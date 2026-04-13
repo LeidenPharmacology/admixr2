@@ -1,0 +1,42 @@
+bibentry(
+  bibtype  = "Article",
+  title    = "Aggregate data modelling: A fast implementation for fitting pharmacometrics models to summary-level data in R",
+  author   = c(
+    person("Hidde",   "van de Beek"),
+    person("Pyry A. J.", "Välitalo"),
+    person("J. G. Coen", "van Hasselt"),
+    person("Laura B.",   "Zwep")
+  ),
+  journal  = "Journal of Pharmacokinetics and Pharmacodynamics",
+  year     = "2025",
+  volume   = "53",
+  number   = "1",
+  pages    = "3",
+  doi      = "10.1007/s10928-025-10011-w",
+  textVersion = paste(
+    "van de Beek H., Välitalo P.A.J., van Hasselt J.G.C., Zwep L.B. (2025).",
+    "Aggregate data modelling: A fast implementation for fitting pharmacometrics",
+    "models to summary-level data in R.",
+    "Journal of Pharmacokinetics and Pharmacodynamics, 53(1), 3.",
+    "https://doi.org/10.1007/s10928-025-10011-w"
+  )
+)
+
+bibentry(
+  bibtype  = "Article",
+  title    = "Pharmacometric estimation methods for aggregate data, including data simulated from other pharmacometric models",
+  author   = person("Pyry Antti Juhana", "Välitalo"),
+  journal  = "Journal of Pharmacokinetics and Pharmacodynamics",
+  year     = "2021",
+  volume   = "48",
+  number   = "5",
+  pages    = "623--638",
+  doi      = "10.1007/s10928-021-09760-1",
+  textVersion = paste(
+    "Välitalo P.A.J. (2021).",
+    "Pharmacometric estimation methods for aggregate data, including data simulated",
+    "from other pharmacometric models.",
+    "Journal of Pharmacokinetics and Pharmacodynamics, 48(5), 623-638.",
+    "https://doi.org/10.1007/s10928-021-09760-1"
+  )
+)

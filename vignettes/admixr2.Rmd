@@ -1,0 +1,194 @@
+---
+title: "Getting started with admixr2"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with admixr2}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>",
+  message = FALSE, warning = FALSE,
+  fig.width = 7, fig.height = 5
+)
+```
+
+## What is aggregate-data modelling?
+
+`admixr2` fits pharmacometric PK/PD models to **summary-level data**. For each
+clinical study you supply:
+
+- **E** — observed mean vector (one entry per observation time)
+- **V** — observed covariance matrix (or variance vector)
+- **n** — sample size
+- **times** — observation time points
+- **ev** — dosing event table
+
+The estimators match E and V against their model-predicted counterparts and
+return a standard nlmixr2 fit object. This lets you apply established nlmixr2
+models to aggregate statistics from publications or internal data summaries
+where individual records are unavailable.
+
+Three estimators are available:
+
+| Estimator | `est =` | Control function | Approach |
+|-----------|---------|-----------------|---------|
+| First-Order | `"adfo"` | `adfoControl()` | First-order Taylor expansion at η = 0; one rxSolve per NLL eval; fastest |
+| Monte Carlo | `"admc"` | `admControl()` | Sample average over η; asymptotically exact |
+| Iterative Reweighting MC | `"adirmc"` | `adirmcControl()` | Proposals fixed per phase; inner loop needs no new rxSolve calls |
+
+`adfo` is the natural starting point for model screening and initial estimates.
+`admc` is the workhorse for standard PK models. `adirmc` is preferred for
+complex ODE systems with expensive solves, high-dimensional IIV, or poor
+starting values. See
+`vignette("estimator-comparison", package = "admixr2")` for a detailed comparison.
+
+## The examplomycin dataset
+
+`examplomycin` ships with admixr2: 500 simulated subjects from a two-compartment
+PK model with first-order absorption (100 mg oral dose, sampled at 0.1, 0.25,
+0.5, 1, 2, 3, 5, 8, and 12 h). True parameters: CL = 5 L/h, V1 = 10 L,
+V2 = 30 L, Q = 10 L/h, ka = 1 h⁻¹; IIV = 0.3 (SD on log scale) for all
+parameters; proportional error SD = 0.2.
+
+```{r data}
+library(admixr2)
+library(rxode2)
+library(nlmixr2)
+
+data("examplomycin")
+head(examplomycin[examplomycin$EVID == 0, c("ID", "TIME", "DV")], 9)
+```
+
+## Computing aggregate statistics
+
+Reshape individual records into a subjects × times matrix, then compute E and V:
+
+```{r aggregate}
+obs   <- examplomycin[examplomycin$EVID == 0, ]
+obs   <- obs[order(obs$ID, obs$TIME), ]
+times <- sort(unique(obs$TIME))
+ids   <- unique(obs$ID)
+n     <- length(ids)                     # 500
+
+dv_mat <- matrix(NA_real_, nrow = n, ncol = length(times))
+for (i in seq_along(ids)) {
+  sub         <- obs[obs$ID == ids[i], ]
+  dv_mat[i, ] <- sub$DV[order(sub$TIME)]
+}
+
+E <- colMeans(dv_mat)
+V <- cov.wt(dv_mat, method = "ML")$cov
+
+round(E, 2)
+```
+
+`V` is the 9×9 sample covariance matrix. Its off-diagonal entries capture
+within-subject correlation across time; using the full matrix (`method = "cov"`)
+typically tightens parameter estimates compared to the diagonal-only approximation
+(`method = "var"`). `admixr2` auto-detects the method from the structure of V.
+
+## Model definition
+
+Models use standard nlmixr2 syntax with mu-referenced log-scale parameters:
+
+```{r model}
+pk_model <- function() {
+  ini({
+    tcl     <- log(5)  ; label("Log clearance (L/hr)")
+    tv1     <- log(10) ; label("Log central volume (L)")
+    tv2     <- log(30) ; label("Log peripheral volume (L)")
+    tq      <- log(10) ; label("Log inter-compartmental CL (L/hr)")
+    tka     <- log(1)  ; label("Log absorption rate constant (1/hr)")
+    prop.sd <- c(0, 0.2); label("Proportional residual error SD")
+    eta.cl ~ 0.09
+    eta.v1 ~ 0.09
+    eta.v2 ~ 0.09
+    eta.q  ~ 0.09
+    eta.ka ~ 0.09
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v1 <- exp(tv1 + eta.v1)
+    v2 <- exp(tv2 + eta.v2)
+    q  <- exp(tq  + eta.q)
+    ka <- exp(tka + eta.ka)
+    d/dt(depot)      <- -ka * depot
+    d/dt(central)    <- ka * depot - (cl/v1 + q/v1) * central + (q/v2) * peripheral
+    d/dt(peripheral) <- (q/v1) * central - (q/v2) * peripheral
+    cp <- central / v1
+    cp ~ prop(prop.sd)
+  })
+}
+```
+
+Writing each parameter as `exp(tcl + eta.cl)` is called **mu-referencing**:
+the structural fixed effect and its random effect enter additively on the
+log scale. `admixr2` exploits this pairing to compute analytical gradients
+via sensitivity equations. See the
+[Advanced usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html#mu-referencing-and-sensitivity-equations)
+vignette for details, including how parameters without a random effect are
+handled.
+
+## Assembling the study specification
+
+Bundle each study's statistics into a named list:
+
+```{r study}
+study <- list(
+  E     = E,
+  V     = V,                       # full 9x9 covariance matrix
+  n     = n,
+  times = times,
+  ev    = rxode2::et(amt = 100)    # single 100 mg oral dose
+)
+```
+
+## Fitting
+
+Pass one or more named studies to `admControl()`:
+
+```{r fit}
+fit <- nlmixr2(
+  pk_model, admData(), est = "admc",
+  control = admControl(
+    studies   = list(examplomycin = study),
+    n_sim     = 5000L,
+    cov_n_sim = 10000L,
+    maxeval   = 300L,
+    seed      = 1L
+  )
+)
+```
+
+## Inspecting the fit
+
+```{r print}
+print(fit)
+```
+
+Key entries in `fit$env$admExtra`:
+
+```{r internals}
+fit$objective                    # -2 log-likelihood
+fit$env$admExtra$struct          # structural parameters (log scale)
+fit$env$admExtra$omega           # estimated Omega matrix
+fit$env$admExtra$sigma_var       # residual variance(s)
+
+logLik(fit)
+AIC(fit)
+```
+
+## Diagnostic plots
+
+`plot()` produces up to four panel types and returns them as a named list of
+ggplot2 objects:
+
+```{r plot, fig.cap="Left: observed vs predicted mean with residuals. Right: NLL convergence trace."}
+plots <- plot(fit, which = c("mean", "nll"))
+```
+
+For a detailed walkthrough of all four panel types and customisation options, see
+`vignette("diagnostic-plots", package = "admixr2")`.

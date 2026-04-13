@@ -1,0 +1,50 @@
+Package: admixr2
+Type: Package
+Title: Aggregate Data Modelling
+Version: 0.1.0
+Authors@R: c(
+        person("H.", "van de Beek", email = "h.van.de.beek@lacdr.leidenuniv.nl", role = c("aut", "cre")),
+        person("P.A.J.", "Välitalo", role = "aut"),
+        person("L.B.", "Zwep", role = "aut"),
+        person("J.G.C.", "van Hasselt", role = "aut")
+    )
+Description: Fit pharmacokinetic/pharmacodynamic (PK/PD) models to aggregate-level data (mean vector
+    and covariance matrix per study) rather than individual-level data. Integrates
+    with the 'nlmixr2'/'rxode2' ecosystem via three estimation methods: a First-Order ('FO')
+    analytical estimator, a Monte Carlo (MC) estimator, and an Iterative Reweighting
+    Monte Carlo ('IRMC') estimator. Methods are
+    based on Välitalo (2021) <doi:10.1007/s10928-021-09760-1>; software described in
+    van de Beek et al. (2025) <doi:10.1007/s10928-025-10011-w>.
+License: GPL (>= 3)
+URL: https://leidenpharmacology.github.io/admixr2/, https://github.com/LeidenPharmacology/admixr2
+BugReports: https://github.com/LeidenPharmacology/admixr2/issues
+Encoding: UTF-8
+LazyData: true
+Depends: R (>= 4.1.0)
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports:
+    checkmate,
+    digest,
+    nlmixr2est,
+    nloptr,
+    qs2,
+    randtoolbox,
+    Rcpp,
+    rxode2
+LinkingTo:
+    Rcpp,
+    RcppEigen
+Suggests:
+    expm,
+    furrr,
+    future,
+    ggplot2,
+    knitr,
+    mnormt,
+    nlmixr2,
+    patchwork,
+    rmarkdown,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3

@@ -1,0 +1,90 @@
+url: https://leidenpharmacology.github.io/admixr2
+
+template:
+  bootstrap: 5
+  bootswatch: cosmo
+
+home:
+  title: admixr2 — Aggregate Data Modelling in R
+  description: >
+    Fit pharmacometric PK/PD models to aggregate-level data (mean vector and
+    covariance matrix per study) using the nlmixr2/rxode2 ecosystem.
+
+navbar:
+  structure:
+    left: [intro, blog, vignettes, reference]
+    right: [search, github]
+  components:
+    blog:
+      text: Blog
+      menu:
+        - text: The mathematics of aggregate data modelling
+          href: articles/introducing-admixr2.html
+    vignettes:
+      text: Vignettes
+      menu:
+        - text: Getting started
+          href: articles/admixr2.html
+        - text: Diagnostic plots
+          href: articles/diagnostic-plots.html
+        - text: Multiple studies
+          href: articles/multiple-studies.html
+        - text: Estimator comparison
+          href: articles/estimator-comparison.html
+        - text: Advanced usage
+          href: articles/advanced.html
+        - text: Data generation
+          href: articles/datagen.html
+    github:
+      icon: fab fa-github
+      href: https://github.com/LeidenPharmacology/admixr2
+      aria-label: GitHub
+
+articles:
+  - title: Blog
+    navbar: Blog
+    contents:
+      - articles/introducing-admixr2
+  - title: Vignettes
+    navbar: Vignettes
+    contents:
+      - admixr2
+      - diagnostic-plots
+      - multiple-studies
+      - estimator-comparison
+      - advanced
+      - datagen
+
+reference:
+  - title: Fitting
+    desc: Main entry point and data helper.
+    contents:
+      - admData
+      - nlmixr2Est.adfo
+      - nlmixr2Est.admc
+      - nlmixr2Est.adirmc
+
+  - title: Simulation
+    desc: Generate aggregate data from models for simulation studies.
+    contents:
+      - datagen
+      - datagenControl
+
+  - title: Control objects
+    desc: Configuration for each estimator.
+    contents:
+      - adfoControl
+      - admControl
+      - adirmcControl
+      - admStopWorkers
+
+  - title: Methods
+    desc: S3 methods for fit objects.
+    contents:
+      - print.admFit
+      - plot.admFit
+
+  - title: Data
+    desc: Example datasets.
+    contents:
+      - examplomycin
