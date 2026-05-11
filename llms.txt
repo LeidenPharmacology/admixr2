@@ -1,0 +1,175 @@
+# admixr2 ![](reference/figures/logo.png)
+
+`admixr2` fits pharmacometric PK/PD models to **aggregate-level data** —
+an observed mean vector **E** and covariance matrix **V** per clinical
+study — rather than individual observations. It integrates with the
+[nlmixr2](https://nlmixr2.org/) / [rxode2](https://rxode2.nlmixr2.org/)
+ecosystem and provides two estimation backends:
+
+| Estimator | `est =` | Control |
+|----|----|----|
+| Monte Carlo | `"admc"` | [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md) |
+| Importance Resampling MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
+
+## When to use admixr2
+
+- Individual-level data cannot be shared (privacy, IP restrictions)
+- Fitting to published summary statistics (means and SDs from a paper)
+- Combining evidence across trials where only aggregate endpoints are
+  available
+
+## Installation
+
+``` r
+
+# Install from GitHub using pak (recommended)
+pak::pak("LeidenPharmacology/admixr2")
+
+# Or with remotes
+remotes::install_github("LeidenPharmacology/admixr2")
+```
+
+## Quick start
+
+``` r
+
+library(admixr2)
+library(rxode2)
+library(nlmixr2)
+
+# 1. Compute aggregate statistics from individual data
+data("examplomycin")
+obs    <- examplomycin[examplomycin$EVID == 0, ]
+obs    <- obs[order(obs$ID, obs$TIME), ]
+times  <- sort(unique(obs$TIME))
+ids    <- unique(obs$ID)
+dv_mat <- matrix(NA_real_, nrow = length(ids), ncol = length(times))
+for (i in seq_along(ids)) {
+  sub         <- obs[obs$ID == ids[i], ]
+  dv_mat[i, ] <- sub$DV[order(sub$TIME)]
+}
+E <- colMeans(dv_mat)
+V <- cov(dv_mat)
+
+# 2. Define the model (standard nlmixr2 syntax)
+pk_model <- function() {
+  ini({
+    tcl     <- log(5);  label("Log clearance (L/hr)")
+    tv1     <- log(10); label("Log central volume (L)")
+    tv2     <- log(30); label("Log peripheral volume (L)")
+    tq      <- log(10); label("Log inter-compartmental CL (L/hr)")
+    tka     <- log(1);  label("Log absorption rate constant (1/hr)")
+    prop.sd <- c(0, 0.2)
+    eta.cl ~ 0.09; eta.v1 ~ 0.09; eta.v2 ~ 0.09
+    eta.q  ~ 0.09; eta.ka ~ 0.09
+  })
+  model({
+    cl <- exp(tcl + eta.cl); v1 <- exp(tv1 + eta.v1)
+    v2 <- exp(tv2 + eta.v2); q  <- exp(tq  + eta.q)
+    ka <- exp(tka + eta.ka)
+    d/dt(depot)      <- -ka * depot
+    d/dt(central)    <- ka * depot - (cl/v1 + q/v1) * central + (q/v2) * peripheral
+    d/dt(peripheral) <- (q/v1) * central - (q/v2) * peripheral
+    cp <- central / v1
+    cp ~ prop(prop.sd)
+  })
+}
+
+# 3. Fit
+fit <- nlmixr2(
+  pk_model, admData(), est = "admc",
+  control = admControl(
+    studies = list(examplomycin = list(
+      E = E, V = V, n = length(ids),
+      times = times, ev = et(amt = 100)
+    )),
+    n_sim = 5000L, seed = 1L
+  )
+)
+
+print(fit)
+plot(fit)
+```
+
+## Vignettes
+
+| Vignette | Topic |
+|----|----|
+| [Getting started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md) | Core workflow: data prep, model, fit, diagnostics |
+| [Diagnostic plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md) | All four plot panels explained; IIV heatmap |
+| [Multiple studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md) | Joint fitting across studies with different designs |
+| [Estimator comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md) | admc vs adirmc: when to use each |
+| [Advanced usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md) | Gradient modes, parallel restarts, AIC/BIC model comparison |
+
+## Citation
+
+If you use `admixr2` in your work, please cite the software paper:
+
+> van de Beek H., Välitalo P.A.J., van Hasselt J.G.C., Zwep L.B. (2025).
+> Aggregate data modelling: A fast implementation for fitting
+> pharmacometrics models to summary-level data in R. *Journal of
+> Pharmacokinetics and Pharmacodynamics*, 53(1), 3.
+> <https://doi.org/10.1007/s10928-025-10011-w>
+
+The underlying methodology is described in:
+
+> Välitalo P.A.J. (2021). Pharmacometric estimation methods for
+> aggregate data, including data simulated from other pharmacometric
+> models. *Journal of Pharmacokinetics and Pharmacodynamics*, 48(5),
+> 623–638. <https://doi.org/10.1007/s10928-021-09760-1>
+
+# Package index
+
+## Fitting
+
+Main entry point and data helper.
+
+- [`admData()`](https://leidenpharmacology.github.io/admixr2/reference/admData.md)
+  : Dummy data frame for nlmixr2 dispatch
+- [`nlmixr2Est(`*`<admc>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.admc.md)
+  : Fit an aggregate data model via Monte Carlo (admc estimator)
+- [`nlmixr2Est(`*`<adirmc>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.adirmc.md)
+  : Fit an aggregate data model via Importance Resampling MC (adirmc
+  estimator)
+
+## Control objects
+
+Configuration for each estimator.
+
+- [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
+  : Control settings for the ADM estimator
+- [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)
+  : Control settings for the IRMC estimator
+- [`admStopWorkers()`](https://leidenpharmacology.github.io/admixr2/reference/admStopWorkers.md)
+  : Stop PSOCK workers
+
+## Methods
+
+S3 methods for fit objects.
+
+- [`print(`*`<admFit>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/print.admFit.md)
+  : Print method for admFit objects
+- [`plot(`*`<admFit>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/plot.admFit.md)
+  : Diagnostic plots for an admixr2 fit
+
+## Data
+
+Example datasets.
+
+- [`examplomycin`](https://leidenpharmacology.github.io/admixr2/reference/examplomycin.md)
+  : Examplomycin dataset
+
+# Articles
+
+### Vignettes
+
+- [Getting started with
+  admixr2](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md):
+- [Diagnostic
+  plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md):
+- [Multiple
+  studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md):
+- [Estimator comparison: admc vs
+  adirmc](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md):
+- [Advanced
+  usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md):
