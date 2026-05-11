@@ -4,8 +4,8 @@
 data** — the observed mean vector **E** and covariance matrix **V**
 reported per clinical study — rather than requiring individual patient
 records. It integrates with the [nlmixr2](https://nlmixr2.org/) /
-[rxode2](https://rxode2.nlmixr2.org/) ecosystem and provides two
-estimation backends:
+[rxode2](https://cran.r-project.org/package=rxode2) ecosystem and
+provides two estimation backends:
 
 | Estimator | `est =` | Control |
 |----|----|----|
@@ -130,11 +130,11 @@ plot(fit)
 
 | Vignette | Topic |
 |----|----|
-| [Getting started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md) | Core workflow: data prep, model, fit, diagnostics |
-| [Diagnostic plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md) | All four plot panels explained; IIV heatmap |
-| [Multiple studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md) | Joint fitting across studies with different designs |
-| [Estimator comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md) | admc vs adirmc: when to use each |
-| [Advanced usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md) | Gradient modes, parallel restarts, AIC/BIC model comparison |
+| [Getting started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.html) | Core workflow: data prep, model, fit, diagnostics |
+| [Diagnostic plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.html) | All four plot panels explained; IIV heatmap |
+| [Multiple studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.html) | Joint fitting across studies with different designs |
+| [Estimator comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html) | admc vs adirmc: when to use each |
+| [Advanced usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html) | Gradient modes, parallel restarts, AIC/BIC model comparison |
 
 ## Citation
 
