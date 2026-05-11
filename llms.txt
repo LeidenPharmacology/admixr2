@@ -139,8 +139,7 @@ plot(fit)
 ## Citation
 
 If you use `admixr2` in your work, please cite the software paper, which
-introduces the Monte Carlo and Importance Resampling Monte Carlo
-estimators:
+introduces the Importance Resampling Monte Carlo estimator:
 
 > van de Beek H., Välitalo P.A.J., van Hasselt J.G.C., Zwep L.B. (2025).
 > Aggregate data modelling: A fast implementation for fitting
@@ -148,7 +147,7 @@ estimators:
 > Pharmacokinetics and Pharmacodynamics*, 53(1), 3.
 > <https://doi.org/10.1007/s10928-025-10011-w>
 
-The underlying methodology is described in:
+The aggregate data modelling methodology is introduced in:
 
 > Välitalo P.A.J. (2021). Pharmacometric estimation methods for
 > aggregate data, including data simulated from other pharmacometric

@@ -148,23 +148,23 @@ print(fit_multi)
 #> ── Time (sec fit_multi$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   83.643     18.507  102.15
+#> 1   90.971     21.157 112.128
 #> 
 #> ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 #> 
 #>                                   Parameter    Est.      SE  %RSE
 #> tcl                    Log clearance (L/hr)   1.601 0.01637 1.022
-#> tv1                  Log central volume (L)   2.316 0.08775 3.788
-#> tv2               Log peripheral volume (L)   3.402 0.04028 1.184
+#> tv1                  Log central volume (L)   2.316 0.08773 3.787
+#> tv2               Log peripheral volume (L)   3.402 0.04027 1.184
 #> tq        Log inter-compartmental CL (L/hr)   2.284 0.02134 0.934
-#> tka     Log absorption rate constant (1/hr) 0.02612 0.08253   316
+#> tka     Log absorption rate constant (1/hr) 0.02593 0.08251 318.1
 #> prop.sd      Proportional residual error SD  0.1988              
 #>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 #> tcl         4.958 (4.802, 5.12)     32.9            
-#> tv1        10.14 (8.537, 12.04)     33.8            
-#> tv2        30.01 (27.73, 32.48)     32.1            
+#> tv1        10.14 (8.536, 12.04)     33.8            
+#> tv2        30.01 (27.74, 32.48)     32.1            
 #> tq         9.819 (9.417, 10.24)     33.5            
-#> tka       1.026 (0.8732, 1.207)     31.3            
+#> tka        1.026 (0.873, 1.206)     31.3            
 #> prop.sd                  0.1988                     
 #>  
 #>   Covariance Type (fit_multi$covMethod): r
