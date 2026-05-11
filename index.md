@@ -1,22 +1,54 @@
-# admixr2 ![](reference/figures/logo.png)
+# admixr2
 
-`admixr2` fits pharmacometric PK/PD models to **aggregate-level data** —
-an observed mean vector **E** and covariance matrix **V** per clinical
-study — rather than individual observations. It integrates with the
-[nlmixr2](https://nlmixr2.org/) / [rxode2](https://rxode2.nlmixr2.org/)
-ecosystem and provides two estimation backends:
+`admixr2` fits pharmacometric PK/PD models directly to **aggregate-level
+data** — the observed mean vector **E** and covariance matrix **V**
+reported per clinical study — rather than requiring individual patient
+records. It integrates with the [nlmixr2](https://nlmixr2.org/) /
+[rxode2](https://rxode2.nlmixr2.org/) ecosystem and provides two
+estimation backends:
 
 | Estimator | `est =` | Control |
 |----|----|----|
 | Monte Carlo | `"admc"` | [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md) |
 | Importance Resampling MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
 
+## Model-Based Meta-Analysis
+
+**Model-Based Meta-Analysis (MBMA)** is a pharmacometric framework for
+synthesising evidence across multiple clinical studies by fitting a
+shared mechanistic PK/PD model to the aggregate outcomes (means,
+variances) reported in each study. Unlike classical meta-analysis, which
+pools effect estimates, MBMA preserves the full pharmacometric model
+structure — including nonlinear dose-response, IIV, and residual error —
+enabling principled extrapolation, dose optimisation, and between-study
+comparison.
+
+`admixr2` is designed specifically for MBMA workflows: each study
+contributes its own dosing regimen, observation times, sample size, and
+summary statistics, and all studies are fitted jointly under a single
+model.
+
 ## When to use admixr2
 
-- Individual-level data cannot be shared (privacy, IP restrictions)
-- Fitting to published summary statistics (means and SDs from a paper)
-- Combining evidence across trials where only aggregate endpoints are
-  available
+**Individual patient data are unavailable** — the most common scenario
+in MBMA. Published papers report means and standard deviations;
+regulatory submissions and competitive reasons prevent IPD sharing
+across companies or institutions. `admixr2` extracts the maximum
+information from what is publicly available.
+
+**Leveraging the literature for trial design** — fit a mechanistic PK/PD
+model to aggregated results from existing trials, then simulate new
+dosing regimens or patient populations before committing to a costly
+study.
+
+**Combining evidence across heterogeneous trials** — studies differ in
+dose, formulation, population, or observation schedule. `admixr2`
+handles multi-study fits with per-study dosing events and time grids,
+propagating between-study variability through the shared omega matrix.
+
+**Reproducing and extending published models** — digitised mean
+concentration– time profiles from figures are sufficient input. No IPD
+required.
 
 ## Installation
 
@@ -37,7 +69,7 @@ library(admixr2)
 library(rxode2)
 library(nlmixr2)
 
-# 1. Compute aggregate statistics from individual data
+# 1. Compute aggregate statistics from individual data (or digitise from paper)
 data("examplomycin")
 obs    <- examplomycin[examplomycin$EVID == 0, ]
 obs    <- obs[order(obs$ID, obs$TIME), ]
