@@ -19,22 +19,25 @@ synthesising evidence across multiple clinical studies by fitting a
 shared mechanistic PK/PD model to the aggregate outcomes (means,
 variances) reported in each study. Unlike classical meta-analysis, which
 pools effect estimates, MBMA preserves the full pharmacometric model
-structure — including nonlinear dose-response, IIV, and residual error —
-enabling principled extrapolation, dose optimisation, and between-study
-comparison.
+structure — including nonlinear dose-response, inter-individual
+variability, and residual error — enabling principled extrapolation and
+dose optimisation across the evidence base.
 
-`admixr2` is designed specifically for MBMA workflows: each study
-contributes its own dosing regimen, observation times, sample size, and
-summary statistics, and all studies are fitted jointly under a single
-model.
+`admixr2` fits a single population model jointly to all studies.
+Between-study differences in outcomes are accounted for through the
+population model structure: inter-individual variability captures
+subject-level spread within each study, and residual error absorbs
+remaining discrepancies. Each study contributes its own dosing regimen,
+observation times, and sample size, but shares the same structural and
+variance parameters.
 
 ## When to use admixr2
 
 **Individual patient data are unavailable** — the most common scenario
 in MBMA. Published papers report means and standard deviations;
-regulatory submissions and competitive reasons prevent IPD sharing
-across companies or institutions. `admixr2` extracts the maximum
-information from what is publicly available.
+regulatory submissions and competitive reasons prevent individual
+patient data sharing across companies or institutions. `admixr2`
+extracts the maximum information from what is publicly available.
 
 **Leveraging the literature for trial design** — fit a mechanistic PK/PD
 model to aggregated results from existing trials, then simulate new
@@ -43,12 +46,12 @@ study.
 
 **Combining evidence across heterogeneous trials** — studies differ in
 dose, formulation, population, or observation schedule. `admixr2`
-handles multi-study fits with per-study dosing events and time grids,
-propagating between-study variability through the shared omega matrix.
+handles multi-study fits with per-study dosing events and time grids
+under a single shared population model.
 
 **Reproducing and extending published models** — digitised mean
-concentration– time profiles from figures are sufficient input. No IPD
-required.
+concentration– time profiles from figures are sufficient input. No
+individual patient data required.
 
 ## Installation
 
@@ -135,7 +138,9 @@ plot(fit)
 
 ## Citation
 
-If you use `admixr2` in your work, please cite the software paper:
+If you use `admixr2` in your work, please cite the software paper, which
+introduces the Monte Carlo and Importance Resampling Monte Carlo
+estimators:
 
 > van de Beek H., Välitalo P.A.J., van Hasselt J.G.C., Zwep L.B. (2025).
 > Aggregate data modelling: A fast implementation for fitting

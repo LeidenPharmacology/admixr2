@@ -120,6 +120,15 @@ pk_model <- function() {
 }
 ```
 
+Writing each parameter as `exp(tcl + eta.cl)` is called
+**mu-referencing**: the structural fixed effect and its random effect
+enter additively on the log scale. `admixr2` exploits this pairing to
+compute analytical gradients via sensitivity equations. See the
+[Advanced
+usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html#mu-referencing-and-sensitivity-equations)
+vignette for details, including how parameters without a random effect
+are handled.
+
 ## Assembling the study specification
 
 Bundle each study’s statistics into a named list:
@@ -182,7 +191,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   43.818     10.399  54.217
+#> 1    44.59     10.114  54.704
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

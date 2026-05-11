@@ -174,12 +174,64 @@ a published table of means and SDs) or when runtime is a priority.</p>
 <code>"fd"</code> automatically with a warning.</p>
 </div>
 <div class="section level2">
+<h2 id="mu-referencing-and-sensitivity-equations">Mu-referencing and sensitivity equations<a class="anchor" aria-label="anchor" href="#mu-referencing-and-sensitivity-equations"></a>
+</h2>
+<p><strong>Mu-referencing</strong> is the nlmixr2 convention of
+expressing each structural parameter as a fixed effect plus a random
+effect through a known back-transformation:</p>
+<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">cl</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tcl</span> <span class="op">+</span> <span class="va">eta.cl</span><span class="op">)</span>   <span class="co"># mu-referenced: tcl paired with eta.cl</span></span></code></pre></div>
+<p><code>admixr2</code> uses this pairing to classify parameters into
+three cases, each handled differently by <code>grad = "sens"</code>:</p>
+<p><strong>Paired (mu-referenced) parameters</strong> — rxode2 augments
+the ODE system with sensitivity equations <code>d(pred)/d(eta_i)</code>
+for each random effect. Because <code>tcl</code> and <code>eta.cl</code>
+enter additively on the log scale, the gradient of the NLL with respect
+to <code>tcl</code> equals the gradient with respect to
+<code>eta.cl</code>. Both are recovered from a single ODE solve, with no
+extra function evaluations.</p>
+<p><strong>Non-mu-referenced parameters</strong> — when a structural
+parameter and its random effect are written separately
+(e.g. <code>cl &lt;- exp(tcl) * exp(eta.cl)</code>),
+<code>admixr2</code> cannot recover <code>d(NLL)/d(tcl)</code> from the
+sensitivity equations alone. The sensitivity model is still used for all
+etas, omega, and sigma; only the unpaired structural parameters require
+a targeted CRN finite difference solve. A warning is issued but
+<code>grad = "sens"</code> is kept.</p>
+<p><strong>Parameters without a random effect</strong> — structural
+parameters with no corresponding eta
+(e.g. <code>v2 &lt;- exp(tv2)</code> with IIV dropped from V2) are
+always handled by CRN finite differences. The perturbation uses the same
+quasi-random seed as the nominal draw so that Monte Carlo noise largely
+cancels in the difference.</p>
+</div>
+<div class="section level2">
+<h2 id="irmc-kappa-correction">IRMC kappa correction<a class="anchor" aria-label="anchor" href="#irmc-kappa-correction"></a>
+</h2>
+<p>The IRMC estimator draws proposals from an inflated omega. For
+nonlinear models, the mean of simulated predictions does not equal the
+prediction at eta = 0 — a Jensen’s inequality gap. The kappa correction
+shifts the predicted mean to account for this bias:</p>
+<ul>
+<li>
+<strong><code>"first-order"</code></strong> (default): baseline is
+the population prediction <code>f(theta, 0)</code>. Fast; sufficient for
+most models.</li>
+<li>
+<strong><code>"second-order"</code></strong>: adds a curvature term
+<code>(1/2) * sum_k(omega_k * d²f/deta_k²)</code>. More accurate for
+strongly nonlinear models.</li>
+</ul>
+<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/adirmcControl.html">adirmcControl</a></span><span class="op">(</span><span class="va">...</span>, kappa_method <span class="op">=</span> <span class="st">"second-order"</span><span class="op">)</span></span></code></pre></div>
+</div>
+<div class="section level2">
 <h2 id="parallel-restarts">Parallel restarts<a class="anchor" aria-label="anchor" href="#parallel-restarts"></a>
 </h2>
 <p>Multi-restart fitting guards against local optima.
 <code>workers &gt; 1</code> runs restarts in parallel;
 <code>admixr2</code> manages the worker pool internally:</p>
-<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit_par</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
 <span>  <span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
 <span>  control <span class="op">=</span> <span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span></span>
@@ -243,7 +295,7 @@ normal draws for equivalent NLL variance. For small <code>n_sim</code>,
 after optimisation and reports standard errors in
 <code>print(fit)</code>. A larger <code>cov_n_sim</code> reduces MC
 noise in the Hessian:</p>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit_cov</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
 <span>  <span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
 <span>  control <span class="op">=</span> <span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span></span>
@@ -258,7 +310,7 @@ noise in the Hessian:</p>
 <p>Set <code>covMethod = "none"</code> to skip uncertainty estimation
 during early model development when you only need the point
 estimates:</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span><span class="va">...</span>, covMethod <span class="op">=</span> <span class="st">"none"</span><span class="op">)</span></span></code></pre></div>
 <p>If the Hessian is non-positive-definite (SEs printed as
 <code>NA</code>), increase <code>cov_h_outer</code> or
@@ -270,7 +322,7 @@ estimates:</p>
 <p>Standard information criteria work directly on <code>admFit</code>
 objects. Here we compare the full model (IIV on all five parameters)
 against a reduced model with IIV on CL and V1 only:</p>
-<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">ctl</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span></span>
 <span>  studies   <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>examplomycin <span class="op">=</span> <span class="va">study</span><span class="op">)</span>,</span>
 <span>  n_sim     <span class="op">=</span> <span class="fl">5000L</span>,</span>

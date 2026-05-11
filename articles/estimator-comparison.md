@@ -75,6 +75,13 @@ pk_model <- function() {
 study <- list(E = E, V = V, n = n, times = times, ev = rxode2::et(amt = 100))
 ```
 
+The model uses mu-referenced parameterisation
+(`cl <- exp(tcl + eta.cl)`), which enables analytical gradient
+computation via sensitivity equations in both estimators. See the
+[Advanced
+usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html#mu-referencing-and-sensitivity-equations)
+vignette for details.
+
 ## Fitting with admc
 
 ``` r

@@ -63,6 +63,59 @@ fit_bobyqa <- nlmixr2(pk_model, admData(), est = "admc",
 the sensitivity model is unavailable (e.g. rare ODE features), `admixr2`
 falls back to `"fd"` automatically with a warning.
 
+## Mu-referencing and sensitivity equations
+
+**Mu-referencing** is the nlmixr2 convention of expressing each
+structural parameter as a fixed effect plus a random effect through a
+known back-transformation:
+
+``` r
+
+cl <- exp(tcl + eta.cl)   # mu-referenced: tcl paired with eta.cl
+```
+
+`admixr2` uses this pairing to classify parameters into three cases,
+each handled differently by `grad = "sens"`:
+
+**Paired (mu-referenced) parameters** — rxode2 augments the ODE system
+with sensitivity equations `d(pred)/d(eta_i)` for each random effect.
+Because `tcl` and `eta.cl` enter additively on the log scale, the
+gradient of the NLL with respect to `tcl` equals the gradient with
+respect to `eta.cl`. Both are recovered from a single ODE solve, with no
+extra function evaluations.
+
+**Non-mu-referenced parameters** — when a structural parameter and its
+random effect are written separately
+(e.g. `cl <- exp(tcl) * exp(eta.cl)`), `admixr2` cannot recover
+`d(NLL)/d(tcl)` from the sensitivity equations alone. The sensitivity
+model is still used for all etas, omega, and sigma; only the unpaired
+structural parameters require a targeted CRN finite difference solve. A
+warning is issued but `grad = "sens"` is kept.
+
+**Parameters without a random effect** — structural parameters with no
+corresponding eta (e.g. `v2 <- exp(tv2)` with IIV dropped from V2) are
+always handled by CRN finite differences. The perturbation uses the same
+quasi-random seed as the nominal draw so that Monte Carlo noise largely
+cancels in the difference.
+
+## IRMC kappa correction
+
+The IRMC estimator draws proposals from an inflated omega. For nonlinear
+models, the mean of simulated predictions does not equal the prediction
+at eta = 0 — a Jensen’s inequality gap. The kappa correction shifts the
+predicted mean to account for this bias:
+
+- **`"first-order"`** (default): baseline is the population prediction
+  `f(theta, 0)`. Fast; sufficient for most models.
+- **`"second-order"`**: adds a curvature term
+  `(1/2) * sum_k(omega_k * d²f/deta_k²)`. More accurate for strongly
+  nonlinear models.
+
+``` r
+
+adirmcControl(..., kappa_method = "second-order")
+```
+
 ## Parallel restarts
 
 Multi-restart fitting guards against local optima. `workers > 1` runs

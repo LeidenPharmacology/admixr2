@@ -204,6 +204,13 @@ parameters:</p>
 <span>    <span class="va">cp</span> <span class="op">~</span> <span class="fu">prop</span><span class="op">(</span><span class="va">prop.sd</span><span class="op">)</span></span>
 <span>  <span class="op">}</span><span class="op">)</span></span>
 <span><span class="op">}</span></span></code></pre></div>
+<p>Writing each parameter as <code>exp(tcl + eta.cl)</code> is called
+<strong>mu-referencing</strong>: the structural fixed effect and its
+random effect enter additively on the log scale. <code>admixr2</code>
+exploits this pairing to compute analytical gradients via sensitivity
+equations. See the <a href="advanced.html#mu-referencing-and-sensitivity-equations">Advanced
+usage</a> vignette for details, including how parameters without a
+random effect are handled.</p>
 </div>
 <div class="section level2">
 <h2 id="assembling-the-study-specification">Assembling the study specification<a class="anchor" aria-label="anchor" href="#assembling-the-study-specification"></a>
@@ -262,7 +269,7 @@ parameters:</p>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt;   optimize covariance elapsed</span></span>
-<span><span class="co">#&gt; 1   43.818     10.399  54.217</span></span>
+<span><span class="co">#&gt; 1    44.59     10.114  54.704</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>

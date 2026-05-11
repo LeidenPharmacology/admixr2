@@ -141,6 +141,11 @@ starting values more reliably.</p>
 <span><span class="op">}</span></span>
 <span></span>
 <span><span class="va">study</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E</span>, V <span class="op">=</span> <span class="va">V</span>, n <span class="op">=</span> <span class="va">n</span>, times <span class="op">=</span> <span class="va">times</span>, ev <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">100</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<p>The model uses mu-referenced parameterisation
+(<code>cl &lt;- exp(tcl + eta.cl)</code>), which enables analytical
+gradient computation via sensitivity equations in both estimators. See
+the <a href="advanced.html#mu-referencing-and-sensitivity-equations">Advanced
+usage</a> vignette for details.</p>
 </div>
 <div class="section level2">
 <h2 id="fitting-with-admc">Fitting with admc<a class="anchor" aria-label="anchor" href="#fitting-with-admc"></a>
