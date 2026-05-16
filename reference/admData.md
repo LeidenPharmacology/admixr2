@@ -21,9 +21,4 @@ admData()
 #>   ID TIME DV AMT EVID CMT
 #> 1  1    0 NA 100  101   1
 #> 2  1    1 NA   0    0   2
-
-if (FALSE) { # \dontrun{
-# Pass to nlmixr2() as the data argument when using admixr2 estimators:
-# fit <- nlmixr2(model, admData(), est = "admc", control = admControl(...))
-} # }
 ```

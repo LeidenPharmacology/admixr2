@@ -248,10 +248,24 @@ ctl2 <- adirmcControl(
   n_restarts      = 3L
 )
 
-if (FALSE) { # \dontrun{
-# Full fit using examplomycin (requires rxode2 and nlmixr2)
+# \donttest{
 library(rxode2)
+#> rxode2 5.0.2 using 2 threads (see ?getRxThreads)
+#>   no cache: create with `rxCreateCache()`
 library(nlmixr2)
+#> ── Attaching packages ───────────────────────────────────────── nlmixr2 5.0.0 ──
+#> ✔ lotri        1.0.4     ✔ nlmixr2extra 5.0.0
+#> ✔ nlmixr2data  2.0.9     ✔ nlmixr2plot  5.0.1
+#> ✔ nlmixr2est   5.0.2     
+#> ── Optional Packages Loaded/Ignored ─────────────────────────── nlmixr2 5.0.0 ──
+#> ✖ babelmixr2     ✖ nonmem2rx
+#> ✖ ggPMX     ✖ posologyr
+#> ✖ monolix2rx     ✖ shinyMixR
+#> ✖ nlmixr2lib     ✖ xpose.nlmixr2
+#> ✖ nlmixr2rpt     
+#> ── Conflicts ───────────────────────────────────────────── nlmixr2conflicts() ──
+#> ✖ nlmixr2est::boxCox()     masks rxode2::boxCox()
+#> ✖ nlmixr2est::yeoJohnson() masks rxode2::yeoJohnson()
 
 data("examplomycin")
 obs   <- examplomycin[examplomycin$EVID == 0, ]
@@ -262,7 +276,7 @@ dv_mat <- do.call(rbind, lapply(ids, function(i) {
   sub <- obs[obs$ID == i, ]; sub$DV[order(sub$TIME)]
 }))
 E <- colMeans(dv_mat)
-V <- diag(diag(cov(dv_mat)))   # variance-only for IRMC
+V <- diag(diag(cov(dv_mat)))
 
 pk_model <- function() {
   ini({
@@ -292,6 +306,88 @@ fit <- nlmixr2(
     n_sim   = 500L
   )
 )
+#>  
+#>  
+#>  
+#>  
+#> ℹ parameter labels from comments are typically ignored in non-interactive mode
+#> ℹ Need to run with the source intact to parse comments
+#> → loading into symengine environment...
+#> → pruning branches (`if`/`else`) of full model...
+#> ✔ done
+#> → calculate jacobian
+#> → calculate sensitivities
+#> → calculate ∂(f)/∂(η)
+#> → calculate ∂(R²)/∂(η)
+#> → finding duplicate expressions in inner model...
+#> → optimizing duplicate expressions in inner model...
+#> → finding duplicate expressions in EBE model...
+#> → optimizing duplicate expressions in EBE model...
+#> → compiling inner model...
+#>  
+#>  
+#> ✔ done
+#> → finding duplicate expressions in FD model...
+#> → optimizing duplicate expressions in FD model...
+#> → compiling EBE model...
+#>  
+#>  
+#> ✔ done
+#> → compiling events FD model...
+#>  
+#>  
+#> ✔ done
+#>  
+#>  
+#>  
+#>  
+#> === admixr2: Aggregate Data Modeling (IR-MC) ===
+#>   Studies: 1 | MC samples: 500 | Phases: 4 | Iters/phase: 50 | Expansion: 1.00 | Grad: analytic+Sens-Hessian | Restarts: 1
+#> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
+#> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |
+#> +-- Phase 1: Wide (+/-2.00) -------------------------------------------------------------------------------------------------------------------+
+#> | 0001     |  2394.83 |    3.993 |    2.604 |    37.52 |    8.863 |   0.7407 |   0.1931 |   0.2467 |    0.665 |    0.665 |  0.02795 |    0.135 |
+#> | 0002     | -1006.70 |    4.629 |    8.384 |     32.1 |     9.94 |   0.8639 |   0.1828 |   0.1074 |     0.09 |    0.115 |   0.2065 |    0.247 |
+#> | 0003     | -1254.25 |    4.962 |    8.193 |    31.16 |    8.859 |   0.8156 |   0.1827 |   0.1168 |   0.0762 |  0.07697 |  0.02795 |   0.1441 |
+#> | 0004     | -1253.53 |    4.892 |    8.033 |    31.74 |    8.861 |   0.8039 |   0.1754 |   0.1313 |  0.07653 |   0.1217 |  0.02351 |   0.1459 |
+#> | 0005     | -1256.51 |    4.947 |     8.06 |    31.52 |    8.898 |   0.8092 |   0.1793 |   0.1202 |  0.07351 |  0.09691 |   0.0236 |   0.1395 |
+#> | 0006 ✓   | -1257.40 |    4.948 |    8.176 |    31.23 |     8.93 |   0.8205 |   0.1801 |   0.1234 |  0.07442 |  0.09763 |  0.02351 |   0.1422 |
+#> +-- Phase 2: Focused (+/-1.00) ----------------------------------------------------------------------------------------------------------------+
+#> | 0007 ✓   | -1257.41 |    4.949 |    8.179 |    31.23 |    8.928 |   0.8201 |     0.18 |   0.1233 |  0.07442 |  0.09764 |  0.02351 |   0.1422 |
+#> +-- Phase 3: Fine-tuning (+/-0.50) ------------------------------------------------------------------------------------------------------------+
+#> | 0008 ✓   | -1257.41 |    4.947 |    8.174 |    31.23 |     8.93 |     0.82 |   0.1799 |   0.1232 |  0.07441 |  0.09771 |   0.0235 |   0.1419 |
+#> +-- Phase 4: Precision (+/-0.01) --------------------------------------------------------------------------------------------------------------+
+#> | 0009 ✓   | -1257.41 |    4.948 |    8.172 |    31.23 |    8.932 |   0.8199 |     0.18 |   0.1232 |  0.07444 |  0.09777 |   0.0235 |   0.1419 |
+#> | 1.0 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)
+#> → compress origData in nlmixr2 object, save 1120
 print(fit)
-} # }
+#> ── nlmixr² adirmc ──
+#> 
+#>             OBJF       AIC       BIC Log-likelihood
+#> adirmc -1257.413 -1235.413 -1164.882       628.7063
+#> 
+#> ── Time (sec fit$time): ──
+#> 
+#>   optimize covariance elapsed
+#> 1    1.007     10.286  11.293
+#> 
+#> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
+#> 
+#>            Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+#> tcl       1.599 0.02433 1.521    4.948 (4.717, 5.189)     36.2            
+#> tv1       2.101  0.1919 9.137      8.172 (5.61, 11.9)     27.8            
+#> tv2       3.441 0.07038 2.045     31.23 (27.2, 35.85)     32.0            
+#> tq         2.19 0.05773 2.637       8.932 (7.976, 10)     15.4            
+#> tka     -0.1985  0.1772 89.28  0.8199 (0.5793, 1.161)     39.0            
+#> prop.sd    0.18                                  0.18                     
+#>  
+#>   Covariance Type (fit$covMethod): r
+#>   No correlations in between subject variability (BSV) matrix
+#>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
+#>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
+#>   Censoring (fit$censInformation): No censoring
+#>   Minimization message (fit$message):  
+#>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+# }
 ```

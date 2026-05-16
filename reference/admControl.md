@@ -220,8 +220,7 @@ ctl2 <- admControl(
   seed     = 42L
 )
 
-if (FALSE) { # \dontrun{
-# Full fit using examplomycin (requires rxode2 and nlmixr2)
+# \donttest{
 library(rxode2)
 library(nlmixr2)
 
@@ -265,6 +264,52 @@ fit <- nlmixr2(
     maxeval  = 200L
   )
 )
+#>  
+#>  
+#>  
+#>  
+#> ℹ parameter labels from comments are typically ignored in non-interactive mode
+#> ℹ Need to run with the source intact to parse comments
+#> === admixr2: Aggregate Data Modeling (MC) ===
+#>   Studies: 1 | MC samples: 1000 | Params: 11 | Cores: 1 | Grad: Sens | Restarts: 1
+#> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
+#> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |
+#> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
+#> | 0010     | -3635.67 |    5.144 |    11.61 |    26.16 |    10.87 |    1.244 |   0.2006 |  0.09031 |  0.09022 |  0.09008 |  0.09076 |  0.09031 |
+#> | 0020     | -3681.10 |     4.99 |    10.73 |    29.22 |    9.787 |     1.08 |   0.1992 |   0.1069 |   0.1038 |  0.09625 |   0.1052 |   0.1067 |
+#> | 0030     | -3681.63 |    4.965 |    10.27 |    29.85 |    9.855 |    1.043 |   0.1988 |   0.1043 |   0.1069 |   0.1017 |   0.1083 |  0.09879 |
+#> | 0040     | -3681.71 |    4.951 |    10.16 |    29.99 |    9.822 |    1.031 |   0.1986 |   0.1046 |    0.114 |   0.1019 |   0.1068 |   0.0942 |
+#> | 0046 ✓   | -3681.73 |    4.952 |    10.12 |    30.03 |    9.815 |    1.027 |   0.1985 |   0.1046 |   0.1156 |    0.101 |   0.1063 |  0.09264 |
+#> | 9.7 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#>   Computing covariance (R method, Sens-Hessian, 7 gradient evaluations)
+#> → compress origData in nlmixr2 object, save 1120
 print(fit)
-} # }
+#> ── nlmixr² admc ──
+#> 
+#>           OBJF       AIC       BIC Log-likelihood
+#> admc -3681.725 -3659.725 -3589.195       1840.863
+#> 
+#> ── Time (sec fit$time): ──
+#> 
+#>   optimize covariance elapsed
+#> 1    9.676     10.859  20.535
+#> 
+#> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
+#> 
+#>           Est.      SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+#> tcl        1.6 0.01659  1.037    4.952 (4.793, 5.115)     33.2            
+#> tv1      2.315 0.08736  3.774    10.12 (8.528, 12.01)     35.0            
+#> tv2      3.402 0.04064  1.194    30.03 (27.73, 32.52)     32.6            
+#> tq       2.284 0.02143 0.9384    9.815 (9.411, 10.24)     33.5            
+#> tka     0.0262 0.08201  313.1   1.027 (0.8741, 1.206)     31.2            
+#> prop.sd 0.1985                                 0.1985                     
+#>  
+#>   Covariance Type (fit$covMethod): r
+#>   No correlations in between subject variability (BSV) matrix
+#>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
+#>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
+#>   Censoring (fit$censInformation): No censoring
+#>   Minimization message (fit$message):  
+#>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+# }
 ```

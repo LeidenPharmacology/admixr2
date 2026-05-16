@@ -24,15 +24,3 @@ nlmixr2Est(env, ...)
 ## Value
 
 An `admFit` nlmixr2 fit object.
-
-## Examples
-
-``` r
-if (FALSE) { # \dontrun{
-# Typically called indirectly via nlmixr2():
-# fit <- nlmixr2(model, admData(), est = "adirmc", control = adirmcControl(...))
-#
-# Direct dispatch (advanced):
-# nlmixr2Est.adirmc(env)   # env is the nlmixr2 environment object
-} # }
-```
