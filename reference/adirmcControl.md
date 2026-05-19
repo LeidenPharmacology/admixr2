@@ -1,7 +1,7 @@
 # Control settings for the IRMC estimator
 
-Constructs a control object for `est = "adirmc"`, the Importance
-Resampling Monte Carlo estimator.
+Constructs a control object for `est = "adirmc"`, the Iterative
+Reweighting Monte Carlo estimator.
 
 ## Usage
 
@@ -370,7 +370,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    1.005      10.42  11.425
+#> 1    1.006      10.32  11.326
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

@@ -22,7 +22,7 @@ Two backends are available:
 | Estimator | `est =` | Control function |
 |----|----|----|
 | Monte Carlo | `"admc"` | [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md) |
-| Importance Resampling MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
+| Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
 
 ## The examplomycin dataset
 
@@ -177,7 +177,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   44.542     10.688   55.23
+#> 1   44.579     10.456  55.035
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

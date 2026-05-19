@@ -1,4 +1,4 @@
-# Fit an aggregate data model via Importance Resampling MC (adirmc estimator)
+# Fit an aggregate data model via Iterative Reweighting MC (adirmc estimator)
 
 Called automatically by
 `nlmixr2(model, admData(), est = "adirmc", control = adirmcControl(...))`.

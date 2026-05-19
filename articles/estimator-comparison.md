@@ -12,7 +12,7 @@ covariance to enter the NLL. The analytical gradient (sensitivity
 equations or CRN finite-differences) makes individual NLL evaluations
 fast. Works well for standard PK models with good starting values.
 
-**`adirmc` — Importance Resampling MC:** Draws proposals from an
+**`adirmc` — Iterative Reweighting MC:** Draws proposals from an
 inflated Omega, then reweights them by their likelihood under the
 current parameters (importance sampling). The inner optimisation given
 fixed proposals is deterministic and fast; proposals are refreshed at

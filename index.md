@@ -10,7 +10,7 @@ provides two estimation backends:
 | Estimator | `est =` | Control |
 |----|----|----|
 | Monte Carlo | `"admc"` | [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md) |
-| Importance Resampling MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
+| Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
 
 ## Model-Based Meta-Analysis
 
@@ -139,7 +139,7 @@ plot(fit)
 ## Citation
 
 If you use `admixr2` in your work, please cite the software paper, which
-introduces the Importance Resampling Monte Carlo estimator:
+introduces the Iterative Reweighting Monte Carlo estimator:
 
 > van de Beek H., Välitalo P.A.J., van Hasselt J.G.C., Zwep L.B. (2025).
 > Aggregate data modelling: A fast implementation for fitting

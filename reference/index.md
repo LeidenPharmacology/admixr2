@@ -9,7 +9,7 @@ Main entry point and data helper.
 - [`nlmixr2Est(`*`<admc>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.admc.md)
   : Fit an aggregate data model via Monte Carlo (admc estimator)
 - [`nlmixr2Est(`*`<adirmc>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.adirmc.md)
-  : Fit an aggregate data model via Importance Resampling MC (adirmc
+  : Fit an aggregate data model via Iterative Reweighting MC (adirmc
   estimator)
 
 ## Control objects
