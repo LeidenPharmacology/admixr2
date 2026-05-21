@@ -138,6 +138,11 @@ FD Jacobian.</p></dd>
 <dd><p>Box-constraint half-width when using gradients.</p></dd>
 
 
+<dt id="arg-cov-h">cov_h<a class="anchor" aria-label="anchor" href="#arg-cov-h"></a></dt>
+<dd><p>Inner FD step for the gradient-based Hessian (only used when
+<code>covMethod = "r"</code> and <code>grad != "none"</code>). Default 1e-3.</p></dd>
+
+
 <dt id="arg-cov-h-outer">cov_h_outer<a class="anchor" aria-label="anchor" href="#arg-cov-h-outer"></a></dt>
 <dd><p>Outer step scale for NLL-FD Hessian.</p></dd>
 
@@ -159,6 +164,20 @@ struct thetas at each restart (&gt; 1).</p></dd>
 <dt id="arg-workers">workers<a class="anchor" aria-label="anchor" href="#arg-workers"></a></dt>
 <dd><p>Number of parallel PSOCK/fork workers for multi-restart
 (default 1 = sequential).</p></dd>
+
+
+<dt id="arg-rxcontrol">rxControl<a class="anchor" aria-label="anchor" href="#arg-rxcontrol"></a></dt>
+<dd><p><code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxode2::rxControl()</a></code> object. Created automatically when <code>NULL</code>.</p></dd>
+
+
+<dt id="arg-calctables-compress-ci-sigdig-sigdigtable-optexpression-sumprod-literalfix">calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd, literalFix<a class="anchor" aria-label="anchor" href="#arg-calctables-compress-ci-sigdig-sigdigtable-optexpression-sumprod-literalfix"></a></dt>
+<dd><p>Passed to <code><a href="https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html" class="external-link">nlmixr2est::foceiControl()</a></code> for the table/output machinery.</p></dd>
+
+
+<dt id="arg-addprop">addProp<a class="anchor" aria-label="anchor" href="#arg-addprop"></a></dt>
+<dd><p>How combined additive+proportional error is parameterised in
+the nlmixr2 output tables: <code>"combined2"</code> (default, variance form) or
+<code>"combined1"</code> (SD form). Has no effect on admixr2's own estimation.</p></dd>
 
 
 <dt id="arg-returnadmr">returnAdmr<a class="anchor" aria-label="anchor" href="#arg-returnadmr"></a></dt>

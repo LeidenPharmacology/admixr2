@@ -93,6 +93,11 @@ adfoControl(
 
   Box-constraint half-width when using gradients.
 
+- cov_h:
+
+  Inner FD step for the gradient-based Hessian (only used when
+  `covMethod = "r"` and `grad != "none"`). Default 1e-3.
+
 - cov_h_outer:
 
   Outer step scale for NLL-FD Hessian.
@@ -114,6 +119,24 @@ adfoControl(
 
   Number of parallel PSOCK/fork workers for multi-restart (default 1 =
   sequential).
+
+- rxControl:
+
+  [`rxode2::rxControl()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
+  object. Created automatically when `NULL`.
+
+- calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd,
+  literalFix:
+
+  Passed to
+  [`nlmixr2est::foceiControl()`](https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html)
+  for the table/output machinery.
+
+- addProp:
+
+  How combined additive+proportional error is parameterised in the
+  nlmixr2 output tables: `"combined2"` (default, variance form) or
+  `"combined1"` (SD form). Has no effect on admixr2's own estimation.
 
 - returnAdmr:
 
