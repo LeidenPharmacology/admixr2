@@ -39,8 +39,8 @@ for (i in seq_along(ids)) {
 idx1 <- seq(1, length(ids), by = 2)   # rows 1, 3, 5, ... → cohort 1
 idx2 <- seq(2, length(ids), by = 2)   # rows 2, 4, 6, ... → cohort 2
 
-E1 <- colMeans(dv_mat[idx1, ]); V1 <- cov(dv_mat[idx1, ]); n1 <- length(idx1)
-E2 <- colMeans(dv_mat[idx2, ]); V2 <- cov(dv_mat[idx2, ]); n2 <- length(idx2)
+E1 <- colMeans(dv_mat[idx1, ]); V1 <- cov.wt(dv_mat[idx1, ], method = "ML")$cov; n1 <- length(idx1)
+E2 <- colMeans(dv_mat[idx2, ]); V2 <- cov.wt(dv_mat[idx2, ], method = "ML")$cov; n2 <- length(idx2)
 ```
 
 ## Comparing observed profiles across cohorts
@@ -143,29 +143,29 @@ print(fit_multi)
 #> ── nlmixr² admc ──
 #> 
 #>           OBJF       AIC       BIC Log-likelihood
-#> admc -3672.877 -3650.877 -3580.346       1836.438
+#> admc -3690.835 -3668.835 -3598.305       1845.418
 #> 
 #> ── Time (sec fit_multi$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    90.54     21.165 111.705
+#> 1   90.259     21.106 111.365
 #> 
 #> ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 #> 
-#>                                   Parameter    Est.      SE  %RSE
-#> tcl                    Log clearance (L/hr)   1.601 0.01637 1.022
-#> tv1                  Log central volume (L)   2.316 0.08773 3.787
-#> tv2               Log peripheral volume (L)   3.402 0.04027 1.184
-#> tq        Log inter-compartmental CL (L/hr)   2.284 0.02134 0.934
-#> tka     Log absorption rate constant (1/hr) 0.02593 0.08251 318.1
-#> prop.sd      Proportional residual error SD  0.1988              
+#>                                   Parameter    Est.      SE   %RSE
+#> tcl                    Log clearance (L/hr)   1.601 0.01634  1.021
+#> tv1                  Log central volume (L)   2.314  0.0872  3.768
+#> tv2               Log peripheral volume (L)   3.402 0.04007  1.178
+#> tq        Log inter-compartmental CL (L/hr)   2.285 0.02132 0.9332
+#> tka     Log absorption rate constant (1/hr) 0.02432 0.08199  337.2
+#> prop.sd      Proportional residual error SD  0.1984               
 #>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl         4.958 (4.802, 5.12)     32.9            
-#> tv1        10.14 (8.536, 12.04)     33.8            
-#> tv2        30.01 (27.74, 32.48)     32.1            
-#> tq         9.819 (9.417, 10.24)     33.5            
-#> tka        1.026 (0.873, 1.206)     31.3            
-#> prop.sd                  0.1988                     
+#> tcl         4.958 (4.802, 5.12)     32.8            
+#> tv1           10.12 (8.528, 12)     33.8            
+#> tv2        30.03 (27.76, 32.48)     32.0            
+#> tq          9.822 (9.42, 10.24)     33.4            
+#> tka       1.025 (0.8725, 1.203)     31.2            
+#> prop.sd                  0.1984                     
 #>  
 #>   Covariance Type (fit_multi$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix

@@ -35,7 +35,7 @@
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison: admc vs adirmc</a></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison: adfo, admc and adirmc</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
   </ul>
 </li>
@@ -121,8 +121,12 @@ a published table of means and SDs) or when runtime is a priority.</p>
 <div class="section level2">
 <h2 id="gradient-modes">Gradient modes<a class="anchor" aria-label="anchor" href="#gradient-modes"></a>
 </h2>
-<p><code><a href="../reference/admControl.html">admControl()</a></code> offers four gradient strategies via the
-<code>grad</code> argument:</p>
+<p><code><a href="../reference/admControl.html">admControl()</a></code> and <code><a href="../reference/adfoControl.html">adfoControl()</a></code> offer
+gradient strategies via the <code>grad</code> argument.
+<code><a href="../reference/adirmcControl.html">adirmcControl()</a></code> offers <code>"analytical"</code>,
+<code>"none"</code>, and <code>"fd"</code> only (no <code>"sens"</code>
+or <code>"cfd"</code>).</p>
+<p><strong><code><a href="../reference/admControl.html">admControl()</a></code> gradient modes:</strong></p>
 <table class="table">
 <colgroup>
 <col width="40%">
@@ -158,6 +162,46 @@ a published table of means and SDs) or when runtime is a priority.</p>
 </tr>
 </tbody>
 </table>
+<p><strong><code><a href="../reference/adfoControl.html">adfoControl()</a></code> gradient modes:</strong></p>
+<table class="table">
+<colgroup>
+<col width="40%">
+<col width="32%">
+<col width="28%">
+</colgroup>
+<thead><tr class="header">
+<th><code>grad =</code></th>
+<th>Method</th>
+<th>Notes</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td>
+<code>"none"</code> (default)</td>
+<td>BOBYQA</td>
+<td>Derivative-free; robust starting point for FO</td>
+</tr>
+<tr class="even">
+<td><code>"analytical"</code></td>
+<td>Chain rule through V_pred</td>
+<td>Omega/sigma analytical; struct thetas FD only</td>
+</tr>
+<tr class="odd">
+<td><code>"fd"</code></td>
+<td>Forward FD of full NLL</td>
+<td>All parameters; <code>n_p + 1</code> NLL evals per step</td>
+</tr>
+<tr class="even">
+<td><code>"cfd"</code></td>
+<td>Central FD of full NLL</td>
+<td>More accurate; <code>2 n_p</code> NLL evals per step</td>
+</tr>
+</tbody>
+</table>
+<p>For <code>adfo</code>, all gradient modes still use the sensitivity
+model inside each NLL evaluation to compute J in a single rxSolve —
+<code>grad</code> controls only how the <em>optimizer</em> gradient is
+formed.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># Analytical gradient (default; fastest for ODE models)</span></span>
 <span><span class="va">fit_sens</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span><span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
@@ -214,16 +258,20 @@ prediction at eta = 0 — a Jensen’s inequality gap. The kappa correction
 shifts the predicted mean to account for this bias:</p>
 <ul>
 <li>
-<strong><code>"first-order"</code></strong> (default): baseline is
-the population prediction <code>f(theta, 0)</code>. Fast; sufficient for
-most models.</li>
+<strong><code>"linear"</code></strong> (default): precomputes
+<code>J = df/d(theta)</code> once per outer iteration via a small FD
+batch.
+<code>kappa_fn(theta_cand) ≈ f0 + J %*% (theta_cand - theta0)</code> —
+pure arithmetic per inner step, zero extra rxSolve calls during inner
+optimisation.</li>
 <li>
-<strong><code>"second-order"</code></strong>: adds a curvature term
-<code>(1/2) * sum_k(omega_k * d²f/deta_k²)</code>. More accurate for
-strongly nonlinear models.</li>
+<strong><code>"first-order"</code></strong>: re-evaluates
+<code>f(theta_cand, 0)</code> via rxSolve at each inner step. More exact
+but one rxSolve per inner NLL evaluation.</li>
 </ul>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="../reference/adirmcControl.html">adirmcControl</a></span><span class="op">(</span><span class="va">...</span>, kappa_method <span class="op">=</span> <span class="st">"second-order"</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/adirmcControl.html">adirmcControl</a></span><span class="op">(</span><span class="va">...</span>, kappa_method <span class="op">=</span> <span class="st">"first-order"</span><span class="op">)</span>   <span class="co"># default</span></span>
+<span><span class="fu"><a href="../reference/adirmcControl.html">adirmcControl</a></span><span class="op">(</span><span class="va">...</span>, kappa_method <span class="op">=</span> <span class="st">"linear"</span><span class="op">)</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="parallel-restarts">Parallel restarts<a class="anchor" aria-label="anchor" href="#parallel-restarts"></a>
@@ -320,8 +368,13 @@ estimates:</p>
 <h2 id="model-comparison-aic-and-bic">Model comparison: AIC and BIC<a class="anchor" aria-label="anchor" href="#model-comparison-aic-and-bic"></a>
 </h2>
 <p>Standard information criteria work directly on <code>admFit</code>
-objects. Here we compare the full model (IIV on all five parameters)
-against a reduced model with IIV on CL and V1 only:</p>
+objects. <strong>AIC and BIC are only comparable within the same
+estimator</strong> — <code>adfo</code> evaluates a linearised likelihood
+that differs from the MC likelihood used by <code>admc</code> and
+<code>adirmc</code>, so cross-estimator comparisons are not
+meaningful.</p>
+<p>Here we compare the full model (IIV on all five parameters) against a
+reduced model with IIV on CL and V1 only:</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">ctl</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span></span>
 <span>  studies   <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>examplomycin <span class="op">=</span> <span class="va">study</span><span class="op">)</span>,</span>
@@ -354,12 +407,12 @@ against a reduced model with IIV on CL and V1 only:</p>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/stats/AIC.html" class="external-link">AIC</a></span><span class="op">(</span><span class="va">fit_full</span>, <span class="va">fit_reduced</span><span class="op">)</span></span>
 <span><span class="co">#&gt;             df       AIC</span></span>
-<span><span class="co">#&gt; fit_full    11 -3659.832</span></span>
-<span><span class="co">#&gt; fit_reduced  8 -3519.403</span></span>
+<span><span class="co">#&gt; fit_full    11 -3668.835</span></span>
+<span><span class="co">#&gt; fit_reduced  8 -3528.356</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/stats/AIC.html" class="external-link">BIC</a></span><span class="op">(</span><span class="va">fit_full</span>, <span class="va">fit_reduced</span><span class="op">)</span></span>
 <span><span class="co">#&gt;             df       BIC</span></span>
-<span><span class="co">#&gt; fit_full    11 -3589.302</span></span>
-<span><span class="co">#&gt; fit_reduced  8 -3468.108</span></span></code></pre></div>
+<span><span class="co">#&gt; fit_full    11 -3598.305</span></span>
+<span><span class="co">#&gt; fit_reduced  8 -3477.061</span></span></code></pre></div>
 <p>Lower AIC/BIC favours the more parsimonious model; a difference &gt;
 10 is generally considered strong evidence.</p>
 </div>

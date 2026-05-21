@@ -39,7 +39,7 @@
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="articles/estimator-comparison.html">Estimator comparison: admc vs adirmc</a></li>
+    <li><a class="dropdown-item" href="articles/estimator-comparison.html">Estimator comparison: adfo, admc and adirmc</a></li>
     <li><a class="dropdown-item" href="articles/advanced.html">Advanced usage</a></li>
   </ul>
 </li>
@@ -62,7 +62,7 @@
 </h1></div>
 <!-- badges: start -->
 
-<p><code>admixr2</code> fits pharmacometric PK/PD models directly to <strong>aggregate-level data</strong> — the observed mean vector <strong>E</strong> and covariance matrix <strong>V</strong> reported per clinical study — rather than requiring individual patient records. It integrates with the <a href="https://nlmixr2.org/" class="external-link">nlmixr2</a> / <a href="https://cran.r-project.org/package=rxode2" class="external-link">rxode2</a> ecosystem and provides two estimation backends:</p>
+<p><code>admixr2</code> fits pharmacometric PK/PD models directly to <strong>aggregate-level data</strong> — the observed mean vector <strong>E</strong> and covariance matrix <strong>V</strong> reported per clinical study — rather than requiring individual patient records. It integrates with the <a href="https://nlmixr2.org/" class="external-link">nlmixr2</a> / <a href="https://cran.r-project.org/package=rxode2" class="external-link">rxode2</a> ecosystem and provides three estimation backends:</p>
 <table class="table">
 <thead><tr>
 <th>Estimator</th>
@@ -70,6 +70,11 @@
 <th>Control</th>
 </tr></thead>
 <tbody>
+<tr>
+<td>First-Order</td>
+<td><code>"adfo"</code></td>
+<td><code><a href="reference/adfoControl.html">adfoControl()</a></code></td>
+</tr>
 <tr>
 <td>Monte Carlo</td>
 <td><code>"admc"</code></td>
@@ -126,7 +131,7 @@
 <span>  <span class="va">dv_mat</span><span class="op">[</span><span class="va">i</span>, <span class="op">]</span> <span class="op">&lt;-</span> <span class="va">sub</span><span class="op">$</span><span class="va">DV</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/order.html" class="external-link">order</a></span><span class="op">(</span><span class="va">sub</span><span class="op">$</span><span class="va">TIME</span><span class="op">)</span><span class="op">]</span></span>
 <span><span class="op">}</span></span>
 <span><span class="va">E</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colSums.html" class="external-link">colMeans</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span></span>
-<span><span class="va">V</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cor.html" class="external-link">cov</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span></span>
+<span><span class="va">V</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cov.wt.html" class="external-link">cov.wt</a></span><span class="op">(</span><span class="va">dv_mat</span>, method <span class="op">=</span> <span class="st">"ML"</span><span class="op">)</span><span class="op">$</span><span class="va">cov</span></span>
 <span></span>
 <span><span class="co"># 2. Define the model (standard nlmixr2 syntax)</span></span>
 <span><span class="va">pk_model</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
@@ -194,7 +199,7 @@
 </tr>
 <tr>
 <td><a href="https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html">Estimator comparison</a></td>
-<td>admc vs adirmc: when to use each</td>
+<td>adfo, admc and adirmc: mathematical foundations and when to use each</td>
 </tr>
 <tr>
 <td><a href="https://leidenpharmacology.github.io/admixr2/articles/advanced.html">Advanced usage</a></td>

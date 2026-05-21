@@ -22,7 +22,7 @@ data modelling estimator.'></head><body>
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison: admc vs adirmc</a></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison: adfo, admc and adirmc</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
   </ul></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -261,7 +261,7 @@ fit object (useful for debugging).</p></dd>
 <span class="r-in"><span>  <span class="va">sub</span> <span class="op">&lt;-</span> <span class="va">obs</span><span class="op">[</span><span class="va">obs</span><span class="op">$</span><span class="va">ID</span> <span class="op">==</span> <span class="va">i</span>, <span class="op">]</span>; <span class="va">sub</span><span class="op">$</span><span class="va">DV</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/order.html" class="external-link">order</a></span><span class="op">(</span><span class="va">sub</span><span class="op">$</span><span class="va">TIME</span><span class="op">)</span><span class="op">]</span></span></span>
 <span class="r-in"><span><span class="op">}</span><span class="op">)</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="va">E</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colSums.html" class="external-link">colMeans</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span></span></span>
-<span class="r-in"><span><span class="va">V</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cor.html" class="external-link">cov</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span></span></span>
+<span class="r-in"><span><span class="va">V</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cov.wt.html" class="external-link">cov.wt</a></span><span class="op">(</span><span class="va">dv_mat</span>, method <span class="op">=</span> <span class="st">"ML"</span><span class="op">)</span><span class="op">$</span><span class="va">cov</span></span></span>
 <span class="r-in"><span></span></span>
 <span class="r-in"><span><span class="va">pk_model</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span></span>
 <span class="r-in"><span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span></span>
@@ -303,34 +303,34 @@ fit object (useful for debugging).</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0010     | -3635.67 |    5.144 |    11.61 |    26.16 |    10.87 |    1.244 |   0.2006 |  0.09031 |  0.09022 |  0.09008 |  0.09076 |  0.09031 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0020     | -3681.10 |     4.99 |    10.73 |    29.22 |    9.787 |     1.08 |   0.1992 |   0.1069 |   0.1038 |  0.09625 |   0.1052 |   0.1067 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0030     | -3681.63 |    4.965 |    10.27 |    29.85 |    9.855 |    1.043 |   0.1988 |   0.1043 |   0.1069 |   0.1017 |   0.1083 |  0.09879 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0040     | -3681.71 |    4.951 |    10.16 |    29.99 |    9.822 |    1.031 |   0.1986 |   0.1046 |    0.114 |   0.1019 |   0.1068 |   0.0942 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0046 ✓   | -3681.73 |    4.952 |    10.12 |    30.03 |    9.815 |    1.027 |   0.1985 |   0.1046 |   0.1156 |    0.101 |   0.1063 |  0.09264 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 9.7 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0010     | -3644.88 |    5.145 |    11.61 |    26.17 |    10.87 |    1.243 |   0.2005 |  0.09031 |  0.09022 |  0.09008 |  0.09076 |  0.09031 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0020     | -3690.09 |     4.99 |    10.74 |    29.21 |    9.789 |    1.082 |   0.1991 |   0.1067 |   0.1036 |  0.09613 |    0.105 |   0.1065 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0030     | -3690.65 |    4.962 |    10.24 |    29.91 |    9.852 |    1.039 |   0.1986 |   0.1043 |   0.1092 |    0.102 |   0.1068 |  0.09677 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0040     | -3690.73 |    4.952 |    10.11 |    30.04 |    9.815 |    1.025 |   0.1983 |   0.1044 |   0.1155 |   0.1006 |   0.1061 |  0.09246 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0044 ✓   | -3690.73 |    4.952 |    10.11 |    30.05 |    9.816 |    1.025 |   0.1983 |   0.1044 |   0.1156 |   0.1007 |   0.1061 |  0.09233 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 9.3 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, Sens-Hessian, 7 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1120</span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── </span><span style="color: #0000BB; font-weight: bold;">nlmix</span><span style="color: #BB0000; font-weight: bold;">r²</span><span style="font-weight: bold;"> </span><span style="color: #BBBB00; font-weight: bold;">admc</span><span style="font-weight: bold;"> ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>           OBJF       AIC       BIC Log-likelihood</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> admc -3681.725 -3659.725 -3589.195       1840.863</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> admc -3690.728 -3668.728 -3598.198       1845.364</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    9.733     10.867    20.6</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1    9.283     11.422  20.705</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>           <span style="font-weight: bold;">Est.</span>      <span style="font-weight: bold;">SE</span>   <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>        1.6 0.01659  1.037    4.952 (4.793, 5.115)     33.2            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv1</span>      2.315 0.08736  3.774    10.12 (8.528, 12.01)     35.0            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv2</span>      3.402 0.04064  1.194    30.03 (27.73, 32.52)     32.6            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tq</span>       2.284 0.02143 0.9384    9.815 (9.411, 10.24)     33.5            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tka</span>     0.0262 0.08201  313.1   1.027 (0.8741, 1.206)     31.2            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span> 0.1985                                 0.1985                     </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>            <span style="font-weight: bold;">Est.</span>      <span style="font-weight: bold;">SE</span>  <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>         1.6 0.01658 1.036    4.952 (4.793, 5.115)     33.2            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv1</span>       2.313   0.087 3.761    10.11 (8.523, 11.99)     35.0            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv2</span>       3.403  0.0405  1.19    30.05 (27.75, 32.53)     32.6            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tq</span>        2.284 0.02143 0.938    9.816 (9.412, 10.24)     33.4            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tka</span>     0.02503 0.08166 326.3   1.025 (0.8737, 1.203)     31.1            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span>  0.1983                                0.1983                     </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Covariance Type (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   No correlations in between subject variability (BSV) matrix</span>

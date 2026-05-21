@@ -35,7 +35,7 @@
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison: admc vs adirmc</a></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison: adfo, admc and adirmc</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
   </ul>
 </li>
@@ -105,8 +105,8 @@ and compute separate aggregate statistics for each:</p>
 <span><span class="va">idx1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">ids</span><span class="op">)</span>, by <span class="op">=</span> <span class="fl">2</span><span class="op">)</span>   <span class="co"># rows 1, 3, 5, ... → cohort 1</span></span>
 <span><span class="va">idx2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">2</span>, <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">ids</span><span class="op">)</span>, by <span class="op">=</span> <span class="fl">2</span><span class="op">)</span>   <span class="co"># rows 2, 4, 6, ... → cohort 2</span></span>
 <span></span>
-<span><span class="va">E1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colSums.html" class="external-link">colMeans</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">[</span><span class="va">idx1</span>, <span class="op">]</span><span class="op">)</span>; <span class="va">V1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cor.html" class="external-link">cov</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">[</span><span class="va">idx1</span>, <span class="op">]</span><span class="op">)</span>; <span class="va">n1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">idx1</span><span class="op">)</span></span>
-<span><span class="va">E2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colSums.html" class="external-link">colMeans</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">[</span><span class="va">idx2</span>, <span class="op">]</span><span class="op">)</span>; <span class="va">V2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cor.html" class="external-link">cov</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">[</span><span class="va">idx2</span>, <span class="op">]</span><span class="op">)</span>; <span class="va">n2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">idx2</span><span class="op">)</span></span></code></pre></div>
+<span><span class="va">E1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colSums.html" class="external-link">colMeans</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">[</span><span class="va">idx1</span>, <span class="op">]</span><span class="op">)</span>; <span class="va">V1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cov.wt.html" class="external-link">cov.wt</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">[</span><span class="va">idx1</span>, <span class="op">]</span>, method <span class="op">=</span> <span class="st">"ML"</span><span class="op">)</span><span class="op">$</span><span class="va">cov</span>; <span class="va">n1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">idx1</span><span class="op">)</span></span>
+<span><span class="va">E2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colSums.html" class="external-link">colMeans</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">[</span><span class="va">idx2</span>, <span class="op">]</span><span class="op">)</span>; <span class="va">V2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cov.wt.html" class="external-link">cov.wt</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">[</span><span class="va">idx2</span>, <span class="op">]</span>, method <span class="op">=</span> <span class="st">"ML"</span><span class="op">)</span><span class="op">$</span><span class="va">cov</span>; <span class="va">n2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">idx2</span><span class="op">)</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="comparing-observed-profiles-across-cohorts">Comparing observed profiles across cohorts<a class="anchor" aria-label="anchor" href="#comparing-observed-profiles-across-cohorts"></a>
@@ -206,29 +206,29 @@ specify <code>times</code>, <code>ev</code>, <code>V</code>,
 <span><span class="co">#&gt; <span style="font-weight: bold;">── </span><span style="color: #0000BB; font-weight: bold;">nlmix</span><span style="color: #BB0000; font-weight: bold;">r²</span><span style="font-weight: bold;"> </span><span style="color: #BBBB00; font-weight: bold;">admc</span><span style="font-weight: bold;"> ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt;           OBJF       AIC       BIC Log-likelihood</span></span>
-<span><span class="co">#&gt; admc -3672.877 -3650.877 -3580.346       1836.438</span></span>
+<span><span class="co">#&gt; admc -3690.835 -3668.835 -3598.305       1845.418</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit_multi</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt;   optimize covariance elapsed</span></span>
-<span><span class="co">#&gt; 1    90.54     21.165 111.705</span></span>
+<span><span class="co">#&gt; 1   90.259     21.106 111.365</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit_multi</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit_multi</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt;                                   <span style="font-weight: bold;">Parameter</span>    <span style="font-weight: bold;">Est.</span>      <span style="font-weight: bold;">SE</span>  <span style="font-weight: bold;">%RSE</span></span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tcl</span>                    Log clearance (L/hr)   1.601 0.01637 1.022</span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tv1</span>                  Log central volume (L)   2.316 0.08773 3.787</span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tv2</span>               Log peripheral volume (L)   3.402 0.04027 1.184</span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tq</span>        Log inter-compartmental CL (L/hr)   2.284 0.02134 0.934</span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tka</span>     Log absorption rate constant (1/hr) 0.02593 0.08251 318.1</span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">prop.sd</span>      Proportional residual error SD  0.1988              </span></span>
+<span><span class="co">#&gt;                                   <span style="font-weight: bold;">Parameter</span>    <span style="font-weight: bold;">Est.</span>      <span style="font-weight: bold;">SE</span>   <span style="font-weight: bold;">%RSE</span></span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tcl</span>                    Log clearance (L/hr)   1.601 0.01634  1.021</span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tv1</span>                  Log central volume (L)   2.314  0.0872  3.768</span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tv2</span>               Log peripheral volume (L)   3.402 0.04007  1.178</span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tq</span>        Log inter-compartmental CL (L/hr)   2.285 0.02132 0.9332</span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tka</span>     Log absorption rate constant (1/hr) 0.02432 0.08199  337.2</span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">prop.sd</span>      Proportional residual error SD  0.1984               </span></span>
 <span><span class="co">#&gt;         <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tcl</span>         4.958 (4.802, 5.12)     32.9            </span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tv1</span>        10.14 (8.536, 12.04)     33.8            </span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tv2</span>        30.01 (27.74, 32.48)     32.1            </span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tq</span>         9.819 (9.417, 10.24)     33.5            </span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tka</span>        1.026 (0.873, 1.206)     31.3            </span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">prop.sd</span>                  0.1988                     </span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tcl</span>         4.958 (4.802, 5.12)     32.8            </span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tv1</span>           10.12 (8.528, 12)     33.8            </span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tv2</span>        30.03 (27.76, 32.48)     32.0            </span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tq</span>          9.822 (9.42, 10.24)     33.4            </span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tka</span>       1.025 (0.8725, 1.203)     31.2            </span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">prop.sd</span>                  0.1984                     </span></span>
 <span><span class="co">#&gt;  </span></span>
 <span><span class="co">#&gt;   Covariance Type (<span style="color: #BBBB00;">fit_multi</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r</span></span></span>
 <span><span class="co">#&gt;   No correlations in between subject variability (BSV) matrix</span></span>

@@ -6,6 +6,8 @@ Main entry point and data helper.
 
 - [`admData()`](https://leidenpharmacology.github.io/admixr2/reference/admData.md)
   : Dummy data frame for nlmixr2 dispatch
+- [`nlmixr2Est(`*`<adfo>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.adfo.md)
+  : Fit an aggregate data model via First-Order (FO) approximation
 - [`nlmixr2Est(`*`<admc>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.admc.md)
   : Fit an aggregate data model via Monte Carlo (admc estimator)
 - [`nlmixr2Est(`*`<adirmc>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.adirmc.md)
@@ -16,6 +18,8 @@ Main entry point and data helper.
 
 Configuration for each estimator.
 
+- [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md)
+  : Control settings for the FO (First-Order) estimator
 - [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
   : Control settings for the ADM estimator
 - [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)

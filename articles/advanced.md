@@ -37,7 +37,15 @@ and SDs) or when runtime is a priority.
 ## Gradient modes
 
 [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
-offers four gradient strategies via the `grad` argument:
+and
+[`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md)
+offer gradient strategies via the `grad` argument.
+[`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)
+offers `"analytical"`, `"none"`, and `"fd"` only (no `"sens"` or
+`"cfd"`).
+
+**[`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
+gradient modes:**
 
 | `grad =` | Method | Notes |
 |----|----|----|
@@ -45,6 +53,20 @@ offers four gradient strategies via the `grad` argument:
 | `"fd"` | Forward finite differences | Falls back to this if sens unavailable |
 | `"cfd"` | Central finite differences | More accurate FD; ~2× slower than `"fd"` |
 | `"none"` | BOBYQA (derivative-free) | No gradient; useful for debugging or simple models |
+
+**[`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md)
+gradient modes:**
+
+| `grad =` | Method | Notes |
+|----|----|----|
+| `"none"` (default) | BOBYQA | Derivative-free; robust starting point for FO |
+| `"analytical"` | Chain rule through V_pred | Omega/sigma analytical; struct thetas FD only |
+| `"fd"` | Forward FD of full NLL | All parameters; `n_p + 1` NLL evals per step |
+| `"cfd"` | Central FD of full NLL | More accurate; `2 n_p` NLL evals per step |
+
+For `adfo`, all gradient modes still use the sensitivity model inside
+each NLL evaluation to compute J in a single rxSolve — `grad` controls
+only how the *optimizer* gradient is formed.
 
 ``` r
 
@@ -105,15 +127,18 @@ models, the mean of simulated predictions does not equal the prediction
 at eta = 0 — a Jensen’s inequality gap. The kappa correction shifts the
 predicted mean to account for this bias:
 
-- **`"first-order"`** (default): baseline is the population prediction
-  `f(theta, 0)`. Fast; sufficient for most models.
-- **`"second-order"`**: adds a curvature term
-  `(1/2) * sum_k(omega_k * d²f/deta_k²)`. More accurate for strongly
-  nonlinear models.
+- **`"linear"`** (default): precomputes `J = df/d(theta)` once per outer
+  iteration via a small FD batch.
+  `kappa_fn(theta_cand) ≈ f0 + J %*% (theta_cand - theta0)` — pure
+  arithmetic per inner step, zero extra rxSolve calls during inner
+  optimisation.
+- **`"first-order"`**: re-evaluates `f(theta_cand, 0)` via rxSolve at
+  each inner step. More exact but one rxSolve per inner NLL evaluation.
 
 ``` r
 
-adirmcControl(..., kappa_method = "second-order")
+adirmcControl(..., kappa_method = "first-order")   # default
+adirmcControl(..., kappa_method = "linear")
 ```
 
 ## Parallel restarts
@@ -194,9 +219,14 @@ If the Hessian is non-positive-definite (SEs printed as `NA`), increase
 
 ## Model comparison: AIC and BIC
 
-Standard information criteria work directly on `admFit` objects. Here we
-compare the full model (IIV on all five parameters) against a reduced
-model with IIV on CL and V1 only:
+Standard information criteria work directly on `admFit` objects. **AIC
+and BIC are only comparable within the same estimator** — `adfo`
+evaluates a linearised likelihood that differs from the MC likelihood
+used by `admc` and `adirmc`, so cross-estimator comparisons are not
+meaningful.
+
+Here we compare the full model (IIV on all five parameters) against a
+reduced model with IIV on CL and V1 only:
 
 ``` r
 
@@ -231,12 +261,12 @@ fit_reduced <- nlmixr2(pk_reduced, admData(), est = "admc", control = ctl)
 
 AIC(fit_full, fit_reduced)
 #>             df       AIC
-#> fit_full    11 -3659.832
-#> fit_reduced  8 -3519.403
+#> fit_full    11 -3668.835
+#> fit_reduced  8 -3528.356
 BIC(fit_full, fit_reduced)
 #>             df       BIC
-#> fit_full    11 -3589.302
-#> fit_reduced  8 -3468.108
+#> fit_full    11 -3598.305
+#> fit_reduced  8 -3477.061
 ```
 
 Lower AIC/BIC favours the more parsimonious model; a difference \> 10 is

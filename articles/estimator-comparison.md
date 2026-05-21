@@ -1,24 +1,151 @@
-# Estimator comparison: admc vs adirmc
+# Estimator comparison: adfo, admc and adirmc
 
-## Two estimators, one interface
+## Three estimators, one interface
 
-Both estimators target the same aggregate-data log-likelihood and accept
-the same model and study specification. They differ only in how they
-approximate the population distribution:
+All three estimators accept the same model and study specification and
+return the same `admFit` object. They share a common likelihood
+framework but differ in how they approximate the population mean and
+covariance of the predicted observations.
 
-**`admc` — Monte Carlo:** Draws `n_sim` eta samples from the current
-Omega, simulates each trajectory via rxSolve, and forms a sample
-covariance to enter the NLL. The analytical gradient (sensitivity
-equations or CRN finite-differences) makes individual NLL evaluations
-fast. Works well for standard PK models with good starting values.
+## The shared integration problem
 
-**`adirmc` — Iterative Reweighting MC:** Draws proposals from an
-inflated Omega, then reweights them by their likelihood under the
-current parameters (importance sampling). The inner optimisation given
-fixed proposals is deterministic and fast; proposals are refreshed at
-each outer phase. IRMC is more robust to importance weight degeneracy in
-higher-dimensional models and can recover from poor starting values more
-reliably.
+For each study the observed data are a mean vector $`\bar{y}`$ and a
+covariance matrix $`S`$ computed from $`n`$ subjects. Under a
+multivariate normal approximation the aggregate log-likelihood is
+
+``` math
+-2\ell = n \left[
+  \log |V_\text{pred}| +
+  \operatorname{tr}(V_\text{pred}^{-1} S) +
+  r^\top V_\text{pred}^{-1} r
+\right], \qquad r = \bar{y} - \mu_\text{pred}
+```
+
+where $`\mu_\text{pred}`$ and $`V_\text{pred}`$ are the model-predicted
+population mean and covariance of the observations. For a nonlinear
+model $`f(\theta,\eta)`$ these are integrals over the random-effects
+distribution $`\eta \sim \mathcal{N}(0, \Omega)`$:
+
+``` math
+\mu_\text{pred} = \mathbb{E}_\eta[f(\theta, \eta)], \qquad
+V_\text{pred} = \operatorname{Var}_\eta[f(\theta, \eta)] + \Sigma
+```
+
+These integrals have no closed form for nonlinear $`f`$. All three
+estimators minimise the same objective but take different approaches to
+evaluating them.
+
+## First-Order (FO): Taylor expansion at $`\eta = 0`$
+
+`adfo` sidesteps the integral entirely by approximating
+$`f(\theta, \eta)`$ with its first-order Taylor expansion around
+$`\eta = 0`$:
+
+``` math
+f(\theta, \eta) \approx f(\theta, 0) + J\,\eta, \qquad
+J_{t,j} = \left.\frac{\partial f_t}{\partial \eta_j}\right|_{\eta=0}
+```
+
+Substituting into the population moments gives closed-form expressions:
+
+``` math
+\mu_\text{pred} = f(\theta, 0), \qquad
+V_\text{pred} = J\,\Omega\,J^\top + \Sigma
+```
+
+The Jacobian $`J`$ is obtained in a single rxSolve call via sensitivity
+equations that augment the ODE system with
+$`\partial f / \partial \eta_j`$ — no finite differences, no extra
+solves per eta. This makes `adfo` the fastest estimator: one rxSolve per
+NLL evaluation, fully deterministic.
+
+**When the approximation holds:** the Taylor expansion is exact when
+$`f`$ is linear in $`\eta`$. For nonlinear models or large IIV the true
+population covariance exceeds $`J\Omega J^\top`$; FO underestimates
+$`\Omega`$ and bias grows with the degree of nonlinearity.
+
+**AIC note:** `adfo` evaluates a linearised likelihood. Its objective is
+not on the same scale as `admc` or `adirmc` and must not be used for
+cross-estimator AIC comparisons.
+
+## Monte Carlo (MC): sample average over $`\eta`$
+
+`admc` estimates the population integrals directly by drawing $`N`$
+samples $`\eta_i \sim \mathcal{N}(0, \Omega)`$ and computing sample
+moments:
+
+``` math
+\mu_\text{pred} = \frac{1}{N} \sum_{i=1}^N f(\theta, \eta_i), \qquad
+V_\text{pred} = \frac{1}{N} \sum_{i=1}^N
+  \bigl(f(\theta,\eta_i) - \mu_\text{pred}\bigr)
+  \bigl(f(\theta,\eta_i) - \mu_\text{pred}\bigr)^\top + \Sigma
+```
+
+No approximation is made to $`f`$ itself — the estimator is
+asymptotically exact as $`N \to \infty`$. Sobol quasi-random sequences
+(default) reduce MC variance relative to plain normal draws, typically
+requiring 2–5× fewer samples for equivalent precision.
+
+The key cost is that **every NLL evaluation requires $`N`$ rxSolve
+calls** — one per sample. The analytical gradient (sensitivity equations
+for mu-referenced parameters; common random numbers FD otherwise) adds
+no further solves, but the base cost per optimizer step remains
+$`N \times`$ (cost of one rxSolve).
+
+**Advantages:**
+
+- Asymptotically exact; AIC directly comparable across `admc` fits.
+- Works well for standard 1–2 compartment PK models with moderate IIV.
+
+**Limitations:**
+
+- Each NLL evaluation requires $`N`$ rxSolve calls; slower than `adfo`.
+- MC noise in the gradient can cause optimiser oscillation at low
+  `n_sim`.
+
+## Iterative Reweighting MC (IRMC): proposals fixed, inner loop free
+
+`adirmc` addresses the main bottleneck of `admc` — the need for $`N`$
+new rxSolve calls at every optimizer step — by **decoupling proposal
+generation from optimization**.
+
+At each outer phase, $`N`$ proposals $`\eta_i`$ are drawn once and held
+fixed for the entire inner optimization. Given fixed proposals,
+evaluating the NLL requires only matrix operations — **no new rxSolve
+calls**. The proposals are reweighted by their likelihood under the
+current $`\Omega`$ so that the inner objective remains a valid
+approximation as parameters move:
+
+``` math
+w_i \propto \frac{p(\eta_i \mid \Omega)}{q(\eta_i)}, \qquad
+\mu_\text{pred} = \sum_i w_i\, f(\theta, \eta_i), \qquad
+V_\text{pred} = \sum_i w_i\,
+  \bigl(f(\theta,\eta_i) - \mu_\text{pred}\bigr)
+  \bigl(\cdots\bigr)^\top + \Sigma
+```
+
+The inner optimizer therefore runs to convergence at negligible cost;
+proposals are refreshed only between phases. Box constraints on the
+parameters are progressively tightened across phases to guide global
+convergence.
+
+This decoupling makes `adirmc` particularly well-suited to **complex ODE
+models** where each rxSolve is expensive: the total number of solves
+scales with the number of phases rather than the number of optimizer
+steps. It is also more robust to poor starting values because the inner
+optimisation is deterministic and does not depend on re-sampling.
+
+**Advantages:**
+
+- Far fewer rxSolve calls per optimizer step than `admc` — especially
+  beneficial for complex ODE systems with expensive solves.
+- Robust to poor starting values; deterministic inner loop.
+- AIC directly comparable to `admc`.
+
+**Limitations:**
+
+- Heavier per-phase overhead than `admc` for simple, well-initialised
+  problems with cheap ODE solves.
 
 ## Common setup
 
@@ -42,7 +169,7 @@ for (i in seq_along(ids)) {
   dv_mat[i, ] <- sub$DV[order(sub$TIME)]
 }
 E <- colMeans(dv_mat)
-V <- cov(dv_mat)
+V <- cov.wt(dv_mat, method = "ML")$cov
 
 pk_model <- function() {
   ini({
@@ -77,10 +204,27 @@ study <- list(E = E, V = V, n = n, times = times, ev = rxode2::et(amt = 100))
 
 The model uses mu-referenced parameterisation
 (`cl <- exp(tcl + eta.cl)`), which enables analytical gradient
-computation via sensitivity equations in both estimators. See the
+computation via sensitivity equations in all three estimators. See the
 [Advanced
 usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html#mu-referencing-and-sensitivity-equations)
 vignette for details.
+
+## Fitting with adfo
+
+`adfo` is the fastest estimator and a natural starting point for model
+screening or obtaining initial estimates for MC refinement.
+
+``` r
+
+fit_fo <- nlmixr2(
+  pk_model, admData(), est = "adfo",
+  control = adfoControl(
+    studies  = list(examplomycin = study),
+    maxeval  = 500L,
+    seed     = 1L
+  )
+)
+```
 
 ## Fitting with admc
 
@@ -102,9 +246,8 @@ fit_mc <- nlmixr2(
 ## Fitting with adirmc
 
 `adirmc` is slower per evaluation but more robust to poor starting
-values and high-dimensional Omega. Run it interactively with larger
-`n_sim` for a production fit; the settings below are tuned for a fast
-vignette build.
+values and high-dimensional $`\Omega`$. The settings below are tuned for
+a fast vignette build; increase `n_sim` for production use.
 
 ``` r
 
@@ -123,60 +266,88 @@ fit_irmc <- nlmixr2(
 
 ## Comparing parameter estimates
 
-Once both fits are available, compare parameters in a table. Both
-estimators should recover values close to the true parameters (CL=5,
-V1=10, V2=30, Q=10, ka=1):
+`adfo` and `admc` should recover values close to the true parameters (CL
+= 5, V1 = 10, V2 = 30, Q = 10, ka = 1; IIV variance = 0.09 for all;
+prop.sd = 0.2). For the examplomycin dataset IIV is moderate and the
+model is near-linear in $`\eta`$, so FO bias is small.
 
 ``` r
 
 get_pars <- function(fit) {
   s  <- fit$env$admExtra$struct
   om <- diag(fit$env$admExtra$omega)
-  sg <- sqrt(fit$env$admExtra$sigma_var)
+  sg <- sqrt(unlist(fit$env$admExtra$sigma_var))
   c(exp(s), om, sg)
 }
 
 tbl <- data.frame(
   Parameter = c(
-    paste0("exp(", names(fit_mc$env$admExtra$struct), ")"),
-    paste0("V(", fit_mc$env$admExtra$eta_col_names, ")"),
+    paste0("exp(", names(fit_fo$env$admExtra$struct), ")"),
+    paste0("var(", fit_fo$env$admExtra$eta_col_names, ")"),
     "prop.sd"
   ),
-  True  = c(5, 10, 30, 10, 1, rep(0.09, 5), 0.2),
-  admc  = round(get_pars(fit_mc),   4),
-  adirmc = round(get_pars(fit_irmc), 4)
+  True = c(5, 10, 30, 10, 1, rep(0.09, 5), 0.2),
+  adfo = round(get_pars(fit_fo), 4),
+  admc = round(get_pars(fit_mc), 4)
 )
 
 knitr::kable(tbl, caption = "Parameter estimates vs true values")
 ```
 
+| Parameter   |  True |    adfo |    admc |
+|:------------|------:|--------:|--------:|
+| exp(tcl)    |  5.00 |  4.9305 |  4.9582 |
+| exp(tv1)    | 10.00 |  7.5125 | 10.1175 |
+| exp(tv2)    | 30.00 | 31.7752 | 30.0300 |
+| exp(tq)     | 10.00 | 10.3718 |  9.8221 |
+| exp(tka)    |  1.00 |  0.8336 |  1.0246 |
+| var(eta.cl) |  0.09 |  0.0972 |  0.1021 |
+| var(eta.v1) |  0.09 |  0.1309 |  0.1080 |
+| var(eta.v2) |  0.09 |  0.0728 |  0.0975 |
+| var(eta.q)  |  0.09 |  0.1015 |  0.1056 |
+| var(eta.ka) |  0.09 |  0.0872 |  0.0927 |
+| prop.sd     |  0.20 |  0.1998 |  0.1984 |
+
+Parameter estimates vs true values {.table}
+
 ## Comparing objectives
 
-Both estimators target the same likelihood; comparable -2LL values
-confirm both have converged:
+`admc` and `adirmc` evaluate the same likelihood and their -2LL values
+are directly comparable. `adfo` evaluates a linearised likelihood — its
+objective is on a different scale and **must not** be compared with MC
+objectives or used for cross-estimator AIC:
 
 ``` r
 
-cat(sprintf("admc  -2LL = %.2f   AIC = %.2f\n",
-            fit_mc$objective,   AIC(fit_mc)))
-cat(sprintf("adirmc -2LL = %.2f  AIC = %.2f\n",
-            fit_irmc$objective, AIC(fit_irmc)))
+cat(sprintf("adfo  -2LL = %.2f   AIC = %.2f\n", fit_fo$objective, AIC(fit_fo)))
+#> adfo  -2LL = -3675.39   AIC = -3653.39
+cat(sprintf("admc  -2LL = %.2f   AIC = %.2f\n", fit_mc$objective, AIC(fit_mc)))
+#> admc  -2LL = -3690.84   AIC = -3668.84
 ```
 
-A large gap in the final objective suggests convergence failure in one
-of the estimators — try more restarts or a better starting point.
+Use AIC only within the same estimator for model selection.
 
 ## NLL convergence traces
 
 ``` r
 
-plot(fit_mc, which = "nll")
+plots_fo <- plot(fit_fo, which = "nll")
 ```
 
-![admc NLL convergence
-trace.](estimator-comparison_files/figure-html/nll-trace-1.png)
+![adfo and admc NLL convergence
+traces.](estimator-comparison_files/figure-html/nll-trace-1.png)
 
-admc NLL convergence trace.
+adfo and admc NLL convergence traces.
+
+``` r
+
+plots_mc <- plot(fit_mc, which = "nll")
+```
+
+![adfo and admc NLL convergence
+traces.](estimator-comparison_files/figure-html/nll-trace-2.png)
+
+adfo and admc NLL convergence traces.
 
 For `adirmc`, the NLL trace reflects outer phase iterations rather than
 individual LBFGS steps. Jumps between phases (as box constraints
@@ -186,16 +357,30 @@ tighten) are normal and expected.
 
 | Situation | Recommendation |
 |----|----|
+| Rapid model screening, many candidate models | `adfo` — fastest per evaluation |
+| Initial estimates before MC refinement | `adfo` then hand off to `admc` |
+| Weak IIV (CV \< 20 %) and near-linear model | `adfo` estimates reliable for inference |
 | Standard 1–2 compartment PK, good starting values | `admc` with `grad = "sens"` |
 | Initial exploration or poor starting values | `admc` with `n_restarts >= 3` |
-| High-dimensional Omega (≥ 5 etas) | `adirmc` — IS weights degrade more slowly |
+| Complex ODE system with expensive solves | `adirmc` — inner loop needs no new rxSolve calls |
+| High-dimensional Omega (≥ 5 etas) | `adirmc` — inner loop scales with phases not steps |
 | Non-Gaussian or bounded IIV | `adirmc` with `omega_expansion > 1` |
-| Fastest possible runtime | `admc` with `grad = "none"` (BOBYQA) |
-| Maximum reproducibility | Both estimators accept `seed` |
+| Need exact likelihood for AIC comparison across models | `admc` or `adirmc` (not `adfo`) |
+| Maximum reproducibility | All three estimators accept `seed` |
 
 ## Control objects at a glance
 
 ``` r
+
+# adfo key arguments (fastest; linearised likelihood)
+adfoControl(
+  studies    = list(...),
+  grad       = "none",      # "none" (BOBYQA), "analytical", "fd", "cfd"
+  maxeval    = 500L,
+  n_restarts = 1L,
+  covMethod  = "r",         # "r" = numerical Hessian, "none" = skip
+  seed       = 1L
+)
 
 # admc key arguments
 admControl(
@@ -215,7 +400,7 @@ adirmcControl(
   phases          = c(2, 1, 0.5, 0.1),   # box constraint half-widths per phase
   omega_expansion = 1.5,                   # inflate proposal Omega
   grad            = "analytical",          # "analytical", "none", "fd"
-  kappa_method    = "first-order",         # "first-order" or "second-order"
+  kappa_method    = "first-order",         # "first-order" (default) or "linear"
   seed            = 1L
 )
 ```

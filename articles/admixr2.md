@@ -11,18 +11,25 @@ For each clinical study you supply:
 - **times** — observation time points
 - **ev** — dosing event table
 
-The estimator matches E and V against their model-predicted counterparts
-using a Monte Carlo approximation of the population distribution. This
-lets you apply established nlmixr2 models to aggregate statistics from
-publications or internal data summaries where individual records are
-unavailable.
+The estimators match E and V against their model-predicted counterparts
+and return a standard nlmixr2 fit object. This lets you apply
+established nlmixr2 models to aggregate statistics from publications or
+internal data summaries where individual records are unavailable.
 
-Two backends are available:
+Three estimators are available:
 
-| Estimator | `est =` | Control function |
-|----|----|----|
-| Monte Carlo | `"admc"` | [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md) |
-| Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
+| Estimator | `est =` | Control function | Approach |
+|----|----|----|----|
+| First-Order | `"adfo"` | [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md) | First-order Taylor expansion at η = 0; one rxSolve per NLL eval; fastest |
+| Monte Carlo | `"admc"` | [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md) | Sample average over η; asymptotically exact |
+| Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) | Proposals fixed per phase; inner loop needs no new rxSolve calls |
+
+`adfo` is the natural starting point for model screening and initial
+estimates. `admc` is the workhorse for standard PK models. `adirmc` is
+preferred for complex ODE systems with expensive solves,
+high-dimensional IIV, or poor starting values. See
+[`vignette("estimator-comparison", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
+for a detailed comparison.
 
 ## The examplomycin dataset
 
@@ -72,7 +79,7 @@ for (i in seq_along(ids)) {
 }
 
 E <- colMeans(dv_mat)
-V <- cov(dv_mat)
+V <- cov.wt(dv_mat, method = "ML")$cov
 
 round(E, 2)
 #> [1] 0.97 1.94 2.79 3.02 2.26 1.65 1.06 0.75 0.51
@@ -172,29 +179,29 @@ print(fit)
 #> ── nlmixr² admc ──
 #> 
 #>           OBJF       AIC       BIC Log-likelihood
-#> admc -3681.832 -3659.832 -3589.302       1840.916
+#> admc -3690.835 -3668.835 -3598.305       1845.418
 #> 
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   44.579     10.456  55.035
+#> 1   45.562     10.507  56.069
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
-#>                                   Parameter   Est.      SE   %RSE
-#> tcl                    Log clearance (L/hr)  1.601 0.01636  1.022
-#> tv1                  Log central volume (L)  2.315 0.08739  3.776
-#> tv2               Log peripheral volume (L)  3.402 0.04014   1.18
-#> tq        Log inter-compartmental CL (L/hr)  2.284 0.02133 0.9337
-#> tka     Log absorption rate constant (1/hr) 0.0247 0.08218  332.6
-#> prop.sd      Proportional residual error SD 0.1986               
+#>                                   Parameter    Est.      SE   %RSE
+#> tcl                    Log clearance (L/hr)   1.601 0.01634  1.021
+#> tv1                  Log central volume (L)   2.314  0.0872  3.768
+#> tv2               Log peripheral volume (L)   3.402 0.04007  1.178
+#> tq        Log inter-compartmental CL (L/hr)   2.285 0.02132 0.9332
+#> tka     Log absorption rate constant (1/hr) 0.02431 0.08199  337.2
+#> prop.sd      Proportional residual error SD  0.1984               
 #>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 #> tcl         4.958 (4.802, 5.12)     32.8            
-#> tv1        10.12 (8.529, 12.01)     33.8            
-#> tv2        30.02 (27.75, 32.48)     32.0            
-#> tq          9.82 (9.418, 10.24)     33.4            
-#> tka       1.025 (0.8725, 1.204)     31.2            
-#> prop.sd                  0.1986                     
+#> tv1           10.12 (8.528, 12)     33.8            
+#> tv2        30.03 (27.76, 32.48)     32.0            
+#> tq          9.822 (9.42, 10.24)     33.4            
+#> tka       1.025 (0.8725, 1.203)     31.2            
+#> prop.sd                  0.1984                     
 #>  
 #>   Covariance Type (fit$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix
@@ -210,25 +217,25 @@ Key entries in `fit$env$admExtra`:
 ``` r
 
 fit$objective                    # -2 log-likelihood
-#> [1] -3681.832
+#> [1] -3690.835
 fit$env$admExtra$struct          # structural parameters (log scale)
 #>        tcl        tv1        tv2         tq        tka 
-#> 1.60108208 2.31477756 3.40198091 2.28442677 0.02470451
+#> 1.60103998 2.31426955 3.40219648 2.28463058 0.02431472
 fit$env$admExtra$omega           # estimated Omega matrix
-#>           [,1]      [,2]       [,3]      [,4]       [,5]
-#> [1,] 0.1023461 0.0000000 0.00000000 0.0000000 0.00000000
-#> [2,] 0.0000000 0.1079487 0.00000000 0.0000000 0.00000000
-#> [3,] 0.0000000 0.0000000 0.09759912 0.0000000 0.00000000
-#> [4,] 0.0000000 0.0000000 0.00000000 0.1057226 0.00000000
-#> [5,] 0.0000000 0.0000000 0.00000000 0.0000000 0.09312475
+#>           [,1]     [,2]       [,3]      [,4]       [,5]
+#> [1,] 0.1021253 0.000000 0.00000000 0.0000000 0.00000000
+#> [2,] 0.0000000 0.108028 0.00000000 0.0000000 0.00000000
+#> [3,] 0.0000000 0.000000 0.09749311 0.0000000 0.00000000
+#> [4,] 0.0000000 0.000000 0.00000000 0.1055874 0.00000000
+#> [5,] 0.0000000 0.000000 0.00000000 0.0000000 0.09272805
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
-#> 0.03945189
+#> 0.03937197
 
 logLik(fit)
-#> 'log Lik.' 1840.916 (df=11)
+#> 'log Lik.' 1845.418 (df=11)
 AIC(fit)
-#> [1] -3659.832
+#> [1] -3668.835
 ```
 
 ## Diagnostic plots

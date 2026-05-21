@@ -8,7 +8,7 @@
   plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md):
 - [Multiple
   studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md):
-- [Estimator comparison: admc vs
+- [Estimator comparison: adfo, admc and
   adirmc](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md):
 - [Advanced
   usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md):

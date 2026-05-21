@@ -5,10 +5,11 @@ data** — the observed mean vector **E** and covariance matrix **V**
 reported per clinical study — rather than requiring individual patient
 records. It integrates with the [nlmixr2](https://nlmixr2.org/) /
 [rxode2](https://cran.r-project.org/package=rxode2) ecosystem and
-provides two estimation backends:
+provides three estimation backends:
 
 | Estimator | `est =` | Control |
 |----|----|----|
+| First-Order | `"adfo"` | [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md) |
 | Monte Carlo | `"admc"` | [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md) |
 | Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
 
@@ -84,7 +85,7 @@ for (i in seq_along(ids)) {
   dv_mat[i, ] <- sub$DV[order(sub$TIME)]
 }
 E <- colMeans(dv_mat)
-V <- cov(dv_mat)
+V <- cov.wt(dv_mat, method = "ML")$cov
 
 # 2. Define the model (standard nlmixr2 syntax)
 pk_model <- function() {
@@ -133,7 +134,7 @@ plot(fit)
 | [Getting started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.html) | Core workflow: data prep, model, fit, diagnostics |
 | [Diagnostic plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.html) | All four plot panels explained; IIV heatmap |
 | [Multiple studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.html) | Joint fitting across studies with different designs |
-| [Estimator comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html) | admc vs adirmc: when to use each |
+| [Estimator comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html) | adfo, admc and adirmc: mathematical foundations and when to use each |
 | [Advanced usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html) | Gradient modes, parallel restarts, AIC/BIC model comparison |
 
 ## Citation
@@ -162,6 +163,8 @@ Main entry point and data helper.
 
 - [`admData()`](https://leidenpharmacology.github.io/admixr2/reference/admData.md)
   : Dummy data frame for nlmixr2 dispatch
+- [`nlmixr2Est(`*`<adfo>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.adfo.md)
+  : Fit an aggregate data model via First-Order (FO) approximation
 - [`nlmixr2Est(`*`<admc>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.admc.md)
   : Fit an aggregate data model via Monte Carlo (admc estimator)
 - [`nlmixr2Est(`*`<adirmc>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.adirmc.md)
@@ -172,6 +175,8 @@ Main entry point and data helper.
 
 Configuration for each estimator.
 
+- [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md)
+  : Control settings for the FO (First-Order) estimator
 - [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
   : Control settings for the ADM estimator
 - [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)
@@ -205,7 +210,7 @@ Example datasets.
   plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md):
 - [Multiple
   studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md):
-- [Estimator comparison: admc vs
+- [Estimator comparison: adfo, admc and
   adirmc](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md):
 - [Advanced
   usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md):

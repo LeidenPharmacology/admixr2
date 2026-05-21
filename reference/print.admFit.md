@@ -31,8 +31,16 @@ print(x, ...)
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
+# \donttest{
 fit <- nlmixr2(model, admData(), est = "admc", control = admControl(...))
+#>  
+#>  
+#>  
+#>  
+#> ℹ parameter labels from comments are typically ignored in non-interactive mode
+#> ℹ Need to run with the source intact to parse comments
+#> Error: rxode2 model function requires one 'model({})' block
 print(fit)   # or just: fit
-} # }
+#> Error: object 'fit' not found
+# }
 ```

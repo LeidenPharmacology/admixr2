@@ -22,7 +22,7 @@ Monte Carlo estimator.'></head><body>
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison: admc vs adirmc</a></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison: adfo, admc and adirmc</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
   </ul></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -62,7 +62,7 @@ Monte Carlo estimator.</p>
 <span>  seed <span class="op">=</span> <span class="fl">12345L</span>,</span>
 <span>  cores <span class="op">=</span> <span class="fl">1L</span>,</span>
 <span>  grad <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"analytical"</span>, <span class="st">"none"</span>, <span class="st">"fd"</span><span class="op">)</span>,</span>
-<span>  kappa_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"first-order"</span>, <span class="st">"second-order"</span><span class="op">)</span>,</span>
+<span>  kappa_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"first-order"</span>, <span class="st">"linear"</span><span class="op">)</span>,</span>
 <span>  grad_h <span class="op">=</span> <span class="fl">1e-04</span>,</span>
 <span>  cov_h <span class="op">=</span> <span class="fl">0.001</span>,</span>
 <span>  cov_h_outer <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">double.eps</span><span class="op">^</span><span class="op">(</span><span class="fl">1</span><span class="op">/</span><span class="fl">5</span><span class="op">)</span>,</span>
@@ -154,10 +154,10 @@ for the IRMC estimator.</p></dd>
 
 
 <dt id="arg-kappa-method">kappa_method<a class="anchor" aria-label="anchor" href="#arg-kappa-method"></a></dt>
-<dd><p>Kappa correction method for non-mu-referenced models:
-<code>"first-order"</code> (default, population prediction at eta=0) or
-<code>"second-order"</code> (delta-method correction for Jensen's inequality,
-adds <code>(1/2) sum_k omega_k * d2f/deta_k2</code> to the reference mean).</p></dd>
+<dd><p>Kappa correction method for models with non-mu-referenced
+struct thetas: <code>"first-order"</code> (default, population prediction <code>f(theta, 0)</code>,
+one rxSolve per inner step) or <code>"linear"</code> (first-order Taylor expansion —
+precomputes <code>J = df/d(theta)</code> once per outer iteration, zero rxSolve per inner step).</p></dd>
 
 
 <dt id="arg-grad-h">grad_h<a class="anchor" aria-label="anchor" href="#arg-grad-h"></a></dt>
@@ -304,7 +304,7 @@ fit object (useful for debugging).</p></dd>
 <span class="r-in"><span>  <span class="va">sub</span> <span class="op">&lt;-</span> <span class="va">obs</span><span class="op">[</span><span class="va">obs</span><span class="op">$</span><span class="va">ID</span> <span class="op">==</span> <span class="va">i</span>, <span class="op">]</span>; <span class="va">sub</span><span class="op">$</span><span class="va">DV</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/order.html" class="external-link">order</a></span><span class="op">(</span><span class="va">sub</span><span class="op">$</span><span class="va">TIME</span><span class="op">)</span><span class="op">]</span></span></span>
 <span class="r-in"><span><span class="op">}</span><span class="op">)</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="va">E</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colSums.html" class="external-link">colMeans</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span></span></span>
-<span class="r-in"><span><span class="va">V</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/cor.html" class="external-link">cov</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span></span>
+<span class="r-in"><span><span class="va">V</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/cov.wt.html" class="external-link">cov.wt</a></span><span class="op">(</span><span class="va">dv_mat</span>, method <span class="op">=</span> <span class="st">"ML"</span><span class="op">)</span><span class="op">$</span><span class="va">cov</span><span class="op">)</span><span class="op">)</span></span></span>
 <span class="r-in"><span></span></span>
 <span class="r-in"><span><span class="va">pk_model</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span></span>
 <span class="r-in"><span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span></span>
@@ -374,18 +374,19 @@ fit object (useful for debugging).</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +-- Phase 1: Wide (+/-2.00) -------------------------------------------------------------------------------------------------------------------+</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0001     |  2394.83 |    3.993 |    2.604 |    37.52 |    8.863 |   0.7407 |   0.1931 |   0.2467 |    0.665 |    0.665 |  0.02795 |    0.135 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0002     | -1006.70 |    4.629 |    8.384 |     32.1 |     9.94 |   0.8639 |   0.1828 |   0.1074 |     0.09 |    0.115 |   0.2065 |    0.247 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0003     | -1254.25 |    4.962 |    8.193 |    31.16 |    8.859 |   0.8156 |   0.1827 |   0.1168 |   0.0762 |  0.07697 |  0.02795 |   0.1441 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0004     | -1253.53 |    4.892 |    8.033 |    31.74 |    8.861 |   0.8039 |   0.1754 |   0.1313 |  0.07653 |   0.1217 |  0.02351 |   0.1459 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0005     | -1256.51 |    4.947 |     8.06 |    31.52 |    8.898 |   0.8092 |   0.1793 |   0.1202 |  0.07351 |  0.09691 |   0.0236 |   0.1395 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0006 ✓   | -1257.40 |    4.948 |    8.176 |    31.23 |     8.93 |   0.8205 |   0.1801 |   0.1234 |  0.07442 |  0.09763 |  0.02351 |   0.1422 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0001     |  1764.39 |    4.278 |    3.685 |    38.18 |    8.767 |   0.8694 |   0.1872 |   0.1653 |    0.665 |    0.665 |  0.05283 |  0.09956 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0002     | -1231.42 |    4.817 |    8.687 |     30.5 |    9.044 |   0.8399 |   0.1594 |   0.1168 |   0.1085 |     0.09 |  0.06498 |   0.1675 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0003     | -1264.96 |     4.95 |    7.932 |    31.87 |    8.796 |   0.7944 |   0.1752 |   0.1264 |  0.06648 |   0.0982 |  0.02324 |   0.1434 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0004     | -1266.20 |    4.915 |    7.996 |    31.74 |    8.866 |   0.8038 |   0.1777 |   0.1222 |  0.07718 |    0.109 |  0.02161 |    0.143 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0005 ✓   | -1266.42 |    4.916 |    8.011 |     31.8 |    8.878 |   0.8039 |   0.1773 |   0.1229 |  0.07669 |   0.1089 |   0.0216 |   0.1403 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +-- Phase 2: Focused (+/-1.00) ----------------------------------------------------------------------------------------------------------------+</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0007 ✓   | -1257.41 |    4.949 |    8.179 |    31.23 |    8.928 |   0.8201 |     0.18 |   0.1233 |  0.07442 |  0.09764 |  0.02351 |   0.1422 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0006 ✓   | -1266.42 |    4.913 |    8.008 |    31.79 |    8.879 |   0.8041 |   0.1773 |   0.1229 |   0.0767 |   0.1089 |   0.0216 |   0.1404 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +-- Phase 3: Fine-tuning (+/-0.50) ------------------------------------------------------------------------------------------------------------+</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0008 ✓   | -1257.41 |    4.947 |    8.174 |    31.23 |     8.93 |     0.82 |   0.1799 |   0.1232 |  0.07441 |  0.09771 |   0.0235 |   0.1419 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0007     | -1266.30 |    4.938 |    8.075 |    31.51 |    8.902 |    0.811 |   0.1803 |   0.1215 |  0.07672 |  0.09915 |   0.0213 |   0.1384 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0008     | -1266.40 |    4.924 |    8.062 |    31.57 |    8.894 |   0.8097 |     0.18 |   0.1233 |  0.07969 |   0.1039 |  0.02059 |   0.1383 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0009 ✓   | -1266.45 |    4.924 |    8.033 |    31.65 |    8.889 |   0.8069 |     0.18 |   0.1228 |  0.07934 |   0.1034 |  0.02057 |   0.1372 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +-- Phase 4: Precision (+/-0.01) --------------------------------------------------------------------------------------------------------------+</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0009 ✓   | -1257.41 |    4.948 |    8.172 |    31.23 |    8.932 |   0.8199 |     0.18 |   0.1232 |  0.07444 |  0.09777 |   0.0235 |   0.1419 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0010 ✓   | -1266.45 |    4.923 |    8.032 |    31.65 |     8.89 |    0.807 |     0.18 |   0.1228 |  0.07934 |   0.1034 |  0.02057 |   0.1372 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 1.0 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1120</span>
@@ -393,21 +394,21 @@ fit object (useful for debugging).</p></dd>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── </span><span style="color: #0000BB; font-weight: bold;">nlmix</span><span style="color: #BB0000; font-weight: bold;">r²</span><span style="font-weight: bold;"> </span><span style="color: #BBBB00; font-weight: bold;">adirmc</span><span style="font-weight: bold;"> ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>             OBJF       AIC       BIC Log-likelihood</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> adirmc -1257.413 -1235.413 -1164.882       628.7063</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> adirmc -1266.449 -1244.449 -1173.919       633.2246</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    1.006      10.32  11.326</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1    1.025     10.314  11.339</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>            <span style="font-weight: bold;">Est.</span>      <span style="font-weight: bold;">SE</span>  <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>       1.599 0.02433 1.521    4.948 (4.717, 5.189)     36.2            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv1</span>       2.101  0.1919 9.137      8.172 (5.61, 11.9)     27.8            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv2</span>       3.441 0.07038 2.045     31.23 (27.2, 35.85)     32.0            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tq</span>         2.19 0.05773 2.637       8.932 (7.976, 10)     15.4            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tka</span>     -0.1985  0.1772 89.28  0.8199 (0.5793, 1.161)     39.0            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>       1.594 0.02539 1.593    4.923 (4.684, 5.175)     36.1            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv1</span>       2.083  0.1895 9.093    8.032 (5.541, 11.64)     28.7            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv2</span>       3.455 0.07219  2.09    31.65 (27.47, 36.46)     33.0            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tq</span>        2.185 0.05916 2.708     8.89 (7.916, 9.983)     14.4            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tka</span>     -0.2145  0.1742  81.2   0.807 (0.5736, 1.135)     38.4            </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span>    0.18                                  0.18                     </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Covariance Type (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r</span></span>

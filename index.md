@@ -5,10 +5,11 @@ data** — the observed mean vector **E** and covariance matrix **V**
 reported per clinical study — rather than requiring individual patient
 records. It integrates with the [nlmixr2](https://nlmixr2.org/) /
 [rxode2](https://cran.r-project.org/package=rxode2) ecosystem and
-provides two estimation backends:
+provides three estimation backends:
 
 | Estimator | `est =` | Control |
 |----|----|----|
+| First-Order | `"adfo"` | [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md) |
 | Monte Carlo | `"admc"` | [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md) |
 | Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
 
@@ -84,7 +85,7 @@ for (i in seq_along(ids)) {
   dv_mat[i, ] <- sub$DV[order(sub$TIME)]
 }
 E <- colMeans(dv_mat)
-V <- cov(dv_mat)
+V <- cov.wt(dv_mat, method = "ML")$cov
 
 # 2. Define the model (standard nlmixr2 syntax)
 pk_model <- function() {
@@ -133,7 +134,7 @@ plot(fit)
 | [Getting started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.html) | Core workflow: data prep, model, fit, diagnostics |
 | [Diagnostic plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.html) | All four plot panels explained; IIV heatmap |
 | [Multiple studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.html) | Joint fitting across studies with different designs |
-| [Estimator comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html) | admc vs adirmc: when to use each |
+| [Estimator comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html) | adfo, admc and adirmc: mathematical foundations and when to use each |
 | [Advanced usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html) | Gradient modes, parallel restarts, AIC/BIC model comparison |
 
 ## Citation

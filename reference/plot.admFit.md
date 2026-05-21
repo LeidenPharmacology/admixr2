@@ -13,8 +13,8 @@ plot(x, which = c("mean", "cov", "nll", "par"), n_sim = NULL, seed = 1L, ...)
 
 - x:
 
-  An `admFit` object returned by `nlmixr2()` with `est = "admc"` or
-  `est = "adirmc"`.
+  An `admFit` object returned by `nlmixr2()` with `est = "adfo"`,
+  `est = "admc"`, or `est = "adirmc"`.
 
 - which:
 
@@ -64,22 +64,36 @@ A named list of ggplot2 objects, invisibly. Prints each selected plot.
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
+# \donttest{
 fit <- nlmixr2(model, admData(), est = "admc", control = admControl(...))
+#>  
+#>  
+#>  
+#>  
+#> ℹ parameter labels from comments are typically ignored in non-interactive mode
+#> ℹ Need to run with the source intact to parse comments
+#> Error: rxode2 model function requires one 'model({})' block
 
 # All panels (default)
 plots <- plot(fit)
+#> Error: object 'fit' not found
 
 # Only mean and covariance diagnostics
 plot(fit, which = c("mean", "cov"))
+#> Error: object 'fit' not found
 
 # Only traces (no MC simulation needed -- fast)
 plot(fit, which = c("nll", "par"))
+#> Error: object 'fit' not found
 
 # Access a specific panel from the returned list
 plots$mean_study1   # mean diagnostics for the study named "study1"
+#> Error: object 'plots' not found
 plots$cov_study1    # covariance heatmap for "study1"
+#> Error: object 'plots' not found
 plots$nll_trace     # NLL trace
+#> Error: object 'plots' not found
 plots$par_trace     # parameter trace
-} # }
+#> Error: object 'plots' not found
+# }
 ```
