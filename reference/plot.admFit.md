@@ -65,35 +65,78 @@ A named list of ggplot2 objects, invisibly. Prints each selected plot.
 
 ``` r
 # \donttest{
-fit <- nlmixr2(model, admData(), est = "admc", control = admControl(...))
+library(rxode2)
+library(nlmixr2)
+
+data("examplomycin")
+obs    <- examplomycin[examplomycin$EVID == 0, ]
+obs    <- obs[order(obs$ID, obs$TIME), ]
+times  <- sort(unique(obs$TIME))
+ids    <- unique(obs$ID)
+dv_mat <- do.call(rbind, lapply(ids, function(i) {
+  sub <- obs[obs$ID == i, ]; sub$DV[order(sub$TIME)]
+}))
+E <- colMeans(dv_mat)
+V <- cov.wt(dv_mat, method = "ML")$cov
+
+pk_model <- function() {
+  ini({
+    tcl <- log(5); tv <- log(30)
+    prop.sd <- c(0, 0.2)
+    eta.cl ~ 0.09; eta.v ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.v)
+    d/dt(central) <- -(cl/v) * central
+    cp <- central / v
+    cp ~ prop(prop.sd)
+  })
+}
+
+fit <- nlmixr2(
+  pk_model, admData(), est = "adfo",
+  control = adfoControl(
+    studies = list(study1 = list(E = E, V = V, n = length(ids),
+                                 times = times, ev = et(amt = 100))),
+    maxeval = 100L
+  )
+)
 #>  
 #>  
 #>  
 #>  
 #> ℹ parameter labels from comments are typically ignored in non-interactive mode
 #> ℹ Need to run with the source intact to parse comments
-#> Error: rxode2 model function requires one 'model({})' block
+#>  
+#>  
+#>  
+#>  
+#> === admixr2: Aggregate Data Modeling (FO) ===
+#>   Studies: 1 | Params: 5 | Cores: 1 | Grad: none | Restarts: 1
+#> +----------+----------+----------+----------+----------+----------+----------+
+#> |          |     -2LL |      tcl |       tv |  prop.sd |   eta.cl |    eta.v |
+#> +----------+----------+----------+----------+----------+----------+----------+
+#> | 0010     |  1.5e+30 |        5 |        1 |      0.2 |     0.09 |     0.04 |
+#> | 0020     |  3878.99 |    4.803 |    31.64 |      0.2 |     0.09 |     0.04 |
+#> | 0030     |  3303.72 |    4.806 |     30.1 |   0.2068 |  0.09261 |     0.04 |
+#> | 0040     |  2828.60 |    4.816 |    28.56 |   0.2164 |  0.09217 |  0.04034 |
+#> | 0050     |   929.13 |    6.839 |    37.04 |   0.3811 |   0.1391 |  0.02192 |
+#> | 0060     |   833.01 |    6.862 |    39.38 |   0.4076 |   0.1484 |  0.02135 |
+#> | 0070     |   826.48 |    6.702 |    39.97 |   0.4139 |   0.1411 |  0.02057 |
+#> | 0080     |   822.02 |    6.697 |    39.52 |   0.4177 |   0.1395 |  0.02036 |
+#> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |
+#> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |
+#> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |
+#> | 4.4 sec  |          |          |          |          |          |          |
+#>   Computing covariance (R method, 19 NLL evaluations)
+#> → compress origData in nlmixr2 object, save 1120
+plot(fit)
+#>  
+#>  
 
-# All panels (default)
-plots <- plot(fit)
-#> Error: object 'fit' not found
 
-# Only mean and covariance diagnostics
-plot(fit, which = c("mean", "cov"))
-#> Error: object 'fit' not found
 
-# Only traces (no MC simulation needed -- fast)
-plot(fit, which = c("nll", "par"))
-#> Error: object 'fit' not found
 
-# Access a specific panel from the returned list
-plots$mean_study1   # mean diagnostics for the study named "study1"
-#> Error: object 'plots' not found
-plots$cov_study1    # covariance heatmap for "study1"
-#> Error: object 'plots' not found
-plots$nll_trace     # NLL trace
-#> Error: object 'plots' not found
-plots$par_trace     # parameter trace
-#> Error: object 'plots' not found
 # }
 ```
