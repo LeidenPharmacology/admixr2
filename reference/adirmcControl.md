@@ -360,7 +360,7 @@ fit <- nlmixr2(
 #> | 0009 ✓   | -1266.45 |    4.924 |    8.033 |    31.65 |    8.889 |   0.8069 |     0.18 |   0.1228 |  0.07934 |   0.1034 |  0.02057 |   0.1372 |
 #> +-- Phase 4: Precision (+/-0.01) --------------------------------------------------------------------------------------------------------------+
 #> | 0010 ✓   | -1266.45 |    4.923 |    8.032 |    31.65 |     8.89 |    0.807 |     0.18 |   0.1228 |  0.07934 |   0.1034 |  0.02057 |   0.1372 |
-#> | 1.0 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 1.5 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1120
 print(fit)
@@ -372,7 +372,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    1.046     10.156  11.202
+#> 1    1.506      9.301  10.807
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

@@ -148,7 +148,7 @@ print(fit_multi)
 #> ── Time (sec fit_multi$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   89.798     20.997 110.795
+#> 1   85.545     19.141 104.686
 #> 
 #> ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 #> 
