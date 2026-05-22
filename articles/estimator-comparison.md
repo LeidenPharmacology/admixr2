@@ -400,7 +400,7 @@ adirmcControl(
   phases          = c(2, 1, 0.5, 0.1),   # box constraint half-widths per phase
   omega_expansion = 1.5,                   # inflate proposal Omega
   grad            = "analytical",          # "analytical", "none", "fd"
-  kappa_method    = "first-order",         # "first-order" (default) or "linear"
+  kappa_method    = "exact",               # "exact" (default) or "linearized"
   seed            = 1L
 )
 ```

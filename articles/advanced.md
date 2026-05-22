@@ -139,24 +139,24 @@ point. Kappa is zero when all struct thetas are mu-referenced.
 Two methods control how `f(theta_cand, 0)` is evaluated during inner
 optimisation:
 
-- **`"first-order"`** (default): re-evaluates `f(theta_cand, 0)` via a
-  single rxSolve at each inner NLL evaluation. Exact; costs one extra
-  rxSolve per inner step.
-- **`"linear"`**: precomputes `J = df/d(theta)` once per outer iteration
-  via a small FD batch. Approximates
+- **`"exact"`** (default): re-evaluates `f(theta_cand, 0)` via a single
+  rxSolve at each inner NLL evaluation. Exact; costs one extra rxSolve
+  per inner step.
+- **`"linearized"`**: precomputes `J = df/d(theta)` once per outer
+  iteration via a small FD batch. Approximates
   `kappa_fn(theta_cand) ≈ f0 + J %*% (theta_cand - theta0)` — pure
   arithmetic per inner step, zero extra rxSolve calls.
 
-`"first-order"` is exact but adds an rxSolve to every inner NLL call.
-`"linear"` is faster and the approximation is good when inner steps stay
-small relative to the outer box constraint — which is typical for
-converged phases. Prefer `"linear"` for complex ODE models where each
-rxSolve is expensive.
+`"exact"` is accurate but adds an rxSolve to every inner NLL call.
+`"linearized"` is faster and the approximation is good when inner steps
+stay small relative to the outer box constraint — which is typical for
+converged phases. Prefer `"linearized"` for complex ODE models where
+each rxSolve is expensive.
 
 ``` r
 
-adirmcControl(..., kappa_method = "first-order")   # default
-adirmcControl(..., kappa_method = "linear")        # faster for complex ODE models
+adirmcControl(..., kappa_method = "exact")       # default
+adirmcControl(..., kappa_method = "linearized")  # faster for complex ODE models
 ```
 
 ## Parallel restarts
@@ -275,7 +275,7 @@ fit_reduced <- nlmixr2(pk_reduced, admData(), est = "admc", control = ctl)
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:04 
 #> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:08
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:09
 
 AIC(fit_full, fit_reduced)
 #>             df       AIC

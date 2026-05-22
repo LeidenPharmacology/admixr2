@@ -62,7 +62,7 @@ Monte Carlo estimator.</p>
 <span>  seed <span class="op">=</span> <span class="fl">12345L</span>,</span>
 <span>  cores <span class="op">=</span> <span class="fl">1L</span>,</span>
 <span>  grad <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"analytical"</span>, <span class="st">"none"</span>, <span class="st">"fd"</span><span class="op">)</span>,</span>
-<span>  kappa_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"first-order"</span>, <span class="st">"linear"</span><span class="op">)</span>,</span>
+<span>  kappa_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"exact"</span>, <span class="st">"linearized"</span><span class="op">)</span>,</span>
 <span>  grad_h <span class="op">=</span> <span class="fl">1e-04</span>,</span>
 <span>  cov_h <span class="op">=</span> <span class="fl">0.001</span>,</span>
 <span>  cov_h_outer <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">double.eps</span><span class="op">^</span><span class="op">(</span><span class="fl">1</span><span class="op">/</span><span class="fl">5</span><span class="op">)</span>,</span>
@@ -155,9 +155,9 @@ for the IRMC estimator.</p></dd>
 
 <dt id="arg-kappa-method">kappa_method<a class="anchor" aria-label="anchor" href="#arg-kappa-method"></a></dt>
 <dd><p>Kappa correction method for models with non-mu-referenced
-struct thetas: <code>"first-order"</code> (default, population prediction <code>f(theta, 0)</code>,
-one rxSolve per inner step) or <code>"linear"</code> (first-order Taylor expansion —
-precomputes <code>J = df/d(theta)</code> once per outer iteration, zero rxSolve per inner step).</p></dd>
+struct thetas: <code>"exact"</code> (default, re-evaluates population prediction <code>f(theta, 0)</code>
+via rxSolve at each inner step) or <code>"linearized"</code> (precomputes <code>J = df/d(theta)</code>
+once per outer iteration, approximates kappa via linear expansion — zero rxSolve per inner step).</p></dd>
 
 
 <dt id="arg-grad-h">grad_h<a class="anchor" aria-label="anchor" href="#arg-grad-h"></a></dt>
@@ -407,7 +407,7 @@ fit object (useful for debugging).</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0028     | -1266.44 |    4.935 |    8.122 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0029     | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0030 ✓   | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1008 |   0.0234 |   0.1396 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 2.7 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 2.6 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1120</span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span></span>
@@ -419,7 +419,7 @@ fit object (useful for debugging).</p></dd>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    2.691     10.271  12.962</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1    2.578     10.169  12.747</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
