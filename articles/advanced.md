@@ -122,23 +122,41 @@ cancels in the difference.
 
 ## IRMC kappa correction
 
-The IRMC estimator draws proposals from an inflated omega. For nonlinear
-models, the mean of simulated predictions does not equal the prediction
-at eta = 0 — a Jensen’s inequality gap. The kappa correction shifts the
-predicted mean to account for this bias:
+The IRMC estimator shifts IS weights by moving the proposal mean when a
+structural parameter changes. This works directly for mu-referenced
+parameters (e.g. `cl <- exp(tcl + eta.cl)`) because the weight shift is
+a closed-form function of the back-transformed ratio.
 
-- **`"linear"`** (default): precomputes `J = df/d(theta)` once per outer
-  iteration via a small FD batch.
+For **non-mu-referenced parameters** — structural thetas without a
+paired random effect (e.g. `ka <- exp(tka)` with no `eta.ka`) — changing
+`tka` during inner optimisation alters the population mean prediction
+`f(theta, 0)` without a corresponding IS weight path. The kappa
+correction accounts for this by adding
+`kappa = f(theta_cand, 0) - f(theta_outer, 0)` to the predicted mean,
+keeping the inner NLL anchored to the true prediction at the candidate
+point. Kappa is zero when all struct thetas are mu-referenced.
+
+Two methods control how `f(theta_cand, 0)` is evaluated during inner
+optimisation:
+
+- **`"first-order"`** (default): re-evaluates `f(theta_cand, 0)` via a
+  single rxSolve at each inner NLL evaluation. Exact; costs one extra
+  rxSolve per inner step.
+- **`"linear"`**: precomputes `J = df/d(theta)` once per outer iteration
+  via a small FD batch. Approximates
   `kappa_fn(theta_cand) ≈ f0 + J %*% (theta_cand - theta0)` — pure
-  arithmetic per inner step, zero extra rxSolve calls during inner
-  optimisation.
-- **`"first-order"`**: re-evaluates `f(theta_cand, 0)` via rxSolve at
-  each inner step. More exact but one rxSolve per inner NLL evaluation.
+  arithmetic per inner step, zero extra rxSolve calls.
+
+`"first-order"` is exact but adds an rxSolve to every inner NLL call.
+`"linear"` is faster and the approximation is good when inner steps stay
+small relative to the outer box constraint — which is typical for
+converged phases. Prefer `"linear"` for complex ODE models where each
+rxSolve is expensive.
 
 ``` r
 
 adirmcControl(..., kappa_method = "first-order")   # default
-adirmcControl(..., kappa_method = "linear")
+adirmcControl(..., kappa_method = "linear")        # faster for complex ODE models
 ```
 
 ## Parallel restarts
@@ -255,9 +273,9 @@ fit_reduced <- nlmixr2(pk_reduced, admData(), est = "admc", control = ctl)
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:03 
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:04 
 #> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:07
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:08
 
 AIC(fit_full, fit_reduced)
 #>             df       AIC

@@ -184,7 +184,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   42.871      9.424  52.295
+#> 1   45.265     10.414  55.679
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
@@ -193,7 +193,7 @@ print(fit)
 #> tv1                  Log central volume (L)   2.314  0.0872  3.768
 #> tv2               Log peripheral volume (L)   3.402 0.04007  1.178
 #> tq        Log inter-compartmental CL (L/hr)   2.285 0.02132 0.9332
-#> tka     Log absorption rate constant (1/hr) 0.02432 0.08199  337.2
+#> tka     Log absorption rate constant (1/hr) 0.02431 0.08199  337.2
 #> prop.sd      Proportional residual error SD  0.1984               
 #>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 #> tcl         4.958 (4.802, 5.12)     32.8            
@@ -220,14 +220,14 @@ fit$objective                    # -2 log-likelihood
 #> [1] -3690.835
 fit$env$admExtra$struct          # structural parameters (log scale)
 #>        tcl        tv1        tv2         tq        tka 
-#> 1.60103981 2.31427139 3.40219600 2.28463062 0.02431654
+#> 1.60103998 2.31426955 3.40219648 2.28463058 0.02431472
 fit$env$admExtra$omega           # estimated Omega matrix
-#>           [,1]      [,2]       [,3]      [,4]       [,5]
-#> [1,] 0.1021253 0.0000000 0.00000000 0.0000000 0.00000000
-#> [2,] 0.0000000 0.1080283 0.00000000 0.0000000 0.00000000
-#> [3,] 0.0000000 0.0000000 0.09749349 0.0000000 0.00000000
-#> [4,] 0.0000000 0.0000000 0.00000000 0.1055877 0.00000000
-#> [5,] 0.0000000 0.0000000 0.00000000 0.0000000 0.09272768
+#>           [,1]     [,2]       [,3]      [,4]       [,5]
+#> [1,] 0.1021253 0.000000 0.00000000 0.0000000 0.00000000
+#> [2,] 0.0000000 0.108028 0.00000000 0.0000000 0.00000000
+#> [3,] 0.0000000 0.000000 0.09749311 0.0000000 0.00000000
+#> [4,] 0.0000000 0.000000 0.00000000 0.1055874 0.00000000
+#> [5,] 0.0000000 0.000000 0.00000000 0.0000000 0.09272805
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
 #> 0.03937197

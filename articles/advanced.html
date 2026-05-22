@@ -252,26 +252,43 @@ cancels in the difference.</p>
 <div class="section level2">
 <h2 id="irmc-kappa-correction">IRMC kappa correction<a class="anchor" aria-label="anchor" href="#irmc-kappa-correction"></a>
 </h2>
-<p>The IRMC estimator draws proposals from an inflated omega. For
-nonlinear models, the mean of simulated predictions does not equal the
-prediction at eta = 0 — a Jensen’s inequality gap. The kappa correction
-shifts the predicted mean to account for this bias:</p>
+<p>The IRMC estimator shifts IS weights by moving the proposal mean when
+a structural parameter changes. This works directly for mu-referenced
+parameters (e.g. <code>cl &lt;- exp(tcl + eta.cl)</code>) because the
+weight shift is a closed-form function of the back-transformed
+ratio.</p>
+<p>For <strong>non-mu-referenced parameters</strong> — structural thetas
+without a paired random effect (e.g. <code>ka &lt;- exp(tka)</code> with
+no <code>eta.ka</code>) — changing <code>tka</code> during inner
+optimisation alters the population mean prediction
+<code>f(theta, 0)</code> without a corresponding IS weight path. The
+kappa correction accounts for this by adding
+<code>kappa = f(theta_cand, 0) - f(theta_outer, 0)</code> to the
+predicted mean, keeping the inner NLL anchored to the true prediction at
+the candidate point. Kappa is zero when all struct thetas are
+mu-referenced.</p>
+<p>Two methods control how <code>f(theta_cand, 0)</code> is evaluated
+during inner optimisation:</p>
 <ul>
 <li>
-<strong><code>"linear"</code></strong> (default): precomputes
-<code>J = df/d(theta)</code> once per outer iteration via a small FD
-batch.
-<code>kappa_fn(theta_cand) ≈ f0 + J %*% (theta_cand - theta0)</code> —
-pure arithmetic per inner step, zero extra rxSolve calls during inner
-optimisation.</li>
+<strong><code>"first-order"</code></strong> (default): re-evaluates
+<code>f(theta_cand, 0)</code> via a single rxSolve at each inner NLL
+evaluation. Exact; costs one extra rxSolve per inner step.</li>
 <li>
-<strong><code>"first-order"</code></strong>: re-evaluates
-<code>f(theta_cand, 0)</code> via rxSolve at each inner step. More exact
-but one rxSolve per inner NLL evaluation.</li>
+<strong><code>"linear"</code></strong>: precomputes
+<code>J = df/d(theta)</code> once per outer iteration via a small FD
+batch. Approximates
+<code>kappa_fn(theta_cand) ≈ f0 + J %*% (theta_cand - theta0)</code> —
+pure arithmetic per inner step, zero extra rxSolve calls.</li>
 </ul>
+<p><code>"first-order"</code> is exact but adds an rxSolve to every
+inner NLL call. <code>"linear"</code> is faster and the approximation is
+good when inner steps stay small relative to the outer box constraint —
+which is typical for converged phases. Prefer <code>"linear"</code> for
+complex ODE models where each rxSolve is expensive.</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/adirmcControl.html">adirmcControl</a></span><span class="op">(</span><span class="va">...</span>, kappa_method <span class="op">=</span> <span class="st">"first-order"</span><span class="op">)</span>   <span class="co"># default</span></span>
-<span><span class="fu"><a href="../reference/adirmcControl.html">adirmcControl</a></span><span class="op">(</span><span class="va">...</span>, kappa_method <span class="op">=</span> <span class="st">"linear"</span><span class="op">)</span></span></code></pre></div>
+<span><span class="fu"><a href="../reference/adirmcControl.html">adirmcControl</a></span><span class="op">(</span><span class="va">...</span>, kappa_method <span class="op">=</span> <span class="st">"linear"</span><span class="op">)</span>        <span class="co"># faster for complex ODE models</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="parallel-restarts">Parallel restarts<a class="anchor" aria-label="anchor" href="#parallel-restarts"></a>
@@ -401,9 +418,9 @@ reduced model with IIV on CL and V1 only:</p>
 <span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
 <span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
 <span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:03 </span></span>
+<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:04 </span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:07</span></span>
+<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:08</span></span>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/stats/AIC.html" class="external-link">AIC</a></span><span class="op">(</span><span class="va">fit_full</span>, <span class="va">fit_reduced</span><span class="op">)</span></span>
 <span><span class="co">#&gt;             df       AIC</span></span>
