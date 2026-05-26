@@ -3,6 +3,7 @@
 <url><loc>https://leidenpharmacology.github.io/admixr2/LICENSE.html</loc></url>
 <url><loc>https://leidenpharmacology.github.io/admixr2/articles/admixr2.html</loc></url>
 <url><loc>https://leidenpharmacology.github.io/admixr2/articles/advanced.html</loc></url>
+<url><loc>https://leidenpharmacology.github.io/admixr2/articles/datagen.html</loc></url>
 <url><loc>https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.html</loc></url>
 <url><loc>https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html</loc></url>
 <url><loc>https://leidenpharmacology.github.io/admixr2/articles/index.html</loc></url>
@@ -15,6 +16,8 @@
 <url><loc>https://leidenpharmacology.github.io/admixr2/reference/admControl.html</loc></url>
 <url><loc>https://leidenpharmacology.github.io/admixr2/reference/admData.html</loc></url>
 <url><loc>https://leidenpharmacology.github.io/admixr2/reference/admStopWorkers.html</loc></url>
+<url><loc>https://leidenpharmacology.github.io/admixr2/reference/datagen.html</loc></url>
+<url><loc>https://leidenpharmacology.github.io/admixr2/reference/datagenControl.html</loc></url>
 <url><loc>https://leidenpharmacology.github.io/admixr2/reference/examplomycin.html</loc></url>
 <url><loc>https://leidenpharmacology.github.io/admixr2/reference/index.html</loc></url>
 <url><loc>https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.adfo.html</loc></url>

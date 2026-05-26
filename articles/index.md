@@ -12,3 +12,5 @@
   adirmc](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md):
 - [Advanced
   usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md):
+- [Generating aggregate data with
+  datagen](https://leidenpharmacology.github.io/admixr2/articles/datagen.md):

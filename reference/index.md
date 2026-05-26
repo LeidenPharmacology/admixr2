@@ -14,6 +14,19 @@ Main entry point and data helper.
   : Fit an aggregate data model via Iterative Reweighting MC (adirmc
   estimator)
 
+## Simulation
+
+Generate aggregate data from models for simulation studies.
+
+- [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+  : Generate aggregate study data from (possibly different)
+  pharmacometric models
+
+- [`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md)
+  :
+
+  Control parameters for `datagen`
+
 ## Control objects
 
 Configuration for each estimator.
