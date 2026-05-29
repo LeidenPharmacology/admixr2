@@ -2,26 +2,40 @@
 
 ## Why aggregate data?
 
-Pharmacometric analyses traditionally begin with individual patient
-records. Each observation row carries a subject identifier, a time
-stamp, and a measured drug concentration. The statistical model is
-fitted to this raw dataset using methods such as FOCE or SAEM.
+Meta-analysis in pharmacometrics means combining evidence across studies
+to obtain parameter estimates that no single study could support on its
+own. The classical approach pools individual patient data (IPD) from
+multiple studies into one dataset. This is scientifically ideal but
+practically rare: data sharing agreements, proprietary restrictions, and
+the simple fact that most published work reports only summary statistics
+make IPD pooling the exception rather than the rule.
 
-In many practically important situations, individual-level records are
-simply not available. Clinical pharmacology databases, published
-meta-analyses, and regulatory submissions frequently report only
-*summary statistics*: a mean concentration profile and a between-subject
-variance structure. Reconstructing individual data from these summaries
-is at best approximate, and often impossible.
+Model-based meta-analysis (MBMA) addresses this by fitting
+pharmacometric models directly to aggregate summaries. These summaries
+come from two distinct sources. The first is *directly published*: many
+clinical studies report a mean concentration-time profile together with
+the variance at each time point, and sometimes the full covariance
+matrix. The second is *model-derived*: a published pharmacometric model
+with its parameter estimates (fixed effects, random-effects variance,
+residual error) can be used to generate the expected mean vector and
+covariance matrix via simulation, without access to the original data.
+The covariance structure carries information about the shape of
+individual profiles that a variance-only summary would discard — two
+studies can have identical variances at each time point yet very
+different correlation structures, reflecting different sources of
+variability. Both types of aggregate data, whether published directly or
+derived from a published model, can be analysed within the same
+framework. This makes the full literature — competitor compounds,
+historical datasets, regulatory submissions — available as modelling
+input for dose selection, trial design, and disease-progression
+modelling.
 
 The aggregate data likelihood, first systematically described by
-[Välitalo et al. (2021)](https://doi.org/10.1007/s10928-021-09760-1),
-bypasses individual records entirely. It works directly with the mean
-vector and covariance matrix that a study reports and asks: how likely
-are these summaries under a given nonlinear mixed-effects model?
-
-The first R implementation was admr, described in [van de Beek et
-al. (2025)](https://doi.org/10.1007/s10928-025-10011-w). admixr2
+[Välitalo (2021)](https://doi.org/10.1007/s10928-021-09760-1), provides
+the statistical foundation for MBMA: given a nonlinear mixed-effects
+model, what is the probability of observing the reported mean and
+covariance? The first R implementation was admr, described in [van de
+Beek et al. (2025)](https://doi.org/10.1007/s10928-025-10011-w). admixr2
 re-implements the same approach within the nlmixr2/rxode2 ecosystem,
 extending it with new algorithmic ideas that are the focus of this post.
 
