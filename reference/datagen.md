@@ -54,7 +54,7 @@ datagen(studies, model = NULL, control = datagenControl())
 - control:
 
   A
-  [`datagenControl`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md)
+  [`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md)
   object.
 
 ## Value
@@ -106,5 +106,46 @@ incur only a single compilation.
 
 ## See also
 
-[`datagenControl`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md),
-[`admControl`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
+[`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md),
+[`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
+
+## Examples
+
+``` r
+# \donttest{
+library(rxode2)
+
+pk_model <- function() {
+  ini({
+    tcl <- log(5); tv <- log(30)
+    prop.sd <- c(0, 0.2)
+    eta.cl ~ 0.09; eta.v ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.v)
+    d/dt(central) <- -(cl/v) * central
+    cp <- central / v
+    cp ~ prop(prop.sd)
+  })
+}
+
+study_data <- datagen(
+  studies = list(
+    study1 = list(times = c(1, 2, 4, 8, 12, 24),
+                  ev = rxode2::et(amt = 100), n = 200L)
+  ),
+  model   = pk_model,
+  control = datagenControl(n_sim = 2000L)
+)
+#>  
+#>  
+#> ℹ parameter labels from comments are typically ignored in non-interactive mode
+#> ℹ Need to run with the source intact to parse comments
+
+# E and V plug directly into admControl(studies = ...)
+round(study_data$study1$E, 2)
+#>    1    2    4    8   12   24 
+#> 2.83 2.37 1.68 0.88 0.48 0.10 
+# }
+```

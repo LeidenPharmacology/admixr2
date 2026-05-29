@@ -108,10 +108,6 @@ fit <- nlmixr2(
 #>  
 #> ℹ parameter labels from comments are typically ignored in non-interactive mode
 #> ℹ Need to run with the source intact to parse comments
-#>  
-#>  
-#>  
-#>  
 #> === admixr2: Aggregate Data Modeling (FO) ===
 #>   Studies: 1 | Params: 5 | Cores: 1 | Grad: none | Restarts: 1
 #> +----------+----------+----------+----------+----------+----------+----------+
@@ -128,7 +124,7 @@ fit <- nlmixr2(
 #> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |
 #> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |
 #> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |
-#> | 4.4 sec  |          |          |          |          |          |          |
+#> | 3.4 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, 19 NLL evaluations)
 #> → compress origData in nlmixr2 object, save 1120
 plot(fit)

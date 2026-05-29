@@ -198,9 +198,9 @@ fit_sim <- nlmixr2(
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:03 
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:02 
 #> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:03
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:02
 
 print(fit_sim)
 #> ── nlmixr² admc ──
@@ -211,7 +211,7 @@ print(fit_sim)
 #> ── Time (sec fit_sim$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    78.84      8.954  87.794
+#> 1   64.953      7.493  72.446
 #> 
 #> ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 #> 
@@ -268,9 +268,9 @@ top-level default:
 # One-compartment oral model (as published in a simpler earlier study)
 model_1cmt <- function() {
   ini({
-    tcl     <- log(3)
-    tv      <- log(13)    # apparent volume, peripheral compartment lumped in
-    tka     <- log(3)
+    tcl     <- log(5)
+    tv      <- log(40)    # apparent volume, peripheral compartment lumped in
+    tka     <- log(1)
     prop.sd <- c(0, 0.25)
     eta.cl  ~ 0.04
     eta.v   ~ 0.01
@@ -331,7 +331,7 @@ lit_data <- datagen(
     ),
     later_study = list(
       model = model_2cmt,
-      times = c(0.5, 1, 2, 4, 8, 12, 24),
+      times = c(2, 4, 8, 12, 24),
       ev    = rxode2::et(amt = 200),
       n     = 180L
     )

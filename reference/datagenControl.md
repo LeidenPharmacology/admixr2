@@ -1,7 +1,7 @@
-# Control parameters for [`datagen`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+# Control parameters for [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
 
 Control parameters for
-[`datagen`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
 
 ## Usage
 
@@ -51,4 +51,12 @@ A list of class `"datagenControl"`.
 
 ## See also
 
-[`datagen`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+
+## Examples
+
+``` r
+ctrl <- datagenControl(n_sim = 2000L)
+ctrl$sampling  # "sobol"
+#> [1] "sobol"
+```

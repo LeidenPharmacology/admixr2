@@ -1,5 +1,17 @@
 # Articles
 
+### Blog
+
+- [The mathematics of aggregate data
+  modelling](https://leidenpharmacology.github.io/admixr2/articles/introducing-admixr2.md):
+
+  Aggregate data modelling has a long history in pharmacometrics. This
+  post lays out the mathematical foundations of admixr2: the aggregate
+  likelihood, three estimators for evaluating it, and the algorithmic
+  innovations — particularly the common-random-numbers analytical
+  gradient and the analytical IRMC inner gradient — that make
+  gradient-based optimisation both fast and reliable.
+
 ### Vignettes
 
 - [Getting started with

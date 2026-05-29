@@ -25,7 +25,8 @@ Generate aggregate data from models for simulation studies.
 - [`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md)
   :
 
-  Control parameters for `datagen`
+  Control parameters for
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
 
 ## Control objects
 

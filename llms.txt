@@ -182,7 +182,8 @@ Generate aggregate data from models for simulation studies.
 - [`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md)
   :
 
-  Control parameters for `datagen`
+  Control parameters for
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
 
 ## Control objects
 
@@ -214,6 +215,18 @@ Example datasets.
   : Examplomycin dataset
 
 # Articles
+
+### Blog
+
+- [The mathematics of aggregate data
+  modelling](https://leidenpharmacology.github.io/admixr2/articles/introducing-admixr2.md):
+
+  Aggregate data modelling has a long history in pharmacometrics. This
+  post lays out the mathematical foundations of admixr2: the aggregate
+  likelihood, three estimators for evaluating it, and the algorithmic
+  innovations — particularly the common-random-numbers analytical
+  gradient and the analytical IRMC inner gradient — that make
+  gradient-based optimisation both fast and reliable.
 
 ### Vignettes
 

@@ -251,22 +251,7 @@ ctl2 <- adirmcControl(
 
 # \donttest{
 library(rxode2)
-#> rxode2 5.0.2 using 2 threads (see ?getRxThreads)
-#>   no cache: create with `rxCreateCache()`
 library(nlmixr2)
-#> ── Attaching packages ───────────────────────────────────────── nlmixr2 5.0.0 ──
-#> ✔ lotri        1.0.4     ✔ nlmixr2extra 5.0.0
-#> ✔ nlmixr2data  2.0.9     ✔ nlmixr2plot  5.0.1
-#> ✔ nlmixr2est   5.0.2     
-#> ── Optional Packages Loaded/Ignored ─────────────────────────── nlmixr2 5.0.0 ──
-#> ✖ babelmixr2     ✖ nonmem2rx
-#> ✖ ggPMX     ✖ posologyr
-#> ✖ monolix2rx     ✖ shinyMixR
-#> ✖ nlmixr2lib     ✖ xpose.nlmixr2
-#> ✖ nlmixr2rpt     
-#> ── Conflicts ───────────────────────────────────────────── nlmixr2conflicts() ──
-#> ✖ nlmixr2est::boxCox()     masks rxode2::boxCox()
-#> ✖ nlmixr2est::yeoJohnson() masks rxode2::yeoJohnson()
 
 data("examplomycin")
 obs   <- examplomycin[examplomycin$EVID == 0, ]
@@ -380,7 +365,7 @@ fit <- nlmixr2(
 #> | 0028     | -1266.44 |    4.935 |    8.122 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |
 #> | 0029     | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |
 #> | 0030 ✓   | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1008 |   0.0234 |   0.1396 |
-#> | 2.6 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 2.1 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1120
 print(fit)
@@ -392,7 +377,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    2.588     10.247  12.835
+#> 1    2.113      9.809  11.922
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
