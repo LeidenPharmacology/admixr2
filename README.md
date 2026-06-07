@@ -2,6 +2,8 @@
 
 <!-- badges: start -->
 [![R-CMD-check](https://github.com/LeidenPharmacology/admixr2/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/LeidenPharmacology/admixr2/actions/workflows/R-CMD-check.yaml)
+[![CRAN version](https://www.r-pkg.org/badges/version/admixr2)](https://cran.r-project.org/package=admixr2)
+[![CRAN downloads](https://cranlogs.r-pkg.org/badges/grand-total/admixr2)](https://cran.r-project.org/package=admixr2)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Lifecycle: stable](https://img.shields.io/badge/lifecycle-stable-brightgreen.svg)](https://lifecycle.r-lib.org/articles/stages.html#stable)
 [![DOI](https://img.shields.io/badge/DOI-10.1007%2Fs10928--025--10011--w-blue)](https://doi.org/10.1007/s10928-025-10011-w)
@@ -61,11 +63,11 @@ required.
 ## Installation
 
 ```r
-# Install from GitHub using pak (recommended)
-pak::pak("LeidenPharmacology/admixr2")
+# From CRAN
+install.packages("admixr2")
 
-# Or with remotes
-remotes::install_github("LeidenPharmacology/admixr2")
+# Development version from GitHub
+pak::pak("LeidenPharmacology/admixr2")
 ```
 
 ## Quick start

@@ -3,6 +3,25 @@ url: https://leidenpharmacology.github.io/admixr2
 template:
   bootstrap: 5
   bootswatch: cosmo
+  light-switch: true
+  bslib:
+    # FeRx-inspired slate/oxide palette
+    bg: "#F7F6F3"
+    fg: "#1A2332"
+    primary: "#1F6B7A"
+    secondary: "#455066"
+    success: "#4A6B5D"
+    danger: "#C9582A"
+    warning: "#C8893E"
+    info: "#1F6B7A"
+    # Typography
+    base_font:
+      google: "IBM Plex Sans"
+    heading_font:
+      google: "Fraunces"
+    code_font:
+      google: "JetBrains Mono"
+    line-height-base: 1.55
 
 home:
   title: admixr2 — Aggregate Data Modelling in R
