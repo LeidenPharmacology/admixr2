@@ -91,9 +91,9 @@ fit <- nlmixr2(
 #> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |
 #> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |
 #> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |
-#> | 3.8 sec  |          |          |          |          |          |          |
+#> | 3.7 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, 19 NLL evaluations)
-#> → compress origData in nlmixr2 object, save 1120
+#> → compress origData in nlmixr2 object, save 1160
 print(fit)
 #> ── nlmixr² adfo ──
 #> 
@@ -103,7 +103,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    3.774      0.702   4.476
+#> 1    3.665      0.674   4.339
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

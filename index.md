@@ -58,11 +58,11 @@ individual patient data required.
 
 ``` r
 
-# Install from GitHub using pak (recommended)
-pak::pak("LeidenPharmacology/admixr2")
+# From CRAN
+install.packages("admixr2")
 
-# Or with remotes
-remotes::install_github("LeidenPharmacology/admixr2")
+# Development version from GitHub
+pak::pak("LeidenPharmacology/admixr2")
 ```
 
 ## Quick start

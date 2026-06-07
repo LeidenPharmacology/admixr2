@@ -2,6 +2,8 @@
 
 ## admixr2 0.1.0
 
+CRAN release: 2026-06-02
+
 - Initial release.
 - Monte Carlo estimator (`est = "admc"`) via
   [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md).

@@ -170,13 +170,13 @@ ctl2 <- adfoControl(grad = "analytical", maxeval = 1000L)
 
 # \donttest{
 library(rxode2)
-#> rxode2 5.1.1 using 2 threads (see ?getRxThreads)
+#> rxode2 5.1.2 using 2 threads (see ?getRxThreads)
 #>   no cache: create with `rxCreateCache()`
 library(nlmixr2)
 #> ── Attaching packages ───────────────────────────────────────── nlmixr2 5.0.0 ──
 #> ✔ lotri        1.0.4     ✔ nlmixr2extra 5.0.0
 #> ✔ nlmixr2data  2.0.9     ✔ nlmixr2plot  5.0.1
-#> ✔ nlmixr2est   5.0.2     
+#> ✔ nlmixr2est   6.0.1     
 #> ── Optional Packages Loaded/Ignored ─────────────────────────── nlmixr2 5.0.0 ──
 #> ✖ babelmixr2     ✖ nonmem2rx
 #> ✖ ggPMX     ✖ posologyr
@@ -249,7 +249,7 @@ fit <- nlmixr2(
 #> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |
 #> | 3.8 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, 19 NLL evaluations)
-#> → compress origData in nlmixr2 object, save 1120
+#> → compress origData in nlmixr2 object, save 1160
 print(fit)
 #> ── nlmixr² adfo ──
 #> 
@@ -259,7 +259,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    3.806       0.67   4.476
+#> 1    3.848       0.68   4.528
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
