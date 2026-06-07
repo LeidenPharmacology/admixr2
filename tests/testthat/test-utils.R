@@ -180,3 +180,87 @@ test_that(".admFullTheta: off-diagonal omega entry from omega[neta1, neta2]", {
   j <- pinfo$iniDf$neta2[off_row]
   expect_equal(unname(ft[off_nm]), pars$omega[i, j], tolerance = 1e-12)
 })
+
+# ---- .admMakeZ: additional sampling methods ----------------------------------
+
+test_that(".admMakeZ: halton returns correct shape", {
+  pinfo <- admixr2:::.admParseIniDf(make_inidf_2eta())
+  z_list <- admixr2:::.admMakeZ(200L, pinfo, n_studies = 1L, sampling = "halton")
+  expect_length(z_list, 1L)
+  expect_equal(dim(z_list[[1]]), c(200L, 2L))
+})
+
+test_that(".admMakeZ: torus returns correct shape", {
+  pinfo <- admixr2:::.admParseIniDf(make_inidf_2eta())
+  z_list <- admixr2:::.admMakeZ(200L, pinfo, n_studies = 1L, sampling = "torus")
+  expect_length(z_list, 1L)
+  expect_equal(dim(z_list[[1]]), c(200L, 2L))
+})
+
+test_that(".admMakeZ: lhs returns correct shape and uniform marginals", {
+  pinfo <- admixr2:::.admParseIniDf(make_inidf_1eta())
+  set.seed(99)
+  z_list <- admixr2:::.admMakeZ(100L, pinfo, n_studies = 1L, sampling = "lhs")
+  expect_equal(dim(z_list[[1]]), c(100L, 1L))
+})
+
+test_that(".admMakeZ: halton multi-study returns correct number of studies", {
+  # Use 2-eta model: randtoolbox::halton(dim=1) returns a vector not a matrix,
+  # so dim() is NULL for 1-eta; 2-eta always returns a matrix.
+  pinfo <- admixr2:::.admParseIniDf(make_inidf_2eta())
+  z_list <- admixr2:::.admMakeZ(50L, pinfo, n_studies = 3L, sampling = "halton")
+  expect_length(z_list, 3L)
+  for (i in seq_len(3L)) expect_equal(dim(z_list[[i]]), c(50L, 2L))
+})
+
+# ---- admData() ---------------------------------------------------------------
+
+test_that("admData() returns data.frame with required columns", {
+  d <- admData()
+  expect_s3_class(d, "data.frame")
+  expect_named(d, c("ID", "TIME", "DV", "AMT", "EVID", "CMT"))
+})
+
+test_that("admData() has all-NA DV column", {
+  d <- admData()
+  expect_true(all(is.na(d$DV)))
+})
+
+test_that("admData() has at least one dosing and one observation row", {
+  d <- admData()
+  expect_true(any(d$EVID != 0L))
+  expect_true(any(d$EVID == 0L))
+})
+
+# ---- admStopWorkers() --------------------------------------------------------
+
+test_that("admStopWorkers(): returns invisibly when no cluster is running", {
+  expect_invisible(admStopWorkers())
+})
+
+test_that("admStopWorkers(): can be called twice without error", {
+  expect_no_error(admStopWorkers())
+  expect_no_error(admStopWorkers())
+})
+
+# ---- %||% operator -----------------------------------------------------------
+
+test_that("%||% returns left side when non-NULL", {
+  expect_equal(admixr2:::`%||%`("a", "b"), "a")
+})
+
+test_that("%||% returns right side when left is NULL", {
+  expect_equal(admixr2:::`%||%`(NULL, "fallback"), "fallback")
+})
+
+test_that("%||% works with numeric values", {
+  expect_equal(admixr2:::`%||%`(NULL, 42), 42)
+  expect_equal(admixr2:::`%||%`(0, 42), 0)
+})
+
+# ---- .admSetupParallelPlan() single-worker fast path -------------------------
+
+test_that(".admSetupParallelPlan: workers=1 returns invisibly without starting workers", {
+  ctl <- admControl(workers = 1L)
+  expect_invisible(admixr2:::.admSetupParallelPlan(ctl, n_r = 3L))
+})

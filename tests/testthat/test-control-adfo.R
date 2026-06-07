@@ -132,3 +132,57 @@ test_that("adfoControl(): getValidNlmixrCtl.adfo converts plain list", {
   expect_s3_class(out, "adfoControl")
   expect_equal(out$maxeval, 77L)
 })
+
+test_that("adfoControl(): getValidNlmixrCtl.adfo extracts nested adfoControl", {
+  ctl <- adfoControl(maxeval = 66L)
+  out <- admixr2:::getValidNlmixrCtl.adfo(list(ctl))
+  expect_s3_class(out, "adfoControl")
+  expect_equal(out$maxeval, 66L)
+})
+
+test_that("adfoControl(): getValidNlmixrCtl.adfo builds from nested list with studies key", {
+  plain <- list(list(studies = list(), maxeval = 55L))
+  out   <- admixr2:::getValidNlmixrCtl.adfo(plain)
+  expect_s3_class(out, "adfoControl")
+})
+
+test_that("adfoControl(): getValidNlmixrCtl.adfo falls back to default for unrecognised input", {
+  # list(NULL): control[[1]] is NULL → not adfoControl, not list-with-studies,
+  # no named keys on outer list → falls through to adfoControl() default.
+  out <- admixr2:::getValidNlmixrCtl.adfo(list(NULL))
+  expect_s3_class(out, "adfoControl")
+})
+
+test_that("nmObjHandleControlObject.adfoControl: assigns control to env", {
+  ctl <- adfoControl(maxeval = 22L)
+  e   <- new.env(parent = emptyenv())
+  admixr2:::nmObjHandleControlObject.adfoControl(ctl, e)
+  expect_true(exists("adfoControl", envir = e, inherits = FALSE))
+  expect_equal(get("adfoControl", envir = e)$maxeval, 22L)
+})
+
+test_that("nmObjGetControl.adfo: retrieves control from env", {
+  ctl <- adfoControl(maxeval = 33L)
+  e   <- new.env(parent = emptyenv())
+  e$adfoControl <- ctl
+  out <- admixr2:::nmObjGetControl.adfo(list(e))
+  expect_s3_class(out, "adfoControl")
+  expect_equal(out$maxeval, 33L)
+})
+
+test_that("nmObjGetControl.adfo: falls back to 'control' slot", {
+  ctl <- adfoControl(maxeval = 44L)
+  e   <- new.env(parent = emptyenv())
+  e$control <- ctl
+  out <- admixr2:::nmObjGetControl.adfo(list(e))
+  expect_s3_class(out, "adfoControl")
+  expect_equal(out$maxeval, 44L)
+})
+
+test_that("nmObjGetControl.adfo: errors when no control found", {
+  e <- new.env(parent = emptyenv())
+  expect_error(
+    admixr2:::nmObjGetControl.adfo(list(e)),
+    regexp = "cannot find adfo control"
+  )
+})
