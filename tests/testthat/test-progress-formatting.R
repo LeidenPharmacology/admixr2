@@ -158,3 +158,57 @@ test_that("All formatting functions produce consistent widths for 2-eta model", 
   expect_equal(nchar(admixr2:::.admProgressRow("1", 0.0, vec$p0, pinfo)), w)
   expect_equal(nchar(admixr2:::.admProgressTimingRow(1.0, pinfo)), w)
 })
+
+# ---- Large NLL switches to scientific notation --------------------------------
+
+test_that("Row with large NLL uses scientific notation", {
+  pinfo <- make_pinfo_simple()
+  vec   <- admixr2:::.admBuildOptVec(pinfo)
+  # Value too wide for 'f' format in 8-char column -> fall back to 'e'
+  row   <- admixr2:::.admProgressRow("1", 1e15, vec$p0, pinfo)
+  expect_true(grepl("e", row, ignore.case = TRUE))
+})
+
+# ---- Timing row: >= 60 seconds shows minutes ----------------------------------
+
+test_that("Timing row >= 60s shows minutes", {
+  pinfo <- make_pinfo_simple()
+  tr    <- admixr2:::.admProgressTimingRow(90.0, pinfo)
+  expect_true(grepl("min", tr, fixed = TRUE))
+})
+
+test_that("Timing row < 60s shows seconds", {
+  pinfo <- make_pinfo_simple()
+  tr    <- admixr2:::.admProgressTimingRow(45.0, pinfo)
+  expect_true(grepl("sec", tr, fixed = TRUE))
+})
+
+# ---- 0-eta model (no omega diagonal) ------------------------------------------
+
+test_that("Header and row work for 0-eta model", {
+  pinfo <- admixr2:::.admParseIniDf(make_inidf_0eta())
+  vec   <- admixr2:::.admBuildOptVec(pinfo)
+
+  hdr_lines <- strsplit(admixr2:::.admProgressHeader(pinfo), "\n")[[1]]
+  w   <- nchar(hdr_lines[1])
+  row <- admixr2:::.admProgressRow("1", 50.0, vec$p0, pinfo)
+  expect_equal(nchar(row), w)
+})
+
+# ---- .admProgressNames -------------------------------------------------------
+
+test_that(".admProgressNames includes -2LL, struct, sigma, omega diagonal", {
+  pinfo <- make_pinfo_2eta()
+  nms   <- admixr2:::.admProgressNames(pinfo)
+  expect_true("-2LL" %in% nms)
+  for (nm in pinfo$struct_names) expect_true(nm %in% nms)
+  for (nm in pinfo$sigma_names)  expect_true(nm %in% nms)
+  diag_nms <- pinfo$eta_names[pinfo$chol_i[pinfo$chol_diag]]
+  for (nm in diag_nms) expect_true(nm %in% nms)
+})
+
+test_that(".admProgressNames: 0-eta model has no omega entries", {
+  pinfo <- admixr2:::.admParseIniDf(make_inidf_0eta())
+  nms   <- admixr2:::.admProgressNames(pinfo)
+  expect_equal(nms, c("-2LL", pinfo$struct_names, pinfo$sigma_names))
+})

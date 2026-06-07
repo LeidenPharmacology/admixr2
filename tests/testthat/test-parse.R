@@ -317,3 +317,107 @@ test_that(".admComputeScaleC: 0-eta model returns only struct and sigma entries"
   expect_equal(length(sc), 2L)  # tcl + add.err
   expect_true(all(sc == 1.0))
 })
+
+# ---- .admBackTransform / .admLogBackTransform: identity/unknown ---------------
+
+test_that(".admBackTransform: unknown curEval returns p unchanged", {
+  tr <- list(curEval = "identity", low = NA_real_, hi = NA_real_)
+  expect_equal(admixr2:::.admBackTransform(3.7, tr), 3.7)
+})
+
+test_that(".admLogBackTransform: unknown curEval returns log(p)", {
+  tr <- list(curEval = "identity", low = NA_real_, hi = NA_real_)
+  expect_equal(admixr2:::.admLogBackTransform(exp(2), tr), 2, tolerance = 1e-12)
+})
+
+test_that(".admLogBackTransform: log curEval returns p unchanged", {
+  tr <- list(curEval = "log", low = NA_real_, hi = NA_real_)
+  expect_equal(admixr2:::.admLogBackTransform(1.5, tr), 1.5)
+})
+
+# ---- .admParseIniDf: warning paths for residual error types ------------------
+
+test_that(".admParseIniDf: propT/propF triggers proportional approximation warning", {
+  inidf <- make_inidf_1eta()
+  inidf$err[inidf$name == "prop.err"] <- "propT"
+  expect_warning(
+    admixr2:::.admParseIniDf(inidf),
+    regexp = "modelled as proportional"
+  )
+})
+
+test_that(".admParseIniDf: propF triggers proportional approximation warning", {
+  inidf <- make_inidf_1eta()
+  inidf$err[inidf$name == "prop.err"] <- "propF"
+  expect_warning(
+    admixr2:::.admParseIniDf(inidf),
+    regexp = "modelled as proportional"
+  )
+})
+
+test_that(".admParseIniDf: norm triggers additive approximation warning", {
+  inidf <- make_inidf_1eta()
+  inidf$err[inidf$name == "prop.err"] <- "norm"
+  expect_warning(
+    admixr2:::.admParseIniDf(inidf),
+    regexp = "modelled as additive"
+  )
+})
+
+test_that(".admParseIniDf: dnorm triggers additive approximation warning", {
+  inidf <- make_inidf_1eta()
+  inidf$err[inidf$name == "prop.err"] <- "dnorm"
+  expect_warning(
+    admixr2:::.admParseIniDf(inidf),
+    regexp = "modelled as additive"
+  )
+})
+
+test_that(".admParseIniDf: dlnorm triggers lognormal approximation warning", {
+  inidf <- make_inidf_1eta()
+  inidf$err[inidf$name == "prop.err"] <- "dlnorm"
+  expect_warning(
+    admixr2:::.admParseIniDf(inidf),
+    regexp = "modelled as lognormal"
+  )
+})
+
+test_that(".admParseIniDf: logn triggers lognormal approximation warning", {
+  inidf <- make_inidf_1eta()
+  inidf$err[inidf$name == "prop.err"] <- "logn"
+  expect_warning(
+    admixr2:::.admParseIniDf(inidf),
+    regexp = "modelled as lognormal"
+  )
+})
+
+test_that(".admParseIniDf: unsupported error type triggers warning", {
+  inidf <- make_inidf_1eta()
+  inidf$err[inidf$name == "prop.err"] <- "weird_err"
+  expect_warning(
+    admixr2:::.admParseIniDf(inidf),
+    regexp = "Unsupported residual error"
+  )
+})
+
+test_that(".admParseIniDf: propT sigma_is_prop = TRUE (approximated as prop)", {
+  inidf <- make_inidf_1eta()
+  inidf$err[inidf$name == "prop.err"] <- "propT"
+  pinfo <- suppressWarnings(admixr2:::.admParseIniDf(inidf))
+  expect_true(pinfo$sigma_is_prop[[1]])
+})
+
+test_that(".admParseIniDf: norm sigma_is_prop = FALSE, sigma_is_lnorm = FALSE", {
+  inidf <- make_inidf_1eta()
+  inidf$err[inidf$name == "prop.err"] <- "norm"
+  pinfo <- suppressWarnings(admixr2:::.admParseIniDf(inidf))
+  expect_false(pinfo$sigma_is_prop[[1]])
+  expect_false(pinfo$sigma_is_lnorm[[1]])
+})
+
+test_that(".admParseIniDf: dlnorm sigma_is_lnorm = TRUE (approximated as lnorm)", {
+  inidf <- make_inidf_1eta()
+  inidf$err[inidf$name == "prop.err"] <- "dlnorm"
+  pinfo <- suppressWarnings(admixr2:::.admParseIniDf(inidf))
+  expect_true(pinfo$sigma_is_lnorm[[1]])
+})
