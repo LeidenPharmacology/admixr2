@@ -105,6 +105,25 @@ test_that("FO analytical gradient direction agrees with FD (ratio within 5% for 
                    names(ratio_ok)[which.max(abs(ratio_ok - 1))]))
 })
 
+test_that("FO analytical diagonal omega gradients agree with FD (ratio within 5%)", {
+  skip_on_cran()
+  env <- .int_adfo_setup()
+
+  n_s <- length(env$pinfo$struct_names)
+  n_e <- length(env$pinfo$sigma_names)
+  diag_idx <- which(env$pinfo$chol_diag) + n_s + n_e
+
+  ratio <- env$g_ana[diag_idx] / env$g_fd[diag_idx]
+  ok <- abs(env$g_fd[diag_idx]) > 1e-6
+  if (sum(ok) == 0) skip("All diagonal omega FD gradients near-zero at p0")
+
+  ratio_ok <- ratio[ok]
+  expect_true(all(abs(ratio_ok - 1) < 0.05),
+    info = sprintf("max diagonal omega ratio deviation: %.4f (param: %s)",
+                   max(abs(ratio_ok - 1)),
+                   names(ratio_ok)[which.max(abs(ratio_ok - 1))]))
+})
+
 
 test_that("FO .adfoNLL() produces no R-level warnings at true params", {
   skip_on_cran()
