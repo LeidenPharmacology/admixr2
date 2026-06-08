@@ -260,8 +260,12 @@ test_that("struct_eta_idx maps each eta to paired struct theta index with mock u
 })
 
 test_that("sigma_is_prop = TRUE for prop error, FALSE for add error", {
-  # sigma_is_prop / sigma_is_lnorm are plain logical vectors (no names)
+  # sigma_is_prop / sigma_is_lnorm are named by sigma_names
   pinfo_prop <- admixr2:::.admParseIniDf(make_inidf_1eta())   # err = "prop"
+  expect_equal(names(pinfo_prop$sigma_is_prop), pinfo_prop$sigma_names)
+  expect_equal(names(pinfo_prop$sigma_is_lnorm), pinfo_prop$sigma_names)
+  expect_true(pinfo_prop$sigma_is_prop[["prop.err"]])
+  expect_false(pinfo_prop$sigma_is_lnorm[["prop.err"]])
   expect_true(pinfo_prop$sigma_is_prop[[1]])
   expect_false(pinfo_prop$sigma_is_lnorm[[1]])
 
