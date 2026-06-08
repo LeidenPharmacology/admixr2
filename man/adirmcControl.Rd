@@ -116,7 +116,9 @@ Phases progressively tighten the search region.}
 
 \item{max_worse}{Stop a phase after this many consecutive worsening iterations.}
 
-\item{covMethod}{Covariance method: \code{"r"} (numerical Hessian) or \code{"none"}.}
+\item{covMethod}{Covariance method: \code{"r"} (numerical Hessian for structural
+and residual-error parameters only; omega/IIV SEs are not computed,
+consistent with nlmixr2 FOCEI) or \code{"none"}.}
 
 \item{cov_n_sim}{Number of MC samples for the covariance (Hessian) step.
 More samples reduce MC noise in NLL evaluations. The NLL-based Hessian

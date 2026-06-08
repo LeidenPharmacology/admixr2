@@ -68,8 +68,9 @@ FD Jacobian.}
 
 \item{cov_h_outer}{Outer step scale for NLL-FD Hessian.}
 
-\item{covMethod}{\code{"r"} computes covariance via numerical Hessian; \code{"none"}
-skips it.}
+\item{covMethod}{\code{"r"} computes covariance via numerical Hessian for
+structural and residual-error parameters only (omega/IIV SEs are not
+computed, consistent with nlmixr2 FOCEI); \code{"none"} skips it.}
 
 \item{n_restarts}{Number of optimizer restarts (1 = no multi-start).}
 
