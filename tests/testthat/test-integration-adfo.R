@@ -185,11 +185,12 @@ test_that("FO analytical diagonal omega gradients agree with FD (ratio within 5%
 test_that("FO analytical gradient matches FD for unpaired struct theta", {
   skip_on_cran()
   env <- .int_adfo_kappa_setup()
+  fd_zero_tol <- 1e-6
 
-  expect_true(isFALSE(env$pinfo$struct_has_eta[["tsc"]]))
+  expect_false(env$pinfo$struct_has_eta[["tsc"]])
 
   ratio <- env$g_ana["tsc"] / env$g_fd["tsc"]
-  if (!is.finite(env$g_fd["tsc"]) || abs(env$g_fd["tsc"]) <= 1e-6)
+  if (!is.finite(env$g_fd["tsc"]) || abs(env$g_fd["tsc"]) <= fd_zero_tol)
     skip("Unpaired struct theta FD gradient near-zero at p0")
 
   expect_lt(abs(ratio - 1), 0.05,
