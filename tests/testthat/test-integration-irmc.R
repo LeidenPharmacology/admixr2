@@ -59,3 +59,14 @@ test_that("irmcNLL: NLL at true params < NLL at substantially perturbed params",
   irmc <- .int_irmc_setup()
   expect_lt(irmc$nll_p0, irmc$nll_bad)
 })
+
+test_that("irmcInnerGrad with linearized kappa: ratio vs FD within 5%", {
+  env <- .int_grad_lin_kappa_setup()
+  if (!env$proposals_ok) skip("proposal draw failed")
+
+  ratio <- env$g_irmc_ana / env$g_irmc_fd
+  bad   <- names(ratio)[abs(ratio - 1) > 0.05]
+  expect_equal(length(bad), 0L,
+    info = paste("Params with |ratio - 1| > 0.05:",
+                 paste(sprintf("%s=%.4f", bad, ratio[bad]), collapse = ", ")))
+})
