@@ -276,9 +276,9 @@
   cov_idx <- seq_len(n_s + n_e)
   np_cov  <- length(cov_idx)
   nms_cov <- names(p_hat)[cov_idx]
-  message("  Note: omega (IIV) SEs are not computed for covMethod='r'; ",
-          "covariance is evaluated for structural + sigma parameters only ",
-          "(matching nlmixr2 FOCEI behavior).")
+  message("  Note: covMethod='r' computes covariance for structural and sigma ",
+          "parameters only; omega (IIV) SEs are not computed (matching nlmixr2 ",
+          "FOCEI behavior).")
 
   nll_fn <- function(p)
     suppressMessages(.adfoNLL(p, pinfo, studies, sensModel, rxMod, output_var,

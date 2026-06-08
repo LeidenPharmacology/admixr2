@@ -1135,9 +1135,9 @@ nmObjGetControl.admc <- function(x, ...) {
   cov_idx  <- seq_len(n_s + n_e)
   np_cov   <- length(cov_idx)
   nms_cov  <- nms[cov_idx]
-  message("  Note: omega (IIV) SEs are not computed for covMethod='r'; ",
-          "covariance is evaluated for structural + sigma parameters only ",
-          "(matching nlmixr2 FOCEI behavior).")
+  message("  Note: covMethod='r' computes covariance for structural and sigma ",
+          "parameters only; omega (IIV) SEs are not computed (matching nlmixr2 ",
+          "FOCEI behavior).")
 
   if (!is.null(cov_n_sim) && cov_n_sim != nrow(z_list[[1]])) {
     z_list      <- .admMakeZ(cov_n_sim, pinfo, length(studies), sampling)
