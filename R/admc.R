@@ -1265,6 +1265,7 @@ nmObjGetControl.admc <- function(x, ...) {
                               ov_lower, ov_upper, scale_c = NULL, studies, n_sim,
                               seed, algorithm, ftol_rel, maxeval,
                               use_grad, grad_h, grad_bounds,
+                              output_var = "cp",
                               sampling = "sobol",
                               use_central = FALSE,
                               print_progress = TRUE, print = 10L,
@@ -1328,7 +1329,7 @@ nmObjGetControl.admc <- function(x, ...) {
   .par_trace <- NULL
   eval_f <- function(p) {
     .iter <<- .iter + 1L
-    val <- .admNLL(p, pinfo, studies, z_list, rxMod, "cp", params_list, cores_w)
+    val <- .admNLL(p, pinfo, studies, z_list, rxMod, output_var, params_list, cores_w)
     if (is.finite(val) && val < .best_nll) {
       .best_nll  <<- val
       .nll_trace <<- c(.nll_trace, val)
@@ -1341,7 +1342,7 @@ nmObjGetControl.admc <- function(x, ...) {
     val
   }
   eval_grad_f <- if (use_grad) {
-    function(p) .admGrad(p, pinfo, studies, z_list, rxMod, "cp",
+    function(p) .admGrad(p, pinfo, studies, z_list, rxMod, output_var,
                          params_list, cores_w, grad_h, sensModel,
                          use_central = use_central)
   } else NULL
@@ -1831,6 +1832,7 @@ nlmixr2Est.admc <- function(env, ...) {
                         use_grad     = want_grad,
                         grad_h       = .ctl$grad_h,
                         grad_bounds  = .ctl$grad_bounds,
+                        output_var   = output_var,
                         sampling     = .ctl$sampling,
                         use_central  = want_central,
                         print_progress   = TRUE,
