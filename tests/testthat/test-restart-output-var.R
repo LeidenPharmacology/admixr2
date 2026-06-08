@@ -13,7 +13,7 @@ test_that("restart estimators pass detected output_var into restart workers", {
   admc_txt <- paste(deparse(body(admixr2:::nlmixr2Est.admc)), collapse = "\n")
   irmc_txt <- paste(deparse(body(admixr2:::nlmixr2Est.adirmc)), collapse = "\n")
 
-  pat <- "extra_args\\s*=\\s*list\\([\\s\\S]*output_var\\s*=\\s*output_var"
+  pat <- "(?s)extra_args\\s*=\\s*list\\(.*?output_var\\s*=\\s*output_var"
 
   expect_true(grepl(pat, adfo_txt, perl = TRUE))
   expect_true(grepl(pat, admc_txt, perl = TRUE))
