@@ -276,6 +276,9 @@
   cov_idx <- seq_len(n_s + n_e)
   np_cov  <- length(cov_idx)
   nms_cov <- names(p_hat)[cov_idx]
+  message("  Note: covMethod='r' computes covariance for structural and sigma ",
+          "parameters only; omega (IIV) SEs are not computed (matching nlmixr2 ",
+          "FOCEI behavior).")
 
   nll_fn <- function(p)
     suppressMessages(.adfoNLL(p, pinfo, studies, sensModel, rxMod, output_var,
@@ -500,8 +503,9 @@
 #'   FD Jacobian.
 #' @param grad_bounds Box-constraint half-width when using gradients.
 #' @param cov_h_outer Outer step scale for NLL-FD Hessian.
-#' @param covMethod `"r"` computes covariance via numerical Hessian; `"none"`
-#'   skips it.
+#' @param covMethod `"r"` computes covariance via numerical Hessian for
+#'   structural and residual-error parameters only (omega/IIV SEs are not
+#'   computed, consistent with nlmixr2 FOCEI); `"none"` skips it.
 #' @param n_restarts Number of optimizer restarts (1 = no multi-start).
 #' @param restart_sd Standard deviation for random perturbations of initial
 #'   struct thetas at each restart (> 1).

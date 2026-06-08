@@ -48,7 +48,9 @@
 #'   truth. Increase (e.g. to `5e-3` or `1e-2`) if the Hessian is non-positive
 #'   definite.
 #' @param grad_bounds Box-constraint half-width when using gradients.
-#' @param covMethod Covariance method: `"r"` (numerical Hessian) or `"none"`.
+#' @param covMethod Covariance method: `"r"` (numerical Hessian for structural
+#'   and residual-error parameters only; omega/IIV SEs are not computed,
+#'   consistent with nlmixr2 FOCEI) or `"none"`.
 #' @param cov_n_sim Number of MC samples for the covariance (Hessian) step.
 #'   More samples reduce MC noise in NLL evaluations. The NLL-based Hessian
 #'   (`grad = "none"`) uses a central second difference of the NLL with the
@@ -1133,6 +1135,9 @@ nmObjGetControl.admc <- function(x, ...) {
   cov_idx  <- seq_len(n_s + n_e)
   np_cov   <- length(cov_idx)
   nms_cov  <- nms[cov_idx]
+  message("  Note: covMethod='r' computes covariance for structural and sigma ",
+          "parameters only; omega (IIV) SEs are not computed (matching nlmixr2 ",
+          "FOCEI behavior).")
 
   if (!is.null(cov_n_sim) && cov_n_sim != nrow(z_list[[1]])) {
     z_list      <- .admMakeZ(cov_n_sim, pinfo, length(studies), sampling)
