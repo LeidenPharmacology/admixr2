@@ -359,6 +359,7 @@
                                 ov_lower, ov_upper, scale_c = NULL, studies, n_sim,
                                 seed, algorithm, ftol_rel, maxeval,
                                 use_grad, grad_h, grad_bounds,
+                                output_var = "cp",
                                 sampling = "sobol",
                                 use_central = FALSE,
                                 use_pure_fd = FALSE,
@@ -415,7 +416,6 @@
   params_list <- .admMakeParamsList(1L, pinfo, length(studies))
 
   set.seed(seed + restart_id)
-  output_var <- "cp"  # default; sensModel path uses rx_pred_ internally
 
   .iter      <- 0L
   .best_nll  <- Inf
@@ -860,6 +860,7 @@ nlmixr2Est.adfo <- function(env, ...) {
                         use_pure_fd     = use_pure_fd,
                         grad_h          = .ctl$grad_h,
                         grad_bounds     = .ctl$grad_bounds,
+                        output_var      = output_var,
                         print_progress  = TRUE,
                         print           = .ctl$print,
                         cores           = .ctl$cores,
