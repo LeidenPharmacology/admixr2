@@ -65,6 +65,7 @@ one_cmt_kappa_fn <- function() {
   ini({
     tcl     <- log(5)  ; label("Log CL")
     tv      <- log(20) ; label("Log V")
+    # Intentionally unpaired from any eta so IRMC takes the kappa path.
     tsc     <- log(1)  ; label("Log scale")
     add.err <- 0.1     ; label("Additive SD")
     eta.cl  ~ 0.09
@@ -73,6 +74,7 @@ one_cmt_kappa_fn <- function() {
   model({
     cl <- exp(tcl + eta.cl)
     v  <- exp(tv  + eta.v)
+    # Neutral scale keeps the same analytic mean while exercising has_kappa=TRUE.
     sc <- exp(tsc)
     d/dt(central) <- -(cl / v) * central
     cp <- sc * central / v
