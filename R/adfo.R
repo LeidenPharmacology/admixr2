@@ -193,7 +193,7 @@
 
     # Omega gradient: d(-2LL)/d(L[i,j]) via ML = t(J) dNLL_dV JL
     # (JL cached from Pass 1 -- avoids materialising M = t(J) dNLL_dV J separately)
-    # Diagonal p = 2*log(L_ii): chain rule gives (ML)[i,i] * L[i,i] / 2
+    # Diagonal p = 2*log(L_ii): chain rule gives (ML)[i,i] * L[i,i]
     # Off-diagonal p = L_ij:    chain rule gives 2*(ML)[i,j]
     if (n_eta > 0L && n_o > 0L) {
       JL <- mc$JL
@@ -203,7 +203,7 @@
         i  <- pinfo$chol_i[r_idx]; jj <- pinfo$chol_j[r_idx]
         if (d[r_idx]) {
           grad[n_s + n_e + r_idx] <- grad[n_s + n_e + r_idx] +
-            as.numeric(ML[i, i]) * (pars$L[i, i] / 2)
+            as.numeric(ML[i, i]) * pars$L[i, i]
         } else {
           grad[n_s + n_e + r_idx] <- grad[n_s + n_e + r_idx] +
             2 * as.numeric(ML[i, jj])
