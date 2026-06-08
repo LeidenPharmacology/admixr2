@@ -108,14 +108,15 @@
             paste(.unsupported, collapse = ", "),
             ". Treated as additive. Supported: add/norm, prop, lnorm.",
             call. = FALSE)
-  sigma_is_prop  <- .err_vals %in% c("prop", "propT", "propF")
-  sigma_is_lnorm <- .err_vals %in% c("lnorm", "dlnorm", "logn", "dlogn")
+  sigma_names <- sigma_rows$name
+  sigma_is_prop  <- setNames(.err_vals %in% c("prop", "propT", "propF"), sigma_names)
+  sigma_is_lnorm <- setNames(.err_vals %in% c("lnorm", "dlnorm", "logn", "dlogn"), sigma_names)
 
   list(struct_names    = struct_rows$name,
        struct_init     = setNames(struct_rows$est,   struct_rows$name),
        struct_lower    = setNames(struct_rows$lower, struct_rows$name),
        struct_upper    = setNames(struct_rows$upper, struct_rows$name),
-       sigma_names     = sigma_rows$name,
+       sigma_names     = sigma_names,
        sigma_init      = setNames(2 * log(sigma_rows$est), sigma_rows$name),
        sigma_lower     = setNames(sigma_rows$lower, sigma_rows$name),
        sigma_upper     = setNames(sigma_rows$upper, sigma_rows$name),
