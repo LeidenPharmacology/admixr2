@@ -603,7 +603,7 @@ box constraints tighten) are normal and expected.</p>
 <span>  grad       <span class="op">=</span> <span class="st">"none"</span>,      <span class="co"># "none" (BOBYQA), "analytical", "fd", "cfd"</span></span>
 <span>  maxeval    <span class="op">=</span> <span class="fl">500L</span>,</span>
 <span>  n_restarts <span class="op">=</span> <span class="fl">1L</span>,</span>
-<span>  covMethod  <span class="op">=</span> <span class="st">"r"</span>,         <span class="co"># "r" = numerical Hessian, "none" = skip</span></span>
+<span>  covMethod  <span class="op">=</span> <span class="st">"r"</span>,         <span class="co"># SEs for struct+sigma only; omega SEs are not computed</span></span>
 <span>  seed       <span class="op">=</span> <span class="fl">1L</span></span>
 <span><span class="op">)</span></span>
 <span></span>
@@ -614,7 +614,7 @@ box constraints tighten) are normal and expected.</p>
 <span>  grad       <span class="op">=</span> <span class="st">"sens"</span>,      <span class="co"># gradient mode: "sens", "fd", "cfd", "none"</span></span>
 <span>  n_restarts <span class="op">=</span> <span class="fl">1L</span>,          <span class="co"># number of optimizer restarts</span></span>
 <span>  workers    <span class="op">=</span> <span class="fl">1L</span>,          <span class="co"># parallel workers for restarts</span></span>
-<span>  covMethod  <span class="op">=</span> <span class="st">"r"</span>,         <span class="co"># "r" = numerical Hessian, "none" = skip</span></span>
+<span>  covMethod  <span class="op">=</span> <span class="st">"r"</span>,         <span class="co"># SEs for struct+sigma only; omega SEs are not computed</span></span>
 <span>  seed       <span class="op">=</span> <span class="fl">1L</span></span>
 <span><span class="op">)</span></span>
 <span></span>

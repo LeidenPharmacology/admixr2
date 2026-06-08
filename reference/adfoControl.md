@@ -104,7 +104,9 @@ adfoControl(
 
 - covMethod:
 
-  `"r"` computes covariance via numerical Hessian; `"none"` skips it.
+  `"r"` computes covariance via numerical Hessian for structural and
+  residual-error parameters only (omega/IIV SEs are not computed,
+  consistent with nlmixr2 FOCEI); `"none"` skips it.
 
 - n_restarts:
 
@@ -174,7 +176,7 @@ library(rxode2)
 #>   no cache: create with `rxCreateCache()`
 library(nlmixr2)
 #> ── Attaching packages ───────────────────────────────────────── nlmixr2 5.0.0 ──
-#> ✔ lotri        1.0.4     ✔ nlmixr2extra 5.0.0
+#> ✔ lotri        1.0.4     ✔ nlmixr2extra 5.1.0
 #> ✔ nlmixr2data  2.0.9     ✔ nlmixr2plot  5.0.1
 #> ✔ nlmixr2est   6.0.1     
 #> ── Optional Packages Loaded/Ignored ─────────────────────────── nlmixr2 5.0.0 ──
@@ -247,8 +249,9 @@ fit <- nlmixr2(
 #> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |
 #> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |
 #> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |
-#> | 3.8 sec  |          |          |          |          |          |          |
+#> | 3.6 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, 19 NLL evaluations)
+#>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
 print(fit)
 #> ── nlmixr² adfo ──
@@ -259,7 +262,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    3.848       0.68   4.528
+#> 1    3.625      0.636   4.261
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

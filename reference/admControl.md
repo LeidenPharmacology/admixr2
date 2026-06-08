@@ -141,7 +141,9 @@ admControl(
 
 - covMethod:
 
-  Covariance method: `"r"` (numerical Hessian) or `"none"`.
+  Covariance method: `"r"` (numerical Hessian for structural and
+  residual-error parameters only; omega/IIV SEs are not computed,
+  consistent with nlmixr2 FOCEI) or `"none"`.
 
 - cov_n_sim:
 
@@ -280,8 +282,9 @@ fit <- nlmixr2(
 #> | 0030     | -3690.65 |    4.962 |    10.24 |    29.91 |    9.852 |    1.039 |   0.1986 |   0.1043 |   0.1092 |    0.102 |   0.1068 |  0.09677 |
 #> | 0040     | -3690.73 |    4.952 |    10.11 |    30.04 |    9.815 |    1.025 |   0.1983 |   0.1044 |   0.1155 |   0.1006 |   0.1061 |  0.09246 |
 #> | 0044 ✓   | -3690.73 |    4.952 |    10.11 |    30.05 |    9.816 |    1.025 |   0.1983 |   0.1044 |   0.1156 |   0.1007 |   0.1061 |  0.09233 |
-#> | 8.1 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 7.9 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, Sens-Hessian, 7 gradient evaluations)
+#>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
 print(fit)
 #> ── nlmixr² admc ──
@@ -292,7 +295,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    8.058      9.205  17.263
+#> 1    7.856      8.725  16.581
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

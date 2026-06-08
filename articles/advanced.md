@@ -206,8 +206,10 @@ better coverage than Sobol.
 ## Parameter uncertainty
 
 `covMethod = "r"` (default) computes a numerical Hessian after
-optimisation and reports standard errors in `print(fit)`. A larger
-`cov_n_sim` reduces MC noise in the Hessian:
+optimisation and reports standard errors in `print(fit)`. **Important:**
+these SEs are computed for structural and residual-error parameters
+only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI
+behavior). A larger `cov_n_sim` reduces MC noise in the Hessian:
 
 ``` r
 

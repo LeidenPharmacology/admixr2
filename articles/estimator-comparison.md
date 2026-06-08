@@ -378,7 +378,7 @@ adfoControl(
   grad       = "none",      # "none" (BOBYQA), "analytical", "fd", "cfd"
   maxeval    = 500L,
   n_restarts = 1L,
-  covMethod  = "r",         # "r" = numerical Hessian, "none" = skip
+  covMethod  = "r",         # SEs for struct+sigma only; omega SEs are not computed
   seed       = 1L
 )
 
@@ -389,7 +389,7 @@ admControl(
   grad       = "sens",      # gradient mode: "sens", "fd", "cfd", "none"
   n_restarts = 1L,          # number of optimizer restarts
   workers    = 1L,          # parallel workers for restarts
-  covMethod  = "r",         # "r" = numerical Hessian, "none" = skip
+  covMethod  = "r",         # SEs for struct+sigma only; omega SEs are not computed
   seed       = 1L
 )
 

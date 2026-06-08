@@ -374,8 +374,10 @@ normal draws for equivalent NLL variance. For small <code>n_sim</code>,
 </h2>
 <p><code>covMethod = "r"</code> (default) computes a numerical Hessian
 after optimisation and reports standard errors in
-<code>print(fit)</code>. A larger <code>cov_n_sim</code> reduces MC
-noise in the Hessian:</p>
+<code>print(fit)</code>. <strong>Important:</strong> these SEs are
+computed for structural and residual-error parameters only; omega (IIV)
+SEs are not computed (matching nlmixr2 FOCEI behavior). A larger
+<code>cov_n_sim</code> reduces MC noise in the Hessian:</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit_cov</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
 <span>  <span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>

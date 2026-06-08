@@ -170,7 +170,9 @@ adirmcControl(
 
 - covMethod:
 
-  Covariance method: `"r"` (numerical Hessian) or `"none"`.
+  Covariance method: `"r"` (numerical Hessian for structural and
+  residual-error parameters only; omega/IIV SEs are not computed,
+  consistent with nlmixr2 FOCEI) or `"none"`.
 
 - cov_n_sim:
 
@@ -365,8 +367,9 @@ fit <- nlmixr2(
 #> | 0028     | -1266.44 |    4.935 |    8.122 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |
 #> | 0029     | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |
 #> | 0030 ✓   | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1008 |   0.0234 |   0.1396 |
-#> | 2.3 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 2.1 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)
+#>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
 print(fit)
 #> ── nlmixr² adirmc ──
@@ -377,16 +380,16 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    2.273     10.427    12.7
+#> 1    2.131      9.916  12.047
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>            Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl       1.596 0.02479 1.553    4.935 (4.701, 5.181)     36.1            
-#> tv1       2.094  0.1909 9.114    8.121 (5.586, 11.81)     28.3            
-#> tv2       3.448  0.0713 2.068    31.44 (27.34, 36.15)     32.6            
-#> tq        2.189 0.05816 2.658       8.922 (7.961, 10)     15.4            
-#> tka     -0.2042  0.1759 86.17  0.8153 (0.5775, 1.151)     38.7            
+#> tcl       1.596 0.02478 1.552    4.935 (4.701, 5.181)     36.1            
+#> tv1       2.094  0.1906 9.102     8.121 (5.589, 11.8)     28.3            
+#> tv2       3.448 0.07123 2.066    31.44 (27.34, 36.15)     32.6            
+#> tq        2.189  0.0581 2.655    8.922 (7.962, 9.999)     15.4            
+#> tka     -0.2042  0.1757 86.06  0.8153 (0.5778, 1.151)     38.7            
 #> prop.sd  0.1797                                0.1797                     
 #>  
 #>   Covariance Type (fit$covMethod): r

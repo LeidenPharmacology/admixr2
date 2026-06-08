@@ -124,8 +124,9 @@ fit <- nlmixr2(
 #> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |
 #> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |
 #> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |
-#> | 3.8 sec  |          |          |          |          |          |          |
+#> | 3.3 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, 19 NLL evaluations)
+#>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
 plot(fit)
 #>  
