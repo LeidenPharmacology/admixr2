@@ -40,7 +40,8 @@ one_cmt_fn <- function() {
 .int_irmc_cache   <- NULL
 .int_plot_cache   <- NULL
 .int_cov_cache    <- NULL
-.int_adfo_cache   <- NULL
+.int_adfo_cache        <- NULL
+.int_adfo_kappa_cache  <- NULL
 
 # ---- linCmt model (1-cmt, 2 etas) -------------------------------------------
 
@@ -474,4 +475,68 @@ one_cmt_kappa_fn <- function() {
     result_grad = result_grad
   )
   .int_cov_cache
+}
+
+# ---- FO kappa setup ----------------------------------------------------------
+# Exercises the unpaired-struct-theta gradient path in .adfoGrad().
+# tsc is intentionally not mu-referenced by any eta.
+
+.int_adfo_kappa_setup <- function() {
+  if (!is.null(.int_adfo_kappa_cache)) return(.int_adfo_kappa_cache)
+
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+
+  ui <- suppressMessages(tryCatch(
+    rxode2::rxode2(one_cmt_kappa_fn),
+    error = function(e) NULL
+  ))
+  if (is.null(ui)) skip("rxode2 model parse failed")
+
+  pinfo      <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  output_var <- "cp"
+
+  sensModel <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
+  rxMod     <- tryCatch(admixr2:::.admLoadModel(ui),     error = function(e) NULL)
+  if (is.null(rxMod))     skip("Model compilation failed")
+  if (is.null(sensModel)) skip("Sensitivity model unavailable")
+
+  times  <- c(0.5, 1, 2, 4)
+  E_true <- .one_cmt_mean(5, 20, 100, times)
+  V_true <- diag((0.3 * E_true)^2)
+
+  study <- list(E = E_true, V = V_true, n = 200L, times = times,
+                ev = rxode2::et(amt = 100))
+  study <- admixr2:::.admNormaliseStudy(study, "s")
+  study$ev_full <- study$ev |> rxode2::et(study$times)
+  studies <- list(s = study)
+
+  params_list <- admixr2:::.admMakeParamsList(1L, pinfo, length(studies))
+  p0          <- admixr2:::.admBuildOptVec(pinfo)$p0
+  h_fd        <- 1e-4
+
+  g_ana <- admixr2:::.adfoGrad(p0, pinfo, studies, sensModel, rxMod,
+                               output_var, params_list, cores = 1L, grad_h = h_fd)
+
+  # Central FD reference using the same scaled step as .adfoGrad() so that
+  # the perturbation matches for each parameter (pmax(|p[k]|, 0.1) * h_fd).
+  g_fd <- vapply(seq_along(p0), function(k) {
+    hk <- pmax(abs(p0[k]), 0.1) * h_fd
+    ph <- p0; ph[k] <- ph[k] + hk
+    pl <- p0; pl[k] <- pl[k] - hk
+    nh <- admixr2:::.adfoNLL(ph, pinfo, studies, sensModel, rxMod,
+                              output_var, params_list, 1L)
+    nl <- admixr2:::.adfoNLL(pl, pinfo, studies, sensModel, rxMod,
+                              output_var, params_list, 1L)
+    (nh - nl) / (2 * hk)
+  }, double(1))
+  names(g_fd) <- names(p0)
+
+  .int_adfo_kappa_cache <<- list(
+    pinfo = pinfo, studies = studies,
+    rxMod = rxMod, sensModel = sensModel,
+    output_var = output_var, params_list = params_list,
+    p0 = p0, g_ana = g_ana, g_fd = g_fd, h_fd = h_fd
+  )
+  .int_adfo_kappa_cache
 }
