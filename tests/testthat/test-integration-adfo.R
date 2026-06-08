@@ -135,7 +135,7 @@ test_that("FO analytical gradient matches FD for unpaired struct theta", {
   if (!is.finite(env$g_fd["tsc"]) || abs(env$g_fd["tsc"]) <= fd_zero_tol)
     skip("Unpaired struct theta FD gradient near-zero at p0")
 
-  expect_lt(abs(ratio - 1), 0.05,
+  expect_true(abs(ratio - 1) < 0.05,
     info = sprintf("unpaired struct theta ratio: %.4f", ratio))
 })
 
