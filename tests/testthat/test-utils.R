@@ -39,6 +39,13 @@ test_that(".admMakeZ: sobol returns correct shape", {
   expect_equal(dim(z_list[[2]]), c(500L, 2L))
 })
 
+test_that(".admMakeZ: sobol with n_eta=1 returns matrix", {
+  pinfo <- admixr2:::.admParseIniDf(make_inidf_1eta())
+  z_list <- admixr2:::.admMakeZ(200L, pinfo, n_studies = 1L, sampling = "sobol")
+  expect_true(is.matrix(z_list[[1]]))
+  expect_equal(dim(z_list[[1]]), c(200L, 1L))
+})
+
 test_that(".admMakeZ: rnorm returns roughly N(0,1) marginals", {
   pinfo <- admixr2:::.admParseIniDf(make_inidf_1eta())
   set.seed(42)
@@ -190,11 +197,25 @@ test_that(".admMakeZ: halton returns correct shape", {
   expect_equal(dim(z_list[[1]]), c(200L, 2L))
 })
 
+test_that(".admMakeZ: halton with n_eta=1 returns matrix", {
+  pinfo <- admixr2:::.admParseIniDf(make_inidf_1eta())
+  z_list <- admixr2:::.admMakeZ(200L, pinfo, n_studies = 1L, sampling = "halton")
+  expect_true(is.matrix(z_list[[1]]))
+  expect_equal(dim(z_list[[1]]), c(200L, 1L))
+})
+
 test_that(".admMakeZ: torus returns correct shape", {
   pinfo <- admixr2:::.admParseIniDf(make_inidf_2eta())
   z_list <- admixr2:::.admMakeZ(200L, pinfo, n_studies = 1L, sampling = "torus")
   expect_length(z_list, 1L)
   expect_equal(dim(z_list[[1]]), c(200L, 2L))
+})
+
+test_that(".admMakeZ: torus with n_eta=1 returns matrix", {
+  pinfo <- admixr2:::.admParseIniDf(make_inidf_1eta())
+  z_list <- admixr2:::.admMakeZ(200L, pinfo, n_studies = 1L, sampling = "torus")
+  expect_true(is.matrix(z_list[[1]]))
+  expect_equal(dim(z_list[[1]]), c(200L, 1L))
 })
 
 test_that(".admMakeZ: lhs returns correct shape and uniform marginals", {

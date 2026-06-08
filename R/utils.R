@@ -117,9 +117,21 @@ utils::globalVariables(c(
     if (pinfo$n_eta == 0L)
       return(matrix(0, nrow = n_sim, ncol = 1L))
     switch(sampling,
-      sobol  = qnorm(randtoolbox::sobol( n = n_sim, dim = pinfo$n_eta)),
-      halton = qnorm(randtoolbox::halton(n = n_sim, dim = pinfo$n_eta)),
-      torus  = qnorm(randtoolbox::torus( n = n_sim, dim = pinfo$n_eta)),
+      sobol  = {
+        z <- qnorm(randtoolbox::sobol(n = n_sim, dim = pinfo$n_eta))
+        if (!is.matrix(z)) z <- matrix(z, ncol = 1L)
+        z
+      },
+      halton = {
+        z <- qnorm(randtoolbox::halton(n = n_sim, dim = pinfo$n_eta))
+        if (!is.matrix(z)) z <- matrix(z, ncol = 1L)
+        z
+      },
+      torus  = {
+        z <- qnorm(randtoolbox::torus(n = n_sim, dim = pinfo$n_eta))
+        if (!is.matrix(z)) z <- matrix(z, ncol = 1L)
+        z
+      },
       lhs    = qnorm(.lhsSample(n_sim, pinfo$n_eta)),
       rnorm  = matrix(rnorm(n_sim * pinfo$n_eta), nrow = n_sim),
       stop("admMakeZ: unknown sampling method '", sampling, "'", call. = FALSE)
