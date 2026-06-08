@@ -274,6 +274,41 @@ test_that("FO Omega L[2,2] gradient (cov) matches FD", {
   expect_equal(ag$grad_L22, fd, tolerance = 1e-5)
 })
 
+test_that("FO diagonal omega gradients keep the dV/dL and dL/dp factors balanced", {
+  s <- .fo_setup()
+  delta <- 1e-5
+
+  cases <- list(
+    list(
+      name = "cov",
+      grad = .fo_grad_analytic_cov(s$L, s$mu, s$J, s$sv_add, s$E_obs, s$V_obs, s$n),
+      nll  = function(i, step) .fo_nll_cov(.perturb_L_diag(s$L, i, step),
+                                           s$mu, s$J, s$sv_add, s$E_obs, s$V_obs, s$n)
+    ),
+    list(
+      name = "var",
+      grad = .fo_grad_analytic_var(s$L, s$mu, s$J, s$sv_add, s$E_obs, s$v_obs, s$n),
+      nll  = function(i, step) .fo_nll_var(.perturb_L_diag(s$L, i, step),
+                                           s$mu, s$J, s$sv_add, s$E_obs, s$v_obs, s$n)
+    )
+  )
+
+  for (case in cases) {
+    for (i in 1:2) {
+      fd <- (case$nll(i, +delta) - case$nll(i, -delta)) / (2 * delta)
+      grad_name <- paste0("grad_L", i, i)
+      grad_correct <- case$grad[[grad_name]]
+      grad_wrong <- grad_correct / 2
+
+      expect_equal(grad_correct / fd, 1, tolerance = 1e-5,
+        info = sprintf("%s diagonal gradient ratio for L[%d,%d]", case$name, i, i))
+      expect_equal(grad_wrong / fd, 0.5, tolerance = 1e-5,
+        info = sprintf("%s diagonal gradient would be halved by an extra /2 for L[%d,%d]",
+                       case$name, i, i))
+    }
+  }
+})
+
 test_that("FO Omega L[2,1] off-diagonal gradient (cov) matches FD", {
   s   <- .fo_setup()
   ag  <- .fo_grad_analytic_cov(s$L, s$mu, s$J, s$sv_add, s$E_obs, s$V_obs, s$n)
