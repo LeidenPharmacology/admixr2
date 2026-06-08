@@ -35,6 +35,7 @@ one_cmt_fn <- function() {
 # eval-env is GC'd — which unloads the rxMod DLL and crashes later rxSolve calls.
 .int_cache        <- NULL
 .int_grad_cache   <- NULL
+.int_grad_lin_kappa_cache <- NULL
 .int_lincmt_cache <- NULL
 .int_irmc_cache   <- NULL
 .int_plot_cache   <- NULL
@@ -55,6 +56,29 @@ one_cmt_lincmt_fn <- function() {
     cl <- exp(tcl + eta.cl)
     v  <- exp(tv  + eta.v)
     linCmt() ~ add(add.err)
+  })
+}
+
+# ---- Model: 1-cmt with 2 etas + 1 unpaired struct theta ----------------------
+
+one_cmt_kappa_fn <- function() {
+  ini({
+    tcl     <- log(5)  ; label("Log CL")
+    tv      <- log(20) ; label("Log V")
+    # Intentionally unpaired from any eta so IRMC takes the kappa path.
+    tsc     <- log(1)  ; label("Log scale")
+    add.err <- 0.1     ; label("Additive SD")
+    eta.cl  ~ 0.09
+    eta.v   ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.v)
+    # Neutral scale keeps the same analytic mean while exercising has_kappa=TRUE.
+    sc <- exp(tsc)
+    d/dt(central) <- -(cl / v) * central
+    cp <- sc * central / v
+    cp ~ add(add.err)
   })
 }
 
@@ -154,6 +178,91 @@ one_cmt_lincmt_fn <- function() {
     g_irmc_ana = g_irmc_ana, g_irmc_fd = g_irmc_fd
   )
   .int_grad_cache
+}
+
+# ---- IRMC linearized-kappa grad setup ----------------------------------------
+
+.int_grad_lin_kappa_setup <- function(n_sim = 500L, seed = 42L) {
+  if (!is.null(.int_grad_lin_kappa_cache) &&
+      .int_grad_lin_kappa_cache$n_sim == n_sim &&
+      .int_grad_lin_kappa_cache$seed == seed)
+    return(.int_grad_lin_kappa_cache)
+
+  skip_if_not_installed("rxode2")
+
+  ui <- suppressMessages(tryCatch(
+    rxode2::rxode2(one_cmt_kappa_fn),
+    error = function(e) NULL
+  ))
+  if (is.null(ui)) skip("rxode2 model parse failed")
+
+  pinfo      <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  output_var <- "cp"
+
+  rxMod <- tryCatch(admixr2:::.admLoadModel(ui), error = function(e) NULL)
+  if (is.null(rxMod)) skip("Model compilation failed")
+
+  times  <- c(0.5, 1, 2, 4)
+  E_true <- .one_cmt_mean(5, 20, 100, times)
+  V_true <- diag((0.3 * E_true)^2)
+
+  study <- list(E = E_true, V = V_true, n = 200L, times = times,
+                ev = rxode2::et(amt = 100))
+  study <- admixr2:::.admNormaliseStudy(study, "s")
+  study$ev_full <- study$ev |> rxode2::et(study$times)
+  studies <- list(s = study)
+
+  set.seed(seed)
+  z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
+  params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
+  vec         <- admixr2:::.admBuildOptVec(pinfo)
+
+  p0   <- vec$p0
+  pars0 <- admixr2:::.admUnpack(p0, pinfo)
+  irmc_proposals <- lapply(seq_along(studies), function(si)
+    admixr2:::.adirmcProposal(
+      rxMod, pars0$struct, pinfo$sigma_names,
+      pinfo$sigma_is_prop, pinfo$sigma_is_lnorm,
+      pars0$omega, omega_expansion = 2,
+      studies[[si]], z_list[[si]], output_var,
+      params_list[[si]], cores = 1L,
+      pinfo$eta_col_names,
+      has_kappa         = pinfo$has_kappa,
+      kappa_method      = "linearized",
+      struct_transforms = pinfo$struct_transforms,
+      struct_eta_idx    = pinfo$struct_eta_idx,
+      use_grad          = TRUE
+    )
+  )
+  proposals_ok <- !any(vapply(irmc_proposals, is.null, logical(1)))
+
+  g_irmc_ana <- NULL
+  g_irmc_fd  <- NULL
+  if (proposals_ok) {
+    g_irmc_ana <- admixr2:::.adirmcInnerGrad(p0, pinfo, studies, irmc_proposals)
+    names(g_irmc_ana) <- names(p0)
+
+    h_irmc <- 1e-4
+    g_irmc_fd <- vapply(seq_along(p0), function(k) {
+      ph <- p0; ph[k] <- ph[k] + h_irmc
+      pl <- p0; pl[k] <- pl[k] - h_irmc
+      nh <- admixr2:::.adirmcNLL(ph, pinfo, studies, irmc_proposals)
+      nl <- admixr2:::.adirmcNLL(pl, pinfo, studies, irmc_proposals)
+      (nh - nl) / (2 * h_irmc)
+    }, double(1))
+    names(g_irmc_fd) <- names(p0)
+  }
+
+  .int_grad_lin_kappa_cache <<- list(
+    ui = ui, pinfo = pinfo, rxMod = rxMod,
+    studies = studies, z_list = z_list,
+    params_list = params_list, vec = vec,
+    output_var = output_var, times = times,
+    E_true = E_true, n_sim = n_sim, seed = seed,
+    irmc_proposals = irmc_proposals, proposals_ok = proposals_ok,
+    g_irmc_ana = g_irmc_ana, g_irmc_fd = g_irmc_fd
+  )
+  .int_grad_lin_kappa_cache
 }
 
 # ---- linCmt setup ------------------------------------------------------------
