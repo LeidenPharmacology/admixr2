@@ -461,7 +461,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
     is_var <- identical(s$method, "var")
     if (is_var) {
-      pv <- adm_col_sq_sum_cpp(cp_c) / (n_sim - 1L)
+      pv <- adm_col_sq_sum_cpp(cp_c) / n_sim
       for (k in seq_along(pars$sigma_var)) {
         sv <- pars$sigma_var[k]
         if (pinfo$sigma_is_prop[k])
@@ -1007,7 +1007,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
       is_var <- identical(s$method, "var")
       if (is_var) {
-        pv <- adm_col_sq_sum_cpp(cp_c) / (n_sim - 1L)
+        pv <- adm_col_sq_sum_cpp(cp_c) / n_sim
         for (k in seq_along(pars$sigma_var)) {
           sv <- pars$sigma_var[k]
           if (pinfo$sigma_is_prop[k])
