@@ -124,10 +124,10 @@ test_that("adm_grad_partial_cpp vs adm_grad_partial_var_cpp agree for diagonal d
   dV_diag <- c(0.5, 0.3)
   dV      <- diag(dV_diag)
   eff_dmu <- c(0.1, -0.2)
-  inv_nm1 <- 1.0 / (n_sim - 1L)
+  inv_n <- 1.0 / n_sim
 
-  g_cov <- admixr2:::adm_grad_partial_cpp(cp_c, dpred, dV, eff_dmu, inv_nm1)
-  g_var <- admixr2:::adm_grad_partial_var_cpp(cp_c, dpred, dV_diag, eff_dmu, inv_nm1)
+  g_cov <- admixr2:::adm_grad_partial_cpp(cp_c, dpred, dV, eff_dmu, inv_n)
+  g_var <- admixr2:::adm_grad_partial_var_cpp(cp_c, dpred, dV_diag, eff_dmu, inv_n)
 
   expect_equal(g_cov, g_var, tolerance = 1e-12)
 })

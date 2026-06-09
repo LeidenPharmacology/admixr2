@@ -40,7 +40,7 @@
   n_sim  <- nrow(cp_mat)
   mu     <- colMeans(cp_mat)
   cp_c   <- sweep(cp_mat, 2L, mu)
-  V_pred <- crossprod(cp_c) / (n_sim - 1L)
+  V_pred <- crossprod(cp_c) / n_sim
   diag(V_pred) <- diag(V_pred) + sigma_var
   cholV  <- chol(V_pred)
   invV   <- chol2inv(cholV)
