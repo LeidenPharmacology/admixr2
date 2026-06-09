@@ -153,7 +153,7 @@ test_that(".adfoVpred(): additive sigma -- V = J*Omega*J^T + sv*I", {
   diag(V_expected) <- diag(V_expected) + s$sv_add
 
   expect_equal(vp$V, V_expected, tolerance = 1e-12)
-  expect_equal(vp$mu_eff, s$mu)          # no lnorm correction
+  expect_equal(vp$mu_sigma, s$mu)          # no lnorm correction
 })
 
 test_that(".adfoVpred(): proportional sigma -- V diag += sv*mu^2", {
@@ -165,19 +165,19 @@ test_that(".adfoVpred(): proportional sigma -- V diag += sv*mu^2", {
   diag(V_expected) <- diag(V_expected) + s$sv_prop * s$mu^2
 
   expect_equal(vp$V, V_expected, tolerance = 1e-12)
-  expect_equal(vp$mu_eff, s$mu)
+  expect_equal(vp$mu_sigma, s$mu)
 })
 
-test_that(".adfoVpred(): lnorm sigma -- mu_eff = mu*exp(sv/2), diag += mu_eff^2*(exp(sv)-1)", {
+test_that(".adfoVpred(): lnorm sigma -- mu_sigma = mu*exp(sv/2), diag += mu_sigma^2*(exp(sv)-1)", {
   s   <- .fo_setup()
   vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, s$sv_add,
                                 sigma_is_prop = list(FALSE), sigma_is_lnorm = list(TRUE),
                                 n_t = s$n_t, n_eta = 2L)
-  mu_eff_exp <- s$mu * exp(s$sv_add / 2)
+  mu_sigma_exp <- s$mu * exp(s$sv_add / 2)
   V_expected <- s$J %*% (s$L %*% t(s$L)) %*% t(s$J)
-  diag(V_expected) <- diag(V_expected) + mu_eff_exp^2 * (exp(s$sv_add) - 1)
+  diag(V_expected) <- diag(V_expected) + mu_sigma_exp^2 * (exp(s$sv_add) - 1)
 
-  expect_equal(vp$mu_eff, mu_eff_exp, tolerance = 1e-12)
+  expect_equal(vp$mu_sigma, mu_sigma_exp, tolerance = 1e-12)
   expect_equal(diag(vp$V), diag(V_expected), tolerance = 1e-12)
 })
 
@@ -192,7 +192,7 @@ test_that(".adfoVpred(): no etas -- V is pure sigma contribution, J is ignored",
   diag(V_expected) <- s$sv_add
 
   expect_equal(vp$V, V_expected, tolerance = 1e-12)
-  expect_equal(vp$mu_eff, s$mu)
+  expect_equal(vp$mu_sigma, s$mu)
 })
 
 test_that(".adfoVpred(): two sigma terms -- contributions additive", {
