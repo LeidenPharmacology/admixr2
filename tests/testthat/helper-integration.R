@@ -36,12 +36,14 @@ one_cmt_fn <- function() {
 .int_cache        <- NULL
 .int_grad_cache   <- NULL
 .int_grad_lin_kappa_cache <- NULL
+.int_irmc_exact_kappa_cache <- NULL
 .int_lincmt_cache <- NULL
 .int_irmc_cache   <- NULL
 .int_plot_cache   <- NULL
 .int_cov_cache    <- NULL
 .int_adfo_cache        <- NULL
 .int_adfo_kappa_cache  <- NULL
+.int_adfo_cov_cache    <- NULL
 
 # ---- linCmt model (1-cmt, 2 etas) -------------------------------------------
 
@@ -116,7 +118,6 @@ one_cmt_kappa_fn <- function() {
   study$ev_full <- study$ev |> rxode2::et(study$times)
   studies <- list(s = study)
 
-  set.seed(seed)
   z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
   params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
   vec         <- admixr2:::.admBuildOptVec(pinfo)
@@ -183,12 +184,7 @@ one_cmt_kappa_fn <- function() {
 
 # ---- IRMC linearized-kappa grad setup ----------------------------------------
 
-.int_grad_lin_kappa_setup <- function(n_sim = 500L, seed = 42L) {
-  if (!is.null(.int_grad_lin_kappa_cache) &&
-      .int_grad_lin_kappa_cache$n_sim == n_sim &&
-      .int_grad_lin_kappa_cache$seed == seed)
-    return(.int_grad_lin_kappa_cache)
-
+.int_irmc_kappa_setup_impl <- function(kappa_method, n_sim, seed) {
   skip_if_not_installed("rxode2")
 
   ui <- suppressMessages(tryCatch(
@@ -213,12 +209,11 @@ one_cmt_kappa_fn <- function() {
   study$ev_full <- study$ev |> rxode2::et(study$times)
   studies <- list(s = study)
 
-  set.seed(seed)
   z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
   params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
   vec         <- admixr2:::.admBuildOptVec(pinfo)
 
-  p0   <- vec$p0
+  p0    <- vec$p0
   pars0 <- admixr2:::.admUnpack(p0, pinfo)
   irmc_proposals <- lapply(seq_along(studies), function(si)
     admixr2:::.adirmcProposal(
@@ -229,7 +224,7 @@ one_cmt_kappa_fn <- function() {
       params_list[[si]], cores = 1L,
       pinfo$eta_col_names,
       has_kappa         = pinfo$has_kappa,
-      kappa_method      = "linearized",
+      kappa_method      = kappa_method,
       struct_transforms = pinfo$struct_transforms,
       struct_eta_idx    = pinfo$struct_eta_idx,
       use_grad          = TRUE
@@ -254,7 +249,7 @@ one_cmt_kappa_fn <- function() {
     names(g_irmc_fd) <- names(p0)
   }
 
-  .int_grad_lin_kappa_cache <<- list(
+  list(
     ui = ui, pinfo = pinfo, rxMod = rxMod,
     studies = studies, z_list = z_list,
     params_list = params_list, vec = vec,
@@ -263,6 +258,14 @@ one_cmt_kappa_fn <- function() {
     irmc_proposals = irmc_proposals, proposals_ok = proposals_ok,
     g_irmc_ana = g_irmc_ana, g_irmc_fd = g_irmc_fd
   )
+}
+
+.int_grad_lin_kappa_setup <- function(n_sim = 500L, seed = 42L) {
+  if (!is.null(.int_grad_lin_kappa_cache) &&
+      .int_grad_lin_kappa_cache$n_sim == n_sim &&
+      .int_grad_lin_kappa_cache$seed == seed)
+    return(.int_grad_lin_kappa_cache)
+  .int_grad_lin_kappa_cache <<- .int_irmc_kappa_setup_impl("linearized", n_sim, seed)
   .int_grad_lin_kappa_cache
 }
 
@@ -298,7 +301,6 @@ one_cmt_kappa_fn <- function() {
   study$ev_full <- study$ev |> rxode2::et(study$times)
   studies <- list(s = study)
 
-  set.seed(seed)
   z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
   params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
   vec         <- admixr2:::.admBuildOptVec(pinfo)
@@ -352,7 +354,6 @@ one_cmt_kappa_fn <- function() {
   s$ev_full <- s$ev |> rxode2::et(s$times)
   studies <- list(s = s)
 
-  set.seed(seed)
   z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
   params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
   vec         <- admixr2:::.admBuildOptVec(pinfo)
@@ -435,7 +436,10 @@ one_cmt_kappa_fn <- function() {
 }
 
 # ---- Covariance setup --------------------------------------------------------
-# Uses cov_n_sim = 5000L so the NLL surface is smooth enough for a PD Hessian.
+# Uses 5000 Sobol points pre-built here (not inside .admCalcCov()) so the draw
+# happens at a fixed position in the Sobol sequence. Passes z_cov directly with
+# cov_n_sim = NULL to skip internal regeneration which would draw at an
+# unpredictable sequence position mid-computation.
 # Cached once per session — avoids 5x repeated expensive computation in tests.
 
 .int_cov_setup <- function() {
@@ -454,16 +458,24 @@ one_cmt_kappa_fn <- function() {
   p_cov   <- env$vec$p0
   p_cov[n_s + seq_len(n_e)] <- 0  # 2*log(sigma_sd) = 0 → sigma_sd = 1
 
+  # Build a 5000-point Sobol z_list here, outside .admCalcCov(), so the draw
+  # happens at a fixed position in the Sobol sequence (always right after
+  # .int_grad_setup()'s 500-point draw). Passing z_cov directly with
+  # cov_n_sim = NULL avoids the internal regeneration inside .admCalcCov()
+  # which would draw at an unpredictable sequence position.
+  z_cov      <- admixr2:::.admMakeZ(5000L, pinfo, 1L, "sobol")
+  params_cov <- admixr2:::.admMakeParamsList(5000L, pinfo, 1L)
+
   result_nll <- suppressWarnings(admixr2:::.admCalcCov(
-    p_cov, pinfo, env$studies, env$z_list,
-    env$rxMod, env$output_var, env$params_list, 1L,
-    cov_n_sim = 5000L, use_grad = FALSE
+    p_cov, pinfo, env$studies, z_cov,
+    env$rxMod, env$output_var, params_cov, 1L,
+    cov_n_sim = NULL, use_grad = FALSE
   ))
 
   result_grad <- suppressWarnings(admixr2:::.admCalcCov(
-    p_cov, pinfo, env$studies, env$z_list,
-    env$rxMod, env$output_var, env$params_list, 1L,
-    cov_n_sim = 5000L, use_grad = TRUE, sensModel = NULL
+    p_cov, pinfo, env$studies, z_cov,
+    env$rxMod, env$output_var, params_cov, 1L,
+    cov_n_sim = NULL, use_grad = TRUE, sensModel = NULL
   ))
 
   .int_cov_cache <<- list(
@@ -472,9 +484,64 @@ one_cmt_kappa_fn <- function() {
     n_struct    = n_s,
     struct_names = pinfo$struct_names,
     result_nll  = result_nll,
-    result_grad = result_grad
+    result_grad = result_grad,
+    z_cov       = z_cov,
+    params_cov  = params_cov
   )
   .int_cov_cache
+}
+
+# ---- FO setup ----------------------------------------------------------------
+# Reuses sens+rxMod from .int_grad_setup() (ordering invariant satisfied).
+# Kept in helper so it is visible to test-integration-cov.R as well.
+
+.int_adfo_setup <- function() {
+  if (!is.null(.int_adfo_cache)) return(.int_adfo_cache)
+
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+
+  env <- .int_grad_setup()
+  if (is.null(env$rxMod)) skip("rxMod unavailable from grad setup")
+
+  pinfo      <- env$pinfo
+  studies    <- env$studies
+  output_var <- env$output_var
+  p0         <- env$vec$p0
+
+  params_list <- admixr2:::.admMakeParamsList(1L, pinfo, length(studies))
+
+  nll_p0 <- admixr2:::.adfoNLL(p0, pinfo, studies, env$sensModel, env$rxMod,
+                                output_var, params_list, cores = 1L)
+
+  p_bad     <- p0; p_bad["tcl"] <- p_bad["tcl"] + 0.5
+  nll_p_bad <- admixr2:::.adfoNLL(p_bad, pinfo, studies, env$sensModel, env$rxMod,
+                                   output_var, params_list, cores = 1L)
+
+  h_fd  <- 1e-4
+  g_ana <- admixr2:::.adfoGrad(p0, pinfo, studies, env$sensModel, env$rxMod,
+                                output_var, params_list, cores = 1L, grad_h = h_fd)
+
+  g_fd <- vapply(seq_along(p0), function(k) {
+    ph <- p0; ph[k] <- ph[k] + h_fd
+    pl <- p0; pl[k] <- pl[k] - h_fd
+    nh <- admixr2:::.adfoNLL(ph, pinfo, studies, env$sensModel, env$rxMod,
+                              output_var, params_list, 1L)
+    nl <- admixr2:::.adfoNLL(pl, pinfo, studies, env$sensModel, env$rxMod,
+                              output_var, params_list, 1L)
+    (nh - nl) / (2 * h_fd)
+  }, double(1))
+  names(g_fd) <- names(p0)
+
+  .int_adfo_cache <<- list(
+    pinfo = pinfo, studies = studies,
+    rxMod = env$rxMod, sensModel = env$sensModel,
+    output_var = output_var, params_list = params_list,
+    p0 = p0, p_bad = p_bad,
+    nll_p0 = nll_p0, nll_p_bad = nll_p_bad,
+    g_ana = g_ana, g_fd = g_fd, h_fd = h_fd
+  )
+  .int_adfo_cache
 }
 
 # ---- FO kappa setup ----------------------------------------------------------
@@ -539,4 +606,55 @@ one_cmt_kappa_fn <- function() {
     p0 = p0, g_ana = g_ana, g_fd = g_fd, h_fd = h_fd
   )
   .int_adfo_kappa_cache
+}
+
+# ---- FO covariance setup -----------------------------------------------------
+# Mirrors .int_cov_setup() but calls .adfoCalcCov() instead of .admCalcCov().
+# Shifts sigma to sd=1 (log_sigma_var=0) so the Hessian is well-conditioned.
+
+.int_adfo_cov_setup <- function() {
+  if (!is.null(.int_adfo_cov_cache)) return(.int_adfo_cov_cache)
+
+  env <- .int_adfo_setup()   # handles skip guards internally
+
+  pinfo <- env$pinfo
+  n_s   <- length(pinfo$struct_names)
+  n_e   <- length(pinfo$sigma_names)
+  p_cov <- env$p0
+  p_cov[n_s + seq_len(n_e)] <- 0  # 2*log(sigma_sd) = 0 → sigma_sd = 1
+
+  result_nll <- suppressWarnings(admixr2:::.adfoCalcCov(
+    p_cov, pinfo, env$studies, env$sensModel, env$rxMod, env$output_var,
+    env$params_list, 1L,
+    use_grad = FALSE
+  ))
+
+  result_grad <- suppressWarnings(admixr2:::.adfoCalcCov(
+    p_cov, pinfo, env$studies, env$sensModel, env$rxMod, env$output_var,
+    env$params_list, 1L,
+    use_grad = TRUE
+  ))
+
+  .int_adfo_cov_cache <<- list(
+    env          = env,
+    p_cov        = p_cov,
+    n_struct     = n_s,
+    struct_names = pinfo$struct_names,
+    result_nll   = result_nll,
+    result_grad  = result_grad
+  )
+  .int_adfo_cov_cache
+}
+
+# ---- IRMC exact-kappa gradient setup -----------------------------------------
+# Same as .int_grad_lin_kappa_setup() but kappa_method = "exact".
+# Uses one_cmt_kappa_fn so has_kappa = TRUE (tsc is unpaired).
+
+.int_irmc_exact_kappa_setup <- function(n_sim = 500L, seed = 42L) {
+  if (!is.null(.int_irmc_exact_kappa_cache) &&
+      .int_irmc_exact_kappa_cache$n_sim == n_sim &&
+      .int_irmc_exact_kappa_cache$seed == seed)
+    return(.int_irmc_exact_kappa_cache)
+  .int_irmc_exact_kappa_cache <<- .int_irmc_kappa_setup_impl("exact", n_sim, seed)
+  .int_irmc_exact_kappa_cache
 }

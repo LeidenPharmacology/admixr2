@@ -326,6 +326,11 @@
     }
   }
 
+  if (!all(is.finite(H))) {
+    warning("adfoCalcCov: Hessian has non-finite entries -- covariance not computed")
+    return(NULL)
+  }
+
   eig_dec <- tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
   H_eigs  <- if (!is.null(eig_dec)) eig_dec$values else rep(NA_real_, np_cov)
 

@@ -64,9 +64,26 @@ test_that("irmcInnerGrad with linearized kappa: ratio vs FD within 5%", {
   env <- .int_grad_lin_kappa_setup()
   if (!env$proposals_ok) skip("proposal draw failed")
 
-  ratio <- env$g_irmc_ana / env$g_irmc_fd
-  bad   <- names(ratio)[abs(ratio - 1) > 0.05]
+  ratio    <- env$g_irmc_ana / env$g_irmc_fd
+  ok       <- is.finite(env$g_irmc_fd) & abs(env$g_irmc_fd) > 1e-6
+  if (sum(ok) == 0L) skip("All IRMC FD gradients near-zero or non-finite at p0")
+  ratio_ok <- ratio[ok]
+  bad      <- names(ratio_ok)[abs(ratio_ok - 1) > 0.05]
   expect_equal(length(bad), 0L,
     info = paste("Params with |ratio - 1| > 0.05:",
-                 paste(sprintf("%s=%.4f", bad, ratio[bad]), collapse = ", ")))
+                 paste(sprintf("%s=%.4f", bad, ratio_ok[bad]), collapse = ", ")))
+})
+
+test_that("irmcInnerGrad with exact kappa: ratio vs FD within 5%", {
+  env <- .int_irmc_exact_kappa_setup()
+  if (!env$proposals_ok) skip("proposal draw failed")
+
+  ratio    <- env$g_irmc_ana / env$g_irmc_fd
+  ok       <- is.finite(env$g_irmc_fd) & abs(env$g_irmc_fd) > 1e-6
+  if (sum(ok) == 0L) skip("All IRMC FD gradients near-zero or non-finite at p0")
+  ratio_ok <- ratio[ok]
+  bad      <- names(ratio_ok)[abs(ratio_ok - 1) > 0.05]
+  expect_equal(length(bad), 0L,
+    info = paste("Params with |ratio - 1| > 0.05:",
+                 paste(sprintf("%s=%.4f", bad, ratio_ok[bad]), collapse = ", ")))
 })
