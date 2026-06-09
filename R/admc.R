@@ -1587,6 +1587,7 @@ admStopWorkers <- function() {
         .inner <- tryCatch(ui$foceiModel$inner, error = function(e) NULL)
         if (is.null(.inner)) {
           message("  [PSOCK] Sens model unavailable (foceiModel$inner = NULL); workers will use grad = 'fd'.")
+          all_args_par$grad <- "fd"
         } else {
           .scf <- file.path(rxode2::rxTempDir(),
                             paste0("adm-sens-", digest::digest(.inner), ".qs2"))
@@ -1596,6 +1597,7 @@ admStopWorkers <- function() {
             all_args_par$sens_rename     <- .sm$rename_map
           } else {
             message("  [PSOCK] Sens model cache file not found; workers will use grad = 'fd'.")
+            all_args_par$grad <- "fd"
           }
         }
       }
@@ -1642,7 +1644,8 @@ admStopWorkers <- function() {
       else
         furrr::furrr_options(seed = NULL,
           globals = c(.fn_list, list(inits = inits, all_args_par = all_args_par,
-                                     cores_vec = cores_vec, worker_fn = worker_fn)))
+                                     cores_vec = cores_vec, worker_fn = worker_fn,
+                                     effective_workers = effective_workers)))
       for (.batch in batches) {
         .br <- furrr::future_map(
           .batch, function(r) {
