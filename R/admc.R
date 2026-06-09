@@ -493,10 +493,10 @@ nmObjGetControl.admc <- function(x, ...) {
     }
 
     n_t   <- length(s$times)
-    D_mat <- if (n_eta > 0L) do.call(cbind, dpred_list) else NULL
 
     # sigma_mu_scale: error-V sensitivity w.r.t. mu_sim, reused across all gradient terms.
     # For lnorm, also folds in the residual scaling by exp(sv/2): (exp(sv/2)-1)*dNLL_dmu.
+    # Computed once per study (depends only on pars, dNLL_dV_diag, dNLL_dmu, mu_sim, mu).
     sigma_mu_scale <- numeric(n_t)
     for (k in seq_along(pars$sigma_var)) {
       sv <- pars$sigma_var[k]
@@ -513,19 +513,22 @@ nmObjGetControl.admc <- function(x, ...) {
 
     # Eta + omega gradient: one C++ call; var variant avoids n_txn_t intermediates.
     if (n_eta > 0L) {
-      eta_rows_df <- pinfo$eta_rows_df
+      eta_rows_df  <- pinfo$eta_rows_df
+      D_mat        <- do.call(cbind, dpred_list)
       z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
+      neta1 <- as.integer(eta_rows_df$neta1)
+      neta2 <- as.integer(eta_rows_df$neta2)
       go <- if (is_var)
         adm_grad_eta_omega_var_cpp(
           cp_c, D_mat, z_diag_scale, z,
           dNLL_dV_diag, dNLL_dmu, sigma_mu_scale,
-          as.integer(eta_rows_df$neta1), as.integer(eta_rows_df$neta2),
+          neta1, neta2,
           n_t, n_eta)
       else
         adm_grad_eta_omega_cpp(
           cp_c, D_mat, z_diag_scale, z,
           dNLL_dV, dNLL_dmu, sigma_mu_scale,
-          as.integer(eta_rows_df$neta1), as.integer(eta_rows_df$neta2),
+          neta1, neta2,
           n_t, n_eta)
       for (j in seq_len(n_eta)) {
         if (!is.null(pinfo$struct_eta_idx) && !is.na(pinfo$struct_eta_idx[j]))
@@ -1056,17 +1059,19 @@ nmObjGetControl.admc <- function(x, ...) {
         D_mat        <- do.call(cbind, dpred_list)
         eta_rows_df  <- pinfo$eta_rows_df
         z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
+        neta1 <- as.integer(eta_rows_df$neta1)
+        neta2 <- as.integer(eta_rows_df$neta2)
         go <- if (is_var)
           adm_grad_eta_omega_var_cpp(
             cp_c, D_mat, z_diag_scale, z,
             dNLL_dV_diag, dNLL_dmu, sigma_mu_scale,
-            as.integer(eta_rows_df$neta1), as.integer(eta_rows_df$neta2),
+            neta1, neta2,
             n_t, n_eta)
         else
           adm_grad_eta_omega_cpp(
             cp_c, D_mat, z_diag_scale, z,
             dNLL_dV, dNLL_dmu, sigma_mu_scale,
-            as.integer(eta_rows_df$neta1), as.integer(eta_rows_df$neta2),
+            neta1, neta2,
             n_t, n_eta)
         for (j in seq_len(n_eta)) {
           if (!is.null(pinfo$struct_eta_idx) && !is.na(pinfo$struct_eta_idx[j]))

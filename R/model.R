@@ -11,10 +11,6 @@
     load_ok <- !is.null(mod) &&
       tryCatch({ rxode2::rxLoad(mod); TRUE }, error = function(e) FALSE)
     if (load_ok) {
-      .old_wd <- tryCatch(getwd(), error = function(e) NULL)
-      on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
-      setwd(rxode2::rxTempDir())
-      suppressMessages(tryCatch(rxode2::rxode2(ui), error = function(e) NULL))
       return(mod)
     }
     tryCatch(file.remove(.cacheFile), error = function(e) NULL)
