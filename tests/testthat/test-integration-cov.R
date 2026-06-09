@@ -67,7 +67,23 @@ test_that("admCalcCov grad-FD: result dimensions match NLL-FD path", {
   expect_equal(dim(res_grad), dim(res_nll))
 })
 
-# ---- Error path: non-finite NLL at p_hat -------------------------------------
+# ---- Error paths: non-finite NLL and non-finite Hessian ----------------------
+
+test_that("admCalcCov: non-finite Hessian entries warns and returns NULL", {
+  env_cov <- .int_cov_setup()
+  # cov_h_outer = 1e6 → h_gill[sigma] = max(|0|, 0.1) * 1e6 = 1e5.
+  # sigma perturbed to exp(1e5/2) → Inf → Inf NLL → H[sigma,sigma] = Inf.
+  result <- NULL
+  expect_warning(
+    { result <- admixr2:::.admCalcCov(
+        env_cov$p_cov, env_cov$env$pinfo, env_cov$env$studies, env_cov$env$z_list,
+        env_cov$env$rxMod, env_cov$env$output_var, env_cov$env$params_list, 1L,
+        cov_n_sim = NULL, use_grad = FALSE, cov_h_outer = 1e6
+      ) },
+    "Hessian has non-finite entries"
+  )
+  expect_null(result)
+})
 
 test_that("admCalcCov: non-finite NLL at p_hat warns and returns NULL", {
   env <- .int_grad_setup()
@@ -144,13 +160,38 @@ test_that("adfoCalcCov grad-FD: result dimensions match NLL-FD path", {
   expect_equal(dim(res_grad), dim(res_nll))
 })
 
-# ---- adfoCalcCov: Error path --------------------------------------------------
+# ---- adfoCalcCov: Error paths -------------------------------------------------
+
+test_that("adfoCalcCov: non-finite Hessian entries warns and returns NULL", {
+  env_cov <- .int_adfo_cov_setup()
+  # cov_h_outer = 1e6 → h_gill[sigma] = max(|0|, 0.1) * 1e6 = 1e5.
+  # sigma perturbed to exp(1e5/2) → Inf → Inf NLL → H[sigma,sigma] = Inf.
+  result <- NULL
+  expect_warning(
+    { result <- admixr2:::.adfoCalcCov(
+        env_cov$p_cov, env_cov$env$pinfo, env_cov$env$studies,
+        env_cov$env$sensModel, env_cov$env$rxMod, env_cov$env$output_var,
+        env_cov$env$params_list, 1L,
+        use_grad = FALSE, cov_h_outer = 1e6
+      ) },
+    "Hessian has non-finite entries"
+  )
+  expect_null(result)
+})
 
 test_that("adfoCalcCov: non-finite NLL at p_hat warns and returns NULL", {
   env <- .int_adfo_setup()
 
   p_nonfinite <- env$p0
   p_nonfinite["tcl"] <- 1e10   # exp(1e10) → Inf CL → rxSolve returns 0/NaN → Inf NLL
+
+  nll_check <- suppressWarnings(admixr2:::.adfoNLL(
+    p_nonfinite, env$pinfo, env$studies,
+    env$sensModel, env$rxMod, env$output_var,
+    env$params_list, 1L
+  ))
+  skip_if(is.finite(nll_check),
+          "rxSolve returned finite NLL at tcl=1e10; error-path assumption invalid")
 
   result <- NULL
   expect_warning(

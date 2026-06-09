@@ -118,7 +118,6 @@ one_cmt_kappa_fn <- function() {
   study$ev_full <- study$ev |> rxode2::et(study$times)
   studies <- list(s = study)
 
-  set.seed(seed)
   z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
   params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
   vec         <- admixr2:::.admBuildOptVec(pinfo)
@@ -215,7 +214,6 @@ one_cmt_kappa_fn <- function() {
   study$ev_full <- study$ev |> rxode2::et(study$times)
   studies <- list(s = study)
 
-  set.seed(seed)
   z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
   params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
   vec         <- admixr2:::.admBuildOptVec(pinfo)
@@ -300,7 +298,6 @@ one_cmt_kappa_fn <- function() {
   study$ev_full <- study$ev |> rxode2::et(study$times)
   studies <- list(s = study)
 
-  set.seed(seed)
   z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
   params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
   vec         <- admixr2:::.admBuildOptVec(pinfo)
@@ -354,7 +351,6 @@ one_cmt_kappa_fn <- function() {
   s$ev_full <- s$ev |> rxode2::et(s$times)
   studies <- list(s = s)
 
-  set.seed(seed)
   z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
   params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
   vec         <- admixr2:::.admBuildOptVec(pinfo)
@@ -679,7 +675,6 @@ one_cmt_kappa_fn <- function() {
   study$ev_full <- study$ev |> rxode2::et(study$times)
   studies <- list(s = study)
 
-  set.seed(seed)
   z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
   params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
   vec         <- admixr2:::.admBuildOptVec(pinfo)
