@@ -289,7 +289,8 @@
 
   nll0 <- nll_fn(p_hat)
   if (!is.finite(nll0)) {
-    warning("adfoCalcCov: NLL not finite at p_hat -- covariance not computed")
+    warning("adfoCalcCov: NLL not finite at p_hat -- covariance not computed",
+            call. = FALSE)
     return(NULL)
   }
 
@@ -346,7 +347,8 @@
     chol2inv(chol(H)),
     error = function(e) tryCatch(solve(H), error = function(e2) NULL))
   if (is.null(Hinv)) {
-    warning("adfoCalcCov: Hessian inversion failed -- covariance not computed")
+    warning("adfoCalcCov: Hessian inversion failed -- covariance not computed",
+            call. = FALSE)
     return(NULL)
   }
 

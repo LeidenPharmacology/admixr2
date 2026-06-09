@@ -306,21 +306,21 @@ nmObjGetControl.adirmc <- function(x, ...) {
     mu  <- as.numeric(wmc$mu)
     V   <- wmc$V
 
-    mu_sim_irmc <- mu
+    mu_struct <- mu
     for (k in seq_along(pars$sigma_var))
       if (prop$sigma_type[k] == 2L)
         mu <- mu * exp(pars$sigma_var[k] / 2)
     for (k in seq_along(pars$sigma_var)) {
       sv <- pars$sigma_var[k]
       if (prop$sigma_type[k] == 1L)
-        diag(V) <- diag(V) + sv * mu_sim_irmc^2
+        diag(V) <- diag(V) + sv * mu_struct^2
       else if (prop$sigma_type[k] == 2L)
         diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
       else
         diag(V) <- diag(V) + sv
     }
 
-    mu_before_kappa <- mu
+    mu_sigma <- mu
     kappa_delta <- if (!is.null(prop$mu_pop))
       prop$kappa_fn(pars$struct) - prop$mu_pop
     else numeric(0)
@@ -346,19 +346,19 @@ nmObjGetControl.adirmc <- function(x, ...) {
       dNLL_dV_diag <- diag(dNLL_dV)
     }
 
-    # eff_dNLL_dmu folds in sigma V sensitivity w.r.t. mu_sim.
-    # prop:  dV_diag/dmu_sim = 2*sv*mu_sim -> +2*sv*mu_before_kappa*dNLL_dV_diag
+    # eff_dNLL_dmu folds in sigma V sensitivity w.r.t. mu_struct.
+    # prop:  dV_diag/dmu_struct = 2*sv*mu_struct -> +2*sv*mu_sigma*dNLL_dV_diag
     # lnorm: also scales residual path by exp(sv/2): +(exp(sv/2)-1)*dNLL_dmu
-    #        plus V path: +2*exp(sv/2)*mu_before_kappa*(exp(sv)-1)*dNLL_dV_diag
+    #        plus V path: +2*exp(sv/2)*mu_sigma*(exp(sv)-1)*dNLL_dV_diag
     eff_dNLL_dmu <- dNLL_dmu
     for (k in seq_along(pars$sigma_var)) {
       sv <- pars$sigma_var[k]
       if (prop$sigma_type[k] == 1L) {
-        eff_dNLL_dmu <- eff_dNLL_dmu + 2 * sv * mu_before_kappa * dNLL_dV_diag
+        eff_dNLL_dmu <- eff_dNLL_dmu + 2 * sv * mu_sigma * dNLL_dV_diag
       } else if (prop$sigma_type[k] == 2L) {
         eff_dNLL_dmu <- eff_dNLL_dmu +
           (exp(sv / 2) - 1) * dNLL_dmu +
-          2 * exp(sv / 2) * mu_before_kappa * (exp(sv) - 1) * dNLL_dV_diag
+          2 * exp(sv / 2) * mu_sigma * (exp(sv) - 1) * dNLL_dV_diag
       }
     }
 
