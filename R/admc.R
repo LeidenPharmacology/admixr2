@@ -451,12 +451,12 @@ nmObjGetControl.admc <- function(x, ...) {
       }
     }
 
-    mu_sim <- colMeans(cp_mat)
-    mu     <- mu_sim
+    mu_struct <- colMeans(cp_mat)
+    mu     <- mu_struct
     for (k in seq_along(pars$sigma_var))
       if (pinfo$sigma_is_lnorm[k])
         mu <- mu * exp(pars$sigma_var[k] / 2)
-    cp_c <- sweep(cp_mat, 2L, mu_sim)
+    cp_c <- sweep(cp_mat, 2L, mu_struct)
     r    <- as.numeric(s$E) - mu
 
     is_var <- identical(s$method, "var")
@@ -465,7 +465,7 @@ nmObjGetControl.admc <- function(x, ...) {
       for (k in seq_along(pars$sigma_var)) {
         sv <- pars$sigma_var[k]
         if (pinfo$sigma_is_prop[k])
-          pv <- pv + sv * mu_sim^2
+          pv <- pv + sv * mu_struct^2
         else if (pinfo$sigma_is_lnorm[k])
           pv <- pv + mu^2 * (exp(sv) - 1)
         else
@@ -478,7 +478,7 @@ nmObjGetControl.admc <- function(x, ...) {
       for (k in seq_along(pars$sigma_var)) {
         sv <- pars$sigma_var[k]
         if (pinfo$sigma_is_prop[k])
-          diag(V) <- diag(V) + sv * mu_sim^2
+          diag(V) <- diag(V) + sv * mu_struct^2
         else if (pinfo$sigma_is_lnorm[k])
           diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
         else
@@ -495,13 +495,13 @@ nmObjGetControl.admc <- function(x, ...) {
     n_t   <- length(s$times)
     D_mat <- if (n_eta > 0L) do.call(cbind, dpred_list) else NULL
 
-    # sigma_mu_scale: error-V sensitivity w.r.t. mu_sim, reused across all gradient terms.
+    # sigma_mu_scale: error-V sensitivity w.r.t. mu_struct, reused across all gradient terms.
     # For lnorm, also folds in the residual scaling by exp(sv/2): (exp(sv/2)-1)*dNLL_dmu.
     sigma_mu_scale <- numeric(n_t)
     for (k in seq_along(pars$sigma_var)) {
       sv <- pars$sigma_var[k]
       if (pinfo$sigma_is_prop[k]) {
-        sigma_mu_scale <- sigma_mu_scale + 2 * sv * dNLL_dV_diag * mu_sim
+        sigma_mu_scale <- sigma_mu_scale + 2 * sv * dNLL_dV_diag * mu_struct
       } else if (pinfo$sigma_is_lnorm[k]) {
         sigma_mu_scale <- sigma_mu_scale +
           (exp(sv / 2) - 1) * dNLL_dmu +
@@ -620,7 +620,7 @@ nmObjGetControl.admc <- function(x, ...) {
       k_sig <- k_sig + 1L
       sv <- pars$sigma_var[k]
       if (pinfo$sigma_is_prop[k]) {
-        grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag * sv * mu_sim^2)
+        grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag * sv * mu_struct^2)
       } else if (pinfo$sigma_is_lnorm[k]) {
         grad[k_sig] <- grad[k_sig] + sv * (
           sum(dNLL_dV_diag * mu^2 * (2 * exp(sv) - 1)) +
@@ -997,12 +997,12 @@ nmObjGetControl.admc <- function(x, ...) {
       pars       <- pars_list[[ci]]
       eta_mat    <- eta_mats[[ci]]
 
-      mu_sim <- colMeans(cp_mat)
-      mu     <- mu_sim
+      mu_struct <- colMeans(cp_mat)
+      mu     <- mu_struct
       for (k in seq_along(pars$sigma_var))
         if (pinfo$sigma_is_lnorm[k])
           mu <- mu * exp(pars$sigma_var[k] / 2)
-      cp_c <- sweep(cp_mat, 2L, mu_sim)
+      cp_c <- sweep(cp_mat, 2L, mu_struct)
       r    <- as.numeric(s$E) - mu
 
       is_var <- identical(s$method, "var")
@@ -1011,7 +1011,7 @@ nmObjGetControl.admc <- function(x, ...) {
         for (k in seq_along(pars$sigma_var)) {
           sv <- pars$sigma_var[k]
           if (pinfo$sigma_is_prop[k])
-            pv <- pv + sv * mu_sim^2
+            pv <- pv + sv * mu_struct^2
           else if (pinfo$sigma_is_lnorm[k])
             pv <- pv + mu^2 * (exp(sv) - 1)
           else
@@ -1024,7 +1024,7 @@ nmObjGetControl.admc <- function(x, ...) {
         for (k in seq_along(pars$sigma_var)) {
           sv <- pars$sigma_var[k]
           if (pinfo$sigma_is_prop[k])
-            diag(V) <- diag(V) + sv * mu_sim^2
+            diag(V) <- diag(V) + sv * mu_struct^2
           else if (pinfo$sigma_is_lnorm[k])
             diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
           else
@@ -1042,7 +1042,7 @@ nmObjGetControl.admc <- function(x, ...) {
       for (k in seq_along(pars$sigma_var)) {
         sv <- pars$sigma_var[k]
         if (pinfo$sigma_is_prop[k]) {
-          sigma_mu_scale <- sigma_mu_scale + 2 * sv * dNLL_dV_diag * mu_sim
+          sigma_mu_scale <- sigma_mu_scale + 2 * sv * dNLL_dV_diag * mu_struct
         } else if (pinfo$sigma_is_lnorm[k]) {
           sigma_mu_scale <- sigma_mu_scale +
             (exp(sv / 2) - 1) * dNLL_dmu +
@@ -1100,7 +1100,7 @@ nmObjGetControl.admc <- function(x, ...) {
         k_sig <- k_sig + 1L
         sv <- pars$sigma_var[k]
         if (pinfo$sigma_is_prop[k]) {
-          grad_acc[ci, k_sig] <- grad_acc[ci, k_sig] + sum(dNLL_dV_diag * sv * mu_sim^2)
+          grad_acc[ci, k_sig] <- grad_acc[ci, k_sig] + sum(dNLL_dV_diag * sv * mu_struct^2)
         } else if (pinfo$sigma_is_lnorm[k]) {
           grad_acc[ci, k_sig] <- grad_acc[ci, k_sig] + sv * (
             sum(dNLL_dV_diag * mu^2 * (2 * exp(sv) - 1)) +
