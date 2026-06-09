@@ -1224,11 +1224,6 @@ nmObjGetControl.admc <- function(x, ...) {
     }
   }
 
-  if (!all(is.finite(H))) {
-    warning("admCalcCov: Hessian has non-finite entries -- covariance not computed")
-    return(NULL)
-  }
-
   eig_dec <- tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
   H_eigs  <- if (!is.null(eig_dec)) eig_dec$values else rep(NA_real_, np_cov)
 
@@ -1289,20 +1284,9 @@ nmObjGetControl.admc <- function(x, ...) {
                               rxMod_direct = NULL, sensModel_direct = NULL) {
   library(admixr2)
 
-  # Dev mode (load_all): furrr serializes updated functions into worker .GlobalEnv.
-  # Patch the installed namespace so all downstream calls use the dev versions.
-  .adm_dev_nms <- ls(envir = .GlobalEnv, all.names = TRUE,
-                     pattern = "^\\.(adm|adfo|adirmc|softmax|logdmvnorm)")
-  if (length(.adm_dev_nms) > 0L) {
-    .adm_ns <- asNamespace("admixr2")
-    for (.adm_nm in .adm_dev_nms) {
-      .adm_fn <- get(.adm_nm, envir = .GlobalEnv, inherits = FALSE)
-      if (is.function(.adm_fn))
-        tryCatch(utils::assignInNamespace(.adm_nm, .adm_fn, ns = .adm_ns),
-                 error = function(e) NULL)
-    }
-    rm(.adm_dev_nms, .adm_ns, .adm_nm, .adm_fn)
-  }
+  # Dev mode (PSOCK workers): patch installed namespace with dev functions from
+  # .GlobalEnv (serialised there by furrr globals).
+  .admPatchDevNamespace()
 
   cores_w <- if (!is.null(cores)) {
     cores
@@ -1477,6 +1461,25 @@ admStopWorkers <- function() {
   old_plan
 }
 
+# Patch the installed admixr2 namespace with any dev-mode functions found in
+# .GlobalEnv (put there by devtools::load_all() / furrr globals serialisation).
+# No-op when the namespace is locked (installed mode) or .GlobalEnv is clean.
+.admPatchDevNamespace <- function() {
+  pkg_locked <- tryCatch(environmentIsLocked(asNamespace("admixr2")), error = function(e) FALSE)
+  if (pkg_locked) return(invisible(NULL))
+  .adm_dev_nms <- ls(envir = .GlobalEnv, all.names = TRUE,
+                     pattern = "^\\.(adm|adfo|adirmc|softmax|logdmvnorm)")
+  if (length(.adm_dev_nms) == 0L) return(invisible(NULL))
+  .adm_ns <- asNamespace("admixr2")
+  for (.nm in .adm_dev_nms) {
+    .fn <- get(.nm, envir = .GlobalEnv, inherits = FALSE)
+    if (is.function(.fn))
+      tryCatch(utils::assignInNamespace(.nm, .fn, ns = .adm_ns),
+               error = function(e) NULL)
+  }
+  invisible(length(.adm_dev_nms))
+}
+
 .admRunRestarts <- function(worker_fn, p0, ov, pinfo, .ctl, ui, studies,
                             extra_args = list()) {
   n_r <- .ctl$n_restarts
@@ -1518,6 +1521,8 @@ admStopWorkers <- function() {
     .fn_list  <- setNames(lapply(.fn_names, get, envir = pkg_env), .fn_names)
     .fn_list[[.worker_fn_name]] <- worker_fn
   }
+
+  .admPatchDevNamespace()
 
   use_parallel <- n_r > 1L &&
     .ctl$workers > 1L &&
