@@ -1,4 +1,14 @@
-﻿# Back-transform one struct-theta from optimizer scale to natural scale.
+﻿# Emit a warning at most once per R session, keyed by `key`.
+# Used to avoid repeated identical warnings when the same model is parsed
+# once per study in multi-study fits.
+.adm_warn_once <- function(key, msg) {
+  if (is.null(.adm_warn_env[[key]])) {
+    .adm_warn_env[[key]] <- TRUE
+    warning(msg, call. = FALSE)
+  }
+}
+
+# Back-transform one struct-theta from optimizer scale to natural scale.
 .admBackTransform <- function(p, tr) {
   if (is.null(tr)) return(exp(p))
   switch(tr$curEval,
@@ -87,27 +97,31 @@
   .err_vals  <- sigma_rows$err
   .prop_approx <- unique(.err_vals[!is.na(.err_vals) & .err_vals %in% c("propT", "propF")])
   if (length(.prop_approx) > 0L)
-    warning("Residual error type(s) ", paste(.prop_approx, collapse = ", "),
-            " modelled as proportional (prop). Transform-aware scaling ignored.",
-            call. = FALSE)
+    .adm_warn_once(
+      paste0("prop_approx:", paste(.prop_approx, collapse = ",")),
+      paste0("Residual error type(s) ", paste(.prop_approx, collapse = ", "),
+             " modelled as proportional (prop). Transform-aware scaling ignored."))
   .add_approx <- unique(.err_vals[!is.na(.err_vals) & .err_vals %in% c("norm", "dnorm")])
   if (length(.add_approx) > 0L)
-    warning("Residual error type(s) ", paste(.add_approx, collapse = ", "),
-            " modelled as additive (add). Likelihood-path distinction ignored.",
-            call. = FALSE)
+    .adm_warn_once(
+      paste0("add_approx:", paste(.add_approx, collapse = ",")),
+      paste0("Residual error type(s) ", paste(.add_approx, collapse = ", "),
+             " modelled as additive (add). Likelihood-path distinction ignored."))
   .lnorm_approx <- unique(.err_vals[!is.na(.err_vals) & .err_vals %in% c("dlnorm", "logn", "dlogn")])
   if (length(.lnorm_approx) > 0L)
-    warning("Residual error type(s) ", paste(.lnorm_approx, collapse = ", "),
-            " modelled as lognormal (lnorm). Likelihood-path distinction ignored.",
-            call. = FALSE)
+    .adm_warn_once(
+      paste0("lnorm_approx:", paste(.lnorm_approx, collapse = ",")),
+      paste0("Residual error type(s) ", paste(.lnorm_approx, collapse = ", "),
+             " modelled as lognormal (lnorm). Likelihood-path distinction ignored."))
   .supported <- c("add", "norm", "dnorm", "prop", "propT", "propF",
                   "lnorm", "dlnorm", "logn", "dlogn")
   .unsupported <- unique(.err_vals[!is.na(.err_vals) & !.err_vals %in% .supported])
   if (length(.unsupported) > 0L)
-    warning("Unsupported residual error type(s) detected: ",
-            paste(.unsupported, collapse = ", "),
-            ". Treated as additive. Supported: add/norm, prop, lnorm.",
-            call. = FALSE)
+    .adm_warn_once(
+      paste0("unsupported:", paste(.unsupported, collapse = ",")),
+      paste0("Unsupported residual error type(s) detected: ",
+             paste(.unsupported, collapse = ", "),
+             ". Treated as additive. Supported: add/norm, prop, lnorm."))
   sigma_names <- sigma_rows$name
   sigma_is_prop  <- setNames(.err_vals %in% c("prop", "propT", "propF"), sigma_names)
   sigma_is_lnorm <- setNames(.err_vals %in% c("lnorm", "dlnorm", "logn", "dlogn"), sigma_names)
