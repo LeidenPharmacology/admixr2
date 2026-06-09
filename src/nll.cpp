@@ -367,7 +367,7 @@ double nll_var_from_samples_cpp(
 //   dpred    n_sim x n_t  FD sensitivity  (cp_hi - cp_lo) / 2h
 //   dNLL_dV  n_t  x n_t
 //   eff_dmu  n_t           dNLL_dmu + sigma_mu_scale
-//   inv_nm1  1 / (n_sim - 1)
+//   inv_nm1  1 / n_sim  (ML denominator; parameter name kept for ABI stability)
 // ---------------------------------------------------------------------------
 
 // [[Rcpp::export]]
@@ -422,18 +422,18 @@ Rcpp::List adm_grad_eta_omega_cpp(
 ) {
   int n_sim  = cp_c.rows();
   int n_o    = neta1.size();
-  double inv_nm1 = 1.0 / (n_sim - 1);
+  double inv_n = 1.0 / n_sim;
   VectorXd eff_dmu = dNLL_dmu + sigma_mu_scale;   // n_t
 
   // Eta gradient: for eta j, contribution = eff_dmu . colMeans(D_j)
-  //               + 2/(n-1) * sum(dNLL_dV .* (cp_c' D_j))
+  //               + 2/n * sum(dNLL_dV .* (cp_c' D_j))
   VectorXd eta_grad(n_eta);
   for (int j = 0; j < n_eta; ++j) {
     auto     D_j     = D_mat.middleCols(j * n_t, n_t);   // view, no copy
     VectorXd dmu_j   = D_j.colwise().mean();               // n_t
     MatrixXd cpD_j   = cp_c.transpose() * D_j;            // n_t x n_t
     double   trace_j = (dNLL_dV.array() * cpD_j.array()).sum();
-    eta_grad[j] = eff_dmu.dot(dmu_j) + 2.0 * inv_nm1 * trace_j;
+    eta_grad[j] = eff_dmu.dot(dmu_j) + 2.0 * inv_n * trace_j;
   }
 
   // Omega gradient: for Cholesky entry (ei,ej),
@@ -449,7 +449,7 @@ Rcpp::List adm_grad_eta_omega_cpp(
     VectorXd dmu_om  = D_ei.transpose() * scale / n_sim;  // n_t, no intermediate
     MatrixXd cp_c_s  = cp_c.array().colwise() * scale.array();   // n_sim x n_t
     double   trace_o = (dNLL_dV.array() * (cp_c_s.transpose() * D_ei).array()).sum();
-    omega_grad[r] = eff_dmu.dot(dmu_om) + 2.0 * inv_nm1 * trace_o;
+    omega_grad[r] = eff_dmu.dot(dmu_om) + 2.0 * inv_n * trace_o;
   }
 
   return Rcpp::List::create(
@@ -498,7 +498,7 @@ Rcpp::List adm_grad_eta_omega_var_cpp(
 ) {
   int n_sim  = cp_c.rows();
   int n_o    = neta1.size();
-  double inv_nm1 = 1.0 / (n_sim - 1);
+  double inv_n = 1.0 / n_sim;
   VectorXd eff_dmu = dNLL_dmu + sigma_mu_scale;
 
   VectorXd eta_grad(n_eta);
@@ -506,7 +506,7 @@ Rcpp::List adm_grad_eta_omega_var_cpp(
     auto     D_j      = D_mat.middleCols(j * n_t, n_t);
     VectorXd dmu_j    = D_j.colwise().mean();
     VectorXd diag_cpDj = (cp_c.array() * D_j.array()).matrix().colwise().sum().transpose();
-    eta_grad[j] = eff_dmu.dot(dmu_j) + 2.0 * inv_nm1 * dNLL_dV_diag.dot(diag_cpDj);
+    eta_grad[j] = eff_dmu.dot(dmu_j) + 2.0 * inv_n * dNLL_dV_diag.dot(diag_cpDj);
   }
 
   VectorXd omega_grad(n_o);
@@ -518,7 +518,7 @@ Rcpp::List adm_grad_eta_omega_var_cpp(
     VectorXd dmu_om   = D_ei.transpose() * scale / n_sim;
     MatrixXd cp_c_s   = cp_c.array().colwise() * scale.array();
     VectorXd diag_cpsD = (cp_c_s.array() * D_ei.array()).matrix().colwise().sum().transpose();
-    omega_grad[r] = eff_dmu.dot(dmu_om) + 2.0 * inv_nm1 * dNLL_dV_diag.dot(diag_cpsD);
+    omega_grad[r] = eff_dmu.dot(dmu_om) + 2.0 * inv_n * dNLL_dV_diag.dot(diag_cpsD);
   }
 
   return Rcpp::List::create(
