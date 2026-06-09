@@ -200,7 +200,7 @@ fit_sim <- nlmixr2(
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:02 
 #> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:03
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:02
 
 print(fit_sim)
 #> ── nlmixr² admc ──
@@ -211,14 +211,14 @@ print(fit_sim)
 #> ── Time (sec fit_sim$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    66.79      7.653  74.443
+#> 1   57.403      6.534  63.937
 #> 
 #> ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 #> 
 #>                         Parameter     Est.       SE   %RSE
 #> tcl           Log clearance (L/h)    1.608 0.009336 0.5806
-#> tv                 Log volume (L)    2.303  0.01276 0.5542
-#> tka     Log absorption rate (1/h) 0.001775  0.01798   1013
+#> tv                 Log volume (L)    2.303  0.01276 0.5543
+#> tka     Log absorption rate (1/h) 0.001746  0.01798   1030
 #> prop.sd     Proportional error SD   0.1999                
 #>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 #> tcl        4.994 (4.903, 5.086)     30.4            

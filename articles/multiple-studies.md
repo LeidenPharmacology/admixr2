@@ -135,9 +135,9 @@ fit_multi <- nlmixr2(
     seed      = 1L
   )
 )
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:07 
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:05 
 #> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:07
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:06
 
 print(fit_multi)
 #> ── nlmixr² admc ──
@@ -148,16 +148,16 @@ print(fit_multi)
 #> ── Time (sec fit_multi$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   79.581     18.118  97.699
+#> 1   64.133     14.929  79.062
 #> 
 #> ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 #> 
 #>                                   Parameter    Est.      SE   %RSE
-#> tcl                    Log clearance (L/hr)   1.601 0.01634  1.021
-#> tv1                  Log central volume (L)   2.314  0.0872  3.768
+#> tcl                    Log clearance (L/hr)   1.601 0.01635  1.021
+#> tv1                  Log central volume (L)   2.314 0.08719  3.768
 #> tv2               Log peripheral volume (L)   3.402 0.04007  1.178
 #> tq        Log inter-compartmental CL (L/hr)   2.285 0.02132 0.9332
-#> tka     Log absorption rate constant (1/hr) 0.02432 0.08199  337.2
+#> tka     Log absorption rate constant (1/hr) 0.02423 0.08198  338.4
 #> prop.sd      Proportional residual error SD  0.1984               
 #>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 #> tcl         4.958 (4.802, 5.12)     32.8            

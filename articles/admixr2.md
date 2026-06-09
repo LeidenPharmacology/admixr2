@@ -168,7 +168,7 @@ fit <- nlmixr2(
     seed      = 1L
   )
 )
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:07
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:05
 ```
 
 ## Inspecting the fit
@@ -184,16 +184,16 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   40.211      9.252  49.463
+#> 1    31.96      7.364  39.324
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>                                   Parameter    Est.      SE   %RSE
-#> tcl                    Log clearance (L/hr)   1.601 0.01634  1.021
-#> tv1                  Log central volume (L)   2.314  0.0872  3.768
+#> tcl                    Log clearance (L/hr)   1.601 0.01635  1.021
+#> tv1                  Log central volume (L)   2.314 0.08719  3.768
 #> tv2               Log peripheral volume (L)   3.402 0.04007  1.178
 #> tq        Log inter-compartmental CL (L/hr)   2.285 0.02132 0.9332
-#> tka     Log absorption rate constant (1/hr) 0.02431 0.08199  337.2
+#> tka     Log absorption rate constant (1/hr) 0.02423 0.08198  338.4
 #> prop.sd      Proportional residual error SD  0.1984               
 #>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 #> tcl         4.958 (4.802, 5.12)     32.8            
@@ -220,17 +220,17 @@ fit$objective                    # -2 log-likelihood
 #> [1] -3690.835
 fit$env$admExtra$struct          # structural parameters (log scale)
 #>        tcl        tv1        tv2         tq        tka 
-#> 1.60103998 2.31426955 3.40219648 2.28463058 0.02431472
+#> 1.60106955 2.31424049 3.40223702 2.28459886 0.02422593
 fit$env$admExtra$omega           # estimated Omega matrix
-#>           [,1]     [,2]       [,3]      [,4]       [,5]
-#> [1,] 0.1021253 0.000000 0.00000000 0.0000000 0.00000000
-#> [2,] 0.0000000 0.108028 0.00000000 0.0000000 0.00000000
-#> [3,] 0.0000000 0.000000 0.09749311 0.0000000 0.00000000
-#> [4,] 0.0000000 0.000000 0.00000000 0.1055874 0.00000000
-#> [5,] 0.0000000 0.000000 0.00000000 0.0000000 0.09272805
+#>           [,1]      [,2]       [,3]     [,4]       [,5]
+#> [1,] 0.1021589 0.0000000 0.00000000 0.000000 0.00000000
+#> [2,] 0.0000000 0.1080018 0.00000000 0.000000 0.00000000
+#> [3,] 0.0000000 0.0000000 0.09747445 0.000000 0.00000000
+#> [4,] 0.0000000 0.0000000 0.00000000 0.105588 0.00000000
+#> [5,] 0.0000000 0.0000000 0.00000000 0.000000 0.09281047
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
-#> 0.03937197
+#> 0.03937635
 
 logLik(fit)
 #> 'log Lik.' 1845.418 (df=11)
