@@ -2,6 +2,7 @@ test_that("fork: parallel fit NLL matches sequential (workers = 2, same seed)", 
   skip_on_cran()
   skip_if_not_installed("rxode2")
   skip_if_not_installed("furrr")
+  skip_if_not_installed("nlmixr2")
   skip_if(!future::supportsMulticore(),
           "fork not supported on this platform (RStudio or Windows)")
 
@@ -17,12 +18,12 @@ test_that("fork: parallel fit NLL matches sequential (workers = 2, same seed)", 
   )
 
   fit_seq <- suppressMessages(
-    nlmixr2(one_cmt_fn, admData(), est = "admc",
-            control = modifyList(ctl, list(workers = 1L)))
+    nlmixr2::nlmixr2(one_cmt_fn, admData(), est = "admc",
+                     control = modifyList(ctl, list(workers = 1L)))
   )
   fit_par <- suppressMessages(
-    nlmixr2(one_cmt_fn, admData(), est = "admc",
-            control = modifyList(ctl, list(workers = 2L)))
+    nlmixr2::nlmixr2(one_cmt_fn, admData(), est = "admc",
+                     control = modifyList(ctl, list(workers = 2L)))
   )
 
   expect_equal(fit_par$objective, fit_seq$objective, tolerance = 1e-4,
@@ -41,6 +42,7 @@ test_that("parallel: remainder >= 0 when cores < effective_workers (no rep() cra
   skip_on_cran()
   skip_if_not_installed("rxode2")
   skip_if_not_installed("furrr")
+  skip_if_not_installed("nlmixr2")
 
   env <- .int_grad_setup()
 
@@ -55,6 +57,6 @@ test_that("parallel: remainder >= 0 when cores < effective_workers (no rep() cra
   )
 
   expect_no_error(suppressMessages(
-    nlmixr2(one_cmt_fn, admData(), est = "admc", control = ctl)
+    nlmixr2::nlmixr2(one_cmt_fn, admData(), est = "admc", control = ctl)
   ))
 })
