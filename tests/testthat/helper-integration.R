@@ -184,7 +184,8 @@ one_cmt_kappa_fn <- function() {
 
 # ---- IRMC linearized-kappa grad setup ----------------------------------------
 
-.int_irmc_kappa_setup_impl <- function(kappa_method, n_sim, seed) {
+.int_irmc_kappa_setup_impl <- function(kappa_method, n_sim) {
+  skip_on_cran()
   skip_if_not_installed("rxode2")
 
   ui <- suppressMessages(tryCatch(
@@ -254,18 +255,18 @@ one_cmt_kappa_fn <- function() {
     studies = studies, z_list = z_list,
     params_list = params_list, vec = vec,
     output_var = output_var, times = times,
-    E_true = E_true, n_sim = n_sim, seed = seed,
+    E_true = E_true, n_sim = n_sim,
     irmc_proposals = irmc_proposals, proposals_ok = proposals_ok,
     g_irmc_ana = g_irmc_ana, g_irmc_fd = g_irmc_fd
   )
 }
 
-.int_grad_lin_kappa_setup <- function(n_sim = 500L, seed = 42L) {
+.int_grad_lin_kappa_setup <- function(n_sim = 500L) {
+  skip_on_cran()
   if (!is.null(.int_grad_lin_kappa_cache) &&
-      .int_grad_lin_kappa_cache$n_sim == n_sim &&
-      .int_grad_lin_kappa_cache$seed == seed)
+      .int_grad_lin_kappa_cache$n_sim == n_sim)
     return(.int_grad_lin_kappa_cache)
-  .int_grad_lin_kappa_cache <<- .int_irmc_kappa_setup_impl("linearized", n_sim, seed)
+  .int_grad_lin_kappa_cache <<- .int_irmc_kappa_setup_impl("linearized", n_sim)
   .int_grad_lin_kappa_cache
 }
 
@@ -650,11 +651,11 @@ one_cmt_kappa_fn <- function() {
 # Same as .int_grad_lin_kappa_setup() but kappa_method = "exact".
 # Uses one_cmt_kappa_fn so has_kappa = TRUE (tsc is unpaired).
 
-.int_irmc_exact_kappa_setup <- function(n_sim = 500L, seed = 42L) {
+.int_irmc_exact_kappa_setup <- function(n_sim = 500L) {
+  skip_on_cran()
   if (!is.null(.int_irmc_exact_kappa_cache) &&
-      .int_irmc_exact_kappa_cache$n_sim == n_sim &&
-      .int_irmc_exact_kappa_cache$seed == seed)
+      .int_irmc_exact_kappa_cache$n_sim == n_sim)
     return(.int_irmc_exact_kappa_cache)
-  .int_irmc_exact_kappa_cache <<- .int_irmc_kappa_setup_impl("exact", n_sim, seed)
+  .int_irmc_exact_kappa_cache <<- .int_irmc_kappa_setup_impl("exact", n_sim)
   .int_irmc_exact_kappa_cache
 }
