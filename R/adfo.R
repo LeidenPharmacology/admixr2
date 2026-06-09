@@ -49,14 +49,14 @@
   }
 }
 
-# Build V_pred and mu_eff (lnorm-corrected mean) for one study.
-# Returns list(V, mu_eff, JL): JL = J %*% L cached for gradient reuse.
+# Build V_pred and mu_sigma (lnorm-corrected mean) for one study.
+# Returns list(V, mu_sigma, JL): JL = J %*% L cached for gradient reuse.
 # V = tcrossprod(JL) + sigma contributions (additive, proportional, or lognormal).
 .adfoVpred <- function(mu_pred, J, L, sigma_var, sigma_is_prop, sigma_is_lnorm,
                         n_t, n_eta) {
-  mu_eff <- mu_pred
+  mu_sigma <- mu_pred
   for (i in seq_along(sigma_var))
-    if (sigma_is_lnorm[[i]]) mu_eff <- mu_eff * exp(sigma_var[[i]] / 2)
+    if (sigma_is_lnorm[[i]]) mu_sigma <- mu_sigma * exp(sigma_var[[i]] / 2)
 
   JL <- if (n_eta > 0L) J %*% L else matrix(0, n_t, 0)
   V  <- if (n_eta > 0L) tcrossprod(JL) else matrix(0, n_t, n_t)
@@ -66,13 +66,13 @@
     if (sigma_is_prop[[i]]) {
       d_V <- d_V + sv * mu_pred^2
     } else if (sigma_is_lnorm[[i]]) {
-      d_V <- d_V + mu_eff^2 * (exp(sv) - 1)
+      d_V <- d_V + mu_sigma^2 * (exp(sv) - 1)
     } else {
       d_V <- d_V + sv
     }
   }
   diag(V) <- d_V
-  list(V = V, mu_eff = mu_eff, JL = JL)
+  list(V = V, mu_sigma = mu_sigma, JL = JL)
 }
 
 # -- NLL -----------------------------------------------------------------------
@@ -94,9 +94,9 @@
                        pinfo$sigma_is_prop, pinfo$sigma_is_lnorm, n_t, pinfo$n_eta)
 
     nll_s <- if (s$method == "var") {
-      nll_var_cpp(s$E, s$v_diag, vp$mu_eff, diag(vp$V), s$n)
+      nll_var_cpp(s$E, s$v_diag, vp$mu_sigma, diag(vp$V), s$n)
     } else {
-      nll_cov_cpp(s$E, s$V, vp$mu_eff, vp$V, s$n)
+      nll_cov_cpp(s$E, s$V, vp$mu_sigma, vp$V, s$n)
     }
     if (!is.finite(nll_s)) return(Inf)
     total <- total + nll_s
@@ -147,9 +147,9 @@
                        pinfo$sigma_is_prop, pinfo$sigma_is_lnorm, n_t, n_eta)
 
     nll_s <- if (s$method == "var") {
-      nll_var_cpp(s$E, s$v_diag, vp$mu_eff, diag(vp$V), s$n)
+      nll_var_cpp(s$E, s$v_diag, vp$mu_sigma, diag(vp$V), s$n)
     } else {
-      nll_cov_cpp(s$E, s$V, vp$mu_eff, vp$V, s$n)
+      nll_cov_cpp(s$E, s$V, vp$mu_sigma, vp$V, s$n)
     }
     if (!is.finite(nll_s)) { nll_0 <- Inf; break }
     nll_0 <- nll_0 + nll_s
@@ -173,8 +173,8 @@
     if (is.null(mc)) next
     s      <- studies[[s_idx]]
     mu_pred <- mc$mu; J <- mc$J; vp <- mc$vp; n_t <- mc$n_t
-    V_pred  <- vp$V;  mu_eff <- vp$mu_eff
-    r       <- as.numeric(s$E) - mu_eff
+    V_pred  <- vp$V;  mu_sigma <- vp$mu_sigma
+    r       <- as.numeric(s$E) - mu_sigma
     is_var  <- identical(s$method, "var")
 
     if (is_var) {
@@ -222,8 +222,8 @@
         dNLL_dmu     <- if (is_var) -2 * s$n * r / diag(V_pred) else
           drop(-2 * s$n * invV %*% r)
         grad[k_sig] <- grad[k_sig] + sv * (
-          sum(dNLL_dV_diag * mu_eff^2 * (2 * exp(sv) - 1)) +
-          sum(dNLL_dmu * mu_eff) / 2
+          sum(dNLL_dV_diag * mu_sigma^2 * (2 * exp(sv) - 1)) +
+          sum(dNLL_dmu * mu_sigma) / 2
         )
       } else {
         grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag) * sv
@@ -324,11 +324,6 @@
           (nll_fn(p_pp) - nll_fn(p_pm) - nll_fn(p_mp) + nll_fn(p_mm)) / (4 * hi * hj)
       }
     }
-  }
-
-  if (!all(is.finite(H))) {
-    warning("adfoCalcCov: Hessian has non-finite entries -- covariance not computed")
-    return(NULL)
   }
 
   eig_dec <- tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
