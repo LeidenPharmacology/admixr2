@@ -11,6 +11,10 @@
 #       paste0("sens_",  digest(ui$lstExpr))  -> sens model result (in-memory cache)
 .adm_pin_env <- new.env(parent = emptyenv())
 
+# Session-scoped cache for once-per-session warnings.
+# Keys are error-type strings; presence of a key means the warning was already emitted.
+.adm_warn_env <- new.env(parent = emptyenv())
+
 .onLoad <- function(libname, pkgname) {
   tryCatch(.register_adm(),  error = function(e)
     warning("admixr2: admc registration failed (", conditionMessage(e), ")", call. = FALSE))
