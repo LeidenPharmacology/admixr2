@@ -516,10 +516,8 @@ nmObjGetControl.admc <- function(x, ...) {
       eta_rows_df  <- pinfo$eta_rows_df
       D_mat        <- do.call(cbind, dpred_list)
       z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
-      n_o   <- nrow(eta_rows_df)
       neta1 <- as.integer(eta_rows_df$neta1)
       neta2 <- as.integer(eta_rows_df$neta2)
-      stopifnot(length(neta1) == n_o, length(neta2) == n_o)
       go <- if (is_var)
         adm_grad_eta_omega_var_cpp(
           cp_c, D_mat, z_diag_scale, z,
@@ -1061,10 +1059,8 @@ nmObjGetControl.admc <- function(x, ...) {
         D_mat        <- do.call(cbind, dpred_list)
         eta_rows_df  <- pinfo$eta_rows_df
         z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
-        n_o   <- nrow(eta_rows_df)
         neta1 <- as.integer(eta_rows_df$neta1)
         neta2 <- as.integer(eta_rows_df$neta2)
-        stopifnot(length(neta1) == n_o, length(neta2) == n_o)
         go <- if (is_var)
           adm_grad_eta_omega_var_cpp(
             cp_c, D_mat, z_diag_scale, z,
