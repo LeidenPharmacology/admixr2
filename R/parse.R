@@ -98,19 +98,19 @@
   .prop_approx <- unique(.err_vals[!is.na(.err_vals) & .err_vals %in% c("propT", "propF")])
   if (length(.prop_approx) > 0L)
     .adm_warn_once(
-      paste0("prop_approx:", paste(.prop_approx, collapse = ",")),
+      paste0("prop_approx:", paste(sort(.prop_approx), collapse = ",")),
       paste0("Residual error type(s) ", paste(.prop_approx, collapse = ", "),
              " modelled as proportional (prop). Transform-aware scaling ignored."))
   .add_approx <- unique(.err_vals[!is.na(.err_vals) & .err_vals %in% c("norm", "dnorm")])
   if (length(.add_approx) > 0L)
     .adm_warn_once(
-      paste0("add_approx:", paste(.add_approx, collapse = ",")),
+      paste0("add_approx:", paste(sort(.add_approx), collapse = ",")),
       paste0("Residual error type(s) ", paste(.add_approx, collapse = ", "),
              " modelled as additive (add). Likelihood-path distinction ignored."))
   .lnorm_approx <- unique(.err_vals[!is.na(.err_vals) & .err_vals %in% c("dlnorm", "logn", "dlogn")])
   if (length(.lnorm_approx) > 0L)
     .adm_warn_once(
-      paste0("lnorm_approx:", paste(.lnorm_approx, collapse = ",")),
+      paste0("lnorm_approx:", paste(sort(.lnorm_approx), collapse = ",")),
       paste0("Residual error type(s) ", paste(.lnorm_approx, collapse = ", "),
              " modelled as lognormal (lnorm). Likelihood-path distinction ignored."))
   .supported <- c("add", "norm", "dnorm", "prop", "propT", "propF",
@@ -118,7 +118,7 @@
   .unsupported <- unique(.err_vals[!is.na(.err_vals) & !.err_vals %in% .supported])
   if (length(.unsupported) > 0L)
     .adm_warn_once(
-      paste0("unsupported:", paste(.unsupported, collapse = ",")),
+      paste0("unsupported:", paste(sort(.unsupported), collapse = ",")),
       paste0("Unsupported residual error type(s) detected: ",
              paste(.unsupported, collapse = ", "),
              ". Treated as additive. Supported: add/norm, prop, lnorm."))

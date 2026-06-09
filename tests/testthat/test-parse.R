@@ -342,6 +342,7 @@ test_that(".admLogBackTransform: log curEval returns p unchanged", {
 # ---- .admParseIniDf: warning paths for residual error types ------------------
 
 test_that(".admParseIniDf: propT/propF triggers proportional approximation warning", {
+  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "propT"
   expect_warning(
@@ -351,6 +352,7 @@ test_that(".admParseIniDf: propT/propF triggers proportional approximation warni
 })
 
 test_that(".admParseIniDf: propF triggers proportional approximation warning", {
+  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "propF"
   expect_warning(
@@ -360,6 +362,7 @@ test_that(".admParseIniDf: propF triggers proportional approximation warning", {
 })
 
 test_that(".admParseIniDf: norm triggers additive approximation warning", {
+  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "norm"
   expect_warning(
@@ -369,6 +372,7 @@ test_that(".admParseIniDf: norm triggers additive approximation warning", {
 })
 
 test_that(".admParseIniDf: dnorm triggers additive approximation warning", {
+  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "dnorm"
   expect_warning(
@@ -378,6 +382,7 @@ test_that(".admParseIniDf: dnorm triggers additive approximation warning", {
 })
 
 test_that(".admParseIniDf: dlnorm triggers lognormal approximation warning", {
+  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "dlnorm"
   expect_warning(
@@ -387,6 +392,7 @@ test_that(".admParseIniDf: dlnorm triggers lognormal approximation warning", {
 })
 
 test_that(".admParseIniDf: logn triggers lognormal approximation warning", {
+  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "logn"
   expect_warning(
@@ -396,6 +402,7 @@ test_that(".admParseIniDf: logn triggers lognormal approximation warning", {
 })
 
 test_that(".admParseIniDf: unsupported error type triggers warning", {
+  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "weird_err"
   expect_warning(
