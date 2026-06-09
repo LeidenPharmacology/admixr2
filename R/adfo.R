@@ -193,7 +193,10 @@
 
     # Omega gradient: d(-2LL)/d(L[i,j]) via ML = t(J) dNLL_dV JL
     # (JL cached from Pass 1 -- avoids materialising M = t(J) dNLL_dV J separately)
-    # Diagonal p = 2*log(L_ii): chain rule gives (ML)[i,i] * L[i,i]
+    # Diagonal p = log(Omega_ii) = 2*log(L_ii):
+    #   d(NLL)/d(L_ii) = 2*(ML)[i,i]  (factor-of-2 from symmetric d(LL^T)/d(L_ii))
+    #   d(L_ii)/dp     = L_ii/2        (chain rule through L_ii = exp(p/2))
+    #   => d(NLL)/dp   = (ML)[i,i] * L_ii   (the two factors of 2 cancel)
     # Off-diagonal p = L_ij:    chain rule gives 2*(ML)[i,j]
     if (n_eta > 0L && n_o > 0L) {
       JL <- mc$JL
