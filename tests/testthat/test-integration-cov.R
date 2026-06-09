@@ -86,3 +86,81 @@ test_that("admCalcCov: non-finite NLL at p_hat warns and returns NULL", {
   )
   expect_null(result)
 })
+
+# ---- adfoCalcCov: NLL-FD Hessian (use_grad = FALSE, default) -----------------
+
+test_that("adfoCalcCov NLL-FD: result is matrix of correct dimensions", {
+  env_cov <- .int_adfo_cov_setup()
+  result  <- env_cov$result_nll
+  expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
+  expect_true(is.matrix(result))
+  expect_equal(dim(result), c(env_cov$n_struct, env_cov$n_struct))
+  expect_equal(rownames(result), env_cov$struct_names)
+})
+
+test_that("adfoCalcCov NLL-FD: result is symmetric", {
+  env_cov <- .int_adfo_cov_setup()
+  result  <- env_cov$result_nll
+  expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
+  expect_equal(result, t(result), tolerance = 1e-10)
+})
+
+test_that("adfoCalcCov NLL-FD: result is positive definite", {
+  env_cov <- .int_adfo_cov_setup()
+  result  <- env_cov$result_nll
+  expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
+  eigs <- eigen(result, only.values = TRUE)$values
+  expect_true(all(eigs > 0))
+})
+
+test_that("adfoCalcCov NLL-FD: omega params excluded from returned matrix", {
+  env_cov <- .int_adfo_cov_setup()
+  result  <- env_cov$result_nll
+  expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
+  expect_false(any(rownames(result) %in% env_cov$env$pinfo$omega_par_names))
+})
+
+test_that("adfoCalcCov: covMethod='r' path reports omega SE exclusion", {
+  env_cov <- .int_adfo_cov_setup()
+  expect_message(
+    suppressWarnings(admixr2:::.adfoCalcCov(
+      env_cov$p_cov, env_cov$env$pinfo, env_cov$env$studies,
+      env_cov$env$sensModel, env_cov$env$rxMod, env_cov$env$output_var,
+      env_cov$env$params_list, 1L,
+      use_grad = FALSE
+    )),
+    "omega \\(IIV\\) SEs are not computed"
+  )
+})
+
+# ---- adfoCalcCov: Grad-FD Hessian (use_grad = TRUE) --------------------------
+
+test_that("adfoCalcCov grad-FD: result dimensions match NLL-FD path", {
+  env_cov  <- .int_adfo_cov_setup()
+  res_nll  <- env_cov$result_nll
+  res_grad <- env_cov$result_grad
+  expect_false(is.null(res_nll),  info = "NLL-FD Hessian should be PD at sigma_sd=1")
+  expect_false(is.null(res_grad), info = "grad-FD Hessian should be PD at sigma_sd=1")
+  expect_equal(dim(res_grad), dim(res_nll))
+})
+
+# ---- adfoCalcCov: Error path --------------------------------------------------
+
+test_that("adfoCalcCov: non-finite NLL at p_hat warns and returns NULL", {
+  env <- .int_adfo_setup()
+
+  p_nonfinite <- env$p0
+  p_nonfinite["tcl"] <- 1e10   # exp(1e10) → Inf CL → rxSolve returns 0/NaN → Inf NLL
+
+  result <- NULL
+  expect_warning(
+    { result <- admixr2:::.adfoCalcCov(
+        p_nonfinite, env$pinfo, env$studies,
+        env$sensModel, env$rxMod, env$output_var,
+        env$params_list, 1L,
+        use_grad = FALSE
+      ) },
+    "NLL not finite"
+  )
+  expect_null(result)
+})

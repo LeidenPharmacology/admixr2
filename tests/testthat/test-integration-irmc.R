@@ -70,3 +70,14 @@ test_that("irmcInnerGrad with linearized kappa: ratio vs FD within 5%", {
     info = paste("Params with |ratio - 1| > 0.05:",
                  paste(sprintf("%s=%.4f", bad, ratio[bad]), collapse = ", ")))
 })
+
+test_that("irmcInnerGrad with exact kappa: ratio vs FD within 5%", {
+  env <- .int_irmc_exact_kappa_setup()
+  if (!env$proposals_ok) skip("proposal draw failed")
+
+  ratio <- env$g_irmc_ana / env$g_irmc_fd
+  bad   <- names(ratio)[abs(ratio - 1) > 0.05]
+  expect_equal(length(bad), 0L,
+    info = paste("Params with |ratio - 1| > 0.05:",
+                 paste(sprintf("%s=%.4f", bad, ratio[bad]), collapse = ", ")))
+})
