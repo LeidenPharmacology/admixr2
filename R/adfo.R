@@ -383,8 +383,9 @@
   library(admixr2)
 
   # Dev mode (PSOCK workers): patch installed namespace with dev functions from
-  # .GlobalEnv (serialised there by furrr globals).
-  .admPatchDevNamespace()
+  # .GlobalEnv (serialised there by furrr globals). tryCatch guards against
+  # the installed package predating this function (run devtools::install() once).
+  tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   cores_w <- if (!is.null(cores)) {
     cores
