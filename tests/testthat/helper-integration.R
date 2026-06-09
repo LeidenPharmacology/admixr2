@@ -134,6 +134,15 @@ one_cmt_kappa_fn <- function() {
                                  params_list, cores = 1L, h = h_fd,
                                  sensModel = NULL, use_central = TRUE)
 
+  g_fd_p0 <- vapply(seq_along(p0), function(k) {
+    ph <- p0; ph[k] <- ph[k] + h_fd
+    pl <- p0; pl[k] <- pl[k] - h_fd
+    nh <- admixr2:::.admNLL(ph, pinfo, studies, z_list, rxMod, output_var, params_list, cores = 1L)
+    nl <- admixr2:::.admNLL(pl, pinfo, studies, z_list, rxMod, output_var, params_list, cores = 1L)
+    (nh - nl) / (2 * h_fd)
+  }, double(1))
+  names(g_fd_p0) <- names(p0)
+
   # ---- IRMC inner gradient ---------------------------------------------------
   pars0 <- admixr2:::.admUnpack(p0, pinfo)
   irmc_proposals <- lapply(seq_along(studies), function(si)
@@ -175,7 +184,7 @@ one_cmt_kappa_fn <- function() {
     params_list = params_list, vec = vec,
     output_var = output_var, times = times,
     E_true = E_true, n_sim = n_sim, seed = seed,
-    g_ana_p0 = g_ana_p0,
+    g_ana_p0 = g_ana_p0, g_fd_p0 = g_fd_p0,
     irmc_proposals = irmc_proposals, proposals_ok = proposals_ok,
     g_irmc_ana = g_irmc_ana, g_irmc_fd = g_irmc_fd
   )

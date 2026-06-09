@@ -474,7 +474,7 @@ nmObjGetControl.admc <- function(x, ...) {
       dNLL_dmu     <- s$n * as.numeric(-2 * r / pv)
       dNLL_dV_diag <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
     } else {
-      V <- crossprod(cp_c) / (n_sim - 1L)
+      V <- crossprod(cp_c) / n_sim
       for (k in seq_along(pars$sigma_var)) {
         sv <- pars$sigma_var[k]
         if (pinfo$sigma_is_prop[k])
@@ -509,7 +509,7 @@ nmObjGetControl.admc <- function(x, ...) {
       }
     }
     eff_dmu <- dNLL_dmu + sigma_mu_scale
-    inv_nm1 <- 1 / (n_sim - 1L)
+    inv_n <- 1 / n_sim
 
     # Eta + omega gradient: one C++ call; var variant avoids n_txn_t intermediates.
     if (n_eta > 0L) {
@@ -552,9 +552,9 @@ nmObjGetControl.admc <- function(x, ...) {
             (cp_hi_s - cp_mat) / h
           grad[k_s] <- grad[k_s] +
             if (is_var)
-              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_nm1)
+              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_n)
             else
-              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_nm1)
+              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_n)
         }
       } else {
         col_nms <- colnames(pdf)
@@ -608,9 +608,9 @@ nmObjGetControl.admc <- function(x, ...) {
           }
           grad[k_s] <- grad[k_s] +
             if (is_var)
-              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_nm1)
+              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_n)
             else
-              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_nm1)
+              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_n)
         }
       }
     }
@@ -1020,7 +1020,7 @@ nmObjGetControl.admc <- function(x, ...) {
         dNLL_dmu     <- s$n * as.numeric(-2 * r / pv)
         dNLL_dV_diag <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
       } else {
-        V <- crossprod(cp_c) / (n_sim - 1L)
+        V <- crossprod(cp_c) / n_sim
         for (k in seq_along(pars$sigma_var)) {
           sv <- pars$sigma_var[k]
           if (pinfo$sigma_is_prop[k])
@@ -1050,7 +1050,7 @@ nmObjGetControl.admc <- function(x, ...) {
         }
       }
       eff_dmu <- dNLL_dmu + sigma_mu_scale
-      inv_nm1 <- 1 / (n_sim - 1L)
+      inv_n <- 1 / n_sim
 
       if (n_eta > 0L) {
         D_mat        <- do.call(cbind, dpred_list)
@@ -1090,9 +1090,9 @@ nmObjGetControl.admc <- function(x, ...) {
         }
         grad_acc[ci, k_s] <- grad_acc[ci, k_s] +
           if (is_var)
-            adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_nm1)
+            adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_n)
           else
-            adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_nm1)
+            adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_n)
       }
 
       k_sig <- n_s
