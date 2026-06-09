@@ -76,8 +76,8 @@ test_that("admCalcCov: non-finite Hessian entries warns and returns NULL", {
   result <- NULL
   expect_warning(
     { result <- admixr2:::.admCalcCov(
-        env_cov$p_cov, env_cov$env$pinfo, env_cov$env$studies, env_cov$env$z_list,
-        env_cov$env$rxMod, env_cov$env$output_var, env_cov$env$params_list, 1L,
+        env_cov$p_cov, env_cov$env$pinfo, env_cov$env$studies, env_cov$z_cov,
+        env_cov$env$rxMod, env_cov$env$output_var, env_cov$params_cov, 1L,
         cov_n_sim = NULL, use_grad = FALSE, cov_h_outer = 1e6
       ) },
     "Hessian has non-finite entries"
