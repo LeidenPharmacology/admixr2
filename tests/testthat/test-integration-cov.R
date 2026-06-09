@@ -48,9 +48,9 @@ test_that("admCalcCov: covMethod='r' path reports omega SE exclusion", {
   env_cov <- .int_cov_setup()
   expect_message(
     suppressWarnings(admixr2:::.admCalcCov(
-      env_cov$p_cov, env_cov$env$pinfo, env_cov$env$studies, env_cov$env$z_list,
-      env_cov$env$rxMod, env_cov$env$output_var, env_cov$env$params_list, 1L,
-      cov_n_sim = 5000L, use_grad = FALSE
+      env_cov$p_cov, env_cov$env$pinfo, env_cov$env$studies, env_cov$z_cov,
+      env_cov$env$rxMod, env_cov$env$output_var, env_cov$params_cov, 1L,
+      cov_n_sim = NULL, use_grad = FALSE
     )),
     "omega \\(IIV\\) SEs are not computed"
   )
