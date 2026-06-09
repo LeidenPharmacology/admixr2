@@ -15,6 +15,20 @@
 # Keys are error-type strings; presence of a key means the warning was already emitted.
 .adm_warn_env <- new.env(parent = emptyenv())
 
+#' Clear the admixr2 model cache
+#'
+#' Removes all cached simulation models and pinned foceiModel objects from the
+#' session-level cache. Call this in long-running sessions to free memory after
+#' fitting many distinct models.
+#'
+#' @return Invisibly returns the number of objects removed.
+#' @export
+admClearCache <- function() {
+  nms <- ls(envir = .adm_pin_env, all.names = TRUE)
+  rm(list = nms, envir = .adm_pin_env)
+  invisible(length(nms))
+}
+
 .onLoad <- function(libname, pkgname) {
   tryCatch(.register_adm(),  error = function(e)
     warning("admixr2: admc registration failed (", conditionMessage(e), ")", call. = FALSE))
