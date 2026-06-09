@@ -12,6 +12,17 @@ test_that("admGrad: finite at initial parameters", {
   expect_true(all(is.finite(env$g_ana_p0)))
 })
 
+test_that("admGrad vs CFD of admNLL: ratio within 5% (ML denominator, same z_list)", {
+  env   <- .int_grad_setup()
+  ratio <- env$g_ana_p0 / env$g_fd_p0
+  ok    <- is.finite(ratio) & abs(env$g_fd_p0) > 1e-6
+  ratio_ok <- ratio[ok]
+  expect_true(all(abs(ratio_ok - 1) < 0.05),
+    info = sprintf("max ratio deviation: %.4f (param: %s)",
+                   max(abs(ratio_ok - 1)),
+                   names(ratio_ok)[which.max(abs(ratio_ok - 1))]))
+})
+
 test_that("ODE: .admLoadSensModel() returns non-NULL", {
   env <- .int_grad_setup()
   expect_false(is.null(env$sensModel),
