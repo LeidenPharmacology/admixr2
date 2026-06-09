@@ -336,6 +336,7 @@
     return(NULL)
   }
 
+
   eig_dec <- tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
   H_eigs  <- if (!is.null(eig_dec)) eig_dec$values else rep(NA_real_, np_cov)
 
@@ -381,19 +382,10 @@
                                 rxMod_direct = NULL, sensModel_direct = NULL) {
   library(admixr2)
 
-  # Dev mode: patch installed namespace with updated functions from .GlobalEnv.
-  .adm_dev_nms <- ls(envir = .GlobalEnv, all.names = TRUE,
-                     pattern = "^\\.(adm|adfo|adirmc|softmax|logdmvnorm)")
-  if (length(.adm_dev_nms) > 0L) {
-    .adm_ns <- asNamespace("admixr2")
-    for (.adm_nm in .adm_dev_nms) {
-      .adm_fn <- get(.adm_nm, envir = .GlobalEnv, inherits = FALSE)
-      if (is.function(.adm_fn))
-        tryCatch(utils::assignInNamespace(.adm_nm, .adm_fn, ns = .adm_ns),
-                 error = function(e) NULL)
-    }
-    rm(.adm_dev_nms, .adm_ns, .adm_nm, .adm_fn)
-  }
+  # Dev mode (PSOCK workers): patch installed namespace with dev functions from
+  # .GlobalEnv (serialised there by furrr globals). tryCatch guards against
+  # the installed package predating this function (run devtools::install() once).
+  tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   cores_w <- if (!is.null(cores)) {
     cores

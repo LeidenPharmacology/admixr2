@@ -61,9 +61,12 @@
 #' @param restart_sd Standard deviation of structural theta perturbations for
 #'   restart initialisation.
 #' @param workers Number of parallel workers for multi-restart. `1` (default)
-#'   runs restarts sequentially. Values `> 1` use a PSOCK cluster on Windows
-#'   and fork workers on Unix/macOS. Workers are stopped automatically after
-#'   the restart phase so all cores are available for the Hessian step.
+#'   runs restarts sequentially. Values `> 1` use fork workers on Unix/macOS
+#'   (outside RStudio) and a PSOCK cluster on Windows or inside RStudio.
+#'   **RStudio on Linux**: `future::supportsMulticore()` returns `FALSE` inside
+#'   RStudio even on Linux, so PSOCK is used; fork is only active when running
+#'   from a terminal. Workers are stopped automatically after the restart phase
+#'   so all cores are available for the Hessian step.
 #' @param rxControl `rxode2::rxControl()` object. Created automatically when `NULL`.
 #' @param addProp How combined additive+proportional error is parameterised in
 #'   the nlmixr2 output tables: `"combined2"` (default, variance form) or
@@ -198,6 +201,11 @@ admControl <- function(
   checkmate::assertIntegerish(n_restarts,  lower = 1L, len = 1, .var.name = "n_restarts")
   checkmate::assertNumeric(restart_sd,     lower = 0,  len = 1, .var.name = "restart_sd")
   checkmate::assertIntegerish(workers,     lower = 1L, len = 1, .var.name = "workers")
+  if (workers > 1L && cores < workers)
+    message(sprintf(
+      "admControl: cores (%d) < workers (%d) -- each worker will request 1 rxSolve thread.",
+      as.integer(cores), as.integer(workers)
+    ))
   checkmate::assertNumeric(ci,         lower = 0, upper = 1, len = 1, .var.name = "ci")
   checkmate::assertIntegerish(sigdig,  lower = 1L, len = 1, .var.name = "sigdig")
   checkmate::assertLogical(returnAdmr,             len = 1, .var.name = "returnAdmr")
@@ -1289,20 +1297,10 @@ nmObjGetControl.admc <- function(x, ...) {
                               rxMod_direct = NULL, sensModel_direct = NULL) {
   library(admixr2)
 
-  # Dev mode (load_all): furrr serializes updated functions into worker .GlobalEnv.
-  # Patch the installed namespace so all downstream calls use the dev versions.
-  .adm_dev_nms <- ls(envir = .GlobalEnv, all.names = TRUE,
-                     pattern = "^\\.(adm|adfo|adirmc|softmax|logdmvnorm)")
-  if (length(.adm_dev_nms) > 0L) {
-    .adm_ns <- asNamespace("admixr2")
-    for (.adm_nm in .adm_dev_nms) {
-      .adm_fn <- get(.adm_nm, envir = .GlobalEnv, inherits = FALSE)
-      if (is.function(.adm_fn))
-        tryCatch(utils::assignInNamespace(.adm_nm, .adm_fn, ns = .adm_ns),
-                 error = function(e) NULL)
-    }
-    rm(.adm_dev_nms, .adm_ns, .adm_nm, .adm_fn)
-  }
+  # Dev mode (PSOCK workers): patch installed namespace with dev functions from
+  # .GlobalEnv (serialised there by furrr globals). tryCatch guards against
+  # the installed package predating this function (run devtools::install() once).
+  tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   cores_w <- if (!is.null(cores)) {
     cores
@@ -1477,6 +1475,23 @@ admStopWorkers <- function() {
   old_plan
 }
 
+# Patch the installed admixr2 namespace with any dev-mode functions found in
+# .GlobalEnv (put there by devtools::load_all() / furrr globals serialisation).
+# No-op when .GlobalEnv has no matching dev functions (installed mode).
+.admPatchDevNamespace <- function() {
+  .adm_dev_nms <- ls(envir = .GlobalEnv, all.names = TRUE,
+                     pattern = "^\\.(adm|adfo|adirmc|softmax|logdmvnorm)")
+  if (length(.adm_dev_nms) == 0L) return(invisible(NULL))
+  .adm_ns <- asNamespace("admixr2")
+  for (.nm in .adm_dev_nms) {
+    .fn <- get(.nm, envir = .GlobalEnv, inherits = FALSE)
+    if (is.function(.fn))
+      tryCatch(utils::assignInNamespace(.nm, .fn, ns = .adm_ns),
+               error = function(e) NULL)
+  }
+  invisible(length(.adm_dev_nms))
+}
+
 .admRunRestarts <- function(worker_fn, p0, ov, pinfo, .ctl, ui, studies,
                             extra_args = list()) {
   n_r <- .ctl$n_restarts
@@ -1540,7 +1555,7 @@ admStopWorkers <- function() {
     n_workers         <- future::nbrOfWorkers()
     effective_workers <- min(n_workers, n_r)
     base_tpw          <- max(1L, floor(.ctl$cores / effective_workers))
-    remainder         <- .ctl$cores - base_tpw * effective_workers
+    remainder         <- max(0L, .ctl$cores - base_tpw * effective_workers)
     cores_vec         <- c(rep(base_tpw + 1L, remainder), rep(base_tpw, effective_workers - remainder))
     tpw_label         <- if (remainder > 0L)
       sprintf("%d-%d", base_tpw, base_tpw + 1L) else as.character(base_tpw)
@@ -1563,7 +1578,6 @@ admStopWorkers <- function() {
     } else {
       # PSOCK: compiled DLLs cannot serialize; reload from qs2 cache.
       all_args_par <- all_args
-      all_args_par$cores   <- base_tpw
       all_args_par$no_lock <- TRUE
       if ("print_progress"   %in% names(all_args_par)) all_args_par$print_progress   <- FALSE
       if ("rxMod_direct"     %in% names(all_args_par)) all_args_par$rxMod_direct     <- NULL
@@ -1571,13 +1585,17 @@ admStopWorkers <- function() {
       if (!is.null(extra_args$sensModel_direct)) {
         .sm    <- extra_args$sensModel_direct
         .inner <- tryCatch(ui$foceiModel$inner, error = function(e) NULL)
-        if (!is.null(.inner)) {
+        if (is.null(.inner)) {
+          message("  [PSOCK] Sens model unavailable (foceiModel$inner = NULL); workers will use grad = 'fd'.")
+        } else {
           .scf <- file.path(rxode2::rxTempDir(),
                             paste0("adm-sens-", digest::digest(.inner), ".qs2"))
           if (file.exists(.scf)) {
             all_args_par$sens_cache_file <- .scf
             all_args_par$sens_cols       <- .sm$sens_cols
             all_args_par$sens_rename     <- .sm$rename_map
+          } else {
+            message("  [PSOCK] Sens model cache file not found; workers will use grad = 'fd'.")
           }
         }
       }
@@ -1592,33 +1610,21 @@ admStopWorkers <- function() {
     batches <- split(seq_len(n_r), ceiling(seq_len(n_r) / effective_workers))
     results <- vector("list", n_r)
 
-    if (use_fork) {
-      for (.batch in batches) {
-        .br <- furrr::future_map(
-          .batch, function(r) {
-            args <- all_args_par
-            args$cores <- cores_vec[[(r - 1L) %% length(cores_vec) + 1L]]
-            do.call(worker_fn, c(list(restart_id = r, p_init = inits[[r]]), args))
-          },
-          .options = furrr::furrr_options(seed = NULL, globals = FALSE)
-        )
-        for (i in seq_along(.batch)) {
-          results[[.batch[[i]]]] <- .br[[i]]
-          message(.restart_msg(.batch[[i]], .br[[i]]))
-        }
-      }
-    } else if (pkg_locked) {
+    if (pkg_locked && !use_fork) {
+      # PSOCK (installed package): serialise to a clean-env lambda so furrr
+      # doesn't try to capture the surrounding closure.
       .par_lambda <- function(r) {
         wfn  <- get(.worker_fn_name, envir = asNamespace("admixr2"), inherits = FALSE)
         args <- all_args_par
-        args$cores <- cores_vec[[(r - 1L) %% length(cores_vec) + 1L]]
+        args$cores <- cores_vec[[(r - 1L) %% effective_workers + 1L]]
         do.call(wfn, c(list(restart_id = r, p_init = inits[[r]]), args))
       }
       .par_lambda_env <- new.env(parent = baseenv())
-      .par_lambda_env$.worker_fn_name <- .worker_fn_name
-      .par_lambda_env$inits            <- inits
-      .par_lambda_env$all_args_par     <- all_args_par
-      .par_lambda_env$cores_vec        <- cores_vec
+      .par_lambda_env$.worker_fn_name  <- .worker_fn_name
+      .par_lambda_env$inits             <- inits
+      .par_lambda_env$all_args_par      <- all_args_par
+      .par_lambda_env$cores_vec         <- cores_vec
+      .par_lambda_env$effective_workers <- effective_workers
       environment(.par_lambda) <- .par_lambda_env
       .furrr_opts <- furrr::furrr_options(seed = NULL, packages = "admixr2", globals = FALSE)
       for (.batch in batches) {
@@ -1629,16 +1635,19 @@ admStopWorkers <- function() {
         }
       }
     } else {
-      .furrr_opts <- furrr::furrr_options(
-        seed = NULL,
-        globals = c(.fn_list, list(inits = inits, all_args_par = all_args_par,
-                                   cores_vec = cores_vec, worker_fn = worker_fn))
-      )
+      # fork (Unix/macOS): child processes inherit parent memory via copy-on-write.
+      # dev-mode PSOCK: explicit globals required since namespace isn't locked.
+      .furrr_opts <- if (use_fork)
+        furrr::furrr_options(seed = NULL, globals = FALSE)
+      else
+        furrr::furrr_options(seed = NULL,
+          globals = c(.fn_list, list(inits = inits, all_args_par = all_args_par,
+                                     cores_vec = cores_vec, worker_fn = worker_fn)))
       for (.batch in batches) {
         .br <- furrr::future_map(
           .batch, function(r) {
             args <- all_args_par
-            args$cores <- cores_vec[[(r - 1L) %% length(cores_vec) + 1L]]
+            args$cores <- cores_vec[[(r - 1L) %% effective_workers + 1L]]
             do.call(worker_fn, c(list(restart_id = r, p_init = inits[[r]]), args))
           },
           .options = .furrr_opts
