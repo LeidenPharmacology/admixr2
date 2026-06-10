@@ -246,6 +246,10 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
   if (need_sim_local && !rxMod_ok)
     warning("plot.admFit: could not retrieve simulation model from fit object", call. = FALSE)
 
+  # Detect the simulation output variable (e.g. "ipredSim" for linCmt models)
+  # rather than assuming "cp" -- matches the detection used on the fit path.
+  out_var <- tryCatch(.admOutputVar(fit$env$ui), error = function(e) "cp")
+
   .sim_study <- function(s) {
     if (!rxMod_ok) return(NULL)
     tryCatch(rxode2::rxLoad(rxMod), error = function(e) NULL)
@@ -270,7 +274,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
                                       dimnames = list(NULL, col_nms)))
     params_df[["rxerr.cp"]] <- 1
     tryCatch(
-      .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, "cp", params_df, 1L),
+      .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, out_var, params_df, 1L),
       error = function(e) { warning("plot.admFit: simulation failed: ", e$message, call. = FALSE); NULL })
   }
 

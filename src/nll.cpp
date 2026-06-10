@@ -393,7 +393,14 @@ double adm_grad_partial_cpp(
 // Arguments:
 //   cp_c            n_sim x n_t    centred predictions
 //   D_mat           n_sim x (n_eta*n_t)  sensitivity matrix (do.call(cbind, dpred_list))
-//   eta_mat         n_sim x n_eta  realised random effects z %*% t(L)
+//   eta_mat         n_sim x n_eta  diagonal-Cholesky scale for the omega gradient.
+//                                  Callers MUST pass sweep(z, 2L, diag(L)/2, "*")
+//                                  (= z[:,i] * L_ii/2), NOT the realised effects
+//                                  z %*% t(L). The L_ii/2 factor is the
+//                                  d(L_ii)/d(log Omega_ii) chain-rule term; passing
+//                                  raw z %*% t(L) double-counts the diagonal (the
+//                                  factor-of-2 omega-gradient bug). Only used for
+//                                  diagonal entries (ei==ej); off-diagonal uses z.
 //   z               n_sim x n_eta  standard draws
 //   dNLL_dV         n_t  x n_t
 //   dNLL_dmu        n_t
