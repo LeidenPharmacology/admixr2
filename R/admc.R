@@ -1587,7 +1587,6 @@ admStopWorkers <- function() {
         .inner <- tryCatch(ui$foceiModel$inner, error = function(e) NULL)
         if (is.null(.inner)) {
           message("  [PSOCK] Sens model unavailable (foceiModel$inner = NULL); workers will use grad = 'fd'.")
-          all_args_par$grad <- "fd"
         } else {
           .scf <- file.path(rxode2::rxTempDir(),
                             paste0("adm-sens-", digest::digest(.inner), ".qs2"))
@@ -1597,7 +1596,6 @@ admStopWorkers <- function() {
             all_args_par$sens_rename     <- .sm$rename_map
           } else {
             message("  [PSOCK] Sens model cache file not found; workers will use grad = 'fd'.")
-            all_args_par$grad <- "fd"
           }
         }
       }
