@@ -367,7 +367,7 @@ double nll_var_from_samples_cpp(
 //   dpred    n_sim x n_t  FD sensitivity  (cp_hi - cp_lo) / 2h
 //   dNLL_dV  n_t  x n_t
 //   eff_dmu  n_t           dNLL_dmu + sigma_mu_scale
-//   inv_nm1  1 / n_sim  (ML denominator; parameter name kept for ABI stability)
+//   inv_nm1  1 / n_sim  (ML denominator; named inv_nm1 for ABI stability — do NOT pass 1/(n-1))
 // ---------------------------------------------------------------------------
 
 // [[Rcpp::export]]

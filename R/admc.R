@@ -1642,7 +1642,8 @@ admStopWorkers <- function() {
       else
         furrr::furrr_options(seed = NULL,
           globals = c(.fn_list, list(inits = inits, all_args_par = all_args_par,
-                                     cores_vec = cores_vec, worker_fn = worker_fn)))
+                                     cores_vec = cores_vec, worker_fn = worker_fn,
+                                     effective_workers = effective_workers)))
       for (.batch in batches) {
         .br <- furrr::future_map(
           .batch, function(r) {
