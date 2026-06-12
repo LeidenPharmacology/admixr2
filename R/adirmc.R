@@ -1223,6 +1223,10 @@ nlmixr2Est.adirmc <- function(env, ...) {
   .fit$env$method    <- "adirmc"
   .fit$env$studies   <- studies
   .fit$env$adirmcExtra <- .ret$adirmcExtra
+  # Populate nlmixr2-style parameter history so traceplot(fit) works natively.
+  .parHist <- .admBuildParHistData(.ret$adirmcExtra$all_traces,
+                                   .ret$adirmcExtra$par_names, .ui)
+  if (!is.null(.parHist)) .fit$env$parHistData <- .parHist
   .old_cls <- class(.fit)
   .new_cls <- c("admFit", .old_cls)
   attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")
