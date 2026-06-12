@@ -14,8 +14,6 @@
 #' @param seed Integer seed.  Applied before stochastic methods
 #'   (`"rnorm"`, `"lhs"`). Ignored when `method = "fo"`.
 #' @param cores Number of `rxSolve` threads.
-#' @param add_residual_error Add residual-error variance to the diagonal of
-#'   `V` (`TRUE` by default), matching the admixr2 NLL convention.
 #' @param return_samples Include the raw `n_sim x length(times)`
 #'   prediction matrix as `$samples` in each study's output. No effect when
 #'   `method = "fo"` (the FO expansion draws no samples).
@@ -30,30 +28,27 @@
 #' datagenControl(method = "fo")$method  # "fo"
 #' @export
 datagenControl <- function(
-  method             = c("mc", "fo"),
-  n_sim              = 5000L,
-  sampling           = c("sobol", "halton", "torus", "lhs", "rnorm"),
-  seed               = 12345L,
-  cores              = 1L,
-  add_residual_error = TRUE,
-  return_samples     = FALSE
+  method         = c("mc", "fo"),
+  n_sim          = 5000L,
+  sampling       = c("sobol", "halton", "torus", "lhs", "rnorm"),
+  seed           = 12345L,
+  cores          = 1L,
+  return_samples = FALSE
 ) {
   method   <- match.arg(method)
   sampling <- match.arg(sampling)
   checkmate::assertIntegerish(n_sim, lower = 1L, len = 1L)
   checkmate::assertIntegerish(seed,              len = 1L)
   checkmate::assertIntegerish(cores, lower = 1L, len = 1L)
-  checkmate::assertFlag(add_residual_error)
   checkmate::assertFlag(return_samples)
   structure(
     list(
-      method             = method,
-      n_sim              = as.integer(n_sim),
-      sampling           = sampling,
-      seed               = as.integer(seed),
-      cores              = as.integer(cores),
-      add_residual_error = add_residual_error,
-      return_samples     = return_samples
+      method         = method,
+      n_sim          = as.integer(n_sim),
+      sampling       = sampling,
+      seed           = as.integer(seed),
+      cores          = as.integer(cores),
+      return_samples = return_samples
     ),
     class = "datagenControl"
   )
@@ -94,8 +89,8 @@ datagenControl <- function(
 #'     \item{`V`}{Population covariance matrix
 #'       (`length(times)` x `length(times)`; ML denominator `n_sim` for
 #'       `method = "mc"`, the analytical FO covariance for `method = "fo"`).
-#'       Residual error is added to the diagonal when
-#'       `control$add_residual_error = TRUE`.}
+#'       The diagonal carries the model's residual-error variance; to generate
+#'       residual-free (IIV-only) moments, omit the error term from the model.}
 #'     \item{`n`}{Sample size (`NA_integer_` if not supplied).}
 #'     \item{`times`}{Observation times.}
 #'     \item{`ev`}{Dosing event table.}
@@ -124,9 +119,9 @@ datagenControl <- function(
 #' because the data-generating and data-analytic models coincide, the FO Hessian
 #' of the log-likelihood (the expected information matrix) is evaluated at the
 #' true maximum rather than at a point that is not an MLE of the generated data.
-#' For this to hold, keep `add_residual_error = TRUE` (the default): `est = "adfo"`
-#' always adds \eqn{\Sigma} to its predicted covariance, so generating a `V`
-#' without it would move the true parameters off the FO maximum.
+#' Note `est = "adfo"` always adds \eqn{\Sigma} to its predicted covariance, so
+#' for a consistent FIM keep the residual error in the generating model; omit it
+#' only when residual-free (IIV-only) moments are genuinely what you want.
 #'
 #' Models are compiled and cached on first use (keyed by model expression
 #' digest), so repeated calls or multiple studies sharing the same model incur
@@ -234,10 +229,8 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       n_t <- length(s$times)
       mj  <- .adfoGetMuJ(pars, pinfo, study_tmp, sensModel, rxMod, out_var,
                          params_mat, control$cores)
-      sv_l <- if (control$add_residual_error) pars$sigma_var       else list()
-      isp  <- if (control$add_residual_error) pinfo$sigma_is_prop  else logical(0)
-      isl  <- if (control$add_residual_error) pinfo$sigma_is_lnorm else logical(0)
-      vp   <- .adfoVpred(mj$mu, mj$J, pars$L, sv_l, isp, isl, n_t, pinfo$n_eta)
+      vp   <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var,
+                         pinfo$sigma_is_prop, pinfo$sigma_is_lnorm, n_t, pinfo$n_eta)
       mu     <- vp$mu_sigma
       V      <- vp$V
       cp_mat <- NULL
@@ -268,7 +261,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       V    <- crossprod(cp_c) / control$n_sim
 
       # Diagonal residual error (mirrors nll_cov_cpp sigma_type dispatch)
-      if (control$add_residual_error && length(pars$sigma_var) > 0L) {
+      if (length(pars$sigma_var) > 0L) {
         sv <- unname(pars$sigma_var[[1L]])
         if (isTRUE(pinfo$sigma_is_lnorm[[1L]])) {
           mu <- mu * exp(sv / 2)                          # lnorm mean correction

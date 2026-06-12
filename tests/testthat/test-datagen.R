@@ -8,7 +8,6 @@ test_that("datagenControl() returns correct class and defaults", {
   expect_equal(ctl$sampling,           "sobol")
   expect_equal(ctl$seed,               12345L)
   expect_equal(ctl$cores,              1L)
-  expect_true(ctl$add_residual_error)
   expect_false(ctl$return_samples)
 })
 
@@ -58,18 +57,9 @@ test_that("datagenControl(): negative n_sim errors", {
   expect_error(datagenControl(n_sim = -10), regexp = "n_sim")
 })
 
-test_that("datagenControl(): add_residual_error = FALSE accepted", {
-  ctl <- datagenControl(add_residual_error = FALSE)
-  expect_false(ctl$add_residual_error)
-})
-
 test_that("datagenControl(): return_samples = TRUE accepted", {
   ctl <- datagenControl(return_samples = TRUE)
   expect_true(ctl$return_samples)
-})
-
-test_that("datagenControl(): non-flag add_residual_error errors", {
-  expect_error(datagenControl(add_residual_error = "yes"))
 })
 
 # ---- datagen() validation errors (no rxode2 needed) ---------------------------
@@ -195,11 +185,12 @@ test_that("datagen(): return_samples=TRUE includes samples matrix", {
   expect_equal(dim(out$s1$samples), c(n_sim, length(times)))
 })
 
-test_that("datagen(): add_residual_error=FALSE keeps V as pure IIV cov", {
+test_that("datagen(): a model without a residual-error term yields IIV-only V", {
   skip_if_not_installed("rxode2")
   skip_on_cran()
 
-  pk_model <- function() {
+  # With residual error.
+  pk_err <- function() {
     ini({
       tcl <- log(5)
       tv  <- log(30)
@@ -215,18 +206,33 @@ test_that("datagen(): add_residual_error=FALSE keeps V as pure IIV cov", {
       cp ~ prop(prop.sd)
     })
   }
+  # Same structural model, no error term -> V should carry IIV only.
+  pk_noerr <- function() {
+    ini({
+      tcl <- log(5)
+      tv  <- log(30)
+      eta.cl ~ 0.09
+      eta.v  ~ 0.04
+    })
+    model({
+      cl <- exp(tcl + eta.cl)
+      v  <- exp(tv  + eta.v)
+      d/dt(central) <- -(cl/v) * central
+      cp <- central / v
+    })
+  }
 
   times   <- c(1, 4)
   studies <- list(s1 = list(times = times, ev = rxode2::et(amt = 100)))
 
-  out_with    <- datagen(studies, model = pk_model,
-                         control = datagenControl(n_sim = 500L, add_residual_error = TRUE))
-  out_without <- datagen(studies, model = pk_model,
-                         control = datagenControl(n_sim = 500L, add_residual_error = FALSE,
-                                                  seed = datagenControl()$seed))
+  v_err   <- datagen(studies, model = pk_err,
+                     control = datagenControl(n_sim = 500L))$s1$V
+  v_noerr <- datagen(studies, model = pk_noerr,
+                     control = datagenControl(n_sim = 500L))$s1$V
 
-  # With residual error, diagonal of V should be >= without
-  expect_true(all(diag(out_with$s1$V) >= diag(out_without$s1$V) - 1e-10))
+  # Proportional error inflates only the diagonal; off-diagonal IIV structure
+  # matches up to MC noise.
+  expect_true(all(diag(v_err) > diag(v_noerr)))
 })
 
 test_that("datagen(): multi-study with per-study model", {
@@ -364,40 +370,6 @@ test_that("datagen(method='fo'): deterministic (seed/n_sim irrelevant)", {
 
   expect_identical(a$s1$E, b$s1$E)
   expect_identical(a$s1$V, b$s1$V)
-})
-
-test_that("datagen(method='fo'): add_residual_error=FALSE drops the residual diagonal", {
-  skip_if_not_installed("rxode2")
-  skip_on_cran()
-
-  pk_model <- function() {
-    ini({
-      tcl <- log(5)
-      tv  <- log(30)
-      prop.sd <- c(0, 0.2)
-      eta.cl ~ 0.09
-      eta.v  ~ 0.04
-    })
-    model({
-      cl <- exp(tcl + eta.cl)
-      v  <- exp(tv  + eta.v)
-      d/dt(central) <- -(cl/v) * central
-      cp <- central / v
-      cp ~ prop(prop.sd)
-    })
-  }
-
-  studies <- list(s1 = list(times = c(1, 4), ev = rxode2::et(amt = 100)))
-
-  with    <- datagen(studies, model = pk_model,
-                     control = datagenControl(method = "fo", add_residual_error = TRUE))
-  without <- datagen(studies, model = pk_model,
-                     control = datagenControl(method = "fo", add_residual_error = FALSE))
-
-  # Residual error only touches the diagonal; off-diagonal J Omega J' is identical.
-  expect_true(all(diag(with$s1$V) > diag(without$s1$V)))
-  off <- upper.tri(with$s1$V)
-  expect_equal(with$s1$V[off], without$s1$V[off])
 })
 
 test_that("datagen(): unnamed studies get auto-names", {

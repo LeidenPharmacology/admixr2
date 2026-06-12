@@ -33,8 +33,8 @@ A named list with one element per study.  Each element contains:
 \item{\code{V}}{Population covariance matrix
 (\code{length(times)} x \code{length(times)}; ML denominator \code{n_sim} for
 \code{method = "mc"}, the analytical FO covariance for \code{method = "fo"}).
-Residual error is added to the diagonal when
-\code{control$add_residual_error = TRUE}.}
+The diagonal carries the model's residual-error variance; to generate
+residual-free (IIV-only) moments, omit the error term from the model.}
 \item{\code{n}}{Sample size (\code{NA_integer_} if not supplied).}
 \item{\code{times}}{Observation times.}
 \item{\code{ev}}{Dosing event table.}
@@ -73,9 +73,9 @@ evaluation and optimal design: the moments are fast and reproducible, and
 because the data-generating and data-analytic models coincide, the FO Hessian
 of the log-likelihood (the expected information matrix) is evaluated at the
 true maximum rather than at a point that is not an MLE of the generated data.
-For this to hold, keep \code{add_residual_error = TRUE} (the default): \code{est = "adfo"}
-always adds \eqn{\Sigma} to its predicted covariance, so generating a \code{V}
-without it would move the true parameters off the FO maximum.
+Note \code{est = "adfo"} always adds \eqn{\Sigma} to its predicted covariance, so
+for a consistent FIM keep the residual error in the generating model; omit it
+only when residual-free (IIV-only) moments are genuinely what you want.
 
 Models are compiled and cached on first use (keyed by model expression
 digest), so repeated calls or multiple studies sharing the same model incur

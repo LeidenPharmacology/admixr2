@@ -10,7 +10,6 @@ datagenControl(
   sampling = c("sobol", "halton", "torus", "lhs", "rnorm"),
   seed = 12345L,
   cores = 1L,
-  add_residual_error = TRUE,
   return_samples = FALSE
 )
 }
@@ -33,9 +32,6 @@ moments. Ignored when \code{method = "fo"}.}
 (\code{"rnorm"}, \code{"lhs"}). Ignored when \code{method = "fo"}.}
 
 \item{cores}{Number of \code{rxSolve} threads.}
-
-\item{add_residual_error}{Add residual-error variance to the diagonal of
-\code{V} (\code{TRUE} by default), matching the admixr2 NLL convention.}
 
 \item{return_samples}{Include the raw \verb{n_sim x length(times)}
 prediction matrix as \verb{$samples} in each study's output. No effect when
