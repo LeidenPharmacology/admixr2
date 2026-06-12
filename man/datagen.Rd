@@ -43,9 +43,10 @@ Residual error is added to the diagonal when
 }
 }
 \description{
-Simulates population mean vectors (\code{E}) and covariance matrices
-(\code{V}) for each study using Monte Carlo integration over the IIV
-distribution.  Each study may specify its own PK/PD model (as would be the
+Generates population mean vectors (\code{E}) and covariance matrices
+(\code{V}) for each study by integrating over the IIV distribution -- either by
+Monte Carlo (the default) or by a deterministic First-Order expansion
+(\code{method = "fo"}, see \code{\link[=datagenControl]{datagenControl()}}).  Each study may specify its own PK/PD model (as would be the
 case when digitising data from several published studies, each fit with a
 different structural model).  True parameter values are taken from the
 \code{ini()} block of each study's model.  Each element of the returned list
@@ -72,6 +73,9 @@ evaluation and optimal design: the moments are fast and reproducible, and
 because the data-generating and data-analytic models coincide, the FO Hessian
 of the log-likelihood (the expected information matrix) is evaluated at the
 true maximum rather than at a point that is not an MLE of the generated data.
+For this to hold, keep \code{add_residual_error = TRUE} (the default): \code{est = "adfo"}
+always adds \eqn{\Sigma} to its predicted covariance, so generating a \code{V}
+without it would move the true parameters off the FO maximum.
 
 Models are compiled and cached on first use (keyed by model expression
 digest), so repeated calls or multiple studies sharing the same model incur

@@ -62,9 +62,10 @@ datagenControl <- function(
 
 #' Generate aggregate study data from (possibly different) pharmacometric models
 #'
-#' Simulates population mean vectors (`E`) and covariance matrices
-#' (`V`) for each study using Monte Carlo integration over the IIV
-#' distribution.  Each study may specify its own PK/PD model (as would be the
+#' Generates population mean vectors (`E`) and covariance matrices
+#' (`V`) for each study by integrating over the IIV distribution -- either by
+#' Monte Carlo (the default) or by a deterministic First-Order expansion
+#' (`method = "fo"`, see [datagenControl()]).  Each study may specify its own PK/PD model (as would be the
 #' case when digitising data from several published studies, each fit with a
 #' different structural model).  True parameter values are taken from the
 #' `ini()` block of each study's model.  Each element of the returned list
@@ -123,6 +124,9 @@ datagenControl <- function(
 #' because the data-generating and data-analytic models coincide, the FO Hessian
 #' of the log-likelihood (the expected information matrix) is evaluated at the
 #' true maximum rather than at a point that is not an MLE of the generated data.
+#' For this to hold, keep `add_residual_error = TRUE` (the default): `est = "adfo"`
+#' always adds \eqn{\Sigma} to its predicted covariance, so generating a `V`
+#' without it would move the true parameters off the FO maximum.
 #'
 #' Models are compiled and cached on first use (keyed by model expression
 #' digest), so repeated calls or multiple studies sharing the same model incur
