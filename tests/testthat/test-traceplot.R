@@ -121,7 +121,8 @@ test_that("parHistData: NULL when par_trace col count disagrees with par_names",
 
 test_that("parHistData feeds nlmixr2's parHistStacked contract (iter/par/val)", {
   # Mirror nlmixr2est:::.parHistCalc + nmObjGet.parHistStacked stacking so we
-  # assert the shape traceplot.nlmixr2FitCore actually consumes.
+  # assert the shape traceplot.nlmixr2FitCore actually consumes. Runs even when
+  # nlmixr2est is unavailable; the live integration check below complements it.
   ini       <- make_inidf_2eta()
   pinfo     <- .admParseIniDf(ini)
   par_names <- names(.admBuildOptVec(pinfo)$p0)
@@ -135,4 +136,30 @@ test_that("parHistData feeds nlmixr2's parHistStacked contract (iter/par/val)", 
   expect_true(all(c("iter", "par", "val") %in% names(stacked)))
   expect_equal(nrow(stacked), 4L * length(par_names))
   expect_true(is.numeric(stacked$val))
+})
+
+test_that("parHistData is consumed by the real nlmixr2est parHistStacked getter", {
+  # Live integration: feed our parHistData through nlmixr2est's actual
+  # nmObjGet.parHistStacked (the path fit$parHistStacked -> traceplot uses)
+  # rather than a re-implementation, so a contract drift in nlmixr2est is caught.
+  skip_if_not_installed("nlmixr2est")
+  getter <- tryCatch(getFromNamespace("nmObjGet.parHistStacked", "nlmixr2est"),
+                     error = function(e) NULL)
+  skip_if(is.null(getter), "nlmixr2est:::nmObjGet.parHistStacked unavailable")
+
+  ini       <- make_inidf_2eta()
+  pinfo     <- .admParseIniDf(ini)
+  par_names <- names(.admBuildOptVec(pinfo)$p0)
+  ph <- .admBuildParHistData(.mk_traces(par_names), par_names, list(iniDf = ini))
+
+  # Minimal stand-in for a fit object: the getter reads x[[1]]$env$parHistData.
+  e <- new.env(); e$parHistData <- ph
+  stacked <- getter(list(list(env = e)))
+
+  expect_s3_class(stacked, "data.frame")
+  expect_true(all(c("iter", "par", "val") %in% names(stacked)))
+  expect_equal(nrow(stacked), 4L * length(par_names))
+  expect_true(is.numeric(stacked$val))
+  # Display names survive the round-trip (e.g. omega diagonal V(eta.cl)).
+  expect_true("V(eta.cl)" %in% as.character(stacked$par))
 })

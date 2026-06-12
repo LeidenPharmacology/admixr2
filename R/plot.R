@@ -219,7 +219,11 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## - natural scale under `"Unscaled"`, using the same back-transforms and
 ##   display names as the custom par panel (`.admTraceDisplaySpec`).
 ## - no burn-in marker: we leave `parHist`'s class without a `niter` attribute,
-##   so `traceplot()` draws no vline (we have nloptr evals, not SAEM iterations).
+##   so `traceplot()` draws no vline (the trace records improving nloptr
+##   evaluations, not SAEM iterations).
+##
+## Note the `iter` axis indexes improving optimizer evaluations (only steps that
+## lowered the best NLL are stored), not raw nloptr iterations.
 ##
 ## Returns `NULL` when no usable trace is available.
 .admBuildParHistData <- function(all_traces, par_names, ui) {
@@ -243,18 +247,16 @@ head.paged_df <- function(x, n = 6L, ...) {
   pinfo <- tryCatch(.admParseIniDf(ui$iniDf, ui), error = function(e) NULL)
   iniDf <- tryCatch(ui$iniDf, error = function(e) NULL)
   spec  <- .admTraceDisplaySpec(pinfo, par_names, iniDf)
+  # Without the display spec we cannot back-transform to natural scale; emit no
+  # parHistData rather than a raw optimizer-scale trace mislabelled "Unscaled".
+  if (is.null(spec)) return(NULL)
 
-  cols <- lapply(par_names, function(nm) {
-    fn <- if (!is.null(spec)) spec$back_fns[[nm]] else identity
-    as.numeric(fn(df[[nm]]))
-  })
-  disp <- if (!is.null(spec))
-    vapply(par_names, function(nm) spec$disp_nms[[nm]], character(1)) else par_names
-  names(cols) <- disp
+  cols <- lapply(par_names, function(nm) as.numeric(spec$back_fns[[nm]](df[[nm]])))
+  names(cols) <- vapply(par_names, function(nm) spec$disp_nms[[nm]], character(1))
 
   # Follow iniDf facet order when available so traceplot panels match the
   # custom par panel.
-  if (!is.null(spec) && !is.null(spec$param_order))
+  if (!is.null(spec$param_order))
     cols <- cols[spec$param_order]
 
   data.frame(type = "Unscaled",
@@ -262,6 +264,18 @@ head.paged_df <- function(x, n = 6L, ...) {
              cols,
              check.names = FALSE,
              stringsAsFactors = FALSE)
+}
+
+## Attach a nlmixr2-style `parHistData` slot to a freshly constructed admFit when
+## a usable trace is available. Shared by the admc/adfo/adirmc estimators so the
+## binding logic lives in one place. A `NULL` build result must not be bound --
+## `env$x <- NULL` still satisfies `exists()` and would leave a stale slot that
+## `nmObjGet.parHistStacked` treats as present -- so we guard on non-NULL.
+## `fit$env` is an environment, so the assignment is in place.
+.admAttachParHist <- function(fit, all_traces, par_names, ui) {
+  ph <- .admBuildParHistData(all_traces, par_names, ui)
+  if (!is.null(ph)) fit$env$parHistData <- ph
+  invisible(fit)
 }
 
 #' Diagnostic plots for an admixr2 fit
@@ -300,10 +314,12 @@ head.paged_df <- function(x, n = 6L, ...) {
 #' the parameter iteration history of the best restart is stored on the fit in
 #' the standard `parHistData` slot (natural scale), so `traceplot(fit)` produces
 #' the familiar per-parameter, free-y facetted trace used elsewhere in the
-#' nlmixr2 ecosystem. There is no burn-in marker (admixr2 records nloptr
+#' nlmixr2 ecosystem. There is no burn-in marker (admixr2 records optimizer
 #' evaluations, not SAEM iterations), and only the best restart is shown -- the
 #' per-restart overlay and the NLL trace remain available via
-#' `plot(fit, which = c("par", "nll"))`.
+#' `plot(fit, which = c("par", "nll"))`. The trace stores only improving
+#' evaluations (steps that lowered the best NLL), so the `iter` axis indexes
+#' those improvement steps rather than raw optimizer iterations.
 #'
 #' @examples
 #' \donttest{
