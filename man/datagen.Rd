@@ -31,8 +31,9 @@ A named list with one element per study.  Each element contains:
 \describe{
 \item{\code{E}}{Population mean vector at \code{times}.}
 \item{\code{V}}{Population covariance matrix
-(\code{length(times)} x \code{length(times)}, ML denominator
-\code{n_sim}).  Residual error is added to the diagonal when
+(\code{length(times)} x \code{length(times)}; ML denominator \code{n_sim} for
+\code{method = "mc"}, the analytical FO covariance for \code{method = "fo"}).
+Residual error is added to the diagonal when
 \code{control$add_residual_error = TRUE}.}
 \item{\code{n}}{Sample size (\code{NA_integer_} if not supplied).}
 \item{\code{times}}{Observation times.}
@@ -51,8 +52,8 @@ different structural model).  True parameter values are taken from the
 is ready to supply directly to \code{admControl(studies = ...)}.
 }
 \details{
-Population moments are computed via the same Monte Carlo engine as
-\code{est = "admc"}:
+With \code{control = datagenControl(method = "mc")} (the default) population
+moments are computed via the same Monte Carlo engine as \code{est = "admc"}:
 \deqn{E_t = \bar{f}_s(\hat\theta_s, \eta_i, t)}
 \deqn{V_{ts} = \widehat{\mathrm{Cov}}_\eta[f_{s,t}, f_{s,s'}] + \Sigma_s}
 where \eqn{f_s} and \eqn{\hat\theta_s} are the model and initial estimates
@@ -60,6 +61,17 @@ from the \code{ini()} block of study \eqn{s}, the sample covariance uses the
 ML denominator \code{n_sim}, and \eqn{\Sigma_s} is diagonal with entries
 determined by that study model's residual error type (additive, proportional,
 or log-normal).
+
+With \code{method = "fo"} the moments are instead the deterministic First-Order
+expansion used by \code{est = "adfo"}:
+\deqn{E = f_s(\hat\theta_s, 0)}
+\deqn{V = J \Omega_s J^\top + \Sigma_s, \quad J_{tj} = \partial f_{s,t}/\partial \eta_j |_{\eta = 0}}
+with the Jacobian \eqn{J} obtained from the sensitivity model (or finite
+differences if that is unavailable). This is the natural choice for design
+evaluation and optimal design: the moments are fast and reproducible, and
+because the data-generating and data-analytic models coincide, the FO Hessian
+of the log-likelihood (the expected information matrix) is evaluated at the
+true maximum rather than at a point that is not an MLE of the generated data.
 
 Models are compiled and cached on first use (keyed by model expression
 digest), so repeated calls or multiple studies sharing the same model incur

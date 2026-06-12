@@ -5,6 +5,7 @@
 \title{Control parameters for \code{\link[=datagen]{datagen()}}}
 \usage{
 datagenControl(
+  method = c("mc", "fo"),
   n_sim = 5000L,
   sampling = c("sobol", "halton", "torus", "lhs", "rnorm"),
   seed = 12345L,
@@ -14,14 +15,22 @@ datagenControl(
 )
 }
 \arguments{
+\item{method}{Moment approximation used to generate \code{E} and \code{V}:
+\code{"mc"} (default) draws Monte Carlo samples over the IIV distribution, as in
+\code{est = "admc"}; \code{"fo"} uses the deterministic First-Order expansion
+(\code{mu = f(theta, 0)}, \verb{V = J Omega J' + Sigma}), matching \code{est = "adfo"}.
+Use \code{"fo"} for design evaluation / optimal-design work, where the
+data-generating and data-analytic models must coincide so the FO Hessian of
+the log-likelihood (the expected FIM) is evaluated at the true maximum.}
+
 \item{n_sim}{Number of Monte Carlo samples used to approximate population
-moments.}
+moments. Ignored when \code{method = "fo"}.}
 
 \item{sampling}{Quasi-random sampling method: \code{"sobol"} (default),
-\code{"halton"}, \code{"torus"}, \code{"lhs"}, or \code{"rnorm"}.}
+\code{"halton"}, \code{"torus"}, \code{"lhs"}, or \code{"rnorm"}. Ignored when \code{method = "fo"}.}
 
 \item{seed}{Integer seed.  Applied before stochastic methods
-(\code{"rnorm"}, \code{"lhs"}).}
+(\code{"rnorm"}, \code{"lhs"}). Ignored when \code{method = "fo"}.}
 
 \item{cores}{Number of \code{rxSolve} threads.}
 
@@ -29,7 +38,8 @@ moments.}
 \code{V} (\code{TRUE} by default), matching the admixr2 NLL convention.}
 
 \item{return_samples}{Include the raw \verb{n_sim x length(times)}
-prediction matrix as \verb{$samples} in each study's output.}
+prediction matrix as \verb{$samples} in each study's output. No effect when
+\code{method = "fo"} (the FO expansion draws no samples).}
 }
 \value{
 A list of class \code{"datagenControl"}.
@@ -40,6 +50,9 @@ Control parameters for \code{\link[=datagen]{datagen()}}
 \examples{
 ctrl <- datagenControl(n_sim = 2000L)
 ctrl$sampling  # "sobol"
+
+# Deterministic FO moments for design evaluation:
+datagenControl(method = "fo")$method  # "fo"
 }
 \seealso{
 \code{\link[=datagen]{datagen()}}
