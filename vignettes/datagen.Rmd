@@ -377,3 +377,40 @@ ggplot(df_samp, aes(x = time, y = conc, group = id)) +
 The blue line is the population mean E; the grey spaghetti shows the IIV spread.
 Note that `samples` contains concentrations **before** residual error is added;
 the diagonal of V additionally carries the residual error variance.
+
+## First-Order moments for design evaluation
+
+By default `datagen()` integrates over the IIV distribution by Monte Carlo, the
+same engine as `est = "admc"`. For design evaluation and optimal-design work it
+is often preferable to generate `E` and `V` from the deterministic First-Order
+expansion instead, which is what `est = "adfo"` uses:
+
+$$
+E = f(\theta, 0), \qquad V = J\,\Omega\,J^\top + \Sigma, \qquad
+J_{tj} = \left.\frac{\partial f_t}{\partial \eta_j}\right|_{\eta = 0}.
+$$
+
+Switch with `method = "fo"` in `datagenControl()`:
+
+```{r fo-moments}
+fo_data <- datagen(
+  studies = list(
+    single_study = list(times = times, ev = rxode2::et(amt = 100), n = 250L)
+  ),
+  model   = true_model,
+  control = datagenControl(method = "fo")
+)
+
+round(fo_data$single_study$E, 3)
+```
+
+There are two reasons to prefer FO here. First, the moments are deterministic and
+fast — no `n_sim`, `sampling` or `seed` (those arguments are ignored), so the
+result is exactly reproducible. Second, and more importantly, it keeps the
+data-generating and data-analytic models identical: when you subsequently take
+the Hessian of the FO log-likelihood at the generating parameters (the expected
+information matrix), it is evaluated at a genuine maximum. If you generate with
+Monte Carlo and then analyse under FO, the generating parameters are not in
+general an FO maximum likelihood estimate of those data, and the resulting FIM is
+biased. So for FIM / optimal-design calculations, generate and analyse with the
+same FO approximation.

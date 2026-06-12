@@ -1,45 +1,54 @@
 #' Control parameters for [datagen()]
 #'
+#' @param method Moment approximation used to generate `E` and `V`:
+#'   `"mc"` (default) draws Monte Carlo samples over the IIV distribution, as in
+#'   `est = "admc"`; `"fo"` uses the deterministic First-Order expansion
+#'   (`mu = f(theta, 0)`, `V = J Omega J' + Sigma`), matching `est = "adfo"`.
+#'   Use `"fo"` for design evaluation / optimal-design work, where the
+#'   data-generating and data-analytic models must coincide so the FO Hessian of
+#'   the log-likelihood (the expected FIM) is evaluated at the true maximum.
 #' @param n_sim Number of Monte Carlo samples used to approximate population
-#'   moments.
+#'   moments. Ignored when `method = "fo"`.
 #' @param sampling Quasi-random sampling method: `"sobol"` (default),
-#'   `"halton"`, `"torus"`, `"lhs"`, or `"rnorm"`.
+#'   `"halton"`, `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"`.
 #' @param seed Integer seed.  Applied before stochastic methods
-#'   (`"rnorm"`, `"lhs"`).
+#'   (`"rnorm"`, `"lhs"`). Ignored when `method = "fo"`.
 #' @param cores Number of `rxSolve` threads.
-#' @param add_residual_error Add residual-error variance to the diagonal of
-#'   `V` (`TRUE` by default), matching the admixr2 NLL convention.
 #' @param return_samples Include the raw `n_sim x length(times)`
-#'   prediction matrix as `$samples` in each study's output.
+#'   prediction matrix as `$samples` in each study's output. No effect when
+#'   `method = "fo"` (the FO expansion draws no samples).
 #'
 #' @return A list of class `"datagenControl"`.
 #' @seealso [datagen()]
 #' @examples
 #' ctrl <- datagenControl(n_sim = 2000L)
 #' ctrl$sampling  # "sobol"
+#'
+#' # Deterministic FO moments for design evaluation:
+#' datagenControl(method = "fo")$method  # "fo"
 #' @export
 datagenControl <- function(
-  n_sim              = 5000L,
-  sampling           = c("sobol", "halton", "torus", "lhs", "rnorm"),
-  seed               = 12345L,
-  cores              = 1L,
-  add_residual_error = TRUE,
-  return_samples     = FALSE
+  method         = c("mc", "fo"),
+  n_sim          = 5000L,
+  sampling       = c("sobol", "halton", "torus", "lhs", "rnorm"),
+  seed           = 12345L,
+  cores          = 1L,
+  return_samples = FALSE
 ) {
+  method   <- match.arg(method)
   sampling <- match.arg(sampling)
   checkmate::assertIntegerish(n_sim, lower = 1L, len = 1L)
   checkmate::assertIntegerish(seed,              len = 1L)
   checkmate::assertIntegerish(cores, lower = 1L, len = 1L)
-  checkmate::assertFlag(add_residual_error)
   checkmate::assertFlag(return_samples)
   structure(
     list(
-      n_sim              = as.integer(n_sim),
-      sampling           = sampling,
-      seed               = as.integer(seed),
-      cores              = as.integer(cores),
-      add_residual_error = add_residual_error,
-      return_samples     = return_samples
+      method         = method,
+      n_sim          = as.integer(n_sim),
+      sampling       = sampling,
+      seed           = as.integer(seed),
+      cores          = as.integer(cores),
+      return_samples = return_samples
     ),
     class = "datagenControl"
   )
@@ -48,9 +57,10 @@ datagenControl <- function(
 
 #' Generate aggregate study data from (possibly different) pharmacometric models
 #'
-#' Simulates population mean vectors (`E`) and covariance matrices
-#' (`V`) for each study using Monte Carlo integration over the IIV
-#' distribution.  Each study may specify its own PK/PD model (as would be the
+#' Generates population mean vectors (`E`) and covariance matrices
+#' (`V`) for each study by integrating over the IIV distribution -- either by
+#' Monte Carlo (the default) or by a deterministic First-Order expansion
+#' (`method = "fo"`, see [datagenControl()]).  Each study may specify its own PK/PD model (as would be the
 #' case when digitising data from several published studies, each fit with a
 #' different structural model).  True parameter values are taken from the
 #' `ini()` block of each study's model.  Each element of the returned list
@@ -77,9 +87,10 @@ datagenControl <- function(
 #'   \describe{
 #'     \item{`E`}{Population mean vector at `times`.}
 #'     \item{`V`}{Population covariance matrix
-#'       (`length(times)` x `length(times)`, ML denominator
-#'       `n_sim`).  Residual error is added to the diagonal when
-#'       `control$add_residual_error = TRUE`.}
+#'       (`length(times)` x `length(times)`; ML denominator `n_sim` for
+#'       `method = "mc"`, the analytical FO covariance for `method = "fo"`).
+#'       The diagonal carries the model's residual-error variance; to generate
+#'       residual-free (IIV-only) moments, omit the error term from the model.}
 #'     \item{`n`}{Sample size (`NA_integer_` if not supplied).}
 #'     \item{`times`}{Observation times.}
 #'     \item{`ev`}{Dosing event table.}
@@ -88,8 +99,8 @@ datagenControl <- function(
 #'   }
 #'
 #' @details
-#' Population moments are computed via the same Monte Carlo engine as
-#' `est = "admc"`:
+#' With `control = datagenControl(method = "mc")` (the default) population
+#' moments are computed via the same Monte Carlo engine as `est = "admc"`:
 #' \deqn{E_t = \bar{f}_s(\hat\theta_s, \eta_i, t)}
 #' \deqn{V_{ts} = \widehat{\mathrm{Cov}}_\eta[f_{s,t}, f_{s,s'}] + \Sigma_s}
 #' where \eqn{f_s} and \eqn{\hat\theta_s} are the model and initial estimates
@@ -97,6 +108,20 @@ datagenControl <- function(
 #' ML denominator `n_sim`, and \eqn{\Sigma_s} is diagonal with entries
 #' determined by that study model's residual error type (additive, proportional,
 #' or log-normal).
+#'
+#' With `method = "fo"` the moments are instead the deterministic First-Order
+#' expansion used by `est = "adfo"`:
+#' \deqn{E = f_s(\hat\theta_s, 0)}
+#' \deqn{V = J \Omega_s J^\top + \Sigma_s, \quad J_{tj} = \partial f_{s,t}/\partial \eta_j |_{\eta = 0}}
+#' with the Jacobian \eqn{J} obtained from the sensitivity model (or finite
+#' differences if that is unavailable). This is the natural choice for design
+#' evaluation and optimal design: the moments are fast and reproducible, and
+#' because the data-generating and data-analytic models coincide, the FO Hessian
+#' of the log-likelihood (the expected information matrix) is evaluated at the
+#' true maximum rather than at a point that is not an MLE of the generated data.
+#' Note `est = "adfo"` always adds \eqn{\Sigma} to its predicted covariance, so
+#' for a consistent FIM keep the residual error in the generating model; omit it
+#' only when residual-free (IIV-only) moments are genuinely what you want.
 #'
 #' Models are compiled and cached on first use (keyed by model expression
 #' digest), so repeated calls or multiple studies sharing the same model incur
@@ -172,50 +197,80 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   for (i in seq_along(studies)) {
     s   <- studies[[i]]
     mdl <- study_models[[i]]
+    nm  <- study_names[[i]]
 
     # Parse this study's model
     ui      <- rxode2::rxode2(mdl)
     pinfo   <- .admParseIniDf(ui$iniDf, ui)
     out_var <- .admOutputVar(ui)
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
+
+    # FO needs the sensitivity model for the Jacobian df/d(eta)|_0. Load it
+    # before .admLoadModel() to respect the compilation-ordering invariant
+    # (.admLoadModel() poisons the cached inner model on the first-compile path).
+    sensModel <- if (control$method == "fo" && pinfo$n_eta > 0L) {
+      sm <- tryCatch(.admLoadSensModel(ui), error = function(e) NULL)
+      if (is.null(sm))
+        warning(sprintf(
+          "datagen(method = 'fo'): sensitivity model unavailable for study '%s'; using finite differences for the Jacobian.",
+          nm), call. = FALSE)
+      sm
+    } else NULL
+
     rxMod   <- .admLoadModel(ui)
 
-    # Quasi-random draws (n_sim x n_eta) for this study
-    z_list      <- .admMakeZ(control$n_sim, pinfo, 1L, control$sampling)
-    params_list <- .admMakeParamsList(control$n_sim, pinfo, 1L)
-
-    # Correlated random effects: eta_mat = z L'
-    if (pinfo$n_eta > 0L) {
-      z <- z_list[[1L]]
-      if (!is.matrix(z)) z <- matrix(z, ncol = 1L)  # sobol dim=1 edge case
-      eta_mat <- z %*% t(pars$L)
-      colnames(eta_mat) <- pinfo$eta_col_names
-    } else {
-      eta_mat <- matrix(0, control$n_sim, 0L)
-    }
-
-    # Forward simulation — n_sim x n_times matrix
     study_tmp <- list(ev_full = s$ev |> rxode2::et(s$times), times = s$times)
-    cp_mat <- .admSimulate(
-      rxMod, pars$struct, pinfo$sigma_names,
-      eta_mat, study_tmp, out_var, params_list[[1L]], control$cores
-    )
 
-    # Population mean and IIV covariance (ML denominator, matches nll_cov_cpp)
-    mu   <- colMeans(cp_mat)
-    cp_c <- sweep(cp_mat, 2L, mu)
-    V    <- crossprod(cp_c) / control$n_sim
+    if (control$method == "fo") {
+      # Deterministic First-Order expansion: mu = f(theta, 0),
+      # V = J Omega J' + Sigma -- exactly the moments est = "adfo" predicts, so
+      # the FO Hessian of logL is evaluated at the true MLE (design evaluation).
+      params_mat <- .admMakeParamsList(1L, pinfo, 1L)[[1L]]  # FD fallback uses 1 row
+      n_t <- length(s$times)
+      mj  <- .adfoGetMuJ(pars, pinfo, study_tmp, sensModel, rxMod, out_var,
+                         params_mat, control$cores)
+      vp   <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var,
+                         pinfo$sigma_is_prop, pinfo$sigma_is_lnorm, n_t, pinfo$n_eta)
+      mu     <- vp$mu_sigma
+      V      <- vp$V
+      cp_mat <- NULL
+    } else {
+      # Quasi-random draws (n_sim x n_eta) for this study
+      z_list      <- .admMakeZ(control$n_sim, pinfo, 1L, control$sampling)
+      params_list <- .admMakeParamsList(control$n_sim, pinfo, 1L)
 
-    # Diagonal residual error (mirrors nll_cov_cpp sigma_type dispatch)
-    if (control$add_residual_error && length(pars$sigma_var) > 0L) {
-      sv <- unname(pars$sigma_var[[1L]])
-      if (isTRUE(pinfo$sigma_is_lnorm[[1L]])) {
-        mu <- mu * exp(sv / 2)                          # lnorm mean correction
-        diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
-      } else if (isTRUE(pinfo$sigma_is_prop[[1L]])) {
-        diag(V) <- diag(V) + sv * mu^2
+      # Correlated random effects: eta_mat = z L'
+      if (pinfo$n_eta > 0L) {
+        z <- z_list[[1L]]
+        if (!is.matrix(z)) z <- matrix(z, ncol = 1L)  # sobol dim=1 edge case
+        eta_mat <- z %*% t(pars$L)
+        colnames(eta_mat) <- pinfo$eta_col_names
       } else {
-        diag(V) <- diag(V) + sv
+        eta_mat <- matrix(0, control$n_sim, 0L)
+      }
+
+      # Forward simulation — n_sim x n_times matrix
+      cp_mat <- .admSimulate(
+        rxMod, pars$struct, pinfo$sigma_names,
+        eta_mat, study_tmp, out_var, params_list[[1L]], control$cores
+      )
+
+      # Population mean and IIV covariance (ML denominator, matches nll_cov_cpp)
+      mu   <- colMeans(cp_mat)
+      cp_c <- sweep(cp_mat, 2L, mu)
+      V    <- crossprod(cp_c) / control$n_sim
+
+      # Diagonal residual error (mirrors nll_cov_cpp sigma_type dispatch)
+      if (length(pars$sigma_var) > 0L) {
+        sv <- unname(pars$sigma_var[[1L]])
+        if (isTRUE(pinfo$sigma_is_lnorm[[1L]])) {
+          mu <- mu * exp(sv / 2)                          # lnorm mean correction
+          diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
+        } else if (isTRUE(pinfo$sigma_is_prop[[1L]])) {
+          diag(V) <- diag(V) + sv * mu^2
+        } else {
+          diag(V) <- diag(V) + sv
+        }
       }
     }
 
@@ -230,7 +285,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       times = s$times,
       ev    = s$ev
     )
-    if (control$return_samples) result_i$samples <- cp_mat
+    if (control$return_samples && !is.null(cp_mat)) result_i$samples <- cp_mat
     results[[i]] <- result_i
   }
 
