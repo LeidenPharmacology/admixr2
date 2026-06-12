@@ -198,6 +198,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   for (i in seq_along(studies)) {
     s   <- studies[[i]]
     mdl <- study_models[[i]]
+    nm  <- study_names[[i]]
 
     # Parse this study's model
     ui      <- rxode2::rxode2(mdl)
