@@ -1,7 +1,10 @@
 # Generate aggregate study data from (possibly different) pharmacometric models
 
-Simulates population mean vectors (`E`) and covariance matrices (`V`)
-for each study using Monte Carlo integration over the IIV distribution.
+Generates population mean vectors (`E`) and covariance matrices (`V`)
+for each study by integrating over the IIV distribution – either by
+Monte Carlo (the default) or by a deterministic First-Order expansion
+(`method = "fo"`, see
+[`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md)).
 Each study may specify its own PK/PD model (as would be the case when
 digitising data from several published studies, each fit with a
 different structural model). True parameter values are taken from the
@@ -67,9 +70,11 @@ A named list with one element per study. Each element contains:
 
 - `V`:
 
-  Population covariance matrix (`length(times)` x `length(times)`, ML
-  denominator `n_sim`). Residual error is added to the diagonal when
-  `control$add_residual_error = TRUE`.
+  Population covariance matrix (`length(times)` x `length(times)`; ML
+  denominator `n_sim` for `method = "mc"`, the analytical FO covariance
+  for `method = "fo"`). The diagonal carries the model's residual-error
+  variance; to generate residual-free (IIV-only) moments, omit the error
+  term from the model.
 
 - `n`:
 
@@ -90,15 +95,30 @@ A named list with one element per study. Each element contains:
 
 ## Details
 
-Population moments are computed via the same Monte Carlo engine as
-`est = "admc"`: \$\$E_t = \bar{f}\_s(\hat\theta_s, \eta_i, t)\$\$
-\$\$V\_{ts} = \widehat{\mathrm{Cov}}\_\eta\[f\_{s,t}, f\_{s,s'}\] +
-\Sigma_s\$\$ where \\f_s\\ and \\\hat\theta_s\\ are the model and
-initial estimates from the
-[`ini()`](https://nlmixr2.github.io/rxode2/reference/ini.html) block of
-study \\s\\, the sample covariance uses the ML denominator `n_sim`, and
-\\\Sigma_s\\ is diagonal with entries determined by that study model's
-residual error type (additive, proportional, or log-normal).
+With `control = datagenControl(method = "mc")` (the default) population
+moments are computed via the same Monte Carlo engine as `est = "admc"`:
+\$\$E_t = \bar{f}\_s(\hat\theta_s, \eta_i, t)\$\$ \$\$V\_{ts} =
+\widehat{\mathrm{Cov}}\_\eta\[f\_{s,t}, f\_{s,s'}\] + \Sigma_s\$\$ where
+\\f_s\\ and \\\hat\theta_s\\ are the model and initial estimates from
+the [`ini()`](https://nlmixr2.github.io/rxode2/reference/ini.html) block
+of study \\s\\, the sample covariance uses the ML denominator `n_sim`,
+and \\\Sigma_s\\ is diagonal with entries determined by that study
+model's residual error type (additive, proportional, or log-normal).
+
+With `method = "fo"` the moments are instead the deterministic
+First-Order expansion used by `est = "adfo"`: \$\$E = f_s(\hat\theta_s,
+0)\$\$ \$\$V = J \Omega_s J^\top + \Sigma_s, \quad J\_{tj} = \partial
+f\_{s,t}/\partial \eta_j \|\_{\eta = 0}\$\$ with the Jacobian \\J\\
+obtained from the sensitivity model (or finite differences if that is
+unavailable). This is the natural choice for design evaluation and
+optimal design: the moments are fast and reproducible, and because the
+data-generating and data-analytic models coincide, the FO Hessian of the
+log-likelihood (the expected information matrix) is evaluated at the
+true maximum rather than at a point that is not an MLE of the generated
+data. Note `est = "adfo"` always adds \\\Sigma\\ to its predicted
+covariance, so for a consistent FIM keep the residual error in the
+generating model; omit it only when residual-free (IIV-only) moments are
+genuinely what you want.
 
 Models are compiled and cached on first use (keyed by model expression
 digest), so repeated calls or multiple studies sharing the same model

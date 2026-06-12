@@ -198,9 +198,9 @@ fit_sim <- nlmixr2(
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:02 
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:03 
 #> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:02
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:03
 
 print(fit_sim)
 #> ── nlmixr² admc ──
@@ -211,14 +211,14 @@ print(fit_sim)
 #> ── Time (sec fit_sim$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   57.403      6.534  63.937
+#> 1   64.909      8.616  73.525
 #> 
 #> ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 #> 
 #>                         Parameter     Est.       SE   %RSE
 #> tcl           Log clearance (L/h)    1.608 0.009336 0.5806
 #> tv                 Log volume (L)    2.303  0.01276 0.5543
-#> tka     Log absorption rate (1/h) 0.001746  0.01798   1030
+#> tka     Log absorption rate (1/h) 0.001747  0.01798   1029
 #> prop.sd     Proportional error SD   0.1999                
 #>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 #> tcl        4.994 (4.903, 5.086)     30.4            
@@ -468,3 +468,47 @@ The blue line is the population mean E; the grey spaghetti shows the IIV
 spread. Note that `samples` contains concentrations **before** residual
 error is added; the diagonal of V additionally carries the residual
 error variance.
+
+## First-Order moments for design evaluation
+
+By default
+[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+integrates over the IIV distribution by Monte Carlo, the same engine as
+`est = "admc"`. For design evaluation and optimal-design work it is
+often preferable to generate `E` and `V` from the deterministic
+First-Order expansion instead, which is what `est = "adfo"` uses:
+
+``` math
+E = f(\theta, 0), \qquad V = J\,\Omega\,J^\top + \Sigma, \qquad
+J_{tj} = \left.\frac{\partial f_t}{\partial \eta_j}\right|_{\eta = 0}.
+```
+
+Switch with `method = "fo"` in
+[`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md):
+
+``` r
+
+fo_data <- datagen(
+  studies = list(
+    single_study = list(times = times, ev = rxode2::et(amt = 100), n = 250L)
+  ),
+  model   = true_model,
+  control = datagenControl(method = "fo")
+)
+
+round(fo_data$single_study$E, 3)
+#>   0.5     1     2     4     8    12    24 
+#> 3.445 4.773 4.651 2.340 0.360 0.049 0.000
+```
+
+There are two reasons to prefer FO here. First, the moments are
+deterministic and fast — no `n_sim`, `sampling` or `seed` (those
+arguments are ignored), so the result is exactly reproducible. Second,
+and more importantly, it keeps the data-generating and data-analytic
+models identical: when you subsequently take the Hessian of the FO
+log-likelihood at the generating parameters (the expected information
+matrix), it is evaluated at a genuine maximum. If you generate with
+Monte Carlo and then analyse under FO, the generating parameters are not
+in general an FO maximum likelihood estimate of those data, and the
+resulting FIM is biased. So for FIM / optimal-design calculations,
+generate and analyse with the same FO approximation.
