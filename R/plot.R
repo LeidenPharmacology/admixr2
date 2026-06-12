@@ -143,6 +143,141 @@ head.paged_df <- function(x, n = 6L, ...) {
   NextMethod()
 }
 
+## Shared display spec for parameter-trace rendering.
+##
+## Returns the per-parameter display names, optimizer-scale -> natural-scale
+## back-transforms, and iniDf-driven facet order used by both the custom
+## `plot(fit, which = "par")` panel and the nlmixr2 `traceplot()` bridge
+## (`.admBuildParHistData`). Keeping this in one place ensures both renderings
+## label and scale parameters identically.
+##
+## - struct thetas: back-transformed via `ui$muRefCurEval` transform
+## - omega diagonal (`log(Omega_ii)`): `exp()` -> variance, labelled `V(eta)`
+## - omega off-diagonal (raw `L[i,j]`): identity, labelled `eta_i,eta_j`
+## - sigma (`log(sigma^2)`): `exp(v/2)` -> SD
+##
+## Returns `NULL` when `pinfo` or `par_names` is unavailable.
+.admTraceDisplaySpec <- function(pinfo, par_names, iniDf = NULL) {
+  if (is.null(pinfo) || is.null(par_names)) return(NULL)
+
+  disp_nms <- setNames(par_names, par_names)
+  for (k in base::which(pinfo$chol_diag)) {
+    nm <- pinfo$omega_par_names[k]
+    disp_nms[[nm]] <- paste0("V(", pinfo$eta_names[pinfo$chol_i[k]], ")")
+  }
+  for (k in base::which(!pinfo$chol_diag)) {
+    nm <- pinfo$omega_par_names[k]
+    disp_nms[[nm]] <- paste0(pinfo$eta_names[pinfo$chol_i[k]], ",",
+                             pinfo$eta_names[pinfo$chol_j[k]])
+  }
+
+  struct_nms        <- names(pinfo$struct_transforms)
+  omega_diag_nms    <- pinfo$omega_par_names[pinfo$chol_diag]
+  omega_offdiag_nms <- pinfo$omega_par_names[!pinfo$chol_diag]
+  back_fns <- setNames(lapply(par_names, function(nm) {
+    if (nm %in% struct_nms)             function(v) .admBackTransform(v, pinfo$struct_transforms[[nm]])
+    else if (nm %in% omega_diag_nms)    exp
+    else if (nm %in% omega_offdiag_nms) identity
+    else function(v) exp(v / 2)   # sigma: log(sigma^2) -> SD
+  }), par_names)
+
+  # Order par_names by iniDf row position so facets follow ini() block order.
+  # Omega params are positioned at their lead eta's iniDf row; off-diagonals
+  # get a +0.5 fractional offset so they appear just after their diagonal.
+  param_order <- if (!is.null(iniDf)) {
+    ini_nms <- iniDf$name
+    pos <- vapply(par_names, function(nm) {
+      if (nm %in% pinfo$omega_par_names) {
+        k <- match(nm, pinfo$omega_par_names)
+        p <- match(pinfo$eta_names[pinfo$chol_i[k]], ini_nms)
+        if (is.na(p)) Inf else p + if (!pinfo$chol_diag[k]) 0.5 else 0.0
+      } else {
+        p <- match(nm, ini_nms)
+        if (is.na(p)) Inf else as.double(p)
+      }
+    }, double(1))
+    unname(disp_nms[par_names[order(pos)]])
+  } else NULL
+
+  list(disp_nms = disp_nms, back_fns = back_fns, param_order = param_order)
+}
+
+## Build a nlmixr2-style `parHistData` frame from collected optimizer traces.
+##
+## nlmixr2's `traceplot()` generic (`traceplot.nlmixr2FitCore` in nlmixr2plot)
+## reads `fit$parHistStacked`, which `nmObjGet.parHistStacked` derives from
+## `fit$env$parHistData` -- a wide data.frame with a `type` column (it keeps
+## `type == "Unscaled"`), an `iter` column, and one column per parameter.
+## Populating that slot is all that is required for `traceplot(fit)` to work on
+## an admixr2 fit; no S3 method registration is needed because admFit already
+## inherits `nlmixr2FitCore`.
+##
+## Semantics chosen here:
+## - single chain = the best restart (lowest final NLL); nlmixr2's shape stores
+##   one value per parameter per iter, so multi-restart overlay is not
+##   expressible -- that stays in `plot(fit, which = "par")`.
+## - natural scale under `"Unscaled"`, using the same back-transforms and
+##   display names as the custom par panel (`.admTraceDisplaySpec`).
+## - no burn-in marker: we leave `parHist`'s class without a `niter` attribute,
+##   so `traceplot()` draws no vline (the trace records improving nloptr
+##   evaluations, not SAEM iterations).
+##
+## Note the `iter` axis indexes improving optimizer evaluations (only steps that
+## lowered the best NLL are stored), not raw nloptr iterations.
+##
+## Returns `NULL` when no usable trace is available.
+.admBuildParHistData <- function(all_traces, par_names, ui) {
+  if (is.null(all_traces) || length(all_traces) == 0L || is.null(par_names))
+    return(NULL)
+
+  # Best restart = lowest final NLL (NA traces ignored).
+  finals <- vapply(all_traces, function(tr) {
+    nt <- tr$nll_trace
+    if (is.null(nt) || length(nt) == 0L) NA_real_ else nt[length(nt)]
+  }, double(1))
+  if (all(is.na(finals))) return(NULL)
+  best <- all_traces[[which.min(finals)]]
+
+  pt <- best$par_trace
+  if (is.null(pt) || nrow(pt) == 0L) return(NULL)
+  df <- as.data.frame(pt)
+  if (ncol(df) != length(par_names)) return(NULL)
+  colnames(df) <- par_names
+
+  pinfo <- tryCatch(.admParseIniDf(ui$iniDf, ui), error = function(e) NULL)
+  iniDf <- tryCatch(ui$iniDf, error = function(e) NULL)
+  spec  <- .admTraceDisplaySpec(pinfo, par_names, iniDf)
+  # Without the display spec we cannot back-transform to natural scale; emit no
+  # parHistData rather than a raw optimizer-scale trace mislabelled "Unscaled".
+  if (is.null(spec)) return(NULL)
+
+  cols <- lapply(par_names, function(nm) as.numeric(spec$back_fns[[nm]](df[[nm]])))
+  names(cols) <- vapply(par_names, function(nm) spec$disp_nms[[nm]], character(1))
+
+  # Follow iniDf facet order when available so traceplot panels match the
+  # custom par panel.
+  if (!is.null(spec$param_order))
+    cols <- cols[spec$param_order]
+
+  data.frame(type = "Unscaled",
+             iter = seq_len(nrow(df)),
+             cols,
+             check.names = FALSE,
+             stringsAsFactors = FALSE)
+}
+
+## Attach a nlmixr2-style `parHistData` slot to a freshly constructed admFit when
+## a usable trace is available. Shared by the admc/adfo/adirmc estimators so the
+## binding logic lives in one place. A `NULL` build result must not be bound --
+## `env$x <- NULL` still satisfies `exists()` and would leave a stale slot that
+## `nmObjGet.parHistStacked` treats as present -- so we guard on non-NULL.
+## `fit$env` is an environment, so the assignment is in place.
+.admAttachParHist <- function(fit, all_traces, par_names, ui) {
+  ph <- .admBuildParHistData(all_traces, par_names, ui)
+  if (!is.null(ph)) fit$env$parHistData <- ph
+  invisible(fit)
+}
+
 #' Diagnostic plots for an admixr2 fit
 #'
 #' Generates up to four diagnostic panels:
@@ -173,6 +308,18 @@ head.paged_df <- function(x, n = 6L, ...) {
 #' @param ... Unused.
 #'
 #' @return A named list of ggplot2 objects, invisibly. Prints each selected plot.
+#'
+#' @section nlmixr2 `traceplot()`:
+#' admixr2 fits also plug into the nlmixr2 `traceplot()` generic. During fitting
+#' the parameter iteration history of the best restart is stored on the fit in
+#' the standard `parHistData` slot (natural scale), so `traceplot(fit)` produces
+#' the familiar per-parameter, free-y facetted trace used elsewhere in the
+#' nlmixr2 ecosystem. There is no burn-in marker (admixr2 records optimizer
+#' evaluations, not SAEM iterations), and only the best restart is shown -- the
+#' per-restart overlay and the NLL trace remain available via
+#' `plot(fit, which = c("par", "nll"))`. The trace stores only improving
+#' evaluations (steps that lowered the best NLL), so the `iter` axis indexes
+#' those improvement steps rather than raw optimizer iterations.
 #'
 #' @examples
 #' \donttest{
@@ -495,49 +642,11 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
   if (any(c("nll", "par") %in% which) && !is.null(all_traces) && length(all_traces) > 0) {
 
   pinfo_pt       <- tryCatch(.admParseIniDf(fit$env$ui$iniDf, fit$env$ui), error = function(e) NULL)
-  disp_nms       <- NULL
-  back_fns       <- NULL
-  pt_param_order <- NULL
-  if (!is.null(pinfo_pt) && !is.null(par_names)) {
-    disp_nms <- setNames(par_names, par_names)
-    for (k in base::which(pinfo_pt$chol_diag)) {
-      nm <- pinfo_pt$omega_par_names[k]
-      disp_nms[[nm]] <- paste0("V(", pinfo_pt$eta_names[pinfo_pt$chol_i[k]], ")")
-    }
-    for (k in base::which(!pinfo_pt$chol_diag)) {
-      nm <- pinfo_pt$omega_par_names[k]
-      disp_nms[[nm]] <- paste0(pinfo_pt$eta_names[pinfo_pt$chol_i[k]], ",",
-                               pinfo_pt$eta_names[pinfo_pt$chol_j[k]])
-    }
-    struct_nms       <- names(pinfo_pt$struct_transforms)
-    omega_diag_nms   <- pinfo_pt$omega_par_names[pinfo_pt$chol_diag]
-    omega_offdiag_nms <- pinfo_pt$omega_par_names[!pinfo_pt$chol_diag]
-    back_fns <- setNames(lapply(par_names, function(nm) {
-      if (nm %in% struct_nms)         function(v) .admBackTransform(v, pinfo_pt$struct_transforms[[nm]])
-      else if (nm %in% omega_diag_nms)    exp
-      else if (nm %in% omega_offdiag_nms) identity
-      else function(v) exp(v / 2)   # sigma: log(sigma^2) -> SD
-    }), par_names)
-
-    # Order par_names by iniDf row position so facets follow ini() block order.
-    # Omega params are positioned at their lead eta's iniDf row; off-diagonals
-    # get a +0.5 fractional offset so they appear just after their diagonal.
-    ini_df_pt <- tryCatch(fit$env$ui$iniDf, error = function(e) NULL)
-    pt_param_order <- if (!is.null(ini_df_pt)) {
-      ini_nms <- ini_df_pt$name
-      pos <- vapply(par_names, function(nm) {
-        if (nm %in% pinfo_pt$omega_par_names) {
-          k  <- match(nm, pinfo_pt$omega_par_names)
-          p  <- match(pinfo_pt$eta_names[pinfo_pt$chol_i[k]], ini_nms)
-          if (is.na(p)) Inf else p + if (!pinfo_pt$chol_diag[k]) 0.5 else 0.0
-        } else {
-          p <- match(nm, ini_nms)
-          if (is.na(p)) Inf else as.double(p)
-        }
-      }, double(1))
-      unname(disp_nms[par_names[order(pos)]])
-    } else NULL
-  }
+  ini_df_pt      <- tryCatch(fit$env$ui$iniDf, error = function(e) NULL)
+  spec_pt        <- .admTraceDisplaySpec(pinfo_pt, par_names, ini_df_pt)
+  disp_nms       <- spec_pt$disp_nms
+  back_fns       <- spec_pt$back_fns
+  pt_param_order <- spec_pt$param_order
 
   if ("nll" %in% which) {
     df_nll <- do.call(rbind, lapply(all_traces, function(tr) {

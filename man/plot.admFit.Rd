@@ -45,6 +45,20 @@ back-transformed, sigma as SD, omega diagonal as variance labelled
 coloured with the Okabe-Ito palette.
 }
 }
+\section{nlmixr2 \code{traceplot()}}{
+
+admixr2 fits also plug into the nlmixr2 \code{traceplot()} generic. During fitting
+the parameter iteration history of the best restart is stored on the fit in
+the standard \code{parHistData} slot (natural scale), so \code{traceplot(fit)} produces
+the familiar per-parameter, free-y facetted trace used elsewhere in the
+nlmixr2 ecosystem. There is no burn-in marker (admixr2 records optimizer
+evaluations, not SAEM iterations), and only the best restart is shown -- the
+per-restart overlay and the NLL trace remain available via
+\code{plot(fit, which = c("par", "nll"))}. The trace stores only improving
+evaluations (steps that lowered the best NLL), so the \code{iter} axis indexes
+those improvement steps rather than raw optimizer iterations.
+}
+
 \examples{
 \donttest{
 library(rxode2)
