@@ -219,21 +219,31 @@
     for (i in seq_along(sv_vec))
       if (isTRUE(pinfo$sigma_is_lnorm[[i]])) lnorm_scale <- lnorm_scale * exp(sv_vec[[i]] / 2)
 
+    # Precompute the d(NLL)/d(V_diag) vector used for sigma V-correction terms.
+    # For prop:  extra_t = 2*sv*mu_t*d(mu_t)/dpsi;  for lnorm: 2*(exp(sv)-1)*scale*mu_sigma_t*d(mu_t)/dpsi
+    # These couple through mu so must be evaluated per-parameter inside the loops.
+    Bvec <- if (!is_var) Bdiag else dNLL_dV_diag  # length n_t
+
+    .sigma_V_extra <- function(dmu_raw) {
+      if (n_e == 0L) return(0)
+      acc <- 0
+      for (i_sig in seq_len(n_e)) {
+        sv <- sv_vec[[i_sig]]
+        if (isTRUE(pinfo$sigma_is_prop[[i_sig]]))
+          acc <- acc + sum(Bvec * 2 * sv * mu * dmu_raw)
+        else if (isTRUE(pinfo$sigma_is_lnorm[[i_sig]]))
+          acc <- acc + sum(Bvec * 2 * (exp(sv) - 1) * lnorm_scale * mu_sigma * dmu_raw)
+      }
+      acc
+    }
+
     # Struct thetas (paired with etas; unpaired handled by FD below).
-    # For proportional sigma: extra term d(V_tt)/d(mu_t) = 2*sv*mu_t*d(mu_t)/dpsi.
     for (k in seq_len(n_s)) {
       ei <- pinfo$struct_eta_idx[k]
       if (is.na(ei)) next  # unpaired
-      gmat <- if (lnorm_scale != 1) Jl[[ei]] * lnorm_scale else Jl[[ei]]
-      gval <- contrib(gmat)
-      # proportional sigma residual feedback (d(V_tt)/d(psi) via mu_t)
-      if (!is_var && n_e > 0L)
-        for (i in seq_along(sv_vec))
-          if (isTRUE(pinfo$sigma_is_prop[[i]])) {
-            sv <- sv_vec[[i]]
-            gval <- gval + sum(diag(B) * 2 * sv * mu * as.numeric(crossprod(W, Jl[[ei]])))
-          }
-      grad[k] <- grad[k] + gval
+      gmat    <- if (lnorm_scale != 1) Jl[[ei]] * lnorm_scale else Jl[[ei]]
+      dmu_raw <- as.numeric(crossprod(W, Jl[[ei]]))  # d(mu_t)/d(psi) before lnorm scaling
+      grad[k] <- grad[k] + contrib(gmat) + .sigma_V_extra(dmu_raw)
     }
 
     # Omega Cholesky L: d(eta[q,])/d(L_ij) = x[q,j] * e_i (unit vector eta dim i)
@@ -241,15 +251,9 @@
     # Chain: L_ii stored as log(Omega_ii) -> d(L_ii)/dp = L_ii/2.
     if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
       i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
-      gmat <- Jl[[i]] * X[, j]
-      if (lnorm_scale != 1) gmat <- gmat * lnorm_scale
-      dL   <- contrib(gmat)
-      if (!is_var && n_e > 0L)
-        for (ii in seq_along(sv_vec))
-          if (isTRUE(pinfo$sigma_is_prop[[ii]])) {
-            sv <- sv_vec[[ii]]
-            dL <- dL + sum(diag(B) * 2 * sv * mu * as.numeric(crossprod(W, Jl[[i]] * X[, j])))
-          }
+      gmat    <- if (lnorm_scale != 1) Jl[[i]] * X[, j] * lnorm_scale else Jl[[i]] * X[, j]
+      dmu_raw <- as.numeric(crossprod(W, Jl[[i]] * X[, j]))
+      dL      <- contrib(gmat) + .sigma_V_extra(dmu_raw)
       pos <- n_s + n_e + rr
       grad[pos] <- grad[pos] + if (pinfo$chol_diag[rr]) dL * L[i, i] / 2 else dL
     }
