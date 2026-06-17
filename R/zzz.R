@@ -40,6 +40,8 @@ admClearCache <- function() {
     warning("admixr2: adirmc registration failed (", conditionMessage(e), ")", call. = FALSE))
   tryCatch(.register_adfo(), error = function(e)
     warning("admixr2: adfo registration failed (", conditionMessage(e), ")", call. = FALSE))
+  tryCatch(.register_adgh(), error = function(e)
+    warning("admixr2: adgh registration failed (", conditionMessage(e), ")", call. = FALSE))
   # Register knit_print methods into knitr's namespace (knitr is in Suggests).
   # If knitr loads after admixr2 the setHook fires and registers then.
   tryCatch(.register_knit_print(), error = function(e) NULL)
@@ -75,4 +77,12 @@ admClearCache <- function() {
   registerS3method("getValidNlmixrCtl",       "adfo",        getValidNlmixrCtl.adfo,               envir = ns)
   registerS3method("nmObjGetControl",         "adfo",        nmObjGetControl.adfo,                 envir = ns)
   registerS3method("nmObjHandleControlObject","adfoControl", nmObjHandleControlObject.adfoControl, envir = ns)
+}
+
+.register_adgh <- function() {
+  ns <- asNamespace("nlmixr2est")
+  registerS3method("nlmixr2Est",              "adgh",        nlmixr2Est.adgh,                      envir = ns)
+  registerS3method("getValidNlmixrCtl",       "adgh",        getValidNlmixrCtl.adgh,               envir = ns)
+  registerS3method("nmObjGetControl",         "adgh",        nmObjGetControl.adgh,                 envir = ns)
+  registerS3method("nmObjHandleControlObject","adghControl", nmObjHandleControlObject.adghControl, envir = ns)
 }
