@@ -115,9 +115,12 @@ cancels and \code{cov_n_sim = 10000} (default) is sufficient for most models.}
 restart initialisation.}
 
 \item{workers}{Number of parallel workers for multi-restart. \code{1} (default)
-runs restarts sequentially. Values \verb{> 1} use a PSOCK cluster on Windows
-and fork workers on Unix/macOS. Workers are stopped automatically after
-the restart phase so all cores are available for the Hessian step.}
+runs restarts sequentially. Values \verb{> 1} use fork workers on Unix/macOS
+(outside RStudio) and a PSOCK cluster on Windows or inside RStudio.
+\strong{RStudio on Linux}: \code{future::supportsMulticore()} returns \code{FALSE} inside
+RStudio even on Linux, so PSOCK is used; fork is only active when running
+from a terminal. Workers are stopped automatically after the restart phase
+so all cores are available for the Hessian step.}
 
 \item{rxControl}{\code{rxode2::rxControl()} object. Created automatically when \code{NULL}.}
 
