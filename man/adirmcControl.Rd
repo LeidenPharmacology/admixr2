@@ -17,7 +17,8 @@ adirmcControl(
   seed = 12345L,
   cores = 1L,
   grad = c("analytical", "none", "fd"),
-  kappa_method = c("exact", "linearized"),
+  kappa_method = c("exact", "linearized", "linearized_gh"),
+  kappa_n_nodes = 5L,
   grad_h = 1e-04,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
@@ -84,8 +85,15 @@ for the IRMC estimator.}
 
 \item{kappa_method}{Kappa correction method for models with non-mu-referenced
 struct thetas: \code{"exact"} (default, re-evaluates population prediction \code{f(theta, 0)}
-via rxSolve at each inner step) or \code{"linearized"} (precomputes \code{J = df/d(theta)}
-once per outer iteration, approximates kappa via linear expansion — zero rxSolve per inner step).}
+via rxSolve at each inner step), \code{"linearized"} (precomputes \code{J = df/d(theta)}
+once per outer iteration using \code{f(theta, 0)} as baseline — zero rxSolve per inner step),
+or \code{"linearized_gh"} (same linear approximation but baseline and Jacobian use
+Gauss-Hermite quadrature \code{E_GH[f(theta, eta)]} instead of \code{f(theta, 0)} — more
+accurate baseline at any IIV magnitude, still zero rxSolve per inner step).}
+
+\item{kappa_n_nodes}{Number of GH nodes per eta dimension for
+\code{kappa_method = "linearized_gh"} (default 5). Total quadrature points =
+\code{kappa_n_nodes^n_eta}. Ignored for other kappa methods.}
 
 \item{grad_h}{Step size for finite-difference gradient evaluation during
 optimization (used by \code{grad = "fd"} or \code{"cfd"}). The default 1e-4 is near
@@ -133,9 +141,12 @@ cancels and \code{cov_n_sim = 10000} (default) is sufficient for most models.}
 restart initialisation.}
 
 \item{workers}{Number of parallel workers for multi-restart. \code{1} (default)
-runs restarts sequentially. Values \verb{> 1} use a PSOCK cluster on Windows
-and fork workers on Unix/macOS. Workers are stopped automatically after
-the restart phase so all cores are available for the Hessian step.}
+runs restarts sequentially. Values \verb{> 1} use fork workers on Unix/macOS
+(outside RStudio) and a PSOCK cluster on Windows or inside RStudio.
+\strong{RStudio on Linux}: \code{future::supportsMulticore()} returns \code{FALSE} inside
+RStudio even on Linux, so PSOCK is used; fork is only active when running
+from a terminal. Workers are stopped automatically after the restart phase
+so all cores are available for the Hessian step.}
 
 \item{rxControl}{\code{rxode2::rxControl()} object. Created automatically when \code{NULL}.}
 
