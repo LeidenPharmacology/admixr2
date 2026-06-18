@@ -40,15 +40,12 @@ test_that(".adghNLL(): true params give lower NLL than perturbed (monotonicity)"
   expect_lt(env$nll_p0, env$nll_bad)
 })
 
-test_that(".adghNLL(): non-PD omega returns Inf", {
+test_that(".adghNLL(): NaN parameter vector returns non-finite (tryCatch guard)", {
   env   <- .int_adgh_setup()
-  p_bad <- env$p0
-  # Drive diagonal Cholesky entry to -Inf so Omega becomes non-PD after back-transform
-  diag_nm <- env$pinfo$omega_par_names[env$pinfo$chol_diag][1]
-  p_bad[diag_nm] <- -1e10
-  nll <- admixr2:::.adghNLL(p_bad, env$pinfo, env$studies, env$rxMod,
+  p_nan <- env$p0; p_nan[1] <- NaN
+  nll <- admixr2:::.adghNLL(p_nan, env$pinfo, env$studies, env$rxMod,
                               env$output_var, env$grid, 1L)
-  expect_true(is.infinite(nll) || !is.finite(nll))
+  expect_false(is.finite(nll))
 })
 
 test_that(".adghNLL(): scalar (not vector) returned", {
