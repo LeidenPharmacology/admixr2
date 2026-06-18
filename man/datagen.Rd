@@ -32,7 +32,8 @@ A named list with one element per study.  Each element contains:
 \item{\code{E}}{Population mean vector at \code{times}.}
 \item{\code{V}}{Population covariance matrix
 (\code{length(times)} x \code{length(times)}; ML denominator \code{n_sim} for
-\code{method = "mc"}, the analytical FO covariance for \code{method = "fo"}).
+\code{method = "mc"}, the analytical FO covariance for \code{method = "fo"},
+or the GH weighted covariance for \code{method = "gh"}).
 The diagonal carries the model's residual-error variance; to generate
 residual-free (IIV-only) moments, omit the error term from the model.}
 \item{\code{n}}{Sample size (\code{NA_integer_} if not supplied).}
@@ -76,6 +77,14 @@ true maximum rather than at a point that is not an MLE of the generated data.
 Note \code{est = "adfo"} always adds \eqn{\Sigma} to its predicted covariance, so
 for a consistent FIM keep the residual error in the generating model; omit it
 only when residual-free (IIV-only) moments are genuinely what you want.
+
+With \code{method = "gh"} the moments are computed by deterministic
+Gauss-Hermite quadrature over the random-effects prior \eqn{\eta \sim N(0, \Omega)}:
+\deqn{E = \sum_q w_q f(\hat\theta, \eta_q), \quad V = \sum_q w_q (f_q - E)(f_q - E)^\top + \Sigma}
+where \eqn{(\eta_q, w_q)} are the Cholesky-scaled tensor-product GH nodes and
+weights. Unlike FO this is unbiased at any IIV magnitude; unlike MC the result
+is noise-free and exactly reproducible. Matching the moments of \code{est = "adgh"}
+makes \code{method = "gh"} the natural choice for optimal design with that estimator.
 
 Models are compiled and cached on first use (keyed by model expression
 digest), so repeated calls or multiple studies sharing the same model incur

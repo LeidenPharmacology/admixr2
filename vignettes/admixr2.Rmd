@@ -31,16 +31,18 @@ return a standard nlmixr2 fit object. This lets you apply established nlmixr2
 models to aggregate statistics from publications or internal data summaries
 where individual records are unavailable.
 
-Three estimators are available:
+Four estimators are available:
 
 | Estimator | `est =` | Control function | Approach |
 |-----------|---------|-----------------|---------|
 | First-Order | `"adfo"` | `adfoControl()` | First-order Taylor expansion at η = 0; one rxSolve per NLL eval; fastest |
 | Monte Carlo | `"admc"` | `admControl()` | Sample average over η; asymptotically exact |
+| Gauss-Hermite | `"adgh"` | `adghControl()` | Deterministic quadrature over η; noise-free, unbiased at any IIV |
 | Iterative Reweighting MC | `"adirmc"` | `adirmcControl()` | Proposals fixed per phase; inner loop needs no new rxSolve calls |
 
 `adfo` is the natural starting point for model screening and initial estimates.
-`admc` is the workhorse for standard PK models. `adirmc` is preferred for
+`admc` is the workhorse for standard PK models. `adgh` is a noise-free
+alternative to `admc` for models with up to ~4 etas. `adirmc` is preferred for
 complex ODE systems with expensive solves, high-dimensional IIV, or poor
 starting values. See
 `vignette("estimator-comparison", package = "admixr2")` for a detailed comparison.

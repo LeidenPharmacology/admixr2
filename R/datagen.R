@@ -3,20 +3,25 @@
 #' @param method Moment approximation used to generate `E` and `V`:
 #'   `"mc"` (default) draws Monte Carlo samples over the IIV distribution, as in
 #'   `est = "admc"`; `"fo"` uses the deterministic First-Order expansion
-#'   (`mu = f(theta, 0)`, `V = J Omega J' + Sigma`), matching `est = "adfo"`.
-#'   Use `"fo"` for design evaluation / optimal-design work, where the
-#'   data-generating and data-analytic models must coincide so the FO Hessian of
-#'   the log-likelihood (the expected FIM) is evaluated at the true maximum.
+#'   (`mu = f(theta, 0)`, `V = J Omega J' + Sigma`), matching `est = "adfo"`;
+#'   `"gh"` uses deterministic Gauss-Hermite quadrature over the random-effects
+#'   prior, matching `est = "adgh"` -- unbiased at any IIV magnitude and
+#'   noise-free.  Use `"fo"` or `"gh"` for design evaluation where the
+#'   data-generating and data-analytic models must coincide.
 #' @param n_sim Number of Monte Carlo samples used to approximate population
-#'   moments. Ignored when `method = "fo"`.
+#'   moments. Ignored when `method = "fo"` or `"gh"`.
+#' @param n_nodes Number of Gauss-Hermite nodes per eta dimension for
+#'   `method = "gh"` (default 5). Total nodes = `n_nodes^n_eta`. Ignored for
+#'   `"mc"` and `"fo"`.
 #' @param sampling Quasi-random sampling method: `"sobol"` (default),
-#'   `"halton"`, `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"`.
+#'   `"halton"`, `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"`
+#'   or `"gh"`.
 #' @param seed Integer seed.  Applied before stochastic methods
-#'   (`"rnorm"`, `"lhs"`). Ignored when `method = "fo"`.
+#'   (`"rnorm"`, `"lhs"`). Ignored when `method = "fo"` or `"gh"`.
 #' @param cores Number of `rxSolve` threads.
 #' @param return_samples Include the raw `n_sim x length(times)`
 #'   prediction matrix as `$samples` in each study's output. No effect when
-#'   `method = "fo"` (the FO expansion draws no samples).
+#'   `method = "fo"` or `"gh"` (those methods draw no samples).
 #'
 #' @return A list of class `"datagenControl"`.
 #' @seealso [datagen()]
@@ -26,10 +31,14 @@
 #'
 #' # Deterministic FO moments for design evaluation:
 #' datagenControl(method = "fo")$method  # "fo"
+#'
+#' # GH quadrature moments (unbiased, noise-free):
+#' datagenControl(method = "gh", n_nodes = 5L)$n_nodes
 #' @export
 datagenControl <- function(
-  method         = c("mc", "fo"),
+  method         = c("mc", "fo", "gh"),
   n_sim          = 5000L,
+  n_nodes        = 5L,
   sampling       = c("sobol", "halton", "torus", "lhs", "rnorm"),
   seed           = 12345L,
   cores          = 1L,
@@ -37,14 +46,16 @@ datagenControl <- function(
 ) {
   method   <- match.arg(method)
   sampling <- match.arg(sampling)
-  checkmate::assertIntegerish(n_sim, lower = 1L, len = 1L)
-  checkmate::assertIntegerish(seed,              len = 1L)
-  checkmate::assertIntegerish(cores, lower = 1L, len = 1L)
+  checkmate::assertIntegerish(n_sim,    lower = 1L, len = 1L)
+  checkmate::assertIntegerish(n_nodes,  lower = 1L, len = 1L)
+  checkmate::assertIntegerish(seed,                 len = 1L)
+  checkmate::assertIntegerish(cores,    lower = 1L, len = 1L)
   checkmate::assertFlag(return_samples)
   structure(
     list(
       method         = method,
       n_sim          = as.integer(n_sim),
+      n_nodes        = as.integer(n_nodes),
       sampling       = sampling,
       seed           = as.integer(seed),
       cores          = as.integer(cores),
@@ -88,7 +99,8 @@ datagenControl <- function(
 #'     \item{`E`}{Population mean vector at `times`.}
 #'     \item{`V`}{Population covariance matrix
 #'       (`length(times)` x `length(times)`; ML denominator `n_sim` for
-#'       `method = "mc"`, the analytical FO covariance for `method = "fo"`).
+#'       `method = "mc"`, the analytical FO covariance for `method = "fo"`,
+#'       or the GH weighted covariance for `method = "gh"`).
 #'       The diagonal carries the model's residual-error variance; to generate
 #'       residual-free (IIV-only) moments, omit the error term from the model.}
 #'     \item{`n`}{Sample size (`NA_integer_` if not supplied).}
@@ -122,6 +134,14 @@ datagenControl <- function(
 #' Note `est = "adfo"` always adds \eqn{\Sigma} to its predicted covariance, so
 #' for a consistent FIM keep the residual error in the generating model; omit it
 #' only when residual-free (IIV-only) moments are genuinely what you want.
+#'
+#' With `method = "gh"` the moments are computed by deterministic
+#' Gauss-Hermite quadrature over the random-effects prior \eqn{\eta \sim N(0, \Omega)}:
+#' \deqn{E = \sum_q w_q f(\hat\theta, \eta_q), \quad V = \sum_q w_q (f_q - E)(f_q - E)^\top + \Sigma}
+#' where \eqn{(\eta_q, w_q)} are the Cholesky-scaled tensor-product GH nodes and
+#' weights. Unlike FO this is unbiased at any IIV magnitude; unlike MC the result
+#' is noise-free and exactly reproducible. Matching the moments of `est = "adgh"`
+#' makes `method = "gh"` the natural choice for optimal design with that estimator.
 #'
 #' Models are compiled and cached on first use (keyed by model expression
 #' digest), so repeated calls or multiple studies sharing the same model incur
@@ -221,7 +241,15 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 
     study_tmp <- list(ev_full = s$ev |> rxode2::et(s$times), times = s$times)
 
-    if (control$method == "fo") {
+    if (control$method == "gh") {
+      # GH quadrature: unbiased deterministic moments, same as est = "adgh".
+      grid <- .adghNodeGrid(control$n_nodes, pinfo$n_eta)
+      m    <- .adghMoments(pars, pinfo, study_tmp, rxMod, out_var, grid,
+                           control$cores)
+      mu     <- m$E
+      V      <- m$V
+      cp_mat <- NULL
+    } else if (control$method == "fo") {
       # Deterministic First-Order expansion: mu = f(theta, 0),
       # V = J Omega J' + Sigma -- exactly the moments est = "adfo" predicts, so
       # the FO Hessian of logL is evaluated at the true MLE (design evaluation).
