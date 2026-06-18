@@ -1,4 +1,4 @@
-# -- adgh: aggregate Gauss-Hermite quadrature estimator -------------------------
+﻿# -- adgh: aggregate Gauss-Hermite quadrature estimator -------------------------
 # Computes population moments E[f] and Cov[f] for eta ~ N(0, Omega) by
 # deterministic Gauss-Hermite quadrature over the random-effects distribution,
 # then plugs them into the same aggregate MVN -2LL as adfo/admc.
@@ -900,7 +900,7 @@ nlmixr2Est.adgh <- function(env, ...) {
                                        nll_trace  = .nll_trace,
                                        par_trace  = .par_trace)))
     if (.ctl$print > 0L) {
-      row <- .admProgressRow(sprintf("%04d ✓", .iter), opt$objective, opt$solution, pinfo)
+      row <- .admProgressRow(sprintf("%04d \u2713", .iter), opt$objective, opt$solution, pinfo)
       if (!is.null(row)) message(paste0(row, "\n",
         .admProgressTimingRow((proc.time() - t0)["elapsed"], pinfo)))
     }
