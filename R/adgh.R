@@ -397,6 +397,119 @@
   cov_full[pinfo$struct_names, pinfo$struct_names, drop = FALSE]
 }
 
+# -- Restart worker ------------------------------------------------------------
+
+# Self-contained GH optimization run (one restart); serializable for furrr workers.
+# Signature mirrors .adfoRestartWorker: same base_args from .admRunRestarts().
+# n_sim, sampling accepted for interface compatibility but not used.
+.adghRestartWorker <- function(restart_id, p_init, ui_lstExpr, pinfo,
+                                ov_lower, ov_upper, scale_c = NULL, studies, n_sim,
+                                seed, n_nodes, algorithm, ftol_rel, maxeval,
+                                use_grad, grad_h, grad_bounds,
+                                output_var = "cp",
+                                sampling = "sobol",
+                                use_central = FALSE,
+                                use_pure_fd = FALSE,
+                                print_progress = TRUE, print = 10L,
+                                cores = NULL, no_lock = FALSE,
+                                sens_cache_file = NULL, sens_cols = NULL,
+                                sens_rename = NULL,
+                                rxMod_direct = NULL, sensModel_direct = NULL) {
+  library(admixr2)
+  tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
+
+  cores_w <- if (!is.null(cores)) {
+    cores
+  } else if (!is.null(rxMod_direct)) {
+    max(1L, parallel::detectCores() - 1L)
+  } else {
+    1L
+  }
+
+  if (!is.null(rxMod_direct)) {
+    rxMod <- rxMod_direct
+  } else {
+    .cacheFile <- file.path(rxode2::rxTempDir(),
+                            paste0("adm-sim-", digest::digest(ui_lstExpr), ".qs2"))
+    rxMod <- qs2::qs_read(.cacheFile)
+    rxode2::rxLoad(rxMod)
+  }
+
+  sensModel <- if (!is.null(sensModel_direct)) {
+    sensModel_direct
+  } else if (!is.null(sens_cache_file) && file.exists(sens_cache_file)) {
+    .smod <- tryCatch({ m <- qs2::qs_read(sens_cache_file); rxode2::rxLoad(m); m },
+                      error = function(e) NULL)
+    if (!is.null(.smod)) list(type = "ode", mod = .smod,
+                               sens_cols = sens_cols, rename_map = sens_rename)
+    else NULL
+  } else {
+    NULL
+  }
+
+  grid <- .adghNodeGrid(n_nodes, pinfo$n_eta)
+  set.seed(seed + restart_id)
+
+  .iter      <- 0L
+  .best_nll  <- Inf
+  .nll_trace <- numeric(0)
+  .par_trace <- NULL
+
+  eval_f <- function(p) {
+    .iter <<- .iter + 1L
+    val <- .adghNLL(p, pinfo, studies, rxMod, output_var, grid, cores_w)
+    if (is.finite(val) && val < .best_nll) {
+      .best_nll  <<- val
+      .nll_trace <<- c(.nll_trace, val)
+      .par_trace <<- rbind(.par_trace, p)
+    }
+    if (print_progress && print > 0L && .iter %% print == 0L) {
+      row <- .admProgressRow(sprintf("%04d", .iter), val, p, pinfo)
+      if (!is.null(row)) message(row)
+    }
+    val
+  }
+
+  eval_grad_f <- if (!use_grad) {
+    NULL
+  } else if (use_pure_fd) {
+    function(p) .adghFDGrad(p, pinfo, studies, rxMod, output_var, grid, cores_w,
+                              grad_h, use_central)
+  } else {
+    function(p) .adghGrad(p, pinfo, studies, sensModel, rxMod, output_var,
+                           grid, cores_w, grad_h)
+  }
+
+  lb <- if (use_grad) pmax(ov_lower, p_init - grad_bounds) else ov_lower
+  ub <- if (use_grad) pmin(ov_upper, p_init + grad_bounds) else ov_upper
+
+  sc    <- if (!is.null(scale_c)) scale_c else rep(1.0, length(p_init))
+  p_sc  <- p_init / sc
+  lb_sc <- lb / sc; ub_sc <- ub / sc
+  eval_f_sc    <- function(p_s) eval_f(p_s * sc)
+  eval_grad_sc <- if (!is.null(eval_grad_f)) function(p_s) eval_grad_f(p_s * sc) * sc else NULL
+
+  t0 <- proc.time()
+  opt <- tryCatch(
+    nloptr::nloptr(
+      x0 = p_sc, eval_f = eval_f_sc,
+      eval_grad_f = eval_grad_sc,
+      lb = lb_sc, ub = ub_sc,
+      opts = list(algorithm = algorithm, ftol_rel = ftol_rel, maxeval = maxeval)
+    ),
+    error = function(e) list(objective = Inf, solution = p_init / sc,
+                             message = conditionMessage(e))
+  )
+  list(restart_id = restart_id,
+       objective  = opt$objective,
+       solution   = if (!is.null(opt$solution)) opt$solution * sc else p_init,
+       n_iter     = .iter,
+       nll_trace  = .nll_trace,
+       par_trace  = .par_trace,
+       elapsed    = as.numeric((proc.time() - t0)["elapsed"]),
+       message    = opt$message)
+}
+
 # -- Control object ------------------------------------------------------------
 
 #' Control settings for the Gauss-Hermite (GH) quadrature estimator
@@ -770,25 +883,54 @@ nlmixr2Est.adgh <- function(env, ...) {
     function(p_s) eval_grad_f(p_s * sc) * sc
   } else NULL
 
-  message(.admProgressHeader(pinfo))
-  opt_raw <- nlmixr2est::nlmixrWithTiming("adgh", {
-    nloptr::nloptr(x0 = p0_sc, eval_f = eval_f_sc,
-                   eval_grad_f = eval_grad_sc,
-                   lb = lb_sc, ub = ub_sc,
-                   opts = list(algorithm = .ctl$algorithm,
-                               ftol_rel  = .ctl$ftol_rel,
-                               maxeval   = .ctl$maxeval))
-  })
-  opt <- list(objective  = opt_raw$objective,
-              solution   = opt_raw$solution * sc,
-              message    = opt_raw$message,
-              all_traces = list(list(restart_id = 1L,
-                                     nll_trace  = .nll_trace,
-                                     par_trace  = .par_trace)))
-  if (.ctl$print > 0L) {
-    row <- .admProgressRow(sprintf("%04d ✓", .iter), opt$objective, opt$solution, pinfo)
-    if (!is.null(row)) message(paste0(row, "\n",
-      .admProgressTimingRow((proc.time() - t0)["elapsed"], pinfo)))
+  if (.ctl$n_restarts == 1L) {
+    message(.admProgressHeader(pinfo))
+    opt_raw <- nlmixr2est::nlmixrWithTiming("adgh", {
+      nloptr::nloptr(x0 = p0_sc, eval_f = eval_f_sc,
+                     eval_grad_f = eval_grad_sc,
+                     lb = lb_sc, ub = ub_sc,
+                     opts = list(algorithm = .ctl$algorithm,
+                                 ftol_rel  = .ctl$ftol_rel,
+                                 maxeval   = .ctl$maxeval))
+    })
+    opt <- list(objective  = opt_raw$objective,
+                solution   = opt_raw$solution * sc,
+                message    = opt_raw$message,
+                all_traces = list(list(restart_id = 1L,
+                                       nll_trace  = .nll_trace,
+                                       par_trace  = .par_trace)))
+    if (.ctl$print > 0L) {
+      row <- .admProgressRow(sprintf("%04d ✓", .iter), opt$objective, opt$solution, pinfo)
+      if (!is.null(row)) message(paste0(row, "\n",
+        .admProgressTimingRow((proc.time() - t0)["elapsed"], pinfo)))
+    }
+  } else {
+    .adgh_old_plan <- .admSetupParallelPlan(.ctl, .ctl$n_restarts)
+    if (!is.null(.adgh_old_plan)) on.exit(future::plan(.adgh_old_plan), add = TRUE)
+    opt <- .admRunRestarts(
+      worker_fn  = .adghRestartWorker,
+      p0         = ov$p0, ov = ov, pinfo = pinfo,
+      .ctl       = .ctl, ui = .ui, studies = studies,
+      extra_args = list(
+        n_nodes          = n_nodes,
+        algorithm        = .ctl$algorithm,
+        ftol_rel         = .ctl$ftol_rel,
+        maxeval          = .ctl$maxeval,
+        use_grad         = want_grad,
+        use_central      = use_central,
+        use_pure_fd      = use_pure_fd,
+        grad_h           = .ctl$grad_h,
+        grad_bounds      = .ctl$grad_bounds,
+        output_var       = output_var,
+        print_progress   = TRUE,
+        print            = .ctl$print,
+        cores            = .ctl$cores,
+        rxMod_direct     = rxMod,
+        sensModel_direct = sensModel
+      )
+    )
+    admStopWorkers()
+    .iter <- opt$n_iter
   }
 
   t_opt  <- (proc.time() - t0)["elapsed"]
@@ -855,8 +997,9 @@ nlmixr2Est.adgh <- function(env, ...) {
                         t_cov          = t_cov,
                         studies        = studies,
                         n_nodes        = n_nodes,
-                        n_sim          = n_total_nodes,
-                        sampling       = "gh")
+                        n_sim          = 5000L,
+                        sampling       = "sobol",
+                        n_gh           = n_total_nodes)
 
   nlmixr2est::.nlmixr2FitUpdateParams(.ret)
   nmObjHandleControlObject.adghControl(.ctl, .ret)

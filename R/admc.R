@@ -1529,7 +1529,7 @@ admStopWorkers <- function() {
     .fn_list <- list()
   } else {
     .fn_names <- ls(pkg_env, all.names = TRUE)
-    .fn_names <- .fn_names[grepl("^\\.(adm|adfo|adirmc|softmax|logdmvnorm)", .fn_names)]
+    .fn_names <- .fn_names[grepl("^\\.(adm|adfo|adirmc|adgh|softmax|logdmvnorm)", .fn_names)]
     .fn_list  <- setNames(lapply(.fn_names, get, envir = pkg_env), .fn_names)
     .fn_list[[.worker_fn_name]] <- worker_fn
   }
