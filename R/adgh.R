@@ -418,96 +418,28 @@
   library(admixr2)
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
-  cores_w <- if (!is.null(cores)) {
-    cores
-  } else if (!is.null(rxMod_direct)) {
-    max(1L, parallel::detectCores() - 1L)
-  } else {
-    1L
-  }
-
-  if (!is.null(rxMod_direct)) {
-    rxMod <- rxMod_direct
-  } else {
-    .cacheFile <- file.path(rxode2::rxTempDir(),
-                            paste0("adm-sim-", digest::digest(ui_lstExpr), ".qs2"))
-    rxMod <- qs2::qs_read(.cacheFile)
-    rxode2::rxLoad(rxMod)
-  }
-
-  sensModel <- if (!is.null(sensModel_direct)) {
-    sensModel_direct
-  } else if (!is.null(sens_cache_file) && file.exists(sens_cache_file)) {
-    .smod <- tryCatch({ m <- qs2::qs_read(sens_cache_file); rxode2::rxLoad(m); m },
-                      error = function(e) NULL)
-    if (!is.null(.smod)) list(type = "ode", mod = .smod,
-                               sens_cols = sens_cols, rename_map = sens_rename)
-    else NULL
-  } else {
-    NULL
-  }
+  m <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores,
+                            sens_cache_file, sens_cols, sens_rename, sensModel_direct)
 
   grid <- .adghNodeGrid(n_nodes, pinfo$n_eta)
   set.seed(seed + restart_id)
 
-  .iter      <- 0L
-  .best_nll  <- Inf
-  .nll_trace <- numeric(0)
-  .par_trace <- NULL
+  nll_fn <- function(p)
+    .adghNLL(p, pinfo, studies, m$rxMod, output_var, grid, m$cores_w)
 
-  eval_f <- function(p) {
-    .iter <<- .iter + 1L
-    val <- .adghNLL(p, pinfo, studies, rxMod, output_var, grid, cores_w)
-    if (is.finite(val) && val < .best_nll) {
-      .best_nll  <<- val
-      .nll_trace <<- c(.nll_trace, val)
-      .par_trace <<- rbind(.par_trace, p)
-    }
-    if (print_progress && print > 0L && .iter %% print == 0L) {
-      row <- .admProgressRow(sprintf("%04d", .iter), val, p, pinfo)
-      if (!is.null(row)) message(row)
-    }
-    val
-  }
-
-  eval_grad_f <- if (!use_grad) {
-    NULL
-  } else if (use_pure_fd) {
-    function(p) .adghFDGrad(p, pinfo, studies, rxMod, output_var, grid, cores_w,
-                              grad_h, use_central)
+  grad_fn <- if (use_pure_fd) {
+    function(p) .adghFDGrad(p, pinfo, studies, m$rxMod, output_var, grid, m$cores_w,
+                            grad_h, use_central)
   } else {
-    function(p) .adghGrad(p, pinfo, studies, sensModel, rxMod, output_var,
-                           grid, cores_w, grad_h)
+    function(p) .adghGrad(p, pinfo, studies, m$sensModel, m$rxMod, output_var,
+                          grid, m$cores_w, grad_h)
   }
 
-  lb <- if (use_grad) pmax(ov_lower, p_init - grad_bounds) else ov_lower
-  ub <- if (use_grad) pmin(ov_upper, p_init + grad_bounds) else ov_upper
-
-  sc    <- if (!is.null(scale_c)) scale_c else rep(1.0, length(p_init))
-  p_sc  <- p_init / sc
-  lb_sc <- lb / sc; ub_sc <- ub / sc
-  eval_f_sc    <- function(p_s) eval_f(p_s * sc)
-  eval_grad_sc <- if (!is.null(eval_grad_f)) function(p_s) eval_grad_f(p_s * sc) * sc else NULL
-
-  t0 <- proc.time()
-  opt <- tryCatch(
-    nloptr::nloptr(
-      x0 = p_sc, eval_f = eval_f_sc,
-      eval_grad_f = eval_grad_sc,
-      lb = lb_sc, ub = ub_sc,
-      opts = list(algorithm = algorithm, ftol_rel = ftol_rel, maxeval = maxeval)
-    ),
-    error = function(e) list(objective = Inf, solution = p_init / sc,
-                             message = conditionMessage(e))
-  )
-  list(restart_id = restart_id,
-       objective  = opt$objective,
-       solution   = if (!is.null(opt$solution)) opt$solution * sc else p_init,
-       n_iter     = .iter,
-       nll_trace  = .nll_trace,
-       par_trace  = .par_trace,
-       elapsed    = as.numeric((proc.time() - t0)["elapsed"]),
-       message    = opt$message)
+  # adgh loads its own model in-process and does not lock (single-nloptr path).
+  .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
+                     use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
+                     nll_fn, grad_fn, pinfo, print_progress, print,
+                     lock_rxMod = NULL)
 }
 
 # -- Control object ------------------------------------------------------------

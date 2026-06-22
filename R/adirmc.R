@@ -940,22 +940,10 @@ nmObjGetControl.adirmc <- function(x, ...) {
   # the installed package predating this function (run devtools::install() once).
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
-  cores_w <- if (!is.null(cores)) {
-    cores
-  } else if (!is.null(rxMod_direct)) {
-    max(1L, parallel::detectCores() - 1L)
-  } else {
-    1L
-  }
-
-  if (!is.null(rxMod_direct)) {
-    rxMod <- rxMod_direct
-  } else {
-    .cacheFile <- file.path(rxode2::rxTempDir(),
-                            paste0("adm-sim-", digest::digest(ui_lstExpr), ".qs2"))
-    rxMod <- qs2::qs_read(.cacheFile)
-    rxode2::rxLoad(rxMod)
-  }
+  # adirmc has no sensitivity model (analytical inner gradient) -> no sens_* args.
+  m       <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores)
+  cores_w <- m$cores_w
+  rxMod   <- m$rxMod
 
   set.seed(seed)
   z_list      <- .admMakeZ(n_sim, pinfo, length(studies), sampling)
