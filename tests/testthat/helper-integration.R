@@ -814,14 +814,70 @@ one_cmt_kappa_fn <- function() {
     admControl(studies = list(s1 = study1), n_sim = 300L, maxeval = 12L,
                seed = 1L, grad = "sens", covMethod = "r", cov_n_sim = 2000L))
 
+  # --- Restart / covariance / multi-study branches for the non-MC estimators ---
+  # These exercise the per-estimator restart workers (.adghRestartWorker /
+  # .adfoRestartWorker / .adirmcRestartWorker via .admRunRestarts), the in-pipeline
+  # covariance branches (.adghCalcCov / .adfoCalcCov / .adirmcCalcCov) and the
+  # adirmc multi-study path -- all previously only covered for admc at the
+  # pipeline level. workers = 1L keeps restarts sequential (no PSOCK) so the
+  # tests stay fast and platform-independent.
+
+  # adgh: analytical-gradient covariance (.adghCalcCov gradient-Hessian path)
+  fit_adgh_cov <- run("adgh",
+    adghControl(studies = list(s1 = study1), n_nodes = 5L, maxeval = 15L,
+                seed = 1L, grad = "analytical", covMethod = "r"))
+
+  # adgh: multi-restart (.adghRestartWorker)
+  fit_adgh_restart <- run("adgh",
+    adghControl(studies = list(s1 = study1), n_nodes = 5L, maxeval = 12L,
+                seed = 1L, grad = "none", covMethod = "none",
+                n_restarts = 2L, workers = 1L, restart_sd = 0.2))
+
+  # adfo: multi-restart (.adfoRestartWorker)
+  fit_adfo_restart <- run("adfo",
+    adfoControl(studies = list(s1 = study1), maxeval = 12L,
+                grad = "none", covMethod = "none",
+                n_restarts = 2L, workers = 1L, restart_sd = 0.2))
+
+  # adfo: in-pipeline covariance (.adfoCalcCov)
+  fit_adfo_cov <- run("adfo",
+    adfoControl(studies = list(s1 = study1), maxeval = 15L,
+                grad = "none", covMethod = "r"))
+
+  # adirmc: multi-restart (.adirmcRestartWorker)
+  fit_adirmc_restart <- run("adirmc",
+    adirmcControl(studies = list(s1 = study1), n_sim = 300L,
+                  phases = c(1, 0.5), outer_iter = 8L, seed = 1L,
+                  covMethod = "none", n_restarts = 2L, workers = 1L,
+                  restart_sd = 0.2))
+
+  # adirmc: in-pipeline covariance (.adirmcCalcCov)
+  fit_adirmc_cov <- run("adirmc",
+    adirmcControl(studies = list(s1 = study1), n_sim = 300L,
+                  phases = c(1, 0.5), outer_iter = 8L, seed = 1L,
+                  covMethod = "r"))
+
+  # adirmc: multi-study
+  fit_adirmc_multistudy <- run("adirmc",
+    adirmcControl(studies = list(s1 = study1, s2 = study2), n_sim = 300L,
+                  phases = c(1, 0.5), outer_iter = 8L, seed = 1L,
+                  covMethod = "none"))
+
   .int_pipeline_cache <<- list(
-    fit_admc       = fit_admc,
-    fit_adfo       = fit_adfo,
-    fit_adirmc     = fit_adirmc,
-    fit_adgh       = fit_adgh,
-    fit_restart    = fit_restart,
-    fit_multistudy = fit_multistudy,
-    fit_cov        = fit_cov,
+    fit_admc              = fit_admc,
+    fit_adfo              = fit_adfo,
+    fit_adirmc            = fit_adirmc,
+    fit_adgh              = fit_adgh,
+    fit_restart           = fit_restart,
+    fit_multistudy        = fit_multistudy,
+    fit_cov               = fit_cov,
+    fit_adgh_cov          = fit_adgh_cov,
+    fit_adgh_restart      = fit_adgh_restart,
+    fit_adfo_restart      = fit_adfo_restart,
+    fit_adfo_cov          = fit_adfo_cov,
+    fit_adirmc_restart    = fit_adirmc_restart,
+    fit_adirmc_cov        = fit_adirmc_cov,
+    fit_adirmc_multistudy = fit_adirmc_multistudy,
     tcl_true       = log(5),
     tv_true        = log(20)
   )

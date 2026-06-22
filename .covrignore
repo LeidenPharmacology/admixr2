@@ -1,0 +1,8 @@
+# Coverage exclusions (covr reads this gitignore-style).
+#
+# R/zzz.R is the package .onLoad hook: it registers S3 methods into the
+# nlmixr2est / knitr namespaces at load time. That code runs during package
+# loading, before covr attaches its instrumentation, so covr structurally
+# cannot record it as covered (it reports ~5%). Excluding it makes the
+# reported percentage reflect code that is actually measurable by tests.
+R/zzz.R

@@ -927,7 +927,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
 # -- Restart worker ------------------------------------------------------------
 
 .adirmcRestartWorker <- function(restart_id, p_init, ui_lstExpr, pinfo,
-                               ov_lower, ov_upper, studies, n_sim, seed,
+                               ov_lower, ov_upper, scale_c = NULL, studies, n_sim, seed,
                                phases, outer_iter, maxeval, ftol_rel,
                                algorithm, omega_expansion, convcrit,
                                max_worse, grad_mode = "none",
