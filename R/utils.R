@@ -16,6 +16,82 @@ utils::globalVariables(c(
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+# -- nloptr algorithm selection ------------------------------------------------
+
+# Valid nloptr algorithm names, queried from the installed nloptr so the set
+# always matches the user's version (no hardcoded list to go stale). Returns
+# character(0) if the query fails (unexpected nloptr internals) -- callers then
+# defer validation to nloptr itself at fit time.
+.admNloptrAlgorithms <- function() {
+  algs <- tryCatch({
+    o  <- nloptr::nloptr.get.default.options()
+    pv <- o[o$name == "algorithm", "possible_values"]
+    trimws(strsplit(as.character(pv), ",")[[1]])
+  }, error = function(e) character(0))
+  algs[nzchar(algs)]
+}
+
+# TRUE if the algorithm consumes a user-supplied gradient (the _LD_ / _GD_
+# NLopt families); FALSE for the derivative-free _LN_ / _GN_ families.
+.admAlgoNeedsGrad <- function(algorithm) grepl("_(LD|GD)_", algorithm)
+
+# Default nloptr algorithm for a gradient mode: BOBYQA when gradless, LBFGS
+# otherwise. The default pairing is LBFGS (gradient) <-> BOBYQA (gradless).
+.admDefaultAlgorithm <- function(grad)
+  if (grad == "none") "NLOPT_LN_BOBYQA" else "NLOPT_LD_LBFGS"
+
+# Reconcile a user-chosen nloptr algorithm with the gradient mode.
+#   * algorithm = NULL (unset) -> pick the default matching `grad` (no message).
+#   * grad == "none" but a gradient-based algorithm was chosen -> there is no
+#     gradient to give nloptr, so fall back to BOBYQA (with a message).
+#   * grad != "none" but a derivative-free algorithm was chosen -> the gradient
+#     cannot be used, so turn it off (with a message).
+# Validates explicit algorithm names against the installed nloptr.
+# Returns list(algorithm = <chr>, grad = <chr>).
+.admResolveAlgorithm <- function(algorithm, grad, .var.name = "algorithm") {
+  # Unset -> the default that matches the gradient mode; always consistent.
+  if (is.null(algorithm)) return(list(algorithm = .admDefaultAlgorithm(grad),
+                                       grad = grad))
+
+  checkmate::assertString(algorithm, .var.name = .var.name)
+  # Validate early against the installed nloptr when we can; if the query failed
+  # (empty), defer to nloptr -- it rejects bad names and lists the valid ones.
+  valid <- .admNloptrAlgorithms()
+  if (length(valid) && !algorithm %in% valid)
+    stop(sprintf(
+      "%s: '%s' is not a valid nloptr algorithm. See nloptr::nloptr.print.options() for the full list.",
+      .var.name, algorithm), call. = FALSE)
+
+  # AUGLAG / MLSL are meta-algorithms requiring a subsidiary local optimiser
+  # (local_opts) that the control objects do not expose -- warn up front rather
+  # than surface a cryptic nloptr error at fit time.
+  if (grepl("AUGLAG|MLSL", algorithm))
+    warning(sprintf(
+      "%s: '%s' needs a subsidiary local optimiser (local_opts) that admixr2 does not configure; it may fail.",
+      .var.name, algorithm), call. = FALSE)
+
+  algo_grad <- .admAlgoNeedsGrad(algorithm)
+
+  # grad == "none" -> derivative-free optimisation. A gradient-based algorithm
+  # has no gradient to consume, so fall back to BOBYQA.
+  if (grad == "none" && algo_grad) {
+    message(sprintf(
+      "%s: '%s' is gradient-based but grad = 'none'; using 'NLOPT_LN_BOBYQA'.",
+      .var.name, algorithm))
+    algorithm <- "NLOPT_LN_BOBYQA"
+
+  # grad != "none" -> a gradient is computed. A derivative-free algorithm cannot
+  # use it, so turn the gradient off.
+  } else if (grad != "none" && !algo_grad) {
+    message(sprintf(
+      "%s: '%s' is derivative-free; gradient ('%s') is unused (grad set to 'none').",
+      .var.name, algorithm, grad))
+    grad <- "none"
+  }
+
+  list(algorithm = algorithm, grad = grad)
+}
+
 # Detect output variable name from ui$predDf (default "cp").
 .admOutputVar <- function(ui) {
   var <- tryCatch(

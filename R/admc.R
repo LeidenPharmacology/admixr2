@@ -16,8 +16,15 @@
 #' @param sampling Sampling method for eta draws: `"sobol"` (Sobol, default),
 #'   `"halton"` (Halton), `"torus"` (Kronecker/torus), `"lhs"` (Latin hypercube),
 #'   or `"rnorm"` (iid normal).
-#' @param algorithm nloptr algorithm string. Automatically switched to
-#'   `"NLOPT_LD_LBFGS"` when `grad != "none"`.
+#' @param algorithm nloptr algorithm string, or `NULL` (default) to pick the
+#'   default that matches `grad`: `"NLOPT_LD_LBFGS"` with a gradient,
+#'   `"NLOPT_LN_BOBYQA"` when `grad = "none"`. Any algorithm reported by
+#'   [nloptr::nloptr.print.options()] is accepted (e.g. `"NLOPT_LD_MMA"`,
+#'   `"NLOPT_LN_NELDERMEAD"`). An explicit algorithm is reconciled with `grad`:
+#'   when `grad = "none"` a gradient-based algorithm (`NLOPT_LD_*` /
+#'   `NLOPT_GD_*`) falls back to `"NLOPT_LN_BOBYQA"`; when a gradient is
+#'   requested a derivative-free algorithm (`NLOPT_LN_*` / `NLOPT_GN_*`) turns
+#'   the gradient off. Both emit a message.
 #' @param maxeval Maximum number of optimizer function evaluations.
 #' @param ftol_rel Relative function-value tolerance for convergence.
 #' @param print Print progress every this many evaluations (0 = silent).
@@ -146,7 +153,7 @@ admControl <- function(
     studies    = list(),
     n_sim      = 5000L,
     sampling   = c("sobol", "halton", "torus", "lhs", "rnorm"),
-    algorithm  = "NLOPT_LN_BOBYQA",
+    algorithm  = NULL,
     maxeval    = 500L,
     ftol_rel   = .Machine$double.eps^2,
     print      = 10L,
@@ -186,7 +193,6 @@ admControl <- function(
 
   checkmate::assertList(studies)
   checkmate::assertIntegerish(n_sim,   lower = 1L, len = 1, .var.name = "n_sim")
-  checkmate::assertString(algorithm,                         .var.name = "algorithm")
   checkmate::assertIntegerish(maxeval, lower = 1L, len = 1, .var.name = "maxeval")
   checkmate::assertNumeric(ftol_rel,   lower = 0,  len = 1, .var.name = "ftol_rel")
   checkmate::assertIntegerish(print,   lower = 0L, len = 1, .var.name = "print")
@@ -210,8 +216,10 @@ admControl <- function(
   checkmate::assertIntegerish(sigdig,  lower = 1L, len = 1, .var.name = "sigdig")
   checkmate::assertLogical(returnAdmr,             len = 1, .var.name = "returnAdmr")
 
-  if (grad != "none" && algorithm == "NLOPT_LN_BOBYQA")
-    algorithm <- "NLOPT_LD_LBFGS"
+  .algo     <- .admResolveAlgorithm(algorithm, grad,
+                                    .var.name = "admControl: algorithm")
+  algorithm <- .algo$algorithm
+  grad      <- .algo$grad
 
   if (is.null(rxControl))   rxControl   <- rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- max(round(sigdig), 3L)

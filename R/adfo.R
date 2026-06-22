@@ -495,8 +495,14 @@
 #'   equations); `"fd"` uses forward finite differences of the full NLL;
 #'   `"cfd"` uses central finite differences for struct theta gradient
 #'   (more accurate than `"fd"`, roughly twice as many NLL evaluations per step).
-#' @param algorithm nloptr algorithm.  Automatically coerced to
-#'   `"NLOPT_LD_LBFGS"` when `grad != "none"`.
+#' @param algorithm nloptr algorithm, or `NULL` (default) to pick the default
+#'   that matches `grad`: `"NLOPT_LD_LBFGS"` with a gradient, `"NLOPT_LN_BOBYQA"`
+#'   when `grad = "none"`. Any algorithm reported by
+#'   [nloptr::nloptr.print.options()] is accepted. An explicit algorithm is
+#'   reconciled with `grad`: when `grad = "none"` a gradient-based algorithm
+#'   (`NLOPT_LD_*` / `NLOPT_GD_*`) falls back to `"NLOPT_LN_BOBYQA"`; when a
+#'   gradient is requested a derivative-free algorithm (`NLOPT_LN_*` /
+#'   `NLOPT_GN_*`) turns the gradient off. Both emit a message.
 #' @param maxeval Maximum function evaluations (default 500).
 #' @param ftol_rel Relative tolerance (default `sqrt(.Machine$double.eps)`).
 #' @param print Print-frequency for live progress (0 = silent).
@@ -584,7 +590,7 @@
 adfoControl <- function(
     studies    = list(),
     grad        = c("none", "analytical", "fd", "cfd"),
-    algorithm  = "NLOPT_LN_BOBYQA",
+    algorithm  = NULL,
     maxeval    = 500L,
     ftol_rel   = .Machine$double.eps^(1/2),
     print      = 10L,
@@ -621,7 +627,6 @@ adfoControl <- function(
   covMethod <- match.arg(covMethod)
 
   checkmate::assertList(studies)
-  checkmate::assertString(algorithm)
   checkmate::assertIntegerish(maxeval,    lower = 1L, len = 1)
   checkmate::assertNumeric(ftol_rel,      lower = 0,  len = 1)
   checkmate::assertIntegerish(print,      lower = 0L, len = 1)
@@ -638,8 +643,10 @@ adfoControl <- function(
   checkmate::assertIntegerish(sigdig,     lower = 1L, len = 1)
   checkmate::assertLogical(returnAdmr,                len = 1)
 
-  if (grad != "none" && algorithm == "NLOPT_LN_BOBYQA")
-    algorithm <- "NLOPT_LD_LBFGS"
+  .algo     <- .admResolveAlgorithm(algorithm, grad,
+                                    .var.name = "adfoControl: algorithm")
+  algorithm <- .algo$algorithm
+  grad      <- .algo$grad
 
   if (is.null(rxControl))   rxControl   <- rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- max(round(sigdig), 3L)
