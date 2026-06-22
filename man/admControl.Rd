@@ -8,7 +8,7 @@ admControl(
   studies = list(),
   n_sim = 5000L,
   sampling = c("sobol", "halton", "torus", "lhs", "rnorm"),
-  algorithm = "NLOPT_LN_BOBYQA",
+  algorithm = NULL,
   maxeval = 500L,
   ftol_rel = .Machine$double.eps^2,
   print = 10L,
@@ -55,8 +55,15 @@ admControl(
 \code{"halton"} (Halton), \code{"torus"} (Kronecker/torus), \code{"lhs"} (Latin hypercube),
 or \code{"rnorm"} (iid normal).}
 
-\item{algorithm}{nloptr algorithm string. Automatically switched to
-\code{"NLOPT_LD_LBFGS"} when \code{grad != "none"}.}
+\item{algorithm}{nloptr algorithm string, or \code{NULL} (default) to pick the
+default that matches \code{grad}: \code{"NLOPT_LD_LBFGS"} with a gradient,
+\code{"NLOPT_LN_BOBYQA"} when \code{grad = "none"}. Any algorithm reported by
+\code{\link[nloptr:nloptr.print.options]{nloptr::nloptr.print.options()}} is accepted (e.g. \code{"NLOPT_LD_MMA"},
+\code{"NLOPT_LN_NELDERMEAD"}). An explicit algorithm is reconciled with \code{grad}:
+when \code{grad = "none"} a gradient-based algorithm (\verb{NLOPT_LD_*} /
+\verb{NLOPT_GD_*}) falls back to \code{"NLOPT_LN_BOBYQA"}; when a gradient is
+requested a derivative-free algorithm (\verb{NLOPT_LN_*} / \verb{NLOPT_GN_*}) turns
+the gradient off. Both emit a message.}
 
 \item{maxeval}{Maximum number of optimizer function evaluations.}
 

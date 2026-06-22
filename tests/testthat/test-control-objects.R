@@ -13,19 +13,63 @@ test_that("admControl() returns correct class and key defaults", {
   expect_equal(ctl$covMethod,  "r")
 })
 
-test_that("admControl(): grad != 'none' + BOBYQA switches to LBFGS", {
+test_that("admControl(): grad != 'none' defaults to LBFGS", {
   ctl <- admControl(grad = "fd")
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
-test_that("admControl(): grad != 'none' + explicit non-BOBYQA algorithm kept", {
+test_that("admControl(): grad != 'none' + explicit gradient algorithm kept", {
   ctl <- admControl(grad = "fd", algorithm = "NLOPT_LD_SLSQP")
   expect_equal(ctl$algorithm, "NLOPT_LD_SLSQP")
 })
 
-test_that("admControl(): grad = 'none' keeps BOBYQA", {
+test_that("admControl(): grad = 'none' defaults to BOBYQA", {
   ctl <- admControl(grad = "none")
   expect_equal(ctl$algorithm, "NLOPT_LN_BOBYQA")
+})
+
+test_that("admControl(): default algorithm derived from grad", {
+  expect_equal(admControl()$algorithm,             "NLOPT_LD_LBFGS")  # grad "sens"
+  expect_equal(admControl(grad = "none")$algorithm, "NLOPT_LN_BOBYQA")
+})
+
+test_that("admControl(): MMA selectable with the default gradient", {
+  ctl <- admControl(algorithm = "NLOPT_LD_MMA")
+  expect_equal(ctl$algorithm, "NLOPT_LD_MMA")
+  expect_equal(ctl$grad, "sens")
+})
+
+test_that("admControl(): gradient algorithm + grad 'none' falls back to BOBYQA", {
+  ctl <- suppressMessages(admControl(algorithm = "NLOPT_LD_MMA", grad = "none"))
+  expect_equal(ctl$algorithm, "NLOPT_LN_BOBYQA")
+  expect_equal(ctl$grad, "none")
+  expect_message(admControl(algorithm = "NLOPT_LD_MMA", grad = "none"),
+                 regexp = "grad = 'none'")
+})
+
+test_that("admControl(): gradient algorithm + explicit grad kept", {
+  ctl <- admControl(algorithm = "NLOPT_LD_MMA", grad = "fd")
+  expect_equal(ctl$algorithm, "NLOPT_LD_MMA")
+  expect_equal(ctl$grad, "fd")
+})
+
+test_that("admControl(): derivative-free algorithm drops the gradient", {
+  ctl <- suppressMessages(
+    admControl(algorithm = "NLOPT_LN_NELDERMEAD", grad = "sens"))
+  expect_equal(ctl$algorithm, "NLOPT_LN_NELDERMEAD")
+  expect_equal(ctl$grad, "none")
+  expect_message(admControl(algorithm = "NLOPT_LN_NELDERMEAD", grad = "sens"),
+                 regexp = "derivative-free")
+})
+
+test_that("admControl(): invalid algorithm errors", {
+  expect_error(admControl(algorithm = "NLOPT_LD_NOTREAL"),
+               regexp = "not a valid nloptr algorithm")
+})
+
+test_that("admControl(): AUGLAG meta-algorithm warns", {
+  expect_warning(admControl(algorithm = "NLOPT_LD_AUGLAG", grad = "fd"),
+                 regexp = "local_opts")
 })
 
 test_that("admControl(): n_sim stored as integer", {
@@ -173,7 +217,7 @@ test_that("adirmcControl(): omega_expansion = 1 is valid (boundary)", {
   expect_no_error(adirmcControl(omega_expansion = 1.0))
 })
 
-test_that("adirmcControl(): grad != 'none' + BOBYQA switches to LBFGS", {
+test_that("adirmcControl(): grad != 'none' defaults to LBFGS", {
   ctl <- adirmcControl(grad = "fd")
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
@@ -274,9 +318,33 @@ test_that("adirmcControl(): sampling stored", {
   expect_equal(ctl$sampling, "halton")
 })
 
-test_that("adirmcControl(): grad = 'none' keeps BOBYQA", {
+test_that("adirmcControl(): grad = 'none' defaults to BOBYQA", {
   ctl <- adirmcControl(grad = "none")
   expect_equal(ctl$algorithm, "NLOPT_LN_BOBYQA")
+})
+
+test_that("adirmcControl(): MMA selectable with the default gradient", {
+  ctl <- adirmcControl(algorithm = "NLOPT_LD_MMA")
+  expect_equal(ctl$algorithm, "NLOPT_LD_MMA")
+  expect_equal(ctl$grad, "analytical")
+})
+
+test_that("adirmcControl(): gradient algorithm + grad 'none' falls back to BOBYQA", {
+  ctl <- suppressMessages(adirmcControl(algorithm = "NLOPT_LD_MMA", grad = "none"))
+  expect_equal(ctl$algorithm, "NLOPT_LN_BOBYQA")
+  expect_equal(ctl$grad, "none")
+})
+
+test_that("adirmcControl(): derivative-free algorithm drops the gradient", {
+  ctl <- suppressMessages(
+    adirmcControl(algorithm = "NLOPT_LN_SBPLX", grad = "analytical"))
+  expect_equal(ctl$algorithm, "NLOPT_LN_SBPLX")
+  expect_equal(ctl$grad, "none")
+})
+
+test_that("adirmcControl(): invalid algorithm errors", {
+  expect_error(adirmcControl(algorithm = "NLOPT_LD_NOTREAL"),
+               regexp = "not a valid nloptr algorithm")
 })
 
 # ---- admc S3 dispatch helpers ------------------------------------------------

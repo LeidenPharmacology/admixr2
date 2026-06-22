@@ -95,7 +95,7 @@ adirmcControl <- function(
     n_sim           = 2500L,
     outer_iter      = 50L,
     sampling        = c("sobol", "halton", "torus", "lhs", "rnorm"),
-    algorithm       = "NLOPT_LN_BOBYQA",
+    algorithm       = NULL,
     maxeval         = 5000L,
     ftol_rel        = .Machine$double.eps,
     print           = 1L,
@@ -142,7 +142,6 @@ adirmcControl <- function(
   checkmate::assertList(studies)
   checkmate::assertIntegerish(n_sim,        lower = 1L,  len = 1)
   checkmate::assertIntegerish(outer_iter,   lower = 1L,  len = 1)
-  checkmate::assertString(algorithm)
   checkmate::assertIntegerish(maxeval,      lower = 1L,  len = 1)
   checkmate::assertNumeric(ftol_rel,        lower = 0,   len = 1)
   checkmate::assertIntegerish(print,        lower = 0L,  len = 1)
@@ -162,8 +161,10 @@ adirmcControl <- function(
   checkmate::assertNumeric(restart_sd,      lower = 0,   len = 1)
   checkmate::assertIntegerish(workers,      lower = 1L,  len = 1)
 
-  if (grad != "none" && algorithm == "NLOPT_LN_BOBYQA")
-    algorithm <- "NLOPT_LD_LBFGS"
+  .algo     <- .admResolveAlgorithm(algorithm, grad,
+                                    .var.name = "adirmcControl: algorithm")
+  algorithm <- .algo$algorithm
+  grad      <- .algo$grad
 
   if (is.null(rxControl))   rxControl   <- rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- max(round(sigdig), 3L)
@@ -865,7 +866,11 @@ nmObjGetControl.adirmc <- function(x, ...) {
           }),
           NULL)
       }
-      algorithm_inner <- if (grad_mode == "none") algorithm else "NLOPT_LD_LBFGS"
+      # After .admResolveAlgorithm: grad_mode == "none" <=> derivative-free
+      # algorithm; grad_mode != "none" <=> gradient-based algorithm. Either way
+      # the user's chosen algorithm matches the available gradient, so honour it
+      # (the tryCatch below falls back to BOBYQA if the inner solve errors).
+      algorithm_inner <- algorithm
       lb_inner <- pmax(ov_lower, p_cur - ph_step)
       ub_inner <- pmin(ov_upper, p_cur + ph_step)
       opt <- tryCatch(

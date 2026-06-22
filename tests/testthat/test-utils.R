@@ -1,3 +1,59 @@
+test_that(".admNloptrAlgorithms: returns common NLopt names", {
+  algs <- admixr2:::.admNloptrAlgorithms()
+  expect_type(algs, "character")
+  expect_true(all(c("NLOPT_LN_BOBYQA", "NLOPT_LD_LBFGS", "NLOPT_LD_MMA") %in% algs))
+})
+
+test_that(".admAlgoNeedsGrad: classifies LD/GD as gradient-based", {
+  expect_true(admixr2:::.admAlgoNeedsGrad("NLOPT_LD_MMA"))
+  expect_true(admixr2:::.admAlgoNeedsGrad("NLOPT_GD_STOGO"))
+  expect_false(admixr2:::.admAlgoNeedsGrad("NLOPT_LN_BOBYQA"))
+  expect_false(admixr2:::.admAlgoNeedsGrad("NLOPT_GN_DIRECT"))
+})
+
+test_that(".admDefaultAlgorithm: LBFGS with gradient, BOBYQA when gradless", {
+  expect_equal(admixr2:::.admDefaultAlgorithm("none"),       "NLOPT_LN_BOBYQA")
+  expect_equal(admixr2:::.admDefaultAlgorithm("sens"),       "NLOPT_LD_LBFGS")
+  expect_equal(admixr2:::.admDefaultAlgorithm("analytical"), "NLOPT_LD_LBFGS")
+})
+
+test_that(".admResolveAlgorithm: NULL picks default matching grad (no message)", {
+  expect_silent(r1 <- admixr2:::.admResolveAlgorithm(NULL, "none"))
+  expect_equal(r1$algorithm, "NLOPT_LN_BOBYQA")
+  expect_equal(r1$grad, "none")
+  expect_silent(r2 <- admixr2:::.admResolveAlgorithm(NULL, "sens"))
+  expect_equal(r2$algorithm, "NLOPT_LD_LBFGS")
+  expect_equal(r2$grad, "sens")
+})
+
+test_that(".admResolveAlgorithm: any gradient algorithm + gradless -> BOBYQA", {
+  for (a in c("NLOPT_LD_LBFGS", "NLOPT_LD_MMA", "NLOPT_GD_STOGO")) {
+    res <- suppressMessages(admixr2:::.admResolveAlgorithm(a, "none"))
+    expect_equal(res$algorithm, "NLOPT_LN_BOBYQA")
+    expect_equal(res$grad, "none")
+  }
+  expect_message(admixr2:::.admResolveAlgorithm("NLOPT_LD_MMA", "none"),
+                 regexp = "grad = 'none'")
+})
+
+test_that(".admResolveAlgorithm: gradient algorithm kept with a gradient method", {
+  res <- admixr2:::.admResolveAlgorithm("NLOPT_LD_MMA", "fd")
+  expect_equal(res$algorithm, "NLOPT_LD_MMA")
+  expect_equal(res$grad, "fd")
+})
+
+test_that(".admResolveAlgorithm: derivative-free algorithm disables the gradient", {
+  res <- suppressMessages(
+    admixr2:::.admResolveAlgorithm("NLOPT_LN_SBPLX", "fd"))
+  expect_equal(res$algorithm, "NLOPT_LN_SBPLX")
+  expect_equal(res$grad, "none")
+})
+
+test_that(".admResolveAlgorithm: invalid algorithm errors", {
+  expect_error(admixr2:::.admResolveAlgorithm("NOPE", "none"),
+               regexp = "not a valid nloptr algorithm")
+})
+
 test_that(".admCalcObjStats: AIC = objective + 2*npar", {
   s <- make_study_var(n_times = 3L, n = 100L)
   res <- admixr2:::.admCalcObjStats(objective = 50.0, npar = 5L, studies = list(s1 = s))

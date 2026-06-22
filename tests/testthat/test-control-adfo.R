@@ -13,29 +13,53 @@ test_that("adfoControl() returns correct class and key defaults", {
   expect_equal(ctl$returnAdmr, FALSE)
 })
 
-test_that("adfoControl(): grad != 'none' + BOBYQA switches to LBFGS", {
+test_that("adfoControl(): grad = 'analytical' defaults to LBFGS", {
   ctl <- adfoControl(grad = "analytical")
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
-test_that("adfoControl(): grad = 'fd' + BOBYQA switches to LBFGS", {
+test_that("adfoControl(): grad = 'fd' defaults to LBFGS", {
   ctl <- adfoControl(grad = "fd")
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
-test_that("adfoControl(): grad = 'cfd' + BOBYQA switches to LBFGS", {
+test_that("adfoControl(): grad = 'cfd' defaults to LBFGS", {
   ctl <- adfoControl(grad = "cfd")
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
-test_that("adfoControl(): grad = 'none' keeps BOBYQA", {
+test_that("adfoControl(): grad = 'none' defaults to BOBYQA", {
   ctl <- adfoControl(grad = "none")
   expect_equal(ctl$algorithm, "NLOPT_LN_BOBYQA")
 })
 
-test_that("adfoControl(): grad != 'none' + explicit non-BOBYQA algorithm kept", {
+test_that("adfoControl(): grad != 'none' + explicit gradient algorithm kept", {
   ctl <- adfoControl(grad = "fd", algorithm = "NLOPT_LD_SLSQP")
   expect_equal(ctl$algorithm, "NLOPT_LD_SLSQP")
+})
+
+test_that("adfoControl(): MMA selectable with a gradient method", {
+  ctl <- adfoControl(algorithm = "NLOPT_LD_MMA", grad = "analytical")
+  expect_equal(ctl$algorithm, "NLOPT_LD_MMA")
+  expect_equal(ctl$grad, "analytical")
+})
+
+test_that("adfoControl(): gradient algorithm + grad 'none' falls back to BOBYQA", {
+  ctl <- suppressMessages(adfoControl(algorithm = "NLOPT_LD_MMA", grad = "none"))
+  expect_equal(ctl$algorithm, "NLOPT_LN_BOBYQA")
+  expect_equal(ctl$grad, "none")
+})
+
+test_that("adfoControl(): derivative-free algorithm drops the gradient", {
+  ctl <- suppressMessages(
+    adfoControl(algorithm = "NLOPT_LN_NELDERMEAD", grad = "analytical"))
+  expect_equal(ctl$algorithm, "NLOPT_LN_NELDERMEAD")
+  expect_equal(ctl$grad, "none")
+})
+
+test_that("adfoControl(): invalid algorithm errors", {
+  expect_error(adfoControl(algorithm = "NLOPT_LD_NOTREAL"),
+               regexp = "not a valid nloptr algorithm")
 })
 
 test_that("adfoControl(): internal n_sim is 1L for .admRunRestarts() compat", {
