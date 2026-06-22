@@ -66,6 +66,7 @@ static inline double nll_var_impl(
     const VectorXd& E_obs, const VectorXd& v_obs,
     const VectorXd& mu,    const VectorXd& v_pred, double n)
 {
+  if ((v_pred.array() <= 0.0).any()) return R_PosInf;
   ArrayXd r2  = (E_obs - mu).array().square();
   double  val = (v_pred.array().log() +
                  v_obs.array() / v_pred.array() +
@@ -125,6 +126,7 @@ double nll_var_cpp(
     const Eigen::VectorXd& v_pred,
     double n
 ) {
+  if ((v_pred.array() <= 0.0).any()) return R_PosInf;
   ArrayXd r2  = (E_obs - E_pred).array().square();
   double  val = (v_pred.array().log() +
                  v_obs.array() / v_pred.array() +

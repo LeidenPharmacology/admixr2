@@ -79,6 +79,22 @@ test_that("nll_var_cpp is always >= its minimum over v_pred", {
   }
 })
 
+test_that("nll_var_cpp returns Inf (not NaN) on non-positive predicted variance", {
+  # Regression for issue #57: nll_var_impl must guard v_pred <= 0 like its
+  # fused sibling nll_var_from_samples_cpp, so all three diagonal-var paths
+  # behave identically (Inf, not NaN).
+  n      <- 10L
+  E_obs  <- c(1.0, 2.0, 3.0)
+  v_obs  <- c(0.1, 0.2, 0.3)
+  E_pred <- c(1.0, 2.0, 3.0)
+
+  for (v_pred in list(c(0.1, 0.0, 0.3), c(0.1, -0.5, 0.3))) {
+    val <- admixr2:::nll_var_cpp(E_obs, v_obs, E_pred, v_pred, n)
+    expect_true(is.infinite(val) && val > 0)
+    expect_false(is.nan(val))
+  }
+})
+
 test_that("softmax_cpp: outputs sum to 1 and are in (0, 1)", {
   set.seed(5)
   lw <- rnorm(100)
