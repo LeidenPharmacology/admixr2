@@ -44,6 +44,7 @@ one_cmt_fn <- function() {
 .int_adfo_cache        <- NULL
 .int_adfo_kappa_cache  <- NULL
 .int_adfo_cov_cache    <- NULL
+.int_pipeline_cache    <- NULL
 
 # ---- linCmt model (1-cmt, 2 etas) -------------------------------------------
 
@@ -667,4 +668,79 @@ one_cmt_kappa_fn <- function() {
     return(.int_irmc_exact_kappa_cache)
   .int_irmc_exact_kappa_cache <<- .int_irmc_kappa_setup_impl("exact", n_sim)
   .int_irmc_exact_kappa_cache
+}
+
+# ---- End-to-end estimator pipeline setup -------------------------------------
+# Drives the full nlmixr2(model, admData(), est = ...) entry points for all
+# three estimators (nlmixr2Est.admc / .adfo / .adirmc) plus the multi-restart,
+# multi-study and covMethod = "r" pipeline branches. Each fit compiles/loads the
+# same 1-cmt model (cached after the first build) and runs a short optimisation
+# -- the goal is to verify a valid admFit is returned with a finite objective,
+# not to check convergence. All fits are cached once per session because each
+# nlmixr2() call is expensive.
+#
+# Model init values equal the data-generating truth (tcl = log(5),
+# tv = log(20)), so a short fit stays near truth and "sensible estimate" checks
+# can use a loose band around the true values.
+
+.int_pipeline_setup <- function() {
+  if (!is.null(.int_pipeline_cache)) return(.int_pipeline_cache)
+
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  skip_if_not_installed("nlmixr2est")
+
+  nlmixr2 <- nlmixr2est::nlmixr2
+
+  times  <- c(0.5, 1, 2, 4)
+  E_true <- .one_cmt_mean(5, 20, 100, times)
+  V_true <- diag((0.3 * E_true)^2)
+  study1 <- list(E = E_true, V = V_true, n = 200L, times = times,
+                 ev = rxode2::et(amt = 100))
+
+  # Second study at a different dose for the multi-study branch.
+  E2     <- .one_cmt_mean(5, 20, 200, times)
+  study2 <- list(E = E2, V = diag((0.3 * E2)^2), n = 150L, times = times,
+                 ev = rxode2::et(amt = 200))
+
+  run <- function(est, control)
+    suppressMessages(nlmixr2(one_cmt_fn, admData(), est = est, control = control))
+
+  fit_admc <- run("admc",
+    admControl(studies = list(s1 = study1), n_sim = 300L, maxeval = 15L,
+               seed = 1L, grad = "sens", covMethod = "none"))
+
+  fit_adfo <- run("adfo",
+    adfoControl(studies = list(s1 = study1), maxeval = 15L,
+                grad = "none", covMethod = "none"))
+
+  fit_adirmc <- run("adirmc",
+    adirmcControl(studies = list(s1 = study1), n_sim = 300L,
+                  phases = c(1, 0.5), outer_iter = 10L, seed = 1L,
+                  covMethod = "none"))
+
+  fit_restart <- run("admc",
+    admControl(studies = list(s1 = study1), n_sim = 300L, maxeval = 12L,
+               seed = 1L, grad = "sens", covMethod = "none",
+               n_restarts = 2L, workers = 1L, restart_sd = 0.2))
+
+  fit_multistudy <- run("admc",
+    admControl(studies = list(s1 = study1, s2 = study2), n_sim = 300L,
+               maxeval = 12L, seed = 1L, grad = "sens", covMethod = "none"))
+
+  fit_cov <- run("admc",
+    admControl(studies = list(s1 = study1), n_sim = 300L, maxeval = 12L,
+               seed = 1L, grad = "sens", covMethod = "r", cov_n_sim = 2000L))
+
+  .int_pipeline_cache <<- list(
+    fit_admc       = fit_admc,
+    fit_adfo       = fit_adfo,
+    fit_adirmc     = fit_adirmc,
+    fit_restart    = fit_restart,
+    fit_multistudy = fit_multistudy,
+    fit_cov        = fit_cov,
+    tcl_true       = log(5),
+    tv_true        = log(20)
+  )
+  .int_pipeline_cache
 }
