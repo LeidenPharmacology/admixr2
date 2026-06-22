@@ -13,6 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      # Tier 2 integration tests guard on skip_on_cran(), which skips unless
+      # NOT_CRAN == "true". covr::package_coverage() sets R_COVR but not
+      # NOT_CRAN, so without it every rxode2-backed integration test (the
+      # estimator pipelines, gradients and IRMC phase loop) is skipped and
+      # reported as uncovered. Set it so coverage reflects the full two-tier suite.
+      NOT_CRAN: "true"
 
     steps:
       - uses: actions/checkout@v4
