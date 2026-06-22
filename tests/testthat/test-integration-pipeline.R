@@ -137,3 +137,82 @@ test_that("print.admFit on a real fit: runs without error", {
   env <- .int_pipeline_setup()
   expect_output(print(env$fit_admc))
 })
+
+# ---- restart / covariance / multi-study for the non-MC estimators ------------
+# Covers the per-estimator restart workers (.adghRestartWorker /
+# .adfoRestartWorker / .adirmcRestartWorker), the in-pipeline covariance
+# branches (.adghCalcCov / .adfoCalcCov / .adirmcCalcCov) and adirmc multi-study
+# -- paths previously only exercised for admc at the pipeline level.
+
+# A deterministic-surface (adgh/adfo) Hessian covariance should be SPD; for the
+# MC-based adirmc it may legitimately fail to be PD on a short fit, so callers
+# pass require_pd accordingly.
+.expect_cov_ok <- function(fit, require_pd) {
+  expect_s3_class(fit, "admFit")
+  expect_true(is.finite(fit$objective))
+  if (is.null(fit$cov)) {
+    if (require_pd) fail("covariance was not computed")
+    succeed()
+    return(invisible())
+  }
+  expect_identical(fit$env$covMethod, "r")
+  expect_true(is.matrix(fit$cov) && all(is.finite(fit$cov)))
+  expect_equal(nrow(fit$cov), ncol(fit$cov))
+  expect_equal(fit$cov, t(fit$cov), tolerance = 1e-8)
+  if (require_pd)
+    expect_true(all(eigen(fit$cov, symmetric = TRUE, only.values = TRUE)$values > 0))
+}
+
+# -- adgh ----------------------------------------------------------------------
+
+test_that("adgh covMethod='r': pipeline computes an SPD covariance", {
+  env <- .int_pipeline_setup()
+  .expect_cov_ok(env$fit_adgh_cov, require_pd = TRUE)
+})
+
+test_that("adgh multi-restart: records one trace per restart, finite objective", {
+  env <- .int_pipeline_setup()
+  fit <- env$fit_adgh_restart
+  expect_identical(fit$env$method, "adgh")
+  expect_length(fit$env$admExtra$all_traces, 2L)
+  expect_true(is.finite(fit$objective))
+})
+
+# -- adfo ----------------------------------------------------------------------
+
+test_that("adfo multi-restart: records one trace per restart, finite objective", {
+  env <- .int_pipeline_setup()
+  fit <- env$fit_adfo_restart
+  expect_identical(fit$env$method, "adfo")
+  expect_length(fit$env$admExtra$all_traces, 2L)
+  expect_true(is.finite(fit$objective))
+})
+
+test_that("adfo covMethod='r': pipeline computes an SPD covariance", {
+  env <- .int_pipeline_setup()
+  .expect_cov_ok(env$fit_adfo_cov, require_pd = TRUE)
+})
+
+# -- adirmc --------------------------------------------------------------------
+
+test_that("adirmc multi-restart: records one trace per restart, finite objective", {
+  env <- .int_pipeline_setup()
+  fit <- env$fit_adirmc_restart
+  expect_identical(fit$env$method, "adirmc")
+  # adirmc stores traces in adirmcExtra (admc/adgh use admExtra).
+  expect_length(fit$env$adirmcExtra$all_traces, 2L)
+  expect_true(is.finite(fit$objective))
+})
+
+test_that("adirmc covMethod='r': pipeline attaches a finite covariance", {
+  env <- .int_pipeline_setup()
+  .expect_cov_ok(env$fit_adirmc_cov, require_pd = FALSE)
+})
+
+test_that("adirmc multi-study: fit carries both studies and a finite objective", {
+  env <- .int_pipeline_setup()
+  fit <- env$fit_adirmc_multistudy
+  expect_length(fit$env$studies, 2L)
+  expect_identical(names(fit$env$studies), c("s1", "s2"))
+  .expect_sensible(fit, env$tcl_true, env$tv_true)
+})
