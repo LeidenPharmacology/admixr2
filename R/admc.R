@@ -1310,96 +1310,29 @@ nmObjGetControl.admc <- function(x, ...) {
   # the installed package predating this function (run devtools::install() once).
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
-  cores_w <- if (!is.null(cores)) {
-    cores
-  } else if (!is.null(rxMod_direct)) {
-    max(1L, parallel::detectCores() - 1L)
-  } else {
-    1L
-  }
-
-  if (!is.null(rxMod_direct)) {
-    rxMod <- rxMod_direct
-  } else {
-    .cacheFile <- file.path(rxode2::rxTempDir(),
-                            paste0("adm-sim-", digest::digest(ui_lstExpr), ".qs2"))
-    rxMod <- qs2::qs_read(.cacheFile)
-    rxode2::rxLoad(rxMod)
-  }
-
-  sensModel <- if (!is.null(sensModel_direct)) {
-    sensModel_direct
-  } else if (!is.null(sens_cache_file) && file.exists(sens_cache_file)) {
-    .smod <- tryCatch({ m <- qs2::qs_read(sens_cache_file); rxode2::rxLoad(m); m },
-                      error = function(e) NULL)
-    if (!is.null(.smod)) list(type = "ode", mod = .smod,
-                               sens_cols = sens_cols, rename_map = sens_rename)
-    else NULL
-  } else {
-    NULL
-  }
+  m <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores,
+                            sens_cache_file, sens_cols, sens_rename, sensModel_direct)
 
   set.seed(seed)
   z_list      <- .admMakeZ(n_sim, pinfo, length(studies), sampling)
   set.seed(seed + restart_id)
   params_list <- .admMakeParamsList(n_sim, pinfo, length(studies))
 
-  .iter      <- 0L
-  .best_nll  <- Inf
-  .nll_trace <- numeric(0)
-  .par_trace <- NULL
-  eval_f <- function(p) {
-    .iter <<- .iter + 1L
-    val <- .admNLL(p, pinfo, studies, z_list, rxMod, output_var, params_list, cores_w)
-    if (is.finite(val) && val < .best_nll) {
-      .best_nll  <<- val
-      .nll_trace <<- c(.nll_trace, val)
-      .par_trace <<- rbind(.par_trace, p)
-    }
-    if (print_progress && print > 0L && .iter %% print == 0L) {
-      row <- .admProgressRow(sprintf("%04d", .iter), val, p, pinfo)
-      if (!is.null(row)) message(row)
-    }
-    val
-  }
-  eval_grad_f <- if (use_grad) {
-    function(p) .admGrad(p, pinfo, studies, z_list, rxMod, output_var,
-                         params_list, cores_w, grad_h, sensModel,
-                         use_central = use_central)
-  } else NULL
+  nll_fn <- function(p)
+    .admNLL(p, pinfo, studies, z_list, m$rxMod, output_var, params_list, m$cores_w)
 
-  lb <- if (use_grad) pmax(ov_lower, p_init - grad_bounds) else ov_lower
-  ub <- if (use_grad) pmin(ov_upper, p_init + grad_bounds) else ov_upper
+  grad_fn <- function(p)
+    .admGrad(p, pinfo, studies, z_list, m$rxMod, output_var,
+             params_list, m$cores_w, grad_h, m$sensModel, use_central = use_central)
 
-  sc <- if (!is.null(scale_c)) scale_c else rep(1.0, length(p_init))
-  p_sc  <- p_init / sc
-  lb_sc <- lb     / sc
-  ub_sc <- ub     / sc
-  eval_f_sc    <- function(p_s) eval_f(p_s * sc)
-  eval_grad_sc <- if (!is.null(eval_grad_f)) {
-    function(p_s) eval_grad_f(p_s * sc) * sc
-  } else NULL
+  # Lock only when the model was loaded from cache in this process; never across
+  # PSOCK workers (each holds its own independent model instance -> no_lock).
+  lock_rxMod <- if (is.null(rxMod_direct) && !no_lock) m$rxMod else NULL
 
-  # rxLock is a system-wide named mutex -- do NOT use across PSOCK worker processes,
-  # each of which has its own independent model instance.
-  needs_lock <- is.null(rxMod_direct) && !no_lock
-  t0 <- proc.time()
-  if (needs_lock) tryCatch(rxode2::rxLock(rxMod), error = function(e) NULL)
-  opt <- tryCatch(
-    nloptr::nloptr(
-      x0 = p_sc, eval_f = eval_f_sc,
-      eval_grad_f = eval_grad_sc,
-      lb = lb_sc, ub = ub_sc,
-      opts = list(algorithm = algorithm, ftol_rel = ftol_rel, maxeval = maxeval)
-    ),
-    finally = if (needs_lock)
-      tryCatch(rxode2::rxUnlock(rxMod), error = function(e) NULL)
-  )
-  list(restart_id = restart_id, objective = opt$objective,
-       solution = opt$solution * sc, n_iter = .iter,
-       nll_trace = .nll_trace, par_trace = .par_trace,
-       elapsed = as.numeric((proc.time() - t0)["elapsed"]),
-       message = opt$message)
+  .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
+                     use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
+                     nll_fn, grad_fn, pinfo, print_progress, print,
+                     lock_rxMod = lock_rxMod)
 }
 
 # -- Multi-restart orchestration -----------------------------------------------
@@ -1498,6 +1431,122 @@ admStopWorkers <- function() {
                error = function(e) NULL)
   }
   invisible(length(.adm_dev_nms))
+}
+
+# -- Shared restart-worker helpers ---------------------------------------------
+#
+# The four estimator restart workers (.adfoRestartWorker, .admRestartWorker,
+# .adghRestartWorker, .adirmcRestartWorker) shared two near-identical blocks:
+# model/sens-model loading from cache, and -- for the three single-nloptr
+# estimators (adfo/admc/adgh) -- the scaled box-constrained optimisation loop
+# with progress tracking. Both are factored out here so each worker only
+# supplies its estimator-specific NLL/gradient closures.
+
+# Resolve worker cores, load the simulation model (direct or from qs2 cache),
+# and (optionally) the sensitivity model. Returns a list(cores_w, rxMod,
+# sensModel). adirmc passes no sens_* args -> sensModel is NULL (unused).
+.admWorkerLoadModels <- function(ui_lstExpr, rxMod_direct = NULL, cores = NULL,
+                                 sens_cache_file = NULL, sens_cols = NULL,
+                                 sens_rename = NULL, sensModel_direct = NULL) {
+  cores_w <- if (!is.null(cores)) {
+    cores
+  } else if (!is.null(rxMod_direct)) {
+    max(1L, parallel::detectCores() - 1L)
+  } else {
+    1L
+  }
+
+  if (!is.null(rxMod_direct)) {
+    rxMod <- rxMod_direct
+  } else {
+    .cacheFile <- file.path(rxode2::rxTempDir(),
+                            paste0("adm-sim-", digest::digest(ui_lstExpr), ".qs2"))
+    rxMod <- qs2::qs_read(.cacheFile)
+    rxode2::rxLoad(rxMod)
+  }
+
+  sensModel <- if (!is.null(sensModel_direct)) {
+    sensModel_direct
+  } else if (!is.null(sens_cache_file) && file.exists(sens_cache_file)) {
+    .smod <- tryCatch({ m <- qs2::qs_read(sens_cache_file); rxode2::rxLoad(m); m },
+                      error = function(e) NULL)
+    if (!is.null(.smod)) list(type = "ode", mod = .smod,
+                               sens_cols = sens_cols, rename_map = sens_rename)
+    else NULL
+  } else {
+    NULL
+  }
+
+  list(cores_w = cores_w, rxMod = rxMod, sensModel = sensModel)
+}
+
+# Scaled, box-constrained single-nloptr optimisation with NLL/par trace
+# tracking and live progress rows. Shared by the adfo/admc/adgh workers; each
+# supplies `nll_fn(p)` and (optionally) `grad_fn(p)`. `lock_rxMod` non-NULL
+# wraps the optimisation in rxLock/rxUnlock (used by the MC estimator when it
+# loads the model from cache). Returns the standard restart-result list.
+.admScaledOptimize <- function(restart_id, p_init, ov_lower, ov_upper, scale_c,
+                               use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
+                               nll_fn, grad_fn, pinfo, print_progress, print,
+                               lock_rxMod = NULL) {
+  .iter      <- 0L
+  .best_nll  <- Inf
+  .nll_trace <- numeric(0)
+  .par_trace <- NULL
+
+  eval_f <- function(p) {
+    .iter <<- .iter + 1L
+    val <- nll_fn(p)
+    if (is.finite(val) && val < .best_nll) {
+      .best_nll  <<- val
+      .nll_trace <<- c(.nll_trace, val)
+      .par_trace <<- rbind(.par_trace, p)
+    }
+    if (print_progress && print > 0L && .iter %% print == 0L) {
+      row <- .admProgressRow(sprintf("%04d", .iter), val, p, pinfo)
+      if (!is.null(row)) message(row)
+    }
+    val
+  }
+
+  eval_grad_f <- if (use_grad) grad_fn else NULL
+
+  lb <- if (use_grad) pmax(ov_lower, p_init - grad_bounds) else ov_lower
+  ub <- if (use_grad) pmin(ov_upper, p_init + grad_bounds) else ov_upper
+
+  sc    <- if (!is.null(scale_c)) scale_c else rep(1.0, length(p_init))
+  p_sc  <- p_init / sc
+  lb_sc <- lb / sc; ub_sc <- ub / sc
+  eval_f_sc    <- function(p_s) eval_f(p_s * sc)
+  eval_grad_sc <- if (!is.null(eval_grad_f)) function(p_s) eval_grad_f(p_s * sc) * sc else NULL
+
+  # rxLock is a system-wide named mutex -- only used when the model was loaded
+  # from cache in this process (lock_rxMod set by caller), never across PSOCK
+  # workers (each has its own independent model instance).
+  if (!is.null(lock_rxMod)) {
+    tryCatch(rxode2::rxLock(lock_rxMod), error = function(e) NULL)
+    on.exit(tryCatch(rxode2::rxUnlock(lock_rxMod), error = function(e) NULL), add = TRUE)
+  }
+
+  t0 <- proc.time()
+  opt <- tryCatch(
+    nloptr::nloptr(
+      x0 = p_sc, eval_f = eval_f_sc,
+      eval_grad_f = eval_grad_sc,
+      lb = lb_sc, ub = ub_sc,
+      opts = list(algorithm = algorithm, ftol_rel = ftol_rel, maxeval = maxeval)
+    ),
+    error = function(e) list(objective = Inf, solution = NULL,
+                             message = conditionMessage(e))
+  )
+  list(restart_id = restart_id,
+       objective  = opt$objective,
+       solution   = if (!is.null(opt$solution)) opt$solution * sc else p_init,
+       n_iter     = .iter,
+       nll_trace  = .nll_trace,
+       par_trace  = .par_trace,
+       elapsed    = as.numeric((proc.time() - t0)["elapsed"]),
+       message    = opt$message)
 }
 
 .admRunRestarts <- function(worker_fn, p0, ov, pinfo, .ctl, ui, studies,
