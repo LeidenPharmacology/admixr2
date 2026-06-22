@@ -44,6 +44,7 @@ one_cmt_fn <- function() {
 .int_adfo_cache        <- NULL
 .int_adfo_kappa_cache  <- NULL
 .int_adfo_cov_cache    <- NULL
+.int_adgh_cache        <- NULL
 .int_pipeline_cache    <- NULL
 
 # ---- linCmt model (1-cmt, 2 etas) -------------------------------------------
@@ -670,14 +671,91 @@ one_cmt_kappa_fn <- function() {
   .int_irmc_exact_kappa_cache
 }
 
+# ---- adgh setup --------------------------------------------------------------
+# Uses one_cmt_fn (2 etas, additive error). Computes .adghMoments(), .adghNLL()
+# at truth and perturbed params, and .adghGrad() vs FD reference.
+# Sens model loaded before rxMod (ordering invariant).
+
+.int_adgh_setup <- function(n_nodes = 5L) {
+  if (!is.null(.int_adgh_cache) && .int_adgh_cache$n_nodes == n_nodes)
+    return(.int_adgh_cache)
+
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+
+  ui <- suppressMessages(tryCatch(
+    rxode2::rxode2(one_cmt_fn),
+    error = function(e) NULL
+  ))
+  if (is.null(ui)) skip("rxode2 model parse failed")
+
+  pinfo      <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  output_var <- "cp"
+
+  sensModel <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
+  rxMod     <- tryCatch(admixr2:::.admLoadModel(ui),     error = function(e) NULL)
+  if (is.null(rxMod)) skip("Model compilation failed")
+
+  times  <- c(0.5, 1, 2, 4)
+  E_true <- .one_cmt_mean(5, 20, 100, times)
+  V_true <- diag((0.3 * E_true)^2)
+
+  study <- list(E = E_true, V = V_true, n = 200L, times = times,
+                ev = rxode2::et(amt = 100))
+  study <- admixr2:::.admNormaliseStudy(study, "s")
+  study$ev_full <- study$ev |> rxode2::et(study$times)
+  studies <- list(s = study)
+
+  vec  <- admixr2:::.admBuildOptVec(pinfo)
+  p0   <- vec$p0
+  pars <- admixr2:::.admUnpack(p0, pinfo)
+  grid <- admixr2:::.adghNodeGrid(n_nodes, pinfo$n_eta)
+
+  moments_p0 <- admixr2:::.adghMoments(pars, pinfo, study, rxMod, output_var,
+                                        grid, cores = 1L)
+
+  nll_p0  <- admixr2:::.adghNLL(p0, pinfo, studies, rxMod, output_var, grid, 1L)
+  p_bad   <- p0; p_bad["tcl"] <- p_bad["tcl"] + 0.5
+  nll_bad <- admixr2:::.adghNLL(p_bad, pinfo, studies, rxMod, output_var, grid, 1L)
+
+  h_fd  <- 1e-4
+  g_ana <- if (!is.null(sensModel))
+    admixr2:::.adghGrad(p0, pinfo, studies, sensModel, rxMod, output_var,
+                         grid, cores = 1L, grad_h = h_fd)
+  else NULL
+
+  g_fd <- vapply(seq_along(p0), function(k) {
+    hk <- pmax(abs(p0[k]), 0.1) * h_fd
+    ph <- p0; ph[k] <- ph[k] + hk
+    pl <- p0; pl[k] <- pl[k] - hk
+    nh <- admixr2:::.adghNLL(ph, pinfo, studies, rxMod, output_var, grid, 1L)
+    nl <- admixr2:::.adghNLL(pl, pinfo, studies, rxMod, output_var, grid, 1L)
+    (nh - nl) / (2 * hk)
+  }, double(1))
+  names(g_fd) <- names(p0)
+
+  .int_adgh_cache <<- list(
+    ui = ui, pinfo = pinfo, rxMod = rxMod, sensModel = sensModel,
+    studies = studies, study = study,
+    vec = vec, p0 = p0, pars = pars, grid = grid,
+    output_var = output_var, times = times,
+    E_true = E_true, n_nodes = n_nodes,
+    moments_p0 = moments_p0,
+    nll_p0 = nll_p0, nll_bad = nll_bad,
+    p_bad = p_bad,
+    g_ana = g_ana, g_fd = g_fd, h_fd = h_fd
+  )
+  .int_adgh_cache
+}
+
 # ---- End-to-end estimator pipeline setup -------------------------------------
 # Drives the full nlmixr2(model, admData(), est = ...) entry points for all
-# three estimators (nlmixr2Est.admc / .adfo / .adirmc) plus the multi-restart,
-# multi-study and covMethod = "r" pipeline branches. Each fit compiles/loads the
-# same 1-cmt model (cached after the first build) and runs a short optimisation
-# -- the goal is to verify a valid admFit is returned with a finite objective,
-# not to check convergence. All fits are cached once per session because each
-# nlmixr2() call is expensive.
+# four estimators (nlmixr2Est.admc / .adfo / .adirmc / .adgh) plus the
+# multi-restart, multi-study and covMethod = "r" pipeline branches. Each fit
+# compiles/loads the same 1-cmt model (cached after the first build) and runs a
+# short optimisation -- the goal is to verify a valid admFit is returned with a
+# finite objective, not to check convergence. All fits are cached once per
+# session because each nlmixr2() call is expensive.
 #
 # Model init values equal the data-generating truth (tcl = log(5),
 # tv = log(20)), so a short fit stays near truth and "sensible estimate" checks
@@ -719,6 +797,10 @@ one_cmt_kappa_fn <- function() {
                   phases = c(1, 0.5), outer_iter = 10L, seed = 1L,
                   covMethod = "none"))
 
+  fit_adgh <- run("adgh",
+    adghControl(studies = list(s1 = study1), n_nodes = 5L, maxeval = 15L,
+                seed = 1L, grad = "none", covMethod = "none"))
+
   fit_restart <- run("admc",
     admControl(studies = list(s1 = study1), n_sim = 300L, maxeval = 12L,
                seed = 1L, grad = "sens", covMethod = "none",
@@ -736,6 +818,7 @@ one_cmt_kappa_fn <- function() {
     fit_admc       = fit_admc,
     fit_adfo       = fit_adfo,
     fit_adirmc     = fit_adirmc,
+    fit_adgh       = fit_adgh,
     fit_restart    = fit_restart,
     fit_multistudy = fit_multistudy,
     fit_cov        = fit_cov,

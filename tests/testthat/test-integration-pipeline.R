@@ -57,6 +57,16 @@ test_that("adirmc pipeline: returns a finite admFit with method 'adirmc'", {
   .expect_sensible(fit, env$tcl_true, env$tv_true)
 })
 
+# ---- adgh --------------------------------------------------------------------
+
+test_that("adgh pipeline: returns a finite admFit with method 'adgh'", {
+  env <- .int_pipeline_setup()
+  fit <- env$fit_adgh
+  expect_s3_class(fit, "admFit")
+  expect_identical(fit$env$method, "adgh")
+  .expect_sensible(fit, env$tcl_true, env$tv_true)
+})
+
 # ---- multi-restart (.admRunRestarts best-result selection) -------------------
 
 test_that("admc multi-restart: records one trace per restart", {
