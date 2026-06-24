@@ -72,7 +72,8 @@ A named list with one element per study. Each element contains:
 
   Population covariance matrix (`length(times)` x `length(times)`; ML
   denominator `n_sim` for `method = "mc"`, the analytical FO covariance
-  for `method = "fo"`). The diagonal carries the model's residual-error
+  for `method = "fo"`, or the GH weighted covariance for
+  `method = "gh"`). The diagonal carries the model's residual-error
   variance; to generate residual-free (IIV-only) moments, omit the error
   term from the model.
 
@@ -119,6 +120,16 @@ data. Note `est = "adfo"` always adds \\\Sigma\\ to its predicted
 covariance, so for a consistent FIM keep the residual error in the
 generating model; omit it only when residual-free (IIV-only) moments are
 genuinely what you want.
+
+With `method = "gh"` the moments are computed by deterministic
+Gauss-Hermite quadrature over the random-effects prior \\\eta \sim N(0,
+\Omega)\\: \$\$E = \sum_q w_q f(\hat\theta, \eta_q), \quad V = \sum_q
+w_q (f_q - E)(f_q - E)^\top + \Sigma\$\$ where \\(\eta_q, w_q)\\ are the
+Cholesky-scaled tensor-product GH nodes and weights. Unlike FO this is
+unbiased at any IIV magnitude; unlike MC the result is noise-free and
+exactly reproducible. Matching the moments of `est = "adgh"` makes
+`method = "gh"` the natural choice for optimal design with that
+estimator.
 
 Models are compiled and cached on first use (keyed by model expression
 digest), so repeated calls or multiple studies sharing the same model

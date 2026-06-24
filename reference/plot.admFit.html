@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -61,7 +61,7 @@
 
 <dl><dt id="arg-x">x<a class="anchor" aria-label="anchor" href="#arg-x"></a></dt>
 <dd><p>An <code>admFit</code> object returned by <code>nlmixr2()</code> with
-<code>est = "adfo"</code>, <code>est = "admc"</code>, or <code>est = "adirmc"</code>.</p></dd>
+<code>est = "adfo"</code>, <code>est = "admc"</code>, <code>est = "adgh"</code>, or <code>est = "adirmc"</code>.</p></dd>
 
 
 <dt id="arg-which">which<a class="anchor" aria-label="anchor" href="#arg-which"></a></dt>
@@ -105,6 +105,21 @@ back-transformed, sigma as SD, omega diagonal as variance labelled
 <code>V(eta.x)</code>). Facets ordered as in the model <code><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini()</a></code> block. Restarts
 coloured with the Okabe-Ito palette.</p></li>
 </ol></div>
+    <div class="section level2">
+    <h2 id="nlmixr-traceplot-">nlmixr2 <code>traceplot()</code><a class="anchor" aria-label="anchor" href="#nlmixr-traceplot-"></a></h2>
+
+
+<p>admixr2 fits also plug into the nlmixr2 <code>traceplot()</code> generic. During fitting
+the parameter iteration history of the best restart is stored on the fit in
+the standard <code>parHistData</code> slot (natural scale), so <code>traceplot(fit)</code> produces
+the familiar per-parameter, free-y facetted trace used elsewhere in the
+nlmixr2 ecosystem. There is no burn-in marker (admixr2 records optimizer
+evaluations, not SAEM iterations), and only the best restart is shown – the
+per-restart overlay and the NLL trace remain available via
+<code>plot(fit, which = c("par", "nll"))</code>. The trace stores only improving
+evaluations (steps that lowered the best NLL), so the <code>iter</code> axis indexes
+those improvement steps rather than raw optimizer iterations.</p>
+    </div>
 
     <div class="section level2">
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
@@ -168,7 +183,7 @@ coloured with the Okabe-Ito palette.</p></li>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 3.6 sec  |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 3.4 sec  |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, 19 NLL evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>

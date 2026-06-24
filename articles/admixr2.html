@@ -29,7 +29,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -109,7 +109,7 @@ counterparts and return a standard nlmixr2 fit object. This lets you
 apply established nlmixr2 models to aggregate statistics from
 publications or internal data summaries where individual records are
 unavailable.</p>
-<p>Three estimators are available:</p>
+<p>Four estimators are available:</p>
 <table class="table">
 <colgroup>
 <col width="23%">
@@ -138,6 +138,13 @@ fastest</td>
 <td>Sample average over η; asymptotically exact</td>
 </tr>
 <tr class="odd">
+<td>Gauss-Hermite</td>
+<td><code>"adgh"</code></td>
+<td><code><a href="../reference/adghControl.html">adghControl()</a></code></td>
+<td>Deterministic quadrature over η; noise-free, unbiased at any
+IIV</td>
+</tr>
+<tr class="even">
 <td>Iterative Reweighting MC</td>
 <td><code>"adirmc"</code></td>
 <td><code><a href="../reference/adirmcControl.html">adirmcControl()</a></code></td>
@@ -148,8 +155,10 @@ calls</td>
 </table>
 <p><code>adfo</code> is the natural starting point for model screening
 and initial estimates. <code>admc</code> is the workhorse for standard
-PK models. <code>adirmc</code> is preferred for complex ODE systems with
-expensive solves, high-dimensional IIV, or poor starting values. See
+PK models. <code>adgh</code> is a noise-free alternative to
+<code>admc</code> for models with up to ~4 etas. <code>adirmc</code> is
+preferred for complex ODE systems with expensive solves,
+high-dimensional IIV, or poor starting values. See
 <code><a href="../articles/estimator-comparison.html">vignette("estimator-comparison", package = "admixr2")</a></code> for a
 detailed comparison.</p>
 </div>
@@ -294,7 +303,7 @@ random effect are handled.</p>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt;   optimize covariance elapsed</span></span>
-<span><span class="co">#&gt; 1   38.703      9.487   48.19</span></span>
+<span><span class="co">#&gt; 1   38.596      9.168  47.764</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>

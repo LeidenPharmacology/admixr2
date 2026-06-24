@@ -198,7 +198,7 @@ fit_sim <- nlmixr2(
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:03 
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:02 
 #> 
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:03
 
@@ -211,7 +211,7 @@ print(fit_sim)
 #> ── Time (sec fit_sim$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   64.909      8.616  73.525
+#> 1   63.894      7.905  71.799
 #> 
 #> ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 #> 
@@ -512,3 +512,45 @@ Monte Carlo and then analyse under FO, the generating parameters are not
 in general an FO maximum likelihood estimate of those data, and the
 resulting FIM is biased. So for FIM / optimal-design calculations,
 generate and analyse with the same FO approximation.
+
+## Gauss-Hermite moments for design evaluation with adgh
+
+`method = "fo"` matches `est = "adfo"` but inherits FO’s bias for
+nonlinear models or large IIV. The GH method provides a deterministic,
+noise-free alternative that is **unbiased at any IIV magnitude** and
+matches the moments computed by `est = "adgh"`:
+
+``` math
+E = \sum_{q=1}^Q w_q\,f(\theta, \eta_q), \qquad
+V = \sum_{q=1}^Q w_q\,(f_q - E)(f_q - E)^\top + \Sigma
+```
+
+where $`(\eta_q, w_q)`$ are the $`Q = m^{n_\eta}`$ tensor-product
+Gauss-Hermite nodes and weights (Cholesky-scaled to the current
+$`\Omega`$). Like `method = "fo"` the result is exact and reproducible —
+no stochastic sampling. Use `method = "gh"` together with `est = "adgh"`
+for design evaluation and optimal-design work when FO bias would be
+non-negligible:
+
+``` r
+
+gh_data <- datagen(
+  studies = list(
+    single_study = list(times = times, ev = rxode2::et(amt = 100), n = 250L)
+  ),
+  model   = true_model,
+  control = datagenControl(method = "gh", n_nodes = 5L)
+)
+
+round(gh_data$single_study$E, 3)
+#>   0.5     1     2     4     8    12    24 
+#> 3.495 4.753 4.549 2.365 0.485 0.113 0.003
+```
+
+The MC, FO and GH means should agree closely when IIV is moderate and
+the model is nearly linear in $`\eta`$. GH and FO diverge from MC as IIV
+grows — GH tracks MC more accurately because it does not linearise
+$`f`$. The number of nodes `n_nodes` (per eta dimension) trades accuracy
+against computational cost: `n_nodes = 3` is fast; `n_nodes = 5`
+(default) achieves near-exact moments for IIV SD up to ~0.5;
+`n_nodes = 7` extends coverage to SD ~0.7.

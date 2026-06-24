@@ -20,9 +20,9 @@
 <link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><link href="../extra.css" rel="stylesheet">
 <meta property="og:title" content="The mathematics of aggregate data modelling">
-<meta name="description" content="Aggregate data modelling has a long history in pharmacometrics. This post lays out the mathematical foundations of admixr2: the aggregate likelihood, three estimators for evaluating it, and the algorithmic innovations — particularly the common-random-numbers analytical gradient and the analytical IRMC inner gradient — that make gradient-based optimisation both fast and reliable.
+<meta name="description" content="Aggregate data modelling has a long history in pharmacometrics. This post lays out the mathematical foundations of admixr2: the aggregate likelihood, four estimators for evaluating it, and the algorithmic innovations — particularly the common-random-numbers analytical gradient and the analytical IRMC inner gradient — that make gradient-based optimisation both fast and reliable.
 ">
-<meta property="og:description" content="Aggregate data modelling has a long history in pharmacometrics. This post lays out the mathematical foundations of admixr2: the aggregate likelihood, three estimators for evaluating it, and the algorithmic innovations — particularly the common-random-numbers analytical gradient and the analytical IRMC inner gradient — that make gradient-based optimisation both fast and reliable.
+<meta property="og:description" content="Aggregate data modelling has a long history in pharmacometrics. This post lays out the mathematical foundations of admixr2: the aggregate likelihood, four estimators for evaluating it, and the algorithmic innovations — particularly the common-random-numbers analytical gradient and the analytical IRMC inner gradient — that make gradient-based optimisation both fast and reliable.
 ">
 <meta property="og:image" content="https://leidenpharmacology.github.io/admixr2/logo.png">
 </head>
@@ -34,7 +34,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -238,8 +238,11 @@ and
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><annotation encoding="application/x-tex">V_\text{pred}</annotation></semantics></math>
 are integrals over
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>η</mi><mo>∼</mo><mi>𝒩</mi><mo stretchy="false" form="prefix">(</mo><mn>0</mn><mo>,</mo><mi mathvariant="normal">Ω</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\eta \sim \mathcal{N}(0, \Omega)</annotation></semantics></math>.
-There is no closed form. The three estimators differ in how they handle
-this intractability.</p>
+There is no closed form. The four estimators differ in how they handle
+this intractability: <code>adfo</code> linearises the integrand,
+<code>admc</code> samples it randomly, <code>adgh</code> integrates it
+on a deterministic quadrature grid, and <code>adirmc</code> reuses a
+fixed sample via importance reweighting.</p>
 <hr>
 </div>
 <div class="section level2">
@@ -345,6 +348,86 @@ single pass, avoiding an intermediate
 allocation. The resulting
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mover><mi>V</mi><mo accent="true">̂</mo></mover><annotation encoding="application/x-tex">\hat{V}</annotation></semantics></math>
 is guaranteed positive semi-definite by construction.</p>
+<hr>
+</div>
+<div class="section level2">
+<h2 id="gauss-hermite-quadrature-adgh">Gauss-Hermite quadrature (adgh)<a class="anchor" aria-label="anchor" href="#gauss-hermite-quadrature-adgh"></a>
+</h2>
+<p>The MC estimator replaces the population integral with a
+<em>random</em> average. The GH estimator replaces it with a
+<em>deterministic</em> one: a tensor-product Gauss-Hermite quadrature
+rule that evaluates the same expectation over
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>η</mi><mo>∼</mo><mi>𝒩</mi><mo stretchy="false" form="prefix">(</mo><mn>0</mn><mo>,</mo><mi mathvariant="normal">Ω</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\eta \sim \mathcal{N}(0, \Omega)</annotation></semantics></math>
+at a small set of fixed nodes. This estimator is new in admixr2 — it has
+no counterpart in admr.</p>
+<p>For a single random effect, the probabilists’ Gauss-Hermite rule
+approximates an expectation under the standard normal by a weighted sum
+over
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>
+nodes,</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>𝔼</mi><mrow><mi>z</mi><mo>∼</mo><mi>𝒩</mi><mo stretchy="false" form="prefix">(</mo><mn>0</mn><mo>,</mo><mn>1</mn><mo stretchy="false" form="postfix">)</mo></mrow></msub><mo stretchy="false" form="prefix">[</mo><mi>g</mi><mo stretchy="false" form="prefix">(</mo><mi>z</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="postfix">]</mo><mo>≈</mo><munderover><mo>∑</mo><mrow><mi>q</mi><mo>=</mo><mn>1</mn></mrow><mi>m</mi></munderover><msub><mi>w</mi><mi>q</mi></msub><mspace width="0.167em"></mspace><mi>g</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>x</mi><mi>q</mi></msub><mo stretchy="false" form="postfix">)</mo><mo>,</mo></mrow><annotation encoding="application/x-tex">
+\mathbb{E}_{z\sim\mathcal{N}(0,1)}[g(z)] \approx \sum_{q=1}^m w_q\, g(x_q),
+</annotation></semantics></math></p>
+<p>with nodes
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>x</mi><mi>q</mi></msub><annotation encoding="application/x-tex">x_q</annotation></semantics></math>
+and weights
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>w</mi><mi>q</mi></msub><annotation encoding="application/x-tex">w_q</annotation></semantics></math>
+(normalised so
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mo>∑</mo><mi>q</mi></msub><msub><mi>w</mi><mi>q</mi></msub><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\sum_q w_q = 1</annotation></semantics></math>
+and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mo>∑</mo><mi>q</mi></msub><msub><mi>w</mi><mi>q</mi></msub><msubsup><mi>x</mi><mi>q</mi><mn>2</mn></msubsup><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\sum_q w_q x_q^2 = 1</annotation></semantics></math>)
+obtained from the Golub-Welsch algorithm — the eigendecomposition of the
+symmetric tridiagonal Jacobi matrix of the Hermite recurrence, requiring
+no external tables. For
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>n</mi><mi>η</mi></msub><annotation encoding="application/x-tex">n_\eta</annotation></semantics></math>
+random effects the rule is applied as a tensor product, giving a grid of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Q</mi><mo>=</mo><msup><mi>m</mi><msub><mi>n</mi><mi>η</mi></msub></msup></mrow><annotation encoding="application/x-tex">Q = m^{n_\eta}</annotation></semantics></math>
+nodes
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>x</mi><mi>q</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><msub><mi>n</mi><mi>η</mi></msub></msup></mrow><annotation encoding="application/x-tex">x_q \in \mathbb{R}^{n_\eta}</annotation></semantics></math>
+with product weights. The Cholesky factor
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>L</mi><annotation encoding="application/x-tex">L</annotation></semantics></math>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Ω</mi><mo>=</mo><mi>L</mi><msup><mi>L</mi><mi>⊤</mi></msup></mrow><annotation encoding="application/x-tex">\Omega = LL^\top</annotation></semantics></math>)
+maps the standard-normal nodes into the correlated random-effect space,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>η</mi><mi>q</mi></msub><mo>=</mo><mi>L</mi><msub><mi>x</mi><mi>q</mi></msub></mrow><annotation encoding="application/x-tex">\eta_q = L x_q</annotation></semantics></math>,
+so the population moments become</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>q</mi><mo>=</mo><mn>1</mn></mrow><mi>Q</mi></munderover><msub><mi>w</mi><mi>q</mi></msub><mspace width="0.167em"></mspace><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>L</mi><msub><mi>x</mi><mi>q</mi></msub><mo stretchy="false" form="postfix">)</mo><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>q</mi><mo>=</mo><mn>1</mn></mrow><mi>Q</mi></munderover><msub><mi>w</mi><mi>q</mi></msub><mspace width="0.167em"></mspace><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">(</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>L</mi><msub><mi>x</mi><mi>q</mi></msub><mo stretchy="false" form="postfix">)</mo><mo>−</mo><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">)</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">(</mo><mi>⋯</mi><msup><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">)</mo><mi>⊤</mi></msup><mo>+</mo><mi mathvariant="normal">Σ</mi><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\mu_\text{pred} = \sum_{q=1}^Q w_q\, f(\theta, L x_q), \qquad
+V_\text{pred} = \sum_{q=1}^Q w_q\,
+  \bigl(f(\theta, L x_q) - \mu_\text{pred}\bigr)
+  \bigl(\cdots\bigr)^\top + \Sigma.
+</annotation></semantics></math></p>
+<p>Structurally this is the MC estimator with a fixed deterministic node
+grid in place of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>
+random draws and quadrature weights in place of uniform ones, so it
+plugs into exactly the same aggregate MVN
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>−</mi><mn>2</mn><mi>ℓ</mi></mrow><annotation encoding="application/x-tex">-2\ell</annotation></semantics></math>.</p>
+<p><strong>Noise-free objective.</strong> Because the nodes and weights
+are fixed, the objective is a smooth deterministic function of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi mathvariant="normal">Ω</mi><mo>,</mo><mi mathvariant="normal">Σ</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(\theta, \Omega, \Sigma)</annotation></semantics></math>
+— there is no Monte Carlo noise to average away and no
+<code>n_sim</code> to tune. The analytical gradient (closed-form
+contractions through the same ODE sensitivity outputs used by the MC
+estimator) is therefore exact, and the numerical Hessian used for
+standard errors is well-conditioned. Like <code>admc</code> it makes no
+approximation to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>,
+so it is unbiased at any IIV magnitude, and its likelihood is on the
+same scale — its AIC is directly comparable to <code>admc</code> and
+<code>adirmc</code>.</p>
+<p><strong>Cost.</strong> The grid size
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Q</mi><mo>=</mo><msup><mi>m</mi><msub><mi>n</mi><mi>η</mi></msub></msup></mrow><annotation encoding="application/x-tex">Q = m^{n_\eta}</annotation></semantics></math>
+grows exponentially in the number of random effects. For models with up
+to ~4 etas,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Q</mi><annotation encoding="application/x-tex">Q</annotation></semantics></math>
+is small
+(e.g. <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mn>5</mn><mn>4</mn></msup><mo>=</mo><mn>625</mn></mrow><annotation encoding="application/x-tex">5^4 = 625</annotation></semantics></math>
+nodes) and <code>adgh</code> is substantially faster than MC at
+equivalent accuracy; for high-dimensional IIV the node count becomes
+prohibitive and <code>admc</code> or <code>adirmc</code> are preferable.
+A modest node count (<code>n_nodes = 5</code>) gives near-exact
+covariance moments for IIV SD up to ~0.5; <code>n_nodes = 7</code>
+extends this to ~0.7.</p>
 <hr>
 </div>
 <div class="section level2">
@@ -635,9 +718,10 @@ variance components differ by orders of magnitude.</p>
 <h2 id="summary-of-improvements-over-admr">Summary of improvements over admr<a class="anchor" aria-label="anchor" href="#summary-of-improvements-over-admr"></a>
 </h2>
 <p>admr (van de Beek et al., 2025) established the core aggregate data
-workflow in R. admixr2 preserves the same three estimators and the same
-aggregate MVN likelihood while replacing the surrounding architecture
-and several algorithmic components.</p>
+workflow in R. admixr2 preserves the same three estimators (FO, MC,
+IRMC) and the same aggregate MVN likelihood — adding a fourth,
+deterministic Gauss-Hermite estimator — while replacing the surrounding
+architecture and several algorithmic components.</p>
 <table class="table">
 <colgroup>
 <col width="34%">
@@ -668,32 +752,37 @@ and several algorithmic components.</p>
 <tr class="even">
 <td>Estimators</td>
 <td>FO, MC, IRMC</td>
-<td>FO, MC, IRMC</td>
+<td>FO, MC, GH, IRMC</td>
 </tr>
 <tr class="odd">
+<td>Gauss-Hermite quadrature estimator</td>
+<td>Not available</td>
+<td>New deterministic, noise-free estimator</td>
+</tr>
+<tr class="even">
 <td>FO Jacobian
 (<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>∂</mi><mi>f</mi><mi>/</mi><mi>∂</mi><mi>η</mi></mrow><annotation encoding="application/x-tex">\partial f/\partial\eta</annotation></semantics></math>)</td>
 <td>C++ finite differences</td>
 <td>ODE sensitivity equations</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>MC gradient</td>
 <td>FD of frozen MC NLL
 (<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>p</mi><mo>×</mo><mi>N</mi></mrow><annotation encoding="application/x-tex">p \times N</annotation></semantics></math>
 extra solves)</td>
 <td>CRN analytical (0 extra ODE solves)</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>IRMC inner optimizer</td>
 <td>BOBYQA (default) or FD gradient</td>
 <td>L-BFGS with analytical gradient</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Linearized kappa</td>
 <td>Not available</td>
 <td>Optional; eliminates ODE calls in inner loop</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Ω</mi><annotation encoding="application/x-tex">\Omega</annotation></semantics></math>
 off-diagonal encoding</td>
@@ -702,12 +791,12 @@ off-diagonal encoding</td>
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>L</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub><annotation encoding="application/x-tex">L_{jk}</annotation></semantics></math>
 </td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Parameter preconditioning</td>
 <td>No</td>
 <td>Yes (diagonal scaling)</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Parallel restarts</td>
 <td>Sequential chains</td>
 <td>
@@ -733,7 +822,7 @@ calls.</p>
 <p>The mathematical foundations are described in detail in the papers
 linked at the top of this post. The <a href="../estimator-comparison.html">Estimator comparison</a> vignette
 shows worked examples on the included <code>examplomycin</code> dataset
-with all three estimators. The <a href="../advanced.html">Advanced
+with all four estimators. The <a href="../advanced.html">Advanced
 usage</a> vignette covers gradient modes, multi-restart fitting, and
 model comparison via AIC.</p>
 </div>

@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -45,6 +45,31 @@
     </div>
 
     <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.2.0" id="admixr2-020">admixr2 0.2.0<a class="anchor" aria-label="anchor" href="#admixr2-020"></a></h2>
+<div class="section level3">
+<h3 id="new-features-0-2-0">New features<a class="anchor" aria-label="anchor" href="#new-features-0-2-0"></a></h3>
+<ul><li>New estimator <code>est = "adgh"</code>: deterministic Gauss-Hermite quadrature over the random-effects prior, configured via <code><a href="../reference/adghControl.html">adghControl()</a></code>. The objective is noise-free (no Monte Carlo draws), the analytical gradient is exact, and it is unbiased at any IIV magnitude. For models with up to ~4 random effects it is the fastest exact estimator (<a href="https://github.com/LeidenPharmacology/admixr2/issues/65" class="external-link">#65</a>).</li>
+<li>
+<code><a href="../reference/datagen.html">datagen()</a></code> gains FO-approximated population moments (<code>method = "fo"</code>, matching <code>est = "adfo"</code>) for design evaluation and optimal-design work (<a href="https://github.com/LeidenPharmacology/admixr2/issues/56" class="external-link">#56</a>).</li>
+<li>
+<code>adirmcControl(kappa_method = "linearized_gh")</code>: GH-averaged kappa baseline for the IRMC inner loop.</li>
+<li>
+<code><a href="../reference/admClearCache.html">admClearCache()</a></code> prunes the session-level compiled-model cache (<a href="https://github.com/LeidenPharmacology/admixr2/issues/10" class="external-link">#10</a>).</li>
+<li>Control objects now accept any <code>nloptr</code> algorithm; the default is chosen from the gradient mode, and <code>grad</code>/<code>algorithm</code> are reconciled automatically (<a href="https://github.com/LeidenPharmacology/admixr2/issues/70" class="external-link">#70</a>).</li>
+</ul></div>
+<div class="section level3">
+<h3 id="bug-fixes-0-2-0">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-0-2-0"></a></h3>
+<ul><li>Use the ML denominator (<code>1/n_sim</code>) consistently in the MC gradient kernels, matching the NLL (<a href="https://github.com/LeidenPharmacology/admixr2/issues/48" class="external-link">#48</a>).</li>
+<li>Fix parallel multi-restart dispatch for fork/PSOCK, and fix <code>adirmc</code> multi-restart (<a href="https://github.com/LeidenPharmacology/admixr2/issues/45" class="external-link">#45</a>).</li>
+<li>Guard non-positive predicted variance in the diagonal-NLL paths (<a href="https://github.com/LeidenPharmacology/admixr2/issues/57" class="external-link">#57</a>).</li>
+<li>Correct the FO diagonal omega gradient scaling, plus assorted plot, output-variable detection, caching, and worker-serialization fixes.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="documentation-0-2-0">Documentation<a class="anchor" aria-label="anchor" href="#documentation-0-2-0"></a></h3>
+<ul><li>Add Gauss-Hermite sections across the vignettes and fix the pkgdown reference index so the documentation site builds (<a href="https://github.com/LeidenPharmacology/admixr2/issues/79" class="external-link">#79</a>).</li>
+</ul></div>
+</div>
+    <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.0" id="admixr2-010">admixr2 0.1.0<a class="anchor" aria-label="anchor" href="#admixr2-010"></a></h2><p class="text-muted">CRAN release: 2026-06-02</p>
 <ul><li>Initial release.</li>
 <li>Monte Carlo estimator (<code>est = "admc"</code>) via <code><a href="../reference/admControl.html">admControl()</a></code>.</li>
@@ -52,9 +77,12 @@
 <li>Analytical CRN gradient with sensitivity equations (<code>grad = "sens"</code>).</li>
 <li>Multi-restart parallelism via <code>furrr</code>/<code>future</code>.</li>
 <li>Diagnostic plots: observed vs predicted mean/covariance, NLL trace, parameter trace.</li>
+<li>
+<code>traceplot()</code> support: admixr2 fits populate the standard <code>parHistData</code> slot, so the nlmixr2 <code>traceplot()</code> generic works natively (best restart, natural scale, no burn-in marker).</li>
 <li>Integrates with the nlmixr2/rxode2 ecosystem.</li>
 </ul></div>
-  </main></div>
+  </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
+    </nav></aside></div>
 
 
     <footer><div class="pkgdown-footer-left">

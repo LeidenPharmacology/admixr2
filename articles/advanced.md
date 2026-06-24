@@ -40,6 +40,8 @@ and SDs) or when runtime is a priority.
 and
 [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md)
 offer gradient strategies via the `grad` argument.
+[`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md)
+offers `"analytical"`, `"fd"`, `"cfd"`, and `"none"`.
 [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)
 offers `"analytical"`, `"none"`, and `"fd"` only (no `"sens"` or
 `"cfd"`).
@@ -63,6 +65,20 @@ gradient modes:**
 | `"analytical"` | Chain rule through V_pred | Omega/sigma analytical; struct thetas FD only |
 | `"fd"` | Forward FD of full NLL | All parameters; `n_p + 1` NLL evals per step |
 | `"cfd"` | Central FD of full NLL | More accurate; `2 n_p` NLL evals per step |
+
+**[`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md)
+gradient modes:**
+
+| `grad =` | Method | Notes |
+|----|----|----|
+| `"analytical"` (default) | Closed-form contractions through sensitivity equations | Exact and cheapest; one batched sensitivity solve per study over the node grid |
+| `"fd"` | Forward FD of full NLL | All parameters |
+| `"cfd"` | Central FD of full NLL | More accurate; ~2× slower than `"fd"` |
+| `"none"` | BOBYQA (derivative-free) | No gradient |
+
+Because the GH objective is **noise-free** (deterministic quadrature, no
+MC draws), its analytical gradient is exact and the resulting Hessian is
+well-conditioned — `"analytical"` is the recommended default for `adgh`.
 
 For `adfo`, all gradient modes still use the sensitivity model inside
 each NLL evaluation to compute J in a single rxSolve — `grad` controls
@@ -240,10 +256,12 @@ If the Hessian is non-positive-definite (SEs printed as `NA`), increase
 ## Model comparison: AIC and BIC
 
 Standard information criteria work directly on `admFit` objects. **AIC
-and BIC are only comparable within the same estimator** — `adfo`
-evaluates a linearised likelihood that differs from the MC likelihood
-used by `admc` and `adirmc`, so cross-estimator comparisons are not
-meaningful.
+and BIC are comparable only across estimators that evaluate the same
+likelihood.** `admc`, `adgh`, and `adirmc` all target the exact
+aggregate MVN likelihood (MC, quadrature, and importance-weighted
+estimates of the same integral), so their information criteria are
+mutually comparable. `adfo` evaluates a *linearised* likelihood that
+differs from these, so it must not be compared against the other three.
 
 Here we compare the full model (IIV on all five parameters) against a
 reduced model with IIV on CL and V1 only:
@@ -259,7 +277,7 @@ ctl <- admControl(
 )
 
 fit_full    <- nlmixr2(pk_model,   admData(), est = "admc", control = ctl)
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:08
+#> [====|====|====|====|====|====|====|====|====|====] 0:00:07
 fit_reduced <- nlmixr2(pk_reduced, admData(), est = "admc", control = ctl)
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00

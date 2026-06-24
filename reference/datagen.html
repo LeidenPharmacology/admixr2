@@ -21,7 +21,7 @@ is ready to supply directly to admControl(studies = ...)."><meta property="og:im
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -119,7 +119,8 @@ study's <code>model</code> must be non-<code>NULL</code>.</p></dd>
 <dt><code>V</code></dt>
 <dd><p>Population covariance matrix
 (<code>length(times)</code> x <code>length(times)</code>; ML denominator <code>n_sim</code> for
-<code>method = "mc"</code>, the analytical FO covariance for <code>method = "fo"</code>).
+<code>method = "mc"</code>, the analytical FO covariance for <code>method = "fo"</code>,
+or the GH weighted covariance for <code>method = "gh"</code>).
 The diagonal carries the model's residual-error variance; to generate
 residual-free (IIV-only) moments, omit the error term from the model.</p></dd>
 
@@ -162,6 +163,13 @@ true maximum rather than at a point that is not an MLE of the generated data.
 Note <code>est = "adfo"</code> always adds \(\Sigma\) to its predicted covariance, so
 for a consistent FIM keep the residual error in the generating model; omit it
 only when residual-free (IIV-only) moments are genuinely what you want.</p>
+<p>With <code>method = "gh"</code> the moments are computed by deterministic
+Gauss-Hermite quadrature over the random-effects prior \(\eta \sim N(0, \Omega)\):
+$$E = \sum_q w_q f(\hat\theta, \eta_q), \quad V = \sum_q w_q (f_q - E)(f_q - E)^\top + \Sigma$$
+where \((\eta_q, w_q)\) are the Cholesky-scaled tensor-product GH nodes and
+weights. Unlike FO this is unbiased at any IIV magnitude; unlike MC the result
+is noise-free and exactly reproducible. Matching the moments of <code>est = "adgh"</code>
+makes <code>method = "gh"</code> the natural choice for optimal design with that estimator.</p>
 <p>Models are compiled and cached on first use (keyed by model expression
 digest), so repeated calls or multiple studies sharing the same model incur
 only a single compilation.</p>

@@ -34,7 +34,7 @@
 
     <a class="navbar-brand me-2" href="index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -82,7 +82,7 @@
 </div>
 <!-- badges: start -->
 
-<p><code>admixr2</code> fits pharmacometric PK/PD models directly to <strong>aggregate-level data</strong> — the observed mean vector <strong>E</strong> and covariance matrix <strong>V</strong> reported per clinical study — rather than requiring individual patient records. It integrates with the <a href="https://nlmixr2.org/" class="external-link">nlmixr2</a> / <a href="https://cran.r-project.org/package=rxode2" class="external-link">rxode2</a> ecosystem and provides three estimation backends:</p>
+<p><code>admixr2</code> fits pharmacometric PK/PD models directly to <strong>aggregate-level data</strong> — the observed mean vector <strong>E</strong> and covariance matrix <strong>V</strong> reported per clinical study — rather than requiring individual patient records. It integrates with the <a href="https://nlmixr2.org/" class="external-link">nlmixr2</a> / <a href="https://cran.r-project.org/package=rxode2" class="external-link">rxode2</a> ecosystem and provides four estimation backends:</p>
 <table class="table">
 <thead><tr>
 <th>Estimator</th>
@@ -99,6 +99,11 @@
 <td>Monte Carlo</td>
 <td><code>"admc"</code></td>
 <td><code><a href="reference/admControl.html">admControl()</a></code></td>
+</tr>
+<tr>
+<td>Gauss-Hermite</td>
+<td><code>"adgh"</code></td>
+<td><code><a href="reference/adghControl.html">adghControl()</a></code></td>
 </tr>
 <tr>
 <td>Iterative Reweighting MC</td>
@@ -219,7 +224,7 @@
 </tr>
 <tr>
 <td><a href="https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html">Estimator comparison</a></td>
-<td>adfo, admc and adirmc: mathematical foundations and when to use each</td>
+<td>adfo, admc, adgh and adirmc: mathematical foundations and when to use each</td>
 </tr>
 <tr>
 <td><a href="https://leidenpharmacology.github.io/admixr2/articles/advanced.html">Advanced usage</a></td>

@@ -1,8 +1,8 @@
-# Estimator comparison: adfo, admc and adirmc
+# Estimator comparison: adfo, admc, adgh and adirmc
 
-## Three estimators, one interface
+## Four estimators, one interface
 
-All three estimators accept the same model and study specification and
+All four estimators accept the same model and study specification and
 return the same `admFit` object. They share a common likelihood
 framework but differ in how they approximate the population mean and
 covariance of the predicted observations.
@@ -31,7 +31,7 @@ distribution $`\eta \sim \mathcal{N}(0, \Omega)`$:
 V_\text{pred} = \operatorname{Var}_\eta[f(\theta, \eta)] + \Sigma
 ```
 
-These integrals have no closed form for nonlinear $`f`$. All three
+These integrals have no closed form for nonlinear $`f`$. All four
 estimators minimise the same objective but take different approaches to
 evaluating them.
 
@@ -147,6 +147,44 @@ optimisation is deterministic and does not depend on re-sampling.
 - Heavier per-phase overhead than `admc` for simple, well-initialised
   problems with cheap ODE solves.
 
+## Gauss-Hermite (GH): deterministic quadrature over $`\eta`$
+
+`adgh` evaluates the population integrals exactly (up to the accuracy of
+the quadrature rule) using a tensor-product Gauss-Hermite grid over
+$`\eta \sim \mathcal{N}(0, \Omega)`$. The nodes $`\eta_q`$ and weights
+$`w_q`$ are computed via the Golub-Welsch algorithm; $`L\eta_q`$ applies
+the Cholesky factor to map standard-normal nodes into the correlated
+$`\eta`$ space:
+
+``` math
+\mu_\text{pred} = \sum_{q=1}^Q w_q\, f(\theta, \eta_q), \qquad
+V_\text{pred} = \sum_{q=1}^Q w_q\,
+  \bigl(f(\theta,\eta_q) - \mu_\text{pred}\bigr)
+  \bigl(\cdots\bigr)^\top + \Sigma
+```
+
+With $`m`$ nodes per dimension and $`n_\eta`$ random effects the grid
+has $`Q = m^{n_\eta}`$ points. The objective is **fully deterministic**
+— no MC noise — so the gradient is clean and the Hessian
+well-conditioned.
+
+**Advantages:**
+
+- Noise-free objective — cleaner gradient than MC; reproducible across
+  runs without fixing `n_sim`.
+- AIC directly comparable to `admc` and `adirmc` (same likelihood
+  scale).
+- For models with $`\leq 4`$ etas, $`Q`$ is small (e.g. $`5^4 = 625`$)
+  and `adgh` is substantially faster than `admc` at equivalent accuracy.
+- Unbiased at any IIV magnitude (unlike FO); no approximation to $`f`$.
+
+**Limitations:**
+
+- Node count grows exponentially: $`5^5 = 3125`$, $`5^6 = 15625`$. For
+  high-dimensional IIV consider `admc` or `adirmc`.
+- No inner-loop cost saving for complex ODE systems (unlike `adirmc`);
+  each NLL evaluation runs all $`Q`$ rxSolve calls.
+
 ## Common setup
 
 ``` r
@@ -204,7 +242,7 @@ study <- list(E = E, V = V, n = n, times = times, ev = rxode2::et(amt = 100))
 
 The model uses mu-referenced parameterisation
 (`cl <- exp(tcl + eta.cl)`), which enables analytical gradient
-computation via sensitivity equations in all three estimators. See the
+computation via sensitivity equations in all four estimators. See the
 [Advanced
 usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html#mu-referencing-and-sensitivity-equations)
 vignette for details.
@@ -260,6 +298,27 @@ fit_irmc <- nlmixr2(
     cov_n_sim       = 10000L,
     omega_expansion = 1.5,
     seed            = 1L
+  )
+)
+```
+
+## Fitting with adgh
+
+`adgh` is a drop-in alternative to `admc` for models with a modest
+number of etas. The five-eta model used here produces $`5^5 = 3125`$
+nodes — at the upper end of practical use. For production fits consider
+`n_nodes = 3` (243 nodes) as a fast starting point, increasing to 5 or 7
+if IIV is large (SD \> 0.4).
+
+``` r
+
+fit_gh <- nlmixr2(
+  pk_model, admData(), est = "adgh",
+  control = adghControl(
+    studies  = list(examplomycin = study),
+    n_nodes  = 5L,
+    maxeval  = 300L,
+    seed     = 1L
   )
 )
 ```
@@ -358,15 +417,17 @@ tighten) are normal and expected.
 | Situation | Recommendation |
 |----|----|
 | Rapid model screening, many candidate models | `adfo` — fastest per evaluation |
-| Initial estimates before MC refinement | `adfo` then hand off to `admc` |
+| Initial estimates before MC/GH refinement | `adfo` then hand off to `admc` or `adgh` |
 | Weak IIV (CV \< 20 %) and near-linear model | `adfo` estimates reliable for inference |
-| Standard 1–2 compartment PK, good starting values | `admc` with `grad = "sens"` |
+| Standard 1–2 compartment PK, ≤ 4 etas | `adgh` — noise-free, faster than MC at equivalent accuracy |
+| Standard 1–2 compartment PK, ≥ 5 etas or large IIV | `admc` with `grad = "sens"` |
 | Initial exploration or poor starting values | `admc` with `n_restarts >= 3` |
 | Complex ODE system with expensive solves | `adirmc` — inner loop needs no new rxSolve calls |
 | High-dimensional Omega (≥ 5 etas) | `adirmc` — inner loop scales with phases not steps |
 | Non-Gaussian or bounded IIV | `adirmc` with `omega_expansion > 1` |
-| Need exact likelihood for AIC comparison across models | `admc` or `adirmc` (not `adfo`) |
-| Maximum reproducibility | All three estimators accept `seed` |
+| Optimal design / design evaluation (matched moments) | `adgh` with `datagenControl(method = "gh")` |
+| Need exact likelihood for AIC comparison across models | `admc`, `adgh`, or `adirmc` (not `adfo`) |
+| Maximum reproducibility, no MC noise | `adfo` or `adgh` (both deterministic) |
 
 ## Control objects at a glance
 
@@ -393,6 +454,17 @@ admControl(
   seed       = 1L
 )
 
+# adgh key arguments (noise-free quadrature; same likelihood scale as admc)
+adghControl(
+  studies    = list(...),
+  n_nodes    = 5L,          # nodes per eta dimension; total = n_nodes^n_eta
+  grad       = "analytical",# gradient mode: "analytical", "fd", "cfd", "none"
+  n_restarts = 1L,
+  workers    = 1L,
+  covMethod  = "r",         # SEs for struct+sigma only
+  seed       = 1L
+)
+
 # adirmc key arguments
 adirmcControl(
   studies         = list(...),
@@ -400,7 +472,7 @@ adirmcControl(
   phases          = c(2, 1, 0.5, 0.1),   # box constraint half-widths per phase
   omega_expansion = 1.5,                   # inflate proposal Omega
   grad            = "analytical",          # "analytical", "none", "fd"
-  kappa_method    = "exact",               # "exact" (default) or "linearized"
+  kappa_method    = "exact",               # "exact", "linearized", "linearized_gh"
   seed            = 1L
 )
 ```

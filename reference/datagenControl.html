@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -52,8 +52,9 @@
     <div class="section level2">
     <h2 id="ref-usage">Usage<a class="anchor" aria-label="anchor" href="#ref-usage"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">datagenControl</span><span class="op">(</span></span>
-<span>  method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"mc"</span>, <span class="st">"fo"</span><span class="op">)</span>,</span>
+<span>  method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"mc"</span>, <span class="st">"fo"</span>, <span class="st">"gh"</span><span class="op">)</span>,</span>
 <span>  n_sim <span class="op">=</span> <span class="fl">5000L</span>,</span>
+<span>  n_nodes <span class="op">=</span> <span class="fl">5L</span>,</span>
 <span>  sampling <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"sobol"</span>, <span class="st">"halton"</span>, <span class="st">"torus"</span>, <span class="st">"lhs"</span>, <span class="st">"rnorm"</span><span class="op">)</span>,</span>
 <span>  seed <span class="op">=</span> <span class="fl">12345L</span>,</span>
 <span>  cores <span class="op">=</span> <span class="fl">1L</span>,</span>
@@ -69,25 +70,33 @@
 <dd><p>Moment approximation used to generate <code>E</code> and <code>V</code>:
 <code>"mc"</code> (default) draws Monte Carlo samples over the IIV distribution, as in
 <code>est = "admc"</code>; <code>"fo"</code> uses the deterministic First-Order expansion
-(<code>mu = f(theta, 0)</code>, <code>V = J Omega J' + Sigma</code>), matching <code>est = "adfo"</code>.
-Use <code>"fo"</code> for design evaluation / optimal-design work, where the
-data-generating and data-analytic models must coincide so the FO Hessian of
-the log-likelihood (the expected FIM) is evaluated at the true maximum.</p></dd>
+(<code>mu = f(theta, 0)</code>, <code>V = J Omega J' + Sigma</code>), matching <code>est = "adfo"</code>;
+<code>"gh"</code> uses deterministic Gauss-Hermite quadrature over the random-effects
+prior, matching <code>est = "adgh"</code> – unbiased at any IIV magnitude and
+noise-free.  Use <code>"fo"</code> or <code>"gh"</code> for design evaluation where the
+data-generating and data-analytic models must coincide.</p></dd>
 
 
 <dt id="arg-n-sim">n_sim<a class="anchor" aria-label="anchor" href="#arg-n-sim"></a></dt>
 <dd><p>Number of Monte Carlo samples used to approximate population
-moments. Ignored when <code>method = "fo"</code>.</p></dd>
+moments. Ignored when <code>method = "fo"</code> or <code>"gh"</code>.</p></dd>
+
+
+<dt id="arg-n-nodes">n_nodes<a class="anchor" aria-label="anchor" href="#arg-n-nodes"></a></dt>
+<dd><p>Number of Gauss-Hermite nodes per eta dimension for
+<code>method = "gh"</code> (default 5). Total nodes = <code>n_nodes^n_eta</code>. Ignored for
+<code>"mc"</code> and <code>"fo"</code>.</p></dd>
 
 
 <dt id="arg-sampling">sampling<a class="anchor" aria-label="anchor" href="#arg-sampling"></a></dt>
 <dd><p>Quasi-random sampling method: <code>"sobol"</code> (default),
-<code>"halton"</code>, <code>"torus"</code>, <code>"lhs"</code>, or <code>"rnorm"</code>. Ignored when <code>method = "fo"</code>.</p></dd>
+<code>"halton"</code>, <code>"torus"</code>, <code>"lhs"</code>, or <code>"rnorm"</code>. Ignored when <code>method = "fo"</code>
+or <code>"gh"</code>.</p></dd>
 
 
 <dt id="arg-seed">seed<a class="anchor" aria-label="anchor" href="#arg-seed"></a></dt>
 <dd><p>Integer seed.  Applied before stochastic methods
-(<code>"rnorm"</code>, <code>"lhs"</code>). Ignored when <code>method = "fo"</code>.</p></dd>
+(<code>"rnorm"</code>, <code>"lhs"</code>). Ignored when <code>method = "fo"</code> or <code>"gh"</code>.</p></dd>
 
 
 <dt id="arg-cores">cores<a class="anchor" aria-label="anchor" href="#arg-cores"></a></dt>
@@ -97,7 +106,7 @@ moments. Ignored when <code>method = "fo"</code>.</p></dd>
 <dt id="arg-return-samples">return_samples<a class="anchor" aria-label="anchor" href="#arg-return-samples"></a></dt>
 <dd><p>Include the raw <code>n_sim x length(times)</code>
 prediction matrix as <code>$samples</code> in each study's output. No effect when
-<code>method = "fo"</code> (the FO expansion draws no samples).</p></dd>
+<code>method = "fo"</code> or <code>"gh"</code> (those methods draw no samples).</p></dd>
 
 </dl></div>
     <div class="section level2">
@@ -118,6 +127,10 @@ prediction matrix as <code>$samples</code> in each study's output. No effect whe
 <span class="r-in"><span><span class="co"># Deterministic FO moments for design evaluation:</span></span></span>
 <span class="r-in"><span><span class="fu">datagenControl</span><span class="op">(</span>method <span class="op">=</span> <span class="st">"fo"</span><span class="op">)</span><span class="op">$</span><span class="va">method</span>  <span class="co"># "fo"</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> [1] "fo"</span>
+<span class="r-in"><span></span></span>
+<span class="r-in"><span><span class="co"># GH quadrature moments (unbiased, noise-free):</span></span></span>
+<span class="r-in"><span><span class="fu">datagenControl</span><span class="op">(</span>method <span class="op">=</span> <span class="st">"gh"</span>, n_nodes <span class="op">=</span> <span class="fl">5L</span><span class="op">)</span><span class="op">$</span><span class="va">n_nodes</span></span></span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 5</span>
 </code></pre></div>
     </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

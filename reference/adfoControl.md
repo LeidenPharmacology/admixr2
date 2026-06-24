@@ -11,7 +11,7 @@ non-linear individual predictions.
 adfoControl(
   studies = list(),
   grad = c("none", "analytical", "fd", "cfd"),
-  algorithm = "NLOPT_LN_BOBYQA",
+  algorithm = NULL,
   maxeval = 500L,
   ftol_rel = .Machine$double.eps^(1/2),
   print = 10L,
@@ -59,8 +59,15 @@ adfoControl(
 
 - algorithm:
 
-  nloptr algorithm. Automatically coerced to `"NLOPT_LD_LBFGS"` when
-  `grad != "none"`.
+  nloptr algorithm, or `NULL` (default) to pick the default that matches
+  `grad`: `"NLOPT_LD_LBFGS"` with a gradient, `"NLOPT_LN_BOBYQA"` when
+  `grad = "none"`. Any algorithm reported by
+  [`nloptr::nloptr.print.options()`](https://astamm.github.io/nloptr/reference/nloptr.print.options.html)
+  is accepted. An explicit algorithm is reconciled with `grad`: when
+  `grad = "none"` a gradient-based algorithm (`NLOPT_LD_*` /
+  `NLOPT_GD_*`) falls back to `"NLOPT_LN_BOBYQA"`; when a gradient is
+  requested a derivative-free algorithm (`NLOPT_LN_*` / `NLOPT_GN_*`)
+  turns the gradient off. Both emit a message.
 
 - maxeval:
 
@@ -249,7 +256,7 @@ fit <- nlmixr2(
 #> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |
 #> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |
 #> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |
-#> | 3.9 sec  |          |          |          |          |          |          |
+#> | 3.7 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, 19 NLL evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
@@ -262,7 +269,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    3.854      0.702   4.556
+#> 1    3.733      0.665   4.398
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

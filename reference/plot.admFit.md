@@ -14,7 +14,7 @@ plot(x, which = c("mean", "cov", "nll", "par"), n_sim = NULL, seed = 1L, ...)
 - x:
 
   An `admFit` object returned by `nlmixr2()` with `est = "adfo"`,
-  `est = "admc"`, or `est = "adirmc"`.
+  `est = "admc"`, `est = "adgh"`, or `est = "adirmc"`.
 
 - which:
 
@@ -60,6 +60,20 @@ A named list of ggplot2 objects, invisibly. Prints each selected plot.
     labelled `V(eta.x)`). Facets ordered as in the model
     [`ini()`](https://nlmixr2.github.io/rxode2/reference/ini.html)
     block. Restarts coloured with the Okabe-Ito palette.
+
+## nlmixr2 `traceplot()`
+
+admixr2 fits also plug into the nlmixr2 `traceplot()` generic. During
+fitting the parameter iteration history of the best restart is stored on
+the fit in the standard `parHistData` slot (natural scale), so
+`traceplot(fit)` produces the familiar per-parameter, free-y facetted
+trace used elsewhere in the nlmixr2 ecosystem. There is no burn-in
+marker (admixr2 records optimizer evaluations, not SAEM iterations), and
+only the best restart is shown – the per-restart overlay and the NLL
+trace remain available via `plot(fit, which = c("par", "nll"))`. The
+trace stores only improving evaluations (steps that lowered the best
+NLL), so the `iter` axis indexes those improvement steps rather than raw
+optimizer iterations.
 
 ## Examples
 
@@ -124,7 +138,7 @@ fit <- nlmixr2(
 #> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |
 #> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |
 #> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |
-#> | 3.6 sec  |          |          |          |          |          |          |
+#> | 3.4 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, 19 NLL evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160

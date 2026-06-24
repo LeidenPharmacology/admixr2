@@ -16,17 +16,19 @@ and return a standard nlmixr2 fit object. This lets you apply
 established nlmixr2 models to aggregate statistics from publications or
 internal data summaries where individual records are unavailable.
 
-Three estimators are available:
+Four estimators are available:
 
 | Estimator | `est =` | Control function | Approach |
 |----|----|----|----|
 | First-Order | `"adfo"` | [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md) | First-order Taylor expansion at η = 0; one rxSolve per NLL eval; fastest |
 | Monte Carlo | `"admc"` | [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md) | Sample average over η; asymptotically exact |
+| Gauss-Hermite | `"adgh"` | [`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md) | Deterministic quadrature over η; noise-free, unbiased at any IIV |
 | Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) | Proposals fixed per phase; inner loop needs no new rxSolve calls |
 
 `adfo` is the natural starting point for model screening and initial
-estimates. `admc` is the workhorse for standard PK models. `adirmc` is
-preferred for complex ODE systems with expensive solves,
+estimates. `admc` is the workhorse for standard PK models. `adgh` is a
+noise-free alternative to `admc` for models with up to ~4 etas. `adirmc`
+is preferred for complex ODE systems with expensive solves,
 high-dimensional IIV, or poor starting values. See
 [`vignette("estimator-comparison", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
 for a detailed comparison.
@@ -184,7 +186,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   38.703      9.487   48.19
+#> 1   38.596      9.168  47.764
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

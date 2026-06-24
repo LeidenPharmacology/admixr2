@@ -10,6 +10,8 @@ Main entry point and data helper.
   : Fit an aggregate data model via First-Order (FO) approximation
 - [`nlmixr2Est(`*`<admc>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.admc.md)
   : Fit an aggregate data model via Monte Carlo (admc estimator)
+- [`nlmixr2Est(`*`<adgh>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.adgh.md)
+  : Fit an aggregate data model via Gauss-Hermite quadrature
 - [`nlmixr2Est(`*`<adirmc>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/nlmixr2Est.adirmc.md)
   : Fit an aggregate data model via Iterative Reweighting MC (adirmc
   estimator)
@@ -36,6 +38,8 @@ Configuration for each estimator.
   : Control settings for the FO (First-Order) estimator
 - [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
   : Control settings for the ADM estimator
+- [`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md)
+  : Control settings for the Gauss-Hermite (GH) quadrature estimator
 - [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)
   : Control settings for the IRMC estimator
 - [`admStopWorkers()`](https://leidenpharmacology.github.io/admixr2/reference/admStopWorkers.md)

@@ -7,8 +7,9 @@ Control parameters for
 
 ``` r
 datagenControl(
-  method = c("mc", "fo"),
+  method = c("mc", "fo", "gh"),
   n_sim = 5000L,
+  n_nodes = 5L,
   sampling = c("sobol", "halton", "torus", "lhs", "rnorm"),
   seed = 12345L,
   cores = 1L,
@@ -24,25 +25,33 @@ datagenControl(
   draws Monte Carlo samples over the IIV distribution, as in
   `est = "admc"`; `"fo"` uses the deterministic First-Order expansion
   (`mu = f(theta, 0)`, `V = J Omega J' + Sigma`), matching
-  `est = "adfo"`. Use `"fo"` for design evaluation / optimal-design
-  work, where the data-generating and data-analytic models must coincide
-  so the FO Hessian of the log-likelihood (the expected FIM) is
-  evaluated at the true maximum.
+  `est = "adfo"`; `"gh"` uses deterministic Gauss-Hermite quadrature
+  over the random-effects prior, matching `est = "adgh"` – unbiased at
+  any IIV magnitude and noise-free. Use `"fo"` or `"gh"` for design
+  evaluation where the data-generating and data-analytic models must
+  coincide.
 
 - n_sim:
 
   Number of Monte Carlo samples used to approximate population moments.
-  Ignored when `method = "fo"`.
+  Ignored when `method = "fo"` or `"gh"`.
+
+- n_nodes:
+
+  Number of Gauss-Hermite nodes per eta dimension for `method = "gh"`
+  (default 5). Total nodes = `n_nodes^n_eta`. Ignored for `"mc"` and
+  `"fo"`.
 
 - sampling:
 
   Quasi-random sampling method: `"sobol"` (default), `"halton"`,
-  `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"`.
+  `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"` or
+  `"gh"`.
 
 - seed:
 
   Integer seed. Applied before stochastic methods (`"rnorm"`, `"lhs"`).
-  Ignored when `method = "fo"`.
+  Ignored when `method = "fo"` or `"gh"`.
 
 - cores:
 
@@ -51,8 +60,8 @@ datagenControl(
 - return_samples:
 
   Include the raw `n_sim x length(times)` prediction matrix as
-  `$samples` in each study's output. No effect when `method = "fo"` (the
-  FO expansion draws no samples).
+  `$samples` in each study's output. No effect when `method = "fo"` or
+  `"gh"` (those methods draw no samples).
 
 ## Value
 
@@ -72,4 +81,8 @@ ctrl$sampling  # "sobol"
 # Deterministic FO moments for design evaluation:
 datagenControl(method = "fo")$method  # "fo"
 #> [1] "fo"
+
+# GH quadrature moments (unbiased, noise-free):
+datagenControl(method = "gh", n_nodes = 5L)$n_nodes
+#> [1] 5
 ```

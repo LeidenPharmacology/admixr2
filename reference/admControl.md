@@ -10,7 +10,7 @@ admControl(
   studies = list(),
   n_sim = 5000L,
   sampling = c("sobol", "halton", "torus", "lhs", "rnorm"),
-  algorithm = "NLOPT_LN_BOBYQA",
+  algorithm = NULL,
   maxeval = 500L,
   ftol_rel = .Machine$double.eps^2,
   print = 10L,
@@ -73,8 +73,16 @@ admControl(
 
 - algorithm:
 
-  nloptr algorithm string. Automatically switched to `"NLOPT_LD_LBFGS"`
-  when `grad != "none"`.
+  nloptr algorithm string, or `NULL` (default) to pick the default that
+  matches `grad`: `"NLOPT_LD_LBFGS"` with a gradient,
+  `"NLOPT_LN_BOBYQA"` when `grad = "none"`. Any algorithm reported by
+  [`nloptr::nloptr.print.options()`](https://astamm.github.io/nloptr/reference/nloptr.print.options.html)
+  is accepted (e.g. `"NLOPT_LD_MMA"`, `"NLOPT_LN_NELDERMEAD"`). An
+  explicit algorithm is reconciled with `grad`: when `grad = "none"` a
+  gradient-based algorithm (`NLOPT_LD_*` / `NLOPT_GD_*`) falls back to
+  `"NLOPT_LN_BOBYQA"`; when a gradient is requested a derivative-free
+  algorithm (`NLOPT_LN_*` / `NLOPT_GN_*`) turns the gradient off. Both
+  emit a message.
 
 - maxeval:
 
@@ -166,9 +174,14 @@ admControl(
 - workers:
 
   Number of parallel workers for multi-restart. `1` (default) runs
-  restarts sequentially. Values `> 1` use a PSOCK cluster on Windows and
-  fork workers on Unix/macOS. Workers are stopped automatically after
-  the restart phase so all cores are available for the Hessian step.
+  restarts sequentially. Values `> 1` use fork workers on Unix/macOS
+  (outside RStudio) and a PSOCK cluster on Windows or inside RStudio.
+  **RStudio on Linux**:
+  [`future::supportsMulticore()`](https://parallelly.futureverse.org/reference/supportsMulticore.html)
+  returns `FALSE` inside RStudio even on Linux, so PSOCK is used; fork
+  is only active when running from a terminal. Workers are stopped
+  automatically after the restart phase so all cores are available for
+  the Hessian step.
 
 - rxControl:
 
@@ -282,7 +295,7 @@ fit <- nlmixr2(
 #> | 0030     | -3690.65 |    4.961 |    10.25 |     29.9 |    9.857 |     1.04 |   0.1985 |   0.1045 |    0.109 |   0.1022 |   0.1072 |  0.09699 |
 #> | 0040     | -3690.72 |     4.95 |    10.16 |    30.02 |    9.814 |    1.031 |   0.1983 |   0.1044 |   0.1139 |   0.1022 |   0.1067 |  0.09433 |
 #> | 0045 ✓   | -3690.73 |    4.952 |    10.12 |    30.03 |    9.816 |    1.026 |   0.1983 |   0.1045 |   0.1157 |   0.1008 |   0.1064 |  0.09239 |
-#> | 8.1 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 8.8 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, Sens-Hessian, 7 gradient evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
@@ -295,7 +308,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    8.109      8.918  17.027
+#> 1    8.821      9.858  18.679
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

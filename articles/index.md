@@ -7,7 +7,7 @@
 
   Aggregate data modelling has a long history in pharmacometrics. This
   post lays out the mathematical foundations of admixr2: the aggregate
-  likelihood, three estimators for evaluating it, and the algorithmic
+  likelihood, four estimators for evaluating it, and the algorithmic
   innovations — particularly the common-random-numbers analytical
   gradient and the analytical IRMC inner gradient — that make
   gradient-based optimisation both fast and reliable.
@@ -20,7 +20,7 @@
   plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md):
 - [Multiple
   studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md):
-- [Estimator comparison: adfo, admc and
+- [Estimator comparison: adfo, admc, adgh and
   adirmc](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md):
 - [Advanced
   usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md):
