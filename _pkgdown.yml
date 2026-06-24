@@ -81,6 +81,7 @@ reference:
       - admData
       - nlmixr2Est.adfo
       - nlmixr2Est.admc
+      - nlmixr2Est.adgh
       - nlmixr2Est.adirmc
 
   - title: Simulation
@@ -94,6 +95,7 @@ reference:
     contents:
       - adfoControl
       - admControl
+      - adghControl
       - adirmcControl
       - admStopWorkers
       - admClearCache

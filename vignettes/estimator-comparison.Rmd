@@ -46,7 +46,7 @@ $$
 V_\text{pred} = \operatorname{Var}_\eta[f(\theta, \eta)] + \Sigma
 $$
 
-These integrals have no closed form for nonlinear $f$. All three estimators
+These integrals have no closed form for nonlinear $f$. All four estimators
 minimise the same objective but take different approaches to evaluating them.
 
 ## First-Order (FO): Taylor expansion at $\eta = 0$
@@ -245,7 +245,7 @@ study <- list(E = E, V = V, n = n, times = times, ev = rxode2::et(amt = 100))
 
 The model uses mu-referenced parameterisation (`cl <- exp(tcl + eta.cl)`),
 which enables analytical gradient computation via sensitivity equations in
-all three estimators. See the
+all four estimators. See the
 [Advanced usage](advanced.html#mu-referencing-and-sensitivity-equations)
 vignette for details.
 
