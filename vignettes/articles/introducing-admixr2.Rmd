@@ -2,7 +2,7 @@
 title: "The mathematics of aggregate data modelling"
 description: >
   Aggregate data modelling has a long history in pharmacometrics. This post lays
-  out the mathematical foundations of admixr2: the aggregate likelihood, three
+  out the mathematical foundations of admixr2: the aggregate likelihood, four
   estimators for evaluating it, and the algorithmic innovations — particularly
   the common-random-numbers analytical gradient and the analytical IRMC inner
   gradient — that make gradient-based optimisation both fast and reliable.
@@ -126,8 +126,10 @@ twice the sum of log-diagonal elements of the Cholesky factor.
 ## The integration problem
 
 For a nonlinear ODE model, $\mu_\text{pred}$ and $V_\text{pred}$ are integrals
-over $\eta \sim \mathcal{N}(0, \Omega)$. There is no closed form. The three
-estimators differ in how they handle this intractability.
+over $\eta \sim \mathcal{N}(0, \Omega)$. There is no closed form. The four
+estimators differ in how they handle this intractability: `adfo` linearises the
+integrand, `admc` samples it randomly, `adgh` integrates it on a deterministic
+quadrature grid, and `adirmc` reuses a fixed sample via importance reweighting.
 
 ---
 
@@ -210,6 +212,59 @@ model evaluations.
 that accumulate centred products in a single pass, avoiding an intermediate
 $N \times T$ allocation. The resulting $\hat{V}$ is guaranteed positive
 semi-definite by construction.
+
+---
+
+## Gauss-Hermite quadrature (adgh)
+
+The MC estimator replaces the population integral with a *random* average. The
+GH estimator replaces it with a *deterministic* one: a tensor-product
+Gauss-Hermite quadrature rule that evaluates the same expectation over
+$\eta \sim \mathcal{N}(0, \Omega)$ at a small set of fixed nodes. This estimator
+is new in admixr2 — it has no counterpart in admr.
+
+For a single random effect, the probabilists' Gauss-Hermite rule approximates an
+expectation under the standard normal by a weighted sum over $m$ nodes,
+
+$$
+\mathbb{E}_{z\sim\mathcal{N}(0,1)}[g(z)] \approx \sum_{q=1}^m w_q\, g(x_q),
+$$
+
+with nodes $x_q$ and weights $w_q$ (normalised so $\sum_q w_q = 1$ and
+$\sum_q w_q x_q^2 = 1$) obtained from the Golub-Welsch algorithm — the
+eigendecomposition of the symmetric tridiagonal Jacobi matrix of the Hermite
+recurrence, requiring no external tables. For $n_\eta$ random effects the rule
+is applied as a tensor product, giving a grid of $Q = m^{n_\eta}$ nodes
+$x_q \in \mathbb{R}^{n_\eta}$ with product weights. The Cholesky factor $L$
+($\Omega = LL^\top$) maps the standard-normal nodes into the correlated
+random-effect space, $\eta_q = L x_q$, so the population moments become
+
+$$
+\mu_\text{pred} = \sum_{q=1}^Q w_q\, f(\theta, L x_q), \qquad
+V_\text{pred} = \sum_{q=1}^Q w_q\,
+  \bigl(f(\theta, L x_q) - \mu_\text{pred}\bigr)
+  \bigl(\cdots\bigr)^\top + \Sigma.
+$$
+
+Structurally this is the MC estimator with a fixed deterministic node grid in
+place of $N$ random draws and quadrature weights in place of uniform ones, so it
+plugs into exactly the same aggregate MVN $-2\ell$.
+
+**Noise-free objective.** Because the nodes and weights are fixed, the objective
+is a smooth deterministic function of $(\theta, \Omega, \Sigma)$ — there is no
+Monte Carlo noise to average away and no `n_sim` to tune. The analytical
+gradient (closed-form contractions through the same ODE sensitivity outputs used
+by the MC estimator) is therefore exact, and the numerical Hessian used for
+standard errors is well-conditioned. Like `admc` it makes no approximation to
+$f$, so it is unbiased at any IIV magnitude, and its likelihood is on the same
+scale — its AIC is directly comparable to `admc` and `adirmc`.
+
+**Cost.** The grid size $Q = m^{n_\eta}$ grows exponentially in the number of
+random effects. For models with up to ~4 etas, $Q$ is small (e.g. $5^4 = 625$
+nodes) and `adgh` is substantially faster than MC at equivalent accuracy; for
+high-dimensional IIV the node count becomes prohibitive and `admc` or `adirmc`
+are preferable. A modest node count (`n_nodes = 5`) gives near-exact covariance
+moments for IIV SD up to ~0.5; `n_nodes = 7` extends this to ~0.7.
 
 ---
 
@@ -429,16 +484,18 @@ when structural parameters and variance components differ by orders of magnitude
 ## Summary of improvements over admr
 
 admr (van de Beek et al., 2025) established the core aggregate data workflow in
-R. admixr2 preserves the same three estimators and the same aggregate MVN
-likelihood while replacing the surrounding architecture and several algorithmic
-components.
+R. admixr2 preserves the same three estimators (FO, MC, IRMC) and the same
+aggregate MVN likelihood — adding a fourth, deterministic Gauss-Hermite
+estimator — while replacing the surrounding architecture and several
+algorithmic components.
 
 | Aspect | admr | admixr2 |
 |--------|------|---------|
 | Ecosystem | Standalone R package | nlmixr2/rxode2 integration |
 | Model syntax | Custom `genopts()` + prediction function | nlmixr2 `ini()` / `model()` blocks |
 | Fit object | Plain list | nlmixr2 fit object (AIC, logLik, plot, print) |
-| Estimators | FO, MC, IRMC | FO, MC, IRMC |
+| Estimators | FO, MC, IRMC | FO, MC, GH, IRMC |
+| Gauss-Hermite quadrature estimator | Not available | New deterministic, noise-free estimator |
 | FO Jacobian ($\partial f/\partial\eta$) | C++ finite differences | ODE sensitivity equations |
 | MC gradient | FD of frozen MC NLL ($p \times N$ extra solves) | CRN analytical (0 extra ODE solves) |
 | IRMC inner optimizer | BOBYQA (default) or FD gradient | L-BFGS with analytical gradient |
@@ -462,5 +519,5 @@ kappa option allows the entire inner loop to run without any ODE solver calls.
 The mathematical foundations are described in detail in the papers linked at the
 top of this post. The [Estimator comparison](../estimator-comparison.html)
 vignette shows worked examples on the included `examplomycin` dataset with all
-three estimators. The [Advanced usage](../advanced.html) vignette covers
+four estimators. The [Advanced usage](../advanced.html) vignette covers
 gradient modes, multi-restart fitting, and model comparison via AIC.

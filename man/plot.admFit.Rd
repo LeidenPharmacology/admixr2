@@ -8,7 +8,7 @@
 }
 \arguments{
 \item{x}{An \code{admFit} object returned by \code{nlmixr2()} with
-\code{est = "adfo"}, \code{est = "admc"}, or \code{est = "adirmc"}.}
+\code{est = "adfo"}, \code{est = "admc"}, \code{est = "adgh"}, or \code{est = "adirmc"}.}
 
 \item{which}{Character vector selecting which panel types to produce.
 Any subset of \code{c("mean", "cov", "nll", "par")}. Defaults to all four.}

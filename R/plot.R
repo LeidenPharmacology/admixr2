@@ -267,7 +267,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 }
 
 ## Attach a nlmixr2-style `parHistData` slot to a freshly constructed admFit when
-## a usable trace is available. Shared by the admc/adfo/adirmc estimators so the
+## a usable trace is available. Shared by the admc/adfo/adgh/adirmc estimators so the
 ## binding logic lives in one place. A `NULL` build result must not be bound --
 ## `env$x <- NULL` still satisfies `exists()` and would leave a stale slot that
 ## `nmObjGet.parHistStacked` treats as present -- so we guard on non-NULL.
@@ -299,7 +299,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 #'    coloured with the Okabe-Ito palette.
 #'
 #' @param x An `admFit` object returned by `nlmixr2()` with
-#'   `est = "adfo"`, `est = "admc"`, or `est = "adirmc"`.
+#'   `est = "adfo"`, `est = "admc"`, `est = "adgh"`, or `est = "adirmc"`.
 #' @param which Character vector selecting which panel types to produce.
 #'   Any subset of `c("mean", "cov", "nll", "par")`. Defaults to all four.
 #' @param n_sim Number of MC samples for the final prediction. Defaults to the
