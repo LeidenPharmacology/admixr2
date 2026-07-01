@@ -41,7 +41,7 @@
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Changelog</h1>
-      <small>Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
+      <small>Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.2.0/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
     <div class="section level2">
@@ -59,7 +59,8 @@
 </ul></div>
 <div class="section level3">
 <h3 id="bug-fixes-0-2-0">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-0-2-0"></a></h3>
-<ul><li>Use the ML denominator (<code>1/n_sim</code>) consistently in the MC gradient kernels, matching the NLL (<a href="https://github.com/LeidenPharmacology/admixr2/issues/48" class="external-link">#48</a>).</li>
+<ul><li>Fix an infinite recursion (“evaluation nested too deeply” / “node stack overflow”) that aborted the first fit of an R session when a covariance matrix was requested (<code>covMethod = "r"</code>). Accessing <code>ui$simulationModel</code> left a self-referential compiled-model object in <code>ui$meta</code>, which nlmixr2’s ui-cloning during fit assembly could not traverse. admixr2 now clears that transient artifact in <code>.admLoadModel()</code>, keeping the ui in the canonical state nlmixr2 expects. Affected all four estimators (<code>adfo</code>/<code>admc</code>/<code>adgh</code>/<code>adirmc</code>) (<a href="https://github.com/LeidenPharmacology/admixr2/issues/81" class="external-link">#81</a>).</li>
+<li>Use the ML denominator (<code>1/n_sim</code>) consistently in the MC gradient kernels, matching the NLL (<a href="https://github.com/LeidenPharmacology/admixr2/issues/48" class="external-link">#48</a>).</li>
 <li>Fix parallel multi-restart dispatch for fork/PSOCK, and fix <code>adirmc</code> multi-restart (<a href="https://github.com/LeidenPharmacology/admixr2/issues/45" class="external-link">#45</a>).</li>
 <li>Guard non-positive predicted variance in the diagonal-NLL paths (<a href="https://github.com/LeidenPharmacology/admixr2/issues/57" class="external-link">#57</a>).</li>
 <li>Correct the FO diagonal omega gradient scaling, plus assorted plot, output-variable detection, caching, and worker-serialization fixes.</li>
@@ -67,6 +68,10 @@
 <div class="section level3">
 <h3 id="documentation-0-2-0">Documentation<a class="anchor" aria-label="anchor" href="#documentation-0-2-0"></a></h3>
 <ul><li>Add Gauss-Hermite sections across the vignettes and fix the pkgdown reference index so the documentation site builds (<a href="https://github.com/LeidenPharmacology/admixr2/issues/79" class="external-link">#79</a>).</li>
+</ul></div>
+<div class="section level3">
+<h3 id="dependencies-0-2-0">Dependencies<a class="anchor" aria-label="anchor" href="#dependencies-0-2-0"></a></h3>
+<ul><li>Declare minimum versions for the imported <code>rxode2 (&gt;= 5.1.2)</code> and <code>nlmixr2est (&gt;= 6.0.1)</code>, and for the suggested <code>nlmixr2 (&gt;= 5.0.0)</code> (used in examples and tests).</li>
 </ul></div>
 </div>
     <div class="section level2">
