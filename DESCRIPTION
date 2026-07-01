@@ -18,6 +18,7 @@ Description: Fit pharmacokinetic/pharmacodynamic (PK/PD) models to aggregate-lev
 License: GPL (>= 3)
 URL: https://leidenpharmacology.github.io/admixr2/, https://github.com/LeidenPharmacology/admixr2
 BugReports: https://github.com/LeidenPharmacology/admixr2/issues
+Additional_repositories: https://nlmixr2.r-universe.dev
 Encoding: UTF-8
 LazyData: true
 Depends: R (>= 4.1.0)
