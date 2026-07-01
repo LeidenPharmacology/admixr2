@@ -12,7 +12,9 @@
 
 ## Dependencies
 
-* Require `rxode2 (>= 5.1.3)`, `nlmixr2est (>= 6.0.2)`, and `nlmixr2 (>= 5.0.0)`.
+* Declare minimum versions for the imported `rxode2 (>= 5.1.2)` and
+  `nlmixr2est (>= 6.0.1)`, and for the suggested `nlmixr2 (>= 5.0.0)` (used in
+  examples and tests).
 
 # admixr2 0.2.0
 
