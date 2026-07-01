@@ -1,6 +1,12 @@
 # Load (or compile + cache) the rxode2 simulation model.
 # Compiled DLL is cached to disk via qs2, keyed by model digest.
 .admLoadModel <- function(ui) {
+  # Accessing $simulationModel (below) caches the compiled model in
+  # ui$meta$.simModelBase as a side effect -- a live, self-referential rxode2
+  # object that breaks nlmixr2's ui-cloning during fit assembly. Drop it (and any
+  # sibling artifacts) on every exit so the ui stays in the canonical state
+  # nlmixr2 expects; see .admDropSimModelMeta() for the full rationale.
+  on.exit(.admDropSimModelMeta(ui), add = TRUE)
   .model_key <- digest::digest(ui$lstExpr)
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
@@ -24,6 +30,33 @@
   tryCatch(suppressWarnings(qs2::qs_save(mod, .cacheFile)), error = function(e) NULL)
   rxode2::rxLoad(mod)
   mod
+}
+
+# Remove transient rxode2 model objects that $simulationModel / $foceiModel leave
+# behind in ui$meta.
+#
+# nlmixr2's output machinery (nlmixr2CreateOutputFromUi -> ... -> nmObjGet.*)
+# deep-clones the ui with nlmixr2est's internal .cloneEnv(), which recurses into
+# every environment-valued member and has no cycle detection. rxode2's compiled
+# model objects hold a back-reference to the global .rxModels registry
+# (registry -> model -> .rx -> .rxModels -> registry ...), so cloning one loops
+# forever -- surfacing as "evaluation nested too deeply: infinite recursion"
+# (interactive) or "node stack overflow" (batch). A normal nlmixr2 fit never
+# hits this because its estimators do not populate ui$meta with these objects;
+# admixr2 does, because it simulates via $simulationModel. Keeping our ui clean
+# is the in-framework fix: no wrapping of nlmixr2's code, we just do not feed it
+# a ui it was never designed to clone. Safe because admixr2 simulates via its
+# own cached model (the return value of .admLoadModel), and rxode2 regenerates
+# these lazily if any downstream method needs them.
+.admDropSimModelMeta <- function(ui) {
+  .meta <- ui$meta
+  if (!is.environment(.meta)) return(invisible())
+  for (.nm in ls(.meta, all.names = TRUE)) {
+    .v <- get(.nm, envir = .meta, inherits = FALSE)
+    if (is.environment(.v) && inherits(.v, "rxode2"))
+      rm(list = .nm, envir = .meta)
+  }
+  invisible()
 }
 
 # Load the rxode2 sensitivity model (ui$foceiModel$inner) if available.
