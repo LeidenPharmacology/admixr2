@@ -1,3 +1,19 @@
+# admixr2 0.2.1
+
+## Bug fixes
+
+* Fix an infinite recursion ("evaluation nested too deeply" / "node stack
+  overflow") that aborted the first fit of an R session when a covariance matrix
+  was requested (`covMethod = "r"`). Accessing `ui$simulationModel` left a
+  self-referential compiled-model object in `ui$meta`, which nlmixr2's ui-cloning
+  during fit assembly could not traverse. admixr2 now clears that transient
+  artifact in `.admLoadModel()`, keeping the ui in the canonical state nlmixr2
+  expects. Affected all four estimators (`adfo`/`admc`/`adgh`/`adirmc`).
+
+## Dependencies
+
+* Require `rxode2 (>= 5.1.3)`, `nlmixr2est (>= 6.0.2)`, and `nlmixr2 (>= 5.0.0)`.
+
 # admixr2 0.2.0
 
 ## New features

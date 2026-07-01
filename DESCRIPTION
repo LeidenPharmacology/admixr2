@@ -1,7 +1,7 @@
 Package: admixr2
 Type: Package
 Title: Aggregate Data Modelling
-Version: 0.2.0
+Version: 0.2.1
 Authors@R: c(
         person("H.", "van de Beek", email = "h.van.de.beek@lacdr.leidenuniv.nl", role = c("aut", "cre")),
         person("P.A.J.", "Välitalo", role = "aut"),
@@ -26,12 +26,12 @@ RoxygenNote: 7.3.3
 Imports:
     checkmate,
     digest,
-    nlmixr2est,
+    nlmixr2est (>= 6.0.2),
     nloptr,
     qs2,
     randtoolbox,
     Rcpp,
-    rxode2
+    rxode2 (>= 5.1.3)
 LinkingTo:
     Rcpp,
     RcppEigen
@@ -42,7 +42,7 @@ Suggests:
     ggplot2,
     knitr,
     mnormt,
-    nlmixr2,
+    nlmixr2 (>= 5.0.0),
     patchwork,
     rmarkdown,
     testthat (>= 3.0.0)
