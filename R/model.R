@@ -49,12 +49,12 @@
 # own cached model (the return value of .admLoadModel), and rxode2 regenerates
 # these lazily if any downstream method needs them.
 .admDropSimModelMeta <- function(ui) {
-  .meta <- tryCatch(ui$meta, error = function(e) NULL)
+  .meta <- ui$meta
   if (!is.environment(.meta)) return(invisible())
   for (.nm in ls(.meta, all.names = TRUE)) {
-    .v <- tryCatch(get(.nm, envir = .meta, inherits = FALSE), error = function(e) NULL)
+    .v <- get(.nm, envir = .meta, inherits = FALSE)
     if (is.environment(.v) && inherits(.v, "rxode2"))
-      tryCatch(rm(list = .nm, envir = .meta), error = function(e) NULL)
+      rm(list = .nm, envir = .meta)
   }
   invisible()
 }
