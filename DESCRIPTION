@@ -1,7 +1,7 @@
 Package: admixr2
 Type: Package
 Title: Aggregate Data Modelling
-Version: 0.2.1
+Version: 0.2.0
 Authors@R: c(
         person("H.", "van de Beek", email = "h.van.de.beek@lacdr.leidenuniv.nl", role = c("aut", "cre")),
         person("P.A.J.", "Välitalo", role = "aut"),
