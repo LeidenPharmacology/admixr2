@@ -20,3 +20,5 @@
 ^old$
 ^cran-comments\.md$
 ^CRAN-SUBMISSION$
+^\.git$
+^\.covrignore$
