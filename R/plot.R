@@ -529,8 +529,11 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
     setNames(vector("list", length(studies)), names(studies))
   } else {
     cached <- fit$env$aggData
+    # The stored slot was built at n_sim = extra$n_sim and seed 1L. Compare
+    # numerically (not via identical()) so a double n_sim -- e.g. plot(fit,
+    # n_sim = 5000) against a stored 5000L -- still hits the cache.
     if (!is.null(cached) &&
-        identical(n_sim, extra$n_sim %||% 5000L) && identical(seed, 1L))
+        isTRUE(n_sim == (extra$n_sim %||% 5000L)) && isTRUE(seed == 1L))
       cached
     else
       .admAggData(extra, fit$env$ui, n_sim = n_sim, seed = seed, warn = TRUE)
@@ -541,6 +544,18 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
   # `plots` for programmatic extraction but are not printed on their own -- only
   # the combined 2x2 grid (or, without patchwork, the sub-panel list) is shown.
   print_keys <- character(0)
+
+  # Fail loudly rather than silently overwrite: a study whose name ends in a
+  # reserved suffix (e.g. "s1_pred") would derive a key that collides with
+  # another study's sub-panel key. Only possible with pathological names.
+  .check_panel_keys <- function(keys) {
+    dup <- keys[keys %in% names(plots)]
+    if (length(dup))
+      stop("plot.admFit: panel keys collide with existing entries (",
+           paste(dup, collapse = ", "),
+           "); rename the study to avoid the reserved suffixes ",
+           "_obs/_pred/_resid/_std_resid.", call. = FALSE)
+  }
 
   # -- Mean diagnostics: 2x2 grid (Obs | Pred / Residual | Standardised residual)
   # Obs/Pred: shared y scale; black mean line + point + \u00b11 SD ribbon (black, alpha 0.15).
@@ -638,6 +653,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
     # Combined 2x2 grid first so positional extraction returns the whole panel
     # (plot(fit, which = "mean")[[1]]); the individual sub-panels follow under
     # their own keys for one-at-a-time extraction, e.g. $mean_study1_pred.
+    .check_panel_keys(paste0("mean_", nm, c("", "_obs", "_pred", "_resid", "_std_resid")))
     if (requireNamespace("patchwork", quietly = TRUE)) {
       plots[[paste0("mean_", nm)]] <- (p_obs | p_pred) / (p_res | p_z) +
         patchwork::plot_annotation(
@@ -731,6 +747,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
     # Combined 2x2 grid first so positional extraction returns the whole panel
     # (plot(fit, which = "cov")[[1]]); the individual sub-panels follow under
     # their own keys for one-at-a-time extraction, e.g. $cov_study1_std_resid.
+    .check_panel_keys(paste0("cov_", nm, c("", "_obs", "_pred", "_resid", "_std_resid")))
     if (requireNamespace("patchwork", quietly = TRUE)) {
       plots[[paste0("cov_", nm)]] <- (p_obs | p_pred) / (p_res | p_z) +
         patchwork::plot_annotation(
