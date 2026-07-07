@@ -318,8 +318,16 @@ head.paged_df <- function(x, n = 6L, ...) {
   # Detect the simulation output variable (e.g. "ipredSim" for linCmt models)
   # rather than assuming "cp" -- matches the detection used on the fit path.
   out_var <- tryCatch(.admOutputVar(ui), error = function(e) "cp")
+  # Per-output residual selector for multi-compartment fits (each observed output
+  # uses only its own sigma). Delegates to .admSigmaSel() so the endpoint-name ->
+  # rxSolve-column mapping (e.g. linCmt) stays identical to the fit path.
+  sig_output <- tryCatch(.admParseIniDf(ui$iniDf, ui)$sigma_output,
+                         error = function(e) NULL)
+  .sig_sel <- function(ov)
+    .admSigmaSel(list(sigma_output = sig_output, sigma_names = names(sv)), ov)
 
   .sim_study <- function(s) {
+    ov <- s$output %||% out_var
     tryCatch(rxode2::rxLoad(rxMod), error = function(e) NULL)
     set.seed(seed)
     if (n_eta > 0 && !is.null(L)) {
@@ -337,20 +345,25 @@ head.paged_df <- function(x, n = 6L, ...) {
     } else {
       eta_mat <- matrix(0, nrow = n_sim, ncol = 0)
     }
-    col_nms   <- c(names(extra$struct), eta_nms, sig_nms, "rxerr.cp")
+    # One residual placeholder per observed output (rxerr.<output>); a
+    # multi-endpoint solve needs every endpoint's rxerr present. rxSolve
+    # defaults everything else (CMT, hard-coded constants).
+    rxerr_nms <- { so <- unique(sig_output[!is.na(sig_output)])
+                   if (length(so)) paste0("rxerr.", so) else "rxerr.cp" }
+    col_nms   <- c(names(extra$struct), eta_nms, sig_nms, rxerr_nms)
     params_df <- as.data.frame(matrix(0, nrow = n_sim, ncol = length(col_nms),
                                       dimnames = list(NULL, col_nms)))
-    params_df[["rxerr.cp"]] <- 1
+    params_df[, rxerr_nms] <- 1
     tryCatch(
-      .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, out_var, params_df, 1L),
+      .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L),
       error = function(e) {
         if (warn) warning("plot.admFit: simulation failed: ", e$message, call. = FALSE)
         NULL
       })
   }
 
-  .add_sigma <- function(V, mu) {
-    for (k in seq_along(sv)) {
+  .add_sigma <- function(V, mu, ov = out_var) {
+    for (k in which(.sig_sel(ov))) {
       s <- sv[[k]]
       if (sig_lnorm[k]) {
         mu_adj <- mu * exp(s / 2)
@@ -369,7 +382,8 @@ head.paged_df <- function(x, n = 6L, ...) {
     cp_mat <- .sim_study(s)
     if (is.null(cp_mat)) return(NULL)
     mu     <- colMeans(cp_mat)
-    V_pred <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu)
+    V_pred <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
+                         s$output %||% out_var)
     obs_E  <- as.numeric(s$E)
     obs_V  <- as.matrix(s$V)
     tnm    <- as.character(s$times)

@@ -4,7 +4,15 @@
 \alias{admData}
 \title{Dummy data frame for nlmixr2 dispatch}
 \usage{
-admData()
+admData(outputs = NULL)
+}
+\arguments{
+\item{outputs}{Optional character vector of observed output (endpoint) names
+for a multi-compartment model with several prediction lines (e.g.
+\code{c("cp", "cCSF")}). One \code{NA} observation row is emitted per endpoint, keyed
+by name in the \code{CMT} column, so nlmixr2's data translation recognises every
+endpoint. When \code{NULL} (default) the single-endpoint dummy frame is returned
+unchanged.}
 }
 \value{
 A data frame with columns \code{ID}, \code{TIME}, \code{DV}, \code{AMT}, \code{EVID}, \code{CMT}.
@@ -16,5 +24,6 @@ log(2pi) constants to OBJF, keeping \verb{fit$objective == our -2LL} exactly.
 }
 \examples{
 admData()
+admData(c("cp", "cCSF"))
 
 }

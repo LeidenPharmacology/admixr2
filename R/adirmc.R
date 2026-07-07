@@ -5,6 +5,10 @@
 #' Constructs a control object for `est = "adirmc"`, the Iterative Reweighting
 #' Monte Carlo estimator.
 #'
+#' Multi-compartment fits (a study `observations` list with several observed
+#' outputs) are **not** supported by `adirmc`; use `est = "admc"`, `"adfo"`, or
+#' `"adgh"` for those. Single-output studies are fit as usual.
+#'
 #' @inheritParams admControl
 #' @param grad Gradient mode for the inner optimiser: `"analytical"` (default,
 #'   closed-form weight-path gradient), `"none"` (derivative-free BOBYQA), or
@@ -102,6 +106,7 @@ adirmcControl <- function(
     omega_expansion = 1.0,
     seed            = 12345L,
     cores           = 1L,
+    nDisplayProgress = .Machine$integer.max,
     grad            = c("analytical", "none", "fd"),
     kappa_method    = c("exact", "linearized", "linearized_gh"),
     kappa_n_nodes   = 5L,
@@ -148,6 +153,8 @@ adirmcControl <- function(
   checkmate::assertNumeric(omega_expansion, lower = 1,   len = 1)
   checkmate::assertIntegerish(seed,                      len = 1)
   checkmate::assertIntegerish(cores,        lower = 1L,  len = 1)
+  checkmate::assertIntegerish(nDisplayProgress, lower = 1L, len = 1,
+                              .var.name = "nDisplayProgress")
   checkmate::assertNumeric(grad_h,          lower = 0,   len = 1)
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
@@ -181,6 +188,7 @@ adirmcControl <- function(
     omega_expansion = omega_expansion,
     seed            = as.integer(seed),
     cores           = as.integer(cores),
+    nDisplayProgress = as.integer(nDisplayProgress),
     grad            = grad,
     kappa_method    = kappa_method,
     kappa_n_nodes   = as.integer(kappa_n_nodes),
@@ -516,7 +524,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
                           kappa_method = "exact",
                           kappa_n_nodes = 5L,
                           struct_transforms = NULL, struct_eta_idx = NULL,
-                          use_grad = TRUE) {
+                          use_grad = TRUE, ndp = .Machine$integer.max) {
   Omega_prop <- omega * omega_expansion
   L_prop     <- tryCatch(t(chol(Omega_prop)), error = function(e) {
     message("adirmc: proposal:chol(Omega_prop) failed: ", conditionMessage(e))
@@ -600,15 +608,10 @@ nmObjGetControl.adirmc <- function(x, ...) {
     params_df_ext <- params_df
   }
 
-  extra_p <- setdiff(rxMod$params, colnames(params_df_ext))
-  if (length(extra_p) > 0L)
-    params_df_ext <- cbind(params_df_ext,
-                           matrix(0, nrow(params_df_ext), length(extra_p),
-                                  dimnames = list(NULL, extra_p)))
   out      <- rxode2::rxSolve(rxMod, params = as.data.frame(params_df_ext),
                               events = study$ev_full,
                               cores = cores,
-                              nDisplayProgress = .Machine$integer.max)
+                              nDisplayProgress = ndp)
   keep     <- out[["time"]] %in% study$times
   obs_vals <- out[[output_var]][keep]
   if (is.null(obs_vals)) obs_vals <- out[["ipredSim"]][keep]
@@ -697,14 +700,9 @@ nmObjGetControl.adirmc <- function(x, ...) {
           params_cand <- .params_base[1L, , drop = FALSE]
           for (nm in .single_nms)
             params_cand[1L, nm] <- struct_cand[[nm]]
-          extra_c <- setdiff(rxMod$params, colnames(params_cand))
-          if (length(extra_c) > 0L)
-            params_cand <- cbind(params_cand,
-                                 matrix(0, nrow(params_cand), length(extra_c),
-                                        dimnames = list(NULL, extra_c)))
           out_c  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_cand),
                                     events = study$ev_full, cores = 1L,
-                                    nDisplayProgress = .Machine$integer.max)
+                                    nDisplayProgress = ndp)
           keep_c  <- out_c[["time"]] %in% study$times
           vals_c1 <- out_c[[output_var]][keep_c]
           if (is.null(vals_c1)) vals_c1 <- out_c[["ipredSim"]][keep_c]
@@ -727,14 +725,9 @@ nmObjGetControl.adirmc <- function(x, ...) {
               for (nm in .single_nms)
                 params_bat[ci, nm] <- sc[[nm]]
             }
-            extra_b <- setdiff(rxMod$params, colnames(params_bat))
-            if (length(extra_b) > 0L)
-              params_bat <- cbind(params_bat,
-                                  matrix(0, nrow(params_bat), length(extra_b),
-                                         dimnames = list(NULL, extra_b)))
             out_b  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_bat),
                                       events = study$ev_full, cores = 1L,
-                                      nDisplayProgress = .Machine$integer.max)
+                                      nDisplayProgress = ndp)
             keep_b  <- out_b[["time"]] %in% study$times
             vals_b1 <- out_b[[output_var]][keep_b]
             if (is.null(vals_b1)) vals_b1 <- out_b[["ipredSim"]][keep_b]
@@ -978,7 +971,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
                     kappa_n_nodes     = kappa_n_nodes,
                     struct_transforms = pinfo$struct_transforms,
                     struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = grad_mode == "analytical"))
+                    use_grad          = grad_mode == "analytical",
+                    ndp               = pinfo$nDisplayProgress))
     if (any(vapply(props, is.null, logical(1)))) NULL else props
   }
 
@@ -995,7 +989,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
                     kappa_n_nodes     = kappa_n_nodes,
                     struct_transforms = pinfo$struct_transforms,
                     struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = FALSE))
+                    use_grad          = FALSE,
+                    ndp               = pinfo$nDisplayProgress))
     if (any(vapply(props, is.null, logical(1)))) NULL else props
   }
 
@@ -1048,11 +1043,20 @@ nlmixr2Est.adirmc <- function(env, ...) {
     stop("adirmcControl(studies=...) required", call. = FALSE)
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
-  for (nm in names(studies))
-    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm)
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
+  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
   output_var <- .admOutputVar(.ui)
+
+  for (nm in names(studies))
+    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
+  studies    <- .admFlattenStudies(studies)
+  .adm_multi_out <- length(.admOutputVars(.ui)) > 1L
+  .adm_joint     <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
+  if (.adm_multi_out || .adm_joint)
+    stop("adirmc does not yet support multiple observed outputs (multi-compartment observations). ",
+         "Use est = 'admc', 'adfo', or 'adgh' for multi-output fits.", call. = FALSE)
+  studies    <- .admBuildEvFull(studies)
 
   if (pinfo$has_kappa) {
     .unpaired <- names(pinfo$struct_has_eta)[!pinfo$struct_has_eta]
@@ -1071,12 +1075,6 @@ nlmixr2Est.adirmc <- function(env, ...) {
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
   on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree() }, add = TRUE)
-
-  for (nm in names(studies)) {
-    s  <- studies[[nm]]
-    ev <- if (!is.null(s$ev)) s$ev else rxode2::et(amt = 100)
-    studies[[nm]]$ev_full <- rxode2::et(ev) |> rxode2::et(s$times)
-  }
 
   studies_snap <- studies
 
@@ -1121,7 +1119,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
                     kappa_n_nodes     = .ctl$kappa_n_nodes,
                     struct_transforms = pinfo$struct_transforms,
                     struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = grad_mode_inner == "analytical"))
+                    use_grad          = grad_mode_inner == "analytical",
+                    ndp               = pinfo$nDisplayProgress))
     if (any(vapply(props, is.null, logical(1)))) NULL else props
   }
 
@@ -1138,7 +1137,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
                     kappa_n_nodes     = .ctl$kappa_n_nodes,
                     struct_transforms = pinfo$struct_transforms,
                     struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = FALSE))
+                    use_grad          = FALSE,
+                    ndp               = pinfo$nDisplayProgress))
     if (any(vapply(props, is.null, logical(1)))) NULL else props
   }
 

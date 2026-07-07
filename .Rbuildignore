@@ -12,6 +12,7 @@
 ^vignettes/articles/
 ^vignettes/diagnostic-plots\.Rmd$
 ^vignettes/multiple-studies\.Rmd$
+^vignettes/multi-compartment\.Rmd$
 ^vignettes/estimator-comparison\.Rmd$
 ^vignettes/advanced\.Rmd$
 ^vignettes/datagen\.Rmd$

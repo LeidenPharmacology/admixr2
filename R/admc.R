@@ -12,6 +12,28 @@
 #'   - `times` -- numeric vector of observation times
 #'   - `ev` -- `rxode2::et()` dosing event table
 #'   - `method` -- `"cov"` or `"var"` (optional; auto-detected from `V`)
+#'
+#'   **Multi-compartment (multiple observed outputs).** To fit several observed
+#'   compartments simultaneously (e.g. plasma and brain/CSF), give the study an
+#'   `observations` list instead of top-level `E`/`V`/`times`. Each entry is one
+#'   observed output with its own `output` (the model prediction variable, e.g.
+#'   `"cp"` or `"cCSF"`), `times`, `E`, `V` and -- for independent fits -- `ev`
+#'   and `n`. Pass the endpoint names to [admData()], e.g.
+#'   `admData(c("cp", "cCSF"))`, so nlmixr2 recognises every endpoint. There are
+#'   two modes:
+#'
+#'   * *Independent* -- each observed output has its own `n`/`ev` (separate
+#'     experiments / subjects, e.g. a plasma study and a brain study combined for
+#'     meta-analysis). The outputs are independent likelihood blocks and the
+#'     aggregate `-2LL` is their sum.
+#'   * *Joint (same subjects)* -- the outputs are measured on the SAME subjects.
+#'     Give the study a shared `n` and `ev`, and a joint covariance either as a
+#'     study-level full matrix `V` (blocks in `observations` order) or as
+#'     per-output marginal `V` plus a `cross` list of cross-covariance blocks
+#'     keyed `"outA:outB"` (each `length(times_A)` x `length(times_B)`; omitted
+#'     pairs are zero). The compartments are then scored by a single MVN over the
+#'     stacked vector with shared random effects. `est = "adirmc"` does not
+#'     support multiple observed outputs; use `"admc"`, `"adfo"` or `"adgh"`.
 #' @param n_sim Number of Monte Carlo samples per NLL evaluation.
 #' @param sampling Sampling method for eta draws: `"sobol"` (Sobol, default),
 #'   `"halton"` (Halton), `"torus"` (Kronecker/torus), `"lhs"` (Latin hypercube),
@@ -30,6 +52,11 @@
 #' @param print Print progress every this many evaluations (0 = silent).
 #' @param seed Random seed for reproducibility.
 #' @param cores Number of OpenMP threads for `rxSolve()`.
+#' @param nDisplayProgress Passed to `rxSolve()`: the solver shows its text
+#'   progress bar only once a single solve exceeds this many subjects. The
+#'   default (`.Machine$integer.max`) keeps the bar off, which is what you want
+#'   for scripts, vignettes and logs; lower it (e.g. `1000L`) to see solver
+#'   progress during long interactive fits.
 #' @param grad Gradient mode: `"sens"` (sensitivity equations, default), `"fd"`
 #'   (forward finite differences), `"cfd"` (central finite differences), or
 #'   `"none"` (derivative-free). A warning is issued when `"sens"` is requested
@@ -159,6 +186,7 @@ admControl <- function(
     print      = 10L,
     seed       = 12345L,
     cores      = 1L,
+    nDisplayProgress = .Machine$integer.max,
     grad        = c("sens", "fd", "cfd", "none"),
     grad_h      = 1e-4,
     cov_h       = 1e-3,
@@ -198,6 +226,8 @@ admControl <- function(
   checkmate::assertIntegerish(print,   lower = 0L, len = 1, .var.name = "print")
   checkmate::assertIntegerish(seed,                len = 1, .var.name = "seed")
   checkmate::assertIntegerish(cores,   lower = 1L, len = 1, .var.name = "cores")
+  checkmate::assertIntegerish(nDisplayProgress, lower = 1L, len = 1,
+                              .var.name = "nDisplayProgress")
   checkmate::assertNumeric(grad_h,      lower = 0,  len = 1, .var.name = "grad_h")
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
@@ -234,6 +264,7 @@ admControl <- function(
     print         = as.integer(print),
     seed          = as.integer(seed),
     cores         = as.integer(cores),
+    nDisplayProgress = as.integer(nDisplayProgress),
     grad          = grad,
     grad_h        = grad_h,
     cov_h         = cov_h,
@@ -301,25 +332,68 @@ nmObjGetControl.admc <- function(x, ...) {
   sig_type <- ifelse(pinfo$sigma_is_lnorm, 2L, ifelse(pinfo$sigma_is_prop, 1L, 0L))
   for (i in seq_along(studies)) {
     s       <- studies[[i]]
+    ov      <- s$output %||% output_var
     z       <- z_list[[i]]
     eta_mat <- z %*% t(pars$L)
     colnames(eta_mat) <- pinfo$eta_col_names
+
+    # Joint (same-subject) unit: one shared-eta solve produces every output;
+    # score the stacked vector with a single MVN over the joint covariance.
+    if (isTRUE(s$is_joint)) {
+      cp_mat <- tryCatch(
+        .admSimulateJoint(rxMod, pars$struct, pinfo$sigma_names, eta_mat, s,
+                          params_list[[i]], cores, pinfo$nDisplayProgress),
+        error = function(e) NULL)
+      if (is.null(cp_mat) || anyNA(cp_mat)) return(Inf)
+      mu_struct <- colMeans(cp_mat)
+      V_pred    <- crossprod(sweep(cp_mat, 2L, mu_struct)) / nrow(cp_mat)
+      jr        <- .admJointResidual(mu_struct, V_pred, s, pinfo, pars$sigma_var)
+      nll2      <- nll2 + nll_cov_cpp(as.numeric(s$E), s$V, jr$mu, jr$V, s$n)
+      if (!is.finite(nll2)) return(Inf)
+      next
+    }
+
     cp_mat <- tryCatch(
       .admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta_mat, s,
-                   output_var, params_list[[i]], cores),
+                   ov, params_list[[i]], cores, pinfo$nDisplayProgress),
       error = function(e) NULL)
     if (is.null(cp_mat) || anyNA(cp_mat)) return(Inf)
 
+    # Restrict the residual error to this output's sigma(s) so a multi-output fit
+    # does not apply another compartment's error model here (no-op single-output).
+    sel <- .admSigmaSel(pinfo, ov)
+    sv  <- pars$sigma_var[sel]; st <- sig_type[sel]
     if (identical(s$method, "var")) {
       nll2 <- nll2 + nll_var_from_samples_cpp(cp_mat, as.numeric(s$E), s$v_diag,
-                                               s$n, pars$sigma_var, sig_type)
+                                               s$n, sv, st)
     } else {
       nll2 <- nll2 + nll_cov_from_samples_cpp(cp_mat, as.numeric(s$E), s$V,
-                                               s$n, pars$sigma_var, sig_type)
+                                               s$n, sv, st)
     }
     if (!is.finite(nll2)) return(Inf)
   }
   nll2
+}
+
+# Plain forward/central FD of the aggregate NLL. Used when a fit contains a
+# joint (same-subject) unit, whose stacked-MVN gradient is not covered by the
+# per-unit analytical decomposition in .admGrad. The fixed z_list makes this a
+# common-random-number FD, stable despite MC noise.
+.admNLLGradFD <- function(p, pinfo, studies, z_list, rxMod, output_var,
+                          params_list, cores, h, use_central = FALSE) {
+  f0 <- if (use_central) NA_real_ else
+    .admNLL(p, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
+  vapply(seq_along(p), function(k) {
+    pp <- p; pp[k] <- p[k] + h
+    fp <- .admNLL(pp, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
+    if (use_central) {
+      pm <- p; pm[k] <- p[k] - h
+      fm <- .admNLL(pm, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
+      (fp - fm) / (2 * h)
+    } else {
+      (fp - f0) / h
+    }
+  }, double(1))
 }
 
 # -- Gradient (forward / central FD + sensitivity) -----------------------------
@@ -342,6 +416,11 @@ nmObjGetControl.admc <- function(x, ...) {
 
   for (si in seq_along(studies)) {
     s   <- studies[[si]]
+    ov  <- s$output %||% output_var
+    # Sigma indices belonging to this unit's output (all, single-output). Only
+    # these residual-error parameters contribute to V, mu and the sigma gradient
+    # for this observation block.
+    sig_k <- which(.admSigmaSel(pinfo, ov))
     z   <- z_list[[si]]
     pdf <- params_list[[si]]
 
@@ -352,11 +431,106 @@ nmObjGetControl.admc <- function(x, ...) {
       is.null(pinfo$struct_has_eta) || !isTRUE(pinfo$struct_has_eta[nm]), logical(1)))
     n_unp <- length(unpaired_k)
 
+    # --- Joint (same-subject) analytical gradient ----------------------------
+    # Stacked-MVN gradient over all outputs: eta/omega/sigma analytical on the
+    # joint covariance (shared-eta sensitivities per output), paired struct
+    # thetas via the eta path, unpaired struct thetas via CRN-FD. Requires the
+    # sens model + etas; the driver routes joint fits without sens to full FD.
+    if (isTRUE(s$is_joint)) {
+      if (n_eta == 0L || is.null(sensModel)) return(rep(NA_real_, length(p)))
+      js <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names,
+                                  eta_mat, s, cores, pinfo$nDisplayProgress)
+      if (is.null(js) || anyNA(js$cp_mat)) return(rep(NA_real_, length(p)))
+      cp_mat <- js$cp_mat; dpred_list <- js$dpred_list
+      n_t    <- s$n_total
+      mu_struct <- colMeans(cp_mat)
+      jr <- .admJointResidual(mu_struct,
+                              crossprod(sweep(cp_mat, 2L, mu_struct)) / n_sim,
+                              s, pinfo, pars$sigma_var)
+      mu <- jr$mu; V <- jr$V
+      cp_c  <- sweep(cp_mat, 2L, mu_struct)
+      r     <- as.numeric(s$E) - mu
+      cholV <- tryCatch(chol(V), error = function(e) NULL)
+      if (is.null(cholV)) return(rep(NA_real_, length(p)))
+      invV         <- chol2inv(cholV)
+      dNLL_dmu     <- s$n * as.numeric(-2 * invV %*% r)
+      dNLL_dV      <- s$n * (invV - invV %*% (s$V + tcrossprod(r)) %*% invV)
+      dNLL_dV_diag <- diag(dNLL_dV)
+
+      # sigma mu-path coupling and sigma gradient, each on its output's rows.
+      sigma_mu_scale <- numeric(n_t)
+      for (blk in s$blocks) {
+        rows <- blk$rows
+        for (k in which(.admSigmaSel(pinfo, blk$output))) {
+          sv <- pars$sigma_var[k]
+          if (pinfo$sigma_is_prop[k])
+            sigma_mu_scale[rows] <- sigma_mu_scale[rows] +
+              2 * sv * dNLL_dV_diag[rows] * mu_struct[rows]
+          else if (pinfo$sigma_is_lnorm[k])
+            sigma_mu_scale[rows] <- sigma_mu_scale[rows] +
+              (exp(sv / 2) - 1) * dNLL_dmu[rows] +
+              2 * exp(sv / 2) * mu[rows] * (exp(sv) - 1) * dNLL_dV_diag[rows]
+        }
+      }
+
+      if (n_eta > 0L) {
+        eta_rows_df  <- pinfo$eta_rows_df
+        D_mat        <- do.call(cbind, dpred_list)
+        z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
+        go <- adm_grad_eta_omega_cpp(
+          cp_c, D_mat, z_diag_scale, z, dNLL_dV, dNLL_dmu, sigma_mu_scale,
+          as.integer(eta_rows_df$neta1), as.integer(eta_rows_df$neta2),
+          n_t, n_eta)
+        for (j in seq_len(n_eta))
+          if (!is.null(pinfo$struct_eta_idx) && !is.na(pinfo$struct_eta_idx[j]))
+            grad[pinfo$struct_eta_idx[j]] <- grad[pinfo$struct_eta_idx[j]] + go$eta_grad[j]
+        k_om <- n_s + n_e
+        for (r_idx in seq_len(nrow(eta_rows_df))) {
+          k_om <- k_om + 1L
+          grad[k_om] <- grad[k_om] + go$omega_grad[r_idx]
+        }
+      }
+
+      for (blk in s$blocks) {
+        rows <- blk$rows
+        for (k in which(.admSigmaSel(pinfo, blk$output))) {
+          sv <- pars$sigma_var[k]; k_sig <- n_s + k
+          if (pinfo$sigma_is_prop[k])
+            grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag[rows] * sv * mu_struct[rows]^2)
+          else if (pinfo$sigma_is_lnorm[k])
+            grad[k_sig] <- grad[k_sig] + sv * (
+              sum(dNLL_dV_diag[rows] * mu[rows]^2 * (2 * exp(sv) - 1)) +
+              sum(dNLL_dmu[rows] * mu[rows]) / 2)
+          else
+            grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag[rows]) * sv
+        }
+      }
+
+      # Unpaired struct thetas: CRN-FD of the joint contribution (fixed eta_mat).
+      if (n_unp > 0L) {
+        nll0 <- nll_cov_cpp(as.numeric(s$E), s$V, mu, V, s$n)
+        for (bi in seq_len(n_unp)) {
+          k_s <- unpaired_k[bi]
+          pp  <- p; pp[k_s] <- p[k_s] + h
+          pars_p <- .admUnpack(pp, pinfo)
+          cp_p   <- .admSimulateJoint(rxMod, pars_p$struct, pinfo$sigma_names,
+                                      eta_mat, s, pdf, cores, pinfo$nDisplayProgress)
+          mus_p  <- colMeans(cp_p)
+          jr_p   <- .admJointResidual(mus_p,
+                                      crossprod(sweep(cp_p, 2L, mus_p)) / n_sim,
+                                      s, pinfo, pars_p$sigma_var)
+          nllp <- nll_cov_cpp(as.numeric(s$E), s$V, jr_p$mu, jr_p$V, s$n)
+          grad[k_s] <- grad[k_s] + (nllp - nll0) / h
+        }
+      }
+      next
+    }
+
     use_sens <- !is.null(sensModel) && n_eta > 0
     batched_hi <- NULL; batched_lo <- NULL
     if (use_sens) {
       sens_out <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names,
-                                   eta_mat, s, cores)
+                                   eta_mat, s, cores, pinfo$nDisplayProgress)
       if (is.null(sens_out) || anyNA(sens_out$cp_mat)) {
         use_sens <- FALSE
       } else {
@@ -374,7 +548,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
       pdf_big <- matrix(0, nrow = n_runs * n_sim, ncol = n_cols,
                         dimnames = list(NULL, col_nms))
-      pdf_big[, "rxerr.cp"] <- 1L
+      pdf_big[, grep("^rxerr", colnames(pdf_big), value = TRUE)] <- 1L
       for (nm in names(pars$struct)) pdf_big[, nm] <- pars$struct[nm]
       for (nm in pinfo$sigma_names)  pdf_big[, nm] <- 0
       if (n_eta > 0L) pdf_big[seq_len(n_sim), eta_col_names] <- eta_mat
@@ -423,15 +597,11 @@ nmObjGetControl.admc <- function(x, ...) {
         }
       }
 
-      extra_b <- setdiff(rxMod$params, colnames(pdf_big))
-      if (length(extra_b) > 0L)
-        pdf_big <- cbind(pdf_big, matrix(0, nrow(pdf_big), length(extra_b),
-                                         dimnames = list(NULL, extra_b)))
       out_b  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_big),
                                  events = s$ev_full, cores = cores,
-                                 nDisplayProgress = .Machine$integer.max)
+                                 nDisplayProgress = pinfo$nDisplayProgress)
       keep_b <- out_b[["time"]] %in% s$times
-      vals_b <- out_b[[output_var]][keep_b]
+      vals_b <- out_b[[ov]][keep_b]
       if (is.null(vals_b)) vals_b <- out_b[["ipredSim"]][keep_b]
 
       cp_mat <- matrix(vals_b[seq_len(n_sim * n_t)],
@@ -469,7 +639,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
     mu_struct <- colMeans(cp_mat)
     mu     <- mu_struct
-    for (k in seq_along(pars$sigma_var))
+    for (k in sig_k)
       if (pinfo$sigma_is_lnorm[k])
         mu <- mu * exp(pars$sigma_var[k] / 2)
     cp_c <- sweep(cp_mat, 2L, mu_struct)
@@ -478,7 +648,7 @@ nmObjGetControl.admc <- function(x, ...) {
     is_var <- identical(s$method, "var")
     if (is_var) {
       pv <- adm_col_sq_sum_cpp(cp_c) / n_sim
-      for (k in seq_along(pars$sigma_var)) {
+      for (k in sig_k) {
         sv <- pars$sigma_var[k]
         if (pinfo$sigma_is_prop[k])
           pv <- pv + sv * mu_struct^2
@@ -491,7 +661,7 @@ nmObjGetControl.admc <- function(x, ...) {
       dNLL_dV_diag <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
     } else {
       V <- crossprod(cp_c) / n_sim
-      for (k in seq_along(pars$sigma_var)) {
+      for (k in sig_k) {
         sv <- pars$sigma_var[k]
         if (pinfo$sigma_is_prop[k])
           diag(V) <- diag(V) + sv * mu_struct^2
@@ -514,7 +684,7 @@ nmObjGetControl.admc <- function(x, ...) {
     # For lnorm, also folds in the residual scaling by exp(sv/2): (exp(sv/2)-1)*dNLL_dmu.
     # Computed once per study (depends only on pars, dNLL_dV_diag, dNLL_dmu, mu_sim, mu).
     sigma_mu_scale <- numeric(n_t)
-    for (k in seq_along(pars$sigma_var)) {
+    for (k in sig_k) {
       sv <- pars$sigma_var[k]
       if (pinfo$sigma_is_prop[k]) {
         sigma_mu_scale <- sigma_mu_scale + 2 * sv * dNLL_dV_diag * mu_struct
@@ -580,7 +750,7 @@ nmObjGetControl.admc <- function(x, ...) {
         n_cols  <- length(col_nms)
         pdf_hi  <- matrix(0, nrow = n_unp * n_sim, ncol = n_cols,
                           dimnames = list(NULL, col_nms))
-        pdf_hi[, "rxerr.cp"] <- 1L
+        pdf_hi[, grep("^rxerr", colnames(pdf_hi), value = TRUE)] <- 1L
         for (nm in names(pars$struct))       pdf_hi[, nm]              <- pars$struct[nm]
         for (j  in seq_along(eta_col_names)) pdf_hi[, eta_col_names[j]] <- rep(eta_mat[, j], n_unp)
         for (nm in pinfo$sigma_names)        pdf_hi[, nm]              <- 0
@@ -589,15 +759,11 @@ nmObjGetControl.admc <- function(x, ...) {
           nm   <- pinfo$struct_names[unpaired_k[bi]]
           pdf_hi[rows, nm] <- pars$struct[nm] + h
         }
-        extra_hi <- setdiff(rxMod$params, colnames(pdf_hi))
-        if (length(extra_hi) > 0L)
-          pdf_hi <- cbind(pdf_hi, matrix(0, nrow(pdf_hi), length(extra_hi),
-                                          dimnames = list(NULL, extra_hi)))
         out_hi  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                     events = s$ev_full, cores = cores,
-                                    nDisplayProgress = .Machine$integer.max)
+                                    nDisplayProgress = pinfo$nDisplayProgress)
         keep_hi <- out_hi[["time"]] %in% s$times
-        vals_hi <- out_hi[[output_var]][keep_hi]
+        vals_hi <- out_hi[[ov]][keep_hi]
         if (is.null(vals_hi)) vals_hi <- out_hi[["ipredSim"]][keep_hi]
 
         if (use_central) {
@@ -609,9 +775,9 @@ nmObjGetControl.admc <- function(x, ...) {
           }
           out_lo  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_lo),
                                       events = s$ev_full, cores = cores,
-                                      nDisplayProgress = .Machine$integer.max)
+                                      nDisplayProgress = pinfo$nDisplayProgress)
           keep_lo <- out_lo[["time"]] %in% s$times
-          vals_lo <- out_lo[[output_var]][keep_lo]
+          vals_lo <- out_lo[[ov]][keep_lo]
           if (is.null(vals_lo)) vals_lo <- out_lo[["ipredSim"]][keep_lo]
         }
 
@@ -634,9 +800,8 @@ nmObjGetControl.admc <- function(x, ...) {
       }
     }
 
-    k_sig <- n_s
-    for (k in seq_along(pars$sigma_var)) {
-      k_sig <- k_sig + 1L
+    for (k in sig_k) {
+      k_sig <- n_s + k
       sv <- pars$sigma_var[k]
       if (pinfo$sigma_is_prop[k]) {
         grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag * sv * mu_struct^2)
@@ -663,6 +828,12 @@ nmObjGetControl.admc <- function(x, ...) {
                           params_list, cores, chunk_size = 30L) {
   n_c      <- length(p_list)
   if (n_c == 0L) return(numeric(0))
+  # Joint (same-subject) units are scored by a stacked MVN that the batched
+  # single-output solve below does not build; evaluate them one config at a time.
+  if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1))))
+    return(vapply(p_list, function(p)
+      .admNLL(p, pinfo, studies, z_list, rxMod, output_var, params_list, cores),
+      double(1)))
   sig_type <- ifelse(pinfo$sigma_is_lnorm, 2L, ifelse(pinfo$sigma_is_prop, 1L, 0L))
   n_sim   <- nrow(z_list[[1L]])
   col_nms <- colnames(params_list[[1L]])
@@ -684,14 +855,16 @@ nmObjGetControl.admc <- function(x, ...) {
 
   for (si in seq_along(studies)) {
     s <- studies[[si]]
+    ov <- s$output %||% output_var
     z <- z_list[[si]]
     n_t <- length(s$times)
+    sel <- .admSigmaSel(pinfo, ov)
 
     for (chunk in chunks) {
       n_chunk <- length(chunk)
       pdf_mat <- matrix(0, nrow = n_chunk * n_sim, ncol = n_cols,
                         dimnames = list(NULL, col_nms))
-      pdf_mat[, "rxerr.cp"] <- 1L
+      pdf_mat[, grep("^rxerr", colnames(pdf_mat), value = TRUE)] <- 1L
 
       for (cii in seq_along(chunk)) {
         ci <- chunk[cii]
@@ -705,19 +878,15 @@ nmObjGetControl.admc <- function(x, ...) {
         }
       }
 
-      extra_m <- setdiff(rxMod$params, colnames(pdf_mat))
-      if (length(extra_m) > 0L)
-        pdf_mat <- cbind(pdf_mat, matrix(0, nrow(pdf_mat), length(extra_m),
-                                         dimnames = list(NULL, extra_m)))
       out <- tryCatch(
         rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                         events = s$ev_full, cores = cores,
-                        nDisplayProgress = 1000L),
+                        nDisplayProgress = pinfo$nDisplayProgress),
         error = function(e) NULL)
       if (is.null(out)) { for (ci in chunk) finite[ci] <- FALSE; next }
 
       keep <- out[["time"]] %in% s$times
-      vals <- out[[output_var]][keep]
+      vals <- out[[ov]][keep]
       if (is.null(vals)) vals <- out[["ipredSim"]][keep]
 
       for (cii in seq_along(chunk)) {
@@ -727,12 +896,13 @@ nmObjGetControl.admc <- function(x, ...) {
         idx  <- (cii - 1L) * n_sim * n_t + seq_len(n_sim * n_t)
         cp   <- matrix(vals[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
         if (anyNA(cp)) { finite[ci] <- FALSE; next }
+        sv <- pars$sigma_var[sel]; st <- sig_type[sel]
         nll_ci <- if (identical(s$method, "var"))
           nll_var_from_samples_cpp(cp, as.numeric(s$E), s$v_diag,
-                                    s$n, pars$sigma_var, sig_type)
+                                    s$n, sv, st)
         else
           nll_cov_from_samples_cpp(cp, as.numeric(s$E), s$V,
-                                    s$n, pars$sigma_var, sig_type)
+                                    s$n, sv, st)
         if (is.finite(nll_ci)) nlls[ci] <- nlls[ci] + nll_ci
         else                    finite[ci] <- FALSE
       }
@@ -815,7 +985,7 @@ nmObjGetControl.admc <- function(x, ...) {
         suppressWarnings(
           rxode2::rxSolve(sensModel$mod, params = inner_df,
                           events = s$ev_full, cores = cores,
-                          nDisplayProgress = 1000L)),
+                          nDisplayProgress = pinfo$nDisplayProgress)),
         error = function(e) NULL)
       if (is.null(out) || !all(sensModel$sens_cols %in% names(out))) {
         use_sens <- FALSE
@@ -838,20 +1008,16 @@ nmObjGetControl.admc <- function(x, ...) {
       if (n_eta == 0L) {
         pdf_mat <- matrix(0, nrow = n_c * n_sim, ncol = n_cols,
                           dimnames = list(NULL, col_nms))
-        pdf_mat[, "rxerr.cp"] <- 1L
+        pdf_mat[, grep("^rxerr", colnames(pdf_mat), value = TRUE)] <- 1L
         for (ci in seq_len(n_c)) {
           if (!valid[ci]) next
           rows <- (ci - 1L) * n_sim + seq_len(n_sim)
           pars <- pars_list[[ci]]
           for (nm in names(pars$struct)) pdf_mat[rows, nm] <- pars$struct[nm]
         }
-        extra_m <- setdiff(rxMod$params, colnames(pdf_mat))
-        if (length(extra_m) > 0L)
-          pdf_mat <- cbind(pdf_mat, matrix(0, nrow(pdf_mat), length(extra_m),
-                                           dimnames = list(NULL, extra_m)))
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
-                                         nDisplayProgress = 1000L),
+                                         nDisplayProgress = pinfo$nDisplayProgress),
                         error = function(e) NULL)
         if (is.null(out)) { valid[] <- FALSE } else {
           keep <- out[["time"]] %in% s$times
@@ -870,7 +1036,7 @@ nmObjGetControl.admc <- function(x, ...) {
         n_blk   <- if (use_central) 1L + 2L * n_eta else 1L + n_eta
         pdf_mat <- matrix(0, nrow = n_c * n_blk * n_sim, ncol = n_cols,
                           dimnames = list(NULL, col_nms))
-        pdf_mat[, "rxerr.cp"] <- 1L
+        pdf_mat[, grep("^rxerr", colnames(pdf_mat), value = TRUE)] <- 1L
         for (ci in seq_len(n_c)) {
           if (!valid[ci]) next
           pars     <- pars_list[[ci]]; eta <- eta_mats[[ci]]
@@ -900,13 +1066,9 @@ nmObjGetControl.admc <- function(x, ...) {
             }
           }
         }
-        extra_m <- setdiff(rxMod$params, colnames(pdf_mat))
-        if (length(extra_m) > 0L)
-          pdf_mat <- cbind(pdf_mat, matrix(0, nrow(pdf_mat), length(extra_m),
-                                           dimnames = list(NULL, extra_m)))
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
-                                         nDisplayProgress = 1000L),
+                                         nDisplayProgress = pinfo$nDisplayProgress),
                         error = function(e) NULL)
         if (is.null(out)) { valid[] <- FALSE } else {
           keep <- out[["time"]] %in% s$times
@@ -950,7 +1112,7 @@ nmObjGetControl.admc <- function(x, ...) {
       n_cu   <- nrow(cu_idx)
       pdf_hi <- matrix(0, nrow = n_cu * n_sim, ncol = n_cols,
                        dimnames = list(NULL, col_nms))
-      pdf_hi[, "rxerr.cp"] <- 1L
+      pdf_hi[, grep("^rxerr", colnames(pdf_hi), value = TRUE)] <- 1L
       for (cuki in seq_len(n_cu)) {
         ci <- cu_idx$ci[cuki]; bi <- cu_idx$bi[cuki]
         if (!valid[ci] || is.null(cp_mats[[ci]])) next
@@ -961,13 +1123,9 @@ nmObjGetControl.admc <- function(x, ...) {
         nm_u <- pinfo$struct_names[unpaired_k[bi]]
         pdf_hi[rows, nm_u] <- pars$struct[nm_u] + h
       }
-      extra_hi <- setdiff(rxMod$params, colnames(pdf_hi))
-      if (length(extra_hi) > 0L)
-        pdf_hi <- cbind(pdf_hi, matrix(0, nrow(pdf_hi), length(extra_hi),
-                                        dimnames = list(NULL, extra_hi)))
       out_hi <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                           events = s$ev_full, cores = cores,
-                                          nDisplayProgress = 1000L),
+                                          nDisplayProgress = pinfo$nDisplayProgress),
                          error = function(e) NULL)
       if (!is.null(out_hi)) {
         vals_hi <- out_hi[[output_var]][out_hi[["time"]] %in% s$times]
@@ -992,7 +1150,7 @@ nmObjGetControl.admc <- function(x, ...) {
         }
         out_lo <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_lo),
                                             events = s$ev_full, cores = cores,
-                                            nDisplayProgress = 1000L),
+                                            nDisplayProgress = pinfo$nDisplayProgress),
                            error = function(e) NULL)
         if (!is.null(out_lo)) {
           vals_lo <- out_lo[[output_var]][out_lo[["time"]] %in% s$times]
@@ -1321,9 +1479,18 @@ nmObjGetControl.admc <- function(x, ...) {
   nll_fn <- function(p)
     .admNLL(p, pinfo, studies, z_list, m$rxMod, output_var, params_list, m$cores_w)
 
-  grad_fn <- function(p)
-    .admGrad(p, pinfo, studies, z_list, m$rxMod, output_var,
-             params_list, m$cores_w, grad_h, m$sensModel, use_central = use_central)
+  # Derived here (not a worker argument) so the worker signature stays stable for
+  # the PSOCK dev-mode path. A joint unit's stacked-MVN gradient is analytical
+  # when the sens model is available, else FD of the aggregate NLL.
+  .any_joint <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
+  grad_fn <- if (.any_joint && is.null(m$sensModel))
+    function(p)
+      .admNLLGradFD(p, pinfo, studies, z_list, m$rxMod, output_var,
+                    params_list, m$cores_w, grad_h, use_central = use_central)
+  else
+    function(p)
+      .admGrad(p, pinfo, studies, z_list, m$rxMod, output_var,
+               params_list, m$cores_w, grad_h, m$sensModel, use_central = use_central)
 
   # Lock only when the model was loaded from cache in this process; never across
   # PSOCK workers (each holds its own independent model instance -> no_lock).
@@ -1776,17 +1943,31 @@ nlmixr2Est.admc <- function(env, ...) {
     stop("admControl(studies=...) required", call. = FALSE)
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
-  for (nm in names(studies))
-    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm)
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
+  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
   output_var <- .admOutputVar(.ui)
+
+  for (nm in names(studies))
+    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
+  # Flatten to observation units (independent single-output blocks, or one joint
+  # unit per same-subject study) and attach ev_full. multi_out is model-level
+  # (the model has >1 endpoint) so a multi-endpoint model always tags obs by cmt.
+  studies    <- .admFlattenStudies(studies)
+  multi_out  <- length(.admOutputVars(.ui)) > 1L
+  any_joint  <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
+  studies    <- .admBuildEvFull(studies, tag_cmt = multi_out)
 
   want_grad    <- .ctl$grad != "none"
   want_sens    <- .ctl$grad == "sens"
   want_central <- .ctl$grad == "cfd"
+  # Multi-compartment gradient. Independent blocks use the per-output analytical/
+  # sens gradient. Joint (same-subject) fits are scored by a stacked MVN: with a
+  # sens model + etas the joint gradient is analytical (.admGrad joint branch);
+  # otherwise it falls back to the common-random-number FD of the aggregate NLL
+  # (joint_fd, computed below once the sens model has been resolved).
 
-  if (pinfo$n_eta > 0L && any(!pinfo$struct_has_eta)) {
+  if (!any_joint && pinfo$n_eta > 0L && any(!pinfo$struct_has_eta)) {
     .unpaired <- names(pinfo$struct_has_eta)[!pinfo$struct_has_eta]
     if (want_sens && all(!pinfo$struct_has_eta)) {
       message(sprintf("admc: no mu-referenced struct thetas (%s); falling back to full forward FD.",
@@ -1819,12 +2000,6 @@ nlmixr2Est.admc <- function(env, ...) {
   rxode2::rxLock(rxMod)
   on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree() }, add = TRUE)
 
-  for (nm in names(studies)) {
-    s  <- studies[[nm]]
-    ev <- if (!is.null(s$ev)) s$ev else rxode2::et(amt = 100)
-    studies[[nm]]$ev_full <- ev |> rxode2::et(s$times)
-  }
-
   set.seed(.ctl$seed)
   z_list      <- .admMakeZ(.ctl$n_sim, pinfo, length(studies), .ctl$sampling)
   params_list <- .admMakeParamsList(.ctl$n_sim, pinfo, length(studies))
@@ -1853,17 +2028,26 @@ nlmixr2Est.admc <- function(env, ...) {
     val
   }
 
-  eval_grad_f <- if (want_grad) {
-    function(p) .admGrad(p, pinfo, studies, z_list, rxMod, output_var,
-                         params_list, cores, grad_h, sensModel,
-                         use_central = want_central)
-  } else NULL
+  # Joint fits use FD only when no sens model is available; otherwise .admGrad's
+  # joint branch computes the analytical stacked-MVN gradient.
+  joint_fd <- any_joint && is.null(sensModel)
+  eval_grad_f <- if (!want_grad) NULL
+    else if (joint_fd)
+      function(p) .admNLLGradFD(p, pinfo, studies, z_list, rxMod, output_var,
+                                params_list, cores, grad_h,
+                                use_central = want_central)
+    else function(p) .admGrad(p, pinfo, studies, z_list, rxMod, output_var,
+                              params_list, cores, grad_h, sensModel,
+                              use_central = want_central)
 
-  grad_label <- if (!want_grad) "none" else if (!is.null(sensModel))
+  grad_label <- if (!want_grad) "none"
+  else if (joint_fd) (if (want_central) "central FD (joint)" else "forward FD (joint)")
+  else if (any_joint) "Sens (joint)"
+  else if (!is.null(sensModel))
     if (pinfo$has_kappa) "Sens+FD" else "Sens"
   else if (want_central) "central FD" else "forward FD"
   message("=== admixr2: Aggregate Data Modeling (MC) ===")
-  message(sprintf("  Studies: %d | MC samples: %d | Params: %d | Cores: %d | Grad: %s | Restarts: %d",
+  message(sprintf("  Obs units: %d | MC samples: %d | Params: %d | Cores: %d | Grad: %s | Restarts: %d",
                   length(studies), .ctl$n_sim, length(ov$p0), cores,
                   grad_label, .ctl$n_restarts))
   t0 <- proc.time()
@@ -1934,7 +2118,9 @@ nlmixr2Est.admc <- function(env, ...) {
   p_hat  <- setNames(opt$solution, names(ov$p0))
   t0_cov <- proc.time()
   .cov <- if (.ctl$covMethod == "r") {
-    use_grad_cov <- want_grad
+    # Multi-output / joint fits use the NLL-FD Hessian (via .admNLLBatch); the
+    # grad-FD Hessian relies on the single-output analytical grad batch.
+    use_grad_cov <- want_grad && !multi_out && !any_joint
     use_cent_cov <- want_central
     np_cov <- length(pinfo$struct_names) + length(pinfo$sigma_names)
     n_evals <- if (use_grad_cov) {
@@ -2010,7 +2196,8 @@ nlmixr2Est.admc <- function(env, ...) {
   if (!is.null(.focei_model)) .ret$model <- .focei_model
 
   .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = admData(), control = .ret$control,
+    .ui, data = if (multi_out) admData(.admOutputVars(.ui)) else admData(),
+    control = .ret$control,
     table = .ret$table, env = .ret, est = "admc")
 
   .fit$env$method   <- "admc"

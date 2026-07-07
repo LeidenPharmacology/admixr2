@@ -88,6 +88,12 @@ datagenControl <- function(
 #'     \item{`ev`}{A dosing event table created with `rxode2::et()`.}
 #'     \item{`n`}{(Optional) integer sample size; stored as metadata and
 #'       used when supplying the result to `admControl()`.}
+#'     \item{`observations`}{(Optional) a named list to generate data for several
+#'       observed outputs (multi-compartment). Each entry gives one output's
+#'       `output` (model prediction variable, e.g. `"cp"`), `times`, and
+#'       optionally `ev`/`n` (inherited from the study otherwise). When present,
+#'       the study result carries a matching `observations` list of per-output
+#'       `E`/`V`, ready to pass straight to `admControl(studies = ...)`.}
 #'   }
 #' @param model Optional default model function used for any study that does not
 #'   supply its own `model` element.  At least one of `model` or each
@@ -200,10 +206,25 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         call. = FALSE)
     if (!is.function(m))
       stop(sprintf("Study '%s': `model` must be a function.", nm), call. = FALSE)
-    if (is.null(s$times))
-      stop(sprintf("Study '%s' is missing `times`.", nm), call. = FALSE)
-    if (is.null(s$ev))
-      stop(sprintf("Study '%s' is missing `ev`.", nm), call. = FALSE)
+    if (!is.null(s$observations)) {
+      if (!is.list(s$observations) || length(s$observations) == 0L)
+        stop(sprintf("Study '%s': `observations` must be a non-empty list.", nm),
+             call. = FALSE)
+      for (k in seq_along(s$observations)) {
+        o <- s$observations[[k]]
+        if (is.null(o$times %||% s$times))
+          stop(sprintf("Study '%s' observation %d is missing `times`.", nm, k),
+               call. = FALSE)
+        if (is.null(o$ev %||% s$ev))
+          stop(sprintf("Study '%s' observation %d is missing `ev`.", nm, k),
+               call. = FALSE)
+      }
+    } else {
+      if (is.null(s$times))
+        stop(sprintf("Study '%s' is missing `times`.", nm), call. = FALSE)
+      if (is.null(s$ev))
+        stop(sprintf("Study '%s' is missing `ev`.", nm), call. = FALSE)
+    }
     study_models[[i]] <- m
   }
 
@@ -239,82 +260,102 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 
     rxMod   <- .admLoadModel(ui)
 
-    study_tmp <- list(ev_full = s$ev |> rxode2::et(s$times), times = s$times)
-
-    if (control$method == "gh") {
-      # GH quadrature: unbiased deterministic moments, same as est = "adgh".
-      grid <- .adghNodeGrid(control$n_nodes, pinfo$n_eta)
-      m    <- .adghMoments(pars, pinfo, study_tmp, rxMod, out_var, grid,
-                           control$cores)
-      mu     <- m$E
-      V      <- m$V
-      cp_mat <- NULL
-    } else if (control$method == "fo") {
-      # Deterministic First-Order expansion: mu = f(theta, 0),
-      # V = J Omega J' + Sigma -- exactly the moments est = "adfo" predicts, so
-      # the FO Hessian of logL is evaluated at the true MLE (design evaluation).
-      params_mat <- .admMakeParamsList(1L, pinfo, 1L)[[1L]]  # FD fallback uses 1 row
-      n_t <- length(s$times)
-      mj  <- .adfoGetMuJ(pars, pinfo, study_tmp, sensModel, rxMod, out_var,
-                         params_mat, control$cores)
-      vp   <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var,
-                         pinfo$sigma_is_prop, pinfo$sigma_is_lnorm, n_t, pinfo$n_eta)
-      mu     <- vp$mu_sigma
-      V      <- vp$V
-      cp_mat <- NULL
+    # Resolve the observed compartments for this study. A study may carry an
+    # `observations` list (one entry per observed output, each with its own
+    # output/times/ev/n); a legacy study describes a single implicit observation.
+    obs_specs <- if (!is.null(s$observations)) {
+      onm <- names(s$observations) %||% paste0("obs", seq_along(s$observations))
+      lapply(seq_along(s$observations), function(k) {
+        o <- s$observations[[k]]
+        list(name   = onm[k],
+             output = o$output %||% out_var,
+             times  = o$times  %||% s$times,
+             ev     = o$ev     %||% s$ev,
+             n      = o$n      %||% s$n)
+      })
     } else {
-      # Quasi-random draws (n_sim x n_eta) for this study
-      z_list      <- .admMakeZ(control$n_sim, pinfo, 1L, control$sampling)
-      params_list <- .admMakeParamsList(control$n_sim, pinfo, 1L)
+      list(list(name = NULL, output = out_var, times = s$times,
+                ev = s$ev, n = s$n))
+    }
+    # Several observed outputs -> tag each observation's records with its output
+    # compartment (nlmixr2's multi-endpoint simulation model routes by cmt).
+    is_multi <- length(unique(vapply(obs_specs, `[[`, character(1),
+                                     "output"))) > 1L
 
-      # Correlated random effects: eta_mat = z L'
-      if (pinfo$n_eta > 0L) {
-        z <- z_list[[1L]]
-        if (!is.matrix(z)) z <- matrix(z, ncol = 1L)  # sobol dim=1 edge case
-        eta_mat <- z %*% t(pars$L)
-        colnames(eta_mat) <- pinfo$eta_col_names
+    grid <- if (control$method == "gh")
+      .adghNodeGrid(control$n_nodes, pinfo$n_eta) else NULL
+
+    # Moments (mu, V) for one observed compartment via the chosen method.
+    compute_moments <- function(spec) {
+      ov  <- spec$output
+      n_t <- length(spec$times)
+      sel <- .admSigmaSel(pinfo, ov)
+      evf <- if (is_multi) spec$ev |> rxode2::et(spec$times, cmt = ov)
+             else          spec$ev |> rxode2::et(spec$times)
+      study_tmp <- list(ev_full = evf, times = spec$times)
+
+      if (control$method == "gh") {
+        m <- .adghMoments(pars, pinfo, study_tmp, rxMod, ov, grid, control$cores)
+        list(mu = m$E, V = m$V, cp_mat = NULL)
+      } else if (control$method == "fo") {
+        params_mat <- .admMakeParamsList(1L, pinfo, 1L)[[1L]]
+        mj <- .adfoGetMuJ(pars, pinfo, study_tmp, sensModel, rxMod, ov,
+                          params_mat, control$cores)
+        vp <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var[sel],
+                         pinfo$sigma_is_prop[sel], pinfo$sigma_is_lnorm[sel],
+                         n_t, pinfo$n_eta)
+        list(mu = vp$mu_sigma, V = vp$V, cp_mat = NULL)
       } else {
-        eta_mat <- matrix(0, control$n_sim, 0L)
-      }
-
-      # Forward simulation — n_sim x n_times matrix
-      cp_mat <- .admSimulate(
-        rxMod, pars$struct, pinfo$sigma_names,
-        eta_mat, study_tmp, out_var, params_list[[1L]], control$cores
-      )
-
-      # Population mean and IIV covariance (ML denominator, matches nll_cov_cpp)
-      mu   <- colMeans(cp_mat)
-      cp_c <- sweep(cp_mat, 2L, mu)
-      V    <- crossprod(cp_c) / control$n_sim
-
-      # Diagonal residual error (mirrors nll_cov_cpp sigma_type dispatch)
-      if (length(pars$sigma_var) > 0L) {
-        sv <- unname(pars$sigma_var[[1L]])
-        if (isTRUE(pinfo$sigma_is_lnorm[[1L]])) {
-          mu <- mu * exp(sv / 2)                          # lnorm mean correction
-          diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
-        } else if (isTRUE(pinfo$sigma_is_prop[[1L]])) {
-          diag(V) <- diag(V) + sv * mu^2
+        z_list      <- .admMakeZ(control$n_sim, pinfo, 1L, control$sampling)
+        params_list <- .admMakeParamsList(control$n_sim, pinfo, 1L)
+        if (pinfo$n_eta > 0L) {
+          z <- z_list[[1L]]
+          if (!is.matrix(z)) z <- matrix(z, ncol = 1L)  # sobol dim=1 edge case
+          eta_mat <- z %*% t(pars$L)
+          colnames(eta_mat) <- pinfo$eta_col_names
         } else {
-          diag(V) <- diag(V) + sv
+          eta_mat <- matrix(0, control$n_sim, 0L)
         }
+        cp_mat <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta_mat,
+                               study_tmp, ov, params_list[[1L]], control$cores)
+        mu   <- colMeans(cp_mat)
+        cp_c <- sweep(cp_mat, 2L, mu)
+        V    <- crossprod(cp_c) / control$n_sim
+        # This output's residual error only (mirrors nll_cov_cpp sigma dispatch).
+        for (k in which(sel)) {
+          sv <- unname(pars$sigma_var[[k]])
+          if (isTRUE(pinfo$sigma_is_lnorm[[k]])) {
+            mu <- mu * exp(sv / 2)
+            diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
+          } else if (isTRUE(pinfo$sigma_is_prop[[k]])) {
+            diag(V) <- diag(V) + sv * mu^2
+          } else {
+            diag(V) <- diag(V) + sv
+          }
+        }
+        list(mu = mu, V = V, cp_mat = cp_mat)
       }
     }
 
-    t_lbl     <- as.character(s$times)
-    names(mu) <- t_lbl
-    dimnames(V) <- list(t_lbl, t_lbl)
+    one_result <- function(spec) {
+      m     <- compute_moments(spec)
+      t_lbl <- as.character(spec$times)
+      mu <- m$mu; V <- m$V
+      names(mu) <- t_lbl; dimnames(V) <- list(t_lbl, t_lbl)
+      r <- list(E = mu, V = V, n = spec$n %||% NA_integer_,
+                times = spec$times, ev = spec$ev)
+      if (!is.null(spec$output)) r$output <- spec$output
+      if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
+      r
+    }
 
-    result_i <- list(
-      E     = mu,
-      V     = V,
-      n     = s$n %||% NA_integer_,
-      times = s$times,
-      ev    = s$ev
-    )
-    if (control$return_samples && !is.null(cp_mat)) result_i$samples <- cp_mat
-    results[[i]] <- result_i
+    if (!is.null(s$observations)) {
+      obs_res <- lapply(obs_specs, one_result)
+      names(obs_res) <- vapply(obs_specs, `[[`, character(1), "name")
+      results[[i]] <- list(observations = obs_res, n = s$n %||% NA_integer_)
+    } else {
+      results[[i]] <- one_result(obs_specs[[1L]])
+    }
   }
 
   setNames(results, study_names)

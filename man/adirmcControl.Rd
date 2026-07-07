@@ -16,6 +16,7 @@ adirmcControl(
   omega_expansion = 1,
   seed = 12345L,
   cores = 1L,
+  nDisplayProgress = .Machine$integer.max,
   grad = c("analytical", "none", "fd"),
   kappa_method = c("exact", "linearized", "linearized_gh"),
   kappa_n_nodes = 5L,
@@ -53,6 +54,29 @@ adirmcControl(
 \item \code{times} -- numeric vector of observation times
 \item \code{ev} -- \code{rxode2::et()} dosing event table
 \item \code{method} -- \code{"cov"} or \code{"var"} (optional; auto-detected from \code{V})
+}
+
+\strong{Multi-compartment (multiple observed outputs).} To fit several observed
+compartments simultaneously (e.g. plasma and brain/CSF), give the study an
+\code{observations} list instead of top-level \code{E}/\code{V}/\code{times}. Each entry is one
+observed output with its own \code{output} (the model prediction variable, e.g.
+\code{"cp"} or \code{"cCSF"}), \code{times}, \code{E}, \code{V} and -- for independent fits -- \code{ev}
+and \code{n}. Pass the endpoint names to \code{\link[=admData]{admData()}}, e.g.
+\code{admData(c("cp", "cCSF"))}, so nlmixr2 recognises every endpoint. There are
+two modes:
+\itemize{
+\item \emph{Independent} -- each observed output has its own \code{n}/\code{ev} (separate
+experiments / subjects, e.g. a plasma study and a brain study combined for
+meta-analysis). The outputs are independent likelihood blocks and the
+aggregate \verb{-2LL} is their sum.
+\item \emph{Joint (same subjects)} -- the outputs are measured on the SAME subjects.
+Give the study a shared \code{n} and \code{ev}, and a joint covariance either as a
+study-level full matrix \code{V} (blocks in \code{observations} order) or as
+per-output marginal \code{V} plus a \code{cross} list of cross-covariance blocks
+keyed \code{"outA:outB"} (each \code{length(times_A)} x \code{length(times_B)}; omitted
+pairs are zero). The compartments are then scored by a single MVN over the
+stacked vector with shared random effects. \code{est = "adirmc"} does not
+support multiple observed outputs; use \code{"admc"}, \code{"adfo"} or \code{"adgh"}.
 }}
 
 \item{n_sim}{Number of Monte Carlo samples per NLL evaluation.}
@@ -84,6 +108,12 @@ the gradient off. Both emit a message.}
 \item{seed}{Random seed for reproducibility.}
 
 \item{cores}{Number of OpenMP threads for \code{rxSolve()}.}
+
+\item{nDisplayProgress}{Passed to \code{rxSolve()}: the solver shows its text
+progress bar only once a single solve exceeds this many subjects. The
+default (\code{.Machine$integer.max}) keeps the bar off, which is what you want
+for scripts, vignettes and logs; lower it (e.g. \code{1000L}) to see solver
+progress during long interactive fits.}
 
 \item{grad}{Gradient mode for the inner optimiser: \code{"analytical"} (default,
 closed-form weight-path gradient), \code{"none"} (derivative-free BOBYQA), or
@@ -175,6 +205,11 @@ An object of class \code{adirmcControl}.
 \description{
 Constructs a control object for \code{est = "adirmc"}, the Iterative Reweighting
 Monte Carlo estimator.
+}
+\details{
+Multi-compartment fits (a study \code{observations} list with several observed
+outputs) are \strong{not} supported by \code{adirmc}; use \code{est = "admc"}, \code{"adfo"}, or
+\code{"adgh"} for those. Single-output studies are fit as usual.
 }
 \examples{
 # Inspect defaults

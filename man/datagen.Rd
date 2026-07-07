@@ -18,6 +18,12 @@ default is supplied via the \code{model} argument.}
 \item{\code{ev}}{A dosing event table created with \code{rxode2::et()}.}
 \item{\code{n}}{(Optional) integer sample size; stored as metadata and
 used when supplying the result to \code{admControl()}.}
+\item{\code{observations}}{(Optional) a named list to generate data for several
+observed outputs (multi-compartment). Each entry gives one output's
+\code{output} (model prediction variable, e.g. \code{"cp"}), \code{times}, and
+optionally \code{ev}/\code{n} (inherited from the study otherwise). When present,
+the study result carries a matching \code{observations} list of per-output
+\code{E}/\code{V}, ready to pass straight to \code{admControl(studies = ...)}.}
 }}
 
 \item{model}{Optional default model function used for any study that does not

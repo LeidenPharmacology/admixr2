@@ -54,14 +54,15 @@
   }
   pm <- .admMakeParamsList(nrow(eta), pinfo, 1L)[[1L]]
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta, study,
-                     out_var, pm, cores)
+                     out_var, pm, cores, pinfo$nDisplayProgress)
 
   mu  <- as.numeric(crossprod(W, cp))
   cpc <- sweep(cp, 2L, mu)
   V   <- crossprod(cpc, W * cpc)
 
+  # Restrict residual error to this output's sigma(s) (no-op single-output).
   mu_sigma <- mu
-  for (i in seq_along(pars$sigma_var)) {
+  for (i in which(.admSigmaSel(pinfo, out_var))) {
     sv <- pars$sigma_var[[i]]
     if (isTRUE(pinfo$sigma_is_lnorm[[i]])) {
       mu_sigma <- mu_sigma * exp(sv / 2)
@@ -75,6 +76,24 @@
   list(E = mu_sigma, V = V)
 }
 
+# GH-quadrature joint moments for a same-subject unit: one shared-eta node grid
+# gives every output; stacked weighted mean/cov (full, cross blocks included) +
+# per-output residual. Returns list(E = mu_sigma, V).
+.adghMomentsJoint <- function(pars, pinfo, unit, rxMod, grid, cores) {
+  n_eta <- pinfo$n_eta
+  if (n_eta > 0L) {
+    eta <- grid$X %*% t(pars$L); colnames(eta) <- pinfo$eta_col_names; W <- grid$W
+  } else { eta <- matrix(0, 1L, 0L); W <- 1 }
+  pm <- .admMakeParamsList(nrow(eta), pinfo, 1L)[[1L]]
+  cp <- .admSimulateJoint(rxMod, pars$struct, pinfo$sigma_names, eta, unit, pm, cores,
+                          pinfo$nDisplayProgress)
+  mu  <- as.numeric(crossprod(W, cp))
+  cpc <- sweep(cp, 2L, mu)
+  V   <- crossprod(cpc, W * cpc)
+  jr  <- .admJointResidual(mu, V, unit, pinfo, pars$sigma_var)
+  list(E = jr$mu, V = jr$V)
+}
+
 # -- NLL -----------------------------------------------------------------------
 
 #' @noRd
@@ -83,11 +102,16 @@
   if (is.null(pars)) return(Inf)
   total <- 0
   for (s in studies) {
-    m <- .adghMoments(pars, pinfo, s, rxMod, out_var, grid, cores)
-    nll <- if (identical(s$method, "var"))
-      nll_var_cpp(s$E, s$v_diag, m$E, diag(m$V), s$n)
-    else
-      nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
+    if (isTRUE(s$is_joint)) {
+      m   <- .adghMomentsJoint(pars, pinfo, s, rxMod, grid, cores)
+      nll <- nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
+    } else {
+      m <- .adghMoments(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores)
+      nll <- if (identical(s$method, "var"))
+        nll_var_cpp(s$E, s$v_diag, m$E, diag(m$V), s$n)
+      else
+        nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
+    }
     if (!is.finite(nll)) return(Inf)
     total <- total + nll
   }
@@ -124,7 +148,87 @@
     eta <- X %*% t(L)
     colnames(eta) <- pinfo$eta_col_names
 
-    res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores)
+    # --- Joint (same-subject) analytical quadrature gradient -----------------
+    # Stacked weighted moments over all outputs (shared-eta node grid); paired
+    # struct + omega + sigma analytical on the joint covariance, per output rows.
+    # Unpaired struct thetas use the FD block after this loop (.adghNLL is joint).
+    if (isTRUE(s$is_joint)) {
+      js <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
+                                  pinfo$nDisplayProgress)
+      if (is.null(js)) next
+      f  <- js$cp_mat; Jl <- js$dpred_list
+      mu  <- as.numeric(crossprod(W, f))
+      cpc <- sweep(f, 2L, mu)
+      # per-row lnorm mean scaling; residual-adjusted mean/cov via shared helper
+      ls_vec <- rep(1, s$n_total)
+      for (blk in s$blocks) for (k in which(.admSigmaSel(pinfo, blk$output)))
+        if (isTRUE(pinfo$sigma_is_lnorm[[k]]))
+          ls_vec[blk$rows] <- ls_vec[blk$rows] * exp(pars$sigma_var[[k]] / 2)
+      jr <- .admJointResidual(mu, crossprod(cpc, W * cpc), s, pinfo, pars$sigma_var)
+      mu_sigma <- jr$mu; V <- jr$V
+      r  <- as.numeric(s$E) - mu_sigma
+      G  <- tryCatch(chol2inv(chol(V)),
+                     error = function(e) tryCatch(solve(V), error = function(e2) NULL))
+      if (is.null(G)) next
+      B    <- s$n * (G - G %*% (s$V + tcrossprod(r)) %*% G)
+      dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))
+      Bdiag <- diag(B); Bt <- cpc %*% B
+      contrib_j <- function(gmat) {              # gmat = d(mu_sigma)/dpsi rows
+        dmu <- as.numeric(crossprod(W, gmat))
+        sum(dNLL_dmu_sig * dmu) + 2 * sum(W * rowSums(gmat * Bt))
+      }
+      sig_V_extra <- function(dmu_raw) {          # dmu_raw = d(mu)/dpsi (pre-lnorm)
+        acc <- 0
+        for (blk in s$blocks) { rows <- blk$rows
+          for (k in which(.admSigmaSel(pinfo, blk$output))) {
+            sv <- pars$sigma_var[[k]]
+            if (isTRUE(pinfo$sigma_is_prop[[k]]))
+              acc <- acc + sum(Bdiag[rows] * 2 * sv * mu[rows] * dmu_raw[rows])
+            else if (isTRUE(pinfo$sigma_is_lnorm[[k]]))
+              acc <- acc + sum(Bdiag[rows] * 2 * (exp(sv) - 1) * ls_vec[rows] *
+                                 mu_sigma[rows] * dmu_raw[rows])
+          }
+        }
+        acc
+      }
+      # paired struct thetas
+      for (k in seq_len(n_s)) {
+        ei <- which(pinfo$struct_eta_idx == k); if (length(ei) == 0L) next; ei <- ei[[1L]]
+        gmat    <- sweep(Jl[[ei]], 2L, ls_vec, "*")
+        dmu_raw <- as.numeric(crossprod(W, Jl[[ei]]))
+        grad[k] <- grad[k] + contrib_j(gmat) + sig_V_extra(dmu_raw)
+      }
+      # omega Cholesky
+      if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
+        i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
+        base    <- Jl[[i]] * X[, j]
+        gmat    <- sweep(base, 2L, ls_vec, "*")
+        dmu_raw <- as.numeric(crossprod(W, base))
+        dL  <- contrib_j(gmat) + sig_V_extra(dmu_raw)
+        pos <- n_s + n_e + rr
+        grad[pos] <- grad[pos] + if (pinfo$chol_diag[rr]) dL * L[i, i] / 2 else dL
+      }
+      # sigma, per output rows
+      for (blk in s$blocks) { rows <- blk$rows
+        for (k in which(.admSigmaSel(pinfo, blk$output))) {
+          sv <- pars$sigma_var[[k]]; k_sig <- n_s + k
+          if (isTRUE(pinfo$sigma_is_lnorm[[k]]))
+            grad[k_sig] <- grad[k_sig] + (sum(dNLL_dmu_sig[rows] * mu_sigma[rows] / 2) +
+              sum(Bdiag[rows] * mu_sigma[rows]^2 * (2 * exp(sv) - 1))) * sv
+          else if (isTRUE(pinfo$sigma_is_prop[[k]]))
+            grad[k_sig] <- grad[k_sig] + sum(Bdiag[rows] * mu[rows]^2) * sv
+          else
+            grad[k_sig] <- grad[k_sig] + sum(Bdiag[rows]) * sv
+        }
+      }
+      next
+    }
+
+    ov <- s$output %||% out_var
+    sk <- which(.admSigmaSel(pinfo, ov))   # this output's sigma indices
+
+    res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
+                            pinfo$nDisplayProgress)
     f   <- res$cp_mat     # Q x n_t
     Jl  <- res$dpred_list # list n_eta of Q x n_t
 
@@ -132,10 +236,10 @@
     cpc <- sweep(f, 2L, mu)
     V   <- crossprod(cpc, W * cpc)
 
-    # Sigma contributions to V (and lnorm scaling of mean)
+    # Sigma contributions to V (and lnorm scaling of mean) -- this output only
     mu_sigma <- mu
     sv_vec   <- pars$sigma_var
-    for (i in seq_along(sv_vec)) {
+    for (i in sk) {
       sv <- sv_vec[[i]]
       if (isTRUE(pinfo$sigma_is_lnorm[[i]])) {
         mu_sigma <- mu_sigma * exp(sv / 2)
@@ -218,7 +322,7 @@
     # For lnorm: sens Jacobians give d(mu)/d(eta); need d(mu_sigma)/d(eta).
     # Scale factor: exp(sv/2) for each lnorm sigma (multiplicative on mu).
     lnorm_scale <- 1
-    for (i in seq_along(sv_vec))
+    for (i in sk)
       if (isTRUE(pinfo$sigma_is_lnorm[[i]])) lnorm_scale <- lnorm_scale * exp(sv_vec[[i]] / 2)
 
     # Precompute the d(NLL)/d(V_diag) vector used for sigma V-correction terms.
@@ -227,9 +331,9 @@
     Bvec <- if (!is_var) Bdiag else dNLL_dV_diag  # length n_t
 
     .sigma_V_extra <- function(dmu_raw) {
-      if (n_e == 0L) return(0)
+      if (length(sk) == 0L) return(0)
       acc <- 0
-      for (i_sig in seq_len(n_e)) {
+      for (i_sig in sk) {
         sv <- sv_vec[[i_sig]]
         if (isTRUE(pinfo$sigma_is_prop[[i_sig]]))
           acc <- acc + sum(Bvec * 2 * sv * mu * dmu_raw)
@@ -240,6 +344,8 @@
     }
 
     # Struct thetas (paired with etas; unpaired handled by FD below).
+    # struct_eta_idx is eta-indexed (value = struct paired with each eta), so the
+    # eta for struct k is which(struct_eta_idx == k).
     for (k in seq_len(n_s)) {
       if (!is.null(pinfo$struct_has_eta) && !pinfo$struct_has_eta[k]) next  # unpaired
       ei <- which(pinfo$struct_eta_idx == k)[1L]  # struct k -> its eta dim
@@ -262,7 +368,8 @@
     }
 
     # Sigma: d(NLL)/d(sv) * d(sv)/d(p) where sv = exp(p) so d(sv)/d(p) = sv.
-    for (i in seq_len(n_e)) {
+    # Only this output's residual-error parameters (no-op for single-output).
+    for (i in sk) {
       sig_g <- contrib_sigma(i)
       grad[n_s + i] <- grad[n_s + i] + sig_g
     }
@@ -457,7 +564,8 @@
 #' ~4 etas.
 #'
 #' @param studies Named list of study specifications (same format as
-#'   [admControl()]: `E`, `V`, `n`, `times`, `ev`, optional `method`).
+#'   [admControl()]: `E`, `V`, `n`, `times`, `ev`, optional `method`; or an
+#'   `observations` list for multi-compartment fits -- see [admControl()]).
 #' @param n_nodes Number of quadrature nodes per eta dimension (default 5).
 #'   Total nodes = `n_nodes^n_eta`. `n_nodes = 5` achieves near-exact covariance
 #'   moments for IIV SD up to ~0.5; `n_nodes = 7` extends coverage to SD ~0.7.
@@ -474,6 +582,10 @@
 #' @param print Print-frequency for live progress (0 = silent).
 #' @param seed Random seed (used for restarts).
 #' @param cores OpenMP threads for `rxSolve()` (default 1).
+#' @param nDisplayProgress Passed to `rxSolve()`: show the solver's text
+#'   progress bar only once a single solve exceeds this many subjects. The
+#'   default (`.Machine$integer.max`) keeps it off for clean script/vignette
+#'   output; lower it (e.g. `1000L`) to see progress during long fits.
 #' @param grad_h Finite-difference step for unpaired struct theta gradient and
 #'   FD Jacobian fallback.
 #' @param grad_bounds Box-constraint half-width when using gradients.
@@ -560,6 +672,7 @@ adghControl <- function(
     print       = 10L,
     seed        = 12345L,
     cores       = 1L,
+    nDisplayProgress = .Machine$integer.max,
     grad_h      = 1e-4,
     grad_bounds = 5,
     cov_h       = 1e-3,
@@ -598,6 +711,8 @@ adghControl <- function(
   checkmate::assertIntegerish(print,       lower = 0L, len = 1)
   checkmate::assertIntegerish(seed,                    len = 1)
   checkmate::assertIntegerish(cores,       lower = 1L, len = 1)
+  checkmate::assertIntegerish(nDisplayProgress, lower = 1L, len = 1,
+                              .var.name = "nDisplayProgress")
   checkmate::assertNumeric(grad_h,         lower = 0,  len = 1)
   checkmate::assertNumeric(grad_bounds,    lower = 0,  len = 1)
   checkmate::assertNumeric(cov_h,          lower = 0,  len = 1)
@@ -627,6 +742,7 @@ adghControl <- function(
     print         = as.integer(print),
     seed          = as.integer(seed),
     cores         = as.integer(cores),
+    nDisplayProgress = as.integer(nDisplayProgress),
     grad_h        = grad_h,
     grad_bounds   = grad_bounds,
     cov_h         = cov_h,
@@ -711,17 +827,26 @@ nlmixr2Est.adgh <- function(env, ...) {
     stop("adghControl(studies=...) required", call. = FALSE)
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
-  for (nm in names(studies))
-    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm)
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
+  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
   output_var <- .admOutputVar(.ui)
   n_nodes    <- .ctl$n_nodes
+
+  for (nm in names(studies))
+    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
+  studies    <- .admFlattenStudies(studies)
+  multi_out  <- length(.admOutputVars(.ui)) > 1L
+  any_joint  <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
+  studies    <- .admBuildEvFull(studies, tag_cmt = multi_out)
 
   want_grad    <- .ctl$grad != "none"
   want_sens    <- .ctl$grad == "analytical"
   use_central  <- .ctl$grad == "cfd"
   use_pure_fd  <- .ctl$grad %in% c("fd", "cfd")
+  # Joint (same-subject) fits keep the analytical quadrature gradient: .adghGrad's
+  # joint branch computes the stacked-MVN gradient from shared-eta per-output
+  # sensitivities (grad = "analytical"). grad = "fd"/"cfd" use the FD gradient.
 
   if (pinfo$n_eta > 0L) {
     n_total <- n_nodes^pinfo$n_eta
@@ -751,12 +876,6 @@ nlmixr2Est.adgh <- function(env, ...) {
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
   on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree() }, add = TRUE)
-
-  for (nm in names(studies)) {
-    s  <- studies[[nm]]
-    ev <- if (!is.null(s$ev)) s$ev else rxode2::et(amt = 100)
-    studies[[nm]]$ev_full <- ev |> rxode2::et(s$times)
-  }
 
   # Node grid: fixed in standard-normal space; L applied per-eval in .adghMoments.
   grid  <- .adghNodeGrid(n_nodes, pinfo$n_eta)
@@ -800,7 +919,7 @@ nlmixr2Est.adgh <- function(env, ...) {
                 else "FD"
   n_total_nodes <- if (pinfo$n_eta > 0L) n_nodes^pinfo$n_eta else 1L
   message("=== admixr2: Aggregate Data Modeling (GH) ===")
-  message(sprintf("  Studies: %d | Params: %d | Nodes: %d^%d=%d | Cores: %d | Grad: %s | Restarts: %d",
+  message(sprintf("  Obs units: %d | Params: %d | Nodes: %d^%d=%d | Cores: %d | Grad: %s | Restarts: %d",
                   length(studies), length(ov$p0),
                   n_nodes, pinfo$n_eta, n_total_nodes,
                   cores, grad_label, .ctl$n_restarts))
@@ -944,7 +1063,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   if (!is.null(.focei_model)) .ret$model <- .focei_model
 
   .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = admData(), control = .ret$control,
+    .ui, data = if (multi_out) admData(.admOutputVars(.ui)) else admData(),
+    control = .ret$control,
     table = .ret$table, env = .ret, est = "adgh")
 
   .fit$env$method   <- "adgh"

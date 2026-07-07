@@ -41,6 +41,7 @@ Suggests:
     future,
     ggplot2,
     knitr,
+    MASS,
     mnormt,
     nlmixr2 (>= 5.0.0),
     nlmixr2data,
