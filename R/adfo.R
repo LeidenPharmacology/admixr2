@@ -1031,6 +1031,8 @@ nlmixr2Est.adfo <- function(env, ...) {
   .fit$env$admExtra <- .ret$admExtra
   # Populate nlmixr2-style parameter history so traceplot(fit) works natively.
   .admAttachParHist(.fit, .ret$admExtra$all_traces, .ret$admExtra$par_names, .ui)
+  # Store observed + predicted aggregate moments (E vector, V matrix) per study.
+  .admAttachAggData(.fit, .ret$admExtra, .ui)
   .old_cls <- class(.fit)
   .new_cls <- c("admFit", .old_cls)
   attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")

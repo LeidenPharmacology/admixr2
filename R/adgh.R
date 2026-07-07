@@ -138,10 +138,11 @@
   W     <- grid$W
   grad  <- numeric(length(p)); names(grad) <- names(p)
 
-  # Which struct thetas are unpaired (no mu-referencing eta)? struct_has_eta is
-  # indexed by struct (unlike struct_eta_idx, which is indexed by eta).
-  unpaired_k <- which(vapply(pinfo$struct_names, function(nm)
-    is.null(pinfo$struct_has_eta) || !isTRUE(pinfo$struct_has_eta[[nm]]), logical(1)))
+  # Which struct thetas are unpaired (no mu-referencing eta)?
+  # struct_has_eta is struct-indexed (length n_s); struct_eta_idx is eta-indexed
+  # (length n_eta) so is.na() on it never flags unpaired struct thetas.
+  unpaired_k <- if (!is.null(pinfo$struct_has_eta))
+    which(!pinfo$struct_has_eta) else integer(0)
 
   for (s in studies) {
     eta <- X %*% t(L)
@@ -346,9 +347,9 @@
     # struct_eta_idx is eta-indexed (value = struct paired with each eta), so the
     # eta for struct k is which(struct_eta_idx == k).
     for (k in seq_len(n_s)) {
-      ei <- which(pinfo$struct_eta_idx == k)
-      if (length(ei) == 0L) next  # unpaired
-      ei <- ei[[1L]]
+      if (!is.null(pinfo$struct_has_eta) && !pinfo$struct_has_eta[k]) next  # unpaired
+      ei <- which(pinfo$struct_eta_idx == k)[1L]  # struct k -> its eta dim
+      if (is.na(ei)) next  # nocov -- defensive; ei always found when struct_has_eta[k]
       gmat    <- if (lnorm_scale != 1) Jl[[ei]] * lnorm_scale else Jl[[ei]]
       dmu_raw <- as.numeric(crossprod(W, Jl[[ei]]))  # d(mu_t)/d(psi) before lnorm scaling
       grad[k] <- grad[k] + contrib(gmat) + .sigma_V_extra(dmu_raw)
@@ -1070,6 +1071,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   .fit$env$studies  <- studies
   .fit$env$admExtra <- .ret$admExtra
   .admAttachParHist(.fit, .ret$admExtra$all_traces, .ret$admExtra$par_names, .ui)
+  # Store observed + predicted aggregate moments (E vector, V matrix) per study.
+  .admAttachAggData(.fit, .ret$admExtra, .ui)
   .old_cls <- class(.fit)
   .new_cls <- c("admFit", .old_cls)
   attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")

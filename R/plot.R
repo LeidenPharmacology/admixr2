@@ -278,6 +278,139 @@ head.paged_df <- function(x, n = 6L, ...) {
   invisible(fit)
 }
 
+## Observed and predicted aggregate moments per study.
+##
+## Runs one MC simulation per study at the fitted parameters -- using the same
+## quasi-random sampling and residual-error (sigma) handling as the diagnostic
+## mean/cov panels -- and returns, per study, the observed and predicted mean
+## vector `E` and (co)variance matrix `V`. Shared by `plot.admFit()` (mean/cov
+## panels) and `.admAttachAggData()` (the fit's `aggData` slot) so the two never
+## disagree.
+##
+## Returns a named list, one entry per study. Each entry is `NULL` when the
+## simulation model is unavailable or the study simulation failed, otherwise:
+##   list(times = <numeric>, n = <int>,
+##        obs  = list(E = <named numeric>, V = <matrix>),
+##        pred = list(E = <named numeric>, V = <matrix>))
+## The observation times label `E` (names) and `V` (dimnames). `warn = TRUE`
+## emits the user-facing warnings used on the interactive plot path; the fit
+## attachment path passes `warn = FALSE` so a non-simulable fit stays quiet.
+.admAggData <- function(extra, ui, n_sim = NULL, seed = 1L, warn = TRUE) {
+  studies   <- extra$studies
+  n_sim     <- n_sim %||% extra$n_sim %||% 5000L
+  omega     <- extra$omega
+  n_eta     <- nrow(omega)
+  L         <- extra$L %||% tryCatch(t(chol(omega)), error = function(e) NULL)
+  sv        <- extra$sigma_var
+  sig_prop  <- extra$sigma_is_prop  %||% grepl("prop",  names(sv), ignore.case = TRUE)
+  sig_lnorm <- extra$sigma_is_lnorm %||% grepl("lnorm", names(sv), ignore.case = TRUE)
+  eta_nms   <- extra$eta_col_names %||% character(0)
+  sig_nms   <- names(sv)
+
+  empty <- setNames(vector("list", length(studies)), names(studies))
+  rxMod <- tryCatch(ui$simulationModel, error = function(e) NULL)
+  if (is.null(rxMod)) {
+    if (warn)
+      warning("plot.admFit: could not retrieve simulation model from fit object",
+              call. = FALSE)
+    return(empty)
+  }
+  # Detect the simulation output variable (e.g. "ipredSim" for linCmt models)
+  # rather than assuming "cp" -- matches the detection used on the fit path.
+  out_var <- tryCatch(.admOutputVar(ui), error = function(e) "cp")
+  # Per-output residual selector for multi-compartment fits (each observed output
+  # uses only its own sigma). NULL/all-NA mapping -> all sigmas (legacy).
+  sig_output <- tryCatch(.admParseIniDf(ui$iniDf, ui)$sigma_output,
+                         error = function(e) NULL)
+  .sig_sel <- function(ov) {
+    if (is.null(sig_output) || all(is.na(sig_output)) || is.null(ov) || is.na(ov))
+      return(rep(TRUE, length(sv)))
+    sel <- sig_output == ov; sel[is.na(sel)] <- FALSE; sel
+  }
+
+  .sim_study <- function(s) {
+    ov <- s$output %||% out_var
+    tryCatch(rxode2::rxLoad(rxMod), error = function(e) NULL)
+    set.seed(seed)
+    if (n_eta > 0 && !is.null(L)) {
+      .samp <- extra$sampling %||% "sobol"
+      z_s   <- switch(.samp,
+        sobol  = qnorm(randtoolbox::sobol( n = n_sim, dim = n_eta)),
+        halton = qnorm(randtoolbox::halton(n = n_sim, dim = n_eta)),
+        torus  = qnorm(randtoolbox::torus( n = n_sim, dim = n_eta)),
+        lhs    = qnorm(.lhsSample(n_sim, n_eta)),
+        rnorm  = matrix(rnorm(n_sim * n_eta), nrow = n_sim),
+        qnorm(randtoolbox::sobol(n = n_sim, dim = n_eta))
+      )
+      eta_mat <- z_s %*% t(L)
+      colnames(eta_mat) <- eta_nms
+    } else {
+      eta_mat <- matrix(0, nrow = n_sim, ncol = 0)
+    }
+    # One residual placeholder per observed output (rxerr.<output>); a
+    # multi-endpoint solve needs every endpoint's rxerr present. rxSolve
+    # defaults everything else (CMT, hard-coded constants).
+    rxerr_nms <- { so <- unique(sig_output[!is.na(sig_output)])
+                   if (length(so)) paste0("rxerr.", so) else "rxerr.cp" }
+    col_nms   <- c(names(extra$struct), eta_nms, sig_nms, rxerr_nms)
+    params_df <- as.data.frame(matrix(0, nrow = n_sim, ncol = length(col_nms),
+                                      dimnames = list(NULL, col_nms)))
+    params_df[, rxerr_nms] <- 1
+    tryCatch(
+      .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L),
+      error = function(e) {
+        if (warn) warning("plot.admFit: simulation failed: ", e$message, call. = FALSE)
+        NULL
+      })
+  }
+
+  .add_sigma <- function(V, mu, ov = out_var) {
+    for (k in which(.sig_sel(ov))) {
+      s <- sv[[k]]
+      if (sig_lnorm[k]) {
+        mu_adj <- mu * exp(s / 2)
+        diag(V) <- diag(V) + mu_adj^2 * (exp(s) - 1)
+      } else if (sig_prop[k]) {
+        diag(V) <- diag(V) + s * mu^2
+      } else {
+        diag(V) <- diag(V) + s
+      }
+    }
+    V
+  }
+
+  setNames(lapply(names(studies), function(nm) {
+    s      <- studies[[nm]]
+    cp_mat <- .sim_study(s)
+    if (is.null(cp_mat)) return(NULL)
+    mu     <- colMeans(cp_mat)
+    V_pred <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
+                         s$output %||% out_var)
+    obs_E  <- as.numeric(s$E)
+    obs_V  <- as.matrix(s$V)
+    tnm    <- as.character(s$times)
+    names(mu) <- names(obs_E) <- tnm
+    dimnames(V_pred) <- dimnames(obs_V) <- list(tnm, tnm)
+    list(times = s$times, n = s$n,
+         obs  = list(E = obs_E, V = obs_V),
+         pred = list(E = mu,    V = V_pred))
+  }), names(studies))
+}
+
+## Attach an `aggData` slot (observed + predicted aggregate moments per study) to
+## a freshly constructed admFit. Shared by the admc/adfo/adgh/adirmc estimators.
+## Computed at the fitted parameters with the fit's own `n_sim` and a fixed seed
+## so `fit$env$aggData` matches the default `plot(fit)` mean/cov panels. A failure
+## to simulate must not break fit construction, so the whole thing is guarded and
+## a `NULL`/all-NULL result simply leaves the slot unset.
+.admAttachAggData <- function(fit, extra, ui, seed = 1L) {
+  ad <- tryCatch(.admAggData(extra, ui, n_sim = extra$n_sim, seed = seed, warn = FALSE),
+                 error = function(e) NULL)
+  if (!is.null(ad) && any(!vapply(ad, is.null, logical(1))))
+    fit$env$aggData <- ad
+  invisible(fit)
+}
+
 #' Diagnostic plots for an admixr2 fit
 #'
 #' Generates up to four diagnostic panels:
@@ -307,7 +440,34 @@ head.paged_df <- function(x, n = 6L, ...) {
 #' @param seed Random seed for reproducibility.
 #' @param ... Unused.
 #'
-#' @return A named list of ggplot2 objects, invisibly. Prints each selected plot.
+#' @return A named list of ggplot2 objects, invisibly. Prints each selected
+#'   top-level panel. For the `"mean"` and `"cov"` panels the returned list also
+#'   contains each sub-panel individually so a single panel (or a few) can be
+#'   extracted in code without reprinting the whole grid. Elements can be pulled
+#'   out by name -- `plot(fit, which = "mean")$mean_study1_pred` or
+#'   `plot(fit, which = "cov")$cov_study1_std_resid` -- or by position, with the
+#'   combined 2x2 grid stored first per study
+#'   (`plot(fit, which = "mean")[[1]]` is the full grid, `[1]` the length-1
+#'   named sub-list). The sub-panel keys are `<type>_<study>_obs`, `_pred`,
+#'   `_resid`, and `_std_resid`; the combined grid stays under `<type>_<study>`.
+#'   The extra sub-panel keys are not printed on their own.
+#'
+#' @section Aggregate data slot:
+#' Every admixr2 fit also carries the observed and predicted aggregate data in
+#' `fit$env$aggData`, a named list with one entry per study. Each entry holds the
+#' observation `times`, the study `n`, and two moment sets -- `obs` (from the
+#' data) and `pred` (predicted at the fitted parameters) -- each a list with the
+#' mean vector `E` and the (co)variance matrix `V`:
+#' \preformatted{
+#'   fit$env$aggData$study1$obs$E    # observed mean vector
+#'   fit$env$aggData$study1$obs$V    # observed covariance matrix
+#'   fit$env$aggData$study1$pred$E   # predicted mean vector
+#'   fit$env$aggData$study1$pred$V   # predicted covariance matrix
+#' }
+#' The predicted moments are computed by one MC simulation at the fitted
+#' parameters using the fit's own `n_sim` and a fixed seed, so they match the
+#' default `plot(fit)` mean/cov panels. The slot is absent only when the fit
+#' cannot be simulated (no simulation model available).
 #'
 #' @section nlmixr2 `traceplot()`:
 #' admixr2 fits also plug into the nlmixr2 `traceplot()` generic. During fitting
@@ -376,92 +536,42 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
 
   studies  <- extra$studies
   n_sim    <- n_sim %||% extra$n_sim %||% 5000L
-  omega    <- extra$omega
-  n_eta    <- nrow(omega)
-  L        <- extra$L %||% tryCatch(t(chol(omega)), error = function(e) NULL)
-  sv        <- extra$sigma_var
-  sig_prop  <- extra$sigma_is_prop  %||% grepl("prop",  names(sv), ignore.case = TRUE)
-  sig_lnorm <- extra$sigma_is_lnorm %||% grepl("lnorm", names(sv), ignore.case = TRUE)
-  eta_nms  <- extra$eta_col_names %||% character(0)
-  sig_nms  <- names(sv)
 
   need_sim_local <- any(c("mean", "cov") %in% which)
-  rxMod <- if (need_sim_local)
-    tryCatch(fit$env$ui$simulationModel, error = function(e) NULL)
-  else NULL
-  rxMod_ok <- !is.null(rxMod)
-  if (need_sim_local && !rxMod_ok)
-    warning("plot.admFit: could not retrieve simulation model from fit object", call. = FALSE)
-
-  # Detect the simulation output variable (e.g. "ipredSim" for linCmt models)
-  # rather than assuming "cp" -- matches the detection used on the fit path.
-  out_var <- tryCatch(.admOutputVar(fit$env$ui), error = function(e) "cp")
-  # Per-output residual-error selector for multi-compartment fits (each observed
-  # output uses only its own sigma). NULL/all-NA mapping -> all sigmas (legacy).
-  sig_output <- tryCatch(.admParseIniDf(fit$env$ui$iniDf, fit$env$ui)$sigma_output,
-                         error = function(e) NULL)
-  .sig_sel <- function(ov) {
-    if (is.null(sig_output) || all(is.na(sig_output)) || is.null(ov) || is.na(ov))
-      return(rep(TRUE, length(sv)))
-    sel <- sig_output == ov; sel[is.na(sel)] <- FALSE; sel
-  }
-
-  .sim_study <- function(s) {
-    ov <- s$output %||% out_var
-    if (!rxMod_ok) return(NULL)
-    tryCatch(rxode2::rxLoad(rxMod), error = function(e) NULL)
-    set.seed(seed)
-    if (n_eta > 0 && !is.null(L)) {
-      .samp   <- extra$sampling %||% "sobol"
-      z_s     <- switch(.samp,
-        sobol  = qnorm(randtoolbox::sobol( n = n_sim, dim = n_eta)),
-        halton = qnorm(randtoolbox::halton(n = n_sim, dim = n_eta)),
-        torus  = qnorm(randtoolbox::torus( n = n_sim, dim = n_eta)),
-        lhs    = qnorm(.lhsSample(n_sim, n_eta)),
-        rnorm  = matrix(rnorm(n_sim * n_eta), nrow = n_sim),
-        qnorm(randtoolbox::sobol(n = n_sim, dim = n_eta))
-      )
-      eta_mat <- z_s %*% t(L)
-      colnames(eta_mat) <- eta_nms
-    } else {
-      eta_mat <- matrix(0, nrow = n_sim, ncol = 0)
-    }
-    # One residual-error placeholder per observed output (rxerr.<output>); see
-    # .admMakeParamsList(). rxSolve defaults everything else (CMT, constants).
-    rxerr_nms <- { so <- unique(sig_output[!is.na(sig_output)])
-                   if (length(so)) paste0("rxerr.", so) else "rxerr.cp" }
-    col_nms   <- c(names(extra$struct), eta_nms, sig_nms, rxerr_nms)
-    params_df <- as.data.frame(matrix(0, nrow = n_sim, ncol = length(col_nms),
-                                      dimnames = list(NULL, col_nms)))
-    params_df[, rxerr_nms] <- 1
-    tryCatch(
-      .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L),
-      error = function(e) { warning("plot.admFit: simulation failed: ", e$message, call. = FALSE); NULL })
-  }
-
-  .add_sigma <- function(V, mu, ov = out_var) {
-    for (k in which(.sig_sel(ov))) {
-      s <- sv[[k]]
-      if (sig_lnorm[k]) {
-        mu_adj <- mu * exp(s / 2)
-        diag(V) <- diag(V) + mu_adj^2 * (exp(s) - 1)
-      } else if (sig_prop[k]) {
-        diag(V) <- diag(V) + s * mu^2
-      } else {
-        diag(V) <- diag(V) + s
-      }
-    }
-    V
-  }
-
-  # Simulate once per study; only when mean or cov panels are requested
-  sims <- if (need_sim_local)
-    setNames(lapply(names(studies), function(nm) .sim_study(studies[[nm]])),
-             names(studies))
-  else
+  # Observed + predicted aggregate moments per study (mean vector + cov matrix).
+  # Reuse the fit's stored `aggData` slot when it matches the requested n_sim/seed
+  # (avoids a redundant simulation); otherwise recompute via the shared helper.
+  agg <- if (!need_sim_local) {
     setNames(vector("list", length(studies)), names(studies))
+  } else {
+    cached <- fit$env$aggData
+    # The stored slot was built at n_sim = extra$n_sim and seed 1L. Compare
+    # numerically (not via identical()) so a double n_sim -- e.g. plot(fit,
+    # n_sim = 5000) against a stored 5000L -- still hits the cache.
+    if (!is.null(cached) &&
+        isTRUE(n_sim == (extra$n_sim %||% 5000L)) && isTRUE(seed == 1L))
+      cached
+    else
+      .admAggData(extra, fit$env$ui, n_sim = n_sim, seed = seed, warn = TRUE)
+  }
 
   plots <- list()
+  # Keys to actually display. Individual mean/cov sub-panels are added to
+  # `plots` for programmatic extraction but are not printed on their own -- only
+  # the combined 2x2 grid (or, without patchwork, the sub-panel list) is shown.
+  print_keys <- character(0)
+
+  # Fail loudly rather than silently overwrite: a study whose name ends in a
+  # reserved suffix (e.g. "s1_pred") would derive a key that collides with
+  # another study's sub-panel key. Only possible with pathological names.
+  .check_panel_keys <- function(keys) {
+    dup <- keys[keys %in% names(plots)]
+    if (length(dup))
+      stop("plot.admFit: panel keys collide with existing entries (",
+           paste(dup, collapse = ", "),
+           "); rename the study to avoid the reserved suffixes ",
+           "_obs/_pred/_resid/_std_resid.", call. = FALSE)
+  }
 
   # -- Mean diagnostics: 2x2 grid (Obs | Pred / Residual | Standardised residual)
   # Obs/Pred: shared y scale; black mean line + point + \u00b11 SD ribbon (black, alpha 0.15).
@@ -469,14 +579,13 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
   # Standardised residual: z[t] = (E_obs[t] - mu[t]) / sqrt(V_pred[t,t]/n) ~ N(0,1).
   # Stars: |z| > 1.96 (*), > 2.58 (**), > 3.29 (***). Requires patchwork for 2x2.
   if ("mean" %in% which) for (nm in names(studies)) {
-    s      <- studies[[nm]]
-    cp_mat <- sims[[nm]]
-    if (is.null(cp_mat)) next
+    s   <- studies[[nm]]
+    ag  <- agg[[nm]]
+    if (is.null(ag)) next
 
     n_obs      <- s$n
-    mu         <- colMeans(cp_mat)
-    V_pred     <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
-                             s$output %||% out_var)
+    mu         <- ag$pred$E
+    V_pred     <- ag$pred$V
     pred_sd    <- sqrt(diag(V_pred))
     obs_sd     <- sqrt(diag(s$V))
     resid_mean <- as.numeric(s$E) - mu
@@ -547,6 +656,9 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
       ggplot2::geom_point(size = 3, colour = "black") +
       ggplot2::geom_text(ggplot2::aes(label = z_label, vjust = z_vjust),
                          size = 4, colour = "black", fontface = "bold") +
+      # Extra vertical headroom so significance stars placed above/below the
+      # extreme points (via z_vjust) are not clipped at the panel edge.
+      ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = 0.15)) +
       ggplot2::labs(title = "Standardised residual",
                     x = "Time", y = "z-score",
                     subtitle = "dashed +/-1.96  |  z = resid/SE  |  *p<.05 **p<.01 ***p<.001") +
@@ -554,6 +666,10 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
       ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
                                                            face = "plain"))
 
+    # Combined 2x2 grid first so positional extraction returns the whole panel
+    # (plot(fit, which = "mean")[[1]]); the individual sub-panels follow under
+    # their own keys for one-at-a-time extraction, e.g. $mean_study1_pred.
+    .check_panel_keys(paste0("mean_", nm, c("", "_obs", "_pred", "_resid", "_std_resid")))
     if (requireNamespace("patchwork", quietly = TRUE)) {
       plots[[paste0("mean_", nm)]] <- (p_obs | p_pred) / (p_res | p_z) +
         patchwork::plot_annotation(
@@ -562,6 +678,11 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
       plots[[paste0("mean_", nm)]] <- list(obs = p_obs, pred = p_pred,
                                             resid = p_res, std_resid = p_z)
     }
+    plots[[paste0("mean_", nm, "_obs")]]       <- p_obs
+    plots[[paste0("mean_", nm, "_pred")]]      <- p_pred
+    plots[[paste0("mean_", nm, "_resid")]]     <- p_res
+    plots[[paste0("mean_", nm, "_std_resid")]] <- p_z
+    print_keys <- c(print_keys, paste0("mean_", nm))
   }
 
   # -- Covariance heatmaps: 2x2 grid ----------------------------------------
@@ -594,14 +715,13 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
   }
 
   for (nm in names(studies)) {
-    s      <- studies[[nm]]
-    cp_mat <- sims[[nm]]
-    if (is.null(cp_mat)) next
+    s   <- studies[[nm]]
+    ag  <- agg[[nm]]
+    if (is.null(ag)) next
 
     n_obs  <- s$n
-    mu     <- colMeans(cp_mat)
-    V_pred <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
-                         s$output %||% out_var)
+    mu     <- ag$pred$E
+    V_pred <- ag$pred$V
     v_diag <- diag(V_pred)
     n_t    <- length(s$times)
     times  <- s$times
@@ -640,6 +760,10 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
                        subtitle = "z = DeltaCov/SE  |  *p<.05 **p<.01 ***p<.001") +
       ggplot2::geom_text(ggplot2::aes(label = z_label), size = 4, colour = "black", fontface = "bold")
 
+    # Combined 2x2 grid first so positional extraction returns the whole panel
+    # (plot(fit, which = "cov")[[1]]); the individual sub-panels follow under
+    # their own keys for one-at-a-time extraction, e.g. $cov_study1_std_resid.
+    .check_panel_keys(paste0("cov_", nm, c("", "_obs", "_pred", "_resid", "_std_resid")))
     if (requireNamespace("patchwork", quietly = TRUE)) {
       plots[[paste0("cov_", nm)]] <- (p_obs | p_pred) / (p_res | p_z) +
         patchwork::plot_annotation(
@@ -648,6 +772,11 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
       plots[[paste0("cov_", nm)]] <- list(obs = p_obs, pred = p_pred,
                                            resid = p_res, std_resid = p_z)
     }
+    plots[[paste0("cov_", nm, "_obs")]]       <- p_obs
+    plots[[paste0("cov_", nm, "_pred")]]      <- p_pred
+    plots[[paste0("cov_", nm, "_resid")]]     <- p_res
+    plots[[paste0("cov_", nm, "_std_resid")]] <- p_z
+    print_keys <- c(print_keys, paste0("cov_", nm))
   }
   } # end if ("cov" %in% which)
 
@@ -689,6 +818,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
         ggplot2::theme_bw() +
         ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
                                                              face = "plain"))
+      print_keys <- c(print_keys, "nll_trace")
     }
   } # end if ("nll" %in% which)
 
@@ -730,11 +860,16 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
           ggplot2::theme(strip.text    = ggplot2::element_text(size = 8),
                          plot.subtitle = ggplot2::element_text(size = 8, colour = "grey40",
                                                                face = "plain"))
+        print_keys <- c(print_keys, "par_trace")
       }
     }
   }
 
-  for (p in plots) {
+  # Print only the top-level panels (combined mean/cov grids, nll, par). The
+  # individual mean/cov sub-panels remain in `plots` for programmatic extraction
+  # but are not printed here to avoid duplicating the combined grid output.
+  for (key in print_keys) {
+    p <- plots[[key]]
     if (is.list(p) && !inherits(p, "gg"))
       for (pp in p) print(pp)
     else

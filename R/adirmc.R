@@ -1270,7 +1270,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
                          t_opt         = t_opt,
                          t_cov         = t_cov,
                          studies       = studies,
-                         n_sim         = .ctl$n_sim)
+                         n_sim         = .ctl$n_sim,
+                         sampling      = .ctl$sampling)
 
   nlmixr2est::.nlmixr2FitUpdateParams(.ret)
   nmObjHandleControlObject.adirmcControl(.ctl, .ret)
@@ -1288,6 +1289,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
   .fit$env$adirmcExtra <- .ret$adirmcExtra
   # Populate nlmixr2-style parameter history so traceplot(fit) works natively.
   .admAttachParHist(.fit, .ret$adirmcExtra$all_traces, .ret$adirmcExtra$par_names, .ui)
+  # Store observed + predicted aggregate moments (E vector, V matrix) per study.
+  .admAttachAggData(.fit, .ret$adirmcExtra, .ui)
   .old_cls <- class(.fit)
   .new_cls <- c("admFit", .old_cls)
   attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")

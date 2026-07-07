@@ -96,6 +96,47 @@ test_that("admc multi-study: fit carries both studies and a finite objective", {
   .expect_sensible(fit, env$tcl_true, env$tv_true)
 })
 
+# ---- aggData slot (observed + predicted aggregate moments) -------------------
+
+test_that("pipeline: each estimator fit carries a valid aggData slot", {
+  env <- .int_pipeline_setup()
+  for (fit in list(env$fit_admc, env$fit_adfo, env$fit_adgh, env$fit_adirmc)) {
+    ad <- fit$env$aggData
+    expect_false(is.null(ad))
+    study <- names(fit$env$studies)[1]
+    a     <- ad[[study]]
+    expect_false(is.null(a))
+    n_t   <- length(fit$env$studies[[study]]$times)
+    # Observed moments come straight from the study spec.
+    expect_equal(as.numeric(a$obs$E), as.numeric(fit$env$studies[[study]]$E))
+    # Predicted moments: mean vector length n_t, symmetric finite n_t x n_t cov.
+    expect_length(a$pred$E, n_t)
+    expect_equal(dim(a$pred$V), c(n_t, n_t))
+    expect_true(all(is.finite(a$pred$E)))
+    expect_true(all(is.finite(a$pred$V)))
+    expect_equal(a$pred$V, t(a$pred$V))
+  }
+})
+
+test_that("pipeline: adirmc fit records its sampling method in adirmcExtra", {
+  env <- .int_pipeline_setup()
+  # Regression: adirmcExtra used to omit `sampling`, so plots and aggData
+  # silently fell back to "sobol" regardless of the control setting.
+  expect_identical(env$fit_adirmc$env$adirmcExtra$sampling, "sobol")
+})
+
+test_that("pipeline: multi-study fit has an aggData entry per study", {
+  env <- .int_pipeline_setup()
+  ad  <- env$fit_multistudy$env$aggData
+  expect_false(is.null(ad))
+  expect_identical(names(ad), c("s1", "s2"))
+  for (a in ad) {
+    expect_false(is.null(a))
+    expect_true(all(is.finite(a$pred$E)))
+    expect_true(all(is.finite(a$pred$V)))
+  }
+})
+
 # ---- covMethod = "r" (in-pipeline .admCalcCov) -------------------------------
 
 test_that("admc covMethod='r': pipeline attaches a covariance matrix", {
