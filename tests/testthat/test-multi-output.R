@@ -130,6 +130,14 @@ test_that("sigma selector maps sigmas to their output, all-TRUE when unknown", {
   expect_equal(admixr2:::.admSigmaSel(pinfo0, "cp"), logical(0))
 })
 
+test_that("sigma selector maps linCmt endpoint names to the ipredSim column", {
+  # sigma_output holds the endpoint name (iniDf condition = "rxLinCmt") while the
+  # rxSolve output column is "ipredSim"; the selector must still match so linCmt
+  # residual error is not silently dropped.
+  pinfo <- list(sigma_names = "prop.err", sigma_output = "rxLinCmt")
+  expect_equal(admixr2:::.admSigmaSel(pinfo, "ipredSim"), TRUE)
+})
+
 # ---- .admOutputVars ----------------------------------------------------------
 
 test_that("output vars lists every predDf endpoint; linCmt maps to ipredSim", {

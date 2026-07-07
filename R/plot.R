@@ -319,14 +319,12 @@ head.paged_df <- function(x, n = 6L, ...) {
   # rather than assuming "cp" -- matches the detection used on the fit path.
   out_var <- tryCatch(.admOutputVar(ui), error = function(e) "cp")
   # Per-output residual selector for multi-compartment fits (each observed output
-  # uses only its own sigma). NULL/all-NA mapping -> all sigmas (legacy).
+  # uses only its own sigma). Delegates to .admSigmaSel() so the endpoint-name ->
+  # rxSolve-column mapping (e.g. linCmt) stays identical to the fit path.
   sig_output <- tryCatch(.admParseIniDf(ui$iniDf, ui)$sigma_output,
                          error = function(e) NULL)
-  .sig_sel <- function(ov) {
-    if (is.null(sig_output) || all(is.na(sig_output)) || is.null(ov) || is.na(ov))
-      return(rep(TRUE, length(sv)))
-    sel <- sig_output == ov; sel[is.na(sel)] <- FALSE; sel
-  }
+  .sig_sel <- function(ov)
+    .admSigmaSel(list(sigma_output = sig_output, sigma_names = names(sv)), ov)
 
   .sim_study <- function(s) {
     ov <- s$output %||% out_var

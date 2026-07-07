@@ -126,7 +126,13 @@ utils::globalVariables(c(
   if (n == 0L) return(logical(0))
   if (is.null(so) || all(is.na(so)) || is.null(output) || is.na(output))
     return(rep(TRUE, n))
-  sel <- so == output
+  # `so` holds endpoint names from iniDf$condition (e.g. "cp", "rxLinCmt");
+  # `output` is the rxSolve column name. Map endpoints to their column name so
+  # linCmt endpoints ("rxLinCmt"/"linCmt*" -> "ipredSim") match. See
+  # .admOutputColName().
+  so_col <- vapply(so, function(x)
+    if (is.na(x)) NA_character_ else .admOutputColName(x), character(1))
+  sel <- so_col == output
   sel[is.na(sel)] <- FALSE
   sel
 }
@@ -318,6 +324,10 @@ utils::globalVariables(c(
     if (!is.list(s$observations) || length(s$observations) == 0L)
       stop(sprintf("Study '%s': `observations` must be a non-empty list", nm),
            call. = FALSE)
+    if (is.null(s$n) || is.null(s$ev))
+      stop(sprintf(paste("Study '%s': a joint (same-subject) study needs a shared",
+                         "`n` and `ev` at the study level (measured on the same subjects)."),
+                   nm), call. = FALSE)
     s$observations <- setNames(list(.admBuildJointUnit(s, nm, default_output)), nm)
     s$multi <- TRUE; s$joint <- TRUE
   } else if (!is.null(s$observations)) {
