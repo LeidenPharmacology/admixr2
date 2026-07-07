@@ -948,6 +948,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   .fit$env$studies  <- studies
   .fit$env$admExtra <- .ret$admExtra
   .admAttachParHist(.fit, .ret$admExtra$all_traces, .ret$admExtra$par_names, .ui)
+  # Store observed + predicted aggregate moments (E vector, V matrix) per study.
+  .admAttachAggData(.fit, .ret$admExtra, .ui)
   .old_cls <- class(.fit)
   .new_cls <- c("admFit", .old_cls)
   attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")

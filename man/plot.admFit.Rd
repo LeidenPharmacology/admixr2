@@ -21,7 +21,17 @@ value used during fitting. Only used when \code{"mean"} or \code{"cov"} is in \c
 \item{...}{Unused.}
 }
 \value{
-A named list of ggplot2 objects, invisibly. Prints each selected plot.
+A named list of ggplot2 objects, invisibly. Prints each selected
+top-level panel. For the \code{"mean"} and \code{"cov"} panels the returned list also
+contains each sub-panel individually so a single panel (or a few) can be
+extracted in code without reprinting the whole grid. Elements can be pulled
+out by name -- \code{plot(fit, which = "mean")$mean_study1_pred} or
+\code{plot(fit, which = "cov")$cov_study1_std_resid} -- or by position, with the
+combined 2x2 grid stored first per study
+(\code{plot(fit, which = "mean")[[1]]} is the full grid, \verb{[1]} the length-1
+named sub-list). The sub-panel keys are \verb{<type>_<study>_obs}, \verb{_pred},
+\verb{_resid}, and \verb{_std_resid}; the combined grid stays under \verb{<type>_<study>}.
+The extra sub-panel keys are not printed on their own.
 }
 \description{
 Generates up to four diagnostic panels:
@@ -45,6 +55,25 @@ back-transformed, sigma as SD, omega diagonal as variance labelled
 coloured with the Okabe-Ito palette.
 }
 }
+\section{Aggregate data slot}{
+
+Every admixr2 fit also carries the observed and predicted aggregate data in
+\code{fit$env$aggData}, a named list with one entry per study. Each entry holds the
+observation \code{times}, the study \code{n}, and two moment sets -- \code{obs} (from the
+data) and \code{pred} (predicted at the fitted parameters) -- each a list with the
+mean vector \code{E} and the (co)variance matrix \code{V}:
+\preformatted{
+  fit$env$aggData$study1$obs$E    # observed mean vector
+  fit$env$aggData$study1$obs$V    # observed covariance matrix
+  fit$env$aggData$study1$pred$E   # predicted mean vector
+  fit$env$aggData$study1$pred$V   # predicted covariance matrix
+}
+The predicted moments are computed by one MC simulation at the fitted
+parameters using the fit's own \code{n_sim} and a fixed seed, so they match the
+default \code{plot(fit)} mean/cov panels. The slot is absent only when the fit
+cannot be simulated (no simulation model available).
+}
+
 \section{nlmixr2 \code{traceplot()}}{
 
 admixr2 fits also plug into the nlmixr2 \code{traceplot()} generic. During fitting
