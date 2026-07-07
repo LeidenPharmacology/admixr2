@@ -19,7 +19,8 @@
 
   if (n_eta > 0L && !is.null(sensModel)) {
     eta0 <- matrix(0, 1L, n_eta, dimnames = list(NULL, pinfo$eta_col_names))
-    res  <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta0, s, cores)
+    res  <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta0, s, cores,
+                             pinfo$nDisplayProgress)
     if (!is.null(res)) {
       mu <- as.numeric(res$cp_mat)
       J  <- do.call(cbind, lapply(res$dpred_list, as.numeric))
@@ -31,20 +32,23 @@
   if (n_eta > 0L) {
     eta0 <- matrix(0, 1L, n_eta, dimnames = list(NULL, pinfo$eta_col_names))
     mu   <- as.numeric(.admSimulate(rxMod, pars$struct, pinfo$sigma_names,
-                                     eta0, s, output_var, params_mat, cores))
+                                     eta0, s, output_var, params_mat, cores,
+                                     pinfo$nDisplayProgress))
     eps  <- 1e-6
     J    <- matrix(0, n_t, n_eta)
     for (j in seq_len(n_eta)) {
       eta_p    <- eta0; eta_p[1L, j] <- eps
       mu_p     <- as.numeric(.admSimulate(rxMod, pars$struct, pinfo$sigma_names,
-                                           eta_p, s, output_var, params_mat, cores))
+                                           eta_p, s, output_var, params_mat, cores,
+                                           pinfo$nDisplayProgress))
       J[, j]   <- (mu_p - mu) / eps
     }
     list(mu = mu, J = J)
   } else {
     eta_e <- matrix(numeric(0), 1L, 0L)
     mu    <- as.numeric(.admSimulate(rxMod, pars$struct, pinfo$sigma_names,
-                                      eta_e, s, output_var, params_mat, cores))
+                                      eta_e, s, output_var, params_mat, cores,
+                                      pinfo$nDisplayProgress))
     list(mu = mu, J = matrix(0, n_t, 0))
   }
 }
@@ -77,6 +81,37 @@
 
 # -- NLL -----------------------------------------------------------------------
 
+# FO population mean + Jacobian for a JOINT (same-subject) unit: mu = f(theta,0)
+# stacked across outputs, J = d(stacked)/d(eta)|_0 (n_total x n_eta). Prefers the
+# sensitivity model (analytical J, one solve per output at eta = 0) so the
+# struct-theta FD of the joint NLL is not corrupted by an inner FD Jacobian;
+# falls back to finite differences when no sens model is available.
+.adfoGetMuJJoint <- function(pars, pinfo, unit, sensModel, rxMod, params_mat, cores) {
+  n_eta   <- pinfo$n_eta
+  n_total <- unit$n_total
+  eta0 <- matrix(0, 1L, n_eta, dimnames = list(NULL, pinfo$eta_col_names))
+  if (n_eta > 0L && !is.null(sensModel)) {
+    res <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names,
+                                 eta0, unit, cores, pinfo$nDisplayProgress)
+    if (!is.null(res))
+      return(list(mu = as.numeric(res$cp_mat),
+                  J  = do.call(cbind, lapply(res$dpred_list, as.numeric))))
+  }
+  mu <- as.numeric(.admSimulateJoint(rxMod, pars$struct, pinfo$sigma_names,
+                                     eta0, unit, params_mat, cores,
+                                     pinfo$nDisplayProgress))
+  if (n_eta == 0L) return(list(mu = mu, J = matrix(0, n_total, 0)))
+  eps <- 1e-6; J <- matrix(0, n_total, n_eta)
+  for (j in seq_len(n_eta)) {
+    etap <- eta0; etap[1L, j] <- eps
+    mup  <- as.numeric(.admSimulateJoint(rxMod, pars$struct, pinfo$sigma_names,
+                                         etap, unit, params_mat, cores,
+                                         pinfo$nDisplayProgress))
+    J[, j] <- (mup - mu) / eps
+  }
+  list(mu = mu, J = J)
+}
+
 #' @noRd
 .adfoNLL <- function(p, pinfo, studies, sensModel, rxMod, output_var,
                       params_list, cores) {
@@ -86,12 +121,29 @@
 
   for (s_idx in seq_along(studies)) {
     s   <- studies[[s_idx]]
-    n_t <- length(s$times)
 
-    mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, output_var,
+    # Joint (same-subject) unit: stacked FO mean/Jacobian -> full V = J Omega J'
+    # (cross blocks from the shared J) + per-output residual; single MVN.
+    if (isTRUE(s$is_joint)) {
+      mj <- .adfoGetMuJJoint(pars, pinfo, s, sensModel, rxMod, params_list[[s_idx]], cores)
+      V  <- if (pinfo$n_eta > 0L) tcrossprod(mj$J %*% pars$L) else
+        matrix(0, s$n_total, s$n_total)
+      jr <- .admJointResidual(mj$mu, V, s, pinfo, pars$sigma_var)
+      nll_s <- nll_cov_cpp(s$E, s$V, jr$mu, jr$V, s$n)
+      if (!is.finite(nll_s)) return(Inf)
+      total <- total + nll_s
+      next
+    }
+
+    ov  <- s$output %||% output_var
+    n_t <- length(s$times)
+    sel <- .admSigmaSel(pinfo, ov)
+
+    mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
                         params_list[[s_idx]], cores)
-    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var,
-                       pinfo$sigma_is_prop, pinfo$sigma_is_lnorm, n_t, pinfo$n_eta)
+    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var[sel],
+                       pinfo$sigma_is_prop[sel], pinfo$sigma_is_lnorm[sel],
+                       n_t, pinfo$n_eta)
 
     nll_s <- if (s$method == "var") {
       nll_var_cpp(s$E, s$v_diag, vp$mu_sigma, diag(vp$V), s$n)
@@ -139,12 +191,31 @@
 
   for (s_idx in seq_along(studies)) {
     s   <- studies[[s_idx]]
+
+    # Joint (same-subject) unit: stacked FO mean/Jacobian; V = J Omega J' + per-
+    # output residual. Analytical omega/sigma in Pass 3; struct thetas are FD of
+    # the joint-aware .adfoNLL in Pass 2 (unchanged).
+    if (isTRUE(s$is_joint)) {
+      mj <- .adfoGetMuJJoint(pars, pinfo, s, sensModel, rxMod, params_list[[s_idx]], cores)
+      JL <- if (n_eta > 0L) mj$J %*% pars$L else matrix(0, s$n_total, 0)
+      Vs <- if (n_eta > 0L) tcrossprod(JL) else matrix(0, s$n_total, s$n_total)
+      jr <- .admJointResidual(mj$mu, Vs, s, pinfo, pars$sigma_var)
+      nll_s <- nll_cov_cpp(s$E, s$V, jr$mu, jr$V, s$n)
+      if (!is.finite(nll_s)) { nll_0 <- Inf; break }
+      nll_0 <- nll_0 + nll_s
+      muj_cache[[s_idx]] <- list(is_joint = TRUE, mu = mj$mu, J = mj$J, JL = JL,
+                                 V = jr$V, mu_sigma = jr$mu, n_t = s$n_total)
+      next
+    }
+
+    ov  <- s$output %||% output_var
+    sel <- .admSigmaSel(pinfo, ov)
     n_t <- length(s$times)
 
-    mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, output_var,
+    mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
                         params_list[[s_idx]], cores)
-    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var,
-                       pinfo$sigma_is_prop, pinfo$sigma_is_lnorm, n_t, n_eta)
+    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var[sel],
+                       pinfo$sigma_is_prop[sel], pinfo$sigma_is_lnorm[sel], n_t, n_eta)
 
     nll_s <- if (s$method == "var") {
       nll_var_cpp(s$E, s$v_diag, vp$mu_sigma, diag(vp$V), s$n)
@@ -153,7 +224,8 @@
     }
     if (!is.finite(nll_s)) { nll_0 <- Inf; break }
     nll_0 <- nll_0 + nll_s
-    muj_cache[[s_idx]] <- list(mu = mj$mu, J = mj$J, JL = vp$JL, vp = vp, n_t = n_t)
+    muj_cache[[s_idx]] <- list(mu = mj$mu, J = mj$J, JL = vp$JL, vp = vp,
+                               n_t = n_t, sel = sel)
   }
 
   # --- Pass 2: struct theta forward FD (reuses cached nll_0 as baseline) -------
@@ -172,6 +244,45 @@
     mc <- muj_cache[[s_idx]]
     if (is.null(mc)) next
     s      <- studies[[s_idx]]
+
+    # Joint (same-subject) analytical omega/sigma on the stacked V = J Omega J'.
+    if (isTRUE(mc$is_joint)) {
+      mu_pred <- mc$mu; J <- mc$J; JL <- mc$JL; V_pred <- mc$V
+      mu_sigma <- mc$mu_sigma
+      r    <- as.numeric(s$E) - mu_sigma
+      invV <- tryCatch(chol2inv(chol(V_pred)),
+                       error = function(e) tryCatch(solve(V_pred), error = function(e2) NULL))
+      if (is.null(invV)) next
+      dNLL_dV      <- s$n * (invV - invV %*% (s$V + tcrossprod(r)) %*% invV)
+      dNLL_dV_diag <- diag(dNLL_dV)
+      if (n_eta > 0L && n_o > 0L) {
+        ML <- crossprod(J, dNLL_dV %*% JL)
+        for (r_idx in seq_along(pinfo$omega_par)) {
+          i <- pinfo$chol_i[r_idx]; jj <- pinfo$chol_j[r_idx]
+          grad[n_s + n_e + r_idx] <- grad[n_s + n_e + r_idx] +
+            if (pinfo$chol_diag[r_idx]) as.numeric(ML[i, i]) * pars$L[i, i]
+            else 2 * as.numeric(ML[i, jj])
+        }
+      }
+      dNLL_dmu_full <- drop(-2 * s$n * invV %*% r)
+      for (blk in s$blocks) {
+        rows <- blk$rows
+        for (k in which(.admSigmaSel(pinfo, blk$output))) {
+          k_sig <- n_s + k; sv <- pars$sigma_var[[k]]
+          if (pinfo$sigma_is_prop[[k]])
+            grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag[rows] * mu_pred[rows]^2) * sv
+          else if (pinfo$sigma_is_lnorm[[k]])
+            grad[k_sig] <- grad[k_sig] + sv * (
+              sum(dNLL_dV_diag[rows] * mu_sigma[rows]^2 * (2 * exp(sv) - 1)) +
+              sum(dNLL_dmu_full[rows] * mu_sigma[rows]) / 2)
+          else
+            grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag[rows]) * sv
+        }
+      }
+      next
+    }
+
+    sel    <- mc$sel
     mu_pred <- mc$mu; J <- mc$J; vp <- mc$vp; n_t <- mc$n_t
     V_pred  <- vp$V;  mu_sigma <- vp$mu_sigma
     r       <- as.numeric(s$E) - mu_sigma
@@ -214,10 +325,10 @@
       }
     }
 
-    # Sigma gradient: d(-2LL)/d(p_sigma) = d(-2LL)/d(sv) * sv
-    k_sig <- n_s
-    for (i in seq_along(pars$sigma_var)) {
-      k_sig <- k_sig + 1L
+    # Sigma gradient: d(-2LL)/d(p_sigma) = d(-2LL)/d(sv) * sv. Only this output's
+    # residual-error parameters contribute (no-op for single-output fits).
+    for (i in which(sel)) {
+      k_sig <- n_s + i
       sv <- pars$sigma_var[[i]]
       if (pinfo$sigma_is_prop[[i]]) {
         grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag * mu_pred^2) * sv
@@ -422,7 +533,8 @@
 #' non-linear individual predictions.
 #'
 #' @param studies Named list of study specifications (same format as
-#'   [admControl()]: `E`, `V`, `n`, `times`, `ev`, optional `method`).
+#'   [admControl()]: `E`, `V`, `n`, `times`, `ev`, optional `method`; or an
+#'   `observations` list for multi-compartment fits -- see [admControl()]).
 #' @param grad Gradient mode.  `"none"` (default) uses derivative-free BOBYQA;
 #'   `"analytical"` uses the closed-form FO gradient (requires sensitivity
 #'   equations); `"fd"` uses forward finite differences of the full NLL;
@@ -441,6 +553,10 @@
 #' @param print Print-frequency for live progress (0 = silent).
 #' @param seed Random seed (used for restarts).
 #' @param cores OpenMP threads for `rxSolve()` (default 1).
+#' @param nDisplayProgress Passed to `rxSolve()`: show the solver's text
+#'   progress bar only once a single solve exceeds this many subjects. The
+#'   default (`.Machine$integer.max`) keeps it off for clean script/vignette
+#'   output; lower it (e.g. `1000L`) to see progress during long fits.
 #' @param grad_h Finite-difference step for unpaired struct theta gradient and
 #'   FD Jacobian.
 #' @param grad_bounds Box-constraint half-width when using gradients.
@@ -529,6 +645,7 @@ adfoControl <- function(
     print      = 10L,
     seed       = 12345L,
     cores      = 1L,
+    nDisplayProgress = .Machine$integer.max,
     grad_h      = 1e-4,
     grad_bounds = 5,
     cov_h       = 1e-3,
@@ -565,6 +682,8 @@ adfoControl <- function(
   checkmate::assertIntegerish(print,      lower = 0L, len = 1)
   checkmate::assertIntegerish(seed,                   len = 1)
   checkmate::assertIntegerish(cores,      lower = 1L, len = 1)
+  checkmate::assertIntegerish(nDisplayProgress, lower = 1L, len = 1,
+                              .var.name = "nDisplayProgress")
   checkmate::assertNumeric(grad_h,        lower = 0,  len = 1)
   checkmate::assertNumeric(grad_bounds,   lower = 0,  len = 1)
   checkmate::assertNumeric(cov_h,         lower = 0,  len = 1)
@@ -595,6 +714,7 @@ adfoControl <- function(
     print         = as.integer(print),
     seed          = as.integer(seed),
     cores         = as.integer(cores),
+    nDisplayProgress = as.integer(nDisplayProgress),
     grad_h        = grad_h,
     grad_bounds   = grad_bounds,
     cov_h         = cov_h,
@@ -679,16 +799,29 @@ nlmixr2Est.adfo <- function(env, ...) {
     stop("adfoControl(studies=...) required", call. = FALSE)
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
-  for (nm in names(studies))
-    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm)
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
+  pinfo$nDisplayProgress <- .ctl$nDisplayProgress
   output_var <- .admOutputVar(.ui)
+
+  for (nm in names(studies))
+    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
+  studies    <- .admFlattenStudies(studies)
+  multi_out  <- length(.admOutputVars(.ui)) > 1L
+  any_joint  <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
+  studies    <- .admBuildEvFull(studies, tag_cmt = multi_out)
 
   want_grad   <- .ctl$grad != "none"
   want_sens   <- .ctl$grad == "analytical"
   use_central <- .ctl$grad == "cfd"
   use_pure_fd <- .ctl$grad %in% c("fd", "cfd")
+  # Joint (same-subject) fits keep the analytical FO gradient: .adfoGrad's joint
+  # branch applies the omega/sigma chain rule to the stacked V = J Omega J' + res
+  # (struct thetas via FD of the joint-aware .adfoNLL, as in the single-output
+  # path). grad = "fd"/"cfd" still use the pure FD gradient.
+  # Multi-compartment fits use the same per-unit gradient as single-output: the
+  # analytical omega/sigma chain rule and struct-theta FD apply per observed
+  # output (each is an independent block with its own residual error).
 
   if (pinfo$n_eta > 0L && !is.null(pinfo$struct_has_eta) && any(!pinfo$struct_has_eta)) {
     .unpaired <- names(pinfo$struct_has_eta)[!pinfo$struct_has_eta]
@@ -707,12 +840,6 @@ nlmixr2Est.adfo <- function(env, ...) {
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
   on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree() }, add = TRUE)
-
-  for (nm in names(studies)) {
-    s  <- studies[[nm]]
-    ev <- if (!is.null(s$ev)) s$ev else rxode2::et(amt = 100)
-    studies[[nm]]$ev_full <- ev |> rxode2::et(s$times)
-  }
 
   params_list <- .admMakeParamsList(1L, pinfo, length(studies))
 
@@ -749,9 +876,10 @@ nlmixr2Est.adfo <- function(env, ...) {
                            params_list, cores, .ctl$grad_h)
   }
 
-  grad_label <- if (!want_grad) "none" else if (!is.null(sensModel)) "Analytical" else if (use_central) "CFD" else "FD"
+  grad_label <- if (!want_grad) "none" else if (!is.null(sensModel)) "Analytical"
+    else if (use_central) "CFD" else "FD"
   message("=== admixr2: Aggregate Data Modeling (FO) ===")
-  message(sprintf("  Studies: %d | Params: %d | Cores: %d | Grad: %s | Restarts: %d",
+  message(sprintf("  Obs units: %d | Params: %d | Cores: %d | Grad: %s | Restarts: %d",
                   length(studies), length(ov$p0), cores, grad_label, .ctl$n_restarts))
   t0 <- proc.time()
 
@@ -822,7 +950,9 @@ nlmixr2Est.adfo <- function(env, ...) {
   t0_cov <- proc.time()
   .cov <- if (.ctl$covMethod == "r") {
     np_cov     <- length(pinfo$struct_names) + length(pinfo$sigma_names)
-    use_grad_cov <- want_grad
+    # Joint fits use the NLL-FD Hessian (the grad-FD Hessian calls the
+    # single-output analytical .adfoGrad, which does not handle joint units).
+    use_grad_cov <- want_grad && !any_joint
     n_evals <- if (use_grad_cov) {
       np_cov + 1L
     } else {
@@ -892,7 +1022,8 @@ nlmixr2Est.adfo <- function(env, ...) {
   if (!is.null(.focei_model)) .ret$model <- .focei_model
 
   .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = admData(), control = .ret$control,
+    .ui, data = if (multi_out) admData(.admOutputVars(.ui)) else admData(),
+    control = .ret$control,
     table = .ret$table, env = .ret, est = "adfo")
 
   .fit$env$method   <- "adfo"

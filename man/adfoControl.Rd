@@ -13,6 +13,7 @@ adfoControl(
   print = 10L,
   seed = 12345L,
   cores = 1L,
+  nDisplayProgress = .Machine$integer.max,
   grad_h = 1e-04,
   grad_bounds = 5,
   cov_h = 0.001,
@@ -37,7 +38,8 @@ adfoControl(
 }
 \arguments{
 \item{studies}{Named list of study specifications (same format as
-\code{\link[=admControl]{admControl()}}: \code{E}, \code{V}, \code{n}, \code{times}, \code{ev}, optional \code{method}).}
+\code{\link[=admControl]{admControl()}}: \code{E}, \code{V}, \code{n}, \code{times}, \code{ev}, optional \code{method}; or an
+\code{observations} list for multi-compartment fits -- see \code{\link[=admControl]{admControl()}}).}
 
 \item{grad}{Gradient mode.  \code{"none"} (default) uses derivative-free BOBYQA;
 \code{"analytical"} uses the closed-form FO gradient (requires sensitivity
@@ -63,6 +65,11 @@ gradient is requested a derivative-free algorithm (\verb{NLOPT_LN_*} /
 \item{seed}{Random seed (used for restarts).}
 
 \item{cores}{OpenMP threads for \code{rxSolve()} (default 1).}
+
+\item{nDisplayProgress}{Passed to \code{rxSolve()}: show the solver's text
+progress bar only once a single solve exceeds this many subjects. The
+default (\code{.Machine$integer.max}) keeps it off for clean script/vignette
+output; lower it (e.g. \code{1000L}) to see progress during long fits.}
 
 \item{grad_h}{Finite-difference step for unpaired struct theta gradient and
 FD Jacobian.}

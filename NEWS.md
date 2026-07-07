@@ -1,3 +1,57 @@
+# admixr2 (development version)
+
+## New features
+
+* **Multi-compartment fitting (multiple observed outputs).** A study may now
+  observe several model outputs at once (e.g. plasma and brain/CSF) via an
+  `observations` list -- one entry per observed output with its own `output`,
+  `times`, `E` and `V`. Two modes (#85):
+    * *Independent* -- each output has its own `n`/`ev` (separate experiments,
+      e.g. literature meta-analysis); the aggregate `-2LL` is the sum of the
+      per-output likelihood blocks. Fit with full analytical / sensitivity
+      gradients.
+    * *Joint (same subjects)* -- outputs measured on the same subjects, with a
+      shared `n`/`ev` and a joint covariance given either as a study-level full
+      `V` or as per-output marginal `V` plus a `cross` list of cross-covariance
+      blocks. Scored by a single MVN over the stacked vector with shared random
+      effects and the full **analytical** gradient in all three estimators (any
+      number of compartments; the assembled joint covariance is checked for
+      positive-definiteness).
+
+  Supported by `est = "admc"`, `"adfo"` and `"adgh"`; `datagen()` generates
+  multi-output aggregate data and `plot()` renders one panel set per compartment.
+  Pass the endpoint names to `admData()`, e.g. `admData(c("cp", "cCSF"))`.
+  `est = "adirmc"` does not support multiple observed outputs.
+
+* **`nDisplayProgress` control argument** for every estimator (`admControl()`,
+  `adfoControl()`, `adghControl()`, `adirmcControl()`), passed through to the
+  `rxSolve()` calls that drive fitting. It sets how many subjects a single solve
+  must exceed before the solver shows its text progress bar. The default
+  (`.Machine$integer.max`) keeps the bar off, so it no longer leaks into scripts,
+  logs or rendered vignettes; lower it (e.g. `1000L`) to watch progress during
+  long interactive fits.
+
+## Bug fixes
+
+* The solver progress bar no longer appears during covariance/gradient batches.
+  Most internal `rxSolve()` calls already suppressed it, but the covariance and
+  batched-gradient solves in `admc` hard-coded a low `nDisplayProgress` (1000),
+  so the bar printed once a chunk exceeded 1000 solves. All solves now honour the
+  new `nDisplayProgress` control argument (default off).
+
+* Hard-coded numeric constants in a model's `model({})` block (e.g. a fixed brain
+  volume `vb <- 5`, common in PBPK/CNS models) are no longer zeroed. admixr2 used
+  to hand-fill every model parameter it did not set with `0`, clobbering such a
+  constant's default and producing an `NA`/non-finite objective (e.g. a
+  `qout / vb` divide-by-zero). It now supplies only the parameters it varies and
+  lets `rxSolve()` fill the rest from the model's own defaults, so constants and
+  covariate defaults keep their value.
+
+* `adgh` now computes gradients for non-mu-referenced (unpaired) structural
+  thetas. The unpaired-parameter set was derived from the eta-indexed
+  `struct_eta_idx`, so it was always empty and those thetas silently received a
+  zero gradient; it now uses the struct-indexed `struct_has_eta`.
+
 # admixr2 0.2.0
 
 ## New features

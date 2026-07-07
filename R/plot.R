@@ -396,8 +396,18 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
   # Detect the simulation output variable (e.g. "ipredSim" for linCmt models)
   # rather than assuming "cp" -- matches the detection used on the fit path.
   out_var <- tryCatch(.admOutputVar(fit$env$ui), error = function(e) "cp")
+  # Per-output residual-error selector for multi-compartment fits (each observed
+  # output uses only its own sigma). NULL/all-NA mapping -> all sigmas (legacy).
+  sig_output <- tryCatch(.admParseIniDf(fit$env$ui$iniDf, fit$env$ui)$sigma_output,
+                         error = function(e) NULL)
+  .sig_sel <- function(ov) {
+    if (is.null(sig_output) || all(is.na(sig_output)) || is.null(ov) || is.na(ov))
+      return(rep(TRUE, length(sv)))
+    sel <- sig_output == ov; sel[is.na(sel)] <- FALSE; sel
+  }
 
   .sim_study <- function(s) {
+    ov <- s$output %||% out_var
     if (!rxMod_ok) return(NULL)
     tryCatch(rxode2::rxLoad(rxMod), error = function(e) NULL)
     set.seed(seed)
@@ -416,17 +426,21 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
     } else {
       eta_mat <- matrix(0, nrow = n_sim, ncol = 0)
     }
-    col_nms   <- c(names(extra$struct), eta_nms, sig_nms, "rxerr.cp")
+    # One residual-error placeholder per observed output (rxerr.<output>); see
+    # .admMakeParamsList(). rxSolve defaults everything else (CMT, constants).
+    rxerr_nms <- { so <- unique(sig_output[!is.na(sig_output)])
+                   if (length(so)) paste0("rxerr.", so) else "rxerr.cp" }
+    col_nms   <- c(names(extra$struct), eta_nms, sig_nms, rxerr_nms)
     params_df <- as.data.frame(matrix(0, nrow = n_sim, ncol = length(col_nms),
                                       dimnames = list(NULL, col_nms)))
-    params_df[["rxerr.cp"]] <- 1
+    params_df[, rxerr_nms] <- 1
     tryCatch(
-      .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, out_var, params_df, 1L),
+      .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L),
       error = function(e) { warning("plot.admFit: simulation failed: ", e$message, call. = FALSE); NULL })
   }
 
-  .add_sigma <- function(V, mu) {
-    for (k in seq_along(sv)) {
+  .add_sigma <- function(V, mu, ov = out_var) {
+    for (k in which(.sig_sel(ov))) {
       s <- sv[[k]]
       if (sig_lnorm[k]) {
         mu_adj <- mu * exp(s / 2)
@@ -461,7 +475,8 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
 
     n_obs      <- s$n
     mu         <- colMeans(cp_mat)
-    V_pred     <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu)
+    V_pred     <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
+                             s$output %||% out_var)
     pred_sd    <- sqrt(diag(V_pred))
     obs_sd     <- sqrt(diag(s$V))
     resid_mean <- as.numeric(s$E) - mu
@@ -585,7 +600,8 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
 
     n_obs  <- s$n
     mu     <- colMeans(cp_mat)
-    V_pred <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu)
+    V_pred <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
+                         s$output %||% out_var)
     v_diag <- diag(V_pred)
     n_t    <- length(s$times)
     times  <- s$times

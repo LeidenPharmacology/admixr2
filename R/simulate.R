@@ -3,21 +3,17 @@
 # params_mat is a named numeric matrix (from .admMakeParamsList); converted to
 # data.frame only at the rxSolve call to avoid repeated list COW copies.
 .admSimulate <- function(rxMod, struct_theta, sigma_names, eta_mat, study,
-                         output_var, params_mat, cores) {
+                         output_var, params_mat, cores,
+                         ndp = .Machine$integer.max) {
   eta_cols <- colnames(eta_mat)
   for (nm in names(struct_theta)) params_mat[, nm] <- struct_theta[nm]
   if (length(eta_cols) > 0L)      params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)         params_mat[, nm] <- 0
-  # linCmt simulationModel requires rxerr.rxLinCmt; add any rxMod params not
-  # already in params_mat as zeros so rxSolve receives a complete params frame.
-  extra <- setdiff(rxMod$params, colnames(params_mat))
-  if (length(extra) > 0L)
-    params_mat <- cbind(params_mat,
-                        matrix(0, nrow(params_mat), length(extra),
-                               dimnames = list(NULL, extra)))
+  # Only the parameters we vary are supplied; rxSolve fills the rest (rxerr.*,
+  # CMT, hard-coded model constants) from the model's own defaults.
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = study$ev_full, cores = cores,
-                          nDisplayProgress = .Machine$integer.max)
+                          nDisplayProgress = ndp)
   keep <- out[["time"]] %in% study$times
   # linCmt simulationModel outputs "ipredSim" rather than "rx_pred_"
   vals <- out[[output_var]]
@@ -26,10 +22,58 @@
          nrow = nrow(eta_mat), ncol = length(study$times), byrow = TRUE)
 }
 
+# Joint (same-subject) simulation: one rxSolve with SHARED eta produces every
+# observed output; each block is extracted by output name at its own times and
+# stacked column-wise into an n_sim x n_total matrix (columns in block/row
+# order). Used for joint units where the compartments share random effects.
+.admSimulateJoint <- function(rxMod, struct_theta, sigma_names, eta_mat, unit,
+                              params_mat, cores, ndp = .Machine$integer.max) {
+  eta_cols <- colnames(eta_mat)
+  for (nm in names(struct_theta)) params_mat[, nm] <- struct_theta[nm]
+  if (length(eta_cols) > 0L)      params_mat[, eta_cols] <- eta_mat
+  for (nm in sigma_names)         params_mat[, nm] <- 0
+  out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
+                          events = unit$ev_full, cores = cores,
+                          nDisplayProgress = ndp)
+  n_sim <- nrow(eta_mat)
+  cp    <- matrix(0, nrow = n_sim, ncol = unit$n_total)
+  time  <- out[["time"]]
+  for (blk in unit$blocks) {
+    vals <- out[[blk$output]]
+    if (is.null(vals)) vals <- out[["ipredSim"]]
+    keep <- time %in% blk$times
+    cp[, blk$rows] <- matrix(vals[keep], nrow = n_sim,
+                             ncol = length(blk$times), byrow = TRUE)
+  }
+  cp
+}
+
+# Joint sensitivity simulation: for each observed output, one sens solve with the
+# SHARED eta draws (obs tagged with that output's cmt) gives its prediction and
+# d(pred)/d(eta_j); stacked column-wise into n_sim x n_total matrices. Returns
+# list(cp_mat, dpred_list) or NULL if any block's sens solve fails (caller then
+# falls back to FD). Enables the analytical gradient of a joint (same-subject)
+# unit's stacked MVN.
+.admSimulateJointSens <- function(sensModel, struct, sigma_names, eta_mat, unit,
+                                  cores, ndp = .Machine$integer.max) {
+  n_sim <- nrow(eta_mat); n_eta <- ncol(eta_mat)
+  cp_mat     <- matrix(0, n_sim, unit$n_total)
+  dpred_list <- lapply(seq_len(n_eta), function(j) matrix(0, n_sim, unit$n_total))
+  for (blk in unit$blocks) {
+    bs  <- list(ev_full = blk$ev_full, times = blk$times)
+    res <- .admSimulateSens(sensModel, struct, sigma_names, eta_mat, bs, cores, ndp)
+    if (is.null(res)) return(NULL)
+    cp_mat[, blk$rows] <- res$cp_mat
+    for (j in seq_len(n_eta)) dpred_list[[j]][, blk$rows] <- res$dpred_list[[j]]
+  }
+  list(cp_mat = cp_mat, dpred_list = dpred_list)
+}
+
 # Single pass on the sensitivity model returning predictions + d(pred)/d(eta_j).
 # Returns list(cp_mat, dpred_list) or NULL on failure (caller falls back to FD).
 .admSimulateSens <- function(sensModel, struct_theta, sigma_names,
-                             eta_mat, study, cores) {
+                             eta_mat, study, cores,
+                             ndp = .Machine$integer.max) {
   eta_cols  <- colnames(eta_mat)
   rmap      <- sensModel$rename_map
   n_sim     <- nrow(eta_mat)
@@ -55,7 +99,7 @@
     suppressWarnings(
       rxode2::rxSolve(sensModel$mod, params = inner_df,
                       events = study$ev_full, cores = cores,
-                      nDisplayProgress = .Machine$integer.max)),
+                      nDisplayProgress = ndp)),
     error = function(e) NULL)
   if (is.null(out)) return(NULL)
 

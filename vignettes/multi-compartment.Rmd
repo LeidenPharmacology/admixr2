@@ -1,0 +1,288 @@
+---
+title: "Several observed compartments (plasma and brain)"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Several observed compartments (plasma and brain)}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>",
+  message = FALSE, warning = FALSE,
+  fig.width = 7, fig.height = 4.2, dpi = 120
+)
+# The estimators keep rxode2's progress bar off during fitting (the control's
+# nDisplayProgress argument), but a one-off bar still prints while each model is
+# *compiled*. Strip those animation frames from the rendered output.
+knitr::knit_hooks$set(output = local({
+  .default <- knitr::knit_hooks$get("output")
+  function(x, options) {
+    x <- gsub("[^\n]*\\[[=| ]+\\][^\n]*\n?", "", x, perl = TRUE)
+    .default(x, options)
+  }
+}))
+```
+
+## The problem
+
+You are developing a CNS drug and you want one number: **how much of it
+reaches the brain?** You don't have patient-level data. What you *do* have is a
+published paper with two figures — a **plasma** and a **brain**
+concentration–time curve, each drawn as a mean with error bars. You digitise
+them into a mean and an SD at every sampling time.
+
+That aggregate summary is exactly what admixr2 is built for. It fits a
+population PK model *directly* to means-and-covariances, so a digitised figure
+becomes a fittable dataset — no individual records required. This vignette
+builds the analysis in two steps:
+
+1. **Plasma only** — the ordinary single-output workflow, to set the scene.
+2. **Plasma + brain** — add the brain as a second observed output and read the
+   brain-penetration ratio straight off the fit.
+
+```{r libs}
+library(admixr2)
+library(rxode2)
+library(nlmixr2)
+library(ggplot2)
+
+ev <- rxode2::et(amt = 100, cmt = "central")   # single 100-unit dose, shared throughout
+```
+
+## Step 1 — Plasma only
+
+Start where every PK analysis starts: the plasma curve. In admixr2 a **study**
+is the digitised summary bundled with its design — the mean vector `E`, its
+variance `V` (here `SD^2`, read as a diagonal covariance, exactly what error
+bars give you), the sample size `n`, the sampling `times`, and the dosing
+`ev`.
+
+```{r plasma-data}
+plasma_times <- c(0.5, 1, 2, 4, 8, 12)
+plasma_mean  <- c(8.793, 7.812, 6.850, 5.597, 3.985, 2.910)
+plasma_sd    <- c(1.151, 0.911, 0.765, 0.649, 0.770, 0.828)
+
+plasma_study <- list(
+  E = plasma_mean, V = plasma_sd^2, n = 60L,
+  times = plasma_times, ev = ev
+)
+```
+
+The model is an ordinary two-compartment PK model with one observed output,
+`cp`. Fitting is a single call to `nlmixr2()` with `est = "adgh"`, admixr2's
+Gauss–Hermite estimator:
+
+```{r plasma-fit, comment = NA}
+pk_plasma <- function() {
+  ini({
+    tcl <- log(1);  tv1 <- log(10);  tq <- log(3);  tv2 <- log(8)
+    prop.cp <- 0.05
+    eta.cl ~ 0.09
+    eta.v1 ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl); v1 <- exp(tv1 + eta.v1)
+    q  <- exp(tq);           v2 <- exp(tv2)
+    d/dt(central) <- -(cl/v1)*central - (q/v1)*central + (q/v2)*periph
+    d/dt(periph)  <-  (q/v1)*central - (q/v2)*periph
+    cp <- central / v1
+    cp ~ prop(prop.cp)
+  })
+}
+
+fit_plasma <- nlmixr2(pk_plasma, admData(), est = "adgh",
+                      control = adghControl(studies = list(trial = plasma_study)))
+fit_plasma
+```
+
+This is a perfectly good plasma model — but look at what it *cannot* answer. Its
+`periph` compartment is a mathematical distribution store: we never measured it,
+and nothing connects it to the brain. To quantify brain exposure we need brain
+data **and** a model with a real brain compartment.
+
+## Step 2 — Add the brain
+
+Here are the brain concentrations digitised from the same paper:
+
+```{r brain-data}
+brain_times <- c(1, 2, 4, 8, 12)
+brain_mean  <- c(3.004, 3.394, 3.018, 2.157, 1.551)
+brain_sd    <- c(0.353, 0.349, 0.309, 0.369, 0.405)
+```
+
+Now swap the anonymous peripheral compartment for a **mechanistic brain
+compartment**. Drug moves plasma → brain with influx clearance `qin` and back
+brain → plasma with efflux clearance `qout`. The steady-state brain:plasma
+ratio is the quantity we want:
+
+$$K_{p,uu} = \frac{q_{in}}{q_{out}}$$
+
+The model now has **two** observed outputs — plasma `cp` and brain `cb` — so it
+carries a residual-error term for each. (`vb`, the brain volume, is a fixed
+physiological constant, not an estimated parameter.)
+
+```{r brain-model}
+pk_cns <- function() {
+  ini({
+    tcl  <- log(1);  tv1  <- log(10)
+    tqin <- log(3);  tqout <- log(6)
+    prop.cp <- 0.05      # plasma residual (proportional)
+    add.cb  <- 0.02      # brain residual (additive)
+    eta.cl ~ 0.09
+    eta.v1 ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl); v1 <- exp(tv1 + eta.v1)
+    qin <- exp(tqin);        qout <- exp(tqout)
+    vb  <- 5
+    d/dt(central) <- -(cl/v1)*central - (qin/v1)*central + (qout/vb)*brain
+    d/dt(brain)   <-  (qin/v1)*central - (qout/vb)*brain
+    cp <- central / v1        # plasma concentration
+    cb <- brain   / vb        # brain concentration
+    cp ~ prop(prop.cp)
+    cb ~ add(add.cb)
+  })
+}
+```
+
+Two observed outputs means the study needs two summaries. Instead of a single
+`E`/`V`, give it an **`observations` list** — one named entry per observed
+compartment, each pairing a model output with its own `times`, `E` and `V`:
+
+```{r brain-study}
+cns_study <- list(
+  n = 60L, ev = ev,
+  observations = list(
+    plasma = list(output = "cp", times = plasma_times, E = plasma_mean, V = plasma_sd^2),
+    brain  = list(output = "cb", times = brain_times,  E = brain_mean,  V = brain_sd^2)
+  )
+)
+```
+
+The only other change is telling `admData()` which outputs to expect. Then the
+fit call is identical to Step 1:
+
+```{r brain-fit, comment = NA}
+fit_cns <- nlmixr2(pk_cns, admData(c("cp", "cb")), est = "adgh",
+                   control = adghControl(studies = list(lit = cns_study)))
+fit_cns
+```
+
+### Model against data
+
+A single fit now describes both compartments. The figure overlays the observed
+summaries (points, mean ± SD) with the fitted population prediction — the mean
+curve and the ±SD band implied by the estimated between-subject variability
+(1000 simulated subjects, residual error excluded). Plasma and brain are
+distinguished by colour.
+
+```{r brain-plot, fig.height = 4.6}
+# 1. Pull the fitted estimates from the fit (standard nlmixr2 accessors).
+theta <- fit_cns$theta   # fixed effects (tcl, tv1, tqin, tqout, residuals)
+omega <- fit_cns$omega   # between-subject covariance (rows/cols already named)
+
+# 2. Simulate the fitted population. We solve a plain, residual-free copy of the
+#    model so the band shows between-subject variability alone -- and because a
+#    multi-endpoint fit can only be re-solved with per-endpoint DVID/CMT tags,
+#    whereas this gives cp and cb directly.
+sim_model <- rxode2::rxode2({
+  cl <- exp(tcl + eta.cl); v1 <- exp(tv1 + eta.v1)
+  qin <- exp(tqin); qout <- exp(tqout); vb <- 5
+  d/dt(central) <- -(cl/v1)*central - (qin/v1)*central + (qout/vb)*brain
+  d/dt(brain)   <-  (qin/v1)*central - (qout/vb)*brain
+  cp <- central / v1
+  cb <- brain / vb
+})
+grid <- seq(0.25, 13, by = 0.25)
+sim  <- rxode2::rxSolve(sim_model,
+  params = theta[c("tcl", "tv1", "tqin", "tqout")],
+  omega  = omega, nSub = 1000L,
+  events = ev |> rxode2::et(grid), returnType = "data.frame")
+
+# 3. Summarise model and data as mean +/- SD per time, per compartment.
+band <- function(value)
+  data.frame(time = sort(unique(sim$time)),
+             mean = tapply(value, sim$time, mean),
+             sd   = tapply(value, sim$time, sd))
+
+pred <- rbind(cbind(compartment = "Plasma", band(sim$cp)),
+              cbind(compartment = "Brain",  band(sim$cb)))
+obs  <- rbind(
+  data.frame(compartment = "Plasma", time = plasma_times, mean = plasma_mean, sd = plasma_sd),
+  data.frame(compartment = "Brain",  time = brain_times,  mean = brain_mean,  sd = brain_sd))
+
+# 4. Model (line + band) over data (points + error bars), coloured by compartment.
+pal <- c(Plasma = "#0072B2", Brain = "#D55E00")   # Okabe-Ito, colour-blind safe
+
+ggplot() +
+  geom_ribbon(data = pred,
+              aes(time, ymin = mean - sd, ymax = mean + sd, fill = compartment),
+              alpha = 0.15) +
+  geom_line(data = pred,
+            aes(time, mean, colour = compartment), linewidth = 1) +
+  geom_errorbar(data = obs,
+                aes(time, ymin = mean - sd, ymax = mean + sd, colour = compartment),
+                width = 0.4, linewidth = 0.6, show.legend = FALSE) +
+  geom_point(data = obs,
+             aes(time, mean, fill = compartment),
+             shape = 21, colour = "white", size = 3, stroke = 0.7) +
+  scale_colour_manual(values = pal, breaks = c("Plasma", "Brain")) +
+  scale_fill_manual(values = pal, guide = "none") +
+  scale_x_continuous(breaks = seq(0, 12, 2),
+                     expand = expansion(mult = c(0.01, 0.03))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  coord_cartesian(ylim = c(0, NA), clip = "off") +
+  guides(colour = guide_legend(override.aes = list(linewidth = 1.4))) +
+  labs(x = "Time (h)", y = "Concentration (mg/L)",
+       title = "Fitted population prediction vs. observed data",
+       subtitle = "Line + band: model (mean ± SD)   ·   Points + bars: data (mean ± SD)",
+       colour = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    legend.justification = "left",
+    legend.margin = margin(b = 2),
+    plot.title = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(colour = "grey40", size = 9, margin = margin(b = 9)),
+    axis.title = element_text(colour = "grey25"),
+    axis.title.x = element_text(margin = margin(t = 6)),
+    axis.title.y = element_text(margin = margin(r = 6)),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(colour = "grey90", linewidth = 0.4),
+    plot.margin = margin(12, 16, 10, 12)
+  )
+```
+
+The prediction tracks both compartments. Now the payoff — read the brain
+penetration directly off the estimates:
+
+```{r kp}
+Kp_uu <- exp(theta[["tqin"]]) / exp(theta[["tqout"]])
+round(Kp_uu, 2)
+```
+
+`Kp,uu ≈ 0.5`: at steady state the brain sees about half the plasma
+concentration. This is the whole reason the brain data was needed — with plasma
+alone, `qin` and `qout` are not separately identifiable and `Kp,uu` cannot be
+estimated. The brain measurements resolve it.
+
+## Notes
+
+* **Estimators.** `adgh` (used here), `adfo` and `admc` all support several
+  observed outputs, each with its own analytical / sensitivity gradient.
+  `adirmc` does not — use one of the other three. See the
+  [estimator comparison](estimator-comparison.html) vignette to choose.
+* **Structural vs. observed compartments.** How many compartments the ODEs
+  contain is irrelevant to admixr2; what matters is how many outputs you
+  *observe* and fit — one in Step 1, two in Step 2.
+* **Hard-coded constants** such as `vb <- 5` keep their value; not every
+  physiological constant has to be an estimated parameter.
+* **Same-subject data.** Here plasma and brain came from separate figures, so
+  they are treated as independent likelihood blocks. If they had instead been
+  measured in the *same* subjects, you can supply the plasma–brain
+  cross-covariance for a joint fit (a per-output-pair `cross` list, or a
+  study-level joint `V`); see `?admControl`.
+```

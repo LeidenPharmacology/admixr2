@@ -126,6 +126,15 @@
   sigma_is_prop  <- setNames(.err_vals %in% c("prop", "propT", "propF"), sigma_names)
   sigma_is_lnorm <- setNames(.err_vals %in% c("lnorm", "dlnorm", "logn", "dlogn"), sigma_names)
 
+  # Output variable each residual-error parameter belongs to. In a real nlmixr2
+  # iniDf the error rows carry a `condition` column naming the endpoint (e.g.
+  # "cp"); with several observed outputs this maps each sigma to its output so a
+  # given output's likelihood uses only its own residual error. NA when the
+  # column is absent (Tier-1 mock iniDf, or single-output models) -- callers then
+  # treat every sigma as belonging to the single output. See .admSigmaSel().
+  sigma_output <- if ("condition" %in% names(sigma_rows))
+    as.character(sigma_rows$condition) else rep(NA_character_, length(sigma_names))
+
   list(struct_names    = struct_rows$name,
        struct_init     = setNames(struct_rows$est,   struct_rows$name),
        struct_lower    = setNames(struct_rows$lower, struct_rows$name),
@@ -136,6 +145,7 @@
        sigma_upper     = setNames(sigma_rows$upper, sigma_rows$name),
        sigma_is_prop   = sigma_is_prop,
        sigma_is_lnorm  = sigma_is_lnorm,
+       sigma_output    = sigma_output,
        eta_names       = eta_names, n_eta = n_eta,
        eta_col_names   = paste0("eta.", gsub("^eta\\.", "", eta_names)),
        omega_par       = omega_par,

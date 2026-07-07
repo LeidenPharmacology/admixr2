@@ -48,6 +48,8 @@ navbar:
           href: articles/diagnostic-plots.html
         - text: Multiple studies
           href: articles/multiple-studies.html
+        - text: Plasma and brain (several outputs)
+          href: articles/multi-compartment.html
         - text: Estimator comparison
           href: articles/estimator-comparison.html
         - text: Advanced usage
@@ -70,6 +72,7 @@ articles:
       - admixr2
       - diagnostic-plots
       - multiple-studies
+      - multi-compartment
       - estimator-comparison
       - advanced
       - datagen
