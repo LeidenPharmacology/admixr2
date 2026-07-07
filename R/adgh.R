@@ -115,8 +115,10 @@
   grad  <- numeric(length(p)); names(grad) <- names(p)
 
   # Which struct thetas are unpaired (no mu-referencing eta)?
-  unpaired_k <- if (!is.null(pinfo$struct_eta_idx))
-    which(is.na(pinfo$struct_eta_idx)) else integer(0)
+  # struct_has_eta is struct-indexed (length n_s); struct_eta_idx is eta-indexed
+  # (length n_eta) so is.na() on it never flags unpaired struct thetas.
+  unpaired_k <- if (!is.null(pinfo$struct_has_eta))
+    which(!pinfo$struct_has_eta) else integer(0)
 
   for (s in studies) {
     eta <- X %*% t(L)
@@ -239,8 +241,9 @@
 
     # Struct thetas (paired with etas; unpaired handled by FD below).
     for (k in seq_len(n_s)) {
-      ei <- pinfo$struct_eta_idx[k]
-      if (is.na(ei)) next  # unpaired
+      if (!is.null(pinfo$struct_has_eta) && !pinfo$struct_has_eta[k]) next  # unpaired
+      ei <- which(pinfo$struct_eta_idx == k)[1L]  # struct k -> its eta dim
+      if (is.na(ei)) next  # nocov -- defensive; ei always found when struct_has_eta[k]
       gmat    <- if (lnorm_scale != 1) Jl[[ei]] * lnorm_scale else Jl[[ei]]
       dmu_raw <- as.numeric(crossprod(W, Jl[[ei]]))  # d(mu_t)/d(psi) before lnorm scaling
       grad[k] <- grad[k] + contrib(gmat) + .sigma_V_extra(dmu_raw)
