@@ -269,6 +269,16 @@ concentration. This is the whole reason the brain data was needed — with plasm
 alone, `qin` and `qout` are not separately identifiable and `Kp,uu` cannot be
 estimated. The brain measurements resolve it.
 
+### Built-in diagnostics
+
+The overlay above was assembled by hand for a custom figure, but you don't have
+to: calling `plot()` on the fit draws observed-vs-predicted panels directly —
+one per observed output.
+
+```{r plot-fit, fig.width = 7, fig.height = 3.2}
+plot(fit_cns, which = "mean")
+```
+
 ## Notes
 
 * **Estimators.** `adgh` (used here), `adfo` and `admc` all support several
