@@ -43,6 +43,7 @@ Suggests:
     knitr,
     mnormt,
     nlmixr2 (>= 5.0.0),
+    nlmixr2data,
     patchwork,
     rmarkdown,
     testthat (>= 3.0.0)
