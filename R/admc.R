@@ -1945,7 +1945,7 @@ nlmixr2Est.admc <- function(env, ...) {
     names(studies) <- paste0("study", seq_along(studies))
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
-  pinfo$nDisplayProgress <- .ctl$nDisplayProgress
+  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
   output_var <- .admOutputVar(.ui)
 
   for (nm in names(studies))

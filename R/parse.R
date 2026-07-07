@@ -146,6 +146,10 @@
        sigma_is_prop   = sigma_is_prop,
        sigma_is_lnorm  = sigma_is_lnorm,
        sigma_output    = sigma_output,
+       # rxSolve progress-bar threshold; the estimators override this from the
+       # control, but default it here so pinfo built directly (e.g. in tests that
+       # call the NLL/gradient internals) always carries a valid integer.
+       nDisplayProgress = .Machine$integer.max,
        eta_names       = eta_names, n_eta = n_eta,
        eta_col_names   = paste0("eta.", gsub("^eta\\.", "", eta_names)),
        omega_par       = omega_par,

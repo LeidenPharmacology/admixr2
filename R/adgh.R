@@ -173,7 +173,7 @@
       B    <- s$n * (G - G %*% (s$V + tcrossprod(r)) %*% G)
       dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))
       Bdiag <- diag(B); Bt <- cpc %*% B
-      contrib <- function(gmat) {                # gmat = d(mu_sigma)/dpsi rows
+      contrib_j <- function(gmat) {              # gmat = d(mu_sigma)/dpsi rows
         dmu <- as.numeric(crossprod(W, gmat))
         sum(dNLL_dmu_sig * dmu) + 2 * sum(W * rowSums(gmat * Bt))
       }
@@ -196,7 +196,7 @@
         ei <- which(pinfo$struct_eta_idx == k); if (length(ei) == 0L) next; ei <- ei[[1L]]
         gmat    <- sweep(Jl[[ei]], 2L, ls_vec, "*")
         dmu_raw <- as.numeric(crossprod(W, Jl[[ei]]))
-        grad[k] <- grad[k] + contrib(gmat) + sig_V_extra(dmu_raw)
+        grad[k] <- grad[k] + contrib_j(gmat) + sig_V_extra(dmu_raw)
       }
       # omega Cholesky
       if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
@@ -204,7 +204,7 @@
         base    <- Jl[[i]] * X[, j]
         gmat    <- sweep(base, 2L, ls_vec, "*")
         dmu_raw <- as.numeric(crossprod(W, base))
-        dL  <- contrib(gmat) + sig_V_extra(dmu_raw)
+        dL  <- contrib_j(gmat) + sig_V_extra(dmu_raw)
         pos <- n_s + n_e + rr
         grad[pos] <- grad[pos] + if (pinfo$chol_diag[rr]) dL * L[i, i] / 2 else dL
       }
@@ -829,7 +829,7 @@ nlmixr2Est.adgh <- function(env, ...) {
     names(studies) <- paste0("study", seq_along(studies))
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
-  pinfo$nDisplayProgress <- .ctl$nDisplayProgress
+  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
   output_var <- .admOutputVar(.ui)
   n_nodes    <- .ctl$n_nodes
 
