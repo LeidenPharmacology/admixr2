@@ -29,6 +29,7 @@ log(2pi) constants to OBJF, keeping fit$objective == our -2LL exactly."><meta pr
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes"><li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
@@ -45,7 +46,7 @@ log(2pi) constants to OBJF, keeping fit$objective == our -2LL exactly."><meta pr
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Dummy data frame for nlmixr2 dispatch</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.2.0/R/data.R" class="external-link"><code>R/data.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/data.R" class="external-link"><code>R/data.R</code></a></small>
       <div class="d-none name"><code>admData.Rd</code></div>
     </div>
 
@@ -57,9 +58,22 @@ log(2pi) constants to OBJF, keeping <code>fit$objective == our -2LL</code> exact
 
     <div class="section level2">
     <h2 id="ref-usage">Usage<a class="anchor" aria-label="anchor" href="#ref-usage"></a></h2>
-    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">admData</span><span class="op">(</span><span class="op">)</span></span></code></pre></div>
+    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">admData</span><span class="op">(</span>outputs <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span></code></pre></div>
     </div>
 
+    <div class="section level2">
+    <h2 id="arguments">Arguments<a class="anchor" aria-label="anchor" href="#arguments"></a></h2>
+
+
+<dl><dt id="arg-outputs">outputs<a class="anchor" aria-label="anchor" href="#arg-outputs"></a></dt>
+<dd><p>Optional character vector of observed output (endpoint) names
+for a multi-compartment model with several prediction lines (e.g.
+<code>c("cp", "cCSF")</code>). One <code>NA</code> observation row is emitted per endpoint, keyed
+by name in the <code>CMT</code> column, so nlmixr2's data translation recognises every
+endpoint. When <code>NULL</code> (default) the single-endpoint dummy frame is returned
+unchanged.</p></dd>
+
+</dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
     <p>A data frame with columns <code>ID</code>, <code>TIME</code>, <code>DV</code>, <code>AMT</code>, <code>EVID</code>, <code>CMT</code>.</p>
@@ -71,6 +85,11 @@ log(2pi) constants to OBJF, keeping <code>fit$objective == our -2LL</code> exact
 <span class="r-out co"><span class="r-pr">#&gt;</span>   ID TIME DV AMT EVID CMT</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> 1  1    0 NA 100  101   1</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> 2  1    1 NA   0    0   2</span>
+<span class="r-in"><span><span class="fu">admData</span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"cp"</span>, <span class="st">"cCSF"</span><span class="op">)</span><span class="op">)</span></span></span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   ID TIME DV AMT EVID CMT DVID</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1  1    0 NA 100    1   1 &lt;NA&gt;</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 2  1    1  1   0    0  NA   cp</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 3  1    2  1   0    0  NA cCSF</span>
 <span class="r-in"><span></span></span>
 </code></pre></div>
     </div>

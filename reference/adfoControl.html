@@ -31,6 +31,7 @@ non-linear individual predictions.'><meta property="og:image" content="https://l
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes"><li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
@@ -47,7 +48,7 @@ non-linear individual predictions.'><meta property="og:image" content="https://l
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control settings for the FO (First-Order) estimator</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.2.0/R/adfo.R" class="external-link"><code>R/adfo.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/adfo.R" class="external-link"><code>R/adfo.R</code></a></small>
       <div class="d-none name"><code>adfoControl.Rd</code></div>
     </div>
 
@@ -69,6 +70,7 @@ non-linear individual predictions.</p>
 <span>  print <span class="op">=</span> <span class="fl">10L</span>,</span>
 <span>  seed <span class="op">=</span> <span class="fl">12345L</span>,</span>
 <span>  cores <span class="op">=</span> <span class="fl">1L</span>,</span>
+<span>  nDisplayProgress <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">integer.max</span>,</span>
 <span>  grad_h <span class="op">=</span> <span class="fl">1e-04</span>,</span>
 <span>  grad_bounds <span class="op">=</span> <span class="fl">5</span>,</span>
 <span>  cov_h <span class="op">=</span> <span class="fl">0.001</span>,</span>
@@ -98,7 +100,8 @@ non-linear individual predictions.</p>
 
 <dl><dt id="arg-studies">studies<a class="anchor" aria-label="anchor" href="#arg-studies"></a></dt>
 <dd><p>Named list of study specifications (same format as
-<code><a href="admControl.html">admControl()</a></code>: <code>E</code>, <code>V</code>, <code>n</code>, <code>times</code>, <code>ev</code>, optional <code>method</code>).</p></dd>
+<code><a href="admControl.html">admControl()</a></code>: <code>E</code>, <code>V</code>, <code>n</code>, <code>times</code>, <code>ev</code>, optional <code>method</code>; or an
+<code>observations</code> list for multi-compartment fits – see <code><a href="admControl.html">admControl()</a></code>).</p></dd>
 
 
 <dt id="arg-grad">grad<a class="anchor" aria-label="anchor" href="#arg-grad"></a></dt>
@@ -138,6 +141,13 @@ gradient is requested a derivative-free algorithm (<code>NLOPT_LN_*</code> /
 
 <dt id="arg-cores">cores<a class="anchor" aria-label="anchor" href="#arg-cores"></a></dt>
 <dd><p>OpenMP threads for <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code> (default 1).</p></dd>
+
+
+<dt id="arg-ndisplayprogress">nDisplayProgress<a class="anchor" aria-label="anchor" href="#arg-ndisplayprogress"></a></dt>
+<dd><p>Passed to <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code>: show the solver's text
+progress bar only once a single solve exceeds this many subjects. The
+default (<code>.Machine$integer.max</code>) keeps it off for clean script/vignette
+output; lower it (e.g. <code>1000L</code>) to see progress during long fits.</p></dd>
 
 
 <dt id="arg-grad-h">grad_h<a class="anchor" aria-label="anchor" href="#arg-grad-h"></a></dt>
@@ -286,42 +296,44 @@ nlmixr2 fit object.</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> === admixr2: Aggregate Data Modeling (FO) ===</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span>   Studies: 1 | Params: 5 | Cores: 1 | Grad: none | Restarts: 1</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span>   Obs units: 1 | Params: 5 | Cores: 1 | Grad: none | Restarts: 1</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> |          |     -2LL |      tcl |       tv |  prop.sd |   eta.cl |    eta.v |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0010     |  1.5e+30 |        5 |        1 |      0.2 |     0.09 |     0.04 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0020     |  3878.99 |    4.803 |    31.64 |      0.2 |     0.09 |     0.04 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0030     |  3303.72 |    4.806 |     30.1 |   0.2068 |  0.09261 |     0.04 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0040     |  2828.60 |    4.816 |    28.56 |   0.2164 |  0.09217 |  0.04034 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0050     |   929.13 |    6.839 |    37.04 |   0.3811 |   0.1391 |  0.02192 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0060     |   833.01 |    6.862 |    39.38 |   0.4076 |   0.1484 |  0.02135 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0070     |   826.48 |    6.702 |    39.97 |   0.4139 |   0.1411 |  0.02057 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0080     |   822.02 |    6.697 |    39.52 |   0.4177 |   0.1395 |  0.02036 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 4.2 sec  |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0040     |  2828.57 |    4.816 |    28.56 |   0.2164 |  0.09217 |  0.04034 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0050     |   931.70 |    6.841 |       37 |    0.381 |   0.1389 |  0.02184 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0060     |   828.72 |    6.712 |    39.14 |   0.4072 |   0.1429 |  0.02032 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0070     |   822.99 |    6.742 |    39.64 |   0.4167 |   0.1405 |  0.02019 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0080     |   821.51 |    6.716 |    39.82 |    0.422 |   0.1389 |  0.02072 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0090     |   816.00 |    6.677 |    39.33 |   0.4187 |   0.1361 |  0.02537 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0100     |   813.39 |    6.705 |    39.36 |   0.4168 |   0.1346 |  0.02999 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0102 ✓   |   813.39 |    6.705 |    39.36 |   0.4168 |   0.1346 |  0.02999 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 3.9 sec  |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, 19 NLL evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── </span><span style="color: #0000BB; font-weight: bold;">nlmix</span><span style="color: #BB0000; font-weight: bold;">r²</span><span style="font-weight: bold;"> </span><span style="color: #BBBB00; font-weight: bold;">adfo</span><span style="font-weight: bold;"> ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>          OBJF      AIC      BIC Log-likelihood</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> adfo 819.7109 829.7109 861.7701      -409.8555</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> adfo 813.3949 823.3949 855.4541      -406.6975</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    4.165       0.76   4.925</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1    3.889      0.689   4.578</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>           <span style="font-weight: bold;">Est.</span>       <span style="font-weight: bold;">SE</span>   <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>      1.886  0.01222 0.6479    6.591 (6.435, 6.751)     36.4            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv</span>       3.676 0.009646 0.2624    39.47 (38.73, 40.22)     14.7            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span> 0.4158                                  0.4158                     </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>           <span style="font-weight: bold;">Est.</span>      <span style="font-weight: bold;">SE</span>   <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>      1.903 0.01231 0.6467    6.705 (6.546, 6.869)     38.0            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv</span>       3.673 0.01025  0.279    39.36 (38.58, 40.16)     17.4            </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span> 0.4168                                 0.4168                     </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Covariance Type (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   No correlations in between subject variability (BSV) matrix</span>

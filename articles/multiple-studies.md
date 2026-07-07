@@ -135,9 +135,6 @@ fit_multi <- nlmixr2(
     seed      = 1L
   )
 )
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:07 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:07
 
 print(fit_multi)
 #> ── nlmixr² admc ──
@@ -148,7 +145,7 @@ print(fit_multi)
 #> ── Time (sec fit_multi$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    77.14     18.349  95.489
+#> 1   78.781     17.724  96.505
 #> 
 #> ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 #> 
@@ -201,7 +198,10 @@ Mean diagnostics for both cohorts (one panel per study).
 ``` r
 
 names(plots)
-#> [1] "mean_cohort1" "mean_cohort2"
+#>  [1] "mean_cohort1"           "mean_cohort1_obs"       "mean_cohort1_pred"     
+#>  [4] "mean_cohort1_resid"     "mean_cohort1_std_resid" "mean_cohort2"          
+#>  [7] "mean_cohort2_obs"       "mean_cohort2_pred"      "mean_cohort2_resid"    
+#> [10] "mean_cohort2_std_resid"
 ```
 
 Access individual panels to compare studies side by side:

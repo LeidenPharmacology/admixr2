@@ -27,6 +27,7 @@ Monte Carlo estimator.'><meta property="og:image" content="https://leidenpharmac
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes"><li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
@@ -43,7 +44,7 @@ Monte Carlo estimator.'><meta property="og:image" content="https://leidenpharmac
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control settings for the IRMC estimator</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.2.0/R/adirmc.R" class="external-link"><code>R/adirmc.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/adirmc.R" class="external-link"><code>R/adirmc.R</code></a></small>
       <div class="d-none name"><code>adirmcControl.Rd</code></div>
     </div>
 
@@ -66,6 +67,7 @@ Monte Carlo estimator.</p>
 <span>  omega_expansion <span class="op">=</span> <span class="fl">1</span>,</span>
 <span>  seed <span class="op">=</span> <span class="fl">12345L</span>,</span>
 <span>  cores <span class="op">=</span> <span class="fl">1L</span>,</span>
+<span>  nDisplayProgress <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">integer.max</span>,</span>
 <span>  grad <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"analytical"</span>, <span class="st">"none"</span>, <span class="st">"fd"</span><span class="op">)</span>,</span>
 <span>  kappa_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"exact"</span>, <span class="st">"linearized"</span>, <span class="st">"linearized_gh"</span><span class="op">)</span>,</span>
 <span>  kappa_n_nodes <span class="op">=</span> <span class="fl">5L</span>,</span>
@@ -106,6 +108,25 @@ Monte Carlo estimator.</p>
 <li><p><code>times</code> – numeric vector of observation times</p></li>
 <li><p><code>ev</code> – <code><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">rxode2::et()</a></code> dosing event table</p></li>
 <li><p><code>method</code> – <code>"cov"</code> or <code>"var"</code> (optional; auto-detected from <code>V</code>)</p></li>
+</ul><p><strong>Multi-compartment (multiple observed outputs).</strong> To fit several observed
+compartments simultaneously (e.g. plasma and brain/CSF), give the study an
+<code>observations</code> list instead of top-level <code>E</code>/<code>V</code>/<code>times</code>. Each entry is one
+observed output with its own <code>output</code> (the model prediction variable, e.g.
+<code>"cp"</code> or <code>"cCSF"</code>), <code>times</code>, <code>E</code>, <code>V</code> and – for independent fits – <code>ev</code>
+and <code>n</code>. Pass the endpoint names to <code><a href="admData.html">admData()</a></code>, e.g.
+<code>admData(c("cp", "cCSF"))</code>, so nlmixr2 recognises every endpoint. There are
+two modes:</p><ul><li><p><em>Independent</em> – each observed output has its own <code>n</code>/<code>ev</code> (separate
+experiments / subjects, e.g. a plasma study and a brain study combined for
+meta-analysis). The outputs are independent likelihood blocks and the
+aggregate <code>-2LL</code> is their sum.</p></li>
+<li><p><em>Joint (same subjects)</em> – the outputs are measured on the SAME subjects.
+Give the study a shared <code>n</code> and <code>ev</code>, and a joint covariance either as a
+study-level full matrix <code>V</code> (blocks in <code>observations</code> order) or as
+per-output marginal <code>V</code> plus a <code>cross</code> list of cross-covariance blocks
+keyed <code>"outA:outB"</code> (each <code>length(times_A)</code> x <code>length(times_B)</code>; omitted
+pairs are zero). The compartments are then scored by a single MVN over the
+stacked vector with shared random effects. <code>est = "adirmc"</code> does not
+support multiple observed outputs; use <code>"admc"</code>, <code>"adfo"</code> or <code>"adgh"</code>.</p></li>
 </ul></dd>
 
 
@@ -157,6 +178,14 @@ the gradient off. Both emit a message.</p></dd>
 
 <dt id="arg-cores">cores<a class="anchor" aria-label="anchor" href="#arg-cores"></a></dt>
 <dd><p>Number of OpenMP threads for <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code>.</p></dd>
+
+
+<dt id="arg-ndisplayprogress">nDisplayProgress<a class="anchor" aria-label="anchor" href="#arg-ndisplayprogress"></a></dt>
+<dd><p>Passed to <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code>: the solver shows its text
+progress bar only once a single solve exceeds this many subjects. The
+default (<code>.Machine$integer.max</code>) keeps the bar off, which is what you want
+for scripts, vignettes and logs; lower it (e.g. <code>1000L</code>) to see solver
+progress during long interactive fits.</p></dd>
 
 
 <dt id="arg-grad">grad<a class="anchor" aria-label="anchor" href="#arg-grad"></a></dt>
@@ -284,6 +313,12 @@ fit object (useful for debugging).</p></dd>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
     <p>An object of class <code>adirmcControl</code>.</p>
+    </div>
+    <div class="section level2">
+    <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
+    <p>Multi-compartment fits (a study <code>observations</code> list with several observed
+outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>est = "admc"</code>, <code>"adfo"</code>, or
+<code>"adgh"</code> for those. Single-output studies are fit as usual.</p>
     </div>
 
     <div class="section level2">
@@ -419,10 +454,12 @@ fit object (useful for debugging).</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0028     | -1266.44 |    4.935 |    8.122 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0029     | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0030 ✓   | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1008 |   0.0234 |   0.1396 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 2.3 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 3.6 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── </span><span style="color: #0000BB; font-weight: bold;">nlmix</span><span style="color: #BB0000; font-weight: bold;">r²</span><span style="font-weight: bold;"> </span><span style="color: #BBBB00; font-weight: bold;">adirmc</span><span style="font-weight: bold;"> ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
@@ -432,7 +469,7 @@ fit object (useful for debugging).</p></dd>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    2.331     10.192  12.523</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1    3.588      9.102   12.69</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>

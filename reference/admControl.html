@@ -27,6 +27,7 @@ data modelling estimator.'><meta property="og:image" content="https://leidenphar
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes"><li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
@@ -43,7 +44,7 @@ data modelling estimator.'><meta property="og:image" content="https://leidenphar
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control settings for the ADM estimator</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.2.0/R/admc.R" class="external-link"><code>R/admc.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/admc.R" class="external-link"><code>R/admc.R</code></a></small>
       <div class="d-none name"><code>admControl.Rd</code></div>
     </div>
 
@@ -64,6 +65,7 @@ data modelling estimator.</p>
 <span>  print <span class="op">=</span> <span class="fl">10L</span>,</span>
 <span>  seed <span class="op">=</span> <span class="fl">12345L</span>,</span>
 <span>  cores <span class="op">=</span> <span class="fl">1L</span>,</span>
+<span>  nDisplayProgress <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">integer.max</span>,</span>
 <span>  grad <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"sens"</span>, <span class="st">"fd"</span>, <span class="st">"cfd"</span>, <span class="st">"none"</span><span class="op">)</span>,</span>
 <span>  grad_h <span class="op">=</span> <span class="fl">1e-04</span>,</span>
 <span>  cov_h <span class="op">=</span> <span class="fl">0.001</span>,</span>
@@ -100,6 +102,25 @@ data modelling estimator.</p>
 <li><p><code>times</code> – numeric vector of observation times</p></li>
 <li><p><code>ev</code> – <code><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">rxode2::et()</a></code> dosing event table</p></li>
 <li><p><code>method</code> – <code>"cov"</code> or <code>"var"</code> (optional; auto-detected from <code>V</code>)</p></li>
+</ul><p><strong>Multi-compartment (multiple observed outputs).</strong> To fit several observed
+compartments simultaneously (e.g. plasma and brain/CSF), give the study an
+<code>observations</code> list instead of top-level <code>E</code>/<code>V</code>/<code>times</code>. Each entry is one
+observed output with its own <code>output</code> (the model prediction variable, e.g.
+<code>"cp"</code> or <code>"cCSF"</code>), <code>times</code>, <code>E</code>, <code>V</code> and – for independent fits – <code>ev</code>
+and <code>n</code>. Pass the endpoint names to <code><a href="admData.html">admData()</a></code>, e.g.
+<code>admData(c("cp", "cCSF"))</code>, so nlmixr2 recognises every endpoint. There are
+two modes:</p><ul><li><p><em>Independent</em> – each observed output has its own <code>n</code>/<code>ev</code> (separate
+experiments / subjects, e.g. a plasma study and a brain study combined for
+meta-analysis). The outputs are independent likelihood blocks and the
+aggregate <code>-2LL</code> is their sum.</p></li>
+<li><p><em>Joint (same subjects)</em> – the outputs are measured on the SAME subjects.
+Give the study a shared <code>n</code> and <code>ev</code>, and a joint covariance either as a
+study-level full matrix <code>V</code> (blocks in <code>observations</code> order) or as
+per-output marginal <code>V</code> plus a <code>cross</code> list of cross-covariance blocks
+keyed <code>"outA:outB"</code> (each <code>length(times_A)</code> x <code>length(times_B)</code>; omitted
+pairs are zero). The compartments are then scored by a single MVN over the
+stacked vector with shared random effects. <code>est = "adirmc"</code> does not
+support multiple observed outputs; use <code>"admc"</code>, <code>"adfo"</code> or <code>"adgh"</code>.</p></li>
 </ul></dd>
 
 
@@ -143,6 +164,14 @@ the gradient off. Both emit a message.</p></dd>
 
 <dt id="arg-cores">cores<a class="anchor" aria-label="anchor" href="#arg-cores"></a></dt>
 <dd><p>Number of OpenMP threads for <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code>.</p></dd>
+
+
+<dt id="arg-ndisplayprogress">nDisplayProgress<a class="anchor" aria-label="anchor" href="#arg-ndisplayprogress"></a></dt>
+<dd><p>Passed to <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code>: the solver shows its text
+progress bar only once a single solve exceeds this many subjects. The
+default (<code>.Machine$integer.max</code>) keeps the bar off, which is what you want
+for scripts, vignettes and logs; lower it (e.g. <code>1000L</code>) to see solver
+progress during long interactive fits.</p></dd>
 
 
 <dt id="arg-grad">grad<a class="anchor" aria-label="anchor" href="#arg-grad"></a></dt>
@@ -316,7 +345,7 @@ fit object (useful for debugging).</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BBBB;">ℹ</span> parameter labels from comments are typically ignored in non-interactive mode</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BBBB;">ℹ</span> Need to run with the source intact to parse comments</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> === admixr2: Aggregate Data Modeling (MC) ===</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span>   Studies: 1 | MC samples: 1000 | Params: 11 | Cores: 1 | Grad: Sens | Restarts: 1</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span>   Obs units: 1 | MC samples: 1000 | Params: 11 | Cores: 1 | Grad: Sens | Restarts: 1</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+</span>
@@ -325,10 +354,12 @@ fit object (useful for debugging).</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0030     | -3690.65 |    4.961 |    10.25 |     29.9 |    9.857 |     1.04 |   0.1985 |   0.1045 |    0.109 |   0.1022 |   0.1072 |  0.09699 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0040     | -3690.72 |     4.95 |    10.16 |    30.02 |    9.814 |    1.031 |   0.1983 |   0.1044 |   0.1139 |   0.1022 |   0.1067 |  0.09433 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0045 ✓   | -3690.73 |    4.952 |    10.12 |    30.03 |    9.816 |    1.026 |   0.1983 |   0.1045 |   0.1157 |   0.1008 |   0.1064 |  0.09239 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 8.3 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 9.8 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, Sens-Hessian, 7 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── </span><span style="color: #0000BB; font-weight: bold;">nlmix</span><span style="color: #BB0000; font-weight: bold;">r²</span><span style="font-weight: bold;"> </span><span style="color: #BBBB00; font-weight: bold;">admc</span><span style="font-weight: bold;"> ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
@@ -338,7 +369,7 @@ fit object (useful for debugging).</p></dd>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    8.299      8.851   17.15</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1     9.78      8.373  18.153</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>

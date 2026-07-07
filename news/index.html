@@ -25,6 +25,7 @@
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes"><li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
@@ -41,11 +42,32 @@
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Changelog</h1>
-      <small>Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.2.0/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
+      <small>Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
     <div class="section level2">
-<h2 class="pkg-version" data-toc-text="0.2.0" id="admixr2-020">admixr2 0.2.0<a class="anchor" aria-label="anchor" href="#admixr2-020"></a></h2>
+<h2 class="pkg-version" data-toc-text="development version" id="admixr2-development-version">admixr2 (development version)<a class="anchor" aria-label="anchor" href="#admixr2-development-version"></a></h2>
+<div class="section level3">
+<h3 id="new-features-development-version">New features<a class="anchor" aria-label="anchor" href="#new-features-development-version"></a></h3>
+<ul><li>
+<p><strong>Multi-compartment fitting (multiple observed outputs).</strong> A study may now observe several model outputs at once (e.g. plasma and brain/CSF) via an <code>observations</code> list – one entry per observed output with its own <code>output</code>, <code>times</code>, <code>E</code> and <code>V</code>. Two modes (<a href="https://github.com/LeidenPharmacology/admixr2/issues/85" class="external-link">#85</a>):</p>
+<ul><li>
+<em>Independent</em> – each output has its own <code>n</code>/<code>ev</code> (separate experiments, e.g. literature meta-analysis); the aggregate <code>-2LL</code> is the sum of the per-output likelihood blocks. Fit with full analytical / sensitivity gradients.</li>
+<li>
+<em>Joint (same subjects)</em> – outputs measured on the same subjects, with a shared <code>n</code>/<code>ev</code> and a joint covariance given either as a study-level full <code>V</code> or as per-output marginal <code>V</code> plus a <code>cross</code> list of cross-covariance blocks. Scored by a single MVN over the stacked vector with shared random effects and the full <strong>analytical</strong> gradient in all three estimators (any number of compartments; the assembled joint covariance is checked for positive-definiteness).</li>
+</ul><p>Supported by <code>est = "admc"</code>, <code>"adfo"</code> and <code>"adgh"</code>; <code><a href="../reference/datagen.html">datagen()</a></code> generates multi-output aggregate data and <code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> renders one panel set per compartment. Pass the endpoint names to <code><a href="../reference/admData.html">admData()</a></code>, e.g. <code>admData(c("cp", "cCSF"))</code>. <code>est = "adirmc"</code> does not support multiple observed outputs.</p>
+</li>
+<li><p><strong><code>nDisplayProgress</code> control argument</strong> for every estimator (<code><a href="../reference/admControl.html">admControl()</a></code>, <code><a href="../reference/adfoControl.html">adfoControl()</a></code>, <code><a href="../reference/adghControl.html">adghControl()</a></code>, <code><a href="../reference/adirmcControl.html">adirmcControl()</a></code>), passed through to the <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code> calls that drive fitting. It sets how many subjects a single solve must exceed before the solver shows its text progress bar. The default (<code>.Machine$integer.max</code>) keeps the bar off, so it no longer leaks into scripts, logs or rendered vignettes; lower it (e.g. <code>1000L</code>) to watch progress during long interactive fits.</p></li>
+</ul></div>
+<div class="section level3">
+<h3 id="bug-fixes-development-version">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-development-version"></a></h3>
+<ul><li><p>The solver progress bar no longer appears during covariance/gradient batches. Most internal <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code> calls already suppressed it, but the covariance and batched-gradient solves in <code>admc</code> hard-coded a low <code>nDisplayProgress</code> (1000), so the bar printed once a chunk exceeded 1000 solves. All solves now honour the new <code>nDisplayProgress</code> control argument (default off).</p></li>
+<li><p>Hard-coded numeric constants in a model’s <code>model({})</code> block (e.g. a fixed brain volume <code>vb &lt;- 5</code>, common in PBPK/CNS models) are no longer zeroed. admixr2 used to hand-fill every model parameter it did not set with <code>0</code>, clobbering such a constant’s default and producing an <code>NA</code>/non-finite objective (e.g. a <code>qout / vb</code> divide-by-zero). It now supplies only the parameters it varies and lets <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code> fill the rest from the model’s own defaults, so constants and covariate defaults keep their value.</p></li>
+<li><p><code>adgh</code> now computes gradients for non-mu-referenced (unpaired) structural thetas. The unpaired-parameter set was derived from the eta-indexed <code>struct_eta_idx</code>, so it was always empty and those thetas silently received a zero gradient; it now uses the struct-indexed <code>struct_has_eta</code>.</p></li>
+</ul></div>
+</div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.2.0" id="admixr2-020">admixr2 0.2.0<a class="anchor" aria-label="anchor" href="#admixr2-020"></a></h2><p class="text-muted">CRAN release: 2026-07-02</p>
 <div class="section level3">
 <h3 id="new-features-0-2-0">New features<a class="anchor" aria-label="anchor" href="#new-features-0-2-0"></a></h3>
 <ul><li>New estimator <code>est = "adgh"</code>: deterministic Gauss-Hermite quadrature over the random-effects prior, configured via <code><a href="../reference/adghControl.html">adghControl()</a></code>. The objective is noise-free (no Monte Carlo draws), the analytical gradient is exact, and it is unbiased at any IIV magnitude. For models with up to ~4 random effects it is the fastest exact estimator (<a href="https://github.com/LeidenPharmacology/admixr2/issues/65" class="external-link">#65</a>).</li>

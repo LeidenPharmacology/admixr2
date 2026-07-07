@@ -84,7 +84,7 @@ study_data <- datagen(
 
 # Each study returns E, V, n, times, ev
 names(study_data$low_dose)
-#> [1] "E"     "V"     "n"     "times" "ev"
+#> [1] "E"      "V"      "n"      "times"  "ev"     "output"
 round(study_data$low_dose$E, 2)   # population mean at each time
 #>  0.5    1    2    4    8   12   24 
 #> 1.75 2.38 2.27 1.18 0.24 0.06 0.00
@@ -198,9 +198,6 @@ fit_sim <- nlmixr2(
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
 #> [====|====|====|====|====|====|====|====|====|====] 0:00:00
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:03 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:03
 
 print(fit_sim)
 #> ── nlmixr² admc ──
@@ -211,14 +208,14 @@ print(fit_sim)
 #> ── Time (sec fit_sim$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   65.256      7.761  73.017
+#> 1   66.707      7.598  74.305
 #> 
 #> ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 #> 
 #>                         Parameter     Est.       SE   %RSE
 #> tcl           Log clearance (L/h)    1.608 0.009336 0.5806
 #> tv                 Log volume (L)    2.303  0.01276 0.5543
-#> tka     Log absorption rate (1/h) 0.001747  0.01798   1029
+#> tka     Log absorption rate (1/h) 0.001746  0.01798   1029
 #> prop.sd     Proportional error SD   0.1999                
 #>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 #> tcl        4.994 (4.903, 5.086)     30.4            

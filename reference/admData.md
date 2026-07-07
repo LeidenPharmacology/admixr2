@@ -7,8 +7,19 @@ log(2pi) constants to OBJF, keeping `fit$objective == our -2LL` exactly.
 ## Usage
 
 ``` r
-admData()
+admData(outputs = NULL)
 ```
+
+## Arguments
+
+- outputs:
+
+  Optional character vector of observed output (endpoint) names for a
+  multi-compartment model with several prediction lines (e.g.
+  `c("cp", "cCSF")`). One `NA` observation row is emitted per endpoint,
+  keyed by name in the `CMT` column, so nlmixr2's data translation
+  recognises every endpoint. When `NULL` (default) the single-endpoint
+  dummy frame is returned unchanged.
 
 ## Value
 
@@ -21,4 +32,9 @@ admData()
 #>   ID TIME DV AMT EVID CMT
 #> 1  1    0 NA 100  101   1
 #> 2  1    1 NA   0    0   2
+admData(c("cp", "cCSF"))
+#>   ID TIME DV AMT EVID CMT DVID
+#> 1  1    0 NA 100    1   1 <NA>
+#> 2  1    1  1   0    0  NA   cp
+#> 3  1    2  1   0    0  NA cCSF
 ```

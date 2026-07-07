@@ -36,7 +36,17 @@ plot(x, which = c("mean", "cov", "nll", "par"), n_sim = NULL, seed = 1L, ...)
 
 ## Value
 
-A named list of ggplot2 objects, invisibly. Prints each selected plot.
+A named list of ggplot2 objects, invisibly. Prints each selected
+top-level panel. For the `"mean"` and `"cov"` panels the returned list
+also contains each sub-panel individually so a single panel (or a few)
+can be extracted in code without reprinting the whole grid. Elements can
+be pulled out by name – `plot(fit, which = "mean")$mean_study1_pred` or
+`plot(fit, which = "cov")$cov_study1_std_resid` – or by position, with
+the combined 2x2 grid stored first per study
+(`plot(fit, which = "mean")[[1]]` is the full grid, `[1]` the length-1
+named sub-list). The sub-panel keys are `<type>_<study>_obs`, `_pred`,
+`_resid`, and `_std_resid`; the combined grid stays under
+`<type>_<study>`. The extra sub-panel keys are not printed on their own.
 
 ## Details
 
@@ -60,6 +70,25 @@ A named list of ggplot2 objects, invisibly. Prints each selected plot.
     labelled `V(eta.x)`). Facets ordered as in the model
     [`ini()`](https://nlmixr2.github.io/rxode2/reference/ini.html)
     block. Restarts coloured with the Okabe-Ito palette.
+
+## Aggregate data slot
+
+Every admixr2 fit also carries the observed and predicted aggregate data
+in `fit$env$aggData`, a named list with one entry per study. Each entry
+holds the observation `times`, the study `n`, and two moment sets –
+`obs` (from the data) and `pred` (predicted at the fitted parameters) –
+each a list with the mean vector `E` and the (co)variance matrix `V`:
+
+
+      fit$env$aggData$study1$obs$E    # observed mean vector
+      fit$env$aggData$study1$obs$V    # observed covariance matrix
+      fit$env$aggData$study1$pred$E   # predicted mean vector
+      fit$env$aggData$study1$pred$V   # predicted covariance matrix
+
+The predicted moments are computed by one MC simulation at the fitted
+parameters using the fit's own `n_sim` and a fixed seed, so they match
+the default `plot(fit)` mean/cov panels. The slot is absent only when
+the fit cannot be simulated (no simulation model available).
 
 ## nlmixr2 `traceplot()`
 
@@ -123,28 +152,28 @@ fit <- nlmixr2(
 #> ℹ parameter labels from comments are typically ignored in non-interactive mode
 #> ℹ Need to run with the source intact to parse comments
 #> === admixr2: Aggregate Data Modeling (FO) ===
-#>   Studies: 1 | Params: 5 | Cores: 1 | Grad: none | Restarts: 1
+#>   Obs units: 1 | Params: 5 | Cores: 1 | Grad: none | Restarts: 1
 #> +----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |       tv |  prop.sd |   eta.cl |    eta.v |
 #> +----------+----------+----------+----------+----------+----------+----------+
 #> | 0010     |  1.5e+30 |        5 |        1 |      0.2 |     0.09 |     0.04 |
 #> | 0020     |  3878.99 |    4.803 |    31.64 |      0.2 |     0.09 |     0.04 |
 #> | 0030     |  3303.72 |    4.806 |     30.1 |   0.2068 |  0.09261 |     0.04 |
-#> | 0040     |  2828.60 |    4.816 |    28.56 |   0.2164 |  0.09217 |  0.04034 |
-#> | 0050     |   929.13 |    6.839 |    37.04 |   0.3811 |   0.1391 |  0.02192 |
-#> | 0060     |   833.01 |    6.862 |    39.38 |   0.4076 |   0.1484 |  0.02135 |
-#> | 0070     |   826.48 |    6.702 |    39.97 |   0.4139 |   0.1411 |  0.02057 |
-#> | 0080     |   822.02 |    6.697 |    39.52 |   0.4177 |   0.1395 |  0.02036 |
-#> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |
-#> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |
-#> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |
-#> | 3.8 sec  |          |          |          |          |          |          |
+#> | 0040     |  2828.57 |    4.816 |    28.56 |   0.2164 |  0.09217 |  0.04034 |
+#> | 0050     |   931.70 |    6.841 |       37 |    0.381 |   0.1389 |  0.02184 |
+#> | 0060     |   828.72 |    6.712 |    39.14 |   0.4072 |   0.1429 |  0.02032 |
+#> | 0070     |   822.99 |    6.742 |    39.64 |   0.4167 |   0.1405 |  0.02019 |
+#> | 0080     |   821.51 |    6.716 |    39.82 |    0.422 |   0.1389 |  0.02072 |
+#> | 0090     |   816.00 |    6.677 |    39.33 |   0.4187 |   0.1361 |  0.02537 |
+#> | 0100     |   813.39 |    6.705 |    39.36 |   0.4168 |   0.1346 |  0.02999 |
+#> | 0102 ✓   |   813.39 |    6.705 |    39.36 |   0.4168 |   0.1346 |  0.02999 |
+#> | 3.6 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, 19 NLL evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
+#>  
+#>  
 plot(fit)
-#>  
-#>  
 
 
 

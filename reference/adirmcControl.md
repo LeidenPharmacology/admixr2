@@ -18,6 +18,7 @@ adirmcControl(
   omega_expansion = 1,
   seed = 12345L,
   cores = 1L,
+  nDisplayProgress = .Machine$integer.max,
   grad = c("analytical", "none", "fd"),
   kappa_method = c("exact", "linearized", "linearized_gh"),
   kappa_n_nodes = 5L,
@@ -66,6 +67,31 @@ adirmcControl(
     dosing event table
 
   - `method` – `"cov"` or `"var"` (optional; auto-detected from `V`)
+
+  **Multi-compartment (multiple observed outputs).** To fit several
+  observed compartments simultaneously (e.g. plasma and brain/CSF), give
+  the study an `observations` list instead of top-level `E`/`V`/`times`.
+  Each entry is one observed output with its own `output` (the model
+  prediction variable, e.g. `"cp"` or `"cCSF"`), `times`, `E`, `V` and –
+  for independent fits – `ev` and `n`. Pass the endpoint names to
+  [`admData()`](https://leidenpharmacology.github.io/admixr2/reference/admData.md),
+  e.g. `admData(c("cp", "cCSF"))`, so nlmixr2 recognises every endpoint.
+  There are two modes:
+
+  - *Independent* – each observed output has its own `n`/`ev` (separate
+    experiments / subjects, e.g. a plasma study and a brain study
+    combined for meta-analysis). The outputs are independent likelihood
+    blocks and the aggregate `-2LL` is their sum.
+
+  - *Joint (same subjects)* – the outputs are measured on the SAME
+    subjects. Give the study a shared `n` and `ev`, and a joint
+    covariance either as a study-level full matrix `V` (blocks in
+    `observations` order) or as per-output marginal `V` plus a `cross`
+    list of cross-covariance blocks keyed `"outA:outB"` (each
+    `length(times_A)` x `length(times_B)`; omitted pairs are zero). The
+    compartments are then scored by a single MVN over the stacked vector
+    with shared random effects. `est = "adirmc"` does not support
+    multiple observed outputs; use `"admc"`, `"adfo"` or `"adgh"`.
 
 - n_sim:
 
@@ -118,6 +144,16 @@ adirmcControl(
 
   Number of OpenMP threads for
   [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html).
+
+- nDisplayProgress:
+
+  Passed to
+  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html):
+  the solver shows its text progress bar only once a single solve
+  exceeds this many subjects. The default (`.Machine$integer.max`) keeps
+  the bar off, which is what you want for scripts, vignettes and logs;
+  lower it (e.g. `1000L`) to see solver progress during long interactive
+  fits.
 
 - grad:
 
@@ -257,6 +293,12 @@ adirmcControl(
 
 An object of class `adirmcControl`.
 
+## Details
+
+Multi-compartment fits (a study `observations` list with several
+observed outputs) are **not** supported by `adirmc`; use `est = "admc"`,
+`"adfo"`, or `"adgh"` for those. Single-output studies are fit as usual.
+
 ## Examples
 
 ``` r
@@ -391,10 +433,12 @@ fit <- nlmixr2(
 #> | 0028     | -1266.44 |    4.935 |    8.122 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |
 #> | 0029     | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |
 #> | 0030 ✓   | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1008 |   0.0234 |   0.1396 |
-#> | 2.3 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 3.6 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
+#>  
+#>  
 print(fit)
 #> ── nlmixr² adirmc ──
 #> 
@@ -404,7 +448,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    2.331     10.192  12.523
+#> 1    3.588      9.102   12.69
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

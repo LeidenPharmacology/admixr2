@@ -20,6 +20,7 @@ adghControl(
   print = 10L,
   seed = 12345L,
   cores = 1L,
+  nDisplayProgress = .Machine$integer.max,
   grad_h = 1e-04,
   grad_bounds = 5,
   cov_h = 0.001,
@@ -49,7 +50,9 @@ adghControl(
 
   Named list of study specifications (same format as
   [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md):
-  `E`, `V`, `n`, `times`, `ev`, optional `method`).
+  `E`, `V`, `n`, `times`, `ev`, optional `method`; or an `observations`
+  list for multi-compartment fits – see
+  [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)).
 
 - n_nodes:
 
@@ -92,6 +95,15 @@ adghControl(
   OpenMP threads for
   [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
   (default 1).
+
+- nDisplayProgress:
+
+  Passed to
+  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html):
+  show the solver's text progress bar only once a single solve exceeds
+  this many subjects. The default (`.Machine$integer.max`) keeps it off
+  for clean script/vignette output; lower it (e.g. `1000L`) to see
+  progress during long fits.
 
 - grad_h:
 
@@ -220,7 +232,7 @@ fit <- nlmixr2(
 #> ℹ parameter labels from comments are typically ignored in non-interactive mode
 #> ℹ Need to run with the source intact to parse comments
 #> === admixr2: Aggregate Data Modeling (GH) ===
-#>   Studies: 1 | Params: 5 | Nodes: 5^2=25 | Cores: 1 | Grad: Analytical | Restarts: 1
+#>   Obs units: 1 | Params: 5 | Nodes: 5^2=25 | Cores: 1 | Grad: Analytical | Restarts: 1
 #> +----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |       tv |  prop.sd |   eta.cl |    eta.v |
 #> +----------+----------+----------+----------+----------+----------+----------+
@@ -228,9 +240,11 @@ fit <- nlmixr2(
 #> | 0020     |   727.90 |    7.788 |    37.96 |   0.4167 |   0.2292 |  0.04492 |
 #> | 0030     |   726.86 |     8.17 |    38.19 |   0.4231 |   0.2708 |  0.04749 |
 #> | 0034 ✓   |   726.85 |     8.15 |    38.21 |   0.4229 |    0.269 |  0.04736 |
-#> | 0.9 sec  |          |          |          |          |          |          |
+#> | 1.3 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, Analytical-Hessian, 4 gradient evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
+#>  
+#>  
 # }
 ```

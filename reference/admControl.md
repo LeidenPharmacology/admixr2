@@ -16,6 +16,7 @@ admControl(
   print = 10L,
   seed = 12345L,
   cores = 1L,
+  nDisplayProgress = .Machine$integer.max,
   grad = c("sens", "fd", "cfd", "none"),
   grad_h = 1e-04,
   cov_h = 0.001,
@@ -61,6 +62,31 @@ admControl(
 
   - `method` – `"cov"` or `"var"` (optional; auto-detected from `V`)
 
+  **Multi-compartment (multiple observed outputs).** To fit several
+  observed compartments simultaneously (e.g. plasma and brain/CSF), give
+  the study an `observations` list instead of top-level `E`/`V`/`times`.
+  Each entry is one observed output with its own `output` (the model
+  prediction variable, e.g. `"cp"` or `"cCSF"`), `times`, `E`, `V` and –
+  for independent fits – `ev` and `n`. Pass the endpoint names to
+  [`admData()`](https://leidenpharmacology.github.io/admixr2/reference/admData.md),
+  e.g. `admData(c("cp", "cCSF"))`, so nlmixr2 recognises every endpoint.
+  There are two modes:
+
+  - *Independent* – each observed output has its own `n`/`ev` (separate
+    experiments / subjects, e.g. a plasma study and a brain study
+    combined for meta-analysis). The outputs are independent likelihood
+    blocks and the aggregate `-2LL` is their sum.
+
+  - *Joint (same subjects)* – the outputs are measured on the SAME
+    subjects. Give the study a shared `n` and `ev`, and a joint
+    covariance either as a study-level full matrix `V` (blocks in
+    `observations` order) or as per-output marginal `V` plus a `cross`
+    list of cross-covariance blocks keyed `"outA:outB"` (each
+    `length(times_A)` x `length(times_B)`; omitted pairs are zero). The
+    compartments are then scored by a single MVN over the stacked vector
+    with shared random effects. `est = "adirmc"` does not support
+    multiple observed outputs; use `"admc"`, `"adfo"` or `"adgh"`.
+
 - n_sim:
 
   Number of Monte Carlo samples per NLL evaluation.
@@ -104,6 +130,16 @@ admControl(
 
   Number of OpenMP threads for
   [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html).
+
+- nDisplayProgress:
+
+  Passed to
+  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html):
+  the solver shows its text progress bar only once a single solve
+  exceeds this many subjects. The default (`.Machine$integer.max`) keeps
+  the bar off, which is what you want for scripts, vignettes and logs;
+  lower it (e.g. `1000L`) to see solver progress during long interactive
+  fits.
 
 - grad:
 
@@ -286,7 +322,7 @@ fit <- nlmixr2(
 #> ℹ parameter labels from comments are typically ignored in non-interactive mode
 #> ℹ Need to run with the source intact to parse comments
 #> === admixr2: Aggregate Data Modeling (MC) ===
-#>   Studies: 1 | MC samples: 1000 | Params: 11 | Cores: 1 | Grad: Sens | Restarts: 1
+#>   Obs units: 1 | MC samples: 1000 | Params: 11 | Cores: 1 | Grad: Sens | Restarts: 1
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
@@ -295,10 +331,12 @@ fit <- nlmixr2(
 #> | 0030     | -3690.65 |    4.961 |    10.25 |     29.9 |    9.857 |     1.04 |   0.1985 |   0.1045 |    0.109 |   0.1022 |   0.1072 |  0.09699 |
 #> | 0040     | -3690.72 |     4.95 |    10.16 |    30.02 |    9.814 |    1.031 |   0.1983 |   0.1044 |   0.1139 |   0.1022 |   0.1067 |  0.09433 |
 #> | 0045 ✓   | -3690.73 |    4.952 |    10.12 |    30.03 |    9.816 |    1.026 |   0.1983 |   0.1045 |   0.1157 |   0.1008 |   0.1064 |  0.09239 |
-#> | 8.3 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 9.8 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, Sens-Hessian, 7 gradient evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
+#>  
+#>  
 print(fit)
 #> ── nlmixr² admc ──
 #> 
@@ -308,7 +346,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    8.299      8.851   17.15
+#> 1     9.78      8.373  18.153
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

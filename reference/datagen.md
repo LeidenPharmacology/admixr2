@@ -48,6 +48,16 @@ datagen(studies, model = NULL, control = datagenControl())
       supplying the result to
       [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md).
 
+  `observations`
+
+  :   (Optional) a named list to generate data for several observed
+      outputs (multi-compartment). Each entry gives one output's
+      `output` (model prediction variable, e.g. `"cp"`), `times`, and
+      optionally `ev`/`n` (inherited from the study otherwise). When
+      present, the study result carries a matching `observations` list
+      of per-output `E`/`V`, ready to pass straight to
+      `admControl(studies = ...)`.
+
 - model:
 
   Optional default model function used for any study that does not

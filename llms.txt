@@ -243,6 +243,8 @@ Example datasets.
   plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md):
 - [Multiple
   studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md):
+- [Several observed compartments (plasma and
+  brain)](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.md):
 - [Estimator comparison: adfo, admc, adgh and
   adirmc](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md):
 - [Advanced

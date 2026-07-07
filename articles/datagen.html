@@ -51,6 +51,7 @@
 <li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
@@ -78,7 +79,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Generating aggregate data with datagen</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.2.0/vignettes/datagen.Rmd" class="external-link"><code>vignettes/datagen.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/datagen.Rmd" class="external-link"><code>vignettes/datagen.Rmd</code></a></small>
       <div class="d-none name"><code>datagen.Rmd</code></div>
     </div>
 
@@ -162,7 +163,7 @@ Each study spec needs only <code>times</code>, <code>ev</code>, and
 <span></span>
 <span><span class="co"># Each study returns E, V, n, times, ev</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">study_data</span><span class="op">$</span><span class="va">low_dose</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] "E"     "V"     "n"     "times" "ev"</span></span>
+<span><span class="co">#&gt; [1] "E"      "V"      "n"      "times"  "ev"     "output"</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">study_data</span><span class="op">$</span><span class="va">low_dose</span><span class="op">$</span><span class="va">E</span>, <span class="fl">2</span><span class="op">)</span>   <span class="co"># population mean at each time</span></span>
 <span><span class="co">#&gt;  0.5    1    2    4    8   12   24 </span></span>
 <span><span class="co">#&gt; 1.75 2.38 2.27 1.18 0.24 0.06 0.00</span></span></code></pre></div>
@@ -265,9 +266,6 @@ finds them regardless.</p>
 <span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
 <span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
 <span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:03 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:03</span></span>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">fit_sim</span><span class="op">)</span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── </span><span style="color: #0000BB; font-weight: bold;">nlmix</span><span style="color: #BB0000; font-weight: bold;">r²</span><span style="font-weight: bold;"> </span><span style="color: #BBBB00; font-weight: bold;">admc</span><span style="font-weight: bold;"> ──</span></span></span>
@@ -278,14 +276,14 @@ finds them regardless.</p>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt;   optimize covariance elapsed</span></span>
-<span><span class="co">#&gt; 1   65.256      7.761  73.017</span></span>
+<span><span class="co">#&gt; 1   66.707      7.598  74.305</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt;                         <span style="font-weight: bold;">Parameter</span>     <span style="font-weight: bold;">Est.</span>       <span style="font-weight: bold;">SE</span>   <span style="font-weight: bold;">%RSE</span></span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">tcl</span>           Log clearance (L/h)    1.608 0.009336 0.5806</span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">tv</span>                 Log volume (L)    2.303  0.01276 0.5543</span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tka</span>     Log absorption rate (1/h) 0.001747  0.01798   1029</span></span>
+<span><span class="co">#&gt; <span style="font-weight: bold;">tka</span>     Log absorption rate (1/h) 0.001746  0.01798   1029</span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">prop.sd</span>     Proportional error SD   0.1999                </span></span>
 <span><span class="co">#&gt;         <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">tcl</span>        4.994 (4.903, 5.086)     30.4            </span></span>

@@ -51,6 +51,7 @@
 <li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
@@ -78,7 +79,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Multiple studies</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.2.0/vignettes/multiple-studies.Rmd" class="external-link"><code>vignettes/multiple-studies.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/multiple-studies.Rmd" class="external-link"><code>vignettes/multiple-studies.Rmd</code></a></small>
       <div class="d-none name"><code>multiple-studies.Rmd</code></div>
     </div>
 
@@ -214,9 +215,6 @@ specify <code>times</code>, <code>ev</code>, <code>V</code>,
 <span>    seed      <span class="op">=</span> <span class="fl">1L</span></span>
 <span>  <span class="op">)</span></span>
 <span><span class="op">)</span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:07 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:07</span></span>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">fit_multi</span><span class="op">)</span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── </span><span style="color: #0000BB; font-weight: bold;">nlmix</span><span style="color: #BB0000; font-weight: bold;">r²</span><span style="font-weight: bold;"> </span><span style="color: #BBBB00; font-weight: bold;">admc</span><span style="font-weight: bold;"> ──</span></span></span>
@@ -227,7 +225,7 @@ specify <code>times</code>, <code>ev</code>, <code>V</code>,
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit_multi</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt;   optimize covariance elapsed</span></span>
-<span><span class="co">#&gt; 1    77.14     18.349  95.489</span></span>
+<span><span class="co">#&gt; 1   78.781     17.724  96.505</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit_multi</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit_multi</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
@@ -275,7 +273,10 @@ Mean diagnostics for both cohorts (one panel per study).
 </div>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">plots</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] "mean_cohort1" "mean_cohort2"</span></span></code></pre></div>
+<span><span class="co">#&gt;  [1] "mean_cohort1"           "mean_cohort1_obs"       "mean_cohort1_pred"     </span></span>
+<span><span class="co">#&gt;  [4] "mean_cohort1_resid"     "mean_cohort1_std_resid" "mean_cohort2"          </span></span>
+<span><span class="co">#&gt;  [7] "mean_cohort2_obs"       "mean_cohort2_pred"      "mean_cohort2_resid"    </span></span>
+<span><span class="co">#&gt; [10] "mean_cohort2_std_resid"</span></span></code></pre></div>
 <p>Access individual panels to compare studies side by side:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span><span class="op">$</span><span class="va">mean_cohort1</span></span>
