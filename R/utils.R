@@ -131,7 +131,8 @@ utils::globalVariables(c(
   # linCmt endpoints ("rxLinCmt"/"linCmt*" -> "ipredSim") match. See
   # .admOutputColName().
   so_col <- vapply(so, function(x)
-    if (is.na(x)) NA_character_ else .admOutputColName(x), character(1))
+    if (is.na(x)) NA_character_ else .admOutputColName(x), character(1),
+    USE.NAMES = FALSE)
   sel <- so_col == output
   sel[is.na(sel)] <- FALSE
   sel
