@@ -1,9 +1,7 @@
 ## Empirical check: with the CORRECT model (IIV on ka, cl, v), do both the var
 ## and cov aggregate fits recover the individual FOCEI fit on Theophylline?
-## Point ADMIXR2_ROOT at the package root, or run from it (defaults to getwd()).
-WT <- Sys.getenv("ADMIXR2_ROOT", unset = getwd())
-suppressMessages(pkgload::load_all(WT, quiet = TRUE, export_all = TRUE))
-suppressMessages({library(rxode2); library(nlmixr2)})
+## Run against the installed package -- no working directory or path needed.
+suppressMessages({library(admixr2); library(rxode2); library(nlmixr2)})
 set.seed(1L); DOSE <- 320
 
 e <- new.env(); utils::data("theo_sd", package="nlmixr2data", envir=e); theo <- get("theo_sd", e)
