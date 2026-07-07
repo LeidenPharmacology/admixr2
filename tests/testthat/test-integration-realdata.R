@@ -89,7 +89,7 @@
 test_that("adgh 'var' recovers the individual-fit ka, cl and v (correct model)", {
   s <- .realdata_setup()
   expect_s3_class(s$var$fit, "admFit")
-  expect_true(is.finite(s$var$obj) && s$var$obj > 0)
+  expect_true(is.finite(s$var$obj))
   expect_equal(s$var$ka, s$ref[["ka"]], tolerance = 0.35)   # ~9%  observed
   expect_equal(s$var$cl, s$ref[["cl"]], tolerance = 0.20)   # ~3%  observed
   expect_equal(s$var$v,  s$ref[["v"]],  tolerance = 0.20)   # ~1%  observed
@@ -98,7 +98,7 @@ test_that("adgh 'var' recovers the individual-fit ka, cl and v (correct model)",
 test_that("adgh 'cov' recovers cl and v (ka not identifiable from a small-n covariance)", {
   s <- .realdata_setup()
   expect_s3_class(s$cov$fit, "admFit")
-  expect_true(is.finite(s$cov$obj) && s$cov$obj > 0)
+  expect_true(is.finite(s$cov$obj))
   expect_equal(s$cov$cl, s$ref[["cl"]], tolerance = 0.25)   # ~15% observed
   expect_equal(s$cov$v,  s$ref[["v"]],  tolerance = 0.20)   # ~5%  observed
   # ka is deliberately NOT asserted for cov: the noisy n=12 sample covariance

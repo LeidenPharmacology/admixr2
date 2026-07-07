@@ -1,6 +1,7 @@
 ## Empirical check: with the CORRECT model (IIV on ka, cl, v), do both the var
 ## and cov aggregate fits recover the individual FOCEI fit on Theophylline?
-WT <- "C:/package/admixr2/.claude/worktrees/indometh-validation"
+## Point ADMIXR2_ROOT at the package root, or run from it (defaults to getwd()).
+WT <- Sys.getenv("ADMIXR2_ROOT", unset = getwd())
 suppressMessages(pkgload::load_all(WT, quiet = TRUE, export_all = TRUE))
 suppressMessages({library(rxode2); library(nlmixr2)})
 set.seed(1L); DOSE <- 320

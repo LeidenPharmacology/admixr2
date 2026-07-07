@@ -243,7 +243,7 @@
     for (k in seq_len(n_s)) {
       if (!is.null(pinfo$struct_has_eta) && !pinfo$struct_has_eta[k]) next  # unpaired
       ei <- which(pinfo$struct_eta_idx == k)[1L]  # struct k -> its eta dim
-      if (is.na(ei)) next
+      if (is.na(ei)) next  # nocov -- defensive; ei always found when struct_has_eta[k]
       gmat    <- if (lnorm_scale != 1) Jl[[ei]] * lnorm_scale else Jl[[ei]]
       dmu_raw <- as.numeric(crossprod(W, Jl[[ei]]))  # d(mu_t)/d(psi) before lnorm scaling
       grad[k] <- grad[k] + contrib(gmat) + .sigma_V_extra(dmu_raw)
