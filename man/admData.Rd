@@ -9,18 +9,24 @@ admData(outputs = NULL)
 \arguments{
 \item{outputs}{Optional character vector of observed output (endpoint) names
 for a multi-compartment model with several prediction lines (e.g.
-\code{c("cp", "cCSF")}). One \code{NA} observation row is emitted per endpoint, keyed
-by name in the \code{CMT} column, so nlmixr2's data translation recognises every
-endpoint. When \code{NULL} (default) the single-endpoint dummy frame is returned
-unchanged.}
+\code{c("cp", "cCSF")}). One observation row is emitted per endpoint, keyed by
+name in the \code{DVID} column (nlmixr2's endpoint identifier; \code{CMT} is \code{NA} on
+those rows), so nlmixr2's data translation recognises every endpoint. These
+rows carry a non-\code{NA} placeholder \code{DV} (\code{1}) because nlmixr2's
+multi-endpoint translator rejects an all-\code{NA}-DV dataset; the placeholder is
+purely for dispatch and never enters the reported objective (each estimator
+overwrites it with its own aggregate -2LL). When \code{NULL} (default) the
+single-endpoint dummy frame is returned unchanged.}
 }
 \value{
-A data frame with columns \code{ID}, \code{TIME}, \code{DV}, \code{AMT}, \code{EVID}, \code{CMT}.
+A data frame with columns \code{ID}, \code{TIME}, \code{DV}, \code{AMT}, \code{EVID}, \code{CMT}
+(single-endpoint), plus a \code{DVID} endpoint column when \code{outputs} is given.
 }
 \description{
 Returns a minimal NONMEM-style data frame that satisfies nlmixr2's data
-argument requirement. All \code{DV} values are \code{NA} so nlmixr2 adds zero
-log(2pi) constants to OBJF, keeping \verb{fit$objective == our -2LL} exactly.
+argument requirement. For the single-endpoint frame all \code{DV} values are \code{NA},
+so nlmixr2 adds zero log(2pi) constants to OBJF, keeping
+\verb{fit$objective == our -2LL} exactly.
 }
 \examples{
 admData()

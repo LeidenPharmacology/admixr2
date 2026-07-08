@@ -13,6 +13,21 @@ knitr::opts_chunk$set(
   message = FALSE, warning = FALSE,
   fig.width = 7, fig.height = 4.2, dpi = 120
 )
+# nlmixr2's fit print method uses cli colour; when a build forces colour on (e.g.
+# pkgdown/CI) the raw ANSI escapes leak into the HTML. Force plain-text output
+# for this vignette only, saving the previous global state...
+.adm_opts    <- options(cli.num_colors = 1, crayon.enabled = FALSE)
+.adm_nocolor <- Sys.getenv("NO_COLOR", unset = NA)
+Sys.setenv(NO_COLOR = "1")
+
+# ...and restoring it once the document has finished knitting, so the setting
+# does not leak into other articles when pkgdown builds them in one process.
+knitr::knit_hooks$set(document = function(x) {
+  options(.adm_opts)
+  if (is.na(.adm_nocolor)) Sys.unsetenv("NO_COLOR") else Sys.setenv(NO_COLOR = .adm_nocolor)
+  x
+})
+
 # The estimators keep rxode2's progress bar off during fitting (the control's
 # nDisplayProgress argument), but a one-off bar still prints while each model is
 # *compiled*. Strip those animation frames from the rendered output.
