@@ -26,14 +26,14 @@ h1, h2, h3, h4, h5, h6,
 /* ── Code ─────────────────────────────────────────────── */
 
 pre {
-  background: #1e2a3a;
-  border: none;
+  background: #F3F1EC;
+  border: 1px solid rgba(26, 35, 50, 0.08);
   border-radius: 8px;
   padding: 1rem 1.2rem;
 }
 
 pre code {
-  color: #e8e6e0;
+  color: #1A2332;
   background: none;
   padding: 0;
   line-height: 1.65;
@@ -72,11 +72,3 @@ body { transition: background-color 200ms ease, color 200ms ease; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
-
-/* ── Dark mode ────────────────────────────────────────── */
-
-[data-bs-theme="dark"] code { background: rgba(91, 191, 207, 0.12); color: #5bbfcf; }
-[data-bs-theme="dark"] pre { background: #111823; }
-[data-bs-theme="dark"] pre code { background: none; color: #e8e6e0; }
-[data-bs-theme="dark"] .table th { color: #e8e6e0; }
-[data-bs-theme="dark"] footer { border-top-color: rgba(247, 246, 243, 0.07); color: rgba(247, 246, 243, 0.45); }
