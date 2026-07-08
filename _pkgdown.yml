@@ -3,6 +3,7 @@ url: https://leidenpharmacology.github.io/admixr2
 template:
   bootstrap: 5
   bootswatch: cosmo
+  theme: arrow-light
   bslib:
     # FeRx-inspired slate/oxide palette
     bg: "#F7F6F3"
