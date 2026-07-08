@@ -13,6 +13,11 @@ knitr::opts_chunk$set(
   message = FALSE, warning = FALSE,
   fig.width = 7, fig.height = 4.2, dpi = 120
 )
+# nlmixr2's fit print method uses cli colour; when a build forces colour on (e.g.
+# pkgdown/CI) the raw ANSI escapes leak into the HTML. Force plain-text output.
+options(cli.num_colors = 1, crayon.enabled = FALSE)
+Sys.setenv(NO_COLOR = "1")
+
 # The estimators keep rxode2's progress bar off during fitting (the control's
 # nDisplayProgress argument), but a one-off bar still prints while each model is
 # *compiled*. Strip those animation frames from the rendered output.
