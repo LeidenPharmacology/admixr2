@@ -1,8 +1,9 @@
 # Dummy data frame for nlmixr2 dispatch
 
 Returns a minimal NONMEM-style data frame that satisfies nlmixr2's data
-argument requirement. All `DV` values are `NA` so nlmixr2 adds zero
-log(2pi) constants to OBJF, keeping `fit$objective == our -2LL` exactly.
+argument requirement. For the single-endpoint frame all `DV` values are
+`NA`, so nlmixr2 adds zero log(2pi) constants to OBJF, keeping
+`fit$objective == our -2LL` exactly.
 
 ## Usage
 
@@ -16,14 +17,21 @@ admData(outputs = NULL)
 
   Optional character vector of observed output (endpoint) names for a
   multi-compartment model with several prediction lines (e.g.
-  `c("cp", "cCSF")`). One `NA` observation row is emitted per endpoint,
-  keyed by name in the `CMT` column, so nlmixr2's data translation
-  recognises every endpoint. When `NULL` (default) the single-endpoint
-  dummy frame is returned unchanged.
+  `c("cp", "cCSF")`). One observation row is emitted per endpoint, keyed
+  by name in the `DVID` column (nlmixr2's endpoint identifier; `CMT` is
+  `NA` on those rows), so nlmixr2's data translation recognises every
+  endpoint. These rows carry a non-`NA` placeholder `DV` (`1`) because
+  nlmixr2's multi-endpoint translator rejects an all-`NA`-DV dataset;
+  the placeholder is purely for dispatch and never enters the reported
+  objective (each estimator overwrites it with its own aggregate -2LL).
+  When `NULL` (default) the single-endpoint dummy frame is returned
+  unchanged.
 
 ## Value
 
-A data frame with columns `ID`, `TIME`, `DV`, `AMT`, `EVID`, `CMT`.
+A data frame with columns `ID`, `TIME`, `DV`, `AMT`, `EVID`, `CMT`
+(single-endpoint), plus a `DVID` endpoint column when `outputs` is
+given.
 
 ## Examples
 

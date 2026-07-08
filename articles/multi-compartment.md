@@ -73,32 +73,32 @@ pk_plasma <- function() {
 fit_plasma <- nlmixr2(pk_plasma, admData(), est = "adgh",
                       control = adghControl(studies = list(trial = plasma_study)))
 fit_plasma
- [1m──  [34mnlmix [39m [31mr² [39m  [33madgh [39m ── [22m
+── nlmixr² adgh ──
 
          OBJF      AIC      BIC Log-likelihood
 adgh 229.6289 243.6289 270.8316      -114.8144
 
- [1m── Time (sec  [33mfit_plasma [39m [34m$time [39m): ── [22m
+── Time (sec fit_plasma$time): ──
 
         optimize covariance elapsed other
-elapsed    3.705      0.356   4.061  0.08
+elapsed    3.647      0.326   3.973 0.567
 
- [1m── Population Parameters ( [33mfit_plasma [39m [34m$parFixed [39m or  [33mfit_plasma [39m [34m$parFixedDf [39m): ── [22m
+── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
-             [1mEst. [0m       [1m [1mSE [0m [0m   [1m%RSE [0m  [1mBack-transformed(95%CI) [0m  [1mBSV(CV%) [0m  [1mShrink(SD)% [0m
- [1m [1mtcl [0m [0m      0.03319 0.03098 93.36   1.034 (0.9728, 1.098)     27.9            
- [1m [1mtv1 [0m [0m        2.292 0.04476 1.953     9.893 (9.062, 10.8)     15.1            
- [1m [1mtq [0m [0m        0.8808  0.3692 41.91     2.413 (1.17, 4.975)                     
- [1m [1mtv2 [0m [0m        0.867   0.153 17.64     2.38 (1.763, 3.212)                     
- [1m [1mprop.cp [0m [0m 0.004104                              0.004104                     
+            Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl      0.03319 0.03098 93.36   1.034 (0.9728, 1.098)     27.9            
+tv1        2.292 0.04476 1.953     9.893 (9.062, 10.8)     15.1            
+tq        0.8808  0.3692 41.91     2.413 (1.17, 4.975)                     
+tv2        0.867   0.153 17.64     2.38 (1.763, 3.212)                     
+prop.cp 0.004104                              0.004104                     
  
-  Covariance Type ( [33mfit_plasma [39m [1m [34m$covMethod [39m [22m):  [1mr [22m
+  Covariance Type (fit_plasma$covMethod): r
   No correlations in between subject variability (BSV) matrix
-  Full BSV covariance ( [33mfit_plasma [39m [1m [34m$omega [39m [22m) 
-    or correlation ( [33mfit_plasma [39m [1m [34m$omegaR [39m [22m; diagonals=SDs)
-  Distribution stats (mean/skewness/kurtosis/p-value) available in  [1m [34m$shrink [39m [22m 
-  Censoring ( [33mfit_plasma [39m [1m [34m$censInformation [39m [22m): No censoring
-  Minimization message ( [33mfit_plasma [39m [1m [34m$message [39m [22m):  
+  Full BSV covariance (fit_plasma$omega) 
+    or correlation (fit_plasma$omegaR; diagonals=SDs)
+  Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
+  Censoring (fit_plasma$censInformation): No censoring
+  Minimization message (fit_plasma$message):  
     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 
@@ -181,33 +181,33 @@ which outputs to expect. Then the fit call is identical to Step 1:
 fit_cns <- nlmixr2(pk_cns, admData(c("cp", "cb")), est = "adgh",
                    control = adghControl(studies = list(lit = cns_study)))
 fit_cns
- [1m──  [34mnlmix [39m [31mr² [39m  [33madgh [39m ── [22m
+── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
 adgh -88.58817 -72.58817 -36.65025       44.29408
 
- [1m── Time (sec  [33mfit_cns [39m [34m$time [39m): ── [22m
+── Time (sec fit_cns$time): ──
 
-  optimize covariance elapsed
-1     3.72      0.797   4.517
+        optimize covariance elapsed other
+elapsed      3.5      0.735   4.235 0.357
 
- [1m── Population Parameters ( [33mfit_cns [39m [34m$parFixed [39m or  [33mfit_cns [39m [34m$parFixedDf [39m): ── [22m
+── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
-            [1mEst. [0m       [1m [1mSE [0m [0m    [1m%RSE [0m  [1mBack-transformed(95%CI) [0m  [1mBSV(CV%) [0m  [1mShrink(SD)% [0m
- [1m [1mtcl [0m [0m     0.04145 0.01875  45.22    1.042 (1.005, 1.081)     27.0            
- [1m [1mtv1 [0m [0m       2.269 0.01028 0.4529    9.672 (9.479, 9.868)     13.9            
- [1m [1mtqin [0m [0m      1.083 0.03604  3.328    2.953 (2.752, 3.169)                     
- [1m [1mtqout [0m [0m     1.777 0.04141   2.33    5.915 (5.454, 6.415)                     
- [1m [1mprop.cp [0m [0m 0.04853                                0.04853                     
- [1m [1madd.cb [0m [0m  0.01999                                0.01999                     
+           Est.      SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl     0.04145 0.01875  45.22    1.042 (1.005, 1.081)     27.0            
+tv1       2.269 0.01028 0.4529    9.672 (9.479, 9.868)     13.9            
+tqin      1.083 0.03604  3.328    2.953 (2.752, 3.169)                     
+tqout     1.777 0.04141   2.33    5.915 (5.454, 6.415)                     
+prop.cp 0.04853                                0.04853                     
+add.cb  0.01999                                0.01999                     
  
-  Covariance Type ( [33mfit_cns [39m [1m [34m$covMethod [39m [22m):  [1mr [22m
+  Covariance Type (fit_cns$covMethod): r
   No correlations in between subject variability (BSV) matrix
-  Full BSV covariance ( [33mfit_cns [39m [1m [34m$omega [39m [22m) 
-    or correlation ( [33mfit_cns [39m [1m [34m$omegaR [39m [22m; diagonals=SDs)
-  Distribution stats (mean/skewness/kurtosis/p-value) available in  [1m [34m$shrink [39m [22m 
-  Censoring ( [33mfit_cns [39m [1m [34m$censInformation [39m [22m): No censoring
-  Minimization message ( [33mfit_cns [39m [1m [34m$message [39m [22m):  
+  Full BSV covariance (fit_cns$omega) 
+    or correlation (fit_cns$omegaR; diagonals=SDs)
+  Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
+  Censoring (fit_cns$censInformation): No censoring
+  Minimization message (fit_cns$message):  
     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 

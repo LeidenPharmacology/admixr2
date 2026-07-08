@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
 <link rel="icon" sizes="any" href="../favicon.ico">
 <link rel="manifest" href="../site.webmanifest">
-<script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/IBM_Plex_Sans-0.4.10/font.css" rel="stylesheet">
 <link href="../deps/JetBrains_Mono-0.4.10/font.css" rel="stylesheet">
@@ -25,7 +25,7 @@
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
-    <nav class="navbar navbar-expand-lg fixed-top " aria-label="Site navigation"><div class="container">
+    <nav class="navbar navbar-expand-lg fixed-top bg-primary" data-bs-theme="dark" aria-label="Site navigation"><div class="container">
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
@@ -156,32 +156,32 @@ Gauss–Hermite estimator:</p>
 <span id="cb3-18"><a href="#cb3-18" tabindex="-1"></a>fit_plasma <span class="ot">&lt;-</span> <span class="fu">nlmixr2</span>(pk_plasma, <span class="fu">admData</span>(), <span class="at">est =</span> <span class="st">"adgh"</span>,</span>
 <span id="cb3-19"><a href="#cb3-19" tabindex="-1"></a>                      <span class="at">control =</span> <span class="fu">adghControl</span>(<span class="at">studies =</span> <span class="fu">list</span>(<span class="at">trial =</span> plasma_study)))</span>
 <span id="cb3-20"><a href="#cb3-20" tabindex="-1"></a>fit_plasma</span>
-<span id="cb3-21"><a href="#cb3-21" tabindex="-1"></a> [<span class="dv">1</span>m──  [<span class="dv">34</span>mnlmix [<span class="dv">39</span>m [<span class="dv">31</span>mr² [<span class="dv">39</span>m  [<span class="dv">33</span>madgh [<span class="dv">39</span>m ── [<span class="dv">22</span>m</span>
+<span id="cb3-21"><a href="#cb3-21" tabindex="-1"></a>── nlmixr² adgh ──</span>
 <span id="cb3-22"><a href="#cb3-22" tabindex="-1"></a></span>
 <span id="cb3-23"><a href="#cb3-23" tabindex="-1"></a>         OBJF      AIC      BIC Log<span class="sc">-</span>likelihood</span>
 <span id="cb3-24"><a href="#cb3-24" tabindex="-1"></a>adgh <span class="fl">229.6289</span> <span class="fl">243.6289</span> <span class="fl">270.8316</span>      <span class="sc">-</span><span class="fl">114.8144</span></span>
 <span id="cb3-25"><a href="#cb3-25" tabindex="-1"></a></span>
-<span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a> [<span class="dv">1</span>m── <span class="fu">Time</span> (sec  [<span class="dv">33</span>mfit_plasma [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>time [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
+<span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_plasma<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a></span>
 <span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a>        optimize covariance elapsed other</span>
-<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a>elapsed    <span class="fl">3.705</span>      <span class="fl">0.356</span>   <span class="fl">4.061</span>  <span class="fl">0.08</span></span>
+<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a>elapsed    <span class="fl">3.647</span>      <span class="fl">0.326</span>   <span class="fl">3.973</span> <span class="fl">0.567</span></span>
 <span id="cb3-30"><a href="#cb3-30" tabindex="-1"></a></span>
-<span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a> [<span class="dv">1</span>m── Population <span class="fu">Parameters</span> ( [<span class="dv">33</span>mfit_plasma [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixed [<span class="dv">39</span>m or  [<span class="dv">33</span>mfit_plasma [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixedDf [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
+<span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_plasma<span class="sc">$</span>parFixed or fit_plasma<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb3-32"><a href="#cb3-32" tabindex="-1"></a></span>
-<span id="cb3-33"><a href="#cb3-33" tabindex="-1"></a>             [<span class="dv">1</span>mEst. [<span class="dv">0</span>m       [<span class="dv">1</span>m [<span class="dv">1</span>mSE [<span class="dv">0</span>m [<span class="dv">0</span>m   [<span class="dv">1</span>m<span class="sc">%RSE [0m  [1mBack-transformed(95%</span>CI<span class="er">)</span> [<span class="dv">0</span>m  [<span class="dv">1</span><span class="fu">mBSV</span>(CV<span class="sc">%) [0m  [1mShrink(SD)%</span> [<span class="dv">0</span>m</span>
-<span id="cb3-34"><a href="#cb3-34" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtcl [<span class="dv">0</span>m [<span class="dv">0</span>m      <span class="fl">0.03319</span> <span class="fl">0.03098</span> <span class="fl">93.36</span>   <span class="fl">1.034</span> (<span class="fl">0.9728</span>, <span class="fl">1.098</span>)     <span class="fl">27.9</span>            </span>
-<span id="cb3-35"><a href="#cb3-35" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv1 [<span class="dv">0</span>m [<span class="dv">0</span>m        <span class="fl">2.292</span> <span class="fl">0.04476</span> <span class="fl">1.953</span>     <span class="fl">9.893</span> (<span class="fl">9.062</span>, <span class="fl">10.8</span>)     <span class="fl">15.1</span>            </span>
-<span id="cb3-36"><a href="#cb3-36" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtq [<span class="dv">0</span>m [<span class="dv">0</span>m        <span class="fl">0.8808</span>  <span class="fl">0.3692</span> <span class="fl">41.91</span>     <span class="fl">2.413</span> (<span class="fl">1.17</span>, <span class="fl">4.975</span>)                     </span>
-<span id="cb3-37"><a href="#cb3-37" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv2 [<span class="dv">0</span>m [<span class="dv">0</span>m        <span class="fl">0.867</span>   <span class="fl">0.153</span> <span class="fl">17.64</span>     <span class="fl">2.38</span> (<span class="fl">1.763</span>, <span class="fl">3.212</span>)                     </span>
-<span id="cb3-38"><a href="#cb3-38" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mprop.cp [<span class="dv">0</span>m [<span class="dv">0</span>m <span class="fl">0.004104</span>                              <span class="fl">0.004104</span>                     </span>
+<span id="cb3-33"><a href="#cb3-33" tabindex="-1"></a>            Est.      SE  <span class="sc">%RSE Back-transformed(95%</span>CI<span class="er">)</span> <span class="fu">BSV</span>(CV<span class="sc">%) Shrink(SD)%</span></span>
+<span id="cb3-34"><a href="#cb3-34" tabindex="-1"></a>tcl      <span class="fl">0.03319</span> <span class="fl">0.03098</span> <span class="fl">93.36</span>   <span class="fl">1.034</span> (<span class="fl">0.9728</span>, <span class="fl">1.098</span>)     <span class="fl">27.9</span>            </span>
+<span id="cb3-35"><a href="#cb3-35" tabindex="-1"></a>tv1        <span class="fl">2.292</span> <span class="fl">0.04476</span> <span class="fl">1.953</span>     <span class="fl">9.893</span> (<span class="fl">9.062</span>, <span class="fl">10.8</span>)     <span class="fl">15.1</span>            </span>
+<span id="cb3-36"><a href="#cb3-36" tabindex="-1"></a>tq        <span class="fl">0.8808</span>  <span class="fl">0.3692</span> <span class="fl">41.91</span>     <span class="fl">2.413</span> (<span class="fl">1.17</span>, <span class="fl">4.975</span>)                     </span>
+<span id="cb3-37"><a href="#cb3-37" tabindex="-1"></a>tv2        <span class="fl">0.867</span>   <span class="fl">0.153</span> <span class="fl">17.64</span>     <span class="fl">2.38</span> (<span class="fl">1.763</span>, <span class="fl">3.212</span>)                     </span>
+<span id="cb3-38"><a href="#cb3-38" tabindex="-1"></a>prop.cp <span class="fl">0.004104</span>                              <span class="fl">0.004104</span>                     </span>
 <span id="cb3-39"><a href="#cb3-39" tabindex="-1"></a> </span>
-<span id="cb3-40"><a href="#cb3-40" tabindex="-1"></a>  Covariance <span class="fu">Type</span> ( [<span class="dv">33</span>mfit_plasma [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>covMethod [<span class="dv">39</span>m [<span class="dv">22</span>m)<span class="sc">:</span>  [<span class="dv">1</span>mr [<span class="dv">22</span>m</span>
+<span id="cb3-40"><a href="#cb3-40" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit_plasma<span class="sc">$</span>covMethod)<span class="sc">:</span> r</span>
 <span id="cb3-41"><a href="#cb3-41" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
-<span id="cb3-42"><a href="#cb3-42" tabindex="-1"></a>  Full BSV <span class="fu">covariance</span> ( [<span class="dv">33</span>mfit_plasma [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>omega [<span class="dv">39</span>m [<span class="dv">22</span>m) </span>
-<span id="cb3-43"><a href="#cb3-43" tabindex="-1"></a>    or <span class="fu">correlation</span> ( [<span class="dv">33</span>mfit_plasma [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>omegaR [<span class="dv">39</span>m [<span class="dv">22</span>m; <span class="at">diagonals=</span>SDs)</span>
-<span id="cb3-44"><a href="#cb3-44" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span>  [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>shrink [<span class="dv">39</span>m [<span class="dv">22</span>m </span>
-<span id="cb3-45"><a href="#cb3-45" tabindex="-1"></a>  <span class="fu">Censoring</span> ( [<span class="dv">33</span>mfit_plasma [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>censInformation [<span class="dv">39</span>m [<span class="dv">22</span>m)<span class="sc">:</span> No censoring</span>
-<span id="cb3-46"><a href="#cb3-46" tabindex="-1"></a>  Minimization <span class="fu">message</span> ( [<span class="dv">33</span>mfit_plasma [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>message [<span class="dv">39</span>m [<span class="dv">22</span>m)<span class="sc">:</span>  </span>
+<span id="cb3-42"><a href="#cb3-42" tabindex="-1"></a>  Full BSV <span class="fu">covariance</span> (fit_plasma<span class="sc">$</span>omega) </span>
+<span id="cb3-43"><a href="#cb3-43" tabindex="-1"></a>    or <span class="fu">correlation</span> (fit_plasma<span class="sc">$</span>omegaR; <span class="at">diagonals=</span>SDs)</span>
+<span id="cb3-44"><a href="#cb3-44" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> <span class="sc">$</span>shrink </span>
+<span id="cb3-45"><a href="#cb3-45" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit_plasma<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
+<span id="cb3-46"><a href="#cb3-46" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit_plasma<span class="sc">$</span>message)<span class="sc">:</span>  </span>
 <span id="cb3-47"><a href="#cb3-47" tabindex="-1"></a>    NLOPT_XTOL_REACHED<span class="sc">:</span> Optimization stopped because xtol_rel or <span class="fu">xtol_abs</span> (above) was reached. </span></code></pre></div>
 <p>This is a perfectly good plasma model — but look at what it
 <em>cannot</em> answer. Its <code>periph</code> compartment is a
@@ -247,33 +247,33 @@ to expect. Then the fit call is identical to Step 1:</p>
 <div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>fit_cns <span class="ot">&lt;-</span> <span class="fu">nlmixr2</span>(pk_cns, <span class="fu">admData</span>(<span class="fu">c</span>(<span class="st">"cp"</span>, <span class="st">"cb"</span>)), <span class="at">est =</span> <span class="st">"adgh"</span>,</span>
 <span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>                   <span class="at">control =</span> <span class="fu">adghControl</span>(<span class="at">studies =</span> <span class="fu">list</span>(<span class="at">lit =</span> cns_study)))</span>
 <span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>fit_cns</span>
-<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a> [<span class="dv">1</span>m──  [<span class="dv">34</span>mnlmix [<span class="dv">39</span>m [<span class="dv">31</span>mr² [<span class="dv">39</span>m  [<span class="dv">33</span>madgh [<span class="dv">39</span>m ── [<span class="dv">22</span>m</span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a>── nlmixr² adgh ──</span>
 <span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a></span>
 <span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a>          OBJF       AIC       BIC Log<span class="sc">-</span>likelihood</span>
 <span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>adgh <span class="sc">-</span><span class="fl">88.58817</span> <span class="sc">-</span><span class="fl">72.58817</span> <span class="sc">-</span><span class="fl">36.65025</span>       <span class="fl">44.29408</span></span>
 <span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a></span>
-<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a> [<span class="dv">1</span>m── <span class="fu">Time</span> (sec  [<span class="dv">33</span>mfit_cns [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>time [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
+<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_cns<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a></span>
-<span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>  optimize covariance elapsed</span>
-<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a><span class="dv">1</span>     <span class="fl">3.72</span>      <span class="fl">0.797</span>   <span class="fl">4.517</span></span>
+<span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>        optimize covariance elapsed other</span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed      <span class="fl">3.5</span>      <span class="fl">0.735</span>   <span class="fl">4.235</span> <span class="fl">0.357</span></span>
 <span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a></span>
-<span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a> [<span class="dv">1</span>m── Population <span class="fu">Parameters</span> ( [<span class="dv">33</span>mfit_cns [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixed [<span class="dv">39</span>m or  [<span class="dv">33</span>mfit_cns [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixedDf [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
+<span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_cns<span class="sc">$</span>parFixed or fit_cns<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a></span>
-<span id="cb7-16"><a href="#cb7-16" tabindex="-1"></a>            [<span class="dv">1</span>mEst. [<span class="dv">0</span>m       [<span class="dv">1</span>m [<span class="dv">1</span>mSE [<span class="dv">0</span>m [<span class="dv">0</span>m    [<span class="dv">1</span>m<span class="sc">%RSE [0m  [1mBack-transformed(95%</span>CI<span class="er">)</span> [<span class="dv">0</span>m  [<span class="dv">1</span><span class="fu">mBSV</span>(CV<span class="sc">%) [0m  [1mShrink(SD)%</span> [<span class="dv">0</span>m</span>
-<span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtcl [<span class="dv">0</span>m [<span class="dv">0</span>m     <span class="fl">0.04145</span> <span class="fl">0.01875</span>  <span class="fl">45.22</span>    <span class="fl">1.042</span> (<span class="fl">1.005</span>, <span class="fl">1.081</span>)     <span class="fl">27.0</span>            </span>
-<span id="cb7-18"><a href="#cb7-18" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv1 [<span class="dv">0</span>m [<span class="dv">0</span>m       <span class="fl">2.269</span> <span class="fl">0.01028</span> <span class="fl">0.4529</span>    <span class="fl">9.672</span> (<span class="fl">9.479</span>, <span class="fl">9.868</span>)     <span class="fl">13.9</span>            </span>
-<span id="cb7-19"><a href="#cb7-19" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtqin [<span class="dv">0</span>m [<span class="dv">0</span>m      <span class="fl">1.083</span> <span class="fl">0.03604</span>  <span class="fl">3.328</span>    <span class="fl">2.953</span> (<span class="fl">2.752</span>, <span class="fl">3.169</span>)                     </span>
-<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtqout [<span class="dv">0</span>m [<span class="dv">0</span>m     <span class="fl">1.777</span> <span class="fl">0.04141</span>   <span class="fl">2.33</span>    <span class="fl">5.915</span> (<span class="fl">5.454</span>, <span class="fl">6.415</span>)                     </span>
-<span id="cb7-21"><a href="#cb7-21" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mprop.cp [<span class="dv">0</span>m [<span class="dv">0</span>m <span class="fl">0.04853</span>                                <span class="fl">0.04853</span>                     </span>
-<span id="cb7-22"><a href="#cb7-22" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>madd.cb [<span class="dv">0</span>m [<span class="dv">0</span>m  <span class="fl">0.01999</span>                                <span class="fl">0.01999</span>                     </span>
+<span id="cb7-16"><a href="#cb7-16" tabindex="-1"></a>           Est.      SE   <span class="sc">%RSE Back-transformed(95%</span>CI<span class="er">)</span> <span class="fu">BSV</span>(CV<span class="sc">%) Shrink(SD)%</span></span>
+<span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a>tcl     <span class="fl">0.04145</span> <span class="fl">0.01875</span>  <span class="fl">45.22</span>    <span class="fl">1.042</span> (<span class="fl">1.005</span>, <span class="fl">1.081</span>)     <span class="fl">27.0</span>            </span>
+<span id="cb7-18"><a href="#cb7-18" tabindex="-1"></a>tv1       <span class="fl">2.269</span> <span class="fl">0.01028</span> <span class="fl">0.4529</span>    <span class="fl">9.672</span> (<span class="fl">9.479</span>, <span class="fl">9.868</span>)     <span class="fl">13.9</span>            </span>
+<span id="cb7-19"><a href="#cb7-19" tabindex="-1"></a>tqin      <span class="fl">1.083</span> <span class="fl">0.03604</span>  <span class="fl">3.328</span>    <span class="fl">2.953</span> (<span class="fl">2.752</span>, <span class="fl">3.169</span>)                     </span>
+<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a>tqout     <span class="fl">1.777</span> <span class="fl">0.04141</span>   <span class="fl">2.33</span>    <span class="fl">5.915</span> (<span class="fl">5.454</span>, <span class="fl">6.415</span>)                     </span>
+<span id="cb7-21"><a href="#cb7-21" tabindex="-1"></a>prop.cp <span class="fl">0.04853</span>                                <span class="fl">0.04853</span>                     </span>
+<span id="cb7-22"><a href="#cb7-22" tabindex="-1"></a>add.cb  <span class="fl">0.01999</span>                                <span class="fl">0.01999</span>                     </span>
 <span id="cb7-23"><a href="#cb7-23" tabindex="-1"></a> </span>
-<span id="cb7-24"><a href="#cb7-24" tabindex="-1"></a>  Covariance <span class="fu">Type</span> ( [<span class="dv">33</span>mfit_cns [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>covMethod [<span class="dv">39</span>m [<span class="dv">22</span>m)<span class="sc">:</span>  [<span class="dv">1</span>mr [<span class="dv">22</span>m</span>
+<span id="cb7-24"><a href="#cb7-24" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit_cns<span class="sc">$</span>covMethod)<span class="sc">:</span> r</span>
 <span id="cb7-25"><a href="#cb7-25" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
-<span id="cb7-26"><a href="#cb7-26" tabindex="-1"></a>  Full BSV <span class="fu">covariance</span> ( [<span class="dv">33</span>mfit_cns [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>omega [<span class="dv">39</span>m [<span class="dv">22</span>m) </span>
-<span id="cb7-27"><a href="#cb7-27" tabindex="-1"></a>    or <span class="fu">correlation</span> ( [<span class="dv">33</span>mfit_cns [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>omegaR [<span class="dv">39</span>m [<span class="dv">22</span>m; <span class="at">diagonals=</span>SDs)</span>
-<span id="cb7-28"><a href="#cb7-28" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span>  [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>shrink [<span class="dv">39</span>m [<span class="dv">22</span>m </span>
-<span id="cb7-29"><a href="#cb7-29" tabindex="-1"></a>  <span class="fu">Censoring</span> ( [<span class="dv">33</span>mfit_cns [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>censInformation [<span class="dv">39</span>m [<span class="dv">22</span>m)<span class="sc">:</span> No censoring</span>
-<span id="cb7-30"><a href="#cb7-30" tabindex="-1"></a>  Minimization <span class="fu">message</span> ( [<span class="dv">33</span>mfit_cns [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>message [<span class="dv">39</span>m [<span class="dv">22</span>m)<span class="sc">:</span>  </span>
+<span id="cb7-26"><a href="#cb7-26" tabindex="-1"></a>  Full BSV <span class="fu">covariance</span> (fit_cns<span class="sc">$</span>omega) </span>
+<span id="cb7-27"><a href="#cb7-27" tabindex="-1"></a>    or <span class="fu">correlation</span> (fit_cns<span class="sc">$</span>omegaR; <span class="at">diagonals=</span>SDs)</span>
+<span id="cb7-28"><a href="#cb7-28" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> <span class="sc">$</span>shrink </span>
+<span id="cb7-29"><a href="#cb7-29" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit_cns<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
+<span id="cb7-30"><a href="#cb7-30" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit_cns<span class="sc">$</span>message)<span class="sc">:</span>  </span>
 <span id="cb7-31"><a href="#cb7-31" tabindex="-1"></a>    NLOPT_XTOL_REACHED<span class="sc">:</span> Optimization stopped because xtol_rel or <span class="fu">xtol_abs</span> (above) was reached. </span></code></pre></div>
 <div class="section level3">
 <h3 id="model-against-data">Model against data<a class="anchor" aria-label="anchor" href="#model-against-data"></a>
@@ -422,7 +422,7 @@ per-output-pair <code>cross</code> list, or a study-level joint
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer>
