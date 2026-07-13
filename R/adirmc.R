@@ -105,7 +105,7 @@ adirmcControl <- function(
     print           = 1L,
     omega_expansion = 1.0,
     seed            = 12345L,
-    cores           = 1L,
+    cores           = rxode2::rxCores(),
     nDisplayProgress = .Machine$integer.max,
     grad            = c("analytical", "none", "fd"),
     kappa_method    = c("exact", "linearized", "linearized_gh"),
@@ -701,7 +701,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
           for (nm in .single_nms)
             params_cand[1L, nm] <- struct_cand[[nm]]
           out_c  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_cand),
-                                    events = study$ev_full, cores = 1L,
+                                    events = study$ev_full, cores = cores,
                                     nDisplayProgress = ndp)
           keep_c  <- out_c[["time"]] %in% study$times
           vals_c1 <- out_c[[output_var]][keep_c]
@@ -726,7 +726,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
                 params_bat[ci, nm] <- sc[[nm]]
             }
             out_b  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_bat),
-                                      events = study$ev_full, cores = 1L,
+                                      events = study$ev_full, cores = cores,
                                       nDisplayProgress = ndp)
             keep_b  <- out_b[["time"]] %in% study$times
             vals_b1 <- out_b[[output_var]][keep_b]

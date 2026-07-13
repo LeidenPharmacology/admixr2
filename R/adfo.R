@@ -553,7 +553,9 @@
 #' @param ftol_rel Relative tolerance (default `sqrt(.Machine$double.eps)`).
 #' @param print Print-frequency for live progress (0 = silent).
 #' @param seed Random seed (used for restarts).
-#' @param cores OpenMP threads for `rxSolve()` (default 1).
+#' @param cores OpenMP threads for `rxSolve()`. Defaults to
+#'   `rxode2::rxCores()`. When `workers > 1` it is a *total* budget, split
+#'   across the workers.
 #' @param nDisplayProgress Passed to `rxSolve()`: show the solver's text
 #'   progress bar only once a single solve exceeds this many subjects. The
 #'   default (`.Machine$integer.max`) keeps it off for clean script/vignette
@@ -583,6 +585,15 @@
 #' @param ... Unused arguments (trigger an error).
 #'
 #' @return An `adfoControl` object (a named list).
+#'
+#' @section Installing memuse:
+#' `rxode2::rxSolve()` estimates free RAM on every call. When the `memuse`
+#' package is not installed its fallback ends up shelling out to `vm_stat`, a
+#' macOS-only command, so on Windows and Linux every solve spawns a process that
+#' can only fail. Because the FO estimator issues many small solves, this
+#' overhead is measurable (roughly 17% of an FO gradient). Installing `memuse`
+#' makes the fallback unreachable:
+#' \preformatted{install.packages("memuse")}
 #'
 #' @seealso [admControl()], [adirmcControl()]
 #'
@@ -645,7 +656,7 @@ adfoControl <- function(
     ftol_rel   = .Machine$double.eps^(1/2),
     print      = 10L,
     seed       = 12345L,
-    cores      = 1L,
+    cores      = rxode2::rxCores(),
     nDisplayProgress = .Machine$integer.max,
     grad_h      = 1e-4,
     grad_bounds = 5,

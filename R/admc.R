@@ -51,7 +51,10 @@
 #' @param ftol_rel Relative function-value tolerance for convergence.
 #' @param print Print progress every this many evaluations (0 = silent).
 #' @param seed Random seed for reproducibility.
-#' @param cores Number of OpenMP threads for `rxSolve()`.
+#' @param cores Number of OpenMP threads for `rxSolve()`. Defaults to
+#'   `rxode2::rxCores()`. `rxSolve()` parallelises over subjects, so this is the
+#'   main speed lever for the MC estimators; when `workers > 1` it is a *total*
+#'   budget, split across the workers.
 #' @param nDisplayProgress Passed to `rxSolve()`: the solver shows its text
 #'   progress bar only once a single solve exceeds this many subjects. The
 #'   default (`.Machine$integer.max`) keeps the bar off, which is what you want
@@ -184,7 +187,7 @@ admControl <- function(
     ftol_rel   = .Machine$double.eps^2,
     print      = 10L,
     seed       = 12345L,
-    cores      = 1L,
+    cores      = rxode2::rxCores(),
     nDisplayProgress = .Machine$integer.max,
     grad        = c("sens", "fd", "cfd", "none"),
     grad_h      = 1e-4,
