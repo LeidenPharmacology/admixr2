@@ -150,5 +150,41 @@ test_that("an unrepresentable residual model is refused, not silently approximat
   # once and then fit as ADDITIVE.
   ui <- .em_model("cp ~ logitNorm(lg.sd, 0, 10)", "lg.sd <- 0.2")
   expect_error(admixr2:::.admParseIniDf(ui$iniDf, ui),
-               regexp = "Unsupported residual error|not supported")
+               regexp = "Unsupported residual error model")
+})
+
+test_that("refusal messages name the model, the endpoint, the reason and the alternatives", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+
+  # The refusal replaces a silent wrong fit, so the message has to carry its
+  # weight: what was asked for, on which endpoint, WHY it cannot be done, and what
+  # to use instead. A bare "unsupported" would just move the confusion.
+  msg <- tryCatch(
+    admixr2:::.admParseIniDf(
+      .em_model("cp ~ logitNorm(lg.sd, 0, 10)", "lg.sd <- 0.2")$iniDf,
+      .em_model("cp ~ logitNorm(lg.sd, 0, 10)", "lg.sd <- 0.2")),
+    error = conditionMessage)
+
+  expect_match(msg, "logitNorm")           # what was asked for
+  expect_match(msg, "endpoint 'cp'")       # where
+  expect_match(msg, "Why:")                # why not
+  expect_match(msg, "LOGIT scale")         # ... specifically
+  expect_match(msg, "aggregate", ignore.case = TRUE)
+  expect_match(msg, "add\\(a\\) \\+ prop\\(b\\)")   # what IS supported
+  expect_match(msg, "ADDITIVE")            # warns that old results are suspect
+  # no line runs off the terminal
+  expect_true(all(nchar(strsplit(msg, "\n")[[1]]) <= 80))
+})
+
+test_that("propF() gets its own targeted message, not the generic one", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+
+  # propF()'s second argument is a model variable; `v` is defined in .em_model().
+  ui <- .em_model("cp ~ propF(prop.sd, v)", "prop.sd <- 0.2")
+  msg <- tryCatch(admixr2:::.admParseIniDf(ui$iniDf, ui), error = conditionMessage)
+  expect_match(msg, "propF")
+  expect_match(msg, "Fix:")
+  expect_match(msg, "prop\\(\\) or pow\\(\\)")
 })

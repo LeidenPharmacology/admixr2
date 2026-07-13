@@ -107,12 +107,26 @@
   sigma_is_prop  <- setNames(.err_vals %in% .ADM_ERR_PROP, sigma_names)
   sigma_is_lnorm <- setNames(.err_vals %in% .ADM_ERR_LNORM, sigma_names)
 
+  # Refuse anything we cannot represent. This runs BEFORE .admBuildResidSpecs(),
+  # so it -- not the predDf gates below it -- is what a user with a boxCox or
+  # Student-t endpoint actually sees; it therefore has to give the same quality of
+  # explanation. .ADM_ERR_WHY supplies the per-type reason.
   .unsupported <- unique(.err_vals[!is.na(.err_vals) & !.err_vals %in% .ADM_ERR_KNOWN])
-  if (length(.unsupported) > 0L)
-    stop("Unsupported residual error type(s): ",
-         paste(sort(.unsupported), collapse = ", "),
-         ".\n  Supported: add, prop, pow (and their combinations), lnorm.",
-         call. = FALSE)
+  if (length(.unsupported) > 0L) {
+    .bad <- sort(.unsupported)[1L]
+    .ep  <- if ("condition" %in% names(sigma_rows)) {
+      .w <- which(.err_vals == .bad)[1L]
+      as.character(sigma_rows$condition[.w])
+    } else NA_character_
+    .admStopErrModel(
+      .ep,
+      paste0(.bad, "()",
+             if (length(.unsupported) > 1L)
+               paste0(" (also: ", paste(sort(.unsupported)[-1L], collapse = ", "), ")")
+             else ""),
+      .ADM_ERR_WHY[[.bad]] %||%
+        paste0("'", .bad, "' has no aggregate mean/variance admixr2 can score"))
+  }
 
   # Output variable each residual-error parameter belongs to. In a real nlmixr2
   # iniDf the error rows carry a `condition` column naming the endpoint (e.g.

@@ -36,6 +36,69 @@
 .ADM_ERR_KNOWN   <- c(.ADM_ERR_ADD, .ADM_ERR_PROP, .ADM_ERR_POW,
                       .ADM_ERR_POW_EXP, .ADM_ERR_LNORM)
 
+# -- Reporting an unsupported residual error model -----------------------------
+#
+# These models used to be accepted with a one-time warning and then fitted as
+# ADDITIVE, so a user could get a converged fit, plausible estimates and no idea
+# they were fitting a different residual model than the one they wrote. They now
+# stop() -- which means the message has to do real work: say what was asked for,
+# why admixr2 cannot do it, and what to use instead.
+
+# Why each recognised-but-unsupported error type cannot be represented.
+.ADM_ERR_WHY <- list(
+  logitNorm  = "residuals are normal on the LOGIT scale, so the aggregate mean and variance on the natural scale have no closed form",
+  probitNorm = "residuals are normal on the PROBIT scale, so the aggregate mean and variance on the natural scale have no closed form",
+  boxCox     = "Box-Cox transformed residuals are normal on the TRANSFORMED scale; back-transforming to an aggregate mean/variance has no closed form",
+  tbs        = "Box-Cox transformed residuals are normal on the TRANSFORMED scale; back-transforming to an aggregate mean/variance has no closed form",
+  yeoJohnson = "Yeo-Johnson transformed residuals are normal on the TRANSFORMED scale; back-transforming to an aggregate mean/variance has no closed form",
+  tbsYj      = "Yeo-Johnson transformed residuals are normal on the TRANSFORMED scale; back-transforming to an aggregate mean/variance has no closed form",
+  t          = "Student-t residuals are heavy-tailed; the aggregate likelihood admixr2 maximises is normal",
+  cauchy     = "Cauchy residuals have no finite mean or variance",
+  ar         = "AR(1) correlated residuals are a within-individual correlation structure; admixr2 sees only aggregate moments",
+  pois       = "count data are not normally distributed",
+  binom      = "binomial data are not normally distributed",
+  nbinom     = "count data are not normally distributed",
+  beta       = "beta-distributed data are not normally distributed",
+  ordinal    = "ordinal data are not normally distributed"
+)
+
+# The supported-model reference block, shown on every refusal.
+.admSupportedErrText <- function() paste(
+  "Supported residual error models (f = the model prediction):",
+  "  add(a)              var = a^2",
+  "  prop(b)             var = (b*f)^2",
+  "  pow(b, c)           var = (b*f^c)^2",
+  "  lnorm(a)            lognormal, moment-matched",
+  "  add(a) + prop(b)    var = a^2 + (b*f)^2   [combined2, the default]",
+  "                      var = (a + b*f)^2     [combined1, via combined1()]",
+  "  add(a) + pow(b, c)  either combined form",
+  sep = "\n")
+
+# One consistent refusal message.
+#   what   what the model asked for, e.g. "logitNorm()"
+#   why    the reason, as a clause ("residuals are normal on the LOGIT scale, ...")
+#   fix    optional concrete suggestion
+.admStopErrModel <- function(endpoint, what, why, fix = NULL) {
+  .para <- function(txt, prefix = "  ")
+    paste(strwrap(txt, width = 76, prefix = prefix), collapse = "\n")
+
+  ep <- if (is.null(endpoint) || is.na(endpoint)) ""
+        else paste0(" for endpoint '", endpoint, "'")
+
+  stop(
+    "Unsupported residual error model", ep, ": ", what, ".\n\n",
+    .para(paste0("Why: ", why, ".")), "\n\n",
+    .para(paste0("admixr2 fits AGGREGATE data -- each study contributes a mean and a ",
+                 "covariance, scored as a multivariate normal -- so the residual model ",
+                 "must reduce to a mean and a variance on the natural scale.")), "\n\n",
+    if (!is.null(fix)) paste0(.para(paste0("Fix: ", fix)), "\n\n") else "",
+    .admSupportedErrText(), "\n\n",
+    .para(paste0("Note: earlier versions of admixr2 accepted this model with a warning ",
+                 "and then fitted it as ADDITIVE error. Any results carried over from ",
+                 "that are not the model you specified.")),
+    call. = FALSE)
+}
+
 # Build one residual spec per endpoint from ui$predDf.
 #
 # predDf is authoritative and iniDf$err alone is not: `errType` tells us which
@@ -64,22 +127,27 @@
     etf  <- as.character(predDf$errTypeF[i]  %||% "untransformed")
     dist <- as.character(predDf$distribution[i] %||% "norm")
 
-    if (!dist %in% c("norm", "dnorm", "t", "cauchy") || dist %in% c("t", "cauchy"))
-      stop("Endpoint '", ep, "': distribution '", dist,
-           "' is not supported. admixr2 models aggregate data as multivariate ",
-           "normal; only normally-distributed residuals can be represented.",
-           call. = FALSE)
+    if (!dist %in% c("norm", "dnorm"))
+      .admStopErrModel(ep, paste0("a '", dist, "' error distribution"),
+                       .ADM_ERR_WHY[[dist]] %||%
+                         paste0("'", dist, "' is not a normal distribution"))
     if (!tr %in% c("untransformed", "lnorm"))
-      stop("Endpoint '", ep, "': residual transform '", tr, "' is not supported. ",
-           "Supported transforms: untransformed, lnorm.", call. = FALSE)
+      .admStopErrModel(ep, paste0("the '", tr, "' transform"),
+                       .ADM_ERR_WHY[[tr]] %||%
+                         paste0("residuals under '", tr,
+                                "' are normal on the transformed scale, not the natural one"))
     if (identical(etf, "f"))
-      stop("Endpoint '", ep, "': propF()/powF() scale the residual by a ",
-           "user-supplied model variable, which admixr2 cannot resolve from the ",
-           "aggregate mean. Use prop()/pow() instead.", call. = FALSE)
+      .admStopErrModel(
+        ep, "propF() / powF()",
+        paste0("propF()/powF() scale the residual by a user-supplied model variable,\n",
+               "which is an individual-level quantity admixr2 cannot recover from the ",
+               "aggregate mean"),
+        fix = "Use prop() or pow(), which scale by the prediction itself.")
     if (isTRUE(predDf$variance[i]))
-      stop("Endpoint '", ep, "': variance-parameterised residual error ",
-           "(variance = TRUE) is not supported; parameterise in SD units.",
-           call. = FALSE)
+      .admStopErrModel(
+        ep, "variance-parameterised residual error",
+        "admixr2 parameterises residual error in SD units, as nlmixr2 does by default",
+        fix = "Drop `variance = TRUE` and give the error parameter(s) as standard deviations.")
 
     # Rows of iniDf belonging to this endpoint.
     idx    <- which(!is.na(cond) & cond == ep)
@@ -93,8 +161,12 @@
     # combined with a proportional or power term.
     if (identical(tr, "lnorm")) {
       if (length(k_prop) > 0L)
-        stop("Endpoint '", ep, "': lnorm() combined with a proportional/power ",
-             "term is not supported.", call. = FALSE)
+        .admStopErrModel(
+          ep, "lnorm() combined with a proportional or power term",
+          paste0("lnorm()'s parameter is the SD on the LOG scale, which already makes the\n",
+                 "residual proportional to the prediction; adding prop()/pow() on top has no\n",
+                 "single well-defined aggregate variance"),
+          fix = "Use lnorm(a) alone, or add(a) + prop(b) on the natural scale.")
       form <- .ADM_RESID_LNORM
     } else {
       ap <- as.character(predDf$addProp[i] %||% "default")
