@@ -434,30 +434,41 @@ Rcpp::List adm_grad_eta_omega_cpp(
   double inv_n = 1.0 / n_sim;
   VectorXd eff_dmu = dNLL_dmu + sigma_mu_scale;   // n_t
 
-  // Eta gradient: for eta j, contribution = eff_dmu . colMeans(D_j)
-  //               + 2/n * sum(dNLL_dV .* (cp_c' D_j))
+  // Every trace term here contracts some row-scaled cp_c against dNLL_dV:
+  //
+  //   sum_{t1,t2} dNLL_dV[t1,t2] * (X' D)[t1,t2]
+  //     = sum_i < (X * dNLL_dV)[i,:], D[i,:] >
+  //
+  // so hoisting the single gemm cpdV = cp_c * dNLL_dV (n_sim x n_t) out of both
+  // loops turns each eta trace into an O(n_sim*n_t) row-dot reduction and each
+  // omega trace into an O(n_sim) dot product against the scale vector -- the row
+  // scaling factors straight out of the sum. Previously this ran (n_eta + n_o)
+  // separate O(n_sim*n_t^2) gemms, each materialising its own n_sim x n_t
+  // temporary (n_eta=5 => 5 + 15 = 20 gemms per study per gradient evaluation).
+  MatrixXd cpdV(n_sim, n_t);
+  cpdV.noalias() = cp_c * dNLL_dV;
+
+  // rowdot.col(j)[i] = < cpdV[i,:], D_j[i,:] >  -- shared by both loops
+  MatrixXd rowdot(n_sim, n_eta);
   VectorXd eta_grad(n_eta);
   for (int j = 0; j < n_eta; ++j) {
-    auto     D_j     = D_mat.middleCols(j * n_t, n_t);   // view, no copy
-    VectorXd dmu_j   = D_j.colwise().mean();               // n_t
-    MatrixXd cpD_j   = cp_c.transpose() * D_j;            // n_t x n_t
-    double   trace_j = (dNLL_dV.array() * cpD_j.array()).sum();
-    eta_grad[j] = eff_dmu.dot(dmu_j) + 2.0 * inv_n * trace_j;
+    auto     D_j   = D_mat.middleCols(j * n_t, n_t);   // view, no copy
+    VectorXd dmu_j = D_j.colwise().mean();             // n_t
+    rowdot.col(j)  = (cpdV.array() * D_j.array()).rowwise().sum();
+    eta_grad[j]    = eff_dmu.dot(dmu_j) + 2.0 * inv_n * rowdot.col(j).sum();
   }
 
   // Omega gradient: for Cholesky entry (ei,ej),
   //   scale = eta_mat[:,ei] (diagonal) or z[:,ej] (off-diagonal)
-  //   dmu_om = D_ei' scale / n_sim  (gemv, no n_sim x n_t intermediate)
-  //   trace  = sum(dNLL_dV .* (cp_c_scaled' D_ei))  where cp_c_scaled = cp_c .* scale
+  //   trace = sum_i scale[i] * rowdot[i,ei]   (the row scaling factors out)
   VectorXd omega_grad(n_o);
   for (int r = 0; r < n_o; ++r) {
     int ei = neta1[r] - 1;
     int ej = neta2[r] - 1;
-    auto     D_ei    = D_mat.middleCols(ei * n_t, n_t);   // view, no copy
+    auto     D_ei    = D_mat.middleCols(ei * n_t, n_t);  // view, no copy
     VectorXd scale   = (ei == ej) ? eta_mat.col(ei) : z.col(ej);
-    VectorXd dmu_om  = D_ei.transpose() * scale / n_sim;  // n_t, no intermediate
-    MatrixXd cp_c_s  = cp_c.array().colwise() * scale.array();   // n_sim x n_t
-    double   trace_o = (dNLL_dV.array() * (cp_c_s.transpose() * D_ei).array()).sum();
+    VectorXd dmu_om  = D_ei.transpose() * scale / n_sim; // n_t, no intermediate
+    double   trace_o = scale.dot(rowdot.col(ei));        // O(n_sim), no gemm
     omega_grad[r] = eff_dmu.dot(dmu_om) + 2.0 * inv_n * trace_o;
   }
 
@@ -510,24 +521,30 @@ Rcpp::List adm_grad_eta_omega_var_cpp(
   double inv_n = 1.0 / n_sim;
   VectorXd eff_dmu = dNLL_dmu + sigma_mu_scale;
 
+  // Same hoist as the cov branch, with the diagonal dNLL_dV: scaling cp_c's
+  // COLUMNS by dNLL_dV_diag once lets every trace collapse to a row-dot, and the
+  // omega row-scaling again factors out to a plain dot product. This also removes
+  // the n_sim x n_t `cp_c_s` temporary that was allocated per omega entry.
+  MatrixXd cpdV = cp_c.array().rowwise() * dNLL_dV_diag.transpose().array();
+
+  MatrixXd rowdot(n_sim, n_eta);
   VectorXd eta_grad(n_eta);
   for (int j = 0; j < n_eta; ++j) {
-    auto     D_j      = D_mat.middleCols(j * n_t, n_t);
-    VectorXd dmu_j    = D_j.colwise().mean();
-    VectorXd diag_cpDj = (cp_c.array() * D_j.array()).matrix().colwise().sum().transpose();
-    eta_grad[j] = eff_dmu.dot(dmu_j) + 2.0 * inv_n * dNLL_dV_diag.dot(diag_cpDj);
+    auto     D_j   = D_mat.middleCols(j * n_t, n_t);
+    VectorXd dmu_j = D_j.colwise().mean();
+    rowdot.col(j)  = (cpdV.array() * D_j.array()).rowwise().sum();
+    eta_grad[j]    = eff_dmu.dot(dmu_j) + 2.0 * inv_n * rowdot.col(j).sum();
   }
 
   VectorXd omega_grad(n_o);
   for (int r = 0; r < n_o; ++r) {
     int ei = neta1[r] - 1;
     int ej = neta2[r] - 1;
-    auto     D_ei     = D_mat.middleCols(ei * n_t, n_t);
-    VectorXd scale    = (ei == ej) ? eta_mat.col(ei) : z.col(ej);
-    VectorXd dmu_om   = D_ei.transpose() * scale / n_sim;
-    MatrixXd cp_c_s   = cp_c.array().colwise() * scale.array();
-    VectorXd diag_cpsD = (cp_c_s.array() * D_ei.array()).matrix().colwise().sum().transpose();
-    omega_grad[r] = eff_dmu.dot(dmu_om) + 2.0 * inv_n * dNLL_dV_diag.dot(diag_cpsD);
+    auto     D_ei    = D_mat.middleCols(ei * n_t, n_t);
+    VectorXd scale   = (ei == ej) ? eta_mat.col(ei) : z.col(ej);
+    VectorXd dmu_om  = D_ei.transpose() * scale / n_sim;
+    double   trace_o = scale.dot(rowdot.col(ei));
+    omega_grad[r] = eff_dmu.dot(dmu_om) + 2.0 * inv_n * trace_o;
   }
 
   return Rcpp::List::create(
