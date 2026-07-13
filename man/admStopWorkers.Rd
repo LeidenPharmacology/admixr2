@@ -2,7 +2,7 @@
 % Please edit documentation in R/admc.R
 \name{admStopWorkers}
 \alias{admStopWorkers}
-\title{Stop PSOCK workers}
+\title{Stop parallel workers}
 \usage{
 admStopWorkers()
 }
@@ -10,7 +10,7 @@ admStopWorkers()
 \code{NULL}, invisibly.
 }
 \description{
-Stops any PSOCK worker processes started by a parallel-restart fit
+Stops any worker processes (mirai daemons) started by a parallel-restart fit
 (\code{admControl(workers = N)}). Workers are stopped automatically after the
 restart phase completes, so this function is only needed if a fit was
 interrupted before cleanup could run.
