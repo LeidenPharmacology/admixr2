@@ -191,6 +191,15 @@ capture_internals <- function(label, fn, studies_raw, out_var = "cp", tag = FALS
     add(k("adfoFDGradC"), A$.adfoFDGrad(p, s$pinfo, s$studies, s$sensModel, s$rxMod,
                                         s$out_var, pl1, 1L, use_central = TRUE))
 
+    # sensModel = NULL -> exercises the FD-Jacobian fallback inside .adfoGetMuJ,
+    # which the batching work rewrites. Without these the fallback is untested.
+    add(k("adfoNLL.nosens"),  A$.adfoNLL(p, s$pinfo, s$studies, NULL, s$rxMod,
+                                         s$out_var, pl1, 1L))
+    add(k("adfoGrad.nosens"), A$.adfoGrad(p, s$pinfo, s$studies, NULL, s$rxMod,
+                                          s$out_var, pl1, 1L))
+    add(k("adfoFDGrad.nosens"), A$.adfoFDGrad(p, s$pinfo, s$studies, NULL, s$rxMod,
+                                              s$out_var, pl1, 1L, use_central = FALSE))
+
     add(k("adghNLL"),  A$.adghNLL(p, s$pinfo, s$studies, s$rxMod, s$out_var, grid, 1L))
     add(k("adghGrad"), A$.adghGrad(p, s$pinfo, s$studies, s$sensModel, s$rxMod,
                                    s$out_var, grid, 1L))

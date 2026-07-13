@@ -339,9 +339,36 @@ nmObjGetControl.adirmc <- function(x, ...) {
     }
 
     mu_sigma <- mu
-    kappa_delta <- if (!is.null(prop$mu_pop))
-      prop$kappa_fn(pars$struct) - prop$mu_pop
-    else numeric(0)
+
+    # Exact kappa used to cost TWO rxSolve calls per inner evaluation at the same
+    # p: kappa_fn(struct) for the centre (1 row) and, further down, kappa_fn_batch
+    # for the central-difference rows (2 * n_kb rows). They differ only in which
+    # rows are present, so they are fused into one solve of (1 + 2 * n_kb) rows --
+    # the centre is simply carried as the first candidate. The inner loop runs
+    # thousands of times per fit, so this halves its solve count.
+    kappa_batch <- NULL
+    kappa_ctr   <- NULL
+    if (!is.null(prop$mu_pop) && is.null(prop$kappa_jac) &&
+        !is.null(prop$kappa_fn_batch) && length(prop$kappa_grad_idxs) > 0L) {
+      n_kb <- length(prop$kappa_grad_idxs)
+      kb_list <- vector("list", 1L + 2L * n_kb)
+      kb_list[[1L]] <- pars$struct                      # centre
+      for (i_kb in seq_len(n_kb)) {
+        nm_kb <- pinfo$struct_names[prop$kappa_grad_idxs[i_kb]]
+        sh <- pars$struct; sh[nm_kb] <- sh[nm_kb] + h
+        sl <- pars$struct; sl[nm_kb] <- sl[nm_kb] - h
+        kb_list[[2L * i_kb]]      <- sh
+        kb_list[[2L * i_kb + 1L]] <- sl
+      }
+      kb_all      <- prop$kappa_fn_batch(kb_list)
+      kappa_ctr   <- kb_all[1L, ]
+      kappa_batch <- kb_all[-1L, , drop = FALSE]
+    }
+
+    kappa_delta <- if (!is.null(prop$mu_pop)) {
+      if (!is.null(kappa_ctr)) kappa_ctr - prop$mu_pop
+      else prop$kappa_fn(pars$struct) - prop$mu_pop
+    } else numeric(0)
     if (length(kappa_delta) > 0L) mu <- mu + kappa_delta
 
     obs_E <- s$E
@@ -416,18 +443,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
         ki <- prop$kappa_grad_idxs[i_kb]
         grad[ki] <- grad[ki] + sum(eff_dNLL_dmu * prop$kappa_jac[i_kb, ])
       }
-    } else if (!is.null(prop$mu_pop) && !is.null(prop$kappa_fn_batch)) {
-      n_kb        <- length(prop$kappa_grad_idxs)
-      struct_list <- vector("list", 2L * n_kb)
-      for (i_kb in seq_along(prop$kappa_grad_idxs)) {
-        ki    <- prop$kappa_grad_idxs[i_kb]
-        nm_kb <- pinfo$struct_names[ki]
-        sh <- pars$struct; sh[nm_kb] <- sh[nm_kb] + h
-        sl <- pars$struct; sl[nm_kb] <- sl[nm_kb] - h
-        struct_list[[2L * i_kb - 1L]] <- sh
-        struct_list[[2L * i_kb]]      <- sl
-      }
-      kappa_batch <- prop$kappa_fn_batch(struct_list)
+    } else if (!is.null(kappa_batch)) {
+      # Rows already solved above, in the same call as the kappa centre.
       for (i_kb in seq_along(prop$kappa_grad_idxs)) {
         ki     <- prop$kappa_grad_idxs[i_kb]
         dkappa <- (kappa_batch[2L * i_kb - 1L, ] - kappa_batch[2L * i_kb, ]) / (2 * h)
@@ -692,11 +709,23 @@ nmObjGetControl.adirmc <- function(x, ...) {
       kappa_fn <- local({
         .params_base <- params_df_1
         .single_nms  <- single_beta_nms
+        .mu_pop      <- mu_pop
+        # the single-beta values already sitting in the base params row
+        .base_single <- unname(vapply(single_beta_nms,
+                                      function(nm) params_df_1[1L, nm], numeric(1)))
         .cache_key   <- NULL
         .cache_val   <- NULL
         function(struct_cand) {
           if (!is.null(.cache_key) && identical(struct_cand, .cache_key))
             return(.cache_val)
+          cand <- unname(vapply(.single_nms, function(nm) struct_cand[[nm]], numeric(1)))
+          # kappa_delta is identically ZERO at the proposal's own p: kappa_fn only
+          # overwrites the single-beta columns of the base row, so if those already
+          # hold the proposal's values the solve reproduces mu_pop exactly. That is
+          # an algebraic identity, and it fires once per study per outer iteration
+          # (the exact-NLL check) plus on the first inner evaluation -- each of
+          # which used to cost a full rxSolve to recompute a value we already have.
+          if (identical(cand, .base_single)) return(.mu_pop)
           params_cand <- .params_base[1L, , drop = FALSE]
           for (nm in .single_nms)
             params_cand[1L, nm] <- struct_cand[[nm]]
@@ -819,6 +848,30 @@ nmObjGetControl.adirmc <- function(x, ...) {
   par_trace        <- NULL
   last_opt_message <- ""
 
+  # Proposal memo (one entry).
+  #
+  # Each iteration draws proposals at p_cur for the inner optimisation, and then
+  # draws them AGAIN at p_new for the exact-NLL check -- after which p_cur <- p_new,
+  # so the next iteration's inner draw is at the very same p. Proposals are a
+  # deterministic function of p (same z_list, same params_list, same Omega
+  # expansion), so those two draws are bit-identical and one of them is pure waste.
+  # The proposal is the most expensive rxSolve in the loop (n_sim + kappa rows), so
+  # this roughly halves the proposal cost.
+  #
+  # draw_proposals_inner and draw_proposals_exact differ ONLY in `use_grad`, which
+  # decides whether the kappa_fn_batch closure gets built -- and building a closure
+  # costs no solve. So the gradient-capable draw serves both roles.
+  #
+  # The cache correctly MISSES in the two places where p_cur is not p_new: the
+  # start of a phase (p_cur <- best_p) and the max_worse bail-out.
+  .prop_p <- NULL; .prop_v <- NULL
+  get_proposals <- function(p) {
+    if (!is.null(.prop_p) && identical(p, .prop_p)) return(.prop_v)
+    v <- draw_proposals_inner(p)
+    .prop_p <<- p; .prop_v <<- v
+    v
+  }
+
   for (ph_idx in seq_along(phases)) {
     ph_step <- phases[ph_idx]; worse_counter <- 0L; p_cur <- best_p
     if (print_progress)
@@ -826,7 +879,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
     for (iter_idx in seq_len(outer_iter)) {
       global_iter <- global_iter + 1L
-      proposals   <- draw_proposals_inner(p_cur)
+      proposals   <- get_proposals(p_cur)
       if (is.null(proposals)) {
         if (print_progress) message("proposal generation failed -- skipping iter")
         next
@@ -878,7 +931,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
                                      ftol_rel = ftol_rel, maxeval = maxeval)))
       last_opt_message <- opt$message
       p_new <- opt$solution; nll_approx <- opt$objective
-      props_exact <- draw_proposals_exact(p_new)
+      props_exact <- get_proposals(p_new)
       nll_exact   <- if (!is.null(props_exact))
         .adirmcNLL(p_new, pinfo, studies, props_exact) else Inf
       if (nll_exact < best_nll) { best_nll <- nll_exact; best_p <- p_new }
