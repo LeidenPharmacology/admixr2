@@ -185,6 +185,87 @@ fit_cns <- nlmixr2(pk_cns, admData(c("cp", "cb")), est = "adgh",
 fit_cns
 ```
 
+## The same study in long format
+
+If you have used nlmixr2 with [multiple
+endpoints](https://nlmixr2.org/articles/multiple-endpoints.html), the
+`observations` list above may feel like a detour: nlmixr2 does not group
+observations into per-endpoint objects — it stacks them in **one** data frame and
+labels each row with the endpoint it belongs to (`DVID` / `CMT`).
+
+admixr2 accepts a study written that way too. Give the study a `data` frame with
+one row per observed *endpoint × time* — an endpoint column (`DVID`, `CMT` or
+`output`), a time column (`TIME`), the mean (`E`) and its variance (`V`, or an
+`SD` column):
+
+```{r long-study}
+cns_long <- list(
+  n = 60L, ev = ev,
+  data = data.frame(
+    DVID = c(rep("cp", length(plasma_times)), rep("cb", length(brain_times))),
+    TIME = c(plasma_times, brain_times),
+    E    = c(plasma_mean,  brain_mean),
+    V    = c(plasma_sd,    brain_sd)^2
+  )
+)
+```
+
+This is the same study, written differently — admixr2 normalises it into exactly
+the same likelihood blocks, so the fits agree to the last digit:
+
+```{r long-fit, comment = NA}
+fit_long <- nlmixr2(pk_cns, admData(c("cp", "cb")), est = "adgh",
+                    control = adghControl(studies = list(lit = cns_long)))
+
+c(observations = fit_cns$objective, long = fit_long$objective)
+```
+
+Which form to use is a matter of taste. The `observations` list keeps each
+compartment's design visibly together and is the more natural way to write a
+study *by hand*. The long format is the more natural way to write one *from
+data*: it is the shape you already have if your summaries live in a spreadsheet
+or come out of a `dplyr` pipeline, and it is the shape nlmixr2 itself uses.
+
+### Same-subject data: one stacked covariance
+
+The long format earns its keep when plasma and brain were measured in the **same
+subjects**. Then the two curves are correlated, and that correlation is
+information the fit should use — but it lives *between* the compartments, so
+there is nowhere to put it in per-compartment `V` matrices.
+
+In long format there is: because every observation is just a row, the study takes
+**one** covariance matrix spanning all of them — rows and columns aligned with
+the rows of `data`, exactly what `cov.wt(dv_mat, method = "ML")$cov` hands you
+when you still have the subject-level matrix (`dv_mat`: one row per subject, one
+column per observation, plasma columns then brain columns).
+
+```{r long-joint, eval = FALSE}
+cns_joint <- list(
+  n = 60L, ev = ev,
+  data = data.frame(
+    DVID = c(rep("cp", length(plasma_times)), rep("cb", length(brain_times))),
+    TIME = c(plasma_times, brain_times),
+    E    = c(plasma_mean,  brain_mean)
+  ),
+  V = V_joint   # 11 x 11: plasma block, brain block, and the cross-covariance
+)
+```
+
+admixr2 then scores all 11 observations with a **single** multivariate normal,
+simulating both compartments from shared random effects. Supplying a study-level
+`V` is what marks the study as same-subject; without one, each endpoint stays an
+independent likelihood block. (The `observations` form can express this too, via
+a `cross` list of per-pair blocks — see `?admControl` — but assembling those by
+hand is precisely the chore the long format removes.)
+
+Note that the choice is a **modelling** decision, not a formatting one: a joint
+fit with zero cross-covariances is *not* the same as two independent blocks. The
+model predicts plasma and brain to co-vary (they share `eta.cl` and `eta.v1`);
+telling it you observed no covariance is a real statement about the data, and the
+likelihood will hold you to it. Use the joint form when the compartments came
+from the same subjects, the independent form when they came from different ones —
+here, from two separate figures.
+
 ### Model against data
 
 A single fit now describes both compartments. The figure overlays the observed
@@ -305,9 +386,13 @@ plot(fit_cns, which = "mean")
   *observe* and fit — one in Step 1, two in Step 2.
 * **Hard-coded constants** such as `vb <- 5` keep their value; not every
   physiological constant has to be an estimated parameter.
+* **Two ways to write a study.** The `observations` list and the long-format
+  `data` frame are interchangeable — same normalisation, same likelihood, same
+  numbers. Independent experiments can also carry a per-endpoint `n` column and a
+  per-endpoint `ev` (a list of event tables keyed by endpoint).
 * **Same-subject data.** Here plasma and brain came from separate figures, so
   they are treated as independent likelihood blocks. If they had instead been
-  measured in the *same* subjects, you can supply the plasma–brain
-  cross-covariance for a joint fit (a per-output-pair `cross` list, or a
-  study-level joint `V`); see `?admControl`.
+  measured in the *same* subjects, supply the plasma–brain cross-covariance for a
+  joint fit — one stacked `V` in long format, or a per-output-pair `cross` list
+  with `observations`; see `?admControl`.
 ```
