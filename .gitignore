@@ -7,3 +7,6 @@ CLAUDE.original.md
 .claude/
 /old
 /docs
+
+# Manual perf baseline (machine/rxode2-version specific; regenerate locally)
+tests/manual/golden-perf.rds
