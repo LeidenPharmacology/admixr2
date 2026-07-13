@@ -208,14 +208,14 @@ print(fit_sim)
 #> ── Time (sec fit_sim$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   39.065      4.768  43.833
+#> 1   40.241      4.733  44.974
 #> 
 #> ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 #> 
 #>                         Parameter     Est.       SE   %RSE
 #> tcl           Log clearance (L/h)    1.608 0.009336 0.5806
 #> tv                 Log volume (L)    2.303  0.01276 0.5543
-#> tka     Log absorption rate (1/h) 0.001742  0.01798   1032
+#> tka     Log absorption rate (1/h) 0.001746  0.01798   1030
 #> prop.sd     Proportional error SD   0.1999                
 #>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 #> tcl        4.994 (4.903, 5.086)     30.4            

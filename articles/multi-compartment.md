@@ -81,15 +81,15 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance elapsed other
-elapsed    2.084      0.165   2.249     2
+elapsed    2.041      0.164   2.205 1.979
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
             Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl      0.03319 0.03098 93.36   1.034 (0.9728, 1.098)     27.9            
-tv1        2.292 0.04476 1.953     9.893 (9.062, 10.8)     15.1            
-tq        0.8808  0.3692 41.91     2.413 (1.17, 4.975)                     
-tv2        0.867   0.153 17.64     2.38 (1.763, 3.212)                     
+tcl      0.03319 0.03099 93.36   1.034 (0.9728, 1.098)     27.9            
+tv1        2.292 0.04479 1.954     9.893 (9.061, 10.8)     15.1            
+tq        0.8809  0.3694 41.94     2.413 (1.17, 4.977)                     
+tv2        0.867   0.153 17.65     2.38 (1.763, 3.212)                     
 prop.cp 0.004104                              0.004104                     
  
   Covariance Type (fit_plasma$covMethod): r
@@ -189,7 +189,7 @@ adgh -88.58817 -72.58817 -36.65025       44.29408
 ── Time (sec fit_cns$time): ──
 
         optimize covariance elapsed other
-elapsed    2.114      0.391   2.505 1.939
+elapsed    1.972      0.364   2.336 2.275
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
