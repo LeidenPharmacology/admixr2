@@ -46,7 +46,7 @@ test_that("irmc_inner_nll_cpp: uniform log-weights give same NLL as weighted_mea
   A        <- matrix(c(0.15, 0.02, 0.02, 0.12), 2, 2)
   V_obs    <- A %*% t(A)
 
-  irmc_nll <- admixr2:::irmc_inner_nll_cpp(
+  irmc_nll <- .irmc_nll(
     rawpreds, bi_mat, mean_new, L_omega, log_prop,
     E_obs, V_obs, n = n, sigma_var = 0.0, sigma_type = 0L,
     kappa_delta = numeric(0), use_var = 0L
@@ -72,11 +72,11 @@ test_that("irmc_inner_nll_cpp: use_var=1 vs use_var=0 agree for diagonal V_obs",
   v_obs    <- c(0.04, 0.05)
   V_obs    <- diag(v_obs)
 
-  nll_cov <- admixr2:::irmc_inner_nll_cpp(
+  nll_cov <- .irmc_nll(
     rawpreds, bi_mat, mean_new, L_omega, log_prop,
     E_obs, V_obs, n, 0.0, 0L, numeric(0), use_var = 0L
   )
-  nll_var <- admixr2:::irmc_inner_nll_cpp(
+  nll_var <- .irmc_nll(
     rawpreds, bi_mat, mean_new, L_omega, log_prop,
     E_obs, V_obs, n, 0.0, 0L, numeric(0), use_var = 1L
   )
@@ -95,9 +95,9 @@ test_that("irmc_inner_nll_cpp: proportional sigma (sigma_type=1) adds sigma_var*
   V_obs    <- diag(c(0.09, 0.10))
   sv <- 0.05
 
-  nll_add  <- admixr2:::irmc_inner_nll_cpp(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
+  nll_add  <- .irmc_nll(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
                                             E_obs, V_obs, n, sv, 0L, numeric(0), 0L)
-  nll_prop <- admixr2:::irmc_inner_nll_cpp(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
+  nll_prop <- .irmc_nll(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
                                             E_obs, V_obs, n, sv, 1L, numeric(0), 0L)
 
   # With mu ~3, proportional adds 0.05*9=0.45 vs additive adds 0.05: clearly different
@@ -115,9 +115,9 @@ test_that("irmc_inner_nll_cpp: non-empty kappa_delta shifts predicted mean and c
   E_obs    <- c(2.0, 2.1)
   V_obs    <- diag(c(0.04, 0.05))
 
-  nll_no_kappa <- admixr2:::irmc_inner_nll_cpp(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
+  nll_no_kappa <- .irmc_nll(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
                                                E_obs, V_obs, n, 0.0, 0L, numeric(0), 0L)
-  nll_kappa    <- admixr2:::irmc_inner_nll_cpp(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
+  nll_kappa    <- .irmc_nll(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
                                                E_obs, V_obs, n, 0.0, 0L, c(0.5, -0.3), 0L)
 
   expect_true(is.finite(nll_no_kappa))
@@ -139,7 +139,7 @@ test_that("irmc_inner_nll_cpp / logdmvnorm_batch_cpp: zero mean_new (no_ws invar
   mean_new_full <- rep(0.0, n_eta)
   L_omega       <- diag(2) * 0.9
 
-  nll <- admixr2:::irmc_inner_nll_cpp(
+  nll <- .irmc_nll(
     rawpreds, bi_mat, mean_new_full, L_omega, log_prop,
     c(2.0, 2.1), diag(c(0.04, 0.05)), n,
     0.0, 0L, numeric(0), 0L
@@ -162,9 +162,9 @@ test_that("irmc_inner_nll_cpp: additive sigma shifts V diagonal", {
   V_obs    <- diag(c(0.01, 0.02))
   sv <- 0.05
 
-  nll_0  <- admixr2:::irmc_inner_nll_cpp(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
+  nll_0  <- .irmc_nll(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
                                          E_obs, V_obs, n, 0.0, 0L, numeric(0), 0L)
-  nll_sv <- admixr2:::irmc_inner_nll_cpp(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
+  nll_sv <- .irmc_nll(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
                                          E_obs, V_obs, n, sv, 0L, numeric(0), 0L)
 
   # With sigma, V_pred diagonal is larger -> lower sensitivity to residual, different NLL
@@ -184,9 +184,9 @@ test_that("irmc_inner_nll_cpp: lognormal sigma (sigma_type=2) is finite and diff
   V_obs    <- diag(c(0.09, 0.10))
   sv       <- 0.05
 
-  nll_add   <- admixr2:::irmc_inner_nll_cpp(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
+  nll_add   <- .irmc_nll(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
                                             E_obs, V_obs, n, sv, 0L, numeric(0), 0L)
-  nll_lnorm <- admixr2:::irmc_inner_nll_cpp(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
+  nll_lnorm <- .irmc_nll(rawpreds, bi_mat, 0.0, matrix(1.0), log_prop,
                                             E_obs, V_obs, n, sv, 2L, numeric(0), 0L)
 
   expect_true(is.finite(nll_lnorm))

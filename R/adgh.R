@@ -65,19 +65,10 @@
   V   <- crossprod(cpc, W * cpc)
 
   # Restrict residual error to this output's sigma(s) (no-op single-output).
-  mu_sigma <- mu
-  for (i in which(.admSigmaSel(pinfo, out_var))) {
-    sv <- pars$sigma_var[[i]]
-    if (isTRUE(pinfo$sigma_is_lnorm[[i]])) {
-      mu_sigma <- mu_sigma * exp(sv / 2)
-      diag(V)  <- diag(V) + mu_sigma^2 * (exp(sv) - 1)
-    } else if (isTRUE(pinfo$sigma_is_prop[[i]])) {
-      diag(V) <- diag(V) + sv * mu^2
-    } else {
-      diag(V) <- diag(V) + sv
-    }
-  }
-  list(E = mu_sigma, V = V)
+  arr <- .admResidRows(pinfo, out_var, pars$sigma_var, length(mu))
+  ap  <- .admResidApply(mu, diag(V), arr)
+  diag(V) <- ap$dv
+  list(E = ap$mu, V = V)
 }
 
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
@@ -193,11 +184,10 @@
       f  <- js$cp_mat; Jl <- js$dpred_list
       mu  <- as.numeric(crossprod(W, f))
       cpc <- sweep(f, 2L, mu)
-      # per-row lnorm mean scaling; residual-adjusted mean/cov via shared helper
-      ls_vec <- rep(1, s$n_total)
-      for (blk in s$blocks) for (k in which(.admSigmaSel(pinfo, blk$output)))
-        if (isTRUE(pinfo$sigma_is_lnorm[[k]]))
-          ls_vec[blk$rows] <- ls_vec[blk$rows] * exp(pars$sigma_var[[k]] / 2)
+      # per-row residual: mean scaling (lnorm), then the residual-adjusted moments
+      arr    <- .admResidRows(pinfo, .admRowOutput(s, s$n_total), pars$sigma_var, s$n_total)
+      ls_vec <- .admResidMuScale(arr)
+      dres   <- .admResidDeriv(mu, arr, pinfo)
       jr <- .admJointResidual(mu, crossprod(cpc, W * cpc), s, pinfo, pars$sigma_var)
       mu_sigma <- jr$mu; V <- jr$V
       r  <- as.numeric(s$E) - mu_sigma
@@ -211,20 +201,10 @@
         dmu <- as.numeric(crossprod(W, gmat))
         sum(dNLL_dmu_sig * dmu) + 2 * sum(W * rowSums(gmat * Bt))
       }
-      sig_V_extra <- function(dmu_raw) {          # dmu_raw = d(mu)/dpsi (pre-lnorm)
-        acc <- 0
-        for (blk in s$blocks) { rows <- blk$rows
-          for (k in which(.admSigmaSel(pinfo, blk$output))) {
-            sv <- pars$sigma_var[[k]]
-            if (isTRUE(pinfo$sigma_is_prop[[k]]))
-              acc <- acc + sum(Bdiag[rows] * 2 * sv * mu[rows] * dmu_raw[rows])
-            else if (isTRUE(pinfo$sigma_is_lnorm[[k]]))
-              acc <- acc + sum(Bdiag[rows] * 2 * (exp(sv) - 1) * ls_vec[rows] *
-                                 mu_sigma[rows] * dmu_raw[rows])
-          }
-        }
-        acc
-      }
+      # V-path of the mean: the residual variance itself depends on mu, so a
+      # parameter that moves mu also moves diag(V). dv_df = d(var)/d(mu).
+      sig_V_extra <- function(dmu_raw)            # dmu_raw = d(mu)/dpsi (pre-lnorm)
+        sum(Bdiag * dres$dv_df * dmu_raw)
       # paired struct thetas
       for (k in seq_len(n_s)) {
         ei <- which(pinfo$struct_eta_idx == k); if (length(ei) == 0L) next; ei <- ei[[1L]]
@@ -242,24 +222,13 @@
         pos <- n_s + n_e + rr
         grad[pos] <- grad[pos] + if (pinfo$chol_diag[rr]) dL * L[i, i] / 2 else dL
       }
-      # sigma, per output rows
-      for (blk in s$blocks) { rows <- blk$rows
-        for (k in which(.admSigmaSel(pinfo, blk$output))) {
-          sv <- pars$sigma_var[[k]]; k_sig <- n_s + k
-          if (isTRUE(pinfo$sigma_is_lnorm[[k]]))
-            grad[k_sig] <- grad[k_sig] + (sum(dNLL_dmu_sig[rows] * mu_sigma[rows] / 2) +
-              sum(Bdiag[rows] * mu_sigma[rows]^2 * (2 * exp(sv) - 1))) * sv
-          else if (isTRUE(pinfo$sigma_is_prop[[k]]))
-            grad[k_sig] <- grad[k_sig] + sum(Bdiag[rows] * mu[rows]^2) * sv
-          else
-            grad[k_sig] <- grad[k_sig] + sum(Bdiag[rows]) * sv
-        }
-      }
+      # sigma (each row's own endpoint; other endpoints' derivatives are zero)
+      grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
+        .admSigmaGrad(mu, arr, pinfo, Bdiag, dNLL_dmu_sig)
       next
     }
 
     ov <- s$output %||% out_var
-    sk <- which(.admSigmaSel(pinfo, ov))   # this output's sigma indices
 
     res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
                             pinfo$nDisplayProgress)
@@ -274,20 +243,11 @@
     cpc <- sweep(f, 2L, mu)
     V   <- crossprod(cpc, W * cpc)
 
-    # Sigma contributions to V (and lnorm scaling of mean) -- this output only
-    mu_sigma <- mu
-    sv_vec   <- pars$sigma_var
-    for (i in sk) {
-      sv <- sv_vec[[i]]
-      if (isTRUE(pinfo$sigma_is_lnorm[[i]])) {
-        mu_sigma <- mu_sigma * exp(sv / 2)
-        diag(V)  <- diag(V) + mu_sigma^2 * (exp(sv) - 1)
-      } else if (isTRUE(pinfo$sigma_is_prop[[i]])) {
-        diag(V) <- diag(V) + sv * mu^2
-      } else {
-        diag(V) <- diag(V) + sv
-      }
-    }
+    # Residual error (and its lnorm scaling of the mean) -- this output only
+    arr <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
+    ap  <- .admResidApply(mu, diag(V), arr)
+    diag(V) <- ap$dv
+    mu_sigma <- ap$mu
 
     r <- as.numeric(s$E) - mu_sigma
 
@@ -304,22 +264,6 @@
         dmu     <- as.numeric(crossprod(W, gmat_mu))
         dV_diag <- 2 * colSums(W * cpc * gmat_mu)
         sum(dNLL_dmu_sig * dmu) + sum(dNLL_dV_diag * dV_diag)
-      }
-
-      contrib_sigma <- function(i_sig) {
-        sv       <- sv_vec[[i_sig]]
-        is_lnorm <- isTRUE(pinfo$sigma_is_lnorm[[i_sig]])
-        is_prop  <- isTRUE(pinfo$sigma_is_prop[[i_sig]])
-        if (is_lnorm) {
-          # d(NLL)/d(sv) via mu_sigma and V_diag
-          d_mu_sig <- sum(dNLL_dmu_sig * mu_sigma / 2)
-          d_V_diag <- sum(dNLL_dV_diag * mu_sigma^2 * (2 * exp(sv) - 1))
-          (d_mu_sig + d_V_diag) * sv
-        } else if (is_prop) {
-          sum(dNLL_dV_diag * mu^2) * sv
-        } else {
-          sum(dNLL_dV_diag) * sv
-        }
       }
 
     } else {
@@ -340,46 +284,18 @@
         term_cov <- 2 * sum(W * rowSums(gmat_mu * Bt))
         term_mu + term_cov
       }
-
-      contrib_sigma <- function(i_sig) {
-        sv       <- sv_vec[[i_sig]]
-        is_lnorm <- isTRUE(pinfo$sigma_is_lnorm[[i_sig]])
-        is_prop  <- isTRUE(pinfo$sigma_is_prop[[i_sig]])
-        if (is_lnorm) {
-          d_mu_sig <- sum(dNLL_dmu_sig * mu_sigma / 2)
-          d_V_diag <- sum(Bdiag * mu_sigma^2 * (2 * exp(sv) - 1))
-          (d_mu_sig + d_V_diag) * sv
-        } else if (is_prop) {
-          sum(Bdiag * mu^2) * sv
-        } else {
-          sum(Bdiag) * sv
-        }
-      }
     }
 
-    # For lnorm: sens Jacobians give d(mu)/d(eta); need d(mu_sigma)/d(eta).
-    # Scale factor: exp(sv/2) for each lnorm sigma (multiplicative on mu).
-    lnorm_scale <- 1
-    for (i in sk)
-      if (isTRUE(pinfo$sigma_is_lnorm[[i]])) lnorm_scale <- lnorm_scale * exp(sv_vec[[i]] / 2)
+    # The sens Jacobians give d(mu)/d(eta); lnorm needs d(mu_sigma)/d(eta), which
+    # is that scaled by exp(sv/2). Scalar here (one endpoint, at most one lnorm).
+    dres        <- .admResidDeriv(mu, arr, pinfo)
+    lnorm_scale <- .admResidMuScale(arr)[1L]
 
-    # Precompute the d(NLL)/d(V_diag) vector used for sigma V-correction terms.
-    # For prop:  extra_t = 2*sv*mu_t*d(mu_t)/dpsi;  for lnorm: 2*(exp(sv)-1)*scale*mu_sigma_t*d(mu_t)/dpsi
-    # These couple through mu so must be evaluated per-parameter inside the loops.
+    # V-path of the mean: the residual variance depends on mu, so a parameter that
+    # moves mu also moves diag(V) by dv_df = d(var)/d(mu).
     Bvec <- if (!is_var) Bdiag else dNLL_dV_diag  # length n_t
 
-    .sigma_V_extra <- function(dmu_raw) {
-      if (length(sk) == 0L) return(0)
-      acc <- 0
-      for (i_sig in sk) {
-        sv <- sv_vec[[i_sig]]
-        if (isTRUE(pinfo$sigma_is_prop[[i_sig]]))
-          acc <- acc + sum(Bvec * 2 * sv * mu * dmu_raw)
-        else if (isTRUE(pinfo$sigma_is_lnorm[[i_sig]]))
-          acc <- acc + sum(Bvec * 2 * (exp(sv) - 1) * lnorm_scale * mu_sigma * dmu_raw)
-      }
-      acc
-    }
+    .sigma_V_extra <- function(dmu_raw) sum(Bvec * dres$dv_df * dmu_raw)
 
     # Struct thetas (paired with etas; unpaired handled by FD below).
     # struct_eta_idx is eta-indexed (value = struct paired with each eta), so the
@@ -405,12 +321,9 @@
       grad[pos] <- grad[pos] + if (pinfo$chol_diag[rr]) dL * L[i, i] / 2 else dL
     }
 
-    # Sigma: d(NLL)/d(sv) * d(sv)/d(p) where sv = exp(p) so d(sv)/d(p) = sv.
-    # Only this output's residual-error parameters (no-op for single-output).
-    for (i in sk) {
-      sig_g <- contrib_sigma(i)
-      grad[n_s + i] <- grad[n_s + i] + sig_g
-    }
+    # Sigma. Only this output's residual parameters have a nonzero derivative.
+    grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
+      .admSigmaGrad(mu, arr, pinfo, Bvec, dNLL_dmu_sig)
   }
 
   # Unpaired struct thetas: forward FD of .adghNLL.

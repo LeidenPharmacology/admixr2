@@ -142,13 +142,25 @@
 
 # ==============================================================================
 # .adfoVpred() tests
+#
+# .adfoVpred no longer classifies the error model itself: it takes the row array
+# built by .admResidRows(). Building that array here from the legacy
+# sigma_is_prop / sigma_is_lnorm flags also exercises the fallback path used when
+# a pinfo carries no per-endpoint `resid` spec (hand-built pinfo / mock iniDf).
 # ==============================================================================
+
+.fo_arr <- function(sigma_var, is_prop, is_lnorm, n_t) {
+  pinfo <- list(sigma_names    = paste0("sig", seq_along(sigma_var)),
+                sigma_is_prop  = is_prop,
+                sigma_is_lnorm = is_lnorm,
+                sigma_output   = rep(NA_character_, length(sigma_var)))
+  admixr2:::.admResidRows(pinfo, NULL, sigma_var, n_t)
+}
 
 test_that(".adfoVpred(): additive sigma -- V = J*Omega*J^T + sv*I", {
   s   <- .fo_setup()
-  vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, s$sv_add,
-                                sigma_is_prop = list(FALSE), sigma_is_lnorm = list(FALSE),
-                                n_t = s$n_t, n_eta = 2L)
+  arr <- .fo_arr(s$sv_add, list(FALSE), list(FALSE), s$n_t)
+  vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, arr, n_t = s$n_t, n_eta = 2L)
   V_expected <- s$J %*% (s$L %*% t(s$L)) %*% t(s$J)
   diag(V_expected) <- diag(V_expected) + s$sv_add
 
@@ -158,9 +170,8 @@ test_that(".adfoVpred(): additive sigma -- V = J*Omega*J^T + sv*I", {
 
 test_that(".adfoVpred(): proportional sigma -- V diag += sv*mu^2", {
   s   <- .fo_setup()
-  vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, s$sv_prop,
-                                sigma_is_prop = list(TRUE), sigma_is_lnorm = list(FALSE),
-                                n_t = s$n_t, n_eta = 2L)
+  arr <- .fo_arr(s$sv_prop, list(TRUE), list(FALSE), s$n_t)
+  vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, arr, n_t = s$n_t, n_eta = 2L)
   V_expected <- s$J %*% (s$L %*% t(s$L)) %*% t(s$J)
   diag(V_expected) <- diag(V_expected) + s$sv_prop * s$mu^2
 
@@ -170,9 +181,8 @@ test_that(".adfoVpred(): proportional sigma -- V diag += sv*mu^2", {
 
 test_that(".adfoVpred(): lnorm sigma -- mu_sigma = mu*exp(sv/2), diag += mu_sigma^2*(exp(sv)-1)", {
   s   <- .fo_setup()
-  vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, s$sv_add,
-                                sigma_is_prop = list(FALSE), sigma_is_lnorm = list(TRUE),
-                                n_t = s$n_t, n_eta = 2L)
+  arr <- .fo_arr(s$sv_add, list(FALSE), list(TRUE), s$n_t)
+  vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, arr, n_t = s$n_t, n_eta = 2L)
   mu_sigma_exp <- s$mu * exp(s$sv_add / 2)
   V_expected <- s$J %*% (s$L %*% t(s$L)) %*% t(s$J)
   diag(V_expected) <- diag(V_expected) + mu_sigma_exp^2 * (exp(s$sv_add) - 1)
@@ -185,9 +195,8 @@ test_that(".adfoVpred(): no etas -- V is pure sigma contribution, J is ignored",
   s   <- .fo_setup()
   J_empty  <- matrix(0, s$n_t, 0)
   omega_e  <- matrix(numeric(0), 0, 0)
-  vp  <- admixr2:::.adfoVpred(s$mu, J_empty, omega_e, s$sv_add,
-                                sigma_is_prop = list(FALSE), sigma_is_lnorm = list(FALSE),
-                                n_t = s$n_t, n_eta = 0L)
+  arr <- .fo_arr(s$sv_add, list(FALSE), list(FALSE), s$n_t)
+  vp  <- admixr2:::.adfoVpred(s$mu, J_empty, omega_e, arr, n_t = s$n_t, n_eta = 0L)
   V_expected <- matrix(0, s$n_t, s$n_t)
   diag(V_expected) <- s$sv_add
 
@@ -195,14 +204,12 @@ test_that(".adfoVpred(): no etas -- V is pure sigma contribution, J is ignored",
   expect_equal(vp$mu_sigma, s$mu)
 })
 
-test_that(".adfoVpred(): two sigma terms -- contributions additive", {
+test_that(".adfoVpred(): two sigma terms -- contributions additive (combined2)", {
   s   <- .fo_setup()
-  # Two sigmas: one additive, one proportional
-  vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L,
-                                sigma_var    = c(s$sv_add, s$sv_prop),
-                                sigma_is_prop  = list(FALSE, TRUE),
-                                sigma_is_lnorm = list(FALSE, FALSE),
-                                n_t = s$n_t, n_eta = 2L)
+  # Two sigmas on one endpoint: one additive, one proportional. The legacy flags
+  # describe combined2, so V diag gains a^2 + b^2*mu^2.
+  arr <- .fo_arr(c(s$sv_add, s$sv_prop), list(FALSE, TRUE), list(FALSE, FALSE), s$n_t)
+  vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, arr, n_t = s$n_t, n_eta = 2L)
   V_exp <- s$J %*% (s$L %*% t(s$L)) %*% t(s$J)
   diag(V_exp) <- diag(V_exp) + s$sv_add + s$sv_prop * s$mu^2
 

@@ -174,10 +174,12 @@ head.paged_df <- function(x, n = 6L, ...) {
   struct_nms        <- names(pinfo$struct_transforms)
   omega_diag_nms    <- pinfo$omega_par_names[pinfo$chol_diag]
   omega_offdiag_nms <- pinfo$omega_par_names[!pinfo$chol_diag]
+  sigma_pow_nms <- pinfo$sigma_names[.admSigmaRole(pinfo) == "pow_exp"]
   back_fns <- setNames(lapply(par_names, function(nm) {
     if (nm %in% struct_nms)             function(v) .admBackTransform(v, pinfo$struct_transforms[[nm]])
     else if (nm %in% omega_diag_nms)    exp
     else if (nm %in% omega_offdiag_nms) identity
+    else if (nm %in% sigma_pow_nms)     identity   # pow() exponent: already natural
     else function(v) exp(v / 2)   # sigma: log(sigma^2) -> SD
   }), par_names)
 
@@ -302,8 +304,6 @@ head.paged_df <- function(x, n = 6L, ...) {
   n_eta     <- nrow(omega)
   L         <- extra$L %||% tryCatch(t(chol(omega)), error = function(e) NULL)
   sv        <- extra$sigma_var
-  sig_prop  <- extra$sigma_is_prop  %||% grepl("prop",  names(sv), ignore.case = TRUE)
-  sig_lnorm <- extra$sigma_is_lnorm %||% grepl("lnorm", names(sv), ignore.case = TRUE)
   eta_nms   <- extra$eta_col_names %||% character(0)
   sig_nms   <- names(sv)
 
@@ -318,13 +318,16 @@ head.paged_df <- function(x, n = 6L, ...) {
   # Detect the simulation output variable (e.g. "ipredSim" for linCmt models)
   # rather than assuming "cp" -- matches the detection used on the fit path.
   out_var <- tryCatch(.admOutputVar(ui), error = function(e) "cp")
-  # Per-output residual selector for multi-compartment fits (each observed output
-  # uses only its own sigma). Delegates to .admSigmaSel() so the endpoint-name ->
-  # rxSolve-column mapping (e.g. linCmt) stays identical to the fit path.
-  sig_output <- tryCatch(.admParseIniDf(ui$iniDf, ui)$sigma_output,
-                         error = function(e) NULL)
-  .sig_sel <- function(ov)
-    .admSigmaSel(list(sigma_output = sig_output, sigma_names = names(sv)), ov)
+  # Re-parse the ui so the plotted bands use exactly the fit's residual error
+  # model (per-endpoint spec, error form, sigma roles). Falls back to a
+  # name-based guess only when the ui cannot be parsed.
+  pinfo_r <- tryCatch(.admParseIniDf(ui$iniDf, ui), error = function(e) NULL)
+  if (is.null(pinfo_r))
+    pinfo_r <- list(sigma_names   = sig_nms,
+                    sigma_output  = rep(NA_character_, length(sv)),
+                    sigma_is_prop  = as.list(grepl("prop",  sig_nms, ignore.case = TRUE)),
+                    sigma_is_lnorm = as.list(grepl("lnorm", sig_nms, ignore.case = TRUE)))
+  sig_output <- pinfo_r$sigma_output
 
   .sim_study <- function(s) {
     ov <- s$output %||% out_var
@@ -362,19 +365,13 @@ head.paged_df <- function(x, n = 6L, ...) {
       })
   }
 
+  # Returns BOTH the residual-adjusted covariance and mean: lnorm rescales the
+  # mean, and the predicted E must carry that scaling just as the NLL does.
   .add_sigma <- function(V, mu, ov = out_var) {
-    for (k in which(.sig_sel(ov))) {
-      s <- sv[[k]]
-      if (sig_lnorm[k]) {
-        mu_adj <- mu * exp(s / 2)
-        diag(V) <- diag(V) + mu_adj^2 * (exp(s) - 1)
-      } else if (sig_prop[k]) {
-        diag(V) <- diag(V) + s * mu^2
-      } else {
-        diag(V) <- diag(V) + s
-      }
-    }
-    V
+    arr <- .admResidRows(pinfo_r, ov, sv, length(mu))
+    ap  <- .admResidApply(mu, diag(V), arr)
+    diag(V) <- ap$dv
+    list(V = V, mu = ap$mu)
   }
 
   setNames(lapply(names(studies), function(nm) {
@@ -382,8 +379,9 @@ head.paged_df <- function(x, n = 6L, ...) {
     cp_mat <- .sim_study(s)
     if (is.null(cp_mat)) return(NULL)
     mu     <- colMeans(cp_mat)
-    V_pred <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
+    res    <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
                          s$output %||% out_var)
+    V_pred <- res$V; mu <- res$mu
     obs_E  <- as.numeric(s$E)
     obs_V  <- as.matrix(s$V)
     tnm    <- as.character(s$times)

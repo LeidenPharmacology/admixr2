@@ -25,16 +25,16 @@ compute_mean_new_cpp <- function(struct_paired, log_origbeta, transform_type, lo
     .Call(`_admixr2_compute_mean_new_cpp`, struct_paired, log_origbeta, transform_type, low, hi)
 }
 
-irmc_inner_nll_cpp <- function(rawpreds, bi_mat, mean_new, L_omega, log_prop, E_obs, V_obs, n, sigma_var, sigma_type, kappa_delta, use_var) {
-    .Call(`_admixr2_irmc_inner_nll_cpp`, rawpreds, bi_mat, mean_new, L_omega, log_prop, E_obs, V_obs, n, sigma_var, sigma_type, kappa_delta, use_var)
+irmc_inner_nll_cpp <- function(rawpreds, bi_mat, mean_new, L_omega, log_prop, E_obs, V_obs, n, res_form, res_a2, res_b2, res_cc, kappa_delta, use_var) {
+    .Call(`_admixr2_irmc_inner_nll_cpp`, rawpreds, bi_mat, mean_new, L_omega, log_prop, E_obs, V_obs, n, res_form, res_a2, res_b2, res_cc, kappa_delta, use_var)
 }
 
-nll_cov_from_samples_cpp <- function(cp_mat, E_obs, V_obs, n, sigma_var, sigma_type) {
-    .Call(`_admixr2_nll_cov_from_samples_cpp`, cp_mat, E_obs, V_obs, n, sigma_var, sigma_type)
+nll_cov_from_samples_cpp <- function(cp_mat, E_obs, V_obs, n, res_form, res_a2, res_b2, res_cc) {
+    .Call(`_admixr2_nll_cov_from_samples_cpp`, cp_mat, E_obs, V_obs, n, res_form, res_a2, res_b2, res_cc)
 }
 
-nll_var_from_samples_cpp <- function(cp_mat, E_obs, v_obs, n, sigma_var, sigma_type) {
-    .Call(`_admixr2_nll_var_from_samples_cpp`, cp_mat, E_obs, v_obs, n, sigma_var, sigma_type)
+nll_var_from_samples_cpp <- function(cp_mat, E_obs, v_obs, n, res_form, res_a2, res_b2, res_cc) {
+    .Call(`_admixr2_nll_var_from_samples_cpp`, cp_mat, E_obs, v_obs, n, res_form, res_a2, res_b2, res_cc)
 }
 
 adm_grad_partial_cpp <- function(cp_c, dpred, dNLL_dV, eff_dmu, inv_nm1) {

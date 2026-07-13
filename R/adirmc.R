@@ -325,18 +325,9 @@ nmObjGetControl.adirmc <- function(x, ...) {
     V   <- wmc$V
 
     mu_struct <- mu
-    for (k in seq_along(pars$sigma_var))
-      if (prop$sigma_type[k] == 2L)
-        mu <- mu * exp(pars$sigma_var[k] / 2)
-    for (k in seq_along(pars$sigma_var)) {
-      sv <- pars$sigma_var[k]
-      if (prop$sigma_type[k] == 1L)
-        diag(V) <- diag(V) + sv * mu_struct^2
-      else if (prop$sigma_type[k] == 2L)
-        diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
-      else
-        diag(V) <- diag(V) + sv
-    }
+    arr <- .admResidRows(pinfo, s$output, pars$sigma_var, length(mu))
+    ap  <- .admResidApply(mu_struct, diag(V), arr)
+    mu  <- ap$mu; diag(V) <- ap$dv
 
     mu_sigma <- mu
 
@@ -391,21 +382,10 @@ nmObjGetControl.adirmc <- function(x, ...) {
       dNLL_dV_diag <- diag(dNLL_dV)
     }
 
-    # eff_dNLL_dmu folds in sigma V sensitivity w.r.t. mu_struct.
-    # prop:  dV_diag/dmu_struct = 2*sv*mu_struct -> +2*sv*mu_sigma*dNLL_dV_diag
-    # lnorm: also scales residual path by exp(sv/2): +(exp(sv/2)-1)*dNLL_dmu
-    #        plus V path: +2*exp(sv/2)*mu_sigma*(exp(sv)-1)*dNLL_dV_diag
-    eff_dNLL_dmu <- dNLL_dmu
-    for (k in seq_along(pars$sigma_var)) {
-      sv <- pars$sigma_var[k]
-      if (prop$sigma_type[k] == 1L) {
-        eff_dNLL_dmu <- eff_dNLL_dmu + 2 * sv * mu_sigma * dNLL_dV_diag
-      } else if (prop$sigma_type[k] == 2L) {
-        eff_dNLL_dmu <- eff_dNLL_dmu +
-          (exp(sv / 2) - 1) * dNLL_dmu +
-          2 * exp(sv / 2) * mu_sigma * (exp(sv) - 1) * dNLL_dV_diag
-      }
-    }
+    # eff_dNLL_dmu folds in the residual's sensitivity to mu_struct: the lnorm
+    # mean scaling, plus the dependence of the residual variance on mu.
+    eff_dNLL_dmu <- dNLL_dmu +
+      .admResidMuCoupling(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu)
 
     d_mat <- sweep(bi, 2L, mean_new)
 
@@ -467,21 +447,9 @@ nmObjGetControl.adirmc <- function(x, ...) {
       }
     }
 
-    k_sig <- n_s
-    for (k in seq_along(pars$sigma_var)) {
-      k_sig <- k_sig + 1L
-      sv <- pars$sigma_var[k]
-      if (prop$sigma_type[k] == 1L) {
-        grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag * sv * mu^2)
-      } else if (prop$sigma_type[k] == 2L) {
-        grad[k_sig] <- grad[k_sig] + sv * (
-          sum(dNLL_dV_diag * mu^2 * (2 * exp(sv) - 1)) +
-          sum(dNLL_dmu * mu) / 2
-        )
-      } else {
-        grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag) * sv
-      }
-    }
+    n_e <- length(pars$sigma_var)
+    grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
+      .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu)
   }
 
   list(nll = nll2, grad = grad)
@@ -500,7 +468,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
 #    kappa_fn = f(theta,0) + (1/2) sum_k omega_k_prop * d2f/deta_k2(theta,0)  [2nd-order delta]
 # 5. -2LL = n * (log|V| + tr(V_obs * V^{-1}) + r' V^{-1} r)
 
-.adirmcInnerNLL <- function(pars, prop, s) {
+.adirmcInnerNLL <- function(pars, prop, s, pinfo) {
   mean_new_paired <- if (length(prop$log_origbeta) > 0L)
     compute_mean_new_cpp(pars$struct[names(prop$log_origbeta)],
                          prop$log_origbeta, prop$paired_types,
@@ -519,10 +487,14 @@ nmObjGetControl.adirmc <- function(x, ...) {
     prop$kappa_fn(pars$struct) - prop$mu_pop
   else numeric(0)
 
+  # The IS-weighted mu is computed inside the kernel, so the residual cannot be
+  # pre-evaluated here -- hand the kernel the row arrays and let it apply them.
+  ar <- .admResidRows(pinfo, s$output, pars$sigma_var, length(s$times))
+
   irmc_inner_nll_cpp(
     prop$rawpreds, prop$bi, mean_new, L_omega, prop$log_prop,
     s$E, s$V, s$n,
-    pars$sigma_var, prop$sigma_type,
+    ar$form, ar$a2, ar$b2, ar$cc,
     kappa_delta,
     as.integer(identical(s$method, "var"))
   )
@@ -534,7 +506,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
 # use_grad   -- additionally build kappa_fn_batch for exact kappa (needed only for analytical gradient)
 # Approach: IS weight-shift for paired (mu-referenced) thetas always; kappa only for single_betas.
 # When has_kappa=TRUE, mu_pop computed by appending an eta=0 row to the main rxSolve batch.
-.adirmcProposal <- function(rxMod, struct_theta, sigma_names, sigma_is_prop, sigma_is_lnorm,
+.adirmcProposal <- function(rxMod, struct_theta, sigma_names,
                           omega, omega_expansion,
                           study, z, output_var, params_df, cores,
                           eta_col_names, has_kappa = FALSE,
@@ -804,7 +776,6 @@ nmObjGetControl.adirmc <- function(x, ...) {
        paired_lows      = paired_lows,
        paired_his       = paired_his,
        log_prop         = logdmvnorm_batch_cpp(bi, rep(0, ncol(bi)), L_prop),
-       sigma_type       = ifelse(sigma_is_lnorm, 2L, ifelse(sigma_is_prop, 1L, 0L)),
        mu_pop           = mu_pop,
        kappa_fn         = kappa_fn,
        kappa_jac        = kappa_jac,
@@ -821,7 +792,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
   nll2 <- 0
   for (i in seq_along(studies_snap)) {
-    nll2 <- nll2 + .adirmcInnerNLL(pars, proposals[[i]], studies_snap[[i]])
+    nll2 <- nll2 + .adirmcInnerNLL(pars, proposals[[i]], studies_snap[[i]], pinfo)
     if (!is.finite(nll2)) return(Inf)
   }
   nll2
@@ -1016,7 +987,6 @@ nmObjGetControl.adirmc <- function(x, ...) {
     pars  <- .admUnpack(p, pinfo)
     props <- lapply(seq_along(studies), function(si)
       .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pinfo$sigma_is_prop, pinfo$sigma_is_lnorm,
                     pars$omega, omega_expansion, studies[[si]],
                     z_list[[si]], output_var, params_list[[si]], cores_w,
                     pinfo$eta_col_names,
@@ -1034,7 +1004,6 @@ nmObjGetControl.adirmc <- function(x, ...) {
     pars  <- .admUnpack(p, pinfo)
     props <- lapply(seq_along(studies), function(si)
       .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pinfo$sigma_is_prop, pinfo$sigma_is_lnorm,
                     pars$omega, omega_expansion, studies[[si]],
                     z_list[[si]], output_var, params_list[[si]], cores_w,
                     pinfo$eta_col_names,
@@ -1164,7 +1133,6 @@ nlmixr2Est.adirmc <- function(env, ...) {
     pars <- .admUnpack(p, pinfo)
     props <- lapply(seq_along(studies_snap), function(si)
       .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pinfo$sigma_is_prop, pinfo$sigma_is_lnorm,
                     pars$omega, .ctl$omega_expansion,
                     studies_snap[[si]], z_list[[si]], output_var,
                     params_list[[si]], cores, pinfo$eta_col_names,
@@ -1182,7 +1150,6 @@ nlmixr2Est.adirmc <- function(env, ...) {
     pars <- .admUnpack(p, pinfo)
     props <- lapply(seq_along(studies_snap), function(si)
       .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pinfo$sigma_is_prop, pinfo$sigma_is_lnorm,
                     pars$omega, .ctl$omega_expansion,
                     studies_snap[[si]], z_list[[si]], output_var,
                     params_list[[si]], cores, pinfo$eta_col_names,

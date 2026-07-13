@@ -289,7 +289,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     compute_moments <- function(spec) {
       ov  <- spec$output
       n_t <- length(spec$times)
-      sel <- .admSigmaSel(pinfo, ov)
+      arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
       evf <- if (is_multi) spec$ev |> rxode2::et(spec$times, cmt = ov)
              else          spec$ev |> rxode2::et(spec$times)
       study_tmp <- list(ev_full = evf, times = spec$times)
@@ -301,9 +301,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         params_mat <- .admMakeParamsList(1L, pinfo, 1L)[[1L]]
         mj <- .adfoGetMuJ(pars, pinfo, study_tmp, sensModel, rxMod, ov,
                           params_mat, control$cores)
-        vp <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var[sel],
-                         pinfo$sigma_is_prop[sel], pinfo$sigma_is_lnorm[sel],
-                         n_t, pinfo$n_eta)
+        vp <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta)
         list(mu = vp$mu_sigma, V = vp$V, cp_mat = NULL)
       } else {
         z_list      <- .admMakeZ(control$n_sim, pinfo, 1L, control$sampling)
@@ -321,19 +319,10 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         mu   <- colMeans(cp_mat)
         cp_c <- sweep(cp_mat, 2L, mu)
         V    <- crossprod(cp_c) / control$n_sim
-        # This output's residual error only (mirrors nll_cov_cpp sigma dispatch).
-        for (k in which(sel)) {
-          sv <- unname(pars$sigma_var[[k]])
-          if (isTRUE(pinfo$sigma_is_lnorm[[k]])) {
-            mu <- mu * exp(sv / 2)
-            diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
-          } else if (isTRUE(pinfo$sigma_is_prop[[k]])) {
-            diag(V) <- diag(V) + sv * mu^2
-          } else {
-            diag(V) <- diag(V) + sv
-          }
-        }
-        list(mu = mu, V = V, cp_mat = cp_mat)
+        # This output's residual error only.
+        ap   <- .admResidApply(mu, diag(V), arr)
+        diag(V) <- ap$dv
+        list(mu = ap$mu, V = V, cp_mat = cp_mat)
       }
     }
 

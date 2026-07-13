@@ -93,8 +93,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // irmc_inner_nll_cpp
-double irmc_inner_nll_cpp(const Eigen::MatrixXd& rawpreds, const Eigen::MatrixXd& bi_mat, const Eigen::VectorXd& mean_new, const Eigen::MatrixXd& L_omega, const Eigen::VectorXd& log_prop, const Eigen::VectorXd& E_obs, const Eigen::MatrixXd& V_obs, double n, const Eigen::VectorXd& sigma_var, const Eigen::VectorXi& sigma_type, const Eigen::VectorXd& kappa_delta, int use_var);
-RcppExport SEXP _admixr2_irmc_inner_nll_cpp(SEXP rawpredsSEXP, SEXP bi_matSEXP, SEXP mean_newSEXP, SEXP L_omegaSEXP, SEXP log_propSEXP, SEXP E_obsSEXP, SEXP V_obsSEXP, SEXP nSEXP, SEXP sigma_varSEXP, SEXP sigma_typeSEXP, SEXP kappa_deltaSEXP, SEXP use_varSEXP) {
+double irmc_inner_nll_cpp(const Eigen::MatrixXd& rawpreds, const Eigen::MatrixXd& bi_mat, const Eigen::VectorXd& mean_new, const Eigen::MatrixXd& L_omega, const Eigen::VectorXd& log_prop, const Eigen::VectorXd& E_obs, const Eigen::MatrixXd& V_obs, double n, const Eigen::VectorXi& res_form, const Eigen::VectorXd& res_a2, const Eigen::VectorXd& res_b2, const Eigen::VectorXd& res_cc, const Eigen::VectorXd& kappa_delta, int use_var);
+RcppExport SEXP _admixr2_irmc_inner_nll_cpp(SEXP rawpredsSEXP, SEXP bi_matSEXP, SEXP mean_newSEXP, SEXP L_omegaSEXP, SEXP log_propSEXP, SEXP E_obsSEXP, SEXP V_obsSEXP, SEXP nSEXP, SEXP res_formSEXP, SEXP res_a2SEXP, SEXP res_b2SEXP, SEXP res_ccSEXP, SEXP kappa_deltaSEXP, SEXP use_varSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -106,17 +106,19 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type E_obs(E_obsSEXP);
     Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type V_obs(V_obsSEXP);
     Rcpp::traits::input_parameter< double >::type n(nSEXP);
-    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type sigma_var(sigma_varSEXP);
-    Rcpp::traits::input_parameter< const Eigen::VectorXi& >::type sigma_type(sigma_typeSEXP);
+    Rcpp::traits::input_parameter< const Eigen::VectorXi& >::type res_form(res_formSEXP);
+    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type res_a2(res_a2SEXP);
+    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type res_b2(res_b2SEXP);
+    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type res_cc(res_ccSEXP);
     Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type kappa_delta(kappa_deltaSEXP);
     Rcpp::traits::input_parameter< int >::type use_var(use_varSEXP);
-    rcpp_result_gen = Rcpp::wrap(irmc_inner_nll_cpp(rawpreds, bi_mat, mean_new, L_omega, log_prop, E_obs, V_obs, n, sigma_var, sigma_type, kappa_delta, use_var));
+    rcpp_result_gen = Rcpp::wrap(irmc_inner_nll_cpp(rawpreds, bi_mat, mean_new, L_omega, log_prop, E_obs, V_obs, n, res_form, res_a2, res_b2, res_cc, kappa_delta, use_var));
     return rcpp_result_gen;
 END_RCPP
 }
 // nll_cov_from_samples_cpp
-double nll_cov_from_samples_cpp(const Eigen::MatrixXd& cp_mat, const Eigen::VectorXd& E_obs, const Eigen::MatrixXd& V_obs, double n, const Eigen::VectorXd& sigma_var, const Eigen::VectorXi& sigma_type);
-RcppExport SEXP _admixr2_nll_cov_from_samples_cpp(SEXP cp_matSEXP, SEXP E_obsSEXP, SEXP V_obsSEXP, SEXP nSEXP, SEXP sigma_varSEXP, SEXP sigma_typeSEXP) {
+double nll_cov_from_samples_cpp(const Eigen::MatrixXd& cp_mat, const Eigen::VectorXd& E_obs, const Eigen::MatrixXd& V_obs, double n, const Eigen::VectorXi& res_form, const Eigen::VectorXd& res_a2, const Eigen::VectorXd& res_b2, const Eigen::VectorXd& res_cc);
+RcppExport SEXP _admixr2_nll_cov_from_samples_cpp(SEXP cp_matSEXP, SEXP E_obsSEXP, SEXP V_obsSEXP, SEXP nSEXP, SEXP res_formSEXP, SEXP res_a2SEXP, SEXP res_b2SEXP, SEXP res_ccSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -124,15 +126,17 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type E_obs(E_obsSEXP);
     Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type V_obs(V_obsSEXP);
     Rcpp::traits::input_parameter< double >::type n(nSEXP);
-    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type sigma_var(sigma_varSEXP);
-    Rcpp::traits::input_parameter< const Eigen::VectorXi& >::type sigma_type(sigma_typeSEXP);
-    rcpp_result_gen = Rcpp::wrap(nll_cov_from_samples_cpp(cp_mat, E_obs, V_obs, n, sigma_var, sigma_type));
+    Rcpp::traits::input_parameter< const Eigen::VectorXi& >::type res_form(res_formSEXP);
+    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type res_a2(res_a2SEXP);
+    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type res_b2(res_b2SEXP);
+    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type res_cc(res_ccSEXP);
+    rcpp_result_gen = Rcpp::wrap(nll_cov_from_samples_cpp(cp_mat, E_obs, V_obs, n, res_form, res_a2, res_b2, res_cc));
     return rcpp_result_gen;
 END_RCPP
 }
 // nll_var_from_samples_cpp
-double nll_var_from_samples_cpp(const Eigen::MatrixXd& cp_mat, const Eigen::VectorXd& E_obs, const Eigen::VectorXd& v_obs, double n, const Eigen::VectorXd& sigma_var, const Eigen::VectorXi& sigma_type);
-RcppExport SEXP _admixr2_nll_var_from_samples_cpp(SEXP cp_matSEXP, SEXP E_obsSEXP, SEXP v_obsSEXP, SEXP nSEXP, SEXP sigma_varSEXP, SEXP sigma_typeSEXP) {
+double nll_var_from_samples_cpp(const Eigen::MatrixXd& cp_mat, const Eigen::VectorXd& E_obs, const Eigen::VectorXd& v_obs, double n, const Eigen::VectorXi& res_form, const Eigen::VectorXd& res_a2, const Eigen::VectorXd& res_b2, const Eigen::VectorXd& res_cc);
+RcppExport SEXP _admixr2_nll_var_from_samples_cpp(SEXP cp_matSEXP, SEXP E_obsSEXP, SEXP v_obsSEXP, SEXP nSEXP, SEXP res_formSEXP, SEXP res_a2SEXP, SEXP res_b2SEXP, SEXP res_ccSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -140,9 +144,11 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type E_obs(E_obsSEXP);
     Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type v_obs(v_obsSEXP);
     Rcpp::traits::input_parameter< double >::type n(nSEXP);
-    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type sigma_var(sigma_varSEXP);
-    Rcpp::traits::input_parameter< const Eigen::VectorXi& >::type sigma_type(sigma_typeSEXP);
-    rcpp_result_gen = Rcpp::wrap(nll_var_from_samples_cpp(cp_mat, E_obs, v_obs, n, sigma_var, sigma_type));
+    Rcpp::traits::input_parameter< const Eigen::VectorXi& >::type res_form(res_formSEXP);
+    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type res_a2(res_a2SEXP);
+    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type res_b2(res_b2SEXP);
+    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type res_cc(res_ccSEXP);
+    rcpp_result_gen = Rcpp::wrap(nll_var_from_samples_cpp(cp_mat, E_obs, v_obs, n, res_form, res_a2, res_b2, res_cc));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -271,9 +277,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"_admixr2_softmax_cpp", (DL_FUNC) &_admixr2_softmax_cpp, 1},
     {"_admixr2_weighted_meancov_cpp", (DL_FUNC) &_admixr2_weighted_meancov_cpp, 2},
     {"_admixr2_compute_mean_new_cpp", (DL_FUNC) &_admixr2_compute_mean_new_cpp, 5},
-    {"_admixr2_irmc_inner_nll_cpp", (DL_FUNC) &_admixr2_irmc_inner_nll_cpp, 12},
-    {"_admixr2_nll_cov_from_samples_cpp", (DL_FUNC) &_admixr2_nll_cov_from_samples_cpp, 6},
-    {"_admixr2_nll_var_from_samples_cpp", (DL_FUNC) &_admixr2_nll_var_from_samples_cpp, 6},
+    {"_admixr2_irmc_inner_nll_cpp", (DL_FUNC) &_admixr2_irmc_inner_nll_cpp, 14},
+    {"_admixr2_nll_cov_from_samples_cpp", (DL_FUNC) &_admixr2_nll_cov_from_samples_cpp, 8},
+    {"_admixr2_nll_var_from_samples_cpp", (DL_FUNC) &_admixr2_nll_var_from_samples_cpp, 8},
     {"_admixr2_adm_grad_partial_cpp", (DL_FUNC) &_admixr2_adm_grad_partial_cpp, 5},
     {"_admixr2_adm_grad_eta_omega_cpp", (DL_FUNC) &_admixr2_adm_grad_eta_omega_cpp, 11},
     {"_admixr2_adm_grad_partial_var_cpp", (DL_FUNC) &_admixr2_adm_grad_partial_var_cpp, 5},

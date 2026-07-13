@@ -121,7 +121,6 @@ test_that("adirmcProposal with kappa_method='linearized_gh': returns non-NULL", 
   prop <- tryCatch(
     admixr2:::.adirmcProposal(
       rxMod_k, pars_k$struct, pinfo_k$sigma_names,
-      pinfo_k$sigma_is_prop, pinfo_k$sigma_is_lnorm,
       pars_k$omega, omega_expansion = 1.5,
       study_k, z_list[[1L]], "cp",
       pm_list[[1L]], cores = 1L,
@@ -165,7 +164,6 @@ test_that("adirmcProposal with kappa_method='linearized_gh': NLL is finite", {
   prop <- tryCatch(
     admixr2:::.adirmcProposal(
       rxMod_k, pars_k$struct, pinfo_k$sigma_names,
-      pinfo_k$sigma_is_prop, pinfo_k$sigma_is_lnorm,
       pars_k$omega, omega_expansion = 1.5,
       study_k, z_list[[1L]], "cp",
       pm_list[[1L]], cores = 1L,

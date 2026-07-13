@@ -19,9 +19,12 @@ skip_on_cran()
   study_cov <- study_var
   study_cov$method <- "cov"
 
-  nll_var <- tryCatch(admixr2:::.adirmcInnerNLL(pars0, prop, study_var),
+  # .adirmcInnerNLL now takes pinfo: the IS-weighted mean is computed inside the
+  # C++ kernel, so the residual arrays must be built from the parameter info here
+  # rather than pre-baked into the proposal.
+  nll_var <- tryCatch(admixr2:::.adirmcInnerNLL(pars0, prop, study_var, env$pinfo),
                       error = function(e) NA_real_)
-  nll_cov <- tryCatch(admixr2:::.adirmcInnerNLL(pars0, prop, study_cov),
+  nll_cov <- tryCatch(admixr2:::.adirmcInnerNLL(pars0, prop, study_cov, env$pinfo),
                       error = function(e) NA_real_)
 
   p_bad   <- p0; p_bad["tcl"] <- p_bad["tcl"] + 1.0
