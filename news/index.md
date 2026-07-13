@@ -4,6 +4,20 @@
 
 ### New features
 
+- **Parallel restarts now run on `mirai` daemons.** `workers > 1` starts
+  a pool of background R processes instead of dispatching through
+  `future`/`furrr`. This replaces the previous fork (Unix/macOS) vs
+  PSOCK (Windows/RStudio) split with a single code path that behaves
+  identically on every platform, and the pool lives on its own mirai
+  compute profile so it never disturbs daemons the user has set up for
+  their own code. `furrr` and `future` are no longer used; `mirai` moves
+  into `Suggests`. Workers are still stopped automatically after the
+  restart phase (and now also on error/interrupt, via
+  [`on.exit()`](https://rdrr.io/r/base/on.exit.html)), so all cores are
+  free for the covariance step;
+  [`admStopWorkers()`](https://leidenpharmacology.github.io/admixr2/reference/admStopWorkers.md)
+  remains available.
+
 - **Multi-compartment fitting (multiple observed outputs).** A study may
   now observe several model outputs at once (e.g. plasma and brain/CSF)
   via an `observations` list – one entry per observed output with its

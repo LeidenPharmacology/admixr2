@@ -188,7 +188,7 @@ fit_par <- nlmixr2(
     studies    = list(examplomycin = study),
     n_sim      = 5000L,
     n_restarts = 4L,
-    workers    = 4L,      # fork on Unix/macOS; PSOCK cluster on Windows
+    workers    = 4L,      # background worker processes (mirai daemons)
     cores      = 8L,      # total rxSolve OpenMP threads across workers
     restart_sd = 0.3,     # SD of log-scale perturbation from the starting point
     seed       = 1L

@@ -185,7 +185,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   37.485      8.538  46.023
+#> 1   22.902      5.607  28.509
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
@@ -221,14 +221,14 @@ fit$objective                    # -2 log-likelihood
 #> [1] -3690.835
 fit$env$admExtra$struct          # structural parameters (log scale)
 #>        tcl        tv1        tv2         tq        tka 
-#> 1.60106954 2.31424065 3.40223699 2.28459889 0.02422607
+#> 1.60106955 2.31424052 3.40223701 2.28459887 0.02422596
 fit$env$admExtra$omega           # estimated Omega matrix
 #>          [,1]      [,2]       [,3]     [,4]       [,5]
 #> [1,] 0.102159 0.0000000 0.00000000 0.000000 0.00000000
 #> [2,] 0.000000 0.1080019 0.00000000 0.000000 0.00000000
 #> [3,] 0.000000 0.0000000 0.09747445 0.000000 0.00000000
 #> [4,] 0.000000 0.0000000 0.00000000 0.105588 0.00000000
-#> [5,] 0.000000 0.0000000 0.00000000 0.000000 0.09281044
+#> [5,] 0.000000 0.0000000 0.00000000 0.000000 0.09281046
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
 #> 0.03937635

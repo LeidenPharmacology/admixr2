@@ -365,7 +365,7 @@ for complex ODE models where each rxSolve is expensive.</p>
 <span>    studies    <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>examplomycin <span class="op">=</span> <span class="va">study</span><span class="op">)</span>,</span>
 <span>    n_sim      <span class="op">=</span> <span class="fl">5000L</span>,</span>
 <span>    n_restarts <span class="op">=</span> <span class="fl">4L</span>,</span>
-<span>    workers    <span class="op">=</span> <span class="fl">4L</span>,      <span class="co"># fork on Unix/macOS; PSOCK cluster on Windows</span></span>
+<span>    workers    <span class="op">=</span> <span class="fl">4L</span>,      <span class="co"># background worker processes (mirai daemons)</span></span>
 <span>    cores      <span class="op">=</span> <span class="fl">8L</span>,      <span class="co"># total rxSolve OpenMP threads across workers</span></span>
 <span>    restart_sd <span class="op">=</span> <span class="fl">0.3</span>,     <span class="co"># SD of log-scale perturbation from the starting point</span></span>
 <span>    seed       <span class="op">=</span> <span class="fl">1L</span></span>

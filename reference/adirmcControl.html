@@ -66,7 +66,7 @@ Monte Carlo estimator.</p>
 <span>  print <span class="op">=</span> <span class="fl">1L</span>,</span>
 <span>  omega_expansion <span class="op">=</span> <span class="fl">1</span>,</span>
 <span>  seed <span class="op">=</span> <span class="fl">12345L</span>,</span>
-<span>  cores <span class="op">=</span> <span class="fl">1L</span>,</span>
+<span>  cores <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/getRxThreads.html" class="external-link">rxCores</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  nDisplayProgress <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">integer.max</span>,</span>
 <span>  grad <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"analytical"</span>, <span class="st">"none"</span>, <span class="st">"fd"</span><span class="op">)</span>,</span>
 <span>  kappa_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"exact"</span>, <span class="st">"linearized"</span>, <span class="st">"linearized_gh"</span><span class="op">)</span>,</span>
@@ -177,7 +177,10 @@ the gradient off. Both emit a message.</p></dd>
 
 
 <dt id="arg-cores">cores<a class="anchor" aria-label="anchor" href="#arg-cores"></a></dt>
-<dd><p>Number of OpenMP threads for <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code>.</p></dd>
+<dd><p>Number of OpenMP threads for <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code>. Defaults to
+<code><a href="https://nlmixr2.github.io/rxode2/reference/getRxThreads.html" class="external-link">rxode2::rxCores()</a></code>. <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve()</a></code> parallelises over subjects, so this is the
+main speed lever for the MC estimators; when <code>workers &gt; 1</code> it is a <em>total</em>
+budget, split across the workers.</p></dd>
 
 
 <dt id="arg-ndisplayprogress">nDisplayProgress<a class="anchor" aria-label="anchor" href="#arg-ndisplayprogress"></a></dt>
@@ -278,12 +281,11 @@ restart initialisation.</p></dd>
 
 <dt id="arg-workers">workers<a class="anchor" aria-label="anchor" href="#arg-workers"></a></dt>
 <dd><p>Number of parallel workers for multi-restart. <code>1</code> (default)
-runs restarts sequentially. Values <code>&gt; 1</code> use fork workers on Unix/macOS
-(outside RStudio) and a PSOCK cluster on Windows or inside RStudio.
-<strong>RStudio on Linux</strong>: <code><a href="https://parallelly.futureverse.org/reference/supportsMulticore.html" class="external-link">future::supportsMulticore()</a></code> returns <code>FALSE</code> inside
-RStudio even on Linux, so PSOCK is used; fork is only active when running
-from a terminal. Workers are stopped automatically after the restart phase
-so all cores are available for the Hessian step.</p></dd>
+runs restarts sequentially. Values <code>&gt; 1</code> run the restarts on a pool of
+background R processes (mirai daemons), which behaves the same way on every
+platform. Requires the <code>mirai</code> package. Workers are stopped automatically
+after the restart phase so all cores are available for the Hessian step; if
+a fit is interrupted, <code><a href="admStopWorkers.html">admStopWorkers()</a></code> cleans up any survivors.</p></dd>
 
 
 <dt id="arg-rxcontrol">rxControl<a class="anchor" aria-label="anchor" href="#arg-rxcontrol"></a></dt>
@@ -454,7 +456,7 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0028     | -1266.44 |    4.935 |    8.122 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0029     | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0030 ✓   | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1008 |   0.0234 |   0.1396 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 3.5 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 1.1 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
@@ -469,7 +471,7 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    3.541      8.995  12.536</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1    1.071      6.136   7.207</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>

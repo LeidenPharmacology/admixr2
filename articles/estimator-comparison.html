@@ -503,67 +503,67 @@ so FO bias is small.</p>
 <tr class="odd">
 <td align="left">exp(tcl)</td>
 <td align="right">5.00</td>
-<td align="right">4.9528</td>
+<td align="right">4.9305</td>
 <td align="right">4.9583</td>
 </tr>
 <tr class="even">
 <td align="left">exp(tv1)</td>
 <td align="right">10.00</td>
-<td align="right">7.5489</td>
+<td align="right">7.5125</td>
 <td align="right">10.1172</td>
 </tr>
 <tr class="odd">
 <td align="left">exp(tv2)</td>
 <td align="right">30.00</td>
-<td align="right">31.7987</td>
+<td align="right">31.7752</td>
 <td align="right">30.0312</td>
 </tr>
 <tr class="even">
 <td align="left">exp(tq)</td>
 <td align="right">10.00</td>
-<td align="right">10.3957</td>
+<td align="right">10.3718</td>
 <td align="right">9.8217</td>
 </tr>
 <tr class="odd">
 <td align="left">exp(tka)</td>
 <td align="right">1.00</td>
-<td align="right">0.8393</td>
+<td align="right">0.8336</td>
 <td align="right">1.0245</td>
 </tr>
 <tr class="even">
 <td align="left">var(eta.cl)</td>
 <td align="right">0.09</td>
-<td align="right">0.0996</td>
+<td align="right">0.0972</td>
 <td align="right">0.1022</td>
 </tr>
 <tr class="odd">
 <td align="left">var(eta.v1)</td>
 <td align="right">0.09</td>
-<td align="right">0.1251</td>
+<td align="right">0.1309</td>
 <td align="right">0.1080</td>
 </tr>
 <tr class="even">
 <td align="left">var(eta.v2)</td>
 <td align="right">0.09</td>
-<td align="right">0.0851</td>
+<td align="right">0.0728</td>
 <td align="right">0.0975</td>
 </tr>
 <tr class="odd">
 <td align="left">var(eta.q)</td>
 <td align="right">0.09</td>
-<td align="right">0.1010</td>
+<td align="right">0.1015</td>
 <td align="right">0.1056</td>
 </tr>
 <tr class="even">
 <td align="left">var(eta.ka)</td>
 <td align="right">0.09</td>
-<td align="right">0.0869</td>
+<td align="right">0.0872</td>
 <td align="right">0.0928</td>
 </tr>
 <tr class="odd">
 <td align="left">prop.sd</td>
 <td align="right">0.20</td>
-<td align="right">0.1996</td>
+<td align="right">0.1998</td>
 <td align="right">0.1984</td>
 </tr>
 </tbody>
@@ -579,7 +579,7 @@ on a different scale and <strong>must not</strong> be compared with MC
 objectives or used for cross-estimator AIC:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sprintf.html" class="external-link">sprintf</a></span><span class="op">(</span><span class="st">"adfo  -2LL = %.2f   AIC = %.2f\n"</span>, <span class="va">fit_fo</span><span class="op">$</span><span class="va">objective</span>, <span class="fu"><a href="https://rdrr.io/r/stats/AIC.html" class="external-link">AIC</a></span><span class="op">(</span><span class="va">fit_fo</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; adfo  -2LL = -3676.44   AIC = -3654.44</span></span>
+<span><span class="co">#&gt; adfo  -2LL = -3675.39   AIC = -3653.39</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sprintf.html" class="external-link">sprintf</a></span><span class="op">(</span><span class="st">"admc  -2LL = %.2f   AIC = %.2f\n"</span>, <span class="va">fit_mc</span><span class="op">$</span><span class="va">objective</span>, <span class="fu"><a href="https://rdrr.io/r/stats/AIC.html" class="external-link">AIC</a></span><span class="op">(</span><span class="va">fit_mc</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="co">#&gt; admc  -2LL = -3690.84   AIC = -3668.84</span></span></code></pre></div>
 <p>Use AIC only within the same estimator for model selection.</p>

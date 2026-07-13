@@ -15,7 +15,7 @@ admControl(
   ftol_rel = .Machine$double.eps^2,
   print = 10L,
   seed = 12345L,
-  cores = 1L,
+  cores = rxode2::rxCores(),
   nDisplayProgress = .Machine$integer.max,
   grad = c("sens", "fd", "cfd", "none"),
   grad_h = 1e-04,
@@ -130,6 +130,12 @@ admControl(
 
   Number of OpenMP threads for
   [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html).
+  Defaults to
+  [`rxode2::rxCores()`](https://nlmixr2.github.io/rxode2/reference/getRxThreads.html).
+  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
+  parallelises over subjects, so this is the main speed lever for the MC
+  estimators; when `workers > 1` it is a *total* budget, split across
+  the workers.
 
 - nDisplayProgress:
 
@@ -210,14 +216,13 @@ admControl(
 - workers:
 
   Number of parallel workers for multi-restart. `1` (default) runs
-  restarts sequentially. Values `> 1` use fork workers on Unix/macOS
-  (outside RStudio) and a PSOCK cluster on Windows or inside RStudio.
-  **RStudio on Linux**:
-  [`future::supportsMulticore()`](https://parallelly.futureverse.org/reference/supportsMulticore.html)
-  returns `FALSE` inside RStudio even on Linux, so PSOCK is used; fork
-  is only active when running from a terminal. Workers are stopped
+  restarts sequentially. Values `> 1` run the restarts on a pool of
+  background R processes (mirai daemons), which behaves the same way on
+  every platform. Requires the `mirai` package. Workers are stopped
   automatically after the restart phase so all cores are available for
-  the Hessian step.
+  the Hessian step; if a fit is interrupted,
+  [`admStopWorkers()`](https://leidenpharmacology.github.io/admixr2/reference/admStopWorkers.md)
+  cleans up any survivors.
 
 - rxControl:
 
@@ -322,7 +327,7 @@ fit <- nlmixr2(
 #> ℹ parameter labels from comments are typically ignored in non-interactive mode
 #> ℹ Need to run with the source intact to parse comments
 #> === admixr2: Aggregate Data Modeling (MC) ===
-#>   Obs units: 1 | MC samples: 1000 | Params: 11 | Cores: 1 | Grad: Sens | Restarts: 1
+#>   Obs units: 1 | MC samples: 1000 | Params: 11 | Cores: 2 | Grad: Sens | Restarts: 1
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
@@ -331,7 +336,7 @@ fit <- nlmixr2(
 #> | 0030     | -3690.65 |    4.961 |    10.25 |     29.9 |    9.857 |     1.04 |   0.1985 |   0.1045 |    0.109 |   0.1022 |   0.1072 |  0.09699 |
 #> | 0040     | -3690.72 |     4.95 |    10.16 |    30.02 |    9.814 |    1.031 |   0.1983 |   0.1044 |   0.1139 |   0.1022 |   0.1067 |  0.09433 |
 #> | 0045 ✓   | -3690.73 |    4.952 |    10.12 |    30.03 |    9.816 |    1.026 |   0.1983 |   0.1045 |   0.1157 |   0.1008 |   0.1064 |  0.09239 |
-#> | 9.7 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 5.0 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, Sens-Hessian, 7 gradient evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
@@ -346,7 +351,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    9.676      8.253  17.929
+#> 1    5.027      4.997  10.024
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

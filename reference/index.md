@@ -43,7 +43,7 @@ Configuration for each estimator.
 - [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)
   : Control settings for the IRMC estimator
 - [`admStopWorkers()`](https://leidenpharmacology.github.io/admixr2/reference/admStopWorkers.md)
-  : Stop PSOCK workers
+  : Stop parallel workers
 - [`admClearCache()`](https://leidenpharmacology.github.io/admixr2/reference/admClearCache.md)
   : Clear the admixr2 model cache
 

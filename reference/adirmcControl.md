@@ -17,7 +17,7 @@ adirmcControl(
   print = 1L,
   omega_expansion = 1,
   seed = 12345L,
-  cores = 1L,
+  cores = rxode2::rxCores(),
   nDisplayProgress = .Machine$integer.max,
   grad = c("analytical", "none", "fd"),
   kappa_method = c("exact", "linearized", "linearized_gh"),
@@ -144,6 +144,12 @@ adirmcControl(
 
   Number of OpenMP threads for
   [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html).
+  Defaults to
+  [`rxode2::rxCores()`](https://nlmixr2.github.io/rxode2/reference/getRxThreads.html).
+  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
+  parallelises over subjects, so this is the main speed lever for the MC
+  estimators; when `workers > 1` it is a *total* budget, split across
+  the workers.
 
 - nDisplayProgress:
 
@@ -250,14 +256,13 @@ adirmcControl(
 - workers:
 
   Number of parallel workers for multi-restart. `1` (default) runs
-  restarts sequentially. Values `> 1` use fork workers on Unix/macOS
-  (outside RStudio) and a PSOCK cluster on Windows or inside RStudio.
-  **RStudio on Linux**:
-  [`future::supportsMulticore()`](https://parallelly.futureverse.org/reference/supportsMulticore.html)
-  returns `FALSE` inside RStudio even on Linux, so PSOCK is used; fork
-  is only active when running from a terminal. Workers are stopped
+  restarts sequentially. Values `> 1` run the restarts on a pool of
+  background R processes (mirai daemons), which behaves the same way on
+  every platform. Requires the `mirai` package. Workers are stopped
   automatically after the restart phase so all cores are available for
-  the Hessian step.
+  the Hessian step; if a fit is interrupted,
+  [`admStopWorkers()`](https://leidenpharmacology.github.io/admixr2/reference/admStopWorkers.md)
+  cleans up any survivors.
 
 - rxControl:
 
@@ -433,7 +438,7 @@ fit <- nlmixr2(
 #> | 0028     | -1266.44 |    4.935 |    8.122 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |
 #> | 0029     | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1007 |   0.0234 |   0.1396 |
 #> | 0030 ✓   | -1266.44 |    4.935 |    8.121 |    31.44 |    8.922 |   0.8153 |   0.1797 |   0.1227 |  0.07678 |   0.1008 |   0.0234 |   0.1396 |
-#> | 3.5 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 1.1 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
@@ -448,7 +453,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    3.541      8.995  12.536
+#> 1    1.071      6.136   7.207
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
