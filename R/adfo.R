@@ -474,7 +474,7 @@
 
 # -- Restart worker ------------------------------------------------------------
 
-# Self-contained FO optimization run (one restart); serializable for furrr workers.
+# Self-contained FO optimization run (one restart); serializable to a worker.
 # Signature mirrors .admRestartWorker: same base_args from .admRunRestarts().
 # n_sim, sampling accepted for interface compatibility but not used.
 # use_pure_fd: TRUE for grad="fd"/"cfd"; dispatches to .adfoFDGrad() instead of .adfoGrad().
@@ -493,9 +493,10 @@
                                 rxMod_direct = NULL, sensModel_direct = NULL) {
   library(admixr2)
 
-  # Dev mode (PSOCK workers): patch installed namespace with dev functions from
-  # .GlobalEnv (serialised there by furrr globals). tryCatch guards against
-  # the installed package predating this function (run devtools::install() once).
+  # Dev mode: patch the installed namespace with any dev functions in .GlobalEnv.
+  # A daemon is patched by .admDaemonRestart() before it gets here; this covers a
+  # direct (sequential) call. tryCatch guards against the installed package
+  # predating this function (run devtools::install() once).
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   m <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores,
@@ -567,8 +568,8 @@
 #' @param n_restarts Number of optimizer restarts (1 = no multi-start).
 #' @param restart_sd Standard deviation for random perturbations of initial
 #'   struct thetas at each restart (> 1).
-#' @param workers Number of parallel PSOCK/fork workers for multi-restart
-#'   (default 1 = sequential).
+#' @param workers Number of parallel workers (mirai daemons) for multi-restart
+#'   (default 1 = sequential). Requires the `mirai` package.
 #' @param cov_h Inner FD step for the gradient-based Hessian (only used when
 #'   `covMethod = "r"` and `grad != "none"`). Default 1e-3.
 #' @param rxControl `rxode2::rxControl()` object. Created automatically when `NULL`.
@@ -917,8 +918,8 @@ nlmixr2Est.adfo <- function(env, ...) {
                                 nll_trace  = .nll_trace,
                                 par_trace  = .par_trace))
   } else {
-    .adm_old_plan <- .admSetupParallelPlan(.ctl, .ctl$n_restarts)
-    if (!is.null(.adm_old_plan)) on.exit(future::plan(.adm_old_plan), add = TRUE)
+    .admSetupDaemons(.ctl, .ctl$n_restarts)
+    on.exit(.admStopDaemons(), add = TRUE)
     opt <- .admRunRestarts(
       worker_fn  = .adfoRestartWorker,
       p0         = ov$p0, ov = ov, pinfo = pinfo,
@@ -938,7 +939,7 @@ nlmixr2Est.adfo <- function(env, ...) {
                         rxMod_direct    = rxMod,
                         sensModel_direct = sensModel)
     )
-    admStopWorkers()
+    .admStopDaemons()
     .iter <- opt$n_iter
   }
 

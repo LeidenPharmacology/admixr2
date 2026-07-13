@@ -509,7 +509,7 @@
 
 # -- Restart worker ------------------------------------------------------------
 
-# Self-contained GH optimization run (one restart); serializable for furrr workers.
+# Self-contained GH optimization run (one restart); serializable to a worker.
 # Signature mirrors .adfoRestartWorker: same base_args from .admRunRestarts().
 # n_sim, sampling accepted for interface compatibility but not used.
 .adghRestartWorker <- function(restart_id, p_init, ui_lstExpr, pinfo,
@@ -599,8 +599,8 @@
 #' @param n_restarts Number of optimizer restarts (1 = no multi-start).
 #' @param restart_sd SD of random perturbations of initial struct thetas at
 #'   each restart.
-#' @param workers Number of parallel PSOCK/fork workers (default 1 =
-#'   sequential).
+#' @param workers Number of parallel workers (mirai daemons) for multi-restart
+#'   (default 1 = sequential). Requires the `mirai` package.
 #' @param rxControl `rxode2::rxControl()` object. Created automatically when `NULL`.
 #' @param calcTables,compress,ci,sigdig,sigdigTable,optExpression,sumProd,literalFix
 #'   Passed to `nlmixr2est::foceiControl()` for the table/output machinery.
@@ -959,8 +959,8 @@ nlmixr2Est.adgh <- function(env, ...) {
         .admProgressTimingRow((proc.time() - t0)["elapsed"], pinfo)))
     }
   } else {
-    .adgh_old_plan <- .admSetupParallelPlan(.ctl, .ctl$n_restarts)
-    if (!is.null(.adgh_old_plan)) on.exit(future::plan(.adgh_old_plan), add = TRUE)
+    .admSetupDaemons(.ctl, .ctl$n_restarts)
+    on.exit(.admStopDaemons(), add = TRUE)
     opt <- .admRunRestarts(
       worker_fn  = .adghRestartWorker,
       p0         = ov$p0, ov = ov, pinfo = pinfo,
@@ -983,7 +983,7 @@ nlmixr2Est.adgh <- function(env, ...) {
         sensModel_direct = sensModel
       )
     )
-    admStopWorkers()
+    .admStopDaemons()
     .iter <- opt$n_iter
   }
 

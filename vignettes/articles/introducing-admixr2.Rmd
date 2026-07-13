@@ -502,7 +502,7 @@ algorithmic components.
 | Linearized kappa | Not available | Optional; eliminates ODE calls in inner loop |
 | $\Omega$ off-diagonal encoding | covlogit (correlation logit) | Raw Cholesky entry $L_{jk}$ |
 | Parameter preconditioning | No | Yes (diagonal scaling) |
-| Parallel restarts | Sequential chains | `furrr` workers |
+| Parallel restarts | Sequential chains | `mirai` workers |
 
 The gradient improvements are the most consequential. Moving from a gradient
 that requires $p \times N$ extra ODE solves per step (admr FD) to one that

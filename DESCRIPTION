@@ -37,11 +37,10 @@ LinkingTo:
     RcppEigen
 Suggests:
     expm,
-    furrr,
-    future,
     ggplot2,
     knitr,
     MASS,
+    mirai,
     mnormt,
     nlmixr2 (>= 5.0.0),
     nlmixr2data,

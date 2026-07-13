@@ -122,12 +122,17 @@
   on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
   setwd(rxode2::rxTempDir())
 
+  # The cache holds the whole result list, so the compiled model to rxLoad() is
+  # m$mod -- rxLoad(m) errors ("need an rxode2-type object"), which silently sent
+  # every cache hit down the recompile path.
   if (file.exists(.cacheFile)) {
-    mod <- tryCatch({ m <- qs2::qs_read(.cacheFile); rxode2::rxLoad(m); m },
-                    error = function(e) NULL)
-    if (!is.null(mod)) {
-      result <- list(type = "ode", mod = mod, sens_cols = sens_cols,
-                     rename_map = rename_map, is_lincmt = FALSE)
+    result <- tryCatch({ m <- qs2::qs_read(.cacheFile); rxode2::rxLoad(m$mod); m },
+                       error = function(e) NULL)
+    if (!is.null(result)) {
+      # Caches written by older versions predate these fields.
+      result$cache_file <- .cacheFile
+      if (is.null(result$sens_cols))  result$sens_cols  <- sens_cols
+      if (is.null(result$rename_map)) result$rename_map <- rename_map
       tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
       return(result)
     }
@@ -145,8 +150,13 @@
   is_lincmt <- if (!is.null(mvars))
     any(grepl("linCmtB", mvars$model, fixed = TRUE)) else FALSE
 
+  # cache_file travels with the result: parallel workers reload the sens model
+  # from exactly the file that was written here. Re-deriving the key from a later
+  # ui$foceiModel$inner does not work -- that access yields a different object
+  # than the one digested above, so the lookup always missed.
   result <- list(type = "ode", mod = mod, sens_cols = sens_cols,
-                 rename_map = rename_map, is_lincmt = is_lincmt)
+                 rename_map = rename_map, is_lincmt = is_lincmt,
+                 cache_file = .cacheFile)
   tryCatch(qs2::qs_save(result, .cacheFile), error = function(e) NULL)
   tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
   result

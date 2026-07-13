@@ -933,9 +933,10 @@ nmObjGetControl.adirmc <- function(x, ...) {
                                rxMod_direct = NULL) {
   library(admixr2)
 
-  # Dev mode (PSOCK workers): patch installed namespace with dev functions from
-  # .GlobalEnv (serialised there by furrr globals). tryCatch guards against
-  # the installed package predating this function (run devtools::install() once).
+  # Dev mode: patch the installed namespace with any dev functions in .GlobalEnv.
+  # A daemon is patched by .admDaemonRestart() before it gets here; this covers a
+  # direct (sequential) call. tryCatch guards against the installed package
+  # predating this function (run devtools::install() once).
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   # adirmc has no sensitivity model (analytical inner gradient) -> no sens_* args.
@@ -1162,8 +1163,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
     n_iter    <- pl$global_iter
     message(.admProgressTimingRow((proc.time() - t0)["elapsed"], pinfo))
   } else {
-    .irmc_old_plan <- .admSetupParallelPlan(.ctl, .ctl$n_restarts)
-    if (!is.null(.irmc_old_plan)) on.exit(future::plan(.irmc_old_plan), add = TRUE)
+    .admSetupDaemons(.ctl, .ctl$n_restarts)
+    on.exit(.admStopDaemons(), add = TRUE)
     opt_restart <- .admRunRestarts(
       worker_fn  = .adirmcRestartWorker,
       p0         = p_cur, ov = ov, pinfo = pinfo,
@@ -1188,7 +1189,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
         rxMod_direct    = rxMod
       )
     )
-    admStopWorkers()
+    .admStopDaemons()
     best_nll  <- opt_restart$objective
     best_p    <- opt_restart$solution
     n_iter    <- opt_restart$n_iter

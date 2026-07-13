@@ -311,7 +311,7 @@ test_that("admData() has at least one dosing and one observation row", {
 
 # ---- admStopWorkers() --------------------------------------------------------
 
-test_that("admStopWorkers(): returns invisibly when no cluster is running", {
+test_that("admStopWorkers(): returns invisibly when no workers are running", {
   expect_invisible(admStopWorkers())
 })
 
@@ -335,9 +335,14 @@ test_that("%||% works with numeric values", {
   expect_equal(admixr2:::`%||%`(0, 42), 0)
 })
 
-# ---- .admSetupParallelPlan() single-worker fast path -------------------------
+# ---- .admSetupDaemons() single-worker fast path ------------------------------
 
-test_that(".admSetupParallelPlan: workers=1 returns invisibly without starting workers", {
+test_that(".admSetupDaemons: workers=1 returns invisibly without starting workers", {
   ctl <- admControl(workers = 1L)
-  expect_invisible(admixr2:::.admSetupParallelPlan(ctl, n_r = 3L))
+  expect_invisible(admixr2:::.admSetupDaemons(ctl, n_r = 3L))
+  expect_equal(admixr2:::.adm_worker_env$n, 0L)
+})
+
+test_that(".admStopDaemons: no-op returns 0 when no pool is running", {
+  expect_equal(admixr2:::.admStopDaemons(), 0L)
 })
