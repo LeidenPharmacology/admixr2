@@ -37,8 +37,8 @@ There are no reverse dependencies on CRAN.
 - `qs2` is used for caching compiled rxode2 model objects between runs.
 - `nlmixr2` (Suggests) is used in examples and tests; a minimum version is
   declared.
-- `furrr` and `future` (Suggests) are used only when `workers > 1` is set in
-  the control object; they are loaded conditionally via `requireNamespace()`.
+- `mirai` (Suggests) is used only when `workers > 1` is set in the control
+  object; it is loaded conditionally via `requireNamespace()`.
 - `patchwork` (Suggests) is loaded conditionally via `requireNamespace()` for
   optional 2x2 diagnostic plot layouts.
 - `knitr` (Suggests) is used for a `knit_print.admFit` S3 method registered

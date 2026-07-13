@@ -1,12 +1,11 @@
-# Manual verification script for issue #45:
-# Fork (Unix/WSL) vs PSOCK (Windows) parallel-restart paths.
+# Manual verification script for the parallel-restart path (mirai daemons).
+# The backend is identical on every platform, so this script is worth running on
+# each OS you support rather than exercising per-platform branches.
 #
-# Run from WSL:
-#   cd /mnt/c/package/admixr2
-#   Rscript tests/manual/test-fork-psock.R
+#   Rscript tests/manual/test-parallel.R
 #
 # The script covers:
-#   A. Correctness: parallel (fork) NLL == sequential NLL (same seed/Sobol draws)
+#   A. Correctness: parallel NLL == sequential NLL (same seed/Sobol draws)
 #   B. Benchmark:   wall-clock time for n_restarts = 4 at multiple worker counts
 
 # Install/update admixr2 from local source so the test always reflects the
@@ -17,7 +16,7 @@ cat("Installing admixr2 from local source...\n")
 pak::local_install(".", upgrade = FALSE, ask = FALSE)
 
 # Install CRAN packages needed by this script that may not be present.
-needed <- c("future", "furrr")
+needed <- c("mirai")
 missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing)) {
   cat(sprintf("Installing missing packages: %s\n", paste(missing, collapse = ", ")))
@@ -28,7 +27,6 @@ suppressPackageStartupMessages({
   library(admixr2)
   library(rxode2)
   library(nlmixr2est)
-  library(future)
 })
 
 # ---- Model + study (mirrors helper-integration.R) ----------------------------
@@ -62,13 +60,6 @@ study_spec <- list(
 # ---- Section A: correctness (n_restarts = 2, workers = 2) --------------------
 
 cat("\n=== A. CORRECTNESS: parallel vs sequential (n_restarts = 2) ===\n\n")
-
-fork_supported <- future::supportsMulticore()
-cat(sprintf("future::supportsMulticore(): %s\n", fork_supported))
-if (!fork_supported) {
-  cat("  WARNING: fork not supported on this platform — PSOCK will be used instead.\n")
-  cat("  To test the fork path run this script outside RStudio on Linux/WSL.\n\n")
-}
 
 ctl_base <- admControl(
   studies  = study_spec,
@@ -139,5 +130,5 @@ for (r in results) {
               r$workers, r$elapsed, r$nll, baseline / r$elapsed))
 }
 
-cat(sprintf("\nPlatform: %s\nfork supported: %s\n\n",
-            .Platform$OS.type, fork_supported))
+cat(sprintf("\nPlatform: %s\nmirai: %s\n\n",
+            .Platform$OS.type, as.character(utils::packageVersion("mirai"))))

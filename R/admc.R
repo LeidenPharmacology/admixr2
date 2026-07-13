@@ -95,12 +95,11 @@
 #' @param restart_sd Standard deviation of structural theta perturbations for
 #'   restart initialisation.
 #' @param workers Number of parallel workers for multi-restart. `1` (default)
-#'   runs restarts sequentially. Values `> 1` use fork workers on Unix/macOS
-#'   (outside RStudio) and a PSOCK cluster on Windows or inside RStudio.
-#'   **RStudio on Linux**: `future::supportsMulticore()` returns `FALSE` inside
-#'   RStudio even on Linux, so PSOCK is used; fork is only active when running
-#'   from a terminal. Workers are stopped automatically after the restart phase
-#'   so all cores are available for the Hessian step.
+#'   runs restarts sequentially. Values `> 1` run the restarts on a pool of
+#'   background R processes (mirai daemons), which behaves the same way on every
+#'   platform. Requires the `mirai` package. Workers are stopped automatically
+#'   after the restart phase so all cores are available for the Hessian step; if
+#'   a fit is interrupted, `admStopWorkers()` cleans up any survivors.
 #' @param rxControl `rxode2::rxControl()` object. Created automatically when `NULL`.
 #' @param addProp How combined additive+proportional error is parameterised in
 #'   the nlmixr2 output tables: `"combined2"` (default, variance form) or
@@ -1463,9 +1462,10 @@ nmObjGetControl.admc <- function(x, ...) {
                               rxMod_direct = NULL, sensModel_direct = NULL) {
   library(admixr2)
 
-  # Dev mode (PSOCK workers): patch installed namespace with dev functions from
-  # .GlobalEnv (serialised there by furrr globals). tryCatch guards against
-  # the installed package predating this function (run devtools::install() once).
+  # Dev mode: patch the installed namespace with any dev functions in .GlobalEnv.
+  # A daemon is patched by .admDaemonRestart() before it gets here; this covers a
+  # direct (sequential) call. tryCatch guards against the installed package
+  # predating this function (run devtools::install() once).
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   m <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores,
@@ -1480,7 +1480,7 @@ nmObjGetControl.admc <- function(x, ...) {
     .admNLL(p, pinfo, studies, z_list, m$rxMod, output_var, params_list, m$cores_w)
 
   # Derived here (not a worker argument) so the worker signature stays stable for
-  # the PSOCK dev-mode path. A joint unit's stacked-MVN gradient is analytical
+  # the dev-mode worker path. A joint unit's stacked-MVN gradient is analytical
   # when the sens model is available, else FD of the aggregate NLL.
   .any_joint <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
   grad_fn <- if (.any_joint && is.null(m$sensModel))
@@ -1493,7 +1493,7 @@ nmObjGetControl.admc <- function(x, ...) {
                params_list, m$cores_w, grad_h, m$sensModel, use_central = use_central)
 
   # Lock only when the model was loaded from cache in this process; never across
-  # PSOCK workers (each holds its own independent model instance -> no_lock).
+  # workers (each holds its own independent model instance -> no_lock).
   lock_rxMod <- if (is.null(rxMod_direct) && !no_lock) m$rxMod else NULL
 
   .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
@@ -1504,22 +1504,28 @@ nmObjGetControl.admc <- function(x, ...) {
 
 # -- Multi-restart orchestration -----------------------------------------------
 
-# Persistent PSOCK worker pool -- created once, reused across fits in the same
-# session. Fork workers (Unix/macOS) are always ephemeral and not stored here.
-# The future::plan is set per-fit and restored afterwards (cheap: no worker
-# spawning), so the cluster plan never leaks into unrelated nlmixr2() calls.
+# Parallel restarts run on a pool of mirai daemons: background R processes that
+# behave identically on every platform, so there is exactly one worker code path
+# (no fork/PSOCK split). Daemons never share the parent's memory, so everything
+# a restart needs is serialised to it; compiled model DLLs cannot cross that
+# boundary and are reloaded from the qs2 cache inside the daemon.
+#
+# The pool lives on its own mirai compute profile ("admixr2") so that starting
+# and stopping it never disturbs daemons the user set up for their own code.
+.adm_compute <- "admixr2"
+
 .adm_worker_env <- new.env(parent = emptyenv())
-.adm_worker_env$cluster <- NULL   # parallel::makeCluster result
-.adm_worker_env$n       <- 0L     # number of workers in cluster
+.adm_worker_env$n <- 0L   # number of daemons currently running
+
 # Clean up on R exit (onexit = TRUE) or when env is GC'd
 reg.finalizer(.adm_worker_env, function(e) {
-  if (!is.null(e$cluster))
-    tryCatch(parallel::stopCluster(e$cluster), error = function(err) NULL)
+  if (e$n > 0L)
+    tryCatch(mirai::daemons(0L, .compute = .adm_compute), error = function(err) NULL)
 }, onexit = TRUE)
 
-#' Stop PSOCK workers
+#' Stop parallel workers
 #'
-#' Stops any PSOCK worker processes started by a parallel-restart fit
+#' Stops any worker processes (mirai daemons) started by a parallel-restart fit
 #' (`admControl(workers = N)`). Workers are stopped automatically after the
 #' restart phase completes, so this function is only needed if a fit was
 #' interrupted before cleanup could run.
@@ -1532,28 +1538,32 @@ reg.finalizer(.adm_worker_env, function(e) {
 #'
 #' @export
 admStopWorkers <- function() {
-  if (is.null(.adm_worker_env$cluster)) {
-    message("No persistent admixr2 workers running.")
-    return(invisible(NULL))
-  }
-  n <- .adm_worker_env$n
-  tryCatch(parallel::stopCluster(.adm_worker_env$cluster), error = function(e) NULL)
-  .adm_worker_env$cluster <- NULL
-  .adm_worker_env$n       <- 0L
-  message(sprintf("%d admixr2 worker(s) stopped.", n))
+  n <- .admStopDaemons()
+  if (n == 0L)
+    message("No admixr2 workers running.")
+  else
+    message(sprintf("%d admixr2 worker(s) stopped.", n))
   invisible(NULL)
 }
 
-# Set up parallel plan for restarts. Returns old_plan for on.exit restore.
-# Workers are stopped by the caller (via admStopWorkers()) after restarts
-# complete so all cores are free for the Hessian step.
-.admSetupParallelPlan <- function(.ctl, n_r) {
+# Silent counterpart of admStopWorkers() for internal use: returns the number of
+# daemons that were shut down (0 when the pool was already empty).
+.admStopDaemons <- function() {
+  n <- .adm_worker_env$n
+  if (n == 0L) return(invisible(0L))
+  tryCatch(mirai::daemons(0L, .compute = .adm_compute), error = function(e) NULL)
+  .adm_worker_env$n <- 0L
+  invisible(n)
+}
+
+# Start the daemon pool for a multi-restart fit. The caller stops it again via
+# .admStopDaemons() once the restarts are done, so all cores are free for the
+# Hessian step, and registers an on.exit() so an interrupted fit leaves no
+# orphaned processes behind.
+.admSetupDaemons <- function(.ctl, n_r) {
   if (.ctl$workers <= 1L) return(invisible(NULL))
-  if (!requireNamespace("future", quietly = TRUE))
-    stop("Package 'future' required for workers > 1. Install it with install.packages('future').",
-         call. = FALSE)
-  if (!requireNamespace("furrr", quietly = TRUE))
-    stop("Package 'furrr' required for workers > 1. Install it with install.packages('furrr').",
+  if (!requireNamespace("mirai", quietly = TRUE))
+    stop("Package 'mirai' required for workers > 1. Install it with install.packages('mirai').",
          call. = FALSE)
   if (.ctl$workers > n_r)
     warning(sprintf(
@@ -1561,31 +1571,38 @@ admStopWorkers <- function() {
       .ctl$workers, n_r, n_r
     ), call. = FALSE)
 
-  old_plan <- future::plan()
+  n_w <- min(.ctl$workers, n_r)
+  # Reset any pool left behind by an interrupted fit before starting a fresh one.
+  .admStopDaemons()
+  message(sprintf("  Starting %d worker(s)", n_w))
+  mirai::daemons(n_w, .compute = .adm_compute)
+  .adm_worker_env$n <- n_w
+  invisible(n_w)
+}
 
-  # Fork (Unix/macOS): ephemeral workers, cleaned up automatically.
-  if (future::supportsMulticore()) {
-    future::plan(future::multicore, workers = min(.ctl$workers, n_r))
-    return(old_plan)
-  }
-
-  # PSOCK (Windows): always create a fresh cluster; stopped after restarts.
-  n_w <- .ctl$workers
-  if (!is.null(.adm_worker_env$cluster))
-    tryCatch(parallel::stopCluster(.adm_worker_env$cluster), error = function(e) NULL)
-  message(sprintf("  Starting %d PSOCK worker(s)", n_w))
-  .adm_worker_env$cluster <- parallel::makeCluster(n_w)
-  .adm_worker_env$n       <- n_w
-
-  # Use workers= (not cluster=) -- future::cluster ignores cluster= and falls
-  # back to detectCores() without it, making nbrOfWorkers() wrong.
-  future::plan(future::cluster, workers = .adm_worker_env$cluster)
-  old_plan
+# Entry point evaluated inside a daemon: attach admixr2, patch in any dev-mode
+# functions serialised from the parent (empty list in installed mode), then run
+# one restart. Keeping this here -- rather than adding arguments to the restart
+# workers -- is what lets the workers keep stable signatures: a daemon resolves
+# them from the *installed* namespace, so a new worker argument would throw
+# `unused argument` before the patched dev version could ever be reached.
+.admDaemonRestart <- function(r, worker_fn_name, fn_list, inits, all_args,
+                              cores_vec, effective_workers) {
+  library(admixr2)
+  .adm_ns <- asNamespace("admixr2")
+  for (.nm in names(fn_list))
+    tryCatch(utils::assignInNamespace(.nm, fn_list[[.nm]], ns = .adm_ns),
+             error = function(e) NULL)
+  wfn <- get(worker_fn_name, envir = .adm_ns, inherits = FALSE)
+  args <- all_args
+  args$cores <- cores_vec[[(r - 1L) %% effective_workers + 1L]]
+  do.call(wfn, c(list(restart_id = r, p_init = inits[[r]]), args))
 }
 
 # Patch the installed admixr2 namespace with any dev-mode functions found in
-# .GlobalEnv (put there by devtools::load_all() / furrr globals serialisation).
-# No-op when .GlobalEnv has no matching dev functions (installed mode).
+# .GlobalEnv. Retained for direct (non-daemon) worker calls; daemons are patched
+# by .admDaemonRestart() from the serialised fn_list instead. No-op when
+# .GlobalEnv has no matching dev functions (installed mode).
 .admPatchDevNamespace <- function() {
   .adm_dev_nms <- ls(envir = .GlobalEnv, all.names = TRUE,
                      pattern = "^\\.(adm|adfo|adirmc|softmax|logdmvnorm)")
@@ -1632,14 +1649,19 @@ admStopWorkers <- function() {
     rxode2::rxLoad(rxMod)
   }
 
+  # The cache file holds the full sens result list (type/mod/sens_cols/...), so
+  # the object to rxLoad() is m$mod; rxLoad(m) errors and lands in the NULL
+  # branch, which is what silently forced workers onto grad = "fd".
   sensModel <- if (!is.null(sensModel_direct)) {
     sensModel_direct
   } else if (!is.null(sens_cache_file) && file.exists(sens_cache_file)) {
-    .smod <- tryCatch({ m <- qs2::qs_read(sens_cache_file); rxode2::rxLoad(m); m },
-                      error = function(e) NULL)
-    if (!is.null(.smod)) list(type = "ode", mod = .smod,
-                               sens_cols = sens_cols, rename_map = sens_rename)
-    else NULL
+    tryCatch({
+      m <- qs2::qs_read(sens_cache_file)
+      rxode2::rxLoad(m$mod)
+      if (is.null(m$sens_cols))  m$sens_cols  <- sens_cols
+      if (is.null(m$rename_map)) m$rename_map <- sens_rename
+      m
+    }, error = function(e) NULL)
   } else {
     NULL
   }
@@ -1688,7 +1710,7 @@ admStopWorkers <- function() {
   eval_grad_sc <- if (!is.null(eval_grad_f)) function(p_s) eval_grad_f(p_s * sc) * sc else NULL
 
   # rxLock is a system-wide named mutex -- only used when the model was loaded
-  # from cache in this process (lock_rxMod set by caller), never across PSOCK
+  # from cache in this process (lock_rxMod set by caller), never across parallel
   # workers (each has its own independent model instance).
   if (!is.null(lock_rxMod)) {
     tryCatch(rxode2::rxLock(lock_rxMod), error = function(e) NULL)
@@ -1760,9 +1782,8 @@ admStopWorkers <- function() {
 
   use_parallel <- n_r > 1L &&
     .ctl$workers > 1L &&
-    requireNamespace("furrr",  quietly = TRUE) &&
-    requireNamespace("future", quietly = TRUE) &&
-    future::nbrOfWorkers() > 1L
+    requireNamespace("mirai", quietly = TRUE) &&
+    .adm_worker_env$n > 1L
 
   .restart_msg <- function(r, res) {
     sec <- if (!is.null(res$elapsed)) res$elapsed else NA_real_
@@ -1776,8 +1797,7 @@ admStopWorkers <- function() {
   }
 
   if (use_parallel) {
-    n_workers         <- future::nbrOfWorkers()
-    effective_workers <- min(n_workers, n_r)
+    effective_workers <- .adm_worker_env$n
     base_tpw          <- max(1L, floor(.ctl$cores / effective_workers))
     remainder         <- max(0L, .ctl$cores - base_tpw * effective_workers)
     cores_vec         <- c(rep(base_tpw + 1L, remainder), rep(base_tpw, effective_workers - remainder))
@@ -1786,108 +1806,70 @@ admStopWorkers <- function() {
     n_batches         <- ceiling(n_r / effective_workers)
     batch_label       <- if (n_batches > 1L) sprintf(", %d sequential batch(es)", n_batches) else ""
 
-    # use_fork when multicore is supported (Unix/macOS outside RStudio).
-    use_fork <- .ctl$workers > 1L && future::supportsMulticore()
-
-    message(sprintf("  Running %d restarts in parallel (%d workers, %s threads/worker%s%s)",
-                    n_r, effective_workers, tpw_label, batch_label,
-                    if (.ctl$workers > 1L) sprintf(", %s", if (use_fork) "fork" else "PSOCK") else ""))
+    message(sprintf("  Running %d restarts in parallel (%d workers, %s threads/worker%s)",
+                    n_r, effective_workers, tpw_label, batch_label))
     message(.admProgressHeader(pinfo, bottom = FALSE))
 
-    # Prepare shared parallel args (common to all paths below)
-    if (use_fork) {
-      all_args_par <- all_args
-      all_args_par$no_lock <- TRUE
-      if ("print_progress" %in% names(all_args_par)) all_args_par$print_progress <- FALSE
-    } else {
-      # PSOCK: compiled DLLs cannot serialize; reload from qs2 cache.
-      all_args_par <- all_args
-      all_args_par$no_lock <- TRUE
-      if ("print_progress"   %in% names(all_args_par)) all_args_par$print_progress   <- FALSE
-      if ("rxMod_direct"     %in% names(all_args_par)) all_args_par$rxMod_direct     <- NULL
-      if ("sensModel_direct" %in% names(all_args_par)) all_args_par$sensModel_direct <- NULL
-      if (!is.null(extra_args$sensModel_direct)) {
-        .sm    <- extra_args$sensModel_direct
-        .inner <- tryCatch(ui$foceiModel$inner, error = function(e) NULL)
-        if (is.null(.inner)) {
-          message("  [PSOCK] Sens model unavailable (foceiModel$inner = NULL); workers will use grad = 'fd'.")
-        } else {
-          .scf <- file.path(rxode2::rxTempDir(),
-                            paste0("adm-sens-", digest::digest(.inner), ".qs2"))
-          if (file.exists(.scf)) {
-            all_args_par$sens_cache_file <- .scf
-            all_args_par$sens_cols       <- .sm$sens_cols
-            all_args_par$sens_rename     <- .sm$rename_map
-          } else {
-            message("  [PSOCK] Sens model cache file not found; workers will use grad = 'fd'.")
-          }
-        }
+    # Daemons are separate processes on every platform: compiled DLLs cannot be
+    # serialised, so the worker reloads them from the qs2 cache, and rxEt event
+    # tables (~130 MB each) are stripped to plain data frames before sending.
+    all_args_par <- all_args
+    all_args_par$no_lock <- TRUE
+    if ("print_progress"   %in% names(all_args_par)) all_args_par$print_progress   <- FALSE
+    if ("rxMod_direct"     %in% names(all_args_par)) all_args_par$rxMod_direct     <- NULL
+    if ("sensModel_direct" %in% names(all_args_par)) all_args_par$sensModel_direct <- NULL
+    if (!is.null(extra_args$sensModel_direct)) {
+      # Take the cache path recorded by .admLoadSensModel() when it wrote the
+      # file. Re-deriving it from digest(ui$foceiModel$inner) misses: that access
+      # returns a different object than the one digested at save time, so the
+      # workers silently fell back to grad = "fd".
+      .sm  <- extra_args$sensModel_direct
+      .scf <- .sm$cache_file
+      if (!is.null(.scf) && file.exists(.scf)) {
+        all_args_par$sens_cache_file <- .scf
+        all_args_par$sens_cols       <- .sm$sens_cols
+        all_args_par$sens_rename     <- .sm$rename_map
+      } else {
+        message("  [parallel] Sens model cache unavailable; workers will use grad = 'fd'.")
       }
-      all_args_par$studies <- lapply(all_args_par$studies, function(s) {
-        for (.ev_field in c("ev", "ev_full"))
-          if (!is.null(s[[.ev_field]])) s[[.ev_field]] <- as.data.frame(s[[.ev_field]])
-        s
-      })
     }
+    all_args_par$studies <- lapply(all_args_par$studies, function(s) {
+      for (.ev_field in c("ev", "ev_full"))
+        if (!is.null(s[[.ev_field]])) s[[.ev_field]] <- as.data.frame(s[[.ev_field]])
+      s
+    })
 
     # Batch loop -- print after each batch of effective_workers restarts.
+    # .fn_list is empty in installed mode and holds the dev-mode functions under
+    # devtools::load_all(); .admDaemonRestart() patches them into the daemon's
+    # namespace before dispatching.
     batches <- split(seq_len(n_r), ceiling(seq_len(n_r) / effective_workers))
     results <- vector("list", n_r)
 
-    if (pkg_locked && !use_fork) {
-      # PSOCK (installed package): serialise to a clean-env lambda so furrr
-      # doesn't try to capture the surrounding closure.
-      .par_lambda <- function(r) {
-        wfn  <- get(.worker_fn_name, envir = asNamespace("admixr2"), inherits = FALSE)
-        args <- all_args_par
-        args$cores <- cores_vec[[(r - 1L) %% effective_workers + 1L]]
-        do.call(wfn, c(list(restart_id = r, p_init = inits[[r]]), args))
-      }
-      .par_lambda_env <- new.env(parent = baseenv())
-      .par_lambda_env$.worker_fn_name  <- .worker_fn_name
-      .par_lambda_env$inits             <- inits
-      .par_lambda_env$all_args_par      <- all_args_par
-      .par_lambda_env$cores_vec         <- cores_vec
-      .par_lambda_env$effective_workers <- effective_workers
-      environment(.par_lambda) <- .par_lambda_env
-      .furrr_opts <- furrr::furrr_options(seed = NULL, packages = "admixr2", globals = FALSE)
-      for (.batch in batches) {
-        .br <- furrr::future_map(.batch, .par_lambda, .options = .furrr_opts)
-        for (i in seq_along(.batch)) {
-          results[[.batch[[i]]]] <- .br[[i]]
-          message(.restart_msg(.batch[[i]], .br[[i]]))
-        }
-      }
-    } else {
-      # fork (Unix/macOS): child processes inherit parent memory via copy-on-write.
-      # dev-mode PSOCK: explicit globals required since namespace isn't locked.
-      .furrr_opts <- if (use_fork)
-        furrr::furrr_options(seed = NULL, globals = FALSE)
-      else
-        furrr::furrr_options(seed = NULL,
-          globals = c(.fn_list, list(inits = inits, all_args_par = all_args_par,
-                                     cores_vec = cores_vec, worker_fn = worker_fn,
-                                     effective_workers = effective_workers)))
-      for (.batch in batches) {
-        .br <- furrr::future_map(
-          .batch, function(r) {
-            args <- all_args_par
-            args$cores <- cores_vec[[(r - 1L) %% effective_workers + 1L]]
-            do.call(worker_fn, c(list(restart_id = r, p_init = inits[[r]]), args))
-          },
-          .options = .furrr_opts
-        )
-        for (i in seq_along(.batch)) {
-          results[[.batch[[i]]]] <- .br[[i]]
-          message(.restart_msg(.batch[[i]], .br[[i]]))
-        }
+    .map_args <- list(worker_fn_name    = .worker_fn_name,
+                      fn_list           = .fn_list,
+                      inits             = inits,
+                      all_args          = all_args_par,
+                      cores_vec         = cores_vec,
+                      effective_workers = effective_workers)
+
+    for (.batch in batches) {
+      .br <- mirai::mirai_map(.batch, .admDaemonRestart,
+                              .args = .map_args, .compute = .adm_compute)[]
+      for (i in seq_along(.batch)) {
+        res <- .br[[i]]
+        if (inherits(res, "errorValue") || inherits(res, "miraiError"))
+          stop(sprintf("admixr2: parallel restart %d failed: %s",
+                       .batch[[i]], paste(as.character(res), collapse = " ")),
+               call. = FALSE)
+        results[[.batch[[i]]]] <- res
+        message(.restart_msg(.batch[[i]], res))
       }
     }
   } else {
     if (n_r > 1L) {
-      if (!requireNamespace("furrr", quietly = TRUE) ||
-          !requireNamespace("future", quietly = TRUE)) {
-        message(sprintf("  Running %d restarts sequentially (install furrr+future for parallel)",
+      if (!requireNamespace("mirai", quietly = TRUE)) {
+        message(sprintf("  Running %d restarts sequentially (install mirai for parallel)",
                         n_r))
       } else {
         message(sprintf(paste0("  Running %d restarts sequentially",
@@ -2086,8 +2068,8 @@ nlmixr2Est.admc <- function(env, ...) {
                                 nll_trace  = .nll_trace,
                                 par_trace  = .par_trace))
   } else {
-    .adm_old_plan <- .admSetupParallelPlan(.ctl, .ctl$n_restarts)
-    if (!is.null(.adm_old_plan)) on.exit(future::plan(.adm_old_plan), add = TRUE)
+    .admSetupDaemons(.ctl, .ctl$n_restarts)
+    on.exit(.admStopDaemons(), add = TRUE)
     opt <- .admRunRestarts(
       worker_fn  = .admRestartWorker,
       p0         = ov$p0, ov = ov, pinfo = pinfo,
@@ -2107,7 +2089,7 @@ nlmixr2Est.admc <- function(env, ...) {
                         rxMod_direct     = rxMod,
                         sensModel_direct = sensModel)
     )
-    admStopWorkers()
+    .admStopDaemons()
     .iter <- opt$n_iter
   }
 
