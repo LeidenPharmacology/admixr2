@@ -951,6 +951,13 @@ nmObjGetControl.admc <- function(x, ...) {
     col_nms <- colnames(params_list[[si]])
     n_cols  <- length(col_nms)
 
+    # This unit's output and ITS sigma(s). .admGrad restricts residual error this
+    # way; .admGradBatch did not -- it read `output_var` (the model-level default)
+    # and looped every sigma, so on a multi-output fit the gradient-FD Hessian
+    # applied every endpoint's residual error to every block. No-op single-output.
+    ovb   <- s$output %||% output_var
+    sig_k <- which(.admSigmaSel(pinfo, ovb))
+
     eta_mats <- lapply(seq_len(n_c), function(ci) {
       if (!valid[ci]) return(NULL)
       em <- z %*% t(pars_list[[ci]]$L)
@@ -1023,7 +1030,7 @@ nmObjGetControl.admc <- function(x, ...) {
                         error = function(e) NULL)
         if (is.null(out)) { valid[] <- FALSE } else {
           keep <- out[["time"]] %in% s$times
-          vals <- out[[output_var]][keep]
+          vals <- out[[ovb]][keep]
           if (is.null(vals)) vals <- out[["ipredSim"]][keep]
           for (ci in seq_len(n_c)) {
             if (!valid[ci]) next
@@ -1074,7 +1081,7 @@ nmObjGetControl.admc <- function(x, ...) {
                         error = function(e) NULL)
         if (is.null(out)) { valid[] <- FALSE } else {
           keep <- out[["time"]] %in% s$times
-          vals <- out[[output_var]][keep]
+          vals <- out[[ovb]][keep]
           if (is.null(vals)) vals <- out[["ipredSim"]][keep]
           for (ci in seq_len(n_c)) {
             if (!valid[ci]) next
@@ -1130,7 +1137,7 @@ nmObjGetControl.admc <- function(x, ...) {
                                           nDisplayProgress = pinfo$nDisplayProgress),
                          error = function(e) NULL)
       if (!is.null(out_hi)) {
-        vals_hi <- out_hi[[output_var]][out_hi[["time"]] %in% s$times]
+        vals_hi <- out_hi[[ovb]][out_hi[["time"]] %in% s$times]
         if (is.null(vals_hi)) vals_hi <- out_hi[["ipredSim"]][out_hi[["time"]] %in% s$times]
         for (cuki in seq_len(n_cu)) {
           ci <- cu_idx$ci[cuki]; bi <- cu_idx$bi[cuki]
@@ -1155,7 +1162,7 @@ nmObjGetControl.admc <- function(x, ...) {
                                             nDisplayProgress = pinfo$nDisplayProgress),
                            error = function(e) NULL)
         if (!is.null(out_lo)) {
-          vals_lo <- out_lo[[output_var]][out_lo[["time"]] %in% s$times]
+          vals_lo <- out_lo[[ovb]][out_lo[["time"]] %in% s$times]
           if (is.null(vals_lo)) vals_lo <- out_lo[["ipredSim"]][out_lo[["time"]] %in% s$times]
           for (cuki in seq_len(n_cu)) {
             ci <- cu_idx$ci[cuki]; bi <- cu_idx$bi[cuki]
@@ -1178,7 +1185,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
       mu_struct <- colMeans(cp_mat)
       mu     <- mu_struct
-      for (k in seq_along(pars$sigma_var))
+      for (k in sig_k)
         if (pinfo$sigma_is_lnorm[k])
           mu <- mu * exp(pars$sigma_var[k] / 2)
       cp_c <- sweep(cp_mat, 2L, mu_struct)
@@ -1187,7 +1194,7 @@ nmObjGetControl.admc <- function(x, ...) {
       is_var <- identical(s$method, "var")
       if (is_var) {
         pv <- adm_col_sq_sum_cpp(cp_c) / n_sim
-        for (k in seq_along(pars$sigma_var)) {
+        for (k in sig_k) {
           sv <- pars$sigma_var[k]
           if (pinfo$sigma_is_prop[k])
             pv <- pv + sv * mu_struct^2
@@ -1200,7 +1207,7 @@ nmObjGetControl.admc <- function(x, ...) {
         dNLL_dV_diag <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
       } else {
         V <- crossprod(cp_c) / n_sim
-        for (k in seq_along(pars$sigma_var)) {
+        for (k in sig_k) {
           sv <- pars$sigma_var[k]
           if (pinfo$sigma_is_prop[k])
             diag(V) <- diag(V) + sv * mu_struct^2
@@ -1218,7 +1225,7 @@ nmObjGetControl.admc <- function(x, ...) {
       }
 
       sigma_mu_scale <- numeric(n_t)
-      for (k in seq_along(pars$sigma_var)) {
+      for (k in sig_k) {
         sv <- pars$sigma_var[k]
         if (pinfo$sigma_is_prop[k]) {
           sigma_mu_scale <- sigma_mu_scale + 2 * sv * dNLL_dV_diag * mu_struct
@@ -1276,9 +1283,13 @@ nmObjGetControl.admc <- function(x, ...) {
             adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_n)
       }
 
-      k_sig <- n_s
-      for (k in seq_along(pars$sigma_var)) {
-        k_sig <- k_sig + 1L
+      # k is the GLOBAL sigma index, so the gradient slot is n_s + k. A running
+      # counter (n_s + 1, n_s + 2, ...) would be right only when the unit owns
+      # every sigma: for a second output whose sigma is global index 2, sig_k is
+      # {2} and a counter would write it into slot n_s + 1 -- the FIRST output's
+      # sigma -- leaving this output's own sigma gradient at zero.
+      for (k in sig_k) {
+        k_sig <- n_s + k
         sv <- pars$sigma_var[k]
         if (pinfo$sigma_is_prop[k]) {
           grad_acc[ci, k_sig] <- grad_acc[ci, k_sig] + sum(dNLL_dV_diag * sv * mu_struct^2)
