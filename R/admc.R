@@ -34,6 +34,31 @@
 #'     pairs are zero). The compartments are then scored by a single MVN over the
 #'     stacked vector with shared random effects. `est = "adirmc"` does not
 #'     support multiple observed outputs; use `"admc"`, `"adfo"` or `"adgh"`.
+#'
+#'   **Long format (one row per endpoint/time).** As an alternative to the
+#'   `observations` list, a study may carry a `data` frame that keys each observed
+#'   summary by endpoint, the way nlmixr2 keys observations by `DVID`/`CMT`. The
+#'   frame needs an endpoint column (`DVID`, `CMT` or `output`), a time column
+#'   (`TIME`), a mean column (`E`) and -- unless a joint `V` is given -- a
+#'   variance column (`V`) or an SD column (`SD`). It is normalised into exactly
+#'   the same units as the `observations` form, so the two are interchangeable:
+#'
+#'   ```
+#'   # independent blocks: per-row variances; optional per-endpoint `n` column
+#'   # and per-endpoint `ev` (a list of event tables keyed by endpoint)
+#'   list(n = 60L, ev = ev,
+#'        data = data.frame(DVID = c("cp", "cp", "cCSF"), TIME = c(1, 2, 2),
+#'                          E = c(9.1, 7.4, 2.2), V = c(1.2, 0.9, 0.1)))
+#'
+#'   # joint (same subjects): ONE stacked covariance whose rows/cols align with
+#'   # the rows of `data` -- no `cross` blocks to assemble by hand
+#'   list(n = 60L, ev = ev, data = data.frame(DVID = ..., TIME = ..., E = ...),
+#'        V = V_joint)
+#'   ```
+#'
+#'   A study-level `V` (or an explicit `joint = TRUE`) marks the endpoints as
+#'   same-subject; without one, each endpoint is an independent likelihood block.
+#'   Endpoints are stacked in the order they first appear in `data`.
 #' @param n_sim Number of Monte Carlo samples per NLL evaluation.
 #' @param sampling Sampling method for eta draws: `"sobol"` (Sobol, default),
 #'   `"halton"` (Halton), `"torus"` (Kronecker/torus), `"lhs"` (Latin hypercube),

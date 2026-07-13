@@ -306,7 +306,159 @@ utils::globalVariables(c(
        row_output = row_output, n_total = T_total)
 }
 
+# -- long-format study input ---------------------------------------------------
+
+# Accepted column-name synonyms in a long-format study `data` frame. The output
+# column names the model endpoint each row belongs to (nlmixr2 keys observations
+# the same way, by DVID / CMT).
+.adm_long_cols <- list(
+  output = c("DVID", "dvid", "CMT", "cmt", "output"),
+  time   = c("TIME", "time", "t"),
+  E      = c("E", "mean", "DV", "dv"),
+  var    = c("V", "var", "variance"),
+  sd     = c("SD", "sd"),
+  n      = c("n", "N")
+)
+
+.admLongCol <- function(df, key) {
+  hit <- intersect(.adm_long_cols[[key]], names(df))
+  if (length(hit) == 0L) NULL else hit[[1L]]
+}
+
+# Rewrite a long-format study into the canonical `observations` form, so the rest
+# of the pipeline is untouched. The study gives one row per observed
+# (endpoint, time) pair:
+#
+#   list(n = 60L, ev = ev,
+#        data = data.frame(DVID = c("cp","cp","cb"), TIME = c(1,2,1),
+#                          E = c(...), V = c(...)))     # V column = variances
+#
+# Same-subject (joint) studies instead carry ONE study-level covariance matrix
+# whose rows/cols align with the rows of `data`; the per-row variance column is
+# then unnecessary:
+#
+#   list(n = 60L, ev = ev, data = data.frame(DVID = ..., TIME = ..., E = ...),
+#        V = Vjoint)
+#
+# A study-level `V` (or an explicit `joint = TRUE`) means the endpoints were
+# measured on the SAME subjects and the whole stacked vector is scored by one
+# MVN. Without it each endpoint is an independent likelihood block -- a separate
+# experiment, so it may carry its own `n` (an `n` column) and its own dosing (a
+# named list of event tables in `ev`, keyed by endpoint).
+.admExpandLongStudy <- function(s, nm) {
+  df <- s$data
+  if (!is.data.frame(df) || nrow(df) == 0L)
+    stop(sprintf("Study '%s': `data` must be a non-empty data frame", nm),
+         call. = FALSE)
+
+  c_out <- .admLongCol(df, "output"); c_t <- .admLongCol(df, "time")
+  c_E   <- .admLongCol(df, "E")
+  for (cc in list(list(c_out, "an endpoint column (DVID / CMT / output)"),
+                  list(c_t, "a time column (TIME)"),
+                  list(c_E, "a mean column (E)")))
+    if (is.null(cc[[1L]]))
+      stop(sprintf("Study '%s': long-format `data` needs %s", nm, cc[[2L]]),
+           call. = FALSE)
+
+  c_var <- .admLongCol(df, "var"); c_sd <- .admLongCol(df, "sd")
+  c_n   <- .admLongCol(df, "n")
+
+  out  <- as.character(df[[c_out]])
+  tvec <- as.numeric(df[[c_t]])
+  # Endpoints keep the order they first appear in (factor levels win if given).
+  onames <- if (is.factor(df[[c_out]])) levels(droplevels(df[[c_out]])) else unique(out)
+  joint  <- s$joint %||% (!is.null(s$V) || !is.null(s$cross))
+
+  key <- paste(out, tvec, sep = "@")
+  if (anyDuplicated(key))
+    stop(sprintf("Study '%s': duplicate endpoint/time rows in `data` (%s)", nm,
+                 paste(unique(key[duplicated(key)]), collapse = ", ")),
+         call. = FALSE)
+
+  # Row order used for the stacked E / joint V: endpoint block order, then time.
+  perm <- order(match(out, onames), tvec)
+
+  # Per-endpoint variances: from the study-level joint V's diagonal blocks when
+  # given, otherwise from the variance (or SD) column.
+  Vfull <- NULL
+  if (!is.null(s$V)) {
+    Vfull <- unname(as.matrix(s$V))
+    if (nrow(Vfull) != nrow(df) || ncol(Vfull) != nrow(df))
+      stop(sprintf("Study '%s': `V` must be %d x %d to match the rows of `data`",
+                   nm, nrow(df), nrow(df)), call. = FALSE)
+    Vfull <- Vfull[perm, perm, drop = FALSE]
+  } else if (is.null(c_var) && is.null(c_sd)) {
+    stop(sprintf(paste("Study '%s': long-format `data` needs a variance column",
+                       "(V) or an SD column (SD), or a study-level joint `V`."),
+                 nm), call. = FALSE)
+  }
+  vrow <- if (!is.null(c_var)) as.numeric(df[[c_var]]) else
+    if (!is.null(c_sd)) as.numeric(df[[c_sd]])^2 else NULL
+
+  # Per-endpoint dosing: one shared `ev`, or a list of event tables keyed by
+  # endpoint. rxode2 event tables inherit from data.frame -- test for that, not
+  # for is.list().
+  ev_per <- !is.null(s$ev) && is.list(s$ev) && !is.data.frame(s$ev)
+  if (ev_per && joint)
+    stop(sprintf(paste("Study '%s': a joint (same-subject) study shares one `ev`",
+                       "-- per-endpoint event tables describe separate experiments."),
+                 nm), call. = FALSE)
+
+  offset <- 0L
+  obs <- lapply(onames, function(o) {
+    idx <- which(out[perm] == o)                       # rows of this endpoint,
+    j   <- perm[idx]                                   # in study/original order
+    ob  <- list(output = o, times = tvec[j], E = as.numeric(df[[c_E]])[j])
+    # Independent blocks each keep their own covariance: the endpoint's diagonal
+    # block of a supplied V, else its per-row variances. A joint study scores the
+    # whole stack with one V, so the per-endpoint copies would be redundant.
+    if (!is.null(Vfull)) {
+      if (!joint) ob$V <- Vfull[idx, idx, drop = FALSE]
+    } else if (!is.null(vrow)) ob$V <- vrow[j]
+    if (!is.null(c_n)) {
+      nk <- unique(as.numeric(df[[c_n]])[j])
+      if (length(nk) != 1L)
+        stop(sprintf("Study '%s': endpoint '%s' has more than one `n` (%s)", nm, o,
+                     paste(nk, collapse = ", ")), call. = FALSE)
+      ob$n <- nk
+    }
+    if (ev_per) {
+      if (is.null(s$ev[[o]]))
+        stop(sprintf("Study '%s': `ev` is a per-endpoint list but has no entry for '%s'",
+                     nm, o), call. = FALSE)
+      ob$ev <- s$ev[[o]]
+    }
+    ob
+  })
+  names(obs) <- onames
+
+  if (joint) {
+    ns <- unique(vapply(obs, function(o) o$n %||% NA_real_, numeric(1)))
+    ns <- ns[!is.na(ns)]
+    if (length(ns) > 1L)
+      stop(sprintf(paste("Study '%s': a joint (same-subject) study has one shared",
+                         "`n`, but `data` gives several (%s)."),
+                   nm, paste(ns, collapse = ", ")), call. = FALSE)
+    if (length(ns) == 1L) s$n <- s$n %||% ns
+    for (k in seq_along(obs)) obs[[k]]$n <- NULL
+    if (!is.null(Vfull)) s$V <- Vfull
+    # No study-level V: the joint covariance is assembled from the per-endpoint
+    # marginal variances plus any `cross` blocks, as in the observations form.
+  } else {
+    s$V <- NULL
+  }
+  if (ev_per) s$ev <- NULL
+  s$data <- NULL
+  s$joint <- joint
+  s$observations <- obs
+  s
+}
+
 # Normalise one study spec into a list of observed-compartment units.
+#
+# Long-format input (study carries a `data` frame with one row per observed
+# endpoint/time, plus an optional study-level joint `V`) is rewritten into the
+# `observations` form first -- see .admExpandLongStudy().
 #
 # Multi-compartment forms (study carries an `observations` list):
 #   * Independent blocks -- each observed output has its own n/ev/times/E/V and is
@@ -321,7 +473,9 @@ utils::globalVariables(c(
 # observation. Top-level normalised fields (V, method, v_diag) are preserved for
 # backward compatibility; `$observations` holds the single unit either way.
 .admNormaliseStudy <- function(s, nm, default_output = NULL) {
-  if (!is.null(s$observations) && (!is.null(s$cross) || !is.null(s$V))) {
+  if (!is.null(s$data)) s <- .admExpandLongStudy(s, nm)
+  if (!is.null(s$observations) &&
+      (isTRUE(s$joint) || !is.null(s$cross) || !is.null(s$V))) {
     if (!is.list(s$observations) || length(s$observations) == 0L)
       stop(sprintf("Study '%s': `observations` must be a non-empty list", nm),
            call. = FALSE)
