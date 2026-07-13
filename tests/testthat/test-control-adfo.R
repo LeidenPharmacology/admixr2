@@ -6,7 +6,7 @@ test_that("adfoControl() returns correct class and key defaults", {
   expect_equal(ctl$grad,       "none")
   expect_equal(ctl$maxeval,    500L)
   expect_equal(ctl$seed,       12345L)
-  expect_equal(ctl$cores,      1L)
+  expect_equal(ctl$cores,      as.integer(rxode2::rxCores()))
   expect_equal(ctl$n_restarts, 1L)
   expect_equal(ctl$workers,    1L)
   expect_equal(ctl$covMethod,  "r")

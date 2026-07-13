@@ -42,20 +42,24 @@
 # Population moments (E, V) for one study via GH quadrature.
 # One batched .admSimulate over the node grid; weighted ML mean/cov; residual
 # error added to the diagonal exactly as adfo/admc.
-.adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
-  n_eta <- pinfo$n_eta
-  if (n_eta > 0L) {
+# Quadrature grid (eta nodes + weights) for the current Omega. Shared by the
+# single and batched moment paths.
+.adghGrid <- function(pars, pinfo, grid) {
+  if (pinfo$n_eta > 0L) {
     eta <- grid$X %*% t(pars$L)
     colnames(eta) <- pinfo$eta_col_names
-    W <- grid$W
+    list(eta = eta, W = grid$W)
   } else {
-    eta <- matrix(0, 1L, 0L)
-    W   <- 1
+    list(eta = matrix(0, 1L, 0L), W = 1)
   }
-  pm <- .admMakeParamsList(nrow(eta), pinfo, 1L)[[1L]]
-  cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta, study,
-                     out_var, pm, cores, pinfo$nDisplayProgress)
+}
 
+# Weighted moments + residual error from an already-solved quadrature matrix.
+# Split out of .adghMoments so the solve and the assembly can be driven
+# independently: the assembly depends on sigma, but the SOLVE does not (sigma is
+# zeroed into it and re-added analytically here), so a set of configurations
+# that share a solve can each be assembled cheaply.
+.adghMomentsFromCp <- function(cp, W, pars, pinfo, out_var) {
   mu  <- as.numeric(crossprod(W, cp))
   cpc <- sweep(cp, 2L, mu)
   V   <- crossprod(cpc, W * cpc)
@@ -74,6 +78,36 @@
     }
   }
   list(E = mu_sigma, V = V)
+}
+
+.adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
+  g  <- .adghGrid(pars, pinfo, grid)
+  pm <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
+  cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
+                     out_var, pm, cores, pinfo$nDisplayProgress)
+  .adghMomentsFromCp(cp, g$W, pars, pinfo, out_var)
+}
+
+# Moments for a SET of structural-theta configurations in ONE rxSolve.
+# The node grid and Omega are identical across configurations -- only the
+# structural thetas move -- so the n_cfg quadrature solves stack into one call
+# of n_cfg * n_node subjects instead of n_cfg calls of n_node.
+.adghMomentsBatch <- function(struct_mat, pars, pinfo, study, rxMod, out_var, grid, cores) {
+  g     <- .adghGrid(pars, pinfo, grid)
+  Q     <- nrow(g$eta)
+  n_cfg <- nrow(struct_mat)
+
+  sm_big  <- struct_mat[rep(seq_len(n_cfg), each = Q), , drop = FALSE]
+  eta_big <- g$eta[rep(seq_len(Q), times = n_cfg), , drop = FALSE]
+  colnames(eta_big) <- colnames(g$eta)
+
+  pm     <- .admMakeParamsList(n_cfg * Q, pinfo, 1L)[[1L]]
+  cp_all <- .admSimulateRows(rxMod, sm_big, pinfo$sigma_names, eta_big, study,
+                             out_var, pm, cores, pinfo$nDisplayProgress)
+
+  lapply(seq_len(n_cfg), function(k)
+    .adghMomentsFromCp(cp_all[(k - 1L) * Q + seq_len(Q), , drop = FALSE],
+                       g$W, pars, pinfo, out_var))
 }
 
 # GH-quadrature joint moments for a same-subject unit: one shared-eta node grid
@@ -229,6 +263,10 @@
 
     res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
                             pinfo$nDisplayProgress)
+    # .admSimulateSens returns NULL when the solve fails. The joint branch above
+    # guards this; the non-joint branch did not, and errored mid-gradient on
+    # `res$cp_mat` instead of degrading like every other path.
+    if (is.null(res)) next
     f   <- res$cp_mat     # Q x n_t
     Jl  <- res$dpred_list # list n_eta of Q x n_t
 
@@ -375,13 +413,49 @@
     }
   }
 
-  # Unpaired struct thetas: forward FD of .adghNLL
+  # Unpaired struct thetas: forward FD of .adghNLL.
+  #
+  # The baseline and every perturbed configuration differ only in their
+  # structural thetas -- same node grid, same Omega, same sigma -- so they all
+  # share one solve per study (.adghMomentsBatch), with the baseline carried as
+  # configuration 1. That also removes the separate baseline .adghNLL(p) pass,
+  # which re-solved every study to recompute a value this loop already needs.
+  #
+  # Joint units keep the per-configuration path (their solve is per output block).
   if (length(unpaired_k) > 0L) {
-    nll0 <- .adghNLL(p, pinfo, studies, rxMod, out_var, grid, cores)
-    for (k in unpaired_k) {
-      hk    <- pmax(abs(p[k]), 0.1) * grad_h
-      ph    <- p; ph[k] <- p[k] + hk
-      grad[k] <- (.adghNLL(ph, pinfo, studies, rxMod, out_var, grid, cores) - nll0) / hk
+    n_u <- length(unpaired_k)
+    hs  <- pmax(abs(p[unpaired_k]), 0.1) * grad_h
+    p_pert <- lapply(seq_len(n_u), function(i) {
+      pp <- p; pp[unpaired_k[i]] <- p[unpaired_k[i]] + hs[i]; pp
+    })
+
+    if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))) {
+      nll0 <- .adghNLL(p, pinfo, studies, rxMod, out_var, grid, cores)
+      for (i in seq_len(n_u))
+        grad[unpaired_k[i]] <-
+          (.adghNLL(p_pert[[i]], pinfo, studies, rxMod, out_var, grid, cores) - nll0) / hs[i]
+    } else {
+      # configuration 1 = baseline, 1 + i = unpaired theta i perturbed
+      struct_mat <- do.call(rbind, c(
+        list(pars$struct),
+        lapply(p_pert, function(pp) .admUnpack(pp, pinfo)$struct)))
+      colnames(struct_mat) <- names(pars$struct)
+
+      nll_cfg <- numeric(n_u + 1L)
+      for (s in studies) {
+        ovs <- s$output %||% out_var
+        ms  <- .adghMomentsBatch(struct_mat, pars, pinfo, s, rxMod, ovs, grid, cores)
+        for (cfg in seq_len(n_u + 1L)) {
+          if (!is.finite(nll_cfg[cfg])) next
+          m     <- ms[[cfg]]
+          nll_c <- if (identical(s$method, "var"))
+            nll_var_cpp(s$E, s$v_diag, m$E, diag(m$V), s$n)
+          else
+            nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
+          nll_cfg[cfg] <- if (is.finite(nll_c)) nll_cfg[cfg] + nll_c else Inf
+        }
+      }
+      grad[unpaired_k] <- (nll_cfg[-1L] - nll_cfg[1L]) / hs
     }
   }
 
@@ -581,7 +655,9 @@
 #' @param ftol_rel Relative tolerance (default `sqrt(.Machine$double.eps)`).
 #' @param print Print-frequency for live progress (0 = silent).
 #' @param seed Random seed (used for restarts).
-#' @param cores OpenMP threads for `rxSolve()` (default 1).
+#' @param cores OpenMP threads for `rxSolve()`. Defaults to
+#'   `rxode2::rxCores()`. When `workers > 1` it is a *total* budget, split
+#'   across the workers.
 #' @param nDisplayProgress Passed to `rxSolve()`: show the solver's text
 #'   progress bar only once a single solve exceeds this many subjects. The
 #'   default (`.Machine$integer.max`) keeps it off for clean script/vignette
@@ -671,7 +747,7 @@ adghControl <- function(
     ftol_rel    = .Machine$double.eps^(1/2),
     print       = 10L,
     seed        = 12345L,
-    cores       = 1L,
+    cores       = rxode2::rxCores(),
     nDisplayProgress = .Machine$integer.max,
     grad_h      = 1e-4,
     grad_bounds = 5,

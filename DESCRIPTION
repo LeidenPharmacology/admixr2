@@ -40,6 +40,7 @@ Suggests:
     ggplot2,
     knitr,
     MASS,
+    memuse,
     mirai,
     mnormt,
     nlmixr2 (>= 5.0.0),

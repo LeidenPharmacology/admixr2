@@ -39,6 +39,11 @@ There are no reverse dependencies on CRAN.
   declared.
 - `mirai` (Suggests) is used only when `workers > 1` is set in the control
   object; it is loaded conditionally via `requireNamespace()`.
+- `memuse` (Suggests) is never called by this package. It is declared because
+  `rxode2::rxSolve()` estimates free RAM on every call, and its fallback path
+  shells out to the macOS-only `vm_stat` when `memuse` is absent -- a spawned
+  process per solve, on every platform where that command does not exist. With
+  `memuse` installed the fallback is never reached. See `?adfoControl`.
 - `patchwork` (Suggests) is loaded conditionally via `requireNamespace()` for
   optional 2x2 diagnostic plot layouts.
 - `knitr` (Suggests) is used for a `knit_print.admFit` S3 method registered

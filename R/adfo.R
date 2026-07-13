@@ -14,43 +14,72 @@
 # Returns list(mu, J): mu is length-n_t, J is n_t x n_eta.
 # Prefers sens model (one pass); falls back to rxMod + forward FD.
 .adfoGetMuJ <- function(pars, pinfo, s, sensModel, rxMod, output_var, params_mat, cores) {
-  n_t   <- length(s$times)
+  sm  <- matrix(pars$struct, nrow = 1L,
+                dimnames = list(NULL, names(pars$struct)))
+  res <- .adfoGetMuJBatch(sm, pinfo, s, sensModel, rxMod, output_var, cores)
+  if (is.null(res)) return(NULL)
+  res[[1L]]
+}
+
+# (mu, J) for a whole SET of structural-theta configurations, in ONE rxSolve.
+#
+# struct_mat is n_cfg x n_struct (natural scale). Returns a length-n_cfg list of
+# list(mu, J), one per row -- i.e. n_cfg independent FO linearisations.
+#
+# This is the primitive behind the FD batching. Previously each configuration
+# cost its own rxSolve, and under FO every one of those solves carries a single
+# subject: an ~11 ms fixed call cost to do ~0.015 ms of integration. Stacking the
+# configurations as rows collapses them into one call and, as a bonus, finally
+# gives rxSolve's OpenMP something to parallelise over (under FO it previously
+# had exactly one subject, so `cores` did nothing at all).
+#
+# The FD fallback (no sens model) stacks (1 + n_eta) rows per configuration --
+# base plus one perturbed eta per dimension -- so it too is a single solve.
+.adfoGetMuJBatch <- function(struct_mat, pinfo, s, sensModel, rxMod, output_var, cores) {
+  n_cfg <- nrow(struct_mat)
   n_eta <- pinfo$n_eta
+  n_t   <- length(s$times)
 
   if (n_eta > 0L && !is.null(sensModel)) {
-    eta0 <- matrix(0, 1L, n_eta, dimnames = list(NULL, pinfo$eta_col_names))
-    res  <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta0, s, cores,
-                             pinfo$nDisplayProgress)
-    if (!is.null(res)) {
-      mu <- as.numeric(res$cp_mat)
-      J  <- do.call(cbind, lapply(res$dpred_list, as.numeric))
-      return(list(mu = mu, J = J))
-    }
+    eta0 <- matrix(0, n_cfg, n_eta, dimnames = list(NULL, pinfo$eta_col_names))
+    res  <- .admSimulateSensRows(sensModel, struct_mat, pinfo$sigma_names, eta0, s,
+                                 cores, pinfo$nDisplayProgress)
+    if (!is.null(res))
+      return(lapply(seq_len(n_cfg), function(k)
+        list(mu = res$cp_mat[k, ],
+             J  = matrix(vapply(res$dpred_list, function(D) D[k, ], numeric(n_t)),
+                         nrow = n_t, ncol = n_eta))))
   }
 
-  # FD fallback (or n_eta == 0)
-  if (n_eta > 0L) {
-    eta0 <- matrix(0, 1L, n_eta, dimnames = list(NULL, pinfo$eta_col_names))
-    mu   <- as.numeric(.admSimulate(rxMod, pars$struct, pinfo$sigma_names,
-                                     eta0, s, output_var, params_mat, cores,
-                                     pinfo$nDisplayProgress))
-    eps  <- 1e-6
-    J    <- matrix(0, n_t, n_eta)
-    for (j in seq_len(n_eta)) {
-      eta_p    <- eta0; eta_p[1L, j] <- eps
-      mu_p     <- as.numeric(.admSimulate(rxMod, pars$struct, pinfo$sigma_names,
-                                           eta_p, s, output_var, params_mat, cores,
-                                           pinfo$nDisplayProgress))
-      J[, j]   <- (mu_p - mu) / eps
-    }
-    list(mu = mu, J = J)
-  } else {
-    eta_e <- matrix(numeric(0), 1L, 0L)
-    mu    <- as.numeric(.admSimulate(rxMod, pars$struct, pinfo$sigma_names,
-                                      eta_e, s, output_var, params_mat, cores,
-                                      pinfo$nDisplayProgress))
-    list(mu = mu, J = matrix(0, n_t, 0))
+  # FD fallback, or n_eta == 0. One solve either way.
+  if (n_eta == 0L) {
+    eta_e <- matrix(numeric(0), n_cfg, 0L)
+    pm    <- .admMakeParamsList(n_cfg, pinfo, 1L)[[1L]]
+    vals  <- .admSimulateRows(rxMod, struct_mat, pinfo$sigma_names, eta_e, s,
+                              output_var, pm, cores, pinfo$nDisplayProgress)
+    return(lapply(seq_len(n_cfg), function(k)
+      list(mu = vals[k, ], J = matrix(0, n_t, 0))))
   }
+
+  eps    <- 1e-6
+  n_blk  <- 1L + n_eta                      # base + one perturbed eta per dim
+  n_row  <- n_cfg * n_blk
+  sm_big <- struct_mat[rep(seq_len(n_cfg), each = n_blk), , drop = FALSE]
+  eta_big <- matrix(0, n_row, n_eta, dimnames = list(NULL, pinfo$eta_col_names))
+  for (j in seq_len(n_eta))
+    eta_big[seq(from = 1L + j, to = n_row, by = n_blk), j] <- eps
+
+  pm   <- .admMakeParamsList(n_row, pinfo, 1L)[[1L]]
+  vals <- .admSimulateRows(rxMod, sm_big, pinfo$sigma_names, eta_big, s,
+                           output_var, pm, cores, pinfo$nDisplayProgress)
+
+  lapply(seq_len(n_cfg), function(k) {
+    base <- (k - 1L) * n_blk + 1L
+    mu   <- vals[base, ]
+    J    <- matrix(0, n_t, n_eta)
+    for (j in seq_len(n_eta)) J[, j] <- (vals[base + j, ] - mu) / eps
+    list(mu = mu, J = J)
+  })
 }
 
 # Build V_pred and mu_sigma (lnorm-corrected mean) for one study.
@@ -112,9 +141,34 @@
   list(mu = mu, J = J)
 }
 
+# (mu, J) memo for the FO solve.
+#
+# The FO solve depends ONLY on the structural thetas: eta is pinned at 0 and the
+# sigmas are zeroed into it, while Omega and sigma enter afterwards, analytically
+# (V = J Omega J' + Sigma). Verified empirically: perturbing any omega or sigma
+# parameter leaves mu and J bit-for-bit unchanged.
+#
+# So an FD direction that perturbs an omega or a sigma needs NO solve at all --
+# it reuses the base (mu, J). That is what makes the FD gradient and the NLL-FD
+# Hessian cheap: their solve count collapses to the number of DISTINCT structural
+# vectors they visit, which for the Hessian is far smaller than the number of
+# NLL evaluations.
+#
+# `cache` is an environment created per top-level call (never persisted across
+# parameter points), so there is no staleness risk.
+.adfoMuJMemo <- function(cache, s_idx, struct, solve_fn) {
+  if (is.null(cache)) return(solve_fn())
+  key <- paste0(s_idx, ":", paste(sprintf("%.17g", struct), collapse = ","))
+  hit <- cache[[key]]
+  if (!is.null(hit)) return(hit)
+  val <- solve_fn()
+  cache[[key]] <- val
+  val
+}
+
 #' @noRd
 .adfoNLL <- function(p, pinfo, studies, sensModel, rxMod, output_var,
-                      params_list, cores) {
+                      params_list, cores, muj_cache = NULL) {
   pars  <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(Inf)
   total <- 0
@@ -125,7 +179,8 @@
     # Joint (same-subject) unit: stacked FO mean/Jacobian -> full V = J Omega J'
     # (cross blocks from the shared J) + per-output residual; single MVN.
     if (isTRUE(s$is_joint)) {
-      mj <- .adfoGetMuJJoint(pars, pinfo, s, sensModel, rxMod, params_list[[s_idx]], cores)
+      mj <- .adfoMuJMemo(muj_cache, s_idx, pars$struct, function()
+        .adfoGetMuJJoint(pars, pinfo, s, sensModel, rxMod, params_list[[s_idx]], cores))
       V  <- if (pinfo$n_eta > 0L) tcrossprod(mj$J %*% pars$L) else
         matrix(0, s$n_total, s$n_total)
       jr <- .admJointResidual(mj$mu, V, s, pinfo, pars$sigma_var)
@@ -139,8 +194,9 @@
     n_t <- length(s$times)
     sel <- .admSigmaSel(pinfo, ov)
 
-    mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
-                        params_list[[s_idx]], cores)
+    mj  <- .adfoMuJMemo(muj_cache, s_idx, pars$struct, function()
+      .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
+                  params_list[[s_idx]], cores))
     vp  <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var[sel],
                        pinfo$sigma_is_prop[sel], pinfo$sigma_is_lnorm[sel],
                        n_t, pinfo$n_eta)
@@ -229,14 +285,57 @@
   }
 
   # --- Pass 2: struct theta forward FD (reuses cached nll_0 as baseline) -------
+  #
+  # The n_s perturbed configurations differ ONLY in their structural thetas, and
+  # every one of them re-solves the same study. They are therefore stacked into a
+  # single rxSolve per study (.adfoGetMuJBatch) rather than driven through n_s
+  # separate .adfoNLL calls. Same arithmetic, same FD steps -- just one call
+  # instead of (1 + n_s) per study.
+  #
+  # Joint units keep the original per-configuration path: their sensitivity solve
+  # is per output block, so batching them needs a per-ID event table (deferred --
+  # a subtle bug there yields wrong-but-plausible gradients rather than an error).
   if (n_s > 0L && is.finite(nll_0)) {
-    for (k in seq_len(n_s)) {
-      hk  <- pmax(abs(p[k]), 0.1) * grad_h
-      p_p <- p; p_p[k] <- p[k] + hk
-      nll_p <- .adfoNLL(p_p, pinfo, studies, sensModel, rxMod, output_var,
-                         params_list, cores)
-      grad[k] <- (nll_p - nll_0) / hk
+    hs   <- pmax(abs(p[seq_len(n_s)]), 0.1) * grad_h
+    p_pert <- lapply(seq_len(n_s), function(k) { pp <- p; pp[k] <- p[k] + hs[k]; pp })
+
+    any_joint <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
+
+    if (any_joint) {
+      nll_cfg <- vapply(p_pert, function(pp)
+        .adfoNLL(pp, pinfo, studies, sensModel, rxMod, output_var, params_list, cores),
+        numeric(1))
+    } else {
+      struct_mat <- do.call(rbind, lapply(p_pert, function(pp)
+        .admUnpack(pp, pinfo)$struct))
+      colnames(struct_mat) <- names(pars$struct)
+
+      nll_cfg <- numeric(n_s)
+      for (s_idx in seq_along(studies)) {
+        s    <- studies[[s_idx]]
+        ovs  <- s$output %||% output_var
+        sel  <- .admSigmaSel(pinfo, ovs)
+        n_ts <- length(s$times)
+
+        mjs <- .adfoGetMuJBatch(struct_mat, pinfo, s, sensModel, rxMod, ovs, cores)
+        if (is.null(mjs)) { nll_cfg[] <- Inf; break }
+
+        for (k in seq_len(n_s)) {
+          if (!is.finite(nll_cfg[k])) next
+          vpk <- .adfoVpred(mjs[[k]]$mu, mjs[[k]]$J, pars$L, pars$sigma_var[sel],
+                             pinfo$sigma_is_prop[sel], pinfo$sigma_is_lnorm[sel],
+                             n_ts, n_eta)
+          nll_k <- if (s$method == "var") {
+            nll_var_cpp(s$E, s$v_diag, vpk$mu_sigma, diag(vpk$V), s$n)
+          } else {
+            nll_cov_cpp(s$E, s$V, vpk$mu_sigma, vpk$V, s$n)
+          }
+          nll_cfg[k] <- if (is.finite(nll_k)) nll_cfg[k] + nll_k else Inf
+        }
+      }
     }
+
+    grad[seq_len(n_s)] <- (nll_cfg - nll_0) / hs
   }
 
   # --- Pass 3: analytical omega and sigma gradient (uses cached mu/J/vp) ----
@@ -356,20 +455,23 @@
 .adfoFDGrad <- function(p, pinfo, studies, sensModel, rxMod, output_var,
                          params_list, cores, grad_h = 1e-4, use_central = FALSE) {
   g <- numeric(length(p)); names(g) <- names(p)
+  # Shared (mu, J) memo: the omega and sigma directions perturb nothing the solve
+  # sees, so they all hit the base entry and cost no rxSolve at all.
+  cache <- new.env(parent = emptyenv())
   if (use_central) {
     for (k in seq_along(p)) {
       hk <- pmax(abs(p[k]), 0.1) * grad_h
       pp <- p; pp[k] <- p[k] + hk
       pm <- p; pm[k] <- p[k] - hk
-      g[k] <- (.adfoNLL(pp, pinfo, studies, sensModel, rxMod, output_var, params_list, cores) -
-               .adfoNLL(pm, pinfo, studies, sensModel, rxMod, output_var, params_list, cores)) / (2 * hk)
+      g[k] <- (.adfoNLL(pp, pinfo, studies, sensModel, rxMod, output_var, params_list, cores, cache) -
+               .adfoNLL(pm, pinfo, studies, sensModel, rxMod, output_var, params_list, cores, cache)) / (2 * hk)
     }
   } else {
-    nll0 <- .adfoNLL(p, pinfo, studies, sensModel, rxMod, output_var, params_list, cores)
+    nll0 <- .adfoNLL(p, pinfo, studies, sensModel, rxMod, output_var, params_list, cores, cache)
     for (k in seq_along(p)) {
       hk <- pmax(abs(p[k]), 0.1) * grad_h
       ph <- p; ph[k] <- p[k] + hk
-      g[k] <- (.adfoNLL(ph, pinfo, studies, sensModel, rxMod, output_var, params_list, cores) - nll0) / hk
+      g[k] <- (.adfoNLL(ph, pinfo, studies, sensModel, rxMod, output_var, params_list, cores, cache) - nll0) / hk
     }
   }
   g
@@ -394,9 +496,15 @@
           "parameters only; omega (IIV) SEs are not computed (matching nlmixr2 ",
           "FOCEI behavior).")
 
+  # One (mu, J) memo for the whole Hessian. The Hessian perturbs struct AND sigma
+  # (omega Cholesky is excluded), and every sigma direction -- including the
+  # struct x sigma cross terms -- reuses the solve of its struct component. The
+  # solve count therefore collapses to the number of distinct structural vectors,
+  # which is far below the 1 + 2*np_cov + 4*n_off NLL evaluations performed.
+  cache  <- new.env(parent = emptyenv())
   nll_fn <- function(p)
     suppressMessages(.adfoNLL(p, pinfo, studies, sensModel, rxMod, output_var,
-                               params_list, cores))
+                               params_list, cores, cache))
   grad_fn <- function(p)
     suppressMessages(.adfoGrad(p, pinfo, studies, sensModel, rxMod, output_var,
                                 params_list, cores, grad_h = cov_h))
@@ -553,7 +661,9 @@
 #' @param ftol_rel Relative tolerance (default `sqrt(.Machine$double.eps)`).
 #' @param print Print-frequency for live progress (0 = silent).
 #' @param seed Random seed (used for restarts).
-#' @param cores OpenMP threads for `rxSolve()` (default 1).
+#' @param cores OpenMP threads for `rxSolve()`. Defaults to
+#'   `rxode2::rxCores()`. When `workers > 1` it is a *total* budget, split
+#'   across the workers.
 #' @param nDisplayProgress Passed to `rxSolve()`: show the solver's text
 #'   progress bar only once a single solve exceeds this many subjects. The
 #'   default (`.Machine$integer.max`) keeps it off for clean script/vignette
@@ -583,6 +693,15 @@
 #' @param ... Unused arguments (trigger an error).
 #'
 #' @return An `adfoControl` object (a named list).
+#'
+#' @section Installing memuse:
+#' `rxode2::rxSolve()` estimates free RAM on every call. When the `memuse`
+#' package is not installed its fallback ends up shelling out to `vm_stat`, a
+#' macOS-only command, so on Windows and Linux every solve spawns a process that
+#' can only fail. Because the FO estimator issues many small solves, this
+#' overhead is measurable (roughly 17% of an FO gradient). Installing `memuse`
+#' makes the fallback unreachable:
+#' \preformatted{install.packages("memuse")}
 #'
 #' @seealso [admControl()], [adirmcControl()]
 #'
@@ -645,7 +764,7 @@ adfoControl <- function(
     ftol_rel   = .Machine$double.eps^(1/2),
     print      = 10L,
     seed       = 12345L,
-    cores      = 1L,
+    cores      = rxode2::rxCores(),
     nDisplayProgress = .Machine$integer.max,
     grad_h      = 1e-4,
     grad_bounds = 5,
