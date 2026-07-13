@@ -15,7 +15,7 @@ adirmcControl(
   print = 1L,
   omega_expansion = 1,
   seed = 12345L,
-  cores = 1L,
+  cores = rxode2::rxCores(),
   nDisplayProgress = .Machine$integer.max,
   grad = c("analytical", "none", "fd"),
   kappa_method = c("exact", "linearized", "linearized_gh"),
@@ -107,7 +107,10 @@ the gradient off. Both emit a message.}
 
 \item{seed}{Random seed for reproducibility.}
 
-\item{cores}{Number of OpenMP threads for \code{rxSolve()}.}
+\item{cores}{Number of OpenMP threads for \code{rxSolve()}. Defaults to
+\code{rxode2::rxCores()}. \code{rxSolve()} parallelises over subjects, so this is the
+main speed lever for the MC estimators; when \code{workers > 1} it is a \emph{total}
+budget, split across the workers.}
 
 \item{nDisplayProgress}{Passed to \code{rxSolve()}: the solver shows its text
 progress bar only once a single solve exceeds this many subjects. The

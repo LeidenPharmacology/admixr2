@@ -13,7 +13,7 @@ adghControl(
   ftol_rel = .Machine$double.eps^(1/2),
   print = 10L,
   seed = 12345L,
-  cores = 1L,
+  cores = rxode2::rxCores(),
   nDisplayProgress = .Machine$integer.max,
   grad_h = 1e-04,
   grad_bounds = 5,
@@ -64,7 +64,9 @@ contractions through the sensitivity equations -- cheapest and exact.
 
 \item{seed}{Random seed (used for restarts).}
 
-\item{cores}{OpenMP threads for \code{rxSolve()} (default 1).}
+\item{cores}{OpenMP threads for \code{rxSolve()}. Defaults to
+\code{rxode2::rxCores()}. When \code{workers > 1} it is a \emph{total} budget, split
+across the workers.}
 
 \item{nDisplayProgress}{Passed to \code{rxSolve()}: show the solver's text
 progress bar only once a single solve exceeds this many subjects. The

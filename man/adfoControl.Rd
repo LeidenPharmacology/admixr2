@@ -12,7 +12,7 @@ adfoControl(
   ftol_rel = .Machine$double.eps^(1/2),
   print = 10L,
   seed = 12345L,
-  cores = 1L,
+  cores = rxode2::rxCores(),
   nDisplayProgress = .Machine$integer.max,
   grad_h = 1e-04,
   grad_bounds = 5,
@@ -64,7 +64,9 @@ gradient is requested a derivative-free algorithm (\verb{NLOPT_LN_*} /
 
 \item{seed}{Random seed (used for restarts).}
 
-\item{cores}{OpenMP threads for \code{rxSolve()} (default 1).}
+\item{cores}{OpenMP threads for \code{rxSolve()}. Defaults to
+\code{rxode2::rxCores()}. When \code{workers > 1} it is a \emph{total} budget, split
+across the workers.}
 
 \item{nDisplayProgress}{Passed to \code{rxSolve()}: show the solver's text
 progress bar only once a single solve exceeds this many subjects. The
@@ -115,6 +117,17 @@ linearises model predictions at \eqn{\eta = 0}: it is faster than the MC
 estimator but less accurate for models with large IIV or strongly
 non-linear individual predictions.
 }
+\section{Installing memuse}{
+
+\code{rxode2::rxSolve()} estimates free RAM on every call. When the \code{memuse}
+package is not installed its fallback ends up shelling out to \code{vm_stat}, a
+macOS-only command, so on Windows and Linux every solve spawns a process that
+can only fail. Because the FO estimator issues many small solves, this
+overhead is measurable (roughly 17\% of an FO gradient). Installing \code{memuse}
+makes the fallback unreachable:
+\preformatted{install.packages("memuse")}
+}
+
 \examples{
 # Inspect defaults
 ctl <- adfoControl()
