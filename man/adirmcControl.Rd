@@ -178,12 +178,11 @@ cancels and \code{cov_n_sim = 10000} (default) is sufficient for most models.}
 restart initialisation.}
 
 \item{workers}{Number of parallel workers for multi-restart. \code{1} (default)
-runs restarts sequentially. Values \verb{> 1} use fork workers on Unix/macOS
-(outside RStudio) and a PSOCK cluster on Windows or inside RStudio.
-\strong{RStudio on Linux}: \code{future::supportsMulticore()} returns \code{FALSE} inside
-RStudio even on Linux, so PSOCK is used; fork is only active when running
-from a terminal. Workers are stopped automatically after the restart phase
-so all cores are available for the Hessian step.}
+runs restarts sequentially. Values \verb{> 1} run the restarts on a pool of
+background R processes (mirai daemons), which behaves the same way on every
+platform. Requires the \code{mirai} package. Workers are stopped automatically
+after the restart phase so all cores are available for the Hessian step; if
+a fit is interrupted, \code{admStopWorkers()} cleans up any survivors.}
 
 \item{rxControl}{\code{rxode2::rxControl()} object. Created automatically when \code{NULL}.}
 

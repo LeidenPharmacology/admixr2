@@ -91,8 +91,8 @@ structural and residual-error parameters only; \code{"none"} skips it.}
 \item{restart_sd}{SD of random perturbations of initial struct thetas at
 each restart.}
 
-\item{workers}{Number of parallel PSOCK/fork workers (default 1 =
-sequential).}
+\item{workers}{Number of parallel workers (mirai daemons) for multi-restart
+(default 1 = sequential). Requires the \code{mirai} package.}
 
 \item{rxControl}{\code{rxode2::rxControl()} object. Created automatically when \code{NULL}.}
 
