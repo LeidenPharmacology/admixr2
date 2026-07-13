@@ -1,4 +1,6 @@
-# sigma_type codes: 0=additive, 1=proportional, 2=lognormal
+# sigma_type codes: 0=additive, 1=proportional, 2=lognormal.
+# .nll_cov_fs / .nll_var_fs are the legacy-convention shims in helper-errmodel.R:
+# the kernels themselves now take row-indexed residual arrays.
 
 test_that("nll_cov_from_samples_cpp agrees with manual two-step (no sigma)", {
   set.seed(40)
@@ -14,8 +16,7 @@ test_that("nll_cov_from_samples_cpp agrees with manual two-step (no sigma)", {
   E_pred <- colMeans(cp_mat)
   r_nll  <- nll_cov_r(E_obs, V_obs, E_pred, V_pred, n)
 
-  cpp_nll <- admixr2:::nll_cov_from_samples_cpp(
-    cp_mat, E_obs, V_obs, n, sigma_var = 0.0, sigma_type = 0L
+  cpp_nll <- .nll_cov_fs(cp_mat, E_obs, V_obs, n, sigma_var = 0.0, sigma_type = 0L
   )
   expect_equal(cpp_nll, r_nll, tolerance = 1e-8)
 })
@@ -33,8 +34,7 @@ test_that("nll_var_from_samples_cpp agrees with manual two-step (no sigma)", {
   E_pred <- colMeans(cp_mat)
   r_nll  <- nll_var_r(E_obs, v_obs, E_pred, v_pred, n)
 
-  cpp_nll <- admixr2:::nll_var_from_samples_cpp(
-    cp_mat, E_obs, v_obs, n, sigma_var = 0.0, sigma_type = 0L
+  cpp_nll <- .nll_var_fs(cp_mat, E_obs, v_obs, n, sigma_var = 0.0, sigma_type = 0L
   )
   expect_equal(cpp_nll, r_nll, tolerance = 1e-8)
 })
@@ -53,8 +53,7 @@ test_that("nll_cov_from_samples_cpp: additive sigma adds sigma_var to V diagonal
   V_pred_sv <- V_pred; diag(V_pred_sv) <- diag(V_pred_sv) + sv
   expected <- nll_cov_r(E_obs, V_obs, E_pred, V_pred_sv, n)
 
-  cpp_nll <- admixr2:::nll_cov_from_samples_cpp(
-    cp_mat, E_obs, V_obs, n, sigma_var = sv, sigma_type = 0L
+  cpp_nll <- .nll_cov_fs(cp_mat, E_obs, V_obs, n, sigma_var = sv, sigma_type = 0L
   )
   expect_equal(cpp_nll, expected, tolerance = 1e-8)
 })
@@ -73,8 +72,7 @@ test_that("nll_cov_from_samples_cpp: proportional sigma adds sigma_var*mu^2 to V
   V_pred_sv <- V_pred; diag(V_pred_sv) <- diag(V_pred_sv) + sv * mu^2
   expected <- nll_cov_r(E_obs, V_obs, mu, V_pred_sv, n)
 
-  cpp_nll <- admixr2:::nll_cov_from_samples_cpp(
-    cp_mat, E_obs, V_obs, n, sigma_var = sv, sigma_type = 1L
+  cpp_nll <- .nll_cov_fs(cp_mat, E_obs, V_obs, n, sigma_var = sv, sigma_type = 1L
   )
   expect_equal(cpp_nll, expected, tolerance = 1e-8)
 })
@@ -93,8 +91,7 @@ test_that("nll_var_from_samples_cpp: additive sigma agrees with manual", {
   v_pred_sv <- v_pred + sv
   expected <- nll_var_r(E_obs, v_obs, mu, v_pred_sv, n)
 
-  cpp_nll <- admixr2:::nll_var_from_samples_cpp(
-    cp_mat, E_obs, v_obs, n, sigma_var = sv, sigma_type = 0L
+  cpp_nll <- .nll_var_fs(cp_mat, E_obs, v_obs, n, sigma_var = sv, sigma_type = 0L
   )
   expect_equal(cpp_nll, expected, tolerance = 1e-8)
 })
@@ -113,8 +110,7 @@ test_that("nll_var_from_samples_cpp: proportional sigma adds sigma_var*mu^2 to v
   v_pred_sv <- v_pred + sv * mu^2   # proportional: += sigma_var * mu^2
   expected  <- nll_var_r(E_obs, v_obs, mu, v_pred_sv, n)
 
-  cpp_nll <- admixr2:::nll_var_from_samples_cpp(
-    cp_mat, E_obs, v_obs, n, sigma_var = sv, sigma_type = 1L
+  cpp_nll <- .nll_var_fs(cp_mat, E_obs, v_obs, n, sigma_var = sv, sigma_type = 1L
   )
   expect_equal(cpp_nll, expected, tolerance = 1e-8)
 })
@@ -125,7 +121,7 @@ test_that("nll_cov_from_samples_cpp returns Inf when predicted V is not PD", {
   cp_mat <- matrix(1.0, n_sim, n_t)
   E_obs  <- c(1.0, 1.0)
   V_obs  <- diag(2)
-  result <- admixr2:::nll_cov_from_samples_cpp(cp_mat, E_obs, V_obs, 20L, 0.0, 0L)
+  result <- .nll_cov_fs(cp_mat, E_obs, V_obs, 20L, 0.0, 0L)
   expect_true(is.infinite(result))
 })
 
@@ -146,7 +142,7 @@ test_that("nll_cov_from_samples_cpp: lognormal sigma (sigma_type=2) agrees with 
   diag(V_adj) <- diag(V_adj) + mu_adj^2 * (exp(sv) - 1)
   expected <- nll_cov_r(E_obs, V_obs, mu_adj, V_adj, n)
 
-  cpp_nll <- admixr2:::nll_cov_from_samples_cpp(cp_mat, E_obs, V_obs, n, sv, 2L)
+  cpp_nll <- .nll_cov_fs(cp_mat, E_obs, V_obs, n, sv, 2L)
   expect_equal(cpp_nll, expected, tolerance = 1e-8)
 })
 
@@ -165,6 +161,6 @@ test_that("nll_var_from_samples_cpp: lognormal sigma (sigma_type=2) agrees with 
   v_adj  <- v_pred + mu_adj^2 * (exp(sv) - 1)
   expected <- nll_var_r(E_obs, v_obs, mu_adj, v_adj, n)
 
-  cpp_nll <- admixr2:::nll_var_from_samples_cpp(cp_mat, E_obs, v_obs, n, sv, 2L)
+  cpp_nll <- .nll_var_fs(cp_mat, E_obs, v_obs, n, sv, 2L)
   expect_equal(cpp_nll, expected, tolerance = 1e-8)
 })

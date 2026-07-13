@@ -339,96 +339,72 @@ test_that(".admLogBackTransform: log curEval returns p unchanged", {
   expect_equal(admixr2:::.admLogBackTransform(1.5, tr), 1.5)
 })
 
-# ---- .admParseIniDf: warning paths for residual error types ------------------
+# ---- .admParseIniDf: residual error type classification -----------------------
+#
+# These types used to emit "modelled as ..." approximation warnings. They are not
+# approximations: norm/dnorm are aliases of add, dlnorm/logn/dlogn are aliases of
+# lnorm, and on an untransformed model propT (which scales by the TRANSFORMED
+# prediction) is exactly prop, because there the transformed and untransformed
+# predictions are the same quantity. The warnings claimed an inaccuracy that did
+# not exist, so they are gone -- parsing these types must now be silent.
 
-test_that(".admParseIniDf: propT/propF triggers proportional approximation warning", {
-  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
-  inidf <- make_inidf_1eta()
-  inidf$err[inidf$name == "prop.err"] <- "propT"
-  expect_warning(
-    admixr2:::.admParseIniDf(inidf),
-    regexp = "modelled as proportional"
-  )
+test_that(".admParseIniDf: alias error types parse silently (no approximation warning)", {
+  for (e in c("propT", "propF", "norm", "dnorm", "dlnorm", "logn", "dlogn")) {
+    rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
+    inidf <- make_inidf_1eta()
+    inidf$err[inidf$name == "prop.err"] <- e
+    expect_silent(admixr2:::.admParseIniDf(inidf))
+  }
 })
 
-test_that(".admParseIniDf: propF triggers proportional approximation warning", {
-  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
-  inidf <- make_inidf_1eta()
-  inidf$err[inidf$name == "prop.err"] <- "propF"
-  expect_warning(
-    admixr2:::.admParseIniDf(inidf),
-    regexp = "modelled as proportional"
-  )
-})
-
-test_that(".admParseIniDf: norm triggers additive approximation warning", {
-  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
-  inidf <- make_inidf_1eta()
-  inidf$err[inidf$name == "prop.err"] <- "norm"
-  expect_warning(
-    admixr2:::.admParseIniDf(inidf),
-    regexp = "modelled as additive"
-  )
-})
-
-test_that(".admParseIniDf: dnorm triggers additive approximation warning", {
-  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
-  inidf <- make_inidf_1eta()
-  inidf$err[inidf$name == "prop.err"] <- "dnorm"
-  expect_warning(
-    admixr2:::.admParseIniDf(inidf),
-    regexp = "modelled as additive"
-  )
-})
-
-test_that(".admParseIniDf: dlnorm triggers lognormal approximation warning", {
-  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
-  inidf <- make_inidf_1eta()
-  inidf$err[inidf$name == "prop.err"] <- "dlnorm"
-  expect_warning(
-    admixr2:::.admParseIniDf(inidf),
-    regexp = "modelled as lognormal"
-  )
-})
-
-test_that(".admParseIniDf: logn triggers lognormal approximation warning", {
-  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
-  inidf <- make_inidf_1eta()
-  inidf$err[inidf$name == "prop.err"] <- "logn"
-  expect_warning(
-    admixr2:::.admParseIniDf(inidf),
-    regexp = "modelled as lognormal"
-  )
-})
-
-test_that(".admParseIniDf: unsupported error type triggers warning", {
-  rm(list = ls(admixr2:::.adm_warn_env), envir = admixr2:::.adm_warn_env)
+test_that(".admParseIniDf: unsupported error type is a hard error, not a silent fallback", {
+  # Previously these warned and were then treated as ADDITIVE -- so a model with
+  # an error type admixr2 cannot represent still fitted, silently, with the wrong
+  # residual model. A refused fit beats a wrong one that looks fine.
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "weird_err"
-  expect_warning(
-    admixr2:::.admParseIniDf(inidf),
-    regexp = "Unsupported residual error"
-  )
+  expect_error(admixr2:::.admParseIniDf(inidf),
+               regexp = "Unsupported residual error")
 })
 
-test_that(".admParseIniDf: propT sigma_is_prop = TRUE (approximated as prop)", {
+test_that(".admParseIniDf: propT classifies as proportional", {
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "propT"
-  pinfo <- suppressWarnings(admixr2:::.admParseIniDf(inidf))
+  pinfo <- admixr2:::.admParseIniDf(inidf)
   expect_true(pinfo$sigma_is_prop[[1]])
 })
 
 test_that(".admParseIniDf: norm sigma_is_prop = FALSE, sigma_is_lnorm = FALSE", {
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "norm"
-  pinfo <- suppressWarnings(admixr2:::.admParseIniDf(inidf))
+  pinfo <- admixr2:::.admParseIniDf(inidf)
   expect_false(pinfo$sigma_is_prop[[1]])
   expect_false(pinfo$sigma_is_lnorm[[1]])
 })
 
-test_that(".admParseIniDf: dlnorm sigma_is_lnorm = TRUE (approximated as lnorm)", {
+test_that(".admParseIniDf: dlnorm sigma_is_lnorm = TRUE", {
   inidf <- make_inidf_1eta()
   inidf$err[inidf$name == "prop.err"] <- "dlnorm"
-  pinfo <- suppressWarnings(admixr2:::.admParseIniDf(inidf))
+  pinfo <- admixr2:::.admParseIniDf(inidf)
   expect_true(pinfo$sigma_is_lnorm[[1]])
+})
+
+test_that(".admParseIniDf: a pow() exponent row is an exponent, not a variance", {
+  # pow(b, c) emits TWO iniDf rows: the coefficient (err "pow") and the EXPONENT
+  # (err "pow2"). The exponent used to fall through the whitelist into the
+  # additive branch, where it was stored as 2*log(est) and then optimized as a
+  # residual VARIANCE -- so a pow model silently fitted the wrong thing.
+  inidf <- make_inidf_1eta()
+  prow  <- inidf[inidf$name == "prop.err", , drop = FALSE]
+  prow$name <- "pow.c"; prow$err <- "pow2"; prow$est <- 0.75
+  inidf$err[inidf$name == "prop.err"] <- "pow"
+  inidf <- rbind(inidf, prow)
+
+  pinfo <- admixr2:::.admParseIniDf(inidf)
+  k <- match("pow.c", pinfo$sigma_names)
+
+  expect_identical(unname(admixr2:::.admSigmaRole(pinfo)[k]), "pow_exp")
+  # identity transform, NOT 2*log(est)
+  expect_equal(unname(pinfo$sigma_init[k]), 0.75)
+  expect_equal(unname(admixr2:::.admSigmaNat(pinfo$sigma_init, pinfo)[k]), 0.75)
 })

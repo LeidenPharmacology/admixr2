@@ -2,6 +2,64 @@
 
 ## New features
 
+* **Residual error models: `pow()`, `addPow()` and `combined1()` are now
+  supported, with analytical gradients** (#84). admixr2 previously supported
+  only `add`, `prop` and `lnorm`. The residual error model is now read from
+  `ui$predDf` (`errType`/`errTypeF`/`transform`/`addProp`) rather than from
+  `iniDf$err` alone, and every estimator evaluates it through one shared
+  specification:
+
+  | form | variance |
+  |------|----------|
+  | `combined2` (default for `add + prop`) | `a^2 + b^2 * f^(2c)` |
+  | `combined1` | `(a + b * f^c)^2` |
+  | `lnorm` | moment-matched lognormal |
+
+  with `c = 1` recovering `prop` and `b = 0` recovering `add`. Analytical
+  `d(var)/d(sigma)`, `d(mu)/d(sigma)` and `d(var)/d(f)` are supplied for all of
+  them, so residual parameters keep an exact gradient under
+  `grad = "sens"`/`"analytical"`.
+
+  Existing `add`/`prop`/`lnorm` fits are unaffected: the aggregate `-2LL` is
+  bit-for-bit identical, and their gradients change only by floating-point
+  reassociation (~1 ulp).
+
+## Bug fixes
+
+* **`pow()` models no longer fit the wrong residual model, silently.** `pow(b, c)`
+  produces two `iniDf` rows -- the coefficient (`err = "pow"`) and the *exponent*
+  (`err = "pow2"`). admixr2 recognised neither, warned once, and then treated
+  **both as additive variances**: the exponent was stored as `2*log(c)` and
+  optimized as a variance contributing `exp(2*log(c))` to `diag(V)`. A `pow`
+  model therefore ran to completion and reported plausible estimates for a model
+  it was not fitting. Residual parameters now carry a role, and a `pow` exponent
+  is estimated on its own (unconstrained, identity) scale.
+
+* **`combined1()` is honoured.** `predDf$addProp` selects SD-additive
+  (`combined1`) versus variance-additive (`combined2`) residual error. admixr2
+  ignored it and always computed `combined2`, dropping the `2*a*b*f` cross term.
+  (`combined2` is nlmixr2's default, so only models that explicitly asked for
+  `combined1()` were affected.)
+
+* **An unrepresentable residual model is now refused rather than approximated.**
+  Error types admixr2 cannot express as a Gaussian aggregate MVN (`logitNorm`,
+  `probitNorm`, Box-Cox/Yeo-Johnson transforms, `t`/`cauchy`, `propF`/`powF`)
+  previously emitted a one-time warning and were then **treated as additive**,
+  so the fit proceeded with the wrong residual model. They now `stop()`. This is
+  a behaviour change: a model that "worked" before may now error.
+
+* **`propT`/`propF`, `norm`/`dnorm` and `dlnorm`/`logn`/`dlogn` no longer emit
+  spurious "modelled as ..." approximation warnings.** These are aliases, not
+  approximations: `norm` *is* `add`, `logn` *is* `lnorm`, and on an untransformed
+  model `propT` (which scales by the transformed prediction) *is* exactly `prop`,
+  because there the transformed and untransformed predictions are the same
+  quantity. The warnings claimed an inaccuracy that did not exist.
+
+* **Lognormal residual error is now applied to the plotted predicted mean.**
+  `plot.admFit()`'s aggregate-data helper added the lnorm variance to the
+  predicted covariance but never applied the `exp(s/2)` mean scaling to the
+  predicted `E`, so lnorm fits plotted a mean the NLL does not use.
+
 * **Parallel restarts now run on `mirai` daemons.** `workers > 1` starts a pool
   of background R processes instead of dispatching through `future`/`furrr`.
   This replaces the previous fork (Unix/macOS) vs PSOCK (Windows/RStudio) split

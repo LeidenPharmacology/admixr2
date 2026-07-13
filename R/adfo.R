@@ -84,28 +84,14 @@
 
 # Build V_pred and mu_sigma (lnorm-corrected mean) for one study.
 # Returns list(V, mu_sigma, JL): JL = J %*% L cached for gradient reuse.
-# V = tcrossprod(JL) + sigma contributions (additive, proportional, or lognormal).
-.adfoVpred <- function(mu_pred, J, L, sigma_var, sigma_is_prop, sigma_is_lnorm,
-                        n_t, n_eta) {
-  mu_sigma <- mu_pred
-  for (i in seq_along(sigma_var))
-    if (sigma_is_lnorm[[i]]) mu_sigma <- mu_sigma * exp(sigma_var[[i]] / 2)
-
+# V = tcrossprod(JL) + the residual contribution to diag(V). `arr` is the row
+# array from .admResidRows(); it, not this function, knows the error model.
+.adfoVpred <- function(mu_pred, J, L, arr, n_t, n_eta) {
   JL <- if (n_eta > 0L) J %*% L else matrix(0, n_t, 0)
   V  <- if (n_eta > 0L) tcrossprod(JL) else matrix(0, n_t, n_t)
-  d_V <- diag(V)
-  for (i in seq_along(sigma_var)) {
-    sv <- sigma_var[[i]]
-    if (sigma_is_prop[[i]]) {
-      d_V <- d_V + sv * mu_pred^2
-    } else if (sigma_is_lnorm[[i]]) {
-      d_V <- d_V + mu_sigma^2 * (exp(sv) - 1)
-    } else {
-      d_V <- d_V + sv
-    }
-  }
-  diag(V) <- d_V
-  list(V = V, mu_sigma = mu_sigma, JL = JL)
+  ap <- .admResidApply(mu_pred, diag(V), arr)
+  diag(V) <- ap$dv
+  list(V = V, mu_sigma = ap$mu, JL = JL)
 }
 
 # -- NLL -----------------------------------------------------------------------
@@ -192,14 +178,12 @@
 
     ov  <- s$output %||% output_var
     n_t <- length(s$times)
-    sel <- .admSigmaSel(pinfo, ov)
+    arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
 
     mj  <- .adfoMuJMemo(muj_cache, s_idx, pars$struct, function()
       .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
                   params_list[[s_idx]], cores))
-    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var[sel],
-                       pinfo$sigma_is_prop[sel], pinfo$sigma_is_lnorm[sel],
-                       n_t, pinfo$n_eta)
+    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta)
 
     nll_s <- if (s$method == "var") {
       nll_var_cpp(s$E, s$v_diag, vp$mu_sigma, diag(vp$V), s$n)
@@ -260,18 +244,20 @@
       if (!is.finite(nll_s)) { nll_0 <- Inf; break }
       nll_0 <- nll_0 + nll_s
       muj_cache[[s_idx]] <- list(is_joint = TRUE, mu = mj$mu, J = mj$J, JL = JL,
-                                 V = jr$V, mu_sigma = jr$mu, n_t = s$n_total)
+                                 V = jr$V, mu_sigma = jr$mu, n_t = s$n_total,
+                                 arr = .admResidRows(pinfo, .admRowOutput(s, s$n_total),
+                                                     pars$sigma_var, s$n_total))
       next
     }
 
     ov  <- s$output %||% output_var
     sel <- .admSigmaSel(pinfo, ov)
     n_t <- length(s$times)
+    arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
 
     mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
                         params_list[[s_idx]], cores)
-    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, pars$sigma_var[sel],
-                       pinfo$sigma_is_prop[sel], pinfo$sigma_is_lnorm[sel], n_t, n_eta)
+    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, n_eta)
 
     nll_s <- if (s$method == "var") {
       nll_var_cpp(s$E, s$v_diag, vp$mu_sigma, diag(vp$V), s$n)
@@ -281,7 +267,7 @@
     if (!is.finite(nll_s)) { nll_0 <- Inf; break }
     nll_0 <- nll_0 + nll_s
     muj_cache[[s_idx]] <- list(mu = mj$mu, J = mj$J, JL = vp$JL, vp = vp,
-                               n_t = n_t, sel = sel)
+                               n_t = n_t, sel = sel, arr = arr)
   }
 
   # --- Pass 2: struct theta forward FD (reuses cached nll_0 as baseline) -------
@@ -314,17 +300,15 @@
       for (s_idx in seq_along(studies)) {
         s    <- studies[[s_idx]]
         ovs  <- s$output %||% output_var
-        sel  <- .admSigmaSel(pinfo, ovs)
         n_ts <- length(s$times)
+        arrs <- .admResidRows(pinfo, ovs, pars$sigma_var, n_ts)
 
         mjs <- .adfoGetMuJBatch(struct_mat, pinfo, s, sensModel, rxMod, ovs, cores)
         if (is.null(mjs)) { nll_cfg[] <- Inf; break }
 
         for (k in seq_len(n_s)) {
           if (!is.finite(nll_cfg[k])) next
-          vpk <- .adfoVpred(mjs[[k]]$mu, mjs[[k]]$J, pars$L, pars$sigma_var[sel],
-                             pinfo$sigma_is_prop[sel], pinfo$sigma_is_lnorm[sel],
-                             n_ts, n_eta)
+          vpk <- .adfoVpred(mjs[[k]]$mu, mjs[[k]]$J, pars$L, arrs, n_ts, n_eta)
           nll_k <- if (s$method == "var") {
             nll_var_cpp(s$E, s$v_diag, vpk$mu_sigma, diag(vpk$V), s$n)
           } else {
@@ -364,20 +348,8 @@
         }
       }
       dNLL_dmu_full <- drop(-2 * s$n * invV %*% r)
-      for (blk in s$blocks) {
-        rows <- blk$rows
-        for (k in which(.admSigmaSel(pinfo, blk$output))) {
-          k_sig <- n_s + k; sv <- pars$sigma_var[[k]]
-          if (pinfo$sigma_is_prop[[k]])
-            grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag[rows] * mu_pred[rows]^2) * sv
-          else if (pinfo$sigma_is_lnorm[[k]])
-            grad[k_sig] <- grad[k_sig] + sv * (
-              sum(dNLL_dV_diag[rows] * mu_sigma[rows]^2 * (2 * exp(sv) - 1)) +
-              sum(dNLL_dmu_full[rows] * mu_sigma[rows]) / 2)
-          else
-            grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag[rows]) * sv
-        }
-      }
+      grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
+        .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu_full)
       next
     }
 
@@ -424,24 +396,13 @@
       }
     }
 
-    # Sigma gradient: d(-2LL)/d(p_sigma) = d(-2LL)/d(sv) * sv. Only this output's
-    # residual-error parameters contribute (no-op for single-output fits).
-    for (i in which(sel)) {
-      k_sig <- n_s + i
-      sv <- pars$sigma_var[[i]]
-      if (pinfo$sigma_is_prop[[i]]) {
-        grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag * mu_pred^2) * sv
-      } else if (pinfo$sigma_is_lnorm[[i]]) {
-        dNLL_dmu     <- if (is_var) -2 * s$n * r / diag(V_pred) else
-          drop(-2 * s$n * invV %*% r)
-        grad[k_sig] <- grad[k_sig] + sv * (
-          sum(dNLL_dV_diag * mu_sigma^2 * (2 * exp(sv) - 1)) +
-          sum(dNLL_dmu * mu_sigma) / 2
-        )
-      } else {
-        grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag) * sv
-      }
-    }
+    # Sigma gradient. Only this output's residual parameters contribute; rows
+    # belonging to other endpoints carry a zero derivative, so summing over all
+    # rows is a no-op for them.
+    dNLL_dmu <- if (is_var) -2 * s$n * r / diag(V_pred) else
+      drop(-2 * s$n * invV %*% r)
+    grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
+      .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu)
   }
 
   grad
