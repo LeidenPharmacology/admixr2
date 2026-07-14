@@ -63,6 +63,40 @@ test_that("parameter-dependent initial condition gets an exact column", {
 # ---- Dosing modifiers: the regression this file was written for --------------
 # These are ZERO without eventSens = "jump" (nlmixr2est's inner model carries no
 # event/dose-parameter sensitivities; FOCEI finite-differences them separately).
+#
+# Jump support is version-dependent: rxode2 5.1.2 has no lag() jumps, 5.1.3 does.
+# .admJumpCovers() feature-detects it and REFUSES the sens model when a modifier
+# the model uses cannot be differentiated -- so the estimators fall back to FD
+# instead of silently using a zero column. The tests below skip in that case.
+
+test_that("a dosing modifier rxode2 cannot differentiate refuses the sens model", {
+  # Contract: sens model or FD, never a silently-zero column. Both branches are
+  # correct; which one runs depends on the installed rxode2.
+  ui <- suppressMessages(rxode2::rxode2(one_cmt_dose_fn))
+  sm <- suppressMessages(admixr2:::.admLoadSensModel(ui))
+
+  expect_setequal(admixr2:::.admDoseMods(ui$loadPruneSens), c("f", "lag"))
+
+  if (is.null(sm) || !identical(sm$type, "dirs")) {
+    # refused: this rxode2 cannot differentiate a modifier one of our directions
+    # feeds, so there is no theta column for tlag and the estimators FD it. The
+    # point of the contract is that we never hand back a zero column instead.
+    expect_null(sm$theta_sens_cols)
+  } else {
+    # accepted -> the jump derivatives must be there for every modifier a
+    # direction of ours actually feeds
+    expect_true(admixr2:::.admJumpCovers(sm$mod, ui$loadPruneSens, sm$dirs))
+    d0 <- rxode2::rxSolve(sm$mod,
+      params = c(`THETA[1]` = log(5), `THETA[2]` = log(20), `THETA[3]` = log(1),
+                 `THETA[4]` = 0.5, `THETA[5]` = log(0.3), `THETA[6]` = 0.1,
+                 `ETA[1]` = 0.2, `ETA[2]` = 0.1),
+      events = rxode2::et(amt = 100) |> rxode2::et(c(0.5, 1, 2, 4)),
+      returnType = "data.frame", addDosing = FALSE)
+    d0 <- d0[d0$time > 0, ]
+    expect_false(all(d0[[sm$sens_cols[2]]] == 0))               # eta.f in f()
+    expect_false(all(d0[[sm$theta_sens_cols[["tlag"]]]] == 0))  # tlag in alag()
+  }
+})
 
 test_that("bioavailability f() and lag time: eta AND theta columns are exact", {
   errs <- .int_sens_col_errs(one_cmt_dose_fn, bolus, times)
@@ -104,8 +138,10 @@ test_that("our emitted model agrees with nlmixr2est's inner model (eta columns +
 
     ours   <- suppressMessages(admixr2:::.admBuildThetaSens(ui, unp))
     theirs <- suppressMessages(admixr2:::.admSensFromInner(ui, NULL, n_eta, tempfile()))
-    expect_false(is.null(ours),   info = nm)
-    expect_false(is.null(theirs), info = nm)
+    # Either side may legitimately refuse on an rxode2 that cannot differentiate a
+    # dosing modifier it needs (5.1.2 has no lag() jumps) -- the comparison only
+    # means something when both exist.
+    if (is.null(ours) || is.null(theirs)) next
 
     th_rows <- ui$iniDf[!is.na(ui$iniDf$ntheta), ]
     th <- stats::setNames(th_rows$est, paste0("THETA[", th_rows$ntheta, "]"))
@@ -160,6 +196,8 @@ test_that("d(pred)/d(lag) is one-sided AT the dose boundary (documented, not a b
   }
   ui <- suppressMessages(rxode2::rxode2(lag_on_grid_fn))
   sm <- suppressMessages(admixr2:::.admLoadSensModel(ui))
+  skip_if(is.null(sm) || is.null(sm$theta_sens_cols),
+          "rxode2 build has no dosing-modifier (jump) sensitivities")
   th <- stats::setNames(c(log(5), log(20), log(1), log(2), 0.1),
                         paste0("THETA[", 1:5, "]"))
   n_all <- 2L + length(sm$theta_sens_cols)

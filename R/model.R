@@ -82,6 +82,58 @@
 # text instead of the model code. (nlmixr2est's aug builder has the same wrapper.)
 .admToRx <- function(l) rxode2::rxFromSE(l)
 
+# Which dosing modifiers does the model actually use? (f/lag/rate/dur live in the
+# pruned env as rx_<mod>_<state>_; rxode2 stores lag() as alag().)
+.admDoseMods <- function(s) {
+  v <- grep("^rx_(f|lag|alag|rate|dur)_.+_$", ls(envir = s, all.names = TRUE), value = TRUE)
+  m <- sub("^rx_(f|lag|alag|rate|dur)_.+_$", "\\1", v)
+  unique(ifelse(m == "alag", "lag", m))
+}
+
+# Can this rxode2 build differentiate every dosing modifier that one of OUR
+# directions actually feeds?
+#
+# A direction entering f()/lag()/rate()/dur() only has a sensitivity if rxode2
+# attaches its analytic variational jumps at dose times (eventSens = "jump");
+# otherwise its column is silently ZERO. Support is version-dependent -- rxode2
+# 5.1.2 has no lag() jumps, 5.1.3 does -- so FEATURE-DETECT rather than
+# version-compare: the compiled model carries eventSensInfo$derivs, one table per
+# modifier, and an unsupported one has zero rows.
+#
+# The test must be per DIRECTION, not merely "the model has a lag()": nlmixr2est's
+# inner model has no theta directions, so for `alag(depot) = exp(tlag)` its
+# derivs$lag is legitimately empty -- nothing depends on lag there, so nothing can
+# be wrong. Only a modifier some direction differentiates to non-zero needs cover.
+#
+# FALSE -> the caller returns NULL for the whole sens model and the estimators
+# fall back to a finite-difference gradient (correct, if slower). Far better than
+# the alternative: an identically-zero gradient component, silently.
+.admJumpCovers <- function(mod, s, dirs) {
+  vars <- grep("^rx_(f|lag|alag|rate|dur)_.+_$", ls(envir = s, all.names = TRUE), value = TRUE)
+  if (length(vars) == 0L || length(dirs) == 0L) return(TRUE)
+
+  need <- character(0)
+  for (v in vars) {
+    ex <- tryCatch(get(v, envir = s), error = function(e) NULL)
+    if (is.null(ex)) next
+    depends <- any(vapply(dirs, function(p)
+      !identical(tryCatch(.admToRx(symengine::D(ex, symengine::S(p))),
+                          error = function(e) "0"), "0"),
+      logical(1)))
+    if (!depends) next
+    key <- sub("^rx_(f|lag|alag|rate|dur)_.+_$", "\\1", v)
+    need <- c(need, if (identical(key, "alag")) "lag" else key)
+  }
+  need <- unique(need)
+  if (length(need) == 0L) return(TRUE)
+
+  info <- tryCatch(mod$eventSensInfo, error = function(e) NULL)
+  if (is.null(info) || !identical(info$mode, "jump")) return(FALSE)
+  d <- info$derivs
+  if (!is.list(d)) return(FALSE)
+  all(vapply(need, function(m) is.data.frame(d[[m]]) && nrow(d[[m]]) > 0L, logical(1)))
+}
+
 # Build the sensitivity model over an explicit DIRECTION SET:
 #
 #   dirs = ETA_1_ .. ETA_n_        (one per random effect)
@@ -245,6 +297,10 @@
                     error = function(e) txt)
     mod <- rxode2::rxode2(txt, eventSens = "jump")
     rxode2::rxLoad(mod)
+    # This rxode2 cannot differentiate a dosing modifier one of our directions
+    # feeds -> that column would be silently zero. Refuse the sens model entirely;
+    # the caller falls back to a finite-difference gradient.
+    if (!.admJumpCovers(mod, s, dirs)) return(NULL)
     list(mod = mod, dirs = dirs,
          sens_cols = paste0("rx_f1_", eta_dirs),
          theta_sens_cols = if (length(unpaired))
@@ -400,6 +456,13 @@
     mod <- tryCatch({ m <- rxode2::rxode2(inner); rxode2::rxLoad(m); m },
                     error = function(e) NULL)
   if (is.null(mod)) return(NULL)
+
+  # Same guard as the emitter, over the inner model's directions (etas only): if
+  # this rxode2 cannot differentiate a dosing modifier an ETA feeds, that eta's
+  # column is identically zero. Refuse the sens model so the estimators use FD.
+  .s <- tryCatch(ui$loadPruneSens, error = function(e) NULL)
+  if (!is.null(.s) &&
+      !.admJumpCovers(mod, .s, paste0("ETA_", seq_len(n_eta), "_"))) return(NULL)
 
   list(type = "inner", mod = mod, sens_cols = sens_cols,
        theta_sens_cols = NULL, rename_map = rename_map,

@@ -285,6 +285,12 @@ one_cmt_transit_fn <- function() {
   if (is.null(ui)) skip("rxode2 model parse failed")
   sm <- suppressMessages(tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL))
   if (is.null(sm)) skip("sens model unavailable")
+  # The emitter refuses to build when the installed rxode2 cannot differentiate a
+  # dosing modifier one of its directions feeds (5.1.2 has no lag()/rate()/dur()
+  # jumps; 5.1.3 does), and admixr2 falls back to the inner model + FD. That is the
+  # correct behaviour -- but there are then no theta columns to check here.
+  if (length(admixr2:::.admUnpairedThetas(ui)) > 0L && is.null(sm$theta_sens_cols))
+    skip("sens model fell back to the inner model (rxode2 lacks a needed jump derivative)")
 
   ini      <- ui$iniDf
   th_rows  <- ini[!is.na(ini$ntheta), , drop = FALSE]
