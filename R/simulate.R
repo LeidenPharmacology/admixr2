@@ -59,6 +59,7 @@
   all_src   <- c(theta_nms, sigma_names, eta_cols)
   inner_nms <- rmap[all_src]
   inner_nms <- inner_nms[!is.na(inner_nms)]
+  inner_nms <- c(inner_nms, .admDummyEtaZeros(sensModel))
 
   inner_df  <- as.data.frame(matrix(0, nrow = n_row, ncol = length(inner_nms),
                                     dimnames = list(NULL, unname(inner_nms))),
@@ -87,7 +88,8 @@
   dpred_list <- lapply(seq_len(n_eta), function(j)
     matrix(out[[sensModel$sens_cols[j]]][keep], nrow = n_row, ncol = n_t, byrow = TRUE))
 
-  list(cp_mat = cp_mat, dpred_list = dpred_list)
+  list(cp_mat = cp_mat, dpred_list = dpred_list,
+       dtheta_list = .admThetaSens(sensModel, out, keep, n_row, n_t))
 }
 
 # Joint (same-subject) simulation: one rxSolve with SHARED eta produces every
@@ -125,20 +127,51 @@
 .admSimulateJointSens <- function(sensModel, struct, sigma_names, eta_mat, unit,
                                   cores, ndp = .Machine$integer.max) {
   n_sim <- nrow(eta_mat); n_eta <- ncol(eta_mat)
+  th_nms <- names(sensModel$theta_sens_cols)
   cp_mat     <- matrix(0, n_sim, unit$n_total)
   dpred_list <- lapply(seq_len(n_eta), function(j) matrix(0, n_sim, unit$n_total))
+  dtheta_list <- if (length(th_nms))
+    stats::setNames(lapply(th_nms, function(nm) matrix(0, n_sim, unit$n_total)), th_nms)
+  else NULL
   for (blk in unit$blocks) {
     bs  <- list(ev_full = blk$ev_full, times = blk$times)
     res <- .admSimulateSens(sensModel, struct, sigma_names, eta_mat, bs, cores, ndp)
     if (is.null(res)) return(NULL)
     cp_mat[, blk$rows] <- res$cp_mat
     for (j in seq_len(n_eta)) dpred_list[[j]][, blk$rows] <- res$dpred_list[[j]]
+    # any block missing its theta columns disables the theta path for the whole
+    # joint unit (a half-filled stacked derivative would be silently wrong)
+    if (!is.null(dtheta_list)) {
+      if (is.null(res$dtheta_list)) dtheta_list <- NULL
+      else for (nm in th_nms) dtheta_list[[nm]][, blk$rows] <- res$dtheta_list[[nm]]
+    }
   }
-  list(cp_mat = cp_mat, dpred_list = dpred_list)
+  list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list)
 }
 
-# Single pass on the sensitivity model returning predictions + d(pred)/d(eta_j).
-# Returns list(cp_mat, dpred_list) or NULL on failure (caller falls back to FD).
+# The dummy-eta columns of the augmented sens model (.admBuildSensUi): they carry
+# d(pred)/d(theta) for the unpaired structural thetas and MUST be solved at 0 --
+# there the augmented model's prediction is the original model's prediction and
+# d(pred)/d(eta.admSens.x) == d(pred)/d(x). character(0) for a plain sens model.
+.admDummyEtaZeros <- function(sensModel) sensModel$dummy_eta_inner %||% character(0)
+
+# Extract d(pred)/d(theta) for the unpaired thetas from a sens solve.
+# NULL when the sens model is the plain one (no theta columns) or the solve did
+# not return them -- the caller then falls back to finite differences.
+.admThetaSens <- function(sensModel, out, keep, n_row, n_t) {
+  tsc <- sensModel$theta_sens_cols
+  if (is.null(tsc) || length(tsc) == 0L) return(NULL)
+  if (!all(tsc %in% names(out))) return(NULL)
+  stats::setNames(
+    lapply(tsc, function(col)
+      matrix(out[[col]][keep], nrow = n_row, ncol = n_t, byrow = TRUE)),
+    names(tsc))
+}
+
+# Single pass on the sensitivity model returning predictions, d(pred)/d(eta_j)
+# and (augmented model only) d(pred)/d(theta_k) for the unpaired struct thetas.
+# Returns list(cp_mat, dpred_list, dtheta_list) or NULL on failure (caller falls
+# back to FD). dtheta_list is NULL when the model carries no theta directions.
 .admSimulateSens <- function(sensModel, struct_theta, sigma_names,
                              eta_mat, study, cores,
                              ndp = .Machine$integer.max) {
@@ -150,6 +183,9 @@
   all_src   <- c(theta_nms, sigma_names, eta_cols)
   inner_nms <- rmap[all_src]
   inner_nms <- inner_nms[!is.na(inner_nms)]
+  # dummy etas are not in rename_map (no admixr2-side parameter maps to them);
+  # they are appended here and left at their zero fill.
+  inner_nms <- c(inner_nms, .admDummyEtaZeros(sensModel))
 
   # check.names=FALSE: preserve THETA[1]/ETA[1] bracket notation so column
   # assignments below find existing columns rather than creating duplicates.
@@ -182,5 +218,6 @@
   dpred_list <- lapply(seq_len(n_eta), function(j)
     matrix(out[[sensModel$sens_cols[j]]][keep], nrow = n_sim, ncol = n_t, byrow = TRUE))
 
-  list(cp_mat = cp_mat, dpred_list = dpred_list)
+  list(cp_mat = cp_mat, dpred_list = dpred_list,
+       dtheta_list = .admThetaSens(sensModel, out, keep, n_sim, n_t))
 }

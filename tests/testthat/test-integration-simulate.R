@@ -20,7 +20,10 @@ test_that("admSimulateSens: returns list with cp_mat and dpred_list", {
   )
 
   expect_type(res, "list")
-  expect_named(res, c("cp_mat", "dpred_list"))
+  # dtheta_list carries d(pred)/d(theta) for unpaired struct thetas; NULL for a
+  # model whose thetas are all mu-referenced (this one).
+  expect_named(res, c("cp_mat", "dpred_list", "dtheta_list"))
+  expect_null(res$dtheta_list)
 })
 
 test_that("admSimulateSens: cp_mat has correct dimensions", {

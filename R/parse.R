@@ -28,6 +28,54 @@
     log(p))
 }
 
+# How many times each name appears in the model expressions.
+#
+# No model text (a hand-built mock ui in the Tier-1 tests) -> 1L, i.e. the
+# shared-eta guard below is simply not applied and muRefDataFrame is trusted as
+# before. A real rxUi always carries lstExpr, so this only affects mocks. (This
+# is the opposite of nlmixr2est's conservative 2L default: there an unknown case
+# costs one extra direction, here it would silently change struct_has_eta for
+# every mock-based unit test.)
+.admNameOccurrence <- function(ui, nms) {
+  if (length(nms) == 0L) return(setNames(integer(0), character(0)))
+  lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
+  if (is.null(lst)) return(setNames(rep(1L, length(nms)), nms))
+  # unique = FALSE: count repeated uses within one line too
+  syms <- unlist(lapply(lst, function(e) all.vars(e, unique = FALSE)))
+  setNames(vapply(nms, function(nm) sum(syms == nm), integer(1)), nms)
+}
+
+# The theta <-> eta mu-reference map, with SHARED etas removed.
+#
+# A mu-referenced theta may reuse its eta's sensitivity column, because theta and
+# eta enter the parameter identically: d(pred)/d(theta) == d(pred)/d(eta). That
+# identity FAILS if the eta also appears in another parameter (`eta.cl` in both
+# `cl` and `v`): d(pred)/d(eta.cl) then collects a path through `v` that
+# d(pred)/d(tcl) does not have. Such a theta must not reuse the eta column -- it
+# is treated as unpaired and gets its own sensitivity direction (a dummy eta in
+# the augmented sens model), which is always exact.
+#
+# In practice rxode2 already declines to mu-reference a shared eta (it drops the
+# rows from muRefDataFrame), so this is belt-and-braces -- it mirrors the
+# equivalent guard in nlmixr2est (.foceiEtaOccurrence > 1 in foceiCovAnalytic.R).
+# A false positive costs one extra sensitivity direction and stays exact.
+# NULL means "no mu-reference information at all" (no ui, or no muRefDataFrame) --
+# the callers then keep their historical fallbacks. A ZERO-ROW frame is different:
+# it means the information exists and says nothing is paired (a non-mu-referenced
+# model, or every pair dropped by the shared-eta guard). Conflating the two makes
+# struct_eta_idx fall back to identity pairing (eta j <-> struct j), which would
+# add the eta-path gradient on top of the theta column -- double counting.
+.admMuRefPairs <- function(ui) {
+  if (is.null(ui)) return(NULL)
+  mrd <- tryCatch(ui$muRefDataFrame, error = function(e) NULL)
+  if (is.null(mrd) || !is.data.frame(mrd) || !("theta" %in% names(mrd))) return(NULL)
+  if (nrow(mrd) == 0L) return(mrd)
+  eta_col <- if ("eta" %in% names(mrd)) "eta" else names(mrd)[2]
+  occ  <- .admNameOccurrence(ui, unique(as.character(mrd[[eta_col]])))
+  keep <- occ[as.character(mrd[[eta_col]])] <= 1L
+  mrd[keep, , drop = FALSE]
+}
+
 # Extract parameter structure from ui$iniDf.
 # Builds: struct/sigma/omega rows, Cholesky index vectors, per-theta transform metadata.
 .admParseIniDf <- function(iniDf, ui = NULL) {
@@ -159,14 +207,13 @@
        eta_rows_df        = eta_rows,
        has_kappa          = has_kappa,
        struct_has_eta     = setNames(
-         struct_rows$name %in% if (!is.null(ui) && !is.null(ui$muRefDataFrame) &&
-                                   "theta" %in% names(ui$muRefDataFrame))
-           ui$muRefDataFrame$theta else eta_names,
+         struct_rows$name %in% {
+           .mrd <- .admMuRefPairs(ui)
+           if (!is.null(.mrd)) .mrd$theta else eta_names
+         },
          struct_rows$name),
        struct_eta_idx     = {
-         mrd <- if (!is.null(ui) && !is.null(ui$muRefDataFrame) &&
-                    "theta" %in% names(ui$muRefDataFrame))
-           ui$muRefDataFrame else NULL
+         mrd <- .admMuRefPairs(ui)
          if (!is.null(mrd)) {
            eta_col <- if ("eta" %in% names(mrd)) "eta" else names(mrd)[2]
            vapply(eta_names, function(en) {

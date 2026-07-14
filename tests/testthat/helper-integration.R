@@ -87,6 +87,157 @@ one_cmt_kappa_fn <- function() {
   })
 }
 
+# ---- linCmt model with an unpaired struct theta ------------------------------
+# The sens model for a linCmt model cannot come from state sensitivities; its
+# theta column goes through rxode2's linCmtB chain rule (this is the case
+# nlmixr2est's own augmented outer model cannot build).
+
+one_cmt_lincmt_kappa_fn <- function() {
+  ini({
+    tcl     <- log(5)  ; label("Log CL")
+    tv      <- log(20) ; label("Log V")
+    tsc     <- log(1)  ; label("Log scale")   # unpaired: no eta
+    add.err <- 0.1     ; label("Additive SD")
+    eta.cl  ~ 0.09
+    eta.v   ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.v)
+    sc <- exp(tsc)
+    cp <- sc * linCmt()
+    cp ~ add(add.err)
+  })
+}
+
+# ---- Model with DOSING-MODIFIER parameters ----------------------------------
+# eta.f drives bioavailability; the eta-less theta tlag drives the lag time.
+# Parameters entering f()/lag()/rate()/dur() have NO sensitivity in nlmixr2est's
+# inner model (FOCEI finite-differences event sensitivities separately), so
+# admixr2 recompiles it with eventSens = "jump". The lag (0.3 h) sits off the
+# observation grid on purpose -- at an observation exactly equal to the lagged
+# dose time the derivative does not exist.
+
+one_cmt_dose_fn <- function() {
+  ini({
+    tcl <- log(5)   ; label("Log CL")
+    tv  <- log(20)  ; label("Log V")
+    tka <- log(1)   ; label("Log ka")
+    tf  <- 0.5      ; label("Logit F")
+    tlag <- log(0.3); label("Log lag")
+    add.err <- 0.1
+    eta.cl ~ 0.09
+    eta.f  ~ 0.05
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv)
+    ka <- exp(tka)
+    d/dt(depot)   = -ka * depot
+    f(depot)      = expit(tf + eta.f)
+    alag(depot)   = exp(tlag)
+    d/dt(central) =  ka * depot - (cl / v) * central
+    cp = central / v
+    cp ~ add(add.err)
+  })
+}
+
+.int_theta_sens_cache <- NULL
+
+# ---- Theta-sensitivity setup -------------------------------------------------
+# Model with an unpaired struct theta (tsc): the sens model is augmented with a
+# dummy eta for it (.admBuildSensUi), so .admGrad gets d(pred)/d(tsc) from the
+# sens solve instead of finite-differencing it. Builds, for both an ODE and a
+# linCmt model:
+#   g_ana  -- .admGrad with the augmented sens model (theta columns used)
+#   g_plain-- .admGrad with the theta columns removed (the old FD path)
+#   g_fd   -- CRN central difference of .admNLL (the reference)
+# Same study/z_list construction as .int_grad_setup().
+.int_theta_sens_setup <- function(n_sim = 500L, seed = 42L) {
+  if (!is.null(.int_theta_sens_cache) &&
+      .int_theta_sens_cache$n_sim == n_sim && .int_theta_sens_cache$seed == seed)
+    return(.int_theta_sens_cache)
+
+  skip_if_not_installed("rxode2")
+
+  one <- function(model_fn) {
+    ui <- suppressMessages(tryCatch(rxode2::rxode2(model_fn), error = function(e) NULL))
+    if (is.null(ui)) skip("rxode2 model parse failed")
+    pinfo      <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+    output_var <- "cp"
+
+    # ORDERING INVARIANT: sens model before .admLoadModel()
+    sensModel <- suppressMessages(
+      tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL))
+    rxMod <- tryCatch(admixr2:::.admLoadModel(ui), error = function(e) NULL)
+    if (is.null(rxMod)) skip("Model compilation failed")
+    rxode2::rxLoad(rxMod)
+
+    times  <- c(0.5, 1, 2, 4)
+    E_true <- .one_cmt_mean(5, 20, 100, times)
+    V_true <- diag((0.3 * E_true)^2)
+    study  <- list(E = E_true, V = V_true, n = 200L, times = times,
+                   ev = rxode2::et(amt = 100))
+    study  <- admixr2:::.admNormaliseStudy(study, "s")
+    study$ev_full <- study$ev |> rxode2::et(study$times)
+    studies <- list(s = study)
+
+    z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
+    params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
+    p0          <- admixr2:::.admBuildOptVec(pinfo)$p0
+    h_fd        <- 1e-3
+
+    # the augmented sens model, and the same model with its theta columns hidden
+    # (what a plain/failed augmentation gives -> the FD fallback path)
+    sens_plain <- sensModel
+    if (!is.null(sens_plain)) {
+      sens_plain$theta_sens_cols <- NULL
+      # keep dummy_eta_inner: the compiled model still HAS the dummy etas and they
+      # must stay pinned at 0, otherwise the solve is not the original model
+    }
+
+    g_ana <- admixr2:::.admGrad(p0, pinfo, studies, z_list, rxMod, output_var,
+                                params_list, cores = 1L, h = h_fd,
+                                sensModel = sensModel, use_central = TRUE)
+    # the FD path this replaces, at the production default (forward FD)
+    g_plain <- admixr2:::.admGrad(p0, pinfo, studies, z_list, rxMod, output_var,
+                                  params_list, cores = 1L, h = h_fd,
+                                  sensModel = sens_plain, use_central = FALSE)
+    g_fd <- vapply(seq_along(p0), function(k) {
+      ph <- p0; ph[k] <- ph[k] + h_fd
+      pl <- p0; pl[k] <- pl[k] - h_fd
+      (admixr2:::.admNLL(ph, pinfo, studies, z_list, rxMod, output_var, params_list, 1L) -
+       admixr2:::.admNLL(pl, pinfo, studies, z_list, rxMod, output_var, params_list, 1L)) / (2 * h_fd)
+    }, double(1))
+    names(g_fd) <- names(p0)
+
+    # adgh gradient on the same model/study
+    grid   <- admixr2:::.adghNodeGrid(5L, pinfo$n_eta)
+    g_adgh <- admixr2:::.adghGrad(p0, pinfo, studies, sensModel, rxMod, output_var,
+                                  grid, cores = 1L, grad_h = h_fd)
+    g_adgh_fd <- vapply(seq_along(p0), function(k) {
+      ph <- p0; ph[k] <- ph[k] + h_fd
+      pl <- p0; pl[k] <- pl[k] - h_fd
+      (admixr2:::.adghNLL(ph, pinfo, studies, rxMod, output_var, grid, 1L) -
+       admixr2:::.adghNLL(pl, pinfo, studies, rxMod, output_var, grid, 1L)) / (2 * h_fd)
+    }, double(1))
+    names(g_adgh_fd) <- names(p0)
+
+    list(ui = ui, pinfo = pinfo, sensModel = sensModel, p0 = p0,
+         studies = list(s = list(E = E_true, V = V_true, n = 200L, times = times,
+                                 ev = rxode2::et(amt = 100))),
+         g_ana = g_ana, g_plain = g_plain, g_fd = g_fd,
+         g_adgh = g_adgh, g_adgh_fd = g_adgh_fd,
+         unpaired = names(pinfo$struct_has_eta)[!pinfo$struct_has_eta])
+  }
+
+  .int_theta_sens_cache <<- list(
+    n_sim = n_sim, seed = seed,
+    ode = one(one_cmt_kappa_fn),
+    lin = one(one_cmt_lincmt_kappa_fn))
+  .int_theta_sens_cache
+}
+
 # ---- Grad setup: passes ui so struct_has_eta = TRUE for struct thetas --------
 # Separate from .int_setup() which calls .admParseIniDf(iniDf) without ui,
 # routing struct thetas through unpaired FD (2x gradient error).

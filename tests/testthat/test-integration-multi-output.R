@@ -284,6 +284,57 @@ test_that("adirmc rejects a joint (same-subject) study", {
     regexp = "does not yet support multiple observed outputs")
 })
 
+test_that("the multi-output sens model carries theta columns for tq/tv2", {
+  # .mo_model has two thetas with no eta (tq, tv2), so its sens model is augmented
+  # with a dummy eta for each and the gradients below take the THETA-COLUMN path,
+  # not the FD one. Asserted explicitly: without this, a regression that silently
+  # dropped the theta columns would still pass the gradient tests (they would just
+  # quietly fall back to FD, which is also correct -- only slower and coarser).
+  ui <- rxode2::rxode2(.mo_model)
+  expect_equal(admixr2:::.admUnpairedThetas(ui), c("tq", "tv2"))
+  sm <- admixr2:::.admLoadSensModel(ui)
+  expect_false(is.null(sm$theta_sens_cols))
+  expect_equal(names(sm$theta_sens_cols), c("tq", "tv2"))
+  # dummy etas come after the two real ones and must be pinned at 0 by the solves
+  expect_equal(sm$dummy_eta_inner, c("ETA[3]", "ETA[4]"))
+})
+
+test_that("joint + multi-output sens solves return d(pred)/d(theta) for every block", {
+  # The joint path stacks each output's rows; a block that failed to return its
+  # theta columns must disable the theta path for the WHOLE unit (a half-filled
+  # stacked derivative would be silently wrong), so check the stacked shape.
+  s     <- .mo_joint_setup()
+  ui    <- rxode2::rxode2(.mo_model)
+  pinfo <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  ov    <- admixr2:::.admOutputVar(ui)
+  st    <- admixr2:::.admNormaliseStudy(s$cross, "rat", ov)
+  units <- admixr2:::.admBuildEvFull(admixr2:::.admFlattenStudies(list(rat = st)),
+                                     tag_cmt = TRUE)
+  sm    <- admixr2:::.admLoadSensModel(ui)
+  admixr2:::.admLoadModel(ui)
+  unit  <- units[[1]]
+  expect_true(isTRUE(unit$is_joint))
+
+  pars    <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pinfo)$p0, pinfo)
+  n_sim   <- 16L
+  z       <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")[[1]]
+  eta_mat <- z %*% t(pars$L)
+  colnames(eta_mat) <- pinfo$eta_col_names
+
+  js <- admixr2:::.admSimulateJointSens(sm, pars$struct, pinfo$sigma_names,
+                                        eta_mat, unit, 1L)
+  expect_false(is.null(js$dtheta_list))
+  expect_equal(names(js$dtheta_list), c("tq", "tv2"))
+  for (nm in c("tq", "tv2")) {
+    # one column per stacked row across BOTH outputs, all filled (no zero block)
+    expect_equal(dim(js$dtheta_list[[nm]]), c(n_sim, unit$n_total))
+    expect_true(all(is.finite(js$dtheta_list[[nm]])))
+    for (blk in unit$blocks)
+      expect_false(all(js$dtheta_list[[nm]][, blk$rows] == 0),
+                   info = paste(nm, blk$output))
+  }
+})
+
 test_that("analytical joint (stacked-MVN) gradient matches finite differences", {
   s     <- .mo_joint_setup()
   ui    <- rxode2::rxode2(.mo_model)

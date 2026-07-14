@@ -178,6 +178,15 @@
   unpaired_k <- if (!is.null(pinfo$struct_has_eta))
     which(!pinfo$struct_has_eta) else integer(0)
 
+  # An unpaired theta shifts the quadrature moments exactly like an eta does, so
+  # given d(pred)/d(theta) from the augmented sens model it goes through the SAME
+  # contrib() + sigma-V-coupling the paired thetas use -- no FD, no step size.
+  # Accumulated separately: if ANY study fails to return theta columns, the whole
+  # theta gradient falls back to the FD block below (mixing the two across
+  # studies would double-count the studies already accumulated here).
+  theta_sens_ok <- length(unpaired_k) > 0L
+  g_theta       <- numeric(length(p))
+
   for (s in studies) {
     eta <- X %*% t(L)
     colnames(eta) <- pinfo$eta_col_names
@@ -231,6 +240,17 @@
         gmat    <- sweep(Jl[[ei]], 2L, ls_vec, "*")
         dmu_raw <- as.numeric(crossprod(W, Jl[[ei]]))
         grad[k] <- grad[k] + contrib_j(gmat) + sig_V_extra(dmu_raw)
+      }
+      # unpaired struct thetas (augmented sens model): same path as the paired ones
+      if (length(unpaired_k) > 0L) {
+        if (is.null(js$dtheta_list)) {
+          theta_sens_ok <- FALSE
+        } else for (k in unpaired_k) {
+          Dt      <- js$dtheta_list[[pinfo$struct_names[k]]]
+          gmat    <- sweep(Dt, 2L, ls_vec, "*")
+          dmu_raw <- as.numeric(crossprod(W, Dt))
+          g_theta[k] <- g_theta[k] + contrib_j(gmat) + sig_V_extra(dmu_raw)
+        }
       }
       # omega Cholesky
       if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
@@ -381,7 +401,8 @@
       acc
     }
 
-    # Struct thetas (paired with etas; unpaired handled by FD below).
+    # Struct thetas paired with an eta: reuse the eta's sensitivity column
+    # (d(pred)/d(theta) == d(pred)/d(eta) for a mu-referenced theta).
     # struct_eta_idx is eta-indexed (value = struct paired with each eta), so the
     # eta for struct k is which(struct_eta_idx == k).
     for (k in seq_len(n_s)) {
@@ -391,6 +412,19 @@
       gmat    <- if (lnorm_scale != 1) Jl[[ei]] * lnorm_scale else Jl[[ei]]
       dmu_raw <- as.numeric(crossprod(W, Jl[[ei]]))  # d(mu_t)/d(psi) before lnorm scaling
       grad[k] <- grad[k] + contrib(gmat) + .sigma_V_extra(dmu_raw)
+    }
+
+    # Unpaired struct thetas: their own sensitivity column from the augmented
+    # sens model, through the identical formula. Missing -> FD block below.
+    if (length(unpaired_k) > 0L) {
+      if (is.null(res$dtheta_list)) {
+        theta_sens_ok <- FALSE
+      } else for (k in unpaired_k) {
+        Dt      <- res$dtheta_list[[pinfo$struct_names[k]]]
+        gmat    <- if (lnorm_scale != 1) Dt * lnorm_scale else Dt
+        dmu_raw <- as.numeric(crossprod(W, Dt))
+        g_theta[k] <- g_theta[k] + contrib(gmat) + .sigma_V_extra(dmu_raw)
+      }
     }
 
     # Omega Cholesky L: d(eta[q,])/d(L_ij) = x[q,j] * e_i (unit vector eta dim i)
@@ -413,7 +447,13 @@
     }
   }
 
-  # Unpaired struct thetas: forward FD of .adghNLL.
+  # Unpaired struct thetas: the sens path above already has them exactly.
+  if (length(unpaired_k) > 0L && theta_sens_ok) {
+    grad[unpaired_k] <- grad[unpaired_k] + g_theta[unpaired_k]
+    return(grad)
+  }
+
+  # Otherwise forward FD of .adghNLL.
   #
   # The baseline and every perturbed configuration differ only in their
   # structural thetas -- same node grid, same Omega, same sigma -- so they all
@@ -932,12 +972,6 @@ nlmixr2Est.adgh <- function(env, ...) {
         n_nodes, pinfo$n_eta, n_total))
   }
 
-  if (!is.null(pinfo$struct_has_eta) && any(!pinfo$struct_has_eta)) {
-    .unpaired <- names(pinfo$struct_has_eta)[!pinfo$struct_has_eta]
-    message(sprintf("adgh: struct theta(s) without mu-referencing: %s. FD for these parameters.",
-                    paste(.unpaired, collapse = ", ")))
-  }
-
   # ORDERING INVARIANT: .admLoadSensModel() before .admLoadModel().
   sensModel <- if (want_sens) {
     sm <- tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
@@ -948,6 +982,20 @@ nlmixr2Est.adgh <- function(env, ...) {
     }
     sm
   } else NULL
+
+  # Unpaired (non-mu-referenced) struct thetas: the sens model is augmented with a
+  # dummy eta for each (.admBuildSensUi), so their sensitivities come from the same
+  # solve as the etas'. Without those columns they fall back to FD of .adghNLL.
+  if (!is.null(pinfo$struct_has_eta) && any(!pinfo$struct_has_eta)) {
+    .unpaired <- names(pinfo$struct_has_eta)[!pinfo$struct_has_eta]
+    .theta_sens <- want_sens && !is.null(sensModel) &&
+      !is.null(sensModel$theta_sens_cols) &&
+      all(.unpaired %in% names(sensModel$theta_sens_cols))
+    message(sprintf("adgh: struct theta(s) without mu-referencing: %s. %s",
+                    paste(.unpaired, collapse = ", "),
+                    if (.theta_sens) "Sens model carries their sensitivities (no FD)."
+                    else "FD for these parameters."))
+  }
 
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)

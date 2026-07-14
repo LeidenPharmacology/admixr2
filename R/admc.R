@@ -533,21 +533,35 @@ nmObjGetControl.admc <- function(x, ...) {
         }
       }
 
-      # Unpaired struct thetas: CRN-FD of the joint contribution (fixed eta_mat).
+      # Unpaired struct thetas. The augmented sens model carries d(pred)/d(theta)
+      # directly (js$dtheta_list): it enters exactly like an eta direction, so the
+      # same partial kernel the FD path feeds serves it -- but exactly, with no
+      # step size. Without those columns (plain sens model), CRN-FD of the joint
+      # contribution at fixed eta_mat, as before.
       if (n_unp > 0L) {
-        nll0 <- nll_cov_cpp(as.numeric(s$E), s$V, mu, V, s$n)
-        for (bi in seq_len(n_unp)) {
-          k_s <- unpaired_k[bi]
-          pp  <- p; pp[k_s] <- p[k_s] + h
-          pars_p <- .admUnpack(pp, pinfo)
-          cp_p   <- .admSimulateJoint(rxMod, pars_p$struct, pinfo$sigma_names,
-                                      eta_mat, s, pdf, cores, pinfo$nDisplayProgress)
-          mus_p  <- colMeans(cp_p)
-          jr_p   <- .admJointResidual(mus_p,
-                                      crossprod(sweep(cp_p, 2L, mus_p)) / n_sim,
-                                      s, pinfo, pars_p$sigma_var)
-          nllp <- nll_cov_cpp(as.numeric(s$E), s$V, jr_p$mu, jr_p$V, s$n)
-          grad[k_s] <- grad[k_s] + (nllp - nll0) / h
+        eff_dmu_j <- dNLL_dmu + sigma_mu_scale
+        if (!is.null(js$dtheta_list)) {
+          for (bi in seq_len(n_unp)) {
+            k_s   <- unpaired_k[bi]
+            dpred <- js$dtheta_list[[pinfo$struct_names[k_s]]]
+            grad[k_s] <- grad[k_s] +
+              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu_j, 1 / n_sim)
+          }
+        } else {
+          nll0 <- nll_cov_cpp(as.numeric(s$E), s$V, mu, V, s$n)
+          for (bi in seq_len(n_unp)) {
+            k_s <- unpaired_k[bi]
+            pp  <- p; pp[k_s] <- p[k_s] + h
+            pars_p <- .admUnpack(pp, pinfo)
+            cp_p   <- .admSimulateJoint(rxMod, pars_p$struct, pinfo$sigma_names,
+                                        eta_mat, s, pdf, cores, pinfo$nDisplayProgress)
+            mus_p  <- colMeans(cp_p)
+            jr_p   <- .admJointResidual(mus_p,
+                                        crossprod(sweep(cp_p, 2L, mus_p)) / n_sim,
+                                        s, pinfo, pars_p$sigma_var)
+            nllp <- nll_cov_cpp(as.numeric(s$E), s$V, jr_p$mu, jr_p$V, s$n)
+            grad[k_s] <- grad[k_s] + (nllp - nll0) / h
+          }
         }
       }
       next
@@ -555,6 +569,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
     use_sens <- !is.null(sensModel) && n_eta > 0
     batched_hi <- NULL; batched_lo <- NULL
+    theta_sens <- NULL
     if (use_sens) {
       sens_out <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names,
                                    eta_mat, s, cores, pinfo$nDisplayProgress)
@@ -563,6 +578,9 @@ nmObjGetControl.admc <- function(x, ...) {
       } else {
         cp_mat     <- sens_out$cp_mat
         dpred_list <- sens_out$dpred_list
+        # d(pred)/d(theta) for the unpaired thetas (augmented sens model only);
+        # NULL -> the FD block below handles them, as before.
+        theta_sens <- sens_out$dtheta_list
       }
     }
     if (!use_sens) {
@@ -754,11 +772,26 @@ nmObjGetControl.admc <- function(x, ...) {
       }
     }
 
-    # Unpaired struct theta gradient via FD.
+    # Unpaired struct theta gradient.
+    # theta_sens path: the augmented sens model returned d(pred)/d(theta) in the
+    #   SAME solve as the eta sensitivities -- exact, and it removes the extra
+    #   rxSolve the FD path needs (an rxSolve costs ~11 ms before it integrates
+    #   anything). An unpaired theta enters mu and V exactly like an eta, so it
+    #   feeds the same partial kernel; only the derivative source changes.
     # !use_sens path: batched_hi/batched_lo already extracted from the single big rxSolve above.
-    # use_sens path: sens model handled etas; run a separate rxSolve for struct perturbations.
+    # use_sens without theta columns (plain sens model): separate rxSolve for struct perturbations.
     if (n_unp > 0L) {
-      if (!is.null(batched_hi)) {
+      if (!is.null(theta_sens)) {
+        for (bi in seq_len(n_unp)) {
+          k_s   <- unpaired_k[bi]
+          dpred <- theta_sens[[pinfo$struct_names[k_s]]]
+          grad[k_s] <- grad[k_s] +
+            if (is_var)
+              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_n)
+            else
+              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_n)
+        }
+      } else if (!is.null(batched_hi)) {
         for (bi in seq_len(n_unp)) {
           k_s     <- unpaired_k[bi]
           cp_hi_s <- batched_hi[[bi]]
@@ -992,6 +1025,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
     cp_mats     <- vector("list", n_c)
     dpred_lists <- vector("list", n_c)
+    dtheta_lists <- vector("list", n_c)
 
     # --- Sens model path -------------------------------------------------------
     use_sens <- !is.null(sensModel) && n_eta > 0L
@@ -999,6 +1033,7 @@ nmObjGetControl.admc <- function(x, ...) {
       rmap      <- sensModel$rename_map
       all_src   <- c(pinfo$struct_names, pinfo$sigma_names, eta_col_names)
       inner_nms <- rmap[all_src]; inner_nms <- inner_nms[!is.na(inner_nms)]
+      inner_nms <- c(inner_nms, .admDummyEtaZeros(sensModel))
 
       inner_df <- as.data.frame(matrix(0, nrow = n_c * n_sim,
                                         ncol = length(inner_nms),
@@ -1027,12 +1062,21 @@ nmObjGetControl.admc <- function(x, ...) {
         keep      <- out[["time"]] %in% s$times
         vals_pred <- out[["rx_pred_"]][keep]
         vals_sens <- lapply(sensModel$sens_cols, function(col) out[[col]][keep])
+        # d(pred)/d(theta) columns (augmented sens model); NULL keeps the FD path
+        tsc       <- sensModel$theta_sens_cols
+        vals_th   <- if (!is.null(tsc) && all(tsc %in% names(out)))
+          lapply(tsc, function(col) out[[col]][keep]) else NULL
         for (ci in seq_len(n_c)) {
           if (!valid[ci]) next
           idx <- (ci - 1L) * n_sim * n_t + seq_len(n_sim * n_t)
           cp_mats[[ci]]     <- matrix(vals_pred[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
           dpred_lists[[ci]] <- lapply(vals_sens, function(vs)
             matrix(vs[idx], nrow = n_sim, ncol = n_t, byrow = TRUE))
+          if (!is.null(vals_th))
+            dtheta_lists[[ci]] <- stats::setNames(
+              lapply(vals_th, function(vs)
+                matrix(vs[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)),
+              names(tsc))
         }
       }
     }
@@ -1137,7 +1181,13 @@ nmObjGetControl.admc <- function(x, ...) {
     # central FD: two passes (hi + lo); forward FD: hi only, base reused.
     cp_hi_store <- vector("list", n_c)
     cp_lo_store <- if (use_central) vector("list", n_c) else NULL
-    if (n_unp > 0L) {
+    # The augmented sens model already returned d(pred)/d(theta) for every config
+    # in the solve above -- skip the FD passes entirely (they are the expensive
+    # part of this function: one extra rxSolve over all n_c x n_unp configs, two
+    # with central differences).
+    have_theta_sens <- n_unp > 0L &&
+      any(!vapply(dtheta_lists, is.null, logical(1)))
+    if (n_unp > 0L && !have_theta_sens) {
       for (ci in seq_len(n_c)) {
         cp_hi_store[[ci]] <- vector("list", n_unp)
         if (use_central) cp_lo_store[[ci]] <- vector("list", n_unp)
@@ -1292,15 +1342,19 @@ nmObjGetControl.admc <- function(x, ...) {
         }
       }
 
+      dth_ci <- dtheta_lists[[ci]]
       for (bi in seq_len(n_unp)) {
-        k_s     <- unpaired_k[bi]
-        cp_hi_s <- cp_hi_store[[ci]][[bi]]
-        if (is.null(cp_hi_s)) next
-        dpred <- if (use_central && !is.null(cp_lo_store[[ci]][[bi]])) {
-          (cp_hi_s - cp_lo_store[[ci]][[bi]]) / (2 * h)
+        k_s   <- unpaired_k[bi]
+        dpred <- if (!is.null(dth_ci)) {
+          dth_ci[[pinfo$struct_names[k_s]]]            # exact, from the sens solve
         } else {
-          (cp_hi_s - cp_mat) / h
+          cp_hi_s <- cp_hi_store[[ci]][[bi]]
+          if (is.null(cp_hi_s)) NULL
+          else if (use_central && !is.null(cp_lo_store[[ci]][[bi]]))
+            (cp_hi_s - cp_lo_store[[ci]][[bi]]) / (2 * h)
+          else (cp_hi_s - cp_mat) / h
         }
+        if (is.null(dpred)) next
         grad_acc[ci, k_s] <- grad_acc[ci, k_s] +
           if (is_var)
             adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_n)
@@ -1988,21 +2042,8 @@ nlmixr2Est.admc <- function(env, ...) {
   # otherwise it falls back to the common-random-number FD of the aggregate NLL
   # (joint_fd, computed below once the sens model has been resolved).
 
-  if (!any_joint && pinfo$n_eta > 0L && any(!pinfo$struct_has_eta)) {
-    .unpaired <- names(pinfo$struct_has_eta)[!pinfo$struct_has_eta]
-    if (want_sens && all(!pinfo$struct_has_eta)) {
-      message(sprintf("admc: no mu-referenced struct thetas (%s); falling back to full forward FD.",
-                      paste(.unpaired, collapse = ", ")))
-      want_sens <- FALSE
-    } else {
-      message(sprintf(
-        "admc: struct theta(s) without mu-referencing: %s. %s",
-        paste(.unpaired, collapse = ", "),
-        if (want_sens) "Sens model for paired thetas; FD for unpaired."
-        else "FD gradient for these parameters."
-      ))
-    }
-  }
+  .unpaired <- if (!is.null(pinfo$struct_has_eta))
+    names(pinfo$struct_has_eta)[!pinfo$struct_has_eta] else character(0)
 
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   # .admLoadModel() calls rxode2::rxode2(ui) which triggers nlmixr2est's foceiModel
@@ -2016,6 +2057,35 @@ nlmixr2Est.admc <- function(env, ...) {
       warning("admControl(grad='sens'): linCmt sensitivity model detected; grad='fd' is typically faster for linCmt models -- consider switching to admControl(grad='fd')")
     sm
   } else NULL
+
+  # Unpaired (non-mu-referenced) struct thetas. The sens model is AUGMENTED with a
+  # dummy eta per unpaired theta (.admBuildSensUi), so it returns d(pred)/d(theta)
+  # for them and the whole gradient stays analytical -- including a model with NO
+  # mu-referenced theta at all, which used to force a full FD gradient. If the
+  # augmentation was unavailable (theta_sens_cols NULL) the old behaviour stands:
+  # sens for the paired thetas + FD for the unpaired, or full FD when none is paired.
+  if (!any_joint && pinfo$n_eta > 0L && length(.unpaired) > 0L) {
+    .theta_sens <- want_sens && !is.null(sensModel) &&
+      !is.null(sensModel$theta_sens_cols) &&
+      all(.unpaired %in% names(sensModel$theta_sens_cols))
+    if (.theta_sens) {
+      message(sprintf(
+        "admc: struct theta(s) without mu-referencing: %s. Sens model carries their sensitivities (no FD).",
+        paste(.unpaired, collapse = ", ")))
+    } else if (want_sens && all(!pinfo$struct_has_eta)) {
+      message(sprintf("admc: no mu-referenced struct thetas (%s); falling back to full forward FD.",
+                      paste(.unpaired, collapse = ", ")))
+      want_sens <- FALSE
+      sensModel <- NULL
+    } else {
+      message(sprintf(
+        "admc: struct theta(s) without mu-referencing: %s. %s",
+        paste(.unpaired, collapse = ", "),
+        if (want_sens) "Sens model for paired thetas; FD for unpaired."
+        else "FD gradient for these parameters."
+      ))
+    }
+  }
 
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
