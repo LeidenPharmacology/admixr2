@@ -61,8 +61,8 @@
 
 # Structural thetas with no usable mu-referenced eta ("unpaired"): the ones whose
 # gradient cannot come from an eta sensitivity column and would otherwise be
-# finite-differenced. These are the thetas that get a dummy eta in the augmented
-# sens model.
+# finite-differenced. These are the thetas that get their OWN sensitivity
+# direction (THETA_j_) in the sens model.
 #
 # Uses .admMuRefPairs() -- the SAME map pinfo$struct_has_eta is built from -- so
 # the set of thetas the estimators route through the theta columns and the set the
@@ -77,88 +77,204 @@
   setdiff(struct$name, paired)
 }
 
-# Substitute symbols throughout an expression tree: map is a named list of
-# replacement expressions keyed by symbol name.
-.admSubstSym <- function(e, map) {
-  if (is.symbol(e)) {
-    r <- map[[as.character(e)]]
-    return(if (is.null(r)) e else r)
+# rxode2::rxFromSE() substitutes its argument, so it MUST be called through a
+# wrapper -- calling it directly on an inline expression emits the literal call
+# text instead of the model code. (nlmixr2est's aug builder has the same wrapper.)
+.admToRx <- function(l) rxode2::rxFromSE(l)
+
+# Build the sensitivity model over an explicit DIRECTION SET:
+#
+#   dirs = ETA_1_ .. ETA_n_        (one per random effect)
+#        + THETA_j_                (one per UNPAIRED structural theta)
+#
+# A mu-referenced theta needs no direction of its own -- d(pred)/d(theta) ==
+# d(pred)/d(eta) -- so it reuses its eta's column for free. Only a theta with no
+# usable eta (eta-less, non-mu-referenced, or one whose eta is shared across
+# parameters) gets its own direction. Sigmas get none (they never enter the
+# prediction). This is the same direction/linking scheme nlmixr2est's fast-focei
+# uses (.foceiAnalyticDirections), FIRST-ORDER only: admixr2's MC/quadrature
+# moments need d(pred)/d(dir) and nothing higher, so the O(ndir^2) second-order
+# tier that FOCEI's Laplace term requires is skipped entirely.
+#
+# Two branches:
+#   * ODE    -- rxode2::.rxSens() augments the system with the variational
+#               (state-sensitivity) compartments for each direction; the emitted
+#               prediction chain is
+#                 rx_f1_<dir> = d(pred)/d(dir) + sum_states d(pred)/d(state)
+#                                                 * d(state)/d(dir)
+#   * linCmt -- there are no states to augment (.rxSens errors), so the state sum
+#               drops out and D(pred, dir) alone is emitted: symengine resolves it
+#               through rxode2's linCmtB derivative rules (.rxD$linCmtB), which
+#               give d(linCmt)/d(micro parameter) in closed form. This is why the
+#               direction set works for linCmt at first order even though
+#               nlmixr2est's (second-order) augmented outer model cannot build it.
+#
+# Compiled with eventSens = "jump" so a parameter entering a dosing modifier
+# (f/lag/rate/dur) gets rxode2's analytic variational jumps at dose times --
+# without it such a sensitivity is silently ZERO. State initial conditions and
+# their direction derivatives are emitted too (a parameter-dependent IC otherwise
+# starts every sensitivity compartment at 0).
+#
+# Returns list(mod, dirs, sens_cols, theta_sens_cols) or NULL on any failure (the
+# caller then falls back to nlmixr2est's inner model + FD for the thetas).
+.admBuildThetaSens <- function(ui, unpaired) {
+  s <- tryCatch(ui$loadPruneSens, error = function(e) NULL)
+  if (is.null(s)) return(NULL)
+  st <- tryCatch(rxode2::rxStateOde(s), error = function(e) NULL)
+  if (is.null(st)) return(NULL)
+
+  ini      <- tryCatch(ui$iniDf, error = function(e) NULL)
+  if (is.null(ini)) return(NULL)
+  eta_rows <- ini[!is.na(ini$neta1) & ini$neta1 == ini$neta2 & !ini$fix, , drop = FALSE]
+  eta_rows <- eta_rows[order(eta_rows$neta1), , drop = FALSE]
+  th_rows  <- ini[!is.na(ini$ntheta), , drop = FALSE]
+
+  eta_dirs <- paste0("ETA_", seq_len(nrow(eta_rows)), "_")
+  # NB: paste0("THETA_", integer(0), "_") is "THETA__", not character(0) -- R
+  # recycles the zero-length argument to "". Guard, or a model with no unpaired
+  # theta gets a phantom direction.
+  theta_dirs <- character(0)
+  if (length(unpaired) > 0L) {
+    theta_idx <- th_rows$ntheta[match(unpaired, th_rows$name)]
+    if (anyNA(theta_idx)) return(NULL)
+    theta_dirs <- paste0("THETA_", theta_idx, "_")
   }
-  if (is.call(e)) {
-    # index 1 is the function itself -- never substituted (a theta is never a call head)
-    for (i in seq_along(e)[-1L]) e[[i]] <- .admSubstSym(e[[i]], map)
-  }
-  e
+  dirs <- c(eta_dirs, theta_dirs)
+  if (length(dirs) == 0L) return(NULL)
+
+  # matExp() / indLin(): rxStateOde() can return the states REVERSED (an indLin
+  # state parses as compartment 1), so emitting the ODEs in that order would put
+  # the dose in the wrong compartment. nlmixr2est fixes this with an internal
+  # reorder (.rxMatExpStateOrder); rather than reimplement it, bail out and let
+  # the caller fall back to nlmixr2est's inner model + FD -- correct, just slower.
+  .mv <- tryCatch(rxode2::rxModelVars(s), error = function(e) NULL)
+  if (!is.null(.mv) && is.list(.mv$indLin) && length(.mv$indLin) == 4L) return(NULL)
+
+  res <- tryCatch({
+    sens_lines <- character(0)
+    if (length(st) > 0L) {
+      rxode2::.rxJacobian(s, c(st, dirs))
+      sens_lines <- rxode2::.rxSens(s, dirs)
+      if (length(sens_lines) == 0L) return(NULL)
+    }
+    pred <- get("rx_pred_", envir = s)
+    .Dn  <- function(e, v) symengine::D(e, symengine::S(v))
+    .sn1 <- function(j, p) symengine::S(paste0("rx__sens_", j, "_BY_", p, "__"))
+    # linCmt: st is empty, so the state sum drops out and D(pred, dir) alone
+    # resolves through the linCmtB derivative rules.
+    .g1 <- function(ex, p) {
+      e <- .Dn(ex, p)
+      for (j in st) e <- e + .Dn(ex, j) * .sn1(j, p)
+      e
+    }
+
+    base_ode <- if (length(st))
+      vapply(st, function(x)
+        paste0("d/dt(", x, ")=", .admToRx(get(paste0("rx__d_dt_", x, "__"), envir = s))),
+        character(1)) else character(0)
+
+    # dosing modifiers (bioavailability, lag, rate, duration) live in the pruned
+    # env as rx_<mod>_<state>_ and are NOT part of rx__d_dt_*; rxode2 stores lag()
+    # as alag().
+    dos_vars <- grep("^rx_(f|lag|alag|rate|dur)_.+_$", ls(envir = s, all.names = TRUE),
+                     value = TRUE)
+    dose <- vapply(dos_vars, function(v) {
+      m   <- regmatches(v, regexec("^rx_(f|lag|alag|rate|dur)_(.+)_$", v))[[1L]]
+      fun <- if (identical(m[2L], "lag")) "alag" else m[2L]
+      paste0(fun, "(", m[3L], ")=", .admToRx(get(v, envir = s)))
+    }, character(1))
+
+    # state ICs + their direction derivatives. The IC is evaluated at t = 0, before
+    # integration, so its direction derivative is a direct partial (no state chain).
+    # Skip any compartment whose IC .rxSens already emitted.
+    ic_done <- trimws(sub("\\(0\\)=.*$", "",
+                          grep("\\(0\\)=", unlist(strsplit(sens_lines, "\n")), value = TRUE)))
+    ic <- character(0)
+    for (x in st) {
+      x0 <- tryCatch(get(paste0("rx_", x, "_ini_0__"), envir = s), error = function(e) NULL)
+      if (is.null(x0)) next
+      if (!(x %in% ic_done)) ic <- c(ic, paste0(x, "(0)=", .admToRx(x0)))
+      for (p in dirs) {
+        cmt <- paste0("rx__sens_", x, "_BY_", p, "__")
+        d   <- .admToRx(.Dn(x0, p))
+        if (!identical(d, "0") && !(cmt %in% ic_done))
+          ic <- c(ic, paste0(cmt, "(0)=", d))
+      }
+    }
+
+    # DDE pre-history. A non-constant delay() needs `past(state, tau) <- expr`
+    # lines plus the per-sensitivity-compartment histories that .rxSens()
+    # accumulates as a side effect (rxode2's .rxDelaySensAugment). NULL for an
+    # ordinary model, and for a CONSTANT delay -- but omitting them when they do
+    # exist would silently give a wrong sensitivity, so emit them where
+    # nlmixr2est's own augmented builder does: after the ODEs/ICs, before the
+    # prediction.
+    past_lines <- tryCatch(s$..pastLines, error = function(e) NULL)
+    if (is.null(past_lines)) past_lines <- character(0)
+
+    f1 <- vapply(dirs, function(p) paste0("rx_f1_", p, "=", .admToRx(.g1(pred, p))),
+                 character(1))
+
+    # Endpoint routing for a MULTI-ENDPOINT model. Its rx_pred_ is a CMT-conditional
+    # expression (`CMT==3 ? ... : ...`), so the solve needs the endpoint
+    # pseudo-compartments declared and mapped -- nlmixr2est's inner model ends with
+    #   cmt(cp); cmt(ct); dvid(3,4);
+    # admixr2 tags each unit's observations with its output's cmt
+    # (.admBuildEvFull(tag_cmt = TRUE)) precisely so the solve can disambiguate.
+    #
+    # The dvid indices are (number of BASE states) + endpoint position: the
+    # rx__sens_* variational compartments are not counted. `..stateInfo` (which
+    # nlmixr2est uses) is not populated on ui$loadPruneSens, so build the lines from
+    # ui$predDf instead. Single-endpoint models need no routing -- every observation
+    # is that endpoint -- and get no lines, which is what they already did.
+    # The BASE states must also be declared up front (`cmt(central); cmt(periph);`),
+    # as nlmixr2est's inner model does: that pins them to compartments 1..n_base so
+    # the endpoint numbering is n_base + i. Declared implicitly (by d/dt alone) the
+    # rx__sens_* compartments get interleaved and dvid() resolves to the wrong ones.
+    outs <- tryCatch(as.character(ui$predDf$var), error = function(e) character(0))
+    multi <- length(outs) > 1L
+    head_lines <- if (multi && length(st)) paste0("cmt(", st, ")") else character(0)
+    tail_lines <- if (multi)
+      c(paste0("cmt(", outs, ")"),
+        paste0("dvid(", paste(length(st) + seq_along(outs), collapse = ","), ")"))
+    else character(0)
+
+    txt <- paste(c(head_lines, base_ode, dose, sens_lines, ic, past_lines,
+                   paste0("rx_pred_=", .admToRx(pred)), f1, tail_lines), collapse = "\n")
+    txt <- tryCatch(rxode2::rxOptExpr(txt, "admixr2 sensitivity model"),
+                    error = function(e) txt)
+    mod <- rxode2::rxode2(txt, eventSens = "jump")
+    rxode2::rxLoad(mod)
+    list(mod = mod, dirs = dirs,
+         sens_cols = paste0("rx_f1_", eta_dirs),
+         theta_sens_cols = if (length(unpaired))
+           stats::setNames(paste0("rx_f1_", theta_dirs), unpaired) else NULL)
+  }, error = function(e) NULL)
+  res
 }
 
-# Build a SENSITIVITY-ONLY copy of the model in which every unpaired structural
-# theta gains a dummy eta: `tka` is rewritten to `(tka + eta.admSens.tka)`
-# wherever it appears, and `eta.admSens.tka ~ <var>` is appended to ini().
-#
-# Why: rxode2's focei inner model only emits d(pred)/d(eta_j). With the dummy eta
-# pinned at 0 the prediction is unchanged (verified to ~1e-10), while the chain
-# rule makes d(pred)/d(eta.admSens.tka) == d(pred)/d(tka) EXACTLY -- so an extra
-# sensitivity direction replaces the finite-difference solve the estimators used
-# to run for these thetas. Substituting the SYMBOL (not the parameter line) means
-# it does not matter how the parameter is written: `exp(tka)`, `exp(tka)*exp(eta)`
-# and a theta used in several equations all give the correct total derivative.
-#
-# This works for linCmt() too (the derivative goes through rxode2's linCmtB chain
-# rule), where nlmixr2est's own augmented outer model cannot go -- that one needs
-# SECOND-order state sensitivities, which linCmtB does not provide.
-#
-# The dummy omega variance is never used: this ui is only ever a source of
-# sensitivity columns, is never fitted, and is always solved at eta_dummy = 0.
-# It must be non-zero, though, or nlmixr2's zero-omega pre-processing drops the eta.
-#
-# Returns the augmented rxUi, or NULL if anything about the rewrite fails (the
-# caller then falls back to the plain sens model + FD).
-.admBuildSensUi <- function(ui, unpaired, dummy_var = 0.1) {
-  if (length(unpaired) == 0L) return(NULL)
-  fn <- tryCatch(as.function(ui), error = function(e) NULL)
-  if (is.null(fn)) return(NULL)
-  b  <- body(fn)
-  idx_ini <- idx_mod <- NA_integer_
-  for (i in seq_along(b)) {
-    if (!is.call(b[[i]])) next
-    head_i <- as.character(b[[i]][[1L]])
-    if (identical(head_i, "ini"))   idx_ini <- i
-    if (identical(head_i, "model")) idx_mod <- i
-  }
-  if (is.na(idx_ini) || is.na(idx_mod)) return(NULL)
 
-  eta_nms <- paste0("eta.admSens.", unpaired)
-  map <- stats::setNames(
-    lapply(seq_along(unpaired), function(i)
-      bquote((.(as.symbol(unpaired[i])) + .(as.symbol(eta_nms[i]))))),
-    unpaired)
-
-  mblk <- b[[idx_mod]][[2L]]
-  for (i in seq_along(mblk)[-1L]) mblk[[i]] <- .admSubstSym(mblk[[i]], map)
-  b[[idx_mod]][[2L]] <- mblk
-
-  iblk <- b[[idx_ini]][[2L]]
-  for (nm in eta_nms) iblk[[length(iblk) + 1L]] <- bquote(.(as.symbol(nm)) ~ .(dummy_var))
-  b[[idx_ini]][[2L]] <- iblk
-
-  body(fn) <- b
-  tryCatch(rxode2::rxode2(fn), error = function(e) NULL)
-}
-
-# Load the rxode2 sensitivity model (ui$foceiModel$inner) if available.
+# Load (or compile + cache) the sensitivity model.
 #
-# Returns list(type="ode", mod, sens_cols, theta_sens_cols, dummy_eta_inner,
-# rename_map, is_lincmt, cache_file) or NULL. Works for both ODE and linCmt
-# models; ui$foceiModel$inner is non-NULL for both after compilation.
+# Returns list(type, mod, sens_cols, theta_sens_cols, rename_map, is_lincmt,
+# cache_file) or NULL.
 #
-# The model compiled here is the DUMMY-ETA augmented one (.admBuildSensUi) when
-# the model has unpaired structural thetas, so the solve also returns
-# d(pred)/d(theta) for those (theta_sens_cols); `dummy_eta_inner` names the extra
-# ETA[k] columns the solve paths must pin at 0. The first n_eta sensitivity
-# columns are the real etas either way, so every existing consumer of `sens_cols`
-# is unaffected. Any failure in the augmented build falls back to the plain
-# inner model with theta_sens_cols = NULL, which routes the estimators back to
-# their finite-difference path for those thetas.
+#   sens_cols       -- one column per eta, in eta order:      d(pred)/d(eta_i)
+#   theta_sens_cols -- named by theta, for the UNPAIRED ones: d(pred)/d(theta_k)
+#                      (NULL when the model has none, or when the emitted model
+#                       could not be built and we fell back to nlmixr2est's inner
+#                       model -- the estimators then finite-difference those thetas)
+#
+# Preferred model: admixr2's own direction-set model (.admBuildThetaSens), which
+# carries a direction per eta plus one per unpaired theta, and is compiled with
+# eventSens = "jump".
+#
+# Fallback: nlmixr2est's `ui$foceiModel$inner`, which only ever emits eta columns
+# (its sensitivity block is keyed on etas), recompiled with eventSens = "jump" --
+# WITHOUT that flag a parameter entering a dosing modifier (f/lag/rate/dur) has a
+# sensitivity of exactly ZERO, silently, because FOCEI computes event/dose
+# sensitivities separately (its `predNoLhs` FD model) and admixr2 reads the inner
+# model's columns directly.
 #
 # Pinning: ui$foceiModel creates companion objects ($outer, $predOnly,
 # $predNoLhs) with live C++ DLL pointers. rxUi is a locked environment so
@@ -168,168 +284,124 @@
 # finalizer heap corruption (STATUS_HEAP_CORRUPTION / -1073740940).
 .admLoadSensModel <- function(ui) {
   .model_key <- digest::digest(ui$lstExpr)
-  .sens_key  <- paste0("sens_",  .model_key)
+  .sens_key  <- paste0("sens_", .model_key)
 
   # In-memory cache: avoids disk read and rxLoad on repeat calls within a session.
-  .cached <- tryCatch(
-    get(.sens_key, envir = .adm_pin_env, inherits = FALSE),
-    error = function(e) NULL
-  )
+  .cached <- tryCatch(get(.sens_key, envir = .adm_pin_env, inherits = FALSE),
+                      error = function(e) NULL)
   if (!is.null(.cached)) return(.cached)
 
   ini_df <- tryCatch(ui$iniDf, error = function(e) NULL)
   if (is.null(ini_df)) return(NULL)
-  n_eta_real <- nrow(ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 &
-                              !ini_df$fix, , drop = FALSE])
+  eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 &
+                       !ini_df$fix, , drop = FALSE]
+  n_eta    <- nrow(eta_rows)
+  if (n_eta == 0L) return(NULL)
 
-  # Augmented (theta-sensitivity) model first; plain model as the fallback.
-  unpaired <- if (n_eta_real > 0L) .admUnpairedThetas(ui) else character(0)
-  sens_ui  <- if (length(unpaired) > 0L)
-    .admBuildSensUi(ui, unpaired) else NULL
+  unpaired <- .admUnpairedThetas(ui)
 
-  result <- NULL
-  if (!is.null(sens_ui))
-    result <- tryCatch(.admSensFromUi(sens_ui, ui, unpaired),
-                       error = function(e) NULL)
-  if (is.null(result))
-    result <- tryCatch(.admSensFromUi(ui, ui, character(0)),
-                       error = function(e) NULL)
-  if (is.null(result)) return(NULL)
-
-  tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
-  result
-}
-
-# Compile/load the sens model from `sens_ui` (augmented or plain) and describe it
-# relative to the ORIGINAL `ui` (whose parameter names the estimators speak).
-# `unpaired` is empty for the plain model. Returns NULL on any failure.
-.admSensFromUi <- function(sens_ui, ui, unpaired) {
-  .pin_key <- paste0("focei_", digest::digest(sens_ui$lstExpr))
-
-  .focei_model <- tryCatch(sens_ui$foceiModel, error = function(e) NULL)
-  # Pin the full foceiModel to keep companion objects ($outer, $predOnly,
-  # $predNoLhs) alive. See pinning note in .admLoadSensModel's header.
-  tryCatch(assign(.pin_key, .focei_model, envir = .adm_pin_env), error = function(e) NULL)
-  inner <- .focei_model$inner
-  if (is.null(inner)) return(NULL)
-
-  lhs <- tryCatch(inner$lhs, error = function(e) NULL)
-  if (is.null(lhs)) return(NULL)
-
-  ini_df <- tryCatch(ui$iniDf, error = function(e) NULL)
-  if (is.null(ini_df)) return(NULL)
-  eta_rows    <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 & !ini_df$fix, ]
-  struct_rows <- ini_df[is.na(ini_df$neta1) & !ini_df$fix, ]
-  n_eta       <- nrow(eta_rows)
-
+  # Parameter names the estimators speak -> the model's THETA[j] / ETA[i]. Indexed
+  # by ntheta / neta1, NOT by position, so a fixed theta cannot shift the mapping.
+  th_rows    <- ini_df[!is.na(ini_df$ntheta), , drop = FALSE]
   rename_map <- c(
-    setNames(paste0("THETA[", seq_len(nrow(struct_rows)), "]"), struct_rows$name),
-    setNames(paste0("ETA[",   seq_len(n_eta),             "]"),
-             paste0("eta.", gsub("^eta\\.", "", eta_rows$name)))
-  )
+    stats::setNames(paste0("THETA[", th_rows$ntheta, "]"), th_rows$name),
+    stats::setNames(paste0("ETA[", seq_len(n_eta), "]"),
+                    paste0("eta.", gsub("^eta\\.", "", eta_rows$name))))
 
-  sens_cols <- lhs[grepl("sens_rx_pred.*ETA|sens.*pred.*BY.*ETA", lhs, ignore.case = TRUE)]
-  if (length(sens_cols) == 0L) return(NULL)
-
-  eta_idx <- suppressWarnings(as.integer(regmatches(sens_cols, regexpr("[0-9]+", sens_cols))))
-  if (any(is.na(eta_idx))) return(NULL)
-  sens_cols <- sens_cols[order(eta_idx)]
-  # The augmented model appends one dummy eta per unpaired theta, in `unpaired`
-  # order, AFTER the real etas -- so its sens columns split n_eta | n_unpaired.
-  n_unp <- length(unpaired)
-  if (length(sens_cols) != n_eta + n_unp) return(NULL)
-
-  theta_sens_cols <- NULL
-  dummy_eta_inner <- character(0)
-  if (n_unp > 0L) {
-    theta_sens_cols <- setNames(sens_cols[n_eta + seq_len(n_unp)], unpaired)
-    dummy_eta_inner <- paste0("ETA[", n_eta + seq_len(n_unp), "]")
-    sens_cols       <- sens_cols[seq_len(n_eta)]
-  }
-
-  # Cache key: the inner model AND everything that changes the model we compile
-  # from it. "jump" = the eventSens flag below; without it in the key, a cache
-  # written before that fix would be reloaded and silently serve a model whose
-  # dose-parameter sensitivities are zero.
+  # Cache key: the model, the direction set, and the compile flags that change the
+  # emitted model. Without the direction set in the key, a model cached before a
+  # theta gained its own direction would be served with the columns missing.
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
-    paste0("adm-sens-", digest::digest(list(inner, "jump")), ".qs2")
-  )
+    paste0("adm-sens-",
+           digest::digest(list(ui$lstExpr, unpaired, "dirs-jump")), ".qs2"))
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
   on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
   setwd(rxode2::rxTempDir())
 
-  # The cache holds the whole result list, so the compiled model to rxLoad() is
-  # m$mod -- rxLoad(m) errors ("need an rxode2-type object"), which silently sent
-  # every cache hit down the recompile path.
   if (file.exists(.cacheFile)) {
     result <- tryCatch({ m <- qs2::qs_read(.cacheFile); rxode2::rxLoad(m$mod); m },
                        error = function(e) NULL)
     if (!is.null(result)) {
-      # Caches written by older versions predate these fields. The theta-sens
-      # fields are re-derived rather than trusted: the cache key is the inner
-      # model, so a cache written before this feature has the right model but no
-      # theta columns.
-      result$cache_file      <- .cacheFile
-      result$theta_sens_cols <- theta_sens_cols
-      result$dummy_eta_inner <- dummy_eta_inner
-      if (is.null(result$sens_cols))  result$sens_cols  <- sens_cols
-      if (is.null(result$rename_map)) result$rename_map <- rename_map
+      result$cache_file <- .cacheFile
+      tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
       return(result)
     }
   }
 
-  # Recompile the inner model with eventSens = "jump".
-  #
-  # WITHOUT this, a parameter that enters a DOSING MODIFIER -- bioavailability
-  # f(), lag()/alag(), rate(), dur() -- has a sensitivity of exactly ZERO in the
-  # solve, silently. nlmixr2est's inner model does not carry event/dose-parameter
-  # sensitivities (FOCEI computes those separately, by finite differences, via its
-  # `predNoLhs` "events FD model"), but admixr2 reads the inner model's columns
-  # directly. So `grad = "sens"` produced a zero gradient for every eta -- and now
-  # every theta -- driving a modelled F/lag/rate/dur. Verified: analytic column 0
-  # vs a true derivative of ~0.4-0.7.
-  #
-  # eventSens = "jump" attaches rxode2's analytic forward variational jumps at
-  # dose times for the rx__sens_* compartments; this is the same flag nlmixr2est
-  # passes when it builds its augmented outer model, for exactly this reason.
-  # Predictions are bit-identical (verified 0.0e+00) and ordinary (non-dose)
-  # sensitivities are unchanged, so this is a strict fix. Falls back to the inner
-  # model as-is if the recompile fails.
+  # Pin ui$foceiModel even when the emitted model does not need it. The estimator
+  # drivers access $foceiModel anyway (nlmixr2CreateOutputFromUi / double-compile
+  # prevention), which creates companion objects ($outer, $predOnly, $predNoLhs)
+  # holding live C++ DLL pointers. Unpinned they are immediately GC-eligible and
+  # their finalizers unload DLLs mid-allocation -> Windows heap corruption
+  # (STATUS_HEAP_CORRUPTION / -1073740940). rxUi is a locked env, so they are
+  # pinned in .adm_pin_env (package-level, always writable) instead.
+  tryCatch(assign(paste0("focei_", .model_key),
+                  suppressMessages(ui$foceiModel), envir = .adm_pin_env),
+           error = function(e) NULL)
+
+  built <- .admBuildThetaSens(ui, unpaired)
+  if (!is.null(built)) {
+    result <- list(type = "dirs", mod = built$mod,
+                   sens_cols = built$sens_cols,
+                   theta_sens_cols = built$theta_sens_cols,
+                   dirs = built$dirs,
+                   rename_map = rename_map,
+                   is_lincmt = .admIsLinCmtMod(built$mod),
+                   cache_file = .cacheFile)
+  } else {
+    result <- .admSensFromInner(ui, rename_map, n_eta, .cacheFile)
+    if (is.null(result)) return(NULL)
+  }
+
+  # suppressWarnings: the sens model is compiled inside admixr2, so its environment
+  # chain references the package namespace and serialising it warns "'package:
+  # admixr2' may not be available when loading". Harmless -- a worker reloads the
+  # DLL via rxLoad(), not from the serialised env (.admLoadModel does the same).
+  tryCatch(suppressWarnings(qs2::qs_save(result, .cacheFile)), error = function(e) NULL)
+  tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
+  result
+}
+
+.admIsLinCmtMod <- function(mod) {
+  mv <- tryCatch(rxode2::rxModelVars(mod), error = function(e) NULL)
+  if (is.null(mv)) FALSE else any(grepl("linCmtB", mv$model, fixed = TRUE))
+}
+
+# Fallback sens model: nlmixr2est's `ui$foceiModel$inner`. Eta columns only --
+# its sensitivity block is keyed on etas, so there are no theta columns and the
+# estimators finite-difference the unpaired thetas, as they always did.
+# Recompiled with eventSens = "jump" (see .admLoadSensModel's header).
+.admSensFromInner <- function(ui, rename_map, n_eta, cacheFile) {
+  # .admLoadSensModel already pinned $foceiModel (the Windows finalizer guard).
+  .focei_model <- tryCatch(ui$foceiModel, error = function(e) NULL)
+  inner <- .focei_model$inner
+  if (is.null(inner)) return(NULL)
+
+  lhs <- tryCatch(inner$lhs, error = function(e) NULL)
+  if (is.null(lhs)) return(NULL)
+  sens_cols <- lhs[grepl("sens_rx_pred.*ETA|sens.*pred.*BY.*ETA", lhs, ignore.case = TRUE)]
+  if (length(sens_cols) == 0L) return(NULL)
+  eta_idx <- suppressWarnings(as.integer(regmatches(sens_cols, regexpr("[0-9]+", sens_cols))))
+  if (anyNA(eta_idx)) return(NULL)
+  sens_cols <- sens_cols[order(eta_idx)]
+  if (length(sens_cols) != n_eta) return(NULL)
+
   .normMod <- tryCatch(rxode2::rxModelVars(inner)$model[["normModel"]],
                        error = function(e) NULL)
   mod <- if (!is.null(.normMod))
     tryCatch({ m <- rxode2::rxode2(.normMod, eventSens = "jump"); rxode2::rxLoad(m); m },
              error = function(e) NULL)
   else NULL
-  # inner is already a compiled "rxode2" object -- load its DLL directly.
   if (is.null(mod))
     mod <- tryCatch({ rxode2::rxLoad(inner); inner }, error = function(e) NULL)
-  # Fallback: re-compile if load fails (e.g., stale DLL path after clean session).
   if (is.null(mod))
     mod <- tryCatch({ m <- rxode2::rxode2(inner); rxode2::rxLoad(m); m },
                     error = function(e) NULL)
   if (is.null(mod)) return(NULL)
 
-  mvars     <- tryCatch(rxode2::rxModelVars(mod), error = function(e) NULL)
-  is_lincmt <- if (!is.null(mvars))
-    any(grepl("linCmtB", mvars$model, fixed = TRUE)) else FALSE
-
-  # cache_file travels with the result: parallel workers reload the sens model
-  # from exactly the file that was written here. Re-deriving the key from a later
-  # ui$foceiModel$inner does not work -- that access yields a different object
-  # than the one digested above, so the lookup always missed.
-  result <- list(type = "ode", mod = mod, sens_cols = sens_cols,
-                 theta_sens_cols = theta_sens_cols,
-                 dummy_eta_inner = dummy_eta_inner,
-                 rename_map = rename_map, is_lincmt = is_lincmt,
-                 cache_file = .cacheFile)
-  # suppressWarnings: the sens model is now compiled inside admixr2 (for
-  # eventSens="jump"), so its environment chain references the package namespace
-  # and serialising it warns "'package:admixr2' may not be available when
-  # loading". Harmless -- the worker reloads the DLL via rxLoad(), not from the
-  # serialised env. .admLoadModel() suppresses the same warning on its own cache.
-  tryCatch(suppressWarnings(qs2::qs_save(result, .cacheFile)), error = function(e) NULL)
-  result
+  list(type = "inner", mod = mod, sens_cols = sens_cols,
+       theta_sens_cols = NULL, rename_map = rename_map,
+       is_lincmt = .admIsLinCmtMod(mod), cache_file = cacheFile)
 }

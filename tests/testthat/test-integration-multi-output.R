@@ -295,8 +295,8 @@ test_that("the multi-output sens model carries theta columns for tq/tv2", {
   sm <- admixr2:::.admLoadSensModel(ui)
   expect_false(is.null(sm$theta_sens_cols))
   expect_equal(names(sm$theta_sens_cols), c("tq", "tv2"))
-  # dummy etas come after the two real ones and must be pinned at 0 by the solves
-  expect_equal(sm$dummy_eta_inner, c("ETA[3]", "ETA[4]"))
+  # tq/tv2 are THETA[3]/THETA[4]; the two mu-referenced thetas reuse their etas
+  expect_equal(sm$dirs, c("ETA_1_", "ETA_2_", "THETA_3_", "THETA_4_"))
 })
 
 test_that("joint + multi-output sens solves return d(pred)/d(theta) for every block", {

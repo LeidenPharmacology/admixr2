@@ -9,23 +9,21 @@
 skip_on_cran()
 skip_if_not_installed("rxode2")
 
-test_that("sens model is augmented with a dummy eta per unpaired theta", {
+test_that("sens model carries a direction per eta plus one per unpaired theta", {
   env <- .int_theta_sens_setup()
   for (case in c("ode", "lin")) {
     e  <- env[[case]]
     sm <- e$sensModel
     expect_false(is.null(sm), info = case)
     expect_equal(e$unpaired, "tsc", info = case)
+    expect_equal(sm$type, "dirs", info = case)   # our emitter, not the inner fallback
 
-    # theta columns present, named by the unpaired theta
-    expect_false(is.null(sm$theta_sens_cols), info = case)
-    expect_equal(names(sm$theta_sens_cols), "tsc", info = case)
-
-    # existing consumers unaffected: sens_cols is still exactly the real etas
+    # one direction per eta (mu-referenced thetas reuse theirs for free) plus one
+    # for the unpaired theta -- tsc is THETA[3] in this model
+    expect_equal(sm$dirs, c("ETA_1_", "ETA_2_", "THETA_3_"), info = case)
+    expect_equal(sm$sens_cols, c("rx_f1_ETA_1_", "rx_f1_ETA_2_"), info = case)
+    expect_equal(sm$theta_sens_cols, c(tsc = "rx_f1_THETA_3_"), info = case)
     expect_length(sm$sens_cols, e$pinfo$n_eta)
-
-    # the dummy eta is the (n_eta + 1)-th and must be pinned at 0 by the solve paths
-    expect_equal(sm$dummy_eta_inner, paste0("ETA[", e$pinfo$n_eta + 1L, "]"), info = case)
   }
 })
 
@@ -112,10 +110,7 @@ test_that("sensitivities of DOSING-MODIFIER parameters are not silently zero", {
   ev    <- rxode2::et(amt = 100) |> rxode2::et(times)
   th    <- setNames(c(log(5), log(20), log(1), 0.5, log(0.3), 0.1),
                     paste0("THETA[", 1:6, "]"))
-  # ETA[1] eta.cl, ETA[2] eta.f, ETA[3..] dummy etas (tka, tlag) -- pinned at 0
-  n_all <- 2L + length(sm$theta_sens_cols)
-  et    <- setNames(rep(0, n_all), paste0("ETA[", seq_len(n_all), "]"))
-  et[1:2] <- c(0.2, 0.1)
+  et    <- setNames(c(0.2, 0.1), paste0("ETA[", 1:2, "]"))   # eta.cl, eta.f
 
   sol <- function(th, et) {
     d <- rxode2::rxSolve(sm$mod, params = c(th, et), events = ev,
@@ -134,7 +129,7 @@ test_that("sensitivities of DOSING-MODIFIER parameters are not silently zero", {
   expect_false(all(ana_etaf == 0))
   expect_lt(max(abs(ana_etaf - fd_etaf) / pmax(abs(fd_etaf), 1e-8)), 1e-4)
 
-  # tlag (eta-less theta in alag(depot)) via its dummy-eta column
+  # tlag (eta-less theta in alag(depot)) via its own THETA direction
   k <- 5L                                   # THETA[5] = tlag
   tp <- th; tp[k] <- tp[k] + H
   tm <- th; tm[k] <- tm[k] - H
@@ -144,23 +139,19 @@ test_that("sensitivities of DOSING-MODIFIER parameters are not silently zero", {
   expect_lt(max(abs(ana_tlag - fd_tlag) / pmax(abs(fd_tlag), 1e-8)), 1e-4)
 })
 
-test_that("the dummy eta does not change the prediction", {
-  # At eta_dummy = 0 the augmented model must reproduce the PLAIN sens model's
-  # prediction -- otherwise every NLL/moment computed from it is wrong.
-  #
-  # Compared against the plain SENS model, not the simulation model: the two
-  # differ by ~1e-6 anyway because rxode2's adaptive solver takes different steps
-  # for a system with sensitivity compartments (same effect CLAUDE.md documents
-  # for a changed output grid). That is pre-existing -- .admGrad has always taken
-  # cp_mat from the sens solve -- and is not what this test is about.
+test_that("the sens model reproduces the simulation model's prediction", {
+  # The sens model's rx_pred_ is what .admGrad uses as cp_mat, so it must be the
+  # same prediction the NLL is built from. Tolerance 1e-5, not exact: rxode2's
+  # adaptive solver takes different steps for a system carrying sensitivity
+  # compartments (the same effect CLAUDE.md documents for a changed output grid).
+  # That is pre-existing -- .admGrad has always taken cp_mat from the sens solve.
   env   <- .int_theta_sens_setup()
   e     <- env$ode
   pinfo <- e$pinfo
   ui    <- e$ui
 
-  plain <- suppressMessages(admixr2:::.admSensFromUi(ui, ui, character(0)))
-  expect_false(is.null(plain))
-  expect_null(plain$theta_sens_cols)          # plain model has no theta columns
+  rxMod <- admixr2:::.admLoadModel(ui)
+  rxode2::rxLoad(rxMod)
 
   times <- c(0.5, 1, 2, 4)
   E_t   <- .one_cmt_mean(5, 20, 100, times)
@@ -174,17 +165,22 @@ test_that("the dummy eta does not change the prediction", {
   z       <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")[[1]]
   eta_mat <- z %*% t(pars$L)
   colnames(eta_mat) <- pinfo$eta_col_names
+  plist   <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
 
-  aug_out   <- admixr2:::.admSimulateSens(e$sensModel, pars$struct, pinfo$sigma_names,
-                                          eta_mat, study, 1L)
+  cp_sim <- admixr2:::.admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta_mat,
+                                   study, "cp", plist[[1]], 1L)
+  out    <- admixr2:::.admSimulateSens(e$sensModel, pars$struct, pinfo$sigma_names,
+                                       eta_mat, study, 1L)
+  expect_equal(out$cp_mat, cp_sim, tolerance = 1e-5)
+
+  expect_false(is.null(out$dtheta_list))
+  expect_equal(names(out$dtheta_list), "tsc")
+  expect_equal(dim(out$dtheta_list$tsc), c(n_sim, length(times)))
+
+  # hiding the theta columns is what the nlmixr2est-inner fallback looks like ->
+  # the estimators finite-difference those thetas
+  plain <- e$sensModel; plain$theta_sens_cols <- NULL
   plain_out <- admixr2:::.admSimulateSens(plain, pars$struct, pinfo$sigma_names,
                                           eta_mat, study, 1L)
-  expect_equal(aug_out$cp_mat, plain_out$cp_mat, tolerance = 1e-8)
-  # the real etas' sensitivities are unchanged by the augmentation too
-  expect_equal(aug_out$dpred_list, plain_out$dpred_list, tolerance = 1e-8)
-
-  expect_false(is.null(aug_out$dtheta_list))
-  expect_equal(names(aug_out$dtheta_list), "tsc")
-  expect_equal(dim(aug_out$dtheta_list$tsc), c(n_sim, length(times)))
-  expect_null(plain_out$dtheta_list)           # plain model -> FD fallback
+  expect_null(plain_out$dtheta_list)
 })

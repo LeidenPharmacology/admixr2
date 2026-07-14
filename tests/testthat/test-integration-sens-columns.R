@@ -1,0 +1,187 @@
+# Tier 2: the sens model's OWN columns, checked directly against finite
+# differences of the same model's rx_pred_.
+#
+# WHY THIS FILE EXISTS. Every other gradient test compares .admGrad against a
+# finite difference of .admNLL. That cannot see a broken sensitivity column:
+#   * a missing THETA column silently falls back to FD, which is also correct;
+#   * a ZERO eta column makes the analytic and FD gradients agree on being wrong.
+# A parameter entering f()/lag()/rate()/dur() had exactly that -- an identically
+# zero column -- and the whole suite stayed green. So: check the derivative the
+# model actually returns, against the derivative of the model's own prediction.
+#
+# Helper + models: .int_sens_col_errs() in helper-integration.R.
+
+skip_on_cran()
+skip_if_not_installed("rxode2")
+
+TOL   <- 1e-4                                   # FD reference is good to ~1e-6
+times <- c(0.5, 1, 2, 4, 8, 12, 24)
+bolus <- rxode2::et(amt = 100) |> rxode2::et(times)
+
+expect_cols_exact <- function(errs, expected_cols) {
+  expect_setequal(names(errs), expected_cols)
+  for (nm in names(errs))
+    expect_lt(errs[[nm]], TOL, label = sprintf("max rel err of column %s", nm))
+  # a silently-zero column would give exactly 1.0; make that impossible to miss
+  expect_true(all(errs < 0.5))
+}
+
+test_that("ODE: eta columns and an eta-less theta's column are exact", {
+  errs <- .int_sens_col_errs(one_cmt_kappa_fn, bolus, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:tsc"))
+})
+
+test_that("linCmt: eta columns and an eta-less theta's column are exact", {
+  # linCmt has no state sensitivities; these columns come from rxode2's linCmtB
+  # chain rule. (This is the case nlmixr2est's augmented outer model cannot build.)
+  errs <- .int_sens_col_errs(one_cmt_lincmt_kappa_fn, bolus, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:tsc"))
+})
+
+test_that("shared eta: tcl and tv each get their OWN exact column", {
+  # eta.cl drives both cl and v, so d(pred)/d(eta.cl) collects a path through v
+  # that d(pred)/d(tcl) does not have -- reusing the eta column would be wrong.
+  errs <- .int_sens_col_errs(one_cmt_shared_eta_fn, bolus, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.ka", "theta:tcl", "theta:tv"))
+})
+
+test_that("covariate coefficient gets an exact column", {
+  errs <- .int_sens_col_errs(one_cmt_cov_fn, bolus, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:bwt"))
+})
+
+test_that("bounded (expit) theta gets an exact column", {
+  errs <- .int_sens_col_errs(one_cmt_expit_fn, bolus, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:tfr"))
+})
+
+test_that("parameter-dependent initial condition gets an exact column", {
+  errs <- .int_sens_col_errs(one_cmt_ic_fn, bolus, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:tinit"))
+})
+
+# ---- Dosing modifiers: the regression this file was written for --------------
+# These are ZERO without eventSens = "jump" (nlmixr2est's inner model carries no
+# event/dose-parameter sensitivities; FOCEI finite-differences them separately).
+
+test_that("bioavailability f() and lag time: eta AND theta columns are exact", {
+  errs <- .int_sens_col_errs(one_cmt_dose_fn, bolus, times)
+  # eta.f drives f(depot); tlag drives alag(depot); tka/tv are ordinary eta-less
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.f",
+                            "theta:tv", "theta:tka", "theta:tlag"))
+})
+
+test_that("modelled infusion rate(): theta column is exact", {
+  # rate = -1 in the event table selects the modelled rate
+  ev <- rxode2::et(amt = 100, rate = -1) |> rxode2::et(times)
+  errs <- .int_sens_col_errs(one_cmt_rate_fn, ev, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:trate"))
+})
+
+test_that("modelled infusion dur(): theta column is exact", {
+  # rate = -2 in the event table selects the modelled duration
+  ev <- rxode2::et(amt = 100, rate = -2) |> rxode2::et(times)
+  errs <- .int_sens_col_errs(one_cmt_dur_fn, ev, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:tdur"))
+})
+
+# ---- Cross-check against nlmixr2est's own implementation ---------------------
+
+test_that("our emitted model agrees with nlmixr2est's inner model (eta columns + pred)", {
+  # Two INDEPENDENT implementations of the same derivative: admixr2 emits its own
+  # direction-set model (.admBuildThetaSens), nlmixr2est builds the focei inner
+  # model. Their prediction and their eta sensitivity columns must coincide.
+  # (There is no counterpart for the THETA columns -- nlmixr2est's inner model
+  # does not emit them, which is the whole point of the emitter.)
+  times <- c(0.5, 1, 2, 4, 8, 12, 24)
+  ev    <- rxode2::et(amt = 100) |> rxode2::et(times)
+
+  for (nm in c("one_cmt_kappa_fn", "one_cmt_lincmt_kappa_fn", "one_cmt_dose_fn",
+               "one_cmt_ic_fn", "one_cmt_cov_fn")) {
+    ui <- suppressMessages(rxode2::rxode2(get(nm)))
+    unp <- admixr2:::.admUnpairedThetas(ui)
+    n_eta <- sum(!is.na(ui$iniDf$neta1) & ui$iniDf$neta1 == ui$iniDf$neta2 & !ui$iniDf$fix)
+
+    ours   <- suppressMessages(admixr2:::.admBuildThetaSens(ui, unp))
+    theirs <- suppressMessages(admixr2:::.admSensFromInner(ui, NULL, n_eta, tempfile()))
+    expect_false(is.null(ours),   info = nm)
+    expect_false(is.null(theirs), info = nm)
+
+    th_rows <- ui$iniDf[!is.na(ui$iniDf$ntheta), ]
+    th <- stats::setNames(th_rows$est, paste0("THETA[", th_rows$ntheta, "]"))
+    et <- stats::setNames(rep(0.1, n_eta), paste0("ETA[", seq_len(n_eta), "]"))
+    sol <- function(mod) {
+      need <- setdiff(rxode2::rxModelVars(mod)$params, c(names(th), names(et)))
+      cv   <- if (length(need)) stats::setNames(rep(70, length(need)), need) else NULL
+      d <- rxode2::rxSolve(mod, params = c(th, et, cv), events = ev,
+                           returnType = "data.frame", addDosing = FALSE,
+                           atol = 1e-12, rtol = 1e-12)
+      d[d$time > 0, , drop = FALSE]
+    }
+    a <- sol(ours$mod); b <- sol(theirs$mod)
+    scal <- function(x, y) max(abs(x - y)) / max(max(abs(y)), 1e-8)
+    expect_lt(scal(a$rx_pred_, b$rx_pred_), 1e-6)
+    for (j in seq_len(n_eta))
+      expect_lt(scal(a[[ours$sens_cols[j]]], b[[theirs$sens_cols[j]]]), 1e-6)
+  }
+})
+
+test_that("delay() and transit() models get exact columns", {
+  # .rxSens() accumulates the delay-sensitivity augmentation itself, and a
+  # non-constant delay's pre-history (s$..pastLines) is emitted too.
+  times <- c(0.5, 1, 2, 4, 8, 12, 24)
+  ev    <- rxode2::et(amt = 100) |> rxode2::et(times)
+
+  errs <- .int_sens_col_errs(one_cmt_delay_fn, ev, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:tka"))
+
+  errs <- .int_sens_col_errs(one_cmt_transit_fn, ev, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v",
+                            "theta:tka", "theta:tn", "theta:tmtt"))
+})
+
+test_that("d(pred)/d(lag) is one-sided AT the dose boundary (documented, not a bug)", {
+  # At an observation coinciding EXACTLY with the lagged dose time the derivative
+  # does not exist: the analytic jump returns the one-sided value while a central
+  # difference averages across the discontinuity and returns exactly HALF. The FD
+  # reference is the ill-defined one here -- so keep lag/rate values off the
+  # observation grid in every other test. Pinned so nobody "fixes" the jump.
+  lag_on_grid_fn <- function() {
+    ini({tcl <- log(5); tv <- log(20); tka <- log(1); tlag <- log(2); add.err <- 0.1
+         eta.cl ~ 0.09; eta.v ~ 0.04})
+    model({
+      cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v); ka <- exp(tka)
+      d/dt(depot)   <- -ka * depot
+      alag(depot)   <- exp(tlag)         # lag = 2 h, and t = 2 IS an observation
+      d/dt(central) <-  ka * depot - (cl / v) * central
+      cp <- central / v
+      cp ~ add(add.err)
+    })
+  }
+  ui <- suppressMessages(rxode2::rxode2(lag_on_grid_fn))
+  sm <- suppressMessages(admixr2:::.admLoadSensModel(ui))
+  th <- stats::setNames(c(log(5), log(20), log(1), log(2), 0.1),
+                        paste0("THETA[", 1:5, "]"))
+  n_all <- 2L + length(sm$theta_sens_cols)
+  et <- stats::setNames(rep(0, n_all), paste0("ETA[", seq_len(n_all), "]"))
+  et[1:2] <- 0.1
+  sol <- function(th) {
+    d <- rxode2::rxSolve(sm$mod, params = c(th, et), events = bolus,
+                         returnType = "data.frame", addDosing = FALSE,
+                         atol = 1e-12, rtol = 1e-12)
+    d[d$time > 0, , drop = FALSE]
+  }
+  h  <- 1e-5
+  d0 <- sol(th)
+  tp <- th; tp[4] <- tp[4] + h
+  tm <- th; tm[4] <- tm[4] - h
+  fd  <- (sol(tp)$rx_pred_ - sol(tm)$rx_pred_) / (2 * h)
+  ana <- d0[[sm$theta_sens_cols[["tlag"]]]]
+  at_boundary <- d0$time == 2
+
+  # exactly half at the boundary observation ...
+  expect_equal(unname(fd[at_boundary]), unname(ana[at_boundary]) / 2, tolerance = 1e-3)
+  # ... and exact everywhere else
+  expect_lt(max(abs(ana[!at_boundary] - fd[!at_boundary]) /
+                pmax(abs(fd[!at_boundary]), 1e-8)), 1e-4)
+})

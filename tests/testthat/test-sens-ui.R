@@ -1,29 +1,5 @@
-# Tier 1: the sens-model augmentation helpers (.admSubstSym, .admUnpairedThetas,
-# .admBuildSensUi). Only .admBuildSensUi needs rxode2.
-
-test_that(".admSubstSym substitutes a symbol everywhere it appears", {
-  map <- list(tka = quote((tka + eta.admSens.tka)))
-
-  # simple parameter line
-  expect_equal(admixr2:::.admSubstSym(quote(ka <- exp(tka)), map),
-               quote(ka <- exp((tka + eta.admSens.tka))))
-
-  # every occurrence, including several in one expression (total derivative)
-  expect_equal(admixr2:::.admSubstSym(quote(y <- tka * exp(tka)), map),
-               quote(y <- (tka + eta.admSens.tka) * exp((tka + eta.admSens.tka))))
-
-  # nested calls and d/dt() lines
-  expect_equal(admixr2:::.admSubstSym(quote(d/dt(depot) <- -exp(tka) * depot), map),
-               quote(d/dt(depot) <- -exp((tka + eta.admSens.tka)) * depot))
-
-  # a call HEAD is never substituted (a theta is never a function name)
-  expect_equal(admixr2:::.admSubstSym(quote(tka(x)), list(tka = quote(zzz))),
-               quote(tka(x)))
-
-  # untouched symbols and literals survive
-  expect_equal(admixr2:::.admSubstSym(quote(v <- exp(tv) + 2), map),
-               quote(v <- exp(tv) + 2))
-})
+# Tier 1: the sens-model direction set (.admUnpairedThetas, .admMuRefPairs) and
+# the emitted model (.admBuildThetaSens -- needs rxode2).
 
 test_that(".admUnpairedThetas mirrors struct_has_eta", {
   ini <- data.frame(
@@ -127,33 +103,56 @@ test_that("struct_has_eta honours the shared-eta guard", {
   expect_true(is.na(pinfo$struct_eta_idx[[1L]]))
 })
 
-test_that(".admBuildSensUi adds one dummy eta per unpaired theta", {
+test_that(".admBuildThetaSens emits a direction per eta plus one per unpaired theta", {
   skip_on_cran()
   skip_if_not_installed("rxode2")
 
-  ui  <- suppressMessages(rxode2::rxode2(one_cmt_kappa_fn))
-  aug <- suppressMessages(admixr2:::.admBuildSensUi(ui, "tsc"))
-  expect_false(is.null(aug))
+  ui <- suppressMessages(rxode2::rxode2(one_cmt_kappa_fn))   # tsc = THETA[3], no eta
+  sm <- suppressMessages(admixr2:::.admBuildThetaSens(ui, "tsc"))
+  expect_false(is.null(sm))
 
-  ini0 <- ui$iniDf
-  ini1 <- aug$iniDf
-  eta0 <- ini0[!is.na(ini0$neta1), ]
-  eta1 <- ini1[!is.na(ini1$neta1), ]
+  # mu-referenced tcl/tv reuse their etas' directions -- only tsc gets its own
+  expect_equal(sm$dirs, c("ETA_1_", "ETA_2_", "THETA_3_"))
+  expect_equal(sm$sens_cols, c("rx_f1_ETA_1_", "rx_f1_ETA_2_"))
+  expect_equal(sm$theta_sens_cols, c(tsc = "rx_f1_THETA_3_"))
 
-  # one extra eta, appended AFTER the real ones (so ETA[k] indices of the real
-  # etas -- and every existing sens column -- are unchanged)
-  expect_equal(nrow(eta1), nrow(eta0) + 1L)
-  expect_equal(eta1$name[seq_len(nrow(eta0))], eta0$name)
-  expect_equal(eta1$name[nrow(eta1)], "eta.admSens.tsc")
+  # the emitted model really carries those columns, plus the prediction
+  lhs <- sm$mod$lhs
+  expect_true(all(c("rx_pred_", "rx_f1_ETA_1_", "rx_f1_ETA_2_", "rx_f1_THETA_3_") %in% lhs))
 
-  # theta block untouched: same names, same order, same ntheta numbering
-  th0 <- ini0[is.na(ini0$neta1), c("ntheta", "name")]
-  th1 <- ini1[is.na(ini1$neta1), c("ntheta", "name")]
-  expect_equal(th1, th0)
+  # ... and one variational compartment per direction per state
+  st <- rxode2::rxModelVars(sm$mod)$state
+  expect_true("rx__sens_central_BY_THETA_3___" %in% st)
+  expect_true("rx__sens_central_BY_ETA_1___" %in% st)
 
-  # a theta that is not in the model cannot be substituted -> NULL, and the
-  # caller falls back to the plain sens model + FD
-  expect_null(suppressWarnings(admixr2:::.admBuildSensUi(ui, "not_a_theta")))
-  # nothing to do -> NULL
-  expect_null(admixr2:::.admBuildSensUi(ui, character(0)))
+  # no unpaired thetas -> eta directions only, no theta columns
+  sm0 <- suppressMessages(admixr2:::.admBuildThetaSens(ui, character(0)))
+  expect_equal(sm0$dirs, c("ETA_1_", "ETA_2_"))
+  expect_null(sm0$theta_sens_cols)
+
+  # a theta that is not in the model -> NULL, and the caller falls back to
+  # nlmixr2est's inner model + FD
+  expect_null(suppressMessages(admixr2:::.admBuildThetaSens(ui, "not_a_theta")))
+})
+
+test_that(".admBuildThetaSens works for linCmt (no ODE states -> linCmtB chain rule)", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+
+  ui <- suppressMessages(rxode2::rxode2(one_cmt_lincmt_kappa_fn))
+  # rxStateOde() is EMPTY for a linCmt model: there is nothing for .rxSens() to
+  # augment (it would error). The emitter therefore drops the state-sensitivity
+  # sum and D(pred, dir) alone resolves through rxode2's linCmtB derivative rules.
+  expect_length(rxode2::rxStateOde(ui$loadPruneSens), 0L)
+
+  sm <- suppressMessages(admixr2:::.admBuildThetaSens(ui, "tsc"))
+  expect_false(is.null(sm))
+  expect_equal(sm$theta_sens_cols, c(tsc = "rx_f1_THETA_3_"))
+
+  mv <- rxode2::rxModelVars(sm$mod)
+  expect_true(any(grepl("linCmtB", mv$model, fixed = TRUE)))
+  # no variational compartments of OUR making. (rxode2 adds its own linCmtB
+  # pseudo-compartments, rx__sens_central_BY_p1/v1 -- the same ones nlmixr2est's
+  # inner model gets -- so assert on the direction-named ones specifically.)
+  expect_false(any(grepl("_BY_(ETA|THETA)_", mv$state)))
 })

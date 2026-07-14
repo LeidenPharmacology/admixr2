@@ -1033,7 +1033,6 @@ nmObjGetControl.admc <- function(x, ...) {
       rmap      <- sensModel$rename_map
       all_src   <- c(pinfo$struct_names, pinfo$sigma_names, eta_col_names)
       inner_nms <- rmap[all_src]; inner_nms <- inner_nms[!is.na(inner_nms)]
-      inner_nms <- c(inner_nms, .admDummyEtaZeros(sensModel))
 
       inner_df <- as.data.frame(matrix(0, nrow = n_c * n_sim,
                                         ncol = length(inner_nms),

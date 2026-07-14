@@ -59,7 +59,6 @@
   all_src   <- c(theta_nms, sigma_names, eta_cols)
   inner_nms <- rmap[all_src]
   inner_nms <- inner_nms[!is.na(inner_nms)]
-  inner_nms <- c(inner_nms, .admDummyEtaZeros(sensModel))
 
   inner_df  <- as.data.frame(matrix(0, nrow = n_row, ncol = length(inner_nms),
                                     dimnames = list(NULL, unname(inner_nms))),
@@ -149,15 +148,10 @@
   list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list)
 }
 
-# The dummy-eta columns of the augmented sens model (.admBuildSensUi): they carry
-# d(pred)/d(theta) for the unpaired structural thetas and MUST be solved at 0 --
-# there the augmented model's prediction is the original model's prediction and
-# d(pred)/d(eta.admSens.x) == d(pred)/d(x). character(0) for a plain sens model.
-.admDummyEtaZeros <- function(sensModel) sensModel$dummy_eta_inner %||% character(0)
-
 # Extract d(pred)/d(theta) for the unpaired thetas from a sens solve.
-# NULL when the sens model is the plain one (no theta columns) or the solve did
-# not return them -- the caller then falls back to finite differences.
+# NULL when the sens model has no theta directions (the nlmixr2est-inner
+# fallback) or the solve did not return them -- the caller then falls back to
+# finite differences.
 .admThetaSens <- function(sensModel, out, keep, n_row, n_t) {
   tsc <- sensModel$theta_sens_cols
   if (is.null(tsc) || length(tsc) == 0L) return(NULL)
@@ -183,9 +177,6 @@
   all_src   <- c(theta_nms, sigma_names, eta_cols)
   inner_nms <- rmap[all_src]
   inner_nms <- inner_nms[!is.na(inner_nms)]
-  # dummy etas are not in rename_map (no admixr2-side parameter maps to them);
-  # they are appended here and left at their zero fill.
-  inner_nms <- c(inner_nms, .admDummyEtaZeros(sensModel))
 
   # check.names=FALSE: preserve THETA[1]/ETA[1] bracket notation so column
   # assignments below find existing columns rather than creating duplicates.
