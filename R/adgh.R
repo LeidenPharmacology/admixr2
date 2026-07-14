@@ -198,7 +198,12 @@
       r  <- as.numeric(s$E) - mu_sigma
       G  <- tryCatch(chol2inv(chol(V)),
                      error = function(e) tryCatch(solve(V), error = function(e2) NULL))
-      if (is.null(G)) next
+      # A singular predicted V (tiny omega, near-duplicate observation times) used
+      # to `next` -- returning a gradient that silently OMITTED this study. It is
+      # finite and looks valid, so nloptr steps along a direction that is not a
+      # descent direction for the true objective. Degrade to FD, as below.
+      if (is.null(G))
+        return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
       B    <- s$n * (G - G %*% (s$V + tcrossprod(r)) %*% G)
       dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))
       Bdiag <- diag(B); Bt <- cpc %*% B
@@ -276,7 +281,10 @@
       # ------ Cov method: full-matrix derivative path -------------------------
       G    <- tryCatch(chol2inv(chol(V)),
                        error = function(e) tryCatch(solve(V), error = function(e2) NULL))
-      if (is.null(G)) next
+      # Singular predicted V -- see the joint branch above. `next` silently dropped
+      # the study from the gradient; degrade the whole gradient to FD instead.
+      if (is.null(G))
+        return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
       Vhat      <- s$V + tcrossprod(r)
       B         <- s$n * (G - G %*% Vhat %*% G)
       dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))  # d(NLL)/d(mu_sigma)

@@ -124,6 +124,92 @@ test_that(".adghGrad matches FD for a fixed-theta model (was silently dropping t
   expect_false(any(g_an == 0))     # a dropped study would leave zeros behind
 })
 
+test_that("a stale pre-fix sens cache cannot be reused (key carries a schema tag)", {
+  # The cache is keyed on the inner model, which this fix does NOT change -- so a
+  # file written by an older admixr2, carrying the position-indexed rename_map and
+  # no fixed_theta, would still be a cache HIT. A parallel worker reads that file
+  # directly and cannot re-derive, so it would use the wrong map and silently
+  # disagree with the sequential fit. The key now carries a schema tag.
+  e <- .ft_setup()
+  inner <- e$ui$foceiModel$inner
+
+  old_key <- file.path(rxode2::rxTempDir(),
+                       paste0("adm-sens-", digest::digest(inner), ".qs2"))
+  expect_false(identical(normalizePath(e$sens$cache_file, mustWork = FALSE),
+                         normalizePath(old_key, mustWork = FALSE)))
+
+  # and what the parent cached is the CORRECTED map + the fixed value, so a worker
+  # reading the file gets the right thing
+  expect_true(file.exists(e$sens$cache_file))
+  m <- qs2::qs_read(e$sens$cache_file)
+  expect_equal(unname(m$rename_map[["tka"]]), "THETA[3]")
+  expect_equal(m$fixed_theta, c(`THETA[2]` = log(20)))
+})
+
+test_that("a FIXED omega is rejected with an actionable error (not a bare subscript error)", {
+  # Dropping a fixed omega from eta_rows leaves omega_init too small, so the parse
+  # died with "subscript out of bounds"; and had it not, the eta's variance would
+  # have been silently excluded from the model instead of held fixed.
+  fixed_omega_fn <- function() {
+    ini({
+      tcl <- log(5); tv <- log(20); add.err <- 0.1
+      eta.cl ~ fix(0.09)
+      eta.v  ~ 0.04
+    })
+    model({
+      cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v)
+      d/dt(central) <- -(cl / v) * central
+      cp <- central / v
+      cp ~ add(add.err)
+    })
+  }
+  ui <- suppressMessages(rxode2::rxode2(fixed_omega_fn))
+  expect_error(admixr2:::.admParseIniDf(ui$iniDf, ui),
+               regexp = "does not support FIXED omega")
+})
+
+test_that(".adghGrad degrades to FD when the predicted V is singular (was a dropped study)", {
+  # A singular predicted V makes `G` NULL. That used to `next`, so the study was
+  # dropped from the gradient -- and with a single study the caller got a FINITE,
+  # ALL-ZERO gradient, which nloptr reads as a stationary point. It now degrades to
+  # FD, which reports NaN here (the objective itself is not finite at this point) --
+  # a failed evaluation the optimizer can see, rather than a fake optimum.
+  #
+  # Forced by driving omega and sigma to exactly 0 (exp(-1500)), so every quadrature
+  # node predicts the same value at every time and V collapses to the zero matrix.
+  e    <- .ft_setup()
+  grid <- admixr2:::.adghNodeGrid(5L, e$pinfo$n_eta)
+
+  # `G` only exists on the COV branch -- a diagonal V auto-detects as method="var",
+  # which inverts the diagonal directly and never builds G. Use a full V.
+  times  <- c(0.5, 1, 2, 4, 8)
+  E_true <- c(1.8, 2.7, 3.1, 2.3, 0.9)
+  A      <- diag((0.2 * E_true)^2)
+  A[1, 2] <- A[2, 1] <- 0.01                      # off-diagonal -> method = "cov"
+  study  <- admixr2:::.admNormaliseStudy(
+    list(E = E_true, V = A, n = 100L, times = times, ev = rxode2::et(amt = 100)), "s")
+  study$ev_full <- study$ev |> rxode2::et(study$times)
+  studies <- list(s = study)
+  expect_equal(study$method, "cov")
+
+  p_sing <- e$p0
+  p_sing[grep("^logchol", names(p_sing))] <- -1500
+  p_sing[e$pinfo$sigma_names]             <- -1500
+  expect_true(all(diag(admixr2:::.admUnpack(p_sing, e$pinfo)$omega) == 0))  # V -> 0
+
+  g <- admixr2:::.adghGrad(p_sing, e$pinfo, studies, e$sens, e$rxMod, "cp",
+                           grid, 1L, 1e-3)
+
+  # the old (dropped-study) behaviour: a FINITE gradient of exactly zeros, which
+  # nloptr would read as a stationary point
+  expect_false(isTRUE(all(g == 0)))
+
+  # what it must be instead: the FD gradient of the WHOLE objective
+  g_fd <- admixr2:::.adghFDGrad(p_sing, e$pinfo, studies, e$rxMod, "cp",
+                                grid, 1L, 1e-3)
+  expect_equal(unname(g), unname(g_fd))
+})
+
 test_that(".adghGrad degrades to FD (not a dropped study) when the sens solve fails", {
   # Force every sens solve to fail by handing .adghGrad a sens model whose columns
   # do not exist. The gradient must still be the (FD) gradient of the objective --

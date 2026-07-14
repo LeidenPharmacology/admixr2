@@ -127,9 +127,15 @@
   sens_cols <- sens_cols[order(eta_idx)]
   if (length(sens_cols) != n_eta) return(NULL)
 
+  # Cache key: the inner model AND a schema tag for the fields we store alongside
+  # it. Without the tag, a cache written BEFORE the fixed-theta fix is still a hit
+  # (the inner model is unchanged), and a parallel worker -- which reads this file
+  # directly, and cannot re-derive -- would keep the old position-indexed
+  # rename_map and a NULL fixed_theta. The parent corrects both in its own copy,
+  # so the fit would silently disagree between workers = 1 and workers > 1.
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
-    paste0("adm-sens-", digest::digest(inner), ".qs2")
+    paste0("adm-sens-", digest::digest(list(inner, "ntheta-map+fixed-theta")), ".qs2")
   )
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
