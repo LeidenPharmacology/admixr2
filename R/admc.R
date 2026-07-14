@@ -945,6 +945,7 @@ nmObjGetControl.admc <- function(x, ...) {
           if (!is.na(mapped)) inner_df[rows, mapped] <- eta[, j]
         }
       }
+      inner_df <- .admFillFixedTheta(inner_df, sensModel)
       out <- tryCatch(
         suppressWarnings(
           rxode2::rxSolve(sensModel$mod, params = inner_df,

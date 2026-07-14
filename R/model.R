@@ -95,15 +95,29 @@
 
   ini_df <- tryCatch(ui$iniDf, error = function(e) NULL)
   if (is.null(ini_df)) return(NULL)
-  eta_rows    <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 & !ini_df$fix, ]
-  struct_rows <- ini_df[is.na(ini_df$neta1) & !ini_df$fix, ]
-  n_eta       <- nrow(eta_rows)
+  eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 & !ini_df$fix, ]
+  th_rows  <- ini_df[!is.na(ini_df$ntheta), ]
+  n_eta    <- nrow(eta_rows)
 
+  # Index by ntheta, NOT by position among the non-fixed thetas. The sens model's
+  # THETA[k] is numbered by ntheta and INCLUDES fixed thetas, so dropping a fixed
+  # theta from the map shifted every later theta into the wrong slot.
   rename_map <- c(
-    setNames(paste0("THETA[", seq_len(nrow(struct_rows)), "]"), struct_rows$name),
-    setNames(paste0("ETA[",   seq_len(n_eta),             "]"),
+    setNames(paste0("THETA[", th_rows$ntheta, "]"), th_rows$name),
+    setNames(paste0("ETA[",   seq_len(n_eta), "]"),
              paste0("eta.", gsub("^eta\\.", "", eta_rows$name)))
   )
+
+  # A FIXED theta is not an estimated parameter, so it never reaches the solve
+  # paths (pinfo carries only the estimated ones) -- but the sens model still has
+  # a THETA[k] slot for it and rxSolve REQUIRES every parameter. Left unset the
+  # sens solve errors and returns NULL, which silently drops admc/adfo to a
+  # finite-difference gradient and, worse, made .adghGrad skip the study entirely.
+  # Carry the fixed values so the solve paths can fill those columns.
+  fix_rows <- th_rows[th_rows$fix, , drop = FALSE]
+  fixed_theta <- if (nrow(fix_rows) > 0L)
+    setNames(as.numeric(fix_rows$est), paste0("THETA[", fix_rows$ntheta, "]"))
+  else numeric(0)
 
   sens_cols <- lhs[grepl("sens_rx_pred.*ETA|sens.*pred.*BY.*ETA", lhs, ignore.case = TRUE)]
   if (length(sens_cols) == 0L) return(NULL)
@@ -129,10 +143,14 @@
     result <- tryCatch({ m <- qs2::qs_read(.cacheFile); rxode2::rxLoad(m$mod); m },
                        error = function(e) NULL)
     if (!is.null(result)) {
-      # Caches written by older versions predate these fields.
-      result$cache_file <- .cacheFile
-      if (is.null(result$sens_cols))  result$sens_cols  <- sens_cols
-      if (is.null(result$rename_map)) result$rename_map <- rename_map
+      # Caches written by older versions predate these fields. rename_map and
+      # fixed_theta are RE-DERIVED, not trusted: a cache written before the
+      # fixed-theta fix carries the old (position-indexed) map, which puts a
+      # theta's value in the wrong THETA[k] slot.
+      result$cache_file  <- .cacheFile
+      result$rename_map  <- rename_map
+      result$fixed_theta <- fixed_theta
+      if (is.null(result$sens_cols)) result$sens_cols <- sens_cols
       tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
       return(result)
     }
@@ -155,8 +173,8 @@
   # ui$foceiModel$inner does not work -- that access yields a different object
   # than the one digested above, so the lookup always missed.
   result <- list(type = "ode", mod = mod, sens_cols = sens_cols,
-                 rename_map = rename_map, is_lincmt = is_lincmt,
-                 cache_file = .cacheFile)
+                 rename_map = rename_map, fixed_theta = fixed_theta,
+                 is_lincmt = is_lincmt, cache_file = .cacheFile)
   tryCatch(qs2::qs_save(result, .cacheFile), error = function(e) NULL)
   tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
   result

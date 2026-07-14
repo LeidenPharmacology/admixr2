@@ -49,6 +49,19 @@
          byrow = TRUE)
 }
 
+# A FIXED theta is not an estimated parameter, so nothing in pinfo (and nothing in
+# the solve paths) writes its THETA[k] column -- but the sens model still has that
+# slot and rxSolve REQUIRES every model parameter. Left unset, the sens solve
+# errors and returns NULL: admc/adfo then silently drop to a finite-difference
+# gradient, and .adghGrad silently skipped the study altogether. Fill the
+# constants. No-op for a model with no fixed thetas.
+.admFillFixedTheta <- function(inner_df, sensModel) {
+  fx <- sensModel$fixed_theta
+  if (is.null(fx) || length(fx) == 0L) return(inner_df)
+  for (nm in names(fx)) inner_df[[nm]] <- rep(unname(fx[[nm]]), nrow(inner_df))
+  inner_df
+}
+
 .admSimulateSensRows <- function(sensModel, struct_mat, sigma_names, eta_mat, study,
                                  cores, ndp = .Machine$integer.max) {
   rmap      <- sensModel$rename_map
@@ -69,6 +82,7 @@
   for (j in seq_along(eta_cols)) {
     mapped <- rmap[eta_cols[j]]; if (!is.na(mapped)) inner_df[[mapped]][] <- eta_mat[, j]
   }
+  inner_df <- .admFillFixedTheta(inner_df, sensModel)
 
   out <- tryCatch(
     suppressWarnings(
@@ -162,6 +176,7 @@
   for (j in seq_along(eta_cols)) {
     mapped <- rmap[eta_cols[j]]; if (!is.na(mapped)) inner_df[[mapped]][] <- eta_mat[, j]
   }
+  inner_df <- .admFillFixedTheta(inner_df, sensModel)
 
   out <- tryCatch(
     suppressWarnings(

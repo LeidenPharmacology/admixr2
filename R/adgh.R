@@ -180,7 +180,12 @@
     if (isTRUE(s$is_joint)) {
       js <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
                                   pinfo$nDisplayProgress)
-      if (is.null(js)) next
+      # A failed sens solve used to `next`, which SILENTLY DROPPED this study's
+      # entire contribution -- the optimizer then walked a gradient that was
+      # missing whole studies, with no error and no warning. Degrade the whole
+      # gradient to finite differences instead (what admc/adfo already do).
+      if (is.null(js))
+        return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
       f  <- js$cp_mat; Jl <- js$dpred_list
       mu  <- as.numeric(crossprod(W, f))
       cpc <- sweep(f, 2L, mu)
@@ -232,10 +237,11 @@
 
     res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
                             pinfo$nDisplayProgress)
-    # .admSimulateSens returns NULL when the solve fails. The joint branch above
-    # guards this; the non-joint branch did not, and errored mid-gradient on
-    # `res$cp_mat` instead of degrading like every other path.
-    if (is.null(res)) next
+    # .admSimulateSens returns NULL when the solve fails. `next` skipped the study
+    # -- i.e. returned a gradient that silently omitted it. Degrade the whole
+    # gradient to finite differences instead (what admc/adfo already do).
+    if (is.null(res))
+      return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
     f   <- res$cp_mat     # Q x n_t
     Jl  <- res$dpred_list # list n_eta of Q x n_t
 
