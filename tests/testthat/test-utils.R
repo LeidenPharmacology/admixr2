@@ -298,9 +298,14 @@ test_that("admData() returns data.frame with required columns", {
   expect_named(d, c("ID", "TIME", "DV", "AMT", "EVID", "CMT"))
 })
 
-test_that("admData() has all-NA DV column", {
+test_that("admData() dose row has NA DV; observation row has a non-NA placeholder", {
   d <- admData()
-  expect_true(all(is.na(d$DV)))
+  # rxode2's etTran (invoked by nlmixr2CreateOutputFromUi >= nlmixr2 6.0.0)
+  # rejects a frame with no non-NA observation rows, so the observation row
+  # carries a placeholder DV. The placeholder never enters the reported
+  # objective (each estimator overwrites fit$env$objective).
+  expect_true(is.na(d$DV[d$EVID != 0L]))          # dose row: NA
+  expect_true(all(!is.na(d$DV[d$EVID == 0L])))    # observation row(s): non-NA
 })
 
 test_that("admData() has at least one dosing and one observation row", {
