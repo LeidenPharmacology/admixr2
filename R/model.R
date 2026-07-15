@@ -69,24 +69,30 @@
 # $predNoLhs) with live C++ DLL pointers. rxUi is a locked environment so
 # assign(..., envir = ui) fails silently. Instead we pin the full foceiModel
 # result in .adm_pin_env (package-level, always writable), keyed by model
-# digest. This keeps companions alive for the session and prevents Windows GC
-# finalizer heap corruption (STATUS_HEAP_CORRUPTION / -1073740940).
+# digest, to prevent Windows GC finalizer heap corruption
+# (STATUS_HEAP_CORRUPTION / -1073740940). This pin is Windows-only
+# (.admPinCompanions()): off Windows the finalizers are safe and pinning every
+# model's companions just accumulates native memory. Both the companion pin and
+# the sens-result cache go through .adm_pin_env's LRU (.adm_pin_limit()), so a
+# long multi-model session does not grow without bound. See R/zzz.R.
 .admLoadSensModel <- function(ui) {
   .model_key <- digest::digest(ui$lstExpr)
   .sens_key  <- paste0("sens_",  .model_key)
   .pin_key   <- paste0("focei_", .model_key)
 
-  # In-memory cache: avoids disk read and rxLoad on repeat calls within a session.
-  .cached <- tryCatch(
-    get(.sens_key, envir = .adm_pin_env, inherits = FALSE),
-    error = function(e) NULL
-  )
+  # In-memory cache (LRU): avoids disk read and rxLoad on repeat calls within a
+  # session. .admPinGet touches the entry so it survives eviction while in use.
+  .cached <- .admPinGet(.sens_key)
   if (!is.null(.cached)) return(.cached)
 
   .focei_model <- tryCatch(ui$foceiModel, error = function(e) NULL)
   # Pin the full foceiModel to keep companion objects ($outer, $predOnly,
-  # $predNoLhs) alive. See pinning note in function header.
-  tryCatch(assign(.pin_key, .focei_model, envir = .adm_pin_env), error = function(e) NULL)
+  # $predNoLhs) off the GC. See pinning note in function header. Windows-only:
+  # off Windows the finalizers are safe and pinning only accumulates native
+  # memory (.admPinCompanions()), so we let .focei_model fall out of scope here
+  # and rxode2 reclaim its companion DLLs.
+  if (.admPinCompanions())
+    tryCatch(.admPinSet(.pin_key, .focei_model), error = function(e) NULL)
   inner <- .focei_model$inner
   if (is.null(inner)) return(NULL)
 
@@ -169,7 +175,7 @@
       result$rename_map  <- rename_map
       result$fixed_theta <- fixed_theta
       result$sens_cols   <- sens_cols
-      tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
+      tryCatch(.admPinSet(.sens_key, result), error = function(e) NULL)
       return(result)
     }
   }
@@ -194,6 +200,6 @@
                  rename_map = rename_map, fixed_theta = fixed_theta,
                  is_lincmt = is_lincmt, cache_file = .cacheFile)
   tryCatch(qs2::qs_save(result, .cacheFile), error = function(e) NULL)
-  tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
+  tryCatch(.admPinSet(.sens_key, result), error = function(e) NULL)
   result
 }

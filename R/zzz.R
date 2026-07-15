@@ -11,6 +11,59 @@
 #       paste0("sens_",  digest(ui$lstExpr))  -> sens model result (in-memory cache)
 .adm_pin_env <- new.env(parent = emptyenv())
 
+# Whether to pin the foceiModel companion objects ($outer/$predOnly/$predNoLhs).
+# They are NEVER read back -- the pin exists only to keep them off the GC so their
+# rxode2 finalizers cannot unload a DLL mid-allocation (STATUS_HEAP_CORRUPTION,
+# a Windows-only failure). On other platforms the finalizers are safe, so pinning
+# them is pure overhead: it holds every distinct model's companion DLLs resident
+# for the whole session AND blocks rxode2's own DLL unloading (.rxShouldUnload
+# sees a live reference), so native memory climbs without bound across many models
+# -- the ubuntu-devel test-suite hang. Skip it off Windows and let rxode2 reclaim.
+.admPinCompanions <- function() identical(.Platform$OS.type, "windows")
+
+# Upper bound on entries kept in .adm_pin_env, LRU-evicted beyond it -- the same
+# shape as rxode2's rxSolveCacheLimit / rxUnloadAll orphan ceiling, which is why
+# rxode2 and nlmixr2est stay flat while fitting many models. Two entries per model
+# on Windows (focei_ + sens_), one elsewhere. Generous default so a normal
+# multi-model session never evicts; caps pathological long-running sessions.
+# Override with options(admixr2.pin_limit = N).
+.adm_pin_limit <- function() {
+  .v <- suppressWarnings(as.integer(getOption("admixr2.pin_limit", 16L)))
+  if (length(.v) != 1L || is.na(.v) || .v < 1L) 16L else .v
+}
+
+# LRU bookkeeping lives in .adm_pin_env$.order (most-recent first). It is not a
+# model key, so it is never itself a Get/Set target or an eviction candidate.
+.admPinTouch <- function(key) {
+  .ord <- .adm_pin_env$.order
+  .adm_pin_env$.order <- c(key, .ord[.ord != key])
+}
+
+.admPinGet <- function(key) {
+  if (!exists(key, envir = .adm_pin_env, inherits = FALSE)) return(NULL)
+  .admPinTouch(key)
+  get(key, envir = .adm_pin_env, inherits = FALSE)
+}
+
+.admPinSet <- function(key, value) {
+  assign(key, value, envir = .adm_pin_env)
+  .admPinTouch(key)
+  .ord <- .adm_pin_env$.order
+  .lim <- .adm_pin_limit()
+  if (length(.ord) > .lim) {
+    .drop <- .ord[-seq_len(.lim)]
+    if (length(.drop)) {
+      rm(list = .drop, envir = .adm_pin_env)
+      # Drop the evicted models' native DLLs at this quiescent point (no solve in
+      # flight) so any rxode2 finalizer runs here, controlled, rather than firing
+      # mid-allocation later -- the Windows heap-corruption trigger the pin guards.
+      gc(FALSE)
+    }
+    .adm_pin_env$.order <- .ord[seq_len(.lim)]
+  }
+  invisible(value)
+}
+
 # Session-scoped cache for once-per-session warnings.
 # Keys are error-type strings; presence of a key means the warning was already emitted.
 .adm_warn_env <- new.env(parent = emptyenv())
@@ -26,11 +79,11 @@
 #' @export
 admClearCache <- function() {
   nms <- ls(envir = .adm_pin_env, all.names = TRUE)
-  rm(list = nms, envir = .adm_pin_env)
+  rm(list = nms, envir = .adm_pin_env)   # also drops the ".order" LRU bookkeeping
   qs2_files <- list.files(rxode2::rxTempDir(),
                           pattern = "^adm-.*\\.qs2$", full.names = TRUE)
   unlink(qs2_files)
-  invisible(length(nms))
+  invisible(length(setdiff(nms, ".order")))   # count only real cache entries
 }
 
 .onLoad <- function(libname, pkgname) {

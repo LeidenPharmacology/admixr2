@@ -29,14 +29,26 @@ test_that("ODE: .admLoadSensModel() returns non-NULL", {
     info = "ODE sensitivity model should be available (ODE sens equations always present)")
 })
 
-test_that("admLoadSensModel: foceiModel pinned to .adm_pin_env after load", {
+test_that("admLoadSensModel: foceiModel companion pin is Windows-only", {
   env     <- .int_grad_setup()
   pin_key <- paste0("focei_", digest::digest(env$ui$lstExpr))
-  expect_true(exists(pin_key, envir = admixr2:::.adm_pin_env, inherits = FALSE),
-    info = "foceiModel companions must be pinned in .adm_pin_env to prevent Windows GC heap corruption")
-  pinned <- get(pin_key, envir = admixr2:::.adm_pin_env, inherits = FALSE)
-  expect_false(is.null(pinned$inner),
-    info = "pinned foceiModel must have non-NULL $inner (sens equations)")
+  pinned  <- if (exists(pin_key, envir = admixr2:::.adm_pin_env, inherits = FALSE))
+    get(pin_key, envir = admixr2:::.adm_pin_env, inherits = FALSE) else NULL
+
+  if (admixr2:::.admPinCompanions()) {
+    # Windows: companions MUST be pinned to prevent GC finalizer heap corruption.
+    expect_false(is.null(pinned),
+      info = "on Windows foceiModel companions must be pinned in .adm_pin_env")
+    expect_false(is.null(pinned$inner),
+      info = "pinned foceiModel must have non-NULL $inner (sens equations)")
+  } else {
+    # Off Windows the pin is deliberately skipped so native memory does not
+    # accumulate; the sens model must still load (via the sens_ cache, below).
+    expect_null(pinned,
+      info = "off Windows the write-only companion pin must be skipped")
+    expect_false(is.null(env$sensModel),
+      info = "sens model must still load without the companion pin")
+  }
 })
 
 test_that("admLoadSensModel: in-memory cache returns identical result on repeat call", {
@@ -67,11 +79,19 @@ test_that("linCmt: .admLoadSensModel() returns non-NULL", {
     info = "linCmt sensitivity model should be available (inner has linCmtB jacobians)")
 })
 
-test_that("linCmt: admLoadSensModel pins foceiModel to .adm_pin_env", {
+test_that("linCmt: admLoadSensModel companion pin is Windows-only", {
   env     <- .int_lincmt_setup()
   pin_key <- paste0("focei_", digest::digest(env$ui$lstExpr))
-  expect_true(exists(pin_key, envir = admixr2:::.adm_pin_env, inherits = FALSE),
-    info = "linCmt foceiModel companions must be pinned (different digest from ODE model)")
+  pinned  <- exists(pin_key, envir = admixr2:::.adm_pin_env, inherits = FALSE)
+  if (admixr2:::.admPinCompanions()) {
+    expect_true(pinned,
+      info = "on Windows linCmt companions must be pinned (different digest from ODE model)")
+  } else {
+    expect_false(pinned,
+      info = "off Windows the companion pin is skipped; the sens_ cache still holds the model")
+    expect_false(is.null(env$sensModel),
+      info = "linCmt sens model must still load without the companion pin")
+  }
 })
 
 # ---- IRMC inner gradient tests -----------------------------------------------

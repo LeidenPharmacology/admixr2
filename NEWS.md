@@ -26,6 +26,19 @@
 
 ## Bug fixes
 
+* **Fitting many distinct models in one session no longer grows native memory
+  without bound.** `.admLoadSensModel()` pinned every model's `foceiModel`
+  companion objects (`$outer`/`$predOnly`/`$predNoLhs`) in a session-scoped
+  environment to keep their DLL finalizers from firing mid-allocation -- a
+  Windows-only heap-corruption guard (`STATUS_HEAP_CORRUPTION`). The pin was
+  applied on every platform and never evicted, so on Linux/macOS it held every
+  model's companion DLLs resident *and* blocked rxode2's own DLL unloading,
+  climbing until the process was starved (the intermittent `ubuntu-devel`
+  test-suite hang). The companion pin is now Windows-only, and `.adm_pin_env` is
+  LRU-bounded (`options(admixr2.pin_limit = 16)`) on all platforms -- mirroring
+  rxode2's `rxSolveCacheLimit` / `rxUnloadAll` orphan ceiling. Fit results are
+  unchanged.
+
 * **`pow()` models no longer fit the wrong residual model, silently.** `pow(b, c)`
   produces two `iniDf` rows -- the coefficient (`err = "pow"`) and the *exponent*
   (`err = "pow2"`). admixr2 recognised neither, warned once, and then treated
