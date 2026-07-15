@@ -1,0 +1,48 @@
+on:
+  push:
+    branches: [fix/registry-teardown]
+
+name: validate-teardown
+
+permissions: read-all
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    name: teardown ${{ matrix.name }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: heavy-fix,    stage: heavy,    off: "0" }
+          - { name: heavy-base,   stage: heavy,    off: "1" }
+          - { name: parallel-fix, stage: parallel, off: "0" }
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'devel'
+          http-user-agent: 'release'
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::devtools
+          needs: check
+
+      - name: Install admixr2 (force recompile -- the repo ships Windows .o/.dll)
+        run: |
+          rm -f src/*.o src/*.dll src/*.so
+          R CMD INSTALL --preclean --no-docs --no-byte-compile .
+
+      - name: run stage ${{ matrix.stage }} (teardown_off=${{ matrix.off }})
+        continue-on-error: true
+        env:
+          ADM_TEARDOWN_OFF: ${{ matrix.off }}
+        run: timeout 1800 Rscript tests/diag-split.R ${{ matrix.stage }}; echo "EXIT=$? (124=timeout/hang)"
