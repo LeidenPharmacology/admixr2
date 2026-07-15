@@ -43,7 +43,7 @@ Suggests:
     memuse,
     mirai,
     mnormt,
-    nlmixr2 (>= 5.0.0),
+    nlmixr2 (>= 6.0.0),
     nlmixr2data,
     patchwork,
     rmarkdown,
