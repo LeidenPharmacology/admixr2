@@ -26,6 +26,16 @@
 
 ## Bug fixes
 
+* **Parallel restarts fall back to sequential instead of hanging when worker
+  daemons cannot start.** `.admSetupDaemons()` now confirms the `mirai` daemons
+  have connected before dispatching, and the restart collector watches the live
+  connection count instead of blocking forever. If the pool never comes online
+  (e.g. a subprocess that cannot spawn on a memory-starved machine) or a daemon
+  is lost mid-run, the fit transparently finishes its restarts in-process, with
+  the same result. The wait budget is `options(admixr2.worker_timeout = 60)`
+  seconds. Previously the first `mirai_map()` could block indefinitely, which
+  wedged fits (and the test suite) under memory pressure.
+
 * **`pow()` models no longer fit the wrong residual model, silently.** `pow(b, c)`
   produces two `iniDf` rows -- the coefficient (`err = "pow"`) and the *exponent*
   (`err = "pow2"`). admixr2 recognised neither, warned once, and then treated
