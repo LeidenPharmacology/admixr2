@@ -127,15 +127,25 @@
   sens_cols <- sens_cols[order(eta_idx)]
   if (length(sens_cols) != n_eta) return(NULL)
 
-  # Cache key: the inner model AND a schema tag for the fields we store alongside
-  # it. Without the tag, a cache written BEFORE the fixed-theta fix is still a hit
-  # (the inner model is unchanged), and a parallel worker -- which reads this file
-  # directly, and cannot re-derive -- would keep the old position-indexed
-  # rename_map and a NULL fixed_theta. The parent corrects both in its own copy,
-  # so the fit would silently disagree between workers = 1 and workers > 1.
+  # Cache key: the MODEL (ui$lstExpr) plus a schema tag for the fields we store
+  # alongside the compiled model.
+  #
+  # NOT digest(inner): ui$foceiModel$inner returns a DIFFERENT object on its first
+  # access than on later ones (the same foceiModel instability documented for the
+  # pin), so digesting it gives an unstable key -- the path written on the first
+  # (compile) load does not match the path recomputed on a later load, so the
+  # disk-cache branch below never fires in-session and the sens model is silently
+  # RECOMPILED on every reload. ui$lstExpr is the model source: stable, and already
+  # the key used by the in-memory pin (.sens_key) and by .admLoadModel's own cache.
+  #
+  # The schema tag makes a cache written BEFORE the fixed-theta fix a miss: without
+  # it a parallel worker -- which reads this file directly and cannot re-derive --
+  # would keep the old position-indexed rename_map and a NULL fixed_theta, so the
+  # fit would silently disagree between workers = 1 and workers > 1.
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
-    paste0("adm-sens-", digest::digest(list(inner, "ntheta-map+fixed-theta")), ".qs2")
+    paste0("adm-sens-",
+           digest::digest(list(ui$lstExpr, "ntheta-map+fixed-theta")), ".qs2")
   )
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
@@ -149,14 +159,16 @@
     result <- tryCatch({ m <- qs2::qs_read(.cacheFile); rxode2::rxLoad(m$mod); m },
                        error = function(e) NULL)
     if (!is.null(result)) {
-      # Caches written by older versions predate these fields. rename_map and
-      # fixed_theta are RE-DERIVED, not trusted: a cache written before the
-      # fixed-theta fix carries the old (position-indexed) map, which puts a
-      # theta's value in the wrong THETA[k] slot.
+      # Overwrite the derived fields from the parent's fresh derivation rather than
+      # trusting the file. The cache key carries a schema tag, so a hit is always
+      # current-schema -- but a parallel WORKER reads this same file and cannot
+      # re-derive, so what the parent writes here is what the worker gets. Trusting
+      # a stale position-indexed rename_map would put a theta's value in the wrong
+      # THETA[k] slot and silently diverge the parallel fit from the sequential one.
       result$cache_file  <- .cacheFile
       result$rename_map  <- rename_map
       result$fixed_theta <- fixed_theta
-      if (is.null(result$sens_cols)) result$sens_cols <- sens_cols
+      result$sens_cols   <- sens_cols
       tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
       return(result)
     }

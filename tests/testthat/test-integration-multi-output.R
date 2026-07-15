@@ -342,3 +342,37 @@ test_that("analytical joint gradients (adfo FO + adgh quadrature) match FD", {
   }, double(1))
   expect_equal(unname(g_gh), unname(fd_gh), tolerance = 0.02)
 })
+
+test_that(".adghGrad degrades to FD on a JOINT unit (singular V, and failed sens solve)", {
+  # The joint branch of .adghGrad gained the same two guards as the non-joint one:
+  # a failed joint sens solve (`is.null(js)`) and a singular predicted V
+  # (`is.null(G)`) each used to `next`, silently dropping the unit from the
+  # gradient. Both must now degrade the whole gradient to .adghFDGrad.
+  s     <- .mo_joint_setup()
+  ui    <- rxode2::rxode2(.mo_model)
+  pinfo <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  ov    <- admixr2:::.admOutputVar(ui)
+  st    <- admixr2:::.admNormaliseStudy(s$cross, "rat", ov)
+  units <- admixr2:::.admBuildEvFull(admixr2:::.admFlattenStudies(list(rat = st)),
+                                     tag_cmt = TRUE)
+  sm    <- admixr2:::.admLoadSensModel(ui)
+  rxMod <- admixr2:::.admLoadModel(ui)
+  grid  <- admixr2:::.adghNodeGrid(5L, pinfo$n_eta)
+
+  # (a) singular predicted V: omega and sigma driven to exactly 0
+  p_sing <- admixr2:::.admBuildOptVec(pinfo)$p0
+  p_sing[grep("^logchol", names(p_sing))] <- -1500
+  p_sing[pinfo$sigma_names]               <- -1500
+  g_sing <- admixr2:::.adghGrad(p_sing, pinfo, units, sm, rxMod, ov, grid, 1L, 1e-3)
+  g_fd_s <- admixr2:::.adghFDGrad(p_sing, pinfo, units, rxMod, ov, grid, 1L, 1e-3)
+  expect_equal(unname(g_sing), unname(g_fd_s))
+
+  # (b) failed joint sens solve: a sens model whose columns do not exist forces
+  # .admSimulateJointSens to return NULL
+  p0     <- admixr2:::.admBuildOptVec(pinfo)$p0
+  broken <- sm; broken$sens_cols <- paste0("no_such_", seq_along(broken$sens_cols))
+  g_brk  <- admixr2:::.adghGrad(p0, pinfo, units, broken, rxMod, ov, grid, 1L, 1e-3)
+  g_fd_b <- admixr2:::.adghFDGrad(p0, pinfo, units, rxMod, ov, grid, 1L, 1e-3)
+  expect_true(all(is.finite(g_brk)))
+  expect_equal(unname(g_brk), unname(g_fd_b), tolerance = 1e-8)
+})

@@ -61,6 +61,81 @@ fixed_theta_fn <- function() {
        p0 = admixr2:::.admBuildOptVec(pinfo)$p0)
 }
 
+test_that("the sens model re-derives its fields on a disk-cache hit (worker path)", {
+  # The disk-cache branch (.admLoadSensModel, file.exists) runs on the SECOND load
+  # in a session -- the first pins the result in .adm_pin_env and later calls return
+  # from that pin. (It only reaches disk at all because the cache key is now
+  # digest(ui$lstExpr), which is stable; the old digest(ui$foceiModel$inner) changed
+  # between the write and the reload, so the branch never fired and the sens model
+  # was silently recompiled every reload.) Clear the pin to force the disk read,
+  # which overwrites rename_map / fixed_theta / sens_cols from the parent's fresh
+  # derivation rather than trusting the file -- the fields a parallel WORKER
+  # inherits (it reads the same file and cannot re-derive), so a stale
+  # position-indexed map here would silently diverge the parallel fit from the
+  # sequential one.
+  ui    <- suppressMessages(rxode2::rxode2(fixed_theta_fn))
+  first <- suppressMessages(admixr2:::.admLoadSensModel(ui))
+  if (is.null(first)) skip("sens model unavailable")
+  expect_true(file.exists(first$cache_file))
+
+  # seed the file with a STALE (position-indexed) map + missing fixed value, then
+  # force a disk read: the reload must return the corrected fields, not the stale
+  # ones, proving the overwrite (not a fill-if-missing) actually runs.
+  stale <- first
+  stale$rename_map[["tka"]] <- "THETA[2]"    # the pre-fix bug
+  stale$fixed_theta <- numeric(0)
+  stale$sens_cols   <- NULL
+  qs2::qs_save(stale, first$cache_file)
+
+  key <- paste0("sens_", digest::digest(ui$lstExpr))
+  suppressWarnings(rm(list = key, envir = admixr2:::.adm_pin_env))
+
+  back <- suppressMessages(admixr2:::.admLoadSensModel(ui))
+  expect_equal(unname(back$rename_map[["tka"]]), "THETA[3]")     # corrected, not "THETA[2]"
+  expect_equal(back$fixed_theta, c(`THETA[2]` = log(20)))        # re-derived, not empty
+  expect_false(is.null(back$sens_cols))                          # re-derived, not NULL
+
+  # the disk-hit branch corrects the RETURNED result but does not rewrite the file,
+  # so the stale seed we wrote is still on disk -- wipe it so it cannot pollute a
+  # later test that reads this cache path.
+  suppressWarnings(file.remove(first$cache_file))
+  suppressWarnings(rm(list = key, envir = admixr2:::.adm_pin_env))
+})
+
+test_that("adfo Jacobian (.admSimulateSensRows) fills the fixed theta", {
+  # .adfoGetMuJ -> .adfoGetMuJBatch -> .admSimulateSensRows: the batched sens solve
+  # the FO estimator uses. It has its own fixed-theta fill; without it the FO
+  # linearisation of a fixed-theta model would solve a mis-parameterised model.
+  e   <- .ft_setup()
+  ov  <- admixr2:::.admOutputVar(e$ui)
+  pm  <- admixr2:::.admMakeParamsList(1L, e$pinfo, 1L)[[1L]]
+  mj  <- admixr2:::.adfoGetMuJ(e$pars, e$pinfo, e$study, e$sens, e$rxMod, ov, pm, 1L)
+  expect_false(is.null(mj))
+  expect_length(mj$mu, length(e$study$times))
+  expect_true(all(is.finite(mj$mu)))
+  expect_equal(dim(mj$J), c(length(e$study$times), e$pinfo$n_eta))
+  # the FO mean must match the simulation model at eta = 0
+  eta0   <- matrix(0, 1L, e$pinfo$n_eta, dimnames = list(NULL, e$pinfo$eta_col_names))
+  cp_sim <- admixr2:::.admSimulate(e$rxMod, e$pars$struct, e$pinfo$sigma_names, eta0,
+                                   e$study, ov, pm, 1L)
+  expect_equal(mj$mu, as.numeric(cp_sim), tolerance = 1e-4)
+})
+
+test_that(".admGradBatch fills the fixed theta (grad-FD Hessian path)", {
+  # .admGradBatch is the batched gradient behind .admCalcCov. Its sens block has
+  # its own inlined fixed-theta fill; exercise it directly on a fixed-theta model.
+  e      <- .ft_setup(n_sim = 200L)
+  z_list <- admixr2:::.admMakeZ(200L, e$pinfo, 1L, "sobol")
+  plist  <- admixr2:::.admMakeParamsList(200L, e$pinfo, 1L)
+  p1 <- e$p0
+  p2 <- e$p0; p2[["tcl"]] <- p2[["tcl"]] + 1e-3
+  G  <- admixr2:::.admGradBatch(list(p1, p2), e$pinfo, e$studies, z_list, e$rxMod,
+                                "cp", plist, 1L, 1e-3, e$sens)
+  expect_equal(dim(G), c(2L, length(e$p0)))
+  expect_true(all(is.finite(G)))
+  expect_false(any(apply(G, 1, function(row) all(row == 0))))   # not a dropped/empty row
+})
+
 test_that("the sens model carries the fixed theta's value and maps by ntheta", {
   e <- .ft_setup()
   # tv is THETA[2] and must NOT shift tka out of THETA[3]
@@ -124,26 +199,21 @@ test_that(".adghGrad matches FD for a fixed-theta model (was silently dropping t
   expect_false(any(g_an == 0))     # a dropped study would leave zeros behind
 })
 
-test_that("a stale pre-fix sens cache cannot be reused (key carries a schema tag)", {
-  # The cache is keyed on the inner model, which this fix does NOT change -- so a
-  # file written by an older admixr2, carrying the position-indexed rename_map and
-  # no fixed_theta, would still be a cache HIT. A parallel worker reads that file
-  # directly and cannot re-derive, so it would use the wrong map and silently
-  # disagree with the sequential fit. The key now carries a schema tag.
+test_that("the sens cache key carries a schema tag (pre-fix caches miss)", {
+  # A cache written by an older admixr2 carries the position-indexed rename_map and
+  # no fixed_theta. The key now includes a schema tag, so such a file is not a hit;
+  # a worker cannot then inherit a stale map. (What happens ON a hit -- the fields
+  # are re-derived rather than trusted -- is the "disk-cache hit" test above; note
+  # the disk file itself may legitimately hold stale data, which is exactly why the
+  # reload overwrites rather than trusts it, so this test does not read its
+  # contents.)
   e <- .ft_setup()
-  inner <- e$ui$foceiModel$inner
 
-  old_key <- file.path(rxode2::rxTempDir(),
-                       paste0("adm-sens-", digest::digest(inner), ".qs2"))
+  no_tag <- file.path(rxode2::rxTempDir(),
+                      paste0("adm-sens-", digest::digest(e$ui$lstExpr), ".qs2"))
   expect_false(identical(normalizePath(e$sens$cache_file, mustWork = FALSE),
-                         normalizePath(old_key, mustWork = FALSE)))
-
-  # and what the parent cached is the CORRECTED map + the fixed value, so a worker
-  # reading the file gets the right thing
-  expect_true(file.exists(e$sens$cache_file))
-  m <- qs2::qs_read(e$sens$cache_file)
-  expect_equal(unname(m$rename_map[["tka"]]), "THETA[3]")
-  expect_equal(m$fixed_theta, c(`THETA[2]` = log(20)))
+                         normalizePath(no_tag, mustWork = FALSE)))
+  expect_match(basename(e$sens$cache_file), "^adm-sens-.*\\.qs2$")
 })
 
 test_that("a FIXED omega is rejected with an actionable error (not a bare subscript error)", {
