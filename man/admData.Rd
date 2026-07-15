@@ -24,9 +24,16 @@ A data frame with columns \code{ID}, \code{TIME}, \code{DV}, \code{AMT}, \code{E
 }
 \description{
 Returns a minimal NONMEM-style data frame that satisfies nlmixr2's data
-argument requirement. For the single-endpoint frame all \code{DV} values are \code{NA},
-so nlmixr2 adds zero log(2pi) constants to OBJF, keeping
-\verb{fit$objective == our -2LL} exactly.
+argument requirement. The single observation row carries a non-\code{NA}
+placeholder \code{DV} (\code{1}); the dose row keeps \code{DV = NA}. The placeholder is
+purely for dispatch and output construction and never enters the reported
+objective -- each estimator overwrites \code{fit$env$objective} (and
+OBJF/logLik/AIC/BIC) with its own aggregate -2LL. A non-\code{NA} observation is
+required because nlmixr2's post-fit output construction
+(\code{nlmixr2CreateOutputFromUi}) solves the model over this frame, and rxode2's
+event-table translation rejects a dataset with no non-\code{NA} observation rows
+("no rows in event table or input data"), the same reason the multi-endpoint
+frame below uses a placeholder \code{DV}.
 }
 \examples{
 admData()
