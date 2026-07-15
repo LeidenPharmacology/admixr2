@@ -1490,11 +1490,11 @@ admStopWorkers <- function() {
   invisible(n)
 }
 
-# Wall-clock budget (seconds) for worker daemons to come online / to return a
-# restart. Overridable via options(admixr2.worker_timeout = ...); the default is
-# generous -- daemons normally connect in well under a second, so the only time
-# this fires is when the spawn genuinely fails (e.g. a subprocess that cannot
-# start under memory pressure), where waiting longer would not help.
+# Seconds to wait for worker daemons to come online before giving up and running
+# sequentially. Overridable via options(admixr2.worker_timeout = ...); the default
+# is generous -- daemons normally connect in well under a second, so this only
+# fires when the spawn genuinely fails (e.g. a subprocess that cannot start under
+# memory pressure), where waiting longer would not help.
 .admWorkerTimeout <- function()
   as.numeric(getOption("admixr2.worker_timeout", 60))
 
@@ -1508,27 +1508,6 @@ admStopWorkers <- function() {
                      error = function(e) 0L)
     if (isTRUE(as.integer(conn) >= n_w)) return(TRUE)
     if (Sys.time() > deadline) return(FALSE)
-    Sys.sleep(0.05)
-  }
-}
-
-# Dispatch one batch of restarts to the daemon pool and collect the results
-# without blocking forever on a worker that will never return. Returns the
-# results list, or NULL if a daemon was lost mid-batch (the caller then tears the
-# pool down and finishes the restarts sequentially).
-#
-# We watch the live connection count rather than impose a fixed collect deadline:
-# a legitimate restart may run for minutes, but a daemon that was OOM-killed (the
-# failure mode on a memory-starved CI runner) drops its dispatcher connection, so
-# `connections < n_w` while the batch is still unresolved means a worker died and
-# its result will never arrive. The poll on unresolved() is non-blocking.
-.admCollectBatch <- function(.batch, fn, map_args, n_w) {
-  m <- mirai::mirai_map(.batch, fn, .args = map_args, .compute = .adm_compute)
-  repeat {
-    if (!mirai::unresolved(m)) return(m[])
-    conn <- tryCatch(mirai::status(.compute = .adm_compute)$connections,
-                     error = function(e) 0L)
-    if (isTRUE(as.integer(conn) < n_w)) return(NULL)
     Sys.sleep(0.05)
   }
 }
@@ -1791,9 +1770,7 @@ admStopWorkers <- function() {
     .admProgressTimingRow(sec, pinfo)
   }
 
-  ran_parallel <- FALSE
   if (use_parallel) {
-    parallel_failed   <- FALSE
     effective_workers <- .adm_worker_env$n
     base_tpw          <- max(1L, floor(.ctl$cores / effective_workers))
     remainder         <- max(0L, .ctl$cores - base_tpw * effective_workers)
@@ -1851,33 +1828,20 @@ admStopWorkers <- function() {
                       effective_workers = effective_workers)
 
     for (.batch in batches) {
-      .br <- .admCollectBatch(.batch, .admDaemonRestart, .map_args, effective_workers)
-      # NULL = the batch did not resolve within the worker timeout; an errorValue
-      # or miraiError = a daemon died or the restart itself errored. In both cases
-      # abandon the pool and finish every restart sequentially, rather than hang
-      # or surface a worker-transport error to the user.
-      batch_bad <- is.null(.br) ||
-        any(vapply(.br, function(x) inherits(x, "errorValue") || inherits(x, "miraiError"),
-                   logical(1)))
-      if (batch_bad) { parallel_failed <- TRUE; break }
+      .br <- mirai::mirai_map(.batch, .admDaemonRestart,
+                              .args = .map_args, .compute = .adm_compute)[]
       for (i in seq_along(.batch)) {
-        results[[.batch[[i]]]] <- .br[[i]]
-        message(.restart_msg(.batch[[i]], .br[[i]]))
+        res <- .br[[i]]
+        if (inherits(res, "errorValue") || inherits(res, "miraiError"))
+          stop(sprintf("admixr2: parallel restart %d failed: %s",
+                       .batch[[i]], paste(as.character(res), collapse = " ")),
+               call. = FALSE)
+        results[[.batch[[i]]]] <- res
+        message(.restart_msg(.batch[[i]], res))
       }
     }
-    if (parallel_failed) {
-      .admStopDaemons()
-      message("  worker(s) unresponsive; finishing restarts sequentially")
-    } else {
-      ran_parallel <- TRUE
-    }
-  }
-
-  if (!ran_parallel) {
-    # Pure sequential path (workers <= 1, mirai unavailable, or daemons that never
-    # came online): print the sequential preamble + header. On a parallel *fallback*
-    # the header is already up from the parallel attempt, so skip it there.
-    if (!use_parallel && n_r > 1L) {
+  } else {
+    if (n_r > 1L) {
       if (!requireNamespace("mirai", quietly = TRUE)) {
         message(sprintf("  Running %d restarts sequentially (install mirai for parallel)",
                         n_r))
