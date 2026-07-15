@@ -217,6 +217,54 @@ Eigen::VectorXd compute_mean_new_cpp(
 }
 
 // ---------------------------------------------------------------------------
+// adm_apply_residual: add the residual error to a predicted mean/variance.
+//
+// The kernels below are error-model agnostic: R hands them four row-indexed
+// arrays (built by .admResidRows) and they evaluate the residual against
+// whatever mu they compute. That matters for the IRMC kernel in particular,
+// whose mu is the importance-weighted mean and so is not known to R in advance.
+//
+//   res_form  0 = combined2, 1 = combined1, 2 = lnorm
+//   res_a2    additive VARIANCE (a^2), or the lnorm log-variance
+//   res_b2    proportional/power VARIANCE (b^2)
+//   res_cc    power exponent (1 => proportional)
+//
+//   combined2   var = a^2 + b^2 * f^(2c)
+//   combined1   var = (a + b * f^c)^2
+//   lnorm       mu  = f*exp(s/2);  var = mu^2 * (exp(s) - 1)
+//
+// The c == 1 fast path and the (fe*fe) association keep add/prop/lnorm models
+// bit-for-bit identical to the old per-sigma loop this replaced.
+// ---------------------------------------------------------------------------
+static inline void adm_apply_residual(
+    Eigen::VectorXd& mu,
+    Eigen::ArrayXd& dv,
+    const Eigen::VectorXi& res_form,
+    const Eigen::VectorXd& res_a2,
+    const Eigen::VectorXd& res_b2,
+    const Eigen::VectorXd& res_cc
+) {
+  const int n_t = static_cast<int>(mu.size());
+  for (int t = 0; t < n_t; ++t) {
+    const double f = mu[t];
+    if (res_form[t] == 2) {                       // lnorm
+      const double sv = res_a2[t];
+      mu[t] = f * std::exp(sv / 2.0);
+      dv[t] += mu[t] * mu[t] * (std::exp(sv) - 1.0);
+    } else {
+      const double c  = res_cc[t];
+      const double fe = (c == 1.0) ? f : std::pow(f, c);
+      if (res_form[t] == 1) {                     // combined1 (SD-additive)
+        const double s = std::sqrt(res_a2[t]) + std::sqrt(res_b2[t]) * fe;
+        dv[t] += s * s;
+      } else {                                    // combined2 (variance-additive)
+        dv[t] += res_a2[t] + res_b2[t] * (fe * fe);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // irmc_inner_nll_cpp
 //
 // Fused IRMC inner NLL for one study — now includes sigma and kappa.
@@ -230,8 +278,7 @@ Eigen::VectorXd compute_mean_new_cpp(
 //   E_obs         n_times          observed mean
 //   V_obs         n_times x n_times observed covariance
 //   n             study sample size
-//   sigma_var     k_sigma          residual variance values (back-transformed)
-//   sigma_type    k_sigma (int)     0=additive, 1=proportional, 2=lognormal
+//   res_form/a2/b2/cc  n_times      residual error arrays (see adm_apply_residual)
 //   kappa_delta   n_times or empty  kappa_fn(struct) - mu_pop (pre-computed in R);
 //                                   pass length-0 vector when no kappa correction
 //   use_var       int (0/1)        1 = diagonal-only NLL (var branch); 0 = full covariance
@@ -247,8 +294,10 @@ double irmc_inner_nll_cpp(
     const Eigen::VectorXd& E_obs,
     const Eigen::MatrixXd& V_obs,
     double n,
-    const Eigen::VectorXd& sigma_var,
-    const Eigen::VectorXi& sigma_type,
+    const Eigen::VectorXi& res_form,
+    const Eigen::VectorXd& res_a2,
+    const Eigen::VectorXd& res_b2,
+    const Eigen::VectorXd& res_cc,
     const Eigen::VectorXd& kappa_delta,
     int use_var
 ) {
@@ -261,22 +310,12 @@ double irmc_inner_nll_cpp(
   VectorXd mu; MatrixXd V;
   weighted_meancov_impl(rawpreds, w, mu, V);
 
-  // 3. Sigma diagonal update BEFORE kappa.
-  //    sigma_type: 0=add, 1=prop (V_diag += sv*mu^2), 2=lnorm (mu *= exp(sv/2); V_diag += mu^2*(exp(sv)-1))
-  //    kappa_delta shifts mu deterministically (not part of IS average) so sigma is added
-  //    here while mu still reflects IS-weighted structural prediction.
-  int k_sig = sigma_var.size();
-  for (int k = 0; k < k_sig; ++k) {
-    double sv = sigma_var[k];
-    if (sigma_type[k] == 1) {
-      V.diagonal().array() += sv * mu.array().square();
-    } else if (sigma_type[k] == 2) {
-      mu.array() *= std::exp(sv / 2.0);
-      V.diagonal().array() += mu.array().square() * (std::exp(sv) - 1.0);
-    } else {
-      V.diagonal().array() += sv;
-    }
-  }
+  // 3. Residual error BEFORE kappa: kappa_delta shifts mu deterministically (not
+  //    part of the IS average), so the residual is added here while mu still
+  //    reflects the IS-weighted structural prediction.
+  ArrayXd dv = V.diagonal().array();
+  adm_apply_residual(mu, dv, res_form, res_a2, res_b2, res_cc);
+  V.diagonal().array() = dv;
 
   // 4. Kappa correction: shifts mu only, V unchanged. kappa_delta = kappa_fn(struct_cand) - mu_pop,
   //    where mu_pop is fixed per outer iteration and accounts for unpaired theta effects.
@@ -304,24 +343,18 @@ double nll_cov_from_samples_cpp(
     const Eigen::VectorXd& E_obs,
     const Eigen::MatrixXd& V_obs,
     double n,
-    const Eigen::VectorXd& sigma_var,
-    const Eigen::VectorXi& sigma_type
+    const Eigen::VectorXi& res_form,
+    const Eigen::VectorXd& res_a2,
+    const Eigen::VectorXd& res_b2,
+    const Eigen::VectorXd& res_cc
 ) {
   int n_sim = cp_mat.rows();
   VectorXd mu   = cp_mat.colwise().mean();
   MatrixXd cp_c = cp_mat.rowwise() - mu.transpose();  // centred around mu_sim
   MatrixXd V    = cp_c.transpose() * cp_c * (1.0 / n_sim);
-  for (int k = 0; k < sigma_var.size(); ++k) {
-    double sv = sigma_var[k];
-    if (sigma_type[k] == 1) {
-      V.diagonal().array() += sv * mu.array().square();
-    } else if (sigma_type[k] == 2) {
-      mu.array() *= std::exp(sv / 2.0);
-      V.diagonal().array() += mu.array().square() * (std::exp(sv) - 1.0);
-    } else {
-      V.diagonal().array() += sv;
-    }
-  }
+  ArrayXd  dv   = V.diagonal().array();
+  adm_apply_residual(mu, dv, res_form, res_a2, res_b2, res_cc);
+  V.diagonal().array() = dv;
   return nll_cov_impl(E_obs, V_obs, mu, V, n);
 }
 
@@ -335,24 +368,16 @@ double nll_var_from_samples_cpp(
     const Eigen::VectorXd& E_obs,
     const Eigen::VectorXd& v_obs,
     double n,
-    const Eigen::VectorXd& sigma_var,
-    const Eigen::VectorXi& sigma_type
+    const Eigen::VectorXi& res_form,
+    const Eigen::VectorXd& res_a2,
+    const Eigen::VectorXd& res_b2,
+    const Eigen::VectorXd& res_cc
 ) {
   int n_sim = cp_mat.rows();
   VectorXd mu   = cp_mat.colwise().mean();
   MatrixXd cp_c = cp_mat.rowwise() - mu.transpose();  // centred around mu_sim
   ArrayXd  pv   = cp_c.array().square().colwise().sum() / n_sim;
-  for (int k = 0; k < sigma_var.size(); ++k) {
-    double sv = sigma_var[k];
-    if (sigma_type[k] == 1) {
-      pv += sv * mu.array().square();
-    } else if (sigma_type[k] == 2) {
-      mu.array() *= std::exp(sv / 2.0);
-      pv += mu.array().square() * (std::exp(sv) - 1.0);
-    } else {
-      pv += sv;
-    }
-  }
+  adm_apply_residual(mu, pv, res_form, res_a2, res_b2, res_cc);
   if ((pv <= 0.0).any()) return R_PosInf;
   ArrayXd r2  = (E_obs.array() - mu.array()).square();
   return n * (pv.log() + v_obs.array() / pv + r2 / pv).sum();

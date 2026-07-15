@@ -49,6 +49,22 @@
          byrow = TRUE)
 }
 
+# NOTE ON THE FIXED-THETA FILL BELOW (repeated inline in three solve paths rather
+# than factored into a helper -- deliberately):
+#
+# A FIXED theta is not an estimated parameter, so nothing in pinfo (and nothing in
+# the solve paths) writes its THETA[k] column -- but the sens model still HAS that
+# slot and rxSolve REQUIRES every model parameter. Left unset, the sens solve
+# errors and returns NULL: admc/adfo then silently drop to a finite-difference
+# gradient, and .adghGrad silently skipped the study altogether.
+#
+# These three loops run INSIDE mirai daemons. utils::assignInNamespace() can
+# REPLACE a binding in the locked installed namespace but cannot ADD one, so a new
+# helper called from here would be missing in a dev-mode daemon (devtools::load_all
+# with workers > 1 and no prior devtools::install) -- "could not find function" --
+# and abort the whole fit. Same hazard CLAUDE.md records for .admRestartWorker's
+# signature. Three copies of two lines is the cheaper price.
+
 .admSimulateSensRows <- function(sensModel, struct_mat, sigma_names, eta_mat, study,
                                  cores, ndp = .Machine$integer.max) {
   rmap      <- sensModel$rename_map
@@ -69,6 +85,10 @@
   for (j in seq_along(eta_cols)) {
     mapped <- rmap[eta_cols[j]]; if (!is.na(mapped)) inner_df[[mapped]][] <- eta_mat[, j]
   }
+  # fixed thetas: constants the estimated-parameter loops above never write (see
+  # the note at the top of this file -- inlined on purpose, no helper)
+  for (nm in names(sensModel$fixed_theta))
+    inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
 
   out <- tryCatch(
     suppressWarnings(
@@ -189,6 +209,10 @@
   for (j in seq_along(eta_cols)) {
     mapped <- rmap[eta_cols[j]]; if (!is.na(mapped)) inner_df[[mapped]][] <- eta_mat[, j]
   }
+  # fixed thetas: constants the estimated-parameter loops above never write (see
+  # the note at the top of this file -- inlined on purpose, no helper)
+  for (nm in names(sensModel$fixed_theta))
+    inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
 
   out <- tryCatch(
     suppressWarnings(

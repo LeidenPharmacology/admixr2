@@ -143,24 +143,22 @@ utils::globalVariables(c(
 # covariance; each block's own sigma(s) act only on that block's rows. Returns
 # the residual-adjusted mean (`mu`, lnorm-corrected) and covariance (`V`).
 .admJointResidual <- function(mu_struct, V_pred, unit, pinfo, sigma_var) {
-  mu <- mu_struct
-  dv <- diag(V_pred)
-  for (blk in unit$blocks) {
-    rows <- blk$rows
-    for (k in which(.admSigmaSel(pinfo, blk$output))) {
-      sv <- sigma_var[[k]]
-      if (isTRUE(pinfo$sigma_is_lnorm[[k]])) {
-        mu[rows] <- mu[rows] * exp(sv / 2)
-        dv[rows] <- dv[rows] + mu[rows]^2 * (exp(sv) - 1)
-      } else if (isTRUE(pinfo$sigma_is_prop[[k]])) {
-        dv[rows] <- dv[rows] + sv * mu_struct[rows]^2
-      } else {
-        dv[rows] <- dv[rows] + sv
-      }
-    }
+  n_t <- length(mu_struct)
+  arr <- .admResidRows(pinfo, .admRowOutput(unit, n_t), sigma_var, n_t)
+  ap  <- .admResidApply(mu_struct, diag(V_pred), arr)
+  diag(V_pred) <- ap$dv
+  list(mu = ap$mu, V = V_pred)
+}
+
+# Output column name governing each row of a unit's stacked mean vector.
+# Joint units carry per-output blocks; a plain unit is a single output.
+.admRowOutput <- function(unit, n_t) {
+  if (!is.null(unit$blocks) && length(unit$blocks) > 0L) {
+    ro <- rep(NA_character_, n_t)
+    for (blk in unit$blocks) ro[blk$rows] <- blk$output
+    return(ro)
   }
-  diag(V_pred) <- dv
-  list(mu = mu, V = V_pred)
+  rep(unit$output %||% NA_character_, n_t)
 }
 
 # Normalise one observed-compartment unit: coerce E, coerce V to matrix,
@@ -566,7 +564,13 @@ utils::globalVariables(c(
     nm <- .ini$name[i]
     if (.ini$fix[i])                      return(.ini$est[i])
     if (nm %in% names(pars$struct))       return(unname(pars$struct[nm]))
-    if (nm %in% names(pars$sigma_var))    return(sqrt(unname(pars$sigma_var[nm])))
+    # Residual params report on their iniDf scale: variances as an SD, a pow()
+    # exponent as itself.
+    if (nm %in% names(pars$sigma_var)) {
+      .k <- match(nm, pinfo$sigma_names)
+      .v <- unname(pars$sigma_var[nm])
+      return(if (.admSigmaRole(pinfo)[.k] == "var") sqrt(.v) else .v)
+    }
     if (!is.na(.ini$neta1[i]))
       return(pars$omega[.ini$neta1[i], .ini$neta2[i]])
     .ini$est[i]

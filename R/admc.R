@@ -356,7 +356,6 @@ nmObjGetControl.admc <- function(x, ...) {
   if (pinfo$n_eta > 0 && any(diag(pars$omega) <= 0)) return(Inf)
 
   nll2     <- 0
-  sig_type <- ifelse(pinfo$sigma_is_lnorm, 2L, ifelse(pinfo$sigma_is_prop, 1L, 0L))
   for (i in seq_along(studies)) {
     s       <- studies[[i]]
     ov      <- s$output %||% output_var
@@ -388,14 +387,13 @@ nmObjGetControl.admc <- function(x, ...) {
 
     # Restrict the residual error to this output's sigma(s) so a multi-output fit
     # does not apply another compartment's error model here (no-op single-output).
-    sel <- .admSigmaSel(pinfo, ov)
-    sv  <- pars$sigma_var[sel]; st <- sig_type[sel]
+    ar <- .admResidRows(pinfo, ov, pars$sigma_var, length(s$times))
     if (identical(s$method, "var")) {
       nll2 <- nll2 + nll_var_from_samples_cpp(cp_mat, as.numeric(s$E), s$v_diag,
-                                               s$n, sv, st)
+                                              s$n, ar$form, ar$a2, ar$b2, ar$cc)
     } else {
       nll2 <- nll2 + nll_cov_from_samples_cpp(cp_mat, as.numeric(s$E), s$V,
-                                               s$n, sv, st)
+                                              s$n, ar$form, ar$a2, ar$b2, ar$cc)
     }
     if (!is.finite(nll2)) return(Inf)
   }
@@ -444,10 +442,6 @@ nmObjGetControl.admc <- function(x, ...) {
   for (si in seq_along(studies)) {
     s   <- studies[[si]]
     ov  <- s$output %||% output_var
-    # Sigma indices belonging to this unit's output (all, single-output). Only
-    # these residual-error parameters contribute to V, mu and the sigma gradient
-    # for this observation block.
-    sig_k <- which(.admSigmaSel(pinfo, ov))
     z   <- z_list[[si]]
     pdf <- params_list[[si]]
 
@@ -485,20 +479,9 @@ nmObjGetControl.admc <- function(x, ...) {
       dNLL_dV_diag <- diag(dNLL_dV)
 
       # sigma mu-path coupling and sigma gradient, each on its output's rows.
-      sigma_mu_scale <- numeric(n_t)
-      for (blk in s$blocks) {
-        rows <- blk$rows
-        for (k in which(.admSigmaSel(pinfo, blk$output))) {
-          sv <- pars$sigma_var[k]
-          if (pinfo$sigma_is_prop[k])
-            sigma_mu_scale[rows] <- sigma_mu_scale[rows] +
-              2 * sv * dNLL_dV_diag[rows] * mu_struct[rows]
-          else if (pinfo$sigma_is_lnorm[k])
-            sigma_mu_scale[rows] <- sigma_mu_scale[rows] +
-              (exp(sv / 2) - 1) * dNLL_dmu[rows] +
-              2 * exp(sv / 2) * mu[rows] * (exp(sv) - 1) * dNLL_dV_diag[rows]
-        }
-      }
+      arr <- .admResidRows(pinfo, .admRowOutput(s, n_t), pars$sigma_var, n_t)
+      sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
+                                            dNLL_dV_diag, dNLL_dmu)
 
       if (n_eta > 0L) {
         eta_rows_df  <- pinfo$eta_rows_df
@@ -518,20 +501,8 @@ nmObjGetControl.admc <- function(x, ...) {
         }
       }
 
-      for (blk in s$blocks) {
-        rows <- blk$rows
-        for (k in which(.admSigmaSel(pinfo, blk$output))) {
-          sv <- pars$sigma_var[k]; k_sig <- n_s + k
-          if (pinfo$sigma_is_prop[k])
-            grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag[rows] * sv * mu_struct[rows]^2)
-          else if (pinfo$sigma_is_lnorm[k])
-            grad[k_sig] <- grad[k_sig] + sv * (
-              sum(dNLL_dV_diag[rows] * mu[rows]^2 * (2 * exp(sv) - 1)) +
-              sum(dNLL_dmu[rows] * mu[rows]) / 2)
-          else
-            grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag[rows]) * sv
-        }
-      }
+      grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
+        .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu)
 
       # Unpaired struct thetas. The augmented sens model carries d(pred)/d(theta)
       # directly (js$dtheta_list): it enters exactly like an eta direction, so the
@@ -682,39 +653,23 @@ nmObjGetControl.admc <- function(x, ...) {
       }
     }
 
+    n_t       <- length(s$times)
+    arr       <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
     mu_struct <- colMeans(cp_mat)
-    mu     <- mu_struct
-    for (k in sig_k)
-      if (pinfo$sigma_is_lnorm[k])
-        mu <- mu * exp(pars$sigma_var[k] / 2)
-    cp_c <- sweep(cp_mat, 2L, mu_struct)
-    r    <- as.numeric(s$E) - mu
+    cp_c      <- sweep(cp_mat, 2L, mu_struct)
 
     is_var <- identical(s$method, "var")
     if (is_var) {
-      pv <- adm_col_sq_sum_cpp(cp_c) / n_sim
-      for (k in sig_k) {
-        sv <- pars$sigma_var[k]
-        if (pinfo$sigma_is_prop[k])
-          pv <- pv + sv * mu_struct^2
-        else if (pinfo$sigma_is_lnorm[k])
-          pv <- pv + mu^2 * (exp(sv) - 1)
-        else
-          pv <- pv + sv
-      }
+      ap <- .admResidApply(mu_struct, adm_col_sq_sum_cpp(cp_c) / n_sim, arr)
+      mu <- ap$mu; pv <- ap$dv
+      r  <- as.numeric(s$E) - mu
       dNLL_dmu     <- s$n * as.numeric(-2 * r / pv)
       dNLL_dV_diag <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
     } else {
-      V <- crossprod(cp_c) / n_sim
-      for (k in sig_k) {
-        sv <- pars$sigma_var[k]
-        if (pinfo$sigma_is_prop[k])
-          diag(V) <- diag(V) + sv * mu_struct^2
-        else if (pinfo$sigma_is_lnorm[k])
-          diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
-        else
-          diag(V) <- diag(V) + sv
-      }
+      V  <- crossprod(cp_c) / n_sim
+      ap <- .admResidApply(mu_struct, diag(V), arr)
+      mu <- ap$mu; diag(V) <- ap$dv
+      r  <- as.numeric(s$E) - mu
       cholV <- tryCatch(chol(V), error = function(e) NULL)
       if (is.null(cholV)) return(rep(NA_real_, length(p)))
       invV         <- chol2inv(cholV)
@@ -723,22 +678,11 @@ nmObjGetControl.admc <- function(x, ...) {
       dNLL_dV_diag <- diag(dNLL_dV)
     }
 
-    n_t   <- length(s$times)
-
-    # sigma_mu_scale: error-V sensitivity w.r.t. mu_struct, reused across all gradient terms.
-    # For lnorm, also folds in the residual scaling by exp(sv/2): (exp(sv/2)-1)*dNLL_dmu.
-    # Computed once per study (depends only on pars, dNLL_dV_diag, dNLL_dmu, mu_sim, mu).
-    sigma_mu_scale <- numeric(n_t)
-    for (k in sig_k) {
-      sv <- pars$sigma_var[k]
-      if (pinfo$sigma_is_prop[k]) {
-        sigma_mu_scale <- sigma_mu_scale + 2 * sv * dNLL_dV_diag * mu_struct
-      } else if (pinfo$sigma_is_lnorm[k]) {
-        sigma_mu_scale <- sigma_mu_scale +
-          (exp(sv / 2) - 1) * dNLL_dmu +
-          2 * exp(sv / 2) * mu * (exp(sv) - 1) * dNLL_dV_diag
-      }
-    }
+    # sigma_mu_scale: how the residual couples a change in mu_struct into the
+    # objective (lnorm mean scaling + the residual variance's dependence on mu).
+    # Computed once per study and reused across every gradient term.
+    sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
+                                          dNLL_dV_diag, dNLL_dmu)
     eff_dmu <- dNLL_dmu + sigma_mu_scale
     inv_n <- 1 / n_sim
 
@@ -860,20 +804,8 @@ nmObjGetControl.admc <- function(x, ...) {
       }
     }
 
-    for (k in sig_k) {
-      k_sig <- n_s + k
-      sv <- pars$sigma_var[k]
-      if (pinfo$sigma_is_prop[k]) {
-        grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag * sv * mu_struct^2)
-      } else if (pinfo$sigma_is_lnorm[k]) {
-        grad[k_sig] <- grad[k_sig] + sv * (
-          sum(dNLL_dV_diag * mu^2 * (2 * exp(sv) - 1)) +
-          sum(dNLL_dmu * mu) / 2
-        )
-      } else {
-        grad[k_sig] <- grad[k_sig] + sum(dNLL_dV_diag) * sv
-      }
-    }
+    grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
+      .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu)
   }
 
   grad
@@ -894,7 +826,6 @@ nmObjGetControl.admc <- function(x, ...) {
     return(vapply(p_list, function(p)
       .admNLL(p, pinfo, studies, z_list, rxMod, output_var, params_list, cores),
       double(1)))
-  sig_type <- ifelse(pinfo$sigma_is_lnorm, 2L, ifelse(pinfo$sigma_is_prop, 1L, 0L))
   n_sim   <- nrow(z_list[[1L]])
   col_nms <- colnames(params_list[[1L]])
   n_cols  <- length(col_nms)
@@ -918,7 +849,6 @@ nmObjGetControl.admc <- function(x, ...) {
     ov <- s$output %||% output_var
     z <- z_list[[si]]
     n_t <- length(s$times)
-    sel <- .admSigmaSel(pinfo, ov)
 
     for (chunk in chunks) {
       n_chunk <- length(chunk)
@@ -956,13 +886,13 @@ nmObjGetControl.admc <- function(x, ...) {
         idx  <- (cii - 1L) * n_sim * n_t + seq_len(n_sim * n_t)
         cp   <- matrix(vals[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
         if (anyNA(cp)) { finite[ci] <- FALSE; next }
-        sv <- pars$sigma_var[sel]; st <- sig_type[sel]
+        ar <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
         nll_ci <- if (identical(s$method, "var"))
           nll_var_from_samples_cpp(cp, as.numeric(s$E), s$v_diag,
-                                    s$n, sv, st)
+                                   s$n, ar$form, ar$a2, ar$b2, ar$cc)
         else
           nll_cov_from_samples_cpp(cp, as.numeric(s$E), s$V,
-                                    s$n, sv, st)
+                                   s$n, ar$form, ar$a2, ar$b2, ar$cc)
         if (is.finite(nll_ci)) nlls[ci] <- nlls[ci] + nll_ci
         else                    finite[ci] <- FALSE
       }
@@ -1009,12 +939,12 @@ nmObjGetControl.admc <- function(x, ...) {
     col_nms <- colnames(params_list[[si]])
     n_cols  <- length(col_nms)
 
-    # This unit's output and ITS sigma(s). .admGrad restricts residual error this
-    # way; .admGradBatch did not -- it read `output_var` (the model-level default)
-    # and looped every sigma, so on a multi-output fit the gradient-FD Hessian
-    # applied every endpoint's residual error to every block. No-op single-output.
-    ovb   <- s$output %||% output_var
-    sig_k <- which(.admSigmaSel(pinfo, ovb))
+    # This unit's output. .admGrad restricts residual error to this output's own
+    # sigma(s); .admGradBatch did not -- it read `output_var` (the model-level
+    # default), so on a multi-output fit the gradient-FD Hessian applied every
+    # endpoint's residual error to every block. The residual spec is now looked up
+    # per output (.admResidRows below), so the two paths cannot drift apart again.
+    ovb <- s$output %||% output_var
 
     eta_mats <- lapply(seq_len(n_c), function(ci) {
       if (!valid[ci]) return(NULL)
@@ -1049,6 +979,11 @@ nmObjGetControl.admc <- function(x, ...) {
           if (!is.na(mapped)) inner_df[rows, mapped] <- eta[, j]
         }
       }
+      # fixed thetas: constants the loops above never write (see the note at the
+      # top of simulate.R -- inlined on purpose; a new helper would be missing in a
+      # dev-mode daemon, which cannot ADD bindings to the installed namespace)
+      for (nm in names(sensModel$fixed_theta))
+        inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
       out <- tryCatch(
         suppressWarnings(
           rxode2::rxSolve(sensModel$mod, params = inner_df,
@@ -1257,39 +1192,22 @@ nmObjGetControl.admc <- function(x, ...) {
       pars       <- pars_list[[ci]]
       eta_mat    <- eta_mats[[ci]]
 
+      arr       <- .admResidRows(pinfo, ovb, pars$sigma_var, n_t)
       mu_struct <- colMeans(cp_mat)
-      mu     <- mu_struct
-      for (k in sig_k)
-        if (pinfo$sigma_is_lnorm[k])
-          mu <- mu * exp(pars$sigma_var[k] / 2)
-      cp_c <- sweep(cp_mat, 2L, mu_struct)
-      r    <- as.numeric(s$E) - mu
+      cp_c      <- sweep(cp_mat, 2L, mu_struct)
 
       is_var <- identical(s$method, "var")
       if (is_var) {
-        pv <- adm_col_sq_sum_cpp(cp_c) / n_sim
-        for (k in sig_k) {
-          sv <- pars$sigma_var[k]
-          if (pinfo$sigma_is_prop[k])
-            pv <- pv + sv * mu_struct^2
-          else if (pinfo$sigma_is_lnorm[k])
-            pv <- pv + mu^2 * (exp(sv) - 1)
-          else
-            pv <- pv + sv
-        }
+        ap <- .admResidApply(mu_struct, adm_col_sq_sum_cpp(cp_c) / n_sim, arr)
+        mu <- ap$mu; pv <- ap$dv
+        r  <- as.numeric(s$E) - mu
         dNLL_dmu     <- s$n * as.numeric(-2 * r / pv)
         dNLL_dV_diag <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
       } else {
-        V <- crossprod(cp_c) / n_sim
-        for (k in sig_k) {
-          sv <- pars$sigma_var[k]
-          if (pinfo$sigma_is_prop[k])
-            diag(V) <- diag(V) + sv * mu_struct^2
-          else if (pinfo$sigma_is_lnorm[k])
-            diag(V) <- diag(V) + mu^2 * (exp(sv) - 1)
-          else
-            diag(V) <- diag(V) + sv
-        }
+        V  <- crossprod(cp_c) / n_sim
+        ap <- .admResidApply(mu_struct, diag(V), arr)
+        mu <- ap$mu; diag(V) <- ap$dv
+        r  <- as.numeric(s$E) - mu
         cholV <- tryCatch(chol(V), error = function(e) NULL)
         if (is.null(cholV)) { valid[ci] <- FALSE; next }
         invV         <- chol2inv(cholV)
@@ -1298,17 +1216,8 @@ nmObjGetControl.admc <- function(x, ...) {
         dNLL_dV_diag <- diag(dNLL_dV)
       }
 
-      sigma_mu_scale <- numeric(n_t)
-      for (k in sig_k) {
-        sv <- pars$sigma_var[k]
-        if (pinfo$sigma_is_prop[k]) {
-          sigma_mu_scale <- sigma_mu_scale + 2 * sv * dNLL_dV_diag * mu_struct
-        } else if (pinfo$sigma_is_lnorm[k]) {
-          sigma_mu_scale <- sigma_mu_scale +
-            (exp(sv / 2) - 1) * dNLL_dmu +
-            2 * exp(sv / 2) * mu * (exp(sv) - 1) * dNLL_dV_diag
-        }
-      }
+      sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
+                                            dNLL_dV_diag, dNLL_dmu)
       eff_dmu <- dNLL_dmu + sigma_mu_scale
       inv_n <- 1 / n_sim
 
@@ -1361,25 +1270,11 @@ nmObjGetControl.admc <- function(x, ...) {
             adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_n)
       }
 
-      # k is the GLOBAL sigma index, so the gradient slot is n_s + k. A running
-      # counter (n_s + 1, n_s + 2, ...) would be right only when the unit owns
-      # every sigma: for a second output whose sigma is global index 2, sig_k is
-      # {2} and a counter would write it into slot n_s + 1 -- the FIRST output's
-      # sigma -- leaving this output's own sigma gradient at zero.
-      for (k in sig_k) {
-        k_sig <- n_s + k
-        sv <- pars$sigma_var[k]
-        if (pinfo$sigma_is_prop[k]) {
-          grad_acc[ci, k_sig] <- grad_acc[ci, k_sig] + sum(dNLL_dV_diag * sv * mu_struct^2)
-        } else if (pinfo$sigma_is_lnorm[k]) {
-          grad_acc[ci, k_sig] <- grad_acc[ci, k_sig] + sv * (
-            sum(dNLL_dV_diag * mu^2 * (2 * exp(sv) - 1)) +
-            sum(dNLL_dmu * mu) / 2
-          )
-        } else {
-          grad_acc[ci, k_sig] <- grad_acc[ci, k_sig] + sum(dNLL_dV_diag) * sv
-        }
-      }
+      # .admSigmaGrad returns a full-length n_e vector indexed by GLOBAL sigma
+      # position, zero for sigmas belonging to other endpoints. That is what keeps
+      # a second endpoint's sigma gradient out of the first endpoint's slot.
+      grad_acc[ci, n_s + seq_len(n_e)] <- grad_acc[ci, n_s + seq_len(n_e)] +
+        .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu)
     }
   }
 
@@ -1750,8 +1645,15 @@ admStopWorkers <- function() {
     tryCatch({
       m <- qs2::qs_read(sens_cache_file)
       rxode2::rxLoad(m$mod)
-      if (is.null(m$sens_cols))  m$sens_cols  <- sens_cols
-      if (is.null(m$rename_map)) m$rename_map <- sens_rename
+      # PREFER the parent's values over whatever is in the file. The worker cannot
+      # re-derive these (it has no ui), so a cache written by an older admixr2 --
+      # with the position-indexed rename_map, which puts a theta's value in the
+      # wrong THETA[k] slot -- would otherwise be used verbatim and the parallel
+      # fit would silently disagree with the sequential one. (The cache key now
+      # carries a schema tag too, so such a file is no longer even a hit; this is
+      # the belt to that pair of braces.)
+      if (!is.null(sens_cols))   m$sens_cols  <- sens_cols
+      if (!is.null(sens_rename)) m$rename_map <- sens_rename
       m
     }, error = function(e) NULL)
   } else {

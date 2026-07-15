@@ -357,20 +357,39 @@
   unpaired <- .admUnpairedThetas(ui)
 
   # Parameter names the estimators speak -> the model's THETA[j] / ETA[i]. Indexed
-  # by ntheta / neta1, NOT by position, so a fixed theta cannot shift the mapping.
+  # by ntheta / neta1, NOT by position among the non-fixed thetas: the sens model's
+  # THETA[k] is numbered by ntheta and INCLUDES fixed thetas, so a position-indexed
+  # map would put every theta after a fixed one in the wrong slot.
   th_rows    <- ini_df[!is.na(ini_df$ntheta), , drop = FALSE]
   rename_map <- c(
     stats::setNames(paste0("THETA[", th_rows$ntheta, "]"), th_rows$name),
     stats::setNames(paste0("ETA[", seq_len(n_eta), "]"),
                     paste0("eta.", gsub("^eta\\.", "", eta_rows$name))))
 
-  # Cache key: the model, the direction set, and the compile flags that change the
-  # emitted model. Without the direction set in the key, a model cached before a
-  # theta gained its own direction would be served with the columns missing.
+  # A FIXED theta is not an estimated parameter, so it never reaches the solve
+  # paths (pinfo carries only the estimated ones) -- but the EMITTED sens model
+  # still has a THETA[k] slot for it (the model text references every theta) and
+  # rxSolve REQUIRES every parameter. Left unset the sens solve errors and returns
+  # NULL, which silently drops admc/adfo to a finite-difference gradient and, worse,
+  # made .adghGrad skip the study entirely. Carry the fixed values so the solve
+  # paths can fill those columns (.admFillFixedTheta in simulate.R).
+  fix_rows <- th_rows[th_rows$fix, , drop = FALSE]
+  fixed_theta <- if (nrow(fix_rows) > 0L)
+    stats::setNames(as.numeric(fix_rows$est), paste0("THETA[", fix_rows$ntheta, "]"))
+  else numeric(0)
+
+  # Cache key: the MODEL (ui$lstExpr), the DIRECTION SET (unpaired -- so a model
+  # cached before a theta gained its own direction is a miss), and a schema tag.
+  # NOT digest(inner): ui$foceiModel$inner returns a DIFFERENT object on its first
+  # access than on later ones, so digesting it gives an unstable key. The schema
+  # tag ("+fixed-theta") makes a cache written before the fixed-theta fix a miss:
+  # a parallel worker reads this file directly and cannot re-derive, so it would
+  # otherwise inherit a stale rename_map / NULL fixed_theta and silently diverge
+  # from the sequential fit.
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
     paste0("adm-sens-",
-           digest::digest(list(ui$lstExpr, unpaired, "dirs-jump")), ".qs2"))
+           digest::digest(list(ui$lstExpr, unpaired, "dirs-jump+fixed-theta")), ".qs2"))
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
   on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
@@ -380,7 +399,16 @@
     result <- tryCatch({ m <- qs2::qs_read(.cacheFile); rxode2::rxLoad(m$mod); m },
                        error = function(e) NULL)
     if (!is.null(result)) {
-      result$cache_file <- .cacheFile
+      # Overwrite the worker-inherited fields from the parent's fresh derivation
+      # rather than trusting the file. A parallel WORKER reads this same file and
+      # cannot re-derive, so what the parent writes here is what the worker gets;
+      # a stale position-indexed rename_map or a NULL fixed_theta would silently
+      # diverge the parallel fit from the sequential one. (sens_cols / dirs are NOT
+      # re-derived: they are keyed by `unpaired` in the cache path, so a hit is
+      # guaranteed to have the same direction set.)
+      result$cache_file  <- .cacheFile
+      result$rename_map  <- rename_map
+      result$fixed_theta <- fixed_theta
       tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
       return(result)
     }
@@ -404,10 +432,11 @@
                    theta_sens_cols = built$theta_sens_cols,
                    dirs = built$dirs,
                    rename_map = rename_map,
+                   fixed_theta = fixed_theta,
                    is_lincmt = .admIsLinCmtMod(built$mod),
                    cache_file = .cacheFile)
   } else {
-    result <- .admSensFromInner(ui, rename_map, n_eta, .cacheFile)
+    result <- .admSensFromInner(ui, rename_map, fixed_theta, n_eta, .cacheFile)
     if (is.null(result)) return(NULL)
   }
 
@@ -429,7 +458,7 @@
 # its sensitivity block is keyed on etas, so there are no theta columns and the
 # estimators finite-difference the unpaired thetas, as they always did.
 # Recompiled with eventSens = "jump" (see .admLoadSensModel's header).
-.admSensFromInner <- function(ui, rename_map, n_eta, cacheFile) {
+.admSensFromInner <- function(ui, rename_map, fixed_theta, n_eta, cacheFile) {
   # .admLoadSensModel already pinned $foceiModel (the Windows finalizer guard).
   .focei_model <- tryCatch(ui$foceiModel, error = function(e) NULL)
   inner <- .focei_model$inner
@@ -464,7 +493,10 @@
   if (!is.null(.s) &&
       !.admJumpCovers(mod, .s, paste0("ETA_", seq_len(n_eta), "_"))) return(NULL)
 
+  # theta_sens_cols = NULL: the inner model has no theta directions, so the
+  # estimators finite-difference the unpaired thetas. fixed_theta still travels so
+  # the solve paths fill a fixed theta's THETA[k] (the inner model needs it too).
   list(type = "inner", mod = mod, sens_cols = sens_cols,
-       theta_sens_cols = NULL, rename_map = rename_map,
+       theta_sens_cols = NULL, rename_map = rename_map, fixed_theta = fixed_theta,
        is_lincmt = .admIsLinCmtMod(mod), cache_file = cacheFile)
 }

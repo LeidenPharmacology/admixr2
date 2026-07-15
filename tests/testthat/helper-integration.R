@@ -486,7 +486,6 @@ one_cmt_transit_fn <- function() {
   irmc_proposals <- lapply(seq_along(studies), function(si)
     admixr2:::.adirmcProposal(
       rxMod, pars0$struct, pinfo$sigma_names,
-      pinfo$sigma_is_prop, pinfo$sigma_is_lnorm,
       pars0$omega, omega_expansion = 2,
       studies[[si]], z_list[[si]], output_var,
       params_list[[si]], cores = 1L,
@@ -566,7 +565,6 @@ one_cmt_transit_fn <- function() {
   irmc_proposals <- lapply(seq_along(studies), function(si)
     admixr2:::.adirmcProposal(
       rxMod, pars0$struct, pinfo$sigma_names,
-      pinfo$sigma_is_prop, pinfo$sigma_is_lnorm,
       pars0$omega, omega_expansion = 2,
       studies[[si]], z_list[[si]], output_var,
       params_list[[si]], cores = 1L,

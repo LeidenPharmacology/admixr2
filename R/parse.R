@@ -84,6 +84,22 @@
   struct_rows <- theta_rows[!is_err & !theta_rows$fix, , drop = FALSE]
   sigma_rows  <- theta_rows[ is_err & !theta_rows$fix, , drop = FALSE]
 
+  # A FIXED omega is not supported. It is dropped from eta_rows here, so n_eta and
+  # omega_init no longer cover every eta index -- omega_init[neta1, neta1] then
+  # runs off the end of the matrix and the parse dies with a bare "subscript out of
+  # bounds". Worse, if it did not, the eta's variance would be silently EXCLUDED
+  # from the model rather than held at its fixed value, so the fit would quietly
+  # ignore that source of between-subject variability. Fail with something the user
+  # can act on instead. (Proper support means: keep the eta, hold its variance at
+  # the fixed value, and exclude only its Cholesky entries from the optimizer.)
+  .eta_all <- iniDf[!is.na(iniDf$neta1), , drop = FALSE]
+  if (any(.eta_all$fix)) {
+    .fx <- unique(.eta_all$name[.eta_all$fix])
+    stop("admixr2 does not support FIXED omega entries (", paste(.fx, collapse = ", "),
+         "). Remove fix() from the random effect, or drop the eta from the model ",
+         "and fold its parameter into a structural theta.", call. = FALSE)
+  }
+
   eta_rows  <- iniDf[!is.na(iniDf$neta1) & !iniDf$fix, , drop = FALSE]
   diag_rows <- eta_rows[eta_rows$neta1 == eta_rows$neta2, , drop = FALSE]
   eta_names <- diag_rows$name
@@ -142,37 +158,39 @@
          hi      = if ("hi"  %in% names(.ce)) .ce$hi[.w]  else NA_real_)
   }), struct_rows$name)
 
-  .err_vals  <- sigma_rows$err
-  .prop_approx <- unique(.err_vals[!is.na(.err_vals) & .err_vals %in% c("propT", "propF")])
-  if (length(.prop_approx) > 0L)
-    .adm_warn_once(
-      paste0("prop_approx:", paste(sort(.prop_approx), collapse = ",")),
-      paste0("Residual error type(s) ", paste(.prop_approx, collapse = ", "),
-             " modelled as proportional (prop). Transform-aware scaling ignored."))
-  .add_approx <- unique(.err_vals[!is.na(.err_vals) & .err_vals %in% c("norm", "dnorm")])
-  if (length(.add_approx) > 0L)
-    .adm_warn_once(
-      paste0("add_approx:", paste(sort(.add_approx), collapse = ",")),
-      paste0("Residual error type(s) ", paste(.add_approx, collapse = ", "),
-             " modelled as additive (add). Likelihood-path distinction ignored."))
-  .lnorm_approx <- unique(.err_vals[!is.na(.err_vals) & .err_vals %in% c("dlnorm", "logn", "dlogn")])
-  if (length(.lnorm_approx) > 0L)
-    .adm_warn_once(
-      paste0("lnorm_approx:", paste(sort(.lnorm_approx), collapse = ",")),
-      paste0("Residual error type(s) ", paste(.lnorm_approx, collapse = ", "),
-             " modelled as lognormal (lnorm). Likelihood-path distinction ignored."))
-  .supported <- c("add", "norm", "dnorm", "prop", "propT", "propF",
-                  "lnorm", "dlnorm", "logn", "dlogn")
-  .unsupported <- unique(.err_vals[!is.na(.err_vals) & !.err_vals %in% .supported])
-  if (length(.unsupported) > 0L)
-    .adm_warn_once(
-      paste0("unsupported:", paste(sort(.unsupported), collapse = ",")),
-      paste0("Unsupported residual error type(s) detected: ",
-             paste(.unsupported, collapse = ", "),
-             ". Treated as additive. Supported: add/norm, prop, lnorm."))
+  .err_vals   <- sigma_rows$err
   sigma_names <- sigma_rows$name
-  sigma_is_prop  <- setNames(.err_vals %in% c("prop", "propT", "propF"), sigma_names)
-  sigma_is_lnorm <- setNames(.err_vals %in% c("lnorm", "dlnorm", "logn", "dlogn"), sigma_names)
+
+  # `pow(b, c)` emits TWO iniDf rows: the coefficient (err "pow") and the
+  # EXPONENT (err "pow2"). The exponent is not a variance -- it must not be
+  # squared, floored at zero, or reported as an SD -- so it carries its own
+  # optimizer role and an identity transform. See .admSigmaRole()/.admSigmaNat().
+  sigma_role <- setNames(
+    ifelse(.err_vals %in% .ADM_ERR_POW_EXP, "pow_exp", "var"), sigma_names)
+
+  sigma_is_prop  <- setNames(.err_vals %in% .ADM_ERR_PROP, sigma_names)
+  sigma_is_lnorm <- setNames(.err_vals %in% .ADM_ERR_LNORM, sigma_names)
+
+  # Refuse anything we cannot represent. This runs BEFORE .admBuildResidSpecs(),
+  # so it -- not the predDf gates below it -- is what a user with a boxCox or
+  # Student-t endpoint actually sees; it therefore has to give the same quality of
+  # explanation. .ADM_ERR_WHY supplies the per-type reason.
+  .unsupported <- unique(.err_vals[!is.na(.err_vals) & !.err_vals %in% .ADM_ERR_KNOWN])
+  if (length(.unsupported) > 0L) {
+    .bad <- sort(.unsupported)[1L]
+    .ep  <- if ("condition" %in% names(sigma_rows)) {
+      .w <- which(.err_vals == .bad)[1L]
+      as.character(sigma_rows$condition[.w])
+    } else NA_character_
+    .admStopErrModel(
+      .ep,
+      paste0(.bad, "()",
+             if (length(.unsupported) > 1L)
+               paste0(" (also: ", paste(sort(.unsupported)[-1L], collapse = ", "), ")")
+             else ""),
+      .ADM_ERR_WHY[[.bad]] %||%
+        paste0("'", .bad, "' has no aggregate mean/variance admixr2 can score"))
+  }
 
   # Output variable each residual-error parameter belongs to. In a real nlmixr2
   # iniDf the error rows carry a `condition` column naming the endpoint (e.g.
@@ -183,14 +201,22 @@
   sigma_output <- if ("condition" %in% names(sigma_rows))
     as.character(sigma_rows$condition) else rep(NA_character_, length(sigma_names))
 
+  # Residual parameters enter the optimizer on their role's scale: variances as
+  # log(sigma^2), a pow() exponent as itself.
+  .is_var    <- sigma_role == "var"
+  sigma_init <- setNames(ifelse(.is_var, 2 * log(sigma_rows$est), sigma_rows$est),
+                         sigma_names)
+
   list(struct_names    = struct_rows$name,
        struct_init     = setNames(struct_rows$est,   struct_rows$name),
        struct_lower    = setNames(struct_rows$lower, struct_rows$name),
        struct_upper    = setNames(struct_rows$upper, struct_rows$name),
        sigma_names     = sigma_names,
-       sigma_init      = setNames(2 * log(sigma_rows$est), sigma_rows$name),
+       sigma_init      = sigma_init,
        sigma_lower     = setNames(sigma_rows$lower, sigma_rows$name),
        sigma_upper     = setNames(sigma_rows$upper, sigma_rows$name),
+       sigma_role      = sigma_role,
+       resid           = .admBuildResidSpecs(ui, sigma_rows, sigma_names),
        sigma_is_prop   = sigma_is_prop,
        sigma_is_lnorm  = sigma_is_lnorm,
        sigma_output    = sigma_output,
@@ -238,10 +264,15 @@
   p  <- c(pinfo$struct_init, pinfo$sigma_init, pinfo$omega_par)
   nm <- c(pinfo$struct_names, pinfo$sigma_names, pinfo$omega_par_names)
   names(p) <- nm
-  sig_lb <- ifelse(is.finite(pinfo$sigma_lower) & pinfo$sigma_lower > 0,
-                   2 * log(pinfo$sigma_lower), -Inf)
-  sig_ub <- ifelse(is.finite(pinfo$sigma_upper),
-                   2 * log(pinfo$sigma_upper),  Inf)
+  # Variance params are bounded on the log-variance scale; a pow() exponent is
+  # unconstrained and its bounds pass through untransformed.
+  .is_var <- .admSigmaRole(pinfo) == "var"
+  sig_lb <- ifelse(!.is_var, pinfo$sigma_lower,
+                   ifelse(is.finite(pinfo$sigma_lower) & pinfo$sigma_lower > 0,
+                          2 * log(pinfo$sigma_lower), -Inf))
+  sig_ub <- ifelse(!.is_var, pinfo$sigma_upper,
+                   ifelse(is.finite(pinfo$sigma_upper),
+                          2 * log(pinfo$sigma_upper),  Inf))
   lb <- c(pinfo$struct_lower, sig_lb, rep(-Inf, length(pinfo$omega_par)))
   ub <- c(pinfo$struct_upper, sig_ub, rep( Inf, length(pinfo$omega_par)))
   list(p0 = p, lower = lb, upper = ub, names = nm,
@@ -298,7 +329,9 @@
   n_eta <- pinfo$n_eta
 
   struct    <- setNames(p[seq_len(n_s)], pinfo$struct_names)
-  sigma_var <- setNames(exp(p[n_s + seq_len(n_e)]), pinfo$sigma_names)
+  # Natural scale: variances back-transform as exp(p); a pow() exponent is
+  # already on its natural scale.
+  sigma_var <- .admSigmaNat(p[n_s + seq_len(n_e)], pinfo)
 
   if (n_eta > 0) {
     om_p <- p[n_s + n_e + seq_len(n_o)]
