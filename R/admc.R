@@ -945,6 +945,11 @@ nmObjGetControl.admc <- function(x, ...) {
           if (!is.na(mapped)) inner_df[rows, mapped] <- eta[, j]
         }
       }
+      # fixed thetas: constants the loops above never write (see the note at the
+      # top of simulate.R -- inlined on purpose; a new helper would be missing in a
+      # dev-mode daemon, which cannot ADD bindings to the installed namespace)
+      for (nm in names(sensModel$fixed_theta))
+        inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
       out <- tryCatch(
         suppressWarnings(
           rxode2::rxSolve(sensModel$mod, params = inner_df,
@@ -1587,8 +1592,15 @@ admStopWorkers <- function() {
     tryCatch({
       m <- qs2::qs_read(sens_cache_file)
       rxode2::rxLoad(m$mod)
-      if (is.null(m$sens_cols))  m$sens_cols  <- sens_cols
-      if (is.null(m$rename_map)) m$rename_map <- sens_rename
+      # PREFER the parent's values over whatever is in the file. The worker cannot
+      # re-derive these (it has no ui), so a cache written by an older admixr2 --
+      # with the position-indexed rename_map, which puts a theta's value in the
+      # wrong THETA[k] slot -- would otherwise be used verbatim and the parallel
+      # fit would silently disagree with the sequential one. (The cache key now
+      # carries a schema tag too, so such a file is no longer even a hit; this is
+      # the belt to that pair of braces.)
+      if (!is.null(sens_cols))   m$sens_cols  <- sens_cols
+      if (!is.null(sens_rename)) m$rename_map <- sens_rename
       m
     }, error = function(e) NULL)
   } else {

@@ -36,6 +36,22 @@
   struct_rows <- theta_rows[!is_err & !theta_rows$fix, , drop = FALSE]
   sigma_rows  <- theta_rows[ is_err & !theta_rows$fix, , drop = FALSE]
 
+  # A FIXED omega is not supported. It is dropped from eta_rows here, so n_eta and
+  # omega_init no longer cover every eta index -- omega_init[neta1, neta1] then
+  # runs off the end of the matrix and the parse dies with a bare "subscript out of
+  # bounds". Worse, if it did not, the eta's variance would be silently EXCLUDED
+  # from the model rather than held at its fixed value, so the fit would quietly
+  # ignore that source of between-subject variability. Fail with something the user
+  # can act on instead. (Proper support means: keep the eta, hold its variance at
+  # the fixed value, and exclude only its Cholesky entries from the optimizer.)
+  .eta_all <- iniDf[!is.na(iniDf$neta1), , drop = FALSE]
+  if (any(.eta_all$fix)) {
+    .fx <- unique(.eta_all$name[.eta_all$fix])
+    stop("admixr2 does not support FIXED omega entries (", paste(.fx, collapse = ", "),
+         "). Remove fix() from the random effect, or drop the eta from the model ",
+         "and fold its parameter into a structural theta.", call. = FALSE)
+  }
+
   eta_rows  <- iniDf[!is.na(iniDf$neta1) & !iniDf$fix, , drop = FALSE]
   diag_rows <- eta_rows[eta_rows$neta1 == eta_rows$neta2, , drop = FALSE]
   eta_names <- diag_rows$name

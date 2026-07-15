@@ -95,15 +95,29 @@
 
   ini_df <- tryCatch(ui$iniDf, error = function(e) NULL)
   if (is.null(ini_df)) return(NULL)
-  eta_rows    <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 & !ini_df$fix, ]
-  struct_rows <- ini_df[is.na(ini_df$neta1) & !ini_df$fix, ]
-  n_eta       <- nrow(eta_rows)
+  eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 & !ini_df$fix, ]
+  th_rows  <- ini_df[!is.na(ini_df$ntheta), ]
+  n_eta    <- nrow(eta_rows)
 
+  # Index by ntheta, NOT by position among the non-fixed thetas. The sens model's
+  # THETA[k] is numbered by ntheta and INCLUDES fixed thetas, so dropping a fixed
+  # theta from the map shifted every later theta into the wrong slot.
   rename_map <- c(
-    setNames(paste0("THETA[", seq_len(nrow(struct_rows)), "]"), struct_rows$name),
-    setNames(paste0("ETA[",   seq_len(n_eta),             "]"),
+    setNames(paste0("THETA[", th_rows$ntheta, "]"), th_rows$name),
+    setNames(paste0("ETA[",   seq_len(n_eta), "]"),
              paste0("eta.", gsub("^eta\\.", "", eta_rows$name)))
   )
+
+  # A FIXED theta is not an estimated parameter, so it never reaches the solve
+  # paths (pinfo carries only the estimated ones) -- but the sens model still has
+  # a THETA[k] slot for it and rxSolve REQUIRES every parameter. Left unset the
+  # sens solve errors and returns NULL, which silently drops admc/adfo to a
+  # finite-difference gradient and, worse, made .adghGrad skip the study entirely.
+  # Carry the fixed values so the solve paths can fill those columns.
+  fix_rows <- th_rows[th_rows$fix, , drop = FALSE]
+  fixed_theta <- if (nrow(fix_rows) > 0L)
+    setNames(as.numeric(fix_rows$est), paste0("THETA[", fix_rows$ntheta, "]"))
+  else numeric(0)
 
   sens_cols <- lhs[grepl("sens_rx_pred.*ETA|sens.*pred.*BY.*ETA", lhs, ignore.case = TRUE)]
   if (length(sens_cols) == 0L) return(NULL)
@@ -113,9 +127,25 @@
   sens_cols <- sens_cols[order(eta_idx)]
   if (length(sens_cols) != n_eta) return(NULL)
 
+  # Cache key: the MODEL (ui$lstExpr) plus a schema tag for the fields we store
+  # alongside the compiled model.
+  #
+  # NOT digest(inner): ui$foceiModel$inner returns a DIFFERENT object on its first
+  # access than on later ones (the same foceiModel instability documented for the
+  # pin), so digesting it gives an unstable key -- the path written on the first
+  # (compile) load does not match the path recomputed on a later load, so the
+  # disk-cache branch below never fires in-session and the sens model is silently
+  # RECOMPILED on every reload. ui$lstExpr is the model source: stable, and already
+  # the key used by the in-memory pin (.sens_key) and by .admLoadModel's own cache.
+  #
+  # The schema tag makes a cache written BEFORE the fixed-theta fix a miss: without
+  # it a parallel worker -- which reads this file directly and cannot re-derive --
+  # would keep the old position-indexed rename_map and a NULL fixed_theta, so the
+  # fit would silently disagree between workers = 1 and workers > 1.
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
-    paste0("adm-sens-", digest::digest(inner), ".qs2")
+    paste0("adm-sens-",
+           digest::digest(list(ui$lstExpr, "ntheta-map+fixed-theta")), ".qs2")
   )
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
@@ -129,10 +159,16 @@
     result <- tryCatch({ m <- qs2::qs_read(.cacheFile); rxode2::rxLoad(m$mod); m },
                        error = function(e) NULL)
     if (!is.null(result)) {
-      # Caches written by older versions predate these fields.
-      result$cache_file <- .cacheFile
-      if (is.null(result$sens_cols))  result$sens_cols  <- sens_cols
-      if (is.null(result$rename_map)) result$rename_map <- rename_map
+      # Overwrite the derived fields from the parent's fresh derivation rather than
+      # trusting the file. The cache key carries a schema tag, so a hit is always
+      # current-schema -- but a parallel WORKER reads this same file and cannot
+      # re-derive, so what the parent writes here is what the worker gets. Trusting
+      # a stale position-indexed rename_map would put a theta's value in the wrong
+      # THETA[k] slot and silently diverge the parallel fit from the sequential one.
+      result$cache_file  <- .cacheFile
+      result$rename_map  <- rename_map
+      result$fixed_theta <- fixed_theta
+      result$sens_cols   <- sens_cols
       tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
       return(result)
     }
@@ -155,8 +191,8 @@
   # ui$foceiModel$inner does not work -- that access yields a different object
   # than the one digested above, so the lookup always missed.
   result <- list(type = "ode", mod = mod, sens_cols = sens_cols,
-                 rename_map = rename_map, is_lincmt = is_lincmt,
-                 cache_file = .cacheFile)
+                 rename_map = rename_map, fixed_theta = fixed_theta,
+                 is_lincmt = is_lincmt, cache_file = .cacheFile)
   tryCatch(qs2::qs_save(result, .cacheFile), error = function(e) NULL)
   tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
   result
