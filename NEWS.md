@@ -26,18 +26,19 @@
 
 ## Bug fixes
 
-* **Fitting many distinct models in one session no longer grows native memory
-  without bound.** `.admLoadSensModel()` pinned every model's `foceiModel`
-  companion objects (`$outer`/`$predOnly`/`$predNoLhs`) in a session-scoped
-  environment to keep their DLL finalizers from firing mid-allocation -- a
-  Windows-only heap-corruption guard (`STATUS_HEAP_CORRUPTION`). The pin was
-  applied on every platform and never evicted, so on Linux/macOS it held every
-  model's companion DLLs resident *and* blocked rxode2's own DLL unloading,
-  climbing until the process was starved (the intermittent `ubuntu-devel`
-  test-suite hang). The companion pin is now Windows-only, and `.adm_pin_env` is
-  LRU-bounded (`options(admixr2.pin_limit = 16)`) on all platforms -- mirroring
-  rxode2's `rxSolveCacheLimit` / `rxUnloadAll` orphan ceiling. Fit results are
-  unchanged.
+* **The model pin cache (`.adm_pin_env`) is now bounded, and the `foceiModel`
+  companion pin is Windows-only.** `.admLoadSensModel()` pinned every distinct
+  model's `foceiModel` companion objects (`$outer`/`$predOnly`/`$predNoLhs`) in a
+  session-scoped environment -- a guard against their DLL finalizers firing
+  mid-allocation, which is a Windows-only heap corruption
+  (`STATUS_HEAP_CORRUPTION`). The pin ran on every platform and was never
+  evicted, so on Linux/macOS it held companion DLLs resident and blocked
+  rxode2's own DLL unloading for no benefit. The companion pin is now applied
+  only on Windows, and `.adm_pin_env` (both the companion pin and the
+  sens-model cache) is LRU-bounded via `options(admixr2.pin_limit = 16)` --
+  mirroring rxode2's `rxSolveCacheLimit` / `rxUnloadAll` ceiling -- so a
+  long-running session that fits many distinct models keeps its resident
+  footprint bounded. Fit results are unchanged.
 
 * **`pow()` models no longer fit the wrong residual model, silently.** `pow(b, c)`
   produces two `iniDf` rows -- the coefficient (`err = "pow"`) and the *exponent*
