@@ -26,6 +26,7 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           extra-packages: any::pkgdown, local::.
+          extra-repositories: https://nlmixr2.r-universe.dev
           needs: website
 
       - name: Build pkgdown site

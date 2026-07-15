@@ -26,12 +26,12 @@ RoxygenNote: 7.3.3
 Imports:
     checkmate,
     digest,
-    nlmixr2est (>= 6.0.1),
+    nlmixr2est (>= 6.2.0),
     nloptr,
     qs2,
     randtoolbox,
     Rcpp,
-    rxode2 (>= 5.1.2)
+    rxode2 (>= 5.1.3)
 LinkingTo:
     Rcpp,
     RcppEigen
@@ -49,4 +49,5 @@ Suggests:
     rmarkdown,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr
+Additional_repositories: https://nlmixr2.r-universe.dev
 Config/testthat/edition: 3
