@@ -13,14 +13,6 @@
 
 skip_on_cran()
 skip_if_not_installed("rxode2")
-# This file compiles ~14 distinct rxode2 models (ODE, linCmt, every dosing
-# modifier, transit, delay, multi-endpoint, ...) plus a sensitivity model for
-# each. On the R-devel CI canary that compilation load hangs the runner, while it
-# runs in <5 min on every release R. The columns are fully covered on ubuntu
-# release, Windows, macOS and the compat-oldstack integration job, so skip the
-# file on R-devel rather than let the non-blocking canary hang.
-skip_if(grepl("Under development", R.version$status),
-        "heavy model-compilation suite skipped on R-devel (covered on release)")
 
 TOL   <- 1e-4                                   # FD reference is good to ~1e-6
 times <- c(0.5, 1, 2, 4, 8, 12, 24)
