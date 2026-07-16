@@ -1946,6 +1946,10 @@ nlmixr2Est.admc <- function(env, ...) {
   .unpaired <- if (!is.null(pinfo$struct_has_eta))
     names(pinfo$struct_has_eta)[!pinfo$struct_has_eta] else character(0)
 
+  # Snapshot the rxode2 model registry BEFORE we load any model, so the on.exit
+  # teardown removes only the models this fit registers (see .admFitTeardown).
+  .reg0 <- .admRegistrySnapshot()
+
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   # .admLoadModel() calls rxode2::rxode2(ui) which triggers nlmixr2est's foceiModel
   # compilation via its FD path for linCmt, caching inner=NULL. Calling this first
@@ -1990,7 +1994,7 @@ nlmixr2Est.admc <- function(env, ...) {
 
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
-  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree() }, add = TRUE)
+  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); .admFitTeardown(.reg0) }, add = TRUE)
 
   set.seed(.ctl$seed)
   z_list      <- .admMakeZ(.ctl$n_sim, pinfo, length(studies), .ctl$sampling)

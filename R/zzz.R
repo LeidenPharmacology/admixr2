@@ -11,6 +11,12 @@
 #       paste0("sens_",  digest(ui$lstExpr))  -> sens model result (in-memory cache)
 .adm_pin_env <- new.env(parent = emptyenv())
 
+# Registry keys (rxode2 model names) that admixr2 has loaded, so a per-fit
+# teardown can reclaim exactly them -- including models loaded outside an
+# estimator fit (test-helper setup, datagen) -- without touching models the user
+# registered themselves. Populated by .admTrackRegistry, drained by .admFitTeardown.
+.adm_model_keys <- new.env(parent = emptyenv())
+
 # Session-scoped cache for once-per-session warnings.
 # Keys are error-type strings; presence of a key means the warning was already emitted.
 .adm_warn_env <- new.env(parent = emptyenv())
@@ -26,7 +32,7 @@
 #' @export
 admClearCache <- function() {
   nms <- ls(envir = .adm_pin_env, all.names = TRUE)
-  rm(list = nms, envir = .adm_pin_env)
+  .admClearPins()
   qs2_files <- list.files(rxode2::rxTempDir(),
                           pattern = "^adm-.*\\.qs2$", full.names = TRUE)
   unlink(qs2_files)

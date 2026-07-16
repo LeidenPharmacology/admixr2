@@ -7,6 +7,10 @@
   # sibling artifacts) on every exit so the ui stays in the canonical state
   # nlmixr2 expects; see .admDropSimModelMeta() for the full rationale.
   on.exit(.admDropSimModelMeta(ui), add = TRUE)
+  # Record the rxode2 model(s) this load registers so .admFitTeardown can reclaim
+  # them later, even when called outside an estimator fit (test setup, datagen).
+  .before_reg <- .admRegistrySnapshot()
+  on.exit(.admTrackRegistry(.before_reg), add = TRUE)
   .model_key <- digest::digest(ui$lstExpr)
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
@@ -341,6 +345,12 @@
 .admLoadSensModel <- function(ui) {
   .model_key <- digest::digest(ui$lstExpr)
   .sens_key  <- paste0("sens_", .model_key)
+
+  # Record the rxode2 models this load registers (the foceiModel companions read
+  # via ui$foceiModel, plus the inner sens model) so .admFitTeardown can reclaim
+  # them -- including when loaded outside an estimator fit (test setup, datagen).
+  .before_reg <- .admRegistrySnapshot()
+  on.exit(.admTrackRegistry(.before_reg), add = TRUE)
 
   # In-memory cache: avoids disk read and rxLoad on repeat calls within a session.
   .cached <- tryCatch(get(.sens_key, envir = .adm_pin_env, inherits = FALSE),

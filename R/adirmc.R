@@ -1089,6 +1089,9 @@ nlmixr2Est.adirmc <- function(env, ...) {
     ))
   }
 
+  # Snapshot the rxode2 model registry BEFORE loading any model (see .admFitTeardown).
+  .reg0 <- .admRegistrySnapshot()
+
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   # See model.R for rationale (linCmt foceiModel FD-path caching inner=NULL).
   sensModel <- if (.ctl$grad == "analytical")
@@ -1097,7 +1100,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
-  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree() }, add = TRUE)
+  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); .admFitTeardown(.reg0) }, add = TRUE)
 
   studies_snap <- studies
 
