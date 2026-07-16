@@ -2,6 +2,13 @@
 
 ## Bug fixes
 
+* **Parallel restarts under `devtools::load_all()` warn once about the installed
+  package.** In dev mode the admixr2 namespace is locked, so worker daemons run
+  the *installed* package rather than the loaded source; if it is stale the
+  parallel objective silently diverges from the sequential one. `.admRunRestarts`
+  now emits a one-time warning in this case telling you to `devtools::install()`.
+  It never fires in production (installed package == source).
+
 * **Fitting many models in one R session no longer grows memory without bound.**
   Each fit reads `ui$foceiModel` (loading the inner/outer/predOnly/predNoLhs
   companion models) and compiles a simulation model, all of which register in

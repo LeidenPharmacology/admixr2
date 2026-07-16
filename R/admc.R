@@ -1751,6 +1751,35 @@ admStopWorkers <- function() {
                     n_r, effective_workers, tpw_label, batch_label))
     message(.admProgressHeader(pinfo, bottom = FALSE))
 
+    # Dev-mode stale-install guard. When admixr2 is loaded with devtools::load_all()
+    # the parent runs the dev source, but the worker daemons `library(admixr2)` the
+    # INSTALLED package (a daemon cannot ADD new bindings to a locked installed
+    # namespace, so .fn_list is empty and no dev patch is applied). If the installed
+    # package is older than the loaded source -- e.g. it predates a function the
+    # parent's gradient path now uses -- the daemons silently compute a DIFFERENT
+    # objective than the sequential path, with no error. Warn once so this cannot be
+    # mistaken for a real numerical difference.
+    #
+    # Detect dev mode by the `.__DEVTOOLS__` marker devtools::load_all() stamps
+    # into the namespace, NOT environmentIsLocked() -- an INSTALLED namespace is
+    # locked too, so pkg_locked is TRUE in production (where daemons and parent run
+    # the same code and there is nothing to warn about). Reading the marker
+    # directly avoids a dependency on pkgload (which R CMD check would flag as an
+    # undeclared `::` import). In production the marker is absent and this never
+    # fires.
+    .dev_loaded <- isTRUE(tryCatch(
+      exists(".__DEVTOOLS__", envir = asNamespace("admixr2"), inherits = FALSE),
+      error = function(e) FALSE))
+    if (.dev_loaded &&
+        !exists("dev_daemon_stale", envir = .adm_warn_env, inherits = FALSE)) {
+      assign("dev_daemon_stale", TRUE, envir = .adm_warn_env)
+      warning("admixr2: parallel restarts under devtools::load_all() -- worker ",
+              "daemons load the INSTALLED admixr2, not your loaded source. If it ",
+              "is stale, parallel results silently diverge from sequential. Run ",
+              "devtools::install() (once) before comparing parallel vs sequential.",
+              call. = FALSE)
+    }
+
     # Daemons are separate processes on every platform: compiled DLLs cannot be
     # serialised, so the worker reloads them from the qs2 cache, and rxEt event
     # tables (~130 MB each) are stripped to plain data frames before sending.
