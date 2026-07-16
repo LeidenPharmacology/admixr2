@@ -865,6 +865,9 @@ nlmixr2Est.adgh <- function(env, ...) {
                     paste(.unpaired, collapse = ", ")))
   }
 
+  # Snapshot the rxode2 model registry BEFORE loading any model (see .admFitTeardown).
+  .reg0 <- .admRegistrySnapshot()
+
   # ORDERING INVARIANT: .admLoadSensModel() before .admLoadModel().
   sensModel <- if (want_sens) {
     sm <- tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
@@ -878,7 +881,7 @@ nlmixr2Est.adgh <- function(env, ...) {
 
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
-  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree() }, add = TRUE)
+  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); .admFitTeardown(.reg0) }, add = TRUE)
 
   # Node grid: fixed in standard-normal space; L applied per-eval in .adghMoments.
   grid  <- .adghNodeGrid(n_nodes, pinfo$n_eta)

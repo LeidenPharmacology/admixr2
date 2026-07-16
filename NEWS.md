@@ -1,5 +1,24 @@
 # admixr2 (development version)
 
+## Bug fixes
+
+* **Fitting many models in one R session no longer grows memory without bound.**
+  Each fit reads `ui$foceiModel` (loading the inner/outer/predOnly/predNoLhs
+  companion models) and compiles a simulation model, all of which register in
+  rxode2's global model registry (`.rxModels`). nlmixr2est bounds that registry
+  via `rxUnloadAll()`, but its registry sweep only fires once at least
+  `getOption("rxode2.checkOrphans", 75)` DLLs are loaded -- a threshold admixr2's
+  workload sits under -- so the registry grew unbounded, and once it held a few
+  hundred entries the next fit's solve ballooned the R heap by several GB (a
+  session or test suite in one process could reach ~15 GB and be OOM-killed).
+  Each estimator (and `datagen()`) now removes the registry entries **it added**
+  after every fit -- snapshotting the registry on entry and clearing only the
+  delta, so models the user or the nlmixr2 framework registered elsewhere in the
+  session are left untouched -- plus admixr2's own in-memory model cache (off
+  Windows, where the cache also anchors GC finalizers). The qs2 disk caches are
+  retained so same-model reloads stay cheap. Fit results are unchanged. Set
+  `options(admixr2.fit_teardown = FALSE)` to disable.
+
 ## New features
 
 * **Residual error models: `pow()`, `addPow()` and `combined1()` are now
