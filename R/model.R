@@ -406,17 +406,29 @@
   else numeric(0)
 
   # Cache key: the MODEL (ui$lstExpr), the DIRECTION SET (unpaired -- so a model
-  # cached before a theta gained its own direction is a miss), and a schema tag.
+  # cached before a theta gained its own direction is a miss), a schema tag, and
+  # the rxode2 VERSION.
   # NOT digest(inner): ui$foceiModel$inner returns a DIFFERENT object on its first
   # access than on later ones, so digesting it gives an unstable key. The schema
   # tag ("+fixed-theta") makes a cache written before the fixed-theta fix a miss:
   # a parallel worker reads this file directly and cannot re-derive, so it would
   # otherwise inherit a stale rename_map / NULL fixed_theta and silently diverge
   # from the sequential fit.
+  # The rxode2 version keys the transition where a dosing-modifier's jump
+  # derivative becomes available (e.g. lag()/rate()/dur() gain jumps in 5.1.3):
+  # a model fitted on the older rxode2 caches the FD-fallback sens model
+  # (theta_sens_cols = NULL), and without the version in the key that stale
+  # fallback could be served after the upgrade instead of rebuilding the now-full
+  # jump model. rxTempDir() is session-scoped and compiled models are
+  # version-stamped, so this is belt-and-braces for a pinned persistent tempdir --
+  # but it makes the 5.1.2 -> 5.1.3 handoff automatic regardless.
+  .rx_ver <- tryCatch(as.character(utils::packageVersion("rxode2")),
+                      error = function(e) "NA")
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
     paste0("adm-sens-",
-           digest::digest(list(ui$lstExpr, unpaired, "dirs-jump+fixed-theta")), ".qs2"))
+           digest::digest(list(ui$lstExpr, unpaired, "dirs-jump+fixed-theta", .rx_ver)),
+           ".qs2"))
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
   on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
