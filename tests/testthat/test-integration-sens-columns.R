@@ -176,12 +176,15 @@ test_that("delay() and transit() models get exact columns", {
                             "theta:tka", "theta:tn", "theta:tmtt"))
 })
 
-test_that("d(pred)/d(lag) is one-sided AT the dose boundary (documented, not a bug)", {
+test_that("d(pred)/d(lag) is undefined AT the dose boundary (documented, not a bug)", {
   # At an observation coinciding EXACTLY with the lagged dose time the derivative
-  # does not exist: the analytic jump returns the one-sided value while a central
-  # difference averages across the discontinuity and returns exactly HALF. The FD
-  # reference is the ill-defined one here -- so keep lag/rate values off the
-  # observation grid in every other test. Pinned so nobody "fixes" the jump.
+  # DOES NOT EXIST. The analytic jump returns a one-sided value and a central
+  # difference straddles the discontinuity, so the two disagree -- but the exact
+  # values are implementation-defined and rxode2-version-dependent (older builds
+  # returned the post-jump value with FD ~ analytic/2; the 5.1.3 r-universe build
+  # returns 0 at the pre-dose side). So assert only what is actually guaranteed:
+  # the column is EXACT everywhere off the boundary, and analytic and FD DISAGREE
+  # at it. Keep lag/rate values off the observation grid in every other test.
   lag_on_grid_fn <- function() {
     ini({tcl <- log(5); tv <- log(20); tka <- log(1); tlag <- log(2); add.err <- 0.1
          eta.cl ~ 0.09; eta.v ~ 0.04})
@@ -217,9 +220,10 @@ test_that("d(pred)/d(lag) is one-sided AT the dose boundary (documented, not a b
   ana <- d0[[sm$theta_sens_cols[["tlag"]]]]
   at_boundary <- d0$time == 2
 
-  # exactly half at the boundary observation ...
-  expect_equal(unname(fd[at_boundary]), unname(ana[at_boundary]) / 2, tolerance = 1e-3)
-  # ... and exact everywhere else
+  # the FD reference and the analytic column DISAGREE at the boundary (the
+  # derivative is undefined there) -- the specific values are version-dependent
+  expect_gt(abs(ana[at_boundary] - fd[at_boundary]), 1e-2)
+  # ... and the column is EXACT everywhere else (the real guarantee)
   expect_lt(max(abs(ana[!at_boundary] - fd[!at_boundary]) /
                 pmax(abs(fd[!at_boundary]), 1e-8)), 1e-4)
 })
