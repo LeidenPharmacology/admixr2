@@ -21,6 +21,24 @@
 
 ## New features
 
+* **Analytical gradients for non-mu-referenced ("unpaired") structural thetas.**
+  A structural theta with no mu-referencing eta (`tka` with no `eta.ka`, or the
+  `exp(tcl) * exp(eta.cl)` writing style rxode2 does not mu-reference) used to
+  cost an extra finite-difference `rxSolve` per gradient call. admixr2 now emits
+  its own first-order sensitivity model over an explicit direction set (one
+  direction per random effect plus one per unpaired theta), compiled with
+  `eventSens = "jump"` so dosing-modifier (`f`/`lag`/`rate`/`dur`) sensitivities
+  are no longer silently zero. This mirrors the scheme nlmixr2est's fast-focei
+  uses (`.foceiAnalyticDirections`) but first-order only, and is cross-validated
+  against nlmixr2est's inner model to ~1e-13 across ODE, linCmt, dosing
+  modifiers, initial conditions, covariates, if/else and multi-endpoint models.
+  Consumed by `admc`, `adgh` (including joint multi-output studies); `adfo` keeps
+  finite differences (its `V_pred = J Omega J' + Sigma` needs a second
+  derivative). Measured 2.5-3.8x faster and ~100x more accurate than the previous
+  finite-difference path on a 2-compartment model. This adds `symengine` (already
+  a hard dependency of `rxode2`) to `Imports`, used to emit the linCmt direction
+  derivatives.
+
 * **Residual error models: `pow()`, `addPow()` and `combined1()` are now
   supported, with analytical gradients** (#84). admixr2 previously supported
   only `add`, `prop` and `lnorm`. The residual error model is now read from

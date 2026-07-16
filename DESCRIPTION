@@ -31,7 +31,8 @@ Imports:
     qs2,
     randtoolbox,
     Rcpp,
-    rxode2 (>= 5.1.2)
+    rxode2 (>= 5.1.2),
+    symengine
 LinkingTo:
     Rcpp,
     RcppEigen
