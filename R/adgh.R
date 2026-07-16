@@ -915,8 +915,8 @@ nlmixr2Est.adgh <- function(env, ...) {
     sm
   } else NULL
 
-  # Unpaired (non-mu-referenced) struct thetas: the sens model is augmented with a
-  # dummy eta for each (.admBuildSensUi), so their sensitivities come from the same
+  # Unpaired (non-mu-referenced) struct thetas: the sens model carries an explicit
+  # THETA_j_ direction for each (.admBuildThetaSens), so their sensitivities come from the same
   # solve as the etas'. Without those columns they fall back to FD of .adghNLL.
   if (!is.null(pinfo$struct_has_eta) && any(!pinfo$struct_has_eta)) {
     .unpaired <- names(pinfo$struct_has_eta)[!pinfo$struct_has_eta]

@@ -43,8 +43,8 @@
   finite differences (its `V_pred = J Omega J' + Sigma` needs a second
   derivative). Measured 2.5-3.8x faster and ~100x more accurate than the previous
   finite-difference path on a 2-compartment model. This adds `symengine` (already
-  a hard dependency of `rxode2`) to `Imports`, used to emit the linCmt direction
-  derivatives.
+  a hard dependency of `nlmixr2est`, so always installed alongside admixr2) to
+  `Imports`, used to emit the linCmt direction derivatives.
 
 * **Residual error models: `pow()`, `addPow()` and `combined1()` are now
   supported, with analytical gradients** (#84). admixr2 previously supported

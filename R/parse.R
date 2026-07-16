@@ -52,8 +52,8 @@
 # identity FAILS if the eta also appears in another parameter (`eta.cl` in both
 # `cl` and `v`): d(pred)/d(eta.cl) then collects a path through `v` that
 # d(pred)/d(tcl) does not have. Such a theta must not reuse the eta column -- it
-# is treated as unpaired and gets its own sensitivity direction (a dummy eta in
-# the augmented sens model), which is always exact.
+# is treated as unpaired and gets its own sensitivity direction (an explicit
+# THETA_j_ direction in .admBuildThetaSens's sens model), which is always exact.
 #
 # In practice rxode2 already declines to mu-reference a shared eta (it drops the
 # rows from muRefDataFrame), so this is belt-and-braces -- it mirrors the
@@ -207,6 +207,10 @@
   sigma_init <- setNames(ifelse(.is_var, 2 * log(sigma_rows$est), sigma_rows$est),
                          sigma_names)
 
+  # mu-reference pairs drive BOTH struct_has_eta and struct_eta_idx below; compute
+  # once (each call re-runs .admNameOccurrence's all.vars scan over the model).
+  mrd <- .admMuRefPairs(ui)
+
   list(struct_names    = struct_rows$name,
        struct_init     = setNames(struct_rows$est,   struct_rows$name),
        struct_lower    = setNames(struct_rows$lower, struct_rows$name),
@@ -234,12 +238,10 @@
        has_kappa          = has_kappa,
        struct_has_eta     = setNames(
          struct_rows$name %in% {
-           .mrd <- .admMuRefPairs(ui)
-           if (!is.null(.mrd)) .mrd$theta else eta_names
+           if (!is.null(mrd)) mrd$theta else eta_names
          },
          struct_rows$name),
        struct_eta_idx     = {
-         mrd <- .admMuRefPairs(ui)
          if (!is.null(mrd)) {
            eta_col <- if ("eta" %in% names(mrd)) "eta" else names(mrd)[2]
            vapply(eta_names, function(en) {

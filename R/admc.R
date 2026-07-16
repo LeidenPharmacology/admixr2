@@ -1654,6 +1654,15 @@ admStopWorkers <- function() {
       # the belt to that pair of braces.)
       if (!is.null(sens_cols))   m$sens_cols  <- sens_cols
       if (!is.null(sens_rename)) m$rename_map <- sens_rename
+      # m$theta_sens_cols and m$fixed_theta are NOT overwritten here -- the parent
+      # does not thread them through (adding a worker-load argument would trip the
+      # dev-mode stale-daemon `unused argument` trap; see .admRestartWorker's note).
+      # Their staleness is guarded solely by the "dirs-jump+fixed-theta" schema tag
+      # in the sens cache key: any change to how those fields are DERIVED must bump
+      # that tag, or a stale file would become a false hit and a worker could fill
+      # the wrong constant into a fixed theta's THETA[k] column, silently diverging
+      # from the sequential fit. Overwriting sens_cols/rename_map above is the belt;
+      # the schema tag is the braces for these two.
       m
     }, error = function(e) NULL)
   } else {
@@ -1992,8 +2001,8 @@ nlmixr2Est.admc <- function(env, ...) {
     sm
   } else NULL
 
-  # Unpaired (non-mu-referenced) struct thetas. The sens model is AUGMENTED with a
-  # dummy eta per unpaired theta (.admBuildSensUi), so it returns d(pred)/d(theta)
+  # Unpaired (non-mu-referenced) struct thetas. The sens model carries an explicit
+  # THETA_j_ direction per unpaired theta (.admBuildThetaSens), so it returns d(pred)/d(theta)
   # for them and the whole gradient stays analytical -- including a model with NO
   # mu-referenced theta at all, which used to force a full FD gradient. If the
   # augmentation was unavailable (theta_sens_cols NULL) the old behaviour stands:
