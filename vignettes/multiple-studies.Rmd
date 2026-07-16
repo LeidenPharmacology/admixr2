@@ -123,7 +123,7 @@ pk_model <- function() {
 Pass both cohorts as a named list. Each entry may independently specify `times`,
 `ev`, `V`, `n`, and `method`:
 
-```{r fit}
+```{r fit, comment = NA}
 fit_multi <- nlmixr2(
   pk_model, admData(), est = "admc",
   control = admControl(
