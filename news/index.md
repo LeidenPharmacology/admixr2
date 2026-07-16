@@ -2,6 +2,37 @@
 
 ## admixr2 (development version)
 
+### Bug fixes
+
+- **Parallel restarts under `devtools::load_all()` warn once about the
+  installed package.** In dev mode the admixr2 namespace is locked, so
+  worker daemons run the *installed* package rather than the loaded
+  source; if it is stale the parallel objective silently diverges from
+  the sequential one. `.admRunRestarts` now emits a one-time warning in
+  this case telling you to `devtools::install()`. It never fires in
+  production (installed package == source).
+
+- **Fitting many models in one R session no longer grows memory without
+  bound.** Each fit reads `ui$foceiModel` (loading the
+  inner/outer/predOnly/predNoLhs companion models) and compiles a
+  simulation model, all of which register in rxode2’s global model
+  registry (`.rxModels`). nlmixr2est bounds that registry via
+  [`rxUnloadAll()`](https://nlmixr2.github.io/rxode2/reference/rxUnloadAll.html),
+  but its registry sweep only fires once at least
+  `getOption("rxode2.checkOrphans", 75)` DLLs are loaded – a threshold
+  admixr2’s workload sits under – so the registry grew unbounded, and
+  once it held a few hundred entries the next fit’s solve ballooned the
+  R heap by several GB (a session or test suite in one process could
+  reach ~15 GB and be OOM-killed). Each estimator (and
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md))
+  now removes the registry entries **it added** after every fit –
+  snapshotting the registry on entry and clearing only the delta, so
+  models the user or the nlmixr2 framework registered elsewhere in the
+  session are left untouched – plus admixr2’s own in-memory model cache
+  (off Windows, where the cache also anchors GC finalizers). The qs2
+  disk caches are retained so same-model reloads stay cheap. Fit results
+  are unchanged. Set `options(admixr2.fit_teardown = FALSE)` to disable.
+
 ### New features
 
 - **Residual error models: `pow()`, `addPow()` and `combined1()` are now

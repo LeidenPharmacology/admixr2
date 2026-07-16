@@ -422,7 +422,7 @@ fit <- nlmixr2(
 #> | 0012     | -1266.45 |    4.926 |    8.051 |     31.6 |    8.896 |   0.8088 |    0.181 |   0.1227 |  0.08089 |   0.1023 |  0.01963 |   0.1358 |
 #> | 0013     | -1266.45 |    4.926 |    8.051 |     31.6 |    8.895 |   0.8088 |    0.181 |   0.1227 |  0.08089 |   0.1023 |  0.01963 |   0.1358 |
 #> | 0014 ✓   | -1266.45 |    4.926 |    8.051 |     31.6 |    8.895 |   0.8088 |    0.181 |   0.1227 |  0.08089 |   0.1023 |  0.01963 |   0.1358 |
-#> | 0.6 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 0.7 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160
@@ -437,7 +437,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    0.646      6.335   6.981
+#> 1    0.696      5.363   6.059
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

@@ -49,9 +49,11 @@
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-vignettes" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Vignettes</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes">
 <li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
+    <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
     <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
+    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD — what data do you need?</a></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
@@ -171,15 +173,93 @@ Each study spec needs only <code>times</code>, <code>ev</code>, and
 between-time correlation and the residual error contribution on the
 diagonal:</p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">study_data</span><span class="op">$</span><span class="va">low_dose</span><span class="op">$</span><span class="va">V</span>, <span class="fl">3</span><span class="op">)</span></span>
-<span><span class="co">#&gt;        0.5      1     2      4      8     12    24</span></span>
-<span><span class="co">#&gt; 0.5  0.291  0.187 0.106 -0.005 -0.018 -0.007 0.000</span></span>
-<span><span class="co">#&gt; 1    0.187  0.452 0.171  0.051  0.001 -0.001 0.000</span></span>
-<span><span class="co">#&gt; 2    0.106  0.171 0.420  0.161  0.051  0.015 0.001</span></span>
-<span><span class="co">#&gt; 4   -0.005  0.051 0.161  0.255  0.084  0.028 0.001</span></span>
-<span><span class="co">#&gt; 8   -0.018  0.001 0.051  0.084  0.046  0.016 0.001</span></span>
-<span><span class="co">#&gt; 12  -0.007 -0.001 0.015  0.028  0.016  0.007 0.000</span></span>
-<span><span class="co">#&gt; 24   0.000  0.000 0.001  0.001  0.001  0.000 0.000</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="fu">knitr</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/knitr/man/kable.html" class="external-link">kable</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">study_data</span><span class="op">$</span><span class="va">low_dose</span><span class="op">$</span><span class="va">V</span>, <span class="fl">3</span><span class="op">)</span>,</span>
+<span>             caption <span class="op">=</span> <span class="st">"Generated covariance matrix V for the low-dose study"</span><span class="op">)</span></span></code></pre></div>
+<table class="table">
+<caption>Generated covariance matrix V for the low-dose study</caption>
+<thead><tr class="header">
+<th align="left"></th>
+<th align="right">0.5</th>
+<th align="right">1</th>
+<th align="right">2</th>
+<th align="right">4</th>
+<th align="right">8</th>
+<th align="right">12</th>
+<th align="right">24</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">0.5</td>
+<td align="right">0.291</td>
+<td align="right">0.187</td>
+<td align="right">0.106</td>
+<td align="right">-0.005</td>
+<td align="right">-0.018</td>
+<td align="right">-0.007</td>
+<td align="right">0.000</td>
+</tr>
+<tr class="even">
+<td align="left">1</td>
+<td align="right">0.187</td>
+<td align="right">0.452</td>
+<td align="right">0.171</td>
+<td align="right">0.051</td>
+<td align="right">0.001</td>
+<td align="right">-0.001</td>
+<td align="right">0.000</td>
+</tr>
+<tr class="odd">
+<td align="left">2</td>
+<td align="right">0.106</td>
+<td align="right">0.171</td>
+<td align="right">0.420</td>
+<td align="right">0.161</td>
+<td align="right">0.051</td>
+<td align="right">0.015</td>
+<td align="right">0.001</td>
+</tr>
+<tr class="even">
+<td align="left">4</td>
+<td align="right">-0.005</td>
+<td align="right">0.051</td>
+<td align="right">0.161</td>
+<td align="right">0.255</td>
+<td align="right">0.084</td>
+<td align="right">0.028</td>
+<td align="right">0.001</td>
+</tr>
+<tr class="odd">
+<td align="left">8</td>
+<td align="right">-0.018</td>
+<td align="right">0.001</td>
+<td align="right">0.051</td>
+<td align="right">0.084</td>
+<td align="right">0.046</td>
+<td align="right">0.016</td>
+<td align="right">0.001</td>
+</tr>
+<tr class="even">
+<td align="left">12</td>
+<td align="right">-0.007</td>
+<td align="right">-0.001</td>
+<td align="right">0.015</td>
+<td align="right">0.028</td>
+<td align="right">0.016</td>
+<td align="right">0.007</td>
+<td align="right">0.000</td>
+</tr>
+<tr class="odd">
+<td align="left">24</td>
+<td align="right">0.000</td>
+<td align="right">0.000</td>
+<td align="right">0.001</td>
+<td align="right">0.001</td>
+<td align="right">0.001</td>
+<td align="right">0.000</td>
+<td align="right">0.000</td>
+</tr>
+</tbody>
+</table>
 </div>
 <div class="section level3">
 <h3 id="inspecting-the-generated-profiles">Inspecting the generated profiles<a class="anchor" aria-label="anchor" href="#inspecting-the-generated-profiles"></a>
@@ -276,7 +356,7 @@ finds them regardless.</p>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt;   optimize covariance elapsed</span></span>
-<span><span class="co">#&gt; 1   40.241      4.733  44.974</span></span>
+<span><span class="co">#&gt; 1   45.009      5.118  50.127</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span></span>
 <span><span class="co">#&gt; </span></span>
@@ -304,15 +384,38 @@ finds them regardless.</p>
 <code class="sourceCode R"><span><span class="va">est</span>   <span class="op">&lt;-</span> <span class="va">fit_sim</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">struct</span></span>
 <span><span class="va">truth</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>tcl <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">5</span><span class="op">)</span>, tv <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">10</span><span class="op">)</span>, tka <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">1</span><span class="op">)</span><span class="op">)</span></span>
 <span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
-<span>  parameter <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">truth</span><span class="op">)</span>,</span>
-<span>  truth     <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">truth</span><span class="op">)</span>, <span class="fl">2</span><span class="op">)</span>,</span>
-<span>  estimate  <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">est</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">truth</span><span class="op">)</span><span class="op">]</span><span class="op">)</span>, <span class="fl">2</span><span class="op">)</span></span>
-<span><span class="op">)</span></span>
-<span><span class="co">#&gt;     parameter truth estimate</span></span>
-<span><span class="co">#&gt; tcl       tcl     5     4.99</span></span>
-<span><span class="co">#&gt; tv         tv    10    10.00</span></span>
-<span><span class="co">#&gt; tka       tka     1     1.00</span></span></code></pre></div>
+<span><span class="fu">knitr</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/knitr/man/kable.html" class="external-link">kable</a></span><span class="op">(</span></span>
+<span>  <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
+<span>    parameter <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">truth</span><span class="op">)</span>,</span>
+<span>    truth     <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">truth</span><span class="op">)</span>, <span class="fl">2</span><span class="op">)</span>,</span>
+<span>    estimate  <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">est</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">truth</span><span class="op">)</span><span class="op">]</span><span class="op">)</span>, <span class="fl">2</span><span class="op">)</span></span>
+<span>  <span class="op">)</span>,</span>
+<span>  row.names <span class="op">=</span> <span class="cn">FALSE</span>, caption <span class="op">=</span> <span class="st">"Structural parameter estimates vs true values"</span><span class="op">)</span></span></code></pre></div>
+<table class="table">
+<caption>Structural parameter estimates vs true values</caption>
+<thead><tr class="header">
+<th align="left">parameter</th>
+<th align="right">truth</th>
+<th align="right">estimate</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">tcl</td>
+<td align="right">5</td>
+<td align="right">4.99</td>
+</tr>
+<tr class="even">
+<td align="left">tv</td>
+<td align="right">10</td>
+<td align="right">10.00</td>
+</tr>
+<tr class="odd">
+<td align="left">tka</td>
+<td align="right">1</td>
+<td align="right">1.00</td>
+</tr>
+</tbody>
+</table>
 </div>
 </div>
 <div class="section level2">

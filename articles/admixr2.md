@@ -175,42 +175,41 @@ fit <- nlmixr2(
 ## Inspecting the fit
 
 ``` r
-
 print(fit)
-#> ── nlmixr² admc ──
-#> 
-#>           OBJF       AIC       BIC Log-likelihood
-#> admc -3690.835 -3668.835 -3598.305       1845.418
-#> 
-#> ── Time (sec fit$time): ──
-#> 
-#>   optimize covariance elapsed
-#> 1   22.659      5.505  28.164
-#> 
-#> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
-#> 
-#>                                   Parameter    Est.      SE   %RSE
-#> tcl                    Log clearance (L/hr)   1.601 0.01635  1.021
-#> tv1                  Log central volume (L)   2.314 0.08719  3.768
-#> tv2               Log peripheral volume (L)   3.402 0.04007  1.178
-#> tq        Log inter-compartmental CL (L/hr)   2.285 0.02132 0.9332
-#> tka     Log absorption rate constant (1/hr) 0.02423 0.08198  338.4
-#> prop.sd      Proportional residual error SD  0.1984               
-#>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl         4.958 (4.802, 5.12)     32.8            
-#> tv1           10.12 (8.528, 12)     33.8            
-#> tv2        30.03 (27.76, 32.48)     32.0            
-#> tq          9.822 (9.42, 10.24)     33.4            
-#> tka       1.025 (0.8725, 1.203)     31.2            
-#> prop.sd                  0.1984                     
-#>  
-#>   Covariance Type (fit$covMethod): r
-#>   No correlations in between subject variability (BSV) matrix
-#>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
-#>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
-#>   Censoring (fit$censInformation): No censoring
-#>   Minimization message (fit$message):  
-#>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached.
+ [1m──  [34mnlmix [39m [31mr² [39m  [33madmc [39m ── [22m
+
+          OBJF       AIC       BIC Log-likelihood
+admc -3690.835 -3668.835 -3598.305       1845.418
+
+ [1m── Time (sec  [33mfit [39m [34m$time [39m): ── [22m
+
+  optimize covariance elapsed
+1   23.516      5.081  28.597
+
+ [1m── Population Parameters ( [33mfit [39m [34m$parFixed [39m or  [33mfit [39m [34m$parFixedDf [39m): ── [22m
+
+                                   [1m [1mParameter [0m [0m     [1mEst. [0m       [1m [1mSE [0m [0m    [1m%RSE [0m
+ [1m [1mtcl [0m [0m                    Log clearance (L/hr)   1.601 0.01635  1.021
+ [1m [1mtv1 [0m [0m                  Log central volume (L)   2.314 0.08719  3.768
+ [1m [1mtv2 [0m [0m               Log peripheral volume (L)   3.402 0.04007  1.178
+ [1m [1mtq [0m [0m        Log inter-compartmental CL (L/hr)   2.285 0.02132 0.9332
+ [1m [1mtka [0m [0m     Log absorption rate constant (1/hr) 0.02423 0.08198  338.4
+ [1m [1mprop.sd [0m [0m      Proportional residual error SD  0.1984               
+         [1mBack-transformed(95%CI) [0m  [1mBSV(CV%) [0m  [1mShrink(SD)% [0m
+ [1m [1mtcl [0m [0m         4.958 (4.802, 5.12)     32.8            
+ [1m [1mtv1 [0m [0m           10.12 (8.528, 12)     33.8            
+ [1m [1mtv2 [0m [0m        30.03 (27.76, 32.48)     32.0            
+ [1m [1mtq [0m [0m          9.822 (9.42, 10.24)     33.4            
+ [1m [1mtka [0m [0m       1.025 (0.8725, 1.203)     31.2            
+ [1m [1mprop.sd [0m [0m                  0.1984                     
+ 
+  Covariance Type ( [33mfit [39m [1m [34m$covMethod [39m [22m):  [1mr [22m
+  No correlations in between subject variability (BSV) matrix
+  Full BSV covariance ( [33mfit [39m [1m [34m$omega [39m [22m) or correlation ( [33mfit [39m [1m [34m$omegaR [39m [22m; diagonals=SDs) 
+  Distribution stats (mean/skewness/kurtosis/p-value) available in  [33mfit [39m [1m [34m$shrink [39m [22m 
+  Censoring ( [33mfit [39m [1m [34m$censInformation [39m [22m): No censoring
+  Minimization message ( [33mfit [39m [1m [34m$message [39m [22m):  
+    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 
 Key entries in `fit$env$admExtra`:
@@ -220,15 +219,15 @@ Key entries in `fit$env$admExtra`:
 fit$objective                    # -2 log-likelihood
 #> [1] -3690.835
 fit$env$admExtra$struct          # structural parameters (log scale)
-#>        tcl        tv1        tv2         tq        tka 
-#> 1.60106955 2.31424055 3.40223701 2.28459887 0.02422598
+#>       tcl       tv1       tv2        tq       tka 
+#> 1.6010696 2.3142405 3.4022370 2.2845989 0.0242259
 fit$env$admExtra$omega           # estimated Omega matrix
-#>          [,1]      [,2]       [,3]     [,4]       [,5]
-#> [1,] 0.102159 0.0000000 0.00000000 0.000000 0.00000000
-#> [2,] 0.000000 0.1080019 0.00000000 0.000000 0.00000000
-#> [3,] 0.000000 0.0000000 0.09747445 0.000000 0.00000000
-#> [4,] 0.000000 0.0000000 0.00000000 0.105588 0.00000000
-#> [5,] 0.000000 0.0000000 0.00000000 0.000000 0.09281046
+#>           [,1]      [,2]       [,3]     [,4]       [,5]
+#> [1,] 0.1021589 0.0000000 0.00000000 0.000000 0.00000000
+#> [2,] 0.0000000 0.1080018 0.00000000 0.000000 0.00000000
+#> [3,] 0.0000000 0.0000000 0.09747445 0.000000 0.00000000
+#> [4,] 0.0000000 0.0000000 0.00000000 0.105588 0.00000000
+#> [5,] 0.0000000 0.0000000 0.00000000 0.000000 0.09281048
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
 #> 0.03937635

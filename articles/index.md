@@ -16,12 +16,16 @@
 
 - [Getting started with
   admixr2](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md):
+- [From a published figure to E, V and
+  n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md):
 - [Diagnostic
   plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md):
 - [Multiple
   studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md):
 - [Several observed compartments (plasma and
   brain)](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.md):
+- [PD and PK/PD
+  data](https://leidenpharmacology.github.io/admixr2/articles/pkpd.md):
 - [Estimator comparison: adfo, admc, adgh and
   adirmc](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md):
 - [Advanced

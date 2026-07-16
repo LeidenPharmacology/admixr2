@@ -95,16 +95,21 @@ correlation and the residual error contribution on the diagonal:
 
 ``` r
 
-round(study_data$low_dose$V, 3)
-#>        0.5      1     2      4      8     12    24
-#> 0.5  0.291  0.187 0.106 -0.005 -0.018 -0.007 0.000
-#> 1    0.187  0.452 0.171  0.051  0.001 -0.001 0.000
-#> 2    0.106  0.171 0.420  0.161  0.051  0.015 0.001
-#> 4   -0.005  0.051 0.161  0.255  0.084  0.028 0.001
-#> 8   -0.018  0.001 0.051  0.084  0.046  0.016 0.001
-#> 12  -0.007 -0.001 0.015  0.028  0.016  0.007 0.000
-#> 24   0.000  0.000 0.001  0.001  0.001  0.000 0.000
+knitr::kable(round(study_data$low_dose$V, 3),
+             caption = "Generated covariance matrix V for the low-dose study")
 ```
+
+|     |    0.5 |      1 |     2 |      4 |      8 |     12 |    24 |
+|:----|-------:|-------:|------:|-------:|-------:|-------:|------:|
+| 0.5 |  0.291 |  0.187 | 0.106 | -0.005 | -0.018 | -0.007 | 0.000 |
+| 1   |  0.187 |  0.452 | 0.171 |  0.051 |  0.001 | -0.001 | 0.000 |
+| 2   |  0.106 |  0.171 | 0.420 |  0.161 |  0.051 |  0.015 | 0.001 |
+| 4   | -0.005 |  0.051 | 0.161 |  0.255 |  0.084 |  0.028 | 0.001 |
+| 8   | -0.018 |  0.001 | 0.051 |  0.084 |  0.046 |  0.016 | 0.001 |
+| 12  | -0.007 | -0.001 | 0.015 |  0.028 |  0.016 |  0.007 | 0.000 |
+| 24  |  0.000 |  0.000 | 0.001 |  0.001 |  0.001 |  0.000 | 0.000 |
+
+Generated covariance matrix V for the low-dose study {.table}
 
 ### Inspecting the generated profiles
 
@@ -208,7 +213,7 @@ print(fit_sim)
 #> ── Time (sec fit_sim$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1   40.241      4.733  44.974
+#> 1   45.009      5.118  50.127
 #> 
 #> ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 #> 
@@ -240,16 +245,22 @@ Structural parameter estimates and the truth:
 est   <- fit_sim$env$admExtra$struct
 truth <- c(tcl = log(5), tv = log(10), tka = log(1))
 
-data.frame(
-  parameter = names(truth),
-  truth     = round(exp(truth), 2),
-  estimate  = round(exp(est[names(truth)]), 2)
-)
-#>     parameter truth estimate
-#> tcl       tcl     5     4.99
-#> tv         tv    10    10.00
-#> tka       tka     1     1.00
+knitr::kable(
+  data.frame(
+    parameter = names(truth),
+    truth     = round(exp(truth), 2),
+    estimate  = round(exp(est[names(truth)]), 2)
+  ),
+  row.names = FALSE, caption = "Structural parameter estimates vs true values")
 ```
+
+| parameter | truth | estimate |
+|:----------|------:|---------:|
+| tcl       |     5 |     4.99 |
+| tv        |    10 |    10.00 |
+| tka       |     1 |     1.00 |
+
+Structural parameter estimates vs true values {.table}
 
 ## Literature workflow: per-study models
 

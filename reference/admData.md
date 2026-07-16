@@ -1,9 +1,16 @@
 # Dummy data frame for nlmixr2 dispatch
 
 Returns a minimal NONMEM-style data frame that satisfies nlmixr2's data
-argument requirement. For the single-endpoint frame all `DV` values are
-`NA`, so nlmixr2 adds zero log(2pi) constants to OBJF, keeping
-`fit$objective == our -2LL` exactly.
+argument requirement. The single observation row carries a non-`NA`
+placeholder `DV` (`1`); the dose row keeps `DV = NA`. The placeholder is
+purely for dispatch and output construction and never enters the
+reported objective – each estimator overwrites `fit$env$objective` (and
+OBJF/logLik/AIC/BIC) with its own aggregate -2LL. A non-`NA` observation
+is required because nlmixr2's post-fit output construction
+(`nlmixr2CreateOutputFromUi`) solves the model over this frame, and
+rxode2's event-table translation rejects a dataset with no non-`NA`
+observation rows ("no rows in event table or input data"), the same
+reason the multi-endpoint frame below uses a placeholder `DV`.
 
 ## Usage
 
@@ -39,7 +46,7 @@ given.
 admData()
 #>   ID TIME DV AMT EVID CMT
 #> 1  1    0 NA 100  101   1
-#> 2  1    1 NA   0    0   2
+#> 2  1    1  1   0    0   2
 admData(c("cp", "cCSF"))
 #>   ID TIME DV AMT EVID CMT DVID
 #> 1  1    0 NA 100    1   1 <NA>

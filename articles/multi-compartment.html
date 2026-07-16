@@ -49,9 +49,11 @@
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-vignettes" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Vignettes</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes">
 <li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
+    <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
     <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
+    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD — what data do you need?</a></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
@@ -164,7 +166,7 @@ Gauss–Hermite estimator:</p>
 <span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_plasma<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a></span>
 <span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a>        optimize covariance elapsed other</span>
-<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a>elapsed    <span class="fl">2.041</span>      <span class="fl">0.164</span>   <span class="fl">2.205</span> <span class="fl">1.979</span></span>
+<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a>elapsed    <span class="fl">1.768</span>      <span class="fl">0.144</span>   <span class="fl">1.912</span> <span class="fl">1.531</span></span>
 <span id="cb3-30"><a href="#cb3-30" tabindex="-1"></a></span>
 <span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_plasma<span class="sc">$</span>parFixed or fit_plasma<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb3-32"><a href="#cb3-32" tabindex="-1"></a></span>
@@ -255,7 +257,7 @@ to expect. Then the fit call is identical to Step 1:</p>
 <span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_cns<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a></span>
 <span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>        optimize covariance elapsed other</span>
-<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed    <span class="fl">1.972</span>      <span class="fl">0.364</span>   <span class="fl">2.336</span> <span class="fl">2.275</span></span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed      <span class="fl">1.7</span>      <span class="fl">0.326</span>   <span class="fl">2.026</span> <span class="fl">1.466</span></span>
 <span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a></span>
 <span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_cns<span class="sc">$</span>parFixed or fit_cns<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a></span>
