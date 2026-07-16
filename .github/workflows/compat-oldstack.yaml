@@ -42,7 +42,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::testthat, any::devtools
+          extra-packages: any::testthat
           needs: check                    # pulls Suggests (rxode2, nlmixr2, mirai, ...)
 
       - name: Confirm this is the OLD (current-CRAN) stack
@@ -56,13 +56,21 @@ jobs:
           '
         shell: bash
 
+      # Install (not load_all) so the mirai daemons in the parallel test load the
+      # SAME admixr2 build the parent runs. devtools::load_all() would leave the
+      # daemons on an absent/stale INSTALLED package -> workers silently diverge
+      # from the sequential fit (the documented dev-mode parallel caveat).
+      - name: Install admixr2
+        run: R CMD INSTALL --no-multiarch --with-keep.source .
+        shell: bash
+
       - name: Run integration suite with NOT_CRAN=true
         env:
           NOT_CRAN: "true"
         run: |
           Rscript -e '
             Sys.setenv(NOT_CRAN = "true")
-            suppressMessages(devtools::load_all("."))
+            library(admixr2)
             res <- testthat::test_dir("tests/testthat", filter = "integration",
                                       reporter = "summary", stop_on_failure = FALSE)
             df  <- as.data.frame(res)
