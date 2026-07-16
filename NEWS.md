@@ -1,5 +1,12 @@
 # admixr2 (development version)
 
+## New features
+
+* The aggregate-data estimators (`adfo`, `adgh`, `adirmc`, `admc`) now carry
+  `type` and `description` attributes classifying them as "Model Based Meta
+  Analysis" methods, so they appear in the category-grouped estimation-method
+  list nlmixr2est prints for an unsupported `est=` (or a bare `nlmixr2()` call).
+
 ## Bug fixes
 
 * **Parallel restarts under `devtools::load_all()` warn once about the installed
