@@ -212,6 +212,9 @@ test_that("our emitted model agrees with nlmixr2est's inner model (eta columns +
     expect_lt(scal(a$rx_pred_, b$rx_pred_), 1e-6)
     for (j in seq_len(n_eta))
       expect_lt(scal(a[[ours$sens_cols[j]]], b[[theirs$sens_cols[j]]]), 1e-6)
+    # This loop builds a fresh model + companions each iteration; reclaim them so
+    # the registry does not accumulate all five at once (bypasses the fit teardown).
+    admixr2:::.admFitTeardown()
   }
 })
 

@@ -358,6 +358,12 @@ one_cmt_transit_fn <- function() {
     fd <- (sol(tp, et)$rx_pred_ - sol(tm, et)$rx_pred_) / (2 * h)
     out[paste0("theta:", nm)] <- relerr(d0[[sm$theta_sens_cols[[nm]]]], fd)
   }
+  # Reclaim the sens model + foceiModel companions this build registered in
+  # rxode2's global model registry. These column tests bypass the estimator fit
+  # path, so the per-fit teardown never fires; without this the registry (and
+  # RSS) grows across every model in the file until the ubuntu-devel R CMD check
+  # hangs. The returned `out` is a plain numeric vector, unaffected.
+  admixr2:::.admFitTeardown()
   out
 }
 
