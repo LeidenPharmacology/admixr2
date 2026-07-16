@@ -26,6 +26,12 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
+      # rcmdcheck runs the integration suite (NOT_CRAN=true), which drives many
+      # rxode2 fits in one process. glibc retains a per-thread malloc arena across
+      # them, inflating RSS to ~11 GB and hanging/OOM-killing the ubuntu-devel job.
+      # Cap the arena count so freed memory is actually reused (validated: the
+      # compat-oldstack job runs the same suite on ubuntu and passes with this set).
+      MALLOC_ARENA_MAX: "2"
 
 
     steps:
