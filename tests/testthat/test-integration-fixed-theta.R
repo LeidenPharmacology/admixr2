@@ -68,8 +68,9 @@ test_that("the sens model re-derives its fields on a disk-cache hit (worker path
   # digest(ui$lstExpr), which is stable; the old digest(ui$foceiModel$inner) changed
   # between the write and the reload, so the branch never fired and the sens model
   # was silently recompiled every reload.) Clear the pin to force the disk read,
-  # which overwrites rename_map / fixed_theta / sens_cols from the parent's fresh
-  # derivation rather than trusting the file -- the fields a parallel WORKER
+  # which overwrites rename_map / fixed_theta from the parent's fresh
+  # derivation rather than trusting the file (sens_cols is keyed by `unpaired`
+  # in the cache path, so a hit is guaranteed the same set and it is trusted) -- the fields a parallel WORKER
   # inherits (it reads the same file and cannot re-derive), so a stale
   # position-indexed map here would silently diverge the parallel fit from the
   # sequential one.
@@ -84,7 +85,6 @@ test_that("the sens model re-derives its fields on a disk-cache hit (worker path
   stale <- first
   stale$rename_map[["tka"]] <- "THETA[2]"    # the pre-fix bug
   stale$fixed_theta <- numeric(0)
-  stale$sens_cols   <- NULL
   qs2::qs_save(stale, first$cache_file)
 
   key <- paste0("sens_", digest::digest(ui$lstExpr))
@@ -93,7 +93,10 @@ test_that("the sens model re-derives its fields on a disk-cache hit (worker path
   back <- suppressMessages(admixr2:::.admLoadSensModel(ui))
   expect_equal(unname(back$rename_map[["tka"]]), "THETA[3]")     # corrected, not "THETA[2]"
   expect_equal(back$fixed_theta, c(`THETA[2]` = log(20)))        # re-derived, not empty
-  expect_false(is.null(back$sens_cols))                          # re-derived, not NULL
+  # sens_cols / the direction set are keyed by `unpaired` in the cache path, so a
+  # hit is guaranteed the same direction set -- trusted from the cache (a worker
+  # also gets sens_cols passed to it directly), so it round-trips unchanged.
+  expect_equal(back$sens_cols, first$sens_cols)
 
   # the disk-hit branch corrects the RETURNED result but does not rewrite the file,
   # so the stale seed we wrote is still on disk -- wipe it so it cannot pollute a
