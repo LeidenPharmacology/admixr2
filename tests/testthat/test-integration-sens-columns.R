@@ -121,7 +121,7 @@ test_that("a dosing modifier rxode2 cannot differentiate refuses the sens model"
   ui <- suppressMessages(rxode2::rxode2(one_cmt_dose_fn))
   sm <- suppressMessages(admixr2:::.admLoadSensModel(ui))
 
-  expect_setequal(admixr2:::.admDoseMods(ui$loadPruneSens), c("f", "lag"))
+  expect_setequal(.admDoseMods(ui$loadPruneSens), c("f", "lag"))
 
   if (is.null(sm) || !identical(sm$type, "dirs")) {
     # refused: this rxode2 cannot differentiate a modifier one of our directions
@@ -183,7 +183,9 @@ test_that("our emitted model agrees with nlmixr2est's inner model (eta columns +
     n_eta <- sum(!is.na(ui$iniDf$neta1) & ui$iniDf$neta1 == ui$iniDf$neta2 & !ui$iniDf$fix)
 
     ours   <- suppressMessages(admixr2:::.admBuildThetaSens(ui, unp))
-    theirs <- suppressMessages(admixr2:::.admSensFromInner(ui, NULL, n_eta, tempfile()))
+    theirs <- suppressMessages(
+      admixr2:::.admSensFromInner(ui, rename_map = NULL, fixed_theta = numeric(0),
+                                  n_eta = n_eta, cacheFile = tempfile()))
     # Either side may legitimately refuse on an rxode2 that cannot differentiate a
     # dosing modifier it needs (5.1.2 has no lag() jumps) -- the comparison only
     # means something when both exist.

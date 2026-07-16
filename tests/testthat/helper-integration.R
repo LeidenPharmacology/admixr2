@@ -290,6 +290,16 @@ one_cmt_transit_fn <- function() {
 # metric still catches the failure this file exists for: an identically zero
 # column scores exactly 1.0.
 #
+# Which dosing modifiers (by name) does a pruned sens env carry? Test-only helper
+# for the "refuses" contract below. Production code (.admJumpCovers /
+# .admBuildThetaSens) greps admixr2:::.admDoseModRe for the VARS it needs, not the
+# names, so this name-only view lives here rather than in the package.
+.admDoseMods <- function(s) {
+  v <- grep(admixr2:::.admDoseModRe, ls(envir = s, all.names = TRUE), value = TRUE)
+  m <- sub(admixr2:::.admDoseModRe, "\\1", v)
+  unique(ifelse(m == "alag", "lag", m))
+}
+
 # Returns a named vector of those errors: one entry per real eta ("eta:<name>")
 # and per augmented theta ("theta:<name>").
 .int_sens_col_errs <- function(model_fn, ev, times, h = 1e-5, eta_at = 0.1,

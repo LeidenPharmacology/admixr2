@@ -88,13 +88,6 @@
 # rxode2's naming is a single edit rather than four. Group 1 = modifier, 2 = state.
 .admDoseModRe <- "^rx_(f|lag|alag|rate|dur)_(.+)_$"
 
-# Which dosing modifiers does the model actually use?
-.admDoseMods <- function(s) {
-  v <- grep(.admDoseModRe, ls(envir = s, all.names = TRUE), value = TRUE)
-  m <- sub(.admDoseModRe, "\\1", v)
-  unique(ifelse(m == "alag", "lag", m))
-}
-
 # Can this rxode2 build differentiate every dosing modifier that one of OUR
 # directions actually feeds?
 #
@@ -357,6 +350,11 @@
   if (is.null(ini_df)) return(NULL)
   eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 &
                        !ini_df$fix, , drop = FALSE]
+  # Order by neta1 so rename_map's ETA[i] labels below line up with
+  # .admBuildThetaSens's ETA_i_ directions (which it numbers after order(neta1));
+  # otherwise, for an iniDf whose eta rows are out of neta1 order, sens_cols[i]
+  # would report d(pred)/d(eta) for a different eta than rename_map fills ETA[i].
+  eta_rows <- eta_rows[order(eta_rows$neta1), , drop = FALSE]
   n_eta    <- nrow(eta_rows)
   if (n_eta == 0L) return(NULL)
 
