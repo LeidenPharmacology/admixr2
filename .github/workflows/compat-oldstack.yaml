@@ -61,7 +61,13 @@ jobs:
       # daemons on an absent/stale INSTALLED package -> workers silently diverge
       # from the sequential fit (the documented dev-mode parallel caveat).
       - name: Install admixr2
-        run: R CMD INSTALL --no-multiarch --with-keep.source .
+        run: |
+          # Drop the git-tracked Windows build artifacts (src/*.o, *.dll): installing
+          # from the working dir would otherwise LINK the stale Windows nll.o on Linux
+          # ("dangerous relocation: R_AMD64_IMAGEBASE"). R CMD build cleans these when
+          # it makes a tarball, which is why the full R-CMD-check is unaffected.
+          rm -f src/*.o src/*.so src/*.dll
+          R CMD INSTALL --no-multiarch --with-keep.source .
         shell: bash
 
       - name: Run integration suite with NOT_CRAN=true
