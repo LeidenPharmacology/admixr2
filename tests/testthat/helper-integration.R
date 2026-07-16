@@ -178,28 +178,25 @@ one_cmt_dose_fn <- function() {
 # can be checked directly against finite differences. See
 # .int_sens_col_errs() / test-integration-sens-columns.R.
 
-# covariate coefficient: bwt has no eta -> its own direction. (focei can only
-# reuse an eta-scaled column here, and only for subject-constant covariates.)
-one_cmt_cov_fn <- function() {
-  ini({tcl <- log(5); tv <- log(20); bwt <- 0.75; add.err <- 0.1
+# Rich ODE model consolidating three independent, eta-less theta types into ONE
+# compile: a covariate coefficient (bwt), an expit-bounded structural theta (tfr,
+# where focei's analytic path bails entirely), and a parameter-dependent initial
+# condition (tinit). .int_sens_col_errs checks every column at once, so one model
+# verifies all three -- fewer rxode2 compiles in the sens-columns suite than one
+# model per feature.
+one_cmt_feat_fn <- function() {
+  ini({tcl <- log(5); tv <- log(20)
+       bwt   <- 0.75     # covariate coefficient on CL
+       tfr   <- 0.3      # expit-bounded structural theta
+       tinit <- log(2)   # parameter-dependent initial condition
+       add.err <- 0.1
        eta.cl ~ 0.09; eta.v ~ 0.04})
   model({
     cl <- exp(tcl + eta.cl + bwt * WT)
     v  <- exp(tv + eta.v)
-    d/dt(central) <- -(cl / v) * central
-    cp <- central / v
-    cp ~ add(add.err)
-  })
-}
-
-# bounded transform: focei's analytic path bails on these entirely
-one_cmt_expit_fn <- function() {
-  ini({tcl <- log(5); tv <- log(20); tfr <- 0.3; add.err <- 0.1
-       eta.cl ~ 0.09; eta.v ~ 0.04})
-  model({
-    cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v)
     fr <- expit(tfr)
     d/dt(central) <- -(cl / v) * central
+    central(0) <- exp(tinit)
     cp <- fr * central / v
     cp ~ add(add.err)
   })
@@ -216,19 +213,6 @@ one_cmt_shared_eta_fn <- function() {
     ka <- exp(tka + eta.ka)
     d/dt(depot)   <- -ka * depot
     d/dt(central) <-  ka * depot - (cl / v) * central
-    cp <- central / v
-    cp ~ add(add.err)
-  })
-}
-
-# parameter-dependent initial condition
-one_cmt_ic_fn <- function() {
-  ini({tcl <- log(5); tv <- log(20); tinit <- log(2); add.err <- 0.1
-       eta.cl ~ 0.09; eta.v ~ 0.04})
-  model({
-    cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v)
-    d/dt(central) <- -(cl / v) * central
-    central(0) <- exp(tinit)
     cp <- central / v
     cp ~ add(add.err)
   })

@@ -106,19 +106,12 @@ test_that("shared eta: tcl and tv each get their OWN exact column", {
   expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.ka", "theta:tcl", "theta:tv"))
 })
 
-test_that("covariate coefficient gets an exact column", {
-  errs <- .int_sens_col_errs(one_cmt_cov_fn, bolus, times)
-  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:bwt"))
-})
-
-test_that("bounded (expit) theta gets an exact column", {
-  errs <- .int_sens_col_errs(one_cmt_expit_fn, bolus, times)
-  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:tfr"))
-})
-
-test_that("parameter-dependent initial condition gets an exact column", {
-  errs <- .int_sens_col_errs(one_cmt_ic_fn, bolus, times)
-  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:tinit"))
+test_that("covariate, expit-bounded, and parameter-dependent-IC columns are exact", {
+  # One rich model carries all three independent eta-less theta types, so the whole
+  # set is verified in a single compile (see one_cmt_feat_fn).
+  errs <- .int_sens_col_errs(one_cmt_feat_fn, bolus, times)
+  expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v",
+                            "theta:bwt", "theta:tfr", "theta:tinit"))
 })
 
 # ---- Dosing modifiers: the regression this file was written for --------------
@@ -192,7 +185,7 @@ test_that("our emitted model agrees with nlmixr2est's inner model (eta columns +
   ev    <- rxode2::et(amt = 100) |> rxode2::et(times)
 
   for (nm in c("one_cmt_kappa_fn", "one_cmt_lincmt_kappa_fn", "one_cmt_dose_fn",
-               "one_cmt_ic_fn", "one_cmt_cov_fn")) {
+               "one_cmt_feat_fn")) {
     ui <- suppressMessages(rxode2::rxode2(get(nm)))
     unp <- admixr2:::.admUnpairedThetas(ui)
     n_eta <- sum(!is.na(ui$iniDf$neta1) & ui$iniDf$neta1 == ui$iniDf$neta2 & !ui$iniDf$fix)
