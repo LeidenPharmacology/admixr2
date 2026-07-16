@@ -71,7 +71,31 @@ keyed \code{"outA:outB"} (each \code{length(times_A)} x \code{length(times_B)}; 
 pairs are zero). The compartments are then scored by a single MVN over the
 stacked vector with shared random effects. \code{est = "adirmc"} does not
 support multiple observed outputs; use \code{"admc"}, \code{"adfo"} or \code{"adgh"}.
-}}
+}
+
+\strong{Long format (one row per endpoint/time).} As an alternative to the
+\code{observations} list, a study may carry a \code{data} frame that keys each observed
+summary by endpoint, the way nlmixr2 keys observations by \code{DVID}/\code{CMT}. The
+frame needs an endpoint column (\code{DVID}, \code{CMT} or \code{output}), a time column
+(\code{TIME}), a mean column (\code{E}) and -- unless a joint \code{V} is given -- a
+variance column (\code{V}) or an SD column (\code{SD}). It is normalised into exactly
+the same units as the \code{observations} form, so the two are interchangeable:
+
+\if{html}{\out{<div class="sourceCode">}}\preformatted{# independent blocks: per-row variances; optional per-endpoint `n` column
+# and per-endpoint `ev` (a list of event tables keyed by endpoint)
+list(n = 60L, ev = ev,
+     data = data.frame(DVID = c("cp", "cp", "cCSF"), TIME = c(1, 2, 2),
+                       E = c(9.1, 7.4, 2.2), V = c(1.2, 0.9, 0.1)))
+
+# joint (same subjects): ONE stacked covariance whose rows/cols align with
+# the rows of `data` -- no `cross` blocks to assemble by hand
+list(n = 60L, ev = ev, data = data.frame(DVID = ..., TIME = ..., E = ...),
+     V = V_joint)
+}\if{html}{\out{</div>}}
+
+A study-level \code{V} (or an explicit \code{joint = TRUE}) marks the endpoints as
+same-subject; without one, each endpoint is an independent likelihood block.
+Endpoints are stacked in the order they first appear in \code{data}.}
 
 \item{n_sim}{Number of Monte Carlo samples per NLL evaluation.}
 
