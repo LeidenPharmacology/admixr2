@@ -191,12 +191,9 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   if (!inherits(control, "datagenControl"))
     stop("`control` must be created via `datagenControl()`", call. = FALSE)
 
-  # Per-study model loading populates rxode2's global model registry; reclaim what
-  # this call adds on exit so repeated datagen() runs do not accumulate memory
-  # (the same registry blow-up the estimator drivers guard against; see
-  # .admFitTeardown).
-  .reg0 <- .admRegistrySnapshot()
-  on.exit(.admFitTeardown(.reg0), add = TRUE)
+  # Per-study model loading populates rxode2's global model registry; free it with
+  # rxode2's own idiom on exit so repeated datagen() runs stay bounded.
+  on.exit({ gc(FALSE); rxode2::rxUnloadAll() }, add = TRUE)
 
   # Ensure studies are named
   study_names <- names(studies) %||% paste0("study", seq_along(studies))

@@ -7,10 +7,6 @@
   # sibling artifacts) on every exit so the ui stays in the canonical state
   # nlmixr2 expects; see .admDropSimModelMeta() for the full rationale.
   on.exit(.admDropSimModelMeta(ui), add = TRUE)
-  # Record the rxode2 model(s) this load registers so .admFitTeardown can reclaim
-  # them later, even when called outside an estimator fit (test setup, datagen).
-  .before_reg <- .admRegistrySnapshot()
-  on.exit(.admTrackRegistry(.before_reg), add = TRUE)
   .model_key <- digest::digest(ui$lstExpr)
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
@@ -352,28 +348,7 @@
 # sensitivity of exactly ZERO, silently, because FOCEI computes event/dose
 # sensitivities separately (its `predNoLhs` FD model) and admixr2 reads the inner
 # model's columns directly.
-#
-# Pinning: ui$foceiModel creates companion objects ($outer, $predOnly,
-# $predNoLhs) with live C++ DLL pointers. rxUi is a locked environment so
-# assign(..., envir = ui) fails silently. Instead we pin the full foceiModel
-# result in .adm_pin_env (package-level, always writable), keyed by model
-# digest. This keeps companions alive for the session and prevents Windows GC
-# finalizer heap corruption (STATUS_HEAP_CORRUPTION / -1073740940).
 .admLoadSensModel <- function(ui) {
-  .model_key <- digest::digest(ui$lstExpr)
-  .sens_key  <- paste0("sens_", .model_key)
-
-  # Record the rxode2 models this load registers (the foceiModel companions read
-  # via ui$foceiModel, plus the inner sens model) so .admFitTeardown can reclaim
-  # them -- including when loaded outside an estimator fit (test setup, datagen).
-  .before_reg <- .admRegistrySnapshot()
-  on.exit(.admTrackRegistry(.before_reg), add = TRUE)
-
-  # In-memory cache: avoids disk read and rxLoad on repeat calls within a session.
-  .cached <- tryCatch(get(.sens_key, envir = .adm_pin_env, inherits = FALSE),
-                      error = function(e) NULL)
-  if (!is.null(.cached)) return(.cached)
-
   ini_df <- tryCatch(ui$iniDf, error = function(e) NULL)
   if (is.null(ini_df)) return(NULL)
   eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 &
@@ -448,21 +423,9 @@
       result$cache_file  <- .cacheFile
       result$rename_map  <- rename_map
       result$fixed_theta <- fixed_theta
-      tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
       return(result)
     }
   }
-
-  # Pin ui$foceiModel even when the emitted model does not need it. The estimator
-  # drivers access $foceiModel anyway (nlmixr2CreateOutputFromUi / double-compile
-  # prevention), which creates companion objects ($outer, $predOnly, $predNoLhs)
-  # holding live C++ DLL pointers. Unpinned they are immediately GC-eligible and
-  # their finalizers unload DLLs mid-allocation -> Windows heap corruption
-  # (STATUS_HEAP_CORRUPTION / -1073740940). rxUi is a locked env, so they are
-  # pinned in .adm_pin_env (package-level, always writable) instead.
-  tryCatch(assign(paste0("focei_", .model_key),
-                  suppressMessages(ui$foceiModel), envir = .adm_pin_env),
-           error = function(e) NULL)
 
   built <- .admBuildThetaSens(ui, unpaired)
   if (!is.null(built)) {
@@ -484,7 +447,6 @@
   # admixr2' may not be available when loading". Harmless -- a worker reloads the
   # DLL via rxLoad(), not from the serialised env (.admLoadModel does the same).
   tryCatch(suppressWarnings(qs2::qs_save(result, .cacheFile)), error = function(e) NULL)
-  tryCatch(assign(.sens_key, result, envir = .adm_pin_env), error = function(e) NULL)
   result
 }
 

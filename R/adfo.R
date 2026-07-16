@@ -910,8 +910,6 @@ nlmixr2Est.adfo <- function(env, ...) {
                     paste(.unpaired, collapse = ", ")))
   }
 
-  # Snapshot the rxode2 model registry BEFORE loading any model (see .admFitTeardown).
-  .reg0 <- .admRegistrySnapshot()
 
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   sensModel <- if (want_sens) {
@@ -923,7 +921,10 @@ nlmixr2Est.adfo <- function(env, ...) {
 
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
-  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); .admFitTeardown(.reg0) }, add = TRUE)
+  # Free the models this fit registered with rxode2's own idiom (the same
+  # gc(); rxUnloadAll() nlmixr2est runs), so many fits in a session stay bounded.
+  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); gc(FALSE); rxode2::rxUnloadAll() },
+          add = TRUE)
 
   params_list <- .admMakeParamsList(1L, pinfo, length(studies))
 

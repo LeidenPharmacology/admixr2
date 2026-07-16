@@ -62,17 +62,13 @@ fixed_theta_fn <- function() {
 }
 
 test_that("the sens model re-derives its fields on a disk-cache hit (worker path)", {
-  # The disk-cache branch (.admLoadSensModel, file.exists) runs on the SECOND load
-  # in a session -- the first pins the result in .adm_pin_env and later calls return
-  # from that pin. (It only reaches disk at all because the cache key is now
-  # digest(ui$lstExpr), which is stable; the old digest(ui$foceiModel$inner) changed
-  # between the write and the reload, so the branch never fired and the sens model
-  # was silently recompiled every reload.) Clear the pin to force the disk read,
-  # which overwrites rename_map / fixed_theta from the parent's fresh
-  # derivation rather than trusting the file (sens_cols is keyed by `unpaired`
-  # in the cache path, so a hit is guaranteed the same set and it is trusted) -- the fields a parallel WORKER
-  # inherits (it reads the same file and cannot re-derive), so a stale
-  # position-indexed map here would silently diverge the parallel fit from the
+  # The disk-cache branch (.admLoadSensModel, file.exists) runs on the SECOND load:
+  # the first load writes the qs2 file, the reload reads it and OVERWRITES
+  # rename_map / fixed_theta from the parent's fresh derivation rather than trusting
+  # the file (sens_cols is keyed by `unpaired` in the cache path, so a hit is
+  # guaranteed the same direction set and it is trusted). These are the fields a
+  # parallel WORKER inherits -- it reads the same file and cannot re-derive -- so a
+  # stale position-indexed map here would silently diverge the parallel fit from the
   # sequential one.
   ui    <- suppressMessages(rxode2::rxode2(fixed_theta_fn))
   first <- suppressMessages(admixr2:::.admLoadSensModel(ui))
@@ -87,9 +83,6 @@ test_that("the sens model re-derives its fields on a disk-cache hit (worker path
   stale$fixed_theta <- numeric(0)
   qs2::qs_save(stale, first$cache_file)
 
-  key <- paste0("sens_", digest::digest(ui$lstExpr))
-  suppressWarnings(rm(list = key, envir = admixr2:::.adm_pin_env))
-
   back <- suppressMessages(admixr2:::.admLoadSensModel(ui))
   expect_equal(unname(back$rename_map[["tka"]]), "THETA[3]")     # corrected, not "THETA[2]"
   expect_equal(back$fixed_theta, c(`THETA[2]` = log(20)))        # re-derived, not empty
@@ -102,7 +95,6 @@ test_that("the sens model re-derives its fields on a disk-cache hit (worker path
   # so the stale seed we wrote is still on disk -- wipe it so it cannot pollute a
   # later test that reads this cache path.
   suppressWarnings(file.remove(first$cache_file))
-  suppressWarnings(rm(list = key, envir = admixr2:::.adm_pin_env))
 })
 
 test_that("adfo Jacobian (.admSimulateSensRows) fills the fixed theta", {

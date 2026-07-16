@@ -1984,9 +1984,6 @@ nlmixr2Est.admc <- function(env, ...) {
   .unpaired <- if (!is.null(pinfo$struct_has_eta))
     names(pinfo$struct_has_eta)[!pinfo$struct_has_eta] else character(0)
 
-  # Snapshot the rxode2 model registry BEFORE we load any model, so the on.exit
-  # teardown removes only the models this fit registers (see .admFitTeardown).
-  .reg0 <- .admRegistrySnapshot()
 
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   # .admLoadModel() calls rxode2::rxode2(ui) which triggers nlmixr2est's foceiModel
@@ -2032,7 +2029,11 @@ nlmixr2Est.admc <- function(env, ...) {
 
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
-  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); .admFitTeardown(.reg0) }, add = TRUE)
+  # Reclaim the models this fit registered in rxode2's global registry with
+  # rxode2's own idiom (the gc(); rxUnloadAll() nlmixr2est runs per fit), so a
+  # session of many fits does not accumulate compiled models (and RSS) unbounded.
+  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); gc(FALSE); rxode2::rxUnloadAll() },
+          add = TRUE)
 
   set.seed(.ctl$seed)
   z_list      <- .admMakeZ(.ctl$n_sim, pinfo, length(studies), .ctl$sampling)

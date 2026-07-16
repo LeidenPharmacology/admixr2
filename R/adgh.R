@@ -899,10 +899,6 @@ nlmixr2Est.adgh <- function(env, ...) {
         n_nodes, pinfo$n_eta, n_total))
   }
 
-  # Snapshot the rxode2 model registry BEFORE loading any model (see .admFitTeardown).
-  # (Unpaired struct thetas get analytical sensitivities via the augmented sens
-  # model here, so the old "FD for these parameters" message no longer applies.)
-  .reg0 <- .admRegistrySnapshot()
 
   # ORDERING INVARIANT: .admLoadSensModel() before .admLoadModel().
   sensModel <- if (want_sens) {
@@ -931,7 +927,10 @@ nlmixr2Est.adgh <- function(env, ...) {
 
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
-  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); .admFitTeardown(.reg0) }, add = TRUE)
+  # Free the models this fit registered with rxode2's own idiom (the same
+  # gc(); rxUnloadAll() nlmixr2est runs), so many fits in a session stay bounded.
+  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); gc(FALSE); rxode2::rxUnloadAll() },
+          add = TRUE)
 
   # Node grid: fixed in standard-normal space; L applied per-eval in .adghMoments.
   grid  <- .adghNodeGrid(n_nodes, pinfo$n_eta)
