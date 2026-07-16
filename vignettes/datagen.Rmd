@@ -97,7 +97,8 @@ The covariance matrix `V` captures both IIV-driven between-time correlation and
 the residual error contribution on the diagonal:
 
 ```{r show-v}
-round(study_data$low_dose$V, 3)
+knitr::kable(round(study_data$low_dose$V, 3),
+             caption = "Generated covariance matrix V for the low-dose study")
 ```
 
 ### Inspecting the generated profiles
@@ -178,11 +179,13 @@ Structural parameter estimates and the truth:
 est   <- fit_sim$env$admExtra$struct
 truth <- c(tcl = log(5), tv = log(10), tka = log(1))
 
-data.frame(
-  parameter = names(truth),
-  truth     = round(exp(truth), 2),
-  estimate  = round(exp(est[names(truth)]), 2)
-)
+knitr::kable(
+  data.frame(
+    parameter = names(truth),
+    truth     = round(exp(truth), 2),
+    estimate  = round(exp(est[names(truth)]), 2)
+  ),
+  row.names = FALSE, caption = "Structural parameter estimates vs true values")
 ```
 
 ## Literature workflow: per-study models

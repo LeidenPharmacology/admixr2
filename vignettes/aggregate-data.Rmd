@@ -1,0 +1,339 @@
+---
+title: "From a published figure to E, V and n"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{From a published figure to E, V and n}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>",
+  message = FALSE, warning = FALSE,
+  fig.width = 7, fig.height = 4.2, dpi = 120
+)
+# nlmixr2's fit print method uses cli colour; when a build forces colour on (e.g.
+# pkgdown/CI) the raw ANSI escapes leak into the HTML. Force plain-text output
+# for this vignette only, saving the previous global state...
+.adm_opts    <- options(cli.num_colors = 1, crayon.enabled = FALSE)
+.adm_nocolor <- Sys.getenv("NO_COLOR", unset = NA)
+Sys.setenv(NO_COLOR = "1")
+
+# ...and restoring it once the document has finished knitting, so the setting
+# does not leak into other articles when pkgdown builds them in one process.
+knitr::knit_hooks$set(document = function(x) {
+  options(.adm_opts)
+  if (is.na(.adm_nocolor)) Sys.unsetenv("NO_COLOR") else Sys.setenv(NO_COLOR = .adm_nocolor)
+  x
+})
+
+# The estimators keep rxode2's progress bar off during fitting (the control's
+# nDisplayProgress argument), but a one-off bar still prints while each model is
+# *compiled*. Strip those animation frames from the rendered output.
+knitr::knit_hooks$set(output = local({
+  .default <- knitr::knit_hooks$get("output")
+  function(x, options) {
+    x <- gsub("[^\n]*\\[[=| ]+\\][^\n]*\n?", "", x, perl = TRUE)
+    .default(x, options)
+  }
+}))
+```
+
+## The problem
+
+Every study passed to `admControl()` needs a mean vector `E`, a covariance `V`, a
+sample size `n`, the observation `times` and a dosing event table `ev`. A
+published figure gives you a mean and an error bar.
+
+Reading the mean off is easy. Getting the variance right is where aggregate
+analyses go wrong: a standard error used as a standard deviation is off by a
+factor of `sqrt(n)`, and the fit does not tell you — the structural parameters
+come back correct and only the between-subject variability collapses. This
+vignette converts a published figure into `E`, `V` and `n`, and shows what that
+mistake costs.
+
+```{r libs}
+library(admixr2)
+library(rxode2)
+library(nlmixr2)
+library(ggplot2)
+```
+
+## What V must be
+
+`V` is the spread across *subjects*, not the precision of the mean. admixr2's
+likelihood is
+
+$$-2LL = n \left( \log|V_{pred}| + \mathrm{tr}(V_{pred}^{-1} V_{obs}) + r^{\top} V_{pred}^{-1} r \right)$$
+
+where `r` is the mismatch between observed and predicted means, and
+`V_pred = J Omega J' + Sigma` — one subject's covariance, built from the
+between-subject variability and the residual error. `V_obs` must be the same
+object, and the sample size `n` sits outside it. Hand the likelihood a standard
+error squared and you have told it about `n` twice.
+
+So `V = SD^2`, never `SEM^2`.
+
+## What is the error bar?
+
+Read the caption. If it does not say, treat the error bar as unknown rather than
+assuming:
+
+| Figure reports | Convert to SD | Note |
+|---|---|---|
+| Standard deviation (SD) | `SD` | Use directly |
+| Standard error (SEM) | `SD = SEM * sqrt(n)` | Off by `sqrt(n)` if confused |
+| 95% CI of the mean | `SD = (upper - lower) * sqrt(n) / 3.92` | 3.92 = 2 × 1.96; for small `n` use `2 * qt(0.975, n - 1)` |
+| Interquartile range | `SD ~ IQR / 1.35` | Assumes normality |
+| LS-mean SE (from an MMRM) | `SD ~ SE * sqrt(n)` | Biased small — see below |
+
+```{r convert}
+sd_from_sem <- function(sem, n)        sem * sqrt(n)
+sd_from_ci  <- function(lower, upper, n) (upper - lower) * sqrt(n) / (2 * qt(0.975, n - 1))
+sd_from_iqr <- function(q1, q3)        (q3 - q1) / 1.35
+```
+
+An LS-mean SE deserves care because it is the one row that can silently
+reproduce the error this vignette is about. It comes out of a model, usually an
+MMRM: baseline and covariate adjustment remove variance from the residual, and
+the covariance structure borrows across visits, so `SE * sqrt(n)` is usually
+**smaller** than the true between-subject SD — the same direction as mistaking a
+SEM for an SD. It also describes whatever the MMRM modelled, often a change from
+baseline rather than an absolute value. Prefer a descriptive SD from the paper's
+own baseline table, or from a comparable study.
+
+## A figure reporting standard errors
+
+A 50 mg arm, 60 subjects, digitised from a concentration–time figure whose
+caption reads "mean ± SEM" — the same arm used in
+[PD and PK/PD data](pkpd.html), before it was fitted:
+
+```{r data}
+times <- c(0.5, 1, 2, 4, 8, 12, 24)
+E     <- c(0.969, 0.920, 0.831, 0.679, 0.460, 0.317, 0.111)     # mg/L
+SEM   <- c(0.0267, 0.0243, 0.0205, 0.0161, 0.0137, 0.0125, 0.0080)
+n     <- 60L
+
+SD <- sd_from_sem(SEM, n)
+round(SD, 3)
+```
+
+The bars the figure plots are `sqrt(60)` — nearly eight times — smaller than the
+standard deviations the fit needs. Plotting both makes it concrete: the SEM band
+is far too tight to be a between-subject spread.
+
+```{r band-plot, fig.height = 3.6}
+band <- rbind(
+  data.frame(t = times, m = E, lo = E - SD,  hi = E + SD,  what = "mean ± SD (what V needs)"),
+  data.frame(t = times, m = E, lo = E - SEM, hi = E + SEM, what = "mean ± SEM (what the figure plots)"))
+
+ggplot(band, aes(t, m)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi, fill = what), alpha = 0.25) +
+  geom_line(linewidth = 0.9, colour = "grey20") +
+  geom_point(size = 1.8, colour = "grey20") +
+  facet_wrap(~ what) +
+  scale_fill_manual(values = c("mean ± SD (what V needs)"          = "#0072B2",
+                               "mean ± SEM (what the figure plots)" = "#D55E00"),
+                    guide = "none") +
+  labs(x = "Time (h)", y = "Concentration (mg/L)") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        strip.text = element_text(face = "bold", size = 10))
+```
+
+Passing `V` as a plain vector of variances is enough; admixr2 expands it to a
+diagonal matrix and sets `method = "var"`:
+
+```{r study}
+study <- list(E = E, V = SD^2, n = n, times = times,
+              ev = rxode2::et(amt = 50, cmt = "central"))
+```
+
+```{r model}
+pk_model <- function() {
+  ini({
+    tcl <- log(4)  ; label("Log clearance (L/h)")
+    tv  <- log(40) ; label("Log volume (L)")
+    prop.cp <- 0.1 ; label("Proportional residual error")
+    eta.cl ~ 0.09
+    eta.v  ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.v)
+    d/dt(central) <- -(cl/v) * central
+    cp <- central / v
+    cp ~ prop(prop.cp)
+  })
+}
+```
+
+```{r fit, comment = NA}
+fit <- nlmixr2(pk_model, admData(), est = "adgh",
+               control = adghControl(studies = list(mg50 = study)))
+fit
+```
+
+## What reading SEM as SD costs
+
+Now make the mistake: use the plotted `SEM` as if it were an `SD`, so `V` is
+`n`-fold too small.
+
+```{r sem-demo, comment = NA}
+fit_wrong <- nlmixr2(
+  pk_model, admData(), est = "adgh",
+  control = adghControl(studies = list(
+    mg50 = list(E = E, V = SEM^2, n = n, times = times,   # WRONG: SEM^2 as V
+                ev = rxode2::et(amt = 50, cmt = "central")))))
+fit_wrong
+```
+
+Clearance and volume are unchanged to three figures. The between-subject
+variability is not:
+
+```{r sem-omega}
+round(diag(fit$omega) / diag(fit_wrong$omega), 1)
+```
+
+`Omega` shrinks by more than an order of magnitude on both random effects,
+because the model is asked to reproduce a between-subject spread `n` times
+tighter than the real one. `V_pred = J Omega J' + Sigma` is linear in `Omega` and
+in the residual variance, so both shrink together and the structural parameters
+are free to stay where they were. The shrinkage stops short of the full factor of
+`n` only because the mean-mismatch term `r' V_pred^-1 r` does not rescale.
+
+Nothing in the *point estimates* warns you. The *precision* does:
+
+```{r sem-rse}
+round(c(RSE_CL_correct = fit$parFixedDf["tcl", "%RSE"],
+        RSE_CL_wrong   = fit_wrong$parFixedDf["tcl", "%RSE"]), 3)
+```
+
+Clearance comes back not just right but implausibly certain — its standard error
+tightens about
+`r round(fit$parFixedDf["tcl","%RSE"] / fit_wrong$parFixedDf["tcl","%RSE"], 1)`-fold,
+of order `sqrt(n)`. An RSE that looks too good for digitised literature data, or
+an IIV that comes back near zero, is the tell.
+
+Two things make this worse than the demo suggests:
+
+* **The structural parameters only survive because this model fits.** With a
+  misspecified model, `r` is not zero, and a `V_pred` that is `n` times too small
+  weights that mismatch `n` times too heavily — dragging the structural estimates
+  to close a gap they cannot close.
+* **In a multi-study fit, one bad `V` captures the whole fit.** Getting `V` wrong
+  in a single study inflates that study's weight in the joint likelihood roughly
+  `n`-fold. It then dominates every other arm and biases the shared parameters.
+  This is the usual way admixr2 is used, and it is where the mistake is most
+  expensive.
+
+## Why V is usually diagonal
+
+A figure gives one error bar per time point and nothing about how the times
+covary, so the off-diagonal entries of `V` are not available from published
+summaries. A diagonal `V` selects `method = "var"`, which skips the Cholesky
+solve the full-covariance path needs. This is the honest default for literature
+data. The full-covariance path is available when you have the subject-level
+matrix and can compute `cov.wt(dv_mat, method = "ML")$cov` — see
+[Getting started](admixr2.html).
+
+Note the denominator. admixr2's likelihood wants the ML (`n`) variance, while a
+published SD is the unbiased (`n - 1`) sample SD, so strictly
+`V = SD^2 * (n - 1) / n`. At `n = 60` that is a 1.7% change and is usually
+ignored; below `n` of about 15 it is worth applying. The `method = "ML"` rule
+matters most when you compute `V` yourself from subject-level data.
+
+## Sample size
+
+`n` is the number of subjects contributing to the summary, per arm — not the
+total across arms, and not the number of observations.
+
+* **Dropout.** `n` often falls over time, so a figure's late points may rest on
+  fewer subjects than its early ones. Convert each point's error bar with the `n`
+  that applies to it, and pass the number contributing to the observations you are
+  fitting — the number at risk, not the number randomised.
+* **Per-endpoint `n`.** PK and PD are not always measured in the same people. A
+  study's `observations` entries may each carry their own `n`.
+
+## Absolute values or change from baseline?
+
+Many PD papers report a least-squares-mean change from baseline rather than an
+absolute value. Either can be fitted, but the model must predict the same
+quantity as the data:
+
+* Fitting absolute values needs a baseline parameter in the model; see
+  [PD and PK/PD data](pkpd.html).
+* Fitting a change means the model output must itself be a change, and the SD of
+  the change — not of the absolute value — is the one `V` needs.
+
+Studies that report different quantities must be converted to a common one before
+fitting, not after.
+
+## When there is no variability at all
+
+A paper often gives a mean with no SD, SEM or CI — a placebo arm reported only in
+a footnote, for example.
+
+You then have to assume a `V`, and it is worth knowing what that assumption does.
+Refit the arm above with the SD deliberately wrong in each direction:
+
+```{r assume-sweep}
+assume <- function(mult) {
+  f <- nlmixr2(pk_model, admData(), est = "adgh",
+               control = adghControl(studies = list(
+                 mg50 = list(E = E, V = (SD * mult)^2, n = n, times = times,
+                             ev = rxode2::et(amt = 50, cmt = "central")))))
+  c(exp(f$theta[["tcl"]]), exp(f$theta[["tv"]]),
+    diag(f$omega)[["eta.cl"]], diag(f$omega)[["eta.v"]])
+}
+
+mults <- c(0.5, 1, 2, 4)
+res   <- t(vapply(mults, assume, numeric(4)))
+
+tbl <- data.frame(
+  `Assumed SD` = c("0.5x  (too small)", "1x  (correct)",
+                   "2x  (too large)",   "4x  (too large)"),
+  CL           = round(res[, 1], 2),
+  V            = round(res[, 2], 2),
+  `var(eta.cl)` = round(res[, 3], 3),
+  `var(eta.v)`  = round(res[, 4], 3),
+  check.names  = FALSE
+)
+
+knitr::kable(tbl, row.names = FALSE,
+             caption = "Fit against a deliberately wrong V. Truth: CL = 5, V = 50, var(eta.cl) = 0.09, var(eta.v) = 0.04.")
+```
+
+`Omega` follows the assumption in whichever direction it is wrong: too small and
+the between-subject variability collapses, too large and it inflates several-fold.
+`V` is data the model must reproduce, not a weight — so an assumed `V` is an
+assumption about the IIV you are trying to estimate, and it propagates to every
+study through the shared `Omega`. Push it far enough and the fit stops being
+sensible at all: at `4x` the structural parameters leave the building.
+
+There is no safe direction to err in. In rough order of preference:
+
+1. Take the variability from a comparable arm, or a comparable study of the same
+   endpoint.
+2. Use a published typical SD for that endpoint and population.
+3. Exclude the study.
+
+Whichever you choose, record it, and refit across the range you consider
+plausible. If the estimates move, the assumption is doing the work and the result
+belongs in a sensitivity table rather than a headline.
+
+## Notes
+
+* **The error bar is the dominant error source.** Digitisation software is
+  accurate to a few percent; mistaking a SEM for an SD is an error of `sqrt(n)`.
+  Reading the caption matters more than the pixels.
+* **Geometric means.** A paper reporting a geometric mean and CV% is describing a
+  log-normal distribution, while `E` and `V` are arithmetic moments. Convert
+  before fitting.
+* **Digitising.** WebPlotDigitizer is the usual tool. Extracting a figure twice
+  and comparing is a cheap check.
+* **`%RSE` is on the estimation scale.** These parameters are log-scale, so an
+  RSE on `tcl` is not an RSE on clearance.
+* **PD specifics** — baselines, placebo arms, two endpoints — are covered in
+  [PD and PK/PD data](pkpd.html).

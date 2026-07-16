@@ -167,7 +167,7 @@ fit <- nlmixr2(
 
 ## Inspecting the fit
 
-```{r print}
+```{r print, comment = NA}
 print(fit)
 ```
 

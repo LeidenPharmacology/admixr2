@@ -44,12 +44,16 @@ navbar:
       menu:
         - text: Getting started
           href: articles/admixr2.html
+        - text: From a published figure to E, V and n
+          href: articles/aggregate-data.html
         - text: Diagnostic plots
           href: articles/diagnostic-plots.html
         - text: Multiple studies
           href: articles/multiple-studies.html
         - text: Plasma and brain (several outputs)
           href: articles/multi-compartment.html
+        - text: PD and PK/PD — what data do you need?
+          href: articles/pkpd.html
         - text: Estimator comparison
           href: articles/estimator-comparison.html
         - text: Advanced usage
@@ -70,9 +74,11 @@ articles:
     navbar: Vignettes
     contents:
       - admixr2
+      - aggregate-data
       - diagnostic-plots
       - multiple-studies
       - multi-compartment
+      - pkpd
       - estimator-comparison
       - advanced
       - datagen
