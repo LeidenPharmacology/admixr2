@@ -110,6 +110,36 @@ one_cmt_lincmt_kappa_fn <- function() {
   })
 }
 
+# ---- MULTI-ENDPOINT linCmt model --------------------------------------------
+# linCmt() PK (cp) + an algebraic PD endpoint (eff) derived from it. linCmt has
+# no d/dt state, so rxStateOde() is empty but rxState() reports its implicit
+# `central` compartment -- the endpoints must be numbered AFTER it (dvid(2,3), as
+# nlmixr2est's inner model emits), which is why .admBuildThetaSens counts base
+# compartments with rxState(), not rxStateOde(). tv and tec50 are eta-less
+# (unpaired) thetas, so this exercises THETA_j_ direction columns on a linCmt
+# multi-endpoint model. nlmixr2est's inner model returns NULL for this model, so
+# without the emitter these endpoints would get a full finite-difference gradient.
+
+two_endpoint_lincmt_fn <- function() {
+  ini({
+    tcl   <- log(1)  ; label("Log CL")
+    tv    <- log(20) ; label("Log V")       # unpaired: no eta
+    tec50 <- log(5)  ; label("Log EC50")    # unpaired: no eta
+    add.cp  <- 0.5   ; label("Additive SD cp")
+    add.eff <- 0.3   ; label("Additive SD eff")
+    eta.cl  ~ 0.1
+  })
+  model({
+    cl   <- exp(tcl + eta.cl)
+    v    <- exp(tv)
+    ec50 <- exp(tec50)
+    cp   <- linCmt()
+    eff  <- cp / (ec50 + cp)
+    cp  ~ add(add.cp)
+    eff ~ add(add.eff)
+  })
+}
+
 # ---- Model with DOSING-MODIFIER parameters ----------------------------------
 # eta.f drives bioavailability; the eta-less theta tlag drives the lag time.
 # Parameters entering f()/lag()/rate()/dur() have NO sensitivity in nlmixr2est's

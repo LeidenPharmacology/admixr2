@@ -289,10 +289,27 @@
     # rx__sens_* compartments get interleaved and dvid() resolves to the wrong ones.
     outs <- tryCatch(as.character(ui$predDf$var), error = function(e) character(0))
     multi <- length(outs) > 1L
+    # Endpoint pseudo-compartments are numbered AFTER the base compartments, so the
+    # dvid() indices are (number of base compartments) + endpoint position. The base
+    # count must include linCmt's implicit `central` compartment: rxStateOde() lists
+    # only d/dt states (empty for a pure linCmt model) but rxState() reports the
+    # linCmt compartment too. Using rxStateOde() here numbered a multi-endpoint
+    # linCmt model's endpoints one too low (dvid(1,2) instead of nlmixr2est's
+    # dvid(2,3)), mis-routing the CMT-conditional rx_pred_/rx_f1_ columns; rxState()
+    # matches nlmixr2est's inner model exactly. For a pure-ODE model rxState() ==
+    # rxStateOde(), so ODE numbering is unchanged.
+    st_all <- tryCatch(rxode2::rxState(s), error = function(e) st)
+    n_base <- length(st_all)
+    # The one case we still cannot number reliably: a model mixing linCmt with
+    # EXPLICIT ODE states (n_base > number of d/dt states). The ordering of the
+    # implicit linCmt central versus the declared ODE-state cmt() lines is not
+    # reproducible from here, so bail to the inner model + FD (correct, just slower),
+    # as matExp()/indLin() do above.
+    if (multi && length(st) > 0L && n_base > length(st)) return(NULL)
     head_lines <- if (multi && length(st)) paste0("cmt(", st, ")") else character(0)
     tail_lines <- if (multi)
       c(paste0("cmt(", outs, ")"),
-        paste0("dvid(", paste(length(st) + seq_along(outs), collapse = ","), ")"))
+        paste0("dvid(", paste(n_base + seq_along(outs), collapse = ","), ")"))
     else character(0)
 
     txt <- paste(c(head_lines, base_ode, dose, sens_lines, ic, past_lines,

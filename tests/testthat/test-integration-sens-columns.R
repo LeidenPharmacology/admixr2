@@ -38,6 +38,59 @@ test_that("linCmt: eta columns and an eta-less theta's column are exact", {
   expect_cols_exact(errs, c("eta:eta.cl", "eta:eta.v", "theta:tsc"))
 })
 
+test_that("multi-endpoint linCmt: per-endpoint routing + all columns are exact", {
+  # A linCmt PK endpoint (cp) + an algebraic PD endpoint (eff). The endpoint
+  # pseudo-compartments are numbered after linCmt's implicit `central` (rxState),
+  # NOT after the empty rxStateOde -- getting that wrong mis-routes the
+  # CMT-conditional rx_pred_/rx_f1_ columns. nlmixr2est's inner model returns NULL
+  # for this model, so this is the ONLY analytical sensitivity path for it. Check
+  # every eta + THETA column, per endpoint, against a finite difference of the
+  # emitted model's own rx_pred_.
+  ui  <- suppressMessages(rxode2::rxode2(two_endpoint_lincmt_fn))
+  unp <- admixr2:::.admUnpairedThetas(ui)
+  expect_setequal(unp, c("tv", "tec50"))
+
+  sm <- suppressMessages(admixr2:::.admBuildThetaSens(ui, unp))
+  # The whole point of this test is that the emitter does NOT bail here.
+  expect_false(is.null(sm))
+  expect_setequal(names(sm$theta_sens_cols), c("tv", "tec50"))
+
+  th_rows <- ui$iniDf[!is.na(ui$iniDf$ntheta), ]
+  th <- stats::setNames(th_rows$est, paste0("THETA[", th_rows$ntheta, "]"))
+  et <- c(`ETA[1]` = 0.1)
+
+  sol <- function(params, cmt) {
+    ev <- rxode2::et(amt = 100) |> rxode2::et(times, cmt = cmt)
+    d  <- rxode2::rxSolve(sm$mod, params = params, events = ev,
+                          returnType = "data.frame", addDosing = FALSE,
+                          atol = 1e-12, rtol = 1e-12)
+    d[d$time > 0, , drop = FALSE]
+  }
+  scal <- function(x, y) max(abs(x - y)) / max(max(abs(y)), 1e-8)
+
+  # Routing: cp is a concentration (>> 1); eff = cp/(ec50+cp) lives in (0, 1).
+  expect_gt(mean(sol(c(th, et), "cp")$rx_pred_),  1)
+  expect_lt(max(sol(c(th, et), "eff")$rx_pred_),  1)
+
+  for (cmt in c("cp", "eff")) {
+    base <- sol(c(th, et), cmt)
+    hh   <- 1e-6
+    # eta column
+    ep <- et; ep[1] <- ep[1] + hh; em <- et; em[1] <- em[1] - hh
+    fd <- (sol(c(th, ep), cmt)$rx_pred_ - sol(c(th, em), cmt)$rx_pred_) / (2 * hh)
+    expect_lt(scal(base[[sm$sens_cols[1]]], fd), TOL,
+              label = sprintf("eta col, endpoint %s", cmt))
+    # THETA columns
+    for (tnm in names(sm$theta_sens_cols)) {
+      k  <- th_rows$ntheta[match(tnm, th_rows$name)]; pn <- paste0("THETA[", k, "]")
+      tp <- th; tp[pn] <- tp[pn] + hh; tm <- th; tm[pn] <- tm[pn] - hh
+      fd <- (sol(c(tp, et), cmt)$rx_pred_ - sol(c(tm, et), cmt)$rx_pred_) / (2 * hh)
+      expect_lt(scal(base[[sm$theta_sens_cols[[tnm]]]], fd), TOL,
+                label = sprintf("THETA col %s, endpoint %s", tnm, cmt))
+    }
+  }
+})
+
 test_that("shared eta: tcl and tv each get their OWN exact column", {
   # eta.cl drives both cl and v, so d(pred)/d(eta.cl) collects a path through v
   # that d(pred)/d(tcl) does not have -- reusing the eta column would be wrong.
