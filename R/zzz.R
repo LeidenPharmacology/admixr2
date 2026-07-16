@@ -2,23 +2,6 @@
 # Keys are error-type strings; presence of a key means the warning was already emitted.
 .adm_warn_env <- new.env(parent = emptyenv())
 
-#' Clear the admixr2 model cache
-#'
-#' A thin wrapper around [rxode2::rxClean()]. admixr2 writes its `qs2` model
-#' caches (`adm-sim-*`, `adm-sens-*`) to `rxode2::rxTempDir()`, the same directory
-#' rxode2 and nlmixr2est use for their own caches, so `rxode2::rxClean()` --
-#' which unloads all compiled models and wipes that directory -- already clears
-#' admixr2's cache too. This keeps admixr2 on the standard rxode2/nlmixr2est
-#' cache-clearing path rather than a package-specific one; call it (or
-#' `rxode2::rxClean()` directly) in long-running sessions to free disk and memory.
-#'
-#' @return `NULL`, invisibly.
-#' @export
-admClearCache <- function() {
-  rxode2::rxClean()
-  invisible()
-}
-
 .onLoad <- function(libname, pkgname) {
   tryCatch(.register_adm(),  error = function(e)
     warning("admixr2: admc registration failed (", conditionMessage(e), ")", call. = FALSE))

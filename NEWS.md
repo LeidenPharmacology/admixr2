@@ -22,6 +22,13 @@
   files). Net: ~290 fewer lines, no admixr2-specific memory machinery, and fit
   results are unchanged.
 
+* **`admClearCache()` is removed; use `rxode2::rxClean()`.** admixr2's `qs2`
+  caches live in `rxode2::rxTempDir()` alongside rxode2's and nlmixr2est's, so
+  `rxode2::rxClean()` -- rxode2's standard cache wipe (unload all models + clear
+  the temp dir), which nlmixr2est itself calls to reset -- already clears
+  admixr2's cache too. The package-specific `admClearCache()` is therefore
+  redundant.
+
 ## New features
 
 * **Analytical gradients for non-mu-referenced ("unpaired") structural thetas.**

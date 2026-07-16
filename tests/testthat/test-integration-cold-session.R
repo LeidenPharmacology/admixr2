@@ -11,7 +11,7 @@
 # The regular pipeline (test-integration-pipeline.R) builds several
 # covMethod = "none" fits first, which cache the model, so its later
 # covMethod = "r" fit hits the cache and would NOT reproduce the crash.
-# admClearCache() forces the recompile that repopulates .simModelBase, so this
+# rxode2::rxClean() forces the recompile that repopulates .simModelBase, so this
 # test reproduces the exact trigger independent of test execution order.
 
 test_that("covMethod='r' after a cache clear does not recurse in fit assembly (#81)", {
@@ -26,7 +26,7 @@ test_that("covMethod='r' after a cache clear does not recurse in fit assembly (#
                  times = times, ev = rxode2::et(amt = 100))
 
   # Force .admLoadModel() to recompile -> repopulates ui$meta$.simModelBase.
-  admClearCache()
+  rxode2::rxClean()
 
   fit <- suppressMessages(nlmixr2(
     one_cmt_fn, admData(), est = "admc",
