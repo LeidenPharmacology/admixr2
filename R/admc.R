@@ -2029,9 +2029,13 @@ nlmixr2Est.admc <- function(env, ...) {
 
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
-  # Reclaim the models this fit registered in rxode2's global registry with
-  # rxode2's own idiom (the gc(); rxUnloadAll() nlmixr2est runs per fit), so a
-  # session of many fits does not accumulate compiled models (and RSS) unbounded.
+  # Reclaim compiled models with rxode2's own idiom -- the gc(); rxUnloadAll()
+  # nlmixr2est runs per fit -- so a session of many fits does not accumulate models
+  # (and RSS) unbounded. rxUnloadAll() keeps the last getOption("rxode2.dontUnload",
+  # 10) models, and this fit registers only ~6 (sim + sens + the four foceiModel
+  # companions), so the model driving the returned fit stays loaded for nlmixr2's
+  # post-fit output/table solve; only OLDER models (from earlier fits) are freed --
+  # exactly the semantics nlmixr2est's own rxUnloadAll() at fit start has.
   on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); gc(FALSE); rxode2::rxUnloadAll() },
           add = TRUE)
 

@@ -101,7 +101,6 @@ reference:
       - adghControl
       - adirmcControl
       - admStopWorkers
-      - admClearCache
 
   - title: Methods
     desc: S3 methods for fit objects.

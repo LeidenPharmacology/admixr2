@@ -185,7 +185,9 @@
     # --- Joint (same-subject) analytical quadrature gradient -----------------
     # Stacked weighted moments over all outputs (shared-eta node grid); paired
     # struct + omega + sigma analytical on the joint covariance, per output rows.
-    # Unpaired struct thetas use the FD block after this loop (.adghNLL is joint).
+    # Unpaired struct thetas are ALSO analytical here (via js$dtheta_list, same path
+    # as the paired ones); they fall back to the FD block only when the augmented
+    # sens columns are unavailable (theta_sens_ok = FALSE).
     if (isTRUE(s$is_joint)) {
       js <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
                                   pinfo$nDisplayProgress)

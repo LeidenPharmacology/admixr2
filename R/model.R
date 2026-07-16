@@ -82,11 +82,16 @@
 # text instead of the model code. (nlmixr2est's aug builder has the same wrapper.)
 .admToRx <- function(l) rxode2::rxFromSE(l)
 
-# Which dosing modifiers does the model actually use? (f/lag/rate/dur live in the
-# pruned env as rx_<mod>_<state>_; rxode2 stores lag() as alag().)
+# The dosing-modifier variables rxode2 emits into the pruned sens env as
+# rx_<mod>_<state>_ (f/lag/rate/dur; lag() is stored as alag()). ONE regex, used
+# everywhere a dose modifier is found or its name extracted, so a change to
+# rxode2's naming is a single edit rather than four. Group 1 = modifier, 2 = state.
+.admDoseModRe <- "^rx_(f|lag|alag|rate|dur)_(.+)_$"
+
+# Which dosing modifiers does the model actually use?
 .admDoseMods <- function(s) {
-  v <- grep("^rx_(f|lag|alag|rate|dur)_.+_$", ls(envir = s, all.names = TRUE), value = TRUE)
-  m <- sub("^rx_(f|lag|alag|rate|dur)_.+_$", "\\1", v)
+  v <- grep(.admDoseModRe, ls(envir = s, all.names = TRUE), value = TRUE)
+  m <- sub(.admDoseModRe, "\\1", v)
   unique(ifelse(m == "alag", "lag", m))
 }
 
@@ -109,7 +114,7 @@
 # fall back to a finite-difference gradient (correct, if slower). Far better than
 # the alternative: an identically-zero gradient component, silently.
 .admJumpCovers <- function(mod, s, dirs) {
-  vars <- grep("^rx_(f|lag|alag|rate|dur)_.+_$", ls(envir = s, all.names = TRUE), value = TRUE)
+  vars <- grep(.admDoseModRe, ls(envir = s, all.names = TRUE), value = TRUE)
   if (length(vars) == 0L || length(dirs) == 0L) return(TRUE)
 
   need <- character(0)
@@ -121,7 +126,7 @@
                           error = function(e) "0"), "0"),
       logical(1)))
     if (!depends) next
-    key <- sub("^rx_(f|lag|alag|rate|dur)_.+_$", "\\1", v)
+    key <- sub(.admDoseModRe, "\\1", v)
     need <- c(need, if (identical(key, "alag")) "lag" else key)
   }
   need <- unique(need)
@@ -228,10 +233,9 @@
     # dosing modifiers (bioavailability, lag, rate, duration) live in the pruned
     # env as rx_<mod>_<state>_ and are NOT part of rx__d_dt_*; rxode2 stores lag()
     # as alag().
-    dos_vars <- grep("^rx_(f|lag|alag|rate|dur)_.+_$", ls(envir = s, all.names = TRUE),
-                     value = TRUE)
+    dos_vars <- grep(.admDoseModRe, ls(envir = s, all.names = TRUE), value = TRUE)
     dose <- vapply(dos_vars, function(v) {
-      m   <- regmatches(v, regexec("^rx_(f|lag|alag|rate|dur)_(.+)_$", v))[[1L]]
+      m   <- regmatches(v, regexec(.admDoseModRe, v))[[1L]]
       fun <- if (identical(m[2L], "lag")) "alag" else m[2L]
       paste0(fun, "(", m[3L], ")=", .admToRx(get(v, envir = s)))
     }, character(1))
