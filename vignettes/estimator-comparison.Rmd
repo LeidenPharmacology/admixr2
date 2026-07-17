@@ -99,7 +99,8 @@ equivalent precision.
 
 The key cost is that **every NLL evaluation requires $N$ rxSolve calls** — one
 per sample. The analytical gradient (sensitivity equations for mu-referenced
-parameters; common random numbers FD otherwise) adds no further solves, but the
+parameters and, via an added first-order direction set, non-mu-referenced
+structural thetas) adds no further solves, but the
 base cost per optimizer step remains $N \times$ (cost of one rxSolve).
 
 **Advantages:**

@@ -43,22 +43,29 @@ navbar:
       text: Vignettes
       menu:
         - text: Getting started
+        - text: Introduction to admixr2
           href: articles/admixr2.html
         - text: From a published figure to E, V and n
           href: articles/aggregate-data.html
-        - text: Diagnostic plots
-          href: articles/diagnostic-plots.html
+        - text: "---"
+        - text: Study & data scenarios
         - text: Multiple studies
           href: articles/multiple-studies.html
-        - text: Plasma and brain (several outputs)
+        - text: Several outputs (plasma + brain)
           href: articles/multi-compartment.html
-        - text: PD and PK/PD — what data do you need?
+        - text: PD and PK/PD data
           href: articles/pkpd.html
-        - text: Estimator comparison
+        - text: "---"
+        - text: Estimation methods
+        - text: Comparing the estimators
           href: articles/estimator-comparison.html
         - text: Advanced usage
           href: articles/advanced.html
-        - text: Data generation
+        - text: "---"
+        - text: Diagnostics & simulation
+        - text: Diagnostic plots
+          href: articles/diagnostic-plots.html
+        - text: Simulating aggregate data
           href: articles/datagen.html
     github:
       icon: fab fa-github
@@ -70,17 +77,30 @@ articles:
     navbar: Blog
     contents:
       - articles/introducing-admixr2
-  - title: Vignettes
-    navbar: Vignettes
+
+  - title: Getting started
+    desc: Install, fit your first model, and turn a published figure into study inputs.
     contents:
       - admixr2
       - aggregate-data
-      - diagnostic-plots
+
+  - title: Study & data scenarios
+    desc: Structure the data — several studies, several observed outputs, and PD/PK-PD endpoints.
+    contents:
       - multiple-studies
       - multi-compartment
       - pkpd
+
+  - title: Estimation methods
+    desc: Choose and tune an estimator; gradients, restarts, and model comparison.
+    contents:
       - estimator-comparison
       - advanced
+
+  - title: Diagnostics & simulation
+    desc: Assess a fit and generate aggregate data for simulation studies.
+    contents:
+      - diagnostic-plots
       - datagen
 
 reference:

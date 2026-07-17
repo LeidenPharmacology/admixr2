@@ -176,11 +176,17 @@ Key entries in `fit$env$admExtra`:
 ```{r internals}
 fit$objective                    # -2 log-likelihood
 fit$env$admExtra$struct          # structural parameters (log scale)
-fit$env$admExtra$omega           # estimated Omega matrix
 fit$env$admExtra$sigma_var       # residual variance(s)
 
 logLik(fit)
 AIC(fit)
+```
+
+The estimated between-subject covariance matrix `Omega`:
+
+```{r internals-omega}
+knitr::kable(fit$env$admExtra$omega, digits = 4,
+             caption = "Estimated Omega (between-subject covariance).")
 ```
 
 ## Diagnostic plots

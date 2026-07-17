@@ -175,7 +175,9 @@ names(plots)
 ```
 
 Panel names follow the pattern `<type>_<study>` for per-study panels, or
-`nll_trace` / `par_trace` for the trace panels:
+`nll_trace` / `par_trace` for the trace panels. For a study with several observed
+outputs the study label gains the output name — e.g. `mean_lit.plasma`,
+`cov_lit.brain` — so each compartment gets its own panel:
 
 ```{r access2, eval=FALSE}
 plots$nll_trace

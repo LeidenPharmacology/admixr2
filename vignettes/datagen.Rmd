@@ -160,7 +160,7 @@ Starting values are deliberately offset from the truth (CL start = 4 vs true 5,
 V start = 12 vs true 10) to demonstrate that the estimator finds them
 regardless.
 
-```{r fit-simulation}
+```{r fit-simulation, comment = NA}
 fit_sim <- nlmixr2(
   analysis_model, admData(), est = "admc",
   control = admControl(
@@ -247,7 +247,7 @@ model_2cmt <- function() {
 
 Both studies share the same CL (5 L/h) but differ in how they describe
 distribution: the earlier study lumped peripheral distribution into a single
-larger apparent volume (V = 15 L), while the later study resolved the two
+larger apparent volume (V = 40 L), while the later study resolved the two
 compartments (V₁ = 10 L, V₂ = 30 L, Q = 10 L/h).
 
 ```{r lit-datagen}

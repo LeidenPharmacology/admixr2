@@ -360,7 +360,7 @@ Kp_uu <- exp(theta[["tqin"]]) / exp(theta[["tqout"]])
 round(Kp_uu, 2)
 ```
 
-`Kp,uu ≈ 0.5`: at steady state the brain sees about half the plasma
+`Kp,uu` ≈ `r round(Kp_uu, 1)`: at steady state the brain sees about half the plasma
 concentration. This is the whole reason the brain data was needed — with plasma
 alone, `qin` and `qout` are not separately identifiable and `Kp,uu` cannot be
 estimated. The brain measurements resolve it.
