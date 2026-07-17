@@ -175,7 +175,9 @@ names(plots)
 ```
 
 Panel names follow the pattern `<type>_<study>` for per-study panels, or
-`nll_trace` / `par_trace` for the trace panels:
+`nll_trace` / `par_trace` for the trace panels. For a study with several observed
+outputs the study label gains the output name — e.g. `mean_lit.plasma`,
+`cov_lit.brain` — so each compartment gets its own panel:
 
 ```{r access2, eval=FALSE}
 plots$nll_trace
@@ -230,3 +232,9 @@ ggplot2::ggplot(df_corr, ggplot2::aes(x = eta_j, y = eta_i, fill = r)) +
   ggplot2::theme_bw() +
   ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
 ```
+
+## See also
+
+- [Getting started](admixr2.html)
+- [Multiple studies](multiple-studies.html) — meta-analysis across studies
+- [Estimator comparison](estimator-comparison.html)

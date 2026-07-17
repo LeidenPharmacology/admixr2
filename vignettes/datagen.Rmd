@@ -23,11 +23,14 @@ Two common situations call for generating aggregate data programmatically:
 parameters. Define a data-generating model with known parameters, call `datagen()`
 to obtain E and V, fit your analysis model, and compare the estimates to the truth.
 
-**Literature-based modelling.** Each published study was analysed with its own
-structural PK model (possibly a different number of compartments, a different
-parameterisation, or only a subset of the IIV terms). `datagen()` lets each
-study carry its own model so that the simulated aggregate data reflects the
-original authors' model, not a single shared structure.
+**Using published models as an input.** Each published study was analysed with
+its own structural PK model (possibly a different number of compartments, a
+different parameterisation, or only a subset of the IIV terms). `datagen()` turns
+each such model into the aggregate data it implies, so a *previously published
+model* becomes a direct input to your analysis — one of admixr2's two input types
+alongside digitised summary data. Feeding several of these into
+`admControl(studies = ...)` is a meta-analysis across the published literature
+(see `vignette("multiple-studies", package = "admixr2")`).
 
 In both cases the output is a named list of `(E, V, n, times, ev)` objects that
 plug directly into `admControl(studies = ...)`.
@@ -160,7 +163,7 @@ Starting values are deliberately offset from the truth (CL start = 4 vs true 5,
 V start = 12 vs true 10) to demonstrate that the estimator finds them
 regardless.
 
-```{r fit-simulation}
+```{r fit-simulation, comment = NA}
 fit_sim <- nlmixr2(
   analysis_model, admData(), est = "admc",
   control = admControl(
@@ -247,7 +250,7 @@ model_2cmt <- function() {
 
 Both studies share the same CL (5 L/h) but differ in how they describe
 distribution: the earlier study lumped peripheral distribution into a single
-larger apparent volume (V = 15 L), while the later study resolved the two
+larger apparent volume (V = 40 L), while the later study resolved the two
 compartments (V₁ = 10 L, V₂ = 30 L, Q = 10 L/h).
 
 ```{r lit-datagen}
@@ -454,3 +457,9 @@ MC more accurately because it does not linearise $f$. The number of nodes
 `n_nodes` (per eta dimension) trades accuracy against computational cost:
 `n_nodes = 3` is fast; `n_nodes = 5` (default) achieves near-exact moments for
 IIV SD up to ~0.5; `n_nodes = 7` extends coverage to SD ~0.7.
+
+## See also
+
+- [Multiple studies](multiple-studies.html) — feed per-study models into a meta-analysis
+- [From a published figure to E, V and n](aggregate-data.html) — the other input type
+- [Estimator comparison](estimator-comparison.html)

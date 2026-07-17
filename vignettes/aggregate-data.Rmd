@@ -119,7 +119,7 @@ SD <- sd_from_sem(SEM, n)
 round(SD, 3)
 ```
 
-The bars the figure plots are `sqrt(60)` — nearly eight times — smaller than the
+The bars the figure plots are `sqrt(n)` — nearly eight times — smaller than the
 standard deviations the fit needs. Plotting both makes it concrete: the SEM band
 is far too tight to be a between-subject spread.
 
@@ -240,7 +240,7 @@ matrix and can compute `cov.wt(dv_mat, method = "ML")$cov` — see
 
 Note the denominator. admixr2's likelihood wants the ML (`n`) variance, while a
 published SD is the unbiased (`n - 1`) sample SD, so strictly
-`V = SD^2 * (n - 1) / n`. At `n = 60` that is a 1.7% change and is usually
+`V = SD^2 * (n - 1) / n`. At `n = 60` that is a `r round(100 / n, 1)`% change and is usually
 ignored; below `n` of about 15 it is worth applying. The `method = "ML"` rule
 matters most when you compute `V` yourself from subject-level data.
 
@@ -337,3 +337,9 @@ belongs in a sensitivity table rather than a headline.
   RSE on `tcl` is not an RSE on clearance.
 * **PD specifics** — baselines, placebo arms, two endpoints — are covered in
   [PD and PK/PD data](pkpd.html).
+
+## See also
+
+- [Multiple studies](multiple-studies.html) — combine several studies into a meta-analysis
+- [Simulating data & using published models](datagen.html) — the other input type
+- [Getting started](admixr2.html)

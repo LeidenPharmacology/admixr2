@@ -19,10 +19,13 @@ knitr::opts_chunk$set(
 
 Passing several studies to `admControl()` fits the model to all of them
 simultaneously, minimising the sum of per-study NLLs under a shared set of
-population parameters. This is the core use case for aggregate-data modelling:
-you have summary statistics from multiple trials (which may differ in dose,
-sample size, or observation schedule) and want a single population model
-consistent with all of them.
+population parameters. This is **meta-analysis** — the core use case for
+aggregate-data modelling: you have summary statistics from multiple trials
+(which may differ in dose, sample size, or observation schedule) and want a
+single population model consistent with all of them. Each study's `E`, `V` and
+`n` can come from a digitised figure (see
+`vignette("aggregate-data", package = "admixr2")`) or from that study's own
+published model (see `vignette("datagen", package = "admixr2")`).
 
 ## Splitting examplomycin into two cohorts
 
@@ -195,3 +198,9 @@ fit_program <- nlmixr2(
 Studies with a diagonal V (or a plain vector of variances) are automatically
 assigned `method = "var"`, avoiding the O(n_t³) Cholesky solve when the
 off-diagonal covariance structure is unavailable.
+
+## See also
+
+- [From a published figure to E, V and n](aggregate-data.html) — prepare each study's `E`, `V` and `n`
+- [Several observed compartments](multi-compartment.html) — several outputs per study
+- [Estimator comparison](estimator-comparison.html)
