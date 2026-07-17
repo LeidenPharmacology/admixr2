@@ -395,4 +395,10 @@ plot(fit_cns, which = "mean")
   measured in the *same* subjects, supply the plasma–brain cross-covariance for a
   joint fit — one stacked `V` in long format, or a per-output-pair `cross` list
   with `observations`; see `?admControl`.
+
+## See also
+
+- [PD and PK/PD data](pkpd.html) — add a pharmacodynamic endpoint
+- [Multiple studies](multiple-studies.html) — meta-analysis across studies
+- [Diagnostic plots](diagnostic-plots.html)
 ```

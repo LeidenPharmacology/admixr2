@@ -17,8 +17,14 @@ knitr::opts_chunk$set(
 
 ## What is aggregate-data modelling?
 
-`admixr2` fits pharmacometric PK/PD models to **summary-level data**. For each
-clinical study you supply:
+`admixr2` fits pharmacometric PK/PD models to **summary-level data** instead of
+individual records — a **meta-analysis** framework for population PK/PD. The
+inputs can be **digitised aggregate data** from published studies (means, error
+bars and covariances), **previously published PK/PD models**, or a mix of both.
+The result is a single unified population model with interpretable fixed, random
+and covariate effects, recovered without individual patient data.
+
+For each study you supply:
 
 - **E** — observed mean vector (one entry per observation time)
 - **V** — observed covariance matrix (or variance vector)
@@ -27,9 +33,12 @@ clinical study you supply:
 - **ev** — dosing event table
 
 The estimators match E and V against their model-predicted counterparts and
-return a standard nlmixr2 fit object. This lets you apply established nlmixr2
-models to aggregate statistics from publications or internal data summaries
-where individual records are unavailable.
+return a standard nlmixr2 fit object, so established nlmixr2 models apply to
+aggregate statistics from publications or internal summaries where individual
+records are unavailable. Turning a published figure into `E`, `V` and `n` is
+covered in `vignette("aggregate-data", package = "admixr2")`; letting each study
+carry its own published model as the input is covered in
+`vignette("datagen", package = "admixr2")`.
 
 Four estimators are available:
 
@@ -42,9 +51,9 @@ Four estimators are available:
 
 `adfo` is the natural starting point for model screening and initial estimates.
 `admc` is the workhorse for standard PK models. `adgh` is a noise-free
-alternative to `admc` for models with up to ~4 etas. `adirmc` is preferred for
-complex ODE systems with expensive solves, high-dimensional IIV, or poor
-starting values. See
+alternative to `admc`, most efficient when the number of random effects is
+small. `adirmc` is preferred for complex ODE systems with expensive solves,
+high-dimensional IIV, or poor starting values. See
 `vignette("estimator-comparison", package = "admixr2")` for a detailed comparison.
 
 ## The examplomycin dataset
@@ -200,3 +209,10 @@ plots <- plot(fit, which = c("mean", "nll"))
 
 For a detailed walkthrough of all four panel types and customisation options, see
 `vignette("diagnostic-plots", package = "admixr2")`.
+
+## Where to next
+
+- [From a published figure to E, V and n](aggregate-data.html) — turn published summaries into `E`, `V` and `n`
+- [Simulating data & using published models](datagen.html) — the model-as-input path
+- [Multiple studies](multiple-studies.html) — meta-analysis across several studies
+- [Estimator comparison](estimator-comparison.html) — choosing a backend

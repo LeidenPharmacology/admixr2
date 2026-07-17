@@ -323,3 +323,9 @@ if (is.null(cv)) {
   estimated `boxCox()`/`yeoJohnson()` lambda is **not** supported by admixr2:
   because it has no closed-form aggregate mean/variance, the fit stops with an
   error rather than silently approximating it.
+
+## See also
+
+- [Several observed compartments](multi-compartment.html) — multiple outputs and joint fits
+- [Multiple studies](multiple-studies.html) — meta-analysis across studies
+- [From a published figure to E, V and n](aggregate-data.html)

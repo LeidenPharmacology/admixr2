@@ -337,3 +337,9 @@ belongs in a sensitivity table rather than a headline.
   RSE on `tcl` is not an RSE on clearance.
 * **PD specifics** — baselines, placebo arms, two endpoints — are covered in
   [PD and PK/PD data](pkpd.html).
+
+## See also
+
+- [Multiple studies](multiple-studies.html) — combine several studies into a meta-analysis
+- [Simulating data & using published models](datagen.html) — the other input type
+- [Getting started](admixr2.html)

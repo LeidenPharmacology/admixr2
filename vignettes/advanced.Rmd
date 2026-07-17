@@ -361,3 +361,8 @@ BIC(fit_full, fit_reduced)
 
 Lower AIC/BIC favours the more parsimonious model; a difference > 10 is
 generally considered strong evidence.
+
+## See also
+
+- [Estimator comparison](estimator-comparison.html) — the mathematical foundations of each backend
+- [Diagnostic plots](diagnostic-plots.html)

@@ -232,3 +232,9 @@ ggplot2::ggplot(df_corr, ggplot2::aes(x = eta_j, y = eta_i, fill = r)) +
   ggplot2::theme_bw() +
   ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
 ```
+
+## See also
+
+- [Getting started](admixr2.html)
+- [Multiple studies](multiple-studies.html) — meta-analysis across studies
+- [Estimator comparison](estimator-comparison.html)
