@@ -158,7 +158,7 @@ adgh -1323.146 -1313.146 -1292.945       661.5729
 ── Time (sec fit$time): ──
 
         optimize covariance elapsed other
-elapsed    0.548      0.056   0.604  3.53
+elapsed    0.226      0.058   0.284  3.74
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -195,22 +195,22 @@ fit_wrong
 ── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
-adgh -2942.689 -2932.689 -2912.488       1471.344
+adgh -2942.661 -2932.661 -2912.459        1471.33
 
 ── Time (sec fit_wrong$time): ──
 
   optimize covariance elapsed
-1    1.284       0.05   1.334
+1    0.644       0.05   0.694
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
                           Parameter     Est.       SE    %RSE
-tcl             Log clearance (L/h)    1.558 0.003057  0.1962
-tv                   Log volume (L)    3.908 0.002135 0.05464
+tcl             Log clearance (L/h)    1.558 0.003064  0.1967
+tv                   Log volume (L)    3.908 0.002122 0.05431
 prop.cp Proportional residual error 0.008208                 
         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl         4.749 (4.72, 4.777)     4.18            
-tv            49.79 (49.58, 50)     2.94            
+tcl         4.749 (4.72, 4.777)     4.19            
+tv         49.78 (49.57, 49.99)     2.91            
 prop.cp                0.008208                     
  
   Covariance Type (fit_wrong$covMethod): r
@@ -230,7 +230,7 @@ variability is not:
 
 round(diag(fit$omega) / diag(fit_wrong$omega), 1)
 #> eta.cl  eta.v 
-#>   37.1   44.4
+#>   36.9   45.3
 ```
 
 `Omega` shrinks by more than an order of magnitude on both random
@@ -249,7 +249,7 @@ Nothing in the *point estimates* warns you. The *precision* does:
 round(c(RSE_CL_correct = fit$parFixedDf["tcl", "%RSE"],
         RSE_CL_wrong   = fit_wrong$parFixedDf["tcl", "%RSE"]), 3)
 #> RSE_CL_correct   RSE_CL_wrong 
-#>          1.256          0.196
+#>          1.256          0.197
 ```
 
 Clearance comes back not just right but implausibly certain — its

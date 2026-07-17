@@ -267,7 +267,7 @@ admixr2 expands it to a diagonal matrix and sets
 <span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a></span>
 <span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>        optimize covariance elapsed other</span>
-<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed    <span class="fl">0.548</span>      <span class="fl">0.056</span>   <span class="fl">0.604</span>  <span class="fl">3.53</span></span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed    <span class="fl">0.226</span>      <span class="fl">0.058</span>   <span class="fl">0.284</span>  <span class="fl">3.74</span></span>
 <span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a></span>
 <span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a></span>
@@ -303,22 +303,22 @@ small.</p>
 <span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>── nlmixr² adgh ──</span>
 <span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a></span>
 <span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a>          OBJF       AIC       BIC Log<span class="sc">-</span>likelihood</span>
-<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a>adgh <span class="sc">-</span><span class="fl">2942.689</span> <span class="sc">-</span><span class="fl">2932.689</span> <span class="sc">-</span><span class="fl">2912.488</span>       <span class="fl">1471.344</span></span>
+<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a>adgh <span class="sc">-</span><span class="fl">2942.661</span> <span class="sc">-</span><span class="fl">2932.661</span> <span class="sc">-</span><span class="fl">2912.459</span>        <span class="fl">1471.33</span></span>
 <span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a></span>
 <span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_wrong<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a></span>
 <span id="cb8-14"><a href="#cb8-14" tabindex="-1"></a>  optimize covariance elapsed</span>
-<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a><span class="dv">1</span>    <span class="fl">1.284</span>       <span class="fl">0.05</span>   <span class="fl">1.334</span></span>
+<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a><span class="dv">1</span>    <span class="fl">0.644</span>       <span class="fl">0.05</span>   <span class="fl">0.694</span></span>
 <span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a></span>
 <span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_wrong<span class="sc">$</span>parFixed or fit_wrong<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb8-18"><a href="#cb8-18" tabindex="-1"></a></span>
 <span id="cb8-19"><a href="#cb8-19" tabindex="-1"></a>                          Parameter     Est.       SE    %RSE</span>
-<span id="cb8-20"><a href="#cb8-20" tabindex="-1"></a>tcl             Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)    <span class="fl">1.558</span> <span class="fl">0.003057</span>  <span class="fl">0.1962</span></span>
-<span id="cb8-21"><a href="#cb8-21" tabindex="-1"></a>tv                   Log <span class="fu">volume</span> (L)    <span class="fl">3.908</span> <span class="fl">0.002135</span> <span class="fl">0.05464</span></span>
+<span id="cb8-20"><a href="#cb8-20" tabindex="-1"></a>tcl             Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)    <span class="fl">1.558</span> <span class="fl">0.003064</span>  <span class="fl">0.1967</span></span>
+<span id="cb8-21"><a href="#cb8-21" tabindex="-1"></a>tv                   Log <span class="fu">volume</span> (L)    <span class="fl">3.908</span> <span class="fl">0.002122</span> <span class="fl">0.05431</span></span>
 <span id="cb8-22"><a href="#cb8-22" tabindex="-1"></a>prop.cp Proportional residual error <span class="fl">0.008208</span>                 </span>
 <span id="cb8-23"><a href="#cb8-23" tabindex="-1"></a>        Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
-<span id="cb8-24"><a href="#cb8-24" tabindex="-1"></a>tcl         <span class="fl">4.749</span> (<span class="fl">4.72</span>, <span class="fl">4.777</span>)     <span class="fl">4.18</span>            </span>
-<span id="cb8-25"><a href="#cb8-25" tabindex="-1"></a>tv            <span class="fl">49.79</span> (<span class="fl">49.58</span>, <span class="dv">50</span>)     <span class="fl">2.94</span>            </span>
+<span id="cb8-24"><a href="#cb8-24" tabindex="-1"></a>tcl         <span class="fl">4.749</span> (<span class="fl">4.72</span>, <span class="fl">4.777</span>)     <span class="fl">4.19</span>            </span>
+<span id="cb8-25"><a href="#cb8-25" tabindex="-1"></a>tv         <span class="fl">49.78</span> (<span class="fl">49.57</span>, <span class="fl">49.99</span>)     <span class="fl">2.91</span>            </span>
 <span id="cb8-26"><a href="#cb8-26" tabindex="-1"></a>prop.cp                <span class="fl">0.008208</span>                     </span>
 <span id="cb8-27"><a href="#cb8-27" tabindex="-1"></a> </span>
 <span id="cb8-28"><a href="#cb8-28" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit_wrong<span class="sc">$</span>covMethod)<span class="sc">:</span> r</span>
@@ -334,7 +334,7 @@ between-subject variability is not:</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">fit</span><span class="op">$</span><span class="va">omega</span><span class="op">)</span> <span class="op">/</span> <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">fit_wrong</span><span class="op">$</span><span class="va">omega</span><span class="op">)</span>, <span class="fl">1</span><span class="op">)</span></span>
 <span><span class="co">#&gt; eta.cl  eta.v </span></span>
-<span><span class="co">#&gt;   37.1   44.4</span></span></code></pre></div>
+<span><span class="co">#&gt;   36.9   45.3</span></span></code></pre></div>
 <p><code>Omega</code> shrinks by more than an order of magnitude on both
 random effects, because the model is asked to reproduce a
 between-subject spread <code>n</code> times tighter than the real one.
@@ -349,7 +349,7 @@ of the full factor of <code>n</code> only because the mean-mismatch term
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>RSE_CL_correct <span class="op">=</span> <span class="va">fit</span><span class="op">$</span><span class="va">parFixedDf</span><span class="op">[</span><span class="st">"tcl"</span>, <span class="st">"%RSE"</span><span class="op">]</span>,</span>
 <span>        RSE_CL_wrong   <span class="op">=</span> <span class="va">fit_wrong</span><span class="op">$</span><span class="va">parFixedDf</span><span class="op">[</span><span class="st">"tcl"</span>, <span class="st">"%RSE"</span><span class="op">]</span><span class="op">)</span>, <span class="fl">3</span><span class="op">)</span></span>
 <span><span class="co">#&gt; RSE_CL_correct   RSE_CL_wrong </span></span>
-<span><span class="co">#&gt;          1.256          0.196</span></span></code></pre></div>
+<span><span class="co">#&gt;          1.256          0.197</span></span></code></pre></div>
 <p>Clearance comes back not just right but implausibly certain — its
 standard error tightens about 6.4-fold, of order <code>sqrt(n)</code>.
 An RSE that looks too good for digitised literature data, or an IIV that

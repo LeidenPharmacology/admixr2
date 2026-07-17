@@ -81,15 +81,15 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance elapsed other
-elapsed    1.226      0.081   1.307  4.46
+elapsed    0.545      0.083   0.628 5.042
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
             Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl      0.03322 0.03098 93.27   1.034 (0.9729, 1.098)     27.9            
-tv1        2.292 0.04514  1.97      9.89 (9.053, 10.8)     15.1            
-tq         0.883  0.3714 42.06    2.418 (1.168, 5.007)                     
-tv2       0.8677  0.1541 17.76    2.382 (1.761, 3.221)                     
+tcl      0.03322 0.03098 93.25   1.034 (0.9729, 1.098)     27.9            
+tv1        2.292 0.04515  1.97      9.89 (9.052, 10.8)     15.1            
+tq        0.8833  0.3714 42.05    2.419 (1.168, 5.009)                     
+tv2       0.8678  0.1541 17.76    2.382 (1.761, 3.222)                     
 prop.cp 0.004104                              0.004104                     
  
   Covariance Type (fit_plasma$covMethod): r
@@ -184,12 +184,12 @@ fit_cns
 ── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
-adgh -88.59291 -72.59291 -36.65499       44.29646
+adgh -88.59286 -72.59286 -36.65494       44.29643
 
 ── Time (sec fit_cns$time): ──
 
         optimize covariance elapsed other
-elapsed    1.453      0.178   1.631 4.508
+elapsed    0.647      0.171   0.818 5.528
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
@@ -247,7 +247,7 @@ fit_long <- nlmixr2(pk_cns, admData(c("cp", "cb")), est = "adgh",
 
 c(observations = fit_cns$objective, long = fit_long$objective)
 observations         long 
-   -88.59291    -88.59291 
+   -88.59286    -88.59286 
 ```
 
 Which form to use is a matter of taste. The `observations` list keeps
