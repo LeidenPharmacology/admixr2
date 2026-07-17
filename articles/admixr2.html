@@ -48,15 +48,22 @@
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-vignettes" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Vignettes</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes">
-<li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
+<li><h6 class="dropdown-header" data-toc-skip>Getting started</h6></li>
+    <li><a class="dropdown-item" href="../articles/admixr2.html">Introduction to admixr2</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
-    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
+    <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
-    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD — what data do you need?</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Several outputs (plasma + brain)</a></li>
+    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD data</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
-    <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
+    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -81,7 +88,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Getting started with admixr2</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/admixr2.Rmd" class="external-link"><code>vignettes/admixr2.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/admixr2.Rmd" class="external-link"><code>vignettes/admixr2.Rmd</code></a></small>
       <div class="d-none name"><code>admixr2.Rmd</code></div>
     </div>
 
@@ -91,8 +98,14 @@
 <h2 id="what-is-aggregate-data-modelling">What is aggregate-data modelling?<a class="anchor" aria-label="anchor" href="#what-is-aggregate-data-modelling"></a>
 </h2>
 <p><code>admixr2</code> fits pharmacometric PK/PD models to
-<strong>summary-level data</strong>. For each clinical study you
-supply:</p>
+<strong>summary-level data</strong> instead of individual records — a
+<strong>meta-analysis</strong> framework for population PK/PD. The
+inputs can be <strong>digitised aggregate data</strong> from published
+studies (means, error bars and covariances), <strong>previously
+published PK/PD models</strong>, or a mix of both. The result is a
+single unified population model with interpretable fixed, random and
+covariate effects, recovered without individual patient data.</p>
+<p>For each study you supply:</p>
 <ul>
 <li>
 <strong>E</strong> — observed mean vector (one entry per observation
@@ -108,10 +121,14 @@ vector)</li>
 <strong>ev</strong> — dosing event table</li>
 </ul>
 <p>The estimators match E and V against their model-predicted
-counterparts and return a standard nlmixr2 fit object. This lets you
-apply established nlmixr2 models to aggregate statistics from
-publications or internal data summaries where individual records are
-unavailable.</p>
+counterparts and return a standard nlmixr2 fit object, so established
+nlmixr2 models apply to aggregate statistics from publications or
+internal summaries where individual records are unavailable. Turning a
+published figure into <code>E</code>, <code>V</code> and <code>n</code>
+is covered in
+<code><a href="../articles/aggregate-data.html">vignette("aggregate-data", package = "admixr2")</a></code>; letting
+each study carry its own published model as the input is covered in
+<code><a href="../articles/datagen.html">vignette("datagen", package = "admixr2")</a></code>.</p>
 <p>Four estimators are available:</p>
 <table class="table">
 <colgroup>
@@ -159,9 +176,9 @@ calls</td>
 <p><code>adfo</code> is the natural starting point for model screening
 and initial estimates. <code>admc</code> is the workhorse for standard
 PK models. <code>adgh</code> is a noise-free alternative to
-<code>admc</code> for models with up to ~4 etas. <code>adirmc</code> is
-preferred for complex ODE systems with expensive solves,
-high-dimensional IIV, or poor starting values. See
+<code>admc</code>, most efficient when the number of random effects is
+small. <code>adirmc</code> is preferred for complex ODE systems with
+expensive solves, high-dimensional IIV, or poor starting values. See
 <code><a href="../articles/estimator-comparison.html">vignette("estimator-comparison", package = "admixr2")</a></code> for a
 detailed comparison.</p>
 </div>
@@ -175,7 +192,7 @@ parameters: CL = 5 L/h, V1 = 10 L, V2 = 30 L, Q = 10 L/h, ka = 1 h⁻¹;
 IIV = 0.3 (SD on log scale) for all parameters; proportional error SD =
 0.2.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2/">admixr2</a></span><span class="op">)</span></span>
+<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2">admixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.org/" class="external-link">nlmixr2</a></span><span class="op">)</span></span>
 <span></span>
@@ -304,7 +321,7 @@ random effect are handled.</p>
 <span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a> [<span class="dv">1</span>m── <span class="fu">Time</span> (sec  [<span class="dv">33</span>mfit [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>time [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
 <span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a></span>
 <span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>  optimize covariance elapsed</span>
-<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">22.206</span>      <span class="fl">4.615</span>  <span class="fl">26.821</span></span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">22.095</span>      <span class="fl">5.307</span>  <span class="fl">27.402</span></span>
 <span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a></span>
 <span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a> [<span class="dv">1</span>m── Population <span class="fu">Parameters</span> ( [<span class="dv">33</span>mfit [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixed [<span class="dv">39</span>m or  [<span class="dv">33</span>mfit [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixedDf [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
 <span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a></span>
@@ -335,15 +352,8 @@ random effect are handled.</p>
 <code class="sourceCode R"><span><span class="va">fit</span><span class="op">$</span><span class="va">objective</span>                    <span class="co"># -2 log-likelihood</span></span>
 <span><span class="co">#&gt; [1] -3690.835</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">struct</span>          <span class="co"># structural parameters (log scale)</span></span>
-<span><span class="co">#&gt;       tcl       tv1       tv2        tq       tka </span></span>
-<span><span class="co">#&gt; 1.6010696 2.3142405 3.4022370 2.2845989 0.0242259</span></span>
-<span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">omega</span>           <span class="co"># estimated Omega matrix</span></span>
-<span><span class="co">#&gt;           [,1]      [,2]       [,3]     [,4]       [,5]</span></span>
-<span><span class="co">#&gt; [1,] 0.1021589 0.0000000 0.00000000 0.000000 0.00000000</span></span>
-<span><span class="co">#&gt; [2,] 0.0000000 0.1080018 0.00000000 0.000000 0.00000000</span></span>
-<span><span class="co">#&gt; [3,] 0.0000000 0.0000000 0.09747445 0.000000 0.00000000</span></span>
-<span><span class="co">#&gt; [4,] 0.0000000 0.0000000 0.00000000 0.105588 0.00000000</span></span>
-<span><span class="co">#&gt; [5,] 0.0000000 0.0000000 0.00000000 0.000000 0.09281048</span></span>
+<span><span class="co">#&gt;        tcl        tv1        tv2         tq        tka </span></span>
+<span><span class="co">#&gt; 1.60106955 2.31424055 3.40223701 2.28459887 0.02422598</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">sigma_var</span>       <span class="co"># residual variance(s)</span></span>
 <span><span class="co">#&gt;    prop.sd </span></span>
 <span><span class="co">#&gt; 0.03937635</span></span>
@@ -352,13 +362,58 @@ random effect are handled.</p>
 <span><span class="co">#&gt; 'log Lik.' 1845.418 (df=11)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/stats/AIC.html" class="external-link">AIC</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] -3668.835</span></span></code></pre></div>
+<p>The estimated between-subject covariance matrix
+<code>Omega</code>:</p>
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu">knitr</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/knitr/man/kable.html" class="external-link">kable</a></span><span class="op">(</span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">omega</span>, digits <span class="op">=</span> <span class="fl">4</span>,</span>
+<span>             caption <span class="op">=</span> <span class="st">"Estimated Omega (between-subject covariance)."</span><span class="op">)</span></span></code></pre></div>
+<table class="table">
+<caption>Estimated Omega (between-subject covariance).</caption>
+<tbody>
+<tr class="odd">
+<td align="right">0.1022</td>
+<td align="right">0.000</td>
+<td align="right">0.0000</td>
+<td align="right">0.0000</td>
+<td align="right">0.0000</td>
+</tr>
+<tr class="even">
+<td align="right">0.0000</td>
+<td align="right">0.108</td>
+<td align="right">0.0000</td>
+<td align="right">0.0000</td>
+<td align="right">0.0000</td>
+</tr>
+<tr class="odd">
+<td align="right">0.0000</td>
+<td align="right">0.000</td>
+<td align="right">0.0975</td>
+<td align="right">0.0000</td>
+<td align="right">0.0000</td>
+</tr>
+<tr class="even">
+<td align="right">0.0000</td>
+<td align="right">0.000</td>
+<td align="right">0.0000</td>
+<td align="right">0.1056</td>
+<td align="right">0.0000</td>
+</tr>
+<tr class="odd">
+<td align="right">0.0000</td>
+<td align="right">0.000</td>
+<td align="right">0.0000</td>
+<td align="right">0.0000</td>
+<td align="right">0.0928</td>
+</tr>
+</tbody>
+</table>
 </div>
 <div class="section level2">
 <h2 id="diagnostic-plots">Diagnostic plots<a class="anchor" aria-label="anchor" href="#diagnostic-plots"></a>
 </h2>
 <p><code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> produces up to four panel types and returns them
 as a named list of ggplot2 objects:</p>
-<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"mean"</span>, <span class="st">"nll"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
 <img src="admixr2_files/figure-html/plot-1.png" class="r-plt" alt="Left: observed vs predicted mean with residuals. Right: NLL convergence trace." width="672"><p class="caption">
@@ -375,6 +430,26 @@ trace.
 <p>For a detailed walkthrough of all four panel types and customisation
 options, see
 <code><a href="../articles/diagnostic-plots.html">vignette("diagnostic-plots", package = "admixr2")</a></code>.</p>
+</div>
+<div class="section level2">
+<h2 id="where-to-next">Where to next<a class="anchor" aria-label="anchor" href="#where-to-next"></a>
+</h2>
+<ul>
+<li>
+<a href="aggregate-data.html">From a published figure to E, V and
+n</a> — turn published summaries into <code>E</code>, <code>V</code> and
+<code>n</code>
+</li>
+<li>
+<a href="datagen.html">Simulating data &amp; using published
+models</a> — the model-as-input path</li>
+<li>
+<a href="multiple-studies.html">Multiple studies</a> — meta-analysis
+across several studies</li>
+<li>
+<a href="estimator-comparison.html">Estimator comparison</a> —
+choosing a backend</li>
+</ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

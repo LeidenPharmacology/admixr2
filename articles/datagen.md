@@ -12,13 +12,17 @@ call
 to obtain E and V, fit your analysis model, and compare the estimates to
 the truth.
 
-**Literature-based modelling.** Each published study was analysed with
-its own structural PK model (possibly a different number of
-compartments, a different parameterisation, or only a subset of the IIV
-terms).
+**Using published models as an input.** Each published study was
+analysed with its own structural PK model (possibly a different number
+of compartments, a different parameterisation, or only a subset of the
+IIV terms).
 [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-lets each study carry its own model so that the simulated aggregate data
-reflects the original authors’ model, not a single shared structure.
+turns each such model into the aggregate data it implies, so a
+*previously published model* becomes a direct input to your analysis —
+one of admixr2’s two input types alongside digitised summary data.
+Feeding several of these into `admControl(studies = ...)` is a
+meta-analysis across the published literature (see
+[`vignette("multiple-studies", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)).
 
 In both cases the output is a named list of `(E, V, n, times, ev)`
 objects that plug directly into `admControl(studies = ...)`.
@@ -180,7 +184,6 @@ true 5, V start = 12 vs true 10) to demonstrate that the estimator finds
 them regardless.
 
 ``` r
-
 fit_sim <- nlmixr2(
   analysis_model, admData(), est = "admc",
   control = admControl(
@@ -189,66 +192,66 @@ fit_sim <- nlmixr2(
     covMethod = "r"
   )
 )
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00 
-#> 
-#> [====|====|====|====|====|====|====|====|====|====] 0:00:00
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
+
+[====|====|====|====|====|====|====|====|====|====] 0:00:00 
 
 print(fit_sim)
-#> ── nlmixr² admc ──
-#> 
-#>           OBJF       AIC       BIC Log-likelihood
-#> admc -7889.378 -7875.378 -7832.254       3944.689
-#> 
-#> ── Time (sec fit_sim$time): ──
-#> 
-#>   optimize covariance elapsed
-#> 1   44.045      4.821  48.866
-#> 
-#> ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
-#> 
-#>                         Parameter     Est.       SE   %RSE
-#> tcl           Log clearance (L/h)    1.608 0.009336 0.5806
-#> tv                 Log volume (L)    2.303  0.01276 0.5543
-#> tka     Log absorption rate (1/h) 0.001746  0.01798   1030
-#> prop.sd     Proportional error SD   0.1999                
-#>         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl        4.994 (4.903, 5.086)     30.4            
-#> tv            10 (9.754, 10.25)     19.6            
-#> tka       1.002 (0.9671, 1.038)     20.9            
-#> prop.sd                  0.1999                     
-#>  
-#>   Covariance Type (fit_sim$covMethod): r
-#>   No correlations in between subject variability (BSV) matrix
-#>   Full BSV covariance (fit_sim$omega) 
-#>     or correlation (fit_sim$omegaR; diagonals=SDs)
-#>   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
-#>   Censoring (fit_sim$censInformation): No censoring
-#>   Minimization message (fit_sim$message):  
-#>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached.
+ [1m──  [34mnlmix [39m [31mr² [39m  [33madmc [39m ── [22m
+
+          OBJF       AIC       BIC Log-likelihood
+admc -7889.378 -7875.378 -7832.254       3944.689
+
+ [1m── Time (sec  [33mfit_sim [39m [34m$time [39m): ── [22m
+
+  optimize covariance elapsed
+1   41.832      4.823  46.655
+
+ [1m── Population Parameters ( [33mfit_sim [39m [34m$parFixed [39m or  [33mfit_sim [39m [34m$parFixedDf [39m): ── [22m
+
+                         [1m [1mParameter [0m [0m      [1mEst. [0m        [1m [1mSE [0m [0m    [1m%RSE [0m
+ [1m [1mtcl [0m [0m           Log clearance (L/h)    1.608 0.009336 0.5806
+ [1m [1mtv [0m [0m                 Log volume (L)    2.303  0.01276 0.5543
+ [1m [1mtka [0m [0m     Log absorption rate (1/h) 0.001746  0.01798   1030
+ [1m [1mprop.sd [0m [0m     Proportional error SD   0.1999                
+         [1mBack-transformed(95%CI) [0m  [1mBSV(CV%) [0m  [1mShrink(SD)% [0m
+ [1m [1mtcl [0m [0m        4.994 (4.903, 5.086)     30.4            
+ [1m [1mtv [0m [0m            10 (9.754, 10.25)     19.6            
+ [1m [1mtka [0m [0m       1.002 (0.9671, 1.038)     20.9            
+ [1m [1mprop.sd [0m [0m                  0.1999                     
+ 
+  Covariance Type ( [33mfit_sim [39m [1m [34m$covMethod [39m [22m):  [1mr [22m
+  No correlations in between subject variability (BSV) matrix
+  Full BSV covariance ( [33mfit_sim [39m [1m [34m$omega [39m [22m) 
+    or correlation ( [33mfit_sim [39m [1m [34m$omegaR [39m [22m; diagonals=SDs)
+  Distribution stats (mean/skewness/kurtosis/p-value) available in  [1m [34m$shrink [39m [22m 
+  Censoring ( [33mfit_sim [39m [1m [34m$censInformation [39m [22m): No censoring
+  Minimization message ( [33mfit_sim [39m [1m [34m$message [39m [22m):  
+    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 
 Structural parameter estimates and the truth:
@@ -337,7 +340,7 @@ model_2cmt <- function() {
 
 Both studies share the same CL (5 L/h) but differ in how they describe
 distribution: the earlier study lumped peripheral distribution into a
-single larger apparent volume (V = 15 L), while the later study resolved
+single larger apparent volume (V = 40 L), while the later study resolved
 the two compartments (V₁ = 10 L, V₂ = 30 L, Q = 10 L/h).
 
 ``` r
@@ -575,3 +578,14 @@ $`f`$. The number of nodes `n_nodes` (per eta dimension) trades accuracy
 against computational cost: `n_nodes = 3` is fast; `n_nodes = 5`
 (default) achieves near-exact moments for IIV SD up to ~0.5;
 `n_nodes = 7` extends coverage to SD ~0.7.
+
+## See also
+
+- [Multiple
+  studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)
+  — feed per-study models into a meta-analysis
+- [From a published figure to E, V and
+  n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md)
+  — the other input type
+- [Estimator
+  comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)

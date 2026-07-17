@@ -24,15 +24,22 @@ Monte Carlo estimator.'><meta property="og:image" content="https://leidenpharmac
   </ul></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-vignettes" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Vignettes</button>
-  <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes"><li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
+  <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes"><li><h6 class="dropdown-header" data-toc-skip>Getting started</h6></li>
+    <li><a class="dropdown-item" href="../articles/admixr2.html">Introduction to admixr2</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
-    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
+    <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
-    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD — what data do you need?</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Several outputs (plasma + brain)</a></li>
+    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD data</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
-    <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
+    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
@@ -46,7 +53,7 @@ Monte Carlo estimator.'><meta property="og:image" content="https://leidenpharmac
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control settings for the IRMC estimator</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/R/adirmc.R" class="external-link"><code>R/adirmc.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/adirmc.R" class="external-link"><code>R/adirmc.R</code></a></small>
       <div class="d-none name"><code>adirmcControl.Rd</code></div>
     </div>
 
@@ -445,7 +452,7 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0012     | -1266.45 |    4.926 |    8.051 |     31.6 |    8.896 |   0.8088 |    0.181 |   0.1227 |  0.08089 |   0.1023 |  0.01963 |   0.1358 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0013     | -1266.45 |    4.926 |    8.051 |     31.6 |    8.895 |   0.8088 |    0.181 |   0.1227 |  0.08089 |   0.1023 |  0.01963 |   0.1358 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0014 ✓   | -1266.45 |    4.926 |    8.051 |     31.6 |    8.895 |   0.8088 |    0.181 |   0.1227 |  0.08089 |   0.1023 |  0.01963 |   0.1358 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0.7 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0.6 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
@@ -459,8 +466,8 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    0.683      4.986   5.669</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>         optimize covariance elapsed other</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> elapsed    0.634      5.625   6.259 0.707</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>

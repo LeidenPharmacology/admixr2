@@ -81,7 +81,7 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance elapsed other
-elapsed    1.041      0.068   1.109 3.321
+elapsed    1.364      0.089   1.453 4.439
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
@@ -189,7 +189,7 @@ adgh -88.59291 -72.59291 -36.65499       44.29646
 ── Time (sec fit_cns$time): ──
 
         optimize covariance elapsed other
-elapsed    1.139      0.136   1.275 3.442
+elapsed    1.466      0.182   1.648  4.87
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
@@ -403,7 +403,7 @@ round(Kp_uu, 2)
 #> [1] 0.5
 ```
 
-`Kp,uu ≈ 0.5`: at steady state the brain sees about half the plasma
+`Kp,uu` ≈ 0.5: at steady state the brain sees about half the plasma
 concentration. This is the whole reason the brain data was needed — with
 plasma alone, `qin` and `qout` are not separately identifiable and
 `Kp,uu` cannot be estimated. The brain measurements resolve it.
@@ -447,4 +447,15 @@ plot(fit_cns, which = "mean")
   long format, or a per-output-pair `cross` list with `observations`;
   see
   [`?admControl`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md).
+
+## See also
+
+- [PD and PK/PD
+  data](https://leidenpharmacology.github.io/admixr2/articles/pkpd.md) —
+  add a pharmacodynamic endpoint
+- [Multiple
+  studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)
+  — meta-analysis across studies
+- [Diagnostic
+  plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md)
   \`\`\`

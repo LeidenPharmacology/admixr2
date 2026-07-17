@@ -5,11 +5,15 @@
 Passing several studies to
 [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
 fits the model to all of them simultaneously, minimising the sum of
-per-study NLLs under a shared set of population parameters. This is the
-core use case for aggregate-data modelling: you have summary statistics
-from multiple trials (which may differ in dose, sample size, or
-observation schedule) and want a single population model consistent with
-all of them.
+per-study NLLs under a shared set of population parameters. This is
+**meta-analysis** — the core use case for aggregate-data modelling: you
+have summary statistics from multiple trials (which may differ in dose,
+sample size, or observation schedule) and want a single population model
+consistent with all of them. Each study’s `E`, `V` and `n` can come from
+a digitised figure (see
+[`vignette("aggregate-data", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md))
+or from that study’s own published model (see
+[`vignette("datagen", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)).
 
 ## Splitting examplomycin into two cohorts
 
@@ -144,7 +148,7 @@ admc -3690.835 -3668.835 -3598.305       1845.418
  [1m── Time (sec  [33mfit_multi [39m [34m$time [39m): ── [22m
 
   optimize covariance elapsed
-1   44.511      9.036  53.547
+1   45.713     10.492  56.205
 
  [1m── Population Parameters ( [33mfit_multi [39m [34m$parFixed [39m or  [33mfit_multi [39m [34m$parFixedDf [39m): ── [22m
 
@@ -247,3 +251,14 @@ fit_program <- nlmixr2(
 Studies with a diagonal V (or a plain vector of variances) are
 automatically assigned `method = "var"`, avoiding the O(n_t³) Cholesky
 solve when the off-diagonal covariance structure is unavailable.
+
+## See also
+
+- [From a published figure to E, V and
+  n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md)
+  — prepare each study’s `E`, `V` and `n`
+- [Several observed
+  compartments](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.md)
+  — several outputs per study
+- [Estimator
+  comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)

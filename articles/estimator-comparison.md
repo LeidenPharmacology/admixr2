@@ -88,9 +88,10 @@ requiring 2–5× fewer samples for equivalent precision.
 
 The key cost is that **every NLL evaluation requires $`N`$ rxSolve
 calls** — one per sample. The analytical gradient (sensitivity equations
-for mu-referenced parameters; common random numbers FD otherwise) adds
-no further solves, but the base cost per optimizer step remains
-$`N \times`$ (cost of one rxSolve).
+for mu-referenced parameters and, via an added first-order direction
+set, non-mu-referenced structural thetas) adds no further solves, but
+the base cost per optimizer step remains $`N \times`$ (cost of one
+rxSolve).
 
 **Advantages:**
 
@@ -354,17 +355,17 @@ knitr::kable(tbl, caption = "Parameter estimates vs true values")
 
 | Parameter   |  True |    adfo |    admc |
 |:------------|------:|--------:|--------:|
-| exp(tcl)    |  5.00 |  4.9528 |  4.9583 |
-| exp(tv1)    | 10.00 |  7.5489 | 10.1172 |
-| exp(tv2)    | 30.00 | 31.7987 | 30.0312 |
-| exp(tq)     | 10.00 | 10.3957 |  9.8217 |
-| exp(tka)    |  1.00 |  0.8393 |  1.0245 |
-| var(eta.cl) |  0.09 |  0.0996 |  0.1022 |
-| var(eta.v1) |  0.09 |  0.1251 |  0.1080 |
-| var(eta.v2) |  0.09 |  0.0851 |  0.0975 |
-| var(eta.q)  |  0.09 |  0.1010 |  0.1056 |
-| var(eta.ka) |  0.09 |  0.0869 |  0.0928 |
-| prop.sd     |  0.20 |  0.1996 |  0.1984 |
+| exp(tcl)    |  5.00 |  4.9305 |  4.9583 |
+| exp(tv1)    | 10.00 |  7.5125 | 10.1172 |
+| exp(tv2)    | 30.00 | 31.7752 | 30.0312 |
+| exp(tq)     | 10.00 | 10.3718 |  9.8217 |
+| exp(tka)    |  1.00 |  0.8336 |  1.0245 |
+| var(eta.cl) |  0.09 |  0.0972 |  0.1022 |
+| var(eta.v1) |  0.09 |  0.1309 |  0.1080 |
+| var(eta.v2) |  0.09 |  0.0728 |  0.0975 |
+| var(eta.q)  |  0.09 |  0.1015 |  0.1056 |
+| var(eta.ka) |  0.09 |  0.0872 |  0.0928 |
+| prop.sd     |  0.20 |  0.1998 |  0.1984 |
 
 Parameter estimates vs true values {.table}
 
@@ -378,7 +379,7 @@ objectives or used for cross-estimator AIC:
 ``` r
 
 cat(sprintf("adfo  -2LL = %.2f   AIC = %.2f\n", fit_fo$objective, AIC(fit_fo)))
-#> adfo  -2LL = -3676.44   AIC = -3654.44
+#> adfo  -2LL = -3675.39   AIC = -3653.39
 cat(sprintf("admc  -2LL = %.2f   AIC = %.2f\n", fit_mc$objective, AIC(fit_mc)))
 #> admc  -2LL = -3690.84   AIC = -3668.84
 ```
@@ -475,3 +476,11 @@ adirmcControl(
   seed            = 1L
 )
 ```
+
+## See also
+
+- [Advanced
+  usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md)
+  — gradient modes, restarts, and AIC/BIC model comparison
+- [Getting
+  started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md)

@@ -91,7 +91,7 @@ round(SD, 3)
 #> [1] 0.207 0.188 0.159 0.125 0.106 0.097 0.062
 ```
 
-The bars the figure plots are `sqrt(60)` — nearly eight times — smaller
+The bars the figure plots are `sqrt(n)` — nearly eight times — smaller
 than the standard deviations the fit needs. Plotting both makes it
 concrete: the SEM band is far too tight to be a between-subject spread.
 
@@ -158,7 +158,7 @@ adgh -1323.146 -1313.146 -1292.945       661.5729
 ── Time (sec fit$time): ──
 
         optimize covariance elapsed other
-elapsed    0.495      0.047   0.542 2.709
+elapsed    0.615      0.074   0.689 3.517
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -200,7 +200,7 @@ adgh -2942.689 -2932.689 -2912.488       1471.344
 ── Time (sec fit_wrong$time): ──
 
   optimize covariance elapsed
-1    1.036      0.042   1.078
+1    1.431      0.054   1.485
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
@@ -397,3 +397,14 @@ the result belongs in a sensitivity table rather than a headline.
 - **PD specifics** — baselines, placebo arms, two endpoints — are
   covered in [PD and PK/PD
   data](https://leidenpharmacology.github.io/admixr2/articles/pkpd.md).
+
+## See also
+
+- [Multiple
+  studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)
+  — combine several studies into a meta-analysis
+- [Simulating data & using published
+  models](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)
+  — the other input type
+- [Getting
+  started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md)

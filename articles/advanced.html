@@ -48,15 +48,22 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-vignettes" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Vignettes</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes">
-<li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
+<li><h6 class="dropdown-header" data-toc-skip>Getting started</h6></li>
+    <li><a class="dropdown-item" href="../articles/admixr2.html">Introduction to admixr2</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
-    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
+    <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
-    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD — what data do you need?</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Several outputs (plasma + brain)</a></li>
+    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD data</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
-    <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
+    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -81,7 +88,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Advanced usage</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/advanced.Rmd" class="external-link"><code>vignettes/advanced.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/advanced.Rmd" class="external-link"><code>vignettes/advanced.Rmd</code></a></small>
       <div class="d-none name"><code>advanced.Rmd</code></div>
     </div>
 
@@ -300,18 +307,29 @@ to <code>tcl</code> equals the gradient with respect to
 extra function evaluations.</p>
 <p><strong>Non-mu-referenced parameters</strong> — when a structural
 parameter and its random effect are written separately
-(e.g. <code>cl &lt;- exp(tcl) * exp(eta.cl)</code>),
-<code>admixr2</code> cannot recover <code>d(NLL)/d(tcl)</code> from the
-sensitivity equations alone. The sensitivity model is still used for all
-etas, omega, and sigma; only the unpaired structural parameters require
-a targeted CRN finite difference solve. A warning is issued but
-<code>grad = "sens"</code> is kept.</p>
-<p><strong>Parameters without a random effect</strong> — structural
-parameters with no corresponding eta
-(e.g. <code>v2 &lt;- exp(tv2)</code> with IIV dropped from V2) are
-always handled by CRN finite differences. The perturbation uses the same
-quasi-random seed as the nominal draw so that Monte Carlo noise largely
-cancels in the difference.</p>
+(e.g. <code>cl &lt;- exp(tcl) * exp(eta.cl)</code>), the sensitivity
+equations keyed on the etas do not by themselves carry
+<code>d(pred)/d(tcl)</code>. <code>admixr2</code> therefore emits its
+own first-order sensitivity model over an explicit <em>direction
+set</em> — one direction per random effect plus one per unpaired
+structural theta — compiled with <code>eventSens = "jump"</code> so that
+dosing-modifier
+(<code>f</code>/<code>lag</code>/<code>rate</code>/<code>dur</code>)
+sensitivities are included. The unpaired thetas then get an
+<strong>analytical</strong> gradient from the same single solve, with no
+finite differences (a message notes that the sensitivity model carries
+them). This mirrors the direction-set scheme <code>nlmixr2est</code>’s
+fast-focei uses, at first order, and is cross-validated against its
+inner model to ~1e-13. A targeted CRN finite-difference solve is used
+only as a fallback, when the augmented model cannot be built.</p>
+<p><strong>Parameters without a random effect</strong> — a structural
+parameter with no corresponding eta (e.g. <code>v2 &lt;- exp(tv2)</code>
+with IIV dropped from V2) is simply the same unpaired case: it gets its
+own direction in that sensitivity model and an exact analytical
+gradient. (<code>adfo</code> is the one exception — its
+<code>V_pred = J Ω Jᵀ + Σ</code> needs the second derivative
+<code>dJ/dθ</code>, so it keeps finite differences for structural
+thetas, as noted above.)</p>
 </div>
 <div class="section level2">
 <h2 id="irmc-kappa-correction">IRMC kappa correction<a class="anchor" aria-label="anchor" href="#irmc-kappa-correction"></a>
@@ -510,6 +528,16 @@ reduced model with IIV on CL and V1 only:</p>
 <span><span class="co">#&gt; fit_reduced  8 -3477.060</span></span></code></pre></div>
 <p>Lower AIC/BIC favours the more parsimonious model; a difference &gt;
 10 is generally considered strong evidence.</p>
+</div>
+<div class="section level2">
+<h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a>
+</h2>
+<ul>
+<li>
+<a href="estimator-comparison.html">Estimator comparison</a> — the
+mathematical foundations of each backend</li>
+<li><a href="diagnostic-plots.html">Diagnostic plots</a></li>
+</ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

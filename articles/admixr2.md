@@ -2,8 +2,15 @@
 
 ## What is aggregate-data modelling?
 
-`admixr2` fits pharmacometric PK/PD models to **summary-level data**.
-For each clinical study you supply:
+`admixr2` fits pharmacometric PK/PD models to **summary-level data**
+instead of individual records — a **meta-analysis** framework for
+population PK/PD. The inputs can be **digitised aggregate data** from
+published studies (means, error bars and covariances), **previously
+published PK/PD models**, or a mix of both. The result is a single
+unified population model with interpretable fixed, random and covariate
+effects, recovered without individual patient data.
+
+For each study you supply:
 
 - **E** — observed mean vector (one entry per observation time)
 - **V** — observed covariance matrix (or variance vector)
@@ -12,9 +19,14 @@ For each clinical study you supply:
 - **ev** — dosing event table
 
 The estimators match E and V against their model-predicted counterparts
-and return a standard nlmixr2 fit object. This lets you apply
-established nlmixr2 models to aggregate statistics from publications or
-internal data summaries where individual records are unavailable.
+and return a standard nlmixr2 fit object, so established nlmixr2 models
+apply to aggregate statistics from publications or internal summaries
+where individual records are unavailable. Turning a published figure
+into `E`, `V` and `n` is covered in
+[`vignette("aggregate-data", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md);
+letting each study carry its own published model as the input is covered
+in
+[`vignette("datagen", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md).
 
 Four estimators are available:
 
@@ -27,9 +39,10 @@ Four estimators are available:
 
 `adfo` is the natural starting point for model screening and initial
 estimates. `admc` is the workhorse for standard PK models. `adgh` is a
-noise-free alternative to `admc` for models with up to ~4 etas. `adirmc`
-is preferred for complex ODE systems with expensive solves,
-high-dimensional IIV, or poor starting values. See
+noise-free alternative to `admc`, most efficient when the number of
+random effects is small. `adirmc` is preferred for complex ODE systems
+with expensive solves, high-dimensional IIV, or poor starting values.
+See
 [`vignette("estimator-comparison", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
 for a detailed comparison.
 
@@ -184,7 +197,7 @@ admc -3690.835 -3668.835 -3598.305       1845.418
  [1m── Time (sec  [33mfit [39m [34m$time [39m): ── [22m
 
   optimize covariance elapsed
-1   22.206      4.615  26.821
+1   22.095      5.307  27.402
 
  [1m── Population Parameters ( [33mfit [39m [34m$parFixed [39m or  [33mfit [39m [34m$parFixedDf [39m): ── [22m
 
@@ -219,15 +232,8 @@ Key entries in `fit$env$admExtra`:
 fit$objective                    # -2 log-likelihood
 #> [1] -3690.835
 fit$env$admExtra$struct          # structural parameters (log scale)
-#>       tcl       tv1       tv2        tq       tka 
-#> 1.6010696 2.3142405 3.4022370 2.2845989 0.0242259
-fit$env$admExtra$omega           # estimated Omega matrix
-#>           [,1]      [,2]       [,3]     [,4]       [,5]
-#> [1,] 0.1021589 0.0000000 0.00000000 0.000000 0.00000000
-#> [2,] 0.0000000 0.1080018 0.00000000 0.000000 0.00000000
-#> [3,] 0.0000000 0.0000000 0.09747445 0.000000 0.00000000
-#> [4,] 0.0000000 0.0000000 0.00000000 0.105588 0.00000000
-#> [5,] 0.0000000 0.0000000 0.00000000 0.000000 0.09281048
+#>        tcl        tv1        tv2         tq        tka 
+#> 1.60106955 2.31424055 3.40223701 2.28459887 0.02422598
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
 #> 0.03937635
@@ -237,6 +243,24 @@ logLik(fit)
 AIC(fit)
 #> [1] -3668.835
 ```
+
+The estimated between-subject covariance matrix `Omega`:
+
+``` r
+
+knitr::kable(fit$env$admExtra$omega, digits = 4,
+             caption = "Estimated Omega (between-subject covariance).")
+```
+
+|        |       |        |        |        |
+|-------:|------:|-------:|-------:|-------:|
+| 0.1022 | 0.000 | 0.0000 | 0.0000 | 0.0000 |
+| 0.0000 | 0.108 | 0.0000 | 0.0000 | 0.0000 |
+| 0.0000 | 0.000 | 0.0975 | 0.0000 | 0.0000 |
+| 0.0000 | 0.000 | 0.0000 | 0.1056 | 0.0000 |
+| 0.0000 | 0.000 | 0.0000 | 0.0000 | 0.0928 |
+
+Estimated Omega (between-subject covariance). {.table}
 
 ## Diagnostic plots
 
@@ -263,3 +287,18 @@ trace.
 For a detailed walkthrough of all four panel types and customisation
 options, see
 [`vignette("diagnostic-plots", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md).
+
+## Where to next
+
+- [From a published figure to E, V and
+  n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md)
+  — turn published summaries into `E`, `V` and `n`
+- [Simulating data & using published
+  models](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)
+  — the model-as-input path
+- [Multiple
+  studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)
+  — meta-analysis across several studies
+- [Estimator
+  comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
+  — choosing a backend

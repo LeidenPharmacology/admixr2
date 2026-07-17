@@ -22,15 +22,22 @@
   </ul></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-vignettes" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Vignettes</button>
-  <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes"><li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
+  <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes"><li><h6 class="dropdown-header" data-toc-skip>Getting started</h6></li>
+    <li><a class="dropdown-item" href="../articles/admixr2.html">Introduction to admixr2</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
-    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
+    <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
-    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD — what data do you need?</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Several outputs (plasma + brain)</a></li>
+    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD data</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
-    <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
+    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul></li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
@@ -54,26 +61,41 @@
         <dd><p>Aggregate data modelling has a long history in pharmacometrics. This post lays out the mathematical foundations of admixr2: the aggregate likelihood, four estimators for evaluating it, and the algorithmic innovations — particularly the common-random-numbers analytical gradient and the analytical IRMC inner gradient — that make gradient-based optimisation both fast and reliable.</p>
       </dd></dl></div>
     <div class="section ">
-      <h3>Vignettes</h3>
-      <div class="section-desc"></div>
+      <h3>Getting started</h3>
+      <div class="section-desc"><p>Install admixr2 and fit your first model to aggregate data.</p></div>
 
       <dl><dt><a href="admixr2.html">Getting started with admixr2</a></dt>
         <dd>
-        </dd><dt><a href="aggregate-data.html">From a published figure to E, V and n</a></dt>
+      </dd></dl></div>
+    <div class="section ">
+      <h3>Inputs — data &amp; models</h3>
+      <div class="section-desc"><p>The two ways to feed a meta-analysis — digitized study summaries, or previously published PK/PD models.</p></div>
+
+      <dl><dt><a href="aggregate-data.html">From a published figure to E, V and n</a></dt>
         <dd>
-        </dd><dt><a href="diagnostic-plots.html">Diagnostic plots</a></dt>
+        </dd><dt><a href="datagen.html">Generating aggregate data with datagen</a></dt>
         <dd>
-        </dd><dt><a href="multiple-studies.html">Multiple studies</a></dt>
+      </dd></dl></div>
+    <div class="section ">
+      <h3>Meta-analysis across studies</h3>
+      <div class="section-desc"><p>Combine evidence across sources — several studies, several observed outputs, and PD / PK-PD endpoints.</p></div>
+
+      <dl><dt><a href="multiple-studies.html">Multiple studies</a></dt>
         <dd>
         </dd><dt><a href="multi-compartment.html">Several observed compartments (plasma and brain)</a></dt>
         <dd>
         </dd><dt><a href="pkpd.html">PD and PK/PD data</a></dt>
         <dd>
-        </dd><dt><a href="estimator-comparison.html">Estimator comparison: adfo, admc, adgh and adirmc</a></dt>
+      </dd></dl></div>
+    <div class="section ">
+      <h3>Estimation &amp; diagnostics</h3>
+      <div class="section-desc"><p>Choose and tune an estimator — gradients, restarts, model comparison — then assess the fit.</p></div>
+
+      <dl><dt><a href="estimator-comparison.html">Estimator comparison: adfo, admc, adgh and adirmc</a></dt>
         <dd>
         </dd><dt><a href="advanced.html">Advanced usage</a></dt>
         <dd>
-        </dd><dt><a href="datagen.html">Generating aggregate data with datagen</a></dt>
+        </dd><dt><a href="diagnostic-plots.html">Diagnostic plots</a></dt>
         <dd>
       </dd></dl></div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

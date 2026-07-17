@@ -124,17 +124,27 @@ extra function evaluations.
 
 **Non-mu-referenced parameters** — when a structural parameter and its
 random effect are written separately
-(e.g. `cl <- exp(tcl) * exp(eta.cl)`), `admixr2` cannot recover
-`d(NLL)/d(tcl)` from the sensitivity equations alone. The sensitivity
-model is still used for all etas, omega, and sigma; only the unpaired
-structural parameters require a targeted CRN finite difference solve. A
-warning is issued but `grad = "sens"` is kept.
+(e.g. `cl <- exp(tcl) * exp(eta.cl)`), the sensitivity equations keyed
+on the etas do not by themselves carry `d(pred)/d(tcl)`. `admixr2`
+therefore emits its own first-order sensitivity model over an explicit
+*direction set* — one direction per random effect plus one per unpaired
+structural theta — compiled with `eventSens = "jump"` so that
+dosing-modifier (`f`/`lag`/`rate`/`dur`) sensitivities are included. The
+unpaired thetas then get an **analytical** gradient from the same single
+solve, with no finite differences (a message notes that the sensitivity
+model carries them). This mirrors the direction-set scheme
+`nlmixr2est`’s fast-focei uses, at first order, and is cross-validated
+against its inner model to ~1e-13. A targeted CRN finite-difference
+solve is used only as a fallback, when the augmented model cannot be
+built.
 
-**Parameters without a random effect** — structural parameters with no
-corresponding eta (e.g. `v2 <- exp(tv2)` with IIV dropped from V2) are
-always handled by CRN finite differences. The perturbation uses the same
-quasi-random seed as the nominal draw so that Monte Carlo noise largely
-cancels in the difference.
+**Parameters without a random effect** — a structural parameter with no
+corresponding eta (e.g. `v2 <- exp(tv2)` with IIV dropped from V2) is
+simply the same unpaired case: it gets its own direction in that
+sensitivity model and an exact analytical gradient. (`adfo` is the one
+exception — its `V_pred = J Ω Jᵀ + Σ` needs the second derivative
+`dJ/dθ`, so it keeps finite differences for structural thetas, as noted
+above.)
 
 ## IRMC kappa correction
 
@@ -318,3 +328,11 @@ BIC(fit_full, fit_reduced)
 
 Lower AIC/BIC favours the more parsimonious model; a difference \> 10 is
 generally considered strong evidence.
+
+## See also
+
+- [Estimator
+  comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
+  — the mathematical foundations of each backend
+- [Diagnostic
+  plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md)

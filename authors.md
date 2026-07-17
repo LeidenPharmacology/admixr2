@@ -13,7 +13,7 @@
 ## Citation
 
 Source:
-[`inst/CITATION`](https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/inst/CITATION)
+[`inst/CITATION`](https://github.com/LeidenPharmacology/admixr2/blob/main/inst/CITATION)
 
 van de Beek H., Välitalo P.A.J., van Hasselt J.G.C., Zwep L.B. (2025).
 Aggregate data modelling: A fast implementation for fitting

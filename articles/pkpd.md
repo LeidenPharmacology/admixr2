@@ -156,7 +156,7 @@ adgh 1749.128 1769.128 1820.981      -874.5638
 ── Time (sec fit$time): ──
 
         optimize covariance elapsed other
-elapsed    5.017      0.392   5.409 1.145
+elapsed    5.952      0.456   6.408 1.736
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -342,5 +342,17 @@ if (is.null(cv)) {
   range of a bounded score. Rescale or transform the endpoint before
   fitting — note that an estimated
   [`boxCox()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)/[`yeoJohnson()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)
-  lambda is **not** supported by admixr2 and would be treated as a
-  residual variance.
+  lambda is **not** supported by admixr2: because it has no closed-form
+  aggregate mean/variance, the fit stops with an error rather than
+  silently approximating it.
+
+## See also
+
+- [Several observed
+  compartments](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.md)
+  — multiple outputs and joint fits
+- [Multiple
+  studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)
+  — meta-analysis across studies
+- [From a published figure to E, V and
+  n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md)

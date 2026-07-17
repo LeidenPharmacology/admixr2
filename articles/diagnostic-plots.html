@@ -48,15 +48,22 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-vignettes" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Vignettes</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes">
-<li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
+<li><h6 class="dropdown-header" data-toc-skip>Getting started</h6></li>
+    <li><a class="dropdown-item" href="../articles/admixr2.html">Introduction to admixr2</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
-    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
+    <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
-    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD — what data do you need?</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Several outputs (plasma + brain)</a></li>
+    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD data</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
-    <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
+    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -81,7 +88,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Diagnostic plots</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/diagnostic-plots.Rmd" class="external-link"><code>vignettes/diagnostic-plots.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/diagnostic-plots.Rmd" class="external-link"><code>vignettes/diagnostic-plots.Rmd</code></a></small>
       <div class="d-none name"><code>diagnostic-plots.Rmd</code></div>
     </div>
 
@@ -208,8 +215,10 @@ or modify panels:</p>
 <span><span class="co">#&gt; [1] "nll_trace" "par_trace"</span></span></code></pre></div>
 <p>Panel names follow the pattern
 <code>&lt;type&gt;_&lt;study&gt;</code> for per-study panels, or
-<code>nll_trace</code> / <code>par_trace</code> for the trace
-panels:</p>
+<code>nll_trace</code> / <code>par_trace</code> for the trace panels.
+For a study with several observed outputs the study label gains the
+output name — e.g. <code>mean_lit.plasma</code>,
+<code>cov_lit.brain</code> — so each compartment gets its own panel:</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span><span class="op">$</span><span class="va">nll_trace</span></span>
 <span><span class="va">plots</span><span class="op">$</span><span class="va">par_trace</span></span>
@@ -270,6 +279,17 @@ especially informative for models with off-diagonal omega entries.</p>
 IIV correlation matrix derived from the estimated Omega.
 </p>
 </div>
+</div>
+<div class="section level2">
+<h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a>
+</h2>
+<ul>
+<li><a href="admixr2.html">Getting started</a></li>
+<li>
+<a href="multiple-studies.html">Multiple studies</a> — meta-analysis
+across studies</li>
+<li><a href="estimator-comparison.html">Estimator comparison</a></li>
+</ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

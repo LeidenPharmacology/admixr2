@@ -141,7 +141,10 @@ names(plots)
 ```
 
 Panel names follow the pattern `<type>_<study>` for per-study panels, or
-`nll_trace` / `par_trace` for the trace panels:
+`nll_trace` / `par_trace` for the trace panels. For a study with several
+observed outputs the study label gains the output name —
+e.g. `mean_lit.plasma`, `cov_lit.brain` — so each compartment gets its
+own panel:
 
 ``` r
 
@@ -209,3 +212,13 @@ ggplot2::ggplot(df_corr, ggplot2::aes(x = eta_j, y = eta_i, fill = r)) +
 Omega.](diagnostic-plots_files/figure-html/omega-heatmap-1.png)
 
 IIV correlation matrix derived from the estimated Omega.
+
+## See also
+
+- [Getting
+  started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md)
+- [Multiple
+  studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)
+  — meta-analysis across studies
+- [Estimator
+  comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)

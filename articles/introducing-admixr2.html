@@ -53,15 +53,22 @@
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-vignettes" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Vignettes</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes">
-<li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
+<li><h6 class="dropdown-header" data-toc-skip>Getting started</h6></li>
+    <li><a class="dropdown-item" href="../articles/admixr2.html">Introduction to admixr2</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
-    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
+    <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
-    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD — what data do you need?</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Several outputs (plasma + brain)</a></li>
+    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD data</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
-    <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
+    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -89,7 +96,7 @@ Beek</h4>
             
             <h4 data-toc-skip class="date">2026-05-29</h4>
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/articles/introducing-admixr2.Rmd" class="external-link"><code>vignettes/articles/introducing-admixr2.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/articles/introducing-admixr2.Rmd" class="external-link"><code>vignettes/articles/introducing-admixr2.Rmd</code></a></small>
       <div class="d-none name"><code>introducing-admixr2.Rmd</code></div>
     </div>
 
@@ -245,7 +252,7 @@ There is no closed form. The four estimators differ in how they handle
 this intractability: <code>adfo</code> linearises the integrand,
 <code>admc</code> samples it randomly, <code>adgh</code> integrates it
 on a deterministic quadrature grid, and <code>adirmc</code> reuses a
-fixed sample via importance reweighting.</p>
+fixed sample, iteratively reweighting it as the parameters move.</p>
 <hr>
 </div>
 <div class="section level2">
@@ -823,11 +830,11 @@ calls.</p>
 <h2 id="further-reading">Further reading<a class="anchor" aria-label="anchor" href="#further-reading"></a>
 </h2>
 <p>The mathematical foundations are described in detail in the papers
-linked at the top of this post. The <a href="../estimator-comparison.html">Estimator comparison</a> vignette
-shows worked examples on the included <code>examplomycin</code> dataset
-with all four estimators. The <a href="../advanced.html">Advanced
-usage</a> vignette covers gradient modes, multi-restart fitting, and
-model comparison via AIC.</p>
+linked at the top of this post. The <a href="estimator-comparison.html">Estimator comparison</a> vignette shows
+worked examples on the included <code>examplomycin</code> dataset with
+all four estimators. The <a href="advanced.html">Advanced usage</a>
+vignette covers gradient modes, multi-restart fitting, and model
+comparison via AIC.</p>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

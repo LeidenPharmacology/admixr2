@@ -121,7 +121,7 @@ integrals over $`\eta \sim \mathcal{N}(0, \Omega)`$. There is no closed
 form. The four estimators differ in how they handle this intractability:
 `adfo` linearises the integrand, `admc` samples it randomly, `adgh`
 integrates it on a deterministic quadrature grid, and `adirmc` reuses a
-fixed sample via importance reweighting.
+fixed sample, iteratively reweighting it as the parameters move.
 
 ------------------------------------------------------------------------
 
@@ -539,9 +539,9 @@ inner loop to run without any ODE solver calls.
 
 The mathematical foundations are described in detail in the papers
 linked at the top of this post. The [Estimator
-comparison](https://leidenpharmacology.github.io/admixr2/estimator-comparison.md)
+comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
 vignette shows worked examples on the included `examplomycin` dataset
 with all four estimators. The [Advanced
-usage](https://leidenpharmacology.github.io/admixr2/advanced.md)
+usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md)
 vignette covers gradient modes, multi-restart fitting, and model
 comparison via AIC.

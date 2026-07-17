@@ -48,15 +48,22 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-vignettes" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Vignettes</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes">
-<li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
+<li><h6 class="dropdown-header" data-toc-skip>Getting started</h6></li>
+    <li><a class="dropdown-item" href="../articles/admixr2.html">Introduction to admixr2</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
-    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
+    <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
-    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD — what data do you need?</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Several outputs (plasma + brain)</a></li>
+    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD data</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
-    <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
+    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -81,7 +88,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Generating aggregate data with datagen</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/datagen.Rmd" class="external-link"><code>vignettes/datagen.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/datagen.Rmd" class="external-link"><code>vignettes/datagen.Rmd</code></a></small>
       <div class="d-none name"><code>datagen.Rmd</code></div>
     </div>
 
@@ -96,12 +103,16 @@ programmatically:</p>
 estimator recovers the true parameters. Define a data-generating model
 with known parameters, call <code><a href="../reference/datagen.html">datagen()</a></code> to obtain E and V,
 fit your analysis model, and compare the estimates to the truth.</p>
-<p><strong>Literature-based modelling.</strong> Each published study was
-analysed with its own structural PK model (possibly a different number
-of compartments, a different parameterisation, or only a subset of the
-IIV terms). <code><a href="../reference/datagen.html">datagen()</a></code> lets each study carry its own model
-so that the simulated aggregate data reflects the original authors’
-model, not a single shared structure.</p>
+<p><strong>Using published models as an input.</strong> Each published
+study was analysed with its own structural PK model (possibly a
+different number of compartments, a different parameterisation, or only
+a subset of the IIV terms). <code><a href="../reference/datagen.html">datagen()</a></code> turns each such model
+into the aggregate data it implies, so a <em>previously published
+model</em> becomes a direct input to your analysis — one of admixr2’s
+two input types alongside digitised summary data. Feeding several of
+these into <code>admControl(studies = ...)</code> is a meta-analysis
+across the published literature (see
+<code><a href="../articles/multiple-studies.html">vignette("multiple-studies", package = "admixr2")</a></code>).</p>
 <p>In both cases the output is a named list of
 <code>(E, V, n, times, ev)</code> objects that plug directly into
 <code>admControl(studies = ...)</code>.</p>
@@ -116,7 +127,7 @@ study datasets — a low-dose and a high-dose arm — then verify that
 <h3 id="data-generating-model">Data-generating model<a class="anchor" aria-label="anchor" href="#data-generating-model"></a>
 </h3>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2/">admixr2</a></span><span class="op">)</span></span>
+<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2">admixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.org/" class="external-link">nlmixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://ggplot2.tidyverse.org" class="external-link">ggplot2</a></span><span class="op">)</span></span>
@@ -323,75 +334,74 @@ structural model — this lets us verify estimator consistency:</p>
 <p>Starting values are deliberately offset from the truth (CL start = 4
 vs true 5, V start = 12 vs true 10) to demonstrate that the estimator
 finds them regardless.</p>
-<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">fit_sim</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
-<span>  <span class="va">analysis_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
-<span>  control <span class="op">=</span> <span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span></span>
-<span>    studies   <span class="op">=</span> <span class="va">study_data</span>,</span>
-<span>    maxeval   <span class="op">=</span> <span class="fl">300L</span>,</span>
-<span>    covMethod <span class="op">=</span> <span class="st">"r"</span></span>
-<span>  <span class="op">)</span></span>
-<span><span class="op">)</span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00 </span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [====|====|====|====|====|====|====|====|====|====] 0:00:00</span></span>
-<span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">fit_sim</span><span class="op">)</span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">── </span><span style="color: #0000BB; font-weight: bold;">nlmix</span><span style="color: #BB0000; font-weight: bold;">r²</span><span style="font-weight: bold;"> </span><span style="color: #BBBB00; font-weight: bold;">admc</span><span style="font-weight: bold;"> ──</span></span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt;           OBJF       AIC       BIC Log-likelihood</span></span>
-<span><span class="co">#&gt; admc -7889.378 -7875.378 -7832.254       3944.689</span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt;   optimize covariance elapsed</span></span>
-<span><span class="co">#&gt; 1   44.045      4.821  48.866</span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt;                         <span style="font-weight: bold;">Parameter</span>     <span style="font-weight: bold;">Est.</span>       <span style="font-weight: bold;">SE</span>   <span style="font-weight: bold;">%RSE</span></span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tcl</span>           Log clearance (L/h)    1.608 0.009336 0.5806</span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tv</span>                 Log volume (L)    2.303  0.01276 0.5543</span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tka</span>     Log absorption rate (1/h) 0.001746  0.01798   1030</span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">prop.sd</span>     Proportional error SD   0.1999                </span></span>
-<span><span class="co">#&gt;         <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tcl</span>        4.994 (4.903, 5.086)     30.4            </span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tv</span>            10 (9.754, 10.25)     19.6            </span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">tka</span>       1.002 (0.9671, 1.038)     20.9            </span></span>
-<span><span class="co">#&gt; <span style="font-weight: bold;">prop.sd</span>                  0.1999                     </span></span>
-<span><span class="co">#&gt;  </span></span>
-<span><span class="co">#&gt;   Covariance Type (<span style="color: #BBBB00;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r</span></span></span>
-<span><span class="co">#&gt;   No correlations in between subject variability (BSV) matrix</span></span>
-<span><span class="co">#&gt;   Full BSV covariance (<span style="color: #BBBB00;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$omega</span>) </span></span>
-<span><span class="co">#&gt;     or correlation (<span style="color: #BBBB00;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$omegaR</span>; diagonals=SDs)</span></span>
-<span><span class="co">#&gt;   Distribution stats (mean/skewness/kurtosis/p-value) available in <span style="color: #0000BB; font-weight: bold;">$shrink</span> </span></span>
-<span><span class="co">#&gt;   Censoring (<span style="color: #BBBB00;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$censInformation</span>): No censoring</span></span>
-<span><span class="co">#&gt;   Minimization message (<span style="color: #BBBB00;">fit_sim</span><span style="color: #0000BB; font-weight: bold;">$message</span>):  </span></span>
-<span><span class="co">#&gt;     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached.</span></span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>fit_sim <span class="ot">&lt;-</span> <span class="fu">nlmixr2</span>(</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a>  analysis_model, <span class="fu">admData</span>(), <span class="at">est =</span> <span class="st">"admc"</span>,</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a>  <span class="at">control =</span> <span class="fu">admControl</span>(</span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>    <span class="at">studies   =</span> study_data,</span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>    <span class="at">maxeval   =</span> <span class="dv">300</span><span class="dt">L</span>,</span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>    <span class="at">covMethod =</span> <span class="st">"r"</span></span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>  )</span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a>)</span>
+<span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a></span>
+<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a></span>
+<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a></span>
+<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a></span>
+<span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a></span>
+<span id="cb6-23"><a href="#cb6-23" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-24"><a href="#cb6-24" tabindex="-1"></a></span>
+<span id="cb6-25"><a href="#cb6-25" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-26"><a href="#cb6-26" tabindex="-1"></a></span>
+<span id="cb6-27"><a href="#cb6-27" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-28"><a href="#cb6-28" tabindex="-1"></a></span>
+<span id="cb6-29"><a href="#cb6-29" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-30"><a href="#cb6-30" tabindex="-1"></a></span>
+<span id="cb6-31"><a href="#cb6-31" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-32"><a href="#cb6-32" tabindex="-1"></a></span>
+<span id="cb6-33"><a href="#cb6-33" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-34"><a href="#cb6-34" tabindex="-1"></a></span>
+<span id="cb6-35"><a href="#cb6-35" tabindex="-1"></a>[<span class="sc">==</span><span class="er">==|====|====|====|====|====|====|====|====|====</span>] <span class="dv">0</span><span class="sc">:</span><span class="dv">00</span><span class="sc">:</span><span class="dv">00</span> </span>
+<span id="cb6-36"><a href="#cb6-36" tabindex="-1"></a></span>
+<span id="cb6-37"><a href="#cb6-37" tabindex="-1"></a><span class="fu">print</span>(fit_sim)</span>
+<span id="cb6-38"><a href="#cb6-38" tabindex="-1"></a> [<span class="dv">1</span>m──  [<span class="dv">34</span>mnlmix [<span class="dv">39</span>m [<span class="dv">31</span>mr² [<span class="dv">39</span>m  [<span class="dv">33</span>madmc [<span class="dv">39</span>m ── [<span class="dv">22</span>m</span>
+<span id="cb6-39"><a href="#cb6-39" tabindex="-1"></a></span>
+<span id="cb6-40"><a href="#cb6-40" tabindex="-1"></a>          OBJF       AIC       BIC Log<span class="sc">-</span>likelihood</span>
+<span id="cb6-41"><a href="#cb6-41" tabindex="-1"></a>admc <span class="sc">-</span><span class="fl">7889.378</span> <span class="sc">-</span><span class="fl">7875.378</span> <span class="sc">-</span><span class="fl">7832.254</span>       <span class="fl">3944.689</span></span>
+<span id="cb6-42"><a href="#cb6-42" tabindex="-1"></a></span>
+<span id="cb6-43"><a href="#cb6-43" tabindex="-1"></a> [<span class="dv">1</span>m── <span class="fu">Time</span> (sec  [<span class="dv">33</span>mfit_sim [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>time [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
+<span id="cb6-44"><a href="#cb6-44" tabindex="-1"></a></span>
+<span id="cb6-45"><a href="#cb6-45" tabindex="-1"></a>  optimize covariance elapsed</span>
+<span id="cb6-46"><a href="#cb6-46" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">41.832</span>      <span class="fl">4.823</span>  <span class="fl">46.655</span></span>
+<span id="cb6-47"><a href="#cb6-47" tabindex="-1"></a></span>
+<span id="cb6-48"><a href="#cb6-48" tabindex="-1"></a> [<span class="dv">1</span>m── Population <span class="fu">Parameters</span> ( [<span class="dv">33</span>mfit_sim [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixed [<span class="dv">39</span>m or  [<span class="dv">33</span>mfit_sim [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixedDf [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
+<span id="cb6-49"><a href="#cb6-49" tabindex="-1"></a></span>
+<span id="cb6-50"><a href="#cb6-50" tabindex="-1"></a>                         [<span class="dv">1</span>m [<span class="dv">1</span>mParameter [<span class="dv">0</span>m [<span class="dv">0</span>m      [<span class="dv">1</span>mEst. [<span class="dv">0</span>m        [<span class="dv">1</span>m [<span class="dv">1</span>mSE [<span class="dv">0</span>m [<span class="dv">0</span>m    [<span class="dv">1</span>m%RSE [<span class="dv">0</span>m</span>
+<span id="cb6-51"><a href="#cb6-51" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtcl [<span class="dv">0</span>m [<span class="dv">0</span>m           Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)    <span class="fl">1.608</span> <span class="fl">0.009336</span> <span class="fl">0.5806</span></span>
+<span id="cb6-52"><a href="#cb6-52" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv [<span class="dv">0</span>m [<span class="dv">0</span>m                 Log <span class="fu">volume</span> (L)    <span class="fl">2.303</span>  <span class="fl">0.01276</span> <span class="fl">0.5543</span></span>
+<span id="cb6-53"><a href="#cb6-53" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtka [<span class="dv">0</span>m [<span class="dv">0</span>m     Log absorption <span class="fu">rate</span> (<span class="dv">1</span><span class="sc">/</span>h) <span class="fl">0.001746</span>  <span class="fl">0.01798</span>   <span class="dv">1030</span></span>
+<span id="cb6-54"><a href="#cb6-54" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mprop.sd [<span class="dv">0</span>m [<span class="dv">0</span>m     Proportional error SD   <span class="fl">0.1999</span>                </span>
+<span id="cb6-55"><a href="#cb6-55" tabindex="-1"></a>         [<span class="dv">1</span>mBack<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) [0m  [1mBSV(CV%</span>) [<span class="dv">0</span>m  [<span class="dv">1</span><span class="fu">mShrink</span>(SD)% [<span class="dv">0</span>m</span>
+<span id="cb6-56"><a href="#cb6-56" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtcl [<span class="dv">0</span>m [<span class="dv">0</span>m        <span class="fl">4.994</span> (<span class="fl">4.903</span>, <span class="fl">5.086</span>)     <span class="fl">30.4</span>            </span>
+<span id="cb6-57"><a href="#cb6-57" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv [<span class="dv">0</span>m [<span class="dv">0</span>m            <span class="dv">10</span> (<span class="fl">9.754</span>, <span class="fl">10.25</span>)     <span class="fl">19.6</span>            </span>
+<span id="cb6-58"><a href="#cb6-58" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtka [<span class="dv">0</span>m [<span class="dv">0</span>m       <span class="fl">1.002</span> (<span class="fl">0.9671</span>, <span class="fl">1.038</span>)     <span class="fl">20.9</span>            </span>
+<span id="cb6-59"><a href="#cb6-59" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mprop.sd [<span class="dv">0</span>m [<span class="dv">0</span>m                  <span class="fl">0.1999</span>                     </span>
+<span id="cb6-60"><a href="#cb6-60" tabindex="-1"></a> </span>
+<span id="cb6-61"><a href="#cb6-61" tabindex="-1"></a>  Covariance <span class="fu">Type</span> ( [<span class="dv">33</span>mfit_sim [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>covMethod [<span class="dv">39</span>m [<span class="dv">22</span>m)<span class="sc">:</span>  [<span class="dv">1</span>mr [<span class="dv">22</span>m</span>
+<span id="cb6-62"><a href="#cb6-62" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
+<span id="cb6-63"><a href="#cb6-63" tabindex="-1"></a>  Full BSV <span class="fu">covariance</span> ( [<span class="dv">33</span>mfit_sim [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>omega [<span class="dv">39</span>m [<span class="dv">22</span>m) </span>
+<span id="cb6-64"><a href="#cb6-64" tabindex="-1"></a>    or <span class="fu">correlation</span> ( [<span class="dv">33</span>mfit_sim [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>omegaR [<span class="dv">39</span>m [<span class="dv">22</span>m; <span class="at">diagonals=</span>SDs)</span>
+<span id="cb6-65"><a href="#cb6-65" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span>  [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>shrink [<span class="dv">39</span>m [<span class="dv">22</span>m </span>
+<span id="cb6-66"><a href="#cb6-66" tabindex="-1"></a>  <span class="fu">Censoring</span> ( [<span class="dv">33</span>mfit_sim [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>censInformation [<span class="dv">39</span>m [<span class="dv">22</span>m)<span class="sc">:</span> No censoring</span>
+<span id="cb6-67"><a href="#cb6-67" tabindex="-1"></a>  Minimization <span class="fu">message</span> ( [<span class="dv">33</span>mfit_sim [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>message [<span class="dv">39</span>m [<span class="dv">22</span>m)<span class="sc">:</span>  </span>
+<span id="cb6-68"><a href="#cb6-68" tabindex="-1"></a>    NLOPT_XTOL_REACHED<span class="sc">:</span> Optimization stopped because xtol_rel or <span class="fu">xtol_abs</span> (above) was reached. </span></code></pre></div>
 <p>Structural parameter estimates and the truth:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">est</span>   <span class="op">&lt;-</span> <span class="va">fit_sim</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">struct</span></span>
@@ -489,7 +499,7 @@ top-level default:</p>
 <span><span class="op">}</span></span></code></pre></div>
 <p>Both studies share the same CL (5 L/h) but differ in how they
 describe distribution: the earlier study lumped peripheral distribution
-into a single larger apparent volume (V = 15 L), while the later study
+into a single larger apparent volume (V = 40 L), while the later study
 resolved the two compartments (V₁ = 10 L, V₂ = 30 L, Q = 10 L/h).</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">lit_data</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/datagen.html">datagen</a></span><span class="op">(</span></span>
@@ -715,6 +725,19 @@ The number of nodes <code>n_nodes</code> (per eta dimension) trades
 accuracy against computational cost: <code>n_nodes = 3</code> is fast;
 <code>n_nodes = 5</code> (default) achieves near-exact moments for IIV
 SD up to ~0.5; <code>n_nodes = 7</code> extends coverage to SD ~0.7.</p>
+</div>
+<div class="section level2">
+<h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a>
+</h2>
+<ul>
+<li>
+<a href="multiple-studies.html">Multiple studies</a> — feed
+per-study models into a meta-analysis</li>
+<li>
+<a href="aggregate-data.html">From a published figure to E, V and
+n</a> — the other input type</li>
+<li><a href="estimator-comparison.html">Estimator comparison</a></li>
+</ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

@@ -1,9 +1,13 @@
 # admixr2
 
-`admixr2` fits pharmacometric PK/PD models directly to **aggregate-level
-data** — the observed mean vector **E** and covariance matrix **V**
-reported per clinical study — rather than requiring individual patient
-records. It integrates with the [nlmixr2](https://nlmixr2.org/) /
+`admixr2` is a **meta-analysis framework for population PK/PD**. It fits
+pharmacometric models directly to **summary-level data** — the mean
+vector **E** and covariance matrix **V** reported per study — instead of
+individual patient records. The inputs can be **digitised aggregate
+data** from published studies, **previously published PK/PD models**, or
+a mix of both; the result is a single unified population model with
+interpretable fixed, random and covariate effects. It integrates with
+the [nlmixr2](https://nlmixr2.org/) /
 [rxode2](https://cran.r-project.org/package=rxode2) ecosystem and
 provides four estimation backends:
 
@@ -14,32 +18,35 @@ provides four estimation backends:
 | Gauss-Hermite | `"adgh"` | [`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md) |
 | Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
 
-## Model-Based Meta-Analysis
+## Aggregate data modelling
 
-**Model-Based Meta-Analysis (MBMA)** is a pharmacometric framework for
-synthesising evidence across multiple clinical studies by fitting a
-shared mechanistic PK/PD model to the aggregate outcomes (means,
-variances) reported in each study. Unlike classical meta-analysis, which
-pools effect estimates, MBMA preserves the full pharmacometric model
-structure — including nonlinear dose-response, inter-individual
-variability, and residual error — enabling principled extrapolation and
-dose optimisation across the evidence base.
+`admixr2` implements **aggregate data modelling**: fitting a nonlinear
+mixed-effects model to the summary statistics a study reports rather
+than to individual records. Fitting a single population model jointly
+across several studies turns them into one **meta-analysis** —
+between-study differences are carried by the model itself
+(inter-individual variability captures subject-level spread within each
+study; residual error absorbs the rest), while every study shares the
+same structural and variance parameters and contributes its own dosing
+regimen, observation times, and sample size.
 
-`admixr2` fits a single population model jointly to all studies.
-Between-study differences in outcomes are accounted for through the
-population model structure: inter-individual variability captures
-subject-level spread within each study, and residual error absorbs
-remaining discrepancies. Each study contributes its own dosing regimen,
-observation times, and sample size, but shares the same structural and
-variance parameters.
+Two kinds of input feed the analysis:
+
+- **Aggregate data** — means, error bars and covariances digitised from
+  published figures or tables.
+- **Published PK/PD models** — a previously published population model
+  can be supplied directly, via
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md),
+  so the literature’s *models* (not only its data) become evidence you
+  can combine.
 
 ## When to use admixr2
 
-**Individual patient data are unavailable** — the most common scenario
-in MBMA. Published papers report means and standard deviations;
-regulatory submissions and competitive reasons prevent individual
-patient data sharing across companies or institutions. `admixr2`
-extracts the maximum information from what is publicly available.
+**Individual patient data are unavailable** — the most common scenario.
+Published papers report means and standard deviations; regulatory
+submissions and competitive reasons prevent individual patient data
+sharing across companies or institutions. `admixr2` extracts the maximum
+information from what is publicly available.
 
 **Leveraging the literature for trial design** — fit a mechanistic PK/PD
 model to aggregated results from existing trials, then simulate new
@@ -51,8 +58,10 @@ dose, formulation, population, or observation schedule. `admixr2`
 handles multi-study fits with per-study dosing events and time grids
 under a single shared population model.
 
-**Reproducing and extending published models** — digitised mean
-concentration– time profiles from figures are sufficient input. No
+**Reproducing and extending published models** — supply a previously
+published population model directly as input (via
+[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)),
+or digitise its mean concentration–time profiles from figures. No
 individual patient data required.
 
 ## Installation

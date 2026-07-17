@@ -48,15 +48,22 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-vignettes" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Vignettes</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-vignettes">
-<li><a class="dropdown-item" href="../articles/admixr2.html">Getting started</a></li>
+<li><h6 class="dropdown-header" data-toc-skip>Getting started</h6></li>
+    <li><a class="dropdown-item" href="../articles/admixr2.html">Introduction to admixr2</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
-    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
+    <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
-    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Plasma and brain (several outputs)</a></li>
-    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD — what data do you need?</a></li>
-    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Estimator comparison</a></li>
+    <li><a class="dropdown-item" href="../articles/multi-compartment.html">Several outputs (plasma + brain)</a></li>
+    <li><a class="dropdown-item" href="../articles/pkpd.html">PD and PK/PD data</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
+    <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
-    <li><a class="dropdown-item" href="../articles/datagen.html">Data generation</a></li>
+    <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -81,7 +88,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Multiple studies</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/multiple-studies.Rmd" class="external-link"><code>vignettes/multiple-studies.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/multiple-studies.Rmd" class="external-link"><code>vignettes/multiple-studies.Rmd</code></a></small>
       <div class="d-none name"><code>multiple-studies.Rmd</code></div>
     </div>
 
@@ -92,10 +99,16 @@
 </h2>
 <p>Passing several studies to <code><a href="../reference/admControl.html">admControl()</a></code> fits the model
 to all of them simultaneously, minimising the sum of per-study NLLs
-under a shared set of population parameters. This is the core use case
-for aggregate-data modelling: you have summary statistics from multiple
-trials (which may differ in dose, sample size, or observation schedule)
-and want a single population model consistent with all of them.</p>
+under a shared set of population parameters. This is
+<strong>meta-analysis</strong> — the core use case for aggregate-data
+modelling: you have summary statistics from multiple trials (which may
+differ in dose, sample size, or observation schedule) and want a single
+population model consistent with all of them. Each study’s
+<code>E</code>, <code>V</code> and <code>n</code> can come from a
+digitised figure (see
+<code><a href="../articles/aggregate-data.html">vignette("aggregate-data", package = "admixr2")</a></code>) or from
+that study’s own published model (see
+<code><a href="../articles/datagen.html">vignette("datagen", package = "admixr2")</a></code>).</p>
 </div>
 <div class="section level2">
 <h2 id="splitting-examplomycin-into-two-cohorts">Splitting examplomycin into two cohorts<a class="anchor" aria-label="anchor" href="#splitting-examplomycin-into-two-cohorts"></a>
@@ -103,7 +116,7 @@ and want a single population model consistent with all of them.</p>
 <p>We partition the 500 examplomycin subjects into two cohorts of 250
 and compute separate aggregate statistics for each:</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2/">admixr2</a></span><span class="op">)</span></span>
+<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2">admixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.org/" class="external-link">nlmixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://ggplot2.tidyverse.org" class="external-link">ggplot2</a></span><span class="op">)</span></span>
@@ -226,7 +239,7 @@ specify <code>times</code>, <code>ev</code>, <code>V</code>,
 <span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a> [<span class="dv">1</span>m── <span class="fu">Time</span> (sec  [<span class="dv">33</span>mfit_multi [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>time [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
 <span id="cb4-24"><a href="#cb4-24" tabindex="-1"></a></span>
 <span id="cb4-25"><a href="#cb4-25" tabindex="-1"></a>  optimize covariance elapsed</span>
-<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">44.511</span>      <span class="fl">9.036</span>  <span class="fl">53.547</span></span>
+<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">45.713</span>     <span class="fl">10.492</span>  <span class="fl">56.205</span></span>
 <span id="cb4-27"><a href="#cb4-27" tabindex="-1"></a></span>
 <span id="cb4-28"><a href="#cb4-28" tabindex="-1"></a> [<span class="dv">1</span>m── Population <span class="fu">Parameters</span> ( [<span class="dv">33</span>mfit_multi [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixed [<span class="dv">39</span>m or  [<span class="dv">33</span>mfit_multi [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixedDf [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
 <span id="cb4-29"><a href="#cb4-29" tabindex="-1"></a></span>
@@ -317,6 +330,21 @@ drug development programme:</p>
 automatically assigned <code>method = "var"</code>, avoiding the O(n_t³)
 Cholesky solve when the off-diagonal covariance structure is
 unavailable.</p>
+</div>
+<div class="section level2">
+<h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a>
+</h2>
+<ul>
+<li>
+<a href="aggregate-data.html">From a published figure to E, V and
+n</a> — prepare each study’s <code>E</code>, <code>V</code> and
+<code>n</code>
+</li>
+<li>
+<a href="multi-compartment.html">Several observed compartments</a> —
+several outputs per study</li>
+<li><a href="estimator-comparison.html">Estimator comparison</a></li>
+</ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>
