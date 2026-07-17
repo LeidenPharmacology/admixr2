@@ -9,24 +9,45 @@
   now emits a one-time warning in this case telling you to `devtools::install()`.
   It never fires in production (installed package == source).
 
-* **Fitting many models in one R session no longer grows memory without bound.**
-  Each fit reads `ui$foceiModel` (loading the inner/outer/predOnly/predNoLhs
-  companion models) and compiles a simulation model, all of which register in
-  rxode2's global model registry (`.rxModels`). nlmixr2est bounds that registry
-  via `rxUnloadAll()`, but its registry sweep only fires once at least
-  `getOption("rxode2.checkOrphans", 75)` DLLs are loaded -- a threshold admixr2's
-  workload sits under -- so the registry grew unbounded, and once it held a few
-  hundred entries the next fit's solve ballooned the R heap by several GB (a
-  session or test suite in one process could reach ~15 GB and be OOM-killed).
-  Each estimator (and `datagen()`) now removes the registry entries **it added**
-  after every fit -- snapshotting the registry on entry and clearing only the
-  delta, so models the user or the nlmixr2 framework registered elsewhere in the
-  session are left untouched -- plus admixr2's own in-memory model cache (off
-  Windows, where the cache also anchors GC finalizers). The qs2 disk caches are
-  retained so same-model reloads stay cheap. Fit results are unchanged. Set
-  `options(admixr2.fit_teardown = FALSE)` to disable.
+* **Model loading and per-fit memory now follow nlmixr2est's own conventions.**
+  admixr2 previously pinned each fit's `foceiModel` companion objects in a
+  package-level environment (a Windows GC-finalizer heap-corruption guard) and
+  reclaimed rxode2's global model registry with a bespoke snapshot/teardown after
+  every fit. Both are gone: the companion objects are no longer pinned (the guard
+  proved unnecessary -- verified by running the `covMethod = "r"` fit path
+  repeatedly under aggressive GC with no crash), and each estimator now frees
+  memory the way nlmixr2est does, with `gc(); rxode2::rxUnloadAll()`. The disk
+  model cache continues to use `qs2` + `digest`, exactly like rxode2/nlmixr2est;
+  the in-memory pin cache was removed (same-model reloads come from the `qs2`
+  files). Net: ~290 fewer lines, no admixr2-specific memory machinery, and fit
+  results are unchanged.
+
+* **`admClearCache()` is removed; use `rxode2::rxClean()`.** admixr2's `qs2`
+  caches live in `rxode2::rxTempDir()` alongside rxode2's and nlmixr2est's, so
+  `rxode2::rxClean()` -- rxode2's standard cache wipe (unload all models + clear
+  the temp dir), which nlmixr2est itself calls to reset -- already clears
+  admixr2's cache too. The package-specific `admClearCache()` is therefore
+  redundant.
 
 ## New features
+
+* **Analytical gradients for non-mu-referenced ("unpaired") structural thetas.**
+  A structural theta with no mu-referencing eta (`tka` with no `eta.ka`, or the
+  `exp(tcl) * exp(eta.cl)` writing style rxode2 does not mu-reference) used to
+  cost an extra finite-difference `rxSolve` per gradient call. admixr2 now emits
+  its own first-order sensitivity model over an explicit direction set (one
+  direction per random effect plus one per unpaired theta), compiled with
+  `eventSens = "jump"` so dosing-modifier (`f`/`lag`/`rate`/`dur`) sensitivities
+  are no longer silently zero. This mirrors the scheme nlmixr2est's fast-focei
+  uses (`.foceiAnalyticDirections`) but first-order only, and is cross-validated
+  against nlmixr2est's inner model to ~1e-13 across ODE, linCmt, dosing
+  modifiers, initial conditions, covariates, if/else and multi-endpoint models.
+  Consumed by `admc`, `adgh` (including joint multi-output studies); `adfo` keeps
+  finite differences (its `V_pred = J Omega J' + Sigma` needs a second
+  derivative). Measured 2.5-3.8x faster and ~100x more accurate than the previous
+  finite-difference path on a 2-compartment model. This adds `symengine` (already
+  a hard dependency of `nlmixr2est`, so always installed alongside admixr2) to
+  `Imports`, used to emit the linCmt direction derivatives.
 
 * **Residual error models: `pow()`, `addPow()` and `combined1()` are now
   supported, with analytical gradients** (#84). admixr2 previously supported

@@ -1,43 +1,6 @@
-# Session-scoped environment for pinning foceiModel companion objects and
-# caching sens model results across calls within a session.
-#
-# rxode2 companion objects ($outer, $predOnly, $predNoLhs) hold live C++ DLL
-# pointers. If they become GC-eligible while another allocation is in progress,
-# their finalizers unload DLLs mid-allocation -> STATUS_HEAP_CORRUPTION on
-# Windows. We cannot pin them to `ui` because rxode2 locks the rxUi environment
-# (assign() fails silently there). A package-level env is always writable.
-#
-# Keys: paste0("focei_", digest(ui$lstExpr))  -> foceiModel list (companion pin)
-#       paste0("sens_",  digest(ui$lstExpr))  -> sens model result (in-memory cache)
-.adm_pin_env <- new.env(parent = emptyenv())
-
-# Registry keys (rxode2 model names) that admixr2 has loaded, so a per-fit
-# teardown can reclaim exactly them -- including models loaded outside an
-# estimator fit (test-helper setup, datagen) -- without touching models the user
-# registered themselves. Populated by .admTrackRegistry, drained by .admFitTeardown.
-.adm_model_keys <- new.env(parent = emptyenv())
-
 # Session-scoped cache for once-per-session warnings.
 # Keys are error-type strings; presence of a key means the warning was already emitted.
 .adm_warn_env <- new.env(parent = emptyenv())
-
-#' Clear the admixr2 model cache
-#'
-#' Removes all cached simulation and sensitivity models from both the
-#' session-level in-memory cache and the qs2 disk files written to
-#' `rxode2::rxTempDir()`. Call this in long-running sessions to free memory
-#' and disk space after fitting many distinct models.
-#'
-#' @return Invisibly returns the number of in-memory objects removed.
-#' @export
-admClearCache <- function() {
-  nms <- ls(envir = .adm_pin_env, all.names = TRUE)
-  .admClearPins()
-  qs2_files <- list.files(rxode2::rxTempDir(),
-                          pattern = "^adm-.*\\.qs2$", full.names = TRUE)
-  unlink(qs2_files)
-  invisible(length(nms))
-}
 
 .onLoad <- function(libname, pkgname) {
   tryCatch(.register_adm(),  error = function(e)

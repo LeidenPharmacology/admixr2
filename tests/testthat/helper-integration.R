@@ -87,6 +87,372 @@ one_cmt_kappa_fn <- function() {
   })
 }
 
+# ---- linCmt model with an unpaired struct theta ------------------------------
+# The sens model for a linCmt model cannot come from state sensitivities; its
+# theta column goes through rxode2's linCmtB chain rule (this is the case
+# nlmixr2est's own augmented outer model cannot build).
+
+one_cmt_lincmt_kappa_fn <- function() {
+  ini({
+    tcl     <- log(5)  ; label("Log CL")
+    tv      <- log(20) ; label("Log V")
+    tsc     <- log(1)  ; label("Log scale")   # unpaired: no eta
+    add.err <- 0.1     ; label("Additive SD")
+    eta.cl  ~ 0.09
+    eta.v   ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.v)
+    sc <- exp(tsc)
+    cp <- sc * linCmt()
+    cp ~ add(add.err)
+  })
+}
+
+# ---- MULTI-ENDPOINT linCmt model --------------------------------------------
+# linCmt() PK (cp) + an algebraic PD endpoint (eff) derived from it. linCmt has
+# no d/dt state, so rxStateOde() is empty but rxState() reports its implicit
+# `central` compartment -- the endpoints must be numbered AFTER it (dvid(2,3), as
+# nlmixr2est's inner model emits), which is why .admBuildThetaSens counts base
+# compartments with rxState(), not rxStateOde(). tv and tec50 are eta-less
+# (unpaired) thetas, so this exercises THETA_j_ direction columns on a linCmt
+# multi-endpoint model. nlmixr2est's inner model returns NULL for this model, so
+# without the emitter these endpoints would get a full finite-difference gradient.
+
+two_endpoint_lincmt_fn <- function() {
+  ini({
+    tcl   <- log(1)  ; label("Log CL")
+    tv    <- log(20) ; label("Log V")       # unpaired: no eta
+    tec50 <- log(5)  ; label("Log EC50")    # unpaired: no eta
+    add.cp  <- 0.5   ; label("Additive SD cp")
+    add.eff <- 0.3   ; label("Additive SD eff")
+    eta.cl  ~ 0.1
+  })
+  model({
+    cl   <- exp(tcl + eta.cl)
+    v    <- exp(tv)
+    ec50 <- exp(tec50)
+    cp   <- linCmt()
+    eff  <- cp / (ec50 + cp)
+    cp  ~ add(add.cp)
+    eff ~ add(add.eff)
+  })
+}
+
+# ---- Model with DOSING-MODIFIER parameters ----------------------------------
+# eta.f drives bioavailability; the eta-less theta tlag drives the lag time.
+# Parameters entering f()/lag()/rate()/dur() have NO sensitivity in nlmixr2est's
+# inner model (FOCEI finite-differences event sensitivities separately), so
+# admixr2 recompiles it with eventSens = "jump". The lag (0.3 h) sits off the
+# observation grid on purpose -- at an observation exactly equal to the lagged
+# dose time the derivative does not exist.
+
+one_cmt_dose_fn <- function() {
+  ini({
+    tcl <- log(5)   ; label("Log CL")
+    tv  <- log(20)  ; label("Log V")
+    tka <- log(1)   ; label("Log ka")
+    tf  <- 0.5      ; label("Logit F")
+    tlag <- log(0.3); label("Log lag")
+    add.err <- 0.1
+    eta.cl ~ 0.09
+    eta.f  ~ 0.05
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv)
+    ka <- exp(tka)
+    d/dt(depot)   = -ka * depot
+    f(depot)      = expit(tf + eta.f)
+    alag(depot)   = exp(tlag)
+    d/dt(central) =  ka * depot - (cl / v) * central
+    cp = central / v
+    cp ~ add(add.err)
+  })
+}
+
+# ---- Models exercising the sens model's own columns --------------------------
+# Each has at least one eta-less ("unpaired") theta, so the sens model is
+# augmented and both kinds of column -- d(pred)/d(eta) and d(pred)/d(theta) --
+# can be checked directly against finite differences. See
+# .int_sens_col_errs() / test-integration-sens-columns.R.
+
+# Rich ODE model consolidating three independent, eta-less theta types into ONE
+# compile: a covariate coefficient (bwt), an expit-bounded structural theta (tfr,
+# where focei's analytic path bails entirely), and a parameter-dependent initial
+# condition (tinit). .int_sens_col_errs checks every column at once, so one model
+# verifies all three -- fewer rxode2 compiles in the sens-columns suite than one
+# model per feature.
+one_cmt_feat_fn <- function() {
+  ini({tcl <- log(5); tv <- log(20)
+       bwt   <- 0.75     # covariate coefficient on CL
+       tfr   <- 0.3      # expit-bounded structural theta
+       tinit <- log(2)   # parameter-dependent initial condition
+       add.err <- 0.1
+       eta.cl ~ 0.09; eta.v ~ 0.04})
+  model({
+    cl <- exp(tcl + eta.cl + bwt * WT)
+    v  <- exp(tv + eta.v)
+    fr <- expit(tfr)
+    d/dt(central) <- -(cl / v) * central
+    central(0) <- exp(tinit)
+    cp <- fr * central / v
+    cp ~ add(add.err)
+  })
+}
+
+# eta.cl SHARED across cl and v: rxode2 will not mu-reference tcl/tv, so both
+# become unpaired and must get their OWN column (reusing eta.cl's would be wrong)
+one_cmt_shared_eta_fn <- function() {
+  ini({tcl <- log(5); tv <- log(20); tka <- log(1); add.err <- 0.1
+       eta.cl ~ 0.09; eta.ka ~ 0.04})
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.cl)
+    ka <- exp(tka + eta.ka)
+    d/dt(depot)   <- -ka * depot
+    d/dt(central) <-  ka * depot - (cl / v) * central
+    cp <- central / v
+    cp ~ add(add.err)
+  })
+}
+
+# modelled infusion rate. Dosed with rate = -1; the infusion ends at amt/rate,
+# kept OFF the observation grid (100/30 = 3.33 h) -- see the discontinuity note.
+one_cmt_rate_fn <- function() {
+  ini({tcl <- log(5); tv <- log(20); trate <- log(30); add.err <- 0.1
+       eta.cl ~ 0.09; eta.v ~ 0.04})
+  model({
+    cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v)
+    d/dt(central) <- -(cl / v) * central
+    rate(central) <- exp(trate)
+    cp <- central / v
+    cp ~ add(add.err)
+  })
+}
+
+# modelled infusion duration (dose given with rate = -2); 1.7 h, off the grid
+one_cmt_dur_fn <- function() {
+  ini({tcl <- log(5); tv <- log(20); tdur <- log(1.7); add.err <- 0.1
+       eta.cl ~ 0.09; eta.v ~ 0.04})
+  model({
+    cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v)
+    d/dt(central) <- -(cl / v) * central
+    dur(central) <- exp(tdur)
+    cp <- central / v
+    cp ~ add(add.err)
+  })
+}
+
+# delay() (DDE) and transit(): .rxSens() augments these itself. nlmixr2est's
+# augmented builder also emits `..pastLines` (the pre-history of a NON-constant
+# delay), which the emitter mirrors.
+one_cmt_delay_fn <- function() {
+  ini({tcl <- log(5); tv <- log(20); tka <- log(1); add.err <- 0.1
+       eta.cl ~ 0.09; eta.v ~ 0.04})
+  model({
+    cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v); ka <- exp(tka)
+    d/dt(depot)   <- -ka * depot
+    d/dt(central) <-  ka * delay(depot, 0.5) - (cl / v) * central
+    cp <- central / v
+    cp ~ add(add.err)
+  })
+}
+
+one_cmt_transit_fn <- function() {
+  ini({tcl <- log(5); tv <- log(20); tka <- log(1)
+       tn <- log(3); tmtt <- log(2); add.err <- 0.1
+       eta.cl ~ 0.09; eta.v ~ 0.04})
+  model({
+    cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v); ka <- exp(tka)
+    n  <- exp(tn); mtt <- exp(tmtt)
+    d/dt(depot)   <- transit(n, mtt) - ka * depot
+    d/dt(central) <-  ka * depot - (cl / v) * central
+    cp <- central / v
+    cp ~ add(add.err)
+  })
+}
+
+# Check the sens model's OWN columns against central finite differences of the
+# SAME model's rx_pred_, so the only thing under test is the derivative.
+#
+# This is the check that catches a silently-ZERO column (the dosing-modifier bug):
+# a gradient-level test cannot, because the FD fallback would quietly cover for a
+# missing theta column, and a zero eta column merely makes the analytic and FD
+# gradients agree on being wrong.
+#
+# Error metric is COLUMN-SCALED: max|ana - fd| / max|fd| over the column, not a
+# per-point relative error. A sensitivity may legitimately cross zero -- e.g.
+# d(cp)/d(eta.v) does, because raising v lowers cp directly (1/v) but also slows
+# elimination (k = cl/v), and the two cancel at some time -- and dividing by an fd
+# that passes through zero explodes for a perfectly correct column. The scaled
+# metric still catches the failure this file exists for: an identically zero
+# column scores exactly 1.0.
+#
+# Which dosing modifiers (by name) does a pruned sens env carry? Test-only helper
+# for the "refuses" contract below. Production code (.admJumpCovers /
+# .admBuildThetaSens) greps admixr2:::.admDoseModRe for the VARS it needs, not the
+# names, so this name-only view lives here rather than in the package.
+.admDoseMods <- function(s) {
+  v <- grep(admixr2:::.admDoseModRe, ls(envir = s, all.names = TRUE), value = TRUE)
+  m <- sub(admixr2:::.admDoseModRe, "\\1", v)
+  unique(ifelse(m == "alag", "lag", m))
+}
+
+# Returns a named vector of those errors: one entry per real eta ("eta:<name>")
+# and per augmented theta ("theta:<name>").
+.int_sens_col_errs <- function(model_fn, ev, times, h = 1e-5, eta_at = 0.1,
+                               covariates = c(WT = 70)) {
+  skip_if_not_installed("rxode2")
+  ui <- suppressMessages(tryCatch(rxode2::rxode2(model_fn), error = function(e) NULL))
+  if (is.null(ui)) skip("rxode2 model parse failed")
+  sm <- suppressMessages(tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL))
+  if (is.null(sm)) skip("sens model unavailable")
+  # The emitter refuses to build when the installed rxode2 cannot differentiate a
+  # dosing modifier one of its directions feeds (5.1.2 has no lag()/rate()/dur()
+  # jumps; 5.1.3 does), and admixr2 falls back to the inner model + FD. That is the
+  # correct behaviour -- but there are then no theta columns to check here.
+  if (length(admixr2:::.admUnpairedThetas(ui)) > 0L && is.null(sm$theta_sens_cols))
+    skip("sens model fell back to the inner model (rxode2 lacks a needed jump derivative)")
+
+  ini      <- ui$iniDf
+  th_rows  <- ini[!is.na(ini$ntheta), , drop = FALSE]
+  eta_rows <- ini[!is.na(ini$neta1) & ini$neta1 == ini$neta2 & !ini$fix, , drop = FALSE]
+  n_eta    <- nrow(eta_rows)
+
+  # the sens model's parameters are exactly the model's: THETA[ntheta] and ETA[i]
+  th <- stats::setNames(th_rows$est, paste0("THETA[", th_rows$ntheta, "]"))
+  et <- stats::setNames(rep(eta_at, n_eta), paste0("ETA[", seq_len(n_eta), "]"))
+
+  # any leftover required parameter is a model covariate -> hold it constant
+  need <- setdiff(rxode2::rxModelVars(sm$mod)$params, c(names(th), names(et)))
+  cov_v <- if (length(need)) covariates[need] else NULL
+
+  sol <- function(th, et) {
+    d <- rxode2::rxSolve(sm$mod, params = c(th, et, cov_v), events = ev,
+                         returnType = "data.frame", addDosing = FALSE,
+                         atol = 1e-12, rtol = 1e-12)
+    d[d$time > 0, , drop = FALSE]
+  }
+  relerr <- function(ana, fd) max(abs(ana - fd)) / max(max(abs(fd)), 1e-8)
+  d0  <- sol(th, et)
+  out <- numeric(0)
+
+  for (j in seq_len(n_eta)) {                          # real eta columns
+    ep <- et; ep[j] <- ep[j] + h
+    em <- et; em[j] <- em[j] - h
+    fd <- (sol(th, ep)$rx_pred_ - sol(th, em)$rx_pred_) / (2 * h)
+    out[paste0("eta:", eta_rows$name[j])] <- relerr(d0[[sm$sens_cols[j]]], fd)
+  }
+  for (nm in names(sm$theta_sens_cols)) {              # augmented theta columns
+    k  <- which(th_rows$name == nm)
+    tp <- th; tp[k] <- tp[k] + h
+    tm <- th; tm[k] <- tm[k] - h
+    fd <- (sol(tp, et)$rx_pred_ - sol(tm, et)$rx_pred_) / (2 * h)
+    out[paste0("theta:", nm)] <- relerr(d0[[sm$theta_sens_cols[[nm]]]], fd)
+  }
+  # Reclaim the models this build registered in rxode2's global registry -- these
+  # column tests bypass the estimator fit path, so without this the registry (and
+  # RSS) grows across every model until the ubuntu-devel R CMD check hangs. Same
+  # idiom nlmixr2est runs before every test (nmTest): gc(); rxUnloadAll(). The
+  # returned `out` is a plain numeric vector, unaffected.
+  gc(FALSE); rxode2::rxUnloadAll()
+  out
+}
+
+.int_theta_sens_cache <- NULL
+
+# ---- Theta-sensitivity setup -------------------------------------------------
+# Model with an unpaired struct theta (tsc): the sens model is augmented with a
+# dummy eta for it (.admBuildSensUi), so .admGrad gets d(pred)/d(tsc) from the
+# sens solve instead of finite-differencing it. Builds, for both an ODE and a
+# linCmt model:
+#   g_ana  -- .admGrad with the augmented sens model (theta columns used)
+#   g_plain-- .admGrad with the theta columns removed (the old FD path)
+#   g_fd   -- CRN central difference of .admNLL (the reference)
+# Same study/z_list construction as .int_grad_setup().
+.int_theta_sens_setup <- function(n_sim = 500L, seed = 42L) {
+  if (!is.null(.int_theta_sens_cache) &&
+      .int_theta_sens_cache$n_sim == n_sim && .int_theta_sens_cache$seed == seed)
+    return(.int_theta_sens_cache)
+
+  skip_if_not_installed("rxode2")
+
+  one <- function(model_fn) {
+    ui <- suppressMessages(tryCatch(rxode2::rxode2(model_fn), error = function(e) NULL))
+    if (is.null(ui)) skip("rxode2 model parse failed")
+    pinfo      <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+    output_var <- "cp"
+
+    # ORDERING INVARIANT: sens model before .admLoadModel()
+    sensModel <- suppressMessages(
+      tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL))
+    rxMod <- tryCatch(admixr2:::.admLoadModel(ui), error = function(e) NULL)
+    if (is.null(rxMod)) skip("Model compilation failed")
+    rxode2::rxLoad(rxMod)
+
+    times  <- c(0.5, 1, 2, 4)
+    E_true <- .one_cmt_mean(5, 20, 100, times)
+    V_true <- diag((0.3 * E_true)^2)
+    study  <- list(E = E_true, V = V_true, n = 200L, times = times,
+                   ev = rxode2::et(amt = 100))
+    study  <- admixr2:::.admNormaliseStudy(study, "s")
+    study$ev_full <- study$ev |> rxode2::et(study$times)
+    studies <- list(s = study)
+
+    z_list      <- admixr2:::.admMakeZ(n_sim, pinfo, 1L, "sobol")
+    params_list <- admixr2:::.admMakeParamsList(n_sim, pinfo, 1L)
+    p0          <- admixr2:::.admBuildOptVec(pinfo)$p0
+    h_fd        <- 1e-3
+
+    # the same model with its theta columns hidden: what the nlmixr2est-inner
+    # fallback gives (eta columns only) -> the FD path for the unpaired thetas
+    sens_plain <- sensModel
+    if (!is.null(sens_plain)) sens_plain$theta_sens_cols <- NULL
+
+    g_ana <- admixr2:::.admGrad(p0, pinfo, studies, z_list, rxMod, output_var,
+                                params_list, cores = 1L, h = h_fd,
+                                sensModel = sensModel, use_central = TRUE)
+    # the FD path this replaces, at the production default (forward FD)
+    g_plain <- admixr2:::.admGrad(p0, pinfo, studies, z_list, rxMod, output_var,
+                                  params_list, cores = 1L, h = h_fd,
+                                  sensModel = sens_plain, use_central = FALSE)
+    g_fd <- vapply(seq_along(p0), function(k) {
+      ph <- p0; ph[k] <- ph[k] + h_fd
+      pl <- p0; pl[k] <- pl[k] - h_fd
+      (admixr2:::.admNLL(ph, pinfo, studies, z_list, rxMod, output_var, params_list, 1L) -
+       admixr2:::.admNLL(pl, pinfo, studies, z_list, rxMod, output_var, params_list, 1L)) / (2 * h_fd)
+    }, double(1))
+    names(g_fd) <- names(p0)
+
+    # adgh gradient on the same model/study
+    grid   <- admixr2:::.adghNodeGrid(5L, pinfo$n_eta)
+    g_adgh <- admixr2:::.adghGrad(p0, pinfo, studies, sensModel, rxMod, output_var,
+                                  grid, cores = 1L, grad_h = h_fd)
+    g_adgh_fd <- vapply(seq_along(p0), function(k) {
+      ph <- p0; ph[k] <- ph[k] + h_fd
+      pl <- p0; pl[k] <- pl[k] - h_fd
+      (admixr2:::.adghNLL(ph, pinfo, studies, rxMod, output_var, grid, 1L) -
+       admixr2:::.adghNLL(pl, pinfo, studies, rxMod, output_var, grid, 1L)) / (2 * h_fd)
+    }, double(1))
+    names(g_adgh_fd) <- names(p0)
+
+    list(ui = ui, pinfo = pinfo, sensModel = sensModel, p0 = p0,
+         studies = list(s = list(E = E_true, V = V_true, n = 200L, times = times,
+                                 ev = rxode2::et(amt = 100))),
+         g_ana = g_ana, g_plain = g_plain, g_fd = g_fd,
+         g_adgh = g_adgh, g_adgh_fd = g_adgh_fd,
+         unpaired = names(pinfo$struct_has_eta)[!pinfo$struct_has_eta])
+  }
+
+  .int_theta_sens_cache <<- list(
+    n_sim = n_sim, seed = seed,
+    ode = one(one_cmt_kappa_fn),
+    lin = one(one_cmt_lincmt_kappa_fn))
+  .int_theta_sens_cache
+}
+
 # ---- Grad setup: passes ui so struct_has_eta = TRUE for struct thetas --------
 # Separate from .int_setup() which calls .admParseIniDf(iniDf) without ui,
 # routing struct thetas through unpaired FD (2x gradient error).

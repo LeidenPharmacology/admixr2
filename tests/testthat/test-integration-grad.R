@@ -29,38 +29,6 @@ test_that("ODE: .admLoadSensModel() returns non-NULL", {
     info = "ODE sensitivity model should be available (ODE sens equations always present)")
 })
 
-test_that("admLoadSensModel: foceiModel pinned to .adm_pin_env after load", {
-  env     <- .int_grad_setup()
-  # A prior fit's teardown may have dropped the pins; force a fresh load so we
-  # test .admLoadSensModel's pinning itself (.adm_pin_env is populated on load,
-  # then cleared per-fit by .admFitTeardown -- see R/utils.R).
-  admixr2::admClearCache()
-  admixr2:::.admLoadSensModel(env$ui)
-  pin_key <- paste0("focei_", digest::digest(env$ui$lstExpr))
-  expect_true(exists(pin_key, envir = admixr2:::.adm_pin_env, inherits = FALSE),
-    info = "foceiModel companions must be pinned in .adm_pin_env to prevent Windows GC heap corruption")
-  pinned <- get(pin_key, envir = admixr2:::.adm_pin_env, inherits = FALSE)
-  expect_false(is.null(pinned$inner),
-    info = "pinned foceiModel must have non-NULL $inner (sens equations)")
-})
-
-test_that("admLoadSensModel: in-memory cache returns identical result on repeat call", {
-  env   <- .int_grad_setup()
-  sens1 <- admixr2:::.admLoadSensModel(env$ui)
-  sens2 <- admixr2:::.admLoadSensModel(env$ui)
-  expect_true(identical(sens1, sens2),
-    info = "second call should return same object from .adm_pin_env cache, not re-read from disk")
-})
-
-test_that("admLoadSensModel: sens result cached in .adm_pin_env", {
-  env      <- .int_grad_setup()
-  admixr2::admClearCache()          # force a fresh load (teardown clears pins per fit)
-  admixr2:::.admLoadSensModel(env$ui)
-  sens_key <- paste0("sens_", digest::digest(env$ui$lstExpr))
-  expect_true(exists(sens_key, envir = admixr2:::.adm_pin_env, inherits = FALSE),
-    info = "sens model result must be cached in .adm_pin_env for in-memory cache to work")
-})
-
 # ---- linCmt sensitivity model tests -----------------------------------------
 
 test_that("linCmt: .admNLL() is finite (simulationModel multi-subject fix)", {
@@ -72,15 +40,6 @@ test_that("linCmt: .admLoadSensModel() returns non-NULL", {
   env <- .int_lincmt_setup()
   expect_false(is.null(env$sensModel),
     info = "linCmt sensitivity model should be available (inner has linCmtB jacobians)")
-})
-
-test_that("linCmt: admLoadSensModel pins foceiModel to .adm_pin_env", {
-  env     <- .int_lincmt_setup()
-  admixr2::admClearCache()          # force a fresh load (teardown clears pins per fit)
-  admixr2:::.admLoadSensModel(env$ui)
-  pin_key <- paste0("focei_", digest::digest(env$ui$lstExpr))
-  expect_true(exists(pin_key, envir = admixr2:::.adm_pin_env, inherits = FALSE),
-    info = "linCmt foceiModel companions must be pinned (different digest from ODE model)")
 })
 
 # ---- IRMC inner gradient tests -----------------------------------------------

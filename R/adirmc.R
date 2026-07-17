@@ -1089,8 +1089,6 @@ nlmixr2Est.adirmc <- function(env, ...) {
     ))
   }
 
-  # Snapshot the rxode2 model registry BEFORE loading any model (see .admFitTeardown).
-  .reg0 <- .admRegistrySnapshot()
 
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   # See model.R for rationale (linCmt foceiModel FD-path caching inner=NULL).
@@ -1100,7 +1098,10 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
-  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); .admFitTeardown(.reg0) }, add = TRUE)
+  # Free the models this fit registered with rxode2's own idiom (the same
+  # gc(); rxUnloadAll() nlmixr2est runs), so many fits in a session stay bounded.
+  on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); gc(FALSE); rxode2::rxUnloadAll() },
+          add = TRUE)
 
   studies_snap <- studies
 
