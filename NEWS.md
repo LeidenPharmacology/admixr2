@@ -173,6 +173,20 @@
   admixr2's cache too. The package-specific `admClearCache()` is therefore
   redundant.
 
+* **`print()` on a fit no longer writes into rmarkdown's namespace.**
+  `print.admFit` temporarily overwrote `rmarkdown:::print.paged_df` via
+  `assignInNamespace()` (restoring it `on.exit`) to steer nlmixr2est away from
+  its paged-table branch. That branch is in fact unreachable: nlmixr2est decides
+  between paged and console output by *probing behaviour* -- it prints a
+  `paged_df`-classed frame into `capture.output()` and infers "a paged renderer
+  consumed my output" from zero captured lines -- but `rmarkdown:::print.paged_df`
+  returns its `knit_asis` object visibly and no `print.knit_asis` method exists,
+  so the probe always collects output, always returns `FALSE`, and the console
+  branch is always taken. The stub therefore changed nothing except skipping the
+  discarded probe render (~20 ms per `print(fit)`), at the cost of mutating a
+  foreign namespace -- fragile, unsafe under concurrent rendering, and a
+  CRAN-policy grey area. Printed output is unchanged, byte for byte. (#58)
+
 # admixr2 0.2.0
 
 ## New features
