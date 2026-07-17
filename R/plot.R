@@ -72,33 +72,6 @@ print.admFit <- function(x, ...) {
   saved_cl <- class(x)
   on.exit(tryCatch(class(x) <- saved_cl, error = function(e) NULL), add = TRUE)
 
-  # Distinguish explicit print(fit) from RStudio auto-print (chunk evaluates
-  # bare `fit`). RStudio's auto-print wrapper is an anonymous function; explicit
-  # print() appears as "print" in sys.calls(). Inject the rmarkdown stub only
-  # for explicit calls so auto-print keeps the paged-table path.
-  .stk <- sys.calls()
-  .n   <- length(.stk)
-  .parent_fn <- if (.n >= 2L)
-    tryCatch(deparse(.stk[[.n - 1L]][[1L]])[1L], error = function(e) "")
-  else ""
-
-  if (identical(.parent_fn, "print") && isNamespaceLoaded("rmarkdown")) {
-    .rm_ns <- asNamespace("rmarkdown")
-    .orig_paged <- tryCatch(
-      get("print.paged_df", envir = .rm_ns, inherits = FALSE),
-      error = function(e) NULL
-    )
-    if (!is.null(.orig_paged)) {
-      utils::assignInNamespace("print.paged_df",
-                               function(x, ...) { cat(" "); invisible(x) },
-                               ns = "rmarkdown")
-      on.exit(
-        utils::assignInNamespace("print.paged_df", .orig_paged, ns = "rmarkdown"),
-        add = TRUE
-      )
-    }
-  }
-
   fn <- get("print.nlmixr2FitCore", envir = asNamespace("nlmixr2est"), inherits = FALSE)
   class(x) <- class(x)[class(x) != "nlmixr2FitData"]
   fn(x, ...)
@@ -108,8 +81,7 @@ print.admFit <- function(x, ...) {
 # knitr auto-print handler. Registered as knit_print.admFit into knitr's
 # namespace by .register_knit_print() in .onLoad (zzz.R). Not named
 # knit_print.admFit to avoid roxygen2 S3-method detection and spurious
-# NAMESPACE requirements. No rmarkdown stub injection -> .pagedPrint detects
-# the knitr side-channel and produces paged tables.
+# NAMESPACE requirements.
 .admKnitPrint <- function(x, ...) {
   fn <- get("print.nlmixr2FitCore", envir = asNamespace("nlmixr2est"), inherits = FALSE)
   saved_cl <- class(x)
@@ -119,9 +91,11 @@ print.admFit <- function(x, ...) {
   invisible(NULL)
 }
 
-# Called by print.nlmixr2FitCore's paged path when it does head(fit).
-# Unlike print.paged_df, this method is not in nlmixr2est's import chain, so
-# S3 dispatch falls through to admixr2's method table and finds us first.
+# Called by print.nlmixr2FitCore when it ends its console branch with
+# print(head(x)). Unlike rmarkdown's print.paged_df, this method is not in
+# nlmixr2est's import chain, so S3 dispatch falls through to admixr2's method
+# table and finds us first -- which is the supported way to intercept this path,
+# and the reason no namespace mutation is needed (see #58).
 # Converts to a plain data frame before head() to avoid .subset2(env, integer).
 #' @method head admFit
 #' @export
