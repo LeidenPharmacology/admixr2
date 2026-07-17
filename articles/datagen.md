@@ -229,7 +229,7 @@ admc -7889.378 -7875.378 -7832.254       3944.689
  [1m── Time (sec  [33mfit_sim [39m [34m$time [39m): ── [22m
 
   optimize covariance elapsed
-1   41.039      4.781   45.82
+1   40.528      4.844  45.372
 
  [1m── Population Parameters ( [33mfit_sim [39m [34m$parFixed [39m or  [33mfit_sim [39m [34m$parFixedDf [39m): ── [22m
 

@@ -297,7 +297,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>         optimize covariance elapsed other
-#> elapsed    1.469      0.104   1.573 2.741
+#> elapsed    1.506      0.105   1.611 2.853
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
