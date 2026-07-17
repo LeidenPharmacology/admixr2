@@ -81,15 +81,15 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance elapsed other
-elapsed    1.768      0.144   1.912 1.531
+elapsed    1.041      0.068   1.109 3.321
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
             Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl      0.03319 0.03099 93.36   1.034 (0.9728, 1.098)     27.9            
-tv1        2.292 0.04479 1.954     9.893 (9.061, 10.8)     15.1            
-tq        0.8809  0.3694 41.94     2.413 (1.17, 4.977)                     
-tv2        0.867   0.153 17.65     2.38 (1.763, 3.212)                     
+tcl      0.03322 0.03098 93.27   1.034 (0.9729, 1.098)     27.9            
+tv1        2.292 0.04514  1.97      9.89 (9.053, 10.8)     15.1            
+tq         0.883  0.3714 42.06    2.418 (1.168, 5.007)                     
+tv2       0.8677  0.1541 17.76    2.382 (1.761, 3.221)                     
 prop.cp 0.004104                              0.004104                     
  
   Covariance Type (fit_plasma$covMethod): r
@@ -184,21 +184,21 @@ fit_cns
 ── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
-adgh -88.58817 -72.58817 -36.65025       44.29408
+adgh -88.59291 -72.59291 -36.65499       44.29646
 
 ── Time (sec fit_cns$time): ──
 
         optimize covariance elapsed other
-elapsed      1.7      0.326   2.026 1.466
+elapsed    1.139      0.136   1.275 3.442
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
            Est.      SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl     0.04145 0.01875  45.22    1.042 (1.005, 1.081)     27.0            
-tv1       2.269 0.01028 0.4529    9.672 (9.479, 9.868)     13.9            
-tqin      1.083 0.03604  3.328    2.953 (2.752, 3.169)                     
-tqout     1.777 0.04141   2.33    5.915 (5.454, 6.415)                     
-prop.cp 0.04853                                0.04853                     
+tcl     0.04102 0.01879   45.8    1.042 (1.004, 1.081)     27.0            
+tv1       2.269 0.01029 0.4535     9.673 (9.48, 9.871)     13.9            
+tqin      1.085 0.03661  3.373      2.96 (2.755, 3.18)                     
+tqout      1.78 0.04209  2.364    5.932 (5.462, 6.442)                     
+prop.cp 0.04852                                0.04852                     
 add.cb  0.01999                                0.01999                     
  
   Covariance Type (fit_cns$covMethod): r
@@ -247,7 +247,7 @@ fit_long <- nlmixr2(pk_cns, admData(c("cp", "cb")), est = "adgh",
 
 c(observations = fit_cns$objective, long = fit_long$objective)
 observations         long 
-   -88.58817    -88.58817 
+   -88.59291    -88.59291 
 ```
 
 Which form to use is a matter of taste. The `observations` list keeps

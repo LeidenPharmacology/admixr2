@@ -29,7 +29,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -81,7 +81,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Several observed compartments (plasma and brain)</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/multi-compartment.Rmd" class="external-link"><code>vignettes/multi-compartment.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/multi-compartment.Rmd" class="external-link"><code>vignettes/multi-compartment.Rmd</code></a></small>
       <div class="d-none name"><code>multi-compartment.Rmd</code></div>
     </div>
 
@@ -166,15 +166,15 @@ Gauss–Hermite estimator:</p>
 <span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_plasma<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a></span>
 <span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a>        optimize covariance elapsed other</span>
-<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a>elapsed    <span class="fl">1.768</span>      <span class="fl">0.144</span>   <span class="fl">1.912</span> <span class="fl">1.531</span></span>
+<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a>elapsed    <span class="fl">1.041</span>      <span class="fl">0.068</span>   <span class="fl">1.109</span> <span class="fl">3.321</span></span>
 <span id="cb3-30"><a href="#cb3-30" tabindex="-1"></a></span>
 <span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_plasma<span class="sc">$</span>parFixed or fit_plasma<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb3-32"><a href="#cb3-32" tabindex="-1"></a></span>
 <span id="cb3-33"><a href="#cb3-33" tabindex="-1"></a>            Est.      SE  <span class="sc">%RSE Back-transformed(95%</span>CI<span class="er">)</span> <span class="fu">BSV</span>(CV<span class="sc">%) Shrink(SD)%</span></span>
-<span id="cb3-34"><a href="#cb3-34" tabindex="-1"></a>tcl      <span class="fl">0.03319</span> <span class="fl">0.03099</span> <span class="fl">93.36</span>   <span class="fl">1.034</span> (<span class="fl">0.9728</span>, <span class="fl">1.098</span>)     <span class="fl">27.9</span>            </span>
-<span id="cb3-35"><a href="#cb3-35" tabindex="-1"></a>tv1        <span class="fl">2.292</span> <span class="fl">0.04479</span> <span class="fl">1.954</span>     <span class="fl">9.893</span> (<span class="fl">9.061</span>, <span class="fl">10.8</span>)     <span class="fl">15.1</span>            </span>
-<span id="cb3-36"><a href="#cb3-36" tabindex="-1"></a>tq        <span class="fl">0.8809</span>  <span class="fl">0.3694</span> <span class="fl">41.94</span>     <span class="fl">2.413</span> (<span class="fl">1.17</span>, <span class="fl">4.977</span>)                     </span>
-<span id="cb3-37"><a href="#cb3-37" tabindex="-1"></a>tv2        <span class="fl">0.867</span>   <span class="fl">0.153</span> <span class="fl">17.65</span>     <span class="fl">2.38</span> (<span class="fl">1.763</span>, <span class="fl">3.212</span>)                     </span>
+<span id="cb3-34"><a href="#cb3-34" tabindex="-1"></a>tcl      <span class="fl">0.03322</span> <span class="fl">0.03098</span> <span class="fl">93.27</span>   <span class="fl">1.034</span> (<span class="fl">0.9729</span>, <span class="fl">1.098</span>)     <span class="fl">27.9</span>            </span>
+<span id="cb3-35"><a href="#cb3-35" tabindex="-1"></a>tv1        <span class="fl">2.292</span> <span class="fl">0.04514</span>  <span class="fl">1.97</span>      <span class="fl">9.89</span> (<span class="fl">9.053</span>, <span class="fl">10.8</span>)     <span class="fl">15.1</span>            </span>
+<span id="cb3-36"><a href="#cb3-36" tabindex="-1"></a>tq         <span class="fl">0.883</span>  <span class="fl">0.3714</span> <span class="fl">42.06</span>    <span class="fl">2.418</span> (<span class="fl">1.168</span>, <span class="fl">5.007</span>)                     </span>
+<span id="cb3-37"><a href="#cb3-37" tabindex="-1"></a>tv2       <span class="fl">0.8677</span>  <span class="fl">0.1541</span> <span class="fl">17.76</span>    <span class="fl">2.382</span> (<span class="fl">1.761</span>, <span class="fl">3.221</span>)                     </span>
 <span id="cb3-38"><a href="#cb3-38" tabindex="-1"></a>prop.cp <span class="fl">0.004104</span>                              <span class="fl">0.004104</span>                     </span>
 <span id="cb3-39"><a href="#cb3-39" tabindex="-1"></a> </span>
 <span id="cb3-40"><a href="#cb3-40" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit_plasma<span class="sc">$</span>covMethod)<span class="sc">:</span> r</span>
@@ -252,21 +252,21 @@ to expect. Then the fit call is identical to Step 1:</p>
 <span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a>── nlmixr² adgh ──</span>
 <span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a></span>
 <span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a>          OBJF       AIC       BIC Log<span class="sc">-</span>likelihood</span>
-<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>adgh <span class="sc">-</span><span class="fl">88.58817</span> <span class="sc">-</span><span class="fl">72.58817</span> <span class="sc">-</span><span class="fl">36.65025</span>       <span class="fl">44.29408</span></span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>adgh <span class="sc">-</span><span class="fl">88.59291</span> <span class="sc">-</span><span class="fl">72.59291</span> <span class="sc">-</span><span class="fl">36.65499</span>       <span class="fl">44.29646</span></span>
 <span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a></span>
 <span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_cns<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a></span>
 <span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>        optimize covariance elapsed other</span>
-<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed      <span class="fl">1.7</span>      <span class="fl">0.326</span>   <span class="fl">2.026</span> <span class="fl">1.466</span></span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed    <span class="fl">1.139</span>      <span class="fl">0.136</span>   <span class="fl">1.275</span> <span class="fl">3.442</span></span>
 <span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a></span>
 <span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_cns<span class="sc">$</span>parFixed or fit_cns<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a></span>
 <span id="cb7-16"><a href="#cb7-16" tabindex="-1"></a>           Est.      SE   <span class="sc">%RSE Back-transformed(95%</span>CI<span class="er">)</span> <span class="fu">BSV</span>(CV<span class="sc">%) Shrink(SD)%</span></span>
-<span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a>tcl     <span class="fl">0.04145</span> <span class="fl">0.01875</span>  <span class="fl">45.22</span>    <span class="fl">1.042</span> (<span class="fl">1.005</span>, <span class="fl">1.081</span>)     <span class="fl">27.0</span>            </span>
-<span id="cb7-18"><a href="#cb7-18" tabindex="-1"></a>tv1       <span class="fl">2.269</span> <span class="fl">0.01028</span> <span class="fl">0.4529</span>    <span class="fl">9.672</span> (<span class="fl">9.479</span>, <span class="fl">9.868</span>)     <span class="fl">13.9</span>            </span>
-<span id="cb7-19"><a href="#cb7-19" tabindex="-1"></a>tqin      <span class="fl">1.083</span> <span class="fl">0.03604</span>  <span class="fl">3.328</span>    <span class="fl">2.953</span> (<span class="fl">2.752</span>, <span class="fl">3.169</span>)                     </span>
-<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a>tqout     <span class="fl">1.777</span> <span class="fl">0.04141</span>   <span class="fl">2.33</span>    <span class="fl">5.915</span> (<span class="fl">5.454</span>, <span class="fl">6.415</span>)                     </span>
-<span id="cb7-21"><a href="#cb7-21" tabindex="-1"></a>prop.cp <span class="fl">0.04853</span>                                <span class="fl">0.04853</span>                     </span>
+<span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a>tcl     <span class="fl">0.04102</span> <span class="fl">0.01879</span>   <span class="fl">45.8</span>    <span class="fl">1.042</span> (<span class="fl">1.004</span>, <span class="fl">1.081</span>)     <span class="fl">27.0</span>            </span>
+<span id="cb7-18"><a href="#cb7-18" tabindex="-1"></a>tv1       <span class="fl">2.269</span> <span class="fl">0.01029</span> <span class="fl">0.4535</span>     <span class="fl">9.673</span> (<span class="fl">9.48</span>, <span class="fl">9.871</span>)     <span class="fl">13.9</span>            </span>
+<span id="cb7-19"><a href="#cb7-19" tabindex="-1"></a>tqin      <span class="fl">1.085</span> <span class="fl">0.03661</span>  <span class="fl">3.373</span>      <span class="fl">2.96</span> (<span class="fl">2.755</span>, <span class="fl">3.18</span>)                     </span>
+<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a>tqout      <span class="fl">1.78</span> <span class="fl">0.04209</span>  <span class="fl">2.364</span>    <span class="fl">5.932</span> (<span class="fl">5.462</span>, <span class="fl">6.442</span>)                     </span>
+<span id="cb7-21"><a href="#cb7-21" tabindex="-1"></a>prop.cp <span class="fl">0.04852</span>                                <span class="fl">0.04852</span>                     </span>
 <span id="cb7-22"><a href="#cb7-22" tabindex="-1"></a>add.cb  <span class="fl">0.01999</span>                                <span class="fl">0.01999</span>                     </span>
 <span id="cb7-23"><a href="#cb7-23" tabindex="-1"></a> </span>
 <span id="cb7-24"><a href="#cb7-24" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit_cns<span class="sc">$</span>covMethod)<span class="sc">:</span> r</span>
@@ -311,7 +311,7 @@ digit:</p>
 <span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a></span>
 <span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a><span class="fu">c</span>(<span class="at">observations =</span> fit_cns<span class="sc">$</span>objective, <span class="at">long =</span> fit_long<span class="sc">$</span>objective)</span>
 <span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a>observations         long </span>
-<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a>   <span class="sc">-</span><span class="fl">88.58817</span>    <span class="sc">-</span><span class="fl">88.58817</span> </span></code></pre></div>
+<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a>   <span class="sc">-</span><span class="fl">88.59291</span>    <span class="sc">-</span><span class="fl">88.59291</span> </span></code></pre></div>
 <p>Which form to use is a matter of taste. The <code>observations</code>
 list keeps each compartment’s design visibly together and is the more
 natural way to write a study <em>by hand</em>. The long format is the

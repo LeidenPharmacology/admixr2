@@ -155,25 +155,25 @@ adgh 1749.128 1769.128 1820.981      -874.5638
 
 ── Time (sec fit$time): ──
 
-  optimize covariance elapsed
-1     8.51      0.961   9.471
+        optimize covariance elapsed other
+elapsed    5.017      0.392   5.409 1.145
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                                          Parameter    Est.      SE   %RSE
 tcl                            Log clearance (L/h)   1.595 0.01548 0.9705
 tv                                  Log volume (L)    3.91 0.01117 0.2856
-te0                        Log baseline DBP (mmHg)   4.563 0.01238 0.2714
-temax             Log maximum DBP reduction (mmHg)   2.826  0.1141   4.04
-tec50                              Log EC50 (mg/L)  0.6843  0.4836  70.68
+te0                        Log baseline DBP (mmHg)   4.563 0.01241  0.272
+temax             Log maximum DBP reduction (mmHg)   2.826  0.1148  4.061
+tec50                              Log EC50 (mg/L)  0.6859  0.4846  70.65
 prop.cp Proportional residual error, concentration 0.09995               
 add.dbp        Additive residual error, DBP (mmHg)   3.013               
         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 tcl         4.927 (4.78, 5.079)     30.6            
 tv            49.89 (48.81, 51)     19.2            
 te0        95.85 (93.55, 98.21)     8.50            
-temax       16.87 (13.49, 21.1)                     
-tec50     1.982 (0.7683, 5.115)                     
+temax      16.88 (13.48, 21.14)                     
+tec50      1.985 (0.768, 5.133)                     
 prop.cp                 0.09995                     
 add.dbp                   3.013                     
  
@@ -274,7 +274,7 @@ ggplot(pred, aes(t, dbp, colour = arm)) +
 ![](pkpd_files/figure-html/dr-plot-1.png)
 
 Because the data were simulated, the answer is known. The truth was
-`Emax` = 15 mmHg and `EC50` = 2 mg/L; the fit gives 16.9 and 1.98. At 1
+`Emax` = 15 mmHg and `EC50` = 2 mg/L; the fit gives 16.9 and 1.99. At 1
 h the true 150 mg drop is 8.6 mmHg against the predicted 9.8 — an
 overshoot of about 13%. That is what sixty subjects and two dose levels
 buy: the right shape and a usable dose, not a precise `Emax`.

@@ -234,6 +234,15 @@ fit <- nlmixr2(
 #>  
 #> ℹ parameter labels from comments are typically ignored in non-interactive mode
 #> ℹ Need to run with the source intact to parse comments
+#> → loading into symengine environment...
+#> → pruning branches (`if`/`else`) of full model...
+#> ✔ done
+#> → calculate jacobian
+#> → calculate sensitivities
+#> → finding duplicate expressions in admixr2 sensitivity model...
+#> → optimizing duplicate expressions in admixr2 sensitivity model...
+#>  
+#>  
 #> === admixr2: Aggregate Data Modeling (GH) ===
 #>   Obs units: 1 | Params: 5 | Nodes: 5^2=25 | Cores: 2 | Grad: Analytical | Restarts: 1
 #> +----------+----------+----------+----------+----------+----------+----------+
@@ -243,7 +252,7 @@ fit <- nlmixr2(
 #> | 0020     |   727.90 |    7.788 |    37.96 |   0.4167 |   0.2292 |  0.04492 |
 #> | 0030     |   726.86 |     8.17 |    38.19 |   0.4231 |   0.2708 |  0.04749 |
 #> | 0034 ✓   |   726.85 |     8.15 |    38.21 |   0.4229 |    0.269 |  0.04736 |
-#> | 1.0 sec  |          |          |          |          |          |          |
+#> | 0.9 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, Analytical-Hessian, 4 gradient evaluations)
 #>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
 #> → compress origData in nlmixr2 object, save 1160

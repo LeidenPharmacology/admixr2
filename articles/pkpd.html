@@ -29,7 +29,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -81,7 +81,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>PD and PK/PD data</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/pkpd.Rmd" class="external-link"><code>vignettes/pkpd.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/pkpd.Rmd" class="external-link"><code>vignettes/pkpd.Rmd</code></a></small>
       <div class="d-none name"><code>pkpd.Rmd</code></div>
     </div>
 
@@ -235,25 +235,25 @@ Otherwise this is an ordinary admixr2 fit:</p>
 <span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a></span>
 <span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a></span>
-<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>  optimize covariance elapsed</span>
-<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="dv">1</span>     <span class="fl">8.51</span>      <span class="fl">0.961</span>   <span class="fl">9.471</span></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>        optimize covariance elapsed other</span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">5.017</span>      <span class="fl">0.392</span>   <span class="fl">5.409</span> <span class="fl">1.145</span></span>
 <span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a></span>
 <span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a></span>
 <span id="cb5-17"><a href="#cb5-17" tabindex="-1"></a>                                         Parameter    Est.      SE   %RSE</span>
 <span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a>tcl                            Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)   <span class="fl">1.595</span> <span class="fl">0.01548</span> <span class="fl">0.9705</span></span>
 <span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a>tv                                  Log <span class="fu">volume</span> (L)    <span class="fl">3.91</span> <span class="fl">0.01117</span> <span class="fl">0.2856</span></span>
-<span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a>te0                        Log baseline <span class="fu">DBP</span> (mmHg)   <span class="fl">4.563</span> <span class="fl">0.01238</span> <span class="fl">0.2714</span></span>
-<span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a>temax             Log maximum DBP <span class="fu">reduction</span> (mmHg)   <span class="fl">2.826</span>  <span class="fl">0.1141</span>   <span class="fl">4.04</span></span>
-<span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a>tec50                              Log <span class="fu">EC50</span> (mg<span class="sc">/</span>L)  <span class="fl">0.6843</span>  <span class="fl">0.4836</span>  <span class="fl">70.68</span></span>
+<span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a>te0                        Log baseline <span class="fu">DBP</span> (mmHg)   <span class="fl">4.563</span> <span class="fl">0.01241</span>  <span class="fl">0.272</span></span>
+<span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a>temax             Log maximum DBP <span class="fu">reduction</span> (mmHg)   <span class="fl">2.826</span>  <span class="fl">0.1148</span>  <span class="fl">4.061</span></span>
+<span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a>tec50                              Log <span class="fu">EC50</span> (mg<span class="sc">/</span>L)  <span class="fl">0.6859</span>  <span class="fl">0.4846</span>  <span class="fl">70.65</span></span>
 <span id="cb5-23"><a href="#cb5-23" tabindex="-1"></a>prop.cp Proportional residual error, concentration <span class="fl">0.09995</span>               </span>
 <span id="cb5-24"><a href="#cb5-24" tabindex="-1"></a>add.dbp        Additive residual error, <span class="fu">DBP</span> (mmHg)   <span class="fl">3.013</span>               </span>
 <span id="cb5-25"><a href="#cb5-25" tabindex="-1"></a>        Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
 <span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a>tcl         <span class="fl">4.927</span> (<span class="fl">4.78</span>, <span class="fl">5.079</span>)     <span class="fl">30.6</span>            </span>
 <span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a>tv            <span class="fl">49.89</span> (<span class="fl">48.81</span>, <span class="dv">51</span>)     <span class="fl">19.2</span>            </span>
 <span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a>te0        <span class="fl">95.85</span> (<span class="fl">93.55</span>, <span class="fl">98.21</span>)     <span class="fl">8.50</span>            </span>
-<span id="cb5-29"><a href="#cb5-29" tabindex="-1"></a>temax       <span class="fl">16.87</span> (<span class="fl">13.49</span>, <span class="fl">21.1</span>)                     </span>
-<span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a>tec50     <span class="fl">1.982</span> (<span class="fl">0.7683</span>, <span class="fl">5.115</span>)                     </span>
+<span id="cb5-29"><a href="#cb5-29" tabindex="-1"></a>temax      <span class="fl">16.88</span> (<span class="fl">13.48</span>, <span class="fl">21.14</span>)                     </span>
+<span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a>tec50      <span class="fl">1.985</span> (<span class="fl">0.768</span>, <span class="fl">5.133</span>)                     </span>
 <span id="cb5-31"><a href="#cb5-31" tabindex="-1"></a>prop.cp                 <span class="fl">0.09995</span>                     </span>
 <span id="cb5-32"><a href="#cb5-32" tabindex="-1"></a>add.dbp                   <span class="fl">3.013</span>                     </span>
 <span id="cb5-33"><a href="#cb5-33" tabindex="-1"></a> </span>
@@ -339,7 +339,7 @@ arms that were measured:</p>
 <p><img src="pkpd_files/figure-html/dr-plot-1.png" class="r-plt" alt="" width="840"></p>
 <p>Because the data were simulated, the answer is known. The truth was
 <code>Emax</code> = 15 mmHg and <code>EC50</code> = 2 mg/L; the fit
-gives 16.9 and 1.98. At 1 h the true 150 mg drop is 8.6 mmHg against the
+gives 16.9 and 1.99. At 1 h the true 150 mg drop is 8.6 mmHg against the
 predicted 9.8 — an overshoot of about 13%. That is what sixty subjects
 and two dose levels buy: the right shape and a usable dose, not a
 precise <code>Emax</code>.</p>
