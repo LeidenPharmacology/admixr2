@@ -26,8 +26,9 @@ template:
 home:
   title: admixr2 — Aggregate Data Modelling in R
   description: >
-    Fit pharmacometric PK/PD models to aggregate-level data (mean vector and
-    covariance matrix per study) using the nlmixr2/rxode2 ecosystem.
+    A meta-analysis framework for population PK/PD — fit models to summary-level
+    data (means and covariances per study) or to previously published PK/PD
+    models, in the nlmixr2 / rxode2 ecosystem.
 
 navbar:
   structure:
