@@ -11,26 +11,26 @@
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="icon" sizes="any" href="favicon.ico">
 <link rel="manifest" href="site.webmanifest">
-<script src="deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<script src="lightswitch.js"></script><script src="deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <link href="deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="deps/IBM_Plex_Sans-0.4.10/font.css" rel="stylesheet">
 <link href="deps/JetBrains_Mono-0.4.10/font.css" rel="stylesheet">
 <link href="deps/Fraunces-0.4.10/font.css" rel="stylesheet">
 <link href="deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
 <link href="deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
-<script src="deps/headroom-0.11.0/headroom.min.js"></script><script src="deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="deps/search-1.0.0/fuse.min.js"></script><script src="deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="pkgdown.js"></script><link href="extra.css" rel="stylesheet">
-<meta property="og:title" content="admixr2 — Aggregate Data Modelling in R">
+<script src="deps/headroom-0.11.0/headroom.min.js"></script><script src="deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="deps/search-1.0.0/fuse.min.js"></script><script src="deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="pkgdown.js"></script><meta property="og:title" content="admixr2 — Aggregate Data Modelling in R">
 <meta name="description" content="A meta-analysis framework for population PK/PD — fit models to summary-level data (means and covariances per study) or to previously published PK/PD models, in the nlmixr2 / rxode2 ecosystem.
 ">
 <meta property="og:description" content="A meta-analysis framework for population PK/PD — fit models to summary-level data (means and covariances per study) or to previously published PK/PD models, in the nlmixr2 / rxode2 ecosystem.
 ">
 <meta property="og:image" content="https://leidenpharmacology.github.io/admixr2/logo.png">
+<meta name="theme-color" content="#001158">
 </head>
 <body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
-    <nav class="navbar navbar-expand-lg fixed-top bg-primary" data-bs-theme="dark" aria-label="Site navigation"><div class="container">
+    <nav class="navbar navbar-expand-lg fixed-top " aria-label="Site navigation"><div class="container">
 
     <a class="navbar-brand me-2" href="index.html">admixr2</a>
 
@@ -78,6 +78,14 @@
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="search.json">
 </form></li>
 <li class="nav-item"><a class="external-link nav-link" href="https://github.com/LeidenPharmacology/admixr2" aria-label="GitHub"><span class="fa fab fa-github"></span></a></li>
+<li class="nav-item dropdown">
+  <button class="nav-link dropdown-toggle" type="button" id="dropdown-lightswitch" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true" aria-label="Light switch"><span class="fa fa-sun"></span></button>
+  <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-lightswitch">
+<li><button class="dropdown-item" data-bs-theme-value="light"><span class="fa fa-sun"></span> Light</button></li>
+    <li><button class="dropdown-item" data-bs-theme-value="dark"><span class="fa fa-moon"></span> Dark</button></li>
+    <li><button class="dropdown-item" data-bs-theme-value="auto"><span class="fa fa-adjust"></span> Auto</button></li>
+  </ul>
+</li>
       </ul>
 </div>
 
@@ -85,232 +93,242 @@
   </div>
 </nav><div class="container template-home">
 <div class="row">
-  <main id="main" class="col-md-9"><div class="section level1">
+  <main id="main" class="col-md-9"><div class="adm-hero">
+<div class="adm-hero-text">
+<p class="adm-eyebrow">
+Aggregate data modelling · nlmixr2 / rxode2
+</p>
 <div class="page-header">
-<img src="logo.png" class="logo" alt=""><h1 id="admixr2">admixr2<a class="anchor" aria-label="anchor" href="#admixr2"></a>
+<img src="logo.png" class="logo" alt=""><h1 class="adm-h1">
+A meta-analysis framework for population PK/PD
 </h1>
 </div>
-<!-- badges: start -->
-
-<p><code>admixr2</code> is a <strong>meta-analysis framework for population PK/PD</strong>. It fits pharmacometric models directly to <strong>summary-level data</strong> — the mean vector <strong>E</strong> and covariance matrix <strong>V</strong> reported per study — instead of individual patient records. The inputs can be <strong>digitised aggregate data</strong> from published studies, <strong>previously published PK/PD models</strong>, or a mix of both; the result is a single unified population model with interpretable fixed, random and covariate effects. It integrates with the <a href="https://nlmixr2.org/" class="external-link">nlmixr2</a> / <a href="https://cran.r-project.org/package=rxode2" class="external-link">rxode2</a> ecosystem and provides four estimation backends:</p>
-<table class="table">
-<thead><tr>
-<th>Estimator</th>
-<th><code>est =</code></th>
-<th>Control</th>
-</tr></thead>
-<tbody>
-<tr>
-<td>First-Order</td>
-<td><code>"adfo"</code></td>
-<td><code><a href="reference/adfoControl.html">adfoControl()</a></code></td>
-</tr>
-<tr>
-<td>Monte Carlo</td>
-<td><code>"admc"</code></td>
-<td><code><a href="reference/admControl.html">admControl()</a></code></td>
-</tr>
-<tr>
-<td>Gauss-Hermite</td>
-<td><code>"adgh"</code></td>
-<td><code><a href="reference/adghControl.html">adghControl()</a></code></td>
-</tr>
-<tr>
-<td>Iterative Reweighting MC</td>
-<td><code>"adirmc"</code></td>
-<td><code><a href="reference/adirmcControl.html">adirmcControl()</a></code></td>
-</tr>
-</tbody>
-</table>
-<div class="section level2">
-<h2 id="aggregate-data-modelling">Aggregate data modelling<a class="anchor" aria-label="anchor" href="#aggregate-data-modelling"></a>
+<p class="adm-tag">
+Fit one unified population model to what the literature reports — aggregate summary data or previously published PK/PD models — without individual patient data.
+</p>
+<p class="adm-badges">
+<a href="https://github.com/LeidenPharmacology/admixr2/actions/workflows/R-CMD-check.yaml" class="external-link"><img src="https://img.shields.io/github/actions/workflow/status/LeidenPharmacology/admixr2/R-CMD-check.yaml?style=flat-square&amp;label=R-CMD-check" alt="R-CMD-check"></a> <a href="https://cran.r-project.org/package=admixr2" class="external-link"><img src="https://img.shields.io/cran/v/admixr2?style=flat-square" alt="CRAN"></a> <a href="https://app.codecov.io/gh/LeidenPharmacology/admixr2" class="external-link"><img src="https://img.shields.io/codecov/c/github/LeidenPharmacology/admixr2?style=flat-square&amp;label=coverage" alt="Coverage"></a> <a href="https://lifecycle.r-lib.org/articles/stages.html#stable" class="external-link"><img src="https://img.shields.io/badge/lifecycle-stable-4A6B5D?style=flat-square" alt="Lifecycle: stable"></a> <a href="https://doi.org/10.1007/s10928-025-10011-w" class="external-link"><img src="https://img.shields.io/badge/DOI-10.1007%2Fs10928--025--10011--w-1F4E79?style=flat-square" alt="DOI"></a>
+</p>
+<p class="adm-cta">
+<a class="btn btn-primary btn-lg" href="articles/admixr2.html">Get started</a> <a class="external-link btn btn-outline-secondary btn-lg" href="https://github.com/LeidenPharmacology/admixr2">GitHub</a>
+</p>
+<p class="adm-install">
+<span class="adm-prompt">&gt;</span> <code>install.packages("admixr2")</code>
+</p>
+</div>
+<div class="adm-card">
+<div class="adm-card-top">
+<i></i><i></i><i></i><span>meta-analysis.R</span>
+</div>
+<pre class="adm-code"><code><span><span class="co"># Fit a model to published means + covariances</span></span>
+<span><span class="va">fit</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span><span class="va">model</span>, <span class="fu"><a href="reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
+<span>  control <span class="op">=</span> <span class="fu"><a href="reference/admControl.html">admControl</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
+<span>    trial_A <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">Ea</span>, V <span class="op">=</span> <span class="va">Va</span>, n <span class="op">=</span> <span class="fl">120L</span>,</span>
+<span>                   times <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">4</span>, <span class="fl">8</span>, <span class="fl">24</span><span class="op">)</span>,</span>
+<span>                   ev <span class="op">=</span> <span class="fu">et</span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">100</span><span class="op">)</span><span class="op">)</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
+<span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span>   <span class="co"># observed mean vs prediction, ±1 SD</span></span></code></pre>
+<div class="adm-plot">
+<svg viewbox="0 0 460 150" width="100%" style="display:block"><line x1="42" y1="12" x2="42" y2="122" stroke="var(--bs-border-color)" stroke-width="1"></line><line x1="42" y1="122" x2="440" y2="122" stroke="var(--bs-border-color)" stroke-width="1"></line><path d="M42,30 C120,44 210,74 300,96 C350,108 400,114 440,117 L440,127 C400,124 350,118 300,106 C210,84 120,54 42,40 Z" fill="var(--adm-navy)" opacity="0.12"></path><path d="M42,35 C120,49 210,79 300,101 C360,114 410,118 440,122" fill="none" stroke="var(--adm-navy)" stroke-width="2"></path><g stroke="var(--bs-body-color)" stroke-width="1.3"><line x1="90" y1="40" x2="90" y2="58"></line><line x1="175" y1="62" x2="175" y2="82"></line><line x1="260" y1="82" x2="260" y2="100"></line><line x1="345" y1="100" x2="345" y2="116"></line></g><g fill="var(--adm-orange)"><circle cx="90" cy="49" r="3.6"></circle><circle cx="175" cy="72" r="3.6"></circle><circle cx="260" cy="91" r="3.6"></circle><circle cx="345" cy="108" r="3.6"></circle></g></svg><div class="cap">
+observed study mean ± SD  vs  model prediction
+</div>
+</div>
+</div>
+</div>
+<div class="adm-steps">
+<div class="adm-step">
+<div class="adm-inpair">
+<div class="adm-inp">
+<div class="ico-sm">
+<svg width="19" height="19" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"></path></svg>
+</div>
+<div>
+<b>Aggregate data</b><span>published means, error bars &amp; covariances</span>
+</div>
+</div>
+<div class="adm-inp">
+<div class="ico-sm">
+<svg width="19" height="19" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M6 15c3-6 8-6 12 0" stroke-linecap="round"></path><circle cx="9" cy="10.5" r="1.2" fill="currentColor" stroke="none"></circle></svg>
+</div>
+<div>
+<b>PK/PD models</b><span>previously published population models</span>
+</div>
+</div>
+</div>
+</div>
+<div class="adm-arrow">
+<svg width="28" height="28" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 12h15M14 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+</div>
+<div class="adm-step">
+<div class="ico">
+<svg width="26" height="26" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16h16"></path><path d="M7.5 16.5c2.5-6 7-9 11.5-11"></path><circle cx="10" cy="13.2" r="1.35" fill="currentColor" stroke="none"></circle><circle cx="14.5" cy="9.6" r="1.35" fill="currentColor" stroke="none"></circle></svg>
+</div>
+<h4>
+Aggregate data modelling
+</h4>
+<p>
+One likelihood over the summary-level information — a meta-analysis across studies.
+</p>
+</div>
+<div class="adm-arrow">
+<svg width="28" height="28" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 12h15M14 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+</div>
+<div class="adm-step">
+<div class="ico">
+<svg width="26" height="26" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 5c6.5 0 6 7 11.5 7"></path><path d="M3 12h11.5"></path><path d="M3 19c6.5 0 6-7 11.5-7"></path><circle cx="18.6" cy="12" r="2.4"></circle></svg>
+</div>
+<h4>
+Unified population model
+</h4>
+<p>
+One fit with interpretable fixed, random and covariate effects.
+</p>
+</div>
+</div>
+<div class="adm-sec">
+<div class="adm-kick">
+Four estimators, one interface
+</div>
+<h2>
+Choose the method that fits your problem
 </h2>
-<p><code>admixr2</code> implements <strong>aggregate data modelling</strong>: fitting a nonlinear mixed-effects model to the summary statistics a study reports rather than to individual records. Fitting a single population model jointly across several studies turns them into one <strong>meta-analysis</strong> — between-study differences are carried by the model itself (inter-individual variability captures subject-level spread within each study; residual error absorbs the rest), while every study shares the same structural and variance parameters and contributes its own dosing regimen, observation times, and sample size.</p>
-<p>Two kinds of input feed the analysis:</p>
+<p class="adm-lead">
+Every backend plugs into <code>nlmixr2(…, est=)</code> with analytical gradients. Compare them side by side in the <a href="articles/estimator-comparison.html">estimator vignette</a>.
+</p>
+</div>
+<div class="adm-cards">
+<div class="adm-est">
+<span class="tag">adfo</span>
+<h3>
+First-order
+</h3>
+<p>
+Analytical first-order linearisation — deterministic, no Monte-Carlo draws. Typically the fastest backend.
+</p>
+</div>
+<div class="adm-est">
+<span class="tag">admc</span>
+<h3>
+Monte Carlo
+</h3>
+<p>
+Simulation of the aggregate likelihood, with analytical common-random-number gradients. Accuracy improves with the number of draws.
+</p>
+</div>
+<div class="adm-est">
+<span class="tag">adgh</span>
+<h3>
+Gauss–Hermite
+</h3>
+<p>
+Deterministic quadrature over the random effects — noise-free, with an exact gradient. Most efficient when the random-effect dimension is small.
+</p>
+</div>
+<div class="adm-est">
+<span class="tag">adirmc</span>
+<h3>
+Iterative RMC
+</h3>
+<p>
+Iterative Reweighting Monte Carlo — reweights simulated draws across iterations, with a kappa correction for non-linear models.
+</p>
+</div>
+</div>
+<div class="adm-sec">
+<div class="adm-kick">
+Documentation
+</div>
+<h2>
+Guides, grouped by what you’re doing
+</h2>
+<p class="adm-lead">
+Nine worked vignettes, from your first fit to publication-grade diagnostics.
+</p>
+</div>
+<div class="adm-vcards">
+<div class="adm-vcard">
+<h3>
+Getting started
+</h3>
 <ul>
 <li>
-<strong>Aggregate data</strong> — means, error bars and covariances digitised from published figures or tables.</li>
+<a href="articles/admixr2.html">Introduction to admixr2</a>
+</li>
+</ul>
+</div>
+<div class="adm-vcard">
+<h3>
+Inputs — data &amp; models
+</h3>
+<ul>
 <li>
-<strong>Published PK/PD models</strong> — a previously published population model can be supplied directly, via <code><a href="reference/datagen.html">datagen()</a></code>, so the literature’s <em>models</em> (not only its data) become evidence you can combine.</li>
+<a href="articles/aggregate-data.html">From a published figure to E, V and n</a>
+</li>
+<li>
+<a href="articles/datagen.html">Simulating data &amp; using published models</a>
+</li>
 </ul>
 </div>
-<div class="section level2">
-<h2 id="when-to-use-admixr2">When to use admixr2<a class="anchor" aria-label="anchor" href="#when-to-use-admixr2"></a>
-</h2>
-<p><strong>Individual patient data are unavailable</strong> — the most common scenario. Published papers report means and standard deviations; regulatory submissions and competitive reasons prevent individual patient data sharing across companies or institutions. <code>admixr2</code> extracts the maximum information from what is publicly available.</p>
-<p><strong>Leveraging the literature for trial design</strong> — fit a mechanistic PK/PD model to aggregated results from existing trials, then simulate new dosing regimens or patient populations before committing to a costly study.</p>
-<p><strong>Combining evidence across heterogeneous trials</strong> — studies differ in dose, formulation, population, or observation schedule. <code>admixr2</code> handles multi-study fits with per-study dosing events and time grids under a single shared population model.</p>
-<p><strong>Reproducing and extending published models</strong> — supply a previously published population model directly as input (via <code><a href="reference/datagen.html">datagen()</a></code>), or digitise its mean concentration–time profiles from figures. No individual patient data required.</p>
-</div>
-<div class="section level2">
-<h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
-</h2>
-<div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="co"># From CRAN</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"admixr2"</span><span class="op">)</span></span>
-<span></span>
-<span><span class="co"># Development version from GitHub</span></span>
-<span><span class="fu">pak</span><span class="fu">::</span><span class="fu"><a href="https://pak.r-lib.org/reference/pak.html" class="external-link">pak</a></span><span class="op">(</span><span class="st">"LeidenPharmacology/admixr2"</span><span class="op">)</span></span></code></pre></div>
-</div>
-<div class="section level2">
-<h2 id="quick-start">Quick start<a class="anchor" aria-label="anchor" href="#quick-start"></a>
-</h2>
-<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2">admixr2</a></span><span class="op">)</span></span>
-<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span></span>
-<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.org/" class="external-link">nlmixr2</a></span><span class="op">)</span></span>
-<span></span>
-<span><span class="co"># 1. Compute aggregate statistics from individual data (or digitise from paper)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/utils/data.html" class="external-link">data</a></span><span class="op">(</span><span class="st">"examplomycin"</span><span class="op">)</span></span>
-<span><span class="va">obs</span>    <span class="op">&lt;-</span> <span class="va">examplomycin</span><span class="op">[</span><span class="va">examplomycin</span><span class="op">$</span><span class="va">EVID</span> <span class="op">==</span> <span class="fl">0</span>, <span class="op">]</span></span>
-<span><span class="va">obs</span>    <span class="op">&lt;-</span> <span class="va">obs</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/order.html" class="external-link">order</a></span><span class="op">(</span><span class="va">obs</span><span class="op">$</span><span class="va">ID</span>, <span class="va">obs</span><span class="op">$</span><span class="va">TIME</span><span class="op">)</span>, <span class="op">]</span></span>
-<span><span class="va">times</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/unique.html" class="external-link">unique</a></span><span class="op">(</span><span class="va">obs</span><span class="op">$</span><span class="va">TIME</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="va">ids</span>    <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/unique.html" class="external-link">unique</a></span><span class="op">(</span><span class="va">obs</span><span class="op">$</span><span class="va">ID</span><span class="op">)</span></span>
-<span><span class="va">dv_mat</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="cn">NA_real_</span>, nrow <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">ids</span><span class="op">)</span>, ncol <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">times</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="kw">for</span> <span class="op">(</span><span class="va">i</span> <span class="kw">in</span> <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq_along</a></span><span class="op">(</span><span class="va">ids</span><span class="op">)</span><span class="op">)</span> <span class="op">{</span></span>
-<span>  <span class="va">sub</span>         <span class="op">&lt;-</span> <span class="va">obs</span><span class="op">[</span><span class="va">obs</span><span class="op">$</span><span class="va">ID</span> <span class="op">==</span> <span class="va">ids</span><span class="op">[</span><span class="va">i</span><span class="op">]</span>, <span class="op">]</span></span>
-<span>  <span class="va">dv_mat</span><span class="op">[</span><span class="va">i</span>, <span class="op">]</span> <span class="op">&lt;-</span> <span class="va">sub</span><span class="op">$</span><span class="va">DV</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/order.html" class="external-link">order</a></span><span class="op">(</span><span class="va">sub</span><span class="op">$</span><span class="va">TIME</span><span class="op">)</span><span class="op">]</span></span>
-<span><span class="op">}</span></span>
-<span><span class="va">E</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colSums.html" class="external-link">colMeans</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span></span>
-<span><span class="va">V</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cov.wt.html" class="external-link">cov.wt</a></span><span class="op">(</span><span class="va">dv_mat</span>, method <span class="op">=</span> <span class="st">"ML"</span><span class="op">)</span><span class="op">$</span><span class="va">cov</span></span>
-<span></span>
-<span><span class="co"># 2. Define the model (standard nlmixr2 syntax)</span></span>
-<span><span class="va">pk_model</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
-<span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span>
-<span>    <span class="va">tcl</span>     <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">5</span><span class="op">)</span>;  <span class="fu">label</span><span class="op">(</span><span class="st">"Log clearance (L/hr)"</span><span class="op">)</span></span>
-<span>    <span class="va">tv1</span>     <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">10</span><span class="op">)</span>; <span class="fu">label</span><span class="op">(</span><span class="st">"Log central volume (L)"</span><span class="op">)</span></span>
-<span>    <span class="va">tv2</span>     <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">30</span><span class="op">)</span>; <span class="fu">label</span><span class="op">(</span><span class="st">"Log peripheral volume (L)"</span><span class="op">)</span></span>
-<span>    <span class="va">tq</span>      <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">10</span><span class="op">)</span>; <span class="fu">label</span><span class="op">(</span><span class="st">"Log inter-compartmental CL (L/hr)"</span><span class="op">)</span></span>
-<span>    <span class="va">tka</span>     <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">1</span><span class="op">)</span>;  <span class="fu">label</span><span class="op">(</span><span class="st">"Log absorption rate constant (1/hr)"</span><span class="op">)</span></span>
-<span>    <span class="va">prop.sd</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0</span>, <span class="fl">0.2</span><span class="op">)</span></span>
-<span>    <span class="va">eta.cl</span> <span class="op">~</span> <span class="fl">0.09</span>; <span class="va">eta.v1</span> <span class="op">~</span> <span class="fl">0.09</span>; <span class="va">eta.v2</span> <span class="op">~</span> <span class="fl">0.09</span></span>
-<span>    <span class="va">eta.q</span>  <span class="op">~</span> <span class="fl">0.09</span>; <span class="va">eta.ka</span> <span class="op">~</span> <span class="fl">0.09</span></span>
-<span>  <span class="op">}</span><span class="op">)</span></span>
-<span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/model.html" class="external-link">model</a></span><span class="op">(</span><span class="op">{</span></span>
-<span>    <span class="va">cl</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tcl</span> <span class="op">+</span> <span class="va">eta.cl</span><span class="op">)</span>; <span class="va">v1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tv1</span> <span class="op">+</span> <span class="va">eta.v1</span><span class="op">)</span></span>
-<span>    <span class="va">v2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tv2</span> <span class="op">+</span> <span class="va">eta.v2</span><span class="op">)</span>; <span class="va">q</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tq</span>  <span class="op">+</span> <span class="va">eta.q</span><span class="op">)</span></span>
-<span>    <span class="va">ka</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tka</span> <span class="op">+</span> <span class="va">eta.ka</span><span class="op">)</span></span>
-<span>    <span class="va">d</span><span class="op">/</span><span class="fu"><a href="https://rdrr.io/r/stats/TDist.html" class="external-link">dt</a></span><span class="op">(</span><span class="va">depot</span><span class="op">)</span>      <span class="op">&lt;-</span> <span class="op">-</span><span class="va">ka</span> <span class="op">*</span> <span class="va">depot</span></span>
-<span>    <span class="va">d</span><span class="op">/</span><span class="fu"><a href="https://rdrr.io/r/stats/TDist.html" class="external-link">dt</a></span><span class="op">(</span><span class="va">central</span><span class="op">)</span>    <span class="op">&lt;-</span> <span class="va">ka</span> <span class="op">*</span> <span class="va">depot</span> <span class="op">-</span> <span class="op">(</span><span class="va">cl</span><span class="op">/</span><span class="va">v1</span> <span class="op">+</span> <span class="va">q</span><span class="op">/</span><span class="va">v1</span><span class="op">)</span> <span class="op">*</span> <span class="va">central</span> <span class="op">+</span> <span class="op">(</span><span class="va">q</span><span class="op">/</span><span class="va">v2</span><span class="op">)</span> <span class="op">*</span> <span class="va">peripheral</span></span>
-<span>    <span class="va">d</span><span class="op">/</span><span class="fu"><a href="https://rdrr.io/r/stats/TDist.html" class="external-link">dt</a></span><span class="op">(</span><span class="va">peripheral</span><span class="op">)</span> <span class="op">&lt;-</span> <span class="op">(</span><span class="va">q</span><span class="op">/</span><span class="va">v1</span><span class="op">)</span> <span class="op">*</span> <span class="va">central</span> <span class="op">-</span> <span class="op">(</span><span class="va">q</span><span class="op">/</span><span class="va">v2</span><span class="op">)</span> <span class="op">*</span> <span class="va">peripheral</span></span>
-<span>    <span class="va">cp</span> <span class="op">&lt;-</span> <span class="va">central</span> <span class="op">/</span> <span class="va">v1</span></span>
-<span>    <span class="va">cp</span> <span class="op">~</span> <span class="fu">prop</span><span class="op">(</span><span class="va">prop.sd</span><span class="op">)</span></span>
-<span>  <span class="op">}</span><span class="op">)</span></span>
-<span><span class="op">}</span></span>
-<span></span>
-<span><span class="co"># 3. Fit</span></span>
-<span><span class="va">fit</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
-<span>  <span class="va">pk_model</span>, <span class="fu"><a href="reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
-<span>  control <span class="op">=</span> <span class="fu"><a href="reference/admControl.html">admControl</a></span><span class="op">(</span></span>
-<span>    studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>examplomycin <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
-<span>      E <span class="op">=</span> <span class="va">E</span>, V <span class="op">=</span> <span class="va">V</span>, n <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">ids</span><span class="op">)</span>,</span>
-<span>      times <span class="op">=</span> <span class="va">times</span>, ev <span class="op">=</span> <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">100</span><span class="op">)</span></span>
-<span>    <span class="op">)</span><span class="op">)</span>,</span>
-<span>    n_sim <span class="op">=</span> <span class="fl">5000L</span>, seed <span class="op">=</span> <span class="fl">1L</span></span>
-<span>  <span class="op">)</span></span>
-<span><span class="op">)</span></span>
-<span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span></code></pre></div>
-</div>
-<div class="section level2">
-<h2 id="vignettes">Vignettes<a class="anchor" aria-label="anchor" href="#vignettes"></a>
-</h2>
-<table class="table">
-<colgroup>
-<col width="58%">
-<col width="41%">
-</colgroup>
-<thead><tr>
-<th>Vignette</th>
-<th>Topic</th>
-</tr></thead>
-<tbody>
-<tr>
-<td><a href="https://leidenpharmacology.github.io/admixr2/articles/admixr2.html">Getting started</a></td>
-<td>Core workflow: data prep, model, fit, diagnostics</td>
-</tr>
-<tr>
-<td><a href="https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.html">Diagnostic plots</a></td>
-<td>All four plot panels explained; IIV heatmap</td>
-</tr>
-<tr>
-<td><a href="https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.html">Multiple studies</a></td>
-<td>Joint fitting across studies with different designs</td>
-</tr>
-<tr>
-<td><a href="https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html">Estimator comparison</a></td>
-<td>adfo, admc, adgh and adirmc: mathematical foundations and when to use each</td>
-</tr>
-<tr>
-<td><a href="https://leidenpharmacology.github.io/admixr2/articles/advanced.html">Advanced usage</a></td>
-<td>Gradient modes, parallel restarts, AIC/BIC model comparison</td>
-</tr>
-</tbody>
-</table>
-</div>
-<div class="section level2">
-<h2 id="citation">Citation<a class="anchor" aria-label="anchor" href="#citation"></a>
-</h2>
-<p>If you use <code>admixr2</code> in your work, please cite the software paper, which introduces the Iterative Reweighting Monte Carlo estimator:</p>
-<blockquote>
-<p>van de Beek H., Välitalo P.A.J., van Hasselt J.G.C., Zwep L.B. (2025). Aggregate data modelling: A fast implementation for fitting pharmacometrics models to summary-level data in R. <em>Journal of Pharmacokinetics and Pharmacodynamics</em>, 53(1), 3. <a href="https://doi.org/10.1007/s10928-025-10011-w" class="external-link uri">https://doi.org/10.1007/s10928-025-10011-w</a></p>
-</blockquote>
-<p>The aggregate data modelling methodology is introduced in:</p>
-<blockquote>
-<p>Välitalo P.A.J. (2021). Pharmacometric estimation methods for aggregate data, including data simulated from other pharmacometric models. <em>Journal of Pharmacokinetics and Pharmacodynamics</em>, 48(5), 623–638. <a href="https://doi.org/10.1007/s10928-021-09760-1" class="external-link uri">https://doi.org/10.1007/s10928-021-09760-1</a></p>
-</blockquote>
-</div>
-</div>
-  </main><aside class="col-md-3"><div class="links">
-<h2 data-toc-skip>Links</h2>
-<ul class="list-unstyled">
-<li><a href="https://cloud.r-project.org/package=admixr2" class="external-link">View on CRAN</a></li>
-<li><a href="https://github.com/LeidenPharmacology/admixr2/" class="external-link">Browse source code</a></li>
-<li><a href="https://github.com/LeidenPharmacology/admixr2/issues" class="external-link">Report a bug</a></li>
+<div class="adm-vcard">
+<h3>
+Meta-analysis across studies
+</h3>
+<ul>
+<li>
+<a href="articles/multiple-studies.html">Multiple studies</a>
+</li>
+<li>
+<a href="articles/multi-compartment.html">Several outputs (plasma + brain)</a>
+</li>
+<li>
+<a href="articles/pkpd.html">PD and PK/PD data</a>
+</li>
 </ul>
 </div>
-
-<div class="license">
-<h2 data-toc-skip>License</h2>
-<ul class="list-unstyled">
-<li><a href="LICENSE.html">Full license</a></li>
-<li><small>GPL (&gt;= 3)</small></li>
+<div class="adm-vcard">
+<h3>
+Estimation &amp; diagnostics
+</h3>
+<ul>
+<li>
+<a href="articles/estimator-comparison.html">Comparing the estimators</a>
+</li>
+<li>
+<a href="articles/advanced.html">Advanced usage</a>
+</li>
+<li>
+<a href="articles/diagnostic-plots.html">Diagnostic plots</a>
+</li>
 </ul>
 </div>
-
-
-<div class="citation">
-<h2 data-toc-skip>Citation</h2>
-<ul class="list-unstyled">
-<li><a href="authors.html#citation">Citing admixr2</a></li>
-</ul>
+</div>
+<div class="adm-close">
+<div>
+<h5>
+How to cite
+</h5>
+<p class="cite">
+van de Beek H., Välitalo P.A.J., Zwep L.B., van Hasselt J.G.C. (2025). <em>admixr2: Aggregate Data Modelling.</em> Journal of Pharmacokinetics and Pharmacodynamics. <a href="https://doi.org/10.1007/s10928-025-10011-w" class="external-link">doi:10.1007/s10928-025-10011-w</a>
+</p>
+<p class="leiden">
+Developed at Leiden University
+</p>
+</div>
+<div>
+<h5>
+Package
+</h5>
+<a href="articles/admixr2.html">Get started</a><a href="reference/index.html">Reference</a><a href="news/index.html">Changelog</a>
+</div>
+<div>
+<h5>
+Ecosystem
+</h5>
+<a href="https://nlmixr2.org/" class="external-link">nlmixr2</a><a href="https://cran.r-project.org/package=rxode2" class="external-link">rxode2</a><a href="https://github.com/LeidenPharmacology/admixr2" class="external-link">GitHub</a>
+</div>
 </div>
 
-<div class="developers">
-<h2 data-toc-skip>Developers</h2>
-<ul class="list-unstyled">
-<li>H. van de Beek <br><small class="roles"> Author, maintainer </small>   </li>
-<li>P.A.J. Välitalo <br><small class="roles"> Author </small>   </li>
-<li>L.B. Zwep <br><small class="roles"> Author </small>   </li>
-<li>J.G.C. van Hasselt <br><small class="roles"> Author </small>   </li>
-</ul>
-</div>
-
-<div class="dev-status">
-<h2 data-toc-skip>Dev status</h2>
-<ul class="list-unstyled">
-<li><a href="https://github.com/LeidenPharmacology/admixr2/actions/workflows/R-CMD-check.yaml" class="external-link"><img src="https://github.com/LeidenPharmacology/admixr2/actions/workflows/R-CMD-check.yaml/badge.svg" alt="R-CMD-check"></a></li>
-<li><a href="https://cran.r-project.org/package=admixr2" class="external-link"><img src="https://www.r-pkg.org/badges/version/admixr2" alt="CRAN version"></a></li>
-<li><a href="https://cran.r-project.org/package=admixr2" class="external-link"><img src="https://cranlogs.r-pkg.org/badges/grand-total/admixr2" alt="CRAN downloads"></a></li>
-<li><a href="https://www.gnu.org/licenses/gpl-3.0" class="external-link"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a></li>
-<li><a href="https://lifecycle.r-lib.org/articles/stages.html#stable" class="external-link"><img src="https://img.shields.io/badge/lifecycle-stable-brightgreen.svg" alt="Lifecycle: stable"></a></li>
-<li><a href="https://doi.org/10.1007/s10928-025-10011-w" class="external-link"><img src="https://img.shields.io/badge/DOI-10.1007%2Fs10928--025--10011--w-blue" alt="DOI"></a></li>
-<li><a href="https://app.codecov.io/gh/LeidenPharmacology/admixr2" class="external-link"><img src="https://codecov.io/gh/LeidenPharmacology/admixr2/branch/main/graph/badge.svg" alt="Codecov"></a></li>
-</ul>
-</div>
-
-  </aside>
+  </main><aside class="col-md-3"></aside>
 </div>
 
 

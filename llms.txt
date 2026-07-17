@@ -1,169 +1,158 @@
-# admixr2
+# A meta-analysis framework for population PK/PD
 
-`admixr2` is a **meta-analysis framework for population PK/PD**. It fits
-pharmacometric models directly to **summary-level data** — the mean
-vector **E** and covariance matrix **V** reported per study — instead of
-individual patient records. The inputs can be **digitised aggregate
-data** from published studies, **previously published PK/PD models**, or
-a mix of both; the result is a single unified population model with
-interpretable fixed, random and covariate effects. It integrates with
-the [nlmixr2](https://nlmixr2.org/) /
-[rxode2](https://cran.r-project.org/package=rxode2) ecosystem and
-provides four estimation backends:
+Aggregate data modelling · nlmixr2 / rxode2
 
-| Estimator | `est =` | Control |
-|----|----|----|
-| First-Order | `"adfo"` | [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md) |
-| Monte Carlo | `"admc"` | [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md) |
-| Gauss-Hermite | `"adgh"` | [`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md) |
-| Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) |
+Fit one unified population model to what the literature reports —
+aggregate summary data or previously published PK/PD models — without
+individual patient data.
 
-## Aggregate data modelling
+[![R-CMD-check](https://img.shields.io/github/actions/workflow/status/LeidenPharmacology/admixr2/R-CMD-check.yaml?style=flat-square&label=R-CMD-check)](https://github.com/LeidenPharmacology/admixr2/actions/workflows/R-CMD-check.yaml)
+[![CRAN](https://img.shields.io/cran/v/admixr2?style=flat-square)](https://cran.r-project.org/package=admixr2)
+[![Coverage](https://img.shields.io/codecov/c/github/LeidenPharmacology/admixr2?style=flat-square&label=coverage)](https://app.codecov.io/gh/LeidenPharmacology/admixr2)
+[![Lifecycle:
+stable](https://img.shields.io/badge/lifecycle-stable-4A6B5D?style=flat-square)](https://lifecycle.r-lib.org/articles/stages.html#stable)
+[![DOI](https://img.shields.io/badge/DOI-10.1007%2Fs10928--025--10011--w-1F4E79?style=flat-square)](https://doi.org/10.1007/s10928-025-10011-w)
 
-`admixr2` implements **aggregate data modelling**: fitting a nonlinear
-mixed-effects model to the summary statistics a study reports rather
-than to individual records. Fitting a single population model jointly
-across several studies turns them into one **meta-analysis** —
-between-study differences are carried by the model itself
-(inter-individual variability captures subject-level spread within each
-study; residual error absorbs the rest), while every study shares the
-same structural and variance parameters and contributes its own dosing
-regimen, observation times, and sample size.
+[Get
+started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md)
+[GitHub](https://github.com/LeidenPharmacology/admixr2)
 
-Two kinds of input feed the analysis:
+\> `install.packages("admixr2")`
 
-- **Aggregate data** — means, error bars and covariances digitised from
-  published figures or tables.
-- **Published PK/PD models** — a previously published population model
-  can be supplied directly, via
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md),
-  so the literature’s *models* (not only its data) become evidence you
-  can combine.
+meta-analysis.R
 
-## When to use admixr2
+``` adm-code
+# Fit a model to published means + covariances
+fit <- nlmixr2(model, admData(), est = "admc",
+  control = admControl(studies = list(
+    trial_A = list(E = Ea, V = Va, n = 120L,
+                   times = c(1, 2, 4, 8, 24),
+                   ev = et(amt = 100)))))
 
-**Individual patient data are unavailable** — the most common scenario.
-Published papers report means and standard deviations; regulatory
-submissions and competitive reasons prevent individual patient data
-sharing across companies or institutions. `admixr2` extracts the maximum
-information from what is publicly available.
-
-**Leveraging the literature for trial design** — fit a mechanistic PK/PD
-model to aggregated results from existing trials, then simulate new
-dosing regimens or patient populations before committing to a costly
-study.
-
-**Combining evidence across heterogeneous trials** — studies differ in
-dose, formulation, population, or observation schedule. `admixr2`
-handles multi-study fits with per-study dosing events and time grids
-under a single shared population model.
-
-**Reproducing and extending published models** — supply a previously
-published population model directly as input (via
-[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)),
-or digitise its mean concentration–time profiles from figures. No
-individual patient data required.
-
-## Installation
-
-``` r
-
-# From CRAN
-install.packages("admixr2")
-
-# Development version from GitHub
-pak::pak("LeidenPharmacology/admixr2")
+plot(fit)   # observed mean vs prediction, ±1 SD
 ```
 
-## Quick start
+![](data:image/svg+xml;base64,PHN2ZyB2aWV3Ym94PSIwIDAgNDYwIDE1MCIgd2lkdGg9IjEwMCUiIHN0eWxlPSJkaXNwbGF5OmJsb2NrIj48bGluZSB4MT0iNDIiIHkxPSIxMiIgeDI9IjQyIiB5Mj0iMTIyIiBzdHJva2U9InZhcigtLWJzLWJvcmRlci1jb2xvcikiIHN0cm9rZS13aWR0aD0iMSI+PC9saW5lPjxsaW5lIHgxPSI0MiIgeTE9IjEyMiIgeDI9IjQ0MCIgeTI9IjEyMiIgc3Ryb2tlPSJ2YXIoLS1icy1ib3JkZXItY29sb3IpIiBzdHJva2Utd2lkdGg9IjEiPjwvbGluZT48cGF0aCBkPSJNNDIsMzAgQzEyMCw0NCAyMTAsNzQgMzAwLDk2IEMzNTAsMTA4IDQwMCwxMTQgNDQwLDExNyBMNDQwLDEyNyBDNDAwLDEyNCAzNTAsMTE4IDMwMCwxMDYgQzIxMCw4NCAxMjAsNTQgNDIsNDAgWiIgZmlsbD0idmFyKC0tYWRtLW5hdnkpIiBvcGFjaXR5PSIwLjEyIiAvPjxwYXRoIGQ9Ik00MiwzNSBDMTIwLDQ5IDIxMCw3OSAzMDAsMTAxIEMzNjAsMTE0IDQxMCwxMTggNDQwLDEyMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ2YXIoLS1hZG0tbmF2eSkiIHN0cm9rZS13aWR0aD0iMiIgLz48ZyBzdHJva2U9InZhcigtLWJzLWJvZHktY29sb3IpIiBzdHJva2Utd2lkdGg9IjEuMyI+PGxpbmUgeDE9IjkwIiB5MT0iNDAiIHgyPSI5MCIgeTI9IjU4Ij48L2xpbmU+PGxpbmUgeDE9IjE3NSIgeTE9IjYyIiB4Mj0iMTc1IiB5Mj0iODIiPjwvbGluZT48bGluZSB4MT0iMjYwIiB5MT0iODIiIHgyPSIyNjAiIHkyPSIxMDAiPjwvbGluZT48bGluZSB4MT0iMzQ1IiB5MT0iMTAwIiB4Mj0iMzQ1IiB5Mj0iMTE2Ij48L2xpbmU+PC9nPjxnIGZpbGw9InZhcigtLWFkbS1vcmFuZ2UpIj48Y2lyY2xlIGN4PSI5MCIgY3k9IjQ5IiByPSIzLjYiPjwvY2lyY2xlPjxjaXJjbGUgY3g9IjE3NSIgY3k9IjcyIiByPSIzLjYiPjwvY2lyY2xlPjxjaXJjbGUgY3g9IjI2MCIgY3k9IjkxIiByPSIzLjYiPjwvY2lyY2xlPjxjaXJjbGUgY3g9IjM0NSIgY3k9IjEwOCIgcj0iMy42Ij48L2NpcmNsZT48L2c+PC9zdmc+)
 
-``` r
+observed study mean ± SD  vs  model prediction
 
-library(admixr2)
-library(rxode2)
-library(nlmixr2)
+![](data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkiIGhlaWdodD0iMTkiIHZpZXdib3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMS41Ij48cmVjdCB4PSI0IiB5PSIzIiB3aWR0aD0iMTYiIGhlaWdodD0iMTgiIHJ4PSIyIiAvPjxwYXRoIGQ9Ik04IDhoOE04IDEyaDhNOCAxNmg1IiBzdHJva2UtbGluZWNhcD0icm91bmQiIC8+PC9zdmc+)
 
-# 1. Compute aggregate statistics from individual data (or digitise from paper)
-data("examplomycin")
-obs    <- examplomycin[examplomycin$EVID == 0, ]
-obs    <- obs[order(obs$ID, obs$TIME), ]
-times  <- sort(unique(obs$TIME))
-ids    <- unique(obs$ID)
-dv_mat <- matrix(NA_real_, nrow = length(ids), ncol = length(times))
-for (i in seq_along(ids)) {
-  sub         <- obs[obs$ID == ids[i], ]
-  dv_mat[i, ] <- sub$DV[order(sub$TIME)]
-}
-E <- colMeans(dv_mat)
-V <- cov.wt(dv_mat, method = "ML")$cov
+**Aggregate data**published means, error bars & covariances
 
-# 2. Define the model (standard nlmixr2 syntax)
-pk_model <- function() {
-  ini({
-    tcl     <- log(5);  label("Log clearance (L/hr)")
-    tv1     <- log(10); label("Log central volume (L)")
-    tv2     <- log(30); label("Log peripheral volume (L)")
-    tq      <- log(10); label("Log inter-compartmental CL (L/hr)")
-    tka     <- log(1);  label("Log absorption rate constant (1/hr)")
-    prop.sd <- c(0, 0.2)
-    eta.cl ~ 0.09; eta.v1 ~ 0.09; eta.v2 ~ 0.09
-    eta.q  ~ 0.09; eta.ka ~ 0.09
-  })
-  model({
-    cl <- exp(tcl + eta.cl); v1 <- exp(tv1 + eta.v1)
-    v2 <- exp(tv2 + eta.v2); q  <- exp(tq  + eta.q)
-    ka <- exp(tka + eta.ka)
-    d/dt(depot)      <- -ka * depot
-    d/dt(central)    <- ka * depot - (cl/v1 + q/v1) * central + (q/v2) * peripheral
-    d/dt(peripheral) <- (q/v1) * central - (q/v2) * peripheral
-    cp <- central / v1
-    cp ~ prop(prop.sd)
-  })
-}
+![](data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkiIGhlaWdodD0iMTkiIHZpZXdib3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMS41Ij48cmVjdCB4PSIzIiB5PSI0IiB3aWR0aD0iMTgiIGhlaWdodD0iMTYiIHJ4PSIyIiAvPjxwYXRoIGQ9Ik02IDE1YzMtNiA4LTYgMTIgMCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiAvPjxjaXJjbGUgY3g9IjkiIGN5PSIxMC41IiByPSIxLjIiIGZpbGw9ImN1cnJlbnRDb2xvciIgc3Ryb2tlPSJub25lIj48L2NpcmNsZT48L3N2Zz4=)
 
-# 3. Fit
-fit <- nlmixr2(
-  pk_model, admData(), est = "admc",
-  control = admControl(
-    studies = list(examplomycin = list(
-      E = E, V = V, n = length(ids),
-      times = times, ev = et(amt = 100)
-    )),
-    n_sim = 5000L, seed = 1L
-  )
-)
+**PK/PD models**previously published population models
 
-print(fit)
-plot(fit)
-```
+![](data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjgiIGhlaWdodD0iMjgiIHZpZXdib3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMS42Ij48cGF0aCBkPSJNNCAxMmgxNU0xNCA2bDYgNi02IDYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgLz48L3N2Zz4=)
 
-## Vignettes
+![](data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjYiIGhlaWdodD0iMjYiIHZpZXdib3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik00IDR2MTZoMTYiIC8+PHBhdGggZD0iTTcuNSAxNi41YzIuNS02IDctOSAxMS41LTExIiAvPjxjaXJjbGUgY3g9IjEwIiBjeT0iMTMuMiIgcj0iMS4zNSIgZmlsbD0iY3VycmVudENvbG9yIiBzdHJva2U9Im5vbmUiPjwvY2lyY2xlPjxjaXJjbGUgY3g9IjE0LjUiIGN5PSI5LjYiIHI9IjEuMzUiIGZpbGw9ImN1cnJlbnRDb2xvciIgc3Ryb2tlPSJub25lIj48L2NpcmNsZT48L3N2Zz4=)
 
-| Vignette | Topic |
-|----|----|
-| [Getting started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.html) | Core workflow: data prep, model, fit, diagnostics |
-| [Diagnostic plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.html) | All four plot panels explained; IIV heatmap |
-| [Multiple studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.html) | Joint fitting across studies with different designs |
-| [Estimator comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html) | adfo, admc, adgh and adirmc: mathematical foundations and when to use each |
-| [Advanced usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html) | Gradient modes, parallel restarts, AIC/BIC model comparison |
+#### Aggregate data modelling
 
-## Citation
+One likelihood over the summary-level information — a meta-analysis
+across studies.
 
-If you use `admixr2` in your work, please cite the software paper, which
-introduces the Iterative Reweighting Monte Carlo estimator:
+![](data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjgiIGhlaWdodD0iMjgiIHZpZXdib3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMS42Ij48cGF0aCBkPSJNNCAxMmgxNU0xNCA2bDYgNi02IDYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgLz48L3N2Zz4=)
 
-> van de Beek H., Välitalo P.A.J., van Hasselt J.G.C., Zwep L.B. (2025).
-> Aggregate data modelling: A fast implementation for fitting
-> pharmacometrics models to summary-level data in R. *Journal of
-> Pharmacokinetics and Pharmacodynamics*, 53(1), 3.
-> <https://doi.org/10.1007/s10928-025-10011-w>
+![](data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjYiIGhlaWdodD0iMjYiIHZpZXdib3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiPjxwYXRoIGQ9Ik0zIDVjNi41IDAgNiA3IDExLjUgNyIgLz48cGF0aCBkPSJNMyAxMmgxMS41IiAvPjxwYXRoIGQ9Ik0zIDE5YzYuNSAwIDYtNyAxMS41LTciIC8+PGNpcmNsZSBjeD0iMTguNiIgY3k9IjEyIiByPSIyLjQiPjwvY2lyY2xlPjwvc3ZnPg==)
 
-The aggregate data modelling methodology is introduced in:
+#### Unified population model
 
-> Välitalo P.A.J. (2021). Pharmacometric estimation methods for
-> aggregate data, including data simulated from other pharmacometric
-> models. *Journal of Pharmacokinetics and Pharmacodynamics*, 48(5),
-> 623–638. <https://doi.org/10.1007/s10928-021-09760-1>
+One fit with interpretable fixed, random and covariate effects.
+
+Four estimators, one interface
+
+## Choose the method that fits your problem
+
+Every backend plugs into `nlmixr2(…, est=)` with analytical gradients.
+Compare them side by side in the [estimator
+vignette](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md).
+
+adfo
+
+### First-order
+
+Analytical first-order linearisation — deterministic, no Monte-Carlo
+draws. Typically the fastest backend.
+
+admc
+
+### Monte Carlo
+
+Simulation of the aggregate likelihood, with analytical
+common-random-number gradients. Accuracy improves with the number of
+draws.
+
+adgh
+
+### Gauss–Hermite
+
+Deterministic quadrature over the random effects — noise-free, with an
+exact gradient. Most efficient when the random-effect dimension is
+small.
+
+adirmc
+
+### Iterative RMC
+
+Iterative Reweighting Monte Carlo — reweights simulated draws across
+iterations, with a kappa correction for non-linear models.
+
+Documentation
+
+## Guides, grouped by what you’re doing
+
+Nine worked vignettes, from your first fit to publication-grade
+diagnostics.
+
+### Getting started
+
+- [Introduction to
+  admixr2](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md)
+
+### Inputs — data & models
+
+- [From a published figure to E, V and
+  n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md)
+- [Simulating data & using published
+  models](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)
+
+### Meta-analysis across studies
+
+- [Multiple
+  studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)
+- [Several outputs (plasma +
+  brain)](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.md)
+- [PD and PK/PD
+  data](https://leidenpharmacology.github.io/admixr2/articles/pkpd.md)
+
+### Estimation & diagnostics
+
+- [Comparing the
+  estimators](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
+- [Advanced
+  usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md)
+- [Diagnostic
+  plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md)
+
+##### How to cite
+
+van de Beek H., Välitalo P.A.J., Zwep L.B., van Hasselt J.G.C. (2025).
+*admixr2: Aggregate Data Modelling.* Journal of Pharmacokinetics and
+Pharmacodynamics.
+[doi:10.1007/s10928-025-10011-w](https://doi.org/10.1007/s10928-025-10011-w)
+
+Developed at Leiden University
+
+##### Package
+
+[Get
+started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md)[Reference](https://leidenpharmacology.github.io/admixr2/reference/index.md)[Changelog](https://leidenpharmacology.github.io/admixr2/news/index.md)
+
+##### Ecosystem
+
+[nlmixr2](https://nlmixr2.org/)[rxode2](https://cran.r-project.org/package=rxode2)[GitHub](https://github.com/LeidenPharmacology/admixr2)
 
 # Package index
 
