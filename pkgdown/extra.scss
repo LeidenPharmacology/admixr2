@@ -1,0 +1,342 @@
+// pkgdown/extra.scss — admixr2 (Leiden Clinical)
+// Compiled by bslib together with Bootstrap, so Bootstrap's CSS custom
+// properties (--bs-*) are available and flip automatically with the
+// light-switch (data-bs-theme = light|dark). Rules built on --bs-* are
+// therefore dark-mode-aware without duplication.
+
+// ── Custom accent tokens (navy + logo-orange), flipped for dark ──
+:root {
+  --adm-navy:    #001158;
+  --adm-orange:  #DD6B2A;
+  --adm-muted:   #5B6673;
+  --adm-surface: #FFFFFF;
+  --adm-panel:   #F4F5F7;
+  --adm-hero:    #FBFBFC;
+  --adm-shadow:  rgba(0, 17, 88, .08);
+}
+[data-bs-theme="dark"] {
+  --adm-navy:    #8AA6E8;
+  --adm-orange:  #E89457;
+  --adm-muted:   #9AA4B8;
+  --adm-surface: #121A2E;
+  --adm-panel:   #0E1526;
+  --adm-hero:    #0B1020;
+  --adm-shadow:  rgba(0, 0, 0, .45);
+  --bs-link-color: #9DB4EC;
+  --bs-link-hover-color: #B9CAF0;
+}
+
+// =====================================================================
+// GLOBAL — every page
+// =====================================================================
+body { -webkit-font-smoothing: antialiased; }
+
+h1, h2, h3, h4, h5, h6 { font-weight: 500; letter-spacing: -0.01em; }
+.contents h2 {
+  margin-top: 2.5rem;
+  padding-bottom: .3rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+.contents h3 { margin-top: 1.75rem; }
+
+// Links — thin offset underline that firms on hover
+main a:not(.btn):not(.nav-link):not(.dropdown-item) {
+  text-decoration-thickness: 1px;
+  text-underline-offset: .15em;
+  text-decoration-color: color-mix(in srgb, var(--bs-link-color) 35%, transparent);
+}
+main a:not(.btn):not(.nav-link):not(.dropdown-item):hover {
+  text-decoration-color: var(--bs-link-color);
+}
+
+// NOTE: do NOT override `.container { max-width }`. pkgdown adds
+// `.col-md-3 { margin-left: 5rem }` at >=1400px, and its layout budgets for
+// that against Bootstrap's own container widths (1320px at xxl). Narrowing the
+// container makes main(800, capped by .row>main{max-width:50rem}) + 80px +
+// aside(25%) exceed the row, wrapping the TOC aside onto its own line — which
+// dumps "On this page" at the bottom of every article/reference page.
+
+// Navbar — soft depth, Fraunces brand + logo, pill hover, navy active
+// (background comes from bslib navbar-light-bg / navbar-dark-bg)
+.navbar {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .05);
+  border-bottom: 1px solid var(--bs-border-color);
+  padding-top: .35rem;
+  padding-bottom: .35rem;
+}
+.navbar-brand {
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+// The logo is drawn on .navbar-brand::before (see the bottom of this file).
+// pkgdown otherwise drops the logo into the home page-header, i.e. in the
+// middle of the content — hide it there so it only appears in the top bar.
+.page-header img.logo { display: none; }
+.template-home .page-header { border: 0; margin-bottom: 0; padding-bottom: 0; }
+// pkgdown's real (dynamic) version, styled as a small pill — not hardcoded
+.navbar .nav-text {
+  font-family: "JetBrains Mono", monospace;
+  font-size: .6rem;
+  color: var(--adm-muted);
+  background: var(--adm-panel);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 20px;
+  padding: .1rem .45rem;
+  margin-left: .1rem;
+  align-self: center;
+}
+.navbar .nav-link { border-radius: 6px; padding-left: .7rem; padding-right: .7rem; }
+.navbar .nav-link:hover {
+  background: color-mix(in srgb, var(--adm-navy) 7%, transparent);
+  color: var(--adm-navy) !important;
+}
+.navbar .nav-link.active { color: var(--adm-navy) !important; font-weight: 500; }
+
+// Buttons — rounded, medium weight; primary navy + a quiet ghost
+.btn { border-radius: 8px; font-weight: 500; display: inline-flex; align-items: center; gap: .5rem; }
+.btn-lg { padding: .69rem 1.25rem; font-size: .94rem; border-radius: 8px; }
+.btn-primary {
+  --bs-btn-bg: var(--adm-navy);
+  --bs-btn-border-color: var(--adm-navy);
+  --bs-btn-hover-bg: #001a7a;
+  --bs-btn-hover-border-color: #001a7a;
+}
+[data-bs-theme="dark"] .btn-primary { --bs-btn-color: #0B1020; }
+.btn-outline-secondary {
+  --bs-btn-color: var(--bs-body-color);
+  --bs-btn-border-color: var(--bs-border-color);
+  --bs-btn-hover-bg: transparent;
+  --bs-btn-hover-color: var(--adm-navy);
+  --bs-btn-hover-border-color: var(--adm-navy);
+}
+
+// Inline code + code blocks
+code {
+  color: var(--adm-navy);
+  background: color-mix(in srgb, var(--adm-navy) 8%, transparent);
+  border-radius: 4px;
+  padding: .12em .4em;
+  font-size: .88em;
+}
+[data-bs-theme="dark"] code { color: var(--adm-orange); background: rgba(255, 255, 255, .06); }
+pre {
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  padding: 1rem 1.15rem;
+}
+pre code { color: inherit; background: none; padding: 0; font-size: .875rem; line-height: 1.6; }
+
+// Tables — tabular figures, soft header, horizontal scroll on narrow
+.contents table, .ref-arguments table { font-variant-numeric: tabular-nums; }
+table.table th {
+  font-weight: 600;
+  border-bottom-width: 2px;
+  background: color-mix(in srgb, var(--adm-navy) 5%, transparent);
+}
+table.table td, table.table th { padding: .5rem .7rem; }
+.contents .table-responsive, .contents > table { overflow-x: auto; display: block; }
+@media (min-width: 720px) { .contents > table { display: table; } }
+
+// Blockquotes / callouts
+blockquote, .callout {
+  border-left: 3px solid var(--adm-orange);
+  background: color-mix(in srgb, var(--adm-orange) 6%, transparent);
+  padding: .75rem 1rem;
+  border-radius: 0 var(--bs-border-radius) var(--bs-border-radius) 0;
+}
+
+// On-this-page TOC
+// "On this page" TOC (pkgdown already makes it sticky — only colour it here)
+#toc .nav-link { color: var(--adm-muted); border-left: 2px solid transparent; padding-left: .75rem; }
+#toc .nav-link.active { color: var(--adm-navy); font-weight: 600; border-left-color: var(--adm-navy); }
+
+// Footer
+footer {
+  border-top: 1px solid var(--bs-border-color);
+  margin-top: 3rem;
+  padding-top: 1.25rem;
+  color: var(--adm-muted);
+  font-size: .88rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+// =====================================================================
+// REFERENCE pages (function docs + index)
+// =====================================================================
+.ref-index .icon { display: none; }
+.ref-index td { border-top: 1px solid var(--bs-border-color); padding: .5rem .4rem; }
+.ref-arguments th, dt { color: var(--adm-navy); }
+.ref-arguments th { white-space: nowrap; vertical-align: top; }
+dt { font-weight: 600; }
+
+// =====================================================================
+// HOME — hero, schematic, cards (index.md uses .adm-* classes)
+// =====================================================================
+// The custom home sets `home.sidebar: false`, which empties the right
+// column but leaves an empty .col-md-3 reserving 25% width. Collapse the
+// empty aside and let the content span full width — article/reference
+// pages keep their (non-empty) TOC aside untouched.
+// Scoped to .template-home ONLY: article/reference pages must keep their
+// right-hand "On this page" TOC aside. (A :has/:empty heuristic here risked
+// widening main on those pages, which wraps the col-md-3 aside to the next
+// line — that is what dumps the TOC at the bottom of the page.)
+.template-home aside.col-md-3 { display: none; }
+.template-home .row > main.col-md-9 {
+  flex: 0 0 100%;
+  max-width: 100%;
+}
+
+.adm-hero {
+  display: grid;
+  grid-template-columns: 1.05fr .95fr;
+  gap: 2.5rem;
+  align-items: center;
+  padding: 1rem 0 2rem;
+}
+.adm-eyebrow {
+  font-family: "JetBrains Mono", monospace;
+  font-size: .78rem; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--adm-orange); margin-bottom: .75rem;
+}
+h1.adm-h1 { font-size: 2.7rem; font-weight: 600; line-height: 1.12; margin: 0 0 1rem; }
+.adm-tag { font-size: 1.12rem; color: var(--adm-muted); max-width: 40ch; margin-bottom: 1.1rem; }
+.adm-badges { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-bottom: 1.2rem; }
+.adm-badges a { line-height: 0; }
+.adm-badges img { height: 20px; border-radius: 3px; }
+
+// suppress pkgdown's external-link ↗ icon inside the custom home components
+.adm-hero a.external-link::after,
+.adm-close a.external-link::after,
+.adm-vcards a.external-link::after,
+.adm-code a.external-link::after { display: none !important; }
+.adm-cta { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+.adm-install {
+  font-family: "JetBrains Mono", monospace; font-size: .82rem; color: var(--adm-muted);
+  background: var(--adm-panel); border: 1px solid var(--bs-border-color);
+  border-radius: 8px; padding: .62rem .9rem;
+  display: inline-flex; align-items: center; gap: .5rem;
+}
+.adm-install .adm-prompt { color: var(--adm-orange); font-weight: 600; }
+.adm-install code { background: none; color: inherit; padding: 0; font-size: inherit; }
+
+.adm-card {
+  background: var(--adm-surface); border: 1px solid var(--bs-border-color);
+  border-radius: 12px; box-shadow: 0 10px 34px var(--adm-shadow); overflow: hidden;
+}
+.adm-card-top {
+  display: flex; align-items: center; gap: .5rem; padding: .7rem .9rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+.adm-card-top i { width: 11px; height: 11px; border-radius: 50%; background: var(--bs-border-color); display: inline-block; }
+.adm-card-top span { margin-left: .5rem; font-family: "JetBrains Mono", monospace; font-size: .72rem; color: var(--adm-muted); }
+.adm-card pre { margin: 0; border: 0; border-radius: 0; }
+.adm-plot { border-top: 1px solid var(--bs-border-color); padding: .9rem 1rem; }
+.adm-plot .cap { font-family: "JetBrains Mono", monospace; font-size: .72rem; color: var(--adm-muted); text-align: center; margin-top: .4rem; }
+
+// two-input schematic
+.adm-steps {
+  display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: .4rem;
+  background: var(--adm-surface); border: 1px solid var(--bs-border-color);
+  border-radius: 14px; padding: 1.6rem 1.4rem; margin: 1rem 0 2rem;
+}
+.adm-step { text-align: center; padding: .5rem .75rem; }
+.adm-step .ico {
+  margin: 0 auto .8rem; width: 52px; height: 52px; border-radius: 12px;
+  display: grid; place-items: center; color: var(--adm-navy);
+  background: color-mix(in srgb, var(--adm-navy) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--adm-navy) 22%, transparent);
+}
+.adm-step h4 { font-size: 1rem; margin: 0 0 .3rem; }
+.adm-step p { font-size: .84rem; color: var(--adm-muted); margin: 0; line-height: 1.45; }
+.adm-arrow { display: grid; place-items: center; color: var(--adm-orange); }
+.adm-inpair { display: flex; flex-direction: column; gap: .6rem; }
+.adm-inp {
+  display: flex; align-items: center; gap: .7rem; text-align: left;
+  background: color-mix(in srgb, var(--adm-navy) 6%, transparent);
+  border: 1px solid var(--bs-border-color); border-radius: 10px; padding: .7rem .8rem;
+}
+.adm-inp .ico-sm { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 8px; display: grid; place-items: center; color: var(--adm-navy); background: var(--adm-surface); border: 1px solid var(--bs-border-color); }
+.adm-inp b { font-size: .86rem; font-weight: 600; }
+.adm-inp span { display: block; font-size: .76rem; color: var(--adm-muted); }
+
+// estimator cards
+.adm-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin: 1rem 0 2rem; }
+.adm-est {
+  background: var(--adm-surface); border: 1px solid var(--bs-border-color);
+  border-radius: 12px; padding: 1.25rem; transition: box-shadow .15s, transform .15s;
+}
+.adm-est:hover { box-shadow: 0 6px 22px var(--adm-shadow); transform: translateY(-3px); }
+.adm-est .tag {
+  font-family: "JetBrains Mono", monospace; font-size: .8rem; font-weight: 500;
+  color: var(--adm-navy); background: color-mix(in srgb, var(--adm-navy) 8%, transparent);
+  padding: .15rem .55rem; border-radius: 6px; display: inline-block; margin-bottom: .6rem;
+}
+[data-bs-theme="dark"] .adm-est .tag { color: var(--bs-body-color); }
+.adm-est h3 { font-size: 1.05rem; margin: 0 0 .4rem; }
+.adm-est p { font-size: .86rem; color: var(--adm-muted); margin: 0; line-height: 1.5; }
+
+// code-card syntax colouring (matches the design mockup)
+.adm-code { margin: 0; border: 0; border-radius: 0; background: var(--adm-surface); padding: 1rem 1.15rem; }
+.adm-code code { background: none; color: inherit; padding: 0; }
+// downlit re-highlights the block with real R classes — colour them to match
+.adm-code .co { color: var(--adm-muted); font-style: italic; }        // comment
+.adm-code .fu, .adm-code .fu a { color: var(--bs-link-color); }       // function (+ autolink)
+.adm-code .st { color: var(--bs-success); }                           // string
+.adm-code .fl, .adm-code .dv { color: var(--adm-orange); }            // number
+.adm-code .op { color: color-mix(in srgb, var(--bs-body-color) 70%, transparent); }  // operator
+.adm-code a { text-decoration: none; }
+
+// section headers (kicker + heading + lead)
+.adm-sec { margin: 2.8rem 0 1.4rem; }
+.adm-sec .adm-kick {
+  font-family: "JetBrains Mono", monospace; font-size: .74rem; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--adm-orange); margin-bottom: .5rem;
+}
+.adm-sec h2 { border: 0; margin: 0 0 .4rem; padding: 0; font-size: 1.7rem; font-weight: 600; }
+.adm-sec .adm-lead { color: var(--adm-muted); margin: 0; max-width: 62ch; }
+
+// vignette group cards (Documentation)
+.adm-vcards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin: 1rem 0 2rem; }
+.adm-vcard { background: var(--adm-surface); border: 1px solid var(--bs-border-color); border-radius: 12px; padding: 1.3rem 1.4rem; }
+.adm-vcard h3 { font-size: 1.05rem; margin: 0; display: flex; align-items: center; gap: .55rem; }
+.adm-vcard h3::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--adm-orange); flex: 0 0 9px; }
+.adm-vcard ul { margin: .8rem 0 0; padding: 0; list-style: none; }
+.adm-vcard li { padding: .32rem 0; font-size: .9rem; border-top: 1px solid var(--bs-border-color); }
+.adm-vcard li:first-child { border-top: 0; padding-top: 0; }
+.adm-vcard a { color: var(--bs-body-color); text-decoration: none; }
+.adm-vcard a:hover { color: var(--adm-navy); }
+
+// closing block (cite + links)
+.adm-close { border-top: 1px solid var(--bs-border-color); margin-top: 2.5rem; padding-top: 1.6rem; display: grid; grid-template-columns: 1.7fr 1fr 1fr; gap: 2rem; }
+.adm-close h5 { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--adm-muted); margin: 0 0 .7rem; }
+.adm-close .cite { font-size: .85rem; color: var(--adm-muted); line-height: 1.55; margin: 0; }
+.adm-close .cite a { color: var(--bs-link-color); }
+.adm-close .leiden { margin: .9rem 0 0; font-weight: 500; color: var(--bs-body-color); font-size: .85rem; }
+.adm-close a { display: block; padding: .2rem 0; font-size: .9rem; color: var(--bs-body-color); text-decoration: none; }
+.adm-close > div > a:hover { color: var(--adm-navy); }
+
+@media (max-width: 800px) {
+  .adm-hero { grid-template-columns: 1fr; }
+  .adm-cards { grid-template-columns: repeat(2, 1fr); }
+  .adm-steps { grid-template-columns: 1fr; gap: 1rem; }
+  .adm-arrow svg { transform: rotate(90deg); }
+  .adm-vcards { grid-template-columns: 1fr; }
+  .adm-close { grid-template-columns: 1fr; }
+}
+
+// Navbar logo via the shared stylesheet (renders on EVERY page — home,
+// articles and reference — unlike an in_header script, which pkgdown strips
+// from template-generated reference pages). Small favicon PNG embedded inline.
+.navbar-brand::before {
+  content: "";
+  display: inline-block;
+  width: 26px;
+  height: 26px;
+  background: url("data:image/png;base64,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") center / contain no-repeat;
+}

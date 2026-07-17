@@ -2,26 +2,35 @@ url: https://leidenpharmacology.github.io/admixr2
 
 template:
   bootstrap: 5
-  bootswatch: cosmo
-  theme: arrow-light
+  light-switch: true
+  theme: arrow-light          # code highlighting (light)
+  theme-dark: arrow-dark      # code highlighting (dark)
   bslib:
-    # FeRx-inspired slate/oxide palette
-    bg: "#F7F6F3"
-    fg: "#1A2332"
-    primary: "#1F6B7A"
-    secondary: "#455066"
-    success: "#4A6B5D"
-    danger: "#C9582A"
-    warning: "#C8893E"
-    info: "#1F6B7A"
-    # Typography
-    base_font:
-      google: "IBM Plex Sans"
-    heading_font:
-      google: "Fraunces"
-    code_font:
-      google: "JetBrains Mono"
-    line-height-base: 1.55
+    # ── Leiden Clinical palette (deep navy + logo orange) ──
+    bg: "#FBFBFC"
+    fg: "#1A1A1A"
+    primary: "#001158"        # deep Leiden navy — buttons, active nav, accents
+    secondary: "#DD6B2A"      # logo orange — CTAs, section kickers
+    success: "#2F7D51"
+    info: "#123A99"
+    warning: "#B5761E"
+    danger: "#B23B2E"
+    link-color: "#123A99"     # readable navy-blue (primary itself is near-black)
+    code-bg: "#F4F5F7"
+    border-color: "#E5E7EB"
+    border-radius: "0.5rem"
+    # ── Typography ──
+    base_font: { google: "IBM Plex Sans" }
+    heading_font: { google: "Fraunces" }
+    code_font: { google: "JetBrains Mono" }
+    line-height-base: 1.6
+    font-scale: 1.0
+    # ── Navbar background per mode (accent stays navy) ──
+    navbar-light-bg: "#FFFFFF"
+    navbar-dark-bg: "#0B1020"
+  includes:
+    in_header: |
+      <meta name="theme-color" content="#001158">
 
 home:
   title: admixr2 — Aggregate Data Modelling in R
@@ -29,11 +38,12 @@ home:
     A meta-analysis framework for population PK/PD — fit models to summary-level
     data (means and covariances per study) or to previously published PK/PD
     models, in the nlmixr2 / rxode2 ecosystem.
+  sidebar: false          # full-width custom home (hero carries its own content)
 
 navbar:
   structure:
     left: [intro, blog, vignettes, reference]
-    right: [search, github]
+    right: [search, github, lightswitch]
   components:
     blog:
       text: Blog
