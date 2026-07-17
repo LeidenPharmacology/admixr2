@@ -152,7 +152,7 @@
 #
 # Var-method studies use a diagonal derivative path; cov-method uses full B.
 # For lnorm sigma: Jl scaled by exp(sv/2) for mean path; analytical sigma grad.
-.adghGrad <- function(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
+.adghGradNLL <- function(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
                        grad_h = 1e-4) {
   pars  <- .admUnpack(p, pinfo)
   L     <- pars$L
@@ -162,6 +162,16 @@
   X     <- grid$X
   W     <- grid$W
   grad  <- numeric(length(p)); names(grad) <- names(p)
+
+  # (#5) The moments this gradient is built from are exactly the moments the NLL
+  # needs, so returning the NLL alongside costs nothing and lets the driver skip
+  # a whole second solve per iterate (see .adghFusedFns). Returned as a list
+  # rather than an attribute on the gradient: an attribute travels through
+  # unname() and into expect_equal(), where it broke a gradient-vs-FD comparison
+  # that had nothing to do with the NLL. Callers wanting just the gradient use
+  # the .adghGrad wrapper below. nll = NULL on the FD-fallback returns -- those
+  # never form these moments.
+  nll_total <- 0
 
   # Which struct thetas are unpaired (no mu-referencing eta)?
   # struct_has_eta is struct-indexed (length n_s); struct_eta_idx is eta-indexed
@@ -196,7 +206,8 @@
       # missing whole studies, with no error and no warning. Degrade the whole
       # gradient to finite differences instead (what admc/adfo already do).
       if (is.null(js))
-        return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
+        return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                       cores, grad_h), nll = NULL))
       f  <- js$cp_mat; Jl <- js$dpred_list
       mu  <- as.numeric(crossprod(W, f))
       cpc <- sweep(f, 2L, mu)
@@ -206,6 +217,7 @@
       dres   <- .admResidDeriv(mu, arr, pinfo)
       jr <- .admJointResidual(mu, crossprod(cpc, W * cpc), s, pinfo, pars$sigma_var)
       mu_sigma <- jr$mu; V <- jr$V
+      nll_total <- nll_total + nll_cov_cpp(s$E, s$V, mu_sigma, V, s$n)
       r  <- as.numeric(s$E) - mu_sigma
       G  <- tryCatch(chol2inv(chol(V)),
                      error = function(e) tryCatch(solve(V), error = function(e2) NULL))
@@ -214,7 +226,8 @@
       # finite and looks valid, so nloptr steps along a direction that is not a
       # descent direction for the true objective. Degrade to FD, as below.
       if (is.null(G))
-        return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
+        return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                       cores, grad_h), nll = NULL))
       B    <- s$n * (G - G %*% (s$V + tcrossprod(r)) %*% G)
       dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))
       Bdiag <- diag(B); Bt <- cpc %*% B
@@ -268,7 +281,8 @@
     # -- i.e. returned a gradient that silently omitted it. Degrade the whole
     # gradient to finite differences instead (what admc/adfo already do).
     if (is.null(res))
-      return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
+      return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                     cores, grad_h), nll = NULL))
     f   <- res$cp_mat     # Q x n_t
     Jl  <- res$dpred_list # list n_eta of Q x n_t
 
@@ -285,6 +299,11 @@
     r <- as.numeric(s$E) - mu_sigma
 
     is_var <- identical(s$method, "var")
+
+    nll_total <- nll_total + if (is_var)
+      nll_var_cpp(s$E, s$v_diag, mu_sigma, diag(V), s$n)
+    else
+      nll_cov_cpp(s$E, s$V, mu_sigma, V, s$n)
 
     if (is_var) {
       # ------ Var method: diagonal derivative path ----------------------------
@@ -306,7 +325,8 @@
       # Singular predicted V -- see the joint branch above. `next` silently dropped
       # the study from the gradient; degrade the whole gradient to FD instead.
       if (is.null(G))
-        return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
+        return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                       cores, grad_h), nll = NULL))
       Vhat      <- s$V + tcrossprod(r)
       B         <- s$n * (G - G %*% Vhat %*% G)
       dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))  # d(NLL)/d(mu_sigma)
@@ -379,7 +399,7 @@
   # Unpaired struct thetas: the sens path above already has them exactly.
   if (length(unpaired_k) > 0L && theta_sens_ok) {
     grad[unpaired_k] <- grad[unpaired_k] + g_theta[unpaired_k]
-    return(grad)
+    return(list(grad = grad, nll = if (is.finite(nll_total)) nll_total else Inf))
   }
 
   # Otherwise forward FD of .adghNLL.
@@ -428,7 +448,54 @@
     }
   }
 
-  grad
+  list(grad = grad, nll = if (is.finite(nll_total)) nll_total else Inf)
+}
+
+# The gradient alone, with exactly the contract it has always had: a plain named
+# numeric and nothing else. Callers that compare or subset it (.adghCalcCov, the
+# FD cross-checks in the integration tests) must not have to know that the NLL
+# rides along -- an earlier revision returned it as an attribute on this vector
+# and it leaked into an expect_equal() of gradient values (#113). The NLL is
+# computed either way; forming it from moments that already exist is free.
+.adghGrad <- function(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
+                      grad_h = 1e-4)
+  .adghGradNLL(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
+               grad_h)$grad
+
+# (#5) Pair the objective and the gradient onto ONE solve.
+#
+# nloptr asks for them as two separate calls, but LBFGS always asks at the same
+# p (measured: every gradient call shares its p with an NLL call), and
+# .adghGradNLL already forms the moments the NLL needs -- so .adghNLL's solve was
+# pure duplicate work. Memoising on p collapses the pair to one solve: ~2x on a
+# gradient-mode fit (8.13s -> 3.77s, 58 -> 23 rxSolve on a 3-cmt/5-eta/40-time
+# fit; estimates unchanged to 6 dp).
+#
+# Consequence worth knowing: the objective now comes from the SENSITIVITY solve
+# rather than the plain one. Both integrate the same base ODEs, but the
+# augmented system makes rxode2's adaptive stepper land ~1e-6 apart (4.6e-11
+# relative on the NLL) -- so this is NOT bit-identical to the pre-fusion
+# objective, though both sit at the solver's own rtol. It also makes f and
+# grad-f self-consistent (one trajectory), where before they came from two.
+#
+# Only for the analytical-sens path; grad = "fd"/"cfd"/"none" keep the old route.
+.adghFusedFns <- function(pinfo, studies, sensModel, rxMod, out_var, grid, cores,
+                          grad_h) {
+  memo <- new.env(parent = emptyenv())
+  memo$key <- NULL; memo$nll <- NULL; memo$grad <- NULL
+  ev <- function(p) {
+    if (!is.null(memo$key) && identical(memo$key, p)) return(invisible(NULL))
+    gn <- .adghGradNLL(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
+                       grad_h)
+    n <- gn$nll
+    # nll = NULL => .adghGradNLL degraded to .adghFDGrad, which never formed the
+    # moments. Fall back to the ordinary NLL solve rather than invent a value.
+    if (is.null(n)) n <- .adghNLL(p, pinfo, studies, rxMod, out_var, grid, cores)
+    memo$key <- p; memo$grad <- gn$grad; memo$nll <- n
+    invisible(NULL)
+  }
+  list(nll_fn  = function(p) { ev(p); memo$nll },
+       grad_fn = function(p) { ev(p); memo$grad })
 }
 
 # -- FD gradient ---------------------------------------------------------------
@@ -577,12 +644,20 @@
   grid <- .adghNodeGrid(n_nodes, pinfo$n_eta)
   set.seed(seed + restart_id)
 
-  nll_fn <- function(p)
-    .adghNLL(p, pinfo, studies, m$rxMod, output_var, grid, m$cores_w)
+  # (#5) Same objective/gradient fusion the single-fit driver uses, so a restart
+  # is not twice the solves of the fit it restarts.
+  .fz <- if (!use_pure_fd && !is.null(m$sensModel))
+    .adghFusedFns(pinfo, studies, m$sensModel, m$rxMod, output_var, grid,
+                  m$cores_w, grad_h) else NULL
+
+  nll_fn <- if (!is.null(.fz)) .fz$nll_fn else
+    function(p) .adghNLL(p, pinfo, studies, m$rxMod, output_var, grid, m$cores_w)
 
   grad_fn <- if (use_pure_fd) {
     function(p) .adghFDGrad(p, pinfo, studies, m$rxMod, output_var, grid, m$cores_w,
                             grad_h, use_central)
+  } else if (!is.null(.fz)) {
+    .fz$grad_fn
   } else {
     function(p) .adghGrad(p, pinfo, studies, m$sensModel, m$rxMod, output_var,
                           grid, m$cores_w, grad_h)
@@ -945,9 +1020,15 @@ nlmixr2Est.adgh <- function(env, ...) {
   .par_trace <- NULL
   .best_nll  <- Inf
 
+  # (#5) One solve serves both the objective and the gradient -- see .adghFusedFns.
+  .fz <- if (want_sens && !is.null(sensModel))
+    .adghFusedFns(pinfo, studies, sensModel, rxMod, output_var, grid, cores,
+                  .ctl$grad_h) else NULL
+
   eval_f <- function(p) {
     .iter <<- .iter + 1L
-    val <- .adghNLL(p, pinfo, studies, rxMod, output_var, grid, cores)
+    val <- if (!is.null(.fz)) .fz$nll_fn(p)
+           else .adghNLL(p, pinfo, studies, rxMod, output_var, grid, cores)
     if (is.finite(val) && val < .best_nll) {
       .best_nll  <<- val
       .nll_trace <<- c(.nll_trace, val)
@@ -965,6 +1046,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   } else if (use_pure_fd) {
     function(p) .adghFDGrad(p, pinfo, studies, rxMod, output_var, grid, cores,
                               .ctl$grad_h, use_central)
+  } else if (!is.null(.fz)) {
+    .fz$grad_fn
   } else {
     function(p) .adghGrad(p, pinfo, studies, sensModel, rxMod, output_var,
                            grid, cores, .ctl$grad_h)
