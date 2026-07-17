@@ -152,7 +152,7 @@
 #
 # Var-method studies use a diagonal derivative path; cov-method uses full B.
 # For lnorm sigma: Jl scaled by exp(sv/2) for mean path; analytical sigma grad.
-.adghGrad <- function(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
+.adghGradNLL <- function(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
                        grad_h = 1e-4) {
   pars  <- .admUnpack(p, pinfo)
   L     <- pars$L
@@ -164,11 +164,13 @@
   grad  <- numeric(length(p)); names(grad) <- names(p)
 
   # (#5) The moments this gradient is built from are exactly the moments the NLL
-  # needs, so the NLL costs nothing extra here. It rides back as an attribute on
-  # the gradient rather than changing the return type, so every existing caller
-  # (restart workers, tests, .adghCalcCov) is untouched. The driver reads it to
-  # skip a whole second solve per iterate; a caller that ignores it loses nothing.
-  # NOT set on the FD-fallback returns -- those never form these moments.
+  # needs, so returning the NLL alongside costs nothing and lets the driver skip
+  # a whole second solve per iterate (see .adghFusedFns). Returned as a list
+  # rather than an attribute on the gradient: an attribute travels through
+  # unname() and into expect_equal(), where it broke a gradient-vs-FD comparison
+  # that had nothing to do with the NLL. Callers wanting just the gradient use
+  # the .adghGrad wrapper below. nll = NULL on the FD-fallback returns -- those
+  # never form these moments.
   nll_total <- 0
 
   # Which struct thetas are unpaired (no mu-referencing eta)?
@@ -204,7 +206,8 @@
       # missing whole studies, with no error and no warning. Degrade the whole
       # gradient to finite differences instead (what admc/adfo already do).
       if (is.null(js))
-        return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
+        return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                       cores, grad_h), nll = NULL))
       f  <- js$cp_mat; Jl <- js$dpred_list
       mu  <- as.numeric(crossprod(W, f))
       cpc <- sweep(f, 2L, mu)
@@ -223,7 +226,8 @@
       # finite and looks valid, so nloptr steps along a direction that is not a
       # descent direction for the true objective. Degrade to FD, as below.
       if (is.null(G))
-        return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
+        return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                       cores, grad_h), nll = NULL))
       B    <- s$n * (G - G %*% (s$V + tcrossprod(r)) %*% G)
       dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))
       Bdiag <- diag(B); Bt <- cpc %*% B
@@ -277,7 +281,8 @@
     # -- i.e. returned a gradient that silently omitted it. Degrade the whole
     # gradient to finite differences instead (what admc/adfo already do).
     if (is.null(res))
-      return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
+      return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                     cores, grad_h), nll = NULL))
     f   <- res$cp_mat     # Q x n_t
     Jl  <- res$dpred_list # list n_eta of Q x n_t
 
@@ -320,7 +325,8 @@
       # Singular predicted V -- see the joint branch above. `next` silently dropped
       # the study from the gradient; degrade the whole gradient to FD instead.
       if (is.null(G))
-        return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
+        return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                       cores, grad_h), nll = NULL))
       Vhat      <- s$V + tcrossprod(r)
       B         <- s$n * (G - G %*% Vhat %*% G)
       dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))  # d(NLL)/d(mu_sigma)
@@ -393,8 +399,7 @@
   # Unpaired struct thetas: the sens path above already has them exactly.
   if (length(unpaired_k) > 0L && theta_sens_ok) {
     grad[unpaired_k] <- grad[unpaired_k] + g_theta[unpaired_k]
-    attr(grad, "nll") <- if (is.finite(nll_total)) nll_total else Inf
-    return(grad)
+    return(list(grad = grad, nll = if (is.finite(nll_total)) nll_total else Inf))
   }
 
   # Otherwise forward FD of .adghNLL.
@@ -443,16 +448,26 @@
     }
   }
 
-  attr(grad, "nll") <- if (is.finite(nll_total)) nll_total else Inf
-  grad
+  list(grad = grad, nll = if (is.finite(nll_total)) nll_total else Inf)
 }
+
+# The gradient alone, with exactly the contract it has always had: a plain named
+# numeric and nothing else. Callers that compare or subset it (.adghCalcCov, the
+# FD cross-checks in the integration tests) must not have to know that the NLL
+# rides along -- an earlier revision returned it as an attribute on this vector
+# and it leaked into an expect_equal() of gradient values (#113). The NLL is
+# computed either way; forming it from moments that already exist is free.
+.adghGrad <- function(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
+                      grad_h = 1e-4)
+  .adghGradNLL(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
+               grad_h)$grad
 
 # (#5) Pair the objective and the gradient onto ONE solve.
 #
 # nloptr asks for them as two separate calls, but LBFGS always asks at the same
-# p (measured: every gradient call shares its p with an NLL call), and .adghGrad
-# already forms the moments the NLL needs -- so .adghNLL's solve was pure
-# duplicate work. Memoising on p collapses the pair to one solve: ~2x on a
+# p (measured: every gradient call shares its p with an NLL call), and
+# .adghGradNLL already forms the moments the NLL needs -- so .adghNLL's solve was
+# pure duplicate work. Memoising on p collapses the pair to one solve: ~2x on a
 # gradient-mode fit (8.13s -> 3.77s, 58 -> 23 rxSolve on a 3-cmt/5-eta/40-time
 # fit; estimates unchanged to 6 dp).
 #
@@ -470,12 +485,13 @@
   memo$key <- NULL; memo$nll <- NULL; memo$grad <- NULL
   ev <- function(p) {
     if (!is.null(memo$key) && identical(memo$key, p)) return(invisible(NULL))
-    g <- .adghGrad(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores, grad_h)
-    n <- attr(g, "nll")
-    # No attribute => .adghGrad degraded to .adghFDGrad, which never formed the
+    gn <- .adghGradNLL(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
+                       grad_h)
+    n <- gn$nll
+    # nll = NULL => .adghGradNLL degraded to .adghFDGrad, which never formed the
     # moments. Fall back to the ordinary NLL solve rather than invent a value.
     if (is.null(n)) n <- .adghNLL(p, pinfo, studies, rxMod, out_var, grid, cores)
-    memo$key <- p; memo$grad <- g; memo$nll <- n
+    memo$key <- p; memo$grad <- gn$grad; memo$nll <- n
     invisible(NULL)
   }
   list(nll_fn  = function(p) { ev(p); memo$nll },
