@@ -45,10 +45,14 @@ navbar:
         - text: Getting started
         - text: Introduction to admixr2
           href: articles/admixr2.html
+        - text: "---"
+        - text: Inputs — data & models
         - text: From a published figure to E, V and n
           href: articles/aggregate-data.html
+        - text: Simulating data & using published models
+          href: articles/datagen.html
         - text: "---"
-        - text: Study & data scenarios
+        - text: Meta-analysis across studies
         - text: Multiple studies
           href: articles/multiple-studies.html
         - text: Several outputs (plasma + brain)
@@ -56,17 +60,13 @@ navbar:
         - text: PD and PK/PD data
           href: articles/pkpd.html
         - text: "---"
-        - text: Estimation methods
+        - text: Estimation & diagnostics
         - text: Comparing the estimators
           href: articles/estimator-comparison.html
         - text: Advanced usage
           href: articles/advanced.html
-        - text: "---"
-        - text: Diagnostics & simulation
         - text: Diagnostic plots
           href: articles/diagnostic-plots.html
-        - text: Simulating aggregate data
-          href: articles/datagen.html
     github:
       icon: fab fa-github
       href: https://github.com/LeidenPharmacology/admixr2
@@ -79,29 +79,33 @@ articles:
       - articles/introducing-admixr2
 
   - title: Getting started
-    desc: Install, fit your first model, and turn a published figure into study inputs.
+    desc: Install admixr2 and fit your first model to aggregate data.
     contents:
       - admixr2
-      - aggregate-data
 
-  - title: Study & data scenarios
-    desc: Structure the data — several studies, several observed outputs, and PD/PK-PD endpoints.
+  - title: Inputs — data & models
+    desc: >
+      The two ways to feed a meta-analysis — digitized study summaries, or
+      previously published PK/PD models.
+    contents:
+      - aggregate-data
+      - datagen
+
+  - title: Meta-analysis across studies
+    desc: >
+      Combine evidence across sources — several studies, several observed
+      outputs, and PD / PK-PD endpoints.
     contents:
       - multiple-studies
       - multi-compartment
       - pkpd
 
-  - title: Estimation methods
-    desc: Choose and tune an estimator; gradients, restarts, and model comparison.
+  - title: Estimation & diagnostics
+    desc: Choose and tune an estimator — gradients, restarts, model comparison — then assess the fit.
     contents:
       - estimator-comparison
       - advanced
-
-  - title: Diagnostics & simulation
-    desc: Assess a fit and generate aggregate data for simulation studies.
-    contents:
       - diagnostic-plots
-      - datagen
 
 reference:
   - title: Fitting
