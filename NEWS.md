@@ -153,6 +153,26 @@
 
 ## Internal changes
 
+* **`adgh` gradient-mode fits are about twice as fast: the objective and the
+  gradient now share one solve** (#76). `nloptr` asks for the objective and the
+  gradient as two separate calls, but LBFGS always asks at the same parameter
+  vector, and `.adghGrad` already builds exactly the moments the negative
+  log-likelihood needs -- so the objective's solve was duplicate work. It is now
+  memoised onto the gradient's solve. Measured on a 3-compartment, 5-eta,
+  40-timepoint fit with a full covariance `V`: `rxSolve` calls per fit drop from
+  58 to 23 (`n_nodes = 3`) and 63 to 25 (`n_nodes = 5`), roughly halving wall
+  time. Applies to `grad = "analytical"` only (including multi-restart fits);
+  `grad = "fd"`/`"cfd"`/`"none"` are unchanged, as are all gradient values.
+
+  Note for anyone comparing objectives across versions: the reported objective
+  now comes from the sensitivity solve rather than the plain one. Both integrate
+  the same underlying model, but the augmented system makes rxode2's adaptive
+  stepper land a little differently -- about 5e-11 relative on the objective,
+  well inside the solver's own tolerance, and parameter estimates are unchanged
+  (identical to six decimal places in testing). As a side effect the objective
+  and its gradient are now computed from a single trajectory, where previously
+  they came from two slightly different ones.
+
 * **Model loading and per-fit memory now follow nlmixr2est's own conventions.**
   admixr2 previously pinned each fit's `foceiModel` companion objects in a
   package-level environment (a Windows GC-finalizer heap-corruption guard) and

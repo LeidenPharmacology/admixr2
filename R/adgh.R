@@ -163,6 +163,14 @@
   W     <- grid$W
   grad  <- numeric(length(p)); names(grad) <- names(p)
 
+  # (#5) The moments this gradient is built from are exactly the moments the NLL
+  # needs, so the NLL costs nothing extra here. It rides back as an attribute on
+  # the gradient rather than changing the return type, so every existing caller
+  # (restart workers, tests, .adghCalcCov) is untouched. The driver reads it to
+  # skip a whole second solve per iterate; a caller that ignores it loses nothing.
+  # NOT set on the FD-fallback returns -- those never form these moments.
+  nll_total <- 0
+
   # Which struct thetas are unpaired (no mu-referencing eta)?
   # struct_has_eta is struct-indexed (length n_s); struct_eta_idx is eta-indexed
   # (length n_eta) so is.na() on it never flags unpaired struct thetas.
@@ -206,6 +214,7 @@
       dres   <- .admResidDeriv(mu, arr, pinfo)
       jr <- .admJointResidual(mu, crossprod(cpc, W * cpc), s, pinfo, pars$sigma_var)
       mu_sigma <- jr$mu; V <- jr$V
+      nll_total <- nll_total + nll_cov_cpp(s$E, s$V, mu_sigma, V, s$n)
       r  <- as.numeric(s$E) - mu_sigma
       G  <- tryCatch(chol2inv(chol(V)),
                      error = function(e) tryCatch(solve(V), error = function(e2) NULL))
@@ -285,6 +294,11 @@
     r <- as.numeric(s$E) - mu_sigma
 
     is_var <- identical(s$method, "var")
+
+    nll_total <- nll_total + if (is_var)
+      nll_var_cpp(s$E, s$v_diag, mu_sigma, diag(V), s$n)
+    else
+      nll_cov_cpp(s$E, s$V, mu_sigma, V, s$n)
 
     if (is_var) {
       # ------ Var method: diagonal derivative path ----------------------------
@@ -379,6 +393,7 @@
   # Unpaired struct thetas: the sens path above already has them exactly.
   if (length(unpaired_k) > 0L && theta_sens_ok) {
     grad[unpaired_k] <- grad[unpaired_k] + g_theta[unpaired_k]
+    attr(grad, "nll") <- if (is.finite(nll_total)) nll_total else Inf
     return(grad)
   }
 
@@ -428,7 +443,43 @@
     }
   }
 
+  attr(grad, "nll") <- if (is.finite(nll_total)) nll_total else Inf
   grad
+}
+
+# (#5) Pair the objective and the gradient onto ONE solve.
+#
+# nloptr asks for them as two separate calls, but LBFGS always asks at the same
+# p (measured: every gradient call shares its p with an NLL call), and .adghGrad
+# already forms the moments the NLL needs -- so .adghNLL's solve was pure
+# duplicate work. Memoising on p collapses the pair to one solve: ~2x on a
+# gradient-mode fit (8.13s -> 3.77s, 58 -> 23 rxSolve on a 3-cmt/5-eta/40-time
+# fit; estimates unchanged to 6 dp).
+#
+# Consequence worth knowing: the objective now comes from the SENSITIVITY solve
+# rather than the plain one. Both integrate the same base ODEs, but the
+# augmented system makes rxode2's adaptive stepper land ~1e-6 apart (4.6e-11
+# relative on the NLL) -- so this is NOT bit-identical to the pre-fusion
+# objective, though both sit at the solver's own rtol. It also makes f and
+# grad-f self-consistent (one trajectory), where before they came from two.
+#
+# Only for the analytical-sens path; grad = "fd"/"cfd"/"none" keep the old route.
+.adghFusedFns <- function(pinfo, studies, sensModel, rxMod, out_var, grid, cores,
+                          grad_h) {
+  memo <- new.env(parent = emptyenv())
+  memo$key <- NULL; memo$nll <- NULL; memo$grad <- NULL
+  ev <- function(p) {
+    if (!is.null(memo$key) && identical(memo$key, p)) return(invisible(NULL))
+    g <- .adghGrad(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores, grad_h)
+    n <- attr(g, "nll")
+    # No attribute => .adghGrad degraded to .adghFDGrad, which never formed the
+    # moments. Fall back to the ordinary NLL solve rather than invent a value.
+    if (is.null(n)) n <- .adghNLL(p, pinfo, studies, rxMod, out_var, grid, cores)
+    memo$key <- p; memo$grad <- g; memo$nll <- n
+    invisible(NULL)
+  }
+  list(nll_fn  = function(p) { ev(p); memo$nll },
+       grad_fn = function(p) { ev(p); memo$grad })
 }
 
 # -- FD gradient ---------------------------------------------------------------
@@ -577,12 +628,20 @@
   grid <- .adghNodeGrid(n_nodes, pinfo$n_eta)
   set.seed(seed + restart_id)
 
-  nll_fn <- function(p)
-    .adghNLL(p, pinfo, studies, m$rxMod, output_var, grid, m$cores_w)
+  # (#5) Same objective/gradient fusion the single-fit driver uses, so a restart
+  # is not twice the solves of the fit it restarts.
+  .fz <- if (!use_pure_fd && !is.null(m$sensModel))
+    .adghFusedFns(pinfo, studies, m$sensModel, m$rxMod, output_var, grid,
+                  m$cores_w, grad_h) else NULL
+
+  nll_fn <- if (!is.null(.fz)) .fz$nll_fn else
+    function(p) .adghNLL(p, pinfo, studies, m$rxMod, output_var, grid, m$cores_w)
 
   grad_fn <- if (use_pure_fd) {
     function(p) .adghFDGrad(p, pinfo, studies, m$rxMod, output_var, grid, m$cores_w,
                             grad_h, use_central)
+  } else if (!is.null(.fz)) {
+    .fz$grad_fn
   } else {
     function(p) .adghGrad(p, pinfo, studies, m$sensModel, m$rxMod, output_var,
                           grid, m$cores_w, grad_h)
@@ -945,9 +1004,15 @@ nlmixr2Est.adgh <- function(env, ...) {
   .par_trace <- NULL
   .best_nll  <- Inf
 
+  # (#5) One solve serves both the objective and the gradient -- see .adghFusedFns.
+  .fz <- if (want_sens && !is.null(sensModel))
+    .adghFusedFns(pinfo, studies, sensModel, rxMod, output_var, grid, cores,
+                  .ctl$grad_h) else NULL
+
   eval_f <- function(p) {
     .iter <<- .iter + 1L
-    val <- .adghNLL(p, pinfo, studies, rxMod, output_var, grid, cores)
+    val <- if (!is.null(.fz)) .fz$nll_fn(p)
+           else .adghNLL(p, pinfo, studies, rxMod, output_var, grid, cores)
     if (is.finite(val) && val < .best_nll) {
       .best_nll  <<- val
       .nll_trace <<- c(.nll_trace, val)
@@ -965,6 +1030,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   } else if (use_pure_fd) {
     function(p) .adghFDGrad(p, pinfo, studies, rxMod, output_var, grid, cores,
                               .ctl$grad_h, use_central)
+  } else if (!is.null(.fz)) {
+    .fz$grad_fn
   } else {
     function(p) .adghGrad(p, pinfo, studies, sensModel, rxMod, output_var,
                            grid, cores, .ctl$grad_h)
