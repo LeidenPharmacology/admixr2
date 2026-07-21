@@ -110,9 +110,12 @@
 #'   truth. Increase (e.g. to `5e-3` or `1e-2`) if the Hessian is non-positive
 #'   definite.
 #' @param grad_bounds Box-constraint half-width when using gradients.
-#' @param covMethod Covariance method: `"r"` (numerical Hessian for structural
-#'   and residual-error parameters only; omega/IIV SEs are not computed,
-#'   consistent with nlmixr2 FOCEI) or `"none"`.
+#' @param covMethod Covariance method: `"r"` (numerical Hessian over the
+#'   structural, residual-error and omega parameters) or `"none"`. Omega is
+#'   included because excluding it also biases the STRUCTURAL standard errors
+#'   downward -- a theta carrying an eta is correlated with that eta's variance.
+#'   If the weakly-identified omega Cholesky makes the Hessian non-positive
+#'   definite, the structural + residual sub-block is reported with a warning.
 #' @param cov_n_sim Number of MC samples for the covariance (Hessian) step.
 #'   More samples reduce MC noise in NLL evaluations. The NLL-based Hessian
 #'   (`grad = "none"`) uses a central second difference of the NLL with the
@@ -388,12 +391,30 @@ nmObjGetControl.admc <- function(x, ...) {
     # Restrict the residual error to this output's sigma(s) so a multi-output fit
     # does not apply another compartment's error model here (no-op single-output).
     ar <- .admResidRows(pinfo, ov, pars$sigma_var, length(s$times))
-    if (identical(s$method, "var")) {
-      nll2 <- nll2 + nll_var_from_samples_cpp(cp_mat, as.numeric(s$E), s$v_diag,
-                                              s$n, ar$form, ar$a2, ar$b2, ar$cc)
+    .ph <- attr(cp_mat, "phi"); if (!is.null(.ph)) ar$phi <- .ph
+    if (.admResidCppOK(ar)) {
+      # forms the fused C++ kernels implement (combined1/2, lnorm, no ar)
+      if (identical(s$method, "var")) {
+        nll2 <- nll2 + nll_var_from_samples_cpp(cp_mat, as.numeric(s$E), s$v_diag,
+                                                s$n, ar$form, ar$a2, ar$b2, ar$cc)
+      } else {
+        nll2 <- nll2 + nll_cov_from_samples_cpp(cp_mat, as.numeric(s$E), s$V,
+                                                s$n, ar$form, ar$a2, ar$b2, ar$cc)
+      }
     } else {
-      nll2 <- nll2 + nll_cov_from_samples_cpp(cp_mat, as.numeric(s$E), s$V,
-                                              s$n, ar$form, ar$a2, ar$b2, ar$cc)
+      # everything else: assemble the moments in R (form-agnostic), then score
+      # with the plain kernels. See .admResidCppOK() for why.
+      mu_s <- colMeans(cp_mat)
+      cpc  <- sweep(cp_mat, 2L, mu_s)
+      Vs   <- crossprod(cpc) / nrow(cp_mat)
+      ap   <- .admResidApply(mu_s, diag(Vs), ar, s$times, Vs)
+      if (identical(s$method, "var")) {
+        nll2 <- nll2 + nll_var_cpp(as.numeric(s$E), s$v_diag, ap$mu, ap$dv, s$n)
+      } else {
+        Vp <- Vs * tcrossprod(ap$ms); diag(Vp) <- ap$dv
+        if (!is.null(ap$rmat)) Vp <- Vp + ap$rmat
+        nll2 <- nll2 + nll_cov_cpp(as.numeric(s$E), s$V, ap$mu, Vp, s$n)
+      }
     }
     if (!is.finite(nll2)) return(Inf)
   }
@@ -460,14 +481,15 @@ nmObjGetControl.admc <- function(x, ...) {
     if (isTRUE(s$is_joint)) {
       if (n_eta == 0L || is.null(sensModel)) return(rep(NA_real_, length(p)))
       js <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names,
-                                  eta_mat, s, cores, pinfo$nDisplayProgress)
+                                  eta_mat, s, cores, pinfo$nDisplayProgress,
+                                  pars$sigma_var)
       if (is.null(js) || anyNA(js$cp_mat)) return(rep(NA_real_, length(p)))
       cp_mat <- js$cp_mat; dpred_list <- js$dpred_list
       n_t    <- s$n_total
       mu_struct <- colMeans(cp_mat)
-      jr <- .admJointResidual(mu_struct,
-                              crossprod(sweep(cp_mat, 2L, mu_struct)) / n_sim,
-                              s, pinfo, pars$sigma_var)
+      V_struct  <- crossprod(sweep(cp_mat, 2L, mu_struct)) / n_sim
+      var_f     <- diag(V_struct)                    # Var_eta(f), pre-residual
+      jr <- .admJointResidual(mu_struct, V_struct, s, pinfo, pars$sigma_var)
       mu <- jr$mu; V <- jr$V
       cp_c  <- sweep(cp_mat, 2L, mu_struct)
       r     <- as.numeric(s$E) - mu
@@ -481,14 +503,21 @@ nmObjGetControl.admc <- function(x, ...) {
       # sigma mu-path coupling and sigma gradient, each on its output's rows.
       arr <- .admResidRows(pinfo, .admRowOutput(s, n_t), pars$sigma_var, n_t)
       sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
-                                            dNLL_dV_diag, dNLL_dmu)
+                                            dNLL_dV_diag, dNLL_dmu, var_f,
+                                            dNLL_dV, V_struct)
+      # V_pred -> V_struct chain (see the single-output branch below)
+      vchain     <- .admResidVChain(mu_struct, var_f, arr, pinfo,
+                                    .admRowTimes(s, length(mu_struct)))
+      dNLL_dV_s  <- dNLL_dV * vchain
+      diag(dNLL_dV_s) <- diag(dNLL_dV_s) +
+        dNLL_dmu * (attr(vchain, "dmu_dv0") %||% numeric(n_t))
 
       if (n_eta > 0L) {
         eta_rows_df  <- pinfo$eta_rows_df
         D_mat        <- do.call(cbind, dpred_list)
         z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
         go <- adm_grad_eta_omega_cpp(
-          cp_c, D_mat, z_diag_scale, z, dNLL_dV, dNLL_dmu, sigma_mu_scale,
+          cp_c, D_mat, z_diag_scale, z, dNLL_dV_s, dNLL_dmu, sigma_mu_scale,
           as.integer(eta_rows_df$neta1), as.integer(eta_rows_df$neta2),
           n_t, n_eta)
         for (j in seq_len(n_eta))
@@ -502,7 +531,8 @@ nmObjGetControl.admc <- function(x, ...) {
       }
 
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-        .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu)
+        .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
+                    dNLL_dV, s$times, V_struct)
 
       # Unpaired struct thetas. The augmented sens model carries d(pred)/d(theta)
       # directly (js$dtheta_list): it enters exactly like an eta direction, so the
@@ -516,7 +546,7 @@ nmObjGetControl.admc <- function(x, ...) {
             k_s   <- unpaired_k[bi]
             dpred <- js$dtheta_list[[pinfo$struct_names[k_s]]]
             grad[k_s] <- grad[k_s] +
-              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu_j, 1 / n_sim)
+              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV_s, eff_dmu_j, 1 / n_sim)
           }
         } else {
           nll0 <- nll_cov_cpp(as.numeric(s$E), s$V, mu, V, s$n)
@@ -543,7 +573,8 @@ nmObjGetControl.admc <- function(x, ...) {
     theta_sens <- NULL
     if (use_sens) {
       sens_out <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names,
-                                   eta_mat, s, cores, pinfo$nDisplayProgress)
+                                   eta_mat, s, cores, pinfo$nDisplayProgress,
+                                   pars$sigma_var)
       if (is.null(sens_out) || anyNA(sens_out$cp_mat)) {
         use_sens <- FALSE
       } else {
@@ -655,20 +686,30 @@ nmObjGetControl.admc <- function(x, ...) {
 
     n_t       <- length(s$times)
     arr       <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
+    # beta: the precision phi is SOLVED, not fitted -- .admSimulate returns it as
+    # an attribute on cp_mat (see there). Everything else leaves arr$phi NA.
+    .ph <- attr(cp_mat, "phi"); if (!is.null(.ph)) arr$phi <- .ph
     mu_struct <- colMeans(cp_mat)
     cp_c      <- sweep(cp_mat, 2L, mu_struct)
 
     is_var <- identical(s$method, "var")
+    cov_f  <- NULL                                   # only the cov branch has one
     if (is_var) {
-      ap <- .admResidApply(mu_struct, adm_col_sq_sum_cpp(cp_c) / n_sim, arr)
+      var_f <- adm_col_sq_sum_cpp(cp_c) / n_sim      # Var_eta(f), pre-residual
+      ap <- .admResidApply(mu_struct, var_f, arr)
       mu <- ap$mu; pv <- ap$dv
       r  <- as.numeric(s$E) - mu
       dNLL_dmu     <- s$n * as.numeric(-2 * r / pv)
       dNLL_dV_diag <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
     } else {
-      V  <- crossprod(cp_c) / n_sim
-      ap <- .admResidApply(mu_struct, diag(V), arr)
-      mu <- ap$mu; diag(V) <- ap$dv
+      cov_f <- crossprod(cp_c) / n_sim               # STRUCTURAL Cov_eta(f); keep it,
+      V  <- cov_f                                    # the ms/sigma chain needs it
+      var_f <- diag(V)                               # Var_eta(f), pre-residual
+      ap <- .admResidApply(mu_struct, var_f, arr, s$times)
+      mu <- ap$mu
+      if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)   # lnorm scales off-diagonals
+      diag(V) <- ap$dv
+      if (!is.null(ap$rmat)) V <- V + ap$rmat            # ar() correlation
       r  <- as.numeric(s$E) - mu
       cholV <- tryCatch(chol(V), error = function(e) NULL)
       if (is.null(cholV)) return(rep(NA_real_, length(p)))
@@ -682,9 +723,28 @@ nmObjGetControl.admc <- function(x, ...) {
     # objective (lnorm mean scaling + the residual variance's dependence on mu).
     # Computed once per study and reused across every gradient term.
     sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
-                                          dNLL_dV_diag, dNLL_dmu)
+                                          dNLL_dV_diag, dNLL_dmu, var_f,
+                                          if (is_var) NULL else dNLL_dV, cov_f)
     eff_dmu <- dNLL_dmu + sigma_mu_scale
     inv_n <- 1 / n_sim
+
+    # V-path chain. dNLL_dV/dNLL_dV_diag are derivatives w.r.t. V_PRED, but every
+    # kernel below differentiates the STRUCTURAL covariance Cov_eta(f). Since
+    # V_pred = ms(x)ms o Cov_eta(f) + diag(E[v]) -- and E[v] itself depends on
+    # diag(Cov_eta(f)) whenever the residual is f-dependent -- the two differ by
+    # .admResidVChain(): ms_i*ms_j off the diagonal, dv_dv0_i on it. Without this
+    # the eta/omega/theta gradients silently assume d(V_pred)/d(V_struct) = I,
+    # which is true only for purely additive error (chain == identity there, so
+    # add() models are bit-identical).
+    vchain <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times)
+    # TBS only: mu depends on Var_eta(f), so the mean contributes to the same
+    # d(var_f)/d(param) the kernels already chain. Zero for every other form.
+    .dmv <- attr(vchain, "dmu_dv0") %||% numeric(n_t)
+    dNLL_dV_diag_s <- dNLL_dV_diag * diag(vchain) + dNLL_dmu * .dmv
+    if (!is_var) {
+      dNLL_dV_s <- dNLL_dV * vchain
+      diag(dNLL_dV_s) <- diag(dNLL_dV_s) + dNLL_dmu * .dmv
+    }
 
     # Eta + omega gradient: one C++ call; var variant avoids n_txn_t intermediates.
     if (n_eta > 0L) {
@@ -696,13 +756,13 @@ nmObjGetControl.admc <- function(x, ...) {
       go <- if (is_var)
         adm_grad_eta_omega_var_cpp(
           cp_c, D_mat, z_diag_scale, z,
-          dNLL_dV_diag, dNLL_dmu, sigma_mu_scale,
+          dNLL_dV_diag_s, dNLL_dmu, sigma_mu_scale,
           neta1, neta2,
           n_t, n_eta)
       else
         adm_grad_eta_omega_cpp(
           cp_c, D_mat, z_diag_scale, z,
-          dNLL_dV, dNLL_dmu, sigma_mu_scale,
+          dNLL_dV_s, dNLL_dmu, sigma_mu_scale,
           neta1, neta2,
           n_t, n_eta)
       for (j in seq_len(n_eta)) {
@@ -731,9 +791,9 @@ nmObjGetControl.admc <- function(x, ...) {
           dpred <- theta_sens[[pinfo$struct_names[k_s]]]
           grad[k_s] <- grad[k_s] +
             if (is_var)
-              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_n)
+              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag_s, eff_dmu, inv_n)
             else
-              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_n)
+              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV_s, eff_dmu, inv_n)
         }
       } else if (!is.null(batched_hi)) {
         for (bi in seq_len(n_unp)) {
@@ -745,9 +805,9 @@ nmObjGetControl.admc <- function(x, ...) {
             (cp_hi_s - cp_mat) / h
           grad[k_s] <- grad[k_s] +
             if (is_var)
-              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_n)
+              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag_s, eff_dmu, inv_n)
             else
-              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_n)
+              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV_s, eff_dmu, inv_n)
         }
       } else {
         col_nms <- colnames(pdf)
@@ -797,15 +857,16 @@ nmObjGetControl.admc <- function(x, ...) {
           }
           grad[k_s] <- grad[k_s] +
             if (is_var)
-              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_n)
+              adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag_s, eff_dmu, inv_n)
             else
-              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_n)
+              adm_grad_partial_cpp(cp_c, dpred, dNLL_dV_s, eff_dmu, inv_n)
         }
       }
     }
 
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-      .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu)
+      .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
+                    if (is_var) NULL else dNLL_dV, s$times, cov_f)
   }
 
   grad
@@ -887,12 +948,34 @@ nmObjGetControl.admc <- function(x, ...) {
         cp   <- matrix(vals[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
         if (anyNA(cp)) { finite[ci] <- FALSE; next }
         ar <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
-        nll_ci <- if (identical(s$method, "var"))
-          nll_var_from_samples_cpp(cp, as.numeric(s$E), s$v_diag,
-                                   s$n, ar$form, ar$a2, ar$b2, ar$cc)
-        else
-          nll_cov_from_samples_cpp(cp, as.numeric(s$E), s$V,
-                                   s$n, ar$form, ar$a2, ar$b2, ar$cc)
+        .ph <- attr(cp, "phi"); if (!is.null(.ph)) ar$phi <- .ph
+        # SAME gate as .admNLL(). The fused kernels implement forms 0/1/2 only and
+        # have no off-diagonal channel, so a TBS/count/beta/ordinal/ar model fell
+        # into adm_apply_residual's `else` branch and was scored as combined2.
+        # This function IS the post-fit Hessian evaluator (covMethod = "r"), so
+        # without the gate every standard error and RSE for those models came from
+        # a different objective than the one that was fitted. Measured on a boxCox
+        # model: .admNLL 190.28 vs .admNLLBatch 49.46.
+        nll_ci <- if (.admResidCppOK(ar)) {
+          if (identical(s$method, "var"))
+            nll_var_from_samples_cpp(cp, as.numeric(s$E), s$v_diag,
+                                     s$n, ar$form, ar$a2, ar$b2, ar$cc)
+          else
+            nll_cov_from_samples_cpp(cp, as.numeric(s$E), s$V,
+                                     s$n, ar$form, ar$a2, ar$b2, ar$cc)
+        } else {
+          mu_s <- colMeans(cp)
+          cpc  <- sweep(cp, 2L, mu_s)
+          Vs   <- crossprod(cpc) / nrow(cp)
+          ap   <- .admResidApply(mu_s, diag(Vs), ar, s$times, Vs)
+          if (identical(s$method, "var")) {
+            nll_var_cpp(as.numeric(s$E), s$v_diag, ap$mu, ap$dv, s$n)
+          } else {
+            Vp <- Vs * tcrossprod(ap$ms); diag(Vp) <- ap$dv
+            if (!is.null(ap$rmat)) Vp <- Vp + ap$rmat
+            nll_cov_cpp(as.numeric(s$E), s$V, ap$mu, Vp, s$n)
+          }
+        }
         if (is.finite(nll_ci)) nlls[ci] <- nlls[ci] + nll_ci
         else                    finite[ci] <- FALSE
       }
@@ -984,11 +1067,15 @@ nmObjGetControl.admc <- function(x, ...) {
       # dev-mode daemon, which cannot ADD bindings to the installed namespace)
       for (nm in names(sensModel$fixed_theta))
         inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
+      # do.call + sensModel$solve_args: DDE sensitivity solves are forced onto pure
+      # dop853 (see .admLoadSensModel); NULL, hence a no-op, for every other model.
       out <- tryCatch(
         suppressWarnings(
-          rxode2::rxSolve(sensModel$mod, params = inner_df,
-                          events = s$ev_full, cores = cores,
-                          nDisplayProgress = pinfo$nDisplayProgress)),
+          do.call(rxode2::rxSolve,
+                  c(list(sensModel$mod, params = inner_df,
+                         events = s$ev_full, cores = cores,
+                         nDisplayProgress = pinfo$nDisplayProgress),
+                    sensModel$solve_args))),
         error = function(e) NULL)
       if (is.null(out) || !all(sensModel$sens_cols %in% names(out))) {
         use_sens <- FALSE
@@ -1000,16 +1087,27 @@ nmObjGetControl.admc <- function(x, ...) {
         tsc       <- sensModel$theta_sens_cols
         vals_th   <- if (!is.null(tsc) && all(tsc %in% names(out)))
           lapply(tsc, function(col) out[[col]][keep]) else NULL
+        # lnorm endpoint: rx_pred_ is log(f). Back-transform here too (chain rule),
+        # or this batched path would feed .admGradBatch a log-scale prediction while
+        # the NLL scores the natural scale. Inlined -- see the note in simulate.R.
+        .tb <- sensModel$pred_tbs; .plog <- !is.null(.tb)
         for (ci in seq_len(n_c)) {
           if (!valid[ci]) next
           idx <- (ci - 1L) * n_sim * n_t + seq_len(n_sim * n_t)
-          cp_mats[[ci]]     <- matrix(vals_pred[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
-          dpred_lists[[ci]] <- lapply(vals_sens, function(vs)
-            matrix(vs[idx], nrow = n_sim, ncol = n_t, byrow = TRUE))
+          cpm <- matrix(vals_pred[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
+          .gp <- if (.plog) .admTBSid(cpm, .tb$lam, .tb$yj, .tb$lo, .tb$hi) else NULL
+          if (.plog) cpm <- .admTBSi(cpm, .tb$lam, .tb$yj, .tb$lo, .tb$hi)
+          cp_mats[[ci]]     <- cpm
+          dpred_lists[[ci]] <- lapply(vals_sens, function(vs) {
+            D <- matrix(vs[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
+            if (.plog) D * .gp else D
+          })
           if (!is.null(vals_th))
             dtheta_lists[[ci]] <- stats::setNames(
-              lapply(vals_th, function(vs)
-                matrix(vs[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)),
+              lapply(vals_th, function(vs) {
+                D <- matrix(vs[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
+                if (.plog) D * .gp else D
+              }),
               names(tsc))
         }
       }
@@ -1197,16 +1295,26 @@ nmObjGetControl.admc <- function(x, ...) {
       cp_c      <- sweep(cp_mat, 2L, mu_struct)
 
       is_var <- identical(s$method, "var")
+      cov_f  <- NULL
       if (is_var) {
-        ap <- .admResidApply(mu_struct, adm_col_sq_sum_cpp(cp_c) / n_sim, arr)
+        var_f <- adm_col_sq_sum_cpp(cp_c) / n_sim
+        ap <- .admResidApply(mu_struct, var_f, arr)
         mu <- ap$mu; pv <- ap$dv
         r  <- as.numeric(s$E) - mu
         dNLL_dmu     <- s$n * as.numeric(-2 * r / pv)
         dNLL_dV_diag <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
       } else {
-        V  <- crossprod(cp_c) / n_sim
-        ap <- .admResidApply(mu_struct, diag(V), arr)
-        mu <- ap$mu; diag(V) <- ap$dv
+        cov_f <- crossprod(cp_c) / n_sim               # keep the STRUCTURAL cov
+        V  <- cov_f
+        var_f <- diag(V)
+        ap <- .admResidApply(mu_struct, var_f, arr, s$times)
+        mu <- ap$mu
+        # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
+        # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
+        # that aborted the whole fit instead of the optimizer rejecting the point.
+        if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
+        diag(V) <- ap$dv
+        if (!is.null(ap$rmat)) V <- V + ap$rmat
         r  <- as.numeric(s$E) - mu
         cholV <- tryCatch(chol(V), error = function(e) NULL)
         if (is.null(cholV)) { valid[ci] <- FALSE; next }
@@ -1217,9 +1325,18 @@ nmObjGetControl.admc <- function(x, ...) {
       }
 
       sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
-                                            dNLL_dV_diag, dNLL_dmu)
+                                            dNLL_dV_diag, dNLL_dmu, var_f,
+                                            if (is_var) NULL else dNLL_dV, cov_f)
       eff_dmu <- dNLL_dmu + sigma_mu_scale
       inv_n <- 1 / n_sim
+      # V_pred -> V_struct chain (see .admGrad)
+      vchain <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times)
+      .dmv <- attr(vchain, "dmu_dv0") %||% numeric(n_t)
+      dNLL_dV_diag_s <- dNLL_dV_diag * diag(vchain) + dNLL_dmu * .dmv
+      if (!is_var) {
+        dNLL_dV_s <- dNLL_dV * vchain
+        diag(dNLL_dV_s) <- diag(dNLL_dV_s) + dNLL_dmu * .dmv
+      }
 
       if (n_eta > 0L) {
         D_mat        <- do.call(cbind, dpred_list)
@@ -1230,13 +1347,13 @@ nmObjGetControl.admc <- function(x, ...) {
         go <- if (is_var)
           adm_grad_eta_omega_var_cpp(
             cp_c, D_mat, z_diag_scale, z,
-            dNLL_dV_diag, dNLL_dmu, sigma_mu_scale,
+            dNLL_dV_diag_s, dNLL_dmu, sigma_mu_scale,
             neta1, neta2,
             n_t, n_eta)
         else
           adm_grad_eta_omega_cpp(
             cp_c, D_mat, z_diag_scale, z,
-            dNLL_dV, dNLL_dmu, sigma_mu_scale,
+            dNLL_dV_s, dNLL_dmu, sigma_mu_scale,
             neta1, neta2,
             n_t, n_eta)
         for (j in seq_len(n_eta)) {
@@ -1265,16 +1382,17 @@ nmObjGetControl.admc <- function(x, ...) {
         if (is.null(dpred)) next
         grad_acc[ci, k_s] <- grad_acc[ci, k_s] +
           if (is_var)
-            adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag, eff_dmu, inv_n)
+            adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag_s, eff_dmu, inv_n)
           else
-            adm_grad_partial_cpp(cp_c, dpred, dNLL_dV, eff_dmu, inv_n)
+            adm_grad_partial_cpp(cp_c, dpred, dNLL_dV_s, eff_dmu, inv_n)
       }
 
       # .admSigmaGrad returns a full-length n_e vector indexed by GLOBAL sigma
       # position, zero for sigmas belonging to other endpoints. That is what keeps
       # a second endpoint's sigma gradient out of the first endpoint's slot.
       grad_acc[ci, n_s + seq_len(n_e)] <- grad_acc[ci, n_s + seq_len(n_e)] +
-        .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu)
+        .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
+                    if (is_var) NULL else dNLL_dV, s$times, cov_f)
     }
   }
 
@@ -1293,16 +1411,21 @@ nmObjGetControl.admc <- function(x, ...) {
   np    <- length(p_hat)
   nms   <- names(p_hat)
 
-  # Hessian restricted to struct + sigma only (omega Cholesky excluded).
+  # Hessian over struct + sigma + omega (falls back to struct+sigma if not PD).
   # Matches nlmixr2 FOCEI: omega entries are in the optimizer but skipped for cov.
-  n_s      <- length(pinfo$struct_names)
-  n_e      <- length(pinfo$sigma_names)
-  cov_idx  <- seq_len(n_s + n_e)
-  np_cov   <- length(cov_idx)
+  n_s     <- length(pinfo$struct_names)
+  n_e     <- length(pinfo$sigma_names)
+  n_o     <- length(pinfo$omega_par)
+  # The Hessian spans struct + sigma + OMEGA -- see .adghCalcCov() for the
+  # measurement. Excluding omega made the STRUCTURAL SEs too small (reported SE /
+  # empirical sampling SD over simulated datasets went from 0.67 to 1.17 on prop
+  # and 0.67 to 1.06 on lnorm when omega was put back), because a theta carrying
+  # an eta is correlated with that eta's variance. Falls back to the struct+sigma
+  # sub-block if the weakly-identified omega Cholesky makes the full H indefinite.
+  n_sub   <- n_s + n_e
+  cov_idx <- seq_len(n_sub + n_o)
+  np_cov  <- length(cov_idx)
   nms_cov  <- nms[cov_idx]
-  message("  Note: covMethod='r' computes covariance for structural and sigma ",
-          "parameters only; omega (IIV) SEs are not computed (matching nlmixr2 ",
-          "FOCEI behavior).")
 
   if (!is.null(cov_n_sim) && cov_n_sim != nrow(z_list[[1]])) {
     z_list      <- .admMakeZ(cov_n_sim, pinfo, length(studies), sampling)
@@ -1392,6 +1515,21 @@ nmObjGetControl.admc <- function(x, ...) {
   eig_dec <- tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
   H_eigs  <- if (!is.null(eig_dec)) eig_dec$values else rep(NA_real_, np_cov)
 
+  # If the weakly-identified omega Cholesky makes the full Hessian indefinite,
+  # drop back to the struct+sigma sub-block rather than reporting nothing.
+  if (n_o > 0L && (is.null(eig_dec) || min(H_eigs) < 0)) {
+    .sub <- seq_len(n_sub)
+    .Hs  <- H[.sub, .sub, drop = FALSE]
+    .es  <- tryCatch(eigen(.Hs, symmetric = TRUE), error = function(e) NULL)
+    if (!is.null(.es) && min(.es$values) >= 0) {
+      warning("admCalcCov: the full Hessian including omega was not positive ",
+              "definite; reporting structural and sigma standard errors only.",
+              call. = FALSE)
+      H <- .Hs; nms_cov <- nms_cov[.sub]; np_cov <- length(.sub)
+      eig_dec <- .es; H_eigs <- .es$values
+    }
+  }
+
   if (!is.null(eig_dec) && min(H_eigs) < 0) {
     hint <- if (use_grad)
       sprintf("Try increasing cov_h_outer (currently %.3e) or cov_h (currently %.3e) in admControl(), e.g. cov_h_outer = %.3e.",
@@ -1430,8 +1568,18 @@ nmObjGetControl.admc <- function(x, ...) {
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
   dimnames(cov_full) <- list(nms_cov, nms_cov)
-  struct_nms <- pinfo$struct_names
-  cov_full[struct_nms, struct_nms, drop = FALSE]
+  # Return the FULL struct + sigma block, not just the structural corner.
+  #
+  # The Hessian is built over `cov_idx` (structural thetas AND residual-error
+  # parameters), and the sigma SEs it produces are good -- validated against the
+  # empirical sampling SD over 40 simulated datasets: add 0.94, prop 0.91,
+  # lnorm 0.90 (reported SE / empirical SD, on the log-variance scale the
+  # optimizer works on). Returning only the structural corner threw them away AND
+  # left nlmixr2est's C++ popDf builder reading past the end of the matrix, so
+  # every sigma row of `fit$parFixedDf$SE` printed an uninitialised denormal
+  # (6.953178e-310, with %%RSE ~ 1e+307) rather than NA. Shipping the whole block
+  # both removes that garbage and reports three more correct standard errors.
+  cov_full
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -1972,6 +2120,15 @@ nlmixr2Est.admc <- function(env, ...) {
   any_joint  <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
   studies    <- .admBuildEvFull(studies, tag_cmt = multi_out)
 
+  .admCheckAR(pinfo, studies)
+  .admCheckOrdinal(pinfo, studies)
+
+  # A beta endpoint's prediction is derived from TWO solved columns; the pair
+  # travels on each study so the solve paths can combine them (see .admSimulate).
+  .bpair <- .admBetaPair(.ui)
+  if (!is.null(.bpair))
+    studies <- lapply(studies, function(u) { u$out_pair <- .bpair; u })
+
   want_grad    <- .ctl$grad != "none"
   want_sens    <- .ctl$grad == "sens"
   want_central <- .ctl$grad == "cfd"
@@ -2182,6 +2339,13 @@ nlmixr2Est.admc <- function(env, ...) {
                   sampling = .ctl$sampling),
       error = function(e) { warning("admCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
+  # A NULL covariance used to be completely silent: no warning reached the user,
+  # `warnings()` was empty, covMethod came back "" and every SE was NA with no
+  # indication why. Say so once, from the driver, where it cannot be swallowed.
+  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
+    warning("covariance could not be computed (the Hessian was singular or ",
+            "non-finite); standard errors are unavailable for this fit.",
+            call. = FALSE)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
   t_elapsed <- t_opt + t_cov
 

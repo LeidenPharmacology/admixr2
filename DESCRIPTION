@@ -40,6 +40,7 @@ Suggests:
     expm,
     ggplot2,
     knitr,
+    lotri,
     MASS,
     memuse,
     mirai,

@@ -15,15 +15,26 @@
 # Probabilists' GH nodes/weights for E_{N(0,1)}[g] = sum_i w_i g(x_i).
 # Golub-Welsch via symmetric tridiagonal eigendecomposition. No external deps.
 # sum(w) = 1, sum(w * x^2) = 1.
+# Memoised: the nodes depend on nothing but `m`, and .admTBSMoments/.admTBSMomentsD
+# ask for the 81-node set on EVERY residual evaluation of a transformed endpoint --
+# an eigen() of an 81x81 matrix each time, ~0.9 ms, inside the objective's inner
+# loop. The cache is keyed by m, holds a handful of tiny numeric vectors, and lives
+# in the package namespace (created at the top of R/zzz.R).
 .adghNodes1 <- function(m) {
   if (m < 1L) stop("n_nodes must be >= 1")
   if (m == 1L) return(list(x = 0, w = 1))
+  .key <- paste0("gh_", m)
+  .hit <- tryCatch(get(.key, envir = .adm_node_env, inherits = FALSE),
+                   error = function(e) NULL)
+  if (!is.null(.hit)) return(.hit)
   i <- seq_len(m - 1L)
   J <- matrix(0, m, m)
   J[cbind(i, i + 1L)] <- sqrt(i)
   J[cbind(i + 1L, i)] <- sqrt(i)
   e <- eigen(J, symmetric = TRUE)
-  list(x = e$values, w = (e$vectors[1L, ])^2)
+  out <- list(x = e$values, w = (e$vectors[1L, ])^2)
+  assign(.key, out, envir = .adm_node_env)
+  out
 }
 
 # Tensor-product GH grid for n_eta dimensions.
@@ -59,15 +70,22 @@
 # independently: the assembly depends on sigma, but the SOLVE does not (sigma is
 # zeroed into it and re-added analytically here), so a set of configurations
 # that share a solve can each be assembled cheaply.
-.adghMomentsFromCp <- function(cp, W, pars, pinfo, out_var) {
+.adghMomentsFromCp <- function(cp, W, pars, pinfo, out_var, times = NULL) {
   mu  <- as.numeric(crossprod(W, cp))
   cpc <- sweep(cp, 2L, mu)
   V   <- crossprod(cpc, W * cpc)
 
   # Restrict residual error to this output's sigma(s) (no-op single-output).
   arr <- .admResidRows(pinfo, out_var, pars$sigma_var, length(mu))
-  ap  <- .admResidApply(mu, diag(V), arr)
+  .ph <- attr(cp, "phi"); if (!is.null(.ph)) arr$phi <- .ph   # beta precision
+  ap  <- .admResidApply(mu, diag(V), arr, times)
+  # lnorm scales the whole covariance, not just its diagonal (ms == 1 otherwise)
+  # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
+  # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
+  # that aborted the whole fit instead of the optimizer rejecting the point.
+  if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
   diag(V) <- ap$dv
+  if (!is.null(ap$rmat)) V <- V + ap$rmat          # ar() correlation
   list(E = ap$mu, V = V)
 }
 
@@ -76,7 +94,7 @@
   pm <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
                      out_var, pm, cores, pinfo$nDisplayProgress)
-  .adghMomentsFromCp(cp, g$W, pars, pinfo, out_var)
+  .adghMomentsFromCp(cp, g$W, pars, pinfo, out_var, study$times)
 }
 
 # Moments for a SET of structural-theta configurations in ONE rxSolve.
@@ -98,7 +116,7 @@
 
   lapply(seq_len(n_cfg), function(k)
     .adghMomentsFromCp(cp_all[(k - 1L) * Q + seq_len(Q), , drop = FALSE],
-                       g$W, pars, pinfo, out_var))
+                       g$W, pars, pinfo, out_var, study$times))
 }
 
 # GH-quadrature joint moments for a same-subject unit: one shared-eta node grid
@@ -190,7 +208,7 @@
     # sens columns are unavailable (theta_sens_ok = FALSE).
     if (isTRUE(s$is_joint)) {
       js <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
-                                  pinfo$nDisplayProgress)
+                                  pinfo$nDisplayProgress, pars$sigma_var)
       # A failed sens solve used to `next`, which SILENTLY DROPPED this study's
       # entire contribution -- the optimizer then walked a gradient that was
       # missing whole studies, with no error and no warning. Degrade the whole
@@ -202,9 +220,14 @@
       cpc <- sweep(f, 2L, mu)
       # per-row residual: mean scaling (lnorm), then the residual-adjusted moments
       arr    <- .admResidRows(pinfo, .admRowOutput(s, s$n_total), pars$sigma_var, s$n_total)
-      ls_vec <- .admResidMuScale(arr)
-      dres   <- .admResidDeriv(mu, arr, pinfo)
-      jr <- .admJointResidual(mu, crossprod(cpc, W * cpc), s, pinfo, pars$sigma_var)
+      V_str  <- crossprod(cpc, W * cpc)
+      var_f  <- diag(V_str)                 # Var_eta(f), pre-residual
+      dres   <- .admResidDeriv(mu, var_f, arr, pinfo)
+      ls_vec <- dres$dmu_df            # d(mu_pred)/df -- see the single-output branch
+
+      vchain <- .admResidVChain(mu, var_f, arr, pinfo,
+                                .admRowTimes(s, length(mu)))
+      jr <- .admJointResidual(mu, V_str, s, pinfo, pars$sigma_var)
       mu_sigma <- jr$mu; V <- jr$V
       r  <- as.numeric(s$E) - mu_sigma
       G  <- tryCatch(chol2inv(chol(V)),
@@ -217,21 +240,33 @@
         return(.adghFDGrad(p, pinfo, studies, rxMod, out_var, grid, cores, grad_h))
       B    <- s$n * (G - G %*% (s$V + tcrossprod(r)) %*% G)
       dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))
-      Bdiag <- diag(B); Bt <- cpc %*% B
-      contrib_j <- function(gmat) {              # gmat = d(mu_sigma)/dpsi rows
-        dmu <- as.numeric(crossprod(W, gmat))
-        sum(dNLL_dmu_sig * dmu) + 2 * sum(W * rowSums(gmat * Bt))
+      # Bt is chained to the STRUCTURAL covariance (ms_i*ms_j off-diagonal,
+      # dv_dv0 on it), so contrib_j takes the RAW Jacobian -- see the
+      # single-output branch below for why pre-scaling the caller's gmat is wrong.
+      Bdiag <- diag(B)
+      Bsj   <- B * vchain
+      diag(Bsj) <- diag(Bsj) +            # mean-from-covariance path (TBS only)
+        dNLL_dmu_sig * (attr(vchain, "dmu_dv0") %||% numeric(length(mu)))
+      Bt <- cpc %*% Bsj
+      contrib_j <- function(graw) {              # graw = d(f)/dpsi rows, RAW
+        dmu <- as.numeric(crossprod(W, graw))
+        sum(dNLL_dmu_sig * dmu * ls_vec) + 2 * sum(W * rowSums(graw * Bt))
       }
       # V-path of the mean: the residual variance itself depends on mu, so a
       # parameter that moves mu also moves diag(V). dv_df = d(var)/d(mu).
+      # ms = m'(f) (TBS) also reaches V's off-diagonal -- see the single-output branch.
+      ms_off_j <- numeric(length(mu))
+      if (!is.null(dres$dms_df) && any(dres$dms_df != 0)) {
+        Aj <- B * V_str; diag(Aj) <- 0
+        ms_off_j <- 2 * dres$dms_df * drop(Aj %*% dres$ms)
+      }
       sig_V_extra <- function(dmu_raw)            # dmu_raw = d(mu)/dpsi (pre-lnorm)
-        sum(Bdiag * dres$dv_df * dmu_raw)
+        sum((Bdiag * dres$dv_df + ms_off_j) * dmu_raw)
       # paired struct thetas
       for (k in seq_len(n_s)) {
         ei <- which(pinfo$struct_eta_idx == k); if (length(ei) == 0L) next; ei <- ei[[1L]]
-        gmat    <- sweep(Jl[[ei]], 2L, ls_vec, "*")
         dmu_raw <- as.numeric(crossprod(W, Jl[[ei]]))
-        grad[k] <- grad[k] + contrib_j(gmat) + sig_V_extra(dmu_raw)
+        grad[k] <- grad[k] + contrib_j(Jl[[ei]]) + sig_V_extra(dmu_raw)
       }
       # unpaired struct thetas (augmented sens model): same path as the paired ones
       if (length(unpaired_k) > 0L) {
@@ -239,31 +274,29 @@
           theta_sens_ok <- FALSE
         } else for (k in unpaired_k) {
           Dt      <- js$dtheta_list[[pinfo$struct_names[k]]]
-          gmat    <- sweep(Dt, 2L, ls_vec, "*")
           dmu_raw <- as.numeric(crossprod(W, Dt))
-          g_theta[k] <- g_theta[k] + contrib_j(gmat) + sig_V_extra(dmu_raw)
+          g_theta[k] <- g_theta[k] + contrib_j(Dt) + sig_V_extra(dmu_raw)
         }
       }
       # omega Cholesky
       if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
         i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
         base    <- Jl[[i]] * X[, j]
-        gmat    <- sweep(base, 2L, ls_vec, "*")
         dmu_raw <- as.numeric(crossprod(W, base))
-        dL  <- contrib_j(gmat) + sig_V_extra(dmu_raw)
+        dL  <- contrib_j(base) + sig_V_extra(dmu_raw)
         pos <- n_s + n_e + rr
         grad[pos] <- grad[pos] + if (pinfo$chol_diag[rr]) dL * L[i, i] / 2 else dL
       }
       # sigma (each row's own endpoint; other endpoints' derivatives are zero)
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-        .admSigmaGrad(mu, arr, pinfo, Bdiag, dNLL_dmu_sig)
+        .admSigmaGrad(mu, arr, pinfo, Bdiag, dNLL_dmu_sig, var_f, B, s$times, V_str)
       next
     }
 
     ov <- s$output %||% out_var
 
     res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
-                            pinfo$nDisplayProgress)
+                            pinfo$nDisplayProgress, pars$sigma_var)
     # .admSimulateSens returns NULL when the solve fails. `next` skipped the study
     # -- i.e. returned a gradient that silently omitted it. Degrade the whole
     # gradient to finite differences instead (what admc/adfo already do).
@@ -275,12 +308,33 @@
     mu  <- as.numeric(crossprod(W, f))
     cpc <- sweep(f, 2L, mu)
     V   <- crossprod(cpc, W * cpc)
+    cov_f <- V                            # STRUCTURAL Cov_eta(f), before any residual
 
     # Residual error (and its lnorm scaling of the mean) -- this output only
-    arr <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
-    ap  <- .admResidApply(mu, diag(V), arr)
+    arr   <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
+    var_f <- diag(V)                      # Var_eta(f), pre-residual
+    ap    <- .admResidApply(mu, var_f, arr, s$times)
+    # lnorm scales the WHOLE covariance, not just its diagonal; ms == 1 elsewhere.
+    # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
+    # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
+    # that aborted the whole fit instead of the optimizer rejecting the point.
+    if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
     diag(V) <- ap$dv
+    if (!is.null(ap$rmat)) V <- V + ap$rmat            # ar() correlation
     mu_sigma <- ap$mu
+
+    # The sens Jacobians give d(f)/d(psi). `contrib()` below takes them RAW and
+    # applies the two chains itself:
+    #   mean : d(mu_sigma)/dpsi = ms * d(E[f])/dpsi
+    #   cov  : d(NLL)/d(V_struct) = d(NLL)/d(V_pred) o .admResidVChain()
+    # Previously the caller pre-multiplied the Jacobian by ms and fed that to BOTH
+    # terms, which gave the covariance path a single factor of ms where it needs
+    # one per index (ms_i*ms_j) and no dv_dv0 on the diagonal at all.
+    dres        <- .admResidDeriv(mu, var_f, arr, pinfo)
+    # d(mu_pred)/d(f), which is ap$ms for every form EXCEPT TBS -- there the mean
+    # carries a curvature term of its own. ap$ms stays the COVARIANCE scale.
+    lnorm_scale <- dres$dmu_df
+    vchain      <- .admResidVChain(mu, var_f, arr, pinfo, s$times)
 
     r <- as.numeric(s$E) - mu_sigma
 
@@ -291,12 +345,15 @@
       V_diag        <- diag(V)
       dNLL_dmu_sig  <- as.numeric(-2 * s$n * r / V_diag)  # d(NLL)/d(mu_sigma)
       dNLL_dV_diag  <- s$n * (1/V_diag - (s$v_diag + r^2) / V_diag^2)
+      # + the mean's dependence on Var_eta(f) (TBS only; see .admResidVChain).
+      dNLL_dV_dg_s  <- dNLL_dV_diag * diag(vchain) +      # -> d(NLL)/d(var_f)
+        dNLL_dmu_sig * (attr(vchain, "dmu_dv0") %||% numeric(length(mu)))
 
-      contrib <- function(gmat_mu) {
-        # gmat_mu: Q x n_t, derivative of mu (not mu_sigma) w.r.t. psi
-        dmu     <- as.numeric(crossprod(W, gmat_mu))
-        dV_diag <- 2 * colSums(W * cpc * gmat_mu)
-        sum(dNLL_dmu_sig * dmu) + sum(dNLL_dV_diag * dV_diag)
+      contrib <- function(graw) {
+        # graw: Q x n_t, RAW derivative of the structural f w.r.t. psi
+        dmu     <- as.numeric(crossprod(W, graw))
+        dV_diag <- 2 * colSums(W * cpc * graw)
+        sum(dNLL_dmu_sig * dmu * lnorm_scale) + sum(dNLL_dV_dg_s * dV_diag)
       }
 
     } else {
@@ -311,27 +368,36 @@
       B         <- s$n * (G - G %*% Vhat %*% G)
       dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))  # d(NLL)/d(mu_sigma)
       Bdiag     <- diag(B)
-      Bt        <- cpc %*% B  # Q x n_t; row q = cpc[q,] B
+      Bs        <- B * vchain
+      diag(Bs)  <- diag(Bs) +             # mean-from-covariance path (TBS only)
+        dNLL_dmu_sig * (attr(vchain, "dmu_dv0") %||% numeric(length(mu)))
+      Bt        <- cpc %*% Bs             # Q x n_t; chained to V_struct
 
-      contrib <- function(gmat_mu) {
-        # gmat_mu: derivative of mu (not mu_sigma) w.r.t. psi
-        dmu      <- as.numeric(crossprod(W, gmat_mu))
-        term_mu  <- sum(dNLL_dmu_sig * dmu)
-        term_cov <- 2 * sum(W * rowSums(gmat_mu * Bt))
+      contrib <- function(graw) {
+        # graw: RAW derivative of the structural f w.r.t. psi
+        dmu      <- as.numeric(crossprod(W, graw))
+        term_mu  <- sum(dNLL_dmu_sig * dmu * lnorm_scale)
+        term_cov <- 2 * sum(W * rowSums(graw * Bt))
         term_mu + term_cov
       }
     }
-
-    # The sens Jacobians give d(mu)/d(eta); lnorm needs d(mu_sigma)/d(eta), which
-    # is that scaled by exp(sv/2). Scalar here (one endpoint, at most one lnorm).
-    dres        <- .admResidDeriv(mu, arr, pinfo)
-    lnorm_scale <- .admResidMuScale(arr)[1L]
 
     # V-path of the mean: the residual variance depends on mu, so a parameter that
     # moves mu also moves diag(V) by dv_df = d(var)/d(mu).
     Bvec <- if (!is_var) Bdiag else dNLL_dV_diag  # length n_t
 
-    .sigma_V_extra <- function(dmu_raw) sum(Bvec * dres$dv_df * dmu_raw)
+    # For a TBS endpoint the mean scale ms = m'(f) itself depends on f, so moving
+    # the structural mean also moves the OFF-diagonal of V_pred (= ms_i ms_j cov_ij).
+    # Row k gains 2*m''(f_k)*(A ms)_k with A = dNLL_dV o Cov_eta(f), zero diagonal --
+    # the same contraction .admResidMuCoupling() applies for admc. Identically zero
+    # unless ms varies with f, so every other error model is untouched.
+    ms_off <- numeric(length(mu))
+    if (!is_var && !is.null(dres$dms_df) && any(dres$dms_df != 0)) {
+      A <- B * cov_f; diag(A) <- 0
+      ms_off <- 2 * dres$dms_df * drop(A %*% dres$ms)
+    }
+
+    .sigma_V_extra <- function(dmu_raw) sum((Bvec * dres$dv_df + ms_off) * dmu_raw)
 
     # Struct thetas paired with an eta: reuse the eta's sensitivity column
     # (d(pred)/d(theta) == d(pred)/d(eta) for a mu-referenced theta).
@@ -341,9 +407,8 @@
       if (!is.null(pinfo$struct_has_eta) && !pinfo$struct_has_eta[k]) next  # unpaired
       ei <- which(pinfo$struct_eta_idx == k)[1L]  # struct k -> its eta dim
       if (is.na(ei)) next  # nocov -- defensive; ei always found when struct_has_eta[k]
-      gmat    <- if (lnorm_scale != 1) Jl[[ei]] * lnorm_scale else Jl[[ei]]
       dmu_raw <- as.numeric(crossprod(W, Jl[[ei]]))  # d(mu_t)/d(psi) before lnorm scaling
-      grad[k] <- grad[k] + contrib(gmat) + .sigma_V_extra(dmu_raw)
+      grad[k] <- grad[k] + contrib(Jl[[ei]]) + .sigma_V_extra(dmu_raw)
     }
 
     # Unpaired struct thetas: their own sensitivity column from the augmented
@@ -353,9 +418,8 @@
         theta_sens_ok <- FALSE
       } else for (k in unpaired_k) {
         Dt      <- res$dtheta_list[[pinfo$struct_names[k]]]
-        gmat    <- if (lnorm_scale != 1) Dt * lnorm_scale else Dt
         dmu_raw <- as.numeric(crossprod(W, Dt))
-        g_theta[k] <- g_theta[k] + contrib(gmat) + .sigma_V_extra(dmu_raw)
+        g_theta[k] <- g_theta[k] + contrib(Dt) + .sigma_V_extra(dmu_raw)
       }
     }
 
@@ -364,16 +428,18 @@
     # Chain: L_ii stored as log(Omega_ii) -> d(L_ii)/dp = L_ii/2.
     if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
       i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
-      gmat    <- if (lnorm_scale != 1) Jl[[i]] * X[, j] * lnorm_scale else Jl[[i]] * X[, j]
-      dmu_raw <- as.numeric(crossprod(W, Jl[[i]] * X[, j]))
-      dL      <- contrib(gmat) + .sigma_V_extra(dmu_raw)
+      base    <- Jl[[i]] * X[, j]
+      dmu_raw <- as.numeric(crossprod(W, base))
+      dL      <- contrib(base) + .sigma_V_extra(dmu_raw)
       pos <- n_s + n_e + rr
       grad[pos] <- grad[pos] + if (pinfo$chol_diag[rr]) dL * L[i, i] / 2 else dL
     }
 
     # Sigma. Only this output's residual parameters have a nonzero derivative.
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-      .admSigmaGrad(mu, arr, pinfo, Bvec, dNLL_dmu_sig)
+      .admSigmaGrad(mu, arr, pinfo, Bvec, dNLL_dmu_sig, var_f,
+                    if (is_var) NULL else B, s$times,
+                    if (is_var) NULL else cov_f)
   }
 
   # Unpaired struct thetas: the sens path above already has them exactly.
@@ -467,12 +533,24 @@
                            cov_h_outer = .Machine$double.eps^(1/4)) {
   n_s     <- length(pinfo$struct_names)
   n_e     <- length(pinfo$sigma_names)
-  cov_idx <- seq_len(n_s + n_e)
+  n_o     <- length(pinfo$omega_par)
+  # The Hessian now spans struct + sigma + OMEGA. Excluding omega does not just
+  # forgo omega's own SEs -- it makes the STRUCTURAL SEs too small, because a theta
+  # that carries an eta is correlated with that eta's variance and profiling it out
+  # is not the same as fixing it. Measured against the empirical sampling SD over
+  # 40 simulated datasets: SE(tcl) rose 8.8% on prop and 8.6% on lnorm when omega
+  # was included (it was that much too small), while a purely additive model was
+  # unaffected (+0.01%) -- exactly the models where the residual and the IIV
+  # compete to explain the same spread. An omega SE from the full Hessian was
+  # accurate to about +-20% of the empirical SD.
+  #
+  # The omega Cholesky is more weakly identified than struct/sigma, so the full
+  # Hessian can be non-PD where the struct+sigma block is fine. That is handled by
+  # falling back to the struct+sigma sub-block rather than returning nothing.
+  n_sub   <- n_s + n_e
+  cov_idx <- seq_len(n_sub + n_o)
   np_cov  <- length(cov_idx)
   nms_cov <- names(p_hat)[cov_idx]
-  message("  Note: covMethod='r' computes covariance for structural and sigma ",
-          "parameters only; omega (IIV) SEs are not computed (matching nlmixr2 ",
-          "FOCEI behavior).")
 
   nll_fn  <- function(p)
     suppressMessages(.adghNLL(p, pinfo, studies, rxMod, out_var, grid, cores))
@@ -529,25 +607,49 @@
   eig_dec <- tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
   H_eigs  <- if (!is.null(eig_dec)) eig_dec$values else rep(NA_real_, np_cov)
 
-  if (!is.null(eig_dec) && min(H_eigs) < 0) {
-    warning(sprintf(
-      "adghCalcCov: Hessian not positive definite (min eigenvalue %.3e). Covariance not computed. Try increasing cov_h_outer (currently %.3e), e.g. cov_h_outer = %.3e.",
-      min(H_eigs), cov_h_outer, cov_h_outer * 4), call. = FALSE)
-    return(NULL)
+  # Invert the full struct+sigma+omega Hessian; if omega makes it indefinite or
+  # singular, drop back to the struct+sigma sub-block (which is what this returned
+  # before omega was included) rather than reporting no covariance at all.
+  .invert <- function(M) {
+    e <- tryCatch(eigen(M, symmetric = TRUE, only.values = TRUE),
+                  error = function(e) NULL)
+    if (is.null(e) || min(e$values) < 0) return(NULL)
+    tryCatch(chol2inv(chol(M)),
+             error = function(e) tryCatch(solve(M), error = function(e2) NULL))
   }
-
-  Hinv <- tryCatch(
-    chol2inv(chol(H)),
-    error = function(e) tryCatch(solve(H), error = function(e2) NULL))
+  Hinv <- .invert(H)
+  if (is.null(Hinv) && n_o > 0L) {
+    sub  <- seq_len(n_sub)
+    Hinv <- .invert(H[sub, sub, drop = FALSE])
+    if (!is.null(Hinv)) {
+      nms_cov <- nms_cov[sub]
+      warning("adghCalcCov: the full Hessian including omega was not positive ",
+              "definite; reporting structural and sigma standard errors only.",
+              call. = FALSE)
+    }
+  }
   if (is.null(Hinv)) {
-    warning("adghCalcCov: Hessian inversion failed -- covariance not computed",
-            call. = FALSE)
+    warning(sprintf(
+      "adghCalcCov: Hessian not positive definite or not invertible (min eigenvalue %.3e). Covariance not computed. Try increasing cov_h_outer (currently %.3e), e.g. cov_h_outer = %.3e.",
+      if (length(H_eigs)) min(H_eigs) else NA_real_, cov_h_outer, cov_h_outer * 4),
+      call. = FALSE)
     return(NULL)
   }
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
   dimnames(cov_full) <- list(nms_cov, nms_cov)
-  cov_full[pinfo$struct_names, pinfo$struct_names, drop = FALSE]
+  # Return the FULL struct + sigma block, not just the structural corner.
+  #
+  # The Hessian is built over `cov_idx` (structural thetas AND residual-error
+  # parameters), and the sigma SEs it produces are good -- validated against the
+  # empirical sampling SD over 40 simulated datasets: add 0.94, prop 0.91,
+  # lnorm 0.90 (reported SE / empirical SD, on the log-variance scale the
+  # optimizer works on). Returning only the structural corner threw them away AND
+  # left nlmixr2est's C++ popDf builder reading past the end of the matrix, so
+  # every sigma row of `fit$parFixedDf$SE` printed an uninitialised denormal
+  # (6.953178e-310, with %%RSE ~ 1e+307) rather than NA. Shipping the whole block
+  # both removes that garbage and reports three more correct standard errors.
+  cov_full
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -639,8 +741,12 @@
 #' @param cov_h_outer Outer step scale for numerical Hessian. Default
 #'   `eps^(1/4)` (tighter than admc's `eps^(1/5)` because the GH surface is
 #'   noise-free).
-#' @param covMethod `"r"` computes covariance via numerical Hessian for
-#'   structural and residual-error parameters only; `"none"` skips it.
+#' @param covMethod `"r"` computes covariance via a numerical Hessian over the
+#'   structural, residual-error and omega parameters; `"none"` skips it. Omega is
+#'   included because excluding it also biases the STRUCTURAL standard errors
+#'   downward -- a theta carrying an eta is correlated with that eta's variance.
+#'   If the weakly-identified omega Cholesky makes the Hessian non-positive
+#'   definite, the structural + residual sub-block is reported with a warning.
 #' @param n_restarts Number of optimizer restarts (1 = no multi-start).
 #' @param restart_sd SD of random perturbations of initial struct thetas at
 #'   each restart.
@@ -885,6 +991,15 @@ nlmixr2Est.adgh <- function(env, ...) {
   any_joint  <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
   studies    <- .admBuildEvFull(studies, tag_cmt = multi_out)
 
+  .admCheckAR(pinfo, studies)
+  .admCheckOrdinal(pinfo, studies)
+
+  # A beta endpoint's prediction is derived from TWO solved columns; the pair
+  # travels on each study so the solve paths can combine them (see .admSimulate).
+  .bpair <- .admBetaPair(.ui)
+  if (!is.null(.bpair))
+    studies <- lapply(studies, function(u) { u$out_pair <- .bpair; u })
+
   want_grad    <- .ctl$grad != "none"
   want_sens    <- .ctl$grad == "analytical"
   use_central  <- .ctl$grad == "cfd"
@@ -1065,6 +1180,13 @@ nlmixr2Est.adgh <- function(env, ...) {
                    cov_h_outer = .ctl$cov_h_outer),
       error = function(e) { warning("adghCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
+  # A NULL covariance used to be completely silent: no warning reached the user,
+  # `warnings()` was empty, covMethod came back "" and every SE was NA with no
+  # indication why. Say so once, from the driver, where it cannot be swallowed.
+  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
+    warning("covariance could not be computed (the Hessian was singular or ",
+            "non-finite); standard errors are unavailable for this fit.",
+            call. = FALSE)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
   t_elapsed <- t_opt + t_cov
 

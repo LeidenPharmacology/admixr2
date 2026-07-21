@@ -2,6 +2,29 @@
 
 ## New features
 
+* **Student-t residual error (`cp ~ add(a) + t(nu)`) is now supported.** nlmixr2
+  writes Student-t residuals as a *scale family* -- residual = scale * T_nu, with
+  the scale being whatever `add()`/`prop()`/`pow()`/combined structure the
+  endpoint already has -- so on the aggregate scale it is exactly the normal
+  variance times `nu/(nu-2)`. admixr2 moment-matches it: the mean is unchanged and
+  the variance is multiplied, which is exact for every existing residual form and
+  works with all four estimators. Previously refused outright.
+
+  **`nu` cannot be estimated from aggregate data and should be fixed**
+  (`nu <- fix(5)`). This is structural, not a small-sample issue: `nu` reaches the
+  aggregate moments only through the multiplier `nu/(nu-2)`, so it is aliased with
+  the scale and only the product `a^2*nu/(nu-2)` is identified -- an estimated
+  `nu` reflects its starting value, not the data. admixr2 warns when `nu` is left
+  free. `t()` is intended for carrying a *known* `nu` through an aggregate
+  analysis (for instance a published model supplied via `datagen()`), not for
+  estimating tail weight; a fitted t model is observationally equivalent to a
+  normal one with the same total residual variance.
+
+  Note that moment matching makes the *mean* term of the objective correct, but
+  admixr2 also scores `tr(V_pred^-1 V_obs)`, which treats the observed covariance
+  as arising from a normal; that term stays approximate for heavy-tailed
+  residuals, increasingly so as `nu` approaches 2.
+
 * **Analytical gradients for non-mu-referenced ("unpaired") structural thetas.**
   A structural theta with no mu-referencing eta (`tka` with no `eta.ka`, or the
   `exp(tcl) * exp(eta.cl)` writing style rxode2 does not mu-reference) used to
@@ -90,6 +113,183 @@
   (#107).
 
 ## Bug fixes
+
+* **Standard errors: sigma SEs were uninitialised memory, and omega was excluded.**
+  All three `CalcCov` functions built the Hessian over structural *and* residual
+  parameters but returned only the structural corner. nlmixr2est's C++ `popDf`
+  builder then read past the end of the matrix, so every sigma row of
+  `parFixedDf$SE` printed a denormal (6.953178e-310, `%RSE` ~1e+307) instead of
+  `NA` -- while the discarded sigma SEs were in fact good (reported SE / empirical
+  sampling SD 0.90-0.94). The Hessian now also spans **omega**: excluding it made
+  the *structural* SEs too small, because a theta carrying an eta is correlated
+  with that eta's variance. Reported SE / empirical SD for the eta-carrying theta
+  went from 0.67 to 1.17 (`prop`) and 0.67 to 1.06 (`lnorm`); a purely additive
+  model barely moved. Under-stated SEs give over-confident intervals, so that was
+  the dangerous direction of error. If the weakly-identified omega Cholesky makes
+  the full Hessian indefinite, the struct+sigma sub-block is reported with a
+  warning rather than nothing at all.
+
+* **Count endpoints could not be fitted with the default gradient.** `y ~ pois(cp)`
+  and `y ~ nbinomMu(k, cp)` emit `rx_pred_ = llikPois(DV, ...)` -- the
+  log-likelihood, not the mean -- and sensitivity columns that differentiate it,
+  both of which need `DV`, which an aggregate fit does not have. `.adghGrad()` and
+  `.admGradBatch()` returned all-`NA`, so `adgh` died at iteration 0 with
+  "gradient of objective in x0 returns NA" and `admc` silently produced a **zero**
+  Hessian and therefore no standard errors. admixr2 now emits sensitivities of the
+  count MEAN (the distribution's argument), exactly as it already did for `beta`;
+  gradients agree with a finite difference to 1.7e-05.
+
+* **A failed covariance is no longer silent.** When the Hessian was singular the
+  covariance came back `NULL`, `covMethod` was set to `""` and every SE was `NA`
+  with no warning reaching the user. The drivers now say so.
+
+* **A study `ev` containing observation records now warns.** `ev` is dosing-only;
+  observation rows in it were appended a second time by the study's own `times`,
+  silently duplicating every time point.
+
+
+* **Residual parameters fixed with `fix()` were silently dropped.** `add(a)` with
+  `a <- fix(0.7)` fitted with **no residual variance at all**; `add(a) + prop(b)`
+  with a fixed `b` lost the proportional term; and `pow(b, c)` with a fixed `c`
+  reverted to `prop()`. `.admParseIniDf()` removes fixed rows from the optimizer,
+  and the residual spec indexed only the estimated ones -- `tdf_fixed`,
+  `ar_fixed` and `lam_fixed` existed for exactly this reason but `add`/`prop`/`pow`
+  had no equivalent. They now carry `add_fixed`/`prop_fixed`/`pow_fixed`. Fixing a
+  residual parameter is routine (it is what this package's own `t()` advice tells
+  you to do for `nu`), so this was reachable in ordinary use.
+
+* **A `prop()`/`pow()` term on a transform-both-sides endpoint contributed
+  nothing.** For `boxCox`/`yeoJohnson`/`logitNorm`/`probitNorm` the quadrature used
+  only the additive parameter, so `cp ~ add(a) + prop(b) + boxCox(lam)` scored
+  identically with and without `b`: the parameter entered the optimizer, had an
+  exactly-zero gradient, and was reported back at its starting value. rxode2 emits
+  `rx_r_ ~ (a)^2 + (rx_pred_f_)^2*(b)^2` for that model, and admixr2 now builds the
+  transformed-scale residual SD from the same expression, including `propT()`/
+  `powT()` (which scale by the transformed prediction) and `combined1()`.
+
+* **The post-fit covariance was a Hessian of the wrong objective for several error
+  models.** `.admNLLBatch()` -- the evaluator `covMethod = "r"` differentiates --
+  called the fused C++ kernels unconditionally. Those implement additive,
+  proportional, combined and lnorm only, so transform-both-sides, count, beta,
+  ordinal and `ar()` models were scored as `combined2`: standard errors and RSEs
+  came from a different model than the one fitted (measured on a boxCox model,
+  190.28 against 49.46). It now applies the same `.admResidCppOK()` gate `.admNLL()`
+  uses. `adirmc` cannot take that route (its kernel forms the importance-weighted
+  mean internally) and now refuses those models with a message.
+
+* **`adfo` dropped `ar()` from its objective while keeping it in the gradient.**
+  `.adfoVpred()` never received the observation times and never added the residual
+  correlation, so the FO objective was exactly invariant in `rho` while
+  `.adfoGrad()` returned a non-zero `rho` gradient -- the optimizer walked a
+  direction the objective could not move along, and `adfo` reported a different
+  objective from `adgh`/`admc` on identical data. Relatedly, `adfoControl(grad =
+  "analytical")` warned that it was falling back to finite differences when no
+  sensitivity model was available but did not actually do so.
+
+* **An out-of-support transform aborted the whole fit.** `any(ap$ms != 1)` was not
+  NaN-guarded in nine places. `.admTBSi()` legitimately returns `NaN` outside a
+  transform's support, and the default `grad_bounds = 5` lets a line search reach
+  it, so `any(NaN != 1)` -- which is `NA` -- raised "missing value where
+  TRUE/FALSE needed" instead of the optimizer simply rejecting the point. This
+  killed every `yeoJohnson` fit.
+
+* **The sensitivity-model cache could serve a stale transform spec.** The cache key
+  digests `ui$lstExpr`, the `model({})` block only, but a Box-Cox lambda's starting
+  value and its `fix()` status live in `ini({})` -- so `lam <- fix(0.5)` and
+  `lam <- 0.5` collided. `pred_tbs` is what tells the solve which lambda to use and
+  how to back-transform, and it was not re-derived on a cache hit (unlike
+  `rename_map`/`fixed_theta`, which are, for the same reason). Gradients came back
+  wrong by 10^2-10^4x with one component of the wrong sign, while the objective
+  stayed bit-identical, so nothing warned and the fit simply stalled.
+
+* **`0^negative` in the moment expansion.** `pow(b, c)` with `c < 1` at a structural
+  prediction of exactly zero -- routine for a depot model observed at `t = 0` --
+  produced a **negative variance** (measured -3.4e+20 at `c = 0.25`) or a
+  plausible-looking 2.3e+05 at `c = 0.75`. The second-order term has a genuine pole
+  there and is now dropped rather than evaluated at machine epsilon. The C++ twin
+  `adm_mom_f()` had no guard at all and returned `NaN` where the R path returned a
+  finite value, so the same model fitted or did not depending on the estimator.
+
+* **`ordinal` endpoints are now supported** (`y ~ c(p1, p2)`), as a joint
+  same-subject unit with one observation block per category. The spec is registered
+  under every category probability (only the first was, leaving the others with no
+  residual variance), and the same-time cross-category covariance correctly
+  *replaces* the structural covariance rather than adding to it -- by the law of
+  total covariance `Cov(1_j, 1_k) = -E[p_j]E[p_k]` exactly, the structural term
+  cancelling. Verified against a multinomial simulation with between-subject
+  variability.
+
+* **`dv()` is now refused.** It scales the residual by the observed DV, an
+  individual-level quantity an aggregate mean and covariance cannot recover.
+  rxode2's simulation ignores `dv()`, so admixr2 had been silently fitting the
+  prediction-scaled model instead.
+
+* **`ar()` combined with `prop()`/`pow()`/combined is now refused**, as is `ar()`
+  inside a joint multi-output study. rxode2's innovation scaling leaves the marginal
+  variance equal to `rx_r_` only when `rx_r_` is constant; with a prediction-
+  dependent variance the process is non-stationary and admixr2's covariance was
+  measured 2.4-12x too high.
+
+* **Known upstream issue -- simulating an `ar()` fit will not reproduce its
+  covariance.** rxode2 has two `ar()` emitters and they do not agree with each
+  other. Its *estimation* lines are the prediction-error decomposition
+  (`rx_pred_ + phi*prev_resid`, `rx_r_ * (1 - phi^2)`), whose implied marginal
+  variance is the stationary AR(1) admixr2 scores. Its *simulation* is not
+  stationary when a dose record precedes the first observation: the first
+  observation carries up to 2x the nominal residual variance. A **zero-amount**
+  dose reproduces it and a plain `add()` model does not, so it is record-driven
+  and specific to `ar()`; nlmixr2's own focei cannot recover `rho` from rxode2's
+  own simulation either (0.4617 against a truth of 0.60 on individual-level data,
+  with no admixr2 involved). admixr2 keeps the stationary form -- matching the
+  simulator would put it at odds with nlmixr2's estimator and would break when
+  this is fixed upstream. Every other error model round-trips (simulate from the
+  fitted model, aggregate, and recover the fitted mean and covariance) to within
+  Monte-Carlo noise.
+
+
+* **Prediction-dependent residual error is now composed correctly (`prop()`,
+  `pow()`, `lnorm()`, combined).** admixr2 built the predicted covariance as
+  `Var_eta(f) + Sigma(mu_pred)` -- evaluating the residual variance at the
+  *population mean* prediction rather than averaging it over individual
+  predictions. That is exact only for additive error. The predicted covariance is
+  now the **law of total variance**,
+  `Var_eta(E[y|eta]) + E_eta[Var(y|eta)]`, which for a proportional model adds the
+  previously missing `b^2 * Var_eta(f)` to the diagonal, and for `lnorm()` also
+  scales the **off-diagonals** by `exp(s)` (its conditional mean is `f*exp(s/2)`,
+  so the whole covariance is scaled, not just its diagonal). Validated against
+  individual-level simulation: the old formulas carried fixed biases of ~15-20%
+  that did not shrink with sample size, while the new ones converge to the
+  empirical moments.
+
+  **This changes results for every `prop()`, `pow()` and `lnorm()` model.**
+  Objective values, residual-error and IIV estimates and all standard errors move
+  -- for a proportional model with 30-50% IIV, the residual SD and omega were both
+  biased upward by roughly 2-4%; for `lnorm()` the effect is larger. Purely
+  additive (`add()`) models are unchanged, bit for bit. Refits are expected to
+  differ from results produced by earlier versions.
+
+* **`lnorm()` analytic gradients were computed against the wrong quantity.** For a
+  log-transformed endpoint the sensitivity model returns `rx_pred_ = log(f)` while
+  the NLL path reads the natural-scale prediction, so `grad = "sens"`/`"analytical"`
+  differentiated `log(f)` while the objective scored `f`. The sensitivity paths now
+  back-transform with the chain rule. This affected every `lnorm()` fit using an
+  analytic gradient and went unnoticed because `lnorm()` appeared in no gradient
+  test; a finite-difference gradient check across all estimators and error models
+  has been added.
+
+* **`delay()` (DDE) models get an accurate sensitivity solve.** A delay model's
+  sensitivity system -- the base ODEs plus one variational compartment per state
+  per direction, all delayed -- is stiff enough to trip rxode2's `hasDelay`
+  AutoSwitch composite (`dop853`+`ros4`) into its `ros4` leg, whose dense
+  delay-history is inaccurate for this system. The failure is silent: the
+  sensitivity model's predictions match the ordinary solve for the first
+  observations and then drift once `delay()` begins reading the recorded (solved)
+  history, so `grad = "sens"` gradients on a DDE model could be wrong without any
+  error or warning. Sensitivity solves for a delay model are now forced onto pure
+  `dop853` (dense, no `ros4` secondary), whose 8th-order dense output reproduces
+  the ordinary solve. Non-delay models are untouched, and their solves are
+  unchanged byte for byte. Found by porting the equivalent fix from nlmixr2est's
+  own augmented-sensitivity solve.
 
 * **`pow()` models no longer fit the wrong residual model, silently.** `pow(b, c)`
   produces two `iniDf` rows -- the coefficient (`err = "pow"`) and the *exponent*

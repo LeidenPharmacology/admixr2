@@ -16,6 +16,15 @@ utils::globalVariables(c(
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+# rxode2's safeZero, at R level: _div0_() substitutes DBL_EPSILON for a zero
+# denominator (rxode2_model_shared.h; rxSolve's safeZero defaults to TRUE). Used
+# wherever admixr2 divides by a quantity a fit can legitimately drive to zero, so
+# admixr2 and the solve degrade the same way instead of one returning Inf/NaN.
+.admDiv0 <- function(denom) {
+  denom[denom == 0] <- .Machine$double.eps
+  denom
+}
+
 # -- nloptr algorithm selection ------------------------------------------------
 
 # Valid nloptr algorithm names, queried from the installed nloptr so the set
@@ -98,21 +107,58 @@ utils::globalVariables(c(
 .admOutputColName <- function(var)
   if (startsWith(var, "rx") || startsWith(var, "linCmt")) "ipredSim" else var
 
+# The model variable an endpoint's predictions actually live in.
+#
+# For a residual-error endpoint this is predDf$var itself (`cp ~ add(a)` -> "cp").
+# For a COUNT endpoint it is NOT: `y ~ pois(cp)` has predDf$var == "y", the DV
+# name, while the quantity that is solved and that admixr2 must read is the
+# distribution's ARGUMENT, `cp`. Following predDf$var there sent every solve
+# looking for a column that does not exist, which is what made count endpoints
+# unreachable. .admCountSpec() recovers the argument from the model line.
+.admEndpointVar <- function(ui, i = 1L) {
+  pd <- tryCatch(ui$predDf, error = function(e) NULL)
+  if (is.null(pd) || !"var" %in% names(pd) || nrow(pd) < i) return("cp")
+  v <- as.character(pd$var[i])
+  d <- if ("distribution" %in% names(pd)) as.character(pd$distribution[i]) else "norm"
+  if (d %in% c("pois", "dpois", "binom", "dbinom", "nbinomMu", "dnbinomMu")) {
+    cs <- tryCatch(.admCountSpec(ui, v, d), error = function(e) NULL)
+    if (!is.null(cs) && nzchar(cs$mean_var %||% "")) return(cs$mean_var)
+  }
+  if (d %in% c("beta", "dbeta")) {
+    bs <- tryCatch(.admBetaSpec(ui, v), error = function(e) NULL)
+    if (!is.null(bs)) return(bs$b1)      # the pair travels on the study/unit
+  }
+  v
+}
+
+# The two shape columns a beta endpoint's prediction is derived from, or NULL.
+# Attached to each study as `out_pair` so the solve paths can combine them.
+.admBetaPair <- function(ui) {
+  pd <- tryCatch(ui$predDf, error = function(e) NULL)
+  if (is.null(pd) || !"distribution" %in% names(pd)) return(NULL)
+  w <- which(as.character(pd$distribution) %in% c("beta", "dbeta"))
+  if (length(w) == 0L) return(NULL)
+  bs <- tryCatch(.admBetaSpec(ui, as.character(pd$var[w[1L]])), error = function(e) NULL)
+  if (is.null(bs)) return(NULL)
+  c(bs$b1, bs$b2)
+}
+
 # Detect the primary/default output variable name from ui$predDf (default "cp").
 # Used as the fallback output for studies/observations that don't name one.
 .admOutputVar <- function(ui) {
-  var <- tryCatch(
-    { pd <- ui$predDf; if (!is.null(pd) && "var" %in% names(pd)) pd$var[1] else "cp" },
-    error = function(e) "cp")
+  var <- tryCatch(.admEndpointVar(ui, 1L), error = function(e) "cp")
   .admOutputColName(var)
 }
 
 # All observable output variable names from ui$predDf (one per model endpoint).
 # A multi-endpoint model (e.g. `cp ~ ...; cCSF ~ ...`) has several predDf rows.
 .admOutputVars <- function(ui) {
-  vars <- tryCatch(
-    { pd <- ui$predDf; if (!is.null(pd) && "var" %in% names(pd)) as.character(pd$var) else "cp" },
-    error = function(e) "cp")
+  vars <- tryCatch({
+    pd <- ui$predDf
+    if (!is.null(pd) && "var" %in% names(pd))
+      vapply(seq_len(nrow(pd)), function(i) .admEndpointVar(ui, i), character(1))
+    else "cp"
+  }, error = function(e) "cp")
   unique(vapply(vars, .admOutputColName, character(1), USE.NAMES = FALSE))
 }
 
@@ -145,9 +191,34 @@ utils::globalVariables(c(
 .admJointResidual <- function(mu_struct, V_pred, unit, pinfo, sigma_var) {
   n_t <- length(mu_struct)
   arr <- .admResidRows(pinfo, .admRowOutput(unit, n_t), sigma_var, n_t)
-  ap  <- .admResidApply(mu_struct, diag(V_pred), arr)
+  # Row times and the STRUCTURAL covariance are both needed by residual forms that
+  # reach the off-diagonal: ar() correlates by time gap, and ordinal's same-time
+  # cross-category entry replaces V_struct outright (see .admResidApply). This used
+  # to pass neither, so ap$rmat was silently discarded for joint units.
+  rt  <- .admRowTimes(unit, n_t)
+  ap  <- .admResidApply(mu_struct, diag(V_pred), arr, rt, V_pred)
+  if (any(ap$ms != 1, na.rm = TRUE)) V_pred <- V_pred * tcrossprod(ap$ms)   # lnorm off-diagonals
   diag(V_pred) <- ap$dv
+  if (!is.null(ap$rmat)) V_pred <- V_pred + ap$rmat
   list(mu = ap$mu, V = V_pred)
+}
+
+# Observation time governing each row of a unit's stacked mean vector -- the
+# companion of .admRowOutput(). Joint units carry per-output blocks each with
+# their own times; a plain unit has one time vector.
+.admRowTimes <- function(unit, n_t) {
+  if (!is.null(unit$blocks) && length(unit$blocks) > 0L) {
+    rt <- rep(NA_real_, n_t)
+    # A hand-built unit (Tier-1 tests) may carry blocks with `rows` but no `times`;
+    # leave those rows NA rather than erroring. Every consumer guards on
+    # length(times) == length(mu), so NA times simply disable the off-diagonal
+    # residual forms -- which is right: without times there is no time structure.
+    for (blk in unit$blocks)
+      if (length(blk$times) == length(blk$rows)) rt[blk$rows] <- blk$times
+    return(rt)
+  }
+  if (!is.null(unit$times) && length(unit$times) == n_t) return(as.numeric(unit$times))
+  rep(NA_real_, n_t)
 }
 
 # Output column name governing each row of a unit's stacked mean vector.
@@ -529,6 +600,22 @@ utils::globalVariables(c(
 .admBuildEvFull <- function(units, tag_cmt = FALSE) {
   lapply(units, function(u) {
     ev <- if (!is.null(u$ev)) u$ev else rxode2::et(amt = 100)
+    # `ev` is documented as DOSING-only. If a user also puts observation rows in it,
+    # the et() calls below append the study times a SECOND time and every point is
+    # silently duplicated -- a badly wrong fit with no indication. Warn rather than
+    # silently rewriting the event table: reconstructing `ev` from a filtered
+    # data.frame loses event attributes rxode2 needs (it broke the sensitivity
+    # solve outright), so telling the user is both safer and clearer.
+    if (isTRUE(getOption("admixr2.warn.ev.obs", TRUE))) {
+      .nobs <- tryCatch({
+        .d <- as.data.frame(ev)
+        if ("evid" %in% names(.d)) sum(.d$evid == 0) else 0L
+      }, error = function(e) 0L)
+      if (.nobs > 0L)
+        warning("study event table `ev` contains ", .nobs, " observation record(s). ",
+                "`ev` should carry DOSING only -- the study's `times` are added ",
+                "separately, so those rows will be duplicated.", call. = FALSE)
+    }
     # Joint units are always multi-endpoint -> always tag. A single tag (the
     # first output) is enough: the multi-endpoint solve returns every output
     # column at the observation times, and each block is extracted by name.
@@ -564,8 +651,9 @@ utils::globalVariables(c(
     nm <- .ini$name[i]
     if (.ini$fix[i])                      return(.ini$est[i])
     if (nm %in% names(pars$struct))       return(unname(pars$struct[nm]))
-    # Residual params report on their iniDf scale: variances as an SD, a pow()
-    # exponent as itself.
+    # Residual params report on their iniDf scale: variances as an SD; a pow()
+    # exponent and a t() degrees-of-freedom as themselves (.admSigmaNat has
+    # already mapped log(nu - 2) back to nu).
     if (nm %in% names(pars$sigma_var)) {
       .k <- match(nm, pinfo$sigma_names)
       .v <- unname(pars$sigma_var[nm])

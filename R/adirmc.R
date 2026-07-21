@@ -323,11 +323,20 @@ nmObjGetControl.adirmc <- function(x, ...) {
     wmc <- weighted_meancov_cpp(F, w)
     mu  <- as.numeric(wmc$mu)
     V   <- wmc$V
+    cov_f <- V                             # STRUCTURAL cov, before any residual
 
     mu_struct <- mu
-    arr <- .admResidRows(pinfo, s$output, pars$sigma_var, length(mu))
-    ap  <- .admResidApply(mu_struct, diag(V), arr)
-    mu  <- ap$mu; diag(V) <- ap$dv
+    arr   <- .admResidRows(pinfo, s$output, pars$sigma_var, length(mu))
+    var_f <- diag(V)                       # Var_eta(f), pre-residual
+    ap    <- .admResidApply(mu_struct, var_f, arr, s$times)
+    mu    <- ap$mu
+    # lnorm scales the whole covariance, not just its diagonal (ms == 1 otherwise)
+    # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
+    # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
+    # that aborted the whole fit instead of the optimizer rejecting the point.
+    if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
+    diag(V) <- ap$dv
+    if (!is.null(ap$rmat)) V <- V + ap$rmat
 
     mu_sigma <- mu
 
@@ -366,6 +375,11 @@ nmObjGetControl.adirmc <- function(x, ...) {
     r     <- obs_E - mu
     if (identical(s$method, "var")) {
       v_pred       <- diag(V)
+      # nll_var_cpp rejects a non-positive predicted variance with +Inf; this
+      # branch produced NaN for the same input, so the SAME degenerate point was
+      # "reject" to one estimator and "undefined" to another. Match the kernels.
+      if (any(!is.finite(v_pred)) || any(v_pred <= 0))
+        return(list(nll = Inf, grad = rep(NA_real_, np)))
       nll2         <- nll2 + s$n * sum(log(v_pred) + s$v_diag / v_pred + r^2 / v_pred)
       if (!is.finite(nll2)) return(list(nll = Inf, grad = rep(NA_real_, np)))
       dNLL_dmu     <- s$n * as.numeric(-2 * r / v_pred)
@@ -384,15 +398,26 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
     # eff_dNLL_dmu folds in the residual's sensitivity to mu_struct: the lnorm
     # mean scaling, plus the dependence of the residual variance on mu.
+    .is_var_s <- identical(s$method, "var")
     eff_dNLL_dmu <- dNLL_dmu +
-      .admResidMuCoupling(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu)
+      .admResidMuCoupling(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
+                          if (.is_var_s) NULL else dNLL_dV,
+                          if (.is_var_s) NULL else cov_f)
 
     d_mat <- sweep(bi, 2L, mean_new)
 
+    # The kernels differentiate the STRUCTURAL weighted covariance, so dNLL_dV
+    # must be chained from V_pred (identity for additive error).
+    vchain         <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times)
+    .dmv           <- attr(vchain, "dmu_dv0") %||% numeric(length(mu_struct))
+    dNLL_dV_diag_s <- dNLL_dV_diag * diag(vchain) + dNLL_dmu * .dmv
+
     gk <- if (identical(s$method, "var"))
-      irmc_grad_kernel_var_cpp(F, w, mu, d_mat, invO, eff_dNLL_dmu, dNLL_dV_diag)
+      irmc_grad_kernel_var_cpp(F, w, mu, d_mat, invO, eff_dNLL_dmu, dNLL_dV_diag_s)
     else
-      irmc_grad_kernel_cpp(F, w, mu, d_mat, invO, eff_dNLL_dmu, dNLL_dV)
+      irmc_grad_kernel_cpp(F, w, mu, d_mat, invO, eff_dNLL_dmu,
+                           { .b <- dNLL_dV * vchain
+                             diag(.b) <- diag(.b) + dNLL_dmu * .dmv; .b })
     dNLL_dmean_new <- as.numeric(gk$dNLL_dmean_new)
 
     for (k in seq_along(paired_nms)) {
@@ -403,12 +428,14 @@ nmObjGetControl.adirmc <- function(x, ...) {
       } else if (.tr$curEval %in% c("expit", "logit")) {
         p_val <- pars$struct[[nm]]
         s_val <- 1 / (1 + exp(-p_val))
+        # rxode2's safeZero (_div0_): a zero denominator becomes DBL_EPSILON.
+        # `back` is expit(p, low, hi), which is 0 at p = 0 whenever low = 0.
         back  <- .tr$low + (.tr$hi - .tr$low) * s_val
-        (.tr$hi - .tr$low) * s_val * (1 - s_val) / back
+        (.tr$hi - .tr$low) * s_val * (1 - s_val) / .admDiv0(back)
       } else if (.tr$curEval %in% c("probitInv", "probit")) {
         p_val <- pars$struct[[nm]]
         back  <- .tr$low + (.tr$hi - .tr$low) * pnorm(p_val)
-        (.tr$hi - .tr$low) * dnorm(p_val) / back
+        (.tr$hi - .tr$low) * dnorm(p_val) / .admDiv0(back)
       } else {
         (.admLogBackTransform(pars$struct[[nm]] + 1e-7, .tr) -
            .admLogBackTransform(pars$struct[[nm]] - 1e-7, .tr)) / (2e-7)
@@ -449,7 +476,9 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
     n_e <- length(pars$sigma_var)
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-      .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu)
+      .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
+                    if (.is_var_s) NULL else dNLL_dV, s$times,
+                    if (.is_var_s) NULL else cov_f)
   }
 
   list(nll = nll2, grad = grad)
@@ -1068,6 +1097,45 @@ nlmixr2Est.adirmc <- function(env, ...) {
     names(studies) <- paste0("study", seq_along(studies))
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
+  # A beta endpoint's precision phi is SOLVED, not fitted: .admSimulate() returns it
+  # as an attribute on cp_mat and admc/adgh patch it into the residual rows. This
+  # estimator has no such path -- arr$phi stayed NA and .admResidApply() produced NA
+  # for every row, i.e. an NaN objective with no explanation. Refuse with one.
+  # irmc_inner_nll_cpp computes the importance-weighted mu INSIDE the kernel, so
+  # unlike admc the residual cannot be pre-assembled in R and routed around the
+  # fused path. The kernel implements forms 0/1/2 only and has no off-diagonal
+  # channel, so a TBS/count/beta/ordinal/ar model was silently scored as
+  # combined2 -- while .adirmcNLLAndGrad's R path scored it correctly. With the
+  # default grad = "analytical" the inner optimiser used one objective and
+  # nll_exact used the other, so best_p was chosen by minimising the wrong number
+  # and the convergence test |exact - approx| < convcrit could never be met.
+  # Refuse rather than approximate; the other three estimators handle these.
+  .bad_form <- vapply(.admResidSpecs(pinfo), function(sp) {
+    f <- sp$form %||% 0L
+    !identical(f, .ADM_RESID_COMBINED2) && !identical(f, .ADM_RESID_COMBINED1) &&
+      !identical(f, .ADM_RESID_LNORM)
+  }, logical(1))
+  .has_ar <- vapply(.admResidSpecs(pinfo), function(sp)
+    (!is.null(sp$k_ar) && !is.na(sp$k_ar)) ||
+      (!is.null(sp$ar_fixed) && is.finite(sp$ar_fixed)), logical(1))
+  if (any(.bad_form) || any(.has_ar))
+    stop("est='adirmc' supports only add/prop/pow/combined and lnorm residuals.
+",
+         "  Its inner kernel forms the importance-weighted mean internally, so a ",
+         "transform-both-sides,
+  count, beta, ordinal or ar() residual cannot be ",
+         "scored on that path.
+",
+         "  Use est = \"admc\", \"adfo\" or \"adgh\" for this model.", call. = FALSE)
+
+  if (any(vapply(.admResidSpecs(pinfo), function(sp)
+        identical(sp$form, .ADM_RESID_BETA), logical(1))))
+    stop("est='adirmc' does not support a beta() endpoint: the beta precision is ",
+         "derived from the solved shapes, which only the admc and adgh paths ",
+         "recover.
+  Use est = \"admc\" or est = \"adgh\" for this model.",
+         call. = FALSE)
+
   pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
   output_var <- .admOutputVar(.ui)
 
@@ -1256,6 +1324,13 @@ nlmixr2Est.adirmc <- function(env, ...) {
         NULL
       })
   } else NULL
+  # A NULL covariance used to be completely silent: no warning reached the user,
+  # `warnings()` was empty, covMethod came back "" and every SE was NA with no
+  # indication why. Say so once, from the driver, where it cannot be swallowed.
+  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
+    warning("covariance could not be computed (the Hessian was singular or ",
+            "non-finite); standard errors are unavailable for this fit.",
+            call. = FALSE)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
   t_elapsed <- t_opt + t_cov
 

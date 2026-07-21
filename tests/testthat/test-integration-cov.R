@@ -18,8 +18,8 @@ test_that("admCalcCov NLL-FD: result is matrix of correct dimensions", {
   result  <- env_cov$result_nll
   expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
   expect_true(is.matrix(result))
-  expect_equal(dim(result), c(env_cov$n_struct, env_cov$n_struct))
-  expect_equal(rownames(result), env_cov$struct_names)
+  expect_equal(dim(result), c(env_cov$n_cov, env_cov$n_cov))
+  expect_equal(rownames(result), env_cov$cov_names)
 })
 
 test_that("admCalcCov NLL-FD: result is symmetric", {
@@ -37,23 +37,19 @@ test_that("admCalcCov NLL-FD: result is positive definite", {
   expect_true(all(eigs > 0))
 })
 
-test_that("admCalcCov NLL-FD: omega params excluded from returned matrix", {
+test_that("admCalcCov NLL-FD: omega params are INCLUDED in the returned matrix", {
   env_cov <- .int_cov_setup()
   result  <- env_cov$result_nll
   expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
-  expect_false(any(rownames(result) %in% env_cov$env$pinfo$omega_par_names))
-})
-
-test_that("admCalcCov: covMethod='r' path reports omega SE exclusion", {
-  env_cov <- .int_cov_setup()
-  expect_message(
-    suppressWarnings(admixr2:::.admCalcCov(
-      env_cov$p_cov, env_cov$env$pinfo, env_cov$env$studies, env_cov$z_cov,
-      env_cov$env$rxMod, env_cov$env$output_var, env_cov$params_cov, 1L,
-      cov_n_sim = NULL, use_grad = FALSE
-    )),
-    "omega \\(IIV\\) SEs are not computed"
-  )
+  # Omega used to be excluded. That did not merely forgo omega's own SEs -- it made
+  # the STRUCTURAL ones too small, because a theta carrying an eta is correlated
+  # with that eta's variance and profiling it out is not the same as fixing it.
+  # Measured against the empirical sampling SD over simulated datasets, reported
+  # SE / empirical SD for the eta-carrying theta went from 0.67 to 1.17 (prop) and
+  # 0.67 to 1.06 (lnorm) once omega was included; a purely additive model barely
+  # moved. Under-stated SEs give over-confident intervals, so that was the
+  # dangerous direction of error.
+  expect_true(all(env_cov$env$pinfo$omega_par_names %in% rownames(result)))
 })
 
 # ---- Grad-FD Hessian (use_grad = TRUE) ---------------------------------------
@@ -110,8 +106,8 @@ test_that("adfoCalcCov NLL-FD: result is matrix of correct dimensions", {
   result  <- env_cov$result_nll
   expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
   expect_true(is.matrix(result))
-  expect_equal(dim(result), c(env_cov$n_struct, env_cov$n_struct))
-  expect_equal(rownames(result), env_cov$struct_names)
+  expect_equal(dim(result), c(env_cov$n_cov, env_cov$n_cov))
+  expect_equal(rownames(result), env_cov$cov_names)
 })
 
 test_that("adfoCalcCov NLL-FD: result is symmetric", {
@@ -129,24 +125,13 @@ test_that("adfoCalcCov NLL-FD: result is positive definite", {
   expect_true(all(eigs > 0))
 })
 
-test_that("adfoCalcCov NLL-FD: omega params excluded from returned matrix", {
+test_that("adfoCalcCov NLL-FD: omega params are INCLUDED in the returned matrix", {
   env_cov <- .int_adfo_cov_setup()
   result  <- env_cov$result_nll
   expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
-  expect_false(any(rownames(result) %in% env_cov$env$pinfo$omega_par_names))
-})
-
-test_that("adfoCalcCov: covMethod='r' path reports omega SE exclusion", {
-  env_cov <- .int_adfo_cov_setup()
-  expect_message(
-    suppressWarnings(admixr2:::.adfoCalcCov(
-      env_cov$p_cov, env_cov$env$pinfo, env_cov$env$studies,
-      env_cov$env$sensModel, env_cov$env$rxMod, env_cov$env$output_var,
-      env_cov$env$params_list, 1L,
-      use_grad = FALSE
-    )),
-    "omega \\(IIV\\) SEs are not computed"
-  )
+  # Omega is now part of the Hessian -- see the admCalcCov test above for why and
+  # for the measured effect on the structural standard errors.
+  expect_true(all(env_cov$env$pinfo$omega_par_names %in% rownames(result)))
 })
 
 # ---- adfoCalcCov: Grad-FD Hessian (use_grad = TRUE) --------------------------

@@ -305,7 +305,8 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         params_mat <- .admMakeParamsList(1L, pinfo, 1L)[[1L]]
         mj <- .adfoGetMuJ(pars, pinfo, study_tmp, sensModel, rxMod, ov,
                           params_mat, control$cores)
-        vp <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta)
+        vp <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta,
+                           study_tmp$times)
         list(mu = vp$mu_sigma, V = vp$V, cp_mat = NULL)
       } else {
         z_list      <- .admMakeZ(control$n_sim, pinfo, 1L, control$sampling)
@@ -323,9 +324,15 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         mu   <- colMeans(cp_mat)
         cp_c <- sweep(cp_mat, 2L, mu)
         V    <- crossprod(cp_c) / control$n_sim
-        # This output's residual error only.
-        ap   <- .admResidApply(mu, diag(V), arr)
+        # This output's residual error only. `times` + the structural covariance are
+        # needed by the off-diagonal forms (ar, ordinal); without them datagen()
+        # emitted a V that contradicted the model it was handed -- and disagreed
+        # with its own method = "gh" branch, which went through .adghMoments and
+        # did include them.
+        ap   <- .admResidApply(mu, diag(V), arr, study_tmp$times, V)
+        if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)   # lnorm off-diagonals
         diag(V) <- ap$dv
+        if (!is.null(ap$rmat)) V <- V + ap$rmat
         list(mu = ap$mu, V = V, cp_mat = cp_mat)
       }
     }

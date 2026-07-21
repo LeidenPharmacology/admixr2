@@ -149,11 +149,13 @@ head.paged_df <- function(x, n = 6L, ...) {
   omega_diag_nms    <- pinfo$omega_par_names[pinfo$chol_diag]
   omega_offdiag_nms <- pinfo$omega_par_names[!pinfo$chol_diag]
   sigma_pow_nms <- pinfo$sigma_names[.admSigmaRole(pinfo) == "pow_exp"]
+  sigma_tdf_nms <- pinfo$sigma_names[.admSigmaRole(pinfo) == "t_df"]
   back_fns <- setNames(lapply(par_names, function(nm) {
     if (nm %in% struct_nms)             function(v) .admBackTransform(v, pinfo$struct_transforms[[nm]])
     else if (nm %in% omega_diag_nms)    exp
     else if (nm %in% omega_offdiag_nms) identity
     else if (nm %in% sigma_pow_nms)     identity   # pow() exponent: already natural
+    else if (nm %in% sigma_tdf_nms)     function(v) 2 + exp(v)  # t() df: log(nu-2) -> nu
     else function(v) exp(v / 2)   # sigma: log(sigma^2) -> SD
   }), par_names)
 
@@ -341,10 +343,16 @@ head.paged_df <- function(x, n = 6L, ...) {
 
   # Returns BOTH the residual-adjusted covariance and mean: lnorm rescales the
   # mean, and the predicted E must carry that scaling just as the NLL does.
-  .add_sigma <- function(V, mu, ov = out_var) {
+  .add_sigma <- function(V, mu, ov = out_var, times = NULL) {
     arr <- .admResidRows(pinfo_r, ov, sv, length(mu))
-    ap  <- .admResidApply(mu, diag(V), arr)
+    # Without `times` + the structural covariance the off-diagonal forms (ar,
+    # ordinal) were dropped, so the predicted-covariance diagnostic panel showed
+    # an independent-residual V for exactly the models whose off-diagonal is the
+    # point of fitting them.
+    ap  <- .admResidApply(mu, diag(V), arr, times, V)
+    if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)   # lnorm off-diagonals
     diag(V) <- ap$dv
+    if (!is.null(ap$rmat)) V <- V + ap$rmat
     list(V = V, mu = ap$mu)
   }
 
@@ -354,7 +362,7 @@ head.paged_df <- function(x, n = 6L, ...) {
     if (is.null(cp_mat)) return(NULL)
     mu     <- colMeans(cp_mat)
     res    <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
-                         s$output %||% out_var)
+                         s$output %||% out_var, s$times)
     V_pred <- res$V; mu <- res$mu
     obs_E  <- as.numeric(s$E)
     obs_V  <- as.matrix(s$V)

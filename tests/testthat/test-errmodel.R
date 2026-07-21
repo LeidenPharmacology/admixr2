@@ -34,7 +34,10 @@
 .em_expect_grad_matches_fd <- function(pinfo, p, f, tol = 1e-5) {
   nat <- admixr2:::.admSigmaNat(p, pinfo)
   arr <- admixr2:::.admResidRows(pinfo, "cp", nat, length(f))
-  d   <- admixr2:::.admResidDeriv(f, arr, pinfo)
+  # var_f = 0 matches .em_apply(), which passes a zero structural variance --
+  # these unit tests exercise the residual in isolation, not its composition
+  # with Cov_eta(f) (that is test-integration-resid-moments.R).
+  d   <- admixr2:::.admResidDeriv(f, rep(0, length(f)), arr, pinfo)
 
   h <- 1e-6
   for (k in seq_along(p)) {

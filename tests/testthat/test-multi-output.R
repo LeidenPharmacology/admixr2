@@ -277,6 +277,8 @@ test_that("joint residual applies each output's sigma to its own rows", {
                 sigma_is_lnorm = c(FALSE, FALSE))
   mu <- c(4, 2, 1); V <- diag(3)
   jr <- admixr2:::.admJointResidual(mu, V, unit, pinfo, c(0.09, 0.05))
-  # cp rows: + prop 0.09 * mu^2 ; csf row: + add 0.05
-  expect_equal(diag(jr$V), c(1 + 0.09*16, 1 + 0.09*4, 1 + 0.05))
+  # Law of total variance: a PROPORTIONAL residual contributes 0.09*E[f^2] =
+  # 0.09*(var_f + mu^2), not 0.09*mu^2 -- var_f is 1 here (V = diag(3)). The
+  # ADDITIVE row is unaffected, since its variance does not depend on f.
+  expect_equal(diag(jr$V), c(1 + 0.09*(1 + 16), 1 + 0.09*(1 + 4), 1 + 0.05))
 })

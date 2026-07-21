@@ -146,11 +146,26 @@ test_that("an unrepresentable residual model is refused, not silently approximat
   skip_on_cran()
   skip_if_not_installed("rxode2")
 
-  # logitNorm cannot be represented by a Gaussian aggregate MVN. It used to warn
-  # once and then fit as ADDITIVE.
-  ui <- .em_model("cp ~ logitNorm(lg.sd, 0, 10)", "lg.sd <- 0.2")
+  # logitNorm is now SUPPORTED (transform-both-sides, by quadrature), so the
+  # refusal example is cauchy -- which is refused on mathematics rather than
+  # missing machinery: it is the nu = 1 Student-t, has no finite mean or
+  # variance, and averaging cannot rescue it (the Cauchy is a STABLE
+  # distribution, so a study mean of n subjects is distributed exactly like one
+  # subject and never concentrates).
+  ui <- .em_model("cp ~ add(add.sd) + cauchy()", "add.sd <- 0.2")
   expect_error(admixr2:::.admParseIniDf(ui$iniDf, ui),
                regexp = "Unsupported residual error model")
+
+  # ... and the ones that ARE representable now parse.
+  for (spec in list(
+    c("cp ~ logitNorm(lg.sd, 0, 10)",           "lg.sd <- 0.2"),
+    c("cp ~ probitNorm(lg.sd, 0, 10)",          "lg.sd <- 0.2"),
+    c("cp ~ add(add.sd) + boxCox(lam)",         "add.sd <- 0.2; lam <- 0.5"),
+    c("cp ~ add(add.sd) + yeoJohnson(lam)",     "add.sd <- 0.2; lam <- 0.5"),
+    c("cp ~ add(add.sd) + ar(rho)",             "add.sd <- 0.2; rho <- 0.5"))) {
+    u <- .em_model(spec[1], spec[2])
+    expect_no_error(suppressWarnings(admixr2:::.admParseIniDf(u$iniDf, u)))
+  }
 })
 
 test_that("refusal messages name the model, the endpoint, the reason and the alternatives", {
@@ -162,14 +177,14 @@ test_that("refusal messages name the model, the endpoint, the reason and the alt
   # to use instead. A bare "unsupported" would just move the confusion.
   msg <- tryCatch(
     admixr2:::.admParseIniDf(
-      .em_model("cp ~ logitNorm(lg.sd, 0, 10)", "lg.sd <- 0.2")$iniDf,
-      .em_model("cp ~ logitNorm(lg.sd, 0, 10)", "lg.sd <- 0.2")),
+      .em_model("cp ~ add(add.sd) + cauchy()", "add.sd <- 0.2")$iniDf,
+      .em_model("cp ~ add(add.sd) + cauchy()", "add.sd <- 0.2")),
     error = conditionMessage)
 
-  expect_match(msg, "logitNorm")           # what was asked for
+  expect_match(msg, "cauchy")              # what was asked for
   expect_match(msg, "endpoint 'cp'")       # where
   expect_match(msg, "Why:")                # why not
-  expect_match(msg, "LOGIT scale")         # ... specifically
+  expect_match(msg, "STABLE")              # ... specifically: why averaging fails
   expect_match(msg, "aggregate", ignore.case = TRUE)
   expect_match(msg, "add\\(a\\) \\+ prop\\(b\\)")   # what IS supported
   expect_match(msg, "ADDITIVE")            # warns that old results are suspect
