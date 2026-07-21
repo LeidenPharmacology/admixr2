@@ -188,9 +188,9 @@
   correlation, so the FO objective was exactly invariant in `rho` while
   `.adfoGrad()` returned a non-zero `rho` gradient -- the optimizer walked a
   direction the objective could not move along, and `adfo` reported a different
-  objective from `adgh`/`admc` on identical data. Relatedly, `adfoControl(grad =
-  "analytical")` warned that it was falling back to finite differences when no
-  sensitivity model was available but did not actually do so.
+  objective from `adgh`/`admc` on identical data. Relatedly,
+  `adfoControl(grad = "analytical")` warned that it was falling back to finite
+  differences when no sensitivity model was available but did not actually do so.
 
 * **An out-of-support transform aborted the whole fit.** `any(ap$ms != 1)` was not
   NaN-guarded in nine places. `.admTBSi()` legitimately returns `NaN` outside a
