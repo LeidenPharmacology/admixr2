@@ -139,6 +139,12 @@
   count MEAN (the distribution's argument), exactly as it already did for `beta`;
   gradients agree with a finite difference to 1.7e-05.
 
+* **Documented: an `adfo` standard error describes scatter, not accuracy.** FO
+  linearises at eta = 0, so on a non-additive residual or a large omega the point
+  estimate carries a bias of several standard errors -- measured 5-20 SE, giving
+  0% coverage for a nominal 95% interval even where the SE itself matches the
+  sampling SD. Prefer `adgh`/`admc` when the uncertainty matters.
+
 * **A failed covariance is no longer silent.** When the Hessian was singular the
   covariance came back `NULL`, `covMethod` was set to `""` and every SE was `NA`
   with no warning reaching the user. The drivers now say so.

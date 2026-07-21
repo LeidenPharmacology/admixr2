@@ -733,6 +733,13 @@
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
 #'   If the weakly-identified omega Cholesky makes the Hessian non-positive
 #'   definite, the structural + residual sub-block is reported with a warning.
+#'
+#'   **An adfo standard error describes scatter, not accuracy.** FO linearises the
+#'   model at eta = 0, and on a non-additive residual (or a saturating endpoint,
+#'   or a large omega) the resulting point estimates carry a bias of several
+#'   standard errors -- measured 5-20 SE, giving 0% coverage for a nominal 95%
+#'   interval even where the SE itself matches the sampling SD. Use `adgh` or
+#'   `admc` when the uncertainty matters.
 #' @param n_restarts Number of optimizer restarts (1 = no multi-start).
 #' @param restart_sd Standard deviation for random perturbations of initial
 #'   struct thetas at each restart (> 1).
