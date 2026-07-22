@@ -453,5 +453,6 @@ adirmcControl(
 
 ## See also
 
+- [Choosing a residual error model](error-models.html) — which error models each estimator supports
 - [Advanced usage](advanced.html) — gradient modes, restarts, and AIC/BIC model comparison
 - [Getting started](admixr2.html)
