@@ -13,6 +13,13 @@
 #' @param n_nodes Number of Gauss-Hermite nodes per eta dimension for
 #'   `method = "gh"` (default 5). Total nodes = `n_nodes^n_eta`. Ignored for
 #'   `"mc"` and `"fo"`.
+#' @param resid_nodes Gauss-Hermite nodes used to integrate the RESIDUAL for a
+#'   transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+#'   `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean and
+#'   variance. Ignored by every other error model. Default 81 -- the same default
+#'   the four estimator controls use, so `datagen()` and the fit it feeds agree
+#'   unless you deliberately change one of them. See [admControl()] for the
+#'   measured convergence.
 #' @param sampling Quasi-random sampling method: `"sobol"` (default),
 #'   `"halton"`, `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"`
 #'   or `"gh"`.
@@ -39,6 +46,7 @@ datagenControl <- function(
   method         = c("mc", "fo", "gh"),
   n_sim          = 5000L,
   n_nodes        = 5L,
+  resid_nodes    = 81L,
   sampling       = c("sobol", "halton", "torus", "lhs", "rnorm"),
   seed           = 12345L,
   cores          = 1L,
@@ -48,6 +56,7 @@ datagenControl <- function(
   sampling <- match.arg(sampling)
   checkmate::assertIntegerish(n_sim,    lower = 1L, len = 1L)
   checkmate::assertIntegerish(n_nodes,  lower = 1L, len = 1L)
+  checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1L)
   checkmate::assertIntegerish(seed,                 len = 1L)
   checkmate::assertIntegerish(cores,    lower = 1L, len = 1L)
   checkmate::assertFlag(return_samples)
@@ -56,6 +65,7 @@ datagenControl <- function(
       method         = method,
       n_sim          = as.integer(n_sim),
       n_nodes        = as.integer(n_nodes),
+      resid_nodes    = as.integer(resid_nodes),
       sampling       = sampling,
       seed           = as.integer(seed),
       cores          = as.integer(cores),
@@ -247,6 +257,10 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # Parse this study's model
     ui      <- rxode2::rxode2(mdl)
     pinfo   <- .admParseIniDf(ui$iniDf, ui)
+    # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply(), the
+    # same route the estimators use, so a study generated here and the fit that
+    # consumes it integrate the residual identically.
+    pinfo$resid_nodes <- control$resid_nodes %||% .ADM_TBS_NODES
     out_var <- .admOutputVar(ui)
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
 

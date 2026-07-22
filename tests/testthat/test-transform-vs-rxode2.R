@@ -1,17 +1,25 @@
 # admixr2's transform functions, pinned to rxode2's EXPORTED ones.
 #
-# .admTBS/.admTBSi are R re-implementations of rxode2's C `_powerD`/`_powerDi`
-# (rxode2.h). They have to be re-implementations: admixr2 needs them vectorised,
-# dim-preserving, and it needs the derivative of the INVERSE, which rxode2 exposes
-# nowhere -- `_powerDD` is the derivative of the FORWARD transform, and composing
-# `1/_powerDD(g(z))` blows up to 6.7e7 exactly where the 81-node quadrature grid's
-# +-12 SD tails land.
+# .admTBS/.admTBSi are now thin wrappers over `rxode2::.rxTransform()` -- the same
+# entry point rxode2's own boxCox()/yeoJohnson()/logit()/probit() use, bottoming
+# out in `.Call(_rxode2_powerD, ...)`. They used to be a line-by-line R port of
+# that C code, and this file existed to catch the port DRIFTING from it. That
+# specific risk is gone; the file is kept, and still earns its place, because the
+# wrappers add two things of their own that can break:
 #
-# The cost of re-implementing is DRIFT: rxode2 changes its transform and admixr2
-# silently keeps scoring the old one. This file is the tripwire. It compares
-# against the functions rxode2 EXPORTS (boxCox/boxCoxInv, yeoJohnson/
-# yeoJohnsonInv, logit/expit, probit/probitInv), so an upstream change surfaces
-# here as a failure rather than as a wrong fit.
+#   * dim() restoration -- `.rxTransform()` drops it, and a dropped dim turned
+#     cp_mat into a flat vector so every downstream colMeans()/sweep() gave NA;
+#   * the yj code mapping (0 boxCox, 1 yeoJohnson, 2 untransformed, 4 logit,
+#     6 probit) -- if rxode2 ever renumbers those, admixr2 would silently apply
+#     the WRONG transform, and these comparisons against the named functions
+#     (boxCox/yeoJohnson/logit/probit and their inverses) are what would catch it.
+#
+# .admTBSid -- the derivative of the INVERSE -- remains admixr2's own: rxode2
+# exposes no equivalent (`_powerDD` is the derivative of the FORWARD transform,
+# and composing 1/_powerDD(g(z)) blows up to 6.7e7 exactly where the 81-node grid's
+# +-12 SD tails land), and rxode2's `_powerDD` additionally has a sign error on the
+# Yeo-Johnson negative branch which admixr2 deliberately does not reproduce. It is
+# checked below against a central difference of rxode2's OWN inverse.
 
 test_that("forward transforms match rxode2's exported ones", {
   skip_if_not_installed("rxode2")

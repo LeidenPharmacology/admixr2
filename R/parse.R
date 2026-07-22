@@ -14,7 +14,11 @@
   switch(tr$curEval,
     exp = , log = exp(p),
     expit = , logit = rxode2::expit(p, tr$low, tr$hi),
-    probitInv = , probit = tr$low + (tr$hi - tr$low) * pnorm(p),
+    # rxode2::probitInv, not `lo + (hi-lo)*pnorm(p)`: numerically identical today
+    # (verified across the whole range including the clamped tails) but it is the
+    # same C kernel rxode2 transforms WITH, so the two cannot drift apart -- and it
+    # matches the expit line above rather than half-reusing.
+    probitInv = , probit = rxode2::probitInv(p, tr$low, tr$hi),
     p)
 }
 
@@ -31,7 +35,7 @@
   switch(tr$curEval,
     exp = , log = p,
     expit = , logit = .slog(rxode2::expit(p, tr$low, tr$hi)),
-    probitInv = , probit = .slog(tr$low + (tr$hi - tr$low) * pnorm(p)),
+    probitInv = , probit = .slog(rxode2::probitInv(p, tr$low, tr$hi)),
     .slog(p))
 }
 

@@ -175,6 +175,81 @@ test_that("a negative pow exponent is representable (exponents are unconstrained
   .em_expect_grad_matches_fd(pinfo, p, f_test)
 })
 
+# ---- the zero prediction -----------------------------------------------------
+#
+# f == 0 is not exotic: a depot model has it at t = 0, and it is where the moment
+# expansion E[f^k] ~ mu^k + k(k-1)/2 * mu^(k-2) * Var(f) has a POLE for every
+# k < 2 -- i.e. for every pow() exponent below 1, and for combined1's f^c term.
+# Both the R path (.admMomF) and the C++ kernel (adm_mom_f) cap that correction
+# term against the leading one so the result stays finite; these tests pin the
+# behaviour down at f == 0 exactly, which no closed-form test above reaches.
+
+test_that("pow with c < 1 stays finite at a zero prediction", {
+  pinfo <- .em_pinfo(c("pow.sd", "pow.c"), c("var", "pow_exp"),
+                     .em_spec(0L, k_prop = 1L, k_pow = 2L))
+  f0 <- c(0, 0.5, 2)
+  for (cc in c(0.2, 0.4, 0.5, 0.9)) {
+    r <- .em_apply(pinfo, c(pb, cc), f0)
+    expect_true(all(is.finite(r$var)), info = paste("c =", cc))
+    expect_true(all(r$var >= 0),       info = paste("c =", cc))
+    # At f = 0 with c > 0 the power variance is exactly 0 -- no residual scatter
+    # where there is no signal. (Degenerate as a MODEL; the point is that it is
+    # 0 and not NaN.)
+    expect_equal(r$var[1L], 0, info = paste("c =", cc))
+    # And the closed form still holds away from zero.
+    expect_equal(r$var[-1L], (b * f0[-1L]^cc)^2, info = paste("c =", cc))
+  }
+})
+
+test_that("derivatives at a zero prediction are finite for pow and combined1", {
+  # A NaN here would poison the whole gradient vector, not just this row, so the
+  # optimizer would fail at iteration 0 with no indication of which observation
+  # caused it. Checked directly rather than through an FD, because a central
+  # difference straddles f = 0 into f < 0 where f^c is undefined.
+  f0 <- c(0, 1.5)
+  specs <- list(
+    pow       = list(.em_pinfo(c("pow.sd", "pow.c"), c("var", "pow_exp"),
+                               .em_spec(0L, k_prop = 1L, k_pow = 2L)), c(pb, 0.4)),
+    addPow2   = list(.em_pinfo(c("a.sd", "b.sd", "b.c"), c("var", "var", "pow_exp"),
+                               .em_spec(0L, k_add = 1L, k_prop = 2L, k_pow = 3L)),
+                     c(pa, pb, 0.4)),
+    addPow1   = list(.em_pinfo(c("a.sd", "b.sd", "b.c"), c("var", "var", "pow_exp"),
+                               .em_spec(1L, k_add = 1L, k_prop = 2L, k_pow = 3L)),
+                     c(pa, pb, 0.4)),
+    combined1 = list(.em_pinfo(c("a.sd", "b.sd"), c("var", "var"),
+                               .em_spec(1L, k_add = 1L, k_prop = 2L)), c(pa, pb))
+  )
+  for (nm in names(specs)) {
+    pinfo <- specs[[nm]][[1L]]; p <- specs[[nm]][[2L]]
+    nat <- admixr2:::.admSigmaNat(p, pinfo)
+    arr <- admixr2:::.admResidRows(pinfo, "cp", nat, length(f0))
+    # A NON-zero structural variance is the case that actually exercises the cap:
+    # with var_f = 0 the correction term is 0 whatever the pole does.
+    d   <- admixr2:::.admResidDeriv(f0, c(0.25, 0.25), arr, pinfo)
+    for (fld in c("dvar", "dmu", "dv_df", "dv_dv0"))
+      expect_true(all(is.finite(d[[fld]])), info = paste(nm, fld))
+    ap <- admixr2:::.admResidApply(f0, c(0.25, 0.25), arr)
+    expect_true(all(is.finite(ap$dv)) && all(is.finite(ap$mu)), info = nm)
+    expect_true(all(ap$dv >= 0), info = nm)
+  }
+})
+
+test_that("the C++ moment helper agrees with the R one at a zero prediction", {
+  # adm_mom_f (src/nll.cpp) and .admMomF (R/errmodel.R) are two implementations of
+  # the same expansion, and the fused MC kernels use the C++ one while the NLL
+  # composition uses the R one. If their poles are capped differently, admc's NLL
+  # and its gradient describe different functions at f = 0.
+  cp <- matrix(c(0, 0, 0.5, 2.0), 2L, 2L)   # column 1 is identically zero
+  E  <- c(0.02, 1.2); V <- diag(c(0.05, 0.3))
+  for (cc in c(0.4, 0.9, 1.0, 1.6)) {
+    arr <- list(form = rep(0L, 2L), a2 = rep(0.09, 2L),
+                b2 = rep(0.04, 2L), cc = rep(cc, 2L))
+    nll <- admixr2:::nll_cov_from_samples_cpp(cp, E, V, 100L,
+                                              arr$form, arr$a2, arr$b2, arr$cc)
+    expect_true(is.finite(nll), info = paste("c =", cc))
+  }
+})
+
 # ---- legacy fallback ---------------------------------------------------------
 
 test_that("a pinfo with only the legacy flags still parses (no $resid spec)", {

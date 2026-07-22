@@ -202,56 +202,44 @@
 .ADM_TBS_YJ <- c(boxCox = 0L, tbs = 0L, yeoJohnson = 1L, tbsYj = 1L,
                  untransformed = 2L, logit = 4L, probit = 6L)
 
-# Forward transform: natural scale -> modelling scale.
+# Forward / inverse transform: rxode2's OWN kernel, not a re-implementation.
 #
-# Guards follow rxode2's _powerD() (rxode2.h) exactly -- same clamps, same _eps,
-# same NaN for an out-of-bounds logit/probit argument -- so a value admixr2
-# transforms and a value the SOLVE transforms degrade identically. Yeo-Johnson is
-# unguarded there and here (its bases are >= 1 for 0 < lambda < 2).
+# `rxode2::.rxTransform(x, lambda, low, high, transform, inverse)` is exported and
+# is what every one of rxode2's own boxCox()/yeoJohnson()/logit()/probit() (and
+# their inverses) calls; it bottoms out in `.Call(_rxode2_powerD, ...)`, i.e. the
+# very C routine the SOLVE transforms with. Its `transform` codes are the ones
+# admixr2 already uses (0 boxCox, 1 yeoJohnson, 2 untransformed, 4 logit,
+# 6 probit), because admixr2 took them from there.
 #
-# NOTE: the yj == 1 branches allocate a fresh vector, which DROPS dim(). The solve
-# paths hand these functions an n_sim x n_t MATRIX, so a dropped dim turned cp_mat
-# into a flat vector and every downstream colMeans()/sweep() then produced NA.
-# Restore the input attributes on the way out.
-.admTBS <- function(y, lam, yj, lo, hi) {
-  # _powerD/_powerDi/_powerDD all open with `if (!R_finite(x)) return NA_REAL;`.
-  # Without it the yj == 1 branch ERRORS on an NA input ("NAs are not allowed in
-  # subscripted assignments"), and Inf propagated instead of becoming NA.
-  if (!all(is.finite(y))) {
-    out <- rep(NA_real_, length(y)); dim(out) <- dim(y)
-    ok  <- is.finite(y)
-    if (any(ok)) out[ok] <- .admTBS(y[ok], lam, yj, lo, hi)
-    return(out)
-  }
-  if (yj == 2L) return(y)
-  if (yj == 0L) {
-    # _powerD case 0 short-circuits lambda == 1 BEFORE the clamp; clamping first
-    # collapsed every y <= _eps onto one value.
-    if (lam == 1) return(y - 1)
-    # _powerD case 0/3: `if (x <= _eps) x0 = _eps` -- clamp the INPUT, then transform.
-    y0 <- y; y0[y <= .ADM_EPS] <- .ADM_EPS
-    return(if (lam == 0) log(y0) else (y0^lam - 1) / lam)
-  }
-  # _powerD cases 4/6: an argument outside (0, 1) is NaN, not +-Inf.
-  if (yj == 4L) {
-    u <- (y - lo) / (hi - lo); u[u <= 0 | u >= 1] <- NaN
-    return(log(u / (1 - u)))
-  }
-  if (yj == 6L) {
-    u <- (y - lo) / (hi - lo); u[u <= 0 | u >= 1] <- NaN
-    return(stats::qnorm(u))
-  }
-  if (yj == 1L) {
-    if (lam == 1) return(y)          # _powerD case 1: exact identity short-circuit
-    out <- numeric(length(y)); p <- y >= 0
-    # log1p as rxode2 uses it -- log(x+1) loses 8e-4 relative at x = 1e-14.
-    out[p]  <- if (lam == 0) log1p(y[p]) else ((y[p] + 1)^lam - 1) / lam
-    out[!p] <- if (lam == 2) -log1p(-y[!p]) else -(((1 - y[!p])^(2 - lam) - 1) / (2 - lam))
-    dim(out) <- dim(y)
-    return(out)
-  }
-  stop("unsupported transform code ", yj)                                # nocov
+# These used to be a careful line-by-line port of `_powerD`/`_powerDi` -- roughly
+# ninety lines of branch order, clamps and short-circuits, each one a documented
+# gotcha (lambda == 1 short-circuits BEFORE the clamp; log1p not log(x+1); an
+# out-of-bounds logit argument is NaN, not +-Inf). It agreed with the kernel
+# exactly (0 mismatches over every code x lambda x bounds combination) but it
+# could only ever agree by re-deriving, which is what test-transform-vs-rxode2.R
+# was written to police. Calling the kernel makes the agreement structural.
+#
+# The two things the kernel does NOT do for us, and the only reason these are
+# wrappers rather than direct calls:
+#
+#   1. It DROPS dim(). The solve paths hand these an n_sim x n_t MATRIX, and a
+#      dropped dim turned cp_mat into a flat vector so every downstream
+#      colMeans()/sweep() produced NA.
+#   2. Its scalar-argument fast path asserts `any.missing = FALSE` on `lambda`,
+#      `low` and `high` (not on `x` -- non-finite x is handled and returns NA).
+#
+# Not routed through the public boxCox()/yeoJohnson()/logit()/probit() wrappers:
+# those add their own `checkmate::assertNumeric(x, lower = 0, any.missing = FALSE)`
+# and so ERROR on the NA/Inf that the quadrature's +-12 SD tail nodes legitimately
+# produce, where the kernel returns NA.
+.admTBSxf <- function(x, lam, yj, lo, hi, inverse) {
+  d   <- dim(x)
+  out <- rxode2::.rxTransform(x, lam, lo, hi, as.integer(yj), inverse)
+  dim(out) <- d
+  out
 }
+
+.admTBS  <- function(y, lam, yj, lo, hi) .admTBSxf(y, lam, yj, lo, hi, FALSE)
 
 # Box-Cox inverse with rxode2's out-of-support rule. (lam*z + 1)^(1/lam) is only
 # defined while lam*z + 1 > 0 -- the transform has bounded support -- and an
@@ -277,34 +265,8 @@
   out
 }
 
-# Inverse transform: modelling scale -> natural scale.
-.admTBSi <- function(z, lam, yj, lo, hi) {
-  if (!all(is.finite(z))) {                       # _powerDi's R_finite guard
-    out <- rep(NA_real_, length(z)); dim(out) <- dim(z)
-    ok  <- is.finite(z)
-    if (any(ok)) out[ok] <- .admTBSi(z[ok], lam, yj, lo, hi)
-    return(out)
-  }
-  if (yj == 2L) return(z)
-  # _powerDi case 0: `if (lambda == 1.0) return (x+1.0);` BEFORE any guard. Without
-  # it the entire half-line z <= -1 + _eps collapsed to _eps (rxode2: -49 at z = -50).
-  if (yj == 0L && lam == 1) return(z + 1)
-  if (yj == 0L) return(if (lam == 0) exp(z) else .admTBSp(lam * z + 1, 1 / lam))
-  if (yj == 4L) return(lo + (hi - lo) / (1 + exp(-z)))
-  if (yj == 6L) return(lo + (hi - lo) * stats::pnorm(z))
-  if (yj == 1L) {
-    if (lam == 1) return(z)          # _powerDi case 1: exact identity short-circuit
-    out <- numeric(length(z)); p <- z >= 0
-    # No clamp: _powerDi() case 1 has none (both bases are >= 1 for 0 < lambda < 2),
-    # so an out-of-range lambda must surface as NaN here exactly as it does there.
-    out[p]  <- if (lam == 0) expm1(z[p]) else (lam * z[p] + 1)^(1 / lam) - 1
-    out[!p] <- if (lam == 2) -expm1(-z[!p])
-               else 1 - (1 - (2 - lam) * z[!p])^(1 / (2 - lam))
-    dim(out) <- dim(z)                  # see .admTBS(): a dropped dim reads as NA
-    return(out)
-  }
-  stop("unsupported transform code ", yj)                                # nocov
-}
+# Inverse transform: modelling scale -> natural scale. See .admTBSxf() above.
+.admTBSi <- function(z, lam, yj, lo, hi) .admTBSxf(z, lam, yj, lo, hi, TRUE)
 
 # Derivative of the INVERSE transform, g'(z). Everything else follows from it:
 # h'(f) = 1 / g'(h(f)) by the inverse-function theorem, so no separate forward
@@ -346,17 +308,34 @@
 # Returns m = E[y|eta] and v = Var(y|eta), vectorised over f (and over sd, which
 # is f-dependent whenever the endpoint carries a prop()/pow() term).
 #
-# Node count is set from measured convergence, not a guess. Box-Cox and
-# Yeo-Johnson converge almost immediately (1e-13..1e-14 at 15 nodes), but a
-# SATURATING transform integrates slowly once the residual SD is large -- the
-# integrand approaches a step function. Worst case (logit, lo/hi = 0/20):
+# Node count, measured against stats::integrate() at rel.tol 1e-13 (an independent
+# rule, not a bigger version of this one). Worst case over boxCox/yeoJohnson/
+# logit/probit x residual sd in {0.5, 1, 2, 3}:
 #
-#   sd = 2.0 :  n=15 8.5e-4   n=31 5.0e-6   n=61 1.2e-8   n=81 6.8e-11
-#   sd = 3.0 :  n=31 5.3e-4   n=61 4.3e-6   n=81 7.0e-7   n=121 1.3e-8
+#   n     5      15       31       61       81      121
+#   err  3.3e-1  5.7e-2   4.5e-3   6.5e-5   5.0e-5  2.8e-5
 #
-# 81 keeps even an extreme sd = 3 below 1e-6. The cost is pure arithmetic with no
-# ODE solve and scales with n_t (5-20 rows for a real study, not thousands), so
-# it is far below the ~11 ms an rxSolve costs before it integrates anything.
+# Cost is linear in n in isolation -- ~50 us (n=15), 150 (31), 300 (81), 500 (121)
+# per call for an 8-row study -- but negligible beside the ODE solve: a full NLL
+# evaluation measured 0.750 s per 60 evaluations at BOTH 31 and 81 nodes. So
+# `resid_nodes` is an ACCURACY dial, not a speed one.
+#
+# The worst case is dominated ENTIRELY by sd = 3, and there by boxCox/yeoJohnson,
+# whose inverse hits its bounded support and is clamped (see .admTBSp) -- a kink
+# Gauss-Hermite converges on slowly, which is why the error plateaus around 3e-5
+# rather than continuing down. It is not quadrature error at that point. At sd <= 1,
+# a realistic residual on a transformed scale, n = 31 already gives 1e-7 or better
+# and logit/probit reach 1e-13.
+#
+# (An earlier note here claimed "81 keeps even an extreme sd = 3 below 1e-6". That
+# was measured on logit only -- 3.6e-08 -- and does not hold for boxCox, which is
+# 5.0e-05. Corrected rather than dropped, because the number was load-bearing for
+# the choice of default.)
+#
+# 81 stays the DEFAULT because it is safe across the whole grid above; it is now
+# configurable per fit via the `resid_nodes` control argument, since a user with a
+# small residual SD can halve the cost and one with a saturating endpoint and a
+# large SD may want more.
 .ADM_TBS_NODES <- 81L
 
 # Moments PLUS their exact partials w.r.t. f and the residual sd, by
@@ -370,16 +349,28 @@
 #   dm/dsd   =          sum_q w_q g'(z_q) x_q
 #   dv/df    = h'(f) * sum_q w_q 2 g g' - 2 m dm/df
 #   dv/dsd   =          sum_q w_q 2 g g' x_q - 2 m dm/dsd
-.admTBSMomentsD <- function(f, sd, lam, yj, lo, hi) {
-  gq <- .adghNodes1(.ADM_TBS_NODES)
+.admTBSMomentsD <- function(f, sd, lam, yj, lo, hi, nodes = .ADM_TBS_NODES) {
+  gq <- .adghNodes1(nodes)
   hz <- .admTBS(f, lam, yj, lo, hi)
   hp <- 1 / .admTBSid(hz, lam, yj, lo, hi)          # h'(f)
   n  <- length(f)
+  # The transform is evaluated for the WHOLE node grid in one call rather than
+  # once per node. `.admTBSi` bottoms out in rxode2's C kernel, whose R-level
+  # preamble (argument checks + a non-finite scan) costs far more than the kernel
+  # itself on a length-n vector: measured 81 short calls = 2.48 ms against one
+  # stacked call = 0.05 ms for n = 8 at 81 nodes, i.e. the loop, not the maths,
+  # was the cost. z_all[i, q] = h(f_i) + sd_i * x_q (hz recycles down columns).
+  #
+  # The per-node ACCUMULATION below is deliberately left as a loop over columns:
+  # summing in a different order would move the moments by an ulp and the NLL with
+  # them, and this stays bit-identical to the previous implementation.
+  z_all  <- hz + outer(sd, gq$x)
+  yq_all <- .admTBSi(z_all, lam, yj, lo, hi)
+  gp_all <- .admTBSid(z_all, lam, yj, lo, hi)
   m <- m2 <- dmf <- dms <- dvf0 <- dvs0 <- numeric(n)
   for (q in seq_along(gq$x)) {
-    z  <- hz + sd * gq$x[q]
-    yq <- .admTBSi(z, lam, yj, lo, hi)
-    gp <- .admTBSid(z, lam, yj, lo, hi)
+    yq <- yq_all[, q]
+    gp <- gp_all[, q]
     w  <- gq$w[q]
     m    <- m    + w * yq
     m2   <- m2   + w * yq * yq
@@ -1012,6 +1003,31 @@ without that parameter there is no residual to integrate"),
   setNames(out, pinfo$sigma_names)
 }
 
+# Delta-method factor d(REPORTED value)/d(optimizer p), one per residual parameter.
+#
+# The post-fit Hessian is taken w.r.t. the optimizer's parameterisation, but
+# `fit$cov` sits beside `Estimate` in nlmixr2est's parFixed table, so the two must
+# be on the same scale or `Estimate +- 1.96*SE` is wrong by this factor. It lives
+# here, next to .admSigmaNat() and .admSigmaRole(), because it is the derivative of
+# exactly that map -- the three CalcCov functions used to each carry their own
+# copy of the switch(), which is three places to forget when a role is added.
+#
+# `.admFullTheta()` reports a "var" role as an SD, so the factor is d(sd)/dp with
+# p = log(sd^2): sd = exp(p/2), d(sd)/dp = sd/2. The identity roles (pow_exp,
+# tbs_lam) get 1 because they are reported exactly as held.
+.admSigmaReportJac <- function(p_sigma, pinfo) {
+  if (length(p_sigma) == 0L) return(numeric(0))
+  role <- .admSigmaRole(pinfo)
+  nat  <- .admSigmaNat(p_sigma, pinfo)
+  vapply(seq_along(p_sigma), function(k)
+    switch(role[k],
+           var     = sqrt(nat[[k]]) / 2,             # reported sd   = exp(p/2)
+           t_df    = nat[[k]] - 2,                   # reported nu   = 2 + exp(p)
+           ar_cor  = nat[[k]] * (1 - nat[[k]]),      # reported rho  = expit(p)
+           nb_size = nat[[k]],                       # reported size = exp(p)
+           1), double(1))                            # pow_exp / tbs_lam: identity
+}
+
 # Per-endpoint residual specs.
 #
 # `pinfo$resid` is built by .admParseIniDf from ui$predDf. When it is absent --
@@ -1078,6 +1094,10 @@ without that parameter there is no residual to integrate"),
   rho  <- rep(NA_real_, n_t)   # ar() residual correlation; NA when independent
   lam  <- rep(1.0, n_t); yj <- rep(2L, n_t)       # TBS transform + parameter
   csz  <- rep(NA_real_, n_t)                     # binom N / nbinom size
+  # Residual-quadrature node count, carried on `arr` because .admResidApply()
+  # takes `arr` but not `pinfo`. Set from the control's `resid_nodes` by the
+  # drivers; the default keeps every existing fit bit-identical.
+  nodes   <- pinfo$resid_nodes %||% .ADM_TBS_NODES
   tbs_c1  <- rep(FALSE, n_t)   # TBS endpoint: combined1 rather than combined2
   tbs_ftr <- rep(FALSE, n_t)   # TBS endpoint: propT/powT (scale by the TRANSFORMED pred)
   phi  <- rep(NA_real_, n_t)                     # beta precision (SOLVED, set by caller)
@@ -1092,6 +1112,7 @@ without that parameter there is no residual to integrate"),
     return(list(form = form, a2 = a2, b2 = b2, cc = cc, vmul = vmul, rho = rho,
                 lam = lam, yj = yj, tlo = tlo, thi = thi, csz = csz, phi = phi,
                 ord_grp = ord_grp, tbs_c1 = tbs_c1, tbs_ftr = tbs_ftr,
+                nodes = nodes,
                 k_add = k_add, k_prop = k_prop, k_pow = k_pow, k_tdf = k_tdf,
                 k_ar = k_ar, k_lam = k_lam, k_size = k_size))
 
@@ -1161,6 +1182,7 @@ without that parameter there is no residual to integrate"),
   list(form = form, a2 = a2, b2 = b2, cc = cc, vmul = vmul, rho = rho,
        lam = lam, yj = yj, tlo = tlo, thi = thi, csz = csz, phi = phi,
        ord_grp = ord_grp, tbs_c1 = tbs_c1, tbs_ftr = tbs_ftr,
+       nodes = nodes,
        k_add = k_add, k_prop = k_prop, k_pow = k_pow, k_tdf = k_tdf, k_ar = k_ar,
        k_lam = k_lam, k_size = k_size)
 }
@@ -1385,7 +1407,8 @@ without that parameter there is no residual to integrate"),
         sdv <- sqrt(vv)
         dsd <- (.b2i * pw * pwd * xbd) / pmax(sdv, .Machine$double.xmin)
       }
-      q  <- .admTBSMomentsD(fv, sdv, lam, yjc, lo, hi)
+      q  <- .admTBSMomentsD(fv, sdv, lam, yjc, lo, hi,
+                            arr$nodes %||% .ADM_TBS_NODES)
       # sd now depends on f, so the TOTAL derivative picks up the sd path:
       #   dm/df = @m/@f + @m/@sd * dsd/df     (both partials analytic)
       dm_t <- q$dm_df + q$dm_ds * dsd
@@ -1616,7 +1639,8 @@ without that parameter there is no residual to integrate"),
       # chain needs. One row only, so a parameter direction costs O(1).
       .asm1 <- function(a2_, b2_, cc_, lam_) {
         sp_  <- .sdat(a2_, b2_, cc_, lam_)
-        qq   <- .admTBSMomentsD(fv, sp_$sd, lam_, yjc, lo, hi)
+        qq   <- .admTBSMomentsD(fv, sp_$sd, lam_, yjc, lo, hi,
+                                arr$nodes %||% .ADM_TBS_NODES)
         dm_t <- qq$dm_df + qq$dm_ds * sp_$dsd     # TOTAL d/df: sd depends on f
         dv_t <- qq$dv_df + qq$dv_ds * sp_$dsd
         d2m_ <- (dm_t[3L] - dm_t[1L]) / (2 * hstep)

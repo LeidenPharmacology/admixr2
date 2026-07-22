@@ -9,6 +9,17 @@ test_that("datagenControl() returns correct class and defaults", {
   expect_equal(ctl$seed,               12345L)
   expect_equal(ctl$cores,              1L)
   expect_false(ctl$return_samples)
+  # Must match the estimator controls' default, or a study generated here and the
+  # fit that consumes it would integrate a transform-both-sides residual at
+  # different accuracies -- a discrepancy that looks like model misspecification.
+  expect_identical(ctl$resid_nodes,     81L)
+  expect_identical(admControl()$resid_nodes, ctl$resid_nodes)
+})
+
+test_that("datagenControl(): resid_nodes is coerced and validated", {
+  expect_identical(datagenControl(resid_nodes = 31)$resid_nodes, 31L)
+  expect_error(datagenControl(resid_nodes = 0L))
+  expect_error(datagenControl(resid_nodes = c(31L, 81L)))
 })
 
 test_that("datagenControl(): method = 'fo' accepted", {

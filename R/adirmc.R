@@ -96,6 +96,7 @@
 #' @export
 adirmcControl <- function(
     studies         = list(),
+    resid_nodes     = 81L,
     n_sim           = 2500L,
     outer_iter      = 50L,
     sampling        = c("sobol", "halton", "torus", "lhs", "rnorm"),
@@ -146,6 +147,11 @@ adirmcControl <- function(
 
   checkmate::assertList(studies)
   checkmate::assertIntegerish(n_sim,        lower = 1L,  len = 1)
+  # A residual quadrature needs a real grid. .adghNodes1() refuses m < 1, but it
+  # accepts 1..4 happily and returns a rule that integrates nothing usefully --
+  # the measured error at 5 nodes is already 3.3e-1. Refuse here, where the
+  # message can name the argument, rather than silently scoring a wrong NLL.
+  checkmate::assertIntegerish(resid_nodes,  lower = 5L,  len = 1)
   checkmate::assertIntegerish(outer_iter,   lower = 1L,  len = 1)
   checkmate::assertIntegerish(maxeval,      lower = 1L,  len = 1)
   checkmate::assertNumeric(ftol_rel,        lower = 0,   len = 1)
@@ -178,6 +184,7 @@ adirmcControl <- function(
 
   .ret <- list(
     studies         = studies,
+    resid_nodes     = as.integer(resid_nodes),
     n_sim           = as.integer(n_sim),
     outer_iter      = as.integer(outer_iter),
     sampling        = sampling,
@@ -1137,6 +1144,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
          call. = FALSE)
 
   pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
+  # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
+  pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
   output_var <- .admOutputVar(.ui)
 
   for (nm in names(studies))
@@ -1300,7 +1309,10 @@ nlmixr2Est.adirmc <- function(env, ...) {
   p_hat_irmc <- setNames(best_p, names(ov$p0))
   t0_cov <- proc.time()
   .cov <- if (.ctl$covMethod == "r") {
-    np_cov       <- length(pinfo$struct_names) + length(pinfo$sigma_names)
+    # struct + sigma + OMEGA: .admCalcCov()'s Hessian spans all three, so the
+    # advertised evaluation count must too (it understated it otherwise).
+    np_cov       <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
+                    length(pinfo$omega_par)
     use_grad_cov <- .ctl$grad != "none"
     n_evals <- if (use_grad_cov) {
       np_cov + 1L
@@ -1331,6 +1343,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
     warning("covariance could not be computed (the Hessian was singular or ",
             "non-finite); standard errors are unavailable for this fit.",
             call. = FALSE)
+  # Snapshot BEFORE nlmixr2est sees the matrix -- see .admRestoreCovNames().
+  .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
   t_elapsed <- t_opt + t_cov
 
@@ -1385,6 +1399,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
     table = .ret$table, env = .ret, est = "adirmc")
 
   .fit$env$method    <- "adirmc"
+  .admRestoreCovNames(.fit, .cov_nms)
   .fit$env$studies   <- studies
   .fit$env$adirmcExtra <- .ret$adirmcExtra
   # Populate nlmixr2-style parameter history so traceplot(fit) works natively.

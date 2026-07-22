@@ -30,7 +30,7 @@
 
 # rx_r_ evaluated at a given structural prediction f.
 .orc_rx_r <- function(ui, f, pars) {
-  ex <- rxode2:::.rxGetVarianceForErrorType(ui, as.data.frame(ui$predDf)[1L, ])
+  ex <- rxode2::.rxGetVarianceForErrorType(ui, as.data.frame(ui$predDf)[1L, ])
   e  <- list2env(pars, parent = baseenv())
   e$rx_pred_f_ <- f                                    # untransformed prediction
   tr  <- as.character(ui$predDf$transform[1L])
@@ -46,8 +46,8 @@
 
 test_that("UNTRANSFORMED residual variance equals rxode2's rx_r_ exactly", {
   skip_if_not_installed("rxode2")
-  skip_if(is.null(tryCatch(rxode2:::.rxGetVarianceForErrorType, error = function(e) NULL)),
-          "rxode2 does not export .rxGetVarianceForErrorType")
+  skip_if(is.null(tryCatch(rxode2::.rxGetVarianceForErrorType, error = function(e) NULL)),
+          "this rxode2 does not expose .rxGetVarianceForErrorType")
   cases <- list(
     add       = list("a <- 0.5",             "cp ~ add(a)",                          list(a = 0.5)),
     prop      = list("b <- 0.2",             "cp ~ prop(b)",                         list(b = 0.2)),
@@ -72,7 +72,7 @@ test_that("UNTRANSFORMED residual variance equals rxode2's rx_r_ exactly", {
 
 test_that("Student-t scales rxode2's rx_r_ by nu/(nu-2)", {
   skip_if_not_installed("rxode2")
-  skip_if(is.null(tryCatch(rxode2:::.rxGetVarianceForErrorType, error = function(e) NULL)), "")
+  skip_if(is.null(tryCatch(rxode2::.rxGetVarianceForErrorType, error = function(e) NULL)), "")
   ui <- suppressMessages(rxode2::rxode2(
     .orc_model("a <- 0.5; nu <- fix(5)", "cp ~ add(a) + t(nu)")))
   p   <- suppressWarnings(.admParseIniDf(ui$iniDf, ui))
@@ -85,7 +85,7 @@ test_that("Student-t scales rxode2's rx_r_ by nu/(nu-2)", {
 
 test_that("a prop()/propT() term on a TRANSFORMED endpoint uses rxode2's rx_r_", {
   skip_if_not_installed("rxode2")
-  skip_if(is.null(tryCatch(rxode2:::.rxGetVarianceForErrorType, error = function(e) NULL)), "")
+  skip_if(is.null(tryCatch(rxode2::.rxGetVarianceForErrorType, error = function(e) NULL)), "")
   # For a transform-both-sides endpoint rx_r_ is the residual variance on the
   # TRANSFORMED scale, i.e. y = g(h(f) + sqrt(rx_r_) * eps). admixr2 integrates
   # that by quadrature, so the check is against a direct simulation of exactly

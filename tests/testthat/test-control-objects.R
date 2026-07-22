@@ -1,3 +1,30 @@
+# ---- resid_nodes -------------------------------------------------------------
+# The residual quadrature's node count. Only a transform-both-sides endpoint uses
+# it, but it is accepted (and validated) by all four controls so a user does not
+# have to know which estimator routes through which code path.
+
+test_that("resid_nodes: all four controls default to 81 and store an integer", {
+  for (ctl in list(admControl(), adfoControl(), adghControl(), adirmcControl()))
+    expect_identical(ctl$resid_nodes, 81L)
+  # A double is coerced, like every other count parameter.
+  expect_identical(admControl(resid_nodes = 31)$resid_nodes,    31L)
+  expect_identical(adghControl(resid_nodes = 31)$resid_nodes,   31L)
+  expect_identical(adfoControl(resid_nodes = 31)$resid_nodes,   31L)
+  expect_identical(adirmcControl(resid_nodes = 31)$resid_nodes, 31L)
+})
+
+test_that("resid_nodes: a degenerate node count is refused, not passed through", {
+  # 0 nodes would reach .adghNodes1() and divide by an empty weight vector, and a
+  # handful is meaningless as a quadrature -- both would otherwise surface as an
+  # obscure error thousands of lines from the control that caused them.
+  for (f in list(admControl, adfoControl, adghControl, adirmcControl)) {
+    expect_error(f(resid_nodes = 0L))
+    expect_error(f(resid_nodes = -5L))
+    expect_error(f(resid_nodes = c(31L, 81L)))
+    expect_error(f(resid_nodes = "many"))
+  }
+})
+
 # ---- admControl --------------------------------------------------------------
 
 test_that("admControl() returns correct class and key defaults", {

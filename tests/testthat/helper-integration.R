@@ -831,6 +831,7 @@ one_cmt_transit_fn <- function() {
   pinfo   <- env$pinfo
   n_s     <- length(pinfo$struct_names)
   n_e     <- length(pinfo$sigma_names)
+  n_o     <- length(pinfo$omega_par)
   p_cov   <- env$vec$p0
   p_cov[n_s + seq_len(n_e)] <- 0  # 2*log(sigma_sd) = 0 → sigma_sd = 1
 
@@ -859,15 +860,17 @@ one_cmt_transit_fn <- function() {
     p_cov       = p_cov,
     n_struct    = n_s,
     struct_names = pinfo$struct_names,
-    # The RETURNED block is struct + sigma. Returning only the structural corner
-    # discarded good sigma SEs and left nlmixr2est's C++ popDf builder reading past
-    # the end of the matrix (every sigma SE printed an uninitialised denormal
-    # instead of NA). Omega is in the HESSIAN -- excluding it made the structural
-    # SEs too small -- but is not RETURNED: it is reported as variance/covariance
-    # entries while the optimizer holds the log-Cholesky, and that map is not
-    # diagonal for a correlated omega.
-    n_cov       = n_s + n_e,
-    cov_names   = c(pinfo$struct_names, pinfo$sigma_names),
+    # The RETURNED block is struct + sigma + omega. Returning only the structural
+    # corner discarded good sigma SEs and left nlmixr2est's C++ popDf builder
+    # reading past the end of the matrix (every sigma SE printed an uninitialised
+    # denormal instead of NA). Omega is both in the HESSIAN -- excluding it made
+    # the structural SEs too small -- and now RETURNED, mapped from the optimizer's
+    # log-Cholesky onto the variance/covariance entries .admFullTheta() reports by
+    # the full .admOmegaJacobian() (not a per-row factor: the map is not diagonal
+    # once omega is correlated). Named the way nlmixr2est names them.
+    n_cov       = n_s + n_e + n_o,
+    cov_names   = c(pinfo$struct_names, pinfo$sigma_names,
+                    admixr2:::.admOmegaReportNames(pinfo)),
     result_nll  = result_nll,
     result_grad = result_grad,
     z_cov       = z_cov,
@@ -1005,6 +1008,7 @@ one_cmt_transit_fn <- function() {
   pinfo <- env$pinfo
   n_s   <- length(pinfo$struct_names)
   n_e   <- length(pinfo$sigma_names)
+  n_o   <- length(pinfo$omega_par)
   p_cov <- env$p0
   p_cov[n_s + seq_len(n_e)] <- 0  # 2*log(sigma_sd) = 0 → sigma_sd = 1
 
@@ -1025,9 +1029,10 @@ one_cmt_transit_fn <- function() {
     p_cov        = p_cov,
     n_struct     = n_s,
     struct_names = pinfo$struct_names,
-    # struct + sigma -- see the note in .int_cov_setup().
-    n_cov        = n_s + n_e,
-    cov_names    = c(pinfo$struct_names, pinfo$sigma_names),
+    # struct + sigma + omega -- see the note in .int_cov_setup().
+    n_cov        = n_s + n_e + n_o,
+    cov_names    = c(pinfo$struct_names, pinfo$sigma_names,
+                     admixr2:::.admOmegaReportNames(pinfo)),
     result_nll   = result_nll,
     result_grad  = result_grad
   )

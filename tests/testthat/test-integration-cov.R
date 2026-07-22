@@ -3,7 +3,8 @@ skip_on_cran()
 
 # Setup in helper-integration.R. .admCalcCov() uses .admNLLBatch() (use_grad=FALSE)
 # or .admGradBatch() (use_grad=TRUE) to compute a numerical Hessian, then
-# returns 2*H^-1 restricted to struct + sigma parameters (omega Cholesky excluded).
+# returns 2*H^-1 over struct + sigma + omega, delta-transformed onto the scale the
+# estimates are REPORTED on (sigma as an SD, omega as variance/covariance entries).
 # All rxSolve calls are batched: one call per study for all perturbed configs.
 #
 # .int_cov_setup() evaluates at p_cov where sigma_sd = 1 (not the true 0.1).
@@ -37,25 +38,28 @@ test_that("admCalcCov NLL-FD: result is positive definite", {
   expect_true(all(eigs > 0))
 })
 
-test_that("admCalcCov NLL-FD: omega is in the Hessian but NOT in the returned matrix", {
+test_that("admCalcCov: omega is in the Hessian AND in the returned matrix", {
   env_cov <- .int_cov_setup()
   result  <- env_cov$result_nll
   expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
-  # Omega used to be excluded. That did not merely forgo omega's own SEs -- it made
-  # the STRUCTURAL ones too small, because a theta carrying an eta is correlated
-  # with that eta's variance and profiling it out is not the same as fixing it.
-  # Measured against the empirical sampling SD over simulated datasets, reported
-  # SE / empirical SD for the eta-carrying theta went from 0.67 to 1.17 (prop) and
-  # 0.67 to 1.06 (lnorm) once omega was included; a purely additive model barely
-  # moved. Under-stated SEs give over-confident intervals, so that was the
-  # dangerous direction of error.
+  # Omega used to be excluded from the Hessian. That did not merely forgo omega's
+  # own SEs -- it made the STRUCTURAL ones too small, because a theta carrying an
+  # eta is correlated with that eta's variance and profiling it out is not the
+  # same as fixing it. Measured against the empirical sampling SD over simulated
+  # datasets, reported SE / empirical SD for the eta-carrying theta went from 0.67
+  # to 1.17 (prop) and 0.67 to 1.06 (lnorm) once omega was included; a purely
+  # additive model barely moved. Under-stated SEs give over-confident intervals,
+  # so that was the dangerous direction of error.
   #
-  # Omega is NOT returned, though. .admFullTheta() reports omega as the
-  # variance/covariance entries while the optimizer holds the log-Cholesky, and
-  # that map is not diagonal once omega is correlated -- so a correct omega SE
-  # needs a full Jacobian, not a per-row factor. A mixed-scale matrix would be
-  # worse than none, and nlmixr2est prints `Estimate +- 1.96*SE` from whatever
-  # this returns.
+  # Omega is now also RETURNED. The optimizer holds the log-Cholesky while
+  # .admFullTheta() reports the variance/covariance entries, and that map is not
+  # diagonal once omega is correlated -- so the block is rotated by the full
+  # .admOmegaJacobian(), never a per-row delta factor. The names follow
+  # nlmixr2est's own convention (om.<eta> / cov.<eta_i>.<eta_j>).
+  om <- admixr2:::.admOmegaReportNames(env_cov$env$pinfo)
+  expect_true(all(om %in% rownames(result)))
+  expect_equal(rownames(result), env_cov$cov_names)
+  # The optimizer-scale names must NOT leak out: those are log-Cholesky entries.
   expect_false(any(env_cov$env$pinfo$omega_par_names %in% rownames(result)))
 })
 
@@ -132,11 +136,41 @@ test_that("adfoCalcCov NLL-FD: result is positive definite", {
   expect_true(all(eigs > 0))
 })
 
-test_that("adfoCalcCov NLL-FD: omega is in the Hessian but NOT in the returned matrix", {
+test_that("adfoCalcCov: a flat omega falls back to struct+sigma with a warning", {
+  # Including omega in the Hessian is what fixes the structural SEs, but omega is
+  # the block most likely to be weakly identified -- an IIV estimated at
+  # essentially zero has no curvature at all, and the FULL Hessian is then
+  # indefinite while struct+sigma is perfectly fine. Reporting nothing in that
+  # case would be a regression against the behaviour before omega was included,
+  # so the estimator drops back to the sub-block and says so.
+  env   <- .int_adfo_cov_setup()
+  pinfo <- env$env$pinfo
+  p     <- env$p_cov
+  p[pinfo$omega_par_names[pinfo$chol_diag]] <- -30   # Omega ~ 1e-13
+
+  result <- NULL
+  expect_warning(
+    { result <- admixr2:::.adfoCalcCov(
+        p, pinfo, env$env$studies, env$env$sensModel, env$env$rxMod,
+        env$env$output_var, env$env$params_list, 1L, use_grad = FALSE) },
+    "not positive definite")
+  expect_false(is.null(result), info = "the sub-block should still be reported")
+  expect_identical(rownames(result),
+                   c(pinfo$struct_names, pinfo$sigma_names))
+  # No blank/NA labels sneak in when the omega block is dropped.
+  expect_false(any(is.na(rownames(result)) | rownames(result) == ""))
+  expect_true(all(is.finite(result)))
+  expect_true(all(diag(result) > 0))
+})
+
+test_that("adfoCalcCov: omega is in the Hessian AND in the returned matrix", {
   env_cov <- .int_adfo_cov_setup()
   result  <- env_cov$result_nll
   expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
-  # Omega is in the Hessian but not returned -- see the admCalcCov test above.
+  # Reported on the variance/covariance scale -- see the admCalcCov test above.
+  expect_true(all(admixr2:::.admOmegaReportNames(env_cov$env$pinfo) %in%
+                    rownames(result)))
+  expect_equal(rownames(result), env_cov$cov_names)
   expect_false(any(env_cov$env$pinfo$omega_par_names %in% rownames(result)))
 })
 

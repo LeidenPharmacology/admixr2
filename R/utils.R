@@ -16,6 +16,105 @@ utils::globalVariables(c(
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+# Jacobian of the REPORTED omega entries w.r.t. the optimizer's log-Cholesky.
+#
+# The optimizer holds L (lower-triangular) with the diagonal stored as
+# p = log(Omega_ii) and the off-diagonal as the raw L_ij; .admFullTheta() reports
+# the Omega entries themselves. Omega = L L', so
+#
+#   d(Omega)/d(L_ab)  = E_ab L' + L E_ab'   =>   d(Omega_ij)/d(L_ab)
+#                                              = delta_ia L_jb + delta_ja L_ib
+#   d(L_ab)/d(p)      = L_aa/2 on the diagonal (L_aa = exp(p/2)), 1 off it.
+#
+# This is NOT diagonal once omega is correlated, which is why a per-row delta
+# factor -- fine for sigma -- cannot be used here. Returns an (n_report x n_par)
+# matrix so the covariance transforms as J %*% cov %*% t(J).
+#
+# WHY NOT REUSE nlmixr2est/rxode2 -- checked, and the answer is structural:
+#
+#   * nlmixr2est never needs this Jacobian. `.foceiCalcRanalytic()` builds its R
+#     matrix on NATURAL-scale directions from the start (via `.omegaVarCovDeriv()`
+#     -> `rxode2::rxOmegaVarCovDeriv()`, the derivatives of Omega^-1 and
+#     log|Omega| w.r.t. the Omega ELEMENTS), so its result is already on the
+#     reported scale -- hence the variable is literally called `.covNat`. There is
+#     no transform of ours to borrow. We cannot borrow the assembler either: it
+#     needs FOCEI's EBEs, `etaObf` and individual-level `dataSav`, none of which
+#     exist in an aggregate fit. admixr2's covariance is a NUMERICAL Hessian of the
+#     OPTIMIZER-scale objective, so a change of variables is unavoidable.
+#   * `rxode2::rxOmegaVarCovDeriv()` differentiates the wrong way round (w.r.t.
+#     Omega's own entries, not w.r.t. a Cholesky parameter).
+#   * `rxode2::rxSymInvCholCreate()` is a Cholesky of **Omega^-1** with
+#     `diag.xform` in {sqrt, log, identity} -- a different parameterisation from
+#     admixr2's (Cholesky of Omega, diagonal held as log(Omega_ii)), so its thetas
+#     are not ours and its derivatives are not the ones we need.
+#
+# What IS shared with upstream, deliberately: the (row, col) ENUMERATION of the
+# free Omega entries -- pinned to `rxOmegaVarCovDeriv()$elements` in
+# test-cov-reporting.R -- and the resulting names (`.foceiOmegaCovNames`'s
+# `om.<eta>` / `cov.<eta_i>.<eta_j>`). The delta-transform PATTERN is theirs too:
+# `.postEstimationBoundedTransformJacobian()` does `env$cov <- J cov J'` for
+# bounded structural thetas, with a diagonal J; the sigma factors in
+# .admSigmaReportJac() are that same pattern, and omega is the case where J is
+# not diagonal.
+.admOmegaJacobian <- function(pinfo, L) {
+  n_o <- length(pinfo$omega_par)
+  if (n_o == 0L) return(NULL)
+  ci <- pinfo$chol_i; cj <- pinfo$chol_j; cd <- pinfo$chol_diag
+  J  <- matrix(0, n_o, n_o)
+  for (r in seq_len(n_o)) {           # reported entry Omega[i, j]
+    i <- ci[r]; j <- cj[r]
+    for (k in seq_len(n_o)) {         # parameter p_k -> L[a, b]
+      a <- ci[k]; b <- cj[k]
+      dOm <- (if (i == a) L[j, b] else 0) + (if (j == a) L[i, b] else 0)
+      J[r, k] <- dOm * (if (cd[k]) L[a, a] / 2 else 1)
+    }
+  }
+  J
+}
+
+# Names for the reported omega entries, matching nlmixr2est's own convention
+# exactly (.foceiOmegaCovNames): `om.<eta>` on the diagonal, `cov.<eta_i>.<eta_j>`
+# off it, with i the LATER eta -- which is how admixr2 stores chol_i/chol_j too
+# (they come from iniDf's neta1/neta2, i.e. the lower triangle).
+.admOmegaReportNames <- function(pinfo) {
+  et <- pinfo$eta_names %||% pinfo$eta_col_names
+  if (is.null(et)) return(pinfo$omega_par_names)
+  vapply(seq_along(pinfo$omega_par), function(r) {
+    i <- pinfo$chol_i[r]; j <- pinfo$chol_j[r]
+    if (i == j) paste0("om.", et[i]) else paste0("cov.", et[i], ".", et[j])
+  }, character(1))
+}
+
+# Put the dimnames back on fit$env$cov after nlmixr2est has been through it.
+#
+# nlmixr2est's C++ `foceiFitCpp_` re-dimnames whatever covariance it finds in the
+# fit environment using its OWN parameter-name vector, which knows about the
+# thetas only -- so the omega rows we append come back named "". This is a known
+# shape upstream, not a bug of ours: nlmixr2est ships `.impmapNameCov()` to
+# repair exactly these blanks for its importance-sampling estimator, reading the
+# omega names off the model. We do the same thing, except we already hold the
+# authoritative names (we built the block), so we restore them verbatim.
+#
+# `nms` must be SNAPSHOT with .admCovNames() before the matrix is handed to
+# nlmixr2est: foceiFitCpp_ sets the dimnames attribute IN PLACE on the same SEXP
+# (no R-level copy happens when a matrix is merely assigned into an environment),
+# so by the time we get here the driver's own `.cov` has been blanked as well.
+# Reading the names back off it would restore nothing.
+#
+# Guarded on the length matching: if a future nlmixr2est returns a covariance of
+# a different shape, leaving it untouched is the safe outcome -- a wrongly
+# labelled SE is far worse than an unlabelled one.
+.admCovNames <- function(cov) if (is.matrix(cov)) rownames(cov) else NULL
+
+.admRestoreCovNames <- function(fit, nms) {
+  if (is.null(nms)) return(invisible(NULL))
+  e <- tryCatch(fit$env, error = function(e) NULL)
+  if (is.null(e) || is.null(e$cov) || !is.matrix(e$cov)) return(invisible(NULL))
+  if (nrow(e$cov) != length(nms)) return(invisible(NULL))
+  dimnames(e$cov) <- list(nms, nms)
+  invisible(NULL)
+}
+
 # -- nloptr algorithm selection ------------------------------------------------
 
 # Valid nloptr algorithm names, queried from the installed nloptr so the set

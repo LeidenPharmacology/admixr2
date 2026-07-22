@@ -139,6 +139,19 @@ test_that("admc and adgh recover the truth from ordinal aggregate data", {
     expect_equal(exp(ex$struct[["tcl"]]),  5, tolerance = 0.10)
     expect_equal(exp(ex$struct[["tv"]]),  20, tolerance = 0.10)
     expect_equal(ex$omega[1, 1],        0.36, tolerance = 0.20)
+
+    # An ordinal endpoint has NO residual-error parameters at all, so this is the
+    # n_sigma == 0 corner of the delta transform and of the omega block -- the one
+    # place where an off-by-one in the row indexing would land on omega instead of
+    # sigma. covMethod defaults to "r", so the covariance is computed either way;
+    # assert on it rather than letting it go unchecked.
+    if (!is.null(fit$cov)) {
+      rn <- rownames(fit$cov)
+      expect_false(any(is.na(rn) | rn == ""), info = est)
+      expect_true("om.eta.cl" %in% rn, info = est)
+      expect_true(all(is.finite(fit$cov)), info = est)
+      expect_true(all(diag(fit$cov) > 0), info = est)
+    }
   }
 })
 

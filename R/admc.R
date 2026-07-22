@@ -59,6 +59,20 @@
 #'   A study-level `V` (or an explicit `joint = TRUE`) marks the endpoints as
 #'   same-subject; without one, each endpoint is an independent likelihood block.
 #'   Endpoints are stacked in the order they first appear in `data`.
+#' @param resid_nodes Gauss-Hermite nodes used to integrate the RESIDUAL for a
+#'   transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+#'   `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean and
+#'   variance. Ignored by every other error model, which has closed forms. Default
+#'   81. Measured worst-case relative error against an independent quadrature, over
+#'   all four transforms and residual SD in {0.5, 1, 2, 3}: n = 15 gives 5.7e-2,
+#'   31 gives 4.5e-3, 81 gives 5.0e-5. The error is dominated by large residual SD;
+#'   at SD <= 1, n = 31 already gives 1e-7 or better.
+#'
+#'   This is an ACCURACY dial, not a speed one. The quadrature is linear in
+#'   `resid_nodes` in isolation (~50 us at 15, 300 us at 81 for an 8-row study) but
+#'   negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
+#'   evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
+#'   with a large residual SD; there is little to gain by lowering it.
 #' @param n_sim Number of Monte Carlo samples per NLL evaluation.
 #' @param sampling Sampling method for eta draws: `"sobol"` (Sobol, default),
 #'   `"halton"` (Halton), `"torus"` (Kronecker/torus), `"lhs"` (Latin hypercube),
@@ -116,6 +130,13 @@
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
 #'   If the weakly-identified omega Cholesky makes the Hessian non-positive
 #'   definite, the structural + residual sub-block is reported with a warning.
+#'
+#'   All three blocks are reported on the scale the ESTIMATES are printed on, as
+#'   `nlmixr2est` does: structural thetas on the log/optimizer scale, residual
+#'   error as an SD, and omega as the variance/covariance entries (named
+#'   `om.<eta>` and `cov.<eta_i>.<eta_j>`). The omega block is rotated by the
+#'   full Jacobian of Omega with respect to the log-Cholesky, which is not
+#'   diagonal once omega is correlated.
 #' @param cov_n_sim Number of MC samples for the covariance (Hessian) step.
 #'   More samples reduce MC noise in NLL evaluations. The NLL-based Hessian
 #'   (`grad = "none"`) uses a central second difference of the NLL with the
@@ -208,6 +229,7 @@
 #' @export
 admControl <- function(
     studies    = list(),
+    resid_nodes = 81L,
     n_sim      = 5000L,
     sampling   = c("sobol", "halton", "torus", "lhs", "rnorm"),
     algorithm  = NULL,
@@ -251,6 +273,12 @@ admControl <- function(
 
   checkmate::assertList(studies)
   checkmate::assertIntegerish(n_sim,   lower = 1L, len = 1, .var.name = "n_sim")
+  # A residual quadrature needs a real grid. .adghNodes1() refuses m < 1, but it
+  # accepts 1..4 happily and returns a rule that integrates nothing usefully --
+  # the measured error at 5 nodes is already 3.3e-1. Refuse here, where the
+  # message can name the argument, rather than silently scoring a wrong NLL.
+  checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1,
+                              .var.name = "resid_nodes")
   checkmate::assertIntegerish(maxeval, lower = 1L, len = 1, .var.name = "maxeval")
   checkmate::assertNumeric(ftol_rel,   lower = 0,  len = 1, .var.name = "ftol_rel")
   checkmate::assertIntegerish(print,   lower = 0L, len = 1, .var.name = "print")
@@ -286,6 +314,7 @@ admControl <- function(
 
   .ret <- list(
     studies       = studies,
+    resid_nodes   = as.integer(resid_nodes),
     n_sim         = as.integer(n_sim),
     sampling      = sampling,
     algorithm     = algorithm,
@@ -1590,27 +1619,43 @@ nmObjGetControl.admc <- function(x, ...) {
   # or the printed interval is wrong by that factor (for a "var" sigma it is 2/a,
   # so an SD of 0.1 would print an SE 20x too large).
   #
-  # OMEGA is deliberately kept in the HESSIAN but dropped from the RETURNED matrix.
-  # Including it in the Hessian is what fixes the structural SEs (profiling omega
-  # out rather than conditioning on it made them ~33% too small). Reporting its own
-  # SE is a separate question: .admFullTheta reports omega as the VARIANCE/COVARIANCE
-  # entries while the optimizer holds the log-Cholesky, and that map is not diagonal
-  # once omega is correlated -- so a correct omega SE needs a full Jacobian, not a
-  # per-row factor. Shipping a mixed-scale matrix would be worse than shipping none.
-  .role  <- .admSigmaRole(pinfo)
-  .sig_v <- .admSigmaNat(p_hat[n_s + seq_len(n_e)], pinfo)
-  .jac   <- rep(1, n_sub)
-  if (n_e > 0L) .jac[n_s + seq_len(n_e)] <- vapply(seq_len(n_e), function(k)
-    switch(.role[k],
-           var     = sqrt(.sig_v[[k]]) / 2,          # reported SD  = exp(p/2)
-           t_df    = .sig_v[[k]] - 2,                # reported nu  = 2 + exp(p)
-           ar_cor  = .sig_v[[k]] * (1 - .sig_v[[k]]),# reported rho = expit(p)
-           nb_size = .sig_v[[k]],                    # reported size = exp(p)
-           1), double(1))                            # pow_exp / tbs_lam: identity
+  # OMEGA is handled just below, separately, because it is NOT a per-row factor:
+  # .admFullTheta reports omega as the VARIANCE/COVARIANCE entries while the
+  # optimizer holds the log-Cholesky, and that map is dense once omega is
+  # correlated. It gets the full .admOmegaJacobian(). (Keeping omega in the
+  # Hessian is also what fixes the structural SEs -- profiling omega out rather
+  # than conditioning on it made them ~33% too small.)
+  # Struct thetas are reported on their optimizer (log) scale, so their factor is
+  # 1; the residual factors come from .admSigmaReportJac(), which is the
+  # derivative of .admSigmaNat() and lives beside it (errmodel.R) so a new
+  # sigma_role cannot be added in one place and forgotten in three.
+  .jac <- rep(1, n_sub)
+  if (n_e > 0L)
+    .jac[n_s + seq_len(n_e)] <- .admSigmaReportJac(p_hat[n_s + seq_len(n_e)], pinfo)
   .keep <- seq_len(min(n_sub, nrow(cov_full)))
-  cov_full <- cov_full[.keep, .keep, drop = FALSE] *
-    tcrossprod(.jac[.keep])
-  cov_full
+  .out  <- cov_full[.keep, .keep, drop = FALSE] * tcrossprod(.jac[.keep])
+
+  # OMEGA, reported the way nlmixr2 does (`om.<eta>`, on the variance/covariance
+  # scale). Unlike sigma this is not a per-row factor: Omega = L L' with the
+  # diagonal held as log(Omega_ii), so d(Omega_ij)/d(p_k) mixes rows once omega is
+  # correlated and needs a full Jacobian. Dropped silently if the omega block was
+  # not inverted (the non-PD fallback) or if the Jacobian is unavailable.
+  if (n_o > 0L && nrow(cov_full) >= n_sub + n_o) {
+    .oi <- n_sub + seq_len(n_o)
+    .L_cov <- tryCatch(.admUnpack(p_hat, pinfo)$L, error = function(e) NULL)
+    .Jo <- if (is.null(.L_cov)) NULL else
+      tryCatch(.admOmegaJacobian(pinfo, .L_cov), error = function(e) NULL)
+    if (!is.null(.Jo)) {
+      .co <- .Jo %*% cov_full[.oi, .oi, drop = FALSE] %*% t(.Jo)
+      .cx <- cov_full[.keep, .oi, drop = FALSE] * .jac[.keep]
+      .cx <- .cx %*% t(.Jo)
+      .nm <- .admOmegaReportNames(pinfo)
+      .big <- rbind(cbind(.out, .cx), cbind(t(.cx), .co))
+      dimnames(.big) <- list(c(rownames(.out), .nm), c(colnames(.out), .nm))
+      .out <- .big
+    }
+  }
+  .out
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -2139,6 +2184,8 @@ nlmixr2Est.admc <- function(env, ...) {
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
   pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
+  # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
+  pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
   output_var <- .admOutputVar(.ui)
 
   for (nm in names(studies))
@@ -2349,8 +2396,8 @@ nlmixr2Est.admc <- function(env, ...) {
     # grad-FD Hessian relies on the single-output analytical grad batch.
     use_grad_cov <- want_grad && !multi_out && !any_joint
     use_cent_cov <- want_central
-    # struct + sigma + OMEGA: the Hessian spans all three (omega is dropped from
-    # the RETURNED block, not from the Hessian), so the evaluation count must too.
+    # struct + sigma + OMEGA: the Hessian spans all three, so the evaluation
+    # count must too.
     np_cov <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
               length(pinfo$omega_par)
     n_evals <- if (use_grad_cov) {
@@ -2380,6 +2427,8 @@ nlmixr2Est.admc <- function(env, ...) {
     warning("covariance could not be computed (the Hessian was singular or ",
             "non-finite); standard errors are unavailable for this fit.",
             call. = FALSE)
+  # Snapshot BEFORE nlmixr2est sees the matrix -- see .admRestoreCovNames().
+  .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
   t_elapsed <- t_opt + t_cov
 
@@ -2438,6 +2487,7 @@ nlmixr2Est.admc <- function(env, ...) {
     table = .ret$table, env = .ret, est = "admc")
 
   .fit$env$method   <- "admc"
+  .admRestoreCovNames(.fit, .cov_nms)
   .fit$env$studies  <- studies
   .fit$env$admExtra <- .ret$admExtra
   # Populate nlmixr2-style parameter history so traceplot(fit) works natively.
