@@ -6,6 +6,7 @@
 \usage{
 adirmcControl(
   studies = list(),
+  resid_nodes = 81L,
   n_sim = 2500L,
   outer_iter = 50L,
   sampling = c("sobol", "halton", "torus", "lhs", "rnorm"),
@@ -103,6 +104,21 @@ A study-level \code{V} (or an explicit \code{joint = TRUE}) marks the endpoints 
 same-subject; without one, each endpoint is an independent likelihood block.
 Endpoints are stacked in the order they first appear in \code{data}.}
 
+\item{resid_nodes}{Gauss-Hermite nodes used to integrate the RESIDUAL for a
+transform-both-sides endpoint (\code{boxCox}, \code{yeoJohnson}, \code{logitNorm},
+\code{probitNorm}), where \code{y = g(h(f) + sigma*eps)} has no closed-form mean and
+variance. Ignored by every other error model, which has closed forms. Default
+81. Measured worst-case relative error against an independent quadrature, over
+all four transforms and residual SD in {0.5, 1, 2, 3}: n = 15 gives 5.7e-2,
+31 gives 4.5e-3, 81 gives 5.0e-5. The error is dominated by large residual SD;
+at SD <= 1, n = 31 already gives 1e-7 or better.
+
+This is an ACCURACY dial, not a speed one. The quadrature is linear in
+\code{resid_nodes} in isolation (~50 us at 15, 300 us at 81 for an 8-row study) but
+negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
+evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
+with a large residual SD; there is little to gain by lowering it.}
+
 \item{n_sim}{Number of Monte Carlo samples per NLL evaluation.}
 
 \item{outer_iter}{Maximum inner optimiser iterations per phase.}
@@ -188,9 +204,19 @@ Phases progressively tighten the search region.}
 
 \item{max_worse}{Stop a phase after this many consecutive worsening iterations.}
 
-\item{covMethod}{Covariance method: \code{"r"} (numerical Hessian for structural
-and residual-error parameters only; omega/IIV SEs are not computed,
-consistent with nlmixr2 FOCEI) or \code{"none"}.}
+\item{covMethod}{Covariance method: \code{"r"} (numerical Hessian over the
+structural, residual-error and omega parameters) or \code{"none"}. Omega is
+included because excluding it also biases the STRUCTURAL standard errors
+downward -- a theta carrying an eta is correlated with that eta's variance.
+If the weakly-identified omega Cholesky makes the Hessian non-positive
+definite, the structural + residual sub-block is reported with a warning.
+
+All three blocks are reported on the scale the ESTIMATES are printed on, as
+\code{nlmixr2est} does: structural thetas on the log/optimizer scale, residual
+error as an SD, and omega as the variance/covariance entries (named
+\verb{om.<eta>} and \verb{cov.<eta_i>.<eta_j>}). The omega block is rotated by the
+full Jacobian of Omega with respect to the log-Cholesky, which is not
+diagonal once omega is correlated.}
 
 \item{cov_n_sim}{Number of MC samples for the covariance (Hessian) step.
 More samples reduce MC noise in NLL evaluations. The NLL-based Hessian
