@@ -23,9 +23,20 @@
 .adghNodes1 <- function(m) {
   if (m < 1L) stop("n_nodes must be >= 1")
   if (m == 1L) return(list(x = 0, w = 1))
-  .key <- paste0("gh_", m)
-  .hit <- tryCatch(get(.key, envir = .adm_node_env, inherits = FALSE),
+  # The cache env is a package-level binding, and this function runs inside mirai
+  # restart workers, where assignInNamespace() cannot ADD a binding to the locked
+  # installed namespace. Degrade to recomputing rather than erroring if it is absent.
+  .env <- tryCatch(get(".adm_node_env", envir = asNamespace("admixr2")),
                    error = function(e) NULL)
+  if (is.null(.env)) {
+    i <- seq_len(m - 1L)
+    J <- matrix(0, m, m)
+    J[cbind(i, i + 1L)] <- sqrt(i); J[cbind(i + 1L, i)] <- sqrt(i)
+    e <- eigen(J, symmetric = TRUE)
+    return(list(x = e$values, w = (e$vectors[1L, ])^2))
+  }
+  .key <- paste0("gh_", m)
+  .hit <- tryCatch(get(.key, envir = .env, inherits = FALSE), error = function(e) NULL)
   if (!is.null(.hit)) return(.hit)
   i <- seq_len(m - 1L)
   J <- matrix(0, m, m)
@@ -33,7 +44,7 @@
   J[cbind(i + 1L, i)] <- sqrt(i)
   e <- eigen(J, symmetric = TRUE)
   out <- list(x = e$values, w = (e$vectors[1L, ])^2)
-  assign(.key, out, envir = .adm_node_env)
+  assign(.key, out, envir = .env)
   out
 }
 
@@ -289,7 +300,8 @@
       }
       # sigma (each row's own endpoint; other endpoints' derivatives are zero)
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-        .admSigmaGrad(mu, arr, pinfo, Bdiag, dNLL_dmu_sig, var_f, B, s$times, V_str)
+        .admSigmaGrad(mu, arr, pinfo, Bdiag, dNLL_dmu_sig, var_f, B,
+                      .admRowTimes(s, length(mu)), V_str)
       next
     }
 
@@ -313,7 +325,7 @@
     # Residual error (and its lnorm scaling of the mean) -- this output only
     arr   <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
     var_f <- diag(V)                      # Var_eta(f), pre-residual
-    ap    <- .admResidApply(mu, var_f, arr, s$times)
+    ap    <- .admResidApply(mu, var_f, arr, s$times, cov_f)
     # lnorm scales the WHOLE covariance, not just its diagonal; ms == 1 elsewhere.
     # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
     # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
@@ -638,17 +650,35 @@
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
   dimnames(cov_full) <- list(nms_cov, nms_cov)
-  # Return the FULL struct + sigma block, not just the structural corner.
+  # SCALE. The returned covariance must be on the scale the ESTIMATES are reported
+  # on, because nlmixr2est prints `Estimate +- 1.96*SE` from the two together.
+  # .admFullTheta() reports a structural theta on its optimizer (log) scale, but a
+  # residual parameter on its NATURAL scale -- a "var" role as an SD, a t() df as
+  # nu, an ar() correlation as rho. The Hessian is taken w.r.t. the optimizer
+  # parameterisation, so the sigma rows need the delta-method factor d(reported)/dp
+  # or the printed interval is wrong by that factor (for a "var" sigma it is 2/a,
+  # so an SD of 0.1 would print an SE 20x too large).
   #
-  # The Hessian is built over `cov_idx` (structural thetas AND residual-error
-  # parameters), and the sigma SEs it produces are good -- validated against the
-  # empirical sampling SD over 40 simulated datasets: add 0.94, prop 0.91,
-  # lnorm 0.90 (reported SE / empirical SD, on the log-variance scale the
-  # optimizer works on). Returning only the structural corner threw them away AND
-  # left nlmixr2est's C++ popDf builder reading past the end of the matrix, so
-  # every sigma row of `fit$parFixedDf$SE` printed an uninitialised denormal
-  # (6.953178e-310, with %%RSE ~ 1e+307) rather than NA. Shipping the whole block
-  # both removes that garbage and reports three more correct standard errors.
+  # OMEGA is deliberately kept in the HESSIAN but dropped from the RETURNED matrix.
+  # Including it in the Hessian is what fixes the structural SEs (profiling omega
+  # out rather than conditioning on it made them ~33% too small). Reporting its own
+  # SE is a separate question: .admFullTheta reports omega as the VARIANCE/COVARIANCE
+  # entries while the optimizer holds the log-Cholesky, and that map is not diagonal
+  # once omega is correlated -- so a correct omega SE needs a full Jacobian, not a
+  # per-row factor. Shipping a mixed-scale matrix would be worse than shipping none.
+  .role  <- .admSigmaRole(pinfo)
+  .sig_v <- .admSigmaNat(p_hat[n_s + seq_len(n_e)], pinfo)
+  .jac   <- rep(1, n_sub)
+  if (n_e > 0L) .jac[n_s + seq_len(n_e)] <- vapply(seq_len(n_e), function(k)
+    switch(.role[k],
+           var     = sqrt(.sig_v[[k]]) / 2,          # reported SD  = exp(p/2)
+           t_df    = .sig_v[[k]] - 2,                # reported nu  = 2 + exp(p)
+           ar_cor  = .sig_v[[k]] * (1 - .sig_v[[k]]),# reported rho = expit(p)
+           nb_size = .sig_v[[k]],                    # reported size = exp(p)
+           1), double(1))                            # pow_exp / tbs_lam: identity
+  .keep <- seq_len(min(n_sub, nrow(cov_full)))
+  cov_full <- cov_full[.keep, .keep, drop = FALSE] *
+    tcrossprod(.jac[.keep])
   cov_full
 }
 
@@ -1166,7 +1196,10 @@ nlmixr2Est.adgh <- function(env, ...) {
 
   t0_cov <- proc.time()
   .cov <- if (.ctl$covMethod == "r") {
-    np_cov    <- length(pinfo$struct_names) + length(pinfo$sigma_names)
+    # struct + sigma + OMEGA: the Hessian spans all three (omega is dropped from
+    # the RETURNED block, not from the Hessian), so the evaluation count must too.
+    np_cov    <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
+                 length(pinfo$omega_par)
     use_grad_cov <- want_grad && !is.null(sensModel)
     n_evals   <- if (use_grad_cov) np_cov + 1L
                  else { n_off <- np_cov * (np_cov - 1L) / 2L; 1L + 2L * np_cov + 4L * n_off }

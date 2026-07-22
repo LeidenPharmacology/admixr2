@@ -420,11 +420,31 @@
   # but it makes the 5.1.2 -> 5.1.3 handoff automatic regardless.
   .rx_ver <- tryCatch(as.character(utils::packageVersion("rxode2")),
                       error = function(e) "NA")
+  # The key MUST include the iniDf parameter ORDER, not just the model({}) block.
+  # `rename_map` numbers THETA[i] by iniDf row order, and `theta_sens_cols` -- which
+  # names the emitted rx_f1_THETA_j_ columns -- is served straight from the cache.
+  # Two models with an identical model({}) block and a reordered ini({}) therefore
+  # collided: the second was handed the first's column map and read the wrong
+  # sensitivity column. Measured end-to-end (adgh, same model, ini order swapped):
+  # objective 1081.08 with a clean cache vs 2355.77 when served from the other
+  # model's entry -- i.e. stuck at the starting value, every SE NA, and no warning
+  # of any kind. rxTempDir() persists ACROSS SESSIONS, so this survived restarts.
+  #
+  # This is the same failure class the pred_tbs block below documents and fixes by
+  # re-deriving on a cache hit; the reasoning had simply not been carried across to
+  # the field that names the columns. Folding the order into the digest fixes every
+  # cache-served field at once rather than one at a time.
+  .ini_key <- tryCatch({
+    .i <- ui$iniDf
+    paste(paste(.i$name, collapse = "|"),
+          paste(as.integer(.i$fix), collapse = "|"),
+          paste(.i$err, collapse = "|"), sep = "//")
+  }, error = function(e) "")
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
     paste0("adm-sens-",
-           digest::digest(list(ui$lstExpr, unpaired,
-                               "dirs-jump+fixed-theta+dde+predtbs+derivpred+tbslam+countpred", .rx_ver)),
+           digest::digest(list(ui$lstExpr, unpaired, .ini_key,
+                               "dirs-jump+fixed-theta+dde+predtbs+derivpred+tbslam+countpred+inikey", .rx_ver)),
            ".qs2"))
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)

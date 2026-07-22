@@ -859,14 +859,15 @@ one_cmt_transit_fn <- function() {
     p_cov       = p_cov,
     n_struct    = n_s,
     struct_names = pinfo$struct_names,
-    # The covariance block is struct + sigma + OMEGA. Returning only the structural
-    # corner discarded good sigma SEs and left nlmixr2est's C++ popDf builder
-    # reading past the end of the matrix (every sigma SE printed an uninitialised
-    # denormal instead of NA); excluding omega additionally made the STRUCTURAL
-    # SEs too small, since a theta carrying an eta is correlated with that eta's
-    # variance.
-    n_cov       = n_s + n_e + length(pinfo$omega_par),
-    cov_names   = c(pinfo$struct_names, pinfo$sigma_names, pinfo$omega_par_names),
+    # The RETURNED block is struct + sigma. Returning only the structural corner
+    # discarded good sigma SEs and left nlmixr2est's C++ popDf builder reading past
+    # the end of the matrix (every sigma SE printed an uninitialised denormal
+    # instead of NA). Omega is in the HESSIAN -- excluding it made the structural
+    # SEs too small -- but is not RETURNED: it is reported as variance/covariance
+    # entries while the optimizer holds the log-Cholesky, and that map is not
+    # diagonal for a correlated omega.
+    n_cov       = n_s + n_e,
+    cov_names   = c(pinfo$struct_names, pinfo$sigma_names),
     result_nll  = result_nll,
     result_grad = result_grad,
     z_cov       = z_cov,
@@ -1024,9 +1025,9 @@ one_cmt_transit_fn <- function() {
     p_cov        = p_cov,
     n_struct     = n_s,
     struct_names = pinfo$struct_names,
-    # struct + sigma + omega -- see the note in .int_cov_setup().
-    n_cov        = n_s + n_e + length(pinfo$omega_par),
-    cov_names    = c(pinfo$struct_names, pinfo$sigma_names, pinfo$omega_par_names),
+    # struct + sigma -- see the note in .int_cov_setup().
+    n_cov        = n_s + n_e,
+    cov_names    = c(pinfo$struct_names, pinfo$sigma_names),
     result_nll   = result_nll,
     result_grad  = result_grad
   )

@@ -387,7 +387,7 @@
       }
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
         .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu_full, var_f_j,
-                      dNLL_dV, s$times, tcrossprod(JL))
+                      dNLL_dV, .admRowTimes(s, length(mu_pred)), tcrossprod(JL))
       next
     }
 
@@ -621,17 +621,35 @@
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
   dimnames(cov_full) <- list(nms_cov, nms_cov)
-  # Return the FULL struct + sigma block, not just the structural corner.
+  # SCALE. The returned covariance must be on the scale the ESTIMATES are reported
+  # on, because nlmixr2est prints `Estimate +- 1.96*SE` from the two together.
+  # .admFullTheta() reports a structural theta on its optimizer (log) scale, but a
+  # residual parameter on its NATURAL scale -- a "var" role as an SD, a t() df as
+  # nu, an ar() correlation as rho. The Hessian is taken w.r.t. the optimizer
+  # parameterisation, so the sigma rows need the delta-method factor d(reported)/dp
+  # or the printed interval is wrong by that factor (for a "var" sigma it is 2/a,
+  # so an SD of 0.1 would print an SE 20x too large).
   #
-  # The Hessian is built over `cov_idx` (structural thetas AND residual-error
-  # parameters), and the sigma SEs it produces are good -- validated against the
-  # empirical sampling SD over 40 simulated datasets: add 0.94, prop 0.91,
-  # lnorm 0.90 (reported SE / empirical SD, on the log-variance scale the
-  # optimizer works on). Returning only the structural corner threw them away AND
-  # left nlmixr2est's C++ popDf builder reading past the end of the matrix, so
-  # every sigma row of `fit$parFixedDf$SE` printed an uninitialised denormal
-  # (6.953178e-310, with %%RSE ~ 1e+307) rather than NA. Shipping the whole block
-  # both removes that garbage and reports three more correct standard errors.
+  # OMEGA is deliberately kept in the HESSIAN but dropped from the RETURNED matrix.
+  # Including it in the Hessian is what fixes the structural SEs (profiling omega
+  # out rather than conditioning on it made them ~33% too small). Reporting its own
+  # SE is a separate question: .admFullTheta reports omega as the VARIANCE/COVARIANCE
+  # entries while the optimizer holds the log-Cholesky, and that map is not diagonal
+  # once omega is correlated -- so a correct omega SE needs a full Jacobian, not a
+  # per-row factor. Shipping a mixed-scale matrix would be worse than shipping none.
+  .role  <- .admSigmaRole(pinfo)
+  .sig_v <- .admSigmaNat(p_hat[n_s + seq_len(n_e)], pinfo)
+  .jac   <- rep(1, n_sub)
+  if (n_e > 0L) .jac[n_s + seq_len(n_e)] <- vapply(seq_len(n_e), function(k)
+    switch(.role[k],
+           var     = sqrt(.sig_v[[k]]) / 2,          # reported SD  = exp(p/2)
+           t_df    = .sig_v[[k]] - 2,                # reported nu  = 2 + exp(p)
+           ar_cor  = .sig_v[[k]] * (1 - .sig_v[[k]]),# reported rho = expit(p)
+           nb_size = .sig_v[[k]],                    # reported size = exp(p)
+           1), double(1))                            # pow_exp / tbs_lam: identity
+  .keep <- seq_len(min(n_sub, nrow(cov_full)))
+  cov_full <- cov_full[.keep, .keep, drop = FALSE] *
+    tcrossprod(.jac[.keep])
   cov_full
 }
 
@@ -1161,7 +1179,10 @@ nlmixr2Est.adfo <- function(env, ...) {
   p_hat  <- setNames(opt$solution, names(ov$p0))
   t0_cov <- proc.time()
   .cov <- if (.ctl$covMethod == "r") {
-    np_cov     <- length(pinfo$struct_names) + length(pinfo$sigma_names)
+    # struct + sigma + OMEGA: the Hessian spans all three (omega is dropped from
+    # the RETURNED block, not from the Hessian), so the evaluation count must too.
+    np_cov     <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
+                  length(pinfo$omega_par)
     # Joint fits use the NLL-FD Hessian (the grad-FD Hessian calls the
     # single-output analytical .adfoGrad, which does not handle joint units).
     use_grad_cov <- want_grad && !any_joint

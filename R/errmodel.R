@@ -192,6 +192,12 @@
 # which use DBL_EPSILON itself -- do not conflate them.
 .ADM_EPS <- sqrt(.Machine$double.eps)
 
+# Ceiling on a second-order delta-expansion term before it is treated as diverged.
+# The expansion E[f^k] ~ mu^k + k(k-1)/2 * mu^(k-2) * var is only meaningful while
+# the correction is small against the leading term; for pow() with c < 1 near a zero
+# prediction it is not, and an uncapped term produced a negative variance.
+.ADM_MOM_CAP <- 1 / sqrt(.Machine$double.eps)
+
 # rxode2's transform selector codes (`rx_yj_` in the emitted simulation model).
 .ADM_TBS_YJ <- c(boxCox = 0L, tbs = 0L, yeoJohnson = 1L, tbsYj = 1L,
                  untransformed = 2L, logit = 4L, probit = 6L)
@@ -1122,8 +1128,6 @@ without that parameter there is no residual to integrate"),
       # only an ESTIMATED nu gets a gradient slot; a fixed one has none
       if (!is.null(sp$k_tdf) && !is.na(sp$k_tdf)) k_tdf[rows] <- sp$k_tdf
     }
-    # ar(): correlation only; it never touches the diagonal (rxode2 scales the
-    # innovation so the marginal variance is unchanged).
     if (!is.null(sp$csize)) csz[rows] <- sp$csize
     if (!is.null(sp$k_size) && !is.na(sp$k_size)) {
       csz[rows]    <- sigma_nat[[sp$k_size]]
@@ -1174,22 +1178,25 @@ without that parameter there is no residual to integrate"),
   if (any(nz)) {
     kk <- k[nz]
     mm <- mu[nz]
-    # mu^(k-2) at mu == 0. TWO different situations, and they need opposite answers:
+    # mu^(k-2) at or NEAR mu == 0. TWO different situations, needing opposite answers:
     #
     #  k == 2 exactly (add/prop/combined1/combined2): the coefficient k(k-1)/2 * ...
     #    is not zero but mu^0 = 1, so nothing diverges -- E[f^2] = mu^2 + var, exact.
     #  k <  2 (pow with c < 1): mu^(k-2) is a genuine POLE. The second-order delta
     #    expansion simply does not exist at mu = 0.
     #
-    # rxode2's safePow (substitute DBL_EPSILON for a zero base) is the right rule for
-    # a SOLVE evaluating x^y; it is the wrong rule inside a Taylor expansion, because
-    # eps^(k-2) is astronomically large and gets multiplied by a non-zero coefficient.
-    # Measured with c = 0.25, f = 0, var_f = 0.1: dv = -3.4e+20 -- a NEGATIVE variance,
-    # and at c = 0.75 a finite, plausible-looking 2.3e+05. Drop the divergent term
-    # instead and keep the exact leading order, which is what this returned before.
-    kk2 <- kk - 2
-    trm <- ifelse(mm == 0 & kk2 < 0, 0, mm^kk2)
-    out[nz] <- out[nz] + (kk * (kk - 1) / 2) * trm * var_f[nz]
+    # rxode2's safePow (substitute DBL_EPSILON for a zero base) is the right rule
+    # for a SOLVE evaluating x^y, but the WRONG one inside a Taylor expansion:
+    # eps^(k-2) is astronomically large and gets multiplied by a non-zero
+    # coefficient. Cap the correction against the leading term instead.
+    kk2  <- kk - 2
+    lead <- out[nz]
+    corr <- (kk * (kk - 1) / 2) * mm^kk2 * var_f[nz]
+    cap  <- kk2 < 0 & is.finite(lead)
+    if (any(cap))
+      corr[cap] <- sign(corr[cap]) * pmin(abs(corr[cap]), abs(lead[cap]))
+    corr[!is.finite(corr)] <- 0
+    out[nz] <- lead + corr
   }
   out
 }
@@ -1227,10 +1234,18 @@ without that parameter there is no residual to integrate"),
   # Local closure, not a package-level helper: a new binding cannot be ADDED to a
   # locked installed namespace, so a dev-mode mirai daemon would fail to find it
   # (see the note at the top of simulate.R).
-  # See .admMomF: at mu == 0 a NEGATIVE exponent is a genuine pole of the expansion,
-  # not a safePow case, so the term is dropped rather than evaluated at eps. The
-  # k == 2 path (exponent 0) is unaffected and stays exact.
-  .pw <- function(e) ifelse(mu == 0 & e < 0, 0, mu^e)
+  # See .admMomF: a NEGATIVE exponent is a genuine pole of the expansion near mu = 0,
+  # not a safePow case. Cap each divergent term against the leading term rather than
+  # testing mu == 0 exactly, so the derivative stays finite and continuous as mu -> 0.
+  # The k == 2 path (exponent 0) is unaffected and stays exact.
+  .pw <- function(e) {
+    r <- mu^e
+    if (any(e < 0)) {
+      bad <- !is.finite(r) | (e < 0 & abs(r) > .ADM_MOM_CAP)
+      r[bad] <- 0
+    }
+    r
+  }
   list(m   = mk + g * .pw(k - 2) * v0,
        dmu = k * .pw(k - 1) + g * (k - 2) * .pw(k - 3) * v0,
        dv0 = g * .pw(k - 2),
@@ -1949,7 +1964,8 @@ without that parameter there is no residual to integrate"),
 # Returns a length-n_t vector to be added to dNLL_dmu before the eta/omega chain
 # rule. Zero on purely additive rows. (admc's `sigma_mu_scale`.)
 .admResidMuCoupling <- function(mu_struct, arr, pinfo, dNLL_dvar, dNLL_dmu,
-                                var_f = NULL, dNLL_dV = NULL, cov_f = NULL) {
+                                var_f = NULL, dNLL_dV = NULL, cov_f = NULL,
+                                times = NULL) {
   d <- .admResidDeriv(mu_struct, var_f, arr, pinfo)
   # d$dmu_df, NOT d$ms: they differ for TBS (see .admResidDeriv$dmu_extra). Callers
   # already carry the plain dNLL_dmu, so only the excess over 1 belongs here.
@@ -1963,6 +1979,23 @@ without that parameter there is no residual to integrate"),
     A <- dNLL_dV * cov_f
     diag(A) <- 0
     out <- out + 2 * d$dms_df * drop(A %*% d$ms)
+  }
+  # ORDINAL: V_pred[i,j] = -E[p_i]E[p_j] for i != j at the same time (the structural
+  # covariance cancels -- see .admResidApply), so mu_i reaches those entries directly
+  # with d(V_pred[i,j])/d(mu_i) = -mu_j. Nothing else carries that: dv_df is the
+  # diagonal and dms_df is zero for ordinal. Omitting it left this term with the
+  # WRONG SIGN and ~16x relative error against a numeric reference.
+  #
+  # Currently unreachable -- .admLoadSensModel() returns NULL for ordinal, which puts
+  # every estimator on a finite-difference gradient -- but the omission was silent
+  # and depended on that invariant holding, so carry the term rather than the risk.
+  or_ <- arr$form == .ADM_RESID_ORDINAL
+  if (any(or_) && !is.null(dNLL_dV) && !is.null(times) &&
+      length(times) == length(mu_struct)) {
+    g <- ifelse(or_ & !is.na(times), match(times, unique(times)), NA_integer_)
+    same <- outer(g, g, function(a, b) !is.na(a) & !is.na(b) & a == b)
+    diag(same) <- FALSE
+    out <- out + 2 * drop((dNLL_dV * same) %*% (-mu_struct))
   }
   out
 }

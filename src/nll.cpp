@@ -6,23 +6,12 @@
 using namespace Rcpp;
 using namespace Eigen;
 
-// safePow, as rxode2 defines it (Rx_pow_ in rxode2_model_shared.h, safePow = TRUE
-// by default): x^y with x == 0 and y < 0 substitutes x = DBL_EPSILON. Without it
-// std::pow(0, -1) is inf and g*(k-2) is EXACTLY 0 at k = 2, so the product is
-// 0*inf = NaN. A structural prediction of exactly 0 at t = 0 is routine (a depot
-// model's first observation), so this returned NaN from the C++ NLL while the R
-// twin .admMomF returned a finite value -- the two paths this file's header
-// insists must stay in lockstep, disagreeing on whether the model fits at all.
 // safeLog, as rxode2 defines it (_safe_log_ in rxode2_model_shared.h): log(x) for
 // x > 0, else log(DBL_EPSILON). The back-transform's `default` branch is reached
 // for a plain ADDITIVE mu-reference (curEval == ""), i.e. the standard Emax
 // writing style `emax <- temax + eta.emax`, where theta can legitimately be <= 0.
 static inline double adm_safe_log(double a) {
   return std::log(a <= 0.0 ? DBL_EPSILON : a);
-}
-
-static inline double adm_safe_pow(double a, double b) {
-  return std::pow((b < 0.0 && a == 0.0) ? DBL_EPSILON : a, b);
 }
 
 
@@ -274,9 +263,30 @@ Eigen::VectorXd compute_mean_new_cpp(
 // A purely ADDITIVE model (b^2 = 0, ms = 1) still evaluates to v0 + a^2 exactly,
 // so add() fits are bit-for-bit what they always were.
 // ---------------------------------------------------------------------------
+// E[f^k] from (mu, var): exact at k = 1 and k = 2, a second-order delta expansion
+// otherwise (reached only by pow()/combined with c not in {0.5, 1}).
+//
+// MUST match R's .admMomF() exactly. .admNLL() takes this fused path while
+// .admGrad() takes the R one, so any divergence leaves the objective and the
+// gradient describing different functions. The shared rule: the second-order term
+// is only meaningful while it is small against the leading term, so cap it there.
+//
+// Substituting DBL_EPSILON for the base (rxode2's safePow -- the right rule for a
+// SOLVE evaluating x^y) is the WRONG rule inside a Taylor expansion: near a zero
+// prediction, which is routine for a depot model at t = 0, eps^(k-2) is
+// astronomically large and this diverged from R by ~1e21 (R returned a finite
+// variance, C++ returned Inf for the same input). Capping is continuous, never
+// yields a negative variance, and is exact wherever the expansion is valid.
 static inline double adm_mom_f(double mu, double v0, double k) {
-  const double g = k * (k - 1.0) / 2.0;
-  return std::pow(mu, k) + g * adm_safe_pow(mu, k - 2.0) * v0;
+  const double g    = k * (k - 1.0) / 2.0;
+  const double lead = std::pow(mu, k);
+  double corr = g * std::pow(mu, k - 2.0) * v0;
+  if (k - 2.0 < 0.0 && R_finite(corr)) {
+    const double cap = std::fabs(lead);
+    if (std::fabs(corr) > cap) corr = (corr < 0.0 ? -cap : cap);
+  }
+  if (!R_finite(corr)) corr = 0.0;
+  return lead + corr;
 }
 
 static inline void adm_apply_residual(

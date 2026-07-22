@@ -328,7 +328,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
     mu_struct <- mu
     arr   <- .admResidRows(pinfo, s$output, pars$sigma_var, length(mu))
     var_f <- diag(V)                       # Var_eta(f), pre-residual
-    ap    <- .admResidApply(mu_struct, var_f, arr, s$times)
+    ap    <- .admResidApply(mu_struct, var_f, arr, s$times, cov_f)
     mu    <- ap$mu
     # lnorm scales the whole covariance, not just its diagonal (ms == 1 otherwise)
     # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
@@ -402,7 +402,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
     eff_dNLL_dmu <- dNLL_dmu +
       .admResidMuCoupling(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
                           if (.is_var_s) NULL else dNLL_dV,
-                          if (.is_var_s) NULL else cov_f)
+                          if (.is_var_s) NULL else cov_f, s$times)
 
     d_mat <- sweep(bi, 2L, mean_new)
 
@@ -431,11 +431,11 @@ nmObjGetControl.adirmc <- function(x, ...) {
         # rxode2's safeZero (_div0_): a zero denominator becomes DBL_EPSILON.
         # `back` is expit(p, low, hi), which is 0 at p = 0 whenever low = 0.
         back  <- .tr$low + (.tr$hi - .tr$low) * s_val
-        (.tr$hi - .tr$low) * s_val * (1 - s_val) / .admDiv0(back)
+        (.tr$hi - .tr$low) * s_val * (1 - s_val) / { .d <- back; .d[.d == 0] <- .Machine$double.eps; .d }
       } else if (.tr$curEval %in% c("probitInv", "probit")) {
         p_val <- pars$struct[[nm]]
         back  <- .tr$low + (.tr$hi - .tr$low) * pnorm(p_val)
-        (.tr$hi - .tr$low) * dnorm(p_val) / .admDiv0(back)
+        (.tr$hi - .tr$low) * dnorm(p_val) / { .d <- back; .d[.d == 0] <- .Machine$double.eps; .d }
       } else {
         (.admLogBackTransform(pars$struct[[nm]] + 1e-7, .tr) -
            .admLogBackTransform(pars$struct[[nm]] - 1e-7, .tr)) / (2e-7)

@@ -16,15 +16,6 @@ utils::globalVariables(c(
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
-# rxode2's safeZero, at R level: _div0_() substitutes DBL_EPSILON for a zero
-# denominator (rxode2_model_shared.h; rxSolve's safeZero defaults to TRUE). Used
-# wherever admixr2 divides by a quantity a fit can legitimately drive to zero, so
-# admixr2 and the solve degrade the same way instead of one returning Inf/NaN.
-.admDiv0 <- function(denom) {
-  denom[denom == 0] <- .Machine$double.eps
-  denom
-}
-
 # -- nloptr algorithm selection ------------------------------------------------
 
 # Valid nloptr algorithm names, queried from the installed nloptr so the set

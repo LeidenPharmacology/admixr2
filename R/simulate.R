@@ -66,7 +66,7 @@
   # beta: derived prediction mu = b1/(b1+b2) -- see .admSimulate
   vals <- if (!is.null(study$out_pair)) {
     .b1 <- out[[study$out_pair[[1L]]]]; .b2 <- out[[study$out_pair[[2L]]]]
-    .b1 / .admDiv0(.b1 + .b2)
+    .b1 / { .d <- .b1 + .b2; .d[.d == 0] <- .Machine$double.eps; .d }
   } else {
     .v <- out[[output_var]]
     if (is.null(.v)) out[["ipredSim"]] else .v
@@ -192,7 +192,7 @@
   for (blk in unit$blocks) {
     vals <- if (!is.null(blk$out_pair)) {
       .b1 <- out[[blk$out_pair[[1L]]]]; .b2 <- out[[blk$out_pair[[2L]]]]
-      .b1 / .admDiv0(.b1 + .b2)
+      .b1 / { .d <- .b1 + .b2; .d[.d == 0] <- .Machine$double.eps; .d }
     } else out[[blk$output]]
     if (is.null(vals)) vals <- out[["ipredSim"]]
     keep <- time %in% blk$times

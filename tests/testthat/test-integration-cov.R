@@ -37,7 +37,7 @@ test_that("admCalcCov NLL-FD: result is positive definite", {
   expect_true(all(eigs > 0))
 })
 
-test_that("admCalcCov NLL-FD: omega params are INCLUDED in the returned matrix", {
+test_that("admCalcCov NLL-FD: omega is in the Hessian but NOT in the returned matrix", {
   env_cov <- .int_cov_setup()
   result  <- env_cov$result_nll
   expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
@@ -49,7 +49,14 @@ test_that("admCalcCov NLL-FD: omega params are INCLUDED in the returned matrix",
   # 0.67 to 1.06 (lnorm) once omega was included; a purely additive model barely
   # moved. Under-stated SEs give over-confident intervals, so that was the
   # dangerous direction of error.
-  expect_true(all(env_cov$env$pinfo$omega_par_names %in% rownames(result)))
+  #
+  # Omega is NOT returned, though. .admFullTheta() reports omega as the
+  # variance/covariance entries while the optimizer holds the log-Cholesky, and
+  # that map is not diagonal once omega is correlated -- so a correct omega SE
+  # needs a full Jacobian, not a per-row factor. A mixed-scale matrix would be
+  # worse than none, and nlmixr2est prints `Estimate +- 1.96*SE` from whatever
+  # this returns.
+  expect_false(any(env_cov$env$pinfo$omega_par_names %in% rownames(result)))
 })
 
 # ---- Grad-FD Hessian (use_grad = TRUE) ---------------------------------------
@@ -125,13 +132,12 @@ test_that("adfoCalcCov NLL-FD: result is positive definite", {
   expect_true(all(eigs > 0))
 })
 
-test_that("adfoCalcCov NLL-FD: omega params are INCLUDED in the returned matrix", {
+test_that("adfoCalcCov NLL-FD: omega is in the Hessian but NOT in the returned matrix", {
   env_cov <- .int_adfo_cov_setup()
   result  <- env_cov$result_nll
   expect_false(is.null(result), info = "NLL-FD Hessian should be PD at sigma_sd=1")
-  # Omega is now part of the Hessian -- see the admCalcCov test above for why and
-  # for the measured effect on the structural standard errors.
-  expect_true(all(env_cov$env$pinfo$omega_par_names %in% rownames(result)))
+  # Omega is in the Hessian but not returned -- see the admCalcCov test above.
+  expect_false(any(env_cov$env$pinfo$omega_par_names %in% rownames(result)))
 })
 
 # ---- adfoCalcCov: Grad-FD Hessian (use_grad = TRUE) --------------------------
@@ -189,4 +195,53 @@ test_that("adfoCalcCov: non-finite NLL at p_hat warns and returns NULL", {
     "NLL not finite"
   )
   expect_null(result)
+})
+
+# ---- The returned covariance must be on the REPORTED scale -------------------
+
+test_that("a sigma SE is on the same scale as the sigma estimate it is printed with", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  skip_if_not_installed("lotri")
+  # nlmixr2est prints `Estimate +- 1.96*SE` straight from parFixedDf. .admFullTheta()
+  # reports a "var"-role sigma back-transformed to an SD, while the Hessian is taken
+  # w.r.t. log(sigma^2) -- so returning the raw optimizer-scale block made the printed
+  # SE too large by a factor of 2/a. At a = 0.1 that is 20x, and it looked plausible
+  # rather than obviously broken, which is why it needs an INDEPENDENT check rather
+  # than one phrased in terms of the transform the code applies.
+  #
+  # The independent statement: with 2000 subjects, a residual SD is estimated
+  # precisely, so its %RSE is a few percent. Under the scale bug it would be ~2/a in
+  # relative terms, i.e. of order 2000%. The assertion below has a ~50x margin, so it
+  # cannot pass by luck and does not restate the implementation.
+  fn <- function() {
+    ini({ tcl <- log(3); tv <- log(30); a <- 0.1; eta.cl ~ 0.09 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+            d/dt(central) <- -(cl / v) * central; cp <- central / v
+            cp ~ add(a) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  tt <- c(0.5, 1, 2, 4, 8); N <- 2000L
+  set.seed(11)
+  sim <- suppressWarnings(rxode2::rxSolve(
+    ui$simulationModel, rxode2::et(rxode2::et(amt = 100), tt), nSub = N,
+    omega = lotri::lotri(eta.cl ~ 0.09), sigma = lotri::lotri(rxerr.cp ~ 1),
+    returnType = "data.frame", nDisplayProgress = .Machine$integer.max))
+  Y <- matrix(sim$sim[sim$time %in% tt], N, length(tt), byrow = TRUE)
+  d <- list(E = colMeans(Y), V = stats::cov.wt(Y, method = "ML")$cov,
+            n = N, times = tt, ev = rxode2::et(amt = 100))
+  fit <- suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+    fn, admData(), est = "adgh",
+    control = adghControl(studies = list(s = d), maxeval = 200L, covMethod = "r"))))
+  skip_if(is.null(fit$cov), "covariance not computed")
+
+  pf  <- fit$parFixedDf
+  est <- unname(pf["a", "Estimate"])
+  se  <- unname(pf["a", "SE"])
+  expect_true(is.finite(se) && se > 0)
+  expect_equal(est, 0.1, tolerance = 0.15)          # the estimate itself is sane
+  expect_lt(se / est, 0.4)                          # scale bug would give ~20
+  # ... and sigma is reported at all (it used to be uninitialised memory).
+  expect_true("a" %in% rownames(fit$cov))
+  expect_false(any(grepl("^logchol_", rownames(fit$cov))))
 })

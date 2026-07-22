@@ -502,9 +502,10 @@ nmObjGetControl.admc <- function(x, ...) {
 
       # sigma mu-path coupling and sigma gradient, each on its output's rows.
       arr <- .admResidRows(pinfo, .admRowOutput(s, n_t), pars$sigma_var, n_t)
+      .rt_j <- .admRowTimes(s, n_t)
       sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
                                             dNLL_dV_diag, dNLL_dmu, var_f,
-                                            dNLL_dV, V_struct)
+                                            dNLL_dV, V_struct, .rt_j)
       # V_pred -> V_struct chain (see the single-output branch below)
       vchain     <- .admResidVChain(mu_struct, var_f, arr, pinfo,
                                     .admRowTimes(s, length(mu_struct)))
@@ -532,7 +533,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
         .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                    dNLL_dV, s$times, V_struct)
+                    dNLL_dV, .rt_j, V_struct)
 
       # Unpaired struct thetas. The augmented sens model carries d(pred)/d(theta)
       # directly (js$dtheta_list): it enters exactly like an eta direction, so the
@@ -705,7 +706,7 @@ nmObjGetControl.admc <- function(x, ...) {
       cov_f <- crossprod(cp_c) / n_sim               # STRUCTURAL Cov_eta(f); keep it,
       V  <- cov_f                                    # the ms/sigma chain needs it
       var_f <- diag(V)                               # Var_eta(f), pre-residual
-      ap <- .admResidApply(mu_struct, var_f, arr, s$times)
+      ap <- .admResidApply(mu_struct, var_f, arr, s$times, cov_f)
       mu <- ap$mu
       if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)   # lnorm scales off-diagonals
       diag(V) <- ap$dv
@@ -724,7 +725,8 @@ nmObjGetControl.admc <- function(x, ...) {
     # Computed once per study and reused across every gradient term.
     sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
                                           dNLL_dV_diag, dNLL_dmu, var_f,
-                                          if (is_var) NULL else dNLL_dV, cov_f)
+                                          if (is_var) NULL else dNLL_dV, cov_f,
+                                          s$times)
     eff_dmu <- dNLL_dmu + sigma_mu_scale
     inv_n <- 1 / n_sim
 
@@ -996,6 +998,16 @@ nmObjGetControl.admc <- function(x, ...) {
                            use_central = FALSE) {
   n_c   <- length(p_list)
   if (n_c == 0L) return(matrix(0, 0, length(p_list[[1L]])))
+
+  # Joint (same-subject) units are not handled by the batched path -- its stacked
+  # matrices are shaped for a single output and it errors with "non-conformable
+  # arguments". .admNLLBatch() already falls back per config for these; mirror that
+  # here rather than relying on the driver's `!any_joint` guard staying in place.
+  if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1))))
+    return(t(vapply(p_list, function(.p)
+      .admGrad(.p, pinfo, studies, z_list, rxMod, output_var, params_list, cores,
+               h, sensModel),
+      numeric(length(p_list[[1L]])))))
 
   np            <- length(p_list[[1L]])
   n_eta         <- pinfo$n_eta
@@ -1307,7 +1319,7 @@ nmObjGetControl.admc <- function(x, ...) {
         cov_f <- crossprod(cp_c) / n_sim               # keep the STRUCTURAL cov
         V  <- cov_f
         var_f <- diag(V)
-        ap <- .admResidApply(mu_struct, var_f, arr, s$times)
+        ap <- .admResidApply(mu_struct, var_f, arr, s$times, cov_f)
         mu <- ap$mu
         # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
         # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
@@ -1326,7 +1338,8 @@ nmObjGetControl.admc <- function(x, ...) {
 
       sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
                                             dNLL_dV_diag, dNLL_dmu, var_f,
-                                            if (is_var) NULL else dNLL_dV, cov_f)
+                                            if (is_var) NULL else dNLL_dV, cov_f,
+                                            s$times)
       eff_dmu <- dNLL_dmu + sigma_mu_scale
       inv_n <- 1 / n_sim
       # V_pred -> V_struct chain (see .admGrad)
@@ -1568,17 +1581,35 @@ nmObjGetControl.admc <- function(x, ...) {
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
   dimnames(cov_full) <- list(nms_cov, nms_cov)
-  # Return the FULL struct + sigma block, not just the structural corner.
+  # SCALE. The returned covariance must be on the scale the ESTIMATES are reported
+  # on, because nlmixr2est prints `Estimate +- 1.96*SE` from the two together.
+  # .admFullTheta() reports a structural theta on its optimizer (log) scale, but a
+  # residual parameter on its NATURAL scale -- a "var" role as an SD, a t() df as
+  # nu, an ar() correlation as rho. The Hessian is taken w.r.t. the optimizer
+  # parameterisation, so the sigma rows need the delta-method factor d(reported)/dp
+  # or the printed interval is wrong by that factor (for a "var" sigma it is 2/a,
+  # so an SD of 0.1 would print an SE 20x too large).
   #
-  # The Hessian is built over `cov_idx` (structural thetas AND residual-error
-  # parameters), and the sigma SEs it produces are good -- validated against the
-  # empirical sampling SD over 40 simulated datasets: add 0.94, prop 0.91,
-  # lnorm 0.90 (reported SE / empirical SD, on the log-variance scale the
-  # optimizer works on). Returning only the structural corner threw them away AND
-  # left nlmixr2est's C++ popDf builder reading past the end of the matrix, so
-  # every sigma row of `fit$parFixedDf$SE` printed an uninitialised denormal
-  # (6.953178e-310, with %%RSE ~ 1e+307) rather than NA. Shipping the whole block
-  # both removes that garbage and reports three more correct standard errors.
+  # OMEGA is deliberately kept in the HESSIAN but dropped from the RETURNED matrix.
+  # Including it in the Hessian is what fixes the structural SEs (profiling omega
+  # out rather than conditioning on it made them ~33% too small). Reporting its own
+  # SE is a separate question: .admFullTheta reports omega as the VARIANCE/COVARIANCE
+  # entries while the optimizer holds the log-Cholesky, and that map is not diagonal
+  # once omega is correlated -- so a correct omega SE needs a full Jacobian, not a
+  # per-row factor. Shipping a mixed-scale matrix would be worse than shipping none.
+  .role  <- .admSigmaRole(pinfo)
+  .sig_v <- .admSigmaNat(p_hat[n_s + seq_len(n_e)], pinfo)
+  .jac   <- rep(1, n_sub)
+  if (n_e > 0L) .jac[n_s + seq_len(n_e)] <- vapply(seq_len(n_e), function(k)
+    switch(.role[k],
+           var     = sqrt(.sig_v[[k]]) / 2,          # reported SD  = exp(p/2)
+           t_df    = .sig_v[[k]] - 2,                # reported nu  = 2 + exp(p)
+           ar_cor  = .sig_v[[k]] * (1 - .sig_v[[k]]),# reported rho = expit(p)
+           nb_size = .sig_v[[k]],                    # reported size = exp(p)
+           1), double(1))                            # pow_exp / tbs_lam: identity
+  .keep <- seq_len(min(n_sub, nrow(cov_full)))
+  cov_full <- cov_full[.keep, .keep, drop = FALSE] *
+    tcrossprod(.jac[.keep])
   cov_full
 }
 
@@ -2318,7 +2349,10 @@ nlmixr2Est.admc <- function(env, ...) {
     # grad-FD Hessian relies on the single-output analytical grad batch.
     use_grad_cov <- want_grad && !multi_out && !any_joint
     use_cent_cov <- want_central
-    np_cov <- length(pinfo$struct_names) + length(pinfo$sigma_names)
+    # struct + sigma + OMEGA: the Hessian spans all three (omega is dropped from
+    # the RETURNED block, not from the Hessian), so the evaluation count must too.
+    np_cov <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
+              length(pinfo$omega_par)
     n_evals <- if (use_grad_cov) {
       np_cov + 1L
     } else {
