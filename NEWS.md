@@ -158,6 +158,92 @@
   count MEAN (the distribution's argument), exactly as it already did for `beta`;
   gradients agree with a finite difference to 1.7e-05.
 
+* **The covariance Hessian used the starting lambda for a transformed endpoint.**
+  `.admGradBatch()` -- the evaluator behind `covMethod = "r"` when a gradient is
+  available -- inherited the transform back-transform but not the
+  estimated-lambda fix: an estimated `boxCox`/`yeoJohnson` lambda is a *sigma*
+  name, so the zero-fill of the solve frame handed rxode2 lambda = 0 (a plain log
+  transform) while the inverse used the model's STARTING lambda, held constant
+  across every configuration. That is the same mismatch documented elsewhere here
+  as making the sensitivity gradient ~60x wrong, driving the Hessian: every
+  reported SE came from the gradient of a different function, and lambda's own row
+  was insensitive to lambda. Each configuration now writes and inverts with its
+  own lambda; measured against `.admGrad()` at a lambda well away from its start,
+  the batch gradient went from 67% wrong to exact.
+
+* **`beta()` endpoints were only ever right on the plain NLL path.** The
+  prediction of `y ~ beta(b1, b2)` is the derived mean `b1/(b1+b2)` and its
+  variance needs the SOLVED precision `phi = b1 + b2`, and every other path read
+  the raw first shape parameter, or dropped `phi`, or both: the `covMethod = "r"`
+  objective evaluator scored a different model from the fit, the finite-difference
+  gradient returned all-`NA`, `datagen()` emitted an `E` that was a shape
+  parameter and a `V` of `NA`s, and `plot()` gave an all-`NA` predicted covariance
+  after a perfectly ordinary fit. None of it raised anything. Every path that
+  turns a solve into a prediction now combines the pair and carries `phi`.
+
+  A beta fit is also now driven **derivative-free**, with a message: a structural
+  theta reaches the objective through `phi` as well as through the mean, and every
+  gradient path chains through the mean alone. `datagen(method = "fo")` refuses a
+  beta endpoint for the related reason that FO has no path to `phi` at all.
+
+* **The `ar()` and `ordinal` guards judged every study, not the affected one.**
+  Both decided from a model-level scan and then rejected every flattened unit, so
+  `cp ~ add(a) + ar(rho); ct ~ add(a2)` refused a `ct` study whose `V` happened to
+  be diagonal, and a PK + ordinal model could never be fitted at all -- the
+  ordinary `cp` study is neither joint nor supplies one block per category. Each
+  guard now looks only at units that observe the endpoint it is about.
+
+* **Ordinal categories were grouped by exact floating-point time equality.** The
+  row times come from the per-category blocks, i.e. from independent user inputs:
+  `seq(0.1, 0.7, by = 0.2)` and `c(0.1, 0.3, 0.5, 0.7)` are the same grid to a
+  reader and differ in the last bit to `match()`, which put the two categories in
+  different groups and silently dropped the `-p_j*p_k` cross-covariance for those
+  rows -- the term a joint ordinal fit exists to capture. Grouped by tolerance now.
+
+* **The moment expansion and its derivative capped the same pole differently.**
+  `.admMomF()` (what the NLL scores) caps the divergent `mu^(k-2)` correction
+  against the leading term; `.admMomFd()` (what the gradient chains through) zeroed
+  it past a magnitude threshold instead. For `pow(b, c)` with `c < 1` near a zero
+  prediction the two differed by orders of magnitude, so the optimizer was handed a
+  direction that does not descend the function it is minimising. The derivatives
+  are now the derivatives of the capped expression, piecewise, and agree with a
+  finite difference of `.admMomF()` across the capped and uncapped regimes alike.
+
+* **A parallel worker could invert a transform with another model's lambda.** The
+  sensitivity cache key covers the `model({})` block, the `iniDf` names, the
+  `fix()` flags and the `err` column -- but not the estimates, so two models
+  differing only in the VALUE of a `fix()`ed lambda share one file. The parent
+  re-derives `pred_tbs` on a cache hit; the worker could not, and used the file's.
+  The parallel restarts then minimised a different objective from the sequential
+  ones, invisibly, because the NLL itself is bit-identical. The worker now
+  re-derives it from `pinfo`, which it already holds.
+
+* **`plot()` back-transformed three residual roles on the wrong scale.** The trace
+  panel special-cased `pow_exp` and `t_df` and let `ar_cor`, `nb_size` and
+  `tbs_lam` fall through to the generic `exp(v/2)` variance rule: a converged
+  `ar()` correlation of 0.6 plotted as **1.22**, outside its own support and
+  disagreeing with what `print(fit)` reports. The display map now comes from
+  `.admSigmaNat()` itself, so a new `sigma_role` cannot be added in one place and
+  forgotten in the other.
+
+* **A `binom` size written as a model constant was refused as non-constant.**
+  `nt <- 20; y ~ binom(nt, p)` -- a genuinely constant number of trials, and how
+  one is usually written -- hard-errored with advice to `fix()` a parameter that
+  does not exist. A bare numeric assignment in `model({})` now resolves; an
+  estimated size is still refused, since it has no gradient path.
+
+* **A count or beta endpoint alongside another endpoint is now refused.**
+  Multi-endpoint solves route observations by compartment, and a count endpoint is
+  read through its distribution's ARGUMENT -- a model variable, not a compartment
+  -- so the tagged records matched nothing and the objective came back `Inf` with
+  no explanation. Relatedly, the dummy frame handed to nlmixr2est now carries the
+  ENDPOINT names rather than the solve columns, which is what its `dvid`->`cmt`
+  translation expects.
+
+* **`datagen()` refuses an ordinal endpoint** instead of emitting a study without
+  the cross-category covariance: its categories are one joint observation, and
+  `datagen()` derives each observed output separately.
+
 * **Documented: an `adfo` standard error describes scatter, not accuracy.** FO
   linearises at eta = 0, so on a non-additive residual or a large omega the point
   estimate carries a bias of several standard errors -- measured 5-20 SE, giving

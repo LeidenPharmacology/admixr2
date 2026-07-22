@@ -64,15 +64,28 @@
                           nDisplayProgress = ndp)
   keep <- out[["time"]] %in% study$times
   # beta: derived prediction mu = b1/(b1+b2) -- see .admSimulate
+  .phi <- NULL
   vals <- if (!is.null(study$out_pair)) {
     .b1 <- out[[study$out_pair[[1L]]]]; .b2 <- out[[study$out_pair[[2L]]]]
-    .b1 / { .d <- .b1 + .b2; .d[.d == 0] <- .Machine$double.eps; .d }
+    .phi <- .b1 + .b2
+    .b1 / { .d <- .phi; .d[.d == 0] <- .Machine$double.eps; .d }
   } else {
     .v <- out[[output_var]]
     if (is.null(.v)) out[["ipredSim"]] else .v
   }
-  matrix(vals[keep], nrow = nrow(struct_mat), ncol = length(study$times),
-         byrow = TRUE)
+  m <- matrix(vals[keep], nrow = nrow(struct_mat), ncol = length(study$times),
+              byrow = TRUE)
+  # phi rides back the same way it does from .admSimulate: beta's
+  # Var(y | eta) = mu(1 - mu)/(1 + phi) needs it, and it is SOLVED rather than
+  # fitted, so a caller that only has the prediction matrix cannot recover it.
+  # Without this the row-varying paths left arr$phi at NA and every entry of the
+  # predicted covariance came back NA. phi is eta-independent (checked at parse)
+  # but NOT theta-independent, so each ROW keeps its own -- these paths exist
+  # precisely to put different thetas in different rows.
+  if (!is.null(.phi))
+    attr(m, "phi") <- matrix(.phi[keep], nrow = nrow(struct_mat),
+                             ncol = length(study$times), byrow = TRUE)
+  m
 }
 
 # NOTE ON THE FIXED-THETA FILL BELOW (repeated inline in three solve paths rather

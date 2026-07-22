@@ -413,3 +413,37 @@ test_that("datagen(): unnamed studies get auto-names", {
 
   expect_equal(names(out), "study1")
 })
+
+test_that("datagen() refuses the endpoints it cannot generate, rather than emitting NAs", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+
+  # ordinal: its categories are ONE joint observation whose covariance carries the
+  # -p_j*p_k term between categories at the same time. datagen() derives each
+  # observed output separately, so that block cannot be formed here at all.
+  ord <- function() {
+    ini({ tcl <- log(5); tv <- log(20); eta.cl ~ 0.09 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+            d/dt(central) <- -(cl / v) * central
+            cp <- central / v
+            p1 <- 1 / (1 + exp(-(cp - 1)))
+            p2 <- 1 - p1
+            y ~ c(p1, p2) })
+  }
+  expect_error(
+    datagen(list(s = list(times = c(1, 2), ev = rxode2::et(amt = 100), n = 50L)),
+            model = ord, control = datagenControl(n_sim = 100L, seed = 1L)),
+    "ordinal")
+
+  # beta under method = "fo": .adfoVpred never sees the solved b1 + b2, so the
+  # diagonal of the emitted V would be entirely NA.
+  bet <- function() {
+    ini({ tem <- log(0.6); tphi <- log(30); eta.em ~ 0.05 })
+    model({ em <- exp(tem + eta.em); phi <- exp(tphi)
+            mu <- em / (1 + em); b1 <- mu * phi; b2 <- (1 - mu) * phi
+            y ~ beta(b1, b2) })
+  }
+  expect_error(
+    datagen(list(s = list(times = c(1, 2), ev = rxode2::et(amt = 0), n = 50L)),
+            model = bet, control = datagenControl(method = "fo", seed = 1L)),
+    "beta")
+})

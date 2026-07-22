@@ -282,3 +282,45 @@ test_that("joint residual applies each output's sigma to its own rows", {
   # ADDITIVE row is unaffected, since its variance does not depend on f.
   expect_equal(diag(jr$V), c(1 + 0.09*(1 + 16), 1 + 0.09*(1 + 4), 1 + 0.05))
 })
+
+# ---- endpoint NAMES vs solve COLUMNS -----------------------------------------
+
+test_that(".admEndpointNames gives nlmixr2's endpoint names, not the solve column", {
+  skip_if_not_installed("rxode2")
+  # The two coincide for an ordinary endpoint and diverge for exactly the ones
+  # .admEndpointVar() exists for: `y ~ pois(lam)` is SOLVED through `lam` while
+  # nlmixr2 knows the endpoint as `y`. These names go into the DVID column of the
+  # dummy frame handed to nlmixr2CreateOutputFromUi(), whose dvid->cmt translation
+  # rejects anything that is not an endpoint -- so a converged fit died at the
+  # output-building step with "'dvid'->'cmt' ... undefined compartment".
+  fn <- function() {
+    ini({ tcl <- log(5); tv <- log(20); a <- 0.5; eta.cl ~ 0.09 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+            d/dt(central) <- -(cl / v) * central
+            cp  <- central / v
+            lam <- cp * 2 + 0.5
+            cp ~ add(a)
+            y  ~ pois(lam) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  expect_equal(admixr2:::.admOutputVars(ui),   c("cp", "lam"))   # solve columns
+  expect_equal(admixr2:::.admEndpointNames(ui), c("cp", "y"))    # endpoint names
+
+  # ... and this combination is refused rather than silently scoring Inf: the
+  # multi-endpoint solve routes observations by compartment, and `lam` is not one.
+  expect_error(admixr2:::.admCheckMixedEndpoints(ui),
+               "cannot be combined with other endpoints")
+
+  # a single-endpoint count model is the supported case and must stay silent
+  fn1 <- function() {
+    ini({ tcl <- log(5); tv <- log(20); eta.cl ~ 0.09 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+            d/dt(central) <- -(cl / v) * central
+            cp <- central / v
+            y ~ pois(cp) })
+  }
+  ui1 <- suppressMessages(rxode2::rxode2(fn1))
+  expect_silent(admixr2:::.admCheckMixedEndpoints(ui1))
+  expect_equal(admixr2:::.admEndpointNames(ui1), "y")
+  expect_equal(admixr2:::.admOutputVars(ui1),    "cp")
+})

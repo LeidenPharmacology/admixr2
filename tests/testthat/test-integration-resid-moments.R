@@ -40,8 +40,25 @@ skip_if_not_installed("rxode2")
   comb2 = c("a <- 0.5; b <- 0.15",          "cp ~ add(a) + prop(b)"),
   comb1 = c("a <- 0.5; b <- 0.15",          "cp ~ add(a) + prop(b) + combined1()"),
   lnorm = c("a <- 0.3",                     "cp ~ lnorm(a)"),
-  propt = c("b <- 0.15; nu <- fix(5)",      "cp ~ prop(b) + t(nu)")
+  propt = c("b <- 0.15; nu <- fix(5)",      "cp ~ prop(b) + t(nu)"),
+  # The forms added when the error-model factory was completed. CLAUDE.md's rule
+  # is that a new residual form extends THIS file; they were landing with the
+  # closed-form layer alone and no analytic-gradient-vs-FD check, which is exactly
+  # what let the lnorm sensitivity defect survive for so long.
+  bc     = c("a <- 0.3; lam <- 0.4",        "cp ~ add(a) + boxCox(lam)"),
+  yj     = c("a <- 0.3; lam <- 0.4",        "cp ~ add(a) + yeoJohnson(lam)"),
+  logitn = c("a <- 0.3",                    "cp ~ logitNorm(a, 0, 60)"),
+  probn  = c("a <- 0.3",                    "cp ~ probitNorm(a, 0, 60)"),
+  pois   = c("",                            "y ~ pois(cp)"),
+  nbin   = c("k <- 4",                      "y ~ nbinomMu(k, cp)")
 )
+
+# The closed forms written out in the first test below cover the three ANALYTIC
+# variance shapes (combined2, combined1, lnorm). The transform-both-sides and
+# count families are integrated/derived differently -- they are checked against
+# rxode2's own rx_r_ in test-errmodel-rxode2-oracle.R and, here, through their
+# derivatives and each estimator's gradient.
+.rm_closed <- c("add", "prop", "pow", "comb2", "comb1", "lnorm", "propt")
 
 .rm_pinfo <- function(nm) {
   cs <- .rm_cases[[nm]]
@@ -89,7 +106,7 @@ test_that("V_pred is the law of total variance, not Sigma at the mean", {
 test_that(".admResidApply matches the closed form for every residual form", {
   mu0 <- c(4, 12, 30); v0 <- c(1.5, 6.0, 20.0)
   Ef  <- function(k) mu0^k + k*(k-1)/2 * mu0^(k-2) * v0
-  for (nm in names(.rm_cases)) {
+  for (nm in .rm_closed) {
     p   <- .rm_pinfo(nm)
     arr <- admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(p$sigma_init, p), length(mu0))
     ap  <- admixr2:::.admResidApply(mu0, v0, arr)
@@ -129,10 +146,17 @@ test_that(".admResidDeriv matches central FD, including dv_dv0", {
       expect_equal(d$dmu[, k], (ap(pp,mu0,v0)$mu - ap(pm,mu0,v0)$mu)/(2*h),
                    tolerance = 1e-5, label = sprintf("%s d(mu)/d(%s)", nm, names(p0)[k]))
     }
-    fd_df <- vapply(seq_along(mu0), function(i) { mp<-mu0; mp[i]<-mp[i]+h; mm<-mu0; mm[i]<-mm[i]-h
-      (ap(p0,mp,v0)$dv[i] - ap(p0,mm,v0)$dv[i])/(2*h) }, numeric(1))
-    fd_v0 <- vapply(seq_along(v0), function(i) { vp<-v0; vp[i]<-vp[i]+h; vm<-v0; vm[i]<-vm[i]-h
-      (ap(p0,mu0,vp)$dv[i] - ap(p0,mu0,vm)$dv[i])/(2*h) }, numeric(1))
+    # A LARGER step for the prediction/variance directions. The transform-both-
+    # sides forms evaluate their moments by Gauss-Hermite quadrature, so
+    # differencing them at 1e-6 sits on the cancellation floor: the reference, not
+    # the derivative, is what is wrong there. Verified by Richardson -- the FD
+    # converges onto the analytic value as the step grows (max abs difference
+    # 3e-5 at h = 1e-6, 1e-7 at h = 1e-4, 4e-8 at h = 1e-3).
+    h_f <- 1e-4
+    fd_df <- vapply(seq_along(mu0), function(i) { mp<-mu0; mp[i]<-mp[i]+h_f; mm<-mu0; mm[i]<-mm[i]-h_f
+      (ap(p0,mp,v0)$dv[i] - ap(p0,mm,v0)$dv[i])/(2*h_f) }, numeric(1))
+    fd_v0 <- vapply(seq_along(v0), function(i) { vp<-v0; vp[i]<-vp[i]+h_f; vm<-v0; vm[i]<-vm[i]-h_f
+      (ap(p0,mu0,vp)$dv[i] - ap(p0,mu0,vm)$dv[i])/(2*h_f) }, numeric(1))
     expect_equal(d$dv_df,  fd_df, tolerance = 1e-5, label = paste0(nm, ": dv_df"))
     expect_equal(d$dv_dv0, fd_v0, tolerance = 1e-5, label = paste0(nm, ": dv_dv0"))
   }
@@ -140,10 +164,14 @@ test_that(".admResidDeriv matches central FD, including dv_dv0", {
 
 # -- 3. each estimator's analytic gradient vs central FD of its own NLL --------
 
-test_that("analytic gradients match FD for add, prop and lnorm", {
+test_that("analytic gradients match FD for every residual form", {
   skip_if_not_installed("nlmixr2est")
   times <- c(0.5, 1, 2, 4)
-  for (nm in c("add", "prop", "lnorm")) {
+  # EVERY form in .rm_cases, not the three this test was written with. The new
+  # families each brought their own dv_df / dv_dv0 / dms / rmat gradient path, and
+  # a residual whose gradient disagrees with its own objective is precisely the
+  # defect class this file exists to catch.
+  for (nm in names(.rm_cases)) {
     cs    <- .rm_cases[[nm]]
     ui    <- .rm_mk(cs[1], cs[2])
     pinfo <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))

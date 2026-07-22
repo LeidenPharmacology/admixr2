@@ -205,3 +205,50 @@ test_that("ordinal refuses a diagonal V, a non-joint study, and adirmc", {
     # ordinal residual cannot be scored on that path at all.
     "supports only add/prop/pow/combined")
 })
+
+test_that("the ordinal guard judges the ordinal unit, not every unit", {
+  # Both guards used to decide from a MODEL-level spec scan and then reject every
+  # flattened unit, so a PK + ordinal model could never be fitted: the ordinary
+  # `cp` study is neither joint nor supplies one block per category, and tripped a
+  # check about an endpoint it has nothing to do with.
+  s  <- .ord_setup()
+  nt <- s$nt
+  pk <- list(E = c(10, 6, 3), V = diag(c(4, 2, 1)), n = 40L,
+             times = c(0.5, 1, 2), ev = rxode2::et(amt = 100), output = "cp")
+  ord <- .ord_study(s)
+  .units <- function(l) admixr2:::.admFlattenStudies(
+    lapply(names(l), function(nm) admixr2:::.admNormaliseStudy(l[[nm]], nm)))
+  # the ordinal unit is still judged: as supplied it is well formed
+  expect_silent(admixr2:::.admCheckOrdinal(s$pinfo, .units(list(o = ord))))
+  # and a PK unit alongside it does not trip anything
+  expect_silent(admixr2:::.admCheckOrdinal(s$pinfo, .units(list(o = ord, pk = pk))))
+  # ... while a broken ORDINAL unit still errors, PK unit or not
+  flat <- list(E = s$E[seq_len(nt)], V = s$V[seq_len(nt), seq_len(nt)],
+               n = s$N, times = s$times, ev = s$ev, output = "p1")
+  expect_error(admixr2:::.admCheckOrdinal(s$pinfo, .units(list(o = flat, pk = pk))),
+               "one observation block per category")
+})
+
+test_that("categories at nominally identical times are grouped despite float error", {
+  # The row times come from the per-category blocks, i.e. from independent user
+  # inputs. seq(0.1, 0.7, by = 0.2) and c(0.1, 0.3, 0.5, 0.7) are the same grid to
+  # a reader and differ in the last ulp to match(), which silently put the two
+  # categories in different groups and dropped the -p_j*p_k cross term for those
+  # rows -- the term the joint fit exists to capture.
+  s   <- .ord_setup()
+  t1  <- seq(0.1, 0.7, by = 0.2)
+  t2  <- c(0.1, 0.3, 0.5, 0.7)
+  expect_false(identical(t1, t2))            # the premise: they are NOT identical
+  expect_true(any(t1 != t2))
+  n   <- length(t1)
+  arr <- admixr2:::.admResidRows(s$pinfo, rep(c("p1", "p2"), each = n),
+                                 admixr2:::.admSigmaNat(s$pinfo$sigma_init, s$pinfo),
+                                 2L * n)
+  mu  <- c(rep(0.3, n), rep(0.5, n))
+  V0  <- diag(2L * n) * 1e-4
+  ap  <- admixr2:::.admResidApply(mu, diag(V0), arr, c(t1, t2), V0)
+  # every category pair at a shared time carries -mu_j*mu_k (minus the structural
+  # covariance the cancellation removes), so none of those entries may be zero
+  for (i in seq_len(n))
+    expect_lt(ap$rmat[i, n + i], 0)
+})

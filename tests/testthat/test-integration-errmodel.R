@@ -203,3 +203,58 @@ test_that("propF() gets its own targeted message, not the generic one", {
   expect_match(msg, "Fix:")
   expect_match(msg, "prop\\(\\) or pow\\(\\)")
 })
+
+test_that("a binom size written as a model-block constant is a constant", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # `.const()` resolved a numeric literal or a fix()ed iniDf row, so
+  # `nt <- 20; y ~ binom(nt, p)` -- a genuinely constant number of trials, and how
+  # one is usually written -- was refused as "non-constant", with advice (fix() it)
+  # that does not apply to a model-block constant.
+  mk <- function(ini_line, size_expr) suppressMessages(rxode2::rxode2(eval(parse(
+    text = sprintf('function() {
+      ini({ tem <- log(0.6); %s eta.em ~ 0.05 })
+      model({ em <- exp(tem + eta.em); p <- em / (1 + em)
+              nt <- 20
+              y ~ binom(%s, p) }) }', ini_line, size_expr)))))
+
+  spec <- function(ui) {
+    p <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+    admixr2:::.admResidSpecs(p)[[1L]]
+  }
+  expect_equal(spec(mk("", "nt"))$csize, 20)     # model-block constant
+  expect_equal(spec(mk("", "20"))$csize, 20)     # literal, as before
+
+  # ... and an ESTIMATED size is still refused: it enters the objective only
+  # through the variance, so it has no gradient path.
+  expect_error(spec(mk("nsz <- 20;", "nsz")), "non-constant size")
+})
+
+test_that("a count endpoint never falls back to nlmixr2est's inner model", {
+  skip_on_cran(); skip_if_not_installed("rxode2"); skip_if_not_installed("nlmixr2est")
+  # The inner model's rx_pred_ for `y ~ pois(cp)` is llikPois(DV, cp) -- the
+  # LOG-LIKELIHOOD -- and its sensitivity columns differentiate that, using a DV an
+  # aggregate fit does not have. .admLoadSensModel() emits the count MEAN instead;
+  # if that build ever fails it must return NULL (finite differences), never hand
+  # back the inner model, which is what made .adghGrad all-NA and .admGradBatch's
+  # Hessian zero.
+  fn <- function() {
+    ini({ tcl <- log(5); tv <- log(20); eta.cl ~ 0.09 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+            d/dt(central) <- -(cl / v) * central
+            cp <- central / v
+            y ~ pois(cp) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  sm <- suppressMessages(admixr2:::.admLoadSensModel(ui))
+  expect_true(is.null(sm) || identical(sm$type, "dirs"))
+  if (!is.null(sm)) {
+    # the emitted prediction is the MEAN: solving it must give the model's cp,
+    # not a log-likelihood (which would need DV and come back non-finite)
+    d <- rxode2::rxSolve(sm$mod,
+      params = c(`THETA[1]` = log(5), `THETA[2]` = log(20), `ETA[1]` = 0),
+      events = rxode2::et(amt = 100) |> rxode2::et(c(1, 4)),
+      returnType = "data.frame", addDosing = FALSE)
+    expect_true(all(is.finite(d$rx_pred_)))
+    expect_true(all(d$rx_pred_ > 0))
+  }
+})

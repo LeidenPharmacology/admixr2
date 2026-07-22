@@ -148,15 +148,14 @@ head.paged_df <- function(x, n = 6L, ...) {
   struct_nms        <- names(pinfo$struct_transforms)
   omega_diag_nms    <- pinfo$omega_par_names[pinfo$chol_diag]
   omega_offdiag_nms <- pinfo$omega_par_names[!pinfo$chol_diag]
-  sigma_pow_nms <- pinfo$sigma_names[.admSigmaRole(pinfo) == "pow_exp"]
-  sigma_tdf_nms <- pinfo$sigma_names[.admSigmaRole(pinfo) == "t_df"]
+  # Residual parameters go through .admSigmaReportFn() so the trace is on the
+  # same scale print(fit) reports -- every sigma_role, not a list of the ones
+  # that existed when this was written.
   back_fns <- setNames(lapply(par_names, function(nm) {
     if (nm %in% struct_nms)             function(v) .admBackTransform(v, pinfo$struct_transforms[[nm]])
     else if (nm %in% omega_diag_nms)    exp
     else if (nm %in% omega_offdiag_nms) identity
-    else if (nm %in% sigma_pow_nms)     identity   # pow() exponent: already natural
-    else if (nm %in% sigma_tdf_nms)     function(v) 2 + exp(v)  # t() df: log(nu-2) -> nu
-    else function(v) exp(v / 2)   # sigma: log(sigma^2) -> SD
+    else .admSigmaReportFn(pinfo, nm)
   }), par_names)
 
   # Order par_names by iniDf row position so facets follow ini() block order.
@@ -343,8 +342,13 @@ head.paged_df <- function(x, n = 6L, ...) {
 
   # Returns BOTH the residual-adjusted covariance and mean: lnorm rescales the
   # mean, and the predicted E must carry that scaling just as the NLL does.
-  .add_sigma <- function(V, mu, ov = out_var, times = NULL) {
+  .add_sigma <- function(V, mu, ov = out_var, times = NULL, phi = NULL) {
     arr <- .admResidRows(pinfo_r, ov, sv, length(mu))
+    # beta: the precision is SOLVED and rides back on the simulated matrix. Every
+    # estimator patches it in; this path did not, so after a perfectly ordinary
+    # beta fit the predicted-covariance heatmap, the standardised-residual panels
+    # and the +-1 SD ribbon were all NA, silently.
+    if (!is.null(phi)) arr$phi <- phi
     # Without `times` + the structural covariance the off-diagonal forms (ar,
     # ordinal) were dropped, so the predicted-covariance diagnostic panel showed
     # an independent-residual V for exactly the models whose off-diagonal is the
@@ -362,7 +366,7 @@ head.paged_df <- function(x, n = 6L, ...) {
     if (is.null(cp_mat)) return(NULL)
     mu     <- colMeans(cp_mat)
     res    <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
-                         s$output %||% out_var, s$times)
+                         s$output %||% out_var, s$times, attr(cp_mat, "phi"))
     V_pred <- res$V; mu <- res$mu
     obs_E  <- as.numeric(s$E)
     obs_V  <- as.matrix(s$V)

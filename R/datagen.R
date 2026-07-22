@@ -264,6 +264,35 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     out_var <- .admOutputVar(ui)
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
 
+    # method = "fo" has no path to a beta endpoint's precision: .adfoVpred builds
+    # V from J Omega J' + Sigma at eta = 0 and never sees the solved b1 + b2, so
+    # it would emit a V whose diagonal is NA. This is the same refusal
+    # nlmixr2Est.adfo() makes for the same reason -- said here rather than left to
+    # produce NAs, because datagen() has no fit to fail afterwards.
+    if (control$method == "fo" && !is.null(.admBetaPair(ui)))
+      stop("datagen(method = 'fo') does not support a beta() endpoint: the beta ",
+           "precision is derived from the solved shapes, which the FO ",
+           "linearisation has no path to. Use method = 'mc' or 'gh'.",
+           call. = FALSE)
+
+    # An ordinal endpoint is a JOINT observation: its categories are one stacked
+    # vector whose covariance carries the -p_j*p_k term between categories at the
+    # same time. datagen() computes moments one observation spec at a time, each
+    # with its own `arr` and its own rows, so that cross-category block cannot be
+    # formed here at all -- the study it emitted would be scored against a
+    # covariance missing exactly the multinomial structure an ordinal model exists
+    # to capture, and .admCheckOrdinal() would then refuse it on the way back in.
+    # Refuse at the point of generation instead of emitting something unusable.
+    if (any(as.character(tryCatch(ui$predDf$distribution,
+                                  error = function(e) character(0))) %in%
+            c("ordinal", "dordinal")))
+      stop("datagen() does not support an ordinal endpoint: its categories form ",
+           "ONE joint\n  observation whose covariance carries the -p_j*p_k term ",
+           "between categories at the\n  same time, and datagen() derives each ",
+           "observed output separately. Build the\n  study from simulated ",
+           "category counts instead, one observation block per category.",
+           call. = FALSE)
+
     # FO needs the sensitivity model for the Jacobian df/d(eta)|_0. Load it
     # before .admLoadModel() to respect the compilation-ordering invariant
     # (.admLoadModel() poisons the cached inner model on the first-compile path).
@@ -310,7 +339,14 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
       evf <- if (is_multi) spec$ev |> rxode2::et(spec$times, cmt = ov)
              else          spec$ev |> rxode2::et(spec$times)
-      study_tmp <- list(ev_full = evf, times = spec$times)
+      # A beta endpoint's prediction is DERIVED from two solved columns and its
+      # precision phi = b1 + b2 comes back with them -- the same pair the
+      # estimators put on every study. Without it .admOutputVar() resolves to the
+      # first shape parameter, so datagen() returned an `E` that was a shape (an
+      # arbitrary positive number, not a probability) and a `V` whose diagonal was
+      # entirely NA, with no error and no warning.
+      study_tmp <- list(ev_full = evf, times = spec$times,
+                        out_pair = .admBetaPair(ui))
 
       if (control$method == "gh") {
         m <- .adghMoments(pars, pinfo, study_tmp, rxMod, ov, grid, control$cores)
@@ -335,6 +371,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         }
         cp_mat <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta_mat,
                                study_tmp, ov, params_list[[1L]], control$cores)
+        .ph <- attr(cp_mat, "phi"); if (!is.null(.ph)) arr$phi <- .ph  # beta precision
         mu   <- colMeans(cp_mat)
         cp_c <- sweep(cp_mat, 2L, mu)
         V    <- crossprod(cp_c) / control$n_sim

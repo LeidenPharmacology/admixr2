@@ -250,6 +250,53 @@ test_that("the C++ moment helper agrees with the R one at a zero prediction", {
   }
 })
 
+test_that(".admMomFd differentiates exactly what .admMomF evaluates", {
+  # The two carry one expansion between them: .admMomF is what the NLL scores and
+  # .admMomFd is what the gradient chains through. They used to cap the divergent
+  # mu^(k-2) term by DIFFERENT rules -- .admMomF against the leading term, .admMomFd
+  # by zeroing it past .ADM_MOM_CAP -- so for pow(b, c) with c < 1 near a zero
+  # prediction the optimizer was handed the gradient of a different function.
+  F <- admixr2:::.admMomF; Fd <- admixr2:::.admMomFd
+  binds <- function(mu, v0, k) {
+    lead <- mu^k; corr <- (k * (k - 1) / 2) * mu^(k - 2) * v0
+    isTRUE((k - 2) < 0 && is.finite(lead) && is.finite(corr) &&
+             abs(corr) > abs(lead))
+  }
+  grid <- expand.grid(mu = c(1e-6, 1e-3, 0.1, 1, 5, 40),
+                      v0 = c(0, 1e-6, 1e-2, 1, 9),
+                      k  = c(0.5, 1.5, 2, 2.4, 3))
+  # the capped branch is the one that regressed, so make sure it is reached
+  expect_gt(sum(mapply(binds, grid$mu, grid$v0, grid$k)), 10L)
+
+  # A finite difference is a valid reference only when both probes sit on the same
+  # side of the cap (the capped expression is genuinely discontinuous there) and
+  # the difference clears the cancellation floor of the two values it subtracts.
+  ok <- function(fp, fm) abs(fp - fm) > 1e-9 * max(abs(fp), abs(fm), 1e-300)
+  for (i in seq_len(nrow(grid))) {
+    mu <- grid$mu[i]; v0 <- grid$v0[i]; k <- grid$k[i]
+    a  <- Fd(mu, v0, k)
+    lbl <- sprintf("mu=%g v0=%g k=%g", mu, v0, k)
+    expect_equal(a$m, F(mu, v0, k), tolerance = 1e-12, info = lbl)
+
+    h <- 1e-6 * mu
+    fp <- F(mu + h, v0, k); fm <- F(mu - h, v0, k)
+    if (binds(mu + h, v0, k) == binds(mu - h, v0, k) && ok(fp, fm))
+      expect_equal(a$dmu, (fp - fm) / (2 * h), tolerance = 1e-4, info = lbl)
+
+    if (v0 > 0) {
+      h <- 1e-6 * v0
+      fp <- F(mu, v0 + h, k); fm <- F(mu, v0 - h, k)
+      if (binds(mu, v0 + h, k) == binds(mu, v0 - h, k) && ok(fp, fm))
+        expect_equal(a$dv0, (fp - fm) / (2 * h), tolerance = 1e-4, info = lbl)
+    }
+
+    h <- 1e-6
+    fp <- F(mu, v0, k + h); fm <- F(mu, v0, k - h)
+    if (binds(mu, v0, k + h) == binds(mu, v0, k - h) && ok(fp, fm))
+      expect_equal(a$dk, (fp - fm) / (2 * h), tolerance = 1e-4, info = lbl)
+  }
+})
+
 # ---- legacy fallback ---------------------------------------------------------
 
 test_that("a pinfo with only the legacy flags still parses (no $resid spec)", {

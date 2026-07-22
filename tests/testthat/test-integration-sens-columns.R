@@ -278,3 +278,37 @@ test_that("d(pred)/d(lag) is undefined AT the dose boundary (documented, not a b
   expect_lt(max(abs(ana[!at_boundary] - fd[!at_boundary]) /
                 pmax(abs(fd[!at_boundary]), 1e-8)), 1e-4)
 })
+
+test_that("a worker re-derives pred_tbs, so a fixed lambda cannot be served stale", {
+  # The sens cache key digests the model({}) block, the iniDf NAMES, the fix()
+  # flags and the err column -- but NOT the estimates. Two models differing only
+  # in the VALUE of a fix()ed boxCox lambda therefore share one cache file. The
+  # parent re-derives pred_tbs on a hit; a worker cannot (it has no ui), so it
+  # used to invert the transform with the OTHER model's lambda and the parallel
+  # restarts minimised a different objective from the sequential ones -- silently,
+  # since the NLL itself stays bit-identical.
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  mk <- function(lam) suppressMessages(rxode2::rxode2(eval(parse(text = sprintf(
+    'function() { ini({ tcl <- log(5); tv <- log(20); a <- 0.3; lam <- fix(%g)
+                        eta.cl ~ 0.09 })
+       model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+               d/dt(central) <- -(cl/v)*central; cp <- central/v
+               cp ~ add(a) + boxCox(lam) }) }', lam)))))
+  ui_a <- mk(0.4); ui_b <- mk(0.9)
+  sm_b <- suppressMessages(admixr2:::.admLoadSensModel(ui_b))   # writes the file
+  sm_a <- suppressMessages(admixr2:::.admLoadSensModel(ui_a))   # ... and hits it
+  skip_if(is.null(sm_a) || is.null(sm_b), "sensitivity model unavailable")
+
+  # the premise: one file, two lambdas
+  expect_identical(sm_a$cache_file, sm_b$cache_file)
+  expect_equal(sm_a$pred_tbs$lam, 0.4)     # the parent gets its own
+  expect_equal(sm_b$pred_tbs$lam, 0.9)
+
+  invisible(admixr2:::.admLoadModel(ui_a))
+  p_a <- suppressWarnings(admixr2:::.admParseIniDf(ui_a$iniDf, ui_a))
+  w   <- admixr2:::.admWorkerLoadModels(ui_a$lstExpr, NULL, 1L, sm_a$cache_file,
+                                        sm_a$sens_cols, sm_a$rename_map, NULL, p_a)
+  skip_if(is.null(w$sensModel), "worker could not load the sensitivity model")
+  expect_equal(w$sensModel$pred_tbs$lam, 0.4)
+  expect_equal(w$sensModel$pred_tbs$yj, sm_a$pred_tbs$yj)
+})

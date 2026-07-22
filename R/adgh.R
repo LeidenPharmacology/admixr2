@@ -125,9 +125,17 @@
   cp_all <- .admSimulateRows(rxMod, sm_big, pinfo$sigma_names, eta_big, study,
                              out_var, pm, cores, pinfo$nDisplayProgress)
 
-  lapply(seq_len(n_cfg), function(k)
-    .adghMomentsFromCp(cp_all[(k - 1L) * Q + seq_len(Q), , drop = FALSE],
-                       g$W, pars, pinfo, out_var, study$times))
+  # beta: phi = b1 + b2 comes back as one row per SOLVED row, and subsetting a
+  # matrix drops attributes -- so each configuration's block has to carry its own
+  # forward. phi is eta-independent (checked at parse) but not theta-independent,
+  # and each block holds a different theta vector, so it is the block's own first
+  # row that is representative, not the whole matrix's.
+  .phi_all <- attr(cp_all, "phi")
+  lapply(seq_len(n_cfg), function(k) {
+    .cp <- cp_all[(k - 1L) * Q + seq_len(Q), , drop = FALSE]
+    if (!is.null(.phi_all)) attr(.cp, "phi") <- .phi_all[(k - 1L) * Q + 1L, ]
+    .adghMomentsFromCp(.cp, g$W, pars, pinfo, out_var, study$times)
+  })
 }
 
 # GH-quadrature joint moments for a same-subject unit: one shared-eta node grid
@@ -721,7 +729,8 @@
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   m <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores,
-                            sens_cache_file, sens_cols, sens_rename, sensModel_direct)
+                            sens_cache_file, sens_cols, sens_rename, sensModel_direct,
+                            pinfo)
 
   grid <- .adghNodeGrid(n_nodes, pinfo$n_eta)
   set.seed(seed + restart_id)
@@ -1070,12 +1079,26 @@ nlmixr2Est.adgh <- function(env, ...) {
 
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
+  .admCheckMixedEndpoints(.ui)
 
   # A beta endpoint's prediction is derived from TWO solved columns; the pair
   # travels on each study so the solve paths can combine them (see .admSimulate).
   .bpair <- .admBetaPair(.ui)
-  if (!is.null(.bpair))
+  if (!is.null(.bpair)) {
     studies <- lapply(studies, function(u) { u$out_pair <- .bpair; u })
+    # ... and it is fitted DERIVATIVE-FREE, for the reason spelled out in
+    # nlmixr2Est.admc(): beta's conditional variance is mu(1-mu)/(1+phi) with the
+    # precision phi SOLVED from the structural model, so a theta reaches the
+    # objective through phi as well as through mu, and every gradient path here
+    # chains through mu alone. BOBYQA differences the objective itself.
+    if (.ctl$grad != "none") {
+      message("adghControl: a beta() endpoint is fitted derivative-free ",
+              "(grad = \"none\"): its precision is solved from the structural ",
+              "model, and the gradient paths carry only d(prediction)/d(theta).")
+      .ctl$grad      <- "none"
+      .ctl$algorithm <- .admDefaultAlgorithm("none")
+    }
+  }
 
   want_grad    <- .ctl$grad != "none"
   want_sens    <- .ctl$grad == "analytical"
@@ -1326,7 +1349,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   if (!is.null(.focei_model)) .ret$model <- .focei_model
 
   .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = if (multi_out) admData(.admOutputVars(.ui)) else admData(),
+    .ui, data = if (multi_out) admData(.admEndpointNames(.ui)) else admData(),
     control = .ret$control,
     table = .ret$table, env = .ret, est = "adgh")
 

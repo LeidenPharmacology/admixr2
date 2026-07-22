@@ -321,6 +321,53 @@ utils::globalVariables(c(
   unique(vapply(vars, .admOutputColName, character(1), USE.NAMES = FALSE))
 }
 
+# The ENDPOINT names, as nlmixr2 knows them -- predDf$var verbatim.
+#
+# NOT the same thing as .admOutputVars(), and the difference matters for exactly
+# the endpoints that made .admEndpointVar() necessary: `y ~ pois(lam)` is SOLVED
+# through `lam` but nlmixr2 knows the endpoint as `y`. These names go in the DVID
+# column of the dummy frame handed to nlmixr2CreateOutputFromUi(), and its
+# dvid->cmt translation rejects a name that is not an endpoint -- so passing the
+# solve variable there made a converged multi-endpoint count fit die at the
+# output-building step with "'dvid'->'cmt' ... on a undefined compartment".
+.admEndpointNames <- function(ui) {
+  nms <- tryCatch(as.character(ui$predDf$var), error = function(e) NULL)
+  if (is.null(nms) || !length(nms)) return(.admOutputVars(ui))
+  unique(nms)
+}
+
+# A count or beta endpoint cannot share a model with other endpoints.
+#
+# Multi-endpoint solves route observations by COMPARTMENT: .admBuildEvFull() tags
+# each unit's records with `cmt = unit$output`, and rxode2 resolves that against
+# the model's endpoints. A count endpoint's output is its distribution's ARGUMENT
+# (`y ~ pois(lam)` is read through `lam`), which is an ordinary model variable and
+# not an endpoint at all, so the tagged records match nothing: the solve returns no
+# rows for that unit and the objective silently comes back Inf -- there is no
+# wrong-but-plausible number, but there is also nothing telling the user why.
+#
+# Single-endpoint count/beta models are unaffected (no tagging happens) and are
+# what the count/beta support was built for. An ordinal endpoint is ONE predDf row
+# whose categories are separate outputs, so it is not "mixed" either.
+.admCheckMixedEndpoints <- function(ui) {
+  pd <- tryCatch(ui$predDf, error = function(e) NULL)
+  if (is.null(pd) || nrow(pd) < 2L || !"distribution" %in% names(pd))
+    return(invisible(NULL))
+  d <- as.character(pd$distribution)
+  w <- which(d %in% c("pois", "dpois", "binom", "dbinom", "nbinomMu", "dnbinomMu",
+                      "beta", "dbeta"))
+  if (!length(w)) return(invisible(NULL))
+  stop("A ", d[w[1L]], "() endpoint cannot be combined with other endpoints in ",
+       "one model.\n",
+       "  Endpoint ", sQuote(as.character(pd$var[w[1L]])), " is read through its ",
+       "distribution's argument,\n",
+       "  which is a model variable rather than a compartment -- so the ",
+       "multi-endpoint solve,\n",
+       "  which routes observations by compartment, cannot deliver its ",
+       "observations.\n",
+       "  Fit that endpoint in a model of its own.", call. = FALSE)
+}
+
 # Logical selector over pinfo$sigma_names: which residual-error parameters
 # belong to `output`. When the sigma->output mapping is unknown (single-output
 # model, or Tier-1 mock iniDf with no `condition` column) every sigma is treated

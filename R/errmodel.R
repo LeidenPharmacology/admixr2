@@ -129,11 +129,25 @@
   .const <- function(x) {
     v <- suppressWarnings(as.numeric(paste(deparse(x), collapse = "")))
     if (!is.na(v)) return(v)
-    idf <- tryCatch(ui$iniDf, error = function(e) NULL)
     nm  <- paste(deparse(x), collapse = "")
+    idf <- tryCatch(ui$iniDf, error = function(e) NULL)
     if (!is.null(idf) && nm %in% idf$name) {
       r <- idf[idf$name == nm, , drop = FALSE][1L, ]
       if (isTRUE(r$fix)) return(as.numeric(r$est))
+    }
+    # A constant written in the MODEL BLOCK -- `nt <- 20; y ~ binom(nt, p)` -- is
+    # every bit as constant as the literal, and is how a number of trials is
+    # usually written. Refusing it sent the user to fix() a parameter that does not
+    # exist. Only a bare numeric assignment counts: anything computed could depend
+    # on a theta, which is the case that genuinely has no gradient path.
+    lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
+    for (e in lst %||% list()) {
+      if (is.call(e) && length(e) == 3L &&
+          as.character(e[[1L]]) %in% c("<-", "=") &&
+          identical(paste(deparse(e[[2L]]), collapse = ""), nm)) {
+        lit <- suppressWarnings(as.numeric(paste(deparse(e[[3L]]), collapse = "")))
+        if (!is.na(lit)) return(lit)
+      }
     }
     NA_real_
   }
@@ -1003,6 +1017,29 @@ without that parameter there is no residual to integrate"),
   setNames(out, pinfo$sigma_names)
 }
 
+# The value .admFullTheta() REPORTS for ONE residual parameter, as a function of
+# its optimizer value.
+#
+# plot.R traces parameters one at a time and so needs the map per name rather
+# than for the whole sigma vector. It is built out of .admSigmaNat() instead of
+# re-deriving the roles, because a trace plotted on a different scale from the
+# one print(fit) reports is a silent disagreement: an ar() correlation of 0.6
+# (optimizer value 0.405) came out as 1.22 under the generic sigma rule -- past
+# the top of its own support -- and a Box-Cox lambda of 0.5 as 1.28.
+.admSigmaReportFn <- function(pinfo, nm) {
+  .k <- match(nm, pinfo$sigma_names)
+  if (is.na(.k)) return(function(v) exp(v / 2))
+  # unname: pinfo$sigma_role is a NAMED character vector, and a named "var" is not
+  # identical() to "var" -- which silently sent every residual SD back as a
+  # VARIANCE (0.2 plotted as 0.04).
+  .p1 <- list(sigma_names = nm, sigma_role = unname(.admSigmaRole(pinfo)[[.k]]))
+  .sd <- identical(.p1$sigma_role, "var")
+  function(v) vapply(v, function(x) {
+    nat <- unname(.admSigmaNat(x, .p1))
+    if (.sd) sqrt(nat) else nat            # a "var" role is reported as an SD
+  }, double(1))
+}
+
 # Delta-method factor d(REPORTED value)/d(optimizer p), one per residual parameter.
 #
 # The post-fit Hessian is taken w.r.t. the optimizer's parameterisation, but
@@ -1253,25 +1290,41 @@ without that parameter there is no residual to integrate"),
   # E[f^2] = mu^2 + var stays exact. Only pow() with c < 1 -- where the
   # second-order expansion genuinely diverges at f = 0 -- sees the eps value.
   #
-  # Local closure, not a package-level helper: a new binding cannot be ADDED to a
-  # locked installed namespace, so a dev-mode mirai daemon would fail to find it
-  # (see the note at the top of simulate.R).
-  # See .admMomF: a NEGATIVE exponent is a genuine pole of the expansion near mu = 0,
-  # not a safePow case. Cap each divergent term against the leading term rather than
-  # testing mu == 0 exactly, so the derivative stays finite and continuous as mu -> 0.
-  # The k == 2 path (exponent 0) is unaffected and stays exact.
-  .pw <- function(e) {
-    r <- mu^e
-    if (any(e < 0)) {
-      bad <- !is.finite(r) | (e < 0 & abs(r) > .ADM_MOM_CAP)
-      r[bad] <- 0
-    }
-    r
-  }
-  list(m   = mk + g * .pw(k - 2) * v0,
-       dmu = k * .pw(k - 1) + g * (k - 2) * .pw(k - 3) * v0,
-       dv0 = g * .pw(k - 2),
-       dk  = lg * mk + v0 * .pw(k - 2) * ((2 * k - 1) / 2 + g * lg))
+  # THE CAP IS .admMomF's, NOT A SECOND ONE. A negative exponent is a genuine pole
+  # of the expansion near mu = 0, and .admMomF (and adm_mom_f in src/nll.cpp)
+  # handle it by capping the correction against the LEADING term. This function
+  # used to zero mu^(k-2) once it passed .ADM_MOM_CAP instead -- a different rule,
+  # so for pow(b, c) with c < 1 near a zero prediction the objective used a
+  # correction of size mu^(2c) while the gradient used the uncapped expansion, and
+  # the optimizer was handed a direction that does not descend the function it is
+  # minimising. The two must agree term for term, so the derivatives below are the
+  # derivatives of the CAPPED expression, piecewise.
+  #
+  # Where the cap binds, corr = sign(corr)*|lead| and lead = mu^k > 0, so
+  # m = lead*(1 + s) with s = sign(corr): the correction no longer depends on
+  # var_f at all (dv0 = 0) and both remaining partials just scale the leading term.
+  lead <- mk
+  pk2  <- mu^(k - 2)
+  corr <- g * pk2 * v0
+  bind <- (k - 2) < 0 & is.finite(lead) & is.finite(corr) & abs(corr) > abs(lead)
+  bind[is.na(bind)] <- FALSE
+  s    <- sign(corr)
+  # non-finite corrections contribute nothing, exactly as in .admMomF
+  nf   <- !is.finite(corr)
+  corr[nf] <- 0
+  pk1  <- mu^(k - 1)
+  pk3  <- mu^(k - 3)
+  pk1[!is.finite(pk1)] <- 0
+  pk3[!is.finite(pk3)] <- 0
+  pk2z <- pk2; pk2z[!is.finite(pk2z)] <- 0
+
+  m   <- ifelse(bind, lead * (1 + s), lead + corr)
+  dmu <- ifelse(bind, (1 + s) * k * pk1,
+                k * pk1 + g * (k - 2) * pk3 * v0)
+  dv0 <- ifelse(bind, 0, g * pk2z)
+  dk  <- ifelse(bind, (1 + s) * lg * mk,
+                lg * mk + v0 * pk2z * ((2 * k - 1) / 2 + g * lg))
+  list(m = m, dmu = dmu, dv0 = dv0, dk = dk)
 }
 
 # Apply the residual to a structural mean/variance -- the LAW OF TOTAL VARIANCE.
@@ -1456,7 +1509,29 @@ without that parameter there is no residual to integrate"),
     # identifies the group without any extra bookkeeping.
     # NA row times (a hand-built joint block with no `times`) must NOT all collapse
     # into one group -- match(NA, ...) matches, which would invent cross terms.
-    g   <- ifelse(or_ & !is.na(times), match(times, unique(times)), NA_integer_)
+    #
+    # Grouped by TOLERANCE, not by exact equality. The row times come from the
+    # per-category blocks, i.e. from independent user inputs: `seq(0.1, 0.7, by =
+    # 0.2)` for one category and `c(0.1, 0.3, 0.5, 0.7)` for another are nominally
+    # the same grid but differ in the last ulp, and match() then put the two
+    # categories in DIFFERENT groups -- silently dropping the -p_j p_k term for
+    # those rows, which is the whole reason the model is fitted jointly.
+    # Local closure, not a package-level helper: a new binding cannot be added to a
+    # locked installed namespace, so a dev-mode daemon could not find it (see the
+    # note at the top of simulate.R).
+    .tgrp <- function(t) {
+      out <- rep(NA_integer_, length(t))
+      ord <- order(t, na.last = NA)
+      k <- 0L; ref <- NA_real_
+      for (i in ord) {
+        if (is.na(ref) || abs(t[i] - ref) > 1e-8 * max(1, abs(t[i]), abs(ref))) {
+          k <- k + 1L; ref <- t[i]          # compare against the group's FIRST
+        }                                   # member, so groups cannot chain
+        out[i] <- k
+      }
+      out
+    }
+    g   <- ifelse(or_ & !is.na(times), .tgrp(times), NA_integer_)
     rm0 <- matrix(0, length(mu_struct), length(mu_struct))
     same <- outer(g, g, function(a, b) !is.na(a) & !is.na(b) & a == b)
     diag(same) <- FALSE
@@ -1758,6 +1833,18 @@ without that parameter there is no residual to integrate"),
        dmu_dv0 = dmu_dv0, dmu_df = ms_out + dmu_extra)
 }
 
+# Does this observation unit observe any of `outs`? A joint (same-subject) unit
+# stacks several outputs and names them on its blocks; an ordinary unit has one.
+# Used by the ar()/ordinal guards, which are about a particular ENDPOINT and must
+# not judge a unit that observes a different one.
+.admUnitTouches <- function(u, outs) {
+  if (!length(outs)) return(FALSE)
+  got <- if (isTRUE(u$is_joint) && length(u$blocks %||% list()))
+    vapply(u$blocks, function(b) as.character(b$output %||% NA_character_), character(1))
+  else as.character(u$output %||% NA_character_)
+  any(got %in% outs)
+}
+
 # ar() needs a FULL observed covariance. A `method = "var"` study contributes only
 # diag(V), which contains no information about a residual correlation at all -- the
 # fit would run, report whatever rho started at, and mean nothing. Refuse instead,
@@ -1772,8 +1859,15 @@ without that parameter there is no residual to integrate"),
   if (length(sp) == 0L ||
       !any(vapply(sp, function(x) identical(x$form, .ADM_RESID_ORDINAL), logical(1))))
     return(invisible(NULL))
-  n_cat <- length(sp[[which(vapply(sp, function(x)
-    identical(x$form, .ADM_RESID_ORDINAL), logical(1)))[1L]]]$ord_p)
+  .ord <- vapply(sp, function(x) identical(x$form, .ADM_RESID_ORDINAL), logical(1))
+  n_cat <- length(sp[[which(.ord)[1L]]]$ord_p)
+  # ONLY the units that actually observe an ordinal category. Deciding from a
+  # model-level scan and then rejecting every unit made a PK + ordinal model
+  # (`cp ~ add(a); y ~ c(p1, p2)`) unfittable: the ordinary `cp` study is neither
+  # joint nor supplies n_cat blocks, so it tripped a check about an endpoint it
+  # has nothing to do with.
+  studies <- Filter(function(u) .admUnitTouches(u, names(sp)[.ord]), studies)
+  if (length(studies) == 0L) return(invisible(NULL))
   bad_v <- names(studies)[vapply(studies, function(u) identical(u$method, "var"), logical(1))]
   if (length(bad_v) > 0L)
     stop("An ordinal endpoint needs a full observed covariance.
@@ -1810,10 +1904,17 @@ without that parameter there is no residual to integrate"),
 
 .admCheckAR <- function(pinfo, studies) {
   sp <- .admResidSpecs(pinfo)
-  has_ar <- length(sp) > 0L && any(vapply(sp, function(x)
+  .isar <- vapply(sp, function(x)
     (!is.null(x$k_ar) && !is.na(x$k_ar)) ||
-      (!is.null(x$ar_fixed) && is.finite(x$ar_fixed)), logical(1)))
-  if (!has_ar) return(invisible(NULL))
+      (!is.null(x$ar_fixed) && is.finite(x$ar_fixed)), logical(1))
+  if (length(sp) == 0L || !any(.isar)) return(invisible(NULL))
+
+  # ONLY the units that actually observe an ar() endpoint -- see .admCheckOrdinal.
+  # `cp ~ add(a) + ar(rho); ct ~ add(a2)` used to refuse a `ct` study whose V
+  # happened to be diagonal (which .admNormaliseStudy auto-detects as
+  # method = "var"), for an autocorrelation ct does not have.
+  studies <- Filter(function(u) .admUnitTouches(u, names(sp)[.isar]), studies)
+  if (length(studies) == 0L) return(invisible(NULL))
 
   # ar() inside a JOINT (same-subject, multi-output) unit is not representable.
   # The unit's rows stack several outputs, so its row times REPEAT, and

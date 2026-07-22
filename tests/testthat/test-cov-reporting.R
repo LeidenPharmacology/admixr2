@@ -264,3 +264,37 @@ test_that(".admCovSkip tells nlmixr2est exactly which thetas the matrix carries"
   om <- matrix(1, 1, 1, dimnames = list("om.eta.cl", "om.eta.cl"))
   expect_null(admixr2:::.admCovSkip(om, ui))
 })
+
+test_that("a residual parameter's trace is on the scale print(fit) reports", {
+  # plot.admFit back-transforms each traced parameter for display. Its list of
+  # sigma roles had grown stale: only "pow_exp" and "t_df" were special-cased, so
+  # ar_cor, nb_size and tbs_lam fell through to the generic exp(v/2) variance rule.
+  # A converged rho of 0.6 (optimizer value 0.405) then plotted as 1.22 -- outside
+  # its own support, and disagreeing with the number print(fit) shows.
+  reported <- function(p, pinfo) {
+    nat  <- admixr2:::.admSigmaNat(p, pinfo)
+    role <- admixr2:::.admSigmaRole(pinfo)
+    unname(ifelse(role == "var", sqrt(nat), nat))
+  }
+  for (role in c("var", "t_df", "ar_cor", "nb_size", "pow_exp", "tbs_lam")) {
+    # NAMED, as .admParseIniDf() builds it: a named "var" is not identical() to
+    # "var", and that difference alone sent every residual SD back as a VARIANCE.
+    pinfo <- list(sigma_names = "s", sigma_role = stats::setNames(role, "s"))
+    p <- switch(role, var = 2 * log(0.35), t_df = log(6 - 2),
+                ar_cor = log(0.6 / 0.4), nb_size = log(4), 0.7)
+    fn <- admixr2:::.admSigmaReportFn(pinfo, "s")
+    expect_equal(fn(p), reported(p, pinfo), tolerance = 1e-12, info = role)
+    # vectorised over a whole trace, not just one point
+    expect_equal(fn(c(p, p + 0.1)),
+                 c(reported(p, pinfo), reported(p + 0.1, pinfo)),
+                 tolerance = 1e-12, info = role)
+  }
+  # the specific number from the bug report: rho = 0.6 must not plot above 1
+  rho_fn <- admixr2:::.admSigmaReportFn(
+    list(sigma_names = "rho", sigma_role = "ar_cor"), "rho")
+  expect_equal(rho_fn(log(0.6 / 0.4)), 0.6, tolerance = 1e-12)
+  expect_lt(rho_fn(log(0.6 / 0.4)), 1)
+  # an unknown name keeps the historical variance rule rather than erroring
+  expect_equal(admixr2:::.admSigmaReportFn(list(sigma_names = "s"), "nope")(2 * log(0.5)),
+               0.5, tolerance = 1e-12)
+})

@@ -565,6 +565,15 @@
                    fixed_theta = fixed_theta,
                    is_lincmt = .admIsLinCmtMod(built$mod),
                    cache_file = .cacheFile)
+  } else if (!is.null(.pred_expr)) {
+    # The count/beta branches above exist BECAUSE nlmixr2est's inner model puts the
+    # log-likelihood in rx_pred_ (llikPois(DV, cp)) and differentiates that, not the
+    # mean -- and needs a DV an aggregate fit does not have. Falling back to it here
+    # would hand the estimators exactly the object those branches were written to
+    # avoid: .adghGrad returns all-NA and .admGradBatch a zero Hessian. NULL routes
+    # every estimator onto finite differences instead, the same lever the ordinal
+    # guard at the top of this function pulls.
+    return(NULL)
   } else {
     result <- .admSensFromInner(ui, rename_map, fixed_theta, n_eta, .cacheFile)
     if (is.null(result)) return(NULL)

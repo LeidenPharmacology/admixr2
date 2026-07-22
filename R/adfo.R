@@ -697,7 +697,8 @@
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   m <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores,
-                            sens_cache_file, sens_cols, sens_rename, sensModel_direct)
+                            sens_cache_file, sens_cols, sens_rename, sensModel_direct,
+                            pinfo)
 
   params_list <- .admMakeParamsList(1L, pinfo, length(studies))
 
@@ -1074,6 +1075,7 @@ nlmixr2Est.adfo <- function(env, ...) {
   # fail its own block-count check.
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
+  .admCheckMixedEndpoints(.ui)
   multi_out  <- length(.admOutputVars(.ui)) > 1L
   any_joint  <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
   studies    <- .admBuildEvFull(studies, tag_cmt = multi_out)
@@ -1312,7 +1314,7 @@ nlmixr2Est.adfo <- function(env, ...) {
   if (!is.null(.focei_model)) .ret$model <- .focei_model
 
   .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = if (multi_out) admData(.admOutputVars(.ui)) else admData(),
+    .ui, data = if (multi_out) admData(.admEndpointNames(.ui)) else admData(),
     control = .ret$control,
     table = .ret$table, env = .ret, est = "adfo")
 

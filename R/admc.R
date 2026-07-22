@@ -678,11 +678,27 @@ nmObjGetControl.admc <- function(x, ...) {
                                  events = s$ev_full, cores = cores,
                                  nDisplayProgress = pinfo$nDisplayProgress)
       keep_b <- out_b[["time"]] %in% s$times
-      vals_b <- out_b[[ov]][keep_b]
-      if (is.null(vals_b)) vals_b <- out_b[["ipredSim"]][keep_b]
+      # beta: the prediction is DERIVED from two solved columns, mu = b1/(b1+b2),
+      # and the precision phi = b1 + b2 is solved rather than fitted. Reading
+      # s$output alone gave this path the raw first shape parameter (~40, not a
+      # probability) and left arr$phi at NA, so the FD gradient scored a different
+      # function than .admNLL and every entry of V_pred came back NA.
+      # Inlined, matching .admSimulate -- see the dev-mode daemon note in simulate.R.
+      .phi_b <- NULL
+      vals_b <- if (!is.null(s$out_pair)) {
+        .b1 <- out_b[[s$out_pair[[1L]]]][keep_b]; .b2 <- out_b[[s$out_pair[[2L]]]][keep_b]
+        .phi_b <- .b1 + .b2
+        .b1 / { .d <- .phi_b; .d[.d == 0] <- .Machine$double.eps; .d }
+      } else {
+        .v <- out_b[[ov]][keep_b]
+        if (is.null(.v)) out_b[["ipredSim"]][keep_b] else .v
+      }
 
       cp_mat <- matrix(vals_b[seq_len(n_sim * n_t)],
                        nrow = n_sim, ncol = n_t, byrow = TRUE)
+      if (!is.null(.phi_b))
+        attr(cp_mat, "phi") <- matrix(.phi_b[seq_len(n_sim * n_t)], nrow = n_sim,
+                                      ncol = n_t, byrow = TRUE)[1L, ]
       if (anyNA(cp_mat)) return(rep(NA_real_, length(p)))
 
       dpred_list <- if (n_eta > 0L) {
@@ -968,8 +984,21 @@ nmObjGetControl.admc <- function(x, ...) {
       if (is.null(out)) { for (ci in chunk) finite[ci] <- FALSE; next }
 
       keep <- out[["time"]] %in% s$times
-      vals <- out[[ov]][keep]
-      if (is.null(vals)) vals <- out[["ipredSim"]][keep]
+      # beta: the prediction is DERIVED from two solved columns and the precision
+      # phi = b1 + b2 comes back with it. Reading s$output alone handed this path
+      # the raw first shape parameter -- not a probability -- and left phi NULL, so
+      # THIS function, which is the covMethod = "r" objective evaluator, scored a
+      # different model from the one that was fitted. Same shape as .admSimulate;
+      # inlined for the same reason (see the daemon note in simulate.R).
+      .phi_all <- NULL
+      vals <- if (!is.null(s$out_pair)) {
+        .b1 <- out[[s$out_pair[[1L]]]][keep]; .b2 <- out[[s$out_pair[[2L]]]][keep]
+        .phi_all <- .b1 + .b2
+        .b1 / { .d <- .phi_all; .d[.d == 0] <- .Machine$double.eps; .d }
+      } else {
+        .v <- out[[ov]][keep]
+        if (is.null(.v)) out[["ipredSim"]][keep] else .v
+      }
 
       for (cii in seq_along(chunk)) {
         ci <- chunk[cii]
@@ -979,7 +1008,11 @@ nmObjGetControl.admc <- function(x, ...) {
         cp   <- matrix(vals[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
         if (anyNA(cp)) { finite[ci] <- FALSE; next }
         ar <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
-        .ph <- attr(cp, "phi"); if (!is.null(.ph)) ar$phi <- .ph
+        # phi is eta-independent, so this configuration's first simulated row is
+        # representative of its whole block
+        .ph <- if (is.null(.phi_all)) attr(cp, "phi") else
+          matrix(.phi_all[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)[1L, ]
+        if (!is.null(.ph)) ar$phi <- .ph
         # SAME gate as .admNLL(). The fused kernels implement forms 0/1/2 only and
         # have no off-diagonal channel, so a TBS/count/beta/ordinal/ar model fell
         # into adm_apply_residual's `else` branch and was scored as combined2.
@@ -1091,6 +1124,22 @@ nmObjGetControl.admc <- function(x, ...) {
       inner_df <- as.data.frame(matrix(0, nrow = n_c * n_sim,
                                         ncol = length(inner_nms),
                                         dimnames = list(NULL, unname(inner_nms))))
+      # An ESTIMATED boxCox/yeoJohnson lambda is a SIGMA name, so the zero-fill of
+      # inner_df hands the solve lambda = 0 -- a plain log transform -- while the
+      # back-transform below would invert with pred_tbs$lam, the model's STARTING
+      # lambda, held constant across every configuration. Two different transforms:
+      # the same mismatch .admSimulateSens documents as making the sens gradient
+      # ~60x wrong for boxCox and NaN for yeoJohnson. This function IS the
+      # covMethod = "r" Hessian evaluator, so it would put that error into every
+      # reported standard error -- and lambda's own row would be insensitive to
+      # lambda. Each configuration carries its OWN lambda, so it is written per
+      # block of rows and inverted with that same number below.
+      # Inlined, not factored out -- see the dev-mode daemon note in simulate.R.
+      .tb0    <- sensModel$pred_tbs
+      .lam_nm <- if (is.null(.tb0)) NA_character_ else .tb0$lam_name %||% NA_character_
+      .lam_ci <- rep(if (is.null(.tb0)) NA_real_ else .tb0$lam, n_c)
+      .lam_mapped <- if (!is.na(.lam_nm)) rmap[.lam_nm] else NA_character_
+
       for (ci in seq_len(n_c)) {
         if (!valid[ci]) next
         rows <- (ci - 1L) * n_sim + seq_len(n_sim)
@@ -1101,6 +1150,11 @@ nmObjGetControl.admc <- function(x, ...) {
         for (j in seq_along(eta_col_names)) {
           mapped <- rmap[eta_col_names[j]]
           if (!is.na(mapped)) inner_df[rows, mapped] <- eta[, j]
+        }
+        if (!is.na(.lam_nm) && .lam_nm %in% names(pars$sigma_var)) {
+          .lam_ci[ci] <- unname(pars$sigma_var[[.lam_nm]])
+          if (!is.na(.lam_mapped) && .lam_mapped %in% names(inner_df))
+            inner_df[rows, .lam_mapped] <- .lam_ci[ci]
         }
       }
       # fixed thetas: constants the loops above never write (see the note at the
@@ -1136,8 +1190,10 @@ nmObjGetControl.admc <- function(x, ...) {
           if (!valid[ci]) next
           idx <- (ci - 1L) * n_sim * n_t + seq_len(n_sim * n_t)
           cpm <- matrix(vals_pred[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
-          .gp <- if (.plog) .admTBSid(cpm, .tb$lam, .tb$yj, .tb$lo, .tb$hi) else NULL
-          if (.plog) cpm <- .admTBSi(cpm, .tb$lam, .tb$yj, .tb$lo, .tb$hi)
+          # this configuration's lambda -- the one written into the solve above
+          .lm <- if (.plog) .lam_ci[ci] else NA_real_
+          .gp <- if (.plog) .admTBSid(cpm, .lm, .tb$yj, .tb$lo, .tb$hi) else NULL
+          if (.plog) cpm <- .admTBSi(cpm, .lm, .tb$yj, .tb$lo, .tb$hi)
           cp_mats[[ci]]     <- cpm
           dpred_lists[[ci]] <- lapply(vals_sens, function(vs) {
             D <- matrix(vs[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
@@ -1680,7 +1736,8 @@ nmObjGetControl.admc <- function(x, ...) {
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   m <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores,
-                            sens_cache_file, sens_cols, sens_rename, sensModel_direct)
+                            sens_cache_file, sens_cols, sens_rename, sensModel_direct,
+                            pinfo)
 
   set.seed(seed)
   z_list      <- .admMakeZ(n_sim, pinfo, length(studies), sampling)
@@ -1842,7 +1899,8 @@ admStopWorkers <- function() {
 # sensModel). adirmc passes no sens_* args -> sensModel is NULL (unused).
 .admWorkerLoadModels <- function(ui_lstExpr, rxMod_direct = NULL, cores = NULL,
                                  sens_cache_file = NULL, sens_cols = NULL,
-                                 sens_rename = NULL, sensModel_direct = NULL) {
+                                 sens_rename = NULL, sensModel_direct = NULL,
+                                 pinfo = NULL) {
   cores_w <- if (!is.null(cores)) {
     cores
   } else if (!is.null(rxMod_direct)) {
@@ -1887,6 +1945,34 @@ admStopWorkers <- function() {
       # the wrong constant into a fixed theta's THETA[k] column, silently diverging
       # from the sequential fit. Overwriting sens_cols/rename_map above is the belt;
       # the schema tag is the braces for these two.
+      #
+      # pred_tbs MUST be re-derived, exactly as .admLoadSensModel() re-derives it
+      # on the parent's cache-hit path. The cache key digests ui$lstExpr -- the
+      # model({}) block only -- while lambda's starting value and its fix() status
+      # live in ini({}), so `lam <- fix(0.5)` and `lam <- 0.5` COLLIDE on one key.
+      # The parent overwrites the field; the worker did not, so a parallel restart
+      # could invert the transform with a different lambda from the sequential fit
+      # -- the same silent parent/worker divergence the block above exists to
+      # prevent, and invisible because the NLL stays bit-identical.
+      # Derived from `pinfo`, which the worker already holds, rather than from a
+      # new worker ARGUMENT -- see .admRestartWorker's note on stale daemons.
+      if (!is.null(pinfo) && !is.null(m$pred_tbs)) {
+        .sp <- .admResidSpecs(pinfo)
+        if (length(.sp)) {
+          .s1  <- .sp[[1L]]
+          .nat <- tryCatch(.admSigmaNat(pinfo$sigma_init, pinfo),
+                           error = function(e) NULL)
+          .est <- !is.null(.s1$k_lam) && !is.na(.s1$k_lam)
+          m$pred_tbs <- list(
+            lam      = if (.est && !is.null(.nat)) unname(.nat[[.s1$k_lam]])
+                       else if (is.finite(.s1$lam_fixed %||% NA_real_)) .s1$lam_fixed
+                       else m$pred_tbs$lam,
+            yj       = .s1$yj %||% m$pred_tbs$yj,
+            lam_name = if (.est) pinfo$sigma_names[[.s1$k_lam]] else NA_character_,
+            lo       = if (is.finite(.s1$tr_lo %||% NA_real_)) .s1$tr_lo else 0,
+            hi       = if (is.finite(.s1$tr_hi %||% NA_real_)) .s1$tr_hi else 1)
+        }
+      }
       m
     }, error = function(e) NULL)
   } else {
@@ -2200,12 +2286,30 @@ nlmixr2Est.admc <- function(env, ...) {
 
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
+  .admCheckMixedEndpoints(.ui)
 
   # A beta endpoint's prediction is derived from TWO solved columns; the pair
   # travels on each study so the solve paths can combine them (see .admSimulate).
   .bpair <- .admBetaPair(.ui)
-  if (!is.null(.bpair))
+  if (!is.null(.bpair)) {
     studies <- lapply(studies, function(u) { u$out_pair <- .bpair; u })
+    # ... and it is fitted DERIVATIVE-FREE. beta's conditional variance is
+    # mu(1-mu)/(1+phi) with phi = b1 + b2 SOLVED from the structural model, so a
+    # structural theta reaches the objective through phi as well as through mu.
+    # Every gradient path here chains through mu only (dpred), which makes the
+    # analytic/FD-of-the-prediction gradient a gradient of the wrong function --
+    # it holds phi fixed at the value it had before the perturbation. BOBYQA
+    # differences the objective itself, where phi moves with the thetas as it
+    # should. .adfoNLL/.adirmcNLL refuse beta outright for the related reason
+    # that they have no phi at all.
+    if (.ctl$grad != "none") {
+      message("admControl: a beta() endpoint is fitted derivative-free ",
+              "(grad = \"none\"): its precision is solved from the structural ",
+              "model, and the gradient paths carry only d(prediction)/d(theta).")
+      .ctl$grad      <- "none"
+      .ctl$algorithm <- .admDefaultAlgorithm("none")
+    }
+  }
 
   want_grad    <- .ctl$grad != "none"
   want_sens    <- .ctl$grad == "sens"
@@ -2484,7 +2588,7 @@ nlmixr2Est.admc <- function(env, ...) {
   if (!is.null(.focei_model)) .ret$model <- .focei_model
 
   .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = if (multi_out) admData(.admOutputVars(.ui)) else admData(),
+    .ui, data = if (multi_out) admData(.admEndpointNames(.ui)) else admData(),
     control = .ret$control,
     table = .ret$table, env = .ret, est = "admc")
 
