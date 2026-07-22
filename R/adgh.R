@@ -1267,7 +1267,9 @@ nlmixr2Est.adgh <- function(env, ...) {
     warning("covariance could not be computed (the Hessian was singular or ",
             "non-finite); standard errors are unavailable for this fit.",
             call. = FALSE)
-  # Snapshot BEFORE nlmixr2est sees the matrix -- see .admRestoreCovNames().
+  # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
+  # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
+  .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
   t_elapsed <- t_opt + t_cov
@@ -1319,7 +1321,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   nlmixr2est::.nlmixr2FitUpdateParams(.ret)
   nmObjHandleControlObject.adghControl(.ctl, .ret)
   if (exists("control", .ui)) rm(list = "control", envir = .ui)
-  .ret$control <- .admToFoceiControl(.ctl)
+  .ret$control <- .admToFoceiControl(.ctl, .admCovSkip(.cov, .ui))
   .focei_model <- suppressMessages(tryCatch(.ui$foceiModel, error = function(e) NULL))
   if (!is.null(.focei_model)) .ret$model <- .focei_model
 

@@ -190,3 +190,77 @@ test_that(".admCovNames snapshots row names, and tolerates a NULL covariance", {
   expect_null(admixr2:::.admCovNames(NULL))
   expect_null(admixr2:::.admCovNames("not a matrix"))
 })
+
+test_that(".admCovThetaOrder puts the theta rows back in iniDf order", {
+  # nlmixr2est fills parFixedDf$SE positionally, walking iniDf's thetas in order
+  # and consuming sqrt(diag(cov)) one entry at a time. admixr2 builds the matrix
+  # in optimizer order (struct, then residual), so a model that declares its
+  # residual parameter first used to print `a` with tcl's SE -- a rotation, every
+  # number finite and plausible.
+  ini <- data.frame(
+    ntheta = c(1L, 2L, 3L, NA),
+    neta1  = c(NA, NA, NA, 1L),
+    name   = c("a", "tcl", "tv", "eta.cl"),
+    fix    = c(FALSE, FALSE, FALSE, FALSE),
+    stringsAsFactors = FALSE)
+  ui  <- list(iniDf = ini)
+  nms <- c("tcl", "tv", "a", "om.eta.cl")          # the order admixr2 builds
+  cov <- diag(c(1, 2, 3, 4)); dimnames(cov) <- list(nms, nms)
+
+  got <- admixr2:::.admCovThetaOrder(cov, ui)
+  expect_identical(rownames(got), c("a", "tcl", "tv", "om.eta.cl"))
+  expect_identical(colnames(got), rownames(got))
+  # a permutation, so each parameter keeps its OWN variance
+  for (nm in nms) expect_identical(got[nm, nm], cov[nm, nm])
+  # and the off-diagonals travel with it
+  expect_identical(got["a", "tcl"], cov["a", "tcl"])
+
+  # A fixed theta has no row here; the ones that remain still come out in iniDf
+  # order, which is the order nlmixr2est walks them in.
+  ini_fix <- ini; ini_fix$fix[2] <- TRUE
+  cov2 <- cov[c("tv", "a", "om.eta.cl"), c("tv", "a", "om.eta.cl")]
+  got2 <- admixr2:::.admCovThetaOrder(cov2, list(iniDf = ini_fix))
+  expect_identical(rownames(got2), c("a", "tv", "om.eta.cl"))
+
+  # Nothing to order by -> left exactly as built.
+  expect_null(admixr2:::.admCovThetaOrder(NULL, ui))
+  expect_identical(admixr2:::.admCovThetaOrder(cov, list()), cov)
+  om <- matrix(1, 1, 1, dimnames = list("om.eta.cl", "om.eta.cl"))
+  expect_identical(admixr2:::.admCovThetaOrder(om, ui), om)
+})
+
+test_that(".admCovSkip tells nlmixr2est exactly which thetas the matrix carries", {
+  # The other half of the positional contract. nlmixr2est's own default is
+  # version-dependent (< 6.2.0 skips every residual-error theta, because FOCEI's
+  # covariance really does not include them), so leaving it to the host made the
+  # residual's row be read as the first structural theta's SE on that version.
+  ini <- data.frame(
+    ntheta = c(1L, 2L, 3L, NA),
+    neta1  = c(NA, NA, NA, 1L),
+    name   = c("a", "tcl", "tv", "eta.cl"),
+    fix    = c(FALSE, FALSE, FALSE, FALSE),
+    stringsAsFactors = FALSE)
+  ui  <- list(iniDf = ini)
+  nms <- c("a", "tcl", "tv", "om.eta.cl")
+  cov <- diag(4); dimnames(cov) <- list(nms, nms)
+
+  # every theta present -> skip nothing, residual included
+  expect_identical(admixr2:::.admCovSkip(cov, ui), c(FALSE, FALSE, FALSE))
+
+  # a fixed theta has no row in the covariance and must be skipped, in ntheta
+  # order rather than the order the matrix happens to be in
+  nms2 <- c("tv", "a", "om.eta.cl")
+  cov2 <- diag(3); dimnames(cov2) <- list(nms2, nms2)
+  expect_identical(admixr2:::.admCovSkip(cov2, ui), c(FALSE, TRUE, FALSE))
+
+  # length follows max(ntheta), not the number of rows: nlmixr2est checks it and
+  # quietly substitutes a vector of its own when it disagrees
+  ini3 <- ini; ini3$ntheta <- c(2L, 3L, 1L, NA)
+  expect_length(admixr2:::.admCovSkip(cov, list(iniDf = ini3)), 3L)
+
+  # nothing to say: no covariance, no thetas, or no theta of ours in it
+  expect_null(admixr2:::.admCovSkip(NULL, ui))
+  expect_null(admixr2:::.admCovSkip(cov, list()))
+  om <- matrix(1, 1, 1, dimnames = list("om.eta.cl", "om.eta.cl"))
+  expect_null(admixr2:::.admCovSkip(om, ui))
+})

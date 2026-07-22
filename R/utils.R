@@ -106,6 +106,75 @@ utils::globalVariables(c(
 # labelled SE is far worse than an unlabelled one.
 .admCovNames <- function(cov) if (is.matrix(cov)) rownames(cov) else NULL
 
+# Put the theta rows of the covariance in iniDf's OWN order.
+#
+# nlmixr2est fills its `SE` column POSITIONALLY: it walks the thetas in iniDf
+# order and takes the next entry of `sqrt(diag(cov))` for each one it did not
+# skip. admixr2 builds the covariance in OPTIMIZER order -- every structural
+# theta, then every residual parameter -- and those two orders agree only when
+# the model happens to declare its residual parameters last.
+#
+#   ini({ a <- 0.1; tcl <- log(3); tv <- log(30) })   # residual declared FIRST
+#
+# printed `a` with tcl's SE, tcl with tv's and tv with a's: a silent rotation,
+# every value finite and plausible. So this is not cosmetic ordering -- it is
+# what makes the SE belong to the parameter it is printed beside.
+#
+# Rows that are not thetas (the appended omega block) keep their position at the
+# end. Anything unrecognised is left alone: a covariance we cannot map is better
+# reported in the order we built it than permuted on a guess.
+#
+# The other half of the contract is .admCovSkip(), which tells nlmixr2est WHICH
+# thetas this matrix carries -- without it, nlmixr2est < 6.2.0 skips every
+# residual-error theta (FOCEI computes its covariance without them) and so reads
+# the residual's row as the first structural theta's standard error.
+.admCovThetaOrder <- function(cov, ui) {
+  if (!is.matrix(cov) || is.null(rownames(cov))) return(cov)
+  .th <- .admThetaIniDf(ui)
+  if (is.null(.th)) return(cov)
+  nms  <- rownames(cov)
+  # the thetas this matrix carries, in iniDf's order; everything else (the omega
+  # block) keeps its position after them, which is where nlmixr2est stops looking
+  want <- .th$name[.th$name %in% nms]
+  if (!length(want)) return(cov)
+  ord <- c(match(want, nms), which(!(nms %in% .th$name)))
+  cov[ord, ord, drop = FALSE]
+}
+
+# iniDf's theta rows, in ntheta order. NULL when there is nothing to order by.
+.admThetaIniDf <- function(ui) {
+  iniDf <- tryCatch(ui$iniDf, error = function(e) NULL)
+  if (is.null(iniDf) || is.null(iniDf$ntheta)) return(NULL)
+  .th <- iniDf[!is.na(iniDf$ntheta), , drop = FALSE]
+  if (!nrow(.th)) return(NULL)
+  .th[order(.th$ntheta), , drop = FALSE]
+}
+
+# The `skipCov` vector to hand nlmixr2est: TRUE for every theta this covariance
+# does NOT carry a standard error for.
+#
+# Derived from the matrix itself rather than from a convention, so the two cannot
+# drift apart. nlmixr2est's own default is version-dependent -- 6.2.0 skips only
+# fixed thetas, earlier versions skip every residual-error theta as well, because
+# FOCEI's covariance genuinely does not include them. admixr2's does, so saying so
+# is what makes the residual SE print at all on the older host, and what stops the
+# structural SEs being read off the wrong rows there.
+#
+# NULL (leave nlmixr2est's default alone) when the model has no thetas or the
+# covariance is missing, and when we do not hold every theta nlmixr2est expects to
+# find -- the same refusal as .admCovThetaOrder(), for the same reason.
+.admCovSkip <- function(cov, ui) {
+  if (!is.matrix(cov) || is.null(rownames(cov))) return(NULL)
+  .th <- .admThetaIniDf(ui)
+  if (is.null(.th)) return(NULL)
+  # Indexed BY ntheta, not by row position: nlmixr2est checks the length against
+  # max(ntheta) and, if it disagrees, silently substitutes a vector of its own.
+  skip <- rep(TRUE, max(.th$ntheta))
+  skip[.th$ntheta] <- !(.th$name %in% rownames(cov))
+  if (all(skip)) return(NULL)
+  skip
+}
+
 .admRestoreCovNames <- function(fit, nms) {
   if (is.null(nms)) return(invisible(NULL))
   e <- tryCatch(fit$env, error = function(e) NULL)
@@ -775,8 +844,14 @@ utils::globalVariables(c(
 }
 
 # Bridge admControl/adirmcControl fields into foceiControl for nlmixr2 table machinery.
-.admToFoceiControl <- function(ctl) {
-  nlmixr2est::foceiControl(
+#
+# `skip_cov` says which thetas nlmixr2est should NOT expect a standard error for.
+# It fills its SE column by walking the thetas in iniDf order and taking the next
+# entry of sqrt(diag(cov)) for each one it is not skipping, so this vector and the
+# row order of the covariance are two halves of the same contract -- see
+# .admCovSkip()/.admCovThetaOrder(). Left to nlmixr2est's own default when NULL.
+.admToFoceiControl <- function(ctl, skip_cov = NULL) {
+  .args <- list(
     rxControl          = ctl$rxControl,
     maxOuterIterations = 0L,
     maxInnerIterations = 0L,
@@ -791,6 +866,8 @@ utils::globalVariables(c(
     compress           = ctl$compress,
     ci                 = ctl$ci,
     sigdigTable        = ctl$sigdigTable)
+  if (!is.null(skip_cov)) .args$skipCov <- skip_cov
+  do.call(nlmixr2est::foceiControl, .args)
 }
 
 # LHS: one sample per stratum per dimension, independently permuted.

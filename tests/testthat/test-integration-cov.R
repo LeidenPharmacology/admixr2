@@ -248,8 +248,14 @@ test_that("a sigma SE is on the same scale as the sigma estimate it is printed w
   # precisely, so its %RSE is a few percent. Under the scale bug it would be ~2/a in
   # relative terms, i.e. of order 2000%. The assertion below has a ~50x margin, so it
   # cannot pass by luck and does not restate the implementation.
+  #
+  # The residual parameter is declared FIRST on purpose. nlmixr2est fills its SE
+  # column positionally in iniDf order, so a covariance built in optimizer order
+  # (structural thetas, then residual) is a ROTATION of the one it expects unless
+  # .admCovThetaOrder() puts it back -- and a rotation of finite, plausible SEs is
+  # invisible to any check that only asks whether the number is sane.
   fn <- function() {
-    ini({ tcl <- log(3); tv <- log(30); a <- 0.1; eta.cl ~ 0.09 })
+    ini({ a <- 0.1; tcl <- log(3); tv <- log(30); eta.cl ~ 0.09 })
     model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
             d/dt(central) <- -(cl / v) * central; cp <- central / v
             cp ~ add(a) })
@@ -271,11 +277,25 @@ test_that("a sigma SE is on the same scale as the sigma estimate it is printed w
 
   pf  <- fit$parFixedDf
   est <- unname(pf["a", "Estimate"])
-  se  <- unname(pf["a", "SE"])
+  # Read the SE off admixr2's OWN matrix. nlmixr2est < 6.2.0 lists every residual
+  # parameter in `skipCov` (FOCEI computes its covariance without them) and so
+  # leaves their popDf SE at NA whatever the estimator supplies; 6.2.0 dropped
+  # that skip. The scale is admixr2's responsibility either way.
+  expect_true("a" %in% rownames(fit$cov))
+  se <- sqrt(fit$cov["a", "a"])
   expect_true(is.finite(se) && se > 0)
   expect_equal(est, 0.1, tolerance = 0.15)          # the estimate itself is sane
   expect_lt(se / est, 0.4)                          # scale bug would give ~20
-  # ... and sigma is reported at all (it used to be uninitialised memory).
-  expect_true("a" %in% rownames(fit$cov))
   expect_false(any(grepl("^logchol_", rownames(fit$cov))))
+
+  # Every printed SE must be the entry of OUR matrix carrying the SAME NAME. This
+  # is what catches a rotation (as opposed to a wrong scale), and it is also what
+  # .admCovSkip() buys: nlmixr2est fills the column positionally, so both the row
+  # order and the set of thetas it expects have to be stated. Nothing here is
+  # allowed to be NA -- no parameter of this model is fixed.
+  nms <- intersect(rownames(pf), rownames(fit$cov))
+  expect_setequal(nms, c("a", "tcl", "tv"))
+  for (nm in nms)
+    expect_equal(unname(pf[nm, "SE"]), sqrt(fit$cov[nm, nm]),
+                 tolerance = 1e-8, info = nm)
 })

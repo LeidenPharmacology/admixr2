@@ -126,6 +126,28 @@
   the names are snapshot before the matrix is handed over and restored afterwards
   by `.admRestoreCovNames()`.
 
+* **A printed standard error now belongs to the parameter it is printed beside.**
+  nlmixr2est fills `parFixedDf$SE` *positionally*: it walks the thetas in `iniDf`
+  order and takes the next entry of `sqrt(diag(fit$cov))` for each one it is not
+  skipping. admixr2 builds its covariance in optimizer order -- structural thetas
+  first, then residual error -- and hands over a matrix that also carries the
+  residual parameters, so two things had to be said explicitly:
+
+  - `.admCovThetaOrder()` puts the theta rows back in `iniDf` order. A model that
+    declares its residual parameter first, `ini({ a <- 0.1; tcl <- log(3); tv <-
+    log(30) })`, previously printed `a` with `tcl`'s SE, `tcl` with `tv`'s and
+    `tv` with `a`'s -- a silent rotation, every number finite and plausible.
+  - `.admCovSkip()` tells nlmixr2est which thetas the matrix actually carries,
+    derived from the matrix itself rather than from a convention. nlmixr2est's own
+    default is version-dependent: 6.2.0 skips only *fixed* thetas, while earlier
+    versions (including 6.0.1, current on CRAN) also skip every residual-error
+    theta, because FOCEI's covariance genuinely does not include them. Without
+    this, those versions printed `NA` for every residual SD and read the structural
+    SEs off the wrong rows.
+
+  Verified on nlmixr2est 6.0.1 and 6.2.0, with the residual declared first and
+  last, and with a `fix()`ed structural theta (which correctly stays `NA`).
+
 * **Count endpoints could not be fitted with the default gradient.** `y ~ pois(cp)`
   and `y ~ nbinomMu(k, cp)` emit `rx_pred_ = llikPois(DV, ...)` -- the
   log-likelihood, not the mean -- and sensitivity columns that differentiate it,
