@@ -1,4 +1,4 @@
-# admixr2 0.3.0
+# admixr2 0.4.0
 
 ## New features
 
@@ -24,93 +24,6 @@
   admixr2 also scores `tr(V_pred^-1 V_obs)`, which treats the observed covariance
   as arising from a normal; that term stays approximate for heavy-tailed
   residuals, increasingly so as `nu` approaches 2.
-
-* **Analytical gradients for non-mu-referenced ("unpaired") structural thetas.**
-  A structural theta with no mu-referencing eta (`tka` with no `eta.ka`, or the
-  `exp(tcl) * exp(eta.cl)` writing style rxode2 does not mu-reference) used to
-  cost an extra finite-difference `rxSolve` per gradient call. admixr2 now emits
-  its own first-order sensitivity model over an explicit direction set (one
-  direction per random effect plus one per unpaired theta), compiled with
-  `eventSens = "jump"` so dosing-modifier (`f`/`lag`/`rate`/`dur`) sensitivities
-  are no longer silently zero. This mirrors the scheme nlmixr2est's fast-focei
-  uses (`.foceiAnalyticDirections`) but first-order only, and is cross-validated
-  against nlmixr2est's inner model to ~1e-13 across ODE, linCmt, dosing
-  modifiers, initial conditions, covariates, if/else and multi-endpoint models.
-  Consumed by `admc`, `adgh` (including joint multi-output studies); `adfo` keeps
-  finite differences (its `V_pred = J Omega J' + Sigma` needs a second
-  derivative). Measured 2.5-3.8x faster and ~100x more accurate than the previous
-  finite-difference path on a 2-compartment model. This adds `symengine` (already
-  a hard dependency of `nlmixr2est`, so always installed alongside admixr2) to
-  `Imports`, used to emit the linCmt direction derivatives. The feature degrades
-  gracefully on rxode2 without `eventSens = "jump"` support (it falls back to the
-  finite-difference path), so no minimum-version bump is required.
-
-* **Residual error models: `pow()`, `addPow()` and `combined1()` are now
-  supported, with analytical gradients** (#84). admixr2 previously supported
-  only `add`, `prop` and `lnorm`. The residual error model is now read from
-  `ui$predDf` (`errType`/`errTypeF`/`transform`/`addProp`) rather than from
-  `iniDf$err` alone, and every estimator evaluates it through one shared
-  specification:
-
-  | form | variance |
-  |------|----------|
-  | `combined2` (default for `add + prop`) | `a^2 + b^2 * f^(2c)` |
-  | `combined1` | `(a + b * f^c)^2` |
-  | `lnorm` | moment-matched lognormal |
-
-  with `c = 1` recovering `prop` and `b = 0` recovering `add`. Analytical
-  `d(var)/d(sigma)`, `d(mu)/d(sigma)` and `d(var)/d(f)` are supplied for all of
-  them, so residual parameters keep an exact gradient under
-  `grad = "sens"`/`"analytical"`.
-
-  Existing `add`/`prop`/`lnorm` fits are unaffected: the aggregate `-2LL` is
-  bit-for-bit identical, and their gradients change only by floating-point
-  reassociation (~1 ulp).
-
-* **Multi-compartment fitting (multiple observed outputs).** A study may now
-  observe several model outputs at once (e.g. plasma and brain/CSF) via an
-  `observations` list -- one entry per observed output with its own `output`,
-  `times`, `E` and `V`. Two modes (#85):
-    * *Independent* -- each output has its own `n`/`ev` (separate experiments,
-      e.g. literature meta-analysis); the aggregate `-2LL` is the sum of the
-      per-output likelihood blocks. Fit with full analytical / sensitivity
-      gradients.
-    * *Joint (same subjects)* -- outputs measured on the same subjects, with a
-      shared `n`/`ev` and a joint covariance given either as a study-level full
-      `V` or as per-output marginal `V` plus a `cross` list of cross-covariance
-      blocks. Scored by a single MVN over the stacked vector with shared random
-      effects and the full **analytical** gradient in all three estimators (any
-      number of compartments; the assembled joint covariance is checked for
-      positive-definiteness).
-
-  Supported by `est = "admc"`, `"adfo"` and `"adgh"`; `datagen()` generates
-  multi-output aggregate data and `plot()` renders one panel set per compartment.
-  Pass the endpoint names to `admData()`, e.g. `admData(c("cp", "cCSF"))`.
-  `est = "adirmc"` does not support multiple observed outputs.
-
-* **Parallel restarts now run on `mirai` daemons.** `workers > 1` starts a pool
-  of background R processes instead of dispatching through `future`/`furrr`.
-  This replaces the previous fork (Unix/macOS) vs PSOCK (Windows/RStudio) split
-  with a single code path that behaves identically on every platform, and the
-  pool lives on its own mirai compute profile so it never disturbs daemons the
-  user has set up for their own code. `furrr` and `future` are no longer used;
-  `mirai` moves into `Suggests`. Workers are still stopped automatically after
-  the restart phase (and now also on error/interrupt, via `on.exit()`), so all
-  cores are free for the covariance step; `admStopWorkers()` remains available.
-
-* **`nDisplayProgress` control argument** for every estimator (`admControl()`,
-  `adfoControl()`, `adghControl()`, `adirmcControl()`), passed through to the
-  `rxSolve()` calls that drive fitting. It sets how many subjects a single solve
-  must exceed before the solver shows its text progress bar. The default
-  (`.Machine$integer.max`) keeps the bar off, so it no longer leaks into scripts,
-  logs or rendered vignettes; lower it (e.g. `1000L`) to watch progress during
-  long interactive fits.
-
-* The aggregate-data estimators (`adfo`, `adgh`, `adirmc`, `admc`) now carry
-  `type` and `description` attributes classifying them as "Model Based Meta
-  Analysis" methods, so they appear in the category-grouped estimation-method
-  list nlmixr2est prints for an unsupported `est=` (or a bare `nlmixr2()` call)
-  (#107).
 
 * **The transform-both-sides transforms now call rxode2's own kernel.** `boxCox`,
   `yeoJohnson`, `logitNorm` and `probitNorm` used to be evaluated by a
@@ -237,7 +150,6 @@
   observation rows in it were appended a second time by the study's own `times`,
   silently duplicating every time point.
 
-
 * **Residual parameters fixed with `fix()` were silently dropped.** `add(a)` with
   `a <- fix(0.7)` fitted with **no residual variance at all**; `add(a) + prop(b)`
   with a fixed `b` lost the proportional term; and `pow(b, c)` with a fixed `c`
@@ -336,7 +248,6 @@
   fitted model, aggregate, and recover the fitted mean and covariance) to within
   Monte-Carlo noise.
 
-
 * **Prediction-dependent residual error is now composed correctly (`prop()`,
   `pow()`, `lnorm()`, combined).** admixr2 built the predicted covariance as
   `Var_eta(f) + Sigma(mu_pred)` -- evaluating the residual variance at the
@@ -380,6 +291,99 @@
   the ordinary solve. Non-delay models are untouched, and their solves are
   unchanged byte for byte. Found by porting the equivalent fix from nlmixr2est's
   own augmented-sensitivity solve.
+
+# admixr2 0.3.0
+
+## New features
+
+* **Analytical gradients for non-mu-referenced ("unpaired") structural thetas.**
+  A structural theta with no mu-referencing eta (`tka` with no `eta.ka`, or the
+  `exp(tcl) * exp(eta.cl)` writing style rxode2 does not mu-reference) used to
+  cost an extra finite-difference `rxSolve` per gradient call. admixr2 now emits
+  its own first-order sensitivity model over an explicit direction set (one
+  direction per random effect plus one per unpaired theta), compiled with
+  `eventSens = "jump"` so dosing-modifier (`f`/`lag`/`rate`/`dur`) sensitivities
+  are no longer silently zero. This mirrors the scheme nlmixr2est's fast-focei
+  uses (`.foceiAnalyticDirections`) but first-order only, and is cross-validated
+  against nlmixr2est's inner model to ~1e-13 across ODE, linCmt, dosing
+  modifiers, initial conditions, covariates, if/else and multi-endpoint models.
+  Consumed by `admc`, `adgh` (including joint multi-output studies); `adfo` keeps
+  finite differences (its `V_pred = J Omega J' + Sigma` needs a second
+  derivative). Measured 2.5-3.8x faster and ~100x more accurate than the previous
+  finite-difference path on a 2-compartment model. This adds `symengine` (already
+  a hard dependency of `nlmixr2est`, so always installed alongside admixr2) to
+  `Imports`, used to emit the linCmt direction derivatives. The feature degrades
+  gracefully on rxode2 without `eventSens = "jump"` support (it falls back to the
+  finite-difference path), so no minimum-version bump is required.
+
+* **Residual error models: `pow()`, `addPow()` and `combined1()` are now
+  supported, with analytical gradients** (#84). admixr2 previously supported
+  only `add`, `prop` and `lnorm`. The residual error model is now read from
+  `ui$predDf` (`errType`/`errTypeF`/`transform`/`addProp`) rather than from
+  `iniDf$err` alone, and every estimator evaluates it through one shared
+  specification:
+
+  | form | variance |
+  |------|----------|
+  | `combined2` (default for `add + prop`) | `a^2 + b^2 * f^(2c)` |
+  | `combined1` | `(a + b * f^c)^2` |
+  | `lnorm` | moment-matched lognormal |
+
+  with `c = 1` recovering `prop` and `b = 0` recovering `add`. Analytical
+  `d(var)/d(sigma)`, `d(mu)/d(sigma)` and `d(var)/d(f)` are supplied for all of
+  them, so residual parameters keep an exact gradient under
+  `grad = "sens"`/`"analytical"`.
+
+  Existing `add`/`prop`/`lnorm` fits are unaffected: the aggregate `-2LL` is
+  bit-for-bit identical, and their gradients change only by floating-point
+  reassociation (~1 ulp).
+
+* **Multi-compartment fitting (multiple observed outputs).** A study may now
+  observe several model outputs at once (e.g. plasma and brain/CSF) via an
+  `observations` list -- one entry per observed output with its own `output`,
+  `times`, `E` and `V`. Two modes (#85):
+    * *Independent* -- each output has its own `n`/`ev` (separate experiments,
+      e.g. literature meta-analysis); the aggregate `-2LL` is the sum of the
+      per-output likelihood blocks. Fit with full analytical / sensitivity
+      gradients.
+    * *Joint (same subjects)* -- outputs measured on the same subjects, with a
+      shared `n`/`ev` and a joint covariance given either as a study-level full
+      `V` or as per-output marginal `V` plus a `cross` list of cross-covariance
+      blocks. Scored by a single MVN over the stacked vector with shared random
+      effects and the full **analytical** gradient in all three estimators (any
+      number of compartments; the assembled joint covariance is checked for
+      positive-definiteness).
+
+  Supported by `est = "admc"`, `"adfo"` and `"adgh"`; `datagen()` generates
+  multi-output aggregate data and `plot()` renders one panel set per compartment.
+  Pass the endpoint names to `admData()`, e.g. `admData(c("cp", "cCSF"))`.
+  `est = "adirmc"` does not support multiple observed outputs.
+
+* **Parallel restarts now run on `mirai` daemons.** `workers > 1` starts a pool
+  of background R processes instead of dispatching through `future`/`furrr`.
+  This replaces the previous fork (Unix/macOS) vs PSOCK (Windows/RStudio) split
+  with a single code path that behaves identically on every platform, and the
+  pool lives on its own mirai compute profile so it never disturbs daemons the
+  user has set up for their own code. `furrr` and `future` are no longer used;
+  `mirai` moves into `Suggests`. Workers are still stopped automatically after
+  the restart phase (and now also on error/interrupt, via `on.exit()`), so all
+  cores are free for the covariance step; `admStopWorkers()` remains available.
+
+* **`nDisplayProgress` control argument** for every estimator (`admControl()`,
+  `adfoControl()`, `adghControl()`, `adirmcControl()`), passed through to the
+  `rxSolve()` calls that drive fitting. It sets how many subjects a single solve
+  must exceed before the solver shows its text progress bar. The default
+  (`.Machine$integer.max`) keeps the bar off, so it no longer leaks into scripts,
+  logs or rendered vignettes; lower it (e.g. `1000L`) to watch progress during
+  long interactive fits.
+
+* The aggregate-data estimators (`adfo`, `adgh`, `adirmc`, `admc`) now carry
+  `type` and `description` attributes classifying them as "Model Based Meta
+  Analysis" methods, so they appear in the category-grouped estimation-method
+  list nlmixr2est prints for an unsupported `est=` (or a bare `nlmixr2()` call)
+  (#107).
+
+## Bug fixes
 
 * **`pow()` models no longer fit the wrong residual model, silently.** `pow(b, c)`
   produces two `iniDf` rows -- the coefficient (`err = "pow"`) and the *exponent*
