@@ -46,7 +46,7 @@ skip_if_not_installed("rxode2")
 .rm_pinfo <- function(nm) {
   cs <- .rm_cases[[nm]]
   ui <- .rm_mk(cs[1], cs[2])
-  suppressWarnings(.admParseIniDf(ui$iniDf, ui))
+  suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
 }
 
 # -- 1. the moment formulas vs an individual-level simulation ------------------
@@ -68,8 +68,8 @@ test_that("V_pred is the law of total variance, not Sigma at the mean", {
   )
   for (nm in names(gen)) {
     p   <- .rm_pinfo(nm)
-    arr <- .admResidRows(p, "cp", .admSigmaNat(p$sigma_init, p), length(times))
-    ap  <- .admResidApply(mu_f, diag(Cf), arr)
+    arr <- admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(p$sigma_init, p), length(times))
+    ap  <- admixr2:::.admResidApply(mu_f, diag(Cf), arr)
     V   <- Cf * tcrossprod(ap$ms); diag(V) <- ap$dv
 
     y  <- gen[[nm]]()
@@ -91,8 +91,8 @@ test_that(".admResidApply matches the closed form for every residual form", {
   Ef  <- function(k) mu0^k + k*(k-1)/2 * mu0^(k-2) * v0
   for (nm in names(.rm_cases)) {
     p   <- .rm_pinfo(nm)
-    arr <- .admResidRows(p, "cp", .admSigmaNat(p$sigma_init, p), length(mu0))
-    ap  <- .admResidApply(mu0, v0, arr)
+    arr <- admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(p$sigma_init, p), length(mu0))
+    ap  <- admixr2:::.admResidApply(mu0, v0, arr)
     a2 <- arr$a2; b2 <- arr$b2; cc <- arr$cc
     if (arr$form[1] == 2L) {                    # lnorm
       ms <- exp(a2/2); ev <- Ef(2) * exp(a2) * (exp(a2) - 1)
@@ -108,9 +108,9 @@ test_that(".admResidApply matches the closed form for every residual form", {
 
 test_that("additive error is bit-identical to v0 + a^2", {
   p   <- .rm_pinfo("add")
-  arr <- .admResidRows(p, "cp", .admSigmaNat(p$sigma_init, p), 3L)
+  arr <- admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(p$sigma_init, p), 3L)
   v0  <- c(1.5, 6.0, 20.0)
-  expect_identical(.admResidApply(c(4, 12, 30), v0, arr)$dv, v0 + 0.25)
+  expect_identical(admixr2:::.admResidApply(c(4, 12, 30), v0, arr)$dv, v0 + 0.25)
 })
 
 test_that(".admResidDeriv matches central FD, including dv_dv0", {
@@ -119,8 +119,8 @@ test_that(".admResidDeriv matches central FD, including dv_dv0", {
     p  <- .rm_pinfo(nm)
     p0 <- p$sigma_init
     ap <- function(ps, m, vv)
-      .admResidApply(m, vv, .admResidRows(p, "cp", .admSigmaNat(ps, p), length(m)))
-    d  <- .admResidDeriv(mu0, v0, .admResidRows(p, "cp", .admSigmaNat(p0, p), 3L), p)
+      admixr2:::.admResidApply(m, vv, admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(ps, p), length(m)))
+    d  <- admixr2:::.admResidDeriv(mu0, v0, admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(p0, p), 3L), p)
 
     for (k in seq_along(p0)) {
       pp <- p0; pp[k] <- pp[k]+h; pm <- p0; pm[k] <- pm[k]-h
@@ -146,26 +146,26 @@ test_that("analytic gradients match FD for add, prop and lnorm", {
   for (nm in c("add", "prop", "lnorm")) {
     cs    <- .rm_cases[[nm]]
     ui    <- .rm_mk(cs[1], cs[2])
-    pinfo <- suppressWarnings(.admParseIniDf(ui$iniDf, ui))
-    sens  <- suppressMessages(tryCatch(.admLoadSensModel(ui), error = function(e) NULL))
-    rxMod <- .admLoadModel(ui)
+    pinfo <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+    sens  <- suppressMessages(tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL))
+    rxMod <- admixr2:::.admLoadModel(ui)
     E <- 100/20*exp(-(5/20)*times)
-    s <- .admNormaliseStudy(list(E = E, V = diag((0.3*E)^2), n = 200L,
-                                 times = times, ev = rxode2::et(amt = 100)), "s")
+    s <- admixr2:::.admNormaliseStudy(list(E = E, V = diag((0.3*E)^2), n = 200L,
+                                           times = times, ev = rxode2::et(amt = 100)), "s")
     s$ev_full <- rxode2::et(s$ev, s$times)
     st <- list(s = s)
-    z  <- .admMakeZ(400L, pinfo, 1L, "sobol")
-    pm <- .admMakeParamsList(400L, pinfo, 1L)
-    grid <- .adghNodeGrid(5L, pinfo$n_eta)
-    p0 <- .admBuildOptVec(pinfo)$p0 * 1.03 + 0.01     # off the optimum
+    z  <- admixr2:::.admMakeZ(400L, pinfo, 1L, "sobol")
+    pm <- admixr2:::.admMakeParamsList(400L, pinfo, 1L)
+    grid <- admixr2:::.adghNodeGrid(5L, pinfo$n_eta)
+    p0 <- admixr2:::.admBuildOptVec(pinfo)$p0 * 1.03 + 0.01     # off the optimum
 
     runs <- list(
-      adfo = list(n = function(p) .adfoNLL(p, pinfo, st, sens, rxMod, "cp", pm, 1L),
-                  g = function(p) .adfoGrad(p, pinfo, st, sens, rxMod, "cp", pm, 1L, 1e-5)),
-      adgh = list(n = function(p) .adghNLL(p, pinfo, st, rxMod, "cp", grid, 1L),
-                  g = function(p) .adghGrad(p, pinfo, st, sens, rxMod, "cp", grid, 1L, 1e-5)),
-      admc = list(n = function(p) .admNLL(p, pinfo, st, z, rxMod, "cp", pm, 1L),
-                  g = function(p) .admGrad(p, pinfo, st, z, rxMod, "cp", pm, 1L, 1e-5, sens))
+      adfo = list(n = function(p) admixr2:::.adfoNLL(p, pinfo, st, sens, rxMod, "cp", pm, 1L),
+                  g = function(p) admixr2:::.adfoGrad(p, pinfo, st, sens, rxMod, "cp", pm, 1L, 1e-5)),
+      adgh = list(n = function(p) admixr2:::.adghNLL(p, pinfo, st, rxMod, "cp", grid, 1L),
+                  g = function(p) admixr2:::.adghGrad(p, pinfo, st, sens, rxMod, "cp", grid, 1L, 1e-5)),
+      admc = list(n = function(p) admixr2:::.admNLL(p, pinfo, st, z, rxMod, "cp", pm, 1L),
+                  g = function(p) admixr2:::.admGrad(p, pinfo, st, z, rxMod, "cp", pm, 1L, 1e-5, sens))
     )
     for (est in names(runs)) {
       an <- runs[[est]]$g(p0)

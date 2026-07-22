@@ -48,15 +48,15 @@ test_that("predicted (E, V) equals simulate-from-the-model-and-aggregate", {
                              d/dt(central) <- -(cl/v)*central; cp <- central/v
                              %s }) }', cs[[1L]], OM, cs[[2L]])
     ui    <- suppressMessages(rxode2::rxode2(eval(parse(text = src))))
-    pinfo <- suppressWarnings(.admParseIniDf(ui$iniDf, ui))
-    rxMod <- .admLoadModel(ui)
+    pinfo <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+    rxMod <- admixr2:::.admLoadModel(ui)
 
-    s <- .admNormaliseStudy(list(E = rep(0, length(times)), V = diag(length(times)),
-                                 n = 100L, times = times, ev = ev), "s")
+    s <- admixr2:::.admNormaliseStudy(list(E = rep(0, length(times)), V = diag(length(times)),
+                                           n = 100L, times = times, ev = ev), "s")
     s$ev_full <- rxode2::et(s$ev, s$times)
-    pars <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
-    grid <- .adghNodeGrid(15L, pinfo$n_eta)
-    m    <- .adghMoments(pars, pinfo, s, rxMod, .admOutputVar(ui), grid, 1L)
+    pars <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pinfo)$p0, pinfo)
+    grid <- admixr2:::.adghNodeGrid(15L, pinfo$n_eta)
+    m    <- admixr2:::.adghMoments(pars, pinfo, s, rxMod, admixr2:::.admOutputVar(ui), grid, 1L)
 
     set.seed(9)
     sim <- suppressWarnings(rxode2::rxSolve(
@@ -100,14 +100,14 @@ test_that("the round trip holds for a depot model, where f == 0 at t = 0", {
                              cp <- central/v
                              %s }) }', cs[[1L]], OM, cs[[2L]])
     ui    <- suppressMessages(rxode2::rxode2(eval(parse(text = src))))
-    pinfo <- suppressWarnings(.admParseIniDf(ui$iniDf, ui))
-    rxMod <- .admLoadModel(ui)
-    s <- .admNormaliseStudy(list(E = rep(0, length(times)), V = diag(length(times)),
-                                 n = 100L, times = times, ev = ev), "s")
+    pinfo <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+    rxMod <- admixr2:::.admLoadModel(ui)
+    s <- admixr2:::.admNormaliseStudy(list(E = rep(0, length(times)), V = diag(length(times)),
+                                           n = 100L, times = times, ev = ev), "s")
     s$ev_full <- rxode2::et(s$ev, s$times)
-    pars <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
-    m <- .adghMoments(pars, pinfo, s, rxMod, .admOutputVar(ui),
-                      .adghNodeGrid(15L, pinfo$n_eta), 1L)
+    pars <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pinfo)$p0, pinfo)
+    m <- admixr2:::.adghMoments(pars, pinfo, s, rxMod, admixr2:::.admOutputVar(ui),
+                                admixr2:::.adghNodeGrid(15L, pinfo$n_eta), 1L)
     expect_true(all(is.finite(m$E)))
     expect_true(all(is.finite(m$V)))
     expect_gte(min(diag(m$V)), 0)

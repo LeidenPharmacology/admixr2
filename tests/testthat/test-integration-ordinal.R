@@ -37,8 +37,8 @@
   if (!is.null(.ord_cache)) return(.ord_cache)
   skip_on_cran(); skip_if_not_installed("rxode2"); skip_if_not_installed("nlmixr2est")
   ui    <- suppressMessages(rxode2::rxode2(.ord_model()))
-  pinfo <- suppressWarnings(.admParseIniDf(ui$iniDf, ui))
-  rx    <- .admLoadModel(ui)
+  pinfo <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+  rx    <- admixr2:::.admLoadModel(ui)
   times <- c(0.5, 1, 2, 4)
   ev    <- rxode2::et(amt = 100)
 
@@ -70,11 +70,11 @@
 
 test_that("the ordinal spec is registered under EVERY category probability", {
   s  <- .ord_setup()
-  sp <- .admResidSpecs(s$pinfo)
+  sp <- admixr2:::.admResidSpecs(s$pinfo)
   # Registering only the first probability left every other category with no spec
   # at all -- form 0 and zero residual variance.
   expect_setequal(names(sp), c("p1", "p2"))
-  expect_true(all(vapply(sp, function(x) identical(x$form, .ADM_RESID_ORDINAL),
+  expect_true(all(vapply(sp, function(x) identical(x$form, admixr2:::.ADM_RESID_ORDINAL),
                          logical(1))))
 })
 
@@ -83,12 +83,12 @@ test_that("an ordinal endpoint gets no sensitivity model (rx_pred_ is the likeli
   # rx_pred_ for `y ~ c(p1,p2)` is the ordinal LOG-LIKELIHOOD, not a category
   # probability, so its sensitivity columns differentiate the wrong function.
   # NULL here is what routes every estimator onto the finite-difference path.
-  expect_null(suppressMessages(.admLoadSensModel(s$ui)))
+  expect_null(suppressMessages(admixr2:::.admLoadSensModel(s$ui)))
 })
 
 test_that("ordinal aggregate moments match a real multinomial simulation", {
   s <- .ord_setup()
-  rx <- .admLoadModel(s$ui)
+  rx <- admixr2:::.admLoadModel(s$ui)
   set.seed(11); N <- 200000L
   tt <- c(0.5, 2)
   pdf <- data.frame(tcl = log(5), tv = log(20),
@@ -106,9 +106,9 @@ test_that("ordinal aggregate moments match a real multinomial simulation", {
   F   <- cbind(P1, P2); mu <- colMeans(F)
   Vst <- crossprod(sweep(F, 2L, mu)) / N
   rowt <- c(tt, tt)
-  arr <- .admResidRows(s$pinfo, c("p1", "p1", "p2", "p2"),
-                       .admSigmaNat(s$pinfo$sigma_init, s$pinfo), 4L)
-  ap  <- .admResidApply(mu, diag(Vst), arr, rowt, Vst)
+  arr <- admixr2:::.admResidRows(s$pinfo, c("p1", "p1", "p2", "p2"),
+                                 admixr2:::.admSigmaNat(s$pinfo$sigma_init, s$pinfo), 4L)
+  ap  <- admixr2:::.admResidApply(mu, diag(Vst), arr, rowt, Vst)
   V   <- Vst; diag(V) <- ap$dv
   V   <- V + ap$rmat
 

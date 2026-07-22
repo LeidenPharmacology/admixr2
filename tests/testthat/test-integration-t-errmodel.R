@@ -43,7 +43,7 @@ skip_if_not_installed("rxode2")
 .t_pinfo <- function(a = 0.5, nu = 5) {
   ui <- suppressMessages(rxode2::rxode2(
     .t_mod(sprintf("a <- %g; nu <- %g", a, nu), "cp ~ add(a) + t(nu)")))
-  suppressWarnings(.admParseIniDf(ui$iniDf, ui))
+  suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
 }
 
 # -- 1. semantics: our variance vs rxode2's own simulated residual -------------
@@ -75,9 +75,9 @@ test_that(".admResidApply reproduces the Monte Carlo mean and variance", {
   a <- 0.4; nu <- 6
   pinfo <- .t_pinfo(a, nu)
   f     <- c(2, 10, 25)
-  snat  <- .admSigmaNat(pinfo$sigma_init, pinfo)
-  arr   <- .admResidRows(pinfo, "cp", snat, length(f))
-  got   <- .admResidApply(f, numeric(length(f)), arr)
+  snat  <- admixr2:::.admSigmaNat(pinfo$sigma_init, pinfo)
+  arr   <- admixr2:::.admResidRows(pinfo, "cp", snat, length(f))
+  got   <- admixr2:::.admResidApply(f, numeric(length(f)), arr)
 
   set.seed(7L)
   N <- 400000L
@@ -105,11 +105,11 @@ test_that("the t multiplier is exact for prop, pow and combined1 too", {
     ui_t <- suppressMessages(rxode2::rxode2(.t_mod(cs$ini, cs$err)))
     ui_n <- suppressMessages(rxode2::rxode2(
       .t_mod(sub("; nu <- 5", "", cs$ini), sub(" \\+ t\\(nu\\)", "", cs$err))))
-    pt <- suppressWarnings(.admParseIniDf(ui_t$iniDf, ui_t)); pn <- .admParseIniDf(ui_n$iniDf, ui_n)
-    at <- .admResidRows(pt, "cp", .admSigmaNat(pt$sigma_init, pt), length(f))
-    an <- .admResidRows(pn, "cp", .admSigmaNat(pn$sigma_init, pn), length(f))
-    vt <- .admResidApply(f, numeric(length(f)), at)$dv
-    vn <- .admResidApply(f, numeric(length(f)), an)$dv
+    pt <- suppressWarnings(admixr2:::.admParseIniDf(ui_t$iniDf, ui_t)); pn <- admixr2:::.admParseIniDf(ui_n$iniDf, ui_n)
+    at <- admixr2:::.admResidRows(pt, "cp", admixr2:::.admSigmaNat(pt$sigma_init, pt), length(f))
+    an <- admixr2:::.admResidRows(pn, "cp", admixr2:::.admSigmaNat(pn$sigma_init, pn), length(f))
+    vt <- admixr2:::.admResidApply(f, numeric(length(f)), at)$dv
+    vn <- admixr2:::.admResidApply(f, numeric(length(f)), an)$dv
     # exact scale-family identity: var_t == m * var_normal, for EVERY form
     expect_equal(vt, m * vn, tolerance = 1e-12, label = paste0(nmc, ": var_t vs m*var_normal"))
   }
@@ -122,18 +122,18 @@ test_that(".admResidDeriv matches a finite difference for every residual param",
   # add a proportional term so the FD exercises a2, b2 and nu together
   ui <- suppressMessages(rxode2::rxode2(
     .t_mod("a <- 0.4; b <- 0.15; nu <- 6", "cp ~ add(a) + prop(b) + t(nu)")))
-  pinfo <- suppressWarnings(.admParseIniDf(ui$iniDf, ui))
+  pinfo <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
   f  <- c(2, 9, 22)
   p0 <- pinfo$sigma_init
 
   vfun <- function(p) {
-    arr <- .admResidRows(pinfo, "cp", .admSigmaNat(p, pinfo), length(f))
-    .admResidApply(f, numeric(length(f)), arr)$dv
+    arr <- admixr2:::.admResidRows(pinfo, "cp", admixr2:::.admSigmaNat(p, pinfo), length(f))
+    admixr2:::.admResidApply(f, numeric(length(f)), arr)$dv
   }
-  arr <- .admResidRows(pinfo, "cp", .admSigmaNat(p0, pinfo), length(f))
+  arr <- admixr2:::.admResidRows(pinfo, "cp", admixr2:::.admSigmaNat(p0, pinfo), length(f))
   # var_f = 0: this check isolates the residual, matching vfun()'s zero
   # structural variance (composition is test-integration-resid-moments.R).
-  an  <- .admResidDeriv(f, numeric(length(f)), arr, pinfo)
+  an  <- admixr2:::.admResidDeriv(f, numeric(length(f)), arr, pinfo)
 
   h <- 1e-6
   for (k in seq_along(p0)) {
@@ -146,9 +146,9 @@ test_that(".admResidDeriv matches a finite difference for every residual param",
   # and d(var)/d(f)
   fdf <- (vfun(p0) * 0 + sapply(seq_along(f), function(i) {
     fp <- f; fp[i] <- fp[i] + h; fm <- f; fm[i] <- fm[i] - h
-    ap <- .admResidRows(pinfo, "cp", .admSigmaNat(p0, pinfo), length(f))
-    (.admResidApply(fp, numeric(length(f)), ap)$dv[i] -
-     .admResidApply(fm, numeric(length(f)), ap)$dv[i]) / (2 * h)
+    ap <- admixr2:::.admResidRows(pinfo, "cp", admixr2:::.admSigmaNat(p0, pinfo), length(f))
+    (admixr2:::.admResidApply(fp, numeric(length(f)), ap)$dv[i] -
+     admixr2:::.admResidApply(fm, numeric(length(f)), ap)$dv[i]) / (2 * h)
   }))
   expect_equal(an$dv_df, fdf, tolerance = 1e-6)
 })
@@ -227,12 +227,12 @@ test_that("fixing nu actually applies the multiplier (not silently dropped)", {
   # endpoint would be fitted as a plain NORMAL -- a converged fit of the wrong
   # model. Check the multiplier is really in the variance.
   ui <- suppressMessages(rxode2::rxode2(.mod_t_fixnu))
-  p  <- .admParseIniDf(ui$iniDf, ui)
+  p  <- admixr2:::.admParseIniDf(ui$iniDf, ui)
   expect_false("nu" %in% p$sigma_names)                   # fixed => no optimizer slot
-  arr <- .admResidRows(p, "cp", .admSigmaNat(p$sigma_init, p), 2L)
+  arr <- admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(p$sigma_init, p), 2L)
   expect_equal(arr$vmul, rep(5 / 3, 2))                   # nu = 5 => m = 5/3
   a2 <- exp(p$sigma_init[["a"]])
-  expect_equal(.admResidApply(c(3, 9), numeric(2), arr)$dv, rep(a2 * 5 / 3, 2))
+  expect_equal(admixr2:::.admResidApply(c(3, 9), numeric(2), arr)$dv, rep(a2 * 5 / 3, 2))
 })
 
 test_that("a t fit equals a matched-variance normal fit (estimator bias cancels)", {
@@ -259,18 +259,18 @@ test_that("estimating nu warns that it is not identifiable", {
             cp ~ add(a) + t(nu) })
   }
   ui <- suppressMessages(rxode2::rxode2(mod))
-  expect_warning(.admParseIniDf(ui$iniDf, ui), "cannot be\\s+estimated from aggregate data")
+  expect_warning(admixr2:::.admParseIniDf(ui$iniDf, ui), "cannot be\\s+estimated from aggregate data")
 })
 
 # -- 5. refusals stay refusals ------------------------------------------------
 
 test_that("t() without a scale, with lnorm, or with nu <= 2 is refused", {
   expect_error(
-    .admParseIniDf({ui <- suppressMessages(rxode2::rxode2(
+    admixr2:::.admParseIniDf({ui <- suppressMessages(rxode2::rxode2(
       .t_mod("nu <- 5", "cp ~ t(nu)"))); ui$iniDf}, ui),
     "no scale parameter")
   expect_error(
-    .admParseIniDf({ui <- suppressMessages(rxode2::rxode2(
+    admixr2:::.admParseIniDf({ui <- suppressMessages(rxode2::rxode2(
       .t_mod("a <- 0.5; nu <- 1.5", "cp ~ add(a) + t(nu)"))); ui$iniDf}, ui),
     "initial estimate")
 })

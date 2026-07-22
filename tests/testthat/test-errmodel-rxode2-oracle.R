@@ -34,13 +34,13 @@
   e  <- list2env(pars, parent = baseenv())
   e$rx_pred_f_ <- f                                    # untransformed prediction
   tr  <- as.character(ui$predDf$transform[1L])
-  yj  <- if (tr %in% names(.ADM_TBS_YJ)) unname(.ADM_TBS_YJ[[tr]]) else 2L
+  yj  <- if (tr %in% names(admixr2:::.ADM_TBS_YJ)) unname(admixr2:::.ADM_TBS_YJ[[tr]]) else 2L
   lam <- pars$lam %||% 1
   e$rx_pred_ <- if (identical(tr, "lnorm")) log(f)
                 else if (yj == 2L) f
-                else .admTBS(f, lam, yj,
-                             suppressWarnings(as.numeric(ui$predDf$trLow[1L] %||% 0)),
-                             suppressWarnings(as.numeric(ui$predDf$trHi[1L]  %||% 1)))
+                else admixr2:::.admTBS(f, lam, yj,
+                                       suppressWarnings(as.numeric(ui$predDf$trLow[1L] %||% 0)),
+                                       suppressWarnings(as.numeric(ui$predDf$trHi[1L]  %||% 1)))
   eval(ex, envir = e)
 }
 
@@ -59,11 +59,11 @@ test_that("UNTRANSFORMED residual variance equals rxode2's rx_r_ exactly", {
   for (nm in names(cases)) {
     cs <- cases[[nm]]
     ui <- suppressMessages(rxode2::rxode2(.orc_model(cs[[1L]], cs[[2L]])))
-    p  <- suppressWarnings(.admParseIniDf(ui$iniDf, ui))
+    p  <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
     for (f in c(0.3, 1, 4.7)) {
-      arr <- .admResidRows(p, "cp", .admSigmaNat(p$sigma_init, p), 1L)
+      arr <- admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(p$sigma_init, p), 1L)
       # var_f = 0 isolates the CONDITIONAL variance, which is what rx_r_ states.
-      dv  <- .admResidApply(f, 0, arr)$dv
+      dv  <- admixr2:::.admResidApply(f, 0, arr)$dv
       expect_equal(dv, .orc_rx_r(ui, f, cs[[3L]]), tolerance = 1e-12,
                    info = sprintf("%s at f = %g", nm, f))
     }
@@ -75,11 +75,11 @@ test_that("Student-t scales rxode2's rx_r_ by nu/(nu-2)", {
   skip_if(is.null(tryCatch(rxode2::.rxGetVarianceForErrorType, error = function(e) NULL)), "")
   ui <- suppressMessages(rxode2::rxode2(
     .orc_model("a <- 0.5; nu <- fix(5)", "cp ~ add(a) + t(nu)")))
-  p   <- suppressWarnings(.admParseIniDf(ui$iniDf, ui))
-  arr <- .admResidRows(p, "cp", .admSigmaNat(p$sigma_init, p), 1L)
+  p   <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+  arr <- admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(p$sigma_init, p), 1L)
   # nlmixr2 writes t() as a SCALE family (sim = rx_pred_ + sqrt(rx_r_)*rxt(nu)),
   # so rx_r_ is the SCALE^2 and the variance is that times nu/(nu-2).
-  expect_equal(.admResidApply(2, 0, arr)$dv,
+  expect_equal(admixr2:::.admResidApply(2, 0, arr)$dv,
                .orc_rx_r(ui, 2, list(a = 0.5)) * (5 / 3), tolerance = 1e-12)
 })
 
@@ -100,19 +100,19 @@ test_that("a prop()/propT() term on a TRANSFORMED endpoint uses rxode2's rx_r_",
   for (nm in names(cases)) {
     cs <- cases[[nm]]
     ui <- suppressMessages(rxode2::rxode2(.orc_model(cs[[1L]], cs[[2L]])))
-    p   <- suppressWarnings(.admParseIniDf(ui$iniDf, ui))
-    arr <- .admResidRows(p, "cp", .admSigmaNat(p$sigma_init, p), 1L)
+    p   <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+    arr <- admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(p$sigma_init, p), 1L)
     f   <- 3.5
     lam <- cs[[3L]]$lam %||% 1
-    yj  <- unname(.ADM_TBS_YJ[[as.character(ui$predDf$transform[1L])]])
+    yj  <- unname(admixr2:::.ADM_TBS_YJ[[as.character(ui$predDf$transform[1L])]])
     lo  <- suppressWarnings(as.numeric(ui$predDf$trLow[1L] %||% 0))
     hi  <- suppressWarnings(as.numeric(ui$predDf$trHi[1L]  %||% 1))
     if (!is.finite(lo)) lo <- 0
     if (!is.finite(hi)) hi <- 1
 
     sd_t <- sqrt(.orc_rx_r(ui, f, cs[[3L]]))            # rxode2's transformed-scale SD
-    y    <- .admTBSi(.admTBS(f, lam, yj, lo, hi) + sd_t * eps, lam, yj, lo, hi)
-    ap   <- .admResidApply(f, 0, arr)
+    y    <- admixr2:::.admTBSi(admixr2:::.admTBS(f, lam, yj, lo, hi) + sd_t * eps, lam, yj, lo, hi)
+    ap   <- admixr2:::.admResidApply(f, 0, arr)
     mc   <- stats::sd(y) / sqrt(M)
     expect_equal(ap$mu, mean(y), tolerance = 20 * mc / max(abs(mean(y)), 1e-8),
                  info = paste(nm, "mean"))
@@ -129,9 +129,9 @@ test_that("a prop() term on a transformed endpoint is not silently ignored", {
   ui2 <- suppressMessages(rxode2::rxode2(.orc_model(
     "a <- 0.3; b <- 0.2; lam <- fix(0.5)", "cp ~ add(a) + prop(b) + boxCox(lam)")))
   dv <- function(ui) {
-    p <- suppressWarnings(.admParseIniDf(ui$iniDf, ui))
-    .admResidApply(3.5, 0.25,
-                   .admResidRows(p, "cp", .admSigmaNat(p$sigma_init, p), 1L))$dv
+    p <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+    admixr2:::.admResidApply(3.5, 0.25,
+                             admixr2:::.admResidRows(p, "cp", admixr2:::.admSigmaNat(p$sigma_init, p), 1L))$dv
   }
   expect_gt(abs(dv(ui2) - dv(ui1)), 1e-6)
 })
@@ -148,7 +148,7 @@ test_that("ar() is refused with a prediction-dependent residual variance", {
   # silently, because nothing refused the combination.
   ok <- function(ini, err) {
     ui <- suppressMessages(rxode2::rxode2(.orc_model(ini, err)))
-    suppressWarnings(.admParseIniDf(ui$iniDf, ui))
+    suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
   }
   # add() + ar() is the case that DOES match the simulator -- it must keep working.
   expect_type(ok("a <- 0.5; rho <- 0.5",      "cp ~ add(a) + ar(rho)"), "list")
