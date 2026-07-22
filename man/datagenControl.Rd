@@ -8,11 +8,11 @@ datagenControl(
   method = c("mc", "fo", "gh"),
   n_sim = 5000L,
   n_nodes = 5L,
-  resid_nodes = 81L,
   sampling = c("sobol", "halton", "torus", "lhs", "rnorm"),
   seed = 12345L,
   cores = 1L,
-  return_samples = FALSE
+  return_samples = FALSE,
+  resid_nodes = 81L
 )
 }
 \arguments{
@@ -32,14 +32,6 @@ moments. Ignored when \code{method = "fo"} or \code{"gh"}.}
 \code{method = "gh"} (default 5). Total nodes = \code{n_nodes^n_eta}. Ignored for
 \code{"mc"} and \code{"fo"}.}
 
-\item{resid_nodes}{Gauss-Hermite nodes used to integrate the RESIDUAL for a
-transform-both-sides endpoint (\code{boxCox}, \code{yeoJohnson}, \code{logitNorm},
-\code{probitNorm}), where \code{y = g(h(f) + sigma*eps)} has no closed-form mean and
-variance. Ignored by every other error model. Default 81 -- the same default
-the four estimator controls use, so \code{datagen()} and the fit it feeds agree
-unless you deliberately change one of them. See \code{\link[=admControl]{admControl()}} for the
-measured convergence.}
-
 \item{sampling}{Quasi-random sampling method: \code{"sobol"} (default),
 \code{"halton"}, \code{"torus"}, \code{"lhs"}, or \code{"rnorm"}. Ignored when \code{method = "fo"}
 or \code{"gh"}.}
@@ -52,6 +44,14 @@ or \code{"gh"}.}
 \item{return_samples}{Include the raw \verb{n_sim x length(times)}
 prediction matrix as \verb{$samples} in each study's output. No effect when
 \code{method = "fo"} or \code{"gh"} (those methods draw no samples).}
+
+\item{resid_nodes}{Gauss-Hermite nodes used to integrate the RESIDUAL for a
+transform-both-sides endpoint (\code{boxCox}, \code{yeoJohnson}, \code{logitNorm},
+\code{probitNorm}), where \code{y = g(h(f) + sigma*eps)} has no closed-form mean and
+variance. Ignored by every other error model. Default 81 -- the same default
+the four estimator controls use, so \code{datagen()} and the fit it feeds agree
+unless you deliberately change one of them. See \code{\link[=admControl]{admControl()}} for the
+measured convergence.}
 }
 \value{
 A list of class \code{"datagenControl"}.

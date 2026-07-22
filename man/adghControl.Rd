@@ -6,7 +6,6 @@
 \usage{
 adghControl(
   studies = list(),
-  resid_nodes = 81L,
   n_nodes = 5L,
   grad = c("analytical", "fd", "cfd", "none"),
   algorithm = "NLOPT_LN_BOBYQA",
@@ -35,6 +34,7 @@ adghControl(
   sumProd = FALSE,
   literalFix = TRUE,
   returnAdmr = FALSE,
+  resid_nodes = 81L,
   ...
 )
 }
@@ -42,21 +42,6 @@ adghControl(
 \item{studies}{Named list of study specifications (same format as
 \code{\link[=admControl]{admControl()}}: \code{E}, \code{V}, \code{n}, \code{times}, \code{ev}, optional \code{method}; or an
 \code{observations} list for multi-compartment fits -- see \code{\link[=admControl]{admControl()}}).}
-
-\item{resid_nodes}{Gauss-Hermite nodes used to integrate the RESIDUAL for a
-transform-both-sides endpoint (\code{boxCox}, \code{yeoJohnson}, \code{logitNorm},
-\code{probitNorm}), where \code{y = g(h(f) + sigma*eps)} has no closed-form mean and
-variance. Ignored by every other error model, which has closed forms. Default
-81. Measured worst-case relative error against an independent quadrature, over
-all four transforms and residual SD of 0.5, 1, 2 and 3: n = 15 gives 5.7e-2,
-31 gives 4.5e-3, 81 gives 5.0e-5. The error is dominated by large residual SD;
-at SD <= 1, n = 31 already gives 1e-7 or better.
-
-This is an ACCURACY dial, not a speed one. The quadrature is linear in
-\code{resid_nodes} in isolation (~50 us at 15, 300 us at 81 for an 8-row study) but
-negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
-evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
-with a large residual SD; there is little to gain by lowering it.}
 
 \item{n_nodes}{Number of quadrature nodes per eta dimension (default 5).
 Total nodes = \code{n_nodes^n_eta}. \code{n_nodes = 5} achieves near-exact covariance
@@ -132,6 +117,21 @@ the nlmixr2 output tables: \code{"combined2"} (default) or \code{"combined1"}.}
 
 \item{returnAdmr}{If \code{TRUE}, return a plain list instead of the full
 nlmixr2 fit object.}
+
+\item{resid_nodes}{Gauss-Hermite nodes used to integrate the RESIDUAL for a
+transform-both-sides endpoint (\code{boxCox}, \code{yeoJohnson}, \code{logitNorm},
+\code{probitNorm}), where \code{y = g(h(f) + sigma*eps)} has no closed-form mean and
+variance. Ignored by every other error model, which has closed forms. Default
+81. Measured worst-case relative error against an independent quadrature, over
+all four transforms and residual SD of 0.5, 1, 2 and 3: n = 15 gives 5.7e-2,
+31 gives 4.5e-3, 81 gives 5.0e-5. The error is dominated by large residual SD;
+at SD <= 1, n = 31 already gives 1e-7 or better.
+
+This is an ACCURACY dial, not a speed one. The quadrature is linear in
+\code{resid_nodes} in isolation (~50 us at 15, 300 us at 81 for an 8-row study) but
+negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
+evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
+with a large residual SD; there is little to gain by lowering it.}
 
 \item{...}{Unused arguments (trigger an error).}
 }
