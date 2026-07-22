@@ -738,7 +738,7 @@
 #'   `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean and
 #'   variance. Ignored by every other error model, which has closed forms. Default
 #'   81. Measured worst-case relative error against an independent quadrature, over
-#'   all four transforms and residual SD in {0.5, 1, 2, 3}: n = 15 gives 5.7e-2,
+#'   all four transforms and residual SD of 0.5, 1, 2 and 3: n = 15 gives 5.7e-2,
 #'   31 gives 4.5e-3, 81 gives 5.0e-5. The error is dominated by large residual SD;
 #'   at SD <= 1, n = 31 already gives 1e-7 or better.
 #'
