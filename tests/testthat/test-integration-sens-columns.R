@@ -312,3 +312,38 @@ test_that("a worker re-derives pred_tbs, so a fixed lambda cannot be served stal
   expect_equal(w$sensModel$pred_tbs$lam, 0.4)
   expect_equal(w$sensModel$pred_tbs$yj, sm_a$pred_tbs$yj)
 })
+
+test_that("endpoints transformed DIFFERENTLY refuse the sensitivity model", {
+  # pred_tbs is ONE spec, taken from predDf row 1, and .admSimulateSens() inverts
+  # the whole stacked rx_pred_ with it. The existing guard refused only
+  # transformed-vs-UNtransformed mixtures, so `cp ~ lnorm(a); ct ~ boxCox(b, lam)`
+  # -- both transformed -- applied exp() to ct's Box-Cox rows, and two logitNorm
+  # endpoints with different bounds applied endpoint 1's bounds to endpoint 2's.
+  # The residual path is already per-endpoint, so the gradient described a
+  # different function than the NLL scored.
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  mk <- function(e1, e2, ini_extra = "") suppressMessages(rxode2::rxode2(eval(parse(
+    text = sprintf('function() {
+      ini({ tcl <- log(5); tv <- log(20); a <- 0.3; b <- 0.3; %s
+            eta.cl ~ 0.09 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+              d/dt(central) <- -(cl/v)*central
+              cp <- central/v
+              ct <- central/v * 0.5
+              %s
+              %s }) }', ini_extra, e1, e2)))))
+  sens <- function(...) suppressMessages(admixr2:::.admLoadSensModel(mk(...)))
+
+  # identical transforms: still built, and with the transform's own spec
+  sm <- sens("cp ~ lnorm(a)", "ct ~ lnorm(b)")
+  skip_if(is.null(sm), "sensitivity model unavailable for the baseline model")
+  expect_false(is.null(sm$pred_tbs))
+
+  # every way of differing must refuse -> the estimators finite-difference
+  expect_null(sens("cp ~ lnorm(a)", "ct ~ add(b) + boxCox(lam)", "lam <- 0.4;"))
+  expect_null(sens("cp ~ logitNorm(a, 0, 60)", "ct ~ logitNorm(b, 0, 5)"))
+  expect_null(sens("cp ~ add(a) + boxCox(l1)", "ct ~ add(b) + boxCox(l2)",
+                   "l1 <- 0.4; l2 <- 0.8;"))
+  # ... as does the mixture the original guard already covered
+  expect_null(sens("cp ~ lnorm(a)", "ct ~ add(b)"))
+})

@@ -333,7 +333,14 @@ head.paged_df <- function(x, n = 6L, ...) {
                                       dimnames = list(NULL, col_nms)))
     params_df[, rxerr_nms] <- 1
     tryCatch(
-      .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L),
+      # A joint unit's outputs share one set of etas and are stacked into one
+      # vector; .admSimulate() solves a single output, so it returned the first
+      # endpoint's trajectory for every row. Same shared-eta solve the estimators
+      # use, for the same unit.
+      if (isTRUE(s$is_joint))
+        .admSimulateJoint(rxMod, extra$struct, sig_nms, eta_mat, s, params_df, 1L)
+      else
+        .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L),
       error = function(e) {
         if (warn) warning("plot.admFit: simulation failed: ", e$message, call. = FALSE)
         NULL
@@ -365,12 +372,27 @@ head.paged_df <- function(x, n = 6L, ...) {
     cp_mat <- .sim_study(s)
     if (is.null(cp_mat)) return(NULL)
     mu     <- colMeans(cp_mat)
-    res    <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
-                         s$output %||% out_var, s$times, attr(cp_mat, "phi"))
+    # A JOINT (same-subject, multi-output) unit stacks several endpoints into one
+    # mean vector, so a single `output` cannot describe its rows: passing one made
+    # .admResidRows() build the whole array from the FIRST endpoint's spec, and the
+    # diagnostic panels then showed a covariance the fit never used (plasma's
+    # prop() applied to the brain rows, and so on). Route it through
+    # .admJointResidual() -- the estimators' own per-row-output path -- rather than
+    # reconstructing the residual here for a second time.
+    res    <- if (isTRUE(s$is_joint))
+      .admJointResidual(mu, crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat),
+                        s, pinfo_r, sv)
+    else
+      .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
+                 s$output %||% out_var, s$times, attr(cp_mat, "phi"))
     V_pred <- res$V; mu <- res$mu
     obs_E  <- as.numeric(s$E)
     obs_V  <- as.matrix(s$V)
-    tnm    <- as.character(s$times)
+    # Joint row labels repeat the times across endpoints, so label them by the
+    # endpoint they belong to; a plain unit keeps the bare times it always had.
+    tnm    <- if (isTRUE(s$is_joint))
+      paste0(.admRowOutput(s, length(mu)), "@", .admRowTimes(s, length(mu)))
+    else as.character(s$times)
     names(mu) <- names(obs_E) <- tnm
     dimnames(V_pred) <- dimnames(obs_V) <- list(tnm, tnm)
     list(times = s$times, n = s$n,

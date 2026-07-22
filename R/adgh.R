@@ -892,7 +892,6 @@
 #' @export
 adghControl <- function(
     studies     = list(),
-    resid_nodes = 81L,
     n_nodes     = 5L,
     grad        = c("analytical", "fd", "cfd", "none"),
     algorithm   = "NLOPT_LN_BOBYQA",
@@ -921,6 +920,9 @@ adghControl <- function(
     sumProd       = FALSE,
     literalFix    = TRUE,
     returnAdmr    = FALSE,
+    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # positional call -- adghControl(studies, 7L) used to set n_nodes = 7.
+    resid_nodes   = 81L,
     ...) {
 
   .xtra <- list(...)

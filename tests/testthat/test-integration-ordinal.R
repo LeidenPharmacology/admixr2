@@ -251,4 +251,19 @@ test_that("categories at nominally identical times are grouped despite float err
   # covariance the cancellation removes), so none of those entries may be zero
   for (i in seq_len(n))
     expect_lt(ap$rmat[i, n + i], 0)
+
+  # ... and ALL THREE consumers of that grouping must agree. The tolerance rule
+  # was first applied to .admResidApply alone, which is worse than the exact-match
+  # bug it replaced: the objective then carries a cross term the gradient does not
+  # know about, so the optimizer descends a direction the function does not follow.
+  # A same-time entry of V_pred is -E[p_j]E[p_k] and does not depend on the
+  # structural covariance at all, so its d(V_pred)/d(V_struct) must be 0.
+  pinfo <- s$pinfo
+  M <- admixr2:::.admResidVChain(mu, diag(V0), arr, pinfo, c(t1, t2))
+  for (i in seq_len(n)) {
+    expect_identical(M[i, n + i], 0, info = sprintf("V-chain row %d", i))
+    expect_identical(M[n + i, i], 0, info = sprintf("V-chain col %d", i))
+  }
+  # rows at DIFFERENT times keep the ordinary off-diagonal chain factor
+  expect_false(M[1L, n + 2L] == 0)
 })

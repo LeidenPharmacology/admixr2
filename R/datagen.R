@@ -46,12 +46,13 @@ datagenControl <- function(
   method         = c("mc", "fo", "gh"),
   n_sim          = 5000L,
   n_nodes        = 5L,
-  resid_nodes    = 81L,
   sampling       = c("sobol", "halton", "torus", "lhs", "rnorm"),
   seed           = 12345L,
   cores          = 1L,
-  return_samples = FALSE
-) {
+  return_samples = FALSE,
+  # LAST on purpose: inserting an argument mid-signature silently rebinds every
+  # positional call (datagenControl("mc", 2000L, 7L) used to set n_nodes = 7).
+  resid_nodes    = 81L) {
   method   <- match.arg(method)
   sampling <- match.arg(sampling)
   checkmate::assertIntegerish(n_sim,    lower = 1L, len = 1L)

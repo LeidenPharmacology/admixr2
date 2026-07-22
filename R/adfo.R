@@ -879,7 +879,6 @@
 #' @export
 adfoControl <- function(
     studies    = list(),
-    resid_nodes = 81L,
     grad        = c("none", "analytical", "fd", "cfd"),
     algorithm  = NULL,
     maxeval    = 500L,
@@ -907,6 +906,9 @@ adfoControl <- function(
     sumProd       = FALSE,
     literalFix    = TRUE,
     returnAdmr    = FALSE,
+    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # positional call -- adfoControl(studies, "fd") used to set grad = "fd".
+    resid_nodes = 81L,
     ...) {
 
   .xtra <- list(...)

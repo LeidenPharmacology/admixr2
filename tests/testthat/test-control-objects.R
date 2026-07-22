@@ -512,3 +512,29 @@ test_that("nmObjGetControl.adirmc: errors when no control found", {
   )
 })
 
+
+test_that("a new control argument cannot silently rebind a positional call", {
+  # `resid_nodes` was added as the SECOND formal of every estimator control, so
+  # adghControl(studies, 7L) -- which used to set n_nodes -- set resid_nodes
+  # instead, passed its own validation, and left n_nodes at 5, changing the eta
+  # quadrature grid the whole fit is built on with no message. Positional calls
+  # are part of the interface; a new argument goes at the END.
+  expect_identical(names(formals(adghControl))[1:2],   c("studies", "n_nodes"))
+  expect_identical(names(formals(admControl))[1:2],    c("studies", "n_sim"))
+  expect_identical(names(formals(adirmcControl))[1:2], c("studies", "n_sim"))
+  expect_identical(names(formals(adfoControl))[1:2],   c("studies", "grad"))
+  expect_identical(names(formals(datagenControl))[1:4],
+                   c("method", "n_sim", "n_nodes", "sampling"))
+
+  # and the behaviour those names promise
+  expect_identical(adghControl(list(), 7L)$n_nodes, 7L)
+  expect_identical(admControl(list(), 20000L)$n_sim, 20000L)
+  expect_identical(adirmcControl(list(), 2000L)$n_sim, 2000L)
+  expect_identical(datagenControl("mc", 2000L, 7L)$n_nodes, 7L)
+  # ... while resid_nodes is still reachable by name everywhere
+  expect_identical(adghControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
+  expect_identical(admControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
+  expect_identical(adfoControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
+  expect_identical(adirmcControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
+  expect_identical(datagenControl(resid_nodes = 31L)$resid_nodes, 31L)
+})

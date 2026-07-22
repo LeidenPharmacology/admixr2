@@ -244,6 +244,41 @@
   the cross-category covariance: its categories are one joint observation, and
   `datagen()` derives each observed output separately.
 
+* **`resid_nodes` no longer changes what a positional call means.** It was added
+  as the SECOND argument of every estimator control, so `adghControl(studies, 7L)`
+  -- which had always meant `n_nodes = 7` -- set `resid_nodes = 7` instead, passed
+  its own validation, and left `n_nodes` at its default, changing the eta
+  quadrature grid the whole fit is built on with no message. `admControl(studies,
+  20000L)` and `adirmcControl(studies, 2000L)` were the same for `n_sim`, and
+  `datagenControl` shifted `sampling`/`seed`/`cores`. `resid_nodes` is now the
+  last argument of all five, where it cannot capture a positional one.
+
+* **The ordinal same-time grouping is now defined once.** `.admResidApply()`,
+  `.admResidVChain()` and `.admResidMuCoupling()` each grouped the rows
+  themselves. When the tolerance-based grouping above was first added, it went
+  into one of the three -- which is worse than the exact-match bug it replaced:
+  wrong-but-consistent became objective-and-gradient-disagree, so the optimizer
+  descended a direction the objective does not follow. All three now call
+  `.admOrdTimeGroup()`.
+
+* **Endpoints transformed differently from one another refused the sensitivity
+  model.** The guard caught transformed-vs-*un*transformed mixtures only, while
+  the back-transform spec is a single one taken from the first endpoint. So
+  `cp ~ lnorm(a); ct ~ boxCox(b, lam)` applied `exp()` to `ct`'s Box-Cox rows, two
+  `logitNorm` endpoints with different bounds shared the first one's bounds, and
+  two `boxCox` endpoints shared the first one's lambda -- the residual path being
+  per-endpoint already, the gradient then described a different function from the
+  one the objective scored. Any non-identical set now falls back to finite
+  differences.
+
+* **A joint (same-subject) study had no aggregate diagnostics.** `.admAggData()`
+  solved one output for the whole stacked unit and applied the first endpoint's
+  residual spec to every row; it then died on the dimnames (the row count is the
+  stacked total, the labels were one block's times) and, being guarded, left
+  `fit$env$aggData` unset -- so `plot(fit)`'s mean/cov panels had nothing to show
+  and said nothing about it. It now uses the estimators' own shared-eta solve and
+  per-row-output residual, and labels rows `<endpoint>@<time>`.
+
 * **Documented: an `adfo` standard error describes scatter, not accuracy.** FO
   linearises at eta = 0, so on a non-additive residual or a large omega the point
   estimate carries a bias of several standard errors -- measured 5-20 SE, giving

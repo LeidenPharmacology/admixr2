@@ -96,7 +96,6 @@
 #' @export
 adirmcControl <- function(
     studies         = list(),
-    resid_nodes     = 81L,
     n_sim           = 2500L,
     outer_iter      = 50L,
     sampling        = c("sobol", "halton", "torus", "lhs", "rnorm"),
@@ -133,6 +132,9 @@ adirmcControl <- function(
     sumProd         = FALSE,
     literalFix      = TRUE,
     returnAdmr      = FALSE,
+    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # positional call -- adirmcControl(studies, 2000L) used to set n_sim = 2000.
+    resid_nodes     = 81L,
     ...) {
 
   .xtra <- list(...)

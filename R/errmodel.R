@@ -200,6 +200,45 @@
 # Student-t variance multiplier: Var(scale * T_nu) = scale^2 * nu/(nu-2).
 .admTMult <- function(nu) nu / (nu - 2)
 
+# Which ordinal rows are observations of the SAME time point?
+#
+# A joint ordinal unit stacks one block per category, so the categories of one
+# time point are rows in different blocks and the row-time vector is what
+# identifies them. Three places need that grouping and must agree exactly:
+# .admResidApply (which emits the -p_j*p_k cross term), .admResidVChain (which
+# zeroes d(V_pred)/d(V_struct) for those same entries, because the structural
+# covariance cancels out of them) and .admResidMuCoupling (the mu-coupling term).
+#
+# ONE definition, because two of them disagreeing is worse than both being wrong:
+# the objective then carries a cross term the gradient does not know about, and
+# the optimizer descends a direction the function does not follow. That is exactly
+# what happened when the tolerance grouping below was first added at one site only.
+#
+# Grouped by TOLERANCE. The row times come from the per-category blocks, i.e. from
+# independent user inputs: `seq(0.1, 0.7, by = 0.2)` and `c(0.1, 0.3, 0.5, 0.7)`
+# are the same grid to a reader and differ in the last bit to match(), which put
+# the two categories in different groups and silently dropped the cross term.
+# NA row times (a hand-built block with no `times`) must NOT collapse into one
+# group -- match(NA, ...) matches, which would invent cross terms.
+#
+# Package-level, not inlined: this is the "one place that knows" the rule. A
+# dev-mode mirai daemon cannot see a NEW binding in the installed namespace, so
+# run devtools::install() before testing parallel restarts (the documented rule;
+# it applies to any new function).
+.admOrdTimeGroup <- function(times, or_) {
+  out <- rep(NA_integer_, length(times))
+  keep <- which(or_ & !is.na(times))
+  if (!length(keep)) return(out)
+  k <- 0L; ref <- NA_real_
+  for (i in keep[order(times[keep])]) {
+    if (is.na(ref) || abs(times[i] - ref) > 1e-8 * max(1, abs(times[i]), abs(ref))) {
+      k <- k + 1L; ref <- times[i]      # compare against the group's FIRST member,
+    }                                   # so groups cannot chain
+    out[i] <- k
+  }
+  out
+}
+
 # rxode2's _eps (`#define _eps sqrt(DBL_EPSILON)`, rxode2.h). Every clamp in the
 # transform code below uses THIS, so admixr2 and the solve agree on where a
 # transform runs out of support. NOT the same constant as safeLog/safeZero/safePow,
@@ -1507,31 +1546,7 @@ without that parameter there is no residual to integrate"),
     # Rows at the same TIME are the same category group; ordinal rows for one time
     # are stacked across the joint unit's per-category blocks, so the time vector
     # identifies the group without any extra bookkeeping.
-    # NA row times (a hand-built joint block with no `times`) must NOT all collapse
-    # into one group -- match(NA, ...) matches, which would invent cross terms.
-    #
-    # Grouped by TOLERANCE, not by exact equality. The row times come from the
-    # per-category blocks, i.e. from independent user inputs: `seq(0.1, 0.7, by =
-    # 0.2)` for one category and `c(0.1, 0.3, 0.5, 0.7)` for another are nominally
-    # the same grid but differ in the last ulp, and match() then put the two
-    # categories in DIFFERENT groups -- silently dropping the -p_j p_k term for
-    # those rows, which is the whole reason the model is fitted jointly.
-    # Local closure, not a package-level helper: a new binding cannot be added to a
-    # locked installed namespace, so a dev-mode daemon could not find it (see the
-    # note at the top of simulate.R).
-    .tgrp <- function(t) {
-      out <- rep(NA_integer_, length(t))
-      ord <- order(t, na.last = NA)
-      k <- 0L; ref <- NA_real_
-      for (i in ord) {
-        if (is.na(ref) || abs(t[i] - ref) > 1e-8 * max(1, abs(t[i]), abs(ref))) {
-          k <- k + 1L; ref <- t[i]          # compare against the group's FIRST
-        }                                   # member, so groups cannot chain
-        out[i] <- k
-      }
-      out
-    }
-    g   <- ifelse(or_ & !is.na(times), .tgrp(times), NA_integer_)
+    g   <- .admOrdTimeGroup(times, or_)
     rm0 <- matrix(0, length(mu_struct), length(mu_struct))
     same <- outer(g, g, function(a, b) !is.na(a) & !is.na(b) & a == b)
     diag(same) <- FALSE
@@ -1988,7 +2003,7 @@ without that parameter there is no residual to integrate"),
   # .admResidApply). d(V_pred)/d(V_struct) is therefore 0 there, not 1.
   or_ <- arr$form == .ADM_RESID_ORDINAL
   if (any(or_) && !is.null(times) && length(times) == length(mu_struct)) {
-    g <- ifelse(or_ & !is.na(times), match(times, unique(times)), NA_integer_)
+    g <- .admOrdTimeGroup(times, or_)
     same <- outer(g, g, function(a, b) !is.na(a) & !is.na(b) & a == b)
     diag(same) <- FALSE
     M[same] <- 0
@@ -2117,7 +2132,7 @@ without that parameter there is no residual to integrate"),
   or_ <- arr$form == .ADM_RESID_ORDINAL
   if (any(or_) && !is.null(dNLL_dV) && !is.null(times) &&
       length(times) == length(mu_struct)) {
-    g <- ifelse(or_ & !is.na(times), match(times, unique(times)), NA_integer_)
+    g <- .admOrdTimeGroup(times, or_)
     same <- outer(g, g, function(a, b) !is.na(a) & !is.na(b) & a == b)
     diag(same) <- FALSE
     out <- out + 2 * drop((dNLL_dV * same) %*% (-mu_struct))

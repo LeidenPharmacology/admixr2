@@ -470,6 +470,32 @@
     # just slower, and the alternative is a silently wrong gradient.
     return(NULL)
   }
+  # ... and equally: transformed endpoints that are not transformed the SAME WAY.
+  # pred_tbs below is ONE spec, derived from predDf row 1, and .admSimulateSens()
+  # inverts the whole stacked rx_pred_ with it. So `cp ~ lnorm(a); ct ~ boxCox(b,
+  # lam)` -- which passes the mixed-vs-untransformed guard above, since both are
+  # transformed -- applied exp() to ct's Box-Cox rows; two logitNorm endpoints with
+  # different (trLow, trHi) applied endpoint 1's bounds to endpoint 2's rows; and
+  # two boxCox endpoints with separate lambdas used endpoint 1's lambda for both.
+  # The residual path is already per-endpoint (errmodel.R reads predDf$trLow[i] and
+  # carries per-row lam/yj), so under the default grad = "sens" the gradient
+  # described a different function than the NLL scored and the second endpoint
+  # converged to the wrong estimate with no error and no warning.
+  #
+  # Refuse rather than build a per-row spec: the solve paths would each need a row
+  # map, and finite differences are correct today.
+  if (length(.ln) > 0L && all(.ln) && length(.tr) > 1L) {
+    .bnd <- tryCatch(
+      paste(suppressWarnings(as.numeric(ui$predDf$trLow)),
+            suppressWarnings(as.numeric(ui$predDf$trHi))),
+      error = function(e) rep("", length(.tr)))
+    .n_lam <- tryCatch(nrow(ui$iniDf[!is.na(ui$iniDf$err) &
+                                       ui$iniDf$err %in% .ADM_ERR_TBS_LAM, ,
+                                     drop = FALSE]), error = function(e) 0L)
+    if (length(unique(.tr)) > 1L || length(unique(.bnd)) > 1L || .n_lam > 1L)
+      return(NULL)
+  }
+
   .pred_tbs <- NULL
   if (length(.ln) > 0L && all(.ln)) {
     .t1 <- .tr[[1L]]
