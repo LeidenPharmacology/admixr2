@@ -426,6 +426,18 @@
   z_all  <- hz + outer(sd, gq$x)
   yq_all <- .admTBSi(z_all, lam, yj, lo, hi)
   gp_all <- .admTBSid(z_all, lam, yj, lo, hi)
+  # The +-12 SD tail nodes can overflow the inverse transform to +-Inf/NaN --
+  # yeoJohnson at large lambda over a low prediction is the case that bites, where
+  # m2 - m*m becomes Inf - Inf = NaN. Such a node's GH weight is ~1e-30, so dropping
+  # it from the weighted sum leaves the moments unchanged to machine precision; NOT
+  # dropping it turns the whole moment (and thus the NLL AND the gradient) NaN. The
+  # optimizer tolerates a NaN objective -- it just rejects the step -- but nloptr
+  # errors on a NaN gradient ("missing value where TRUE/FALSE needed"), so the fit
+  # crashed instead of the line search backing off. Zeroing the offending node makes
+  # both consistent and finite. For a well-behaved endpoint no node is non-finite,
+  # so `any(.bad)` is FALSE and this is a bit-identical no-op.
+  .bad <- !is.finite(yq_all) | !is.finite(gp_all)
+  if (any(.bad)) { yq_all[.bad] <- 0; gp_all[.bad] <- 0 }
   m <- m2 <- dmf <- dms <- dvf0 <- dvs0 <- numeric(n)
   for (q in seq_along(gq$x)) {
     yq <- yq_all[, q]

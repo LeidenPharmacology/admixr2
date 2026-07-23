@@ -260,3 +260,50 @@ test_that("a fix()ed prediction-dependent residual keeps its gradient chain", {
     }
   }
 })
+
+# yeoJohnson at a large lambda over a LOW prediction pushes the +-12 SD quadrature
+# tail nodes past the inverse transform's support -> +-Inf/NaN, and m2 - m*m then
+# becomes Inf - Inf = NaN, turning the whole moment, the NLL AND the analytic
+# gradient NaN. nloptr tolerates a NaN OBJECTIVE (it rejects the step) but errors on
+# a NaN GRADIENT, so the DEFAULT adgh fit crashed mid-optimization. Those tail nodes
+# carry GH weight ~1e-30, so .admTBSMomentsD drops the non-finite ones; the moments
+# and gradient must stay finite at a parameter the optimizer legitimately reaches.
+test_that("TBS moments stay finite when tail nodes overflow (yeoJohnson, large lambda)", {
+  ui    <- .rm_mk("a <- 0.15; lam <- 1.3", "cp ~ add(a) + yeoJohnson(lam)")
+  pinfo <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+  sig   <- admixr2:::.admSigmaNat(c(a = 2 * log(0.3), lam = 2.3), pinfo)
+  mu    <- c(3, 2, 1, 0.5, 0.2); vf <- (0.3 * mu)^2 * 0.5
+  arr   <- admixr2:::.admResidRows(pinfo, rep("cp", length(mu)), sig, length(mu))
+  ap    <- admixr2:::.admResidApply(mu, vf, arr)
+  d     <- admixr2:::.admResidDeriv(mu, vf, arr, pinfo)
+  expect_true(all(is.finite(ap$mu)),  label = "TBS moment mean finite")
+  expect_true(all(is.finite(ap$dv)),  label = "TBS moment variance finite")
+  expect_true(all(is.finite(d$dvar)) && all(is.finite(d$dmu)) &&
+              all(is.finite(d$dv_df)) && all(is.finite(d$dv_dv0)),
+              label = "TBS derivative finite")
+})
+
+# End to end: the DEFAULT adgh gradient is analytical, and it used to die on the
+# above. A yeoJohnson fit must now run to completion under it.
+test_that("adgh fits a yeoJohnson endpoint under its default (analytical) gradient", {
+  skip_if_not_installed("nlmixr2est")
+  set.seed(11L)
+  tm <- c(0.25, 0.5, 1, 2, 4, 8, 12); n <- 400L
+  eta <- rnorm(n, 0, sqrt(0.09)); cl <- exp(log(3) + eta); v <- exp(log(30))
+  f  <- outer(cl, tm, function(cl_, t_) 100 / v * exp(-(cl_ / v) * t_))
+  yt <- admixr2:::.admTBS(f, 1.3, 1L, 0, 1) + 0.15 * matrix(rnorm(length(f)), n, length(tm))
+  y  <- admixr2:::.admTBSi(yt, 1.3, 1L, 0, 1)
+  study <- list(E = colMeans(y), V = cov.wt(y, method = "ML")$cov, n = n,
+                times = tm, ev = rxode2::et(amt = 100))
+  mod <- function() {
+    ini({ tcl <- log(3); tv <- log(30); a <- 0.15; lam <- 1.3; eta.cl ~ 0.09 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+            d/dt(central) <- -(cl/v)*central; cp <- central/v
+            cp ~ add(a) + yeoJohnson(lam) }) }
+  fit <- suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+    mod, admData(), est = "adgh", control = adghControl(studies = list(s = study),
+                                                        covMethod = "none"))))
+  expect_s3_class(fit, "admFit")
+  expect_true(is.finite(fit$objective))
+  expect_equal(unname(fit$parFixedDf["lam", "Estimate"]), 1.3, tolerance = 0.25)
+})
