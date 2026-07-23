@@ -263,6 +263,21 @@ covariance for admixr2 to match"),
              "requires nu > 2 to start"),
       fix = sprintf("Give %s an initial value above 2 (e.g. %s <- 5).", .bad, .bad))
   }
+  # The starting size must be > 0: it is estimated on the log scale, so a
+  # non-positive init makes log(size) -Inf/NaN and the first NLL evaluation NaN --
+  # exactly the failure the .is_ar and .is_tdf guards above pre-empt, and caught
+  # here for the same reason rather than surfacing as an unexplained NaN objective.
+  if (any(.is_nbs & sigma_rows$est <= 0)) {
+    .bad <- sigma_names[.is_nbs & sigma_rows$est <= 0][1L]
+    .admStopErrModel(
+      NA_character_,
+      sprintf("nbinomMu size %s with an initial value of %g", .bad,
+              sigma_rows$est[match(.bad, sigma_names)]),
+      paste0("a negative-binomial size must be strictly positive: admixr2 estimates ",
+             "it on the\nlog scale, so a size <= 0 makes log(size) undefined and the ",
+             "first NLL evaluation NaN"),
+      fix = sprintf("Give %s a positive initial value (e.g. %s <- 1).", .bad, .bad))
+  }
   # Indexed assignment, NOT nested ifelse(): ifelse() evaluates every branch over
   # the WHOLE vector, so log(est - 2) would be taken for the add/prop rows too and
   # emit a spurious "NaNs produced" warning on every parse (the value is discarded,

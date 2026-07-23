@@ -23,7 +23,10 @@
   vals <- if (!is.null(study$out_pair)) {
     .b1 <- out[[study$out_pair[[1L]]]]; .b2 <- out[[study$out_pair[[2L]]]]
     .phi <- .b1 + .b2                      # precision; needed for the variance
-    .b1 / .phi
+    # Guard the denominator exactly as the sibling solve paths do (.admSimulateRows,
+    # .admSimulateJoint, and the admc inlined copies): if phi = b1 + b2 hits 0 at a
+    # draw, an unguarded b1/phi is 0/0 = NaN and poisons the whole moment/objective.
+    .b1 / { .d <- .phi; .d[.d == 0] <- .Machine$double.eps; .d }
   } else {
     .v <- out[[output_var]]                # linCmt yields "ipredSim", not rx_pred_
     if (is.null(.v)) out[["ipredSim"]] else .v

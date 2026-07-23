@@ -223,10 +223,40 @@ test_that("a binom size written as a model-block constant is a constant", {
   }
   expect_equal(spec(mk("", "nt"))$csize, 20)     # model-block constant
   expect_equal(spec(mk("", "20"))$csize, 20)     # literal, as before
+  # An INTEGER literal is a constant too: deparse(20L) is "20L", as.numeric("20L")
+  # is NA, so `binom(20L, p)` was misread as non-constant and refused -- the only
+  # difference from binom(20, p) being the integer suffix. .const() now reads a
+  # bare numeric literal (double or integer) straight from the AST.
+  expect_equal(spec(mk("", "20L"))$csize, 20)
 
   # ... and an ESTIMATED size is still refused: it enters the objective only
   # through the variance, so it has no gradient path.
   expect_error(spec(mk("nsz <- 20;", "nsz")), "non-constant size")
+})
+
+test_that("a non-positive nbinomMu size is refused with a clear domain error", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The size is estimated on the log scale, so a start <= 0 makes log(size)
+  # -Inf/NaN and the first NLL evaluation NaN. The .is_ar and .is_tdf roles pre-empt
+  # exactly this with a domain error; nb_size lacked the guard and surfaced an
+  # unexplained NaN objective instead.
+  mk <- function(sz) suppressMessages(rxode2::rxode2(eval(parse(text = sprintf(
+    'function() {
+       ini({ tcl <- log(5); tv <- log(20); tm <- log(4); sz <- %s; eta.cl ~ 0.09 })
+       model({ cl <- exp(tcl + eta.cl); v <- exp(tv); m <- exp(tm)
+               d/dt(central) <- -(cl/v)*central
+               y ~ nbinomMu(sz, m) }) }', sz)))))
+  # rxode2 allows a size init of exactly 0 through to admixr2 (its own check is
+  # "> 0" only for some roles), so this is the gap the guard fills: log(0) = -Inf.
+  ui0 <- mk("0")
+  expect_error(admixr2:::.admParseIniDf(ui0$iniDf, ui0),
+               "size must be strictly positive|positive initial value")
+  # a strictly-negative init rxode2 itself rejects at model build, before admixr2
+  # sees it -- refused either way.
+  expect_error(mk("-1"))
+  # a positive size still parses
+  ui2 <- mk("2")
+  expect_silent(suppressMessages(admixr2:::.admParseIniDf(ui2$iniDf, ui2)))
 })
 
 test_that("a count endpoint never falls back to nlmixr2est's inner model", {

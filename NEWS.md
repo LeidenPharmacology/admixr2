@@ -85,6 +85,38 @@
 
 ## Bug fixes
 
+* **A `fix()`ed prediction-dependent residual lost its gradient.** A single
+  endpoint whose only residual parameter is `fix()`ed -- `cp ~ prop(b)` with
+  `b <- fix(0.2)`, or a fixed `lnorm`/`boxCox` coefficient -- is still
+  prediction-dependent: `Var(y|eta)` moves with the prediction. `.admResidDeriv`
+  early-returned `d(var)/df = 0` and `d(V_pred)/d(V_struct) = 1` whenever there
+  were no *estimated* residual parameters, dropping that dependence from both the
+  structural-theta and omega gradients, so under the default analytic gradient the
+  optimizer descended a direction the objective did not follow. The early return
+  now fires only for a genuinely additive residual (where those defaults are
+  correct); every prediction-dependent form runs the full derivative even with no
+  estimated residual parameter. FD-verified across `adfo`/`adgh`/`admc` for fixed
+  `prop`, `lnorm` and combined residuals.
+
+* **`binom(20L, p)` was refused as a non-constant size.** An integer literal
+  deparses to `"20L"`, and `as.numeric("20L")` is `NA`, so a binomial size written
+  with the integer suffix was misclassified as non-constant and refused with advice
+  to `fix()` a parameter that does not exist -- the only difference from
+  `binom(20, p)` being the suffix. A bare numeric literal (double or integer) is
+  now read straight from the model AST.
+
+* **A non-positive `nbinomMu` size now gives a clear domain error.** The size is
+  estimated on the log scale, so a start `<= 0` made `log(size)` `-Inf`/`NaN` and
+  the first NLL evaluation `NaN` with no explanation. It now refuses at parse with
+  a domain message, matching the sibling `ar()` correlation and `t()` degrees-of-
+  freedom guards.
+
+* **`beta` precision denominator is guarded against a zero draw.** `.admSimulate`
+  computed a `beta` endpoint's derived mean `b1/(b1+b2)` without the zero-
+  denominator guard its three sibling solve paths already carry, so a draw with
+  `b1 + b2 = 0` would have produced a `NaN` objective; it now floors the
+  denominator the same way.
+
 * **Standard errors: sigma SEs were uninitialised memory, and omega was excluded.**
   All three `CalcCov` functions built the Hessian over structural *and* residual
   parameters but returned only the structural corner. nlmixr2est's C++ `popDf`
@@ -434,6 +466,21 @@
   the ordinary solve. Non-delay models are untouched, and their solves are
   unchanged byte for byte. Found by porting the equivalent fix from nlmixr2est's
   own augmented-sensitivity solve.
+
+## Internal changes
+
+* **The post-fit covariance's reported-scale rotation and its non-PD omega
+  fallback are now single shared helpers.** The ~46-line block that rotates the
+  optimizer-scale covariance onto the printed scale (residual delta factors plus
+  the omega Jacobian) was byte-identical in all three `CalcCov` functions, and the
+  "drop to the struct+sigma sub-block when omega makes the Hessian indefinite"
+  fallback was duplicated in `adfo`/`admc` with an already-divergent invert-first
+  variant in `adgh`. Both are now `.admScaleReportedCov()` and
+  `.admReduceNpdOmega()` in `utils.R`, so a change to how residual/omega SEs reach
+  the printed scale, or to the fallback threshold, is made in one place rather than
+  three. The `adgh` fallback converges onto the same eigenvalue threshold the other
+  two use; results are unchanged (the full pipeline and covariance suites pass
+  identically).
 
 # admixr2 0.3.0
 

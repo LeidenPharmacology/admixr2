@@ -1617,18 +1617,13 @@ nmObjGetControl.admc <- function(x, ...) {
 
   # If the weakly-identified omega Cholesky makes the full Hessian indefinite,
   # drop back to the struct+sigma sub-block rather than reporting nothing.
-  if (n_o > 0L && (is.null(eig_dec) || min(H_eigs) < 0)) {
-    .sub <- seq_len(n_sub)
-    .Hs  <- H[.sub, .sub, drop = FALSE]
-    .es  <- tryCatch(eigen(.Hs, symmetric = TRUE), error = function(e) NULL)
-    if (!is.null(.es) && min(.es$values) >= 0) {
-      warning("admCalcCov: the full Hessian including omega was not positive ",
-              "definite; reporting structural and sigma standard errors only.",
-              call. = FALSE)
-      H <- .Hs; nms_cov <- nms_cov[.sub]; np_cov <- length(.sub)
-      eig_dec <- .es; H_eigs <- .es$values
-    }
-  }
+  .red <- .admReduceNpdOmega(H, H_eigs, eig_dec, nms_cov, n_o, n_sub)
+  if (.red$reduced)
+    warning("admCalcCov: the full Hessian including omega was not positive ",
+            "definite; reporting structural and sigma standard errors only.",
+            call. = FALSE)
+  H <- .red$H; nms_cov <- .red$nms_cov; np_cov <- .red$np_cov
+  eig_dec <- .red$eig_dec; H_eigs <- .red$H_eigs
 
   if (!is.null(eig_dec) && min(H_eigs) < 0) {
     hint <- if (use_grad)
@@ -1668,52 +1663,9 @@ nmObjGetControl.admc <- function(x, ...) {
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
   dimnames(cov_full) <- list(nms_cov, nms_cov)
-  # SCALE. The returned covariance must be on the scale the ESTIMATES are reported
-  # on, because nlmixr2est prints `Estimate +- 1.96*SE` from the two together.
-  # .admFullTheta() reports a structural theta on its optimizer (log) scale, but a
-  # residual parameter on its NATURAL scale -- a "var" role as an SD, a t() df as
-  # nu, an ar() correlation as rho. The Hessian is taken w.r.t. the optimizer
-  # parameterisation, so the sigma rows need the delta-method factor d(reported)/dp
-  # or the printed interval is wrong by that factor (for a "var" sigma it is 2/a,
-  # so an SD of 0.1 would print an SE 20x too large).
-  #
-  # OMEGA is handled just below, separately, because it is NOT a per-row factor:
-  # .admFullTheta reports omega as the VARIANCE/COVARIANCE entries while the
-  # optimizer holds the log-Cholesky, and that map is dense once omega is
-  # correlated. It gets the full .admOmegaJacobian(). (Keeping omega in the
-  # Hessian is also what fixes the structural SEs -- profiling omega out rather
-  # than conditioning on it made them ~33% too small.)
-  # Struct thetas are reported on their optimizer (log) scale, so their factor is
-  # 1; the residual factors come from .admSigmaReportJac(), which is the
-  # derivative of .admSigmaNat() and lives beside it (errmodel.R) so a new
-  # sigma_role cannot be added in one place and forgotten in three.
-  .jac <- rep(1, n_sub)
-  if (n_e > 0L)
-    .jac[n_s + seq_len(n_e)] <- .admSigmaReportJac(p_hat[n_s + seq_len(n_e)], pinfo)
-  .keep <- seq_len(min(n_sub, nrow(cov_full)))
-  .out  <- cov_full[.keep, .keep, drop = FALSE] * tcrossprod(.jac[.keep])
-
-  # OMEGA, reported the way nlmixr2 does (`om.<eta>`, on the variance/covariance
-  # scale). Unlike sigma this is not a per-row factor: Omega = L L' with the
-  # diagonal held as log(Omega_ii), so d(Omega_ij)/d(p_k) mixes rows once omega is
-  # correlated and needs a full Jacobian. Dropped silently if the omega block was
-  # not inverted (the non-PD fallback) or if the Jacobian is unavailable.
-  if (n_o > 0L && nrow(cov_full) >= n_sub + n_o) {
-    .oi <- n_sub + seq_len(n_o)
-    .L_cov <- tryCatch(.admUnpack(p_hat, pinfo)$L, error = function(e) NULL)
-    .Jo <- if (is.null(.L_cov)) NULL else
-      tryCatch(.admOmegaJacobian(pinfo, .L_cov), error = function(e) NULL)
-    if (!is.null(.Jo)) {
-      .co <- .Jo %*% cov_full[.oi, .oi, drop = FALSE] %*% t(.Jo)
-      .cx <- cov_full[.keep, .oi, drop = FALSE] * .jac[.keep]
-      .cx <- .cx %*% t(.Jo)
-      .nm <- .admOmegaReportNames(pinfo)
-      .big <- rbind(cbind(.out, .cx), cbind(t(.cx), .co))
-      dimnames(.big) <- list(c(rownames(.out), .nm), c(colnames(.out), .nm))
-      .out <- .big
-    }
-  }
-  .out
+  # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
+  # shared implementation for all three estimators -- see .admScaleReportedCov().
+  .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
 }
 
 # -- Restart worker ------------------------------------------------------------

@@ -85,6 +85,72 @@ utils::globalVariables(c(
   }, character(1))
 }
 
+# Rotate an optimizer-scale covariance onto the scale the ESTIMATES are printed on.
+#
+# Shared by .adfoCalcCov / .adghCalcCov / .admCalcCov -- it was ~46 identical lines
+# in each, the exact "three places to forget when a sigma_role is added" hazard
+# CLAUDE.md cites as the reason .admSigmaReportJac was extracted. That extraction
+# stopped at the per-row factor; this finishes the job for the surrounding block.
+#
+# `cov_full` is the (already symmetrised) inverse-Hessian in OPTIMIZER order --
+# struct thetas (n_s), then residual params (n_e), then omega Cholesky (n_o), with
+# n_sub = n_s + n_e. nlmixr2est prints `Estimate +- 1.96*SE`, so the covariance
+# must match .admFullTheta()'s reported scale:
+#   - struct thetas: optimizer (log) scale, factor 1;
+#   - residual params: NATURAL scale (SD, nu, rho, ...) via the per-row delta
+#     factor .admSigmaReportJac() (the derivative of .admSigmaNat(), beside it);
+#   - omega: reported as VARIANCE/COVARIANCE entries while the optimizer holds the
+#     log-Cholesky -- NOT a per-row factor (dense once omega is correlated), so it
+#     takes the full .admOmegaJacobian() and transforms as J cov J', with the
+#     struct/sigma-vs-omega cross-block rotated to match. Dropped silently if the
+#     omega block was not inverted (the non-PD fallback) or the Jacobian is absent.
+# When including the omega Cholesky makes the full Hessian indefinite, drop back to
+# the struct+sigma sub-block (rows seq_len(n_sub)) rather than reporting nothing --
+# the weakly-identified off-diagonal L is the usual culprit. Shared by all three
+# CalcCov functions so the threshold ("full H not positive definite") and the
+# retained rows cannot drift apart across estimators (they had: adfo/admc reduced
+# eigen-first, adgh via a private invert-first .invert(), on the SAME min-eig < 0
+# threshold -- one helper removes the three-way replicate). Returns the (possibly
+# reduced) H with its names and eigendecomposition; `reduced` flags whether the
+# fallback fired, so each caller can warn once with its own estimator label.
+.admReduceNpdOmega <- function(H, H_eigs, eig_dec, nms_cov, n_o, n_sub) {
+  if (n_o > 0L && (is.null(eig_dec) || min(H_eigs) < 0)) {
+    .sub <- seq_len(n_sub)
+    .Hs  <- H[.sub, .sub, drop = FALSE]
+    .es  <- tryCatch(eigen(.Hs, symmetric = TRUE), error = function(e) NULL)
+    if (!is.null(.es) && min(.es$values) >= 0)
+      return(list(H = .Hs, nms_cov = nms_cov[.sub], np_cov = length(.sub),
+                  eig_dec = .es, H_eigs = .es$values, reduced = TRUE))
+  }
+  list(H = H, nms_cov = nms_cov, np_cov = length(nms_cov),
+       eig_dec = eig_dec, H_eigs = H_eigs, reduced = FALSE)
+}
+
+.admScaleReportedCov <- function(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub) {
+  .jac <- rep(1, n_sub)
+  if (n_e > 0L)
+    .jac[n_s + seq_len(n_e)] <- .admSigmaReportJac(p_hat[n_s + seq_len(n_e)], pinfo)
+  .keep <- seq_len(min(n_sub, nrow(cov_full)))
+  .out  <- cov_full[.keep, .keep, drop = FALSE] * tcrossprod(.jac[.keep])
+
+  if (n_o > 0L && nrow(cov_full) >= n_sub + n_o) {
+    .oi <- n_sub + seq_len(n_o)
+    .L_cov <- tryCatch(.admUnpack(p_hat, pinfo)$L, error = function(e) NULL)
+    .Jo <- if (is.null(.L_cov)) NULL else
+      tryCatch(.admOmegaJacobian(pinfo, .L_cov), error = function(e) NULL)
+    if (!is.null(.Jo)) {
+      .co <- .Jo %*% cov_full[.oi, .oi, drop = FALSE] %*% t(.Jo)
+      .cx <- cov_full[.keep, .oi, drop = FALSE] * .jac[.keep]
+      .cx <- .cx %*% t(.Jo)
+      .nm <- .admOmegaReportNames(pinfo)
+      .big <- rbind(cbind(.out, .cx), cbind(t(.cx), .co))
+      dimnames(.big) <- list(c(rownames(.out), .nm), c(colnames(.out), .nm))
+      .out <- .big
+    }
+  }
+  .out
+}
+
 # Put the dimnames back on fit$env$cov after nlmixr2est has been through it.
 #
 # nlmixr2est's C++ `foceiFitCpp_` re-dimnames whatever covariance it finds in the

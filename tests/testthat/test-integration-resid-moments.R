@@ -209,3 +209,54 @@ test_that("analytic gradients match FD for every residual form", {
     }
   }
 })
+
+# A residual whose ONLY parameter is fix()ed is prediction-dependent all the same:
+# `.all_fixed_resid` keeps the spec alive with n_sig == 0, and Var(y|eta) still
+# moves with f (b^2*E[f^2] for a fixed prop). .admResidDeriv used to early-return
+# dv_df = 0 / dv_dv0 = 1 for every non-count form when n_sig == 0 -- dropping that
+# dependence from BOTH the struct-theta and omega gradients, so the optimizer
+# descended a gradient the objective did not follow. Guard: the analytic gradient
+# of the struct thetas and omega must still match a central FD of the NLL.
+test_that("a fix()ed prediction-dependent residual keeps its gradient chain", {
+  skip_if_not_installed("nlmixr2est")
+  times <- c(0.5, 1, 2, 4)
+  fixed_cases <- list(
+    prop  = c("b <- fix(0.2)",              "cp ~ prop(b)"),
+    lnorm = c("a <- fix(0.3)",              "cp ~ lnorm(a)"),
+    comb  = c("a <- fix(0.4); b <- fix(0.2)", "cp ~ add(a) + prop(b)"))
+  for (nm in names(fixed_cases)) {
+    cs    <- fixed_cases[[nm]]
+    ui    <- .rm_mk(cs[1], cs[2])
+    pinfo <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+    # the premise: no estimated residual parameter, yet the spec is kept
+    expect_length(pinfo$sigma_names, 0L)
+    sens  <- suppressMessages(tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL))
+    rxMod <- admixr2:::.admLoadModel(ui)
+    E <- 100/20*exp(-(5/20)*times)
+    s <- admixr2:::.admNormaliseStudy(list(E = E, V = diag((0.3*E)^2), n = 200L,
+                                           times = times, ev = rxode2::et(amt = 100)), "s")
+    s$ev_full <- rxode2::et(s$ev, s$times)
+    st <- list(s = s)
+    z    <- admixr2:::.admMakeZ(400L, pinfo, 1L, "sobol")
+    pm   <- admixr2:::.admMakeParamsList(400L, pinfo, 1L)
+    grid <- admixr2:::.adghNodeGrid(5L, pinfo$n_eta)
+    p0   <- admixr2:::.admBuildOptVec(pinfo)$p0 * 1.03 + 0.01
+    runs <- list(
+      adfo = list(n = function(p) admixr2:::.adfoNLL(p, pinfo, st, sens, rxMod, "cp", pm, 1L),
+                  g = function(p) admixr2:::.adfoGrad(p, pinfo, st, sens, rxMod, "cp", pm, 1L, 1e-5)),
+      adgh = list(n = function(p) admixr2:::.adghNLL(p, pinfo, st, rxMod, "cp", grid, 1L),
+                  g = function(p) admixr2:::.adghGrad(p, pinfo, st, sens, rxMod, "cp", grid, 1L, 1e-5)),
+      admc = list(n = function(p) admixr2:::.admNLL(p, pinfo, st, z, rxMod, "cp", pm, 1L),
+                  g = function(p) admixr2:::.admGrad(p, pinfo, st, z, rxMod, "cp", pm, 1L, 1e-5, sens)))
+    for (est in names(runs)) {
+      an <- runs[[est]]$g(p0)
+      h  <- 1e-5
+      fd <- vapply(seq_along(p0), function(k) {
+        pp <- p0; pp[k] <- pp[k]+h; pmn <- p0; pmn[k] <- pmn[k]-h
+        (runs[[est]]$n(pp) - runs[[est]]$n(pmn))/(2*h) }, numeric(1))
+      tol <- if (est == "adfo") 5e-3 else 1e-3
+      expect_lt(max(abs(an - fd)/pmax(abs(fd), 1e-6)), tol,
+                label = sprintf("fixed-%s/%s max rel gradient error", nm, est))
+    }
+  }
+})

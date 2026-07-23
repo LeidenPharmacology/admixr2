@@ -127,6 +127,12 @@
   a <- .admDistArgs(ui, var)
   if (is.null(a)) return(NULL)
   .const <- function(x) {
+    # A literal is stored in the AST as an actual R number: `binom(20, p)` gives the
+    # double 20, `binom(20L, p)` the integer 20L. deparse(20L) is "20L", and
+    # as.numeric("20L") is NA -- so an integer-suffixed size was misread as
+    # non-constant and refused with advice to fix() a parameter that does not exist.
+    # Read a bare numeric literal (double OR integer) directly, before deparsing.
+    if (is.numeric(x) && length(x) == 1L) return(as.numeric(x))
     v <- suppressWarnings(as.numeric(paste(deparse(x), collapse = "")))
     if (!is.na(v)) return(v)
     nm  <- paste(deparse(x), collapse = "")
@@ -1637,9 +1643,19 @@ without that parameter there is no residual to integrate"),
   # pois/binom have NO residual parameters, but they still have f- and var_f-paths
   # (Var = f, and N p(1-p) respectively). Returning the defaults here left dv_df at
   # 0 and dv_dv0 at 1, so their structural and omega gradients were simply absent.
-  if (n_sig == 0L && !any(arr$form %in% c(.ADM_RESID_POIS, .ADM_RESID_BINOM,
-                                          .ADM_RESID_NBINOM, .ADM_RESID_BETA,
-                                          .ADM_RESID_ORDINAL)))
+  # The SAME trap reopens for a continuous residual whose only parameter is fix()ed:
+  # `.all_fixed_resid` keeps the spec alive with n_sig == 0, yet a fixed prop/pow/
+  # lnorm/TBS residual is still prediction-dependent (Var(y|eta) moves with f). The
+  # early return must fire ONLY when there is genuinely no f- or var_f-path -- i.e.
+  # a purely additive residual (combined form with b^2 == 0, no count/lnorm/TBS),
+  # where dv_df = 0 and dv_dv0 = 1 are the correct answers. `arr$b2 > 0` covers a
+  # fixed prop/pow/combined coefficient; lnorm/TBS are f-dependent with any params.
+  .f_dep <- any(arr$form %in% c(.ADM_RESID_POIS, .ADM_RESID_BINOM,
+                                .ADM_RESID_NBINOM, .ADM_RESID_BETA,
+                                .ADM_RESID_ORDINAL, .ADM_RESID_LNORM,
+                                .ADM_RESID_TBS)) ||
+            (!is.null(arr$b2) && any(is.finite(arr$b2) & arr$b2 > 0))
+  if (n_sig == 0L && !.f_dep)
     return(list(dmu = dmu, dvar = dvar, dv_df = dv_df, dv_dv0 = dv_dv0,
                 ev_resid = ev_resid, ms = ms_out, dms = dms, dms_df = dms_df,
                 dmu_dv0 = dmu_dv0, dmu_df = ms_out))
