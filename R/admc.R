@@ -394,8 +394,13 @@ nmObjGetControl.admc <- function(x, ...) {
     s       <- studies[[i]]
     ov      <- s$output %||% output_var
     z       <- z_list[[i]]
-    eta_mat <- z %*% t(pars$L)
-    colnames(eta_mat) <- pinfo$eta_col_names
+    # A no-IIV (zero-eta) model has pars$L = NULL, so t(pars$L) errors ("argument
+    # is not a matrix"). adfo and adgh guard this; admc must too (.admNLLBatch
+    # already does). A 0-column eta_mat flows correctly through .admSimulate and the
+    # n_eta-indexed kernels (all seq_len(0) no-ops). For n_eta > 0 this is identical.
+    eta_mat <- if (pinfo$n_eta > 0L) {
+      .em <- z %*% t(pars$L); colnames(.em) <- pinfo$eta_col_names; .em
+    } else matrix(0, nrow(z), 0L)
 
     # Joint (same-subject) unit: one shared-eta solve produces every output;
     # score the stacked vector with a single MVN over the joint covariance.
@@ -496,8 +501,9 @@ nmObjGetControl.admc <- function(x, ...) {
     z   <- z_list[[si]]
     pdf <- params_list[[si]]
 
-    eta_mat           <- z %*% t(pars$L)
-    colnames(eta_mat) <- eta_col_names
+    eta_mat <- if (pinfo$n_eta > 0L) {          # zero-eta guard -- see .admNLL
+      .em <- z %*% t(pars$L); colnames(.em) <- eta_col_names; .em
+    } else matrix(0, nrow(z), 0L)
 
     unpaired_k <- which(vapply(pinfo$struct_names, function(nm)
       is.null(pinfo$struct_has_eta) || !isTRUE(pinfo$struct_has_eta[nm]), logical(1)))
@@ -1104,6 +1110,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
     eta_mats <- lapply(seq_len(n_c), function(ci) {
       if (!valid[ci]) return(NULL)
+      if (pinfo$n_eta == 0L) return(matrix(0, nrow(z), 0L))   # zero-eta guard
       em <- z %*% t(pars_list[[ci]]$L)
       colnames(em) <- eta_col_names
       em
@@ -2444,8 +2451,12 @@ nlmixr2Est.admc <- function(env, ...) {
   t0_cov <- proc.time()
   .cov <- if (.ctl$covMethod == "r") {
     # Multi-output / joint fits use the NLL-FD Hessian (via .admNLLBatch); the
-    # grad-FD Hessian relies on the single-output analytical grad batch.
-    use_grad_cov <- want_grad && !multi_out && !any_joint
+    # grad-FD Hessian relies on the single-output analytical grad batch. A zero-eta
+    # (no-IIV) model also takes the NLL-FD path: grad-FD exists only to BATCH the
+    # eta-gradient, of which there is none here, so it offers no benefit and its
+    # eta-indexed batch machinery is degenerate -- NLL-FD gives the correct SEs
+    # (matching adfo/adgh) where grad-FD's .admGradBatch has nothing to batch.
+    use_grad_cov <- want_grad && !multi_out && !any_joint && pinfo$n_eta > 0L
     use_cent_cov <- want_central
     # struct + sigma + OMEGA: the Hessian spans all three, so the evaluation
     # count must too.

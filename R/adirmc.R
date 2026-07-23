@@ -1089,6 +1089,16 @@ nlmixr2Est.adirmc <- function(env, ...) {
     names(studies) <- paste0("study", seq_along(studies))
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
+  # IRMC draws its importance-sampling proposals FROM the random-effect
+  # distribution, so a model with no random effect has nothing to propose: the
+  # proposal draw is degenerate and the fit returned a silent objective = Inf
+  # (frozen at the initial values) rather than refusing. The other three estimators
+  # fit a no-IIV (population-only) model directly.
+  if (pinfo$n_eta == 0L)
+    stop("est='adirmc' requires at least one random effect (eta): IRMC draws its ",
+         "importance-sampling\n  proposals from the random-effect distribution, and ",
+         "a model with no IIV has nothing to propose.\n  Use est = \"adfo\", ",
+         "\"admc\" or \"adgh\" for a population-only (no-IIV) model.", call. = FALSE)
   # A beta endpoint's precision phi is SOLVED, not fitted: .admSimulate() returns it
   # as an attribute on cp_mat and admc/adgh patch it into the residual rows. This
   # estimator has no such path -- arr$phi stayed NA and .admResidApply() produced NA

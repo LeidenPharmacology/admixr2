@@ -268,7 +268,10 @@
       # parameter that moves mu also moves diag(V). dv_df = d(var)/d(mu).
       # ms = m'(f) (TBS) also reaches V's off-diagonal -- see the single-output branch.
       ms_off_j <- numeric(length(mu))
-      if (!is.null(dres$dms_df) && any(dres$dms_df != 0)) {
+      # na.rm: dms_df is NaN when f crosses the transform bound (a line-search trial
+      # point); any(NaN != 0) is NA and `if (NA)` throws instead of the optimizer
+      # backing off the already-Inf objective. Bit-identical when dms_df is finite.
+      if (!is.null(dres$dms_df) && any(dres$dms_df != 0, na.rm = TRUE)) {
         Aj <- B * V_str; diag(Aj) <- 0
         ms_off_j <- 2 * dres$dms_df * drop(Aj %*% dres$ms)
       }
@@ -399,7 +402,7 @@
     # the same contraction .admResidMuCoupling() applies for admc. Identically zero
     # unless ms varies with f, so every other error model is untouched.
     ms_off <- numeric(length(mu))
-    if (!is_var && !is.null(dres$dms_df) && any(dres$dms_df != 0)) {
+    if (!is_var && !is.null(dres$dms_df) && any(dres$dms_df != 0, na.rm = TRUE)) {
       A <- B * cov_f; diag(A) <- 0
       ms_off <- 2 * dres$dms_df * drop(A %*% dres$ms)
     }

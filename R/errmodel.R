@@ -2128,7 +2128,7 @@ without that parameter there is no residual to integrate"),
   # with A's diagonal zeroed (the diagonal is dvar's). Needs the STRUCTURAL
   # covariance, which the caller has before it applies the ms scaling; without
   # cov_f the term is skipped, which is exact for every form with a constant ms.
-  if (!is.null(cov_f) && !is.null(dNLL_dV) && !is.null(d$dms) && any(d$dms != 0)) {
+  if (!is.null(cov_f) && !is.null(dNLL_dV) && !is.null(d$dms) && any(d$dms != 0, na.rm = TRUE)) {
     A <- dNLL_dV * cov_f
     diag(A) <- 0
     g <- g + 2 * drop(crossprod(d$dms, A %*% d$ms))
@@ -2191,7 +2191,7 @@ without that parameter there is no residual to integrate"),
   #   2 * m''(f_k) * (A ms)_k,   A = dNLL_dV o cov_f with a zero diagonal,
   # which is exactly the same contraction .admSigmaGrad() applies for the sigma
   # path. Zero unless ms varies with f (i.e. TBS only), so nothing else moves.
-  if (!is.null(cov_f) && !is.null(dNLL_dV) && !is.null(d$dms_df) && any(d$dms_df != 0)) {
+  if (!is.null(cov_f) && !is.null(dNLL_dV) && !is.null(d$dms_df) && any(d$dms_df != 0, na.rm = TRUE)) {
     A <- dNLL_dV * cov_f
     diag(A) <- 0
     out <- out + 2 * d$dms_df * drop(A %*% d$ms)
