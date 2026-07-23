@@ -90,3 +90,61 @@ test_that("irmcInnerGrad with exact kappa: ratio vs FD within 5%", {
     info = paste("Params with |ratio - 1| > 0.05:",
                  paste(sprintf("%s=%.4f", bad, ratio_ok[bad]), collapse = ", ")))
 })
+
+# The IRMC importance-sampling mean-shift for a mu-referenced paired theta is
+# p_new - p_orig for EVERY transform: eta and theta share the argument of
+# `param <- h(theta + eta)`, so shifting theta by Delta shifts eta's target mean by
+# Delta regardless of h. The code only had this right for exp (log(exp(p)) = p);
+# additive fell to log(p) and expit/probit to a natural-scale-log form -- all
+# wrong. Measured against a direct adgh objective the expit shift was ~140 -2LL
+# units off a few tenths from the proposal point. Pin the shift itself (exact, no
+# importance-sampling variance): paired_type 0 and mean_new == the raw p-shift.
+test_that("a paired theta's IS shift is the identity p-shift for every transform", {
+  cases <- list(
+    additive = list(
+      fn = function() { ini({ tcl <- log(5); tv <- 20; a <- 0.5; eta.v ~ 4 })
+        model({ cl <- exp(tcl); v <- tv + eta.v
+                d/dt(central) <- -(cl/v)*central; cp <- central/v; cp ~ add(a) }) },
+      theta = "tv", curEval = "", delta = 1.5),
+    expit = list(
+      fn = function() { ini({ tcl <- logit(5, 0, 20); tv <- log(20); a <- 0.4; eta.cl ~ 0.09 })
+        model({ cl <- expit(tcl + eta.cl, 0, 20); v <- exp(tv)
+                d/dt(central) <- -(cl/v)*central; cp <- central/v; cp ~ add(a) }) },
+      theta = "tcl", curEval = "expit", delta = 0.3))
+
+  for (nm in names(cases)) {
+    cc    <- cases[[nm]]
+    ui    <- suppressMessages(rxode2::rxode2(cc$fn))
+    pinfo <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+    expect_identical(pinfo$struct_transforms[[cc$theta]]$curEval, cc$curEval,
+                     label = sprintf("%s curEval", nm))
+    tt <- c(1, 2, 4, 8); ev <- rxode2::et(amt = 100)
+    E  <- 100/20*exp(-(5/20)*tt)
+    s  <- admixr2:::.admNormaliseStudy(list(E = E, V = diag((0.2*E)^2), n = 100L,
+                                            times = tt, ev = ev), "s")
+    s$ev_full <- rxode2::et(s$ev, s$times)
+    rxMod <- admixr2:::.admLoadModel(ui)
+    z  <- admixr2:::.admMakeZ(1000L, pinfo, 1L, "sobol")
+    pm <- admixr2:::.admMakeParamsList(1000L, pinfo, 1L)
+    p0    <- admixr2:::.admBuildOptVec(pinfo)$p0
+    pars0 <- admixr2:::.admUnpack(p0, pinfo)
+    prop <- admixr2:::.adirmcProposal(
+      rxMod, pars0$struct, pinfo$sigma_names, pars0$omega, omega_expansion = 2,
+      s, z[[1]], "cp", pm[[1]], cores = 1L, pinfo$eta_col_names,
+      has_kappa = pinfo$has_kappa, struct_transforms = pinfo$struct_transforms,
+      struct_eta_idx = pinfo$struct_eta_idx, use_grad = TRUE)
+    skip_if(is.null(prop), "proposal draw failed")
+
+    k <- match(cc$theta, names(prop$log_origbeta))
+    expect_false(is.na(k), label = sprintf("%s paired", nm))
+    expect_identical(unname(prop$paired_types[k]), 0L,       # identity, not 1/2/3
+                     label = sprintf("%s paired_type", nm))
+    struct_new <- pars0$struct[names(prop$log_origbeta)]
+    struct_new[cc$theta] <- struct_new[cc$theta] + cc$delta
+    mn <- admixr2:::compute_mean_new_cpp(struct_new, prop$log_origbeta,
+            prop$paired_types, prop$paired_lows, prop$paired_his)
+    # exact p-shift, NOT log(back(p_new)) - log(back(p_orig))
+    expect_equal(mn[k], cc$delta, tolerance = 1e-9,
+                 label = sprintf("%s mean_new", nm))
+  }
+})

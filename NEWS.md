@@ -85,6 +85,23 @@
 
 ## Bug fixes
 
+* **IRMC importance-sampling shift was wrong for every non-`exp` mu-referenced
+  theta.** For a paired parameter `param <- h(theta + eta)`, `eta` and `theta`
+  enter the transform through the *same* argument, so shifting `theta` by `Delta`
+  shifts the importance-sampling target mean of `eta` by exactly `Delta` --
+  `theta_new - theta_orig` -- for *any* `h`. The code computed that shift as
+  `log(back(theta))`, which equals `theta` only for `exp` (`log(exp(theta))`);
+  for a bounded (`expit`/`probit`) paired theta it used a natural-scale-log form
+  and for an additive one (`emax <- temax + eta.emax`, the standard Emax writing
+  style) it used `log(theta)`. Both biased the estimate and its analytical
+  gradient, and the additive case went `-Inf`/`NaN` once the parameter passed
+  through zero. Measured against a direct `adgh` evaluation, the `expit` shift
+  drove the IRMC objective ~140 `-2LL` units off within a few tenths of the
+  proposal point; the shift is now the identity `theta_new - theta_orig` for all
+  transforms and matches the direct objective to importance-sampling noise
+  (~0.06). Only `adirmc` fits used this path; the other three estimators integrate
+  the random effects directly and were unaffected.
+
 * **A `fix()`ed prediction-dependent residual lost its gradient.** A single
   endpoint whose only residual parameter is `fix()`ed -- `cp ~ prop(b)` with
   `b <- fix(0.2)`, or a fixed `lnorm`/`boxCox` coefficient -- is still

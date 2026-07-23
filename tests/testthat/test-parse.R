@@ -171,11 +171,15 @@ test_that(".admBackTransform: probitInv returns lo + (hi-lo)*pnorm(p)", {
                lo + (hi - lo) * pnorm(p), tolerance = 1e-12)
 })
 
-test_that(".admLogBackTransform: probit returns log(lo + (hi-lo)*pnorm(p))", {
+test_that(".admLogBackTransform: probit returns p (transform-independent shift)", {
+  # Corrected with the IRMC shift audit: the eta-shift for a paired theta is
+  # p_new - p_orig for EVERY transform (eta and theta share h's argument), so the
+  # eta-scale value is p itself -- the transform h does not enter. The old
+  # log(back(p)) form drove the adirmc objective far off a direct evaluation for a
+  # probit-bounded paired theta.
   lo <- 0.2; hi <- 4.0; p <- -0.3
   tr <- list(curEval = "probit", low = lo, hi = hi)
-  expect_equal(admixr2:::.admLogBackTransform(p, tr),
-               log(lo + (hi - lo) * pnorm(p)), tolerance = 1e-12)
+  expect_equal(admixr2:::.admLogBackTransform(p, tr), p)
 })
 
 test_that(".admBackTransform: expit returns lo + (hi-lo)*plogis(p)", {
@@ -186,12 +190,29 @@ test_that(".admBackTransform: expit returns lo + (hi-lo)*plogis(p)", {
                lo + (hi - lo) * plogis(p), tolerance = 1e-10)
 })
 
-test_that(".admLogBackTransform: logit returns log(lo + (hi-lo)*plogis(p))", {
-  skip_if_not_installed("rxode2")
+test_that(".admLogBackTransform: identity/additive (curEval == '') returns p", {
+  # An ADDITIVE mu-reference `emax <- temax + eta.emax` (curEval == "", the standard
+  # Emax writing style) has its IRMC importance-sampling mean-shift on the NATURAL
+  # (eta) scale: back(p) = p, so the eta-shift is p_new - p_orig -- exactly what the
+  # exp/log branch gives, and what C++ compute_mean_new case 0 (log_back = p)
+  # computes. This branch used to return log(p): correct for exp only, it modelled
+  # an additive theta as MULTIPLICATIVE and went -Inf/NaN at theta <= 0.
+  tr <- list(curEval = "", low = NA_real_, hi = NA_real_)
+  expect_equal(admixr2:::.admLogBackTransform(30, tr), 30)
+  # the shift is p_new - p_orig = 1, NOT log(31) - log(30) = 0.0328
+  expect_equal(admixr2:::.admLogBackTransform(31, tr) -
+                 admixr2:::.admLogBackTransform(30, tr), 1)
+  # and it is finite for a non-positive additive theta (log(p) was not)
+  expect_true(is.finite(admixr2:::.admLogBackTransform(-2, tr)))
+  expect_equal(admixr2:::.admLogBackTransform(-2, tr), -2)
+})
+
+test_that(".admLogBackTransform: logit/expit returns p (transform-independent shift)", {
+  # See the probit test: the IRMC eta-shift is p_new - p_orig for every transform.
   lo <- 0.3; hi <- 3.0; p <- -0.5
-  tr <- list(curEval = "logit", low = lo, hi = hi)
-  expect_equal(admixr2:::.admLogBackTransform(p, tr),
-               log(lo + (hi - lo) * plogis(p)), tolerance = 1e-10)
+  expect_equal(admixr2:::.admLogBackTransform(p, list(curEval = "logit", low = lo, hi = hi)), p)
+  expect_equal(admixr2:::.admLogBackTransform(p, list(curEval = "expit", low = lo, hi = hi)), p)
+  expect_equal(admixr2:::.admLogBackTransform(1.2, list(curEval = "exp")), 1.2)
 })
 
 test_that(".admComputeScaleC: expit struct theta uses derivative-based scale (no rxode2)", {
@@ -329,9 +350,14 @@ test_that(".admBackTransform: unknown curEval returns p unchanged", {
   expect_equal(admixr2:::.admBackTransform(3.7, tr), 3.7)
 })
 
-test_that(".admLogBackTransform: unknown curEval returns log(p)", {
+test_that(".admLogBackTransform: identity/unknown curEval returns p (additive shift)", {
+  # Corrected with finding 3: the identity/additive eta-scale value is back(p) = p,
+  # NOT log(p). .admBackTransform (above) already returns p unchanged for this
+  # transform; the old .admLogBackTransform returning log(p) was the inconsistency
+  # that modelled an additive paired theta's IRMC shift as multiplicative.
   tr <- list(curEval = "identity", low = NA_real_, hi = NA_real_)
-  expect_equal(admixr2:::.admLogBackTransform(exp(2), tr), 2, tolerance = 1e-12)
+  expect_equal(admixr2:::.admLogBackTransform(exp(2), tr), exp(2), tolerance = 1e-12)
+  expect_equal(admixr2:::.admLogBackTransform(3.7, tr), 3.7)
 })
 
 test_that(".admLogBackTransform: log curEval returns p unchanged", {

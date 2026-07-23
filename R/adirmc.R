@@ -431,27 +431,13 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
     for (k in seq_along(paired_nms)) {
       nm  <- paired_nms[k]
-      .tr <- pinfo$struct_transforms[[nm]]
-      d_logback_dp <- if (is.null(.tr) || .tr$curEval %in% c("exp", "log")) {
-        1.0
-      } else if (.tr$curEval %in% c("expit", "logit")) {
-        p_val <- pars$struct[[nm]]
-        s_val <- 1 / (1 + exp(-p_val))
-        # rxode2's safeZero (_div0_): a zero denominator becomes DBL_EPSILON.
-        # `back` is expit(p, low, hi), which is 0 at p = 0 whenever low = 0.
-        back  <- .tr$low + (.tr$hi - .tr$low) * s_val
-        (.tr$hi - .tr$low) * s_val * (1 - s_val) / { .d <- back; .d[.d == 0] <- .Machine$double.eps; .d }
-      } else if (.tr$curEval %in% c("probitInv", "probit")) {
-        p_val <- pars$struct[[nm]]
-        back  <- .tr$low + (.tr$hi - .tr$low) * pnorm(p_val)
-        (.tr$hi - .tr$low) * dnorm(p_val) / { .d <- back; .d[.d == 0] <- .Machine$double.eps; .d }
-      } else {
-        (.admLogBackTransform(pars$struct[[nm]] + 1e-7, .tr) -
-           .admLogBackTransform(pars$struct[[nm]] - 1e-7, .tr)) / (2e-7)
-      }
+      # The eta-shift is p_new - p_orig for every transform (see
+      # .admLogBackTransform), so d(mean_new)/dp = 1 exactly. The transform-specific
+      # closed forms that used to sit here differentiated log(back(p)) -- the wrong
+      # shift for expit/probit/additive -- and are gone with it.
       k_struct <- match(nm, pinfo$struct_names)
       eta_pos  <- if (k <= length(prop$paired_eta_pos)) prop$paired_eta_pos[k] else k
-      grad[k_struct] <- grad[k_struct] + dNLL_dmean_new[eta_pos] * d_logback_dp
+      grad[k_struct] <- grad[k_struct] + dNLL_dmean_new[eta_pos]
     }
 
     if (!is.null(prop$kappa_jac)) {
@@ -499,7 +485,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
 # -- Inner NLL -----------------------------------------------------------------
 # Deterministic given fixed proposals. Sequence:
 # 1. IS log-weights: log p(bi|Omega_new, mean_new) - log p(bi|Omega_prop) -> softmax
-#    mean_new encodes paired theta shift: log(back_fn(p_new)) - log(back_fn(p_orig))
+#    mean_new encodes paired theta shift: p_new - p_orig (transform-independent)
 # 2. Weighted mean + covariance (ML, no n-1)
 # 3. Sigma added to V diagonal using pre-kappa mu (sigma_prop scales with pre-kappa mu^2)
 # 4. Kappa correction: mu += kappa_fn(struct) - mu_pop
@@ -789,10 +775,12 @@ nmObjGetControl.adirmc <- function(x, ...) {
   else seq_len(n_eta_prop)
 
   .type_code <- function(nm) {
-    cv <- if (!is.null(struct_transforms) && !is.null(struct_transforms[[nm]]))
-      struct_transforms[[nm]]$curEval else "exp"
-    switch(cv, exp = 0L, log = 0L, expit = 1L, logit = 1L,
-           probitInv = 2L, probit = 2L, 3L)
+    # ALWAYS 0L (C++ compute_mean_new case 0, log_back = p). The IRMC eta-shift for
+    # a paired theta is p_new - p_orig for every transform -- see .admLogBackTransform.
+    # Cases 1/2 (expit/probit natural-scale-log) and 3 (additive log) modelled the
+    # shift as if the transform entered it; it does not. `nm` retained for interface.
+    force(nm)
+    0L
   }
   .bound <- function(nm, field) {
     if (!is.null(struct_transforms) && !is.null(struct_transforms[[nm]]))

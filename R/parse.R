@@ -22,22 +22,28 @@
     p)
 }
 
-# log(back(p)) -- used in IRMC gradient chain rule for paired struct thetas.
-.admLogBackTransform <- function(p, tr) {
-  if (is.null(tr)) return(p)
-  # rxode2's safeLog (_safe_log_): log(x) for x > 0, else log(DBL_EPSILON). The
-  # `default` branch is reached whenever curEval is "" -- which is what rxode2
-  # emits for a plain ADDITIVE mu-reference such as `emax <- temax + eta.emax`,
-  # the standard Emax/PD writing style, where theta can legitimately be <= 0.
-  # Unguarded this returned -Inf at theta = 0 and NaN below it. The expit/probit
-  # branches need it too once `low` is negative.
-  .slog <- function(x) log(ifelse(x > 0, x, .Machine$double.eps))
-  switch(tr$curEval,
-    exp = , log = p,
-    expit = , logit = .slog(rxode2::expit(p, tr$low, tr$hi)),
-    probitInv = , probit = .slog(rxode2::probitInv(p, tr$low, tr$hi)),
-    .slog(p))
-}
+# The eta-scale representative of a paired struct theta -- the quantity whose
+# difference (p_new vs p_orig) is the IRMC importance-sampling mean-shift for that
+# theta's eta, and whose derivative is the gradient chain factor.
+#
+# It is p itself, for EVERY transform. A mu-reference is `param <- h(theta + eta)`,
+# so eta and theta enter h through the SAME argument: shifting theta by Delta is
+# identical to shifting eta's mean by Delta, because
+#   f(theta + Delta, eta) = h(theta + Delta + eta) = f(theta, eta + Delta)
+# regardless of h. The exact eta-shift is therefore theta_new - theta_orig = p,
+# and its derivative is 1 -- the outer transform h (exp, expit, probit, identity)
+# does not enter at all.
+#
+# The old switch returned log(back(p)), which equals p ONLY for exp (log(exp(p))).
+# For expit/probit it computed a natural-scale-log shift, and for an additive
+# theta (curEval == "") log(p); both were wrong. Measured against a direct adgh
+# evaluation, the expit shift drove the adirmc objective ~140 -2LL units off a few
+# tenths from the proposal point; the additive one biased its estimate and went
+# -Inf/NaN at theta <= 0. Returning p is exact for all and cannot go non-finite.
+# (Kept as a named function -- rather than inlining `p` -- because the C++
+# compute_mean_new kernel, .type_code and the gradient's d_logback_dp all mirror
+# this one definition, and naming it keeps the reason in one place.)
+.admLogBackTransform <- function(p, tr) p
 
 # How many times each name appears in the model expressions.
 #
