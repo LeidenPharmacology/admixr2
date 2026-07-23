@@ -87,17 +87,10 @@
   V   <- crossprod(cpc, W * cpc)
 
   # Restrict residual error to this output's sigma(s) (no-op single-output).
-  arr <- .admResidRows(pinfo, out_var, pars$sigma_var, length(mu))
-  .ph <- attr(cp, "phi"); if (!is.null(.ph)) arr$phi <- .ph   # beta precision
+  arr <- .admUnitResidRows(pinfo, out_var, pars$sigma_var, length(mu),
+                           phi = attr(cp, "phi"))   # beta precision (SOLVED)
   ap  <- .admResidApply(mu, diag(V), arr, times)
-  # lnorm scales the whole covariance, not just its diagonal (ms == 1 otherwise)
-  # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
-  # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
-  # that aborted the whole fit instead of the optimizer rejecting the point.
-  if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
-  diag(V) <- ap$dv
-  if (!is.null(ap$rmat)) V <- V + ap$rmat          # ar() correlation
-  list(E = ap$mu, V = V)
+  list(E = ap$mu, V = .admApplyResidTail(V, ap))
 }
 
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
@@ -245,7 +238,7 @@
       ls_vec <- dres$dmu_df            # d(mu_pred)/df -- see the single-output branch
 
       vchain <- .admResidVChain(mu, var_f, arr, pinfo,
-                                .admRowTimes(s, length(mu)))
+                                .admRowTimes(s, length(mu)), deriv = dres)
       jr <- .admJointResidual(mu, V_str, s, pinfo, pars$sigma_var)
       mu_sigma <- jr$mu; V <- jr$V
       r  <- as.numeric(s$E) - mu_sigma
@@ -309,7 +302,7 @@
       # sigma (each row's own endpoint; other endpoints' derivatives are zero)
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
         .admSigmaGrad(mu, arr, pinfo, Bdiag, dNLL_dmu_sig, var_f, B,
-                      .admRowTimes(s, length(mu)), V_str)
+                      .admRowTimes(s, length(mu)), V_str, deriv = dres)
       next
     }
 
@@ -334,13 +327,7 @@
     arr   <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
     var_f <- diag(V)                      # Var_eta(f), pre-residual
     ap    <- .admResidApply(mu, var_f, arr, s$times, cov_f)
-    # lnorm scales the WHOLE covariance, not just its diagonal; ms == 1 elsewhere.
-    # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
-    # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
-    # that aborted the whole fit instead of the optimizer rejecting the point.
-    if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
-    diag(V) <- ap$dv
-    if (!is.null(ap$rmat)) V <- V + ap$rmat            # ar() correlation
+    V <- .admApplyResidTail(V, ap)
     mu_sigma <- ap$mu
 
     # The sens Jacobians give d(f)/d(psi). `contrib()` below takes them RAW and
@@ -354,7 +341,7 @@
     # d(mu_pred)/d(f), which is ap$ms for every form EXCEPT TBS -- there the mean
     # carries a curvature term of its own. ap$ms stays the COVARIANCE scale.
     lnorm_scale <- dres$dmu_df
-    vchain      <- .admResidVChain(mu, var_f, arr, pinfo, s$times)
+    vchain      <- .admResidVChain(mu, var_f, arr, pinfo, s$times, deriv = dres)
 
     r <- as.numeric(s$E) - mu_sigma
 
@@ -459,7 +446,7 @@
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
       .admSigmaGrad(mu, arr, pinfo, Bvec, dNLL_dmu_sig, var_f,
                     if (is_var) NULL else B, s$times,
-                    if (is_var) NULL else cov_f)
+                    if (is_var) NULL else cov_f, deriv = dres)
   }
 
   # Unpaired struct thetas: the sens path above already has them exactly.

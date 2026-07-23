@@ -372,7 +372,9 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         }
         cp_mat <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta_mat,
                                study_tmp, ov, params_list[[1L]], control$cores)
-        .ph <- attr(cp_mat, "phi"); if (!is.null(.ph)) arr$phi <- .ph  # beta precision
+        # beta precision (SOLVED) rides back on cp_mat; fold it into the row array
+        arr  <- .admUnitResidRows(pinfo, ov, pars$sigma_var, n_t,
+                                  phi = attr(cp_mat, "phi"))
         mu   <- colMeans(cp_mat)
         cp_c <- sweep(cp_mat, 2L, mu)
         V    <- crossprod(cp_c) / control$n_sim
@@ -382,10 +384,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         # with its own method = "gh" branch, which went through .adghMoments and
         # did include them.
         ap   <- .admResidApply(mu, diag(V), arr, study_tmp$times, V)
-        if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)   # lnorm off-diagonals
-        diag(V) <- ap$dv
-        if (!is.null(ap$rmat)) V <- V + ap$rmat
-        list(mu = ap$mu, V = V, cp_mat = cp_mat)
+        list(mu = ap$mu, V = .admApplyResidTail(V, ap), cp_mat = cp_mat)
       }
     }
 

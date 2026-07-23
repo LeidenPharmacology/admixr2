@@ -421,8 +421,8 @@ nmObjGetControl.admc <- function(x, ...) {
 
     # Restrict the residual error to this output's sigma(s) so a multi-output fit
     # does not apply another compartment's error model here (no-op single-output).
-    ar <- .admResidRows(pinfo, ov, pars$sigma_var, length(s$times))
-    .ph <- attr(cp_mat, "phi"); if (!is.null(.ph)) ar$phi <- .ph
+    ar <- .admUnitResidRows(pinfo, ov, pars$sigma_var, length(s$times),
+                            phi = attr(cp_mat, "phi"))
     if (.admResidCppOK(ar)) {
       # forms the fused C++ kernels implement (combined1/2, lnorm, no ar)
       if (identical(s$method, "var")) {
@@ -442,8 +442,7 @@ nmObjGetControl.admc <- function(x, ...) {
       if (identical(s$method, "var")) {
         nll2 <- nll2 + nll_var_cpp(as.numeric(s$E), s$v_diag, ap$mu, ap$dv, s$n)
       } else {
-        Vp <- Vs * tcrossprod(ap$ms); diag(Vp) <- ap$dv
-        if (!is.null(ap$rmat)) Vp <- Vp + ap$rmat
+        Vp <- .admApplyResidTail(Vs, ap)
         nll2 <- nll2 + nll_cov_cpp(as.numeric(s$E), s$V, ap$mu, Vp, s$n)
       }
     }
@@ -534,12 +533,13 @@ nmObjGetControl.admc <- function(x, ...) {
       # sigma mu-path coupling and sigma gradient, each on its output's rows.
       arr <- .admResidRows(pinfo, .admRowOutput(s, n_t), pars$sigma_var, n_t)
       .rt_j <- .admRowTimes(s, n_t)
+      .dres <- .admResidDeriv(mu_struct, var_f, arr, pinfo)   # once, reused below
       sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
                                             dNLL_dV_diag, dNLL_dmu, var_f,
-                                            dNLL_dV, V_struct, .rt_j)
+                                            dNLL_dV, V_struct, .rt_j, deriv = .dres)
       # V_pred -> V_struct chain (see the single-output branch below)
       vchain     <- .admResidVChain(mu_struct, var_f, arr, pinfo,
-                                    .admRowTimes(s, length(mu_struct)))
+                                    .admRowTimes(s, length(mu_struct)), deriv = .dres)
       dNLL_dV_s  <- dNLL_dV * vchain
       diag(dNLL_dV_s) <- diag(dNLL_dV_s) +
         dNLL_dmu * (attr(vchain, "dmu_dv0") %||% numeric(n_t))
@@ -564,7 +564,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
         .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                    dNLL_dV, .rt_j, V_struct)
+                    dNLL_dV, .rt_j, V_struct, deriv = .dres)
 
       # Unpaired struct thetas. The augmented sens model carries d(pred)/d(theta)
       # directly (js$dtheta_list): it enters exactly like an eta direction, so the
@@ -733,10 +733,10 @@ nmObjGetControl.admc <- function(x, ...) {
     }
 
     n_t       <- length(s$times)
-    arr       <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
     # beta: the precision phi is SOLVED, not fitted -- .admSimulate returns it as
     # an attribute on cp_mat (see there). Everything else leaves arr$phi NA.
-    .ph <- attr(cp_mat, "phi"); if (!is.null(.ph)) arr$phi <- .ph
+    arr       <- .admUnitResidRows(pinfo, ov, pars$sigma_var, n_t,
+                                   phi = attr(cp_mat, "phi"))
     mu_struct <- colMeans(cp_mat)
     cp_c      <- sweep(cp_mat, 2L, mu_struct)
 
@@ -755,9 +755,7 @@ nmObjGetControl.admc <- function(x, ...) {
       var_f <- diag(V)                               # Var_eta(f), pre-residual
       ap <- .admResidApply(mu_struct, var_f, arr, s$times, cov_f)
       mu <- ap$mu
-      if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)   # lnorm scales off-diagonals
-      diag(V) <- ap$dv
-      if (!is.null(ap$rmat)) V <- V + ap$rmat            # ar() correlation
+      V  <- .admApplyResidTail(V, ap)
       r  <- as.numeric(s$E) - mu
       cholV <- tryCatch(chol(V), error = function(e) NULL)
       if (is.null(cholV)) return(rep(NA_real_, length(p)))
@@ -770,10 +768,11 @@ nmObjGetControl.admc <- function(x, ...) {
     # sigma_mu_scale: how the residual couples a change in mu_struct into the
     # objective (lnorm mean scaling + the residual variance's dependence on mu).
     # Computed once per study and reused across every gradient term.
+    .dres <- .admResidDeriv(mu_struct, var_f, arr, pinfo)   # once, reused across terms
     sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
                                           dNLL_dV_diag, dNLL_dmu, var_f,
                                           if (is_var) NULL else dNLL_dV, cov_f,
-                                          s$times)
+                                          s$times, deriv = .dres)
     eff_dmu <- dNLL_dmu + sigma_mu_scale
     inv_n <- 1 / n_sim
 
@@ -785,7 +784,7 @@ nmObjGetControl.admc <- function(x, ...) {
     # the eta/omega/theta gradients silently assume d(V_pred)/d(V_struct) = I,
     # which is true only for purely additive error (chain == identity there, so
     # add() models are bit-identical).
-    vchain <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times)
+    vchain <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times, deriv = .dres)
     # TBS only: mu depends on Var_eta(f), so the mean contributes to the same
     # d(var_f)/d(param) the kernels already chain. Zero for every other form.
     .dmv <- attr(vchain, "dmu_dv0") %||% numeric(n_t)
@@ -915,7 +914,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
       .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                    if (is_var) NULL else dNLL_dV, s$times, cov_f)
+                    if (is_var) NULL else dNLL_dV, s$times, cov_f, deriv = .dres)
   }
 
   grad
@@ -1009,12 +1008,11 @@ nmObjGetControl.admc <- function(x, ...) {
         idx  <- (cii - 1L) * n_sim * n_t + seq_len(n_sim * n_t)
         cp   <- matrix(vals[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
         if (anyNA(cp)) { finite[ci] <- FALSE; next }
-        ar <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
         # phi is eta-independent, so this configuration's first simulated row is
         # representative of its whole block
         .ph <- if (is.null(.phi_all)) attr(cp, "phi") else
           matrix(.phi_all[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)[1L, ]
-        if (!is.null(.ph)) ar$phi <- .ph
+        ar <- .admUnitResidRows(pinfo, ov, pars$sigma_var, n_t, phi = .ph)
         # SAME gate as .admNLL(). The fused kernels implement forms 0/1/2 only and
         # have no off-diagonal channel, so a TBS/count/beta/ordinal/ar model fell
         # into adm_apply_residual's `else` branch and was scored as combined2.
@@ -1037,8 +1035,7 @@ nmObjGetControl.admc <- function(x, ...) {
           if (identical(s$method, "var")) {
             nll_var_cpp(as.numeric(s$E), s$v_diag, ap$mu, ap$dv, s$n)
           } else {
-            Vp <- Vs * tcrossprod(ap$ms); diag(Vp) <- ap$dv
-            if (!is.null(ap$rmat)) Vp <- Vp + ap$rmat
+            Vp <- .admApplyResidTail(Vs, ap)
             nll_cov_cpp(as.numeric(s$E), s$V, ap$mu, Vp, s$n)
           }
         }
@@ -1408,12 +1405,7 @@ nmObjGetControl.admc <- function(x, ...) {
         var_f <- diag(V)
         ap <- .admResidApply(mu_struct, var_f, arr, s$times, cov_f)
         mu <- ap$mu
-        # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
-        # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
-        # that aborted the whole fit instead of the optimizer rejecting the point.
-        if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
-        diag(V) <- ap$dv
-        if (!is.null(ap$rmat)) V <- V + ap$rmat
+        V  <- .admApplyResidTail(V, ap)
         r  <- as.numeric(s$E) - mu
         cholV <- tryCatch(chol(V), error = function(e) NULL)
         if (is.null(cholV)) { valid[ci] <- FALSE; next }
@@ -1423,14 +1415,15 @@ nmObjGetControl.admc <- function(x, ...) {
         dNLL_dV_diag <- diag(dNLL_dV)
       }
 
+      .dres <- .admResidDeriv(mu_struct, var_f, arr, pinfo)   # once, reused across terms
       sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
                                             dNLL_dV_diag, dNLL_dmu, var_f,
                                             if (is_var) NULL else dNLL_dV, cov_f,
-                                            s$times)
+                                            s$times, deriv = .dres)
       eff_dmu <- dNLL_dmu + sigma_mu_scale
       inv_n <- 1 / n_sim
       # V_pred -> V_struct chain (see .admGrad)
-      vchain <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times)
+      vchain <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times, deriv = .dres)
       .dmv <- attr(vchain, "dmu_dv0") %||% numeric(n_t)
       dNLL_dV_diag_s <- dNLL_dV_diag * diag(vchain) + dNLL_dmu * .dmv
       if (!is_var) {
@@ -1492,7 +1485,7 @@ nmObjGetControl.admc <- function(x, ...) {
       # a second endpoint's sigma gradient out of the first endpoint's slot.
       grad_acc[ci, n_s + seq_len(n_e)] <- grad_acc[ci, n_s + seq_len(n_e)] +
         .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                    if (is_var) NULL else dNLL_dV, s$times, cov_f)
+                    if (is_var) NULL else dNLL_dV, s$times, cov_f, deriv = .dres)
     }
   }
 

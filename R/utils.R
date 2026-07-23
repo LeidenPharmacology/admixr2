@@ -469,10 +469,7 @@ utils::globalVariables(c(
   # to pass neither, so ap$rmat was silently discarded for joint units.
   rt  <- .admRowTimes(unit, n_t)
   ap  <- .admResidApply(mu_struct, diag(V_pred), arr, rt, V_pred)
-  if (any(ap$ms != 1, na.rm = TRUE)) V_pred <- V_pred * tcrossprod(ap$ms)   # lnorm off-diagonals
-  diag(V_pred) <- ap$dv
-  if (!is.null(ap$rmat)) V_pred <- V_pred + ap$rmat
-  list(mu = ap$mu, V = V_pred)
+  list(mu = ap$mu, V = .admApplyResidTail(V_pred, ap))
 }
 
 # Observation time governing each row of a unit's stacked mean vector -- the

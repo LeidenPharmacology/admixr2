@@ -350,21 +350,17 @@ head.paged_df <- function(x, n = 6L, ...) {
   # Returns BOTH the residual-adjusted covariance and mean: lnorm rescales the
   # mean, and the predicted E must carry that scaling just as the NLL does.
   .add_sigma <- function(V, mu, ov = out_var, times = NULL, phi = NULL) {
-    arr <- .admResidRows(pinfo_r, ov, sv, length(mu))
     # beta: the precision is SOLVED and rides back on the simulated matrix. Every
     # estimator patches it in; this path did not, so after a perfectly ordinary
     # beta fit the predicted-covariance heatmap, the standardised-residual panels
     # and the +-1 SD ribbon were all NA, silently.
-    if (!is.null(phi)) arr$phi <- phi
+    arr <- .admUnitResidRows(pinfo_r, ov, sv, length(mu), phi = phi)
     # Without `times` + the structural covariance the off-diagonal forms (ar,
     # ordinal) were dropped, so the predicted-covariance diagnostic panel showed
     # an independent-residual V for exactly the models whose off-diagonal is the
     # point of fitting them.
     ap  <- .admResidApply(mu, diag(V), arr, times, V)
-    if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)   # lnorm off-diagonals
-    diag(V) <- ap$dv
-    if (!is.null(ap$rmat)) V <- V + ap$rmat
-    list(V = V, mu = ap$mu)
+    list(V = .admApplyResidTail(V, ap), mu = ap$mu)
   }
 
   setNames(lapply(names(studies), function(nm) {

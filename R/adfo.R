@@ -99,14 +99,7 @@
   # therefore walked a direction the objective could not move along, and adfo
   # reported a completely different objective from adgh/admc on identical data.
   ap <- .admResidApply(mu_pred, diag(V), arr, times, V)
-  # ms scales the WHOLE covariance, not just its diagonal (lnorm's conditional
-  # mean is f*exp(s/2)); ms == 1 for every other form, so V is untouched there.
-  # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
-  # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
-  # that aborted the whole fit instead of the optimizer rejecting the point.
-  if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
-  diag(V) <- ap$dv
-  if (!is.null(ap$rmat)) V <- V + ap$rmat
+  V <- .admApplyResidTail(V, ap)
   list(V = V, mu_sigma = ap$mu, JL = JL, ms = ap$ms, var_f = diag(tcrossprod(JL)))
 }
 
@@ -370,8 +363,9 @@
       dNLL_dV_diag <- diag(dNLL_dV)
       # V_pred -> V_struct chain (see the single-output branch below)
       var_f_j  <- diag(tcrossprod(JL))
+      .dres_j  <- .admResidDeriv(mu_pred, var_f_j, mc$arr, pinfo)   # once, reused below
       vchain_j <- .admResidVChain(mu_pred, var_f_j, mc$arr, pinfo,
-                                  .admRowTimes(s, length(mu_pred)))
+                                  .admRowTimes(s, length(mu_pred)), deriv = .dres_j)
       dNLL_dmu_full <- drop(-2 * s$n * invV %*% r)
       if (n_eta > 0L && n_o > 0L) {
         .bj <- dNLL_dV * vchain_j
@@ -387,7 +381,8 @@
       }
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
         .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu_full, var_f_j,
-                      dNLL_dV, .admRowTimes(s, length(mu_pred)), tcrossprod(JL))
+                      dNLL_dV, .admRowTimes(s, length(mu_pred)), tcrossprod(JL),
+                      deriv = .dres_j)
       next
     }
 
@@ -416,7 +411,8 @@
     # residual is f-dependent (ms_i*ms_j off-diagonal, dv_dv0 on it); identity
     # for purely additive error, so add() models are unchanged.
     var_f  <- vp$var_f
-    vchain <- .admResidVChain(mu_pred, var_f, mc$arr, pinfo, s$times)
+    .dres  <- .admResidDeriv(mu_pred, var_f, mc$arr, pinfo)   # once, reused below
+    vchain <- .admResidVChain(mu_pred, var_f, mc$arr, pinfo, s$times, deriv = .dres)
     # Needed by the omega block below as well as the sigma block, so compute it here.
     dNLL_dmu <- if (is_var) -2 * s$n * r / diag(V_pred) else
       drop(-2 * s$n * invV %*% r)
@@ -465,7 +461,7 @@
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
       .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
                     if (is_var) NULL else dNLL_dV, s$times,
-                    if (is_var) NULL else tcrossprod(mc$JL))
+                    if (is_var) NULL else tcrossprod(mc$JL), deriv = .dres)
   }
 
   grad

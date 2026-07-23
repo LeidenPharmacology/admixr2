@@ -499,6 +499,27 @@
   two use; results are unchanged (the full pipeline and covariance suites pass
   identically).
 
+* **The residual variance's dependence on `(mu, var_f)` is computed once per
+  study/unit instead of three times.** `.admResidVChain()`, `.admSigmaGrad()` and
+  `.admResidMuCoupling()` each recomputed `.admResidDeriv()` internally, in every
+  estimator's hot gradient loop -- three `resid_nodes` (default 81) quadratures per
+  observation row for a transform-both-sides endpoint. They now accept the
+  precomputed derivative as an optional last argument, which the estimators (which
+  call all three on the same inputs) pass, cutting that to one. Gradients are
+  bit-identical (the same computation, reused); the optional argument defaults to
+  recomputing, so every other caller is unchanged.
+
+* **The residual V-composition tail is one helper, `.admApplyResidTail()`.** The
+  three-line `V <- V * tcrossprod(ms); diag(V) <- dv; V <- V + rmat` that composes a
+  structural covariance with the residual (lnorm/TBS off-diagonal scale, the
+  composed diagonal, an `ar()` correlation matrix) was hand-copied at eleven sites
+  across every estimator's moment/objective path, `plot.R`, `datagen.R` and
+  `.admJointResidual`. Adding an off-diagonal residual channel meant editing all of
+  them, and missing one silently dropped that endpoint's off-diagonal predicted
+  covariance on that path. It is now written once, including the load-bearing
+  `na.rm` guard that keeps a NaN from a transform's out-of-support tail from
+  aborting the fit. Objective and gradients are bit-identical.
+
 # admixr2 0.3.0
 
 ## New features

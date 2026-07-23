@@ -1167,6 +1167,24 @@ without that parameter there is no residual to integrate"),
 # value, or NULL, for a single-output vector. Returns the four parallel arrays
 # the R and C++ residual evaluators both consume, plus `k_*` row->sigma maps used
 # by the gradient.
+# Residual row array for a unit, with the SOLVED beta precision folded in.
+#
+# .admResidRows() knows the error model from pinfo but NOT phi = b1 + b2, which for
+# a beta endpoint is derived from the SOLVED shapes and rides back as an attribute
+# on the simulate matrix -- it cannot come from pinfo. Threading it was a two-line
+# `.ph <- attr(cp, "phi"); if (!is.null(.ph)) arr$phi <- .ph` copied at every
+# estimator moment path, datagen and plot; forgetting it left arr$phi NA and every
+# predicted-covariance entry NaN, silently (a bug the call-site comments record more
+# than once). Folding the assignment into the build makes "residual rows for a unit,
+# with its solved phi" one call. The phi VALUE stays the caller's -- it legitimately
+# varies (attr(cp_mat), a per-config .phi_all row, or a diagnostic argument) -- and
+# is passed as `phi`; NULL leaves the NA field untouched (every non-beta endpoint).
+.admUnitResidRows <- function(pinfo, row_output, sigma_nat, n_t, phi = NULL) {
+  arr <- .admResidRows(pinfo, row_output, sigma_nat, n_t)
+  if (!is.null(phi)) arr$phi <- phi
+  arr
+}
+
 .admResidRows <- function(pinfo, row_output, sigma_nat, n_t) {
   form <- integer(n_t)
   a2   <- numeric(n_t)   # additive VARIANCE  (a^2), or the lnorm log-variance
@@ -1372,6 +1390,28 @@ without that parameter there is no residual to integrate"),
   list(m = m, dmu = dmu, dv0 = dv0, dk = dk)
 }
 
+# Compose a full structural covariance with an .admResidApply() result: the
+# lnorm/TBS off-diagonal mean-scale (ms_i ms_j), the composed diagonal (ap$dv) and
+# any ar() correlation matrix (ap$rmat). This three-line tail was hand-copied at
+# ~11 sites -- every estimator's moment/objective path, plot.R, datagen.R and
+# .admJointResidual -- so an added off-diagonal residual channel meant editing all
+# of them, and missing one silently dropped that endpoint's off-diagonal predicted
+# covariance on that path (the exact hazard CLAUDE.md flags).
+#
+# The na.rm guard is load-bearing, not cosmetic: .admTBSi() returns NaN outside a
+# transform's support, which a line search inside grad_bounds can reach, and a bare
+# `any(ap$ms != 1)` is then NA -- so `if (NA)` ABORTS the whole fit instead of the
+# optimizer rejecting the point. With na.rm the multiply is skipped; a NaN in ap$dv
+# still yields a non-finite objective, so the point is rejected either way. For a
+# constant scale (ms == 1: add/prop/count) tcrossprod(ms) is all ones and the
+# multiply is a no-op, so add() models stay bit-identical.
+.admApplyResidTail <- function(V, ap) {
+  if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
+  diag(V) <- ap$dv
+  if (!is.null(ap$rmat)) V <- V + ap$rmat
+  V
+}
+
 # Apply the residual to a structural mean/variance -- the LAW OF TOTAL VARIANCE.
 #
 #   mu_pred = ms * E[f]
@@ -1381,9 +1421,8 @@ without that parameter there is no residual to integrate"),
 # five estimator call sites already pass -- and goes OUT as the full V_pred
 # diagonal. `ms` is returned so the caller can scale the OFF-diagonals too:
 # lnorm's conditional mean is f*exp(s/2), so the whole covariance is scaled, not
-# just its diagonal. A caller holding a full matrix must therefore do
-#
-#   V <- V_struct * tcrossprod(ap$ms);  diag(V) <- ap$dv
+# just its diagonal. A caller holding a full matrix passes the result to
+# .admApplyResidTail(V_struct, ap) (which does the ms-scale, diag and ar() rmat).
 #
 # Why this is not the old `dv + v(mu)`: the residual variance of a prop/pow/lnorm
 # model depends on f, so E_eta[Var(y|eta)] != Var(y | eta = mean). Evaluating at
@@ -2010,8 +2049,16 @@ without that parameter there is no residual to integrate"),
 #   diagonal     (i == i):  dv_dv0_i   (already contains ms_i^2)
 #
 # Returns the full n_t x n_t multiplier matrix; elementwise-multiply dNLL_dV by it.
-.admResidVChain <- function(mu_struct, var_f, arr, pinfo, times = NULL) {
-  d  <- .admResidDeriv(mu_struct, var_f, arr, pinfo)
+.admResidVChain <- function(mu_struct, var_f, arr, pinfo, times = NULL,
+                            deriv = NULL) {
+  # `deriv` (LAST, optional): a precomputed .admResidDeriv(mu_struct, var_f, arr,
+  # pinfo) the caller already holds. The three consumers of .admResidDeriv --
+  # .admResidVChain, .admSigmaGrad, .admResidMuCoupling -- are each called once per
+  # study/unit on the SAME (mu_struct, var_f, arr, pinfo), so computing it once in
+  # the estimator and threading it here avoids two of the three quadratures a TBS/
+  # logitNorm/probitNorm endpoint (resid_nodes, default 81) does per gradient eval.
+  # NULL -> compute it, so every legacy/hand-built caller is unchanged.
+  d  <- deriv %||% .admResidDeriv(mu_struct, var_f, arr, pinfo)
   M  <- tcrossprod(d$ms)          # NOT .admResidMuScale(): see .admResidDeriv$ms
   diag(M) <- d$dv_dv0
   # Ordinal: a same-time cross-category entry of V_pred is -E[p_j]E[p_k], which does
@@ -2057,8 +2104,9 @@ without that parameter there is no residual to integrate"),
 # leaves rho out of the analytic gradient (a var-branch study, where rho is
 # unidentifiable anyway and is refused up front).
 .admSigmaGrad <- function(mu_struct, arr, pinfo, dNLL_dvar, dNLL_dmu, var_f = NULL,
-                          dNLL_dV = NULL, times = NULL, cov_f = NULL) {
-  d <- .admResidDeriv(mu_struct, var_f, arr, pinfo)
+                          dNLL_dV = NULL, times = NULL, cov_f = NULL,
+                          deriv = NULL) {
+  d <- deriv %||% .admResidDeriv(mu_struct, var_f, arr, pinfo)
   g <- drop(crossprod(d$dvar, dNLL_dvar) + crossprod(d$dmu, dNLL_dmu))
 
   # The OFF-diagonal ms path. V_pred = ms(x)ms o Cov_eta(f) + diag(E[v]), and for
@@ -2121,8 +2169,8 @@ without that parameter there is no residual to integrate"),
 # rule. Zero on purely additive rows. (admc's `sigma_mu_scale`.)
 .admResidMuCoupling <- function(mu_struct, arr, pinfo, dNLL_dvar, dNLL_dmu,
                                 var_f = NULL, dNLL_dV = NULL, cov_f = NULL,
-                                times = NULL) {
-  d <- .admResidDeriv(mu_struct, var_f, arr, pinfo)
+                                times = NULL, deriv = NULL) {
+  d <- deriv %||% .admResidDeriv(mu_struct, var_f, arr, pinfo)
   # d$dmu_df, NOT d$ms: they differ for TBS (see .admResidDeriv$dmu_extra). Callers
   # already carry the plain dNLL_dmu, so only the excess over 1 belongs here.
   out <- dNLL_dmu * (d$dmu_df - 1) + dNLL_dvar * d$dv_df

@@ -339,13 +339,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
     var_f <- diag(V)                       # Var_eta(f), pre-residual
     ap    <- .admResidApply(mu_struct, var_f, arr, s$times, cov_f)
     mu    <- ap$mu
-    # lnorm scales the whole covariance, not just its diagonal (ms == 1 otherwise)
-    # na.rm: .admTBSi() returns NaN outside a transform's support, which a line
-    # search inside grad_bounds can reach. `any(NaN != 1)` is NA -- a hard error
-    # that aborted the whole fit instead of the optimizer rejecting the point.
-    if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
-    diag(V) <- ap$dv
-    if (!is.null(ap$rmat)) V <- V + ap$rmat
+    V     <- .admApplyResidTail(V, ap)
 
     mu_sigma <- mu
 
@@ -408,16 +402,17 @@ nmObjGetControl.adirmc <- function(x, ...) {
     # eff_dNLL_dmu folds in the residual's sensitivity to mu_struct: the lnorm
     # mean scaling, plus the dependence of the residual variance on mu.
     .is_var_s <- identical(s$method, "var")
+    .dres        <- .admResidDeriv(mu_struct, var_f, arr, pinfo)   # once, reused below
     eff_dNLL_dmu <- dNLL_dmu +
       .admResidMuCoupling(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
                           if (.is_var_s) NULL else dNLL_dV,
-                          if (.is_var_s) NULL else cov_f, s$times)
+                          if (.is_var_s) NULL else cov_f, s$times, deriv = .dres)
 
     d_mat <- sweep(bi, 2L, mean_new)
 
     # The kernels differentiate the STRUCTURAL weighted covariance, so dNLL_dV
     # must be chained from V_pred (identity for additive error).
-    vchain         <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times)
+    vchain         <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times, deriv = .dres)
     .dmv           <- attr(vchain, "dmu_dv0") %||% numeric(length(mu_struct))
     dNLL_dV_diag_s <- dNLL_dV_diag * diag(vchain) + dNLL_dmu * .dmv
 
@@ -473,7 +468,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
       .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
                     if (.is_var_s) NULL else dNLL_dV, s$times,
-                    if (.is_var_s) NULL else cov_f)
+                    if (.is_var_s) NULL else cov_f, deriv = .dres)
   }
 
   list(nll = nll2, grad = grad)
