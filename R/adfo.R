@@ -1239,6 +1239,11 @@ nlmixr2Est.adfo <- function(env, ...) {
                         sigma_var      = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
+                        # the TBS residual quadrature the FIT used -- plot.admFit()
+                        # re-parses the ui, and .admParseIniDf() carries no
+                        # resid_nodes, so without this the diagnostics recompute
+                        # V_pred at the 81-node default and disagree with the fit
+                        resid_nodes    = pinfo$resid_nodes,
                         omega          = final$omega,
                         L              = final$L,
                         eta_col_names  = pinfo$eta_col_names,

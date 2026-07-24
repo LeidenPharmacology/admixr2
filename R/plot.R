@@ -296,12 +296,23 @@ head.paged_df <- function(x, n = 6L, ...) {
   # Re-parse the ui so the plotted bands use exactly the fit's residual error
   # model (per-endpoint spec, error form, sigma roles). Falls back to a
   # name-based guess only when the ui cannot be parsed.
-  pinfo_r <- tryCatch(.admParseIniDf(ui$iniDf, ui), error = function(e) NULL)
+  #
+  # suppressWarnings: this is a RE-parse of a ui that was already parsed (and
+  # already warned about) at fit time, so .admBuildResidSpecs()'s advisory
+  # warnings -- e.g. an estimated t(nu) being non-identifiable from aggregate
+  # data -- would otherwise be re-emitted on every plot() as if they were new.
+  pinfo_r <- tryCatch(suppressWarnings(.admParseIniDf(ui$iniDf, ui)),
+                      error = function(e) NULL)
   if (is.null(pinfo_r))
     pinfo_r <- list(sigma_names   = sig_nms,
                     sigma_output  = rep(NA_character_, length(sv)),
                     sigma_is_prop  = as.list(grepl("prop",  sig_nms, ignore.case = TRUE)),
                     sigma_is_lnorm = as.list(grepl("lnorm", sig_nms, ignore.case = TRUE)))
+  # .admParseIniDf() carries no resid_nodes -- only the DRIVERS set it, from the
+  # control. Restore the count the fit actually used, or the diagnostics rebuild
+  # V_pred on the 81-node default and a fit run with resid_nodes = 31L (or 201L)
+  # is diagnosed against a different model than it was fitted with.
+  pinfo_r$resid_nodes <- extra$resid_nodes %||% .ADM_TBS_NODES
   sig_output <- pinfo_r$sigma_output
 
   .sim_study <- function(s) {

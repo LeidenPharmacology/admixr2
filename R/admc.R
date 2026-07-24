@@ -705,8 +705,9 @@ nmObjGetControl.admc <- function(x, ...) {
       cp_mat <- matrix(vals_b[seq_len(n_sim * n_t)],
                        nrow = n_sim, ncol = n_t, byrow = TRUE)
       if (!is.null(.phi_b))
-        attr(cp_mat, "phi") <- matrix(.phi_b[seq_len(n_sim * n_t)], nrow = n_sim,
-                                      ncol = n_t, byrow = TRUE)[1L, ]
+        attr(cp_mat, "phi") <- .admBetaPhiConst(
+          matrix(.phi_b[seq_len(n_sim * n_t)], nrow = n_sim,
+                 ncol = n_t, byrow = TRUE))
       if (anyNA(cp_mat)) return(rep(NA_real_, length(p)))
 
       dpred_list <- if (n_eta > 0L) {
@@ -1014,10 +1015,12 @@ nmObjGetControl.admc <- function(x, ...) {
         idx  <- (cii - 1L) * n_sim * n_t + seq_len(n_sim * n_t)
         cp   <- matrix(vals[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
         if (anyNA(cp)) { finite[ci] <- FALSE; next }
-        # phi is eta-independent, so this configuration's first simulated row is
-        # representative of its whole block
+        # phi must be eta-independent for this configuration's first simulated row
+        # to represent its whole block; .admBetaPhiConst() verifies that and returns
+        # the row (rows here are the n_sim draws of ONE configuration).
         .ph <- if (is.null(.phi_all)) attr(cp, "phi") else
-          matrix(.phi_all[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)[1L, ]
+          .admBetaPhiConst(matrix(.phi_all[idx], nrow = n_sim, ncol = n_t,
+                                  byrow = TRUE))
         ar <- .admUnitResidRows(pinfo, ov, pars$sigma_var, n_t, phi = .ph)
         # SAME gate as .admNLL(). The fused kernels implement forms 0/1/2 only and
         # have no off-diagonal channel, so a TBS/count/beta/ordinal/ar model fell
@@ -1511,6 +1514,24 @@ nmObjGetControl.admc <- function(x, ...) {
   np    <- length(p_hat)
   nms   <- names(p_hat)
 
+  # .admGradBatch() has NO beta path: it builds each configuration's prediction
+  # from a SINGLE solved column (`ovb <- s$output %||% output_var`), whereas a beta
+  # endpoint's mean is derived from the b1/b2 pair and its variance needs the
+  # solved precision phi. Its .admResidRows() call therefore carries no phi and
+  # .admResidApply()'s beta branch returns (m - (m^2 + vf))/(1 + NA) = NA on every
+  # row -- an all-NA Hessian, which trips the finite guard and reports "covariance
+  # could not be computed" with an NA SE for every parameter of a fit that
+  # otherwise converged.
+  #
+  # nlmixr2Est.admc() currently makes that unreachable by fitting a beta endpoint
+  # derivative-free, but that is a coercion ~700 lines away and this function is
+  # callable directly. The NLL-FD path IS phi-aware (.admNLLBatch), so route beta
+  # there explicitly instead of depending on the distant gate staying put.
+  if (isTRUE(use_grad) &&
+      any(vapply(.admResidSpecs(pinfo),
+                 function(x) identical(x$form, .ADM_RESID_BETA), logical(1))))
+    use_grad <- FALSE
+
   # Hessian over struct + sigma + omega (falls back to struct+sigma if not PD).
   # Matches nlmixr2 FOCEI: omega entries are in the optimizer but skipped for cov.
   n_s     <- length(pinfo$struct_names)
@@ -1910,18 +1931,31 @@ admStopWorkers <- function() {
       # prevent, and invisible because the NLL stays bit-identical.
       # Derived from `pinfo`, which the worker already holds, rather than from a
       # new worker ARGUMENT -- see .admRestartWorker's note on stale daemons.
+      # INVARIANT: every field below must land on the same value .admLoadSensModel()
+      # would derive from `ui`. The two routes read different sources (predDf there,
+      # the parsed residual spec here) because the worker has no `ui`, so the only
+      # place they can disagree is their FALLBACKS -- and a per-field fallback to
+      # the CACHED value was exactly that disagreement: the parent never falls back
+      # (it always derives yj from predDf$transform and lambda from the iniDf row),
+      # so a worker mixing a freshly-derived lambda with a stale yj or stale bounds
+      # could invert the transform differently from the sequential fit. Rebuild
+      # wholesale or not at all, and mirror the parent's defaults exactly.
       if (!is.null(pinfo) && !is.null(m$pred_tbs)) {
         .sp <- .admResidSpecs(pinfo)
-        if (length(.sp)) {
-          .s1  <- .sp[[1L]]
+        .s1 <- if (length(.sp)) .sp[[1L]] else NULL
+        if (!is.null(.s1) && !is.null(.s1$yj) && !is.na(.s1$yj)) {
           .nat <- tryCatch(.admSigmaNat(pinfo$sigma_init, pinfo),
                            error = function(e) NULL)
           .est <- !is.null(.s1$k_lam) && !is.na(.s1$k_lam)
+          .yj  <- .s1$yj
           m$pred_tbs <- list(
             lam      = if (.est && !is.null(.nat)) unname(.nat[[.s1$k_lam]])
                        else if (is.finite(.s1$lam_fixed %||% NA_real_)) .s1$lam_fixed
-                       else m$pred_tbs$lam,
-            yj       = .s1$yj %||% m$pred_tbs$yj,
+                       # .admLoadSensModel()'s defaults: a lambda-carrying transform
+                       # (boxCox/yeoJohnson, yj in {0,1}) with no lambda row is
+                       # lambda = 1; logit/probit carry no lambda at all -> 0.
+                       else if (.yj %in% c(0L, 1L)) 1 else 0,
+            yj       = .yj,
             lam_name = if (.est) pinfo$sigma_names[[.s1$k_lam]] else NA_character_,
             lo       = if (is.finite(.s1$tr_lo %||% NA_real_)) .s1$tr_lo else 0,
             hi       = if (is.finite(.s1$tr_hi %||% NA_real_)) .s1$tr_hi else 1)
@@ -2521,6 +2555,8 @@ nlmixr2Est.admc <- function(env, ...) {
                         sigma_var     = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
+                        # the TBS residual quadrature the FIT used -- see adfo.R
+                        resid_nodes   = pinfo$resid_nodes,
                         omega         = final$omega,
                         L             = final$L,
                         eta_col_names = pinfo$eta_col_names,

@@ -265,6 +265,17 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     out_var <- .admOutputVar(ui)
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
 
+    # A model mixing a continuous endpoint with a COUNT one is refused here for
+    # exactly the reason the estimators refuse it (.admCheckMixedEndpoints is
+    # called by nlmixr2Est.adfo/.adgh/.admc): a count endpoint's output is the
+    # DISTRIBUTION'S ARGUMENT (`y ~ pois(lam)` is read through `lam`), a model
+    # variable rather than a compartment, so the `cmt = ov` tagging this function
+    # applies below when `is_multi` matches no observation record. Generating such
+    # a model either errored from inside .admSimulate() with no mention of the
+    # endpoint, or recycled into an E/V the user then fed straight back into a fit
+    # -- while the SAME model fitted directly was refused with an explanation.
+    .admCheckMixedEndpoints(ui)
+
     # method = "fo" has no path to a beta endpoint's precision: .adfoVpred builds
     # V from J Omega J' + Sigma at eta = 0 and never sees the solved b1 + b2, so
     # it would emit a V whose diagonal is NA. This is the same refusal

@@ -37,11 +37,13 @@
   # residual parameter -- so it rides back as an attribute. A matrix with an extra
   # attribute is still a matrix, so every existing consumer is unaffected; the one
   # caller that needs it reads it immediately after this returns. phi must be
-  # eta-independent (checked at parse), so the per-draw column is constant and the
-  # first row is representative.
+  # eta-independent for the aggregate variance to factor; .admBetaPhiConst()
+  # VERIFIES that across the draws and returns the representative row, so the
+  # assumption and its use stay together (it used to be asserted by a comment only).
   if (!is.null(.phi))
-    attr(m, "phi") <- matrix(.phi[keep], nrow = nrow(eta_mat),
-                             ncol = length(study$times), byrow = TRUE)[1L, ]
+    attr(m, "phi") <- .admBetaPhiConst(
+      matrix(.phi[keep], nrow = nrow(eta_mat),
+             ncol = length(study$times), byrow = TRUE))
   m
 }
 
@@ -82,9 +84,11 @@
   # Var(y | eta) = mu(1 - mu)/(1 + phi) needs it, and it is SOLVED rather than
   # fitted, so a caller that only has the prediction matrix cannot recover it.
   # Without this the row-varying paths left arr$phi at NA and every entry of the
-  # predicted covariance came back NA. phi is eta-independent (checked at parse)
-  # but NOT theta-independent, so each ROW keeps its own -- these paths exist
-  # precisely to put different thetas in different rows.
+  # predicted covariance came back NA. phi is eta-independent (verified by
+  # .admBetaPhiConst() on the eta-draw paths) but NOT theta-independent, so each
+  # ROW keeps its own -- these paths exist precisely to put different thetas in
+  # different rows, so the rows here are CONFIGURATIONS, not draws, and must not
+  # be collapsed or passed through the eta-independence check.
   if (!is.null(.phi))
     attr(m, "phi") <- matrix(.phi[keep], nrow = nrow(struct_mat),
                              ncol = length(study$times), byrow = TRUE)

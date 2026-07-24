@@ -271,10 +271,8 @@
       # na.rm: dms_df is NaN when f crosses the transform bound (a line-search trial
       # point); any(NaN != 0) is NA and `if (NA)` throws instead of the optimizer
       # backing off the already-Inf objective. Bit-identical when dms_df is finite.
-      if (!is.null(dres$dms_df) && any(dres$dms_df != 0, na.rm = TRUE)) {
-        Aj <- B * V_str; diag(Aj) <- 0
-        ms_off_j <- 2 * dres$dms_df * drop(Aj %*% dres$ms)
-      }
+      if (!is.null(dres$dms_df) && any(dres$dms_df != 0, na.rm = TRUE))
+        ms_off_j <- 2 * dres$dms_df * .admMsOffDiag(B, V_str, dres$ms)
       sig_V_extra <- function(dmu_raw)            # dmu_raw = d(mu)/dpsi (pre-lnorm)
         sum((Bdiag * dres$dv_df + ms_off_j) * dmu_raw)
       # paired struct thetas
@@ -402,10 +400,8 @@
     # the same contraction .admResidMuCoupling() applies for admc. Identically zero
     # unless ms varies with f, so every other error model is untouched.
     ms_off <- numeric(length(mu))
-    if (!is_var && !is.null(dres$dms_df) && any(dres$dms_df != 0, na.rm = TRUE)) {
-      A <- B * cov_f; diag(A) <- 0
-      ms_off <- 2 * dres$dms_df * drop(A %*% dres$ms)
-    }
+    if (!is_var && !is.null(dres$dms_df) && any(dres$dms_df != 0, na.rm = TRUE))
+      ms_off <- 2 * dres$dms_df * .admMsOffDiag(B, cov_f, dres$ms)
 
     .sigma_V_extra <- function(dmu_raw) sum((Bvec * dres$dv_df + ms_off) * dmu_raw)
 
@@ -1269,6 +1265,8 @@ nlmixr2Est.adgh <- function(env, ...) {
                         sigma_var      = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
+                        # the TBS residual quadrature the FIT used -- see adfo.R
+                        resid_nodes    = pinfo$resid_nodes,
                         omega          = final$omega,
                         L              = final$L,
                         eta_col_names  = pinfo$eta_col_names,

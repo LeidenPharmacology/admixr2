@@ -78,6 +78,45 @@
 # distribution of (mu, phi), which admixr2's (mu, var_f) summary cannot carry.
 # That matches how beta regression is written in practice (a varying mean and a
 # scalar precision); .admBetaPhiConst() checks it rather than assuming it.
+
+# Verify that the solved beta precision phi = b1 + b2 really is eta-independent,
+# and return the representative row.
+#
+# `phi_mat` is (n_draw x n_time) for ONE parameter configuration, i.e. its ROWS are
+# random-effect draws. If phi does not depend on eta every row is identical and the
+# first is representative -- which is what the solve paths assume when they collapse
+# the matrix with [1L, ]. This function performs the check AND the collapse together,
+# so the assumption cannot drift away from its use (for a long time the check was
+# only ever promised in a comment; an eta-dependent precision silently populated the
+# variance from whichever draw happened to land first, biasing the objective, the
+# estimates and every SE with no error and no warning).
+#
+# Rows that legitimately differ (e.g. one row per STRUCTURAL configuration, as in
+# .admSimulateRows) are NOT eta draws and must not be passed here.
+.admBetaPhiConst <- function(phi_mat, tol = 1e-6) {
+  if (is.null(phi_mat)) return(NULL)
+  if (!is.matrix(phi_mat)) return(phi_mat)
+  ref <- phi_mat[1L, , drop = TRUE]
+  if (nrow(phi_mat) > 1L) {
+    .sc  <- pmax(abs(ref), 1e-8)
+    .dev <- abs(phi_mat - rep(ref, each = nrow(phi_mat))) /
+      rep(.sc, each = nrow(phi_mat))
+    .rel <- suppressWarnings(max(.dev[is.finite(.dev)], -Inf))
+    if (is.finite(.rel) && .rel > tol)
+      stop("admixr2: the beta precision phi = b1 + b2 varies across random-effect ",
+           "draws (max relative variation ", format(.rel, digits = 3), ").\n",
+           "  admixr2 matches E_eta[Var(y|eta)] = (mu - mu^2 - var_f)/(1 + phi), ",
+           "which factors ONLY when phi is independent of the random effects; with ",
+           "an eta-dependent precision it would need the joint distribution of ",
+           "(mu, phi), which the (mu, var_f) summary cannot carry.\n",
+           "  Write the endpoint with a scalar precision, e.g.\n",
+           "    phi <- exp(tphi); b1 <- mu * phi; b2 <- (1 - mu) * phi\n",
+           "  (a varying MEAN is fine -- only phi must not carry an eta).",
+           call. = FALSE)
+  }
+  ref
+}
+
 .admBetaSpec <- function(ui, var) {
   a <- .admDistArgs(ui, var)
   if (is.null(a) || length(a) < 2L) return(NULL)
@@ -571,6 +610,38 @@
 #
 # Returns NULL when there is no predDf (Tier-1 mock iniDf / no ui); callers then
 # fall back to the legacy sigma_is_prop/sigma_is_lnorm flags.
+# Constructor for a residual-error SPEC: the complete field set and its defaults
+# in ONE place. `...` overrides any default.
+#
+# The four branches that build specs (ordinal, beta, count, and the
+# residual-parameter endpoint) each used to spell out the whole ~18-field literal
+# by hand, and three of the four already disagreed about which fields they set --
+# only ordinal set add_fixed/prop_fixed/pow_fixed, only beta set out_pair, only
+# ordinal set ord_p -- which is precisely why .admResidRows() has to read several
+# of them through `%||% NA_real_`. Adding a field meant a four-site edit, and
+# missing one let the endpoint fall back to the legacy spec (form 0, i.e. NO
+# residual variance at all) -- the recurring bug this file's own comment above
+# describes, of which beta was the fifth instance.
+.admNewSpec <- function(output, form, ...) {
+  .d <- list(
+    output     = output,      form       = form,
+    k_add      = NA_integer_, k_prop     = NA_integer_, k_pow     = NA_integer_,
+    k_tdf      = NA_integer_, tdf_fixed  = NA_real_,
+    k_ar       = NA_integer_, ar_fixed   = NA_real_,
+    k_lam      = NA_integer_, lam_fixed  = NA_real_,
+    yj         = 2L,          tr_lo      = 0,          tr_hi     = 1,
+    csize      = NA_real_,    k_size     = NA_integer_,
+    add_fixed  = NA_real_,    prop_fixed = NA_real_,   pow_fixed = NA_real_,
+    # TBS only: form .ADM_RESID_TBS loses the combined1/combined2 distinction and
+    # the errTypeF, so they ride alongside. FALSE matches what the other branches
+    # got implicitly, since consumers read them through isTRUE().
+    tbs_c1     = FALSE,       tbs_ftr    = FALSE,
+    out_pair   = NULL,        ord_p      = NULL,       dv_name   = NA_character_)
+  .o <- list(...)
+  if (length(.o)) .d[names(.o)] <- .o
+  .d
+}
+
 .admBuildResidSpecs <- function(ui, sigma_rows, sigma_names) {
   predDf <- if (!is.null(ui)) tryCatch(as.data.frame(ui$predDf), error = function(e) NULL) else NULL
   if (is.null(predDf) || nrow(predDf) == 0L) return(NULL)
@@ -644,13 +715,8 @@
       # EVERY p_k, not just the first: .admResidSpecFor() looks a row's spec up by
       # its output name, so registering only op[[1]] left every other category with
       # no spec at all (form 0, zero residual variance).
-      sp_ord <- list(
+      sp_ord <- .admNewSpec(
         output = op[[1L]], form = .ADM_RESID_ORDINAL,
-        k_add = NA_integer_, k_prop = NA_integer_, k_pow = NA_integer_,
-        k_tdf = NA_integer_, tdf_fixed = NA_real_, k_ar = NA_integer_,
-        ar_fixed = NA_real_, k_lam = NA_integer_, lam_fixed = NA_real_, yj = 2L,
-        tr_lo = 0, tr_hi = 1, csize = NA_real_, k_size = NA_integer_,
-        add_fixed = NA_real_, prop_fixed = NA_real_, pow_fixed = NA_real_,
         ord_p = op, dv_name = as.character(predDf$var[i]))
       for (.pk in op) {
         .key <- .admOutputColName(.pk)
@@ -668,12 +734,8 @@
           "admixr2 derives the mean as b1/(b1+b2) from the two SOLVED shape columns, so both arguments must be model variables",
           fix = "Assign the shapes first, e.g. `b1 <- mu*phi; b2 <- (1-mu)*phi; y ~ beta(b1, b2)`.")
       key <- .admOutputColName(bs$b1)
-      specs[[key]] <- list(
+      specs[[key]] <- .admNewSpec(
         output = bs$b1, form = .ADM_RESID_BETA,
-        k_add = NA_integer_, k_prop = NA_integer_, k_pow = NA_integer_,
-        k_tdf = NA_integer_, tdf_fixed = NA_real_, k_ar = NA_integer_,
-        ar_fixed = NA_real_, k_lam = NA_integer_, lam_fixed = NA_real_, yj = 2L,
-        tr_lo = 0, tr_hi = 1, csize = NA_real_, k_size = NA_integer_,
         out_pair = c(bs$b1, bs$b2), dv_name = as.character(predDf$var[i]))
       keys <- c(keys, key)
       next
@@ -703,13 +765,9 @@ the ODE solve, so an ESTIMATED one has no ",
                  "gradient path in admixr2"),
           fix = "Give it as a literal or fix() it, e.g. `y ~ binom(20, p)` or `sz <- fix(3)`.")
       key <- .admOutputColName(cs$mean_var)
-      specs[[key]] <- list(
+      specs[[key]] <- .admNewSpec(
         output = cs$mean_var, form = cnt_form,
-        k_add = NA_integer_, k_prop = NA_integer_, k_pow = NA_integer_,
-        k_tdf = NA_integer_, tdf_fixed = NA_real_,
-        k_ar = NA_integer_, ar_fixed = NA_real_,
-        k_lam = NA_integer_, lam_fixed = NA_real_, yj = 2L,
-        tr_lo = 0, tr_hi = 1, csize = cs$size, dv_name = as.character(predDf$var[i]),
+        csize = cs$size, dv_name = as.character(predDf$var[i]),
         k_size = if (length(k_size) > 0L) k_size[1L] else NA_integer_)
       keys <- c(keys, key)
       next
@@ -1004,7 +1062,7 @@ without that parameter there is no residual to integrate"),
     }
 
     key <- .admOutputColName(ep)
-    specs[[key]] <- list(
+    specs[[key]] <- .admNewSpec(
       output = ep, form = form,
       k_add  = if (length(k_add)  > 0L) k_add[1L]  else NA_integer_,
       k_prop = if (length(k_prop) > 0L) k_prop[1L] else NA_integer_,
@@ -1520,53 +1578,17 @@ without that parameter there is no residual to integrate"),
   tb <- arr$form == .ADM_RESID_TBS
   if (any(tb)) {
     for (i in which(tb)) {
-      lam <- arr$lam[i]; yjc <- arr$yj[i]; lo <- arr$tlo[i]; hi <- arr$thi[i]
-      f0  <- mu_struct[i]
-      # m'/v' are ANALYTIC (.admTBSMomentsD). Only the second-order curvature
-      # terms need a difference, and they difference the analytic first
-      # derivative -- one FD level, not two. Nesting FD here cost 300% accuracy.
-      hstep <- max(abs(f0), 1) * 1e-4
-      fv <- c(f0 - hstep, f0, f0 + hstep)
-      # Residual SD on the TRANSFORMED scale, exactly as rxode2 builds rx_r_:
-      #   combined2 : var = a^2 + (x^c * b)^2          sd = sqrt(var)
-      #   combined1 : sd  = a + x^c * b
-      # where x is rx_pred_f_ = f (prop/pow) or rx_pred_ = h(f) (propT/powT).
-      # This used to be `sqrt(a2)` alone, so a prop() term on a transformed
-      # endpoint contributed nothing at all and its gradient column was
-      # identically zero -- the parameter was admitted to the optimizer and
-      # reported back at its starting value.
-      .a2i <- max(arr$a2[i], 0); .b2i <- max(arr$b2[i], 0); .cci <- arr$cc[i]
-      .ftr <- !is.null(arr$tbs_ftr) && isTRUE(arr$tbs_ftr[i])
-      .c1i <- !is.null(arr$tbs_c1)  && isTRUE(arr$tbs_c1[i])
-      if (.ftr) {                       # scale by the transformed prediction
-        xb  <- .admTBS(fv, lam, yjc, lo, hi)
-        xbd <- 1 / .admTBSid(xb, lam, yjc, lo, hi)      # dh/df
-      } else {
-        xb  <- fv; xbd <- rep(1, length(fv))
-      }
-      if (.cci == 1) { pw <- xb; pwd <- rep(1, length(xb)) }
-      else           { pw <- .admTBSp(xb, .cci); pwd <- .cci * .admTBSp(xb, .cci - 1) }
-      if (.b2i == 0) {
-        sdv <- rep(sqrt(.a2i), length(fv)); dsd <- numeric(length(fv))
-      } else if (.c1i) {
-        sdv <- sqrt(.a2i) + sqrt(.b2i) * pw
-        dsd <- sqrt(.b2i) * pwd * xbd
-      } else {
-        vv  <- .a2i + .b2i * pw * pw
-        sdv <- sqrt(vv)
-        dsd <- (.b2i * pw * pwd * xbd) / pmax(sdv, .Machine$double.xmin)
-      }
-      q  <- .admTBSMomentsD(fv, sdv, lam, yjc, lo, hi,
-                            arr$nodes %||% .ADM_TBS_NODES)
-      # sd now depends on f, so the TOTAL derivative picks up the sd path:
-      #   dm/df = @m/@f + @m/@sd * dsd/df     (both partials analytic)
-      dm_t <- q$dm_df + q$dm_ds * dsd
-      dv_t <- q$dv_df + q$dv_ds * dsd
-      ms[i] <- dm_t[2L]                                       # m'(f), exact
-      d2m   <- (dm_t[3L] - dm_t[1L]) / (2 * hstep)            # m''(f)
-      d2v   <- (dv_t[3L] - dv_t[1L]) / (2 * hstep)            # v''(f)
-      mu[i] <- q$m[2L] + 0.5 * d2m * vf[i]                    # E_eta[m(f)]
-      ev[i] <- q$v[2L] + 0.5 * d2v * vf[i]                    # E_eta[Var(y|eta)]
+      # ONE definition of this assembly, shared with .admResidDeriv's gradient
+      # path -- see .admTBSRow(). m'/v' are ANALYTIC (.admTBSMomentsD); only the
+      # second-order curvature differences the analytic first derivative.
+      .r <- .admTBSRow(mu_struct[i], vf[i], arr$a2[i], arr$b2[i], arr$cc[i],
+                       arr$lam[i], arr$yj[i], arr$tlo[i], arr$thi[i],
+                       !is.null(arr$tbs_ftr) && isTRUE(arr$tbs_ftr[i]),
+                       !is.null(arr$tbs_c1)  && isTRUE(arr$tbs_c1[i]),
+                       arr$nodes %||% .ADM_TBS_NODES)
+      ms[i] <- .r$ms                                          # m'(f), exact
+      mu[i] <- .r$mu                                          # E_eta[m(f)]
+      ev[i] <- .r$ev                                          # E_eta[Var(y|eta)]
     }
   }
   if (any(ln)) {
@@ -1768,45 +1790,16 @@ without that parameter there is no residual to integrate"),
       lam0 <- arr$lam[t]; yjc <- arr$yj[t]; lo <- arr$tlo[t]; hi <- arr$thi[t]
       f    <- mu_struct[t]
       hstep <- max(abs(f), 1) * 1e-4
-      fv   <- c(f - hstep, f, f + hstep)
       .ftr <- !is.null(arr$tbs_ftr) && isTRUE(arr$tbs_ftr[t])
       .c1i <- !is.null(arr$tbs_c1)  && isTRUE(arr$tbs_c1[t])
 
-      # Residual SD on the transformed scale and its d/df -- rxode2's rx_r_ (see
-      # .admResidApply). ONE definition, used by every branch below.
-      .sdat <- function(a2_, b2_, cc_, lam_) {
-        if (.ftr) {
-          xb  <- .admTBS(fv, lam_, yjc, lo, hi)
-          xbd <- 1 / .admTBSid(xb, lam_, yjc, lo, hi)
-        } else { xb <- fv; xbd <- rep(1, length(fv)) }
-        if (cc_ == 1) { pw <- xb; pwd <- rep(1, length(xb)) }
-        else          { pw <- .admTBSp(xb, cc_); pwd <- cc_ * .admTBSp(xb, cc_ - 1) }
-        if (b2_ <= 0)
-          list(sd = rep(sqrt(max(a2_, 0)), length(fv)), dsd = numeric(length(fv)))
-        else if (.c1i)
-          list(sd = sqrt(max(a2_, 0)) + sqrt(b2_) * pw,
-               dsd = sqrt(b2_) * pwd * xbd)
-        else {
-          sdv <- sqrt(max(a2_, 0) + b2_ * pw * pw)
-          list(sd = sdv, dsd = (b2_ * pw * pwd * xbd) / pmax(sdv, .Machine$double.xmin))
-        }
-      }
-
       # Everything .admResidApply assembles for THIS row, plus the pieces the
-      # chain needs. One row only, so a parameter direction costs O(1).
-      .asm1 <- function(a2_, b2_, cc_, lam_) {
-        sp_  <- .sdat(a2_, b2_, cc_, lam_)
-        qq   <- .admTBSMomentsD(fv, sp_$sd, lam_, yjc, lo, hi,
-                                arr$nodes %||% .ADM_TBS_NODES)
-        dm_t <- qq$dm_df + qq$dm_ds * sp_$dsd     # TOTAL d/df: sd depends on f
-        dv_t <- qq$dv_df + qq$dv_ds * sp_$dsd
-        d2m_ <- (dm_t[3L] - dm_t[1L]) / (2 * hstep)
-        d2v_ <- (dv_t[3L] - dv_t[1L]) / (2 * hstep)
-        list(mu = qq$m[2L] + 0.5 * d2m_ * v0,
-             dv = dm_t[2L]^2 * v0 + qq$v[2L] + 0.5 * d2v_ * v0,
-             ms = dm_t[2L], ev = qq$v[2L], d2m = d2m_, d2v = d2v_,
-             dm_t = dm_t, dv_t = dv_t)
-      }
+      # chain needs -- the SAME .admTBSRow() the objective calls, so analytic and
+      # objective agree by construction rather than by two copies staying in step.
+      # One row only, so a parameter direction costs O(1).
+      .asm1 <- function(a2_, b2_, cc_, lam_)
+        .admTBSRow(f, v0, a2_, b2_, cc_, lam_, yjc, lo, hi, .ftr, .c1i,
+                   arr$nodes %||% .ADM_TBS_NODES)
 
       a20 <- max(arr$a2[t], 0); b20 <- max(arr$b2[t], 0); cc0 <- arr$cc[t]
       b0  <- .asm1(a20, b20, cc0, lam0)
@@ -1814,7 +1807,10 @@ without that parameter there is no residual to integrate"),
       dms_df[t]   <- b0$d2m                      # d(ms)/df = m''(f)
       dmu_dv0[t]  <- 0.5 * b0$d2m                # mu carries 0.5*m''*var_f
       dv_dv0[t]   <- b0$ms^2 + 0.5 * b0$d2v      # exact d(...)/d(var_f)
-      ev_resid[t] <- b0$ev
+      # ev_raw, NOT ev: this path carries the UNCORRECTED q$v[2] (the objective's
+      # `ev` adds the 0.5*v''(f)*v0 curvature term). ar() correlates rows by
+      # sqrt(ev_i ev_j), and that is the quantity it has always used here.
+      ev_resid[t] <- b0$ev_raw
       # One order beyond m''/v'': second differences of the analytic TOTAL first
       # derivatives, at the eps^(1/4) optimum for a second difference.
       m3 <- (b0$dm_t[3L] - 2 * b0$dm_t[2L] + b0$dm_t[1L]) / hstep^2
@@ -1851,6 +1847,30 @@ without that parameter there is no residual to integrate"),
         hh <- max(abs(lam0), 1) * 1e-5
         .cdiff(.asm1(a20, b20, cc0, lam0 + hh), .asm1(a20, b20, cc0, lam0 - hh),
                hh, 1, klm)
+      }
+      # Student-t degrees of freedom. nu reaches the objective ONLY through the
+      # multiplier m = nu/(nu-2) that .admResidRows() already folded into a2/b2
+      # (it does so for EVERY form, TBS included), so differentiate along that
+      # scaling rather than re-deriving the quadrature. With p = log(nu-2),
+      # dm/dp = -2/(nu-2) = -(m-1); for the closed forms below vt is proportional
+      # to m and this same chain reduces to their -vt*(m-1)/m, so the two branches
+      # agree by construction.
+      #
+      # Without this the TBS branch fell through `next` before the closed-form nu
+      # block at the end of the loop, so `cp ~ boxCox(lam) + add(a) + t(nu)` had an
+      # identically ZERO nu gradient while the NLL genuinely moved with nu -- the
+      # optimizer left nu at its start value and drove every other parameter along
+      # a direction the objective does not follow. Nothing refuses TBS + t() (only
+      # lnorm + t() is refused), so the combination is reachable.
+      ktd <- k_tdf[t]
+      if (!is.na(ktd)) {
+        m0 <- vmul[t]
+        if (is.finite(m0) && m0 > 0) {
+          hh <- m0 * 1e-5
+          .cdiff(.asm1(a20 * (m0 + hh) / m0, b20 * (m0 + hh) / m0, cc0, lam0),
+                 .asm1(a20 * (m0 - hh) / m0, b20 * (m0 - hh) / m0, cc0, lam0),
+                 hh, -(m0 - 1), ktd)
+        }
       }
       next
     }
@@ -2115,6 +2135,82 @@ without that parameter there is no residual to integrate"),
 # its gradient cannot be read off the diagonal `dNLL_dvar`. Omitting them simply
 # leaves rho out of the analytic gradient (a var-branch study, where rho is
 # unidentifiable anyway and is refused up front).
+# ONE row of the TBS moment assembly -- the single definition shared by the
+# OBJECTIVE (.admResidApply) and the GRADIENT (.admResidDeriv's `.asm1`).
+#
+# Both need the same thing: the residual SD on the TRANSFORMED scale and its d/df
+# (rxode2's rx_r_), the quadrature moments over a 3-point f-stencil, and the
+# second-order curvature terms differenced from the ANALYTIC first derivatives
+# (one FD level, not two -- nesting FD here cost 300% accuracy). They were written
+# out twice; if the two copies drift by a term the optimizer descends a direction
+# the NLL does not follow, which is the worst failure class in this file.
+#
+# Returns BOTH conventions for E[Var(y|eta)] because the callers genuinely differ:
+#   ev_raw = q$v[2]                      -- what the gradient path carries as
+#                                           ev_resid (the ar() correlation uses it)
+#   ev     = q$v[2] + 0.5*v''(f)*v0      -- the objective's curvature-corrected
+#                                           E_eta[Var(y|eta)]
+# `dv` is the full predicted variance for the row, ms^2*v0 + ev.
+.admTBSRow <- function(f, v0, a2, b2, cc, lam, yj, lo, hi, ftr, c1, nodes) {
+  hstep <- max(abs(f), 1) * 1e-4
+  fv    <- c(f - hstep, f, f + hstep)
+  a2 <- max(a2, 0); b2 <- max(b2, 0)
+  # Residual SD on the TRANSFORMED scale, exactly as rxode2 builds rx_r_:
+  #   combined2 : var = a^2 + (x^c * b)^2      combined1 : sd = a + x^c * b
+  # where x is rx_pred_f_ = f, or rx_pred_ = h(f) when errTypeF is "transformed".
+  if (ftr) {
+    xb  <- .admTBS(fv, lam, yj, lo, hi)
+    xbd <- 1 / .admTBSid(xb, lam, yj, lo, hi)          # dh/df
+  } else { xb <- fv; xbd <- rep(1, length(fv)) }
+  if (cc == 1) { pw <- xb; pwd <- rep(1, length(xb)) }
+  else         { pw <- .admTBSp(xb, cc); pwd <- cc * .admTBSp(xb, cc - 1) }
+  if (b2 == 0) {
+    sdv <- rep(sqrt(a2), length(fv)); dsd <- numeric(length(fv))
+  } else if (c1) {
+    sdv <- sqrt(a2) + sqrt(b2) * pw
+    dsd <- sqrt(b2) * pwd * xbd
+  } else {
+    .vv <- a2 + b2 * pw * pw
+    sdv <- sqrt(.vv)
+    dsd <- (b2 * pw * pwd * xbd) / pmax(sdv, .Machine$double.xmin)
+  }
+  q <- .admTBSMomentsD(fv, sdv, lam, yj, lo, hi, nodes)
+  # sd depends on f, so the TOTAL derivative picks up the sd path (both partials
+  # analytic): dm/df = @m/@f + @m/@sd * dsd/df
+  dm_t <- q$dm_df + q$dm_ds * dsd
+  dv_t <- q$dv_df + q$dv_ds * dsd
+  d2m  <- (dm_t[3L] - dm_t[1L]) / (2 * hstep)
+  d2v  <- (dv_t[3L] - dv_t[1L]) / (2 * hstep)
+  .ms  <- dm_t[2L]
+  .ev  <- q$v[2L] + 0.5 * d2v * v0
+  list(mu = q$m[2L] + 0.5 * d2m * v0, dv = .ms^2 * v0 + .ev,
+       ms = .ms, ev = .ev, ev_raw = q$v[2L], d2m = d2m, d2v = d2v,
+       dm_t = dm_t, dv_t = dv_t, hstep = hstep)
+}
+
+# The OFF-diagonal mean-scale factor, shared by every consumer of dms/dms_df.
+#
+# V_pred = ms (x) ms o Cov_eta(f) + diag(E[Var(y|eta)]), so any parameter moving the
+# mean scale `ms` reaches every off-diagonal entry:
+#   d/dp sum_{i!=j} dNLL_dV_ij ms_i ms_j cov_ij = 2 * (dms/dp)' (A ms),
+#   A = dNLL_dV o cov_f  with a ZERO diagonal (the diagonal belongs to dvar/dv_df).
+# This returns the common `A %*% ms` factor; each caller applies its own
+# contraction -- elementwise by dms_df for a per-ROW term, crossprod by the dms
+# matrix for a per-SIGMA one.
+#
+# This is TBS/lnorm gradient maths, which errmodel.R owns, but it had been copied
+# inline four times: .admSigmaGrad(), .admResidMuCoupling(), and TWICE inside
+# .adghGrad(). Adding a form whose ms varies and missing the adgh copies would have
+# given adgh a gradient that disagrees with its own objective -- the exact class of
+# bug this file's notes blame for the recurring silent-wrong-model failures.
+# Returns NULL when the term does not apply, so callers can skip it cheaply.
+.admMsOffDiag <- function(dNLL_dV, cov_f, ms) {
+  if (is.null(dNLL_dV) || is.null(cov_f) || is.null(ms)) return(NULL)
+  A <- dNLL_dV * cov_f
+  diag(A) <- 0
+  drop(A %*% ms)
+}
+
 .admSigmaGrad <- function(mu_struct, arr, pinfo, dNLL_dvar, dNLL_dmu, var_f = NULL,
                           dNLL_dV = NULL, times = NULL, cov_f = NULL,
                           deriv = NULL) {
@@ -2128,11 +2224,8 @@ without that parameter there is no residual to integrate"),
   # with A's diagonal zeroed (the diagonal is dvar's). Needs the STRUCTURAL
   # covariance, which the caller has before it applies the ms scaling; without
   # cov_f the term is skipped, which is exact for every form with a constant ms.
-  if (!is.null(cov_f) && !is.null(dNLL_dV) && !is.null(d$dms) && any(d$dms != 0, na.rm = TRUE)) {
-    A <- dNLL_dV * cov_f
-    diag(A) <- 0
-    g <- g + 2 * drop(crossprod(d$dms, A %*% d$ms))
-  }
+  if (!is.null(cov_f) && !is.null(dNLL_dV) && !is.null(d$dms) && any(d$dms != 0, na.rm = TRUE))
+    g <- g + 2 * drop(crossprod(d$dms, .admMsOffDiag(dNLL_dV, cov_f, d$ms)))
 
   # ar(): rmat[i,j] = sqrt(ev_i ev_j) * rho^d_ij  (i != j), rho = expit(p), so
   #   d(rmat)/dp = sqrt(ev_i ev_j) * d_ij * rho^(d_ij - 1) * rho(1 - rho)
@@ -2191,11 +2284,8 @@ without that parameter there is no residual to integrate"),
   #   2 * m''(f_k) * (A ms)_k,   A = dNLL_dV o cov_f with a zero diagonal,
   # which is exactly the same contraction .admSigmaGrad() applies for the sigma
   # path. Zero unless ms varies with f (i.e. TBS only), so nothing else moves.
-  if (!is.null(cov_f) && !is.null(dNLL_dV) && !is.null(d$dms_df) && any(d$dms_df != 0, na.rm = TRUE)) {
-    A <- dNLL_dV * cov_f
-    diag(A) <- 0
-    out <- out + 2 * d$dms_df * drop(A %*% d$ms)
-  }
+  if (!is.null(cov_f) && !is.null(dNLL_dV) && !is.null(d$dms_df) && any(d$dms_df != 0, na.rm = TRUE))
+    out <- out + 2 * d$dms_df * .admMsOffDiag(dNLL_dV, cov_f, d$ms)
   # ORDINAL: V_pred[i,j] = -E[p_i]E[p_j] for i != j at the same time (the structural
   # covariance cancels -- see .admResidApply), so mu_i reaches those entries directly
   # with d(V_pred[i,j])/d(mu_i) = -mu_j. Nothing else carries that: dv_df is the
