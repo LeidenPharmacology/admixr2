@@ -319,10 +319,9 @@ if (is.null(cv)) {
   course of the disease are confounded. A placebo arm is just another study with
   a zero-amount `ev`.
 * **Bounded endpoints.** An additive residual can predict outside the range of a
-  bounded score. Rescale or transform the endpoint before fitting — note that an
-  estimated `boxCox()`/`yeoJohnson()` lambda is **not** supported by admixr2:
-  because it has no closed-form aggregate mean/variance, the fit stops with an
-  error rather than silently approximating it.
+  bounded score. Transform the endpoint instead — `logitNorm()`, `probitNorm()`,
+  `boxCox()` and `yeoJohnson()` are supported, with lambda either estimated or
+  fixed. See [Choosing a residual error model](error-models.html).
 
 ## See also
 

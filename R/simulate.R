@@ -15,11 +15,36 @@
                           events = study$ev_full, cores = cores,
                           nDisplayProgress = ndp)
   keep <- out[["time"]] %in% study$times
-  # linCmt simulationModel outputs "ipredSim" rather than "rx_pred_"
-  vals <- out[[output_var]]
-  if (is.null(vals)) vals <- out[["ipredSim"]]
-  matrix(vals[keep],
-         nrow = nrow(eta_mat), ncol = length(study$times), byrow = TRUE)
+  # A beta endpoint is defined by TWO solved columns, so its prediction is
+  # derived: mu = b1/(b1+b2). study$out_pair carries their names; every other
+  # endpoint reads a single column exactly as before. Inlined rather than
+  # factored out -- see the dev-mode daemon note at the top of this file.
+  .phi <- NULL
+  vals <- if (!is.null(study$out_pair)) {
+    .b1 <- out[[study$out_pair[[1L]]]]; .b2 <- out[[study$out_pair[[2L]]]]
+    .phi <- .b1 + .b2                      # precision; needed for the variance
+    # Guard the denominator exactly as the sibling solve paths do (.admSimulateRows,
+    # .admSimulateJoint, and the admc inlined copies): if phi = b1 + b2 hits 0 at a
+    # draw, an unguarded b1/phi is 0/0 = NaN and poisons the whole moment/objective.
+    .b1 / { .d <- .phi; .d[.d == 0] <- .Machine$double.eps; .d }
+  } else {
+    .v <- out[[output_var]]                # linCmt yields "ipredSim", not rx_pred_
+    if (is.null(.v)) out[["ipredSim"]] else .v
+  }
+  m <- matrix(vals[keep],
+              nrow = nrow(eta_mat), ncol = length(study$times), byrow = TRUE)
+  # beta's Var(y|eta) = mu(1-mu)/(1+phi) needs phi, which is SOLVED rather than a
+  # residual parameter -- so it rides back as an attribute. A matrix with an extra
+  # attribute is still a matrix, so every existing consumer is unaffected; the one
+  # caller that needs it reads it immediately after this returns. phi must be
+  # eta-independent for the aggregate variance to factor; .admBetaPhiConst()
+  # VERIFIES that across the draws and returns the representative row, so the
+  # assumption and its use stay together (it used to be asserted by a comment only).
+  if (!is.null(.phi))
+    attr(m, "phi") <- .admBetaPhiConst(
+      matrix(.phi[keep], nrow = nrow(eta_mat),
+             ncol = length(study$times), byrow = TRUE))
+  m
 }
 
 # Row-varying variants of .admSimulate / .admSimulateSens.
@@ -43,10 +68,31 @@
                           events = study$ev_full, cores = cores,
                           nDisplayProgress = ndp)
   keep <- out[["time"]] %in% study$times
-  vals <- out[[output_var]]
-  if (is.null(vals)) vals <- out[["ipredSim"]]
-  matrix(vals[keep], nrow = nrow(struct_mat), ncol = length(study$times),
-         byrow = TRUE)
+  # beta: derived prediction mu = b1/(b1+b2) -- see .admSimulate
+  .phi <- NULL
+  vals <- if (!is.null(study$out_pair)) {
+    .b1 <- out[[study$out_pair[[1L]]]]; .b2 <- out[[study$out_pair[[2L]]]]
+    .phi <- .b1 + .b2
+    .b1 / { .d <- .phi; .d[.d == 0] <- .Machine$double.eps; .d }
+  } else {
+    .v <- out[[output_var]]
+    if (is.null(.v)) out[["ipredSim"]] else .v
+  }
+  m <- matrix(vals[keep], nrow = nrow(struct_mat), ncol = length(study$times),
+              byrow = TRUE)
+  # phi rides back the same way it does from .admSimulate: beta's
+  # Var(y | eta) = mu(1 - mu)/(1 + phi) needs it, and it is SOLVED rather than
+  # fitted, so a caller that only has the prediction matrix cannot recover it.
+  # Without this the row-varying paths left arr$phi at NA and every entry of the
+  # predicted covariance came back NA. phi is eta-independent (verified by
+  # .admBetaPhiConst() on the eta-draw paths) but NOT theta-independent, so each
+  # ROW keeps its own -- these paths exist precisely to put different thetas in
+  # different rows, so the rows here are CONFIGURATIONS, not draws, and must not
+  # be collapsed or passed through the eta-independence check.
+  if (!is.null(.phi))
+    attr(m, "phi") <- matrix(.phi[keep], nrow = nrow(struct_mat),
+                             ncol = length(study$times), byrow = TRUE)
+  m
 }
 
 # NOTE ON THE FIXED-THETA FILL BELOW (repeated inline in three solve paths rather
@@ -66,7 +112,8 @@
 # signature. Three copies of two lines is the cheaper price.
 
 .admSimulateSensRows <- function(sensModel, struct_mat, sigma_names, eta_mat, study,
-                                 cores, ndp = .Machine$integer.max) {
+                                 cores, ndp = .Machine$integer.max,
+                                 sigma_var = NULL) {
   rmap      <- sensModel$rename_map
   n_row     <- nrow(struct_mat)
   theta_nms <- colnames(struct_mat)
@@ -90,11 +137,33 @@
   for (nm in names(sensModel$fixed_theta))
     inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
 
+  # An ESTIMATED boxCox/yeoJohnson lambda is a SIGMA name, and the zero-fill above
+  # therefore handed the solve lambda = 0 -- so rx_pred_ came back as a plain log
+  # transform while the back-transform below inverted with the model's STARTING
+  # lambda. Two different transforms, hence a sens gradient that was ~60x wrong for
+  # boxCox and NaN for yeoJohnson. Write the current lambda into the solve and
+  # invert with that same number, so the two agree by construction.
+  # Inlined in each solve path on purpose -- see the dev-mode daemon note above.
+  .tb <- sensModel$pred_tbs
+  .lam <- if (is.null(.tb)) NA_real_ else .tb$lam
+  if (!is.null(.tb) && !is.na(.tb$lam_name %||% NA_character_) &&
+      !is.null(sigma_var) && .tb$lam_name %in% names(sigma_var)) {
+    .lam   <- unname(sigma_var[[.tb$lam_name]])
+    .mapped <- rmap[.tb$lam_name]
+    if (!is.na(.mapped) && .mapped %in% names(inner_df)) inner_df[[.mapped]][] <- .lam
+  }
+
+  # do.call + sensModel$solve_args: a DDE model's sensitivity solve is forced onto
+  # pure dop853 (see .admLoadSensModel). solve_args is NULL for every ordinary
+  # model, and c(list(...), NULL) is the original list, so nothing else changes.
+  # Spliced inline rather than through a helper -- see the note at the top of this
+  # file about dev-mode daemons and new functions.
   out <- tryCatch(
     suppressWarnings(
-      rxode2::rxSolve(sensModel$mod, params = inner_df,
-                      events = study$ev_full, cores = cores,
-                      nDisplayProgress = ndp)),
+      do.call(rxode2::rxSolve,
+              c(list(sensModel$mod, params = inner_df,
+                     events = study$ev_full, cores = cores,
+                     nDisplayProgress = ndp), sensModel$solve_args))),
     error = function(e) NULL)
   if (is.null(out)) return(NULL)
   if (!all(sensModel$sens_cols %in% names(out))) return(NULL)
@@ -106,9 +175,22 @@
   cp_mat     <- matrix(out[["rx_pred_"]][keep], nrow = n_row, ncol = n_t, byrow = TRUE)
   dpred_list <- lapply(seq_len(n_eta), function(j)
     matrix(out[[sensModel$sens_cols[j]]][keep], nrow = n_row, ncol = n_t, byrow = TRUE))
+  dtheta_list <- .admThetaSens(sensModel, out, keep, n_row, n_t)
 
-  list(cp_mat = cp_mat, dpred_list = dpred_list,
-       dtheta_list = .admThetaSens(sensModel, out, keep, n_row, n_t))
+  # lnorm endpoint: rx_pred_ is log(f). Back-transform to the natural scale the
+  # NLL works on, chaining every sensitivity by d(exp(g))/dp = exp(g)*dg/dp.
+  # Inlined rather than factored out -- see the dev-mode daemon note at the top.
+  # Transformed endpoint: rx_pred_ is on the MODELLING scale. Back-transform and
+  # chain every sensitivity by g'(z) -- d(g(z))/dp = g'(z) * dz/dp. Covers lnorm
+  # (yj = 0, lambda = 0) and logit/probit/boxCox/yeoJohnson alike.
+  if (!is.null(.tb)) {
+    .gp        <- .admTBSid(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
+    cp_mat     <- .admTBSi(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
+    dpred_list <- lapply(dpred_list, function(D) D * .gp)
+    if (!is.null(dtheta_list)) dtheta_list <- lapply(dtheta_list, function(D) D * .gp)
+  }
+
+  list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list)
 }
 
 # Joint (same-subject) simulation: one rxSolve with SHARED eta produces every
@@ -128,7 +210,10 @@
   cp    <- matrix(0, nrow = n_sim, ncol = unit$n_total)
   time  <- out[["time"]]
   for (blk in unit$blocks) {
-    vals <- out[[blk$output]]
+    vals <- if (!is.null(blk$out_pair)) {
+      .b1 <- out[[blk$out_pair[[1L]]]]; .b2 <- out[[blk$out_pair[[2L]]]]
+      .b1 / { .d <- .b1 + .b2; .d[.d == 0] <- .Machine$double.eps; .d }
+    } else out[[blk$output]]
     if (is.null(vals)) vals <- out[["ipredSim"]]
     keep <- time %in% blk$times
     cp[, blk$rows] <- matrix(vals[keep], nrow = n_sim,
@@ -144,7 +229,8 @@
 # falls back to FD). Enables the analytical gradient of a joint (same-subject)
 # unit's stacked MVN.
 .admSimulateJointSens <- function(sensModel, struct, sigma_names, eta_mat, unit,
-                                  cores, ndp = .Machine$integer.max) {
+                                  cores, ndp = .Machine$integer.max,
+                                  sigma_var = NULL) {
   n_sim <- nrow(eta_mat); n_eta <- ncol(eta_mat)
   th_nms <- names(sensModel$theta_sens_cols)
   cp_mat     <- matrix(0, n_sim, unit$n_total)
@@ -154,7 +240,8 @@
   else NULL
   for (blk in unit$blocks) {
     bs  <- list(ev_full = blk$ev_full, times = blk$times)
-    res <- .admSimulateSens(sensModel, struct, sigma_names, eta_mat, bs, cores, ndp)
+    res <- .admSimulateSens(sensModel, struct, sigma_names, eta_mat, bs, cores, ndp,
+                            sigma_var)
     if (is.null(res)) return(NULL)
     cp_mat[, blk$rows] <- res$cp_mat
     for (j in seq_len(n_eta)) dpred_list[[j]][, blk$rows] <- res$dpred_list[[j]]
@@ -188,7 +275,7 @@
 # back to FD). dtheta_list is NULL when the model carries no theta directions.
 .admSimulateSens <- function(sensModel, struct_theta, sigma_names,
                              eta_mat, study, cores,
-                             ndp = .Machine$integer.max) {
+                             ndp = .Machine$integer.max, sigma_var = NULL) {
   eta_cols  <- colnames(eta_mat)
   rmap      <- sensModel$rename_map
   n_sim     <- nrow(eta_mat)
@@ -214,11 +301,30 @@
   for (nm in names(sensModel$fixed_theta))
     inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
 
+  # An ESTIMATED boxCox/yeoJohnson lambda is a SIGMA name, and the zero-fill above
+  # therefore handed the solve lambda = 0 -- so rx_pred_ came back as a plain log
+  # transform while the back-transform below inverted with the model's STARTING
+  # lambda. Two different transforms, hence a sens gradient that was ~60x wrong for
+  # boxCox and NaN for yeoJohnson. Write the current lambda into the solve and
+  # invert with that same number, so the two agree by construction.
+  # Inlined in each solve path on purpose -- see the dev-mode daemon note above.
+  .tb <- sensModel$pred_tbs
+  .lam <- if (is.null(.tb)) NA_real_ else .tb$lam
+  if (!is.null(.tb) && !is.na(.tb$lam_name %||% NA_character_) &&
+      !is.null(sigma_var) && .tb$lam_name %in% names(sigma_var)) {
+    .lam   <- unname(sigma_var[[.tb$lam_name]])
+    .mapped <- rmap[.tb$lam_name]
+    if (!is.na(.mapped) && .mapped %in% names(inner_df)) inner_df[[.mapped]][] <- .lam
+  }
+
+  # do.call + sensModel$solve_args: DDE sensitivity solves are forced onto pure
+  # dop853 (see .admLoadSensModel); NULL, hence a no-op, for every other model.
   out <- tryCatch(
     suppressWarnings(
-      rxode2::rxSolve(sensModel$mod, params = inner_df,
-                      events = study$ev_full, cores = cores,
-                      nDisplayProgress = ndp)),
+      do.call(rxode2::rxSolve,
+              c(list(sensModel$mod, params = inner_df,
+                     events = study$ev_full, cores = cores,
+                     nDisplayProgress = ndp), sensModel$solve_args))),
     error = function(e) NULL)
   if (is.null(out)) return(NULL)
 
@@ -232,7 +338,19 @@
   cp_mat     <- matrix(out[["rx_pred_"]][keep], nrow = n_sim, ncol = n_t, byrow = TRUE)
   dpred_list <- lapply(seq_len(n_eta), function(j)
     matrix(out[[sensModel$sens_cols[j]]][keep], nrow = n_sim, ncol = n_t, byrow = TRUE))
+  dtheta_list <- .admThetaSens(sensModel, out, keep, n_sim, n_t)
 
-  list(cp_mat = cp_mat, dpred_list = dpred_list,
-       dtheta_list = .admThetaSens(sensModel, out, keep, n_sim, n_t))
+  # lnorm endpoint: rx_pred_ is log(f) -- back-transform with the chain rule so
+  # the gradient differentiates the same quantity the NLL scores.
+  # Transformed endpoint: rx_pred_ is on the MODELLING scale. Back-transform and
+  # chain every sensitivity by g'(z) -- d(g(z))/dp = g'(z) * dz/dp. Covers lnorm
+  # (yj = 0, lambda = 0) and logit/probit/boxCox/yeoJohnson alike.
+  if (!is.null(.tb)) {
+    .gp        <- .admTBSid(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
+    cp_mat     <- .admTBSi(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
+    dpred_list <- lapply(dpred_list, function(D) D * .gp)
+    if (!is.null(dtheta_list)) dtheta_list <- lapply(dtheta_list, function(D) D * .gp)
+  }
+
+  list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list)
 }

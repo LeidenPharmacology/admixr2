@@ -10,14 +10,14 @@
 # ---- .admTraceDisplaySpec ----------------------------------------------------
 
 test_that("display spec: NULL pinfo or par_names returns NULL", {
-  expect_null(.admTraceDisplaySpec(NULL, c("tcl")))
-  expect_null(.admTraceDisplaySpec(list(), NULL))
+  expect_null(admixr2:::.admTraceDisplaySpec(NULL, c("tcl")))
+  expect_null(admixr2:::.admTraceDisplaySpec(list(), NULL))
 })
 
 test_that("display spec: omega diag labelled V(eta), off-diag labelled eta,eta", {
-  pinfo     <- .admParseIniDf(make_inidf_2eta())
-  par_names <- names(.admBuildOptVec(pinfo)$p0)
-  spec      <- .admTraceDisplaySpec(pinfo, par_names, make_inidf_2eta())
+  pinfo     <- admixr2:::.admParseIniDf(make_inidf_2eta())
+  par_names <- names(admixr2:::.admBuildOptVec(pinfo)$p0)
+  spec      <- admixr2:::.admTraceDisplaySpec(pinfo, par_names, make_inidf_2eta())
 
   disp <- unlist(spec$disp_nms)
   expect_true("V(eta.cl)" %in% disp)
@@ -27,9 +27,9 @@ test_that("display spec: omega diag labelled V(eta), off-diag labelled eta,eta",
 })
 
 test_that("display spec: back-transforms map optimizer scale to natural scale", {
-  pinfo     <- .admParseIniDf(make_inidf_1eta())
-  par_names <- names(.admBuildOptVec(pinfo)$p0)
-  spec      <- .admTraceDisplaySpec(pinfo, par_names, make_inidf_1eta())
+  pinfo     <- admixr2:::.admParseIniDf(make_inidf_1eta())
+  par_names <- names(admixr2:::.admBuildOptVec(pinfo)$p0)
+  spec      <- admixr2:::.admTraceDisplaySpec(pinfo, par_names, make_inidf_1eta())
 
   # struct theta: exp() back-transform
   tcl_fn <- spec$back_fns[["tcl"]]
@@ -45,9 +45,9 @@ test_that("display spec: back-transforms map optimizer scale to natural scale", 
 })
 
 test_that("display spec: param_order follows iniDf row order", {
-  pinfo     <- .admParseIniDf(make_inidf_2eta())
-  par_names <- names(.admBuildOptVec(pinfo)$p0)
-  spec      <- .admTraceDisplaySpec(pinfo, par_names, make_inidf_2eta())
+  pinfo     <- admixr2:::.admParseIniDf(make_inidf_2eta())
+  par_names <- names(admixr2:::.admBuildOptVec(pinfo)$p0)
+  spec      <- admixr2:::.admTraceDisplaySpec(pinfo, par_names, make_inidf_2eta())
   # struct thetas first, in iniDf order, then omega entries
   expect_equal(spec$param_order[1:3], c("tcl", "tv", "add.err"))
 })
@@ -66,20 +66,20 @@ test_that("display spec: param_order follows iniDf row order", {
 }
 
 test_that("parHistData: NULL when no traces", {
-  expect_null(.admBuildParHistData(NULL, c("tcl"), list(iniDf = make_inidf_1eta())))
-  expect_null(.admBuildParHistData(list(), c("tcl"), list(iniDf = make_inidf_1eta())))
+  expect_null(admixr2:::.admBuildParHistData(NULL, c("tcl"), list(iniDf = make_inidf_1eta())))
+  expect_null(admixr2:::.admBuildParHistData(list(), c("tcl"), list(iniDf = make_inidf_1eta())))
 })
 
 test_that("parHistData: NULL when all final NLLs are NA", {
   traces <- list(list(restart_id = 1L, nll_trace = numeric(0), par_trace = NULL))
-  expect_null(.admBuildParHistData(traces, c("tcl"), list(iniDf = make_inidf_1eta())))
+  expect_null(admixr2:::.admBuildParHistData(traces, c("tcl"), list(iniDf = make_inidf_1eta())))
 })
 
 test_that("parHistData: has type/iter columns plus one column per parameter", {
   ini       <- make_inidf_2eta()
-  pinfo     <- .admParseIniDf(ini)
-  par_names <- names(.admBuildOptVec(pinfo)$p0)
-  ph <- .admBuildParHistData(.mk_traces(par_names), par_names, list(iniDf = ini))
+  pinfo     <- admixr2:::.admParseIniDf(ini)
+  par_names <- names(admixr2:::.admBuildOptVec(pinfo)$p0)
+  ph <- admixr2:::.admBuildParHistData(.mk_traces(par_names), par_names, list(iniDf = ini))
 
   expect_s3_class(ph, "data.frame")
   expect_true(all(c("type", "iter") %in% names(ph)))
@@ -92,10 +92,10 @@ test_that("parHistData: has type/iter columns plus one column per parameter", {
 
 test_that("parHistData: selects the best restart (lowest final NLL)", {
   ini       <- make_inidf_1eta()
-  pinfo     <- .admParseIniDf(ini)
-  par_names <- names(.admBuildOptVec(pinfo)$p0)
+  pinfo     <- admixr2:::.admParseIniDf(ini)
+  par_names <- names(admixr2:::.admBuildOptVec(pinfo)$p0)
   traces    <- .mk_traces(par_names)
-  ph <- .admBuildParHistData(traces, par_names, list(iniDf = ini))
+  ph <- admixr2:::.admBuildParHistData(traces, par_names, list(iniDf = ini))
 
   # restart 2 is best; its tcl column back-transformed = exp(par_trace[,1])
   best_tcl_raw <- traces[[2]]$par_trace[, 1]
@@ -104,19 +104,19 @@ test_that("parHistData: selects the best restart (lowest final NLL)", {
 
 test_that("parHistData: columns follow iniDf facet order", {
   ini       <- make_inidf_2eta()
-  pinfo     <- .admParseIniDf(ini)
-  par_names <- names(.admBuildOptVec(pinfo)$p0)
-  ph <- .admBuildParHistData(.mk_traces(par_names), par_names, list(iniDf = ini))
+  pinfo     <- admixr2:::.admParseIniDf(ini)
+  par_names <- names(admixr2:::.admBuildOptVec(pinfo)$p0)
+  ph <- admixr2:::.admBuildParHistData(.mk_traces(par_names), par_names, list(iniDf = ini))
   data_cols <- setdiff(names(ph), c("type", "iter"))
   expect_equal(data_cols[1:3], c("tcl", "tv", "add.err"))
 })
 
 test_that("parHistData: NULL when par_trace col count disagrees with par_names", {
   ini       <- make_inidf_1eta()
-  par_names <- names(.admBuildOptVec(.admParseIniDf(ini))$p0)
+  par_names <- names(admixr2:::.admBuildOptVec(admixr2:::.admParseIniDf(ini))$p0)
   bad <- list(list(restart_id = 1L, nll_trace = c(2, 1),
                    par_trace = matrix(0, 2L, length(par_names) + 1L)))
-  expect_null(.admBuildParHistData(bad, par_names, list(iniDf = ini)))
+  expect_null(admixr2:::.admBuildParHistData(bad, par_names, list(iniDf = ini)))
 })
 
 test_that("parHistData feeds nlmixr2's parHistStacked contract (iter/par/val)", {
@@ -124,9 +124,9 @@ test_that("parHistData feeds nlmixr2's parHistStacked contract (iter/par/val)", 
   # assert the shape traceplot.nlmixr2FitCore actually consumes. Runs even when
   # nlmixr2est is unavailable; the live integration check below complements it.
   ini       <- make_inidf_2eta()
-  pinfo     <- .admParseIniDf(ini)
-  par_names <- names(.admBuildOptVec(pinfo)$p0)
-  ph <- .admBuildParHistData(.mk_traces(par_names), par_names, list(iniDf = ini))
+  pinfo     <- admixr2:::.admParseIniDf(ini)
+  par_names <- names(admixr2:::.admBuildOptVec(pinfo)$p0)
+  ph <- admixr2:::.admBuildParHistData(.mk_traces(par_names), par_names, list(iniDf = ini))
 
   unscaled <- ph[ph$type == "Unscaled", names(ph) != "type"]
   stacked  <- data.frame(iter = unscaled$iter,
@@ -148,9 +148,9 @@ test_that("parHistData is consumed by the real nlmixr2est parHistStacked getter"
   skip_if(is.null(getter), "nlmixr2est:::nmObjGet.parHistStacked unavailable")
 
   ini       <- make_inidf_2eta()
-  pinfo     <- .admParseIniDf(ini)
-  par_names <- names(.admBuildOptVec(pinfo)$p0)
-  ph <- .admBuildParHistData(.mk_traces(par_names), par_names, list(iniDf = ini))
+  pinfo     <- admixr2:::.admParseIniDf(ini)
+  par_names <- names(admixr2:::.admBuildOptVec(pinfo)$p0)
+  ph <- admixr2:::.admBuildParHistData(.mk_traces(par_names), par_names, list(iniDf = ini))
 
   # Minimal stand-in for a fit object: the getter reads x[[1]]$env$parHistData.
   e <- new.env(); e$parHistData <- ph

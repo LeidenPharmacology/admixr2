@@ -1,9 +1,19 @@
 // [[Rcpp::depends(RcppEigen)]]
 #include <RcppEigen.h>
+#include <cfloat>
 #include <cmath>
 
 using namespace Rcpp;
 using namespace Eigen;
+
+// safeLog, as rxode2 defines it (_safe_log_ in rxode2_model_shared.h): log(x) for
+// x > 0, else log(DBL_EPSILON). The back-transform's `default` branch is reached
+// for a plain ADDITIVE mu-reference (curEval == ""), i.e. the standard Emax
+// writing style `emax <- temax + eta.emax`, where theta can legitimately be <= 0.
+static inline double adm_safe_log(double a) {
+  return std::log(a <= 0.0 ? DBL_EPSILON : a);
+}
+
 
 // ===========================================================================
 // Static helpers (not exported)
@@ -198,14 +208,14 @@ Eigen::VectorXd compute_mean_new_cpp(
     switch (transform_type[i]) {
       case 1: {
         double s = 1.0 / (1.0 + std::exp(-p));
-        lb = std::log(low[i] + (hi[i] - low[i]) * s);
+        lb = adm_safe_log(low[i] + (hi[i] - low[i]) * s);
         break;
       }
       case 2:
-        lb = std::log(low[i] + (hi[i] - low[i]) * R::pnorm(p, 0.0, 1.0, 1, 0));
+        lb = adm_safe_log(low[i] + (hi[i] - low[i]) * R::pnorm(p, 0.0, 1.0, 1, 0));
         break;
       case 3:
-        lb = std::log(p);
+        lb = adm_safe_log(p);
         break;
       default:  // 0: exp/log
         lb = p;
@@ -229,16 +239,60 @@ Eigen::VectorXd compute_mean_new_cpp(
 //   res_b2    proportional/power VARIANCE (b^2)
 //   res_cc    power exponent (1 => proportional)
 //
-//   combined2   var = a^2 + b^2 * f^(2c)
-//   combined1   var = (a + b * f^c)^2
-//   lnorm       mu  = f*exp(s/2);  var = mu^2 * (exp(s) - 1)
+// This is the LAW OF TOTAL VARIANCE, and it must stay in lockstep with R's
+// .admResidApply() -- .admNLL runs through these kernels while .admGrad runs
+// through the R path, so any divergence puts the optimizer on a discontinuity:
 //
-// The c == 1 fast path and the (fe*fe) association keep add/prop/lnorm models
-// bit-for-bit identical to the old per-sigma loop this replaced.
+//   mu_pred = ms * E[f]
+//   V_pred  = ms^2 * Cov_eta(f) + diag( E_eta[Var(y|eta)] )
+//
+//   combined2   E[v] = a^2 + b^2 E[f^2c]
+//   combined1   E[v] = a^2 + 2ab E[f^c] + b^2 E[f^2c]
+//   lnorm       ms = exp(s/2);  E[v] = E[f^2] exp(s)(exp(s)-1)
+//
+// `dv` arrives holding diag(Cov_eta(f)) -- the STRUCTURAL variance -- and leaves
+// holding the full V_pred diagonal (assigned, not accumulated). `ms` is written
+// out so the caller can scale the OFF-diagonals: lnorm's conditional mean is
+// f*exp(s/2), so the entire covariance is scaled, not just its diagonal.
+//
+// E[f^k] comes from (mu, var_f), exact at k = 1 and k = 2 -- hence exact for
+// add/prop/combined1/combined2/lnorm, and a second-order expansion only for
+// pow() with c outside {0.5, 1}. Deliberately the same expansion R uses, so NLL
+// and gradient differentiate the same expression.
+//
+// A purely ADDITIVE model (b^2 = 0, ms = 1) still evaluates to v0 + a^2 exactly,
+// so add() fits are bit-for-bit what they always were.
 // ---------------------------------------------------------------------------
+// E[f^k] from (mu, var): exact at k = 1 and k = 2, a second-order delta expansion
+// otherwise (reached only by pow()/combined with c not in {0.5, 1}).
+//
+// MUST match R's .admMomF() exactly. .admNLL() takes this fused path while
+// .admGrad() takes the R one, so any divergence leaves the objective and the
+// gradient describing different functions. The shared rule: the second-order term
+// is only meaningful while it is small against the leading term, so cap it there.
+//
+// Substituting DBL_EPSILON for the base (rxode2's safePow -- the right rule for a
+// SOLVE evaluating x^y) is the WRONG rule inside a Taylor expansion: near a zero
+// prediction, which is routine for a depot model at t = 0, eps^(k-2) is
+// astronomically large and this diverged from R by ~1e21 (R returned a finite
+// variance, C++ returned Inf for the same input). Capping is continuous, never
+// yields a negative variance, and is exact wherever the expansion is valid.
+static inline double adm_mom_f(double mu, double v0, double k) {
+  const double g    = k * (k - 1.0) / 2.0;
+  const double lead = std::pow(mu, k);
+  double corr = g * std::pow(mu, k - 2.0) * v0;
+  if (k - 2.0 < 0.0 && R_finite(corr)) {
+    const double cap = std::fabs(lead);
+    if (std::fabs(corr) > cap) corr = (corr < 0.0 ? -cap : cap);
+  }
+  if (!R_finite(corr)) corr = 0.0;
+  return lead + corr;
+}
+
 static inline void adm_apply_residual(
     Eigen::VectorXd& mu,
     Eigen::ArrayXd& dv,
+    Eigen::ArrayXd& ms,
     const Eigen::VectorXi& res_form,
     const Eigen::VectorXd& res_a2,
     const Eigen::VectorXd& res_b2,
@@ -246,19 +300,26 @@ static inline void adm_apply_residual(
 ) {
   const int n_t = static_cast<int>(mu.size());
   for (int t = 0; t < n_t; ++t) {
-    const double f = mu[t];
+    const double f  = mu[t];
+    const double v0 = dv[t];                      // Var_eta(f)
     if (res_form[t] == 2) {                       // lnorm
       const double sv = res_a2[t];
-      mu[t] = f * std::exp(sv / 2.0);
-      dv[t] += mu[t] * mu[t] * (std::exp(sv) - 1.0);
+      const double es = std::exp(sv);
+      ms[t] = std::exp(sv / 2.0);
+      mu[t] = f * ms[t];
+      // exp(s)*v0 carries Var(E[y|eta]); the E[f^2] term carries E[Var(y|eta)].
+      dv[t] = es * v0 + (v0 + f * f) * es * (es - 1.0);
     } else {
-      const double c  = res_cc[t];
-      const double fe = (c == 1.0) ? f : std::pow(f, c);
+      ms[t] = 1.0;
+      const double c   = res_cc[t];
+      const double m2c = (c == 1.0) ? (v0 + f * f) : adm_mom_f(f, v0, 2.0 * c);
       if (res_form[t] == 1) {                     // combined1 (SD-additive)
-        const double s = std::sqrt(res_a2[t]) + std::sqrt(res_b2[t]) * fe;
-        dv[t] += s * s;
+        const double mc = (c == 1.0) ? f : adm_mom_f(f, v0, c);
+        dv[t] = v0 + res_a2[t]
+                   + 2.0 * std::sqrt(res_a2[t] * res_b2[t]) * mc
+                   + res_b2[t] * m2c;
       } else {                                    // combined2 (variance-additive)
-        dv[t] += res_a2[t] + res_b2[t] * (fe * fe);
+        dv[t] = v0 + res_a2[t] + res_b2[t] * m2c;
       }
     }
   }
@@ -314,7 +375,12 @@ double irmc_inner_nll_cpp(
   //    part of the IS average), so the residual is added here while mu still
   //    reflects the IS-weighted structural prediction.
   ArrayXd dv = V.diagonal().array();
-  adm_apply_residual(mu, dv, res_form, res_a2, res_b2, res_cc);
+  ArrayXd ms(mu.size());
+  adm_apply_residual(mu, dv, ms, res_form, res_a2, res_b2, res_cc);
+  // lnorm scales the whole covariance (its conditional mean is f*exp(s/2)), so
+  // the off-diagonals move too; ms is all-ones for every other form, leaving V
+  // untouched there.
+  V = ms.matrix().asDiagonal() * V * ms.matrix().asDiagonal();
   V.diagonal().array() = dv;
 
   // 4. Kappa correction: shifts mu only, V unchanged. kappa_delta = kappa_fn(struct_cand) - mu_pop,
@@ -353,7 +419,9 @@ double nll_cov_from_samples_cpp(
   MatrixXd cp_c = cp_mat.rowwise() - mu.transpose();  // centred around mu_sim
   MatrixXd V    = cp_c.transpose() * cp_c * (1.0 / n_sim);
   ArrayXd  dv   = V.diagonal().array();
-  adm_apply_residual(mu, dv, res_form, res_a2, res_b2, res_cc);
+  ArrayXd  ms(mu.size());
+  adm_apply_residual(mu, dv, ms, res_form, res_a2, res_b2, res_cc);
+  V = ms.matrix().asDiagonal() * V * ms.matrix().asDiagonal();   // lnorm off-diagonals
   V.diagonal().array() = dv;
   return nll_cov_impl(E_obs, V_obs, mu, V, n);
 }
@@ -377,7 +445,8 @@ double nll_var_from_samples_cpp(
   VectorXd mu   = cp_mat.colwise().mean();
   MatrixXd cp_c = cp_mat.rowwise() - mu.transpose();  // centred around mu_sim
   ArrayXd  pv   = cp_c.array().square().colwise().sum() / n_sim;
-  adm_apply_residual(mu, pv, res_form, res_a2, res_b2, res_cc);
+  ArrayXd  ms(mu.size());   // var branch: diagonal only, so ms needs no further use
+  adm_apply_residual(mu, pv, ms, res_form, res_a2, res_b2, res_cc);
   if ((pv <= 0.0).any()) return R_PosInf;
   ArrayXd r2  = (E_obs.array() - mu.array()).square();
   return n * (pv.log() + v_obs.array() / pv + r2 / pv).sum();

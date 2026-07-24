@@ -14,19 +14,36 @@
   switch(tr$curEval,
     exp = , log = exp(p),
     expit = , logit = rxode2::expit(p, tr$low, tr$hi),
-    probitInv = , probit = tr$low + (tr$hi - tr$low) * pnorm(p),
+    # rxode2::probitInv, not `lo + (hi-lo)*pnorm(p)`: numerically identical today
+    # (verified across the whole range including the clamped tails) but it is the
+    # same C kernel rxode2 transforms WITH, so the two cannot drift apart -- and it
+    # matches the expit line above rather than half-reusing.
+    probitInv = , probit = rxode2::probitInv(p, tr$low, tr$hi),
     p)
 }
 
-# log(back(p)) -- used in IRMC gradient chain rule for paired struct thetas.
-.admLogBackTransform <- function(p, tr) {
-  if (is.null(tr)) return(p)
-  switch(tr$curEval,
-    exp = , log = p,
-    expit = , logit = log(rxode2::expit(p, tr$low, tr$hi)),
-    probitInv = , probit = log(tr$low + (tr$hi - tr$low) * pnorm(p)),
-    log(p))
-}
+# The eta-scale representative of a paired struct theta -- the quantity whose
+# difference (p_new vs p_orig) is the IRMC importance-sampling mean-shift for that
+# theta's eta, and whose derivative is the gradient chain factor.
+#
+# It is p itself, for EVERY transform. A mu-reference is `param <- h(theta + eta)`,
+# so eta and theta enter h through the SAME argument: shifting theta by Delta is
+# identical to shifting eta's mean by Delta, because
+#   f(theta + Delta, eta) = h(theta + Delta + eta) = f(theta, eta + Delta)
+# regardless of h. The exact eta-shift is therefore theta_new - theta_orig = p,
+# and its derivative is 1 -- the outer transform h (exp, expit, probit, identity)
+# does not enter at all.
+#
+# The old switch returned log(back(p)), which equals p ONLY for exp (log(exp(p))).
+# For expit/probit it computed a natural-scale-log shift, and for an additive
+# theta (curEval == "") log(p); both were wrong. Measured against a direct adgh
+# evaluation, the expit shift drove the adirmc objective ~140 -2LL units off a few
+# tenths from the proposal point; the additive one biased its estimate and went
+# -Inf/NaN at theta <= 0. Returning p is exact for all and cannot go non-finite.
+# (Kept as a named function -- rather than inlining `p` -- because the C++
+# compute_mean_new kernel, .type_code and the gradient's d_logback_dp all mirror
+# this one definition, and naming it keeps the reason in one place.)
+.admLogBackTransform <- function(p, tr) p
 
 # How many times each name appears in the model expressions.
 #
@@ -158,6 +175,10 @@
          hi      = if ("hi"  %in% names(.ce)) .ce$hi[.w]  else NA_real_)
   }), struct_rows$name)
 
+  # Endpoint distribution gate. Runs FIRST and independently of the sigma rows,
+  # because a count/categorical endpoint has none -- see .admCheckEndpointDist().
+  .admCheckEndpointDist(ui)
+
   .err_vals   <- sigma_rows$err
   sigma_names <- sigma_rows$name
 
@@ -165,15 +186,29 @@
   # EXPONENT (err "pow2"). The exponent is not a variance -- it must not be
   # squared, floored at zero, or reported as an SD -- so it carries its own
   # optimizer role and an identity transform. See .admSigmaRole()/.admSigmaNat().
+  # A t() degrees-of-freedom row is likewise not a variance: it is estimated as
+  # log(nu - 2) so nu stays > 2 (see .admSigmaRole()).
+  # ar()'s correlation is likewise not a variance: estimated on the logit scale
+  # so rho stays inside (0,1), which is where rxode2 defines it.
+  # A boxCox/yeoJohnson LAMBDA is not a variance either -- and unlike nu or rho it
+  # must be allowed to be zero or negative (lambda = 0 IS the log transform, and
+  # Yeo-Johnson is defined for lambda < 0), so it is estimated unconstrained on
+  # the identity scale. Defaulting it to "var" silently squared it (exp(2*log(l))
+  # = l^2) and made its gradient wrong by exactly 1/l.
   sigma_role <- setNames(
-    ifelse(.err_vals %in% .ADM_ERR_POW_EXP, "pow_exp", "var"), sigma_names)
+    ifelse(.err_vals %in% .ADM_ERR_POW_EXP, "pow_exp",
+           ifelse(.err_vals %in% .ADM_ERR_T, "t_df",
+                  ifelse(.err_vals %in% .ADM_ERR_AR, "ar_cor",
+                         ifelse(.err_vals %in% .ADM_ERR_TBS_LAM, "tbs_lam",
+                                ifelse(.err_vals %in% .ADM_ERR_NB_SIZE, "nb_size", "var"))))),
+    sigma_names)
 
   sigma_is_prop  <- setNames(.err_vals %in% .ADM_ERR_PROP, sigma_names)
   sigma_is_lnorm <- setNames(.err_vals %in% .ADM_ERR_LNORM, sigma_names)
 
   # Refuse anything we cannot represent. This runs BEFORE .admBuildResidSpecs(),
   # so it -- not the predDf gates below it -- is what a user with a boxCox or
-  # Student-t endpoint actually sees; it therefore has to give the same quality of
+  # Cauchy endpoint actually sees; it therefore has to give the same quality of
   # explanation. .ADM_ERR_WHY supplies the per-type reason.
   .unsupported <- unique(.err_vals[!is.na(.err_vals) & !.err_vals %in% .ADM_ERR_KNOWN])
   if (length(.unsupported) > 0L) {
@@ -202,10 +237,63 @@
     as.character(sigma_rows$condition) else rep(NA_character_, length(sigma_names))
 
   # Residual parameters enter the optimizer on their role's scale: variances as
-  # log(sigma^2), a pow() exponent as itself.
-  .is_var    <- sigma_role == "var"
-  sigma_init <- setNames(ifelse(.is_var, 2 * log(sigma_rows$est), sigma_rows$est),
-                         sigma_names)
+  # log(sigma^2), a pow() exponent as itself, a t() df as log(nu - 2).
+  .is_var  <- sigma_role == "var"
+  .is_tdf  <- sigma_role == "t_df"
+  .is_ar   <- sigma_role == "ar_cor"
+  .is_nbs  <- sigma_role == "nb_size"
+  if (any(.is_ar & (sigma_rows$est <= 0 | sigma_rows$est >= 1))) {
+    .bad <- sigma_names[.is_ar & (sigma_rows$est <= 0 | sigma_rows$est >= 1)][1L]
+    .admStopErrModel(
+      NA_character_,
+      sprintf("ar(%s) with an initial correlation of %g", .bad,
+              sigma_rows$est[match(.bad, sigma_names)]),
+      paste0("an AR(1) residual correlation must lie strictly inside (0, 1): at 0 there is ",
+             "no
+correlation to estimate, and at 1 the process is non-stationary and has no ",
+             "stationary
+covariance for admixr2 to match"),
+      fix = sprintf("Give %s an initial value in (0, 1), e.g. %s <- 0.5.", .bad, .bad))
+  }
+  # The starting nu must already be > 2: below it the Student-t has no finite
+  # variance, so there is no aggregate moment to match and log(nu - 2) is undefined.
+  # Caught here rather than at the first NLL evaluation, where it would surface as
+  # an NaN objective with no explanation.
+  if (any(.is_tdf & sigma_rows$est <= 2)) {
+    .bad <- sigma_names[.is_tdf & sigma_rows$est <= 2][1L]
+    .admStopErrModel(
+      NA_character_, sprintf("t(%s) with an initial estimate of %g", .bad,
+                             sigma_rows$est[match(.bad, sigma_names)]),
+      paste0("a Student-t has no finite variance at nu <= 2, so there is no aggregate ",
+             "variance to\nmatch; admixr2 estimates nu on the log(nu - 2) scale, which ",
+             "requires nu > 2 to start"),
+      fix = sprintf("Give %s an initial value above 2 (e.g. %s <- 5).", .bad, .bad))
+  }
+  # The starting size must be > 0: it is estimated on the log scale, so a
+  # non-positive init makes log(size) -Inf/NaN and the first NLL evaluation NaN --
+  # exactly the failure the .is_ar and .is_tdf guards above pre-empt, and caught
+  # here for the same reason rather than surfacing as an unexplained NaN objective.
+  if (any(.is_nbs & sigma_rows$est <= 0)) {
+    .bad <- sigma_names[.is_nbs & sigma_rows$est <= 0][1L]
+    .admStopErrModel(
+      NA_character_,
+      sprintf("nbinomMu size %s with an initial value of %g", .bad,
+              sigma_rows$est[match(.bad, sigma_names)]),
+      paste0("a negative-binomial size must be strictly positive: admixr2 estimates ",
+             "it on the\nlog scale, so a size <= 0 makes log(size) undefined and the ",
+             "first NLL evaluation NaN"),
+      fix = sprintf("Give %s a positive initial value (e.g. %s <- 1).", .bad, .bad))
+  }
+  # Indexed assignment, NOT nested ifelse(): ifelse() evaluates every branch over
+  # the WHOLE vector, so log(est - 2) would be taken for the add/prop rows too and
+  # emit a spurious "NaNs produced" warning on every parse (the value is discarded,
+  # but the warning is real and admixr2 asserts it stays silent).
+  sigma_init <- sigma_rows$est
+  sigma_init[.is_var] <- 2 * log(sigma_rows$est[.is_var])
+  sigma_init[.is_tdf] <- log(sigma_rows$est[.is_tdf] - 2)
+  sigma_init[.is_ar]  <- stats::qlogis(sigma_rows$est[.is_ar])
+  sigma_init[.is_nbs] <- log(sigma_rows$est[.is_nbs])   # size > 0
+  sigma_init <- setNames(sigma_init, sigma_names)
 
   # mu-reference pairs drive BOTH struct_has_eta and struct_eta_idx below; compute
   # once (each call re-runs .admNameOccurrence's all.vars scan over the model).
@@ -267,14 +355,34 @@
   nm <- c(pinfo$struct_names, pinfo$sigma_names, pinfo$omega_par_names)
   names(p) <- nm
   # Variance params are bounded on the log-variance scale; a pow() exponent is
-  # unconstrained and its bounds pass through untransformed.
-  .is_var <- .admSigmaRole(pinfo) == "var"
-  sig_lb <- ifelse(!.is_var, pinfo$sigma_lower,
-                   ifelse(is.finite(pinfo$sigma_lower) & pinfo$sigma_lower > 0,
-                          2 * log(pinfo$sigma_lower), -Inf))
-  sig_ub <- ifelse(!.is_var, pinfo$sigma_upper,
-                   ifelse(is.finite(pinfo$sigma_upper),
-                          2 * log(pinfo$sigma_upper),  Inf))
+  # unconstrained and its bounds pass through untransformed. A t() df is bounded
+  # on the log(nu - 2) scale, so a user bound must clear 2 to mean anything -- the
+  # parameterisation already enforces nu > 2, so a slacker bound is simply -Inf.
+  .role   <- .admSigmaRole(pinfo)
+  .is_var <- .role == "var"
+  .is_tdf <- .role == "t_df"
+  .is_ar  <- .role == "ar_cor"
+  # Indexed, not nested ifelse() -- see .admParseIniDf's sigma_init for why.
+  lo <- pinfo$sigma_lower; hi <- pinfo$sigma_upper
+  sig_lb <- lo; sig_ub <- hi
+  sig_lb[.is_var] <- ifelse(is.finite(lo[.is_var]) & lo[.is_var] > 0,
+                            2 * log(pmax(lo[.is_var], .Machine$double.xmin)), -Inf)
+  sig_ub[.is_var] <- ifelse(is.finite(hi[.is_var]), 2 * log(pmax(hi[.is_var], .Machine$double.xmin)), Inf)
+  sig_lb[.is_tdf] <- ifelse(is.finite(lo[.is_tdf]) & lo[.is_tdf] > 2,
+                            log(pmax(lo[.is_tdf] - 2, .Machine$double.xmin)), -Inf)
+  # ar(): logit scale is already unconstrained; the parameterisation enforces (0,1)
+  sig_lb[.is_ar] <- -Inf; sig_ub[.is_ar] <- Inf
+  # nbinomMu's size is held as log(size), so its NATURAL-scale bound has to be
+  # log()ged like every other role. Passing rxode2's `lower = 0` through unchanged
+  # constrained the optimizer to log(size) >= 0, i.e. size >= 1 -- a bound the user
+  # never wrote. (tbs_lam and pow_exp are identity-encoded and need no rescaling.)
+  .is_nbs <- .role == "nb_size"
+  sig_lb[.is_nbs] <- ifelse(is.finite(lo[.is_nbs]) & lo[.is_nbs] > 0,
+                            log(pmax(lo[.is_nbs], .Machine$double.xmin)), -Inf)
+  sig_ub[.is_nbs] <- ifelse(is.finite(hi[.is_nbs]) & hi[.is_nbs] > 0,
+                            log(pmax(hi[.is_nbs], .Machine$double.xmin)), Inf)
+  sig_ub[.is_tdf] <- ifelse(is.finite(hi[.is_tdf]) & hi[.is_tdf] > 2,
+                            log(pmax(hi[.is_tdf] - 2, .Machine$double.xmin)), Inf)
   lb <- c(pinfo$struct_lower, sig_lb, rep(-Inf, length(pinfo$omega_par)))
   ub <- c(pinfo$struct_upper, sig_ub, rep( Inf, length(pinfo$omega_par)))
   list(p0 = p, lower = lb, upper = ub, names = nm,

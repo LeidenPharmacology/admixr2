@@ -58,7 +58,7 @@ test_that("nll_cov_from_samples_cpp: additive sigma adds sigma_var to V diagonal
   expect_equal(cpp_nll, expected, tolerance = 1e-8)
 })
 
-test_that("nll_cov_from_samples_cpp: proportional sigma adds sigma_var*mu^2 to V diagonal", {
+test_that("nll_cov_from_samples_cpp: proportional sigma adds sigma_var*E[f^2] to V diagonal", {
   set.seed(43)
   n_sim <- 200L; n_t <- 2L; n <- 50L
   cp_mat <- make_cp_mat(n_sim, n_t, seed = 43)$mat[, 1:2]
@@ -69,7 +69,9 @@ test_that("nll_cov_from_samples_cpp: proportional sigma adds sigma_var*mu^2 to V
   cp_c   <- sweep(cp_mat, 2L, colMeans(cp_mat))
   V_pred <- crossprod(cp_c) / n_sim
   mu     <- colMeans(cp_mat)
-  V_pred_sv <- V_pred; diag(V_pred_sv) <- diag(V_pred_sv) + sv * mu^2
+  # law of total variance: E[Var(y|eta)] = sv*E[f^2] = sv*(var_f + mu^2)
+  V_pred_sv <- V_pred
+  diag(V_pred_sv) <- diag(V_pred) + sv * (diag(V_pred) + mu^2)
   expected <- nll_cov_r(E_obs, V_obs, mu, V_pred_sv, n)
 
   cpp_nll <- .nll_cov_fs(cp_mat, E_obs, V_obs, n, sigma_var = sv, sigma_type = 1L
@@ -107,7 +109,7 @@ test_that("nll_var_from_samples_cpp: proportional sigma adds sigma_var*mu^2 to v
   cp_c   <- sweep(cp_mat, 2L, colMeans(cp_mat))
   v_pred <- admixr2:::adm_col_sq_sum_cpp(cp_c) / n_sim
   mu     <- colMeans(cp_mat)
-  v_pred_sv <- v_pred + sv * mu^2   # proportional: += sigma_var * mu^2
+  v_pred_sv <- v_pred + sv * (v_pred + mu^2)   # prop: += sv*E[f^2]
   expected  <- nll_var_r(E_obs, v_obs, mu, v_pred_sv, n)
 
   cpp_nll <- .nll_var_fs(cp_mat, E_obs, v_obs, n, sigma_var = sv, sigma_type = 1L
@@ -138,8 +140,11 @@ test_that("nll_cov_from_samples_cpp: lognormal sigma (sigma_type=2) agrees with 
   cp_c   <- sweep(cp_mat, 2L, mu)
   V_pred <- crossprod(cp_c) / n_sim
   mu_adj <- mu * exp(sv / 2)
-  V_adj  <- V_pred
-  diag(V_adj) <- diag(V_adj) + mu_adj^2 * (exp(sv) - 1)
+  # lnorm scales the WHOLE covariance by exp(s) (E[y|eta] = f*exp(s/2)), and
+  # E[Var(y|eta)] uses E[f^2]
+  V_adj  <- V_pred * exp(sv)
+  diag(V_adj) <- diag(V_pred) * exp(sv) +
+    (diag(V_pred) + mu^2) * exp(sv) * (exp(sv) - 1)
   expected <- nll_cov_r(E_obs, V_obs, mu_adj, V_adj, n)
 
   cpp_nll <- .nll_cov_fs(cp_mat, E_obs, V_obs, n, sv, 2L)
@@ -158,7 +163,7 @@ test_that("nll_var_from_samples_cpp: lognormal sigma (sigma_type=2) agrees with 
   cp_c   <- sweep(cp_mat, 2L, mu)
   v_pred <- admixr2:::adm_col_sq_sum_cpp(cp_c) / n_sim
   mu_adj <- mu * exp(sv / 2)
-  v_adj  <- v_pred + mu_adj^2 * (exp(sv) - 1)
+  v_adj  <- v_pred * exp(sv) + (v_pred + mu^2) * exp(sv) * (exp(sv) - 1)
   expected <- nll_var_r(E_obs, v_obs, mu_adj, v_adj, n)
 
   cpp_nll <- .nll_var_fs(cp_mat, E_obs, v_obs, n, sv, 2L)

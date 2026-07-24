@@ -29,8 +29,23 @@ jobs:
         with:
           use-public-rspm: true
 
+      # RcppParallel 6.0.0 (2026-07-23) -> oneTBB removes tbb::internal, so any
+      # stringfish binary built against the old TBB fails to LOAD (qs2 -> stringfish,
+      # and rxode2 Imports qs2). ABI/stale-artifact, not a source incompatibility --
+      # see the long note in R-CMD-check.yaml. Must run BEFORE setup-r-dependencies
+      # because the failure occurs during dependency installation.
+      # DROP once CRAN/RSPM ship stringfish/qs2 rebuilt against RcppParallel >= 6.
+      - name: Rebuild TBB-linked deps from source (RcppParallel 6.0.0 ABI)
+        if: runner.os != 'macOS'
+        run: |
+          install.packages("RcppParallel", repos = "https://cloud.r-project.org")
+          install.packages(c("stringfish", "qs2"), type = "source",
+                           repos = "https://cloud.r-project.org")
+        shell: Rscript {0}
+
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          cache-version: 2
           extra-packages: any::covr, any::xml2
           needs: coverage
 

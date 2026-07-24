@@ -1,3 +1,30 @@
+# ---- resid_nodes -------------------------------------------------------------
+# The residual quadrature's node count. Only a transform-both-sides endpoint uses
+# it, but it is accepted (and validated) by all four controls so a user does not
+# have to know which estimator routes through which code path.
+
+test_that("resid_nodes: all four controls default to 81 and store an integer", {
+  for (ctl in list(admControl(), adfoControl(), adghControl(), adirmcControl()))
+    expect_identical(ctl$resid_nodes, 81L)
+  # A double is coerced, like every other count parameter.
+  expect_identical(admControl(resid_nodes = 31)$resid_nodes,    31L)
+  expect_identical(adghControl(resid_nodes = 31)$resid_nodes,   31L)
+  expect_identical(adfoControl(resid_nodes = 31)$resid_nodes,   31L)
+  expect_identical(adirmcControl(resid_nodes = 31)$resid_nodes, 31L)
+})
+
+test_that("resid_nodes: a degenerate node count is refused, not passed through", {
+  # 0 nodes would reach .adghNodes1() and divide by an empty weight vector, and a
+  # handful is meaningless as a quadrature -- both would otherwise surface as an
+  # obscure error thousands of lines from the control that caused them.
+  for (f in list(admControl, adfoControl, adghControl, adirmcControl)) {
+    expect_error(f(resid_nodes = 0L))
+    expect_error(f(resid_nodes = -5L))
+    expect_error(f(resid_nodes = c(31L, 81L)))
+    expect_error(f(resid_nodes = "many"))
+  }
+})
+
 # ---- admControl --------------------------------------------------------------
 
 test_that("admControl() returns correct class and key defaults", {
@@ -485,3 +512,29 @@ test_that("nmObjGetControl.adirmc: errors when no control found", {
   )
 })
 
+
+test_that("a new control argument cannot silently rebind a positional call", {
+  # `resid_nodes` was added as the SECOND formal of every estimator control, so
+  # adghControl(studies, 7L) -- which used to set n_nodes -- set resid_nodes
+  # instead, passed its own validation, and left n_nodes at 5, changing the eta
+  # quadrature grid the whole fit is built on with no message. Positional calls
+  # are part of the interface; a new argument goes at the END.
+  expect_identical(names(formals(adghControl))[1:2],   c("studies", "n_nodes"))
+  expect_identical(names(formals(admControl))[1:2],    c("studies", "n_sim"))
+  expect_identical(names(formals(adirmcControl))[1:2], c("studies", "n_sim"))
+  expect_identical(names(formals(adfoControl))[1:2],   c("studies", "grad"))
+  expect_identical(names(formals(datagenControl))[1:4],
+                   c("method", "n_sim", "n_nodes", "sampling"))
+
+  # and the behaviour those names promise
+  expect_identical(adghControl(list(), 7L)$n_nodes, 7L)
+  expect_identical(admControl(list(), 20000L)$n_sim, 20000L)
+  expect_identical(adirmcControl(list(), 2000L)$n_sim, 2000L)
+  expect_identical(datagenControl("mc", 2000L, 7L)$n_nodes, 7L)
+  # ... while resid_nodes is still reachable by name everywhere
+  expect_identical(adghControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
+  expect_identical(admControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
+  expect_identical(adfoControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
+  expect_identical(adirmcControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
+  expect_identical(datagenControl(resid_nodes = 31L)$resid_nodes, 31L)
+})

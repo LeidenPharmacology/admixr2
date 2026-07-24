@@ -146,11 +146,26 @@ test_that("an unrepresentable residual model is refused, not silently approximat
   skip_on_cran()
   skip_if_not_installed("rxode2")
 
-  # logitNorm cannot be represented by a Gaussian aggregate MVN. It used to warn
-  # once and then fit as ADDITIVE.
-  ui <- .em_model("cp ~ logitNorm(lg.sd, 0, 10)", "lg.sd <- 0.2")
+  # logitNorm is now SUPPORTED (transform-both-sides, by quadrature), so the
+  # refusal example is cauchy -- which is refused on mathematics rather than
+  # missing machinery: it is the nu = 1 Student-t, has no finite mean or
+  # variance, and averaging cannot rescue it (the Cauchy is a STABLE
+  # distribution, so a study mean of n subjects is distributed exactly like one
+  # subject and never concentrates).
+  ui <- .em_model("cp ~ add(add.sd) + cauchy()", "add.sd <- 0.2")
   expect_error(admixr2:::.admParseIniDf(ui$iniDf, ui),
                regexp = "Unsupported residual error model")
+
+  # ... and the ones that ARE representable now parse.
+  for (spec in list(
+    c("cp ~ logitNorm(lg.sd, 0, 10)",           "lg.sd <- 0.2"),
+    c("cp ~ probitNorm(lg.sd, 0, 10)",          "lg.sd <- 0.2"),
+    c("cp ~ add(add.sd) + boxCox(lam)",         "add.sd <- 0.2; lam <- 0.5"),
+    c("cp ~ add(add.sd) + yeoJohnson(lam)",     "add.sd <- 0.2; lam <- 0.5"),
+    c("cp ~ add(add.sd) + ar(rho)",             "add.sd <- 0.2; rho <- 0.5"))) {
+    u <- .em_model(spec[1], spec[2])
+    expect_no_error(suppressWarnings(admixr2:::.admParseIniDf(u$iniDf, u)))
+  }
 })
 
 test_that("refusal messages name the model, the endpoint, the reason and the alternatives", {
@@ -162,14 +177,14 @@ test_that("refusal messages name the model, the endpoint, the reason and the alt
   # to use instead. A bare "unsupported" would just move the confusion.
   msg <- tryCatch(
     admixr2:::.admParseIniDf(
-      .em_model("cp ~ logitNorm(lg.sd, 0, 10)", "lg.sd <- 0.2")$iniDf,
-      .em_model("cp ~ logitNorm(lg.sd, 0, 10)", "lg.sd <- 0.2")),
+      .em_model("cp ~ add(add.sd) + cauchy()", "add.sd <- 0.2")$iniDf,
+      .em_model("cp ~ add(add.sd) + cauchy()", "add.sd <- 0.2")),
     error = conditionMessage)
 
-  expect_match(msg, "logitNorm")           # what was asked for
+  expect_match(msg, "cauchy")              # what was asked for
   expect_match(msg, "endpoint 'cp'")       # where
   expect_match(msg, "Why:")                # why not
-  expect_match(msg, "LOGIT scale")         # ... specifically
+  expect_match(msg, "STABLE")              # ... specifically: why averaging fails
   expect_match(msg, "aggregate", ignore.case = TRUE)
   expect_match(msg, "add\\(a\\) \\+ prop\\(b\\)")   # what IS supported
   expect_match(msg, "ADDITIVE")            # warns that old results are suspect
@@ -187,4 +202,89 @@ test_that("propF() gets its own targeted message, not the generic one", {
   expect_match(msg, "propF")
   expect_match(msg, "Fix:")
   expect_match(msg, "prop\\(\\) or pow\\(\\)")
+})
+
+test_that("a binom size written as a model-block constant is a constant", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # `.const()` resolved a numeric literal or a fix()ed iniDf row, so
+  # `nt <- 20; y ~ binom(nt, p)` -- a genuinely constant number of trials, and how
+  # one is usually written -- was refused as "non-constant", with advice (fix() it)
+  # that does not apply to a model-block constant.
+  mk <- function(ini_line, size_expr) suppressMessages(rxode2::rxode2(eval(parse(
+    text = sprintf('function() {
+      ini({ tem <- log(0.6); %s eta.em ~ 0.05 })
+      model({ em <- exp(tem + eta.em); p <- em / (1 + em)
+              nt <- 20
+              y ~ binom(%s, p) }) }', ini_line, size_expr)))))
+
+  spec <- function(ui) {
+    p <- suppressWarnings(admixr2:::.admParseIniDf(ui$iniDf, ui))
+    admixr2:::.admResidSpecs(p)[[1L]]
+  }
+  expect_equal(spec(mk("", "nt"))$csize, 20)     # model-block constant
+  expect_equal(spec(mk("", "20"))$csize, 20)     # literal, as before
+  # An INTEGER literal is a constant too: deparse(20L) is "20L", as.numeric("20L")
+  # is NA, so `binom(20L, p)` was misread as non-constant and refused -- the only
+  # difference from binom(20, p) being the integer suffix. .const() now reads a
+  # bare numeric literal (double or integer) straight from the AST.
+  expect_equal(spec(mk("", "20L"))$csize, 20)
+
+  # ... and an ESTIMATED size is still refused: it enters the objective only
+  # through the variance, so it has no gradient path.
+  expect_error(spec(mk("nsz <- 20;", "nsz")), "non-constant size")
+})
+
+test_that("a non-positive nbinomMu size is refused with a clear domain error", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The size is estimated on the log scale, so a start <= 0 makes log(size)
+  # -Inf/NaN and the first NLL evaluation NaN. The .is_ar and .is_tdf roles pre-empt
+  # exactly this with a domain error; nb_size lacked the guard and surfaced an
+  # unexplained NaN objective instead.
+  mk <- function(sz) suppressMessages(rxode2::rxode2(eval(parse(text = sprintf(
+    'function() {
+       ini({ tcl <- log(5); tv <- log(20); tm <- log(4); sz <- %s; eta.cl ~ 0.09 })
+       model({ cl <- exp(tcl + eta.cl); v <- exp(tv); m <- exp(tm)
+               d/dt(central) <- -(cl/v)*central
+               y ~ nbinomMu(sz, m) }) }', sz)))))
+  # rxode2 allows a size init of exactly 0 through to admixr2 (its own check is
+  # "> 0" only for some roles), so this is the gap the guard fills: log(0) = -Inf.
+  ui0 <- mk("0")
+  expect_error(admixr2:::.admParseIniDf(ui0$iniDf, ui0),
+               "size must be strictly positive|positive initial value")
+  # a strictly-negative init rxode2 itself rejects at model build, before admixr2
+  # sees it -- refused either way.
+  expect_error(mk("-1"))
+  # a positive size still parses
+  ui2 <- mk("2")
+  expect_silent(suppressMessages(admixr2:::.admParseIniDf(ui2$iniDf, ui2)))
+})
+
+test_that("a count endpoint never falls back to nlmixr2est's inner model", {
+  skip_on_cran(); skip_if_not_installed("rxode2"); skip_if_not_installed("nlmixr2est")
+  # The inner model's rx_pred_ for `y ~ pois(cp)` is llikPois(DV, cp) -- the
+  # LOG-LIKELIHOOD -- and its sensitivity columns differentiate that, using a DV an
+  # aggregate fit does not have. .admLoadSensModel() emits the count MEAN instead;
+  # if that build ever fails it must return NULL (finite differences), never hand
+  # back the inner model, which is what made .adghGrad all-NA and .admGradBatch's
+  # Hessian zero.
+  fn <- function() {
+    ini({ tcl <- log(5); tv <- log(20); eta.cl ~ 0.09 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+            d/dt(central) <- -(cl / v) * central
+            cp <- central / v
+            y ~ pois(cp) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  sm <- suppressMessages(admixr2:::.admLoadSensModel(ui))
+  expect_true(is.null(sm) || identical(sm$type, "dirs"))
+  if (!is.null(sm)) {
+    # the emitted prediction is the MEAN: solving it must give the model's cp,
+    # not a log-likelihood (which would need DV and come back non-finite)
+    d <- rxode2::rxSolve(sm$mod,
+      params = c(`THETA[1]` = log(5), `THETA[2]` = log(20), `ETA[1]` = 0),
+      events = rxode2::et(amt = 100) |> rxode2::et(c(1, 4)),
+      returnType = "data.frame", addDosing = FALSE)
+    expect_true(all(is.finite(d$rx_pred_)))
+    expect_true(all(d$rx_pred_ > 0))
+  }
 })

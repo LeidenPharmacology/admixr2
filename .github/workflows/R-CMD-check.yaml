@@ -26,11 +26,13 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
-      # rcmdcheck runs the integration suite (NOT_CRAN=true), which drives many
-      # rxode2 fits in one process. glibc retains a per-thread malloc arena across
-      # them, inflating RSS to ~11 GB and hanging/OOM-killing the ubuntu-devel job.
-      # Cap the arena count so freed memory is actually reused (validated: the
-      # compat-oldstack job runs the same suite on ubuntu and passes with this set).
+      # Belt-and-braces against malloc arena fragmentation. NOTE: profiling the
+      # whole suite per file showed the devel job's growth is NATIVE memory that
+      # accumulates in proportion to WORK DONE (models compiled/loaded per fit,
+      # which rxode2 never returns) and is spread diffusely across ~19 files --
+      # not one hot file and not the rxode2 model registry, both of which were
+      # measured and ruled out. So this alone does not fix devel; the NOT_CRAN
+      # scoping on the check step below is what does.
       MALLOC_ARENA_MAX: "2"
 
 
@@ -45,12 +47,61 @@ jobs:
           http-user-agent: ${{ matrix.config.http-user-agent }}
           use-public-rspm: true
 
+      # RcppParallel 6.0.0 (published 2026-07-23) switched to oneTBB, which removes
+      # tbb::internal. stringfish's SOURCE never uses that API -- it only calls
+      # RcppParallel's public interface (its Makevars just pulls CxxFlags()/
+      # RcppParallelLibs()) -- but any stringfish BINARY compiled against the old TBB
+      # headers has the removed symbol baked in, so loading it against oneTBB dies:
+      #   Linux  : stringfish.so: undefined symbol:
+      #            _ZN3tbb8internal25concurrent_vector_base_v316internal_grow_byEmmPFvPvPKvmES4_
+      #   Windows: stringfish.dll: LoadLibrary failure (old tbb.dll gone; 6.0.0 ships oneTBB)
+      # qs2 -> stringfish, and rxode2 itself Imports qs2, so this takes the whole stack
+      # down at LOAD time -- every Linux job plus windows went red on 2026-07-24.
+      #
+      # It is an ABI/stale-artifact problem, NOT a source incompatibility: on the devel
+      # runner rxode2 COMPILED fine against RcppParallel 6.0.0 (linking -ltbb from
+      # RcppParallel/lib) and then died loading a stale stringfish.so restored from the
+      # dependency cache. Upstream reached the same conclusion and did not pin
+      # RcppParallel back -- nlmixr2/rxode2 fef0550 "Bump required rxode2ll due to
+      # RcppParallel ABI issues" requires a REBUILT dependency instead.
+      #
+      # So: rebuild the two TBB-linked packages from source against whichever
+      # RcppParallel is current. This MUST run BEFORE setup-r-dependencies, because the
+      # failure happens *during* dependency installation (a step placed after it never
+      # executes), and RcppParallel is installed here first so stringfish links to it.
+      # cache-version is bumped in tandem so the poisoned cached library is not restored.
+      #
+      # macOS is excluded: its binaries still resolve and that job is green.
+      # DROP THIS once CRAN/RSPM ship stringfish/qs2 rebuilt against RcppParallel >= 6.
+      - name: Rebuild TBB-linked deps from source (RcppParallel 6.0.0 ABI)
+        if: runner.os != 'macOS'
+        run: |
+          install.packages("RcppParallel", repos = "https://cloud.r-project.org")
+          install.packages(c("stringfish", "qs2"), type = "source",
+                           repos = "https://cloud.r-project.org")
+        shell: Rscript {0}
+
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          cache-version: 2
           extra-packages: any::rcmdcheck
           needs: check
 
       - uses: r-lib/actions/check-r-package@v2
+        env:
+          # Run the integration suite everywhere EXCEPT ubuntu-devel.
+          #
+          # These tests are all skip_on_cran()'d, so CRAN itself never runs them;
+          # NOT_CRAN = "true" is what forces them on under rcmdcheck. On devel they
+          # accumulate ~1 GB+ of unreclaimable native memory (see MALLOC_ARENA_MAX
+          # above) and the job is SIGTERM'd mid-`checking tests` -- kill times vary
+          # (30-44 min) and devel PASSES on main at 42-69 min, so it is a memory
+          # ceiling, not a timeout and not a hang.
+          #
+          # No coverage is lost: the compat-oldstack job already runs the full
+          # integration suite on ubuntu in ~8 min. The devel entry exists to check
+          # R-devel compliance, which is exactly what remains.
+          NOT_CRAN: ${{ matrix.config.r == 'devel' && 'false' || 'true' }}
         with:
           upload-snapshots: true
           build_args: 'c("--no-manual", "--no-build-vignettes")'

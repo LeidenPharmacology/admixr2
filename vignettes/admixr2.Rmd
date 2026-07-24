@@ -216,3 +216,4 @@ For a detailed walkthrough of all four panel types and customisation options, se
 - [Simulating data & using published models](datagen.html) — the model-as-input path
 - [Multiple studies](multiple-studies.html) — meta-analysis across several studies
 - [Estimator comparison](estimator-comparison.html) — choosing a backend
+- [Choosing a residual error model](error-models.html) — what `cp ~ prop(...)` does to `E` and `V`

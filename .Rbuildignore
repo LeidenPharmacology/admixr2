@@ -19,6 +19,7 @@
 ^vignettes/estimator-comparison\.Rmd$
 ^vignettes/advanced\.Rmd$
 ^vignettes/datagen\.Rmd$
+^vignettes/error-models\.Rmd$
 ^validation$
 ^src/.*\.dll$
 ^src/.*\.o$

@@ -74,6 +74,8 @@ navbar:
         - text: Estimation & diagnostics
         - text: Comparing the estimators
           href: articles/estimator-comparison.html
+        - text: Choosing a residual error model
+          href: articles/error-models.html
         - text: Advanced usage
           href: articles/advanced.html
         - text: Diagnostic plots
@@ -115,6 +117,7 @@ articles:
     desc: Choose and tune an estimator — gradients, restarts, model comparison — then assess the fit.
     contents:
       - estimator-comparison
+      - error-models
       - advanced
       - diagnostic-plots
 

@@ -42,9 +42,22 @@ these are integrals over the random-effects distribution
 $\eta \sim \mathcal{N}(0, \Omega)$:
 
 $$
-\mu_\text{pred} = \mathbb{E}_\eta[f(\theta, \eta)], \qquad
-V_\text{pred} = \operatorname{Var}_\eta[f(\theta, \eta)] + \Sigma
+\mu_\text{pred} = \mathbb{E}_\eta\bigl[\mathbb{E}[y \mid \eta]\bigr], \qquad
+V_\text{pred} = \operatorname{Var}_\eta\bigl(\mathbb{E}[y \mid \eta]\bigr)
+             + \mathbb{E}_\eta\bigl[\operatorname{Var}(y \mid \eta)\bigr]
 $$
+
+that is, the **law of total variance**. Writing $V_\text{pred} =
+\operatorname{Var}_\eta[f] + \Sigma$ is correct only when the residual variance
+does not depend on the prediction — i.e. for purely **additive** error. With
+`prop()`, `pow()` or `lnorm()` the residual variance is a function of $f$, so
+$\mathbb{E}_\eta[\operatorname{Var}(y\mid\eta)] \neq
+\operatorname{Var}(y \mid \eta = \bar\eta)$, and `lnorm()` additionally scales the
+conditional *mean* by $e^{s/2}$, which scales the whole covariance rather than
+just its diagonal. Evaluating the residual at the population mean instead — the
+NONMEM "no $\eta$–$\varepsilon$ interaction" convention — understates
+$\operatorname{diag}(V_\text{pred})$ by $b^2\operatorname{Var}_\eta(f)$ for
+proportional error, and admixr2 does **not** do this.
 
 These integrals have no closed form for nonlinear $f$. All four estimators
 minimise the same objective but take different approaches to evaluating them.
@@ -440,5 +453,6 @@ adirmcControl(
 
 ## See also
 
+- [Choosing a residual error model](error-models.html) — which error models each estimator supports
 - [Advanced usage](advanced.html) — gradient modes, restarts, and AIC/BIC model comparison
 - [Getting started](admixr2.html)

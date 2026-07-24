@@ -16,7 +16,8 @@
 .adfoGetMuJ <- function(pars, pinfo, s, sensModel, rxMod, output_var, params_mat, cores) {
   sm  <- matrix(pars$struct, nrow = 1L,
                 dimnames = list(NULL, names(pars$struct)))
-  res <- .adfoGetMuJBatch(sm, pinfo, s, sensModel, rxMod, output_var, cores)
+  res <- .adfoGetMuJBatch(sm, pinfo, s, sensModel, rxMod, output_var, cores,
+                          pars$sigma_var)
   if (is.null(res)) return(NULL)
   res[[1L]]
 }
@@ -35,7 +36,8 @@
 #
 # The FD fallback (no sens model) stacks (1 + n_eta) rows per configuration --
 # base plus one perturbed eta per dimension -- so it too is a single solve.
-.adfoGetMuJBatch <- function(struct_mat, pinfo, s, sensModel, rxMod, output_var, cores) {
+.adfoGetMuJBatch <- function(struct_mat, pinfo, s, sensModel, rxMod, output_var, cores,
+                             sigma_var = NULL) {
   n_cfg <- nrow(struct_mat)
   n_eta <- pinfo$n_eta
   n_t   <- length(s$times)
@@ -43,7 +45,7 @@
   if (n_eta > 0L && !is.null(sensModel)) {
     eta0 <- matrix(0, n_cfg, n_eta, dimnames = list(NULL, pinfo$eta_col_names))
     res  <- .admSimulateSensRows(sensModel, struct_mat, pinfo$sigma_names, eta0, s,
-                                 cores, pinfo$nDisplayProgress)
+                                 cores, pinfo$nDisplayProgress, sigma_var)
     if (!is.null(res))
       return(lapply(seq_len(n_cfg), function(k)
         list(mu = res$cp_mat[k, ],
@@ -86,12 +88,19 @@
 # Returns list(V, mu_sigma, JL): JL = J %*% L cached for gradient reuse.
 # V = tcrossprod(JL) + the residual contribution to diag(V). `arr` is the row
 # array from .admResidRows(); it, not this function, knows the error model.
-.adfoVpred <- function(mu_pred, J, L, arr, n_t, n_eta) {
+.adfoVpred <- function(mu_pred, J, L, arr, n_t, n_eta, times = NULL) {
   JL <- if (n_eta > 0L) J %*% L else matrix(0, n_t, 0)
   V  <- if (n_eta > 0L) tcrossprod(JL) else matrix(0, n_t, n_t)
-  ap <- .admResidApply(mu_pred, diag(V), arr)
-  diag(V) <- ap$dv
-  list(V = V, mu_sigma = ap$mu, JL = JL)
+  # `times` and the structural covariance are REQUIRED by any residual form that
+  # reaches the off-diagonal (ar's rho^|dt|, ordinal's cross-category term). This
+  # used to pass neither and never add ap$rmat, so adfo scored an INDEPENDENT
+  # residual: its NLL was exactly invariant in rho, while .adfoGrad() -- which does
+  # pass s$times to .admSigmaGrad -- returned a non-zero rho gradient. The optimiser
+  # therefore walked a direction the objective could not move along, and adfo
+  # reported a completely different objective from adgh/admc on identical data.
+  ap <- .admResidApply(mu_pred, diag(V), arr, times, V)
+  V <- .admApplyResidTail(V, ap)
+  list(V = V, mu_sigma = ap$mu, JL = JL, ms = ap$ms, var_f = diag(tcrossprod(JL)))
 }
 
 # -- NLL -----------------------------------------------------------------------
@@ -107,7 +116,8 @@
   eta0 <- matrix(0, 1L, n_eta, dimnames = list(NULL, pinfo$eta_col_names))
   if (n_eta > 0L && !is.null(sensModel)) {
     res <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names,
-                                 eta0, unit, cores, pinfo$nDisplayProgress)
+                                 eta0, unit, cores, pinfo$nDisplayProgress,
+                                 pars$sigma_var)
     if (!is.null(res))
       return(list(mu = as.numeric(res$cp_mat),
                   J  = do.call(cbind, lapply(res$dpred_list, as.numeric))))
@@ -142,6 +152,17 @@
 #
 # `cache` is an environment created per top-level call (never persisted across
 # parameter points), so there is no staleness risk.
+# `struct` is the KEY, not the parameters: callers append an estimated Box-Cox /
+# Yeo-Johnson lambda to it, because that lambda reaches rx_pred_ and so the cached
+# (mu, J) is no longer a function of the structural thetas alone. Everything else
+# about FO's "omega/sigma cost no solve" property is unchanged.
+.adfoMuJKey <- function(pars, sensModel) {
+  .tbn <- if (is.null(sensModel)) NULL else sensModel$pred_tbs$lam_name
+  if (!is.null(.tbn) && !is.na(.tbn) && .tbn %in% names(pars$sigma_var))
+    c(pars$struct, unname(pars$sigma_var[[.tbn]]))
+  else pars$struct
+}
+
 .adfoMuJMemo <- function(cache, s_idx, struct, solve_fn) {
   if (is.null(cache)) return(solve_fn())
   key <- paste0(s_idx, ":", paste(sprintf("%.17g", struct), collapse = ","))
@@ -158,6 +179,7 @@
   pars  <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(Inf)
   total <- 0
+  .mkey <- .adfoMuJKey(pars, sensModel)
 
   for (s_idx in seq_along(studies)) {
     s   <- studies[[s_idx]]
@@ -165,7 +187,7 @@
     # Joint (same-subject) unit: stacked FO mean/Jacobian -> full V = J Omega J'
     # (cross blocks from the shared J) + per-output residual; single MVN.
     if (isTRUE(s$is_joint)) {
-      mj <- .adfoMuJMemo(muj_cache, s_idx, pars$struct, function()
+      mj <- .adfoMuJMemo(muj_cache, s_idx, .mkey, function()
         .adfoGetMuJJoint(pars, pinfo, s, sensModel, rxMod, params_list[[s_idx]], cores))
       V  <- if (pinfo$n_eta > 0L) tcrossprod(mj$J %*% pars$L) else
         matrix(0, s$n_total, s$n_total)
@@ -180,10 +202,10 @@
     n_t <- length(s$times)
     arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
 
-    mj  <- .adfoMuJMemo(muj_cache, s_idx, pars$struct, function()
+    mj  <- .adfoMuJMemo(muj_cache, s_idx, .mkey, function()
       .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
                   params_list[[s_idx]], cores))
-    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta)
+    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta, s$times)
 
     nll_s <- if (s$method == "var") {
       nll_var_cpp(s$E, s$v_diag, vp$mu_sigma, diag(vp$V), s$n)
@@ -257,7 +279,7 @@
 
     mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
                         params_list[[s_idx]], cores)
-    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, n_eta)
+    vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, n_eta, s$times)
 
     nll_s <- if (s$method == "var") {
       nll_var_cpp(s$E, s$v_diag, vp$mu_sigma, diag(vp$V), s$n)
@@ -303,12 +325,13 @@
         n_ts <- length(s$times)
         arrs <- .admResidRows(pinfo, ovs, pars$sigma_var, n_ts)
 
-        mjs <- .adfoGetMuJBatch(struct_mat, pinfo, s, sensModel, rxMod, ovs, cores)
+        mjs <- .adfoGetMuJBatch(struct_mat, pinfo, s, sensModel, rxMod, ovs, cores,
+                                pars$sigma_var)
         if (is.null(mjs)) { nll_cfg[] <- Inf; break }
 
         for (k in seq_len(n_s)) {
           if (!is.finite(nll_cfg[k])) next
-          vpk <- .adfoVpred(mjs[[k]]$mu, mjs[[k]]$J, pars$L, arrs, n_ts, n_eta)
+          vpk <- .adfoVpred(mjs[[k]]$mu, mjs[[k]]$J, pars$L, arrs, n_ts, n_eta, s$times)
           nll_k <- if (s$method == "var") {
             nll_var_cpp(s$E, s$v_diag, vpk$mu_sigma, diag(vpk$V), s$n)
           } else {
@@ -338,8 +361,17 @@
       if (is.null(invV)) next
       dNLL_dV      <- s$n * (invV - invV %*% (s$V + tcrossprod(r)) %*% invV)
       dNLL_dV_diag <- diag(dNLL_dV)
+      # V_pred -> V_struct chain (see the single-output branch below)
+      var_f_j  <- diag(tcrossprod(JL))
+      .dres_j  <- .admResidDeriv(mu_pred, var_f_j, mc$arr, pinfo)   # once, reused below
+      vchain_j <- .admResidVChain(mu_pred, var_f_j, mc$arr, pinfo,
+                                  .admRowTimes(s, length(mu_pred)), deriv = .dres_j)
+      dNLL_dmu_full <- drop(-2 * s$n * invV %*% r)
       if (n_eta > 0L && n_o > 0L) {
-        ML <- crossprod(J, dNLL_dV %*% JL)
+        .bj <- dNLL_dV * vchain_j
+        diag(.bj) <- diag(.bj) +           # mean-from-covariance path (TBS only)
+          dNLL_dmu_full * (attr(vchain_j, "dmu_dv0") %||% numeric(length(mu_pred)))
+        ML <- crossprod(J, .bj %*% JL)
         for (r_idx in seq_along(pinfo$omega_par)) {
           i <- pinfo$chol_i[r_idx]; jj <- pinfo$chol_j[r_idx]
           grad[n_s + n_e + r_idx] <- grad[n_s + n_e + r_idx] +
@@ -347,9 +379,10 @@
             else 2 * as.numeric(ML[i, jj])
         }
       }
-      dNLL_dmu_full <- drop(-2 * s$n * invV %*% r)
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-        .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu_full)
+        .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu_full, var_f_j,
+                      dNLL_dV, .admRowTimes(s, length(mu_pred)), tcrossprod(JL),
+                      deriv = .dres_j)
       next
     }
 
@@ -373,6 +406,17 @@
       dNLL_dV_diag <- diag(dNLL_dV)
     }
 
+    # dNLL_dV is w.r.t. V_PRED, but ML below differentiates the STRUCTURAL
+    # covariance J Omega J'. They differ by .admResidVChain() whenever the
+    # residual is f-dependent (ms_i*ms_j off-diagonal, dv_dv0 on it); identity
+    # for purely additive error, so add() models are unchanged.
+    var_f  <- vp$var_f
+    .dres  <- .admResidDeriv(mu_pred, var_f, mc$arr, pinfo)   # once, reused below
+    vchain <- .admResidVChain(mu_pred, var_f, mc$arr, pinfo, s$times, deriv = .dres)
+    # Needed by the omega block below as well as the sigma block, so compute it here.
+    dNLL_dmu <- if (is_var) -2 * s$n * r / diag(V_pred) else
+      drop(-2 * s$n * invV %*% r)
+
     # Omega gradient: d(-2LL)/d(L[i,j]) via ML = t(J) dNLL_dV JL
     # (JL cached from Pass 1 -- avoids materialising M = t(J) dNLL_dV J separately)
     # Diagonal p = log(Omega_ii) = 2*log(L_ii):
@@ -382,7 +426,17 @@
     # Off-diagonal p = L_ij:    chain rule gives 2*(ML)[i,j]
     if (n_eta > 0L && n_o > 0L) {
       JL <- mc$JL
-      ML <- if (is_var) crossprod(J, JL * dNLL_dv_pred) else crossprod(J, dNLL_dV %*% JL)
+      # + dNLL_dmu * dmu_dv0 on the diagonal: for TBS the predicted MEAN depends on
+      # Var_eta(f) = diag(J Omega J'), so omega reaches the objective through the
+      # mean too. Zero for every other residual form (see .admResidVChain).
+      .dmv <- attr(vchain, "dmu_dv0") %||% numeric(length(mu_pred))
+      ML <- if (is_var)
+        crossprod(J, JL * (dNLL_dv_pred * diag(vchain) + dNLL_dmu * .dmv))
+      else {
+        .b <- dNLL_dV * vchain
+        diag(.b) <- diag(.b) + dNLL_dmu * .dmv
+        crossprod(J, .b %*% JL)
+      }
       d  <- pinfo$chol_diag
       for (r_idx in seq_along(pinfo$omega_par)) {
         i  <- pinfo$chol_i[r_idx]; jj <- pinfo$chol_j[r_idx]
@@ -399,10 +453,15 @@
     # Sigma gradient. Only this output's residual parameters contribute; rows
     # belonging to other endpoints carry a zero derivative, so summing over all
     # rows is a no-op for them.
-    dNLL_dmu <- if (is_var) -2 * s$n * r / diag(V_pred) else
-      drop(-2 * s$n * invV %*% r)
+    # cov_f: the STRUCTURAL covariance J Omega J'. Needed because for lnorm/TBS the
+    # mean scale ms is itself a function of a residual parameter, so sigma reaches
+    # every OFF-diagonal of V_pred (= ms_i ms_j cov_ij) and not just the diagonal.
+    # Under FO the struct thetas are finite-differenced through the full NLL, so
+    # only the sigma path needs this; omega's ms factor is already in vchain.
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-      .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu)
+      .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
+                    if (is_var) NULL else dNLL_dV, s$times,
+                    if (is_var) NULL else tcrossprod(mc$JL), deriv = .dres)
   }
 
   grad
@@ -443,19 +502,24 @@
 # Post-fit covariance via numerical Hessian.
 # use_grad=TRUE: forward FD of gradient (np_cov+1 grad evals -- faster).
 # use_grad=FALSE: full NLL-FD quadratic form (1+2*np_cov+4*n_off NLL evals).
-# Hessian restricted to struct + sigma parameters (omega Cholesky excluded).
+# Hessian over struct + sigma + omega (falls back to struct+sigma if not PD).
 .adfoCalcCov <- function(p_hat, pinfo, studies, sensModel, rxMod, output_var,
                           params_list, cores,
                           use_grad = FALSE, grad_h = 1e-4, cov_h = 1e-3,
                           cov_h_outer = .Machine$double.eps^(1/5)) {
   n_s     <- length(pinfo$struct_names)
   n_e     <- length(pinfo$sigma_names)
-  cov_idx <- seq_len(n_s + n_e)
+  n_o     <- length(pinfo$omega_par)
+  # The Hessian spans struct + sigma + OMEGA -- see .adghCalcCov() for the
+  # measurement. Excluding omega made the STRUCTURAL SEs too small (reported SE /
+  # empirical sampling SD over simulated datasets went from 0.67 to 1.17 on prop
+  # and 0.67 to 1.06 on lnorm when omega was put back), because a theta carrying
+  # an eta is correlated with that eta's variance. Falls back to the struct+sigma
+  # sub-block if the weakly-identified omega Cholesky makes the full H indefinite.
+  n_sub   <- n_s + n_e
+  cov_idx <- seq_len(n_sub + n_o)
   np_cov  <- length(cov_idx)
   nms_cov <- names(p_hat)[cov_idx]
-  message("  Note: covMethod='r' computes covariance for structural and sigma ",
-          "parameters only; omega (IIV) SEs are not computed (matching nlmixr2 ",
-          "FOCEI behavior).")
 
   # One (mu, J) memo for the whole Hessian. The Hessian perturbs struct AND sigma
   # (omega Cholesky is excluded), and every sigma direction -- including the
@@ -520,6 +584,16 @@
   eig_dec <- tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
   H_eigs  <- if (!is.null(eig_dec)) eig_dec$values else rep(NA_real_, np_cov)
 
+  # If the weakly-identified omega Cholesky makes the full Hessian indefinite,
+  # drop back to the struct+sigma sub-block rather than reporting nothing.
+  .red <- .admReduceNpdOmega(H, H_eigs, eig_dec, nms_cov, n_o, n_sub)
+  if (.red$reduced)
+    warning("adfoCalcCov: the full Hessian including omega was not positive ",
+            "definite; reporting structural and sigma standard errors only.",
+            call. = FALSE)
+  H <- .red$H; nms_cov <- .red$nms_cov; np_cov <- .red$np_cov
+  eig_dec <- .red$eig_dec; H_eigs <- .red$H_eigs
+
   if (!is.null(eig_dec) && min(H_eigs) < 0) {
     warning(sprintf(
       "adfoCalcCov: Hessian not positive definite (min eigenvalue %.3e). Covariance not computed. Try increasing cov_h_outer (currently %.3e), e.g. cov_h_outer = %.3e.",
@@ -538,7 +612,9 @@
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
   dimnames(cov_full) <- list(nms_cov, nms_cov)
-  cov_full[pinfo$struct_names, pinfo$struct_names, drop = FALSE]
+  # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
+  # shared implementation for all three estimators -- see .admScaleReportedCov().
+  .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -569,7 +645,8 @@
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   m <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores,
-                            sens_cache_file, sens_cols, sens_rename, sensModel_direct)
+                            sens_cache_file, sens_cols, sens_rename, sensModel_direct,
+                            pinfo)
 
   params_list <- .admMakeParamsList(1L, pinfo, length(studies))
 
@@ -605,6 +682,20 @@
 #' @param studies Named list of study specifications (same format as
 #'   [admControl()]: `E`, `V`, `n`, `times`, `ev`, optional `method`; or an
 #'   `observations` list for multi-compartment fits -- see [admControl()]).
+#' @param resid_nodes Gauss-Hermite nodes used to integrate the RESIDUAL for a
+#'   transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+#'   `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean and
+#'   variance. Ignored by every other error model, which has closed forms. Default
+#'   81. Measured worst-case relative error against an independent quadrature, over
+#'   all four transforms and residual SD of 0.5, 1, 2 and 3: n = 15 gives 5.7e-2,
+#'   31 gives 4.5e-3, 81 gives 5.0e-5. The error is dominated by large residual SD;
+#'   at SD <= 1, n = 31 already gives 1e-7 or better.
+#'
+#'   This is an ACCURACY dial, not a speed one. The quadrature is linear in
+#'   `resid_nodes` in isolation (~50 us at 15, 300 us at 81 for an 8-row study) but
+#'   negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
+#'   evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
+#'   with a large residual SD; there is little to gain by lowering it.
 #' @param grad Gradient mode.  `"none"` (default) uses derivative-free BOBYQA;
 #'   `"analytical"` uses the closed-form FO gradient (requires sensitivity
 #'   equations); `"fd"` uses forward finite differences of the full NLL;
@@ -633,9 +724,26 @@
 #'   FD Jacobian.
 #' @param grad_bounds Box-constraint half-width when using gradients.
 #' @param cov_h_outer Outer step scale for NLL-FD Hessian.
-#' @param covMethod `"r"` computes covariance via numerical Hessian for
-#'   structural and residual-error parameters only (omega/IIV SEs are not
-#'   computed, consistent with nlmixr2 FOCEI); `"none"` skips it.
+#' @param covMethod `"r"` computes covariance via a numerical Hessian over the
+#'   structural, residual-error and omega parameters; `"none"` skips it. Omega is
+#'   included because excluding it also biases the STRUCTURAL standard errors
+#'   downward -- a theta carrying an eta is correlated with that eta's variance.
+#'   If the weakly-identified omega Cholesky makes the Hessian non-positive
+#'   definite, the structural + residual sub-block is reported with a warning.
+#'
+#'   All three blocks are reported on the scale the ESTIMATES are printed on, as
+#'   `nlmixr2est` does: structural thetas on the log/optimizer scale, residual
+#'   error as an SD, and omega as the variance/covariance entries (named
+#'   `om.<eta>` and `cov.<eta_i>.<eta_j>`). The omega block is rotated by the
+#'   full Jacobian of Omega with respect to the log-Cholesky, which is not
+#'   diagonal once omega is correlated.
+#'
+#'   **An adfo standard error describes scatter, not accuracy.** FO linearises the
+#'   model at eta = 0, and on a non-additive residual (or a saturating endpoint,
+#'   or a large omega) the resulting point estimates carry a bias of several
+#'   standard errors -- measured 5-20 SE, giving 0% coverage for a nominal 95%
+#'   interval even where the SE itself matches the sampling SD. Use `adgh` or
+#'   `admc` when the uncertainty matters.
 #' @param n_restarts Number of optimizer restarts (1 = no multi-start).
 #' @param restart_sd Standard deviation for random perturbations of initial
 #'   struct thetas at each restart (> 1).
@@ -746,6 +854,9 @@ adfoControl <- function(
     sumProd       = FALSE,
     literalFix    = TRUE,
     returnAdmr    = FALSE,
+    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # positional call -- adfoControl(studies, "fd") used to set grad = "fd".
+    resid_nodes = 81L,
     ...) {
 
   .xtra <- list(...)
@@ -758,6 +869,11 @@ adfoControl <- function(
   covMethod <- match.arg(covMethod)
 
   checkmate::assertList(studies)
+  # A residual quadrature needs a real grid. .adghNodes1() refuses m < 1, but it
+  # accepts 1..4 happily and returns a rule that integrates nothing usefully --
+  # the measured error at 5 nodes is already 3.3e-1. Refuse here, where the
+  # message can name the argument, rather than silently scoring a wrong NLL.
+  checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1)
   checkmate::assertIntegerish(maxeval,    lower = 1L, len = 1)
   checkmate::assertNumeric(ftol_rel,      lower = 0,  len = 1)
   checkmate::assertIntegerish(print,      lower = 0L, len = 1)
@@ -786,6 +902,7 @@ adfoControl <- function(
 
   .ret <- list(
     studies       = studies,
+    resid_nodes   = as.integer(resid_nodes),
     n_sim         = 1L,        # interface compatibility with .admRunRestarts()
     sampling      = "sobol",   # idem
     grad          = grad,
@@ -883,11 +1000,32 @@ nlmixr2Est.adfo <- function(env, ...) {
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
   pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
+  # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
+  pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
   output_var <- .admOutputVar(.ui)
+  # A beta endpoint's precision phi is SOLVED, not fitted: .admSimulate() returns
+  # it as an attribute on cp_mat and admc/adgh patch it into the residual rows.
+  # This estimator has no such path -- arr$phi stayed NA and .admResidApply()
+  # produced NA for every row, i.e. an NaN objective with no explanation. Refuse
+  # with one instead, and name the estimators that do support it.
+  if (any(vapply(.admResidSpecs(pinfo), function(sp)
+        identical(sp$form, .ADM_RESID_BETA), logical(1))))
+    stop("est='adfo' does not support a beta() endpoint: the beta precision is derived ",
+         "from the solved shapes, which only the admc and adgh paths recover.
+",
+         "  Use est = \"admc\" or est = \"adgh\" for this model.", call. = FALSE)
+
 
   for (nm in names(studies))
     studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
   studies    <- .admFlattenStudies(studies)
+  # AFTER flattening: both checks inspect per-unit fields (`method`, `is_joint`,
+  # `blocks`), which only exist on flattened units -- adgh/admc call them at the
+  # equivalent point. Checking the un-flattened studies made every ordinal fit
+  # fail its own block-count check.
+  .admCheckAR(pinfo, studies)
+  .admCheckOrdinal(pinfo, studies)
+  .admCheckMixedEndpoints(.ui)
   multi_out  <- length(.admOutputVars(.ui)) > 1L
   any_joint  <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
   studies    <- .admBuildEvFull(studies, tag_cmt = multi_out)
@@ -914,8 +1052,13 @@ nlmixr2Est.adfo <- function(env, ...) {
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   sensModel <- if (want_sens) {
     sm <- tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
-    if (is.null(sm))
+    if (is.null(sm)) {
       warning("adfoControl(grad='analytical'): sensitivity model unavailable -- falling back to forward FD")
+      # ... and actually fall back. This only warned: want_sens stayed TRUE, so
+      # .adfoGrad's ANALYTICAL path still ran on an FD Jacobian. adgh.R does this
+      # correctly; adfo did not.
+      want_sens <- FALSE
+    }
     sm
   } else NULL
 
@@ -1034,7 +1177,10 @@ nlmixr2Est.adfo <- function(env, ...) {
   p_hat  <- setNames(opt$solution, names(ov$p0))
   t0_cov <- proc.time()
   .cov <- if (.ctl$covMethod == "r") {
-    np_cov     <- length(pinfo$struct_names) + length(pinfo$sigma_names)
+    # struct + sigma + OMEGA: the Hessian spans all three, so the evaluation
+    # count must too.
+    np_cov     <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
+                  length(pinfo$omega_par)
     # Joint fits use the NLL-FD Hessian (the grad-FD Hessian calls the
     # single-output analytical .adfoGrad, which does not handle joint units).
     use_grad_cov <- want_grad && !any_joint
@@ -1054,6 +1200,17 @@ nlmixr2Est.adfo <- function(env, ...) {
                    cov_h_outer = .ctl$cov_h_outer),
       error = function(e) { warning("adfoCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
+  # A NULL covariance used to be completely silent: no warning reached the user,
+  # `warnings()` was empty, covMethod came back "" and every SE was NA with no
+  # indication why. Say so once, from the driver, where it cannot be swallowed.
+  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
+    warning("covariance could not be computed (the Hessian was singular or ",
+            "non-finite); standard errors are unavailable for this fit.",
+            call. = FALSE)
+  # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
+  # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
+  .cov      <- .admCovThetaOrder(.cov, .ui)
+  .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
   t_elapsed <- t_opt + t_cov
 
@@ -1082,6 +1239,11 @@ nlmixr2Est.adfo <- function(env, ...) {
                         sigma_var      = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
+                        # the TBS residual quadrature the FIT used -- plot.admFit()
+                        # re-parses the ui, and .admParseIniDf() carries no
+                        # resid_nodes, so without this the diagnostics recompute
+                        # V_pred at the 81-node default and disagree with the fit
+                        resid_nodes    = pinfo$resid_nodes,
                         omega          = final$omega,
                         L              = final$L,
                         eta_col_names  = pinfo$eta_col_names,
@@ -1102,16 +1264,17 @@ nlmixr2Est.adfo <- function(env, ...) {
   nlmixr2est::.nlmixr2FitUpdateParams(.ret)
   nmObjHandleControlObject.adfoControl(.ctl, .ret)
   if (exists("control", .ui)) rm(list = "control", envir = .ui)
-  .ret$control <- .admToFoceiControl(.ctl)
+  .ret$control <- .admToFoceiControl(.ctl, .admCovSkip(.cov, .ui))
   .focei_model <- suppressMessages(tryCatch(.ui$foceiModel, error = function(e) NULL))
   if (!is.null(.focei_model)) .ret$model <- .focei_model
 
   .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = if (multi_out) admData(.admOutputVars(.ui)) else admData(),
+    .ui, data = if (multi_out) admData(.admEndpointNames(.ui)) else admData(),
     control = .ret$control,
     table = .ret$table, env = .ret, est = "adfo")
 
   .fit$env$method   <- "adfo"
+  .admRestoreCovNames(.fit, .cov_nms)
   .fit$env$studies  <- studies
   .fit$env$admExtra <- .ret$admExtra
   # Populate nlmixr2-style parameter history so traceplot(fit) works natively.
