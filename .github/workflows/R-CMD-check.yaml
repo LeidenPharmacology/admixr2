@@ -47,8 +47,43 @@ jobs:
           http-user-agent: ${{ matrix.config.http-user-agent }}
           use-public-rspm: true
 
+      # RcppParallel 6.0.0 (published 2026-07-23) switched to oneTBB, which removes
+      # tbb::internal. stringfish's SOURCE never uses that API -- it only calls
+      # RcppParallel's public interface (its Makevars just pulls CxxFlags()/
+      # RcppParallelLibs()) -- but any stringfish BINARY compiled against the old TBB
+      # headers has the removed symbol baked in, so loading it against oneTBB dies:
+      #   Linux  : stringfish.so: undefined symbol:
+      #            _ZN3tbb8internal25concurrent_vector_base_v316internal_grow_byEmmPFvPvPKvmES4_
+      #   Windows: stringfish.dll: LoadLibrary failure (old tbb.dll gone; 6.0.0 ships oneTBB)
+      # qs2 -> stringfish, and rxode2 itself Imports qs2, so this takes the whole stack
+      # down at LOAD time -- every Linux job plus windows went red on 2026-07-24.
+      #
+      # It is an ABI/stale-artifact problem, NOT a source incompatibility: on the devel
+      # runner rxode2 COMPILED fine against RcppParallel 6.0.0 (linking -ltbb from
+      # RcppParallel/lib) and then died loading a stale stringfish.so restored from the
+      # dependency cache. Upstream reached the same conclusion and did not pin
+      # RcppParallel back -- nlmixr2/rxode2 fef0550 "Bump required rxode2ll due to
+      # RcppParallel ABI issues" requires a REBUILT dependency instead.
+      #
+      # So: rebuild the two TBB-linked packages from source against whichever
+      # RcppParallel is current. This MUST run BEFORE setup-r-dependencies, because the
+      # failure happens *during* dependency installation (a step placed after it never
+      # executes), and RcppParallel is installed here first so stringfish links to it.
+      # cache-version is bumped in tandem so the poisoned cached library is not restored.
+      #
+      # macOS is excluded: its binaries still resolve and that job is green.
+      # DROP THIS once CRAN/RSPM ship stringfish/qs2 rebuilt against RcppParallel >= 6.
+      - name: Rebuild TBB-linked deps from source (RcppParallel 6.0.0 ABI)
+        if: runner.os != 'macOS'
+        run: |
+          install.packages("RcppParallel", repos = "https://cloud.r-project.org")
+          install.packages(c("stringfish", "qs2"), type = "source",
+                           repos = "https://cloud.r-project.org")
+        shell: Rscript {0}
+
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          cache-version: 2
           extra-packages: any::rcmdcheck
           needs: check
 
