@@ -40,6 +40,21 @@ jobs:
           r-version: 'release'
           use-public-rspm: true          # current CRAN, NOT r-universe
 
+      # stringfish compiles against RcppParallel's TBB; a binary built against another
+      # TBB generation fails to load and takes rxode2 -> the dependency install with it.
+      # Install the binaries, check they load, rebuild from source only if they do not.
+      # See R-CMD-check.yaml for the full account.
+      - name: Ensure stringfish/qs2 load against the installed RcppParallel
+        run: |
+          install.packages("RcppParallel")
+          install.packages(c("stringfish", "qs2"))
+          if (!requireNamespace("qs2", quietly = TRUE)) {
+            message("qs2 does not load -- rebuilding it and stringfish from source")
+            install.packages(c("stringfish", "qs2"), type = "source")
+          }
+          library(qs2)
+        shell: Rscript {0}
+
       # cache-version 3 evicts the libraries built during the RcppParallel 6 oneTBB break.
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
