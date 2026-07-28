@@ -47,18 +47,30 @@ jobs:
           http-user-agent: ${{ matrix.config.http-user-agent }}
           use-public-rspm: true
 
-      # CRAN's macOS stringfish/qs2 binaries predate RcppParallel 6 (oneTBB, which drops
-      # tbb::internal), so they no longer load beside it. Loading rxode2 pulls in qs2 ->
-      # stringfish -- DESCRIPTION Imports load with the namespace, verified -- so this
-      # takes down the dependency install, hence a step BEFORE setup-r-dependencies.
-      # Dropping admixr2's own qs2 Import would NOT avoid it. Linux and Windows binaries
-      # have been rebuilt and need nothing.
-      # DROP when bin/macosx/big-sur-arm64/contrib/4.5/stringfish_*.tgz gets a fresh date.
-      - name: Rebuild stringfish/qs2 from source (macOS)
-        if: runner.os == 'macOS'
+      # stringfish compiles against RcppParallel's TBB, so a binary built against a
+      # different TBB generation fails to LOAD. Loading rxode2 pulls in qs2 ->
+      # stringfish -- DESCRIPTION Imports load with the namespace, verified -- so that
+      # takes down the whole dependency install, hence a step BEFORE it. Dropping
+      # admixr2's own qs2 Import does NOT avoid this; rxode2 imports qs2.
+      #
+      # RcppParallel 6.0.0 (2026-07-23) moved to oneTBB and removed tbb::internal,
+      # which did exactly that. CRAN has since rebuilt the Windows binaries and P3M the
+      # Linux ones, but NOT the macOS ones: it serves RcppParallel 6.1.1 beside a
+      # stringfish built 2026-04-21.
+      #
+      # Rather than name the broken platform, install the binaries and check they load,
+      # rebuilding from source only if they do not. Seconds on a healthy platform, a
+      # repair on a broken one, and no edit needed when CRAN catches up -- or if some
+      # other platform breaks next time. Delete the step once it has been a no-op
+      # everywhere for a while.
+      - name: Ensure stringfish/qs2 load against the installed RcppParallel
         run: |
           install.packages("RcppParallel")
-          install.packages(c("stringfish", "qs2"), type = "source")
+          install.packages(c("stringfish", "qs2"))
+          if (!requireNamespace("qs2", quietly = TRUE)) {
+            message("qs2 does not load -- rebuilding it and stringfish from source")
+            install.packages(c("stringfish", "qs2"), type = "source")
+          }
           library(qs2)  # fail here, not 20 minutes later inside R CMD check
         shell: Rscript {0}
 
