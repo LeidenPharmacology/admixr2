@@ -1,5 +1,5 @@
 # Load (or compile + cache) the rxode2 simulation model.
-# Compiled DLL is cached to disk via qs2, keyed by model digest.
+# Compiled DLL is cached to disk with saveRDS(), keyed by model digest.
 .admLoadModel <- function(ui) {
   # Accessing $simulationModel (below) caches the compiled model in
   # ui$meta$.simModelBase as a side effect -- a live, self-referential rxode2
@@ -10,10 +10,10 @@
   .model_key <- digest::digest(ui$lstExpr)
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
-    paste0("adm-sim-", .model_key, ".qs2")
+    paste0("adm-sim-", .model_key, ".rds")
   )
   if (file.exists(.cacheFile)) {
-    mod <- tryCatch(qs2::qs_read(.cacheFile), error = function(e) NULL)
+    mod <- tryCatch(readRDS(.cacheFile), error = function(e) NULL)
     load_ok <- !is.null(mod) &&
       tryCatch({ rxode2::rxLoad(mod); TRUE }, error = function(e) FALSE)
     if (load_ok) {
@@ -27,7 +27,7 @@
   on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
   setwd(rxode2::rxTempDir())
   mod <- rxode2::rxode2(ui)$simulationModel
-  tryCatch(suppressWarnings(qs2::qs_save(mod, .cacheFile)), error = function(e) NULL)
+  tryCatch(suppressWarnings(saveRDS(mod, .cacheFile)), error = function(e) NULL)
   rxode2::rxLoad(mod)
   mod
 }
@@ -445,7 +445,7 @@
     paste0("adm-sens-",
            digest::digest(list(ui$lstExpr, unpaired, .ini_key,
                                "dirs-jump+fixed-theta+dde+predtbs+derivpred+tbslam+countpred+inikey", .rx_ver)),
-           ".qs2"))
+           ".rds"))
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
   on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
@@ -523,7 +523,7 @@
   }
 
   if (file.exists(.cacheFile)) {
-    result <- tryCatch({ m <- qs2::qs_read(.cacheFile); rxode2::rxLoad(m$mod); m },
+    result <- tryCatch({ m <- readRDS(.cacheFile); rxode2::rxLoad(m$mod); m },
                        error = function(e) NULL)
     if (!is.null(result)) {
       # Overwrite the worker-inherited fields from the parent's fresh derivation
@@ -643,7 +643,7 @@
   #
   # This mirrors nlmixr2est's ed03b8dfc, which found and fixed the same failure in
   # its own augmented-sensitivity solve. Stored on the result -- and folded into the
-  # cache schema tag above -- because a parallel worker reads the qs2 file directly
+  # cache schema tag above -- because a parallel worker reads the cache file directly
   # and cannot re-derive it. NULL for an ordinary model, which leaves every existing
   # solve call byte-for-byte as it was.
   result$solve_args <- if (isTRUE(tryCatch(
@@ -655,7 +655,7 @@
   # chain references the package namespace and serialising it warns "'package:
   # admixr2' may not be available when loading". Harmless -- a worker reloads the
   # DLL via rxLoad(), not from the serialised env (.admLoadModel does the same).
-  tryCatch(suppressWarnings(qs2::qs_save(result, .cacheFile)), error = function(e) NULL)
+  tryCatch(suppressWarnings(saveRDS(result, .cacheFile)), error = function(e) NULL)
   result
 }
 

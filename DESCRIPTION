@@ -28,7 +28,6 @@ Imports:
     digest,
     nlmixr2est (>= 6.0.1),
     nloptr,
-    qs2,
     randtoolbox,
     Rcpp,
     rxode2 (>= 5.1.2),

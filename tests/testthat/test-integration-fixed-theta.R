@@ -63,7 +63,7 @@ fixed_theta_fn <- function() {
 
 test_that("the sens model re-derives its fields on a disk-cache hit (worker path)", {
   # The disk-cache branch (.admLoadSensModel, file.exists) runs on the SECOND load:
-  # the first load writes the qs2 file, the reload reads it and OVERWRITES
+  # the first load writes the cache file, the reload reads it and OVERWRITES
   # rename_map / fixed_theta from the parent's fresh derivation rather than trusting
   # the file (sens_cols is keyed by `unpaired` in the cache path, so a hit is
   # guaranteed the same direction set and it is trusted). These are the fields a
@@ -81,7 +81,7 @@ test_that("the sens model re-derives its fields on a disk-cache hit (worker path
   stale <- first
   stale$rename_map[["tka"]] <- "THETA[2]"    # the pre-fix bug
   stale$fixed_theta <- numeric(0)
-  qs2::qs_save(stale, first$cache_file)
+  saveRDS(stale, first$cache_file)
 
   back <- suppressMessages(admixr2:::.admLoadSensModel(ui))
   expect_equal(unname(back$rename_map[["tka"]]), "THETA[3]")     # corrected, not "THETA[2]"
@@ -205,10 +205,10 @@ test_that("the sens cache key carries a schema tag (pre-fix caches miss)", {
   e <- .ft_setup()
 
   no_tag <- file.path(rxode2::rxTempDir(),
-                      paste0("adm-sens-", digest::digest(e$ui$lstExpr), ".qs2"))
+                      paste0("adm-sens-", digest::digest(e$ui$lstExpr), ".rds"))
   expect_false(identical(normalizePath(e$sens$cache_file, mustWork = FALSE),
                          normalizePath(no_tag, mustWork = FALSE)))
-  expect_match(basename(e$sens$cache_file), "^adm-sens-.*\\.qs2$")
+  expect_match(basename(e$sens$cache_file), "^adm-sens-.*\\.rds$")
 })
 
 test_that("a FIXED omega is rejected with an actionable error (not a bare subscript error)", {
