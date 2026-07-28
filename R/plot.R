@@ -148,13 +148,14 @@ head.paged_df <- function(x, n = 6L, ...) {
   struct_nms        <- names(pinfo$struct_transforms)
   omega_diag_nms    <- pinfo$omega_par_names[pinfo$chol_diag]
   omega_offdiag_nms <- pinfo$omega_par_names[!pinfo$chol_diag]
-  sigma_pow_nms <- pinfo$sigma_names[.admSigmaRole(pinfo) == "pow_exp"]
+  # Residual parameters go through .admSigmaReportFn() so the trace is on the
+  # same scale print(fit) reports -- every sigma_role, not a list of the ones
+  # that existed when this was written.
   back_fns <- setNames(lapply(par_names, function(nm) {
     if (nm %in% struct_nms)             function(v) .admBackTransform(v, pinfo$struct_transforms[[nm]])
     else if (nm %in% omega_diag_nms)    exp
     else if (nm %in% omega_offdiag_nms) identity
-    else if (nm %in% sigma_pow_nms)     identity   # pow() exponent: already natural
-    else function(v) exp(v / 2)   # sigma: log(sigma^2) -> SD
+    else .admSigmaReportFn(pinfo, nm)
   }), par_names)
 
   # Order par_names by iniDf row position so facets follow ini() block order.
@@ -295,12 +296,23 @@ head.paged_df <- function(x, n = 6L, ...) {
   # Re-parse the ui so the plotted bands use exactly the fit's residual error
   # model (per-endpoint spec, error form, sigma roles). Falls back to a
   # name-based guess only when the ui cannot be parsed.
-  pinfo_r <- tryCatch(.admParseIniDf(ui$iniDf, ui), error = function(e) NULL)
+  #
+  # suppressWarnings: this is a RE-parse of a ui that was already parsed (and
+  # already warned about) at fit time, so .admBuildResidSpecs()'s advisory
+  # warnings -- e.g. an estimated t(nu) being non-identifiable from aggregate
+  # data -- would otherwise be re-emitted on every plot() as if they were new.
+  pinfo_r <- tryCatch(suppressWarnings(.admParseIniDf(ui$iniDf, ui)),
+                      error = function(e) NULL)
   if (is.null(pinfo_r))
     pinfo_r <- list(sigma_names   = sig_nms,
                     sigma_output  = rep(NA_character_, length(sv)),
                     sigma_is_prop  = as.list(grepl("prop",  sig_nms, ignore.case = TRUE)),
                     sigma_is_lnorm = as.list(grepl("lnorm", sig_nms, ignore.case = TRUE)))
+  # .admParseIniDf() carries no resid_nodes -- only the DRIVERS set it, from the
+  # control. Restore the count the fit actually used, or the diagnostics rebuild
+  # V_pred on the 81-node default and a fit run with resid_nodes = 31L (or 201L)
+  # is diagnosed against a different model than it was fitted with.
+  pinfo_r$resid_nodes <- extra$resid_nodes %||% .ADM_TBS_NODES
   sig_output <- pinfo_r$sigma_output
 
   .sim_study <- function(s) {
@@ -332,7 +344,14 @@ head.paged_df <- function(x, n = 6L, ...) {
                                       dimnames = list(NULL, col_nms)))
     params_df[, rxerr_nms] <- 1
     tryCatch(
-      .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L),
+      # A joint unit's outputs share one set of etas and are stacked into one
+      # vector; .admSimulate() solves a single output, so it returned the first
+      # endpoint's trajectory for every row. Same shared-eta solve the estimators
+      # use, for the same unit.
+      if (isTRUE(s$is_joint))
+        .admSimulateJoint(rxMod, extra$struct, sig_nms, eta_mat, s, params_df, 1L)
+      else
+        .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L),
       error = function(e) {
         if (warn) warning("plot.admFit: simulation failed: ", e$message, call. = FALSE)
         NULL
@@ -341,11 +360,18 @@ head.paged_df <- function(x, n = 6L, ...) {
 
   # Returns BOTH the residual-adjusted covariance and mean: lnorm rescales the
   # mean, and the predicted E must carry that scaling just as the NLL does.
-  .add_sigma <- function(V, mu, ov = out_var) {
-    arr <- .admResidRows(pinfo_r, ov, sv, length(mu))
-    ap  <- .admResidApply(mu, diag(V), arr)
-    diag(V) <- ap$dv
-    list(V = V, mu = ap$mu)
+  .add_sigma <- function(V, mu, ov = out_var, times = NULL, phi = NULL) {
+    # beta: the precision is SOLVED and rides back on the simulated matrix. Every
+    # estimator patches it in; this path did not, so after a perfectly ordinary
+    # beta fit the predicted-covariance heatmap, the standardised-residual panels
+    # and the +-1 SD ribbon were all NA, silently.
+    arr <- .admUnitResidRows(pinfo_r, ov, sv, length(mu), phi = phi)
+    # Without `times` + the structural covariance the off-diagonal forms (ar,
+    # ordinal) were dropped, so the predicted-covariance diagnostic panel showed
+    # an independent-residual V for exactly the models whose off-diagonal is the
+    # point of fitting them.
+    ap  <- .admResidApply(mu, diag(V), arr, times, V)
+    list(V = .admApplyResidTail(V, ap), mu = ap$mu)
   }
 
   setNames(lapply(names(studies), function(nm) {
@@ -353,12 +379,27 @@ head.paged_df <- function(x, n = 6L, ...) {
     cp_mat <- .sim_study(s)
     if (is.null(cp_mat)) return(NULL)
     mu     <- colMeans(cp_mat)
-    res    <- .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
-                         s$output %||% out_var)
+    # A JOINT (same-subject, multi-output) unit stacks several endpoints into one
+    # mean vector, so a single `output` cannot describe its rows: passing one made
+    # .admResidRows() build the whole array from the FIRST endpoint's spec, and the
+    # diagnostic panels then showed a covariance the fit never used (plasma's
+    # prop() applied to the brain rows, and so on). Route it through
+    # .admJointResidual() -- the estimators' own per-row-output path -- rather than
+    # reconstructing the residual here for a second time.
+    res    <- if (isTRUE(s$is_joint))
+      .admJointResidual(mu, crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat),
+                        s, pinfo_r, sv)
+    else
+      .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
+                 s$output %||% out_var, s$times, attr(cp_mat, "phi"))
     V_pred <- res$V; mu <- res$mu
     obs_E  <- as.numeric(s$E)
     obs_V  <- as.matrix(s$V)
-    tnm    <- as.character(s$times)
+    # Joint row labels repeat the times across endpoints, so label them by the
+    # endpoint they belong to; a plain unit keeps the bare times it always had.
+    tnm    <- if (isTRUE(s$is_joint))
+      paste0(.admRowOutput(s, length(mu)), "@", .admRowTimes(s, length(mu)))
+    else as.character(s$times)
     names(mu) <- names(obs_E) <- tnm
     dimnames(V_pred) <- dimnames(obs_V) <- list(tnm, tnm)
     list(times = s$times, n = s$n,

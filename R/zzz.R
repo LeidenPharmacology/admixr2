@@ -2,6 +2,11 @@
 # Keys are error-type strings; presence of a key means the warning was already emitted.
 .adm_warn_env <- new.env(parent = emptyenv())
 
+# Gauss-Hermite node cache (see .adghNodes1). The nodes depend on nothing but the
+# node count, and a transformed endpoint asks for the 81-node set on every residual
+# evaluation -- an 81x81 eigen() inside the objective's inner loop otherwise.
+.adm_node_env <- new.env(parent = emptyenv())
+
 .onLoad <- function(libname, pkgname) {
   tryCatch(.register_adm(),  error = function(e)
     warning("admixr2: admc registration failed (", conditionMessage(e), ")", call. = FALSE))

@@ -168,27 +168,39 @@ test_that(".adfoVpred(): additive sigma -- V = J*Omega*J^T + sv*I", {
   expect_equal(vp$mu_sigma, s$mu)          # no lnorm correction
 })
 
-test_that(".adfoVpred(): proportional sigma -- V diag += sv*mu^2", {
+test_that(".adfoVpred(): proportional sigma -- V diag += sv*E[f^2]", {
   s   <- .fo_setup()
   arr <- .fo_arr(s$sv_prop, list(TRUE), list(FALSE), s$n_t)
   vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, arr, n_t = s$n_t, n_eta = 2L)
   V_expected <- s$J %*% (s$L %*% t(s$L)) %*% t(s$J)
-  diag(V_expected) <- diag(V_expected) + s$sv_prop * s$mu^2
+  # Law of total variance: E_eta[Var(y|eta)] = sv*E[f^2] = sv*(Var_eta(f) + mu^2),
+  # NOT sv*mu^2. The extra sv*Var_eta(f) is the eta-eps interaction term that the
+  # old "evaluate the residual at the population mean" formula dropped.
+  var_f <- diag(V_expected)
+  diag(V_expected) <- var_f + s$sv_prop * (var_f + s$mu^2)
 
   expect_equal(vp$V, V_expected, tolerance = 1e-12)
   expect_equal(vp$mu_sigma, s$mu)
 })
 
-test_that(".adfoVpred(): lnorm sigma -- mu_sigma = mu*exp(sv/2), diag += mu_sigma^2*(exp(sv)-1)", {
+test_that(".adfoVpred(): lnorm sigma -- mean scaled, WHOLE covariance scaled", {
   s   <- .fo_setup()
   arr <- .fo_arr(s$sv_add, list(FALSE), list(TRUE), s$n_t)
   vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, arr, n_t = s$n_t, n_eta = 2L)
+  es  <- exp(s$sv_add)
   mu_sigma_exp <- s$mu * exp(s$sv_add / 2)
-  V_expected <- s$J %*% (s$L %*% t(s$L)) %*% t(s$J)
-  diag(V_expected) <- diag(V_expected) + mu_sigma_exp^2 * (exp(s$sv_add) - 1)
+  V_struct <- s$J %*% (s$L %*% t(s$L)) %*% t(s$J)
+  # E[y|eta] = f*exp(s/2), so Var_eta(E[y|eta]) scales the ENTIRE covariance by
+  # exp(s) -- off-diagonals included -- and E_eta[Var(y|eta)] uses E[f^2], not mu^2.
+  V_expected <- V_struct * es
+  diag(V_expected) <- diag(V_struct) * es +
+    (diag(V_struct) + s$mu^2) * es * (es - 1)
 
   expect_equal(vp$mu_sigma, mu_sigma_exp, tolerance = 1e-12)
-  expect_equal(diag(vp$V), diag(V_expected), tolerance = 1e-12)
+  expect_equal(vp$V, V_expected, tolerance = 1e-12)
+  # the two algebraic forms of the diagonal agree
+  expect_equal(diag(vp$V), diag(V_struct) * es^2 + s$mu^2 * es * (es - 1),
+               tolerance = 1e-12)
 })
 
 test_that(".adfoVpred(): no etas -- V is pure sigma contribution, J is ignored", {
@@ -207,11 +219,14 @@ test_that(".adfoVpred(): no etas -- V is pure sigma contribution, J is ignored",
 test_that(".adfoVpred(): two sigma terms -- contributions additive (combined2)", {
   s   <- .fo_setup()
   # Two sigmas on one endpoint: one additive, one proportional. The legacy flags
-  # describe combined2, so V diag gains a^2 + b^2*mu^2.
+  # describe combined2, so E[Var(y|eta)] = a^2 + b^2*E[f^2]. Only the ADDITIVE
+  # term is free of the prediction; the proportional one picks up Var_eta(f) via
+  # E[f^2] = Var_eta(f) + mu^2 (the eta-eps interaction).
   arr <- .fo_arr(c(s$sv_add, s$sv_prop), list(FALSE, TRUE), list(FALSE, FALSE), s$n_t)
   vp  <- admixr2:::.adfoVpred(s$mu, s$J, s$L, arr, n_t = s$n_t, n_eta = 2L)
   V_exp <- s$J %*% (s$L %*% t(s$L)) %*% t(s$J)
-  diag(V_exp) <- diag(V_exp) + s$sv_add + s$sv_prop * s$mu^2
+  var_f <- diag(V_exp)
+  diag(V_exp) <- var_f + s$sv_add + s$sv_prop * (var_f + s$mu^2)
 
   expect_equal(vp$V, V_exp, tolerance = 1e-12)
 })

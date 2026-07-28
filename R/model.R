@@ -167,7 +167,18 @@
 #
 # Returns list(mod, dirs, sens_cols, theta_sens_cols) or NULL on any failure (the
 # caller then falls back to nlmixr2est's inner model + FD for the thetas).
-.admBuildThetaSens <- function(ui, unpaired) {
+# `pred_expr`: the model expression whose sensitivities to emit, as a symengine
+# object. Defaults to `rx_pred_`, which is the prediction for every ordinary
+# endpoint -- but NOT for a likelihood-form endpoint, where rxode2 puts the
+# LOG-LIKELIHOOD there (`llikBeta(DV, b1, b2)`). FOCEI wants exactly that; admixr2
+# moment-matches and needs the MEAN, so such an endpoint passes its own derived
+# expression (beta: b1/(b1+b2)).
+#
+# This works because .rxSens() builds the variational compartments for the WHOLE
+# ODE SYSTEM -- d(state)/d(dir), once -- not for a particular target. .g1() then
+# applies the chain rule to any expression on top of them. A derived prediction is
+# therefore no harder than rx_pred_; only the direct partial differs.
+.admBuildThetaSens <- function(ui, unpaired, pred_expr = NULL) {
   s <- tryCatch(ui$loadPruneSens, error = function(e) NULL)
   if (is.null(s)) return(NULL)
   st <- tryCatch(rxode2::rxStateOde(s), error = function(e) NULL)
@@ -207,7 +218,7 @@
       sens_lines <- rxode2::.rxSens(s, dirs)
       if (length(sens_lines) == 0L) return(NULL)
     }
-    pred <- get("rx_pred_", envir = s)
+    pred <- if (!is.null(pred_expr)) pred_expr else get("rx_pred_", envir = s)
     .Dn  <- function(e, v) symengine::D(e, symengine::S(v))
     .sn1 <- function(j, p) symengine::S(paste0("rx__sens_", j, "_BY_", p, "__"))
     # linCmt: st is empty, so the state sum drops out and D(pred, dir) alone
@@ -348,6 +359,14 @@
 .admLoadSensModel <- function(ui) {
   ini_df <- tryCatch(ui$iniDf, error = function(e) NULL)
   if (is.null(ini_df)) return(NULL)
+  # ORDINAL endpoints get no sensitivity model. rx_pred_ for `y ~ c(p1, p2)` is the
+  # ordinal LOG-LIKELIHOOD, not any one category probability, so its sensitivity
+  # columns differentiate a different function than admixr2 scores -- the same
+  # class of mismatch that made lnorm's gradient ~200x wrong. Returning NULL here
+  # is the single lever that routes every estimator onto the finite-difference
+  # path (audited at ~5e-06), rather than gating grad in four drivers separately.
+  .d <- tryCatch(as.character(ui$predDf$distribution), error = function(e) character(0))
+  if (length(.d) > 0L && any(.d %in% c("ordinal", "dordinal"))) return(NULL)
   eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 &
                        !ini_df$fix, , drop = FALSE]
   # Order by neta1 so rename_map's ETA[i] labels below line up with
@@ -401,15 +420,107 @@
   # but it makes the 5.1.2 -> 5.1.3 handoff automatic regardless.
   .rx_ver <- tryCatch(as.character(utils::packageVersion("rxode2")),
                       error = function(e) "NA")
+  # The key MUST include the iniDf parameter ORDER, not just the model({}) block.
+  # `rename_map` numbers THETA[i] by iniDf row order, and `theta_sens_cols` -- which
+  # names the emitted rx_f1_THETA_j_ columns -- is served straight from the cache.
+  # Two models with an identical model({}) block and a reordered ini({}) therefore
+  # collided: the second was handed the first's column map and read the wrong
+  # sensitivity column. Measured end-to-end (adgh, same model, ini order swapped):
+  # objective 1081.08 with a clean cache vs 2355.77 when served from the other
+  # model's entry -- i.e. stuck at the starting value, every SE NA, and no warning
+  # of any kind. rxTempDir() persists ACROSS SESSIONS, so this survived restarts.
+  #
+  # This is the same failure class the pred_tbs block below documents and fixes by
+  # re-deriving on a cache hit; the reasoning had simply not been carried across to
+  # the field that names the columns. Folding the order into the digest fixes every
+  # cache-served field at once rather than one at a time.
+  .ini_key <- tryCatch({
+    .i <- ui$iniDf
+    paste(paste(.i$name, collapse = "|"),
+          paste(as.integer(.i$fix), collapse = "|"),
+          paste(.i$err, collapse = "|"), sep = "//")
+  }, error = function(e) "")
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
     paste0("adm-sens-",
-           digest::digest(list(ui$lstExpr, unpaired, "dirs-jump+fixed-theta", .rx_ver)),
+           digest::digest(list(ui$lstExpr, unpaired, .ini_key,
+                               "dirs-jump+fixed-theta+dde+predtbs+derivpred+tbslam+countpred+inikey", .rx_ver)),
            ".qs2"))
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
   on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
   setwd(rxode2::rxTempDir())
+
+  # pred_tbs is derived BEFORE the cache read, because it must also be applied on a
+  # cache HIT. The cache key digests ui$lstExpr -- the model({}) block only -- but
+  # lambda's starting value and its fix() status live in ini({}), so
+  # `lam <- fix(0.5)` and `lam <- 0.5` COLLIDE on one key. pred_tbs is what tells
+  # .admSimulateSens which lambda to write into the solve and which to invert with,
+  # so serving a stale one produced gradients wrong by 1e2-1e4x (one component with
+  # the wrong sign) while the NLL stayed bit-identical -- nothing warned, and the
+  # optimizer simply stalled near its starting values. Pure metadata off `ui`, so
+  # re-deriving costs nothing; same reason rename_map/fixed_theta are re-derived.
+  .tr <- tryCatch(as.character(ui$predDf$transform), error = function(e) character(0))
+  .ln <- .tr %in% c("lnorm", "logit", "probit", "boxCox", "tbs",
+                    "yeoJohnson", "tbsYj")
+  if (length(.ln) > 0L && any(.ln) && !all(.ln)) {
+    # Mixed transformed/untransformed endpoints: rx_pred_ then carries DIFFERENT
+    # scales in different rows and the solve paths have no per-row map to undo it.
+    # Refuse the sens model so the estimators finite-difference instead -- correct,
+    # just slower, and the alternative is a silently wrong gradient.
+    return(NULL)
+  }
+  # ... and equally: transformed endpoints that are not transformed the SAME WAY.
+  # pred_tbs below is ONE spec, derived from predDf row 1, and .admSimulateSens()
+  # inverts the whole stacked rx_pred_ with it. So `cp ~ lnorm(a); ct ~ boxCox(b,
+  # lam)` -- which passes the mixed-vs-untransformed guard above, since both are
+  # transformed -- applied exp() to ct's Box-Cox rows; two logitNorm endpoints with
+  # different (trLow, trHi) applied endpoint 1's bounds to endpoint 2's rows; and
+  # two boxCox endpoints with separate lambdas used endpoint 1's lambda for both.
+  # The residual path is already per-endpoint (errmodel.R reads predDf$trLow[i] and
+  # carries per-row lam/yj), so under the default grad = "sens" the gradient
+  # described a different function than the NLL scored and the second endpoint
+  # converged to the wrong estimate with no error and no warning.
+  #
+  # Refuse rather than build a per-row spec: the solve paths would each need a row
+  # map, and finite differences are correct today.
+  if (length(.ln) > 0L && all(.ln) && length(.tr) > 1L) {
+    .bnd <- tryCatch(
+      paste(suppressWarnings(as.numeric(ui$predDf$trLow)),
+            suppressWarnings(as.numeric(ui$predDf$trHi))),
+      error = function(e) rep("", length(.tr)))
+    .n_lam <- tryCatch(nrow(ui$iniDf[!is.na(ui$iniDf$err) &
+                                       ui$iniDf$err %in% .ADM_ERR_TBS_LAM, ,
+                                     drop = FALSE]), error = function(e) 0L)
+    if (length(unique(.tr)) > 1L || length(unique(.bnd)) > 1L || .n_lam > 1L)
+      return(NULL)
+  }
+
+  .pred_tbs <- NULL
+  if (length(.ln) > 0L && all(.ln)) {
+    .t1 <- .tr[[1L]]
+    .yj <- if (identical(.t1, "lnorm")) 0L else unname(.ADM_TBS_YJ[[.t1]])
+    .lm <- 0
+    .lnm <- NA_character_
+    if (.yj %in% c(0L, 1L) && !identical(.t1, "lnorm")) {
+      .lr <- ui$iniDf[!is.na(ui$iniDf$err) &
+                        ui$iniDf$err %in% .ADM_ERR_TBS_LAM, , drop = FALSE]
+      .lm <- if (nrow(.lr) > 0L) as.numeric(.lr$est[1L]) else 1
+      # An ESTIMATED lambda moves; this `lam` is only its starting value. The solve
+      # paths must use the CURRENT one -- both to fill lambda's parameter column
+      # (it is a sigma name, and .admSimulateSens zero-fills those, so rx_pred_ was
+      # built with lambda = 0, i.e. a plain log transform) and to invert with the
+      # matching lambda. `lam_name` is how they look it up in pars$sigma_var; NA
+      # when lambda is fixed, where the frozen value is already correct.
+      if (nrow(.lr) > 0L && !isTRUE(.lr$fix[1L])) .lnm <- as.character(.lr$name[1L])
+    }
+    .pred_tbs <- list(
+      lam = .lm, yj = .yj, lam_name = .lnm,
+      lo = suppressWarnings(as.numeric(ui$predDf$trLow[1L]  %||% 0)),
+      hi = suppressWarnings(as.numeric(ui$predDf$trHi[1L]   %||% 1)))
+    if (!is.finite(.pred_tbs$lo)) .pred_tbs$lo <- 0
+    if (!is.finite(.pred_tbs$hi)) .pred_tbs$hi <- 1
+  }
 
   if (file.exists(.cacheFile)) {
     result <- tryCatch({ m <- qs2::qs_read(.cacheFile); rxode2::rxLoad(m$mod); m },
@@ -425,11 +536,52 @@
       result$cache_file  <- .cacheFile
       result$rename_map  <- rename_map
       result$fixed_theta <- fixed_theta
+      result$pred_tbs    <- .pred_tbs      # see the derivation above -- key collision
       return(result)
     }
   }
 
-  built <- .admBuildThetaSens(ui, unpaired)
+  # A beta endpoint's rx_pred_ is llikBeta(DV, b1, b2) -- the LOG-LIKELIHOOD, which
+  # is what FOCEI maximises but NOT what admixr2 moment-matches. Emit sensitivities
+  # of the derived mean mu = b1/(b1+b2) instead. The state-sensitivity chain is
+  # shared across the system, so this costs nothing extra (see .admBuildThetaSens).
+  .dist <- tryCatch(as.character(ui$predDf$distribution), error = function(e) character(0))
+  .pred_expr <- NULL
+
+  # A COUNT endpoint has the same shape as beta: `y ~ pois(cp)` emits
+  #   rx_pred_     = llikPois(DV, cp)
+  #   rx_f1_ETA_1_ = ... llikPoisDlambda(DV, cp) * d(central)/d(eta)
+  # i.e. rx_pred_ is the LOG-LIKELIHOOD and the sensitivity columns differentiate
+  # it, not the mean -- and both need DV, which an aggregate fit does not have, so
+  # the solve returned NULL. admc coped (it falls back to FD) but .adghGrad returned
+  # all-NA, which killed adgh at iteration 0 with the default grad = "analytical",
+  # and .admGradBatch returned all-NA, which silently gave admc a ZERO Hessian and
+  # therefore no standard errors at all. Emit sensitivities of the count MEAN -- the
+  # distribution's argument, which is an ordinary model variable -- exactly as the
+  # beta branch below emits them for b1/(b1+b2).
+  if (any(.dist %in% c("pois", "dpois", "binom", "dbinom", "nbinomMu", "dnbinomMu"))) {
+    .mv <- tryCatch(.admEndpointVar(ui, which(.dist %in% c("pois", "dpois", "binom",
+                                                           "dbinom", "nbinomMu",
+                                                           "dnbinomMu"))[1L]),
+                    error = function(e) NULL)
+    .se <- tryCatch(ui$loadPruneSens, error = function(e) NULL)
+    if (is.null(.mv) || is.null(.se)) return(NULL)
+    .pred_expr <- tryCatch(.se[[.mv]], error = function(e) NULL)
+    if (is.null(.pred_expr)) return(NULL)
+  }
+
+  if (any(.dist %in% c("beta", "dbeta"))) {
+    .bp <- tryCatch(.admBetaPair(ui), error = function(e) NULL)
+    .se <- tryCatch(ui$loadPruneSens, error = function(e) NULL)
+    if (is.null(.bp) || is.null(.se)) return(NULL)
+    .pred_expr <- tryCatch({
+      .e1 <- .se[[.bp[[1L]]]]; .e2 <- .se[[.bp[[2L]]]]
+      if (is.null(.e1) || is.null(.e2)) NULL else .e1 / (.e1 + .e2)
+    }, error = function(e) NULL)
+    if (is.null(.pred_expr)) return(NULL)
+  }
+
+  built <- .admBuildThetaSens(ui, unpaired, .pred_expr)
   if (!is.null(built)) {
     result <- list(type = "dirs", mod = built$mod,
                    sens_cols = built$sens_cols,
@@ -439,10 +591,65 @@
                    fixed_theta = fixed_theta,
                    is_lincmt = .admIsLinCmtMod(built$mod),
                    cache_file = .cacheFile)
+  } else if (!is.null(.pred_expr)) {
+    # The count/beta branches above exist BECAUSE nlmixr2est's inner model puts the
+    # log-likelihood in rx_pred_ (llikPois(DV, cp)) and differentiates that, not the
+    # mean -- and needs a DV an aggregate fit does not have. Falling back to it here
+    # would hand the estimators exactly the object those branches were written to
+    # avoid: .adghGrad returns all-NA and .admGradBatch a zero Hessian. NULL routes
+    # every estimator onto finite differences instead, the same lever the ordinal
+    # guard at the top of this function pulls.
+    return(NULL)
   } else {
     result <- .admSensFromInner(ui, rename_map, fixed_theta, n_eta, .cacheFile)
     if (is.null(result)) return(NULL)
   }
+
+  # The sensitivity model's rx_pred_ is on the endpoint's MODELLING scale, which
+  # for an lnorm endpoint is the LOG scale:
+  #
+  #   cp ~ add(a)   ->  rx_pred_ = <cp>              (natural)
+  #   cp ~ lnorm(a) ->  rx_pred_ = log(<cp>)         (log!)
+  #
+  # .admSimulate (the NLL path) always reads the natural-scale output column, so
+  # an lnorm model had .admGrad differentiating log(f) while .admNLL scored f --
+  # a gradient of a different function entirely. It went unnoticed because lnorm
+  # appears in no gradient test. The solve paths back-transform with the chain
+  # rule (d(exp(g))/dp = exp(g)*dg/dp) when this flag is set.
+  # EVERY transformed endpoint puts rx_pred_ on the MODELLING scale, not just
+  # lnorm: logit/probit/boxCox/yeoJohnson all emit rx_pred_ = rxTBS(f, ...). The
+  # original fix handled only the log case, so the other four had a sens model
+  # that predicted the transformed scale -- which is why their analytic gradient
+  # was unusable (the FD audit showed them as NA). Generalise to the full inverse
+  # transform; lnorm is exactly yj = 0 with lambda = 0 (Box-Cox's log branch), so
+  # it stays bit-identical to what pred_log did. `.tr`/`.ln`/`.pred_tbs` are all
+  # derived ABOVE the cache read -- see there for why.
+  # Back-transform spec: (lambda, yj, lo, hi) for .admTBSi()/.admTBSid(). NULL for
+  # an untransformed endpoint, which leaves every solve path byte-identical.
+  result$pred_tbs <- .pred_tbs
+
+  # DDE: force pure dop853 for the SENSITIVITY solve.
+  #
+  # A delay() model's sensitivity system is the base ODEs plus one variational
+  # compartment per state per direction, all of them delayed -- stiff enough to trip
+  # rxode2's hasDelay AutoSwitch composite (dop853+ros4) into its ros4 leg, whose
+  # dense delay-history is inaccurate for this system. The symptom is not an error:
+  # the augmented prediction agrees with the fit's own solve for the first
+  # observations and then drifts, once delay() starts reading the RECORDED (solved)
+  # history rather than the pre-history. dop853's 8th-order dense output reproduces
+  # the base solve exactly, so forcing it also keeps the gradient's predictions
+  # consistent with .admSimulate's (which is NOT augmented, does not trip, and is
+  # deliberately left alone).
+  #
+  # This mirrors nlmixr2est's ed03b8dfc, which found and fixed the same failure in
+  # its own augmented-sensitivity solve. Stored on the result -- and folded into the
+  # cache schema tag above -- because a parallel worker reads the qs2 file directly
+  # and cannot re-derive it. NULL for an ordinary model, which leaves every existing
+  # solve call byte-for-byte as it was.
+  result$solve_args <- if (isTRUE(tryCatch(
+        rxode2::rxModelVars(result$mod)$flags[["hasDelay"]] == 1L,
+        error = function(e) FALSE)))
+    list(method = "dop853", stiff2 = 0L, dense = TRUE) else NULL
 
   # suppressWarnings: the sens model is compiled inside admixr2, so its environment
   # chain references the package namespace and serialising it warns "'package:

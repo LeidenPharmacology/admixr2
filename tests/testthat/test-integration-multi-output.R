@@ -427,3 +427,38 @@ test_that(".adghGrad degrades to FD on a JOINT unit (singular V, and failed sens
   expect_true(all(is.finite(g_brk)))
   expect_equal(unname(g_brk), unname(g_fd_b), tolerance = 1e-8)
 })
+
+test_that("a joint fit gets per-endpoint aggregate diagnostics", {
+  # .admAggData() reconstructs the residual itself rather than reusing what the
+  # estimator computed, and it did so with ONE output name for the whole unit --
+  # so a joint unit got the first endpoint's residual spec applied to every
+  # stacked row, and its single-output solve returned plasma's trajectory for the
+  # brain rows. In practice it then died on the dimnames (length(times) is 5 while
+  # the stacked V is 8x8), and since .admAttachAggData() guards with tryCatch the
+  # slot was simply never set: no diagnostics at all, silently.
+  #
+  # This model is the case that matters: cp ~ prop() and ct ~ add() are different
+  # residual FORMS, so a shared spec cannot be right for both.
+  s   <- .mo_joint_setup()
+  fit <- s$fmc
+  ad  <- fit$env$aggData
+  expect_false(is.null(ad))
+  e <- ad[[1L]]
+  n_tot <- length(s$ip) + length(s$ic)
+  expect_length(e$pred$E, n_tot)
+  expect_identical(dim(e$pred$V), c(n_tot, n_tot))
+
+  # labelled by the endpoint each row belongs to -- the times repeat across
+  # blocks, so bare times would be duplicate labels
+  expect_true(all(grepl("^(cp|ct)@", names(e$pred$E))))
+  expect_identical(sum(grepl("^cp@", names(e$pred$E))), length(s$ip))
+  expect_identical(sum(grepl("^ct@", names(e$pred$E))), length(s$ic))
+
+  # and BOTH blocks are predicted, not just the first: a shared residual spec
+  # (or plasma's trajectory in the brain rows) shows up here
+  expect_true(all(is.finite(e$pred$V)))
+  expect_true(all(diag(e$pred$V) > 0))
+  r <- diag(e$pred$V) / diag(e$obs$V)
+  expect_true(all(r > 0.4 & r < 2.5), info = paste(round(r, 3), collapse = " "))
+  expect_equal(unname(e$pred$E), unname(e$obs$E), tolerance = 0.35)
+})

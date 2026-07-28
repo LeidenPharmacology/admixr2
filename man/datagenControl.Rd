@@ -11,7 +11,8 @@ datagenControl(
   sampling = c("sobol", "halton", "torus", "lhs", "rnorm"),
   seed = 12345L,
   cores = 1L,
-  return_samples = FALSE
+  return_samples = FALSE,
+  resid_nodes = 81L
 )
 }
 \arguments{
@@ -43,6 +44,14 @@ or \code{"gh"}.}
 \item{return_samples}{Include the raw \verb{n_sim x length(times)}
 prediction matrix as \verb{$samples} in each study's output. No effect when
 \code{method = "fo"} or \code{"gh"} (those methods draw no samples).}
+
+\item{resid_nodes}{Gauss-Hermite nodes used to integrate the RESIDUAL for a
+transform-both-sides endpoint (\code{boxCox}, \code{yeoJohnson}, \code{logitNorm},
+\code{probitNorm}), where \code{y = g(h(f) + sigma*eps)} has no closed-form mean and
+variance. Ignored by every other error model. Default 81 -- the same default
+the four estimator controls use, so \code{datagen()} and the fit it feeds agree
+unless you deliberately change one of them. See \code{\link[=admControl]{admControl()}} for the
+measured convergence.}
 }
 \value{
 A list of class \code{"datagenControl"}.

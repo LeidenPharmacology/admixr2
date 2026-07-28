@@ -13,6 +13,13 @@
 #' @param n_nodes Number of Gauss-Hermite nodes per eta dimension for
 #'   `method = "gh"` (default 5). Total nodes = `n_nodes^n_eta`. Ignored for
 #'   `"mc"` and `"fo"`.
+#' @param resid_nodes Gauss-Hermite nodes used to integrate the RESIDUAL for a
+#'   transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+#'   `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean and
+#'   variance. Ignored by every other error model. Default 81 -- the same default
+#'   the four estimator controls use, so `datagen()` and the fit it feeds agree
+#'   unless you deliberately change one of them. See [admControl()] for the
+#'   measured convergence.
 #' @param sampling Quasi-random sampling method: `"sobol"` (default),
 #'   `"halton"`, `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"`
 #'   or `"gh"`.
@@ -42,12 +49,15 @@ datagenControl <- function(
   sampling       = c("sobol", "halton", "torus", "lhs", "rnorm"),
   seed           = 12345L,
   cores          = 1L,
-  return_samples = FALSE
-) {
+  return_samples = FALSE,
+  # LAST on purpose: inserting an argument mid-signature silently rebinds every
+  # positional call (datagenControl("mc", 2000L, 7L) used to set n_nodes = 7).
+  resid_nodes    = 81L) {
   method   <- match.arg(method)
   sampling <- match.arg(sampling)
   checkmate::assertIntegerish(n_sim,    lower = 1L, len = 1L)
   checkmate::assertIntegerish(n_nodes,  lower = 1L, len = 1L)
+  checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1L)
   checkmate::assertIntegerish(seed,                 len = 1L)
   checkmate::assertIntegerish(cores,    lower = 1L, len = 1L)
   checkmate::assertFlag(return_samples)
@@ -56,6 +66,7 @@ datagenControl <- function(
       method         = method,
       n_sim          = as.integer(n_sim),
       n_nodes        = as.integer(n_nodes),
+      resid_nodes    = as.integer(resid_nodes),
       sampling       = sampling,
       seed           = as.integer(seed),
       cores          = as.integer(cores),
@@ -247,8 +258,52 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # Parse this study's model
     ui      <- rxode2::rxode2(mdl)
     pinfo   <- .admParseIniDf(ui$iniDf, ui)
+    # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply(), the
+    # same route the estimators use, so a study generated here and the fit that
+    # consumes it integrate the residual identically.
+    pinfo$resid_nodes <- control$resid_nodes %||% .ADM_TBS_NODES
     out_var <- .admOutputVar(ui)
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
+
+    # A model mixing a continuous endpoint with a COUNT one is refused here for
+    # exactly the reason the estimators refuse it (.admCheckMixedEndpoints is
+    # called by nlmixr2Est.adfo/.adgh/.admc): a count endpoint's output is the
+    # DISTRIBUTION'S ARGUMENT (`y ~ pois(lam)` is read through `lam`), a model
+    # variable rather than a compartment, so the `cmt = ov` tagging this function
+    # applies below when `is_multi` matches no observation record. Generating such
+    # a model either errored from inside .admSimulate() with no mention of the
+    # endpoint, or recycled into an E/V the user then fed straight back into a fit
+    # -- while the SAME model fitted directly was refused with an explanation.
+    .admCheckMixedEndpoints(ui)
+
+    # method = "fo" has no path to a beta endpoint's precision: .adfoVpred builds
+    # V from J Omega J' + Sigma at eta = 0 and never sees the solved b1 + b2, so
+    # it would emit a V whose diagonal is NA. This is the same refusal
+    # nlmixr2Est.adfo() makes for the same reason -- said here rather than left to
+    # produce NAs, because datagen() has no fit to fail afterwards.
+    if (control$method == "fo" && !is.null(.admBetaPair(ui)))
+      stop("datagen(method = 'fo') does not support a beta() endpoint: the beta ",
+           "precision is derived from the solved shapes, which the FO ",
+           "linearisation has no path to. Use method = 'mc' or 'gh'.",
+           call. = FALSE)
+
+    # An ordinal endpoint is a JOINT observation: its categories are one stacked
+    # vector whose covariance carries the -p_j*p_k term between categories at the
+    # same time. datagen() computes moments one observation spec at a time, each
+    # with its own `arr` and its own rows, so that cross-category block cannot be
+    # formed here at all -- the study it emitted would be scored against a
+    # covariance missing exactly the multinomial structure an ordinal model exists
+    # to capture, and .admCheckOrdinal() would then refuse it on the way back in.
+    # Refuse at the point of generation instead of emitting something unusable.
+    if (any(as.character(tryCatch(ui$predDf$distribution,
+                                  error = function(e) character(0))) %in%
+            c("ordinal", "dordinal")))
+      stop("datagen() does not support an ordinal endpoint: its categories form ",
+           "ONE joint\n  observation whose covariance carries the -p_j*p_k term ",
+           "between categories at the\n  same time, and datagen() derives each ",
+           "observed output separately. Build the\n  study from simulated ",
+           "category counts instead, one observation block per category.",
+           call. = FALSE)
 
     # FO needs the sensitivity model for the Jacobian df/d(eta)|_0. Load it
     # before .admLoadModel() to respect the compilation-ordering invariant
@@ -296,7 +351,14 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
       evf <- if (is_multi) spec$ev |> rxode2::et(spec$times, cmt = ov)
              else          spec$ev |> rxode2::et(spec$times)
-      study_tmp <- list(ev_full = evf, times = spec$times)
+      # A beta endpoint's prediction is DERIVED from two solved columns and its
+      # precision phi = b1 + b2 comes back with them -- the same pair the
+      # estimators put on every study. Without it .admOutputVar() resolves to the
+      # first shape parameter, so datagen() returned an `E` that was a shape (an
+      # arbitrary positive number, not a probability) and a `V` whose diagonal was
+      # entirely NA, with no error and no warning.
+      study_tmp <- list(ev_full = evf, times = spec$times,
+                        out_pair = .admBetaPair(ui))
 
       if (control$method == "gh") {
         m <- .adghMoments(pars, pinfo, study_tmp, rxMod, ov, grid, control$cores)
@@ -305,7 +367,8 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         params_mat <- .admMakeParamsList(1L, pinfo, 1L)[[1L]]
         mj <- .adfoGetMuJ(pars, pinfo, study_tmp, sensModel, rxMod, ov,
                           params_mat, control$cores)
-        vp <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta)
+        vp <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta,
+                           study_tmp$times)
         list(mu = vp$mu_sigma, V = vp$V, cp_mat = NULL)
       } else {
         z_list      <- .admMakeZ(control$n_sim, pinfo, 1L, control$sampling)
@@ -320,13 +383,19 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         }
         cp_mat <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta_mat,
                                study_tmp, ov, params_list[[1L]], control$cores)
+        # beta precision (SOLVED) rides back on cp_mat; fold it into the row array
+        arr  <- .admUnitResidRows(pinfo, ov, pars$sigma_var, n_t,
+                                  phi = attr(cp_mat, "phi"))
         mu   <- colMeans(cp_mat)
         cp_c <- sweep(cp_mat, 2L, mu)
         V    <- crossprod(cp_c) / control$n_sim
-        # This output's residual error only.
-        ap   <- .admResidApply(mu, diag(V), arr)
-        diag(V) <- ap$dv
-        list(mu = ap$mu, V = V, cp_mat = cp_mat)
+        # This output's residual error only. `times` + the structural covariance are
+        # needed by the off-diagonal forms (ar, ordinal); without them datagen()
+        # emitted a V that contradicted the model it was handed -- and disagreed
+        # with its own method = "gh" branch, which went through .adghMoments and
+        # did include them.
+        ap   <- .admResidApply(mu, diag(V), arr, study_tmp$times, V)
+        list(mu = ap$mu, V = .admApplyResidTail(V, ap), cp_mat = cp_mat)
       }
     }
 

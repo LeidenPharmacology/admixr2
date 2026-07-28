@@ -29,8 +29,10 @@ jobs:
         with:
           use-public-rspm: true
 
+      # cache-version 3 evicts the libraries built during the RcppParallel 6 oneTBB break.
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          cache-version: 3
           extra-packages: any::covr, any::xml2
           needs: coverage
 

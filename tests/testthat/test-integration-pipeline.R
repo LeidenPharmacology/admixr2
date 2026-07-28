@@ -161,6 +161,33 @@ test_that("admc covMethod='r': struct thetas get finite standard errors", {
   expect_true(all(se_struct > 0))
 })
 
+test_that("covMethod='r': omega and sigma SEs survive the trip through nlmixr2est", {
+  # nlmixr2est's C++ foceiFitCpp_ re-dimnames whatever covariance it finds in the
+  # fit environment from its own theta-name vector, blanking the omega rows -- and
+  # it does so IN PLACE, which also blanks the driver's copy. So this is not a
+  # cosmetic check: without .admCovNames()/.admRestoreCovNames() the omega SE is
+  # present but unreachable by name, and `fit$cov["om.eta.cl", ]` errors.
+  env <- .int_pipeline_setup()
+  # one_cmt_fn has a diagonal 2-eta omega, so nlmixr2est's naming gives om.<eta>
+  # for both. Written out rather than derived, so a change in .admOmegaReportNames
+  # cannot make this test agree with the code by construction.
+  om  <- c("om.eta.cl", "om.eta.v")
+  for (nm in c("admc", "adgh", "adfo")) {
+    fit <- switch(nm, admc = env$fit_cov, adgh = env$fit_adgh_cov,
+                  adfo = env$fit_adfo_cov)
+    if (is.null(fit) || is.null(fit$cov)) next
+    rn <- rownames(fit$cov)
+    expect_false(any(is.na(rn) | rn == ""), info = paste(nm, "blank cov name"))
+    # Reported on the variance/covariance scale, never the log-Cholesky.
+    expect_true(all(om %in% rn), info = paste(nm, "omega missing from cov"))
+    for (o in om) expect_true(is.finite(fit$cov[o, o]) && fit$cov[o, o] > 0,
+                              info = paste(nm, o))
+    # Sigma too: returning only the structural corner used to leave nlmixr2est's
+    # popDf builder reading past the end of the matrix and printing a denormal.
+    expect_true("add.err" %in% rn, info = paste(nm, "sigma missing from cov"))
+  }
+})
+
 # ---- plot / print on a real fit object ---------------------------------------
 
 test_that("plot.admFit on a real fit: nll/par trace panels are ggplots", {

@@ -278,3 +278,72 @@ test_that("d(pred)/d(lag) is undefined AT the dose boundary (documented, not a b
   expect_lt(max(abs(ana[!at_boundary] - fd[!at_boundary]) /
                 pmax(abs(fd[!at_boundary]), 1e-8)), 1e-4)
 })
+
+test_that("a worker re-derives pred_tbs, so a fixed lambda cannot be served stale", {
+  # The sens cache key digests the model({}) block, the iniDf NAMES, the fix()
+  # flags and the err column -- but NOT the estimates. Two models differing only
+  # in the VALUE of a fix()ed boxCox lambda therefore share one cache file. The
+  # parent re-derives pred_tbs on a hit; a worker cannot (it has no ui), so it
+  # used to invert the transform with the OTHER model's lambda and the parallel
+  # restarts minimised a different objective from the sequential ones -- silently,
+  # since the NLL itself stays bit-identical.
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  mk <- function(lam) suppressMessages(rxode2::rxode2(eval(parse(text = sprintf(
+    'function() { ini({ tcl <- log(5); tv <- log(20); a <- 0.3; lam <- fix(%g)
+                        eta.cl ~ 0.09 })
+       model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+               d/dt(central) <- -(cl/v)*central; cp <- central/v
+               cp ~ add(a) + boxCox(lam) }) }', lam)))))
+  ui_a <- mk(0.4); ui_b <- mk(0.9)
+  sm_b <- suppressMessages(admixr2:::.admLoadSensModel(ui_b))   # writes the file
+  sm_a <- suppressMessages(admixr2:::.admLoadSensModel(ui_a))   # ... and hits it
+  skip_if(is.null(sm_a) || is.null(sm_b), "sensitivity model unavailable")
+
+  # the premise: one file, two lambdas
+  expect_identical(sm_a$cache_file, sm_b$cache_file)
+  expect_equal(sm_a$pred_tbs$lam, 0.4)     # the parent gets its own
+  expect_equal(sm_b$pred_tbs$lam, 0.9)
+
+  invisible(admixr2:::.admLoadModel(ui_a))
+  p_a <- suppressWarnings(admixr2:::.admParseIniDf(ui_a$iniDf, ui_a))
+  w   <- admixr2:::.admWorkerLoadModels(ui_a$lstExpr, NULL, 1L, sm_a$cache_file,
+                                        sm_a$sens_cols, sm_a$rename_map, NULL, p_a)
+  skip_if(is.null(w$sensModel), "worker could not load the sensitivity model")
+  expect_equal(w$sensModel$pred_tbs$lam, 0.4)
+  expect_equal(w$sensModel$pred_tbs$yj, sm_a$pred_tbs$yj)
+})
+
+test_that("endpoints transformed DIFFERENTLY refuse the sensitivity model", {
+  # pred_tbs is ONE spec, taken from predDf row 1, and .admSimulateSens() inverts
+  # the whole stacked rx_pred_ with it. The existing guard refused only
+  # transformed-vs-UNtransformed mixtures, so `cp ~ lnorm(a); ct ~ boxCox(b, lam)`
+  # -- both transformed -- applied exp() to ct's Box-Cox rows, and two logitNorm
+  # endpoints with different bounds applied endpoint 1's bounds to endpoint 2's.
+  # The residual path is already per-endpoint, so the gradient described a
+  # different function than the NLL scored.
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  mk <- function(e1, e2, ini_extra = "") suppressMessages(rxode2::rxode2(eval(parse(
+    text = sprintf('function() {
+      ini({ tcl <- log(5); tv <- log(20); a <- 0.3; b <- 0.3; %s
+            eta.cl ~ 0.09 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+              d/dt(central) <- -(cl/v)*central
+              cp <- central/v
+              ct <- central/v * 0.5
+              %s
+              %s }) }', ini_extra, e1, e2)))))
+  sens <- function(...) suppressMessages(admixr2:::.admLoadSensModel(mk(...)))
+
+  # identical transforms: still built, and with the transform's own spec
+  sm <- sens("cp ~ lnorm(a)", "ct ~ lnorm(b)")
+  skip_if(is.null(sm), "sensitivity model unavailable for the baseline model")
+  expect_false(is.null(sm$pred_tbs))
+
+  # every way of differing must refuse -> the estimators finite-difference
+  expect_null(sens("cp ~ lnorm(a)", "ct ~ add(b) + boxCox(lam)", "lam <- 0.4;"))
+  expect_null(sens("cp ~ logitNorm(a, 0, 60)", "ct ~ logitNorm(b, 0, 5)"))
+  expect_null(sens("cp ~ add(a) + boxCox(l1)", "ct ~ add(b) + boxCox(l2)",
+                   "l1 <- 0.4; l2 <- 0.8;"))
+  # ... as does the mixture the original guard already covered
+  expect_null(sens("cp ~ lnorm(a)", "ct ~ add(b)"))
+})
