@@ -34,7 +34,6 @@ There are no reverse dependencies on CRAN.
 - `nlmixr2est` and `rxode2` are on CRAN and provide the model specification
   and ODE-solving infrastructure this package integrates with. Minimum versions
   are declared in `Imports`.
-- `qs2` is used for caching compiled rxode2 model objects between runs.
 - `nlmixr2` (Suggests) is used in examples and tests; a minimum version is
   declared.
 - `mirai` (Suggests) is used only when `workers > 1` is set in the control

@@ -1751,7 +1751,7 @@ nmObjGetControl.admc <- function(x, ...) {
 # behave identically on every platform, so there is exactly one worker code path
 # (no fork/PSOCK split). Daemons never share the parent's memory, so everything
 # a restart needs is serialised to it; compiled model DLLs cannot cross that
-# boundary and are reloaded from the qs2 cache inside the daemon.
+# boundary and are reloaded from the disk cache inside the daemon.
 #
 # The pool lives on its own mirai compute profile ("admixr2") so that starting
 # and stopping it never disturbs daemons the user set up for their own code.
@@ -1869,7 +1869,7 @@ admStopWorkers <- function() {
 # with progress tracking. Both are factored out here so each worker only
 # supplies its estimator-specific NLL/gradient closures.
 
-# Resolve worker cores, load the simulation model (direct or from qs2 cache),
+# Resolve worker cores, load the simulation model (direct or from the disk cache),
 # and (optionally) the sensitivity model. Returns a list(cores_w, rxMod,
 # sensModel). adirmc passes no sens_* args -> sensModel is NULL (unused).
 .admWorkerLoadModels <- function(ui_lstExpr, rxMod_direct = NULL, cores = NULL,
@@ -1888,8 +1888,8 @@ admStopWorkers <- function() {
     rxMod <- rxMod_direct
   } else {
     .cacheFile <- file.path(rxode2::rxTempDir(),
-                            paste0("adm-sim-", digest::digest(ui_lstExpr), ".qs2"))
-    rxMod <- qs2::qs_read(.cacheFile)
+                            paste0("adm-sim-", digest::digest(ui_lstExpr), ".rds"))
+    rxMod <- readRDS(.cacheFile)
     rxode2::rxLoad(rxMod)
   }
 
@@ -1900,7 +1900,7 @@ admStopWorkers <- function() {
     sensModel_direct
   } else if (!is.null(sens_cache_file) && file.exists(sens_cache_file)) {
     tryCatch({
-      m <- qs2::qs_read(sens_cache_file)
+      m <- readRDS(sens_cache_file)
       rxode2::rxLoad(m$mod)
       # PREFER the parent's values over whatever is in the file. The worker cannot
       # re-derive these (it has no ui), so a cache written by an older admixr2 --
@@ -2141,7 +2141,7 @@ admStopWorkers <- function() {
     }
 
     # Daemons are separate processes on every platform: compiled DLLs cannot be
-    # serialised, so the worker reloads them from the qs2 cache, and rxEt event
+    # serialised, so the worker reloads them from the disk cache, and rxEt event
     # tables (~130 MB each) are stripped to plain data frames before sending.
     all_args_par <- all_args
     all_args_par$no_lock <- TRUE

@@ -64,7 +64,7 @@ test_that("parallel: fit NLL matches sequential (workers = 2, same seed)", {
 })
 
 # The augmented (theta-sensitivity) sens model has to survive the trip to a
-# worker: the daemon reloads it from the qs2 cache file, so theta_sens_cols /
+# worker: the daemon reloads it from the disk cache file, so theta_sens_cols /
 # dummy_eta_inner travel inside that cached list (no worker signature change --
 # see the "never add parameters to .admRestartWorker" note in CLAUDE.md). If they
 # did not, the worker would silently drop to the FD path and return a different

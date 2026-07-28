@@ -85,6 +85,19 @@
 
 ## Bug fixes
 
+* **Dropped the `qs2` dependency.** The compiled-model and sensitivity disk
+  caches under `rxode2::rxTempDir()` are written with `saveRDS()`/`readRDS()`
+  instead of `qs2`, and the files are named `adm-sim-*.rds` / `adm-sens-*.rds`.
+  Base R serialization does this job, so the dependency bought nothing; it came
+  up while tracking down rxode2 reverse-dependency failures in a check library
+  that did not contain `qs2`. The caches are keyed by a model digest and live in
+  the session temporary directory, so nothing needs migrating -- a leftover
+  `adm-*.qs2` is simply a cache miss and the model is recompiled.
+
+  Note this does not change which packages get *loaded*: `rxode2` itself imports
+  `qs2`, and R loads a package's `Imports` with its namespace, so `qs2` (and
+  `stringfish`) still enter the session behind `library(admixr2)`.
+
 * **IRMC importance-sampling shift was wrong for every non-`exp` mu-referenced
   theta.** For a paired parameter `param <- h(theta + eta)`, `eta` and `theta`
   enter the transform through the *same* argument, so shifting `theta` by `Delta`
