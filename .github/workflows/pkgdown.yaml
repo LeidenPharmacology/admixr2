@@ -13,6 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      # Backstop for the colour guard in vignettes/_common.R.  nlmixr2's fit
+      # print method uses cli colour, and this runner reports as colour-capable,
+      # so an article that forgets to source _common.R renders the escape codes
+      # into the HTML -- pkgdown rewrites the ESC byte to U+2029, so the page
+      # shows a stray "[1m" rather than anything recognisable.  Every article
+      # sources the guard today; this makes forgetting it non-fatal.
+      NO_COLOR: "1"
 
     steps:
       - uses: actions/checkout@v4

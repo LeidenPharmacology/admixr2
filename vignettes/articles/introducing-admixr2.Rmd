@@ -12,6 +12,7 @@ author: "H. van de Beek"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R"))[1])
 ```
 
 ## Why aggregate data?

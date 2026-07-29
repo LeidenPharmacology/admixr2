@@ -13,6 +13,7 @@ knitr::opts_chunk$set(
   message = FALSE, warning = FALSE,
   fig.width = 7, fig.height = 5
 )
+source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R"))[1])
 ```
 
 ## When would you use `datagen`?
