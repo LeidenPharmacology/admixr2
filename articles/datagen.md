@@ -192,65 +192,38 @@ fit_sim <- nlmixr2(
     covMethod = "r"
   )
 )
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
-
-[====|====|====|====|====|====|====|====|====|====] 0:00:00 
 
 print(fit_sim)
- [1m──  [34mnlmix [39m [31mr² [39m  [33madmc [39m ── [22m
+── nlmixr² admc ──
 
           OBJF       AIC       BIC Log-likelihood
 admc -7359.742 -7345.742 -7302.618       3679.871
 
- [1m── Time (sec  [33mfit_sim [39m [34m$time [39m): ── [22m
+── Time (sec fit_sim$time): ──
 
   optimize covariance elapsed
-1   37.067      6.921  43.988
+1    38.71      7.148  45.858
 
- [1m── Population Parameters ( [33mfit_sim [39m [34m$parFixed [39m or  [33mfit_sim [39m [34m$parFixedDf [39m): ── [22m
+── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 
-                         [1m [1mParameter [0m [0m      [1mEst. [0m        [1m [1mSE [0m [0m    [1m%RSE [0m
- [1m [1mtcl [0m [0m           Log clearance (L/h)    1.608   0.0143 0.8892
- [1m [1mtv [0m [0m                 Log volume (L)    2.303  0.01975 0.8577
- [1m [1mtka [0m [0m     Log absorption rate (1/h) 0.001082  0.02627   2429
- [1m [1mprop.sd [0m [0m     Proportional error SD   0.2001 0.004181  2.089
-         [1mBack-transformed(95%CI) [0m  [1mBSV(CV%) [0m  [1mShrink(SD)% [0m
- [1m [1mtcl [0m [0m        4.991 (4.853, 5.133)     30.4            
- [1m [1mtv [0m [0m             10 (9.623, 10.4)     19.6            
- [1m [1mtka [0m [0m       1.001 (0.9508, 1.054)     20.9            
- [1m [1mprop.sd [0m [0m 0.2001 (0.1919, 0.2083)                     
+                        Parameter     Est.       SE   %RSE
+tcl           Log clearance (L/h)    1.608   0.0143 0.8892
+tv                 Log volume (L)    2.303  0.01975 0.8577
+tka     Log absorption rate (1/h) 0.001082  0.02627   2429
+prop.sd     Proportional error SD   0.2001 0.004181  2.089
+        Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl        4.991 (4.853, 5.133)     30.4            
+tv             10 (9.623, 10.4)     19.6            
+tka       1.001 (0.9508, 1.054)     20.9            
+prop.sd 0.2001 (0.1919, 0.2083)                     
  
-  Covariance Type ( [33mfit_sim [39m [1m [34m$covMethod [39m [22m):  [1mr [22m
+  Covariance Type (fit_sim$covMethod): r
   No correlations in between subject variability (BSV) matrix
-  Full BSV covariance ( [33mfit_sim [39m [1m [34m$omega [39m [22m) 
-    or correlation ( [33mfit_sim [39m [1m [34m$omegaR [39m [22m; diagonals=SDs)
-  Distribution stats (mean/skewness/kurtosis/p-value) available in  [1m [34m$shrink [39m [22m 
-  Censoring ( [33mfit_sim [39m [1m [34m$censInformation [39m [22m): No censoring
-  Minimization message ( [33mfit_sim [39m [1m [34m$message [39m [22m):  
+  Full BSV covariance (fit_sim$omega) 
+    or correlation (fit_sim$omegaR; diagonals=SDs)
+  Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
+  Censoring (fit_sim$censInformation): No censoring
+  Minimization message (fit_sim$message):  
     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 

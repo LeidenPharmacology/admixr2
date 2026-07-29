@@ -140,40 +140,40 @@ fit_multi <- nlmixr2(
 )
 
 print(fit_multi)
- [1m──  [34mnlmix [39m [31mr² [39m  [33madmc [39m ── [22m
+── nlmixr² admc ──
 
           OBJF       AIC       BIC Log-likelihood
 admc -3690.254 -3668.254 -3597.724       1845.127
 
- [1m── Time (sec  [33mfit_multi [39m [34m$time [39m): ── [22m
+── Time (sec fit_multi$time): ──
 
   optimize covariance elapsed
-1   35.629     17.248  52.877
+1   36.844     16.754  53.598
 
- [1m── Population Parameters ( [33mfit_multi [39m [34m$parFixed [39m or  [33mfit_multi [39m [34m$parFixedDf [39m): ── [22m
+── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 
-                                   [1m [1mParameter [0m [0m     [1mEst. [0m       [1m [1mSE [0m [0m   [1m%RSE [0m
- [1m [1mtcl [0m [0m                    Log clearance (L/hr)   1.602 0.01956 1.221
- [1m [1mtv1 [0m [0m                  Log central volume (L)   2.328  0.1207 5.183
- [1m [1mtv2 [0m [0m               Log peripheral volume (L)   3.398 0.05196 1.529
- [1m [1mtq [0m [0m        Log inter-compartmental CL (L/hr)   2.276 0.02652 1.165
- [1m [1mtka [0m [0m     Log absorption rate constant (1/hr) 0.02992  0.1138 380.5
- [1m [1mprop.sd [0m [0m      Proportional residual error SD  0.1895 0.00321 1.694
-         [1mBack-transformed(95%CI) [0m  [1mBSV(CV%) [0m  [1mShrink(SD)% [0m
- [1m [1mtcl [0m [0m        4.963 (4.776, 5.157)     32.6            
- [1m [1mtv1 [0m [0m           10.26 (8.098, 13)     32.8            
- [1m [1mtv2 [0m [0m         29.9 (27.01, 33.11)     32.0            
- [1m [1mtq [0m [0m          9.74 (9.247, 10.26)     33.7            
- [1m [1mtka [0m [0m        1.03 (0.8243, 1.288)     32.2            
- [1m [1mprop.sd [0m [0m 0.1895 (0.1832, 0.1958)                     
+                                  Parameter    Est.      SE  %RSE
+tcl                    Log clearance (L/hr)   1.602 0.01956 1.221
+tv1                  Log central volume (L)   2.328  0.1207 5.183
+tv2               Log peripheral volume (L)   3.398 0.05196 1.529
+tq        Log inter-compartmental CL (L/hr)   2.276 0.02652 1.165
+tka     Log absorption rate constant (1/hr) 0.02992  0.1138 380.5
+prop.sd      Proportional residual error SD  0.1895 0.00321 1.694
+        Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl        4.963 (4.776, 5.157)     32.6            
+tv1           10.26 (8.098, 13)     32.8            
+tv2         29.9 (27.01, 33.11)     32.0            
+tq          9.74 (9.247, 10.26)     33.7            
+tka        1.03 (0.8243, 1.288)     32.2            
+prop.sd 0.1895 (0.1832, 0.1958)                     
  
-  Covariance Type ( [33mfit_multi [39m [1m [34m$covMethod [39m [22m):  [1mr [22m
+  Covariance Type (fit_multi$covMethod): r
   No correlations in between subject variability (BSV) matrix
-  Full BSV covariance ( [33mfit_multi [39m [1m [34m$omega [39m [22m) 
-    or correlation ( [33mfit_multi [39m [1m [34m$omegaR [39m [22m; diagonals=SDs)
-  Distribution stats (mean/skewness/kurtosis/p-value) available in  [1m [34m$shrink [39m [22m 
-  Censoring ( [33mfit_multi [39m [1m [34m$censInformation [39m [22m): No censoring
-  Minimization message ( [33mfit_multi [39m [1m [34m$message [39m [22m):  
+  Full BSV covariance (fit_multi$omega) 
+    or correlation (fit_multi$omegaR; diagonals=SDs)
+  Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
+  Censoring (fit_multi$censInformation): No censoring
+  Minimization message (fit_multi$message):  
     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 
