@@ -29,7 +29,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -62,6 +62,7 @@
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
+    <li><a class="dropdown-item" href="../articles/error-models.html">Choosing a residual error model</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul>
@@ -96,7 +97,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>PD and PK/PD data</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/pkpd.Rmd" class="external-link"><code>vignettes/pkpd.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.0/vignettes/pkpd.Rmd" class="external-link"><code>vignettes/pkpd.Rmd</code></a></small>
       <div class="d-none name"><code>pkpd.Rmd</code></div>
     </div>
 
@@ -246,31 +247,31 @@ Otherwise this is an ordinary admixr2 fit:</p>
 <span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a>── nlmixr² adgh ──</span>
 <span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a></span>
 <span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a>         OBJF      AIC      BIC Log<span class="sc">-</span>likelihood</span>
-<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a>adgh <span class="fl">1749.128</span> <span class="fl">1769.128</span> <span class="fl">1820.981</span>      <span class="sc">-</span><span class="fl">874.5638</span></span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a>adgh <span class="fl">1749.121</span> <span class="fl">1769.121</span> <span class="fl">1820.975</span>      <span class="sc">-</span><span class="fl">874.5605</span></span>
 <span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a></span>
 <span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a></span>
 <span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>        optimize covariance elapsed other</span>
-<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">2.574</span>      <span class="fl">0.451</span>   <span class="fl">3.025</span> <span class="fl">4.876</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">2.538</span>      <span class="fl">0.573</span>   <span class="fl">3.111</span> <span class="fl">6.266</span></span>
 <span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a></span>
 <span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a></span>
 <span id="cb5-17"><a href="#cb5-17" tabindex="-1"></a>                                         Parameter    Est.      SE   %RSE</span>
-<span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a>tcl                            Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)   <span class="fl">1.595</span> <span class="fl">0.01548</span> <span class="fl">0.9705</span></span>
-<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a>tv                                  Log <span class="fu">volume</span> (L)    <span class="fl">3.91</span> <span class="fl">0.01117</span> <span class="fl">0.2856</span></span>
-<span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a>te0                        Log baseline <span class="fu">DBP</span> (mmHg)   <span class="fl">4.563</span> <span class="fl">0.01241</span>  <span class="fl">0.272</span></span>
-<span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a>temax             Log maximum DBP <span class="fu">reduction</span> (mmHg)   <span class="fl">2.826</span>  <span class="fl">0.1148</span>  <span class="fl">4.061</span></span>
-<span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a>tec50                              Log <span class="fu">EC50</span> (mg<span class="sc">/</span>L)  <span class="fl">0.6859</span>  <span class="fl">0.4846</span>  <span class="fl">70.65</span></span>
-<span id="cb5-23"><a href="#cb5-23" tabindex="-1"></a>prop.cp Proportional residual error, concentration <span class="fl">0.09995</span>               </span>
-<span id="cb5-24"><a href="#cb5-24" tabindex="-1"></a>add.dbp        Additive residual error, <span class="fu">DBP</span> (mmHg)   <span class="fl">3.013</span>               </span>
-<span id="cb5-25"><a href="#cb5-25" tabindex="-1"></a>        Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
-<span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a>tcl         <span class="fl">4.927</span> (<span class="fl">4.78</span>, <span class="fl">5.079</span>)     <span class="fl">30.6</span>            </span>
-<span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a>tv            <span class="fl">49.89</span> (<span class="fl">48.81</span>, <span class="dv">51</span>)     <span class="fl">19.2</span>            </span>
-<span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a>te0        <span class="fl">95.85</span> (<span class="fl">93.55</span>, <span class="fl">98.21</span>)     <span class="fl">8.50</span>            </span>
-<span id="cb5-29"><a href="#cb5-29" tabindex="-1"></a>temax      <span class="fl">16.88</span> (<span class="fl">13.48</span>, <span class="fl">21.14</span>)                     </span>
-<span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a>tec50      <span class="fl">1.985</span> (<span class="fl">0.768</span>, <span class="fl">5.133</span>)                     </span>
-<span id="cb5-31"><a href="#cb5-31" tabindex="-1"></a>prop.cp                 <span class="fl">0.09995</span>                     </span>
-<span id="cb5-32"><a href="#cb5-32" tabindex="-1"></a>add.dbp                   <span class="fl">3.013</span>                     </span>
+<span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a>tcl                            Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)   <span class="fl">1.595</span> <span class="fl">0.01608</span>  <span class="fl">1.008</span></span>
+<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a>tv                                  Log <span class="fu">volume</span> (L)    <span class="fl">3.91</span> <span class="fl">0.01155</span> <span class="fl">0.2954</span></span>
+<span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a>te0                        Log baseline <span class="fu">DBP</span> (mmHg)   <span class="fl">4.563</span> <span class="fl">0.01519</span> <span class="fl">0.3329</span></span>
+<span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a>temax             Log maximum DBP <span class="fu">reduction</span> (mmHg)   <span class="fl">2.826</span>  <span class="fl">0.1148</span>  <span class="fl">4.062</span></span>
+<span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a>tec50                              Log <span class="fu">EC50</span> (mg<span class="sc">/</span>L)  <span class="fl">0.6864</span>  <span class="fl">0.4847</span>  <span class="fl">70.62</span></span>
+<span id="cb5-23"><a href="#cb5-23" tabindex="-1"></a>prop.cp Proportional residual error, concentration <span class="fl">0.09973</span> <span class="fl">0.04479</span>  <span class="fl">44.91</span></span>
+<span id="cb5-24"><a href="#cb5-24" tabindex="-1"></a>add.dbp        Additive residual error, <span class="fu">DBP</span> (mmHg)   <span class="fl">3.012</span>   <span class="fl">26.64</span>  <span class="fl">884.2</span></span>
+<span id="cb5-25"><a href="#cb5-25" tabindex="-1"></a>          Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
+<span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a>tcl          <span class="fl">4.927</span> (<span class="fl">4.774</span>, <span class="fl">5.085</span>)     <span class="fl">30.5</span>            </span>
+<span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a>tv           <span class="fl">49.89</span> (<span class="fl">48.78</span>, <span class="fl">51.04</span>)     <span class="fl">19.1</span>            </span>
+<span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a>te0          <span class="fl">95.85</span> (<span class="fl">93.04</span>, <span class="fl">98.75</span>)     <span class="fl">8.50</span>            </span>
+<span id="cb5-29"><a href="#cb5-29" tabindex="-1"></a>temax        <span class="fl">16.88</span> (<span class="fl">13.48</span>, <span class="fl">21.14</span>)                     </span>
+<span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a>tec50       <span class="fl">1.986</span> (<span class="fl">0.7683</span>, <span class="fl">5.137</span>)                     </span>
+<span id="cb5-31"><a href="#cb5-31" tabindex="-1"></a>prop.cp <span class="fl">0.09973</span> (<span class="fl">0.01194</span>, <span class="fl">0.1875</span>)                     </span>
+<span id="cb5-32"><a href="#cb5-32" tabindex="-1"></a>add.dbp     <span class="fl">3.012</span> (<span class="sc">-</span><span class="fl">49.19</span>, <span class="fl">55.22</span>)                     </span>
 <span id="cb5-33"><a href="#cb5-33" tabindex="-1"></a> </span>
 <span id="cb5-34"><a href="#cb5-34" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit<span class="sc">$</span>covMethod)<span class="sc">:</span> r</span>
 <span id="cb5-35"><a href="#cb5-35" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
@@ -430,12 +431,10 @@ and the natural time course of the disease are confounded. A placebo arm
 is just another study with a zero-amount <code>ev</code>.</li>
 <li>
 <strong>Bounded endpoints.</strong> An additive residual can predict
-outside the range of a bounded score. Rescale or transform the endpoint
-before fitting — note that an estimated
-<code><a href="https://nlmixr2.github.io/rxode2/reference/boxCox.html" class="external-link">boxCox()</a></code>/<code><a href="https://nlmixr2.github.io/rxode2/reference/boxCox.html" class="external-link">yeoJohnson()</a></code> lambda is
-<strong>not</strong> supported by admixr2: because it has no closed-form
-aggregate mean/variance, the fit stops with an error rather than
-silently approximating it.</li>
+outside the range of a bounded score. Transform the endpoint instead —
+<code>logitNorm()</code>, <code>probitNorm()</code>,
+<code><a href="https://nlmixr2.github.io/rxode2/reference/boxCox.html" class="external-link">boxCox()</a></code> and <code><a href="https://nlmixr2.github.io/rxode2/reference/boxCox.html" class="external-link">yeoJohnson()</a></code> are supported, with
+lambda either estimated or fixed. See <a href="error-models.html">Choosing a residual error model</a>.</li>
 </ul>
 </div>
 <div class="section level2">

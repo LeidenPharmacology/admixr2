@@ -81,16 +81,22 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance elapsed other
-elapsed    0.545      0.083   0.628 5.042
+elapsed    0.572      0.101   0.673 6.257
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
-            Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl      0.03322 0.03098 93.25   1.034 (0.9729, 1.098)     27.9            
-tv1        2.292 0.04515  1.97      9.89 (9.052, 10.8)     15.1            
-tq        0.8833  0.3714 42.05    2.419 (1.168, 5.009)                     
-tv2       0.8678  0.1541 17.76    2.382 (1.761, 3.222)                     
-prop.cp 0.004104                              0.004104                     
+            Est.      SE  %RSE      Back-transformed(95%CI) BSV(CV%)
+tcl      0.03321 0.03416 102.8        1.034 (0.9668, 1.105)     27.9
+tv1        2.292 0.06685 2.917          9.89 (8.676, 11.27)     15.1
+tq        0.8829  0.5801  65.7        2.418 (0.7757, 7.537)         
+tv2       0.8678  0.2125 24.49          2.382 (1.57, 3.612)         
+prop.cp 0.004104 0.04529  1104 0.004104 (-0.08467, 0.09288)         
+        Shrink(SD)%
+tcl                
+tv1                
+tq                 
+tv2                
+prop.cp            
  
   Covariance Type (fit_plasma$covMethod): r
   No correlations in between subject variability (BSV) matrix
@@ -184,22 +190,22 @@ fit_cns
 ── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
-adgh -88.59286 -72.59286 -36.65494       44.29643
+adgh -88.59587 -72.59587 -36.65795       44.29794
 
 ── Time (sec fit_cns$time): ──
 
         optimize covariance elapsed other
-elapsed    0.647      0.171   0.818 5.528
+elapsed    0.646        0.2   0.846 6.535
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
-           Est.      SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl     0.04102 0.01879   45.8    1.042 (1.004, 1.081)     27.0            
-tv1       2.269 0.01029 0.4535     9.673 (9.48, 9.871)     13.9            
-tqin      1.085 0.03661  3.373      2.96 (2.755, 3.18)                     
-tqout      1.78 0.04209  2.364    5.932 (5.462, 6.442)                     
-prop.cp 0.04852                                0.04852                     
-add.cb  0.01999                                0.01999                     
+           Est.      SE   %RSE    Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl     0.04104 0.01899  46.27       1.042 (1.004, 1.081)     27.0            
+tv1       2.269 0.01038 0.4573       9.674 (9.479, 9.872)     13.9            
+tqin      1.085 0.03669  3.381        2.96 (2.755, 3.181)                     
+tqout      1.78 0.04218  2.369       5.932 (5.461, 6.443)                     
+prop.cp 0.04848 0.01803  37.19 0.04848 (0.01314, 0.08382)                     
+add.cb  0.01999  0.1742  871.2  0.01999 (-0.3213, 0.3613)                     
  
   Covariance Type (fit_cns$covMethod): r
   No correlations in between subject variability (BSV) matrix
@@ -247,7 +253,7 @@ fit_long <- nlmixr2(pk_cns, admData(c("cp", "cb")), est = "adgh",
 
 c(observations = fit_cns$objective, long = fit_long$objective)
 observations         long 
-   -88.59286    -88.59286 
+   -88.59587    -88.59587 
 ```
 
 Which form to use is a matter of taste. The `observations` list keeps

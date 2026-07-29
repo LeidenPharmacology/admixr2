@@ -44,6 +44,7 @@ adirmcControl(
   sumProd = FALSE,
   literalFix = TRUE,
   returnAdmr = FALSE,
+  resid_nodes = 81L,
   ...
 )
 ```
@@ -256,9 +257,20 @@ adirmcControl(
 
 - covMethod:
 
-  Covariance method: `"r"` (numerical Hessian for structural and
-  residual-error parameters only; omega/IIV SEs are not computed,
-  consistent with nlmixr2 FOCEI) or `"none"`.
+  Covariance method: `"r"` (numerical Hessian over the structural,
+  residual-error and omega parameters) or `"none"`. Omega is included
+  because excluding it also biases the STRUCTURAL standard errors
+  downward – a theta carrying an eta is correlated with that eta's
+  variance. If the weakly-identified omega Cholesky makes the Hessian
+  non-positive definite, the structural + residual sub-block is reported
+  with a warning.
+
+  All three blocks are reported on the scale the ESTIMATES are printed
+  on, as `nlmixr2est` does: structural thetas on the log/optimizer
+  scale, residual error as an SD, and omega as the variance/covariance
+  entries (named `om.<eta>` and `cov.<eta_i>.<eta_j>`). The omega block
+  is rotated by the full Jacobian of Omega with respect to the
+  log-Cholesky, which is not diagonal once omega is correlated.
 
 - cov_n_sim:
 
@@ -314,6 +326,25 @@ adirmcControl(
 
   If `TRUE`, return a plain list instead of a full nlmixr2 fit object
   (useful for debugging).
+
+- resid_nodes:
+
+  Gauss-Hermite nodes used to integrate the RESIDUAL for a
+  transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+  `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean
+  and variance. Ignored by every other error model, which has closed
+  forms. Default 81. Measured worst-case relative error against an
+  independent quadrature, over all four transforms and residual SD of
+  0.5, 1, 2 and 3: n = 15 gives 5.7e-2, 31 gives 4.5e-3, 81 gives
+  5.0e-5. The error is dominated by large residual SD; at SD \<= 1, n =
+  31 already gives 1e-7 or better.
+
+  This is an ACCURACY dial, not a speed one. The quadrature is linear in
+  `resid_nodes` in isolation (~50 us at 15, 300 us at 81 for an 8-row
+  study) but negligible beside the ODE solve: a full NLL evaluation
+  measured 0.750 s per 60 evaluations at BOTH 31 and 81 nodes. Raise it
+  if you have a saturating endpoint with a large residual SD; there is
+  little to gain by lowering it.
 
 - ...:
 
@@ -399,7 +430,6 @@ fit <- nlmixr2(
 #> → loading into symengine environment...
 #> → pruning branches (`if`/`else`) of full model...
 #> ✔ done
-#> → calculate jacobian
 #> → calculate sensitivities
 #> → finding duplicate expressions in admixr2 sensitivity model...
 #> → optimizing duplicate expressions in admixr2 sensitivity model...
@@ -414,26 +444,40 @@ fit <- nlmixr2(
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |
 #> +-- Phase 1: Wide (+/-2.00) -------------------------------------------------------------------------------------------------------------------+
-#> | 0001     |  1761.41 |    4.279 |    3.685 |    38.19 |    8.771 |   0.8692 |   0.1871 |   0.1652 |    0.665 |    0.665 |  0.05266 |   0.0996 |
-#> | 0002     | -1242.58 |    4.842 |    8.565 |    30.67 |    8.999 |   0.8292 |   0.1627 |   0.1174 |   0.1081 |     0.09 |  0.05654 |   0.1573 |
-#> | 0003     | -1265.27 |    4.948 |     7.92 |    31.83 |    8.789 |   0.7936 |   0.1757 |   0.1261 |  0.06704 |  0.09755 |  0.02177 |   0.1433 |
-#> | 0004     | -1266.09 |    4.929 |    8.043 |     31.6 |     8.88 |   0.8087 |   0.1808 |   0.1206 |  0.08163 |   0.1025 |  0.01965 |   0.1383 |
-#> | 0005     | -1266.44 |    4.926 |    8.057 |    31.62 |    8.897 |   0.8091 |    0.181 |    0.123 |  0.08081 |   0.1024 |  0.01963 |   0.1353 |
-#> | 0006 ✓   | -1266.45 |    4.924 |    8.053 |    31.62 |      8.9 |   0.8093 |    0.181 |    0.123 |  0.08082 |   0.1024 |  0.01963 |   0.1354 |
+#> | 0001     |   728.22 |    3.552 |     6.49 |    36.82 |    8.796 |   0.5216 |   0.1867 |   0.4043 |   0.1828 |    0.665 |  0.02393 |   0.2747 |
+#> | 0002     | -1247.61 |    4.966 |    6.662 |    33.45 |    7.927 |   0.6548 |   0.1217 |   0.1298 |  0.02474 |   0.1283 |  0.02614 |   0.2091 |
+#> | 0003     | -1194.49 |        5 |    8.026 |    33.06 |    8.569 |   0.7865 |   0.1911 |  0.09852 |   0.1406 |  0.07392 | 0.006252 |   0.1188 |
+#> | 0004     | -1238.75 |    4.872 |    7.888 |    31.64 |    8.864 |   0.7894 |   0.1762 |   0.1499 |  0.07673 |   0.1169 | 0.006838 |   0.1372 |
+#> | 0005     | -1264.67 |    4.955 |    7.829 |    31.56 |    8.832 |     0.79 |   0.1859 |   0.1141 |  0.07267 |  0.08511 | 0.006873 |   0.1292 |
+#> | 0006     | -1266.43 |    4.959 |    8.001 |    31.16 |    8.888 |   0.8065 |   0.1863 |    0.119 |  0.07429 |  0.08569 | 0.006851 |   0.1323 |
+#> | 0007     | -1266.44 |    4.959 |    8.004 |    31.15 |    8.885 |   0.8061 |   0.1863 |    0.119 |  0.07429 |   0.0857 | 0.006851 |   0.1322 |
+#> | 0008 ✓   | -1266.44 |    4.959 |    8.002 |    31.15 |    8.887 |   0.8061 |   0.1863 |    0.119 |  0.07429 |  0.08571 |  0.00685 |   0.1322 |
 #> +-- Phase 2: Focused (+/-1.00) ----------------------------------------------------------------------------------------------------------------+
-#> | 0007 ✓   | -1266.45 |    4.925 |    8.053 |    31.62 |      8.9 |   0.8093 |    0.181 |    0.123 |  0.08083 |   0.1024 |  0.01963 |   0.1354 |
+#> | 0009     | -1266.44 |    4.959 |    8.002 |    31.15 |    8.887 |   0.8061 |   0.1863 |    0.119 |  0.07429 |  0.08571 |  0.00685 |   0.1322 |
+#> | 0010     | -1266.44 |    4.959 |    7.991 |    31.15 |    8.886 |   0.8054 |   0.1862 |    0.119 |  0.07433 |  0.08583 | 0.006848 |   0.1319 |
+#> | 0011     | -1266.44 |    4.959 |    7.991 |    31.16 |    8.886 |   0.8054 |   0.1862 |    0.119 |  0.07433 |  0.08583 | 0.006848 |   0.1319 |
+#> | 0012     | -1266.44 |    4.956 |    7.984 |     31.2 |    8.882 |   0.8044 |   0.1863 |   0.1191 |  0.07447 |  0.08599 | 0.006845 |    0.132 |
+#> | 0013     | -1266.44 |    4.957 |    7.983 |     31.2 |     8.88 |   0.8043 |   0.1862 |   0.1191 |  0.07448 |    0.086 | 0.006845 |   0.1319 |
+#> | 0014     | -1266.44 |    4.956 |    7.982 |     31.2 |    8.881 |   0.8043 |   0.1862 |   0.1191 |  0.07448 |    0.086 | 0.006845 |   0.1319 |
+#> | 0015     | -1266.45 |    4.957 |    7.974 |    31.19 |    8.881 |   0.8038 |   0.1861 |   0.1191 |  0.07453 |   0.0861 | 0.006843 |   0.1317 |
+#> | 0016     | -1266.45 |    4.957 |    7.974 |    31.19 |    8.881 |   0.8038 |   0.1861 |   0.1191 |  0.07453 |   0.0861 | 0.006843 |   0.1317 |
+#> | 0017     | -1266.22 |    4.923 |    7.869 |    31.59 |    8.843 |   0.7939 |    0.185 |   0.1201 |  0.08131 |  0.09585 | 0.006669 |   0.1294 |
+#> | 0018     | -1266.41 |    4.939 |    7.867 |    31.58 |    8.843 |   0.7933 |   0.1854 |   0.1188 |  0.07741 |  0.09027 | 0.006751 |   0.1287 |
+#> | 0019     | -1266.47 |    4.937 |    7.862 |    31.54 |    8.859 |   0.7941 |   0.1856 |    0.119 |  0.07746 |  0.09029 |  0.00675 |   0.1289 |
+#> | 0020     | -1266.48 |    4.939 |    7.872 |    31.51 |    8.851 |   0.7944 |   0.1858 |   0.1191 |  0.07757 |  0.09032 |  0.00675 |   0.1293 |
+#> | 0021     | -1266.48 |    4.938 |    7.874 |    31.52 |    8.848 |   0.7945 |   0.1858 |   0.1191 |  0.07757 |  0.09032 |  0.00675 |   0.1293 |
+#> | 0022 ✓   | -1266.48 |    4.938 |    7.874 |    31.52 |    8.849 |   0.7944 |   0.1858 |   0.1191 |  0.07758 |  0.09032 |  0.00675 |   0.1293 |
 #> +-- Phase 3: Fine-tuning (+/-0.50) ------------------------------------------------------------------------------------------------------------+
-#> | 0008     | -1266.45 |    4.924 |     8.05 |    31.62 |    8.895 |   0.8087 |    0.181 |   0.1227 |  0.08091 |   0.1024 |  0.01964 |   0.1358 |
-#> | 0009     | -1266.45 |    4.925 |    8.051 |    31.61 |    8.894 |   0.8087 |    0.181 |   0.1227 |   0.0809 |   0.1024 |  0.01964 |   0.1358 |
-#> | 0010     | -1266.45 |    4.925 |    8.051 |    31.61 |    8.894 |   0.8087 |    0.181 |   0.1227 |   0.0809 |   0.1024 |  0.01964 |   0.1358 |
-#> | 0011 ✓   | -1266.45 |    4.925 |     8.05 |    31.61 |    8.894 |   0.8087 |    0.181 |   0.1227 |   0.0809 |   0.1024 |  0.01964 |   0.1358 |
+#> | 0023     | -1266.48 |    4.938 |    7.874 |    31.52 |     8.85 |   0.7945 |   0.1858 |   0.1191 |  0.07758 |  0.09032 |  0.00675 |   0.1293 |
+#> | 0024 ✓   | -1266.48 |    4.938 |    7.874 |    31.52 |     8.85 |   0.7945 |   0.1858 |   0.1191 |  0.07758 |  0.09032 |  0.00675 |   0.1293 |
 #> +-- Phase 4: Precision (+/-0.01) --------------------------------------------------------------------------------------------------------------+
-#> | 0012     | -1266.45 |    4.926 |    8.051 |     31.6 |    8.896 |   0.8088 |    0.181 |   0.1227 |  0.08089 |   0.1023 |  0.01963 |   0.1358 |
-#> | 0013     | -1266.45 |    4.926 |    8.051 |     31.6 |    8.895 |   0.8088 |    0.181 |   0.1227 |  0.08089 |   0.1023 |  0.01963 |   0.1358 |
-#> | 0014 ✓   | -1266.45 |    4.926 |    8.051 |     31.6 |    8.895 |   0.8088 |    0.181 |   0.1227 |  0.08089 |   0.1023 |  0.01963 |   0.1358 |
-#> | 0.6 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
-#>   Computing covariance (R method, MC NLL, Sens-Hessian, 7 gradient evaluations)
-#>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
+#> | 0025     | -1266.48 |    4.938 |    7.883 |    31.51 |     8.85 |   0.7952 |   0.1856 |    0.119 |  0.07768 |  0.09035 | 0.006749 |   0.1295 |
+#> | 0026     | -1266.48 |    4.938 |    7.883 |     31.5 |    8.851 |   0.7953 |   0.1856 |   0.1191 |  0.07768 |  0.09036 | 0.006749 |   0.1295 |
+#> | 0027     | -1266.48 |    4.939 |    7.884 |     31.5 |     8.85 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |
+#> | 0028     | -1266.48 |    4.939 |    7.884 |     31.5 |    8.851 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |
+#> | 0029 ✓   | -1266.48 |    4.939 |    7.885 |     31.5 |    8.851 |   0.7954 |   0.1856 |   0.1191 |  0.07769 |  0.09037 | 0.006749 |   0.1295 |
+#> | 1.1 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#>   Computing covariance (R method, MC NLL, Sens-Hessian, 12 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  
@@ -441,22 +485,22 @@ print(fit)
 #> ── nlmixr² adirmc ──
 #> 
 #>             OBJF       AIC       BIC Log-likelihood
-#> adirmc -1266.452 -1244.452 -1173.921       633.2258
+#> adirmc -1266.481 -1244.481 -1173.951       633.2406
 #> 
 #> ── Time (sec fit$time): ──
 #> 
-#>         optimize covariance elapsed other
-#> elapsed    0.641      5.552   6.193 0.535
+#>   optimize covariance elapsed
+#> 1    1.138       9.54  10.678
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
-#>            Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl       1.594 0.02553 1.601    4.926 (4.685, 5.179)     36.1            
-#> tv1       2.086   0.192 9.207    8.051 (5.526, 11.73)     29.0            
-#> tv2       3.453 0.07319 2.119     31.6 (27.38, 36.48)     32.8            
-#> tq        2.186 0.05948 2.722    8.895 (7.916, 9.995)     14.1            
-#> tka     -0.2122  0.1764 83.15  0.8088 (0.5723, 1.143)     38.1            
-#> prop.sd   0.181                                 0.181                     
+#>           Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+#> tcl      1.597 0.04205 2.633    4.939 (4.548, 5.363)     35.6            
+#> tv1      2.065  0.3248 15.73     7.885 (4.172, 14.9)     28.4            
+#> tv2       3.45  0.1365 3.957     31.5 (24.11, 41.16)     30.8            
+#> tq        2.18  0.1072 4.916    8.851 (7.174, 10.92)     8.23            
+#> tka     -0.229  0.2938 128.3  0.7954 (0.4472, 1.415)     37.2            
+#> prop.sd 0.1856 0.01504   8.1 0.1856 (0.1562, 0.2151)                     
 #>  
 #>   Covariance Type (fit$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix

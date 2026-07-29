@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -36,6 +36,7 @@
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
+    <li><a class="dropdown-item" href="../articles/error-models.html">Choosing a residual error model</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul></li>
@@ -57,7 +58,7 @@
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control parameters for <code><a href="datagen.html">datagen()</a></code></h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/R/datagen.R" class="external-link"><code>R/datagen.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.0/R/datagen.R" class="external-link"><code>R/datagen.R</code></a></small>
       <div class="d-none name"><code>datagenControl.Rd</code></div>
     </div>
 
@@ -74,7 +75,8 @@
 <span>  sampling <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"sobol"</span>, <span class="st">"halton"</span>, <span class="st">"torus"</span>, <span class="st">"lhs"</span>, <span class="st">"rnorm"</span><span class="op">)</span>,</span>
 <span>  seed <span class="op">=</span> <span class="fl">12345L</span>,</span>
 <span>  cores <span class="op">=</span> <span class="fl">1L</span>,</span>
-<span>  return_samples <span class="op">=</span> <span class="cn">FALSE</span></span>
+<span>  return_samples <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  resid_nodes <span class="op">=</span> <span class="fl">81L</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -123,6 +125,16 @@ or <code>"gh"</code>.</p></dd>
 <dd><p>Include the raw <code>n_sim x length(times)</code>
 prediction matrix as <code>$samples</code> in each study's output. No effect when
 <code>method = "fo"</code> or <code>"gh"</code> (those methods draw no samples).</p></dd>
+
+
+<dt id="arg-resid-nodes">resid_nodes<a class="anchor" aria-label="anchor" href="#arg-resid-nodes"></a></dt>
+<dd><p>Gauss-Hermite nodes used to integrate the RESIDUAL for a
+transform-both-sides endpoint (<code>boxCox</code>, <code>yeoJohnson</code>, <code>logitNorm</code>,
+<code>probitNorm</code>), where <code>y = g(h(f) + sigma*eps)</code> has no closed-form mean and
+variance. Ignored by every other error model. Default 81 – the same default
+the four estimator controls use, so <code><a href="datagen.html">datagen()</a></code> and the fit it feeds agree
+unless you deliberately change one of them. See <code><a href="admControl.html">admControl()</a></code> for the
+measured convergence.</p></dd>
 
 </dl></div>
     <div class="section level2">

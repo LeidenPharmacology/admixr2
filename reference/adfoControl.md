@@ -37,6 +37,7 @@ adfoControl(
   sumProd = FALSE,
   literalFix = TRUE,
   returnAdmr = FALSE,
+  resid_nodes = 81L,
   ...
 )
 ```
@@ -125,9 +126,27 @@ adfoControl(
 
 - covMethod:
 
-  `"r"` computes covariance via numerical Hessian for structural and
-  residual-error parameters only (omega/IIV SEs are not computed,
-  consistent with nlmixr2 FOCEI); `"none"` skips it.
+  `"r"` computes covariance via a numerical Hessian over the structural,
+  residual-error and omega parameters; `"none"` skips it. Omega is
+  included because excluding it also biases the STRUCTURAL standard
+  errors downward – a theta carrying an eta is correlated with that
+  eta's variance. If the weakly-identified omega Cholesky makes the
+  Hessian non-positive definite, the structural + residual sub-block is
+  reported with a warning.
+
+  All three blocks are reported on the scale the ESTIMATES are printed
+  on, as `nlmixr2est` does: structural thetas on the log/optimizer
+  scale, residual error as an SD, and omega as the variance/covariance
+  entries (named `om.<eta>` and `cov.<eta_i>.<eta_j>`). The omega block
+  is rotated by the full Jacobian of Omega with respect to the
+  log-Cholesky, which is not diagonal once omega is correlated.
+
+  **An adfo standard error describes scatter, not accuracy.** FO
+  linearises the model at eta = 0, and on a non-additive residual (or a
+  saturating endpoint, or a large omega) the resulting point estimates
+  carry a bias of several standard errors – measured 5-20 SE, giving 0%
+  coverage for a nominal 95% interval even where the SE itself matches
+  the sampling SD. Use `adgh` or `admc` when the uncertainty matters.
 
 - n_restarts:
 
@@ -164,6 +183,25 @@ adfoControl(
 - returnAdmr:
 
   If `TRUE`, return a plain list instead of the full nlmixr2 fit object.
+
+- resid_nodes:
+
+  Gauss-Hermite nodes used to integrate the RESIDUAL for a
+  transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+  `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean
+  and variance. Ignored by every other error model, which has closed
+  forms. Default 81. Measured worst-case relative error against an
+  independent quadrature, over all four transforms and residual SD of
+  0.5, 1, 2 and 3: n = 15 gives 5.7e-2, 31 gives 4.5e-3, 81 gives
+  5.0e-5. The error is dominated by large residual SD; at SD \<= 1, n =
+  31 already gives 1e-7 or better.
+
+  This is an ACCURACY dial, not a speed one. The quadrature is linear in
+  `resid_nodes` in isolation (~50 us at 15, 300 us at 81 for an 8-row
+  study) but negligible beside the ODE solve: a full NLL evaluation
+  measured 0.750 s per 60 evaluations at BOTH 31 and 81 nodes. Raise it
+  if you have a saturating endpoint with a large residual SD; there is
+  little to gain by lowering it.
 
 - ...:
 
@@ -205,7 +243,7 @@ ctl2 <- adfoControl(grad = "analytical", maxeval = 1000L)
 
 # \donttest{
 library(rxode2)
-#> rxode2 5.1.2 using 2 threads (see ?getRxThreads)
+#> rxode2 5.1.5 using 2 threads (see ?getRxThreads)
 #>   no cache: create with `rxCreateCache()`
 library(nlmixr2)
 #> ── Attaching packages ───────────────────────────────────────── nlmixr2 5.0.0 ──
@@ -271,20 +309,19 @@ fit <- nlmixr2(
 #> +----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |       tv |  prop.sd |   eta.cl |    eta.v |
 #> +----------+----------+----------+----------+----------+----------+----------+
-#> | 0010     |  1.5e+30 |        5 |        1 |      0.2 |     0.09 |     0.04 |
-#> | 0020     |  3878.99 |    4.803 |    31.64 |      0.2 |     0.09 |     0.04 |
-#> | 0030     |  3303.72 |    4.806 |     30.1 |   0.2068 |  0.09261 |     0.04 |
-#> | 0040     |  2828.60 |    4.816 |    28.56 |   0.2164 |  0.09217 |  0.04034 |
-#> | 0050     |   929.13 |    6.839 |    37.04 |   0.3811 |   0.1391 |  0.02192 |
-#> | 0060     |   833.01 |    6.862 |    39.38 |   0.4076 |   0.1484 |  0.02135 |
-#> | 0070     |   826.48 |    6.702 |    39.97 |   0.4139 |   0.1411 |  0.02057 |
-#> | 0080     |   822.02 |    6.697 |    39.52 |   0.4177 |   0.1395 |  0.02036 |
-#> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |
-#> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |
-#> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |
-#> | 1.5 sec  |          |          |          |          |          |          |
-#>   Computing covariance (R method, 19 NLL evaluations)
-#>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
+#> | 0010     |  1.5e+29 |        5 |        1 |      0.2 |     0.09 |     0.04 |
+#> | 0020     |  2351.54 |        5 |     23.2 |   0.2232 |     0.09 |    1.588 |
+#> | 0030     |  1826.01 |    5.246 |    27.66 |   0.2112 |  0.05607 |   0.9401 |
+#> | 0040     |  1693.60 |    5.429 |    29.31 |   0.2266 |   0.0586 |   0.9714 |
+#> | 0050     |  1459.82 |    5.752 |     33.9 |   0.2796 |  0.04258 |   0.6821 |
+#> | 0060     |  1339.28 |     5.96 |    35.23 |   0.3241 |  0.03856 |   0.5019 |
+#> | 0070     |  1323.48 |    5.712 |    40.83 |   0.3624 |   0.0265 |   0.2476 |
+#> | 0080     |  1137.41 |    5.855 |    35.91 |   0.3459 |  0.02343 |   0.1307 |
+#> | 0090     |  1050.92 |    5.746 |    37.23 |   0.3671 |  0.02109 |  0.06168 |
+#> | 0100     |  1018.46 |    5.853 |    37.91 |     0.39 |  0.02121 |  0.04717 |
+#> | 0102 ✓   |  1018.46 |    5.853 |    37.91 |     0.39 |  0.02121 |  0.04717 |
+#> | 1.2 sec  |          |          |          |          |          |          |
+#>   Computing covariance (R method, 51 NLL evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  
@@ -292,24 +329,26 @@ print(fit)
 #> ── nlmixr² adfo ──
 #> 
 #>          OBJF      AIC      BIC Log-likelihood
-#> adfo 819.7109 829.7109 861.7701      -409.8555
+#> adfo 1018.459 1028.459 1060.518      -509.2295
 #> 
 #> ── Time (sec fit$time): ──
 #> 
 #>         optimize covariance elapsed other
-#> elapsed    1.462      0.104   1.566 3.107
+#> elapsed    1.245      0.093   1.338 3.337
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
-#>           Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl      1.886  0.01222 0.6479    6.591 (6.435, 6.751)     36.4            
-#> tv       3.676 0.009646 0.2624    39.47 (38.73, 40.22)     14.7            
-#> prop.sd 0.4158                                  0.4158                     
+#>          Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+#> tcl     1.767 0.008944 0.5062    5.853 (5.751, 5.957)     14.6            
+#> tv      3.635  0.01258 0.3461    37.91 (36.99, 38.86)     22.0            
+#> prop.sd  0.39 0.006145  1.576    0.39 (0.3779, 0.402)                     
 #>  
 #>   Covariance Type (fit$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
+#>   Information about run found (fit$runInfo):
+#>    • adfoCalcCov: the full Hessian including omega was not positive definite; reporting structural and sigma standard errors only. 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  
 #>     NLOPT_MAXEVAL_REACHED: Optimization stopped because maxeval (above) was reached. 

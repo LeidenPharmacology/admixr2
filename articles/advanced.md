@@ -318,12 +318,12 @@ fit_reduced <- nlmixr2(pk_reduced, admData(), est = "admc", control = ctl)
 
 AIC(fit_full, fit_reduced)
 #>             df       AIC
-#> fit_full    11 -3668.835
-#> fit_reduced  8 -3528.355
+#> fit_full    11 -3668.254
+#> fit_reduced  8 -3523.183
 BIC(fit_full, fit_reduced)
 #>             df       BIC
-#> fit_full    11 -3598.305
-#> fit_reduced  8 -3477.060
+#> fit_full    11 -3597.724
+#> fit_reduced  8 -3471.888
 ```
 
 Lower AIC/BIC favours the more parsimonious model; a difference \> 10 is

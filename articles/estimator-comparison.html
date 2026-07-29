@@ -29,7 +29,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -62,6 +62,7 @@
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
+    <li><a class="dropdown-item" href="../articles/error-models.html">Choosing a residual error model</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul>
@@ -96,7 +97,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Estimator comparison: adfo, admc, adgh and adirmc</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/estimator-comparison.Rmd" class="external-link"><code>vignettes/estimator-comparison.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.0/vignettes/estimator-comparison.Rmd" class="external-link"><code>vignettes/estimator-comparison.Rmd</code></a></small>
       <div class="d-none name"><code>estimator-comparison.Rmd</code></div>
     </div>
 
@@ -137,10 +138,34 @@ observations. For a nonlinear model
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">f(\theta,\eta)</annotation></semantics></math>
 these are integrals over the random-effects distribution
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>η</mi><mo>∼</mo><mi>𝒩</mi><mo stretchy="false" form="prefix">(</mo><mn>0</mn><mo>,</mo><mi mathvariant="normal">Ω</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\eta \sim \mathcal{N}(0, \Omega)</annotation></semantics></math>:</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><msub><mi>𝔼</mi><mi>η</mi></msub><mo stretchy="false" form="prefix">[</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="postfix">]</mo><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><msub><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mi>η</mi></msub><mo stretchy="false" form="prefix">[</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="postfix">]</mo><mo>+</mo><mi mathvariant="normal">Σ</mi></mrow><annotation encoding="application/x-tex">
-\mu_\text{pred} = \mathbb{E}_\eta[f(\theta, \eta)], \qquad
-V_\text{pred} = \operatorname{Var}_\eta[f(\theta, \eta)] + \Sigma
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><msub><mi>𝔼</mi><mi>η</mi></msub><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">[</mo><mi>𝔼</mi><mo stretchy="false" form="prefix">[</mo><mi>y</mi><mo>∣</mo><mi>η</mi><mo stretchy="false" form="postfix">]</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">]</mo><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><msub><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mi>η</mi></msub><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">(</mo><mi>𝔼</mi><mo stretchy="false" form="prefix">[</mo><mi>y</mi><mo>∣</mo><mi>η</mi><mo stretchy="false" form="postfix">]</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">)</mo><mo>+</mo><msub><mi>𝔼</mi><mi>η</mi></msub><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">[</mo><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>y</mi><mo>∣</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">
+\mu_\text{pred} = \mathbb{E}_\eta\bigl[\mathbb{E}[y \mid \eta]\bigr], \qquad
+V_\text{pred} = \operatorname{Var}_\eta\bigl(\mathbb{E}[y \mid \eta]\bigr)
+             + \mathbb{E}_\eta\bigl[\operatorname{Var}(y \mid \eta)\bigr]
 </annotation></semantics></math></p>
+<p>that is, the <strong>law of total variance</strong>. Writing
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><msub><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mi>η</mi></msub><mo stretchy="false" form="prefix">[</mo><mi>f</mi><mo stretchy="false" form="postfix">]</mo><mo>+</mo><mi mathvariant="normal">Σ</mi></mrow><annotation encoding="application/x-tex">V_\text{pred} =
+\operatorname{Var}_\eta[f] + \Sigma</annotation></semantics></math> is
+correct only when the residual variance does not depend on the
+prediction — i.e. for purely <strong>additive</strong> error. With
+<code>prop()</code>, <code>pow()</code> or <code>lnorm()</code> the
+residual variance is a function of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>,
+so
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>𝔼</mi><mi>η</mi></msub><mo stretchy="false" form="prefix">[</mo><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>y</mi><mo>∣</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="postfix">]</mo><mo>≠</mo><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>y</mi><mo>∣</mo><mi>η</mi><mo>=</mo><mover><mi>η</mi><mo accent="true">‾</mo></mover><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\mathbb{E}_\eta[\operatorname{Var}(y\mid\eta)] \neq
+\operatorname{Var}(y \mid \eta = \bar\eta)</annotation></semantics></math>,
+and <code>lnorm()</code> additionally scales the conditional
+<em>mean</em> by
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mi>e</mi><mrow><mi>s</mi><mi>/</mi><mn>2</mn></mrow></msup><annotation encoding="application/x-tex">e^{s/2}</annotation></semantics></math>,
+which scales the whole covariance rather than just its diagonal.
+Evaluating the residual at the population mean instead — the NONMEM “no
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>η</mi><annotation encoding="application/x-tex">\eta</annotation></semantics></math>–<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ε</mi><annotation encoding="application/x-tex">\varepsilon</annotation></semantics></math>
+interaction” convention — understates
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">diag</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\operatorname{diag}(V_\text{pred})</annotation></semantics></math>
+by
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>b</mi><mn>2</mn></msup><msub><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mi>η</mi></msub><mo stretchy="false" form="prefix">(</mo><mi>f</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">b^2\operatorname{Var}_\eta(f)</annotation></semantics></math>
+for proportional error, and admixr2 does <strong>not</strong> do
+this.</p>
 <p>These integrals have no closed form for nonlinear
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>.
 All four estimators minimise the same objective but take different
@@ -520,68 +545,68 @@ so FO bias is small.</p>
 <tr class="odd">
 <td align="left">exp(tcl)</td>
 <td align="right">5.00</td>
-<td align="right">4.9305</td>
-<td align="right">4.9583</td>
+<td align="right">4.9866</td>
+<td align="right">4.9626</td>
 </tr>
 <tr class="even">
 <td align="left">exp(tv1)</td>
 <td align="right">10.00</td>
-<td align="right">7.5125</td>
-<td align="right">10.1172</td>
+<td align="right">8.5523</td>
+<td align="right">10.2582</td>
 </tr>
 <tr class="odd">
 <td align="left">exp(tv2)</td>
 <td align="right">30.00</td>
-<td align="right">31.7752</td>
-<td align="right">30.0312</td>
+<td align="right">30.4149</td>
+<td align="right">29.9032</td>
 </tr>
 <tr class="even">
 <td align="left">exp(tq)</td>
 <td align="right">10.00</td>
-<td align="right">10.3718</td>
-<td align="right">9.8217</td>
+<td align="right">10.7936</td>
+<td align="right">9.7400</td>
 </tr>
 <tr class="odd">
 <td align="left">exp(tka)</td>
 <td align="right">1.00</td>
-<td align="right">0.8336</td>
-<td align="right">1.0245</td>
+<td align="right">0.9455</td>
+<td align="right">1.0304</td>
 </tr>
 <tr class="even">
 <td align="left">var(eta.cl)</td>
 <td align="right">0.09</td>
-<td align="right">0.0972</td>
-<td align="right">0.1022</td>
+<td align="right">0.0958</td>
+<td align="right">0.1011</td>
 </tr>
 <tr class="odd">
 <td align="left">var(eta.v1)</td>
 <td align="right">0.09</td>
-<td align="right">0.1309</td>
-<td align="right">0.1080</td>
+<td align="right">0.1065</td>
+<td align="right">0.1020</td>
 </tr>
 <tr class="even">
 <td align="left">var(eta.v2)</td>
 <td align="right">0.09</td>
-<td align="right">0.0728</td>
+<td align="right">0.0836</td>
 <td align="right">0.0975</td>
 </tr>
 <tr class="odd">
 <td align="left">var(eta.q)</td>
 <td align="right">0.09</td>
-<td align="right">0.1015</td>
-<td align="right">0.1056</td>
+<td align="right">0.1007</td>
+<td align="right">0.1073</td>
 </tr>
 <tr class="even">
 <td align="left">var(eta.ka)</td>
 <td align="right">0.09</td>
-<td align="right">0.0872</td>
-<td align="right">0.0928</td>
+<td align="right">0.0967</td>
+<td align="right">0.0986</td>
 </tr>
 <tr class="odd">
 <td align="left">prop.sd</td>
 <td align="right">0.20</td>
-<td align="right">0.1998</td>
-<td align="right">0.1984</td>
+<td align="right">0.1900</td>
+<td align="right">0.1895</td>
 </tr>
 </tbody>
 </table>
@@ -596,9 +621,9 @@ on a different scale and <strong>must not</strong> be compared with MC
 objectives or used for cross-estimator AIC:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sprintf.html" class="external-link">sprintf</a></span><span class="op">(</span><span class="st">"adfo  -2LL = %.2f   AIC = %.2f\n"</span>, <span class="va">fit_fo</span><span class="op">$</span><span class="va">objective</span>, <span class="fu"><a href="https://rdrr.io/r/stats/AIC.html" class="external-link">AIC</a></span><span class="op">(</span><span class="va">fit_fo</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; adfo  -2LL = -3675.39   AIC = -3653.39</span></span>
+<span><span class="co">#&gt; adfo  -2LL = -3665.64   AIC = -3643.64</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sprintf.html" class="external-link">sprintf</a></span><span class="op">(</span><span class="st">"admc  -2LL = %.2f   AIC = %.2f\n"</span>, <span class="va">fit_mc</span><span class="op">$</span><span class="va">objective</span>, <span class="fu"><a href="https://rdrr.io/r/stats/AIC.html" class="external-link">AIC</a></span><span class="op">(</span><span class="va">fit_mc</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; admc  -2LL = -3690.84   AIC = -3668.84</span></span></code></pre></div>
+<span><span class="co">#&gt; admc  -2LL = -3690.25   AIC = -3668.25</span></span></code></pre></div>
 <p>Use AIC only within the same estimator for model selection.</p>
 </div>
 <div class="section level2">
@@ -758,6 +783,9 @@ accuracy</td>
 <h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a>
 </h2>
 <ul>
+<li>
+<a href="error-models.html">Choosing a residual error model</a> —
+which error models each estimator supports</li>
 <li>
 <a href="advanced.html">Advanced usage</a> — gradient modes,
 restarts, and AIC/BIC model comparison</li>

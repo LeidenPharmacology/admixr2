@@ -151,31 +151,31 @@ fit
 ── nlmixr² adgh ──
 
          OBJF      AIC      BIC Log-likelihood
-adgh 1749.128 1769.128 1820.981      -874.5638
+adgh 1749.121 1769.121 1820.975      -874.5605
 
 ── Time (sec fit$time): ──
 
         optimize covariance elapsed other
-elapsed    2.574      0.451   3.025 4.876
+elapsed    2.538      0.573   3.111 6.266
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                                          Parameter    Est.      SE   %RSE
-tcl                            Log clearance (L/h)   1.595 0.01548 0.9705
-tv                                  Log volume (L)    3.91 0.01117 0.2856
-te0                        Log baseline DBP (mmHg)   4.563 0.01241  0.272
-temax             Log maximum DBP reduction (mmHg)   2.826  0.1148  4.061
-tec50                              Log EC50 (mg/L)  0.6859  0.4846  70.65
-prop.cp Proportional residual error, concentration 0.09995               
-add.dbp        Additive residual error, DBP (mmHg)   3.013               
-        Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl         4.927 (4.78, 5.079)     30.6            
-tv            49.89 (48.81, 51)     19.2            
-te0        95.85 (93.55, 98.21)     8.50            
-temax      16.88 (13.48, 21.14)                     
-tec50      1.985 (0.768, 5.133)                     
-prop.cp                 0.09995                     
-add.dbp                   3.013                     
+tcl                            Log clearance (L/h)   1.595 0.01608  1.008
+tv                                  Log volume (L)    3.91 0.01155 0.2954
+te0                        Log baseline DBP (mmHg)   4.563 0.01519 0.3329
+temax             Log maximum DBP reduction (mmHg)   2.826  0.1148  4.062
+tec50                              Log EC50 (mg/L)  0.6864  0.4847  70.62
+prop.cp Proportional residual error, concentration 0.09973 0.04479  44.91
+add.dbp        Additive residual error, DBP (mmHg)   3.012   26.64  884.2
+          Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl          4.927 (4.774, 5.085)     30.5            
+tv           49.89 (48.78, 51.04)     19.1            
+te0          95.85 (93.04, 98.75)     8.50            
+temax        16.88 (13.48, 21.14)                     
+tec50       1.986 (0.7683, 5.137)                     
+prop.cp 0.09973 (0.01194, 0.1875)                     
+add.dbp     3.012 (-49.19, 55.22)                     
  
   Covariance Type (fit$covMethod): r
   No correlations in between subject variability (BSV) matrix
@@ -339,12 +339,14 @@ if (is.null(cv)) {
   time course of the disease are confounded. A placebo arm is just
   another study with a zero-amount `ev`.
 - **Bounded endpoints.** An additive residual can predict outside the
-  range of a bounded score. Rescale or transform the endpoint before
-  fitting — note that an estimated
-  [`boxCox()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)/[`yeoJohnson()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)
-  lambda is **not** supported by admixr2: because it has no closed-form
-  aggregate mean/variance, the fit stops with an error rather than
-  silently approximating it.
+  range of a bounded score. Transform the endpoint instead —
+  `logitNorm()`, `probitNorm()`,
+  [`boxCox()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)
+  and
+  [`yeoJohnson()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)
+  are supported, with lambda either estimated or fixed. See [Choosing a
+  residual error
+  model](https://leidenpharmacology.github.io/admixr2/articles/error-models.md).
 
 ## See also
 

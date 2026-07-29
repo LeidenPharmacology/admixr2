@@ -7,12 +7,13 @@ articles:
   aggregate-data: aggregate-data.html
   datagen: datagen.html
   diagnostic-plots: diagnostic-plots.html
+  error-models: error-models.html
   estimator-comparison: estimator-comparison.html
   articles/introducing-admixr2: introducing-admixr2.html
   multi-compartment: multi-compartment.html
   multiple-studies: multiple-studies.html
   pkpd: pkpd.html
-last_built: 2026-07-17T12:59Z
+last_built: 2026-07-29T10:00Z
 urls:
   reference: https://leidenpharmacology.github.io/admixr2/reference
   article: https://leidenpharmacology.github.io/admixr2/articles

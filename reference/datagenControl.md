@@ -13,7 +13,8 @@ datagenControl(
   sampling = c("sobol", "halton", "torus", "lhs", "rnorm"),
   seed = 12345L,
   cores = 1L,
-  return_samples = FALSE
+  return_samples = FALSE,
+  resid_nodes = 81L
 )
 ```
 
@@ -62,6 +63,19 @@ datagenControl(
   Include the raw `n_sim x length(times)` prediction matrix as
   `$samples` in each study's output. No effect when `method = "fo"` or
   `"gh"` (those methods draw no samples).
+
+- resid_nodes:
+
+  Gauss-Hermite nodes used to integrate the RESIDUAL for a
+  transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+  `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean
+  and variance. Ignored by every other error model. Default 81 – the
+  same default the four estimator controls use, so
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+  and the fit it feeds agree unless you deliberately change one of them.
+  See
+  [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
+  for the measured convergence.
 
 ## Value
 

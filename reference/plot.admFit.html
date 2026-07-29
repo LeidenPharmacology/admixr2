@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -36,6 +36,7 @@
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
+    <li><a class="dropdown-item" href="../articles/error-models.html">Choosing a residual error model</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul></li>
@@ -57,7 +58,7 @@
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Diagnostic plots for an admixr2 fit</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/R/plot.R" class="external-link"><code>R/plot.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.0/R/plot.R" class="external-link"><code>R/plot.R</code></a></small>
       <div class="d-none name"><code>plot.admFit.Rd</code></div>
     </div>
 
@@ -215,20 +216,19 @@ those improvement steps rather than raw optimizer iterations.</p>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> |          |     -2LL |      tcl |       tv |  prop.sd |   eta.cl |    eta.v |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0010     |  1.5e+30 |        5 |        1 |      0.2 |     0.09 |     0.04 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0020     |  3878.99 |    4.803 |    31.64 |      0.2 |     0.09 |     0.04 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0030     |  3303.72 |    4.806 |     30.1 |   0.2068 |  0.09261 |     0.04 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0040     |  2828.60 |    4.816 |    28.56 |   0.2164 |  0.09217 |  0.04034 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0050     |   929.13 |    6.839 |    37.04 |   0.3811 |   0.1391 |  0.02192 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0060     |   833.01 |    6.862 |    39.38 |   0.4076 |   0.1484 |  0.02135 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0070     |   826.48 |    6.702 |    39.97 |   0.4139 |   0.1411 |  0.02057 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0080     |   822.02 |    6.697 |    39.52 |   0.4177 |   0.1395 |  0.02036 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0090     |   821.28 |    6.719 |    39.61 |   0.4213 |   0.1374 |  0.02043 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0100     |   820.07 |     6.65 |    39.62 |   0.4181 |   0.1294 |  0.02105 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0102 ✓   |   819.71 |    6.591 |    39.47 |   0.4158 |   0.1246 |  0.02138 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 1.2 sec  |          |          |          |          |          |          |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, 19 NLL evaluations)</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0010     |  1.5e+29 |        5 |        1 |      0.2 |     0.09 |     0.04 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0020     |  2351.54 |        5 |     23.2 |   0.2232 |     0.09 |    1.588 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0030     |  1826.01 |    5.246 |    27.66 |   0.2112 |  0.05607 |   0.9401 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0040     |  1693.60 |    5.429 |    29.31 |   0.2266 |   0.0586 |   0.9714 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0050     |  1459.82 |    5.752 |     33.9 |   0.2796 |  0.04258 |   0.6821 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0060     |  1339.28 |     5.96 |    35.23 |   0.3241 |  0.03856 |   0.5019 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0070     |  1323.48 |    5.712 |    40.83 |   0.3624 |   0.0265 |   0.2476 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0080     |  1137.41 |    5.855 |    35.91 |   0.3459 |  0.02343 |   0.1307 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0090     |  1050.92 |    5.746 |    37.23 |   0.3671 |  0.02109 |  0.06168 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0100     |  1018.46 |    5.853 |    37.91 |     0.39 |  0.02121 |  0.04717 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0102 ✓   |  1018.46 |    5.853 |    37.91 |     0.39 |  0.02121 |  0.04717 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 1.0 sec  |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, 51 NLL evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>

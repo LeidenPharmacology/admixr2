@@ -40,6 +40,7 @@ adghControl(
   sumProd = FALSE,
   literalFix = TRUE,
   returnAdmr = FALSE,
+  resid_nodes = 81L,
   ...
 )
 ```
@@ -128,8 +129,20 @@ adghControl(
 
 - covMethod:
 
-  `"r"` computes covariance via numerical Hessian for structural and
-  residual-error parameters only; `"none"` skips it.
+  `"r"` computes covariance via a numerical Hessian over the structural,
+  residual-error and omega parameters; `"none"` skips it. Omega is
+  included because excluding it also biases the STRUCTURAL standard
+  errors downward – a theta carrying an eta is correlated with that
+  eta's variance. If the weakly-identified omega Cholesky makes the
+  Hessian non-positive definite, the structural + residual sub-block is
+  reported with a warning.
+
+  All three blocks are reported on the scale the ESTIMATES are printed
+  on, as `nlmixr2est` does: structural thetas on the log/optimizer
+  scale, residual error as an SD, and omega as the variance/covariance
+  entries (named `om.<eta>` and `cov.<eta_i>.<eta_j>`). The omega block
+  is rotated by the full Jacobian of Omega with respect to the
+  log-Cholesky, which is not diagonal once omega is correlated.
 
 - n_restarts:
 
@@ -164,6 +177,25 @@ adghControl(
 - returnAdmr:
 
   If `TRUE`, return a plain list instead of the full nlmixr2 fit object.
+
+- resid_nodes:
+
+  Gauss-Hermite nodes used to integrate the RESIDUAL for a
+  transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+  `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean
+  and variance. Ignored by every other error model, which has closed
+  forms. Default 81. Measured worst-case relative error against an
+  independent quadrature, over all four transforms and residual SD of
+  0.5, 1, 2 and 3: n = 15 gives 5.7e-2, 31 gives 4.5e-3, 81 gives
+  5.0e-5. The error is dominated by large residual SD; at SD \<= 1, n =
+  31 already gives 1e-7 or better.
+
+  This is an ACCURACY dial, not a speed one. The quadrature is linear in
+  `resid_nodes` in isolation (~50 us at 15, 300 us at 81 for an 8-row
+  study) but negligible beside the ODE solve: a full NLL evaluation
+  measured 0.750 s per 60 evaluations at BOTH 31 and 81 nodes. Raise it
+  if you have a saturating endpoint with a large residual SD; there is
+  little to gain by lowering it.
 
 - ...:
 
@@ -237,7 +269,6 @@ fit <- nlmixr2(
 #> → loading into symengine environment...
 #> → pruning branches (`if`/`else`) of full model...
 #> ✔ done
-#> → calculate jacobian
 #> → calculate sensitivities
 #> → finding duplicate expressions in admixr2 sensitivity model...
 #> → optimizing duplicate expressions in admixr2 sensitivity model...
@@ -248,13 +279,11 @@ fit <- nlmixr2(
 #> +----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |       tv |  prop.sd |   eta.cl |    eta.v |
 #> +----------+----------+----------+----------+----------+----------+----------+
-#> | 0010     |   972.98 |     5.84 |    34.83 |   0.3185 |  0.08983 |  0.05427 |
-#> | 0020     |   727.91 |    7.788 |    37.96 |   0.4167 |   0.2292 |  0.04492 |
-#> | 0030     |   726.86 |     8.17 |    38.19 |   0.4231 |   0.2708 |  0.04749 |
-#> | 0034 ✓   |   726.86 |     8.15 |    38.21 |   0.4229 |    0.269 |  0.04736 |
-#> | 0.4 sec  |          |          |          |          |          |          |
-#>   Computing covariance (R method, Analytical-Hessian, 4 gradient evaluations)
-#>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
+#> | 0010     |  1000.18 |    6.203 |    35.45 |   0.3103 |  0.08888 |  0.05562 |
+#> | 0020     |   805.78 |    6.666 |    37.33 |   0.3781 |   0.1041 |  0.05946 |
+#> | 0022 ✓   |   805.78 |    6.667 |    37.33 |    0.378 |    0.104 |  0.05944 |
+#> | 0.2 sec  |          |          |          |          |          |          |
+#>   Computing covariance (R method, Analytical-Hessian, 6 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  

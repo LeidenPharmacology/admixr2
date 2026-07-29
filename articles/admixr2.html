@@ -29,7 +29,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -62,6 +62,7 @@
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Estimation &amp; diagnostics</h6></li>
     <li><a class="dropdown-item" href="../articles/estimator-comparison.html">Comparing the estimators</a></li>
+    <li><a class="dropdown-item" href="../articles/error-models.html">Choosing a residual error model</a></li>
     <li><a class="dropdown-item" href="../articles/advanced.html">Advanced usage</a></li>
     <li><a class="dropdown-item" href="../articles/diagnostic-plots.html">Diagnostic plots</a></li>
   </ul>
@@ -96,7 +97,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Getting started with admixr2</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.3.0/vignettes/admixr2.Rmd" class="external-link"><code>vignettes/admixr2.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.0/vignettes/admixr2.Rmd" class="external-link"><code>vignettes/admixr2.Rmd</code></a></small>
       <div class="d-none name"><code>admixr2.Rmd</code></div>
     </div>
 
@@ -324,29 +325,29 @@ random effect are handled.</p>
 <span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a> [<span class="dv">1</span>m──  [<span class="dv">34</span>mnlmix [<span class="dv">39</span>m [<span class="dv">31</span>mr² [<span class="dv">39</span>m  [<span class="dv">33</span>madmc [<span class="dv">39</span>m ── [<span class="dv">22</span>m</span>
 <span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a></span>
 <span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>          OBJF       AIC       BIC Log<span class="sc">-</span>likelihood</span>
-<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>admc <span class="sc">-</span><span class="fl">3690.835</span> <span class="sc">-</span><span class="fl">3668.835</span> <span class="sc">-</span><span class="fl">3598.305</span>       <span class="fl">1845.418</span></span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>admc <span class="sc">-</span><span class="fl">3690.254</span> <span class="sc">-</span><span class="fl">3668.254</span> <span class="sc">-</span><span class="fl">3597.724</span>       <span class="fl">1845.127</span></span>
 <span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a></span>
 <span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a> [<span class="dv">1</span>m── <span class="fu">Time</span> (sec  [<span class="dv">33</span>mfit [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>time [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
 <span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a></span>
 <span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>  optimize covariance elapsed</span>
-<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">22.364</span>      <span class="fl">5.284</span>  <span class="fl">27.648</span></span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">17.933</span>      <span class="fl">9.203</span>  <span class="fl">27.136</span></span>
 <span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a></span>
 <span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a> [<span class="dv">1</span>m── Population <span class="fu">Parameters</span> ( [<span class="dv">33</span>mfit [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixed [<span class="dv">39</span>m or  [<span class="dv">33</span>mfit [<span class="dv">39</span>m [<span class="dv">34</span>m<span class="sc">$</span>parFixedDf [<span class="dv">39</span>m)<span class="sc">:</span> ── [<span class="dv">22</span>m</span>
 <span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a></span>
-<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a>                                   [<span class="dv">1</span>m [<span class="dv">1</span>mParameter [<span class="dv">0</span>m [<span class="dv">0</span>m     [<span class="dv">1</span>mEst. [<span class="dv">0</span>m       [<span class="dv">1</span>m [<span class="dv">1</span>mSE [<span class="dv">0</span>m [<span class="dv">0</span>m    [<span class="dv">1</span>m%RSE [<span class="dv">0</span>m</span>
-<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtcl [<span class="dv">0</span>m [<span class="dv">0</span>m                    Log <span class="fu">clearance</span> (L<span class="sc">/</span>hr)   <span class="fl">1.601</span> <span class="fl">0.01635</span>  <span class="fl">1.021</span></span>
-<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv1 [<span class="dv">0</span>m [<span class="dv">0</span>m                  Log central <span class="fu">volume</span> (L)   <span class="fl">2.314</span> <span class="fl">0.08719</span>  <span class="fl">3.768</span></span>
-<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv2 [<span class="dv">0</span>m [<span class="dv">0</span>m               Log peripheral <span class="fu">volume</span> (L)   <span class="fl">3.402</span> <span class="fl">0.04007</span>  <span class="fl">1.178</span></span>
-<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtq [<span class="dv">0</span>m [<span class="dv">0</span>m        Log inter<span class="sc">-</span>compartmental <span class="fu">CL</span> (L<span class="sc">/</span>hr)   <span class="fl">2.285</span> <span class="fl">0.02132</span> <span class="fl">0.9332</span></span>
-<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtka [<span class="dv">0</span>m [<span class="dv">0</span>m     Log absorption rate <span class="fu">constant</span> (<span class="dv">1</span><span class="sc">/</span>hr) <span class="fl">0.02423</span> <span class="fl">0.08198</span>  <span class="fl">338.4</span></span>
-<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mprop.sd [<span class="dv">0</span>m [<span class="dv">0</span>m      Proportional residual error SD  <span class="fl">0.1984</span>               </span>
+<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a>                                   [<span class="dv">1</span>m [<span class="dv">1</span>mParameter [<span class="dv">0</span>m [<span class="dv">0</span>m     [<span class="dv">1</span>mEst. [<span class="dv">0</span>m       [<span class="dv">1</span>m [<span class="dv">1</span>mSE [<span class="dv">0</span>m [<span class="dv">0</span>m   [<span class="dv">1</span>m%RSE [<span class="dv">0</span>m</span>
+<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtcl [<span class="dv">0</span>m [<span class="dv">0</span>m                    Log <span class="fu">clearance</span> (L<span class="sc">/</span>hr)   <span class="fl">1.602</span> <span class="fl">0.01956</span> <span class="fl">1.221</span></span>
+<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv1 [<span class="dv">0</span>m [<span class="dv">0</span>m                  Log central <span class="fu">volume</span> (L)   <span class="fl">2.328</span>  <span class="fl">0.1207</span> <span class="fl">5.183</span></span>
+<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv2 [<span class="dv">0</span>m [<span class="dv">0</span>m               Log peripheral <span class="fu">volume</span> (L)   <span class="fl">3.398</span> <span class="fl">0.05196</span> <span class="fl">1.529</span></span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtq [<span class="dv">0</span>m [<span class="dv">0</span>m        Log inter<span class="sc">-</span>compartmental <span class="fu">CL</span> (L<span class="sc">/</span>hr)   <span class="fl">2.276</span> <span class="fl">0.02652</span> <span class="fl">1.165</span></span>
+<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtka [<span class="dv">0</span>m [<span class="dv">0</span>m     Log absorption rate <span class="fu">constant</span> (<span class="dv">1</span><span class="sc">/</span>hr) <span class="fl">0.02992</span>  <span class="fl">0.1138</span> <span class="fl">380.5</span></span>
+<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mprop.sd [<span class="dv">0</span>m [<span class="dv">0</span>m      Proportional residual error SD  <span class="fl">0.1895</span> <span class="fl">0.00321</span> <span class="fl">1.694</span></span>
 <span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a>         [<span class="dv">1</span>mBack<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) [0m  [1mBSV(CV%</span>) [<span class="dv">0</span>m  [<span class="dv">1</span><span class="fu">mShrink</span>(SD)% [<span class="dv">0</span>m</span>
-<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtcl [<span class="dv">0</span>m [<span class="dv">0</span>m         <span class="fl">4.958</span> (<span class="fl">4.802</span>, <span class="fl">5.12</span>)     <span class="fl">32.8</span>            </span>
-<span id="cb6-23"><a href="#cb6-23" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv1 [<span class="dv">0</span>m [<span class="dv">0</span>m           <span class="fl">10.12</span> (<span class="fl">8.528</span>, <span class="dv">12</span>)     <span class="fl">33.8</span>            </span>
-<span id="cb6-24"><a href="#cb6-24" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv2 [<span class="dv">0</span>m [<span class="dv">0</span>m        <span class="fl">30.03</span> (<span class="fl">27.76</span>, <span class="fl">32.48</span>)     <span class="fl">32.0</span>            </span>
-<span id="cb6-25"><a href="#cb6-25" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtq [<span class="dv">0</span>m [<span class="dv">0</span>m          <span class="fl">9.822</span> (<span class="fl">9.42</span>, <span class="fl">10.24</span>)     <span class="fl">33.4</span>            </span>
-<span id="cb6-26"><a href="#cb6-26" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtka [<span class="dv">0</span>m [<span class="dv">0</span>m       <span class="fl">1.025</span> (<span class="fl">0.8725</span>, <span class="fl">1.203</span>)     <span class="fl">31.2</span>            </span>
-<span id="cb6-27"><a href="#cb6-27" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mprop.sd [<span class="dv">0</span>m [<span class="dv">0</span>m                  <span class="fl">0.1984</span>                     </span>
+<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtcl [<span class="dv">0</span>m [<span class="dv">0</span>m        <span class="fl">4.963</span> (<span class="fl">4.776</span>, <span class="fl">5.157</span>)     <span class="fl">32.6</span>            </span>
+<span id="cb6-23"><a href="#cb6-23" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv1 [<span class="dv">0</span>m [<span class="dv">0</span>m           <span class="fl">10.26</span> (<span class="fl">8.098</span>, <span class="dv">13</span>)     <span class="fl">32.8</span>            </span>
+<span id="cb6-24"><a href="#cb6-24" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtv2 [<span class="dv">0</span>m [<span class="dv">0</span>m         <span class="fl">29.9</span> (<span class="fl">27.01</span>, <span class="fl">33.11</span>)     <span class="fl">32.0</span>            </span>
+<span id="cb6-25"><a href="#cb6-25" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtq [<span class="dv">0</span>m [<span class="dv">0</span>m          <span class="fl">9.74</span> (<span class="fl">9.247</span>, <span class="fl">10.26</span>)     <span class="fl">33.7</span>            </span>
+<span id="cb6-26"><a href="#cb6-26" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mtka [<span class="dv">0</span>m [<span class="dv">0</span>m        <span class="fl">1.03</span> (<span class="fl">0.8243</span>, <span class="fl">1.288</span>)     <span class="fl">32.2</span>            </span>
+<span id="cb6-27"><a href="#cb6-27" tabindex="-1"></a> [<span class="dv">1</span>m [<span class="dv">1</span>mprop.sd [<span class="dv">0</span>m [<span class="dv">0</span>m <span class="fl">0.1895</span> (<span class="fl">0.1832</span>, <span class="fl">0.1958</span>)                     </span>
 <span id="cb6-28"><a href="#cb6-28" tabindex="-1"></a> </span>
 <span id="cb6-29"><a href="#cb6-29" tabindex="-1"></a>  Covariance <span class="fu">Type</span> ( [<span class="dv">33</span>mfit [<span class="dv">39</span>m [<span class="dv">1</span>m [<span class="dv">34</span>m<span class="sc">$</span>covMethod [<span class="dv">39</span>m [<span class="dv">22</span>m)<span class="sc">:</span>  [<span class="dv">1</span>mr [<span class="dv">22</span>m</span>
 <span id="cb6-30"><a href="#cb6-30" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
@@ -358,18 +359,18 @@ random effect are handled.</p>
 <p>Key entries in <code>fit$env$admExtra</code>:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit</span><span class="op">$</span><span class="va">objective</span>                    <span class="co"># -2 log-likelihood</span></span>
-<span><span class="co">#&gt; [1] -3690.835</span></span>
+<span><span class="co">#&gt; [1] -3690.254</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">struct</span>          <span class="co"># structural parameters (log scale)</span></span>
 <span><span class="co">#&gt;        tcl        tv1        tv2         tq        tka </span></span>
-<span><span class="co">#&gt; 1.60106955 2.31424055 3.40223701 2.28459887 0.02422598</span></span>
+<span><span class="co">#&gt; 1.60193579 2.32808009 3.39796638 2.27623769 0.02991704</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">sigma_var</span>       <span class="co"># residual variance(s)</span></span>
 <span><span class="co">#&gt;    prop.sd </span></span>
-<span><span class="co">#&gt; 0.03937635</span></span>
+<span><span class="co">#&gt; 0.03591429</span></span>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/stats/logLik.html" class="external-link">logLik</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span>
-<span><span class="co">#&gt; 'log Lik.' 1845.418 (df=11)</span></span>
+<span><span class="co">#&gt; 'log Lik.' 1845.127 (df=11)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/stats/AIC.html" class="external-link">AIC</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] -3668.835</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] -3668.254</span></span></code></pre></div>
 <p>The estimated between-subject covariance matrix
 <code>Omega</code>:</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
@@ -379,7 +380,7 @@ random effect are handled.</p>
 <caption>Estimated Omega (between-subject covariance).</caption>
 <tbody>
 <tr class="odd">
-<td align="right">0.1022</td>
+<td align="right">0.1011</td>
 <td align="right">0.000</td>
 <td align="right">0.0000</td>
 <td align="right">0.0000</td>
@@ -387,7 +388,7 @@ random effect are handled.</p>
 </tr>
 <tr class="even">
 <td align="right">0.0000</td>
-<td align="right">0.108</td>
+<td align="right">0.102</td>
 <td align="right">0.0000</td>
 <td align="right">0.0000</td>
 <td align="right">0.0000</td>
@@ -403,7 +404,7 @@ random effect are handled.</p>
 <td align="right">0.0000</td>
 <td align="right">0.000</td>
 <td align="right">0.0000</td>
-<td align="right">0.1056</td>
+<td align="right">0.1073</td>
 <td align="right">0.0000</td>
 </tr>
 <tr class="odd">
@@ -411,7 +412,7 @@ random effect are handled.</p>
 <td align="right">0.000</td>
 <td align="right">0.0000</td>
 <td align="right">0.0000</td>
-<td align="right">0.0928</td>
+<td align="right">0.0986</td>
 </tr>
 </tbody>
 </table>
@@ -457,6 +458,11 @@ across several studies</li>
 <li>
 <a href="estimator-comparison.html">Estimator comparison</a> —
 choosing a backend</li>
+<li>
+<a href="error-models.html">Choosing a residual error model</a> —
+what <code>cp ~ prop(...)</code> does to <code>E</code> and
+<code>V</code>
+</li>
 </ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

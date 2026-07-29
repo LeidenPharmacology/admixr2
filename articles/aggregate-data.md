@@ -153,23 +153,23 @@ fit
 ── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
-adgh -1323.146 -1313.146 -1292.945       661.5729
+adgh -1323.144 -1313.144 -1292.943       661.5719
 
 ── Time (sec fit$time): ──
 
         optimize covariance elapsed other
-elapsed    0.226      0.058   0.284  3.74
+elapsed    0.474      0.085   0.559 3.595
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                           Parameter    Est.      SE   %RSE
-tcl             Log clearance (L/h)   1.556 0.01954  1.256
-tv                   Log volume (L)   3.911 0.01546 0.3953
-prop.cp Proportional residual error 0.09764               
-        Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl         4.738 (4.56, 4.923)     25.9            
-tv          49.96 (48.47, 51.5)     19.7            
-prop.cp                 0.09764                     
+tcl             Log clearance (L/h)   1.556 0.02018  1.297
+tv                   Log volume (L)   3.911 0.01594 0.4075
+prop.cp Proportional residual error 0.09732 0.05238  53.83
+         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl          4.738 (4.555, 4.93)     25.8            
+tv          49.96 (48.42, 51.55)     19.7            
+prop.cp 0.09732 (-0.005352, 0.2)                     
  
   Covariance Type (fit$covMethod): r
   No correlations in between subject variability (BSV) matrix
@@ -195,23 +195,23 @@ fit_wrong
 ── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
-adgh -2942.661 -2932.661 -2912.459        1471.33
+adgh -2942.688 -2932.688 -2912.487       1471.344
 
 ── Time (sec fit_wrong$time): ──
 
   optimize covariance elapsed
-1    0.644       0.05   0.694
+1    0.718      0.066   0.784
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
                           Parameter     Est.       SE    %RSE
-tcl             Log clearance (L/h)    1.558 0.003064  0.1967
-tv                   Log volume (L)    3.908 0.002122 0.05431
-prop.cp Proportional residual error 0.008208                 
-        Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl         4.749 (4.72, 4.777)     4.19            
-tv         49.78 (49.57, 49.99)     2.91            
-prop.cp                0.008208                     
+tcl             Log clearance (L/h)    1.558 0.003134  0.2012
+tv                   Log volume (L)    3.908 0.002285 0.05848
+prop.cp Proportional residual error 0.008208 0.005405   65.85
+             Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl             4.749 (4.719, 4.778)     4.18            
+tv              49.79 (49.57, 50.01)     2.94            
+prop.cp 0.008208 (-0.002386, 0.0188)                     
  
   Covariance Type (fit_wrong$covMethod): r
   No correlations in between subject variability (BSV) matrix
@@ -230,7 +230,7 @@ variability is not:
 
 round(diag(fit$omega) / diag(fit_wrong$omega), 1)
 #> eta.cl  eta.v 
-#>   36.9   45.3
+#>   36.8   44.1
 ```
 
 `Omega` shrinks by more than an order of magnitude on both random
@@ -249,7 +249,7 @@ Nothing in the *point estimates* warns you. The *precision* does:
 round(c(RSE_CL_correct = fit$parFixedDf["tcl", "%RSE"],
         RSE_CL_wrong   = fit_wrong$parFixedDf["tcl", "%RSE"]), 3)
 #> RSE_CL_correct   RSE_CL_wrong 
-#>          1.256          0.197
+#>          1.297          0.201
 ```
 
 Clearance comes back not just right but implausibly certain — its
@@ -356,9 +356,9 @@ knitr::kable(tbl, row.names = FALSE,
 | Assumed SD       |   CL |     V | var(eta.cl) | var(eta.v) |
 |:-----------------|-----:|------:|------------:|-----------:|
 | 0.5x (too small) | 4.74 | 49.89 |       0.017 |      0.010 |
-| 1x (correct)     | 4.74 | 49.96 |       0.065 |      0.038 |
-| 2x (too large)   | 4.78 | 49.85 |       0.264 |      0.111 |
-| 4x (too large)   | 1.82 |  0.85 |       0.029 |      5.937 |
+| 1x (correct)     | 4.74 | 49.96 |       0.064 |      0.038 |
+| 2x (too large)   | 4.77 | 49.86 |       0.245 |      0.103 |
+| 4x (too large)   | 2.01 |  1.02 |       0.001 |      5.937 |
 
 Fit against a deliberately wrong V. Truth: CL = 5, V = 50, var(eta.cl) =
 0.09, var(eta.v) = 0.04. {.table}

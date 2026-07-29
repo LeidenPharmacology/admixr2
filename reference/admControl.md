@@ -38,6 +38,7 @@ admControl(
   sumProd = FALSE,
   literalFix = TRUE,
   returnAdmr = FALSE,
+  resid_nodes = 81L,
   ...
 )
 ```
@@ -216,9 +217,20 @@ admControl(
 
 - covMethod:
 
-  Covariance method: `"r"` (numerical Hessian for structural and
-  residual-error parameters only; omega/IIV SEs are not computed,
-  consistent with nlmixr2 FOCEI) or `"none"`.
+  Covariance method: `"r"` (numerical Hessian over the structural,
+  residual-error and omega parameters) or `"none"`. Omega is included
+  because excluding it also biases the STRUCTURAL standard errors
+  downward – a theta carrying an eta is correlated with that eta's
+  variance. If the weakly-identified omega Cholesky makes the Hessian
+  non-positive definite, the structural + residual sub-block is reported
+  with a warning.
+
+  All three blocks are reported on the scale the ESTIMATES are printed
+  on, as `nlmixr2est` does: structural thetas on the log/optimizer
+  scale, residual error as an SD, and omega as the variance/covariance
+  entries (named `om.<eta>` and `cov.<eta_i>.<eta_j>`). The omega block
+  is rotated by the full Jacobian of Omega with respect to the
+  log-Cholesky, which is not diagonal once omega is correlated.
 
 - cov_n_sim:
 
@@ -274,6 +286,25 @@ admControl(
 
   If `TRUE`, return a plain list instead of a full nlmixr2 fit object
   (useful for debugging).
+
+- resid_nodes:
+
+  Gauss-Hermite nodes used to integrate the RESIDUAL for a
+  transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+  `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean
+  and variance. Ignored by every other error model, which has closed
+  forms. Default 81. Measured worst-case relative error against an
+  independent quadrature, over all four transforms and residual SD of
+  0.5, 1, 2 and 3: n = 15 gives 5.7e-2, 31 gives 4.5e-3, 81 gives
+  5.0e-5. The error is dominated by large residual SD; at SD \<= 1, n =
+  31 already gives 1e-7 or better.
+
+  This is an ACCURACY dial, not a speed one. The quadrature is linear in
+  `resid_nodes` in isolation (~50 us at 15, 300 us at 81 for an 8-row
+  study) but negligible beside the ODE solve: a full NLL evaluation
+  measured 0.750 s per 60 evaluations at BOTH 31 and 81 nodes. Raise it
+  if you have a saturating endpoint with a large residual SD; there is
+  little to gain by lowering it.
 
 - ...:
 
@@ -356,37 +387,36 @@ fit <- nlmixr2(
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
-#> | 0010     | -3644.83 |    5.145 |    11.61 |    26.16 |    10.87 |    1.243 |   0.2005 |  0.09031 |  0.09022 |  0.09008 |  0.09076 |  0.09031 |
-#> | 0020     | -3690.08 |    4.991 |    10.75 |    29.19 |     9.79 |    1.082 |   0.1991 |   0.1067 |   0.1036 |  0.09614 |    0.105 |   0.1065 |
-#> | 0030     | -3690.65 |    4.961 |    10.25 |     29.9 |    9.857 |     1.04 |   0.1985 |   0.1045 |    0.109 |   0.1022 |   0.1072 |  0.09699 |
-#> | 0040     | -3690.72 |     4.95 |    10.16 |    30.02 |    9.814 |    1.031 |   0.1983 |   0.1044 |   0.1139 |   0.1022 |   0.1067 |  0.09433 |
-#> | 0045 ✓   | -3690.73 |    4.952 |    10.12 |    30.03 |    9.816 |    1.026 |   0.1983 |   0.1045 |   0.1157 |   0.1008 |   0.1064 |  0.09238 |
-#> | 5.0 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
-#>   Computing covariance (R method, Sens-Hessian, 7 gradient evaluations)
-#>   Note: covMethod='r' computes covariance for structural and sigma parameters only; omega (IIV) SEs are not computed (matching nlmixr2 FOCEI behavior).
+#> | 0010     | -3677.06 |    4.983 |     11.9 |    27.87 |    9.692 |    1.205 |   0.1934 |   0.0924 |  0.09106 |  0.09019 |  0.09241 |  0.09143 |
+#> | 0020     | -3689.96 |    4.963 |    10.47 |    29.64 |    9.746 |    1.051 |   0.1896 |   0.1027 |   0.1028 |  0.09784 |   0.1103 |   0.1058 |
+#> | 0030     | -3690.05 |    4.957 |    10.37 |    29.86 |    9.747 |    1.042 |   0.1895 |   0.1032 |   0.1087 |   0.1021 |   0.1091 |  0.09925 |
+#> | 0040     | -3690.08 |    4.956 |    10.24 |    29.91 |    9.733 |    1.031 |   0.1894 |   0.1034 |   0.1118 |  0.09989 |   0.1081 |   0.0964 |
+#> | 0041 ✓   | -3690.08 |    4.956 |    10.25 |    29.91 |    9.734 |    1.031 |   0.1894 |   0.1034 |   0.1118 |  0.09989 |   0.1081 |  0.09638 |
+#> | 4.3 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#>   Computing covariance (R method, Sens-Hessian, 12 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  
 print(fit)
 #> ── nlmixr² admc ──
 #> 
-#>           OBJF       AIC       BIC Log-likelihood
-#> admc -3690.729 -3668.729 -3598.199       1845.365
+#>          OBJF      AIC      BIC Log-likelihood
+#> admc -3690.08 -3668.08 -3597.55        1845.04
 #> 
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance elapsed
-#> 1    4.998      5.119  10.117
+#> 1    4.348      8.134  12.482
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
-#>            Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl         1.6 0.01658 1.036    4.952 (4.794, 5.115)     33.2            
-#> tv1       2.314 0.08726  3.77    10.12 (8.529, 12.01)     35.0            
-#> tv2       3.402 0.04059 1.193    30.03 (27.74, 32.52)     32.6            
-#> tq        2.284 0.02142 0.938    9.816 (9.413, 10.24)     33.5            
-#> tka     0.02615 0.08192 313.2   1.026 (0.8742, 1.205)     31.1            
-#> prop.sd  0.1983                                0.1983                     
+#>            Est.       SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+#> tcl       1.601  0.01957 1.223      4.956 (4.77, 5.15)     33.0            
+#> tv1       2.327   0.1157 4.972    10.25 (8.167, 12.85)     34.4            
+#> tv2       3.398  0.05101 1.501    29.91 (27.06, 33.05)     32.4            
+#> tq        2.276  0.02685  1.18    9.734 (9.235, 10.26)     33.8            
+#> tka     0.03048   0.1093 358.5   1.031 (0.8322, 1.277)     31.8            
+#> prop.sd  0.1894 0.003221   1.7 0.1894 (0.1831, 0.1958)                     
 #>  
 #>   Covariance Type (fit$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix

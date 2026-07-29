@@ -27,9 +27,25 @@ model $`f(\theta,\eta)`$ these are integrals over the random-effects
 distribution $`\eta \sim \mathcal{N}(0, \Omega)`$:
 
 ``` math
-\mu_\text{pred} = \mathbb{E}_\eta[f(\theta, \eta)], \qquad
-V_\text{pred} = \operatorname{Var}_\eta[f(\theta, \eta)] + \Sigma
+\mu_\text{pred} = \mathbb{E}_\eta\bigl[\mathbb{E}[y \mid \eta]\bigr], \qquad
+V_\text{pred} = \operatorname{Var}_\eta\bigl(\mathbb{E}[y \mid \eta]\bigr)
+             + \mathbb{E}_\eta\bigl[\operatorname{Var}(y \mid \eta)\bigr]
 ```
+
+that is, the **law of total variance**. Writing $`V_\text{pred} =
+\operatorname{Var}_\eta[f] + \Sigma`$ is correct only when the residual
+variance does not depend on the prediction — i.e. for purely
+**additive** error. With `prop()`, `pow()` or `lnorm()` the residual
+variance is a function of $`f`$, so
+$`\mathbb{E}_\eta[\operatorname{Var}(y\mid\eta)] \neq
+\operatorname{Var}(y \mid \eta = \bar\eta)`$, and `lnorm()` additionally
+scales the conditional *mean* by $`e^{s/2}`$, which scales the whole
+covariance rather than just its diagonal. Evaluating the residual at the
+population mean instead — the NONMEM “no $`\eta`$–$`\varepsilon`$
+interaction” convention — understates
+$`\operatorname{diag}(V_\text{pred})`$ by
+$`b^2\operatorname{Var}_\eta(f)`$ for proportional error, and admixr2
+does **not** do this.
 
 These integrals have no closed form for nonlinear $`f`$. All four
 estimators minimise the same objective but take different approaches to
@@ -355,17 +371,17 @@ knitr::kable(tbl, caption = "Parameter estimates vs true values")
 
 | Parameter   |  True |    adfo |    admc |
 |:------------|------:|--------:|--------:|
-| exp(tcl)    |  5.00 |  4.9305 |  4.9583 |
-| exp(tv1)    | 10.00 |  7.5125 | 10.1172 |
-| exp(tv2)    | 30.00 | 31.7752 | 30.0312 |
-| exp(tq)     | 10.00 | 10.3718 |  9.8217 |
-| exp(tka)    |  1.00 |  0.8336 |  1.0245 |
-| var(eta.cl) |  0.09 |  0.0972 |  0.1022 |
-| var(eta.v1) |  0.09 |  0.1309 |  0.1080 |
-| var(eta.v2) |  0.09 |  0.0728 |  0.0975 |
-| var(eta.q)  |  0.09 |  0.1015 |  0.1056 |
-| var(eta.ka) |  0.09 |  0.0872 |  0.0928 |
-| prop.sd     |  0.20 |  0.1998 |  0.1984 |
+| exp(tcl)    |  5.00 |  4.9866 |  4.9626 |
+| exp(tv1)    | 10.00 |  8.5523 | 10.2582 |
+| exp(tv2)    | 30.00 | 30.4149 | 29.9032 |
+| exp(tq)     | 10.00 | 10.7936 |  9.7400 |
+| exp(tka)    |  1.00 |  0.9455 |  1.0304 |
+| var(eta.cl) |  0.09 |  0.0958 |  0.1011 |
+| var(eta.v1) |  0.09 |  0.1065 |  0.1020 |
+| var(eta.v2) |  0.09 |  0.0836 |  0.0975 |
+| var(eta.q)  |  0.09 |  0.1007 |  0.1073 |
+| var(eta.ka) |  0.09 |  0.0967 |  0.0986 |
+| prop.sd     |  0.20 |  0.1900 |  0.1895 |
 
 Parameter estimates vs true values {.table}
 
@@ -379,9 +395,9 @@ objectives or used for cross-estimator AIC:
 ``` r
 
 cat(sprintf("adfo  -2LL = %.2f   AIC = %.2f\n", fit_fo$objective, AIC(fit_fo)))
-#> adfo  -2LL = -3675.39   AIC = -3653.39
+#> adfo  -2LL = -3665.64   AIC = -3643.64
 cat(sprintf("admc  -2LL = %.2f   AIC = %.2f\n", fit_mc$objective, AIC(fit_mc)))
-#> admc  -2LL = -3690.84   AIC = -3668.84
+#> admc  -2LL = -3690.25   AIC = -3668.25
 ```
 
 Use AIC only within the same estimator for model selection.
@@ -479,6 +495,9 @@ adirmcControl(
 
 ## See also
 
+- [Choosing a residual error
+  model](https://leidenpharmacology.github.io/admixr2/articles/error-models.md)
+  — which error models each estimator supports
 - [Advanced
   usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md)
   — gradient modes, restarts, and AIC/BIC model comparison
