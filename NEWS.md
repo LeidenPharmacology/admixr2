@@ -73,6 +73,40 @@
   console noise, this removes a guaranteed-useless ODE solve every time the
   optimizer or the covariance step overflows a parameter.
 
+* **Compiled models are held in a session cache, which also stops a Windows
+  session dying mid-run.** `.admLoadModel()` and `.admLoadSensModel()` reloaded
+  their model from the disk cache on EVERY call -- a `readRDS()` of a compiled
+  model plus a `dyn.load()`, for every fit and every test. Each of those calls
+  also minted a fresh rxode2 object wrapping the same shared library, and every
+  one of them is a finalizer waiting to run; rxode2's finalizers unload the
+  library. A `gc()` at an unlucky moment could therefore unload a model's shared
+  library while it was still in use, and the R process would vanish with no error
+  at all.
+
+  Measured, on Windows, running the package's own test suite file by file in one
+  session -- same code and same files each time, only the provocation changing:
+
+  | `gc()` forced after each file | session cache | outcome |
+  |---|---|---|
+  | yes | no  | process died silently at ~file 20 |
+  | no  | no  | 48/48 files |
+  | yes | yes | 48/48 files |
+
+  Holding the models in the cache makes them permanently reachable, so nothing is
+  left for a finalizer to collect. A repeat load also drops from ~50 ms to ~0.5 ms.
+
+  The cache mechanism is `nlmixr2est`'s, deliberately: an `emptyenv()`-parented
+  environment per purpose, a composite key covering everything that changes the
+  emitted model, and a wholesale wipe at 64 entries to bound retained compiled
+  models -- the same shape as its `.foceiAnalyticAugCache`. Note the trade-off
+  that bound carries: a session fitting more than 64 DISTINCT models wipes the
+  cache and re-enters the window above.
+
+  A cached model is only served while its disk cache file still exists, so
+  `rxode2::rxClean()` still forces a genuine recompile, and the metadata that
+  cannot be keyed (a `boxCox`/`yeoJohnson` lambda's VALUE, which the key does not
+  include) is re-derived on every hit exactly as the disk path already did.
+
 ## Internal changes
 
 * **The sensitivity-model builder takes an `order` argument.**

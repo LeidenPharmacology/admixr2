@@ -12,12 +12,26 @@
     rxode2::rxTempDir(),
     paste0("adm-sim-", .model_key, ".rds")
   )
+  # In-session registry (see .adm_model_env): a disk cache HIT still costs a
+  # readRDS plus a dyn.load, and hands back a fresh object whose finalizer will
+  # eventually unload the shared library this one is using.
+  #
+  # Gated on the disk cache STILL EXISTING, so the registry is a fast path for a
+  # valid cache rather than a replacement for one. Without that check, clearing
+  # the cache (rxode2::rxClean(), or the cold-session regression test that uses
+  # it to force a recompile) would no longer force anything: the memo would be
+  # served and the recompile path silently stop being exercised. The extra
+  # file.exists() is nothing against the readRDS it avoids.
+  .memo <- get0(.model_key, envir = .adm_model_env, inherits = FALSE)
+  if (!is.null(.memo) && file.exists(.cacheFile) &&
+      tryCatch({ rxode2::rxLoad(.memo); TRUE }, error = function(e) FALSE))
+    return(.memo)
   if (file.exists(.cacheFile)) {
     mod <- tryCatch(readRDS(.cacheFile), error = function(e) NULL)
     load_ok <- !is.null(mod) &&
       tryCatch({ rxode2::rxLoad(mod); TRUE }, error = function(e) FALSE)
     if (load_ok) {
-      return(mod)
+      return(.admCacheAssign(.model_key, mod, .adm_model_env))
     }
     tryCatch(file.remove(.cacheFile), error = function(e) NULL)
   }
@@ -29,7 +43,7 @@
   mod <- rxode2::rxode2(ui)$simulationModel
   tryCatch(suppressWarnings(saveRDS(mod, .cacheFile)), error = function(e) NULL)
   rxode2::rxLoad(mod)
-  mod
+  .admCacheAssign(.model_key, mod, .adm_model_env)
 }
 
 # Remove transient rxode2 model objects that $simulationModel / $foceiModel leave
@@ -692,6 +706,29 @@
     if (!is.finite(.pred_tbs$hi)) .pred_tbs$hi <- 1
   }
 
+  # Session cache, ahead of the disk cache and on the same key (.cacheFile already
+  # digests the model, the direction set, the ini order, the schema tag, the
+  # rxode2 version and the ORDER -- upstream's "composite key covering everything
+  # that changes the emitted model"). Same three reasons as .admLoadModel: skip a
+  # readRDS + dyn.load, stop minting a finalizer-bearing object per call, and keep
+  # the compiled model reachable. Gated on the disk file so a cache clear still
+  # forces a rebuild.
+  #
+  # The four fields below are re-derived on a hit exactly as the disk path does --
+  # NOT trusted from the cached object. `.cacheFile`'s key includes the ini NAMES
+  # and fix flags but not their VALUES, so `lam <- 0.5` and `lam <- 0.7` collide;
+  # serving a stale pred_tbs left the objective bit-identical and the gradient
+  # 1e2-1e4x wrong. Sharing that hazard with the disk path is the point.
+  .smemo <- get0(basename(.cacheFile), envir = .adm_sens_env, inherits = FALSE)
+  if (!is.null(.smemo) && file.exists(.cacheFile) &&
+      tryCatch({ rxode2::rxLoad(.smemo$mod); TRUE }, error = function(e) FALSE)) {
+    .smemo$cache_file  <- .cacheFile
+    .smemo$rename_map  <- rename_map
+    .smemo$fixed_theta <- fixed_theta
+    .smemo$pred_tbs    <- .pred_tbs
+    return(.smemo)
+  }
+
   if (file.exists(.cacheFile)) {
     result <- tryCatch({ m <- readRDS(.cacheFile); rxode2::rxLoad(m$mod); m },
                        error = function(e) NULL)
@@ -707,7 +744,7 @@
       result$rename_map  <- rename_map
       result$fixed_theta <- fixed_theta
       result$pred_tbs    <- .pred_tbs      # see the derivation above -- key collision
-      return(result)
+      return(.admCacheAssign(basename(.cacheFile), result, .adm_sens_env))
     }
   }
 
@@ -836,7 +873,7 @@
   # admixr2' may not be available when loading". Harmless -- a worker reloads the
   # DLL via rxLoad(), not from the serialised env (.admLoadModel does the same).
   tryCatch(suppressWarnings(saveRDS(result, .cacheFile)), error = function(e) NULL)
-  result
+  .admCacheAssign(basename(.cacheFile), result, .adm_sens_env)
 }
 
 .admIsLinCmtMod <- function(mod) {
