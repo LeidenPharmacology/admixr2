@@ -73,39 +73,30 @@
   console noise, this removes a guaranteed-useless ODE solve every time the
   optimizer or the covariance step overflows a parameter.
 
-* **Compiled models are held in a session cache, which also stops a Windows
-  session dying mid-run.** `.admLoadModel()` and `.admLoadSensModel()` reloaded
-  their model from the disk cache on EVERY call -- a `readRDS()` of a compiled
-  model plus a `dyn.load()`, for every fit and every test. Each of those calls
-  also minted a fresh rxode2 object wrapping the same shared library, and every
-  one of them is a finalizer waiting to run; rxode2's finalizers unload the
-  library. A `gc()` at an unlucky moment could therefore unload a model's shared
-  library while it was still in use, and the R process would vanish with no error
-  at all.
+* **Compiled models are held in a session cache.** `.admLoadModel()` and
+  `.admLoadSensModel()` reloaded their model from the disk cache on EVERY call --
+  a `readRDS()` of a compiled model plus a `dyn.load()`, for every fit and every
+  test -- and handed back a fresh wrapper object each time. A repeat load now
+  costs a hash lookup instead: measured at roughly 50 ms to 0.5 ms.
 
-  Measured, on Windows, running the package's own test suite file by file in one
-  session -- same code and same files each time, only the provocation changing:
-
-  | `gc()` forced after each file | session cache | outcome |
-  |---|---|---|
-  | yes | no  | process died silently at ~file 20 |
-  | no  | no  | 48/48 files |
-  | yes | yes | 48/48 files |
-
-  Holding the models in the cache makes them permanently reachable, so nothing is
-  left for a finalizer to collect. A repeat load also drops from ~50 ms to ~0.5 ms.
-
-  The cache mechanism is `nlmixr2est`'s, deliberately: an `emptyenv()`-parented
-  environment per purpose, a composite key covering everything that changes the
-  emitted model, and a wholesale wipe at 64 entries to bound retained compiled
-  models -- the same shape as its `.foceiAnalyticAugCache`. Note the trade-off
-  that bound carries: a session fitting more than 64 DISTINCT models wipes the
-  cache and re-enters the window above.
+  The mechanism is `nlmixr2est`'s, deliberately rather than invented: an
+  `emptyenv()`-parented environment per purpose, a composite key covering
+  everything that changes the emitted model, and a wholesale wipe at 64 entries
+  to bound retained compiled models -- the same shape as its
+  `.foceiAnalyticAugCache`. The load step matches `rxUiGet.foceiModel()` too,
+  which re-loads EVERY `rxode2` element of a cached object rather than one by
+  name.
 
   A cached model is only served while its disk cache file still exists, so
-  `rxode2::rxClean()` still forces a genuine recompile, and the metadata that
-  cannot be keyed (a `boxCox`/`yeoJohnson` lambda's VALUE, which the key does not
-  include) is re-derived on every hit exactly as the disk path already did.
+  `rxode2::rxClean()` still forces a genuine recompile, and the metadata the key
+  cannot capture (a `boxCox`/`yeoJohnson` lambda's VALUE) is re-derived on every
+  hit exactly as the disk path already did.
+
+  Note what this does NOT change: memory. A session's footprint is set by how
+  many DISTINCT models it compiles and loads -- measured at roughly 4-10 MB and
+  two shared libraries each, and nothing unloads them -- so a session fitting
+  many different models grows regardless of caching. Caching changes how often
+  the same model is re-read, not how many are resident.
 
 ## Internal changes
 
@@ -120,10 +111,22 @@
   residual analytically). Second-order initial conditions are emitted too,
   without which a parameter-dependent IC leaves the cross compartment at zero.
 
-  The sensitivity cache key includes the order, and its schema tag was bumped:
-  an order-1 *fallback* is cached under the order-2 key -- correct at runtime, so
-  a build that cannot succeed is not retried on every gradient call, but it means
-  a change to what the order-2 build emits is invisible until the tag moves.
+  The sensitivity cache key includes the order. An order-1 *fallback* is cached
+  under the order-2 key -- correct at runtime, so a build that cannot succeed is
+  not retried on every gradient call, but it does mean a change to what the
+  order-2 build emits must invalidate the entry. That used to rest on editing a
+  schema-tag string by hand, and was forgotten once during this work; the key now
+  carries the admixr2 version instead, so it invalidates by itself.
+
+  A `fix()`ed parameter's VALUE now keys the cache too. A fixed parameter never
+  reaches the optimizer, so it travels to the solve as data carried on the cached
+  object -- and a parallel worker, which reads that file and has no `ui` to
+  re-derive from, used the value it found. Two fits of the same model differing
+  only in `theta <- fix(0.5)` versus `fix(0.9)` therefore shared one cache entry,
+  and every parallel restart solved at the other fit's fixed value: silently, and
+  across sessions, since the cache directory persists. Starting values
+  deliberately do not key the cache -- they are optimizer state, and invalidating
+  on them would force a recompile for nothing.
 
 * **CI: `R-CMD-check` gained a `workflow_dispatch` trigger** and a dependency
   cache-version bump. The RcppParallel/TBB -> stringfish -> qs2 -> rxode2 stack
