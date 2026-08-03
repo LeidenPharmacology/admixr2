@@ -493,6 +493,14 @@
     dNLL_dmu <- if (is_var) -2 * s$n * r / diag(V_pred) else
       drop(-2 * s$n * invV %*% r)
 
+    # + dNLL_dmu * dmu_dv0 on the diagonal: for TBS the predicted MEAN depends on
+    # Var_eta(f) = diag(J Omega J'), so omega -- and a structural theta -- reach
+    # the objective through the mean too. Zero for every other residual form (see
+    # .admResidVChain). Hoisted out of the omega block so that block and the
+    # struct-theta block below share ONE value by construction: they are two
+    # contractions of the same object and must not drift apart.
+    .dmv <- attr(vchain, "dmu_dv0") %||% numeric(length(mu_pred))
+
     # Omega gradient: d(-2LL)/d(L[i,j]) via ML = t(J) dNLL_dV JL
     # (JL cached from Pass 1 -- avoids materialising M = t(J) dNLL_dV J separately)
     # Diagonal p = log(Omega_ii) = 2*log(L_ii):
@@ -502,10 +510,6 @@
     # Off-diagonal p = L_ij:    chain rule gives 2*(ML)[i,j]
     if (n_eta > 0L && n_o > 0L) {
       JL <- mc$JL
-      # + dNLL_dmu * dmu_dv0 on the diagonal: for TBS the predicted MEAN depends on
-      # Var_eta(f) = diag(J Omega J'), so omega reaches the objective through the
-      # mean too. Zero for every other residual form (see .admResidVChain).
-      .dmv <- attr(vchain, "dmu_dv0") %||% numeric(length(mu_pred))
       ML <- if (is_var)
         crossprod(J, JL * (dNLL_dv_pred * diag(vchain) + dNLL_dmu * .dmv))
       else {
@@ -541,14 +545,13 @@
     # contractions of one object. d(mu)/d(theta) is the first-order column: the
     # eta's for a mu-referenced theta, its own THETA_j_ column for an unpaired one.
     if (use_d2) {
-      .dmv2 <- attr(vchain, "dmu_dv0") %||% numeric(length(mu_pred))
-      .JO   <- mc$JL %*% t(pars$L)                       # J Omega
-      .G    <- if (is_var) .JO * (dNLL_dv_pred * diag(vchain) + dNLL_dmu * .dmv2)
-               else {
-                 .bt <- dNLL_dV * vchain
-                 diag(.bt) <- diag(.bt) + dNLL_dmu * .dmv2
-                 .bt %*% .JO
-               }
+      .JO <- mc$JL %*% t(pars$L)                         # J Omega
+      .G  <- if (is_var) .JO * (dNLL_dv_pred * diag(vchain) + dNLL_dmu * .dmv)
+             else {
+               .bt <- dNLL_dV * vchain
+               diag(.bt) <- diag(.bt) + dNLL_dmu * .dmv
+               .bt %*% .JO
+             }
       # The residual makes the objective depend on mu beyond the plain r = E - mu
       # path (its variance is mu-dependent, and for TBS so is the mean scale).
       # .admResidMuCoupling returns exactly that EXCESS, so it adds to dNLL_dmu --

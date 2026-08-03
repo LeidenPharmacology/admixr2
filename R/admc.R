@@ -1947,7 +1947,26 @@ admStopWorkers <- function() {
   } else {
     .cacheFile <- file.path(rxode2::rxTempDir(),
                             paste0("adm-sim-", digest::digest(ui_lstExpr), ".rds"))
-    rxMod <- readRDS(.cacheFile)
+    # Retry briefly before giving up: the parent writes this file immediately
+    # before spawning the workers, and a just-written file is not always visible
+    # to a freshly started process. Then fail with something actionable -- the
+    # bare readRDS error identifies neither the file nor the cause, and this is
+    # the failure `test-integration-parallel` shows under a full-suite run.
+    rxMod <- NULL
+    for (.attempt in seq_len(3L)) {
+      if (file.exists(.cacheFile))
+        rxMod <- tryCatch(readRDS(.cacheFile), error = function(e) NULL)
+      if (!is.null(rxMod)) break
+      Sys.sleep(0.2)
+    }
+    if (is.null(rxMod)) {
+      stop("admixr2: a parallel worker could not read the compiled-model cache\n  ",
+           .cacheFile,
+           "\nThe parent writes it before starting workers, so this usually means ",
+           "the rxode2 temporary directory was cleared mid-session (rxode2::rxClean(), ",
+           "or a tempdir sweep). Re-run the fit, or use workers = 1.",
+           call. = FALSE)
+    }
     rxode2::rxLoad(rxMod)
   }
 
