@@ -1,5 +1,36 @@
+# Re-load every compiled model inside a cached object.
+#
+# This is nlmixr2est's own load step, verbatim in behaviour (rxUiGet.foceiModel):
+#
+#   .ret <- readRDS(.cacheFile)
+#   lapply(seq_along(.ret), function(i) {
+#     if (inherits(.ret[[i]], "rxode2")) rxode2::rxLoad(.ret[[i]])
+#   })
+#
+# A deserialised rxode2 object carries a dead pointer until rxLoad() re-attaches
+# its shared library, and it is the CONTAINER that gets cached -- so every
+# rxode2-classed element has to be re-loaded, not just the one the caller happens
+# to read first. admixr2 loaded exactly one element by name, which is correct
+# today (each cached list holds a single model) and silently wrong the moment a
+# second one is added -- the extra model would come back as a live-looking object
+# over an unloaded library. Iterating, as upstream does, removes that trap.
+#
+# TRUE if everything loadable loaded; FALSE if any load failed, which the callers
+# treat as a stale cache entry (delete and rebuild) rather than propagating.
+.admRxLoadAll <- function(x) {
+  .one <- function(e) {
+    if (!inherits(e, "rxode2")) return(TRUE)
+    tryCatch({ rxode2::rxLoad(e); TRUE }, error = function(err) FALSE)
+  }
+  if (inherits(x, "rxode2")) return(.one(x))
+  if (!is.list(x)) return(TRUE)
+  all(vapply(x, .one, logical(1)))
+}
+
 # Load (or compile + cache) the rxode2 simulation model.
-# Compiled DLL is cached to disk with saveRDS(), keyed by model digest.
+# Compiled DLL is cached to disk with saveRDS(), keyed by model digest -- the
+# same shape nlmixr2est uses for its own compiled models (rxTempDir(), a
+# digest-named .rds, saveRDS/readRDS); see .admRxLoadAll for the load step.
 .admLoadModel <- function(ui) {
   # Accessing $simulationModel (below) caches the compiled model in
   # ui$meta$.simModelBase as a side effect -- a live, self-referential rxode2
@@ -23,13 +54,11 @@
   # served and the recompile path silently stop being exercised. The extra
   # file.exists() is nothing against the readRDS it avoids.
   .memo <- get0(.model_key, envir = .adm_model_env, inherits = FALSE)
-  if (!is.null(.memo) && file.exists(.cacheFile) &&
-      tryCatch({ rxode2::rxLoad(.memo); TRUE }, error = function(e) FALSE))
+  if (!is.null(.memo) && file.exists(.cacheFile) && .admRxLoadAll(.memo))
     return(.memo)
   if (file.exists(.cacheFile)) {
     mod <- tryCatch(readRDS(.cacheFile), error = function(e) NULL)
-    load_ok <- !is.null(mod) &&
-      tryCatch({ rxode2::rxLoad(mod); TRUE }, error = function(e) FALSE)
+    load_ok <- !is.null(mod) && .admRxLoadAll(mod)
     if (load_ok) {
       return(.admCacheAssign(.model_key, mod, .adm_model_env))
     }
@@ -720,8 +749,7 @@
   # serving a stale pred_tbs left the objective bit-identical and the gradient
   # 1e2-1e4x wrong. Sharing that hazard with the disk path is the point.
   .smemo <- get0(basename(.cacheFile), envir = .adm_sens_env, inherits = FALSE)
-  if (!is.null(.smemo) && file.exists(.cacheFile) &&
-      tryCatch({ rxode2::rxLoad(.smemo$mod); TRUE }, error = function(e) FALSE)) {
+  if (!is.null(.smemo) && file.exists(.cacheFile) && .admRxLoadAll(.smemo)) {
     .smemo$cache_file  <- .cacheFile
     .smemo$rename_map  <- rename_map
     .smemo$fixed_theta <- fixed_theta
@@ -730,8 +758,10 @@
   }
 
   if (file.exists(.cacheFile)) {
-    result <- tryCatch({ m <- readRDS(.cacheFile); rxode2::rxLoad(m$mod); m },
-                       error = function(e) NULL)
+    result <- tryCatch({
+      m <- readRDS(.cacheFile)
+      if (!.admRxLoadAll(m)) NULL else m
+    }, error = function(e) NULL)
     if (!is.null(result)) {
       # Overwrite the worker-inherited fields from the parent's fresh derivation
       # rather than trusting the file. A parallel WORKER reads this same file and
