@@ -51,6 +51,36 @@ jobs:
           extra-packages: any::covr, any::xml2
           needs: coverage
 
+      # rxode2 links RcppParallel's TBB, so it must be loadable against whichever
+      # RcppParallel the resolver installed -- and right now it is not, on Windows.
+      # RcppParallel 6.2.0 (Windows binary 2026-08-01) moved Windows from a static
+      # TBB to a shipped shared tbb.dll and removed the compatibility stub, while
+      # CRAN still serves the rxode2 5.1.5 Windows binary built 2026-07-30 against
+      # the previous generation. The result is
+      #   unable to load shared object 'rxode2/libs/x64/rxode2.dll':
+      #   LoadLibrary failure: The specified procedure could not be found.
+      # i.e. an import that no longer exists. Each package is individually fine;
+      # only the COMBINATION is broken, which is why a version snapshot is the
+      # right shape of fix rather than a rebuild -- and a Windows source build of
+      # rxode2 against 6.2.0 does not link (nlmixr2est hit exactly that).
+      #
+      # So: if rxode2 does not load, install RcppParallel from a dated snapshot
+      # taken after the rxode2 binary was built and before 6.2.0 reached Windows.
+      # Conditional rather than an unconditional pin -- it costs nothing on a
+      # healthy platform and removes itself once CRAN rebuilds rxode2, exactly
+      # like the stringfish/qs2 guard above. Delete both once they have been
+      # no-ops everywhere for a while.
+      - name: Ensure rxode2 loads against the installed RcppParallel
+        run: |
+          if (!requireNamespace("rxode2", quietly = TRUE)) {
+            message("rxode2 does not load -- pinning RcppParallel to the snapshot ",
+                    "its binary was built against")
+            install.packages("RcppParallel",
+                             repos = "https://packagemanager.posit.co/cran/2026-07-31")
+            library(rxode2)  # fail here, with this message, not later and opaquely
+          }
+        shell: Rscript {0}
+
       - name: Test coverage
         run: |
           cov <- covr::package_coverage(
