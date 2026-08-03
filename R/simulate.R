@@ -1,10 +1,17 @@
+# `sigdig` (here and in every sibling below) is pinfo$sigdig -- the control's
+# significant-digits request, handed to rxSolve's OWN `sigdig` argument so
+# rxode2 keeps ownership of the sigdig -> atol/rtol mapping (it changed that
+# formula between 5.1.4 and 5.1.5). NULL means rxode2's default tolerances. It
+# is the LAST formal with a NULL default on purpose: a caller that does not
+# pass it -- plot.R, datagen.R, a mirai daemon running a half-patched dev
+# namespace -- still calls these correctly and gets the previous numerics.
 # Single rxSolve pass for one study given pre-computed eta_mat (n_sim x n_eta).
 # Returns n_sim x n_times matrix of predicted concentrations.
 # params_mat is a named numeric matrix (from .admMakeParamsList); converted to
 # data.frame only at the rxSolve call to avoid repeated list COW copies.
 .admSimulate <- function(rxMod, struct_theta, sigma_names, eta_mat, study,
                          output_var, params_mat, cores,
-                         ndp = .Machine$integer.max) {
+                         ndp = .Machine$integer.max, sigdig = NULL) {
   eta_cols <- colnames(eta_mat)
   for (nm in names(struct_theta)) params_mat[, nm] <- struct_theta[nm]
   if (length(eta_cols) > 0L)      params_mat[, eta_cols] <- eta_mat
@@ -13,7 +20,8 @@
   # CMT, hard-coded model constants) from the model's own defaults.
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = study$ev_full, cores = cores,
-                          nDisplayProgress = ndp)
+                          nDisplayProgress = ndp,
+                          sigdig = sigdig)
   keep <- out[["time"]] %in% study$times
   # A beta endpoint is defined by TWO solved columns, so its prediction is
   # derived: mu = b1/(b1+b2). study$out_pair carries their names; every other
@@ -59,14 +67,15 @@
 # eta_mat is n_row x n_eta and lines up row-for-row with struct_mat.
 .admSimulateRows <- function(rxMod, struct_mat, sigma_names, eta_mat, study,
                              output_var, params_mat, cores,
-                             ndp = .Machine$integer.max) {
+                             ndp = .Machine$integer.max, sigdig = NULL) {
   eta_cols <- colnames(eta_mat)
   for (nm in colnames(struct_mat)) params_mat[, nm] <- struct_mat[, nm]
   if (length(eta_cols) > 0L)       params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)          params_mat[, nm] <- 0
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = study$ev_full, cores = cores,
-                          nDisplayProgress = ndp)
+                          nDisplayProgress = ndp,
+                          sigdig = sigdig)
   keep <- out[["time"]] %in% study$times
   # beta: derived prediction mu = b1/(b1+b2) -- see .admSimulate
   .phi <- NULL
@@ -113,7 +122,7 @@
 
 .admSimulateSensRows <- function(sensModel, struct_mat, sigma_names, eta_mat, study,
                                  cores, ndp = .Machine$integer.max,
-                                 sigma_var = NULL) {
+                                 sigma_var = NULL, sigdig = NULL) {
   rmap      <- sensModel$rename_map
   n_row     <- nrow(struct_mat)
   theta_nms <- colnames(struct_mat)
@@ -163,7 +172,8 @@
       do.call(rxode2::rxSolve,
               c(list(sensModel$mod, params = inner_df,
                      events = study$ev_full, cores = cores,
-                     nDisplayProgress = ndp), sensModel$solve_args))),
+                     nDisplayProgress = ndp,
+                     sigdig = sigdig), sensModel$solve_args))),
     error = function(e) NULL)
   if (is.null(out)) return(NULL)
   if (!all(sensModel$sens_cols %in% names(out))) return(NULL)
@@ -177,6 +187,23 @@
     matrix(out[[sensModel$sens_cols[j]]][keep], nrow = n_row, ncol = n_t, byrow = TRUE))
   dtheta_list <- .admThetaSens(sensModel, out, keep, n_row, n_t)
 
+  # Second-order cross block (order-2 sens model only): d2_list[[dir]][[i]] is
+  # d2(pred)/(d eta_i d dir), one n_row x n_t matrix -- i.e. column i of
+  # dJ/d(dir). NULL at order 1, which is what tells adfo to keep its FD pass.
+  # Extracted BEFORE the transform block below, and deliberately dropped there
+  # for a transformed endpoint: chaining a second derivative through g() needs
+  # g''(z) z_p z_q + g'(z) z_pq, not g' alone, and a silently first-order-chained
+  # second derivative is exactly the class of error that made lnorm's gradient
+  # ~200x wrong before. adfo finite-differences those endpoints instead.
+  d2_list <- NULL
+  if (!is.null(sensModel$d2_cols) && all(sensModel$d2_cols %in% names(out))) {
+    d2_list <- lapply(seq_len(ncol(sensModel$d2_cols)), function(b)
+      lapply(seq_len(nrow(sensModel$d2_cols)), function(i)
+        matrix(out[[sensModel$d2_cols[i, b]]][keep], nrow = n_row, ncol = n_t,
+               byrow = TRUE)))
+    names(d2_list) <- colnames(sensModel$d2_cols)
+  }
+
   # lnorm endpoint: rx_pred_ is log(f). Back-transform to the natural scale the
   # NLL works on, chaining every sensitivity by d(exp(g))/dp = exp(g)*dg/dp.
   # Inlined rather than factored out -- see the dev-mode daemon note at the top.
@@ -188,9 +215,11 @@
     cp_mat     <- .admTBSi(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
     dpred_list <- lapply(dpred_list, function(D) D * .gp)
     if (!is.null(dtheta_list)) dtheta_list <- lapply(dtheta_list, function(D) D * .gp)
+    d2_list    <- NULL                      # see the note above
   }
 
-  list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list)
+  list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list,
+       d2_list = d2_list)
 }
 
 # Joint (same-subject) simulation: one rxSolve with SHARED eta produces every
@@ -198,14 +227,16 @@
 # stacked column-wise into an n_sim x n_total matrix (columns in block/row
 # order). Used for joint units where the compartments share random effects.
 .admSimulateJoint <- function(rxMod, struct_theta, sigma_names, eta_mat, unit,
-                              params_mat, cores, ndp = .Machine$integer.max) {
+                              params_mat, cores, ndp = .Machine$integer.max,
+                              sigdig = NULL) {
   eta_cols <- colnames(eta_mat)
   for (nm in names(struct_theta)) params_mat[, nm] <- struct_theta[nm]
   if (length(eta_cols) > 0L)      params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)         params_mat[, nm] <- 0
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = unit$ev_full, cores = cores,
-                          nDisplayProgress = ndp)
+                          nDisplayProgress = ndp,
+                          sigdig = sigdig)
   n_sim <- nrow(eta_mat)
   cp    <- matrix(0, nrow = n_sim, ncol = unit$n_total)
   time  <- out[["time"]]
@@ -230,7 +261,7 @@
 # unit's stacked MVN.
 .admSimulateJointSens <- function(sensModel, struct, sigma_names, eta_mat, unit,
                                   cores, ndp = .Machine$integer.max,
-                                  sigma_var = NULL) {
+                                  sigma_var = NULL, sigdig = NULL) {
   n_sim <- nrow(eta_mat); n_eta <- ncol(eta_mat)
   th_nms <- names(sensModel$theta_sens_cols)
   cp_mat     <- matrix(0, n_sim, unit$n_total)
@@ -241,7 +272,7 @@
   for (blk in unit$blocks) {
     bs  <- list(ev_full = blk$ev_full, times = blk$times)
     res <- .admSimulateSens(sensModel, struct, sigma_names, eta_mat, bs, cores, ndp,
-                            sigma_var)
+                            sigma_var, sigdig)
     if (is.null(res)) return(NULL)
     cp_mat[, blk$rows] <- res$cp_mat
     for (j in seq_len(n_eta)) dpred_list[[j]][, blk$rows] <- res$dpred_list[[j]]
@@ -275,7 +306,8 @@
 # back to FD). dtheta_list is NULL when the model carries no theta directions.
 .admSimulateSens <- function(sensModel, struct_theta, sigma_names,
                              eta_mat, study, cores,
-                             ndp = .Machine$integer.max, sigma_var = NULL) {
+                             ndp = .Machine$integer.max, sigma_var = NULL,
+                             sigdig = NULL) {
   eta_cols  <- colnames(eta_mat)
   rmap      <- sensModel$rename_map
   n_sim     <- nrow(eta_mat)
@@ -324,7 +356,8 @@
       do.call(rxode2::rxSolve,
               c(list(sensModel$mod, params = inner_df,
                      events = study$ev_full, cores = cores,
-                     nDisplayProgress = ndp), sensModel$solve_args))),
+                     nDisplayProgress = ndp,
+                     sigdig = sigdig), sensModel$solve_args))),
     error = function(e) NULL)
   if (is.null(out)) return(NULL)
 

@@ -316,6 +316,12 @@ covariance for admixr2 to match"),
        # control, but default it here so pinfo built directly (e.g. in tests that
        # call the NLL/gradient internals) always carries a valid integer.
        nDisplayProgress = .Machine$integer.max,
+       # Significant digits for the ODE solve, passed straight to rxSolve()'s own
+       # `sigdig` argument (rxode2 owns the sigdig -> atol/rtol mapping, and has
+       # changed it between 5.1.4 and 5.1.5 -- deriving tolerances here would pin us
+       # to one version's formula). NULL = rxode2's defaults, which is what a pinfo
+       # built directly by a unit test gets; the estimators set it from the control.
+       sigdig           = NULL,
        eta_names       = eta_names, n_eta = n_eta,
        eta_col_names   = paste0("eta.", gsub("^eta\\.", "", eta_names)),
        omega_par       = omega_par,

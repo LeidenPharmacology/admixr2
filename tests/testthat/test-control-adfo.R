@@ -3,7 +3,10 @@
 test_that("adfoControl() returns correct class and key defaults", {
   ctl <- adfoControl()
   expect_s3_class(ctl, "adfoControl")
-  expect_equal(ctl$grad,       "none")
+  # Default flipped from "none" (BOBYQA) once the struct thetas stopped being
+  # finite-differenced -- see the note on adfoControl's `grad` argument.
+  expect_equal(ctl$grad,       "analytical")
+  expect_equal(ctl$algorithm,  "NLOPT_LD_LBFGS")
   expect_equal(ctl$maxeval,    500L)
   expect_equal(ctl$seed,       12345L)
   expect_equal(ctl$cores,      as.integer(rxode2::rxCores()))

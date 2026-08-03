@@ -1,3 +1,104 @@
+# admixr2 0.4.1
+
+## New features
+
+* **`sigdig` now controls the fit, not just the output tables.** The `sigdig`
+  and `rxControl` arguments were documented as solver controls, but the object
+  they built only ever reached nlmixr2's *post-fit* table solves -- every
+  optimizer solve ran at rxode2's own default tolerances, so setting `sigdig`
+  changed nothing about the fit. It is now passed to `rxode2::rxSolve()`'s own
+  `sigdig` argument at every solve the estimators issue.
+
+  This makes it the lever for trading solver accuracy against speed. Measured on
+  a 1-cmt oral ODE model with two studies, at a fixed iteration count: **adfo is
+  4.8x faster** at the default `sigdig = 4`, `admc` 1.3x, `adgh` unchanged (its
+  batched quadrature solve is not integration-bound). The objective moves by
+  5e-09 relative and the `covMethod = "r"` standard errors are unchanged to four
+  significant figures.
+
+  **This changes fit results**, by roughly the amounts above: a fit now solves at
+  `sigdig = 4` tolerances where it previously used rxode2's defaults. Pass
+  `sigdig = NULL` to any of the four control functions to restore exactly the
+  previous numerics. That escape hatch exists because no single `sigdig` value
+  reproduces rxode2's defaults (they are asymmetric -- `atol` 1e-8 against `rtol`
+  1e-6 -- while the `sigdig` map is one-dimensional), and because rxode2 has
+  changed the map between releases: `sigdig = 4` is `atol = rtol = 5e-07` on
+  rxode2 5.1.4 but `rtol = 1e-04` on 5.1.5. Passing the digits rather than
+  re-deriving tolerances here keeps that rxode2's business; `sigdig = NULL` is
+  the setting whose meaning does not move under an upgrade.
+
+* **adfo differentiates its structural thetas analytically, and
+  `grad = "analytical"` (LBFGS) is now the default.** adfo was the last estimator
+  with a finite-difference component: its `V_pred = J Omega J' + resid` depends on
+  a structural theta through `J`, so the gradient needs `dJ/dtheta`, a *second*
+  derivative that the first-order sensitivity model does not carry. It therefore
+  finite-differenced the whole objective -- differencing a log-determinant and a
+  quadratic form, the noisiest construction in the package.
+
+  `.admBuildThetaSens()` now emits a second-order **cross block**
+  `d2f/(d eta d dir)` on request, and `.adfoGrad()` contracts it against the same
+  `dNLL/dV` matrix the omega path already uses, so the two cannot drift apart.
+  Against a central difference of the objective the structural gradient is
+  accurate to 2e-07..2e-06, where the finite-difference pass it replaces reached
+  8e-04..1e-02 (worst case `tv`, 1.4%).
+
+  Because the gradient is now exact, LBFGS on it beats the derivative-free
+  BOBYQA that `grad = "none"` used, so the default changed. `grad = "none"`
+  remains available, and any model whose second-order model cannot be built
+  falls back to the previous finite-difference gradient automatically.
+
+* **`linCmt()` models are supported at second order, by promotion.** `linCmt()`
+  has no second derivative -- `rxFromSE()` cannot emit the nested `linCmtB`
+  derivative, which is why nlmixr2est refuses `linCmt()` outright for its own
+  analytic gradient and covariance. admixr2 instead promotes the model to its
+  explicit ODE form with the exported `rxode2::linToOde()` and builds the
+  second-order block from that. The promoted solve reproduces the analytic
+  `linCmt()` prediction to 1.8e-08 relative.
+
+  Only the `order = 2` request promotes: `admc`/`adgh` continue to use the fast
+  solved form, which is all their first-order moments need.
+
+## Bug fixes
+
+* **Non-finite parameters no longer reach the ODE solver.** The screen that
+  rejects an unusable parameter vector before a solve tested that the omega
+  diagonal was positive -- and `Inf > 0` is `TRUE`. A covariance probe that
+  perturbs a residual parameter to `exp(1e5/2)` therefore handed `Inf` to
+  `rxSolve()`, which integrated garbage and emitted on the order of 190,000
+  `intdy -- t = <denormal> illegal` and `lsoda -- h too small` warnings before
+  the caller discarded the result anyway. The parameter vector is now also
+  checked for finiteness, at the objective *and* gradient entry points of all
+  three affected estimators (the gradients unpack the optimizer vector
+  themselves, so the objective's guard did not cover them). Aside from the
+  console noise, this removes a guaranteed-useless ODE solve every time the
+  optimizer or the covariance step overflows a parameter.
+
+## Internal changes
+
+* **The sensitivity-model builder takes an `order` argument.**
+  `.admBuildThetaSens()`/`.admLoadSensModel()` default to `order = 1L` -- the
+  existing first-order direction set, unchanged, which is what `admc`/`adgh`
+  read. `order = 2L` additionally emits the eta x direction cross block that
+  `adfo` needs. The block is deliberately asymmetric: `rxode2::rxExpandSens2_()`
+  accepts two different direction sets, so no theta x theta compartment is
+  generated, and admixr2 needs none of the residual-variance chains that
+  dominate nlmixr2est's own second-order build (`errmodel.R` derives the
+  residual analytically). Second-order initial conditions are emitted too,
+  without which a parameter-dependent IC leaves the cross compartment at zero.
+
+  The sensitivity cache key includes the order, and its schema tag was bumped:
+  an order-1 *fallback* is cached under the order-2 key -- correct at runtime, so
+  a build that cannot succeed is not retried on every gradient call, but it means
+  a change to what the order-2 build emits is invisible until the tag moves.
+
+* **CI: `R-CMD-check` gained a `workflow_dispatch` trigger** and a dependency
+  cache-version bump. The RcppParallel/TBB -> stringfish -> qs2 -> rxode2 stack
+  has broken twice from CRAN-side rebuilds alone, with no commit of this
+  package's involved, so being able to ask "does the current CRAN state still
+  build?" without pushing a dummy commit is worth two lines. Pair it with a
+  cache-version bump for a genuinely cold resolve -- a warm dependency cache is
+  what made macOS look healthy right through the RcppParallel 6.0.0 break.
+
 # admixr2 0.4.0
 
 ## New features

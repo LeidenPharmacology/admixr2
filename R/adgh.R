@@ -97,7 +97,8 @@
   g  <- .adghGrid(pars, pinfo, grid)
   pm <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
-                     out_var, pm, cores, pinfo$nDisplayProgress)
+                     out_var, pm, cores, pinfo$nDisplayProgress,
+                             pinfo$sigdig)
   .adghMomentsFromCp(cp, g$W, pars, pinfo, out_var, study$times)
 }
 
@@ -116,7 +117,8 @@
 
   pm     <- .admMakeParamsList(n_cfg * Q, pinfo, 1L)[[1L]]
   cp_all <- .admSimulateRows(rxMod, sm_big, pinfo$sigma_names, eta_big, study,
-                             out_var, pm, cores, pinfo$nDisplayProgress)
+                             out_var, pm, cores, pinfo$nDisplayProgress,
+                             pinfo$sigdig)
 
   # beta: phi = b1 + b2 comes back as one row per SOLVED row, and subsetting a
   # matrix drops attributes -- so each configuration's block has to carry its own
@@ -141,7 +143,7 @@
   } else { eta <- matrix(0, 1L, 0L); W <- 1 }
   pm <- .admMakeParamsList(nrow(eta), pinfo, 1L)[[1L]]
   cp <- .admSimulateJoint(rxMod, pars$struct, pinfo$sigma_names, eta, unit, pm, cores,
-                          pinfo$nDisplayProgress)
+                          pinfo$nDisplayProgress, pinfo$sigdig)
   mu  <- as.numeric(crossprod(W, cp))
   cpc <- sweep(cp, 2L, mu)
   V   <- crossprod(cpc, W * cpc)
@@ -155,6 +157,18 @@
 .adghNLL <- function(p, pinfo, studies, rxMod, out_var, grid, cores) {
   pars <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(Inf)
+  # A NON-FINITE parameter cannot produce a finite objective, but it CAN be handed
+  # to rxSolve, which then integrates garbage: the covariance probe legitimately
+  # perturbs a sigma to exp(1e5/2) = Inf (cov_h_outer is deliberately huge in the
+  # guard tests), and lsoda answers with ~120k `intdy -- t = <denormal> illegal` /
+  # `h too small` warnings before the caller's finite-check rejects the result
+  # anyway. Rejecting it HERE costs one comparison, removes a guaranteed-useless
+  # solve, and keeps the console readable. Written inline rather than as a shared
+  # predicate: this runs run inside mirai daemons, where assignInNamespace
+  # can replace a binding but not ADD one, so a brand-new helper would be missing
+  # (see the note at the top of simulate.R).
+  if (!(all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
+        (pinfo$n_eta == 0L || all(is.finite(pars$omega))))) return(Inf)
   total <- 0
   for (s in studies) {
     if (isTRUE(s$is_joint)) {
@@ -185,6 +199,12 @@
 .adghGradNLL <- function(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
                        grad_h = 1e-4) {
   pars  <- .admUnpack(p, pinfo)
+  # Non-finite parameters never reach rxSolve -- see the note in .adghNLL. The
+  # gradient unpacks `p` itself, so the NLL's guard does not cover this entry.
+  if (!(all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
+        (pinfo$n_eta == 0L || all(is.finite(pars$omega)))))
+    return(list(grad = stats::setNames(rep(NA_real_, length(p)), names(p)),
+                nll = Inf))
   L     <- pars$L
   n_eta <- pinfo$n_eta
   n_s   <- length(pinfo$struct_names)
@@ -230,7 +250,7 @@
     # sens columns are unavailable (theta_sens_ok = FALSE).
     if (isTRUE(s$is_joint)) {
       js <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
-                                  pinfo$nDisplayProgress, pars$sigma_var)
+                                  pinfo$nDisplayProgress, pars$sigma_var, pinfo$sigdig)
       # A failed sens solve used to `next`, which SILENTLY DROPPED this study's
       # entire contribution -- the optimizer then walked a gradient that was
       # missing whole studies, with no error and no warning. Degrade the whole
@@ -323,7 +343,7 @@
     ov <- s$output %||% out_var
 
     res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
-                            pinfo$nDisplayProgress, pars$sigma_var)
+                            pinfo$nDisplayProgress, pars$sigma_var, pinfo$sigdig)
     # .admSimulateSens returns NULL when the solve fails. `next` skipped the study
     # -- i.e. returned a gradient that silently omitted it. Degrade the whole
     # gradient to finite differences instead (what admc/adfo already do).
@@ -846,7 +866,17 @@
 #' @param workers Number of parallel workers (mirai daemons) for multi-restart
 #'   (default 1 = sequential). Requires the `mirai` package.
 #' @param rxControl `rxode2::rxControl()` object. Created automatically when `NULL`.
-#' @param calcTables,compress,ci,sigdig,sigdigTable,optExpression,sumProd,literalFix
+#' @param sigdig Significant digits asked of the ODE solver. Passed to
+#'   `rxode2::rxSolve()`'s own `sigdig` argument for every solve the estimator
+#'   issues, so it is the lever for trading solver accuracy against speed --
+#'   rxode2 owns the mapping to `atol`/`rtol` and has changed it between
+#'   releases, which is why the digits, not the tolerances, are what travels.
+#'   Also passed to `nlmixr2est::foceiControl()` for the post-fit tables.
+#'   `NULL` leaves rxode2's own solver defaults alone -- the setting to use to
+#'   reproduce results from before `sigdig` reached the fit, or to hold the
+#'   tolerances fixed across an rxode2 upgrade (rxode2 has changed the
+#'   sigdig-to-tolerance map between releases). The tables then use 4.
+#' @param calcTables,compress,ci,sigdigTable,optExpression,sumProd,literalFix
 #'   Passed to `nlmixr2est::foceiControl()` for the table/output machinery.
 #' @param addProp How combined additive+proportional error is parameterised in
 #'   the nlmixr2 output tables: `"combined2"` (default) or `"combined1"`.
@@ -973,14 +1003,25 @@ adghControl <- function(
   checkmate::assertNumeric(restart_sd,     lower = 0,  len = 1)
   checkmate::assertIntegerish(workers,     lower = 1L, len = 1)
   checkmate::assertNumeric(ci, lower = 0, upper = 1,   len = 1)
+  if (!is.null(sigdig))
   checkmate::assertIntegerish(sigdig,      lower = 1L, len = 1)
   checkmate::assertLogical(returnAdmr,                 len = 1)
 
   if (grad != "none" && algorithm == "NLOPT_LN_BOBYQA")
     algorithm <- "NLOPT_LD_LBFGS"
 
-  if (is.null(rxControl))   rxControl   <- rxode2::rxControl(sigdig = sigdig)
-  if (is.null(sigdigTable)) sigdigTable <- max(round(sigdig), 3L)
+  # sigdig = NULL means "leave rxode2's own solver defaults alone" -- the ONE
+  # setting whose meaning does not move under an rxode2 upgrade, and the only way
+  # back to the numerics every admixr2 fit had before sigdig reached the solves.
+  # It is needed because the sigdig -> tolerance map is one-dimensional while
+  # rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so no sigdig reproduces
+  # them, AND because rxode2 changed the map between 5.1.4 (sigdig 4 -> atol =
+  # rtol = 5e-7) and 5.1.5 (rtol = 1e-4, atol = 1e-7) -- 200x looser for the same
+  # request. The tables still need a number, so they fall back to 4.
+  if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
+    rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
+  if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
+    max(round(sigdig), 3L)
 
   .ret <- list(
     studies       = studies,
@@ -1083,6 +1124,7 @@ nlmixr2Est.adgh <- function(env, ...) {
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
   pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
+  pinfo$sigdig           <- .ctl$sigdig
   # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
   pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
   output_var <- .admOutputVar(.ui)

@@ -157,7 +157,17 @@
 #'   the nlmixr2 output tables: `"combined2"` (default, variance form) or
 #'   `"combined1"` (SD form). Has no effect on admixr2's own estimation; passed
 #'   to `nlmixr2est::foceiControl()` for the table/output machinery only.
-#' @param calcTables,compress,ci,sigdig,sigdigTable,optExpression,sumProd,literalFix
+#' @param sigdig Significant digits asked of the ODE solver. Passed to
+#'   `rxode2::rxSolve()`'s own `sigdig` argument for every solve the estimator
+#'   issues, so it is the lever for trading solver accuracy against speed --
+#'   rxode2 owns the mapping to `atol`/`rtol` and has changed it between
+#'   releases, which is why the digits, not the tolerances, are what travels.
+#'   Also passed to `nlmixr2est::foceiControl()` for the post-fit tables.
+#'   `NULL` leaves rxode2's own solver defaults alone -- the setting to use to
+#'   reproduce results from before `sigdig` reached the fit, or to hold the
+#'   tolerances fixed across an rxode2 upgrade (rxode2 has changed the
+#'   sigdig-to-tolerance map between releases). The tables then use 4.
+#' @param calcTables,compress,ci,sigdigTable,optExpression,sumProd,literalFix
 #'   Passed to `nlmixr2est::foceiControl()` for the table/output machinery.
 #' @param returnAdmr If `TRUE`, return a plain list instead of a full nlmixr2
 #'   fit object (useful for debugging).
@@ -303,6 +313,7 @@ admControl <- function(
       as.integer(cores), as.integer(workers)
     ))
   checkmate::assertNumeric(ci,         lower = 0, upper = 1, len = 1, .var.name = "ci")
+  if (!is.null(sigdig))
   checkmate::assertIntegerish(sigdig,  lower = 1L, len = 1, .var.name = "sigdig")
   checkmate::assertLogical(returnAdmr,             len = 1, .var.name = "returnAdmr")
 
@@ -311,8 +322,18 @@ admControl <- function(
   algorithm <- .algo$algorithm
   grad      <- .algo$grad
 
-  if (is.null(rxControl))   rxControl   <- rxode2::rxControl(sigdig = sigdig)
-  if (is.null(sigdigTable)) sigdigTable <- max(round(sigdig), 3L)
+  # sigdig = NULL means "leave rxode2's own solver defaults alone" -- the ONE
+  # setting whose meaning does not move under an rxode2 upgrade, and the only way
+  # back to the numerics every admixr2 fit had before sigdig reached the solves.
+  # It is needed because the sigdig -> tolerance map is one-dimensional while
+  # rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so no sigdig reproduces
+  # them, AND because rxode2 changed the map between 5.1.4 (sigdig 4 -> atol =
+  # rtol = 5e-7) and 5.1.5 (rtol = 1e-4, atol = 1e-7) -- 200x looser for the same
+  # request. The tables still need a number, so they fall back to 4.
+  if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
+    rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
+  if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
+    max(round(sigdig), 3L)
 
   .ret <- list(
     studies       = studies,
@@ -407,7 +428,8 @@ nmObjGetControl.admc <- function(x, ...) {
     if (isTRUE(s$is_joint)) {
       cp_mat <- tryCatch(
         .admSimulateJoint(rxMod, pars$struct, pinfo$sigma_names, eta_mat, s,
-                          params_list[[i]], cores, pinfo$nDisplayProgress),
+                          params_list[[i]], cores, pinfo$nDisplayProgress,
+                          pinfo$sigdig),
         error = function(e) NULL)
       if (is.null(cp_mat) || anyNA(cp_mat)) return(Inf)
       mu_struct <- colMeans(cp_mat)
@@ -420,7 +442,8 @@ nmObjGetControl.admc <- function(x, ...) {
 
     cp_mat <- tryCatch(
       .admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta_mat, s,
-                   ov, params_list[[i]], cores, pinfo$nDisplayProgress),
+                   ov, params_list[[i]], cores, pinfo$nDisplayProgress,
+                          pinfo$sigdig),
       error = function(e) NULL)
     if (is.null(cp_mat) || anyNA(cp_mat)) return(Inf)
 
@@ -484,6 +507,15 @@ nmObjGetControl.admc <- function(x, ...) {
                      use_central = FALSE) {
   pars <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(rep(NA_real_, length(p)))
+  # Non-finite parameters never reach rxSolve: the covariance probe can perturb
+  # a sigma to Inf, and the solver answers a poisoned parameter with tens of
+  # thousands of `intdy`/`h too small` warnings before the caller discards the
+  # result anyway. Same guard as the NLL entry points -- and it has to be HERE
+  # too, because the gradient unpacks `p` itself rather than going through the
+  # NLL. Inline, not a shared predicate (mirai daemons cannot gain a new
+  # binding -- see the note at the top of simulate.R).
+  if (!(all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
+        (pinfo$n_eta == 0L || all(is.finite(pars$omega))))) return(rep(NA_real_, length(p)))
 
   n_s   <- length(pinfo$struct_names)
   n_e   <- length(pinfo$sigma_names)
@@ -518,7 +550,7 @@ nmObjGetControl.admc <- function(x, ...) {
       if (n_eta == 0L || is.null(sensModel)) return(rep(NA_real_, length(p)))
       js <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names,
                                   eta_mat, s, cores, pinfo$nDisplayProgress,
-                                  pars$sigma_var)
+                                  pars$sigma_var, pinfo$sigdig)
       if (is.null(js) || anyNA(js$cp_mat)) return(rep(NA_real_, length(p)))
       cp_mat <- js$cp_mat; dpred_list <- js$dpred_list
       n_t    <- s$n_total
@@ -593,7 +625,8 @@ nmObjGetControl.admc <- function(x, ...) {
             pp  <- p; pp[k_s] <- p[k_s] + h
             pars_p <- .admUnpack(pp, pinfo)
             cp_p   <- .admSimulateJoint(rxMod, pars_p$struct, pinfo$sigma_names,
-                                        eta_mat, s, pdf, cores, pinfo$nDisplayProgress)
+                                        eta_mat, s, pdf, cores,
+                                        pinfo$nDisplayProgress, pinfo$sigdig)
             mus_p  <- colMeans(cp_p)
             jr_p   <- .admJointResidual(mus_p,
                                         crossprod(sweep(cp_p, 2L, mus_p)) / n_sim,
@@ -612,7 +645,7 @@ nmObjGetControl.admc <- function(x, ...) {
     if (use_sens) {
       sens_out <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names,
                                    eta_mat, s, cores, pinfo$nDisplayProgress,
-                                   pars$sigma_var)
+                                   pars$sigma_var, pinfo$sigdig)
       if (is.null(sens_out) || anyNA(sens_out$cp_mat)) {
         use_sens <- FALSE
       } else {
@@ -684,7 +717,8 @@ nmObjGetControl.admc <- function(x, ...) {
 
       out_b  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_big),
                                  events = s$ev_full, cores = cores,
-                                 nDisplayProgress = pinfo$nDisplayProgress)
+                                 nDisplayProgress = pinfo$nDisplayProgress,
+                                 sigdig = pinfo$sigdig)
       keep_b <- out_b[["time"]] %in% s$times
       # beta: the prediction is DERIVED from two solved columns, mu = b1/(b1+b2),
       # and the precision phi = b1 + b2 is solved rather than fitted. Reading
@@ -880,7 +914,8 @@ nmObjGetControl.admc <- function(x, ...) {
         }
         out_hi  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                     events = s$ev_full, cores = cores,
-                                    nDisplayProgress = pinfo$nDisplayProgress)
+                                    nDisplayProgress = pinfo$nDisplayProgress,
+                                    sigdig = pinfo$sigdig)
         keep_hi <- out_hi[["time"]] %in% s$times
         vals_hi <- out_hi[[ov]][keep_hi]
         if (is.null(vals_hi)) vals_hi <- out_hi[["ipredSim"]][keep_hi]
@@ -894,7 +929,8 @@ nmObjGetControl.admc <- function(x, ...) {
           }
           out_lo  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_lo),
                                       events = s$ev_full, cores = cores,
-                                      nDisplayProgress = pinfo$nDisplayProgress)
+                                      nDisplayProgress = pinfo$nDisplayProgress,
+                                      sigdig = pinfo$sigdig)
           keep_lo <- out_lo[["time"]] %in% s$times
           vals_lo <- out_lo[[ov]][keep_lo]
           if (is.null(vals_lo)) vals_lo <- out_lo[["ipredSim"]][keep_lo]
@@ -948,9 +984,21 @@ nmObjGetControl.admc <- function(x, ...) {
 
   pars_list <- vector("list", n_c)
   valid     <- logical(n_c)
+  # A NON-FINITE parameter cannot produce a finite objective, but it CAN be handed
+  # to rxSolve, which then integrates garbage: the covariance probe legitimately
+  # perturbs a sigma to exp(1e5/2) = Inf (cov_h_outer is deliberately huge in the
+  # guard tests), and lsoda answers with ~120k `intdy -- t = <denormal> illegal` /
+  # `h too small` warnings before the caller's finite-check rejects the result
+  # anyway. Rejecting it HERE costs one comparison, removes a guaranteed-useless
+  # solve, and keeps the console readable. Written inline rather than as a shared
+  # predicate: these functions run inside mirai daemons, where assignInNamespace
+  # can replace a binding but not ADD one, so a brand-new helper would be missing
+  # (see the note at the top of simulate.R).
   for (ci in seq_len(n_c)) {
     pars <- tryCatch(.admUnpack(p_list[[ci]], pinfo), error = function(e) NULL)
-    if (!is.null(pars) && (pinfo$n_eta == 0L || all(diag(pars$omega) > 0))) {
+    if (!is.null(pars) && (pinfo$n_eta == 0L || all(diag(pars$omega) > 0)) &&
+        all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
+        (pinfo$n_eta == 0L || all(is.finite(pars$omega)))) {
       pars_list[[ci]] <- pars; valid[ci] <- TRUE
     }
   }
@@ -987,7 +1035,8 @@ nmObjGetControl.admc <- function(x, ...) {
       out <- tryCatch(
         rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                         events = s$ev_full, cores = cores,
-                        nDisplayProgress = pinfo$nDisplayProgress),
+                        nDisplayProgress = pinfo$nDisplayProgress,
+                        sigdig = pinfo$sigdig),
         error = function(e) NULL)
       if (is.null(out)) { for (ci in chunk) finite[ci] <- FALSE; next }
 
@@ -1091,7 +1140,11 @@ nmObjGetControl.admc <- function(x, ...) {
 
   pars_list <- lapply(p_list, function(p)
     tryCatch(.admUnpack(p, pinfo), error = function(e) NULL))
-  valid <- !vapply(pars_list, is.null, logical(1))
+  # Non-finite parameters: rejected before the solve, same reason as .admNLLBatch.
+  valid <- vapply(pars_list, function(pars)
+    !is.null(pars) && all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
+        (pinfo$n_eta == 0L || all(is.finite(pars$omega))),
+    logical(1))
 
   grad_acc <- matrix(0, nrow = n_c, ncol = np,
                      dimnames = list(NULL, names(p_list[[1L]])))
@@ -1178,7 +1231,8 @@ nmObjGetControl.admc <- function(x, ...) {
           do.call(rxode2::rxSolve,
                   c(list(sensModel$mod, params = inner_df,
                          events = s$ev_full, cores = cores,
-                         nDisplayProgress = pinfo$nDisplayProgress),
+                         nDisplayProgress = pinfo$nDisplayProgress,
+                         sigdig = pinfo$sigdig),
                     sensModel$solve_args))),
         error = function(e) NULL)
       if (is.null(out) || !all(sensModel$sens_cols %in% names(out))) {
@@ -1233,7 +1287,8 @@ nmObjGetControl.admc <- function(x, ...) {
         }
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
-                                         nDisplayProgress = pinfo$nDisplayProgress),
+                                         nDisplayProgress = pinfo$nDisplayProgress,
+                                         sigdig = pinfo$sigdig),
                         error = function(e) NULL)
         if (is.null(out)) { valid[] <- FALSE } else {
           keep <- out[["time"]] %in% s$times
@@ -1284,7 +1339,8 @@ nmObjGetControl.admc <- function(x, ...) {
         }
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
-                                         nDisplayProgress = pinfo$nDisplayProgress),
+                                         nDisplayProgress = pinfo$nDisplayProgress,
+                                         sigdig = pinfo$sigdig),
                         error = function(e) NULL)
         if (is.null(out)) { valid[] <- FALSE } else {
           keep <- out[["time"]] %in% s$times
@@ -1347,7 +1403,8 @@ nmObjGetControl.admc <- function(x, ...) {
       }
       out_hi <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                           events = s$ev_full, cores = cores,
-                                          nDisplayProgress = pinfo$nDisplayProgress),
+                                          nDisplayProgress = pinfo$nDisplayProgress,
+                                          sigdig = pinfo$sigdig),
                          error = function(e) NULL)
       if (!is.null(out_hi)) {
         vals_hi <- out_hi[[ovb]][out_hi[["time"]] %in% s$times]
@@ -1372,7 +1429,8 @@ nmObjGetControl.admc <- function(x, ...) {
         }
         out_lo <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_lo),
                                             events = s$ev_full, cores = cores,
-                                            nDisplayProgress = pinfo$nDisplayProgress),
+                                            nDisplayProgress = pinfo$nDisplayProgress,
+                                            sigdig = pinfo$sigdig),
                            error = function(e) NULL)
         if (!is.null(out_lo)) {
           vals_lo <- out_lo[[ovb]][out_lo[["time"]] %in% s$times]
@@ -2258,6 +2316,7 @@ nlmixr2Est.admc <- function(env, ...) {
 
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
   pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
+  pinfo$sigdig           <- .ctl$sigdig
   # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
   pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
   output_var <- .admOutputVar(.ui)

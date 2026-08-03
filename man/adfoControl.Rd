@@ -6,7 +6,7 @@
 \usage{
 adfoControl(
   studies = list(),
-  grad = c("none", "analytical", "fd", "cfd"),
+  grad = c("analytical", "none", "fd", "cfd"),
   algorithm = NULL,
   maxeval = 500L,
   ftol_rel = .Machine$double.eps^(1/2),
@@ -42,11 +42,20 @@ adfoControl(
 \code{\link[=admControl]{admControl()}}: \code{E}, \code{V}, \code{n}, \code{times}, \code{ev}, optional \code{method}; or an
 \code{observations} list for multi-compartment fits -- see \code{\link[=admControl]{admControl()}}).}
 
-\item{grad}{Gradient mode.  \code{"none"} (default) uses derivative-free BOBYQA;
-\code{"analytical"} uses the closed-form FO gradient (requires sensitivity
-equations); \code{"fd"} uses forward finite differences of the full NLL;
-\code{"cfd"} uses central finite differences for struct theta gradient
-(more accurate than \code{"fd"}, roughly twice as many NLL evaluations per step).}
+\item{grad}{Gradient mode.  \code{"analytical"} (default) uses the closed-form FO
+gradient with LBFGS; \code{"none"} uses derivative-free BOBYQA; \code{"fd"} uses
+forward finite differences of the full NLL; \code{"cfd"} uses central finite
+differences for struct theta gradient (more accurate than \code{"fd"}, roughly
+twice as many NLL evaluations per step).
+
+The default was \code{"none"} up to 0.4.0, because the structural thetas were
+finite-differenced through the whole NLL and the resulting gradient was too
+noisy for a quasi-Newton step to pay off. They are now differentiated
+analytically from a second-order sensitivity model (relative error ~1e-7
+against a central difference, where the finite-difference pass reached
+1e-2), so LBFGS on the exact gradient is the better default. A model that
+cannot build that sensitivity model falls back to the finite-difference
+gradient automatically, and \code{grad = "none"} remains available.}
 
 \item{algorithm}{nloptr algorithm, or \code{NULL} (default) to pick the default
 that matches \code{grad}: \code{"NLOPT_LD_LBFGS"} with a gradient, \code{"NLOPT_LN_BOBYQA"}
@@ -115,7 +124,18 @@ struct thetas at each restart (> 1).}
 
 \item{rxControl}{\code{rxode2::rxControl()} object. Created automatically when \code{NULL}.}
 
-\item{calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd, literalFix}{Passed to \code{nlmixr2est::foceiControl()} for the table/output machinery.}
+\item{calcTables, compress, ci, sigdigTable, optExpression, sumProd, literalFix}{Passed to \code{nlmixr2est::foceiControl()} for the table/output machinery.}
+
+\item{sigdig}{Significant digits asked of the ODE solver. Passed to
+\code{rxode2::rxSolve()}'s own \code{sigdig} argument for every solve the estimator
+issues, so it is the lever for trading solver accuracy against speed --
+rxode2 owns the mapping to \code{atol}/\code{rtol} and has changed it between
+releases, which is why the digits, not the tolerances, are what travels.
+Also passed to \code{nlmixr2est::foceiControl()} for the post-fit tables.
+\code{NULL} leaves rxode2's own solver defaults alone -- the setting to use to
+reproduce results from before \code{sigdig} reached the fit, or to hold the
+tolerances fixed across an rxode2 upgrade (rxode2 has changed the
+sigdig-to-tolerance map between releases). The tables then use 4.}
 
 \item{addProp}{How combined additive+proportional error is parameterised in
 the nlmixr2 output tables: \code{"combined2"} (default, variance form) or

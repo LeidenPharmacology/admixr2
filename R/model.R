@@ -82,6 +82,44 @@
 # text instead of the model code. (nlmixr2est's aug builder has the same wrapper.)
 .admToRx <- function(l) rxode2::rxFromSE(l)
 
+# Promote a linCmt() model to the equivalent explicit ODE system, so it can carry
+# SECOND-order sensitivities.
+#
+# Why this exists: linCmt()'s first derivative resolves through rxode2's linCmtB
+# rules, but there is no second one -- rxFromSE cannot emit the nested linCmtB
+# derivative, so d2f/(d eta d theta) is unavailable and adfo would be stuck with
+# its finite-difference struct-theta pass. nlmixr2est hits the identical wall and
+# refuses linCmt outright for its analytic gradient and covariance. Promotion
+# sidesteps it: the ODE form has ordinary state sensitivities, so .rxSens()
+# expands it to any order.
+#
+# `rxode2::linToOde()` (exported) does the translation, but its output cannot be
+# used as-is: it names the prediction `rxLinCmt`, and an `rx`-prefixed lhs is
+# RESERVED -- ui$loadPruneSens then dies with "syntax errors" on the model rxode2
+# itself just generated, at every order. Renaming that one variable is the whole
+# fix. Measured on a 1-cmt oral model: the promoted solve reproduces the analytic
+# linCmt prediction to 1.8e-08 relative, and its second-order block agrees with a
+# central difference of its own first-order columns to 1.8e-06 (the FD floor).
+#
+# NULL on any failure -- the caller then falls back to the first-order model, i.e.
+# exactly the behaviour before this existed.
+#
+# Only ever called for an order-2 request. admc/adgh stay on the SOLVED form,
+# which is faster and needs nothing higher than first order.
+.admLinCmtToOde <- function(ui) {
+  tryCatch({
+    .u   <- rxode2::linToOde(ui)
+    .txt <- paste(deparse(.u$fun), collapse = "\n")
+    if (!grepl("rxLinCmt", .txt, fixed = TRUE)) return(.u)
+    # Pick a name that is neither reserved (no `rx` prefix) nor already in the
+    # model. A collision would silently merge two different quantities.
+    .nm <- "admLinCmtOut"
+    while (grepl(.nm, .txt, fixed = TRUE)) .nm <- paste0(.nm, "X")
+    .txt <- gsub("rxLinCmt", .nm, .txt, fixed = TRUE)
+    suppressMessages(rxode2::rxode2(eval(parse(text = .txt))))
+  }, error = function(e) NULL)
+}
+
 # The dosing-modifier variables rxode2 emits into the pruned sens env as
 # rx_<mod>_<state>_ (f/lag/rate/dur; lag() is stored as alag()). ONE regex, used
 # everywhere a dose modifier is found or its name extracted, so a change to
@@ -142,9 +180,29 @@
 # usable eta (eta-less, non-mu-referenced, or one whose eta is shared across
 # parameters) gets its own direction. Sigmas get none (they never enter the
 # prediction). This is the same direction/linking scheme nlmixr2est's fast-focei
-# uses (.foceiAnalyticDirections), FIRST-ORDER only: admixr2's MC/quadrature
-# moments need d(pred)/d(dir) and nothing higher, so the O(ndir^2) second-order
-# tier that FOCEI's Laplace term requires is skipped entirely.
+# uses (.foceiAnalyticDirections).
+#
+# `order = 2L` additionally emits the CROSS second-order block
+#   rx_f2_<eta_i>_<dir_b> = d2(pred)/(d eta_i d dir_b)
+# which is what adfo -- and only adfo -- needs. Its objective is built on
+# V_pred = J Omega J' + resid(mu, diag(J Omega J')) with J = df/d(eta)|_0, so a
+# structural theta's gradient needs dJ/d(theta) = d2f/(d eta d theta): a second
+# derivative, which is why adfo alone still finite-differenced its struct thetas
+# while admc/adgh read theirs off the first-order columns.
+#
+# The block is deliberately ASYMMETRIC -- eta directions x ALL directions -- and
+# that is the whole economy of it. nlmixr2est's builder expands the full
+# symmetric triangle over every direction (it needs the Laplace Hessian);
+# adfo needs no theta x theta pair at all, because the objective is only ever
+# differentiated ONCE with respect to a theta. rxode2's rxExpandSens2_() accepts
+# two different direction sets, so the cross block can be requested directly:
+# for 2 states / 2 etas / 1 unpaired theta that is 12 second-order compartments
+# instead of 18. admixr2 also needs no rx_rvar*/rx_rsig* variance chains at all
+# (errmodel.R derives the residual analytically from (mu, var_f)), which is the
+# larger part of what FOCEI's order-2 build spends its compile time on.
+#
+# admc/adgh stay at order 1: their moments need d(pred)/d(dir) and nothing
+# higher, so they must not pay for the second-order compartments.
 #
 # Two branches:
 #   * ODE    -- rxode2::.rxSens() augments the system with the variational
@@ -178,7 +236,8 @@
 # ODE SYSTEM -- d(state)/d(dir), once -- not for a particular target. .g1() then
 # applies the chain rule to any expression on top of them. A derived prediction is
 # therefore no harder than rx_pred_; only the direct partial differs.
-.admBuildThetaSens <- function(ui, unpaired, pred_expr = NULL) {
+.admBuildThetaSens <- function(ui, unpaired, pred_expr = NULL, order = 1L) {
+  order <- as.integer(order)
   s <- tryCatch(ui$loadPruneSens, error = function(e) NULL)
   if (is.null(s)) return(NULL)
   st <- tryCatch(rxode2::rxStateOde(s), error = function(e) NULL)
@@ -189,6 +248,33 @@
   eta_rows <- ini[!is.na(ini$neta1) & ini$neta1 == ini$neta2 & !ini$fix, , drop = FALSE]
   eta_rows <- eta_rows[order(eta_rows$neta1), , drop = FALSE]
   th_rows  <- ini[!is.na(ini$ntheta), , drop = FALSE]
+
+  # linCmt() carries no SECOND derivative (see .admLinCmtToOde), so an order-2
+  # request promotes the model to its ODE form and builds from that instead. The
+  # rest of this function then runs on an ordinary ODE model and needs no special
+  # case. Promotion failing is not fatal -- NULL here means the caller retries at
+  # order 1, where linCmt works exactly as it always has.
+  #
+  # ui$predDf only (NOT ui$predDfFocei): reaching for the focei-side frame pulls on
+  # nlmixr2est's model machinery, which is the documented Windows GC/finalizer
+  # hazard. A PROMOTED solved-form linCmt (predDf flag cleared, real ODE states)
+  # is caught instead by the linCmtB text check on the emitted model, below.
+  if (order >= 2L) {
+    .lin <- tryCatch(as.logical(ui$predDf$linCmt), error = function(e) NULL)
+    if (isTRUE(any(.lin, na.rm = TRUE))) {
+      ui <- .admLinCmtToOde(ui)
+      if (is.null(ui)) return(NULL)
+      s  <- tryCatch(ui$loadPruneSens, error = function(e) NULL)
+      if (is.null(s)) return(NULL)
+      st <- tryCatch(rxode2::rxStateOde(s), error = function(e) NULL)
+      if (is.null(st) || length(st) == 0L) return(NULL)
+      ini <- tryCatch(ui$iniDf, error = function(e) NULL)
+      if (is.null(ini)) return(NULL)
+      # eta_rows/th_rows are re-derived below from `ini`; the promoted model has
+      # the SAME ini({}) block, so every direction index and the caller's
+      # rename_map (built from the original ui) stay valid.
+    }
+  }
 
   eta_dirs <- paste0("ETA_", seq_len(nrow(eta_rows)), "_")
   # NB: paste0("THETA_", integer(0), "_") is "THETA__", not character(0) -- R
@@ -213,19 +299,48 @@
 
   res <- tryCatch({
     sens_lines <- character(0)
+    sens2_lines <- character(0)
     if (length(st) > 0L) {
       rxode2::.rxJacobian(s, c(st, dirs))
       sens_lines <- rxode2::.rxSens(s, dirs)
       if (length(sens_lines) == 0L) return(NULL)
+      # The cross block only: vars = eta directions, vars2 = every direction.
+      # rxExpandSens2_ takes the two sets independently, so no theta x theta
+      # compartment is generated. .rxSens also assigns the rx__sens_*_BY_*_BY_*__
+      # symbols into `s` as a side effect, which is what makes them resolvable in
+      # .g2 below -- so this must run BEFORE the chains are built.
+      if (order >= 2L) {
+        sens2_lines <- rxode2::.rxSens(s, eta_dirs, dirs)
+        if (length(sens2_lines) == 0L) return(NULL)
+      }
     }
     pred <- if (!is.null(pred_expr)) pred_expr else get("rx_pred_", envir = s)
     .Dn  <- function(e, v) symengine::D(e, symengine::S(v))
-    .sn1 <- function(j, p) symengine::S(paste0("rx__sens_", j, "_BY_", p, "__"))
+    # Variadic, matching the compartment naming rxExpandSens2_ emits:
+    # one direction  -> rx__sens_<state>_BY_<p>__
+    # two directions -> rx__sens_<state>_BY_<p>_BY_<q>__
+    .sn1 <- function(j, ...)
+      symengine::S(paste0("rx__sens_", j, "_BY_",
+                          paste(c(...), collapse = "_BY_"), "__"))
     # linCmt: st is empty, so the state sum drops out and D(pred, dir) alone
     # resolves through the linCmtB derivative rules.
     .g1 <- function(ex, p) {
       e <- .Dn(ex, p)
       for (j in st) e <- e + .Dn(ex, j) * .sn1(j, p)
+      e
+    }
+    # Second-order chain. Differentiating .g1(ex, q) w.r.t. p picks up three
+    # terms: the direct partial, the first-order state paths of the ALREADY
+    # chained expression, and the second-order state sensitivities themselves.
+    # Same construction as nlmixr2est's .g2 -- it is simply the product rule
+    # applied to the first-order chain, and getting any one term wrong yields a
+    # plausible-but-wrong Jacobian derivative, so it is FD-checked in
+    # test-integration-sens2.R rather than trusted.
+    .g2 <- function(ex, p, q) {
+      gq <- .g1(ex, q)
+      e  <- .Dn(gq, p)
+      for (k in st) e <- e + .Dn(gq, k) * .sn1(k, p)
+      for (j in st) e <- e + .Dn(ex, j) * .sn1(j, p, q)
       e
     }
 
@@ -248,7 +363,8 @@
     # integration, so its direction derivative is a direct partial (no state chain).
     # Skip any compartment whose IC .rxSens already emitted.
     ic_done <- trimws(sub("\\(0\\)=.*$", "",
-                          grep("\\(0\\)=", unlist(strsplit(sens_lines, "\n")), value = TRUE)))
+                          grep("\\(0\\)=", unlist(strsplit(c(sens_lines, sens2_lines), "\n")),
+                               value = TRUE)))
     ic <- character(0)
     for (x in st) {
       x0 <- tryCatch(get(paste0("rx_", x, "_ini_0__"), envir = s), error = function(e) NULL)
@@ -257,6 +373,16 @@
       for (p in dirs) {
         cmt <- paste0("rx__sens_", x, "_BY_", p, "__")
         d   <- .admToRx(.Dn(x0, p))
+        if (!identical(d, "0") && !(cmt %in% ic_done))
+          ic <- c(ic, paste0(cmt, "(0)=", d))
+      }
+      # Second-order ICs: an IC depending on two directions leaves the cross
+      # sensitivity compartment starting at 0 unless d2(x0)/(dp dq) is emitted.
+      # Same argument as the first-order block above (the IC is evaluated before
+      # integration, so this is a plain double partial, no state chain).
+      if (order >= 2L) for (p in eta_dirs) for (q in dirs) {
+        cmt <- paste0("rx__sens_", x, "_BY_", p, "_BY_", q, "__")
+        d   <- .admToRx(.Dn(.Dn(x0, p), q))
         if (!identical(d, "0") && !(cmt %in% ic_done))
           ic <- c(ic, paste0(cmt, "(0)=", d))
       }
@@ -274,6 +400,21 @@
 
     f1 <- vapply(dirs, function(p) paste0("rx_f1_", p, "=", .admToRx(.g1(pred, p))),
                  character(1))
+
+    # Cross second-order block: rows = eta directions, columns = all directions.
+    # expand.grid varies `i` fastest, so filling the name matrix column-major puts
+    # eta i in row i and direction b in column b -- i.e. d2_cols[i, b] names the
+    # column holding d2(pred)/(d eta_i d dir_b), which is column i of dJ/d(dir_b).
+    f2 <- character(0); d2_cols <- NULL
+    if (order >= 2L) {
+      P2  <- expand.grid(i = eta_dirs, j = dirs, stringsAsFactors = FALSE)
+      nm2 <- paste0("rx_f2_", P2$i, "_", P2$j)
+      f2  <- vapply(seq_len(nrow(P2)), function(r)
+                    paste0(nm2[r], "=", .admToRx(.g2(pred, P2$i[r], P2$j[r]))),
+                    character(1))
+      d2_cols <- matrix(nm2, nrow = length(eta_dirs), ncol = length(dirs),
+                        dimnames = list(eta_dirs, dirs))
+    }
 
     # Endpoint routing for a MULTI-ENDPOINT model. Its rx_pred_ is a CMT-conditional
     # expression (`CMT==3 ? ... : ...`), so the solve needs the endpoint
@@ -316,8 +457,17 @@
         paste0("dvid(", paste(n_base + seq_along(outs), collapse = ","), ")"))
     else character(0)
 
-    txt <- paste(c(head_lines, base_ode, dose, sens_lines, ic, past_lines,
-                   paste0("rx_pred_=", .admToRx(pred)), f1, tail_lines), collapse = "\n")
+    txt <- paste(c(head_lines, base_ode, dose, sens_lines, sens2_lines, ic, past_lines,
+                   paste0("rx_pred_=", .admToRx(pred)), f1, f2, tail_lines), collapse = "\n")
+    # Second-order backstop for a PROMOTED solved-form linCmt: rxStateOde() is
+    # non-empty and ui$predDf$linCmt is cleared, so neither gate above fires, yet
+    # rx_pred_ still resolves through linCmtB -- whose second derivative rxFromSE
+    # cannot emit (nlmixr2est documents the same failure). Refuse before compiling
+    # rather than risk a silently wrong f2 column; order 1 is unaffected and keeps
+    # linCmt working exactly as it does today.
+    if (order >= 2L && any(grepl("linCmtB", c(f2, sens2_lines), fixed = TRUE)))
+      return(NULL)
+
     txt <- tryCatch(rxode2::rxOptExpr(txt, "admixr2 sensitivity model"),
                     error = function(e) txt)
     mod <- rxode2::rxode2(txt, eventSens = "jump")
@@ -326,10 +476,19 @@
     # feeds -> that column would be silently zero. Refuse the sens model entirely;
     # the caller falls back to a finite-difference gradient.
     if (!.admJumpCovers(mod, s, dirs)) return(NULL)
-    list(mod = mod, dirs = dirs,
+    list(mod = mod, dirs = dirs, order = order,
          sens_cols = paste0("rx_f1_", eta_dirs),
          theta_sens_cols = if (length(unpaired))
-           stats::setNames(paste0("rx_f1_", theta_dirs), unpaired) else NULL)
+           stats::setNames(paste0("rx_f1_", theta_dirs), unpaired) else NULL,
+         # NULL at order 1; the consumer (adfo) treats that as "no dJ available"
+         # and keeps its finite-difference pass.
+         d2_cols = d2_cols,
+         # The theta each direction belongs to, so a consumer can go from a struct
+         # theta to its column of d2_cols without re-deriving the pairing: a
+         # mu-referenced theta uses its ETA direction, an unpaired one its own.
+         theta_dirs = if (length(unpaired))
+           stats::setNames(theta_dirs, unpaired) else NULL,
+         eta_dirs = eta_dirs)
   }, error = function(e) NULL)
   res
 }
@@ -356,7 +515,12 @@
 # sensitivity of exactly ZERO, silently, because FOCEI computes event/dose
 # sensitivities separately (its `predNoLhs` FD model) and admixr2 reads the inner
 # model's columns directly.
-.admLoadSensModel <- function(ui) {
+# `order`: 1L (default) emits d(pred)/d(dir) only -- what admc/adgh need. 2L adds
+# the cross second-order block d2(pred)/(d eta d dir) that adfo needs for dJ/dtheta;
+# it costs extra state compartments, so only adfo asks for it, and a failed order-2
+# build falls back to order 1 (adfo then keeps its finite-difference pass).
+.admLoadSensModel <- function(ui, order = 1L) {
+  order <- as.integer(order)
   ini_df <- tryCatch(ui$iniDf, error = function(e) NULL)
   if (is.null(ini_df)) return(NULL)
   # ORDINAL endpoints get no sensitivity model. rx_pred_ for `y ~ c(p1, p2)` is the
@@ -444,7 +608,13 @@
     rxode2::rxTempDir(),
     paste0("adm-sens-",
            digest::digest(list(ui$lstExpr, unpaired, .ini_key,
-                               "dirs-jump+fixed-theta+dde+predtbs+derivpred+tbslam+countpred+inikey", .rx_ver)),
+                               "dirs-jump+fixed-theta+dde+predtbs+derivpred+tbslam+countpred+inikey+order2lin", .rx_ver,
+                               paste0("order", order))),
+    # NOTE the ORDER-1 FALLBACK is cached under the ORDER-2 key. That is what we
+    # want at runtime (an order-2 build that cannot succeed must not be retried on
+    # every gradient call), but it means a change to what the order-2 build EMITS
+    # is invisible until the schema tag above is bumped -- a stale "linCmt cannot
+    # do order 2" entry outlived exactly that change once already.
            ".rds"))
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
@@ -581,11 +751,21 @@
     if (is.null(.pred_expr)) return(NULL)
   }
 
-  built <- .admBuildThetaSens(ui, unpaired, .pred_expr)
+  built <- .admBuildThetaSens(ui, unpaired, .pred_expr, order = order)
+  # An order-2 build can fail where order 1 succeeds -- linCmt has no second
+  # linCmtB derivative, and a model can simply be too large. Retry at order 1
+  # rather than dropping the caller to finite differences for BOTH orders: adfo
+  # then gets exactly the model it had before, and its FD struct-theta pass.
+  if (is.null(built) && order >= 2L)
+    built <- .admBuildThetaSens(ui, unpaired, .pred_expr, order = 1L)
   if (!is.null(built)) {
     result <- list(type = "dirs", mod = built$mod,
                    sens_cols = built$sens_cols,
                    theta_sens_cols = built$theta_sens_cols,
+                   d2_cols = built$d2_cols,
+                   theta_dirs = built$theta_dirs,
+                   eta_dirs = built$eta_dirs,
+                   order = built$order,
                    dirs = built$dirs,
                    rename_map = rename_map,
                    fixed_theta = fixed_theta,

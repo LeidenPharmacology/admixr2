@@ -161,6 +161,7 @@ adirmcControl <- function(
   checkmate::assertNumeric(omega_expansion, lower = 1,   len = 1)
   checkmate::assertIntegerish(seed,                      len = 1)
   checkmate::assertIntegerish(cores,        lower = 1L,  len = 1)
+  if (!is.null(sigdig)) checkmate::assertIntegerish(sigdig, lower = 1L, len = 1)
   checkmate::assertIntegerish(nDisplayProgress, lower = 1L, len = 1,
                               .var.name = "nDisplayProgress")
   checkmate::assertNumeric(grad_h,          lower = 0,   len = 1)
@@ -181,8 +182,18 @@ adirmcControl <- function(
   algorithm <- .algo$algorithm
   grad      <- .algo$grad
 
-  if (is.null(rxControl))   rxControl   <- rxode2::rxControl(sigdig = sigdig)
-  if (is.null(sigdigTable)) sigdigTable <- max(round(sigdig), 3L)
+  # sigdig = NULL means "leave rxode2's own solver defaults alone" -- the ONE
+  # setting whose meaning does not move under an rxode2 upgrade, and the only way
+  # back to the numerics every admixr2 fit had before sigdig reached the solves.
+  # It is needed because the sigdig -> tolerance map is one-dimensional while
+  # rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so no sigdig reproduces
+  # them, AND because rxode2 changed the map between 5.1.4 (sigdig 4 -> atol =
+  # rtol = 5e-7) and 5.1.5 (rtol = 1e-4, atol = 1e-7) -- 200x looser for the same
+  # request. The tables still need a number, so they fall back to 4.
+  if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
+    rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
+  if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
+    max(round(sigdig), 3L)
 
   .ret <- list(
     studies         = studies,
@@ -532,7 +543,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
                           kappa_method = "exact",
                           kappa_n_nodes = 5L,
                           struct_transforms = NULL, struct_eta_idx = NULL,
-                          use_grad = TRUE, ndp = .Machine$integer.max) {
+                          use_grad = TRUE, ndp = .Machine$integer.max,
+                          sigdig = NULL) {
   Omega_prop <- omega * omega_expansion
   L_prop     <- tryCatch(t(chol(Omega_prop)), error = function(e) {
     message("adirmc: proposal:chol(Omega_prop) failed: ", conditionMessage(e))
@@ -619,7 +631,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
   out      <- rxode2::rxSolve(rxMod, params = as.data.frame(params_df_ext),
                               events = study$ev_full,
                               cores = cores,
-                              nDisplayProgress = ndp)
+                              nDisplayProgress = ndp,
+                              sigdig = sigdig)
   keep     <- out[["time"]] %in% study$times
   obs_vals <- out[[output_var]][keep]
   if (is.null(obs_vals)) obs_vals <- out[["ipredSim"]][keep]
@@ -722,7 +735,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
             params_cand[1L, nm] <- struct_cand[[nm]]
           out_c  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_cand),
                                     events = study$ev_full, cores = cores,
-                                    nDisplayProgress = ndp)
+                                    nDisplayProgress = ndp,
+                                    sigdig = sigdig)
           keep_c  <- out_c[["time"]] %in% study$times
           vals_c1 <- out_c[[output_var]][keep_c]
           if (is.null(vals_c1)) vals_c1 <- out_c[["ipredSim"]][keep_c]
@@ -747,7 +761,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
             }
             out_b  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_bat),
                                       events = study$ev_full, cores = cores,
-                                      nDisplayProgress = ndp)
+                                      nDisplayProgress = ndp,
+                                      sigdig = sigdig)
             keep_b  <- out_b[["time"]] %in% study$times
             vals_b1 <- out_b[[output_var]][keep_b]
             if (is.null(vals_b1)) vals_b1 <- out_b[["ipredSim"]][keep_b]
@@ -1017,7 +1032,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
                     struct_transforms = pinfo$struct_transforms,
                     struct_eta_idx    = pinfo$struct_eta_idx,
                     use_grad          = grad_mode == "analytical",
-                    ndp               = pinfo$nDisplayProgress))
+                    ndp               = pinfo$nDisplayProgress,
+                    sigdig            = pinfo$sigdig))
     if (any(vapply(props, is.null, logical(1)))) NULL else props
   }
 
@@ -1034,7 +1050,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
                     struct_transforms = pinfo$struct_transforms,
                     struct_eta_idx    = pinfo$struct_eta_idx,
                     use_grad          = FALSE,
-                    ndp               = pinfo$nDisplayProgress))
+                    ndp               = pinfo$nDisplayProgress,
+                    sigdig            = pinfo$sigdig))
     if (any(vapply(props, is.null, logical(1)))) NULL else props
   }
 
@@ -1139,6 +1156,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
          call. = FALSE)
 
   pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
+  pinfo$sigdig           <- .ctl$sigdig
   # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
   pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
   output_var <- .admOutputVar(.ui)
@@ -1218,7 +1236,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
                     struct_transforms = pinfo$struct_transforms,
                     struct_eta_idx    = pinfo$struct_eta_idx,
                     use_grad          = grad_mode_inner == "analytical",
-                    ndp               = pinfo$nDisplayProgress))
+                    ndp               = pinfo$nDisplayProgress,
+                    sigdig            = pinfo$sigdig))
     if (any(vapply(props, is.null, logical(1)))) NULL else props
   }
 
@@ -1235,7 +1254,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
                     struct_transforms = pinfo$struct_transforms,
                     struct_eta_idx    = pinfo$struct_eta_idx,
                     use_grad          = FALSE,
-                    ndp               = pinfo$nDisplayProgress))
+                    ndp               = pinfo$nDisplayProgress,
+                    sigdig            = pinfo$sigdig))
     if (any(vapply(props, is.null, logical(1)))) NULL else props
   }
 
