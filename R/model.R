@@ -1,3 +1,42 @@
+# Cache-key material shared by the simulation and sensitivity models.
+#
+# Names, fix flags and error types all change what gets emitted or what the
+# solve is handed. The fixed thetas' VALUES are in here for a sharper reason:
+# a fix()ed theta never reaches the optimizer, so it travels to the solve as
+# DATA carried on the cached object (sensModel$fixed_theta). Without it,
+# `tka <- fix(0.5)` and `tka <- fix(0.9)` produce an identical key, and a
+# parallel worker -- which reads the cached file and cannot re-derive from a
+# `ui` it does not have -- solves every restart at the other fit's fixed value.
+# Silently, and across sessions, because rxTempDir() is a persistent user cache.
+#
+# Only the FIXED rows' values are included. Folding in every `est` would make an
+# ordinary change of starting value invalidate the compiled model, which costs a
+# recompile and buys nothing: a starting value is optimizer state, not model text.
+.admIniKey <- function(ui) {
+  tryCatch({
+    .i <- ui$iniDf
+    .fx <- !is.na(.i$fix) & .i$fix
+    paste(paste(.i$name, collapse = "|"),
+          paste(as.integer(.i$fix), collapse = "|"),
+          paste(.i$err, collapse = "|"),
+          # format(NULL) is the literal string "NULL"; keep the empty case empty
+          # so a ui without an iniDf gets a clean key rather than a stray token.
+          if (any(.fx)) paste(format(.i$est[.fx], digits = 17), collapse = "|") else "",
+          sep = "//")
+  }, error = function(e) "")
+}
+
+# admixr2's own version, so a cached model cannot outlive a change to what this
+# package emits. It replaces a hand-maintained schema-tag string that had to be
+# edited by hand whenever the emitted model changed -- and was forgotten once on
+# this branch, serving a stale "linCmt cannot do order 2" entry after exactly
+# such a change. nlmixr2est solves the same problem by stamping its version into
+# the cache directory (.resetCacheIfNeeded); keying it is the same idea without
+# the directory sweep.
+.admPkgKey <- function() {
+  tryCatch(as.character(utils::packageVersion("admixr2")), error = function(e) "dev")
+}
+
 # Re-load every compiled model inside a cached object.
 #
 # This is nlmixr2est's own load step, verbatim in behaviour (rxUiGet.foceiModel):
@@ -38,6 +77,23 @@
   # sibling artifacts) on every exit so the ui stays in the canonical state
   # nlmixr2 expects; see .admDropSimModelMeta() for the full rationale.
   on.exit(.admDropSimModelMeta(ui), add = TRUE)
+  # Keyed on ui$lstExpr ALONE, deliberately, even though the sensitivity key is
+  # richer. A parallel worker recomputes this path itself from the lstExpr it was
+  # sent (.admWorkerLoadModels) -- it has no `ui` -- so any material added here
+  # must be material the worker can also derive, or the parent writes one file
+  # name and every worker looks for another. Strengthening it without teaching
+  # the worker the same formula was tried and produced exactly that: four
+  # parallel restarts failing on a missing cache file.
+  #
+  # The sensitivity key does not have this constraint because the worker is SENT
+  # that path (`sens_cache_file`) rather than recomputing it.
+  #
+  # The known cost: an ini({}) reorder leaves lstExpr bit-identical while
+  # $simulationModel comes back with its parameters in a different order. That is
+  # currently benign -- rxSolve matches the params data.frame by NAME, and the
+  # name set is unchanged -- but it is an unwritten invariant. Closing it means
+  # routing the parent's path to the worker (through pinfo, which is sent by
+  # value) rather than enriching a formula the worker cannot follow.
   .model_key <- digest::digest(ui$lstExpr)
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
@@ -641,23 +697,20 @@
   # re-deriving on a cache hit; the reasoning had simply not been carried across to
   # the field that names the columns. Folding the order into the digest fixes every
   # cache-served field at once rather than one at a time.
-  .ini_key <- tryCatch({
-    .i <- ui$iniDf
-    paste(paste(.i$name, collapse = "|"),
-          paste(as.integer(.i$fix), collapse = "|"),
-          paste(.i$err, collapse = "|"), sep = "//")
-  }, error = function(e) "")
+  .ini_key <- .admIniKey(ui)
   .cacheFile <- file.path(
     rxode2::rxTempDir(),
     paste0("adm-sens-",
            digest::digest(list(ui$lstExpr, unpaired, .ini_key,
-                               "dirs-jump+fixed-theta+dde+predtbs+derivpred+tbslam+countpred+inikey+order2lin", .rx_ver,
+                               .admPkgKey(), .rx_ver,
                                paste0("order", order))),
     # NOTE the ORDER-1 FALLBACK is cached under the ORDER-2 key. That is what we
-    # want at runtime (an order-2 build that cannot succeed must not be retried on
-    # every gradient call), but it means a change to what the order-2 build EMITS
-    # is invisible until the schema tag above is bumped -- a stale "linCmt cannot
-    # do order 2" entry outlived exactly that change once already.
+    # want at runtime (an order-2 build that cannot succeed must not be retried
+    # on every gradient call), but it means a change to what the order-2 build
+    # EMITS would be invisible to an existing entry. That used to rest on
+    # remembering to edit a schema-tag string, and a stale "linCmt cannot do
+    # order 2" entry outlived exactly such a change once already -- hence
+    # .admPkgKey(), which invalidates on every admixr2 version automatically.
            ".rds"))
 
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)

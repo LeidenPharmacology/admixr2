@@ -1967,7 +1967,10 @@ admStopWorkers <- function() {
            "or a tempdir sweep). Re-run the fit, or use workers = 1.",
            call. = FALSE)
     }
-    rxode2::rxLoad(rxMod)
+    # .admRxLoadAll, not rxLoad(rxMod): re-load EVERY compiled model in the
+    # cached object. See its definition -- loading one element by name is correct
+    # only while each cached object holds exactly one model.
+    .admRxLoadAll(rxMod)
   }
 
   # The cache file holds the full sens result list (type/mod/sens_cols/...), so
@@ -1978,7 +1981,8 @@ admStopWorkers <- function() {
   } else if (!is.null(sens_cache_file) && file.exists(sens_cache_file)) {
     tryCatch({
       m <- readRDS(sens_cache_file)
-      rxode2::rxLoad(m$mod)
+      # Same iterate-the-container rule as the simulation model above.
+      if (!.admRxLoadAll(m)) stop("sens model failed to load")
       # PREFER the parent's values over whatever is in the file. The worker cannot
       # re-derive these (it has no ui), so a cache written by an older admixr2 --
       # with the position-indexed rename_map, which puts a theta's value in the
@@ -2039,7 +2043,19 @@ admStopWorkers <- function() {
         }
       }
       m
-    }, error = function(e) NULL)
+    }, error = function(e) {
+      # Do not fail the restart: a worker without a sens model still fits, by
+      # finite differences. But do not do it silently -- the parent is running
+      # grad = "sens", so this worker is now computing a DIFFERENT gradient from
+      # the sequential fit, which is exactly the divergence the field overwrites
+      # above exist to prevent, and it is invisible in the objective.
+      warning("admixr2: a parallel worker could not load the sensitivity model (",
+              conditionMessage(e), ") -- this worker falls back to a ",
+              "finite-difference gradient while the parent uses sensitivities. ",
+              "Results may differ slightly from a workers = 1 fit.",
+              call. = FALSE)
+      NULL
+    })
   } else {
     NULL
   }
