@@ -71,20 +71,20 @@ jobs:
       # removes itself once CRAN rebuilds the rxode2 binary -- same shape as the
       # stringfish/qs2 guard above. Delete both once they are no-ops everywhere.
       - name: Detect whether rxode2 loads against the installed RcppParallel
+        id: rxode2-load
         run: |
-          if (!requireNamespace("rxode2", quietly = TRUE))
-            writeLines("pin", ".rxode2-needs-rcppparallel-pin")
+          .ok <- requireNamespace("rxode2", quietly = TRUE)
+          cat(paste0("needs_pin=", if (.ok) "false" else "true"),
+              file = Sys.getenv("GITHUB_OUTPUT"), append = TRUE, fill = TRUE)
         shell: Rscript {0}
 
       - name: Pin RcppParallel to a consistent snapshot if it does not
+        if: steps.rxode2-load.outputs.needs_pin == 'true'
         run: |
-          if (file.exists(".rxode2-needs-rcppparallel-pin")) {
-            message("rxode2 does not load -- pinning RcppParallel to the snapshot ",
-                    "its binary was built against")
-            install.packages("RcppParallel",
-                             repos = "https://packagemanager.posit.co/cran/2026-07-31")
-            unlink(".rxode2-needs-rcppparallel-pin")
-          }
+          message("rxode2 does not load -- pinning RcppParallel to the snapshot ",
+                  "its binary was built against")
+          install.packages("RcppParallel",
+                           repos = "https://packagemanager.posit.co/cran/2026-07-31")
         shell: Rscript {0}
 
       - name: Confirm rxode2 loads
