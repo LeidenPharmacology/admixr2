@@ -3,6 +3,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual trigger. The dependency stack below us (RcppParallel/TBB -> stringfish ->
+  # qs2 -> rxode2) has broken twice from CRAN-side rebuilds alone, with no commit of
+  # ours involved, so being able to ask "does the current CRAN state still build?"
+  # without pushing a dummy commit is worth the two lines. Pair it with a
+  # cache-version bump when you want a genuinely cold resolve -- a warm cache is
+  # what made macOS look healthy right through the RcppParallel 6.0.0 break.
+  workflow_dispatch:
 
 name: R-CMD-check
 
@@ -74,9 +81,11 @@ jobs:
           library(qs2)  # fail here, not 20 minutes later inside R CMD check
         shell: Rscript {0}
 
+      # cache-version 4 forces a cold resolve against post-RcppParallel-6.2.0 CRAN
+      # (6.2.0 landed 2026-07-30; the v3 caches were built 2026-07-29 against 6.1.x).
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          cache-version: 3
+          cache-version: 4
           extra-packages: any::rcmdcheck
           needs: check
 
