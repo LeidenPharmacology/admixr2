@@ -72,6 +72,15 @@ jobs:
       # which is why a dated snapshot is the right shape of fix -- and a Windows
       # source build of rxode2 against 6.2.0 does not link (nlmixr2est hit that).
       #
+      # The date is chosen from what the snapshots actually serve, not guessed:
+      #   2026-07-29  RcppParallel 6.1.1  rxode2 5.1.5   (win binaries: both)
+      #   2026-07-30  RcppParallel 6.1.1  rxode2 5.1.5   (win binaries: both)
+      #   2026-07-31  RcppParallel 6.2.0  rxode2 -       (no rxode2 win binary)
+      #   latest      RcppParallel 6.2.0  rxode2 -
+      # 6.2.0's SOURCE reached CRAN on 07-30, so a 07-31 snapshot still serves
+      # it and pins nothing -- which is what the first attempt at this did.
+      # 07-30 is the last date with the consistent pair.
+      #
       # DETECT and REPAIR are separate steps on purpose. Merely testing whether
       # rxode2 loads pulls RcppParallel's DLL into the session, and Windows will
       # not overwrite a loaded DLL -- doing both in one step fails with "cannot
@@ -95,7 +104,7 @@ jobs:
           message("rxode2 does not load -- pinning RcppParallel to the snapshot ",
                   "its binary was built against")
           install.packages("RcppParallel",
-                           repos = "https://packagemanager.posit.co/cran/2026-07-31")
+                           repos = "https://packagemanager.posit.co/cran/2026-07-30")
         shell: Rscript {0}
 
       - name: Confirm rxode2 loads
