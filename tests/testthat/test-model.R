@@ -204,8 +204,9 @@ test_that("editing ANY emitter changes .admPkgKey", {
   # plausible, silently wrong gradient under a normal-looking objective.
   ns <- asNamespace("admixr2")
   base <- admixr2:::.admPkgKey()
-  emitters <- c(".admBuildThetaSens", ".admLoadSensModel", ".admSensFromInner",
-                ".admLinCmtToOde", ".admRxode2", ".admModName", ".admJumpCovers")
+  emitters <- c(".admBuildThetaSens", ".admLoadSensModel", ".admSensNameMaps",
+                ".admSensFromInner", ".admLinCmtToOde", ".admRxode2",
+                ".admModName", ".admJumpCovers")
   for (nm in emitters) {
     orig <- get(nm, envir = ns)
     patched <- orig

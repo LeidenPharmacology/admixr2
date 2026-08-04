@@ -76,9 +76,16 @@
   # would be missing in the worker, the lapply below would error into the
   # tryCatch, and the worker would compute a DIFFERENT key from its parent while
   # looking perfectly healthy. Inlined, the list travels with the patched body.
+  # EXTRACTING A HELPER OUT OF ONE OF THESE MOVES CODE OUT OF THE DIGEST. The key
+  # digests these bodies, so logic lifted into a new function is invisible to it
+  # unless the new name is added here in the SAME commit -- otherwise an edit to
+  # the extracted helper produces a cache HIT on a payload built by superseded
+  # code. That is how .admSensNameMaps got here: it was lifted out of
+  # .admLoadSensModel and had to join the list to stay covered.
   .emitters <- c(
     ".admBuildThetaSens",   # emits the direction set, the chains and the f2 block
     ".admLoadSensModel",    # assembles the cached list and its fallbacks
+    ".admSensNameMaps",     # THETA[k]/ETA[i] maps that fill the emitted columns
     ".admSensFromInner",    # builds the whole type = "inner" payload
     ".admLinCmtToOde",      # emits the promoted ODE an order-2 linCmt differentiates
     ".admRxode2",           # artifact name + wd + eventSens handed to the compiler
@@ -271,18 +278,24 @@
 # string comparison says "different session" for the current one. normalizePath()
 # resolves both; it warns (and returns the input) for a path that does not exist,
 # which is itself a mismatch, so suppress and compare what comes back.
-.admSameDir <- function(a, b) {
-  .n <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE),
-                             error = function(e) p, warning = function(w) p)
-  .a <- .n(a); .b <- .n(b)
-  # Case-fold on Windows ONLY. Its file system is case-insensitive, so two
-  # spellings of one directory must compare equal; Linux and macOS-with-a-
-  # case-sensitive-volume are not, and folding there would make two GENUINELY
-  # different directories compare equal -- which in this guard means accepting a
-  # foreign session's artifact, the exact thing it exists to refuse.
-  if (.Platform$OS.type == "windows") { .a <- tolower(.a); .b <- tolower(.b) }
-  identical(.a, .b)
+# Canonical spelling of a path, for comparing two of them.
+#
+# normalizePath() resolves Windows 8.3 short components ("RT6EC4~1") against the
+# long form tempdir() reports; it warns and returns its input for a path that does
+# not exist, which is itself a mismatch, so suppress and compare what comes back.
+#
+# Case-folded on Windows ONLY. Its file system is case-insensitive, so two
+# spellings of one directory must compare equal; Linux and macOS-with-a-
+# case-sensitive-volume are not, and folding there would make two GENUINELY
+# different directories compare equal -- which in the session guard below means
+# accepting a foreign session's artifact, the exact thing it exists to refuse.
+.admNormPath <- function(p) {
+  .p <- tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE),
+                 error = function(e) p, warning = function(w) p)
+  if (.Platform$OS.type == "windows") tolower(.p) else .p
 }
+
+.admSameDir <- function(a, b) identical(.admNormPath(a), .admNormPath(b))
 
 # Does `path` lie inside THIS session's temporary directory?
 #
@@ -298,10 +311,7 @@
 # A prefix test rather than a fixed depth: it is the tempdir that identifies the
 # session, and nothing here should depend on how deep rxode2 nests a build.
 .admUnderTemp <- function(path) {
-  .n <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE),
-                             error = function(e) p, warning = function(w) p)
-  .p <- .n(path); .t <- sub("/+$", "", .n(tempdir()))
-  if (.Platform$OS.type == "windows") { .p <- tolower(.p); .t <- tolower(.t) }
+  .p <- .admNormPath(path); .t <- sub("/+$", "", .admNormPath(tempdir()))
   identical(.p, .t) || startsWith(.p, paste0(.t, "/"))
 }
 
