@@ -230,3 +230,34 @@ test_that(".admResetCacheIfNeeded survives a malformed version stamp", {
                      as.character(utils::packageVersion("admixr2")))
   }
 })
+
+# --- artifact naming guards (Tier 1: pure functions, no rxode2 needed) --------
+
+test_that(".admModName refuses a name it cannot make unique", {
+  # Returning NULL is not a failure: .admRxode2() then falls back to rxode2's own
+  # anonymous naming, which is still built in OUR directory. A malformed name
+  # would be worse than no name, since two models could share it.
+  expect_null(admixr2:::.admModName("d/dt(a) = -a", role = NULL))
+  expect_null(admixr2:::.admModName("d/dt(a) = -a", role = ""))
+})
+
+test_that(".admModName folds the role and eventSens in beside the md5", {
+  a <- admixr2:::.admModName("d/dt(a) = -a", "admSens", eventSens = "jump")
+  b <- admixr2:::.admModName("d/dt(a) = -a", "admSens", eventSens = "fd")
+  c3 <- admixr2:::.admModName("d/dt(a) = -a", "admSensInner", eventSens = "jump")
+  d <- admixr2:::.admModName("d/dt(a) = -2*a", "admSens", eventSens = "jump")
+  # eventSens is the whole point (nlmixr2/rxode2#1171): two builds of one text
+  # that differ only there must not share an artifact.
+  expect_false(identical(a, b))
+  expect_false(identical(a, c3))   # ... nor two roles
+  expect_false(identical(a, d))    # ... nor two model texts
+  expect_true(all(nzchar(c(a, b, c3, d))))
+})
+
+test_that(".admRxLoadAll is TRUE for a payload holding no compiled model", {
+  # The cached object is a list; anything in it that is not an rxode2 model is
+  # not this function's business, and a non-list payload is vacuously loadable.
+  expect_true(admixr2:::.admRxLoadAll(42))
+  expect_true(admixr2:::.admRxLoadAll("not a model"))
+  expect_true(admixr2:::.admRxLoadAll(list(a = 1, b = "x")))
+})
