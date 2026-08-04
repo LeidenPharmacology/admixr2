@@ -56,12 +56,41 @@
   # deparse(), not the closure itself: a function's environment is the package
   # namespace, which digests differently between load_all() and an installed
   # build and would make every dev session a cache miss for no reason.
+  #
+  # Driven off a NAME LIST, because the set is not obvious and digesting only the
+  # two entry points was not enough. The cached payload is shaped by every
+  # function that decides what gets emitted or how it is compiled -- including
+  # .admJumpCovers(), which decides NULL-versus-cache-a-model, so TIGHTENING it
+  # would not invalidate an entry written under the looser rule. The constants
+  # are digested by VALUE: they are referenced by name inside the deparsed
+  # bodies, so a change to one is invisible to a digest of the text alone.
+  # Per-name tryCatch, NOT one around the whole digest: wrapping the lot means a
+  # single unresolvable name collapses the key to one constant and silently
+  # switches invalidation off altogether -- the worst possible failure for the
+  # mechanism that exists to prevent a stale hit. A name that cannot be resolved
+  # degrades to the name itself, so the other components still separate.
   .src <- tryCatch(
-    digest::digest(list(deparse(body(.admBuildThetaSens)),
-                        deparse(body(.admLoadSensModel)))),
+    digest::digest(c(
+      lapply(.ADM_SENS_EMITTERS,
+             function(.n) tryCatch(deparse(body(get(.n))), error = function(e) .n)),
+      list(.admDoseModRe, .ADM_TBS_YJ))),
     error = function(e) "NA")
   paste(.ver, .src, sep = "/")
 }
+
+# Everything whose edit changes what .admLoadSensModel() caches. A name list so a
+# new emitter is one line here rather than a silently missing digest component --
+# the failure mode being a cache HIT on a model built by superseded code, giving
+# a finite, plausible, silently wrong gradient under a normal-looking objective.
+# Between releases `Version:` does not move, so this digest is the only separator.
+.ADM_SENS_EMITTERS <- c(
+  ".admBuildThetaSens",   # emits the direction set, the chains and the f2 block
+  ".admLoadSensModel",    # assembles the cached list and its fallbacks
+  ".admSensFromInner",    # builds the whole type = "inner" payload
+  ".admLinCmtToOde",      # emits the promoted ODE an order-2 linCmt differentiates
+  ".admRxode2",           # artifact name + wd + eventSens handed to the compiler
+  ".admModName",          # ... and the name itself
+  ".admJumpCovers")       # decides whether a model is cached at all
 
 # Compile a generated model under a stable, role-tagged artifact name.
 #
@@ -139,7 +168,15 @@
 # nlmixr2/rxode2#1171 is open, since the alternative is a silently wrong
 # gradient.
 #
-# The .rds caches stay in rxTempDir(), which PERSISTS, so a cross-session hit
+# NOTE on "persists", asserted in several comments in this file: rxTempDir() is
+# R_user_dir("rxode2", "cache") -- genuinely persistent -- ONLY when that
+# directory already exists, i.e. the user has run rxCreateCache(). Otherwise it
+# is tempdir()/rxode2 and dies with the session. So the cross-session scenarios
+# below are reachable on a machine with an rxode2 cache and unreachable on a
+# default install or a fresh CI runner. The guards are conservative in the right
+# direction either way; the distinction matters when judging how urgent one is.
+#
+# The .rds caches stay in rxTempDir(), which may PERSIST, so a cross-session hit
 # necessarily references a DLL this session no longer has. That is handled by
 # .admRxLoadAll() checking file.exists(rxDll()) and reporting the entry as stale
 # so it is rebuilt. It has to be an explicit check: rxLoad() on a vanished DLL
@@ -192,30 +229,40 @@
 .admRxLoadAll <- function(x) {
   .one <- function(e) {
     if (!inherits(e, "rxode2")) return(TRUE)
-    # The DLL must be checked EXPLICITLY. rxLoad() on a model whose shared object
-    # no longer exists does NOT reliably error -- measured: it returns quietly and
-    # the model then solves to garbage (a prediction frozen at its t = 0 value,
-    # and NA structural gradients), because entry points resolve by name against
-    # whatever is already loaded (nlmixr2/rxode2#1171 again, from the other side).
+    # The DLL must be checked EXPLICITLY: rxLoad() does NOT error on a cached
+    # model whose shared object has gone. It returns quietly, having silently
+    # re-run the deferred compile -- so the caller gets a model back either way
+    # and cannot tell a hit from a rebuild. Measured cost of that hidden rebuild:
+    # ~2.9 s, and with N daemons reading one .rds whose artifact is missing, all
+    # N recompile concurrently into the SAME output path.
     #
-    # This is not hypothetical and it is the ordinary case, not an edge one:
-    # .admModDir() is under tempdir(), which R deletes at exit, while the .rds
-    # caches that REFERENCE those artifacts live in rxTempDir(), which persists.
-    # So every cross-session cache hit points at a deleted DLL. A comment here
-    # used to assert that such a hit "fails rxLoad, and .admLoadModel /
-    # .admLoadSensModel already delete and recompile on exactly that" -- it does
-    # not, which is what made the failure silent instead of self-healing.
+    # (An earlier comment here claimed rxLoad would fail on a vanished DLL, and a
+    # later one claimed the model would bind by name to whatever else was loaded.
+    # Neither is right: role-tagged modNames make the entry-point prefix unique
+    # per role, so the #1171 name-collision branch cannot fire for our own
+    # models. The check earns its place for the two reasons below, not that one.)
     .dll <- tryCatch(rxode2::rxDll(e), error = function(err) NA_character_)
     if (is.na(.dll) || !nzchar(.dll) || !file.exists(.dll)) return(FALSE)
-    # ... and file.exists() alone is NOT the invariant. R removes its tempdir only
-    # on a CLEAN exit, so a killed or crashed session leaves its build directory
-    # behind and a cached entry pointing into it passes file.exists() forever.
-    # Loading it binds this session to another session's artifact, which is the
-    # sharing the .admModDir() comment says does not happen -- so enforce it
-    # rather than assume it. Anything under .admModDir() (this session's build
-    # directory) is ours; anything rxode2 built under its own naming is not our
-    # concern and is left alone.
-    if (grepl("admSens", basename(.dll), fixed = TRUE) &&
+    # ... and file.exists() alone is NOT the invariant, because the artifact may
+    # exist and still not be OURS:
+    #   * R removes its temp directory only on a CLEAN exit, so a killed session
+    #     leaves its build directory behind and a cached entry pointing into it
+    #     satisfies file.exists() indefinitely (this branch's own development
+    #     produced exactly that state);
+    #   * a concurrently LIVE second R session's build directory is equally
+    #     readable, and vanishes under us when that session exits.
+    # The .rds caches persist while these artifacts are session-local, so the
+    # sharing .admModDir() says does not happen has to be enforced, not assumed.
+    #
+    # Discriminated on the PATH, not the basename. A basename test for "admSens"
+    # misses the case it most needs to catch: .admRxode2() falls back to rxode2's
+    # own anonymous naming when .admModName() returns NULL, and that model is
+    # still built inside .admModDir() -- session-local, but named rx_<md5>_<arch>_.
+    # It also misses nlmixr2est's own inner model, which on 7.x is built in
+    # tempdir()/nlmixr2estSens (on 6.0.1/6.2.0 it lives in rxTempDir() and is
+    # correctly out of scope here). Any artifact under a session-local *Sens build
+    # directory must belong to THIS session.
+    if (grepl("(admixr2Sens|nlmixr2estSens)", .dll) &&
         !.admSameDir(dirname(dirname(.dll)), .admModDir())) return(FALSE)
     tryCatch({ rxode2::rxLoad(e); TRUE }, error = function(err) FALSE)
   }

@@ -137,3 +137,67 @@ test_that(".admModelCacheFile is stable and ignores a changed STARTING value", {
     .mock_sim_ui(list(quote(cl <- exp(tcl) * 2), quote(cp ~ add(add.err))),
                  c(0.5, log(5), 0.3)))))
 })
+
+# --- .admSameDir(): the one guard whose failure mode is endless recompiles -----
+#
+# .admRxLoadAll() rejects a cached model whose DLL sits in another session's
+# build directory. If .admSameDir() ever answered FALSE for two spellings of the
+# SAME directory, every load would be rejected and every fit would recompile
+# forever -- slow, not wrong, and so easy to miss. Windows is where that would
+# happen: rxode2 hands back 8.3 short components ("RT6EC4~1") while tempdir()
+# reports the long form, and the two are the same directory.
+
+test_that(".admSameDir equates spellings of one directory and separates two", {
+  d <- normalizePath(tempdir(), winslash = "/", mustWork = FALSE)
+
+  expect_true(admixr2:::.admSameDir(d, d))
+  # trailing separator, and the backslash spelling
+  expect_true(admixr2:::.admSameDir(paste0(d, "/"), d))
+  expect_true(admixr2:::.admSameDir(gsub("/", "\\\\", d), d))
+  # the 8.3 short form, where it exists (Windows only; a no-op elsewhere)
+  short <- tryCatch(utils::shortPathName(d), error = function(e) d)
+  expect_true(admixr2:::.admSameDir(short, d))
+
+  # ... and it must still say FALSE for a genuinely different directory, or the
+  # guard stops guarding.
+  expect_false(admixr2:::.admSameDir(file.path(d, "someOtherSession"), d))
+  expect_false(admixr2:::.admSameDir("/no/such/path/at/all", d))
+})
+
+test_that(".admSameDir on a vanished directory is FALSE, not an error", {
+  # The case the guard exists for: a cached DLL under a killed session's tempdir.
+  # normalizePath(mustWork = FALSE) must not throw, and must not accidentally
+  # compare equal to ours.
+  gone <- file.path(tempdir(), "adm-no-such-dir-12345")
+  expect_false(admixr2:::.admSameDir(gone, tempdir()))
+})
+
+# --- .admPkgKey(): the emitter list must stay in step with the code ------------
+
+test_that(".admPkgKey digests every emitter it names, and they all exist", {
+  # A name that cannot be resolved degrades to the name itself rather than
+  # collapsing the whole digest -- but it must not come to that, so pin the list.
+  for (nm in admixr2:::.ADM_SENS_EMITTERS)
+    expect_true(is.function(get(nm, envir = asNamespace("admixr2"))),
+                info = nm)
+
+  k <- admixr2:::.admPkgKey()
+  expect_type(k, "character")
+  expect_length(k, 1L)
+  # version/source-digest, both non-empty
+  parts <- strsplit(k, "/", fixed = TRUE)[[1L]]
+  expect_length(parts, 2L)
+  expect_true(all(nzchar(parts)))
+  # the digest half must NOT be the "everything failed" sentinel
+  expect_false(identical(parts[2L], "NA"))
+  expect_identical(k, admixr2:::.admPkgKey())   # stable within a session
+})
+
+test_that(".admPkgKey covers the emitters that shape the cached payload", {
+  # Regression on the gap this list closed: digesting only the two entry points
+  # left .admSensFromInner/.admLinCmtToOde/.admRxode2/.admModName/.admJumpCovers
+  # able to change what is cached without changing the key.
+  expect_true(all(c(".admBuildThetaSens", ".admLoadSensModel", ".admSensFromInner",
+                    ".admLinCmtToOde", ".admRxode2", ".admModName",
+                    ".admJumpCovers") %in% admixr2:::.ADM_SENS_EMITTERS))
+})

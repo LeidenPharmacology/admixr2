@@ -2068,9 +2068,32 @@ admStopWorkers <- function() {
   # calling a helper that is new in this release fails with `could not find
   # function` on every restart of a dev-mode fit against a stale install. Same
   # constraint that keeps the non-finite guards inlined; see simulate.R's note.
+  #
+  # THE PARENT'S DIRECTORY CHECK IS DELIBERATELY OMITTED HERE -- do not "restore
+  # parity" by adding it. .admRxLoadAll() rejects any artifact under a
+  # session-local *Sens build directory that is not THIS session's .admModDir().
+  # A mirai daemon has its OWN tempdir(), so the parent-built sensitivity DLL --
+  # which lives under the PARENT's tempdir()/admixr2Sens -- fails that test in
+  # every worker. Copying the check faithfully would return NULL for the sens
+  # model on every restart, and each worker would silently drop to a
+  # finite-difference gradient while the parent ran sensitivities: exactly the
+  # divergence the cache-key fixes in this release exist to prevent, and one that
+  # is invisible in the objective.
+  #
+  # Cross-session staleness is handled for the worker by the parent instead: all
+  # four drivers call .admLoadSensModel()/.admLoadModel() -- which DO run the full
+  # guard, and delete and rebuild on failure -- before .admSetupDaemons(), so a
+  # worker only ever reads an entry the parent refreshed in this session. Only
+  # the DLL-existence half is inlined below; it has no cross-process semantics.
   .load_all <- function(x) {
     .one <- function(e) {
       if (!inherits(e, "rxode2")) return(TRUE)
+      # .admRxLoadAll()'s DLL-existence half, inlined. rxLoad() does not error on
+      # a model whose shared object has gone -- it silently re-runs the deferred
+      # compile (~2.9 s), and with several daemons reading one cache entry they
+      # would all recompile concurrently into the same output path.
+      .dll <- tryCatch(rxode2::rxDll(e), error = function(err) NA_character_)
+      if (is.na(.dll) || !nzchar(.dll) || !file.exists(.dll)) return(FALSE)
       tryCatch({ rxode2::rxLoad(e); TRUE }, error = function(err) FALSE)
     }
     if (inherits(x, "rxode2")) return(.one(x))
@@ -2081,23 +2104,31 @@ admStopWorkers <- function() {
   if (!is.null(rxMod_direct)) {
     rxMod <- rxMod_direct
   } else {
-    # The parent's path, sent on `pinfo`, in preference to recomputing it. The
-    # worker has no `ui`, so it cannot derive the .admIniKey() component that
-    # keys a fix()ed parameter's VALUE into the simulation-model cache -- and
-    # without that key two models differing only in `theta <- fix(0.5)` vs
-    # `fix(0.9)` collide, so a restart would solve at the other model's fixed
-    # value. Recomputing the old lstExpr-only formula is kept as the fallback so
-    # a worker running a stale installed body still finds A file.
-    .cacheFile <- pinfo$sim_cache_file %||%
-      file.path(rxode2::rxTempDir(),
-                paste0("adm-sim-", digest::digest(ui_lstExpr), ".rds"))
+    # The parent's path, sent on `pinfo`. The worker has no `ui`, so it CANNOT
+    # derive the .admIniKey() component that keys a fix()ed parameter's VALUE
+    # into the simulation-model cache -- without it, two models differing only in
+    # `theta <- fix(0.5)` vs `fix(0.9)` collide and a restart solves at the other
+    # model's fixed value.
+    #
+    # There is deliberately NO fallback. This used to recompute the old
+    # lstExpr-only name "so a worker running a stale installed body still finds A
+    # file" -- but finding *a* file is the bug, not the mitigation: that formula
+    # is precisely the one with the fix()-value collision, rxTempDir() is not
+    # swept, and an adm-sim-<digest(lstExpr)>.rds written before that key was
+    # widened can still be sitting there to be false-hit. If the parent did not
+    # supply a path, the right outcome is the legible stop() below.
+    .cacheFile <- pinfo$sim_cache_file
     # rxUiGet.foceiModel()'s read, verbatim in shape: file.exists() -> read ->
     # load. No retry and no sleep -- upstream has neither, and a poll loop was
     # this package's own invention.
-    rxMod <- if (file.exists(.cacheFile)) readRDS(.cacheFile) else NULL
+    # NULL path: `file.exists(NULL)` is logical(0) and `if (logical(0))` is an
+    # "argument is of length zero" error, which would replace the message below
+    # with an opaque one at the point it is most needed.
+    rxMod <- if (!is.null(.cacheFile) && file.exists(.cacheFile))
+      readRDS(.cacheFile) else NULL
     if (is.null(rxMod)) {
       stop("admixr2: a parallel worker could not read the compiled-model cache\n  ",
-           .cacheFile,
+           .cacheFile %||% "<no path supplied by the parent>",
            "\nThe parent writes it before starting workers, so this usually means ",
            "either (a) devtools::load_all() in the parent against an OLDER INSTALLED ",
            "admixr2 -- a daemon runs the installed one, and the two derive this path ",
