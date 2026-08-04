@@ -41,6 +41,25 @@ test_that("the second-order columns match a central difference of the first-orde
   expect_lt(.sens2_cfd_check(env), 1e-4)
 })
 
+test_that("a solved-form linCmt model is DETECTED, whichever marker rxode2 uses", {
+  # The gate that decides whether an order-2 request promotes the model. It read
+  # `ui$predDf$linCmt`, which rxode2 5.1.4 leaves FALSE for a genuine
+  # `cp <- linCmt()` (it marks `ui$.linCmtM` instead) -- so the gate never fired,
+  # every order-2 linCmt build returned NULL, and adfo silently kept the
+  # finite-difference struct-theta pass the order-2 block exists to replace.
+  #
+  # Asserted on the PREDICATE and on d2_cols, with NO skip: the test below skips
+  # on `is.null(sm2$d2_cols)` to tolerate an old rxode2, and that guard is exactly
+  # what hid this -- a feature that never ran looks identical to a feature the
+  # platform cannot support. This one must fail rather than skip.
+  env <- .int_sens2_setup()$lin
+  skip_if(is.null(env) || is.null(env$ui), "linCmt fixture unavailable")
+
+  expect_true(isTRUE(rxode2::testRxLinCmt(env$ui)))
+  # ... and the promotion it gates actually happened.
+  expect_false(is.null(env$sm2$d2_cols))
+})
+
 test_that("linCmt is promoted to ODE form for order 2 and stays solved-form at order 1", {
   env <- .int_sens2_setup()$lin
   skip_if(is.null(env) || is.null(env$sm1), "sens model unavailable")

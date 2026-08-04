@@ -697,13 +697,31 @@
   # case. Promotion failing is not fatal -- NULL here means the caller retries at
   # order 1, where linCmt works exactly as it always has.
   #
-  # ui$predDf only (NOT ui$predDfFocei): reaching for the focei-side frame pulls on
-  # nlmixr2est's model machinery, which is the documented Windows GC/finalizer
-  # hazard. A PROMOTED solved-form linCmt (predDf flag cleared, real ODE states)
-  # is caught instead by the linCmtB text check on the emitted model, below.
+  # DETECTED WITH rxode2::testRxLinCmt(), not by reading predDf$linCmt directly.
+  # On rxode2 5.1.4 that column is FALSE for a genuine `cp <- linCmt()` model --
+  # the solved form is marked on `ui$.linCmtM` instead -- so the gate never fired
+  # and EVERY order-2 request on a linCmt model returned NULL, silently dropping
+  # adfo back to the finite-difference struct-theta pass it was written to
+  # replace. Nothing failed: the caller retries at order 1, which is a correct
+  # (just slower and noisier) fit, and the linCmtB text backstop below caught what
+  # got through. The tests that should have caught it skip on
+  # `is.null(sm2$d2_cols)` -- a guard for old rxode2 versions that instead masked
+  # the feature never running at all.
+  #
+  # testRxLinCmt() is EXPORTED and checks both markers (`.linCmtM`, then
+  # `predDf$linCmt`), so it also survives whichever one a future rxode2 keeps. It
+  # is pure rxode2 -- no nlmixr2est model machinery -- so it does NOT reach for
+  # ui$predDfFocei and stays clear of the documented Windows GC/finalizer hazard,
+  # which is the constraint that made this read predDf in the first place.
+  #
+  # A PROMOTED solved-form linCmt (real ODE states) is caught instead by the
+  # linCmtB text check on the emitted model, below.
   if (order >= 2L) {
-    .lin <- tryCatch(as.logical(ui$predDf$linCmt), error = function(e) NULL)
-    if (isTRUE(any(.lin, na.rm = TRUE))) {
+    .lin <- tryCatch(isTRUE(rxode2::testRxLinCmt(ui)), error = function(e) NULL)
+    if (is.null(.lin))   # older rxode2 without the predicate
+      .lin <- tryCatch(isTRUE(any(as.logical(ui$predDf$linCmt), na.rm = TRUE)),
+                       error = function(e) FALSE)
+    if (isTRUE(.lin)) {
       ui <- .admLinCmtToOde(ui)
       if (is.null(ui)) return(NULL)
       s  <- tryCatch(ui$loadPruneSens, error = function(e) NULL)
