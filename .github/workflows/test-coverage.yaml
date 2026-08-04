@@ -108,7 +108,28 @@ jobs:
             install_path = file.path(normalizePath(Sys.getenv("RUNNER_TEMP"), winslash = "/"), "package")
           )
           covr::to_cobertura(cov)
+          # Line-level detail alongside the cobertura upload. codecov's own UI
+          # gives per-file percentages but reading which LINES are uncovered
+          # means clicking through a SPA, and covr does not run to completion on
+          # Windows (it dies in merge_coverage reading a trace file), so there is
+          # no local route to the same numbers.
+          .z <- subset(as.data.frame(covr::tally_coverage(cov)), value == 0)
+          writeLines(
+            unlist(lapply(sort(unique(.z$filename)), function(f)
+              c(paste0("### ", f, " (", sum(.z$filename == f), " uncovered)"),
+                paste(sort(unique(.z$line[.z$filename == f])), collapse = " ")))),
+            "uncovered-lines.txt")
         shell: Rscript {0}
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ github.sha }}
+          path: |
+            cobertura.xml
+            uncovered-lines.txt
+          if-no-files-found: warn
 
       - uses: codecov/codecov-action@v4
         with:
