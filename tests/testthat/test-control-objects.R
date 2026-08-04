@@ -538,3 +538,28 @@ test_that("a new control argument cannot silently rebind a positional call", {
   expect_identical(adirmcControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
   expect_identical(datagenControl(resid_nodes = 31L)$resid_nodes, 31L)
 })
+
+
+test_that("sigdig defaults to NULL in every control, and tables still get 4", {
+  # This release is what first routed sigdig into the estimators' own rxSolve
+  # calls. It is OFF by default because a looser solve is differenced by the
+  # estimators' own FD steps -- grad_h 1e-4, cov_h 1e-3, cov_h_outer ~2.5e-3 --
+  # and rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4, the same order. Shipping it
+  # on would have moved the objective and the standard errors of every existing
+  # script silently, for a knob that looked like table formatting before.
+  for (ctl in list(adfoControl(), adghControl(), admControl(), adirmcControl())) {
+    expect_null(ctl$sigdig)
+    # Table formatting must be untouched by that choice.
+    expect_identical(ctl$sigdigTable, 4L)
+  }
+})
+
+test_that("sigdig is opt-in and reaches both the solve and the tables", {
+  for (ctl in list(adfoControl(sigdig = 4L), adghControl(sigdig = 4L),
+                   admControl(sigdig = 4L), adirmcControl(sigdig = 4L))) {
+    expect_identical(ctl$sigdig, 4L)
+    expect_identical(ctl$sigdigTable, 4L)
+  }
+  # ... and a value below the table floor still leaves the tables readable.
+  expect_identical(adfoControl(sigdig = 2L)$sigdigTable, 3L)
+})

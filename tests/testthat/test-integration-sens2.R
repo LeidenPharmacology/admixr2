@@ -109,3 +109,33 @@ test_that("adfo's struct-theta gradient is analytic and beats the FD pass it rep
     expect_lt(rel(g_ana), rel(g_fd))
   }
 })
+
+test_that(".adfoGrad degrades to FD when the cached direction map does not cover a theta", {
+  # .dir_of used `theta_dirs[[nm]]`, and `[[` with an unmatched name on an ATOMIC
+  # vector throws "subscript out of bounds" rather than returning NULL -- so the
+  # `%||% NA_character_` fallback beside it could never fire, and the anyNA()
+  # check that turns use_d2 off was unreachable. .adfoGrad is not wrapped in a
+  # tryCatch at that point, so the error propagated out of eval_grad_f and killed
+  # the whole nloptr run with a bare "subscript out of bounds".
+  #
+  # Reachable whenever pinfo's unpaired set and the cached model's disagree --
+  # they are computed from different objects at different times, and the sens
+  # model can be served from a persistent disk cache keyed on the BUILD-time set.
+  # Simulated here by emptying the map on a real order-2 model.
+  for (nm in c("ode", "lin")) {
+    env <- .int_sens2_setup()[[nm]]
+    skip_if(is.null(env) || is.null(env$sm2$d2_cols) || is.null(env$rxMod),
+            "order-2 model unavailable")
+
+    args <- list(env$pinfo, env$studies, NULL, env$rxMod, env$ov,
+                 env$params_list, 1L)
+    for (broken in list(character(0), NULL, c(not.a.theta = "THETA_9_"))) {
+      sm <- env$sm2
+      sm$theta_dirs <- broken
+      g <- do.call(admixr2:::.adfoGrad,
+                   c(list(env$p0), replace(args, 3L, list(sm)), list(1e-4)))
+      expect_true(all(is.finite(g)), info = paste(nm, length(broken)))
+      expect_length(g, length(env$p0))
+    }
+  }
+})

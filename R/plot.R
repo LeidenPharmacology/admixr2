@@ -348,10 +348,19 @@ head.paged_df <- function(x, n = 6L, ...) {
       # vector; .admSimulate() solves a single output, so it returned the first
       # endpoint's trajectory for every row. Same shared-eta solve the estimators
       # use, for the same unit.
+      # sigdig: the tolerance the FIT solved at (extra$sigdig), not rxode2's
+      # default. Without it the predicted-mean, residual and predicted-covariance
+      # panels are computed from a different integration than the objective was
+      # minimised on, and the standardised-residual panel can show structure the
+      # fit never saw -- an artefact that moves with sigdig and disappears when
+      # it is NULL. NULL for a fit made before this field existed, which is
+      # exactly the previous behaviour.
       if (isTRUE(s$is_joint))
-        .admSimulateJoint(rxMod, extra$struct, sig_nms, eta_mat, s, params_df, 1L)
+        .admSimulateJoint(rxMod, extra$struct, sig_nms, eta_mat, s, params_df, 1L,
+                          sigdig = extra$sigdig)
       else
-        .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L),
+        .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L,
+                     sigdig = extra$sigdig),
       error = function(e) {
         if (warn) warning("plot.admFit: simulation failed: ", e$message, call. = FALSE)
         NULL

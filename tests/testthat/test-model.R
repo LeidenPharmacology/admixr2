@@ -80,8 +80,60 @@ test_that(".admIniKey survives a ui with no iniDf", {
   expect_identical(k, admixr2:::.admIniKey(list()))
 })
 
-test_that(".admPkgKey tracks the installed package version", {
+test_that(".admPkgKey carries the package version AND the emitter's source", {
   # Keying the version is what replaced a hand-maintained schema-tag string,
   # which had to be edited whenever the emitted model changed -- and was not.
-  expect_true(nzchar(admixr2:::.admPkgKey()))
+  # The version alone only moves at RELEASE, so every commit in between shares
+  # one key against a cache that persists across sessions: editing what the
+  # order-2 build emits and re-running would hit the previously compiled model
+  # and contract its columns against the new direction map. Digesting the
+  # emitter's own body closes that with nothing to remember.
+  k <- admixr2:::.admPkgKey()
+  expect_true(nzchar(k))
+  expect_identical(k, admixr2:::.admPkgKey())        # stable within a session
+  parts <- strsplit(k, "/", fixed = TRUE)[[1L]]
+  expect_length(parts, 2L)
+  expect_identical(parts[[1L]], as.character(utils::packageVersion("admixr2")))
+  # ... and the second component really is a digest of the emitter, not a
+  # constant: recomputing it from a DIFFERENT body must give something else.
+  .other <- digest::digest(list(deparse(body(admixr2:::.admIniKey)),
+                                deparse(body(admixr2:::.admLoadSensModel))))
+  expect_false(identical(parts[[2L]], .other))
+})
+
+# ---- simulation-model cache key ---------------------------------------------
+#
+# The same fix()ed-value collision, on the OTHER cache. A fixed theta is not an
+# estimated parameter, so .admMakeParamsList() builds no column for it and the
+# value the solve uses is the one rxode2 baked into $simulationModel. Keyed on
+# the model({}) block alone, two models differing only in `tka <- fix(0.5)` vs
+# `fix(0.9)` therefore shared one compiled model and the second silently solved
+# at the first's fixed value.
+
+.mock_sim_ui <- function(lst, est, fix = c(TRUE, FALSE, FALSE)) {
+  c(.mock_ini_ui(est, fix = fix), list(lstExpr = lst))
+}
+
+test_that(".admModelCacheFile separates models that differ only in a FIXED value", {
+  skip_if_not_installed("rxode2")
+  lst <- list(quote(cl <- exp(tcl)), quote(cp ~ add(add.err)))
+  a <- admixr2:::.admModelCacheFile(.mock_sim_ui(lst, c(0.5, log(5), 0.3)))
+  b <- admixr2:::.admModelCacheFile(.mock_sim_ui(lst, c(0.9, log(5), 0.3)))
+  expect_false(identical(a, b))
+  # Both still land in the rxode2 temp dir with the expected prefix, so the
+  # worker's fallback formula and this one name files of the same shape.
+  expect_true(all(grepl("^adm-sim-.*[.]rds$", basename(c(a, b)))))
+})
+
+test_that(".admModelCacheFile is stable and ignores a changed STARTING value", {
+  skip_if_not_installed("rxode2")
+  lst <- list(quote(cl <- exp(tcl)), quote(cp ~ add(add.err)))
+  a <- admixr2:::.admModelCacheFile(.mock_sim_ui(lst, c(0.5, log(5), 0.3)))
+  expect_identical(a, admixr2:::.admModelCacheFile(.mock_sim_ui(lst, c(0.5, log(5), 0.3))))
+  # A starting value must NOT force a recompile -- same rule as .admIniKey.
+  expect_identical(a, admixr2:::.admModelCacheFile(.mock_sim_ui(lst, c(0.5, log(7), 0.3))))
+  # ... but a different model({}) block must.
+  expect_false(identical(a, admixr2:::.admModelCacheFile(
+    .mock_sim_ui(list(quote(cl <- exp(tcl) * 2), quote(cp ~ add(add.err))),
+                 c(0.5, log(5), 0.3)))))
 })

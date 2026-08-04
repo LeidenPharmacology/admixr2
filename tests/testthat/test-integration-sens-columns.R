@@ -330,6 +330,11 @@ test_that("a worker re-derives pred_tbs, so an estimated lambda cannot be served
 
   invisible(admixr2:::.admLoadModel(ui_a))
   p_a <- suppressWarnings(admixr2:::.admParseIniDf(ui_a$iniDf, ui_a))
+  # The simulation-model cache path travels on pinfo, exactly as the estimator
+  # drivers set it: a worker has no `ui`, so it cannot derive the .admIniKey()
+  # component that keys a fix()ed parameter's VALUE. .admParseIniDf() does not
+  # set it (only the drivers do), so a hand-built pinfo has to supply it here.
+  p_a$sim_cache_file <- admixr2:::.admModelCacheFile(ui_a)
   w   <- admixr2:::.admWorkerLoadModels(ui_a$lstExpr, NULL, 1L, sm_a$cache_file,
                                         sm_a$sens_cols, sm_a$rename_map, NULL, p_a)
   skip_if(is.null(w$sensModel), "worker could not load the sensitivity model")

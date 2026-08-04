@@ -48,7 +48,43 @@
   value
 }
 
+# Drop the disk cache when the package version changes.
+#
+# nlmixr2est::.resetCacheIfNeeded(), with admixr2's version in place of its
+# build-time md5 constant. Same mechanism, same place in the load sequence:
+# stamp our identity into rxTempDir(), and clean when the stored stamp differs.
+# admixr2 had no equivalent, so superseded compiled models accumulated there
+# indefinitely.
+.admResetCacheIfNeeded <- function() {
+  .wd <- rxode2::rxTempDir()
+  if (.wd != "") {
+    .verFile <- file.path(.wd, "admixr2.version")
+    .ver <- as.character(utils::packageVersion("admixr2"))
+    if (file.exists(.verFile)) {
+      if (readLines(.verFile) != .ver) {
+        ## Deliberately NOT rxClean() here -- upstream removed exactly this call
+        ## (nlmixr2est fef5be69). It wipes the whole SHARED rxTempDir(), and
+        ## deleting a generated model's compiled artifact out from under a live
+        ## model object makes rxode2's deferred-compile thunk rebuild it,
+        ## emitting different code than the build it replaces (nlmixr2/rxode2#1171).
+        ## For admixr2 it is worse still: a mirai daemon runs library(admixr2),
+        ## so this hook fires in the WORKER and can wipe the adm-sim-*.rds the
+        ## parent wrote seconds earlier and the sibling daemons are about to read.
+        ##
+        ## Rewriting the stamp is also what stops the comparison failing forever:
+        ## the mismatch branch never refreshed it, so every load for the rest of
+        ## the installation's life would clean again, not just the first after an
+        ## upgrade.
+        writeLines(.ver, .verFile)
+      }
+    } else {
+      writeLines(.ver, .verFile)
+    }
+  }
+}
+
 .onLoad <- function(libname, pkgname) {
+  tryCatch(.admResetCacheIfNeeded(), error = function(e) NULL)
   tryCatch(.register_adm(),  error = function(e)
     warning("admixr2: admc registration failed (", conditionMessage(e), ")", call. = FALSE))
   tryCatch(.register_adirmc(), error = function(e)

@@ -26,15 +26,137 @@
   }, error = function(e) "")
 }
 
-# admixr2's own version, so a cached model cannot outlive a change to what this
-# package emits. It replaces a hand-maintained schema-tag string that had to be
-# edited by hand whenever the emitted model changed -- and was forgotten once on
-# this branch, serving a stale "linCmt cannot do order 2" entry after exactly
-# such a change. nlmixr2est solves the same problem by stamping its version into
-# the cache directory (.resetCacheIfNeeded); keying it is the same idea without
-# the directory sweep.
+# Identity of the code that EMITS a cached model, so a cached model cannot
+# outlive a change to what this package emits. It replaces a hand-maintained
+# schema-tag string that had to be edited by hand whenever the emitted model
+# changed -- and was forgotten once on this branch, serving a stale "linCmt
+# cannot do order 2" entry after exactly such a change. nlmixr2est solves the
+# same problem by stamping its version into the cache directory
+# (.resetCacheIfNeeded); keying it is the same idea without the directory sweep.
+#
+# The version ALONE is not enough, and that is the whole point of the second
+# component. `Version:` moves only at release, so every commit between releases
+# -- the entire development cycle, and every user tracking main while Version:
+# sits still -- shares one key against a cache that persists across sessions.
+# Editing .g2, the direction set or the f2 naming and re-running then produces a
+# cache HIT on the previously compiled model, and .adfoGrad contracts the OLD
+# model's second-order columns against the new code's direction map: a finite,
+# plausible, silently wrong structural gradient, with the objective (read off
+# rx_pred_ on the same stale model) looking perfectly normal. Replacing the
+# hand-edited tag with a version string moved that trigger from "forgot to edit
+# the tag" to "did not bump the version" rather than removing it.
+#
+# So the key also digests the BODIES of the two functions that decide what gets
+# emitted. Any edit to either -- released or not -- changes the key by
+# construction, with nothing to remember. Costs one deparse + digest per
+# fit -- .admLoadSensModel(), its only caller, runs once per fit.
 .admPkgKey <- function() {
-  tryCatch(as.character(utils::packageVersion("admixr2")), error = function(e) "dev")
+  .ver <- tryCatch(as.character(utils::packageVersion("admixr2")),
+                   error = function(e) "dev")
+  # deparse(), not the closure itself: a function's environment is the package
+  # namespace, which digests differently between load_all() and an installed
+  # build and would make every dev session a cache miss for no reason.
+  .src <- tryCatch(
+    digest::digest(list(deparse(body(.admBuildThetaSens)),
+                        deparse(body(.admLoadSensModel)))),
+    error = function(e) "NA")
+  paste(.ver, .src, sep = "/")
+}
+
+# Compile a generated model under a stable, role-tagged artifact name.
+#
+# This is nlmixr2est's .nlmixr2estRxode2()/.nlmixr2estModName()/.nlmixr2estModDir()
+# (added on its main in fef5be69, after 6.2.0), ported with admixr2's own roles.
+#
+# rxode2 names a model's generated .c/.so from `.rxPre(model, modName)`, which for
+# an ANONYMOUS model is `rx_<parsed_md5>_<arch>_` -- the parsed model text ALONE.
+# The emitted C also depends on inputs the parsed text cannot see, above all the
+# event-sensitivity code, which is generated afterwards and injected. So two
+# builds of one model text that differ in those inputs land on a single .so; the
+# later build wins for both, and because entry points resolve BY NAME
+# (R_GetCCallable) a model object bound to the earlier one silently starts
+# executing the replacement. Upstream measured a 193856-byte eventSens = "jump"
+# build replaced by a 167792-byte one, after which calc_lhs wrote 4 of the 29 lhs
+# it declares and every analytic gradient came back non-finite. See
+# nlmixr2/rxode2#1171.
+#
+# admixr2 is exposed in the worst way of any package: .admSensFromInner()
+# recompiles NLMIXR2EST'S OWN inner model text with eventSens = "jump", where
+# nlmixr2est built the same text with a different one. Same parsed md5, same
+# directory, different emitted C. Two aggravations specific to this package:
+# rxTempDir() here is a PERSISTENT user cache, so a collision survives restarts;
+# and admixr2 used to setwd() into that directory to compile.
+.admRxode2 <- function(model, role, ...) {
+  .nm <- .admModName(model, role, ...)
+  .wd <- .admModDir()
+  # The fallback must still build in OUR directory: dropping back to rxode2's own
+  # naming AND its own directory puts the model right back where two builds of one
+  # text overwrite each other, which is the failure this exists to prevent.
+  if (is.null(.nm)) return(rxode2::rxode2(model, wd = .wd, ...))
+  rxode2::rxode2(model, modName = .nm, wd = .wd, ...)
+}
+
+# Stable artifact name: role + everything that changes the emitted code.
+# `eventSens` is folded in as well as the role, since it selects which
+# event-sensitivity code rxode2 emits and would otherwise let a "jump" and an
+# "fd" build of one model text share an artifact. The parsed md5 stays in the
+# name, so two genuinely different models still never share one -- a bare role
+# name would be worse than the default, not better.
+.admModName <- function(model, role, ...) {
+  if (is.null(role) || !nzchar(role)) return(NULL)
+  .md5 <- tryCatch(rxode2::rxModelVars(model)$md5[["parsed_md5"]], error = function(e) NULL)
+  if (is.null(.md5) || !nzchar(.md5)) return(NULL)
+  .dots <- list(...)
+  # eventSens can arrive as an un-evaluated match.arg default, i.e. c("jump","fd"):
+  # take the first element, as match.arg would, so the name stays length 1. A
+  # zero-length value must fall back to "" rather than produce character(0), which
+  # would sail past an is.null() check and reach rxode2 as an empty modName.
+  .es <- .dots$eventSens
+  .es <- if (is.null(.es) || length(.es) == 0L) "" else gsub("\\W", "", as.character(.es)[1L])
+  if (is.na(.es)) .es <- ""
+  # "_" separates the parts: without it role "rxA" + es "bc" and role "rxAb" + es
+  # "c" would produce one name. The md5 is last and fixed-width.
+  .nm <- paste0(role, "_", .es, "_", .md5)
+  if (length(.nm) != 1L || is.na(.nm) || !nzchar(.nm)) return(NULL)
+  .nm
+}
+
+# Where generated models are built. Upstream's three constraints hold here too.
+#
+# NOT getwd(): a NAMED model builds there by default, scattering <modName>.d
+# directories through the user's working directory.
+#
+# NOT rxTempDir(): that directory is rxode2's, and something in a session
+# invalidates artifacts inside it -- upstream measured a generated model's .so
+# replaced mid-run by a build emitting different event-sensitivity code, still
+# reproducible with every model uniquely named, so role-tagged names alone do NOT
+# protect against it. For admixr2 it is also a PERSISTENT user cache, so anything
+# wrong there outlives the session.
+#
+# R's session temp directory is neither: nothing else clears it, no consent is
+# needed, and it goes away when R exits. The cost is that artifacts are not
+# shared across sessions, so each session rebuilds them once -- worth it while
+# nlmixr2/rxode2#1171 is open, since the alternative is a silently wrong
+# gradient.
+#
+# The .rds caches stay in rxTempDir(), which PERSISTS, so a cross-session hit
+# necessarily references a DLL this session no longer has. That is handled by
+# .admRxLoadAll() checking file.exists(rxDll()) and reporting the entry as stale
+# so it is rebuilt. It has to be an explicit check: rxLoad() on a vanished DLL
+# does not reliably error, it quietly leaves the model bound to whatever shares
+# its entry-point names, and the model then solves to garbage. An earlier version
+# of this comment asserted rxLoad would fail there; it does not, and until the
+# check was added every second session silently served a dead model.
+.admModDir <- function() {
+  .d <- file.path(tempdir(), "admixr2Sens")
+  if (!dir.exists(.d)) {
+    dir.create(.d, recursive = TRUE, showWarnings = FALSE)
+    # dir.create() is quiet about failure here (another process may have won the
+    # race, which is fine), so confirm rather than hand back a path that does not
+    # exist -- rxode2 would then fail deep in the compile with a confusing error.
+    if (!dir.exists(.d)) return(tempdir())
+  }
+  .d
 }
 
 # Re-load every compiled model inside a cached object.
@@ -56,14 +178,83 @@
 #
 # TRUE if everything loadable loaded; FALSE if any load failed, which the callers
 # treat as a stale cache entry (delete and rebuild) rather than propagating.
+# Are two paths the same directory? Windows hands back 8.3 short names
+# ("RT6EC4~1") inside a DLL path while tempdir() reports the long form, so a
+# string comparison says "different session" for the current one. normalizePath()
+# resolves both; it warns (and returns the input) for a path that does not exist,
+# which is itself a mismatch, so suppress and compare what comes back.
+.admSameDir <- function(a, b) {
+  .n <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE),
+                             error = function(e) p, warning = function(w) p)
+  identical(tolower(.n(a)), tolower(.n(b)))
+}
+
 .admRxLoadAll <- function(x) {
   .one <- function(e) {
     if (!inherits(e, "rxode2")) return(TRUE)
+    # The DLL must be checked EXPLICITLY. rxLoad() on a model whose shared object
+    # no longer exists does NOT reliably error -- measured: it returns quietly and
+    # the model then solves to garbage (a prediction frozen at its t = 0 value,
+    # and NA structural gradients), because entry points resolve by name against
+    # whatever is already loaded (nlmixr2/rxode2#1171 again, from the other side).
+    #
+    # This is not hypothetical and it is the ordinary case, not an edge one:
+    # .admModDir() is under tempdir(), which R deletes at exit, while the .rds
+    # caches that REFERENCE those artifacts live in rxTempDir(), which persists.
+    # So every cross-session cache hit points at a deleted DLL. A comment here
+    # used to assert that such a hit "fails rxLoad, and .admLoadModel /
+    # .admLoadSensModel already delete and recompile on exactly that" -- it does
+    # not, which is what made the failure silent instead of self-healing.
+    .dll <- tryCatch(rxode2::rxDll(e), error = function(err) NA_character_)
+    if (is.na(.dll) || !nzchar(.dll) || !file.exists(.dll)) return(FALSE)
+    # ... and file.exists() alone is NOT the invariant. R removes its tempdir only
+    # on a CLEAN exit, so a killed or crashed session leaves its build directory
+    # behind and a cached entry pointing into it passes file.exists() forever.
+    # Loading it binds this session to another session's artifact, which is the
+    # sharing the .admModDir() comment says does not happen -- so enforce it
+    # rather than assume it. Anything under .admModDir() (this session's build
+    # directory) is ours; anything rxode2 built under its own naming is not our
+    # concern and is left alone.
+    if (grepl("admSens", basename(.dll), fixed = TRUE) &&
+        !.admSameDir(dirname(dirname(.dll)), .admModDir())) return(FALSE)
     tryCatch({ rxode2::rxLoad(e); TRUE }, error = function(err) FALSE)
   }
   if (inherits(x, "rxode2")) return(.one(x))
   if (!is.list(x)) return(TRUE)
   all(vapply(x, .one, logical(1)))
+}
+
+# Disk-cache path for the compiled simulation model.
+#
+# The key covers the model({}) block AND .admIniKey(ui) -- the parameter names,
+# their fix() flags, the error types, and the VALUES of the fixed ones. The
+# lstExpr digest alone is not enough, and the gap was not theoretical:
+#
+#   `tka <- fix(0.5)` and `tka <- fix(0.9)`, model({}) block identical, give the
+#   same digest(ui$lstExpr). A fixed theta never reaches the optimizer, so it is
+#   not in pinfo$struct_names and .admMakeParamsList() builds no column for it;
+#   the value the solve uses is the one rxode2 BAKED INTO $simulationModel as
+#   that parameter's default. So the second fit read the first's cache entry and
+#   silently solved at the first's fixed value -- objective, estimates and SEs
+#   all those of a model the user never wrote, with no error and no warning, and
+#   persisting across sessions because rxTempDir() is a persistent user cache.
+#
+# This is the same collision .admIniKey() was added to close for the SENSITIVITY
+# cache; only the simulation cache had been left on the old key. The ini ORDER
+# rides along for free (an ini({}) reorder leaves lstExpr bit-identical while
+# $simulationModel comes back with its parameters in a different order -- benign
+# today, since rxSolve matches by name, but an unwritten invariant either way).
+#
+# Split out as its own function because a parallel worker cannot recompute it:
+# it has no `ui`. The parent therefore stores this path on pinfo (which is sent
+# to the worker by value) and .admWorkerLoadModels() reads it from there. That
+# routing is the point -- an earlier attempt simply enriched the key here and
+# left the worker recomputing the old formula, so the parent wrote one file name
+# and all four restarts looked for another.
+.admModelCacheFile <- function(ui) {
+  file.path(rxode2::rxTempDir(),
+            paste0("adm-sim-",
+                   digest::digest(list(ui$lstExpr, .admIniKey(ui))), ".rds"))
 }
 
 # Load (or compile + cache) the rxode2 simulation model.
@@ -77,28 +268,8 @@
   # sibling artifacts) on every exit so the ui stays in the canonical state
   # nlmixr2 expects; see .admDropSimModelMeta() for the full rationale.
   on.exit(.admDropSimModelMeta(ui), add = TRUE)
-  # Keyed on ui$lstExpr ALONE, deliberately, even though the sensitivity key is
-  # richer. A parallel worker recomputes this path itself from the lstExpr it was
-  # sent (.admWorkerLoadModels) -- it has no `ui` -- so any material added here
-  # must be material the worker can also derive, or the parent writes one file
-  # name and every worker looks for another. Strengthening it without teaching
-  # the worker the same formula was tried and produced exactly that: four
-  # parallel restarts failing on a missing cache file.
-  #
-  # The sensitivity key does not have this constraint because the worker is SENT
-  # that path (`sens_cache_file`) rather than recomputing it.
-  #
-  # The known cost: an ini({}) reorder leaves lstExpr bit-identical while
-  # $simulationModel comes back with its parameters in a different order. That is
-  # currently benign -- rxSolve matches the params data.frame by NAME, and the
-  # name set is unchanged -- but it is an unwritten invariant. Closing it means
-  # routing the parent's path to the worker (through pinfo, which is sent by
-  # value) rather than enriching a formula the worker cannot follow.
-  .model_key <- digest::digest(ui$lstExpr)
-  .cacheFile <- file.path(
-    rxode2::rxTempDir(),
-    paste0("adm-sim-", .model_key, ".rds")
-  )
+  .cacheFile <- .admModelCacheFile(ui)
+  .model_key <- sub("\\.rds$", "", basename(.cacheFile))
   # In-session registry (see .adm_model_env): a disk cache HIT still costs a
   # readRDS plus a dyn.load, and hands back a fresh object whose finalizer will
   # eventually unload the shared library this one is using.
@@ -114,7 +285,17 @@
     return(.memo)
   if (file.exists(.cacheFile)) {
     mod <- tryCatch(readRDS(.cacheFile), error = function(e) NULL)
-    load_ok <- !is.null(mod) && .admRxLoadAll(mod)
+    # inherits() FIRST, then load. .admRxLoadAll mirrors nlmixr2est's load step
+    # exactly, and that step is a no-op on anything not rxode2-classed -- so on
+    # its own it reports TRUE for a file whose content is not a model at all
+    # (written by a different admixr2's saveRDS, or a digest collision in the
+    # shared rxTempDir). The predicate this replaced called rxLoad()
+    # unconditionally, so anything rxode2 refused fell into the recovery path
+    # below and self-healed on the first attempt. Keeping the helper faithful to
+    # upstream and asserting the payload's SHAPE here restores that: the file is
+    # deleted and recompiled rather than handed back as `rxMod` and memoised, in
+    # which case every fit in the session repeats the failure.
+    load_ok <- inherits(mod, "rxode2") && .admRxLoadAll(mod)
     if (load_ok) {
       return(.admCacheAssign(.model_key, mod, .adm_model_env))
     }
@@ -122,11 +303,27 @@
   }
   # rxode2 compilation calls setwd() internally -- save/restore to avoid
   # "cannot change working directory" error on first compile (Windows).
+  #
+  # STAYS rxTempDir(). Upstream moved its generated models out of that directory
+  # (see .admModDir()), and it does so by passing `wd =` to rxode2::rxode2() --
+  # never by setwd(). Doing it here with setwd() instead breaks multi-endpoint
+  # models: `rxode2(ui)$simulationModel` compiles companion models that resolve
+  # against the working directory, and moving it made every multi-output fit
+  # return an all-NA structural gradient ("gradient of objective in x0 returns
+  # NA"), measured as 12 failures in test-integration-multi-output that revert
+  # to 0 the moment this line goes back. So the build-directory change applies
+  # only where admixr2 emits the model text itself and can pass `wd =`
+  # explicitly -- .admRxode2() -- and not to this call.
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
   on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
   setwd(rxode2::rxTempDir())
   mod <- rxode2::rxode2(ui)$simulationModel
-  tryCatch(suppressWarnings(saveRDS(mod, .cacheFile)), error = function(e) NULL)
+  # Bare, as upstream writes it (`qs2::qs_save(.ret, .cacheFile)`): a write
+  # failure propagates rather than being swallowed. It used to be wrapped in
+  # tryCatch(..., error = function(e) NULL), which mattered once the parallel
+  # workers began finding this model by reading exactly this file -- a silent
+  # failure here surfaced much later as every restart failing to read the cache.
+  saveRDS(mod, .cacheFile)
   rxode2::rxLoad(mod)
   .admCacheAssign(.model_key, mod, .adm_model_env)
 }
@@ -369,9 +566,26 @@
       if (is.null(st) || length(st) == 0L) return(NULL)
       ini <- tryCatch(ui$iniDf, error = function(e) NULL)
       if (is.null(ini)) return(NULL)
-      # eta_rows/th_rows are re-derived below from `ini`; the promoted model has
-      # the SAME ini({}) block, so every direction index and the caller's
-      # rename_map (built from the original ui) stay valid.
+      # RE-DERIVE eta_rows/th_rows from the PROMOTED model's iniDf.
+      #
+      # These drive the direction set: theta_idx <- th_rows$ntheta[match(unpaired,
+      # th_rows$name)] and one ETA_i_ per eta row. Taking them from the
+      # pre-promotion ui (which is what happened while a comment here claimed the
+      # opposite -- `ini` was reassigned and then never read) means that if
+      # linToOde() yields ANY iniDf difference -- a renumbered ntheta, an added or
+      # dropped parameter row, a different eta ordering -- the emitted
+      # rx_f1_THETA_k_ / rx_f2_ETA_i_THETA_k_ differentiate a different parameter
+      # than the caller thinks. With grad = "analytical" now the default and Pass
+      # 2's FD skipped whenever use_d2 is TRUE, adfo would then descend a
+      # structural gradient computed for the wrong theta: wrong estimates, wrong
+      # SEs, no error and no warning.
+      #
+      # linToOde() does preserve the iniDf on the models measured here, so this
+      # was latent rather than firing. Deriving from the model actually being
+      # differentiated makes that an outcome rather than an assumption.
+      eta_rows <- ini[!is.na(ini$neta1) & ini$neta1 == ini$neta2 & !ini$fix, , drop = FALSE]
+      eta_rows <- eta_rows[order(eta_rows$neta1), , drop = FALSE]
+      th_rows  <- ini[!is.na(ini$ntheta), , drop = FALSE]
     }
   }
 
@@ -403,14 +617,30 @@
       rxode2::.rxJacobian(s, c(st, dirs))
       sens_lines <- rxode2::.rxSens(s, dirs)
       if (length(sens_lines) == 0L) return(NULL)
-      # The cross block only: vars = eta directions, vars2 = every direction.
+      # The cross block only: rows = eta directions, columns = every direction.
       # rxExpandSens2_ takes the two sets independently, so no theta x theta
       # compartment is generated. .rxSens also assigns the rx__sens_*_BY_*_BY_*__
       # symbols into `s` as a side effect, which is what makes them resolvable in
       # .g2 below -- so this must run BEFORE the chains are built.
+      #
+      # Requested one eta ROW at a time, each against only the directions at or
+      # after it, because the eta x eta half of that block is SYMMETRIC and
+      # rxExpandSens2_ does not know it: asked for the full rectangle it emits
+      # d2/(d eta_1 d eta_2) and d2/(d eta_2 d eta_1) as two separate variational
+      # compartments carrying the same equation (verified: identical d/dt modulo
+      # the compartment name). Integrating both costs
+      # n_states * n_eta(n_eta - 1)/2 extra states on every solve for no
+      # information -- 2 of 20 on a 2-state/2-eta/1-theta model, 18 of 93 on a
+      # 3-state/4-eta/2-theta one. The eta x theta half has no such symmetry and
+      # is requested in full. .g2/d2_cols below build only these same canonical
+      # pairs and mirror the cell, so the consumer is unchanged.
       if (order >= 2L) {
-        sens2_lines <- rxode2::.rxSens(s, eta_dirs, dirs)
-        if (length(sens2_lines) == 0L) return(NULL)
+        for (.i in seq_along(eta_dirs)) {
+          .cols <- c(eta_dirs[.i:length(eta_dirs)], theta_dirs)
+          .l <- rxode2::.rxSens(s, eta_dirs[.i], .cols)
+          if (length(.l) == 0L) return(NULL)
+          sens2_lines <- c(sens2_lines, .l)
+        }
       }
     }
     pred <- if (!is.null(pred_expr)) pred_expr else get("rx_pred_", envir = s)
@@ -479,11 +709,17 @@
       # sensitivity compartment starting at 0 unless d2(x0)/(dp dq) is emitted.
       # Same argument as the first-order block above (the IC is evaluated before
       # integration, so this is a plain double partial, no state chain).
-      if (order >= 2L) for (p in eta_dirs) for (q in dirs) {
-        cmt <- paste0("rx__sens_", x, "_BY_", p, "_BY_", q, "__")
-        d   <- .admToRx(.Dn(.Dn(x0, p), q))
-        if (!identical(d, "0") && !(cmt %in% ic_done))
-          ic <- c(ic, paste0(cmt, "(0)=", d))
+      # Iterated over the SAME canonical pairs the compartments were emitted for
+      # -- an IC naming a mirrored pair would declare a compartment that no
+      # longer exists.
+      if (order >= 2L) for (.i in seq_along(eta_dirs)) {
+        p <- eta_dirs[.i]
+        for (q in c(eta_dirs[.i:length(eta_dirs)], theta_dirs)) {
+          cmt <- paste0("rx__sens_", x, "_BY_", p, "_BY_", q, "__")
+          d   <- .admToRx(.Dn(.Dn(x0, p), q))
+          if (!identical(d, "0") && !(cmt %in% ic_done))
+            ic <- c(ic, paste0(cmt, "(0)=", d))
+        }
       }
     }
 
@@ -501,18 +737,36 @@
                  character(1))
 
     # Cross second-order block: rows = eta directions, columns = all directions.
-    # expand.grid varies `i` fastest, so filling the name matrix column-major puts
-    # eta i in row i and direction b in column b -- i.e. d2_cols[i, b] names the
-    # column holding d2(pred)/(d eta_i d dir_b), which is column i of dJ/d(dir_b).
+    # d2_cols[i, b] names the solve column holding d2(pred)/(d eta_i d dir_b),
+    # which is column i of dJ/d(dir_b).
+    #
+    # Only the CANONICAL pairs are emitted -- eta row i against directions at or
+    # after it, matching the compartments requested above -- and the matrix
+    # mirrors the eta x eta half onto them: d2_cols["ETA_2_", "ETA_1_"] and
+    # d2_cols["ETA_1_", "ETA_2_"] are the SAME column name. That is exact, not an
+    # approximation (mixed partials of a smooth prediction commute), and it means
+    # the redundant chain expression is not emitted either. The consumer reads
+    # d2_cols purely as a name lookup into the solve output, so a repeated name
+    # needs no handling on its side.
     f2 <- character(0); d2_cols <- NULL
     if (order >= 2L) {
-      P2  <- expand.grid(i = eta_dirs, j = dirs, stringsAsFactors = FALSE)
-      nm2 <- paste0("rx_f2_", P2$i, "_", P2$j)
+      n_eta_d <- length(eta_dirs)
+      P2 <- do.call(rbind, lapply(seq_len(n_eta_d), function(i)
+        cbind(i = i, j = c(i:n_eta_d, if (length(theta_dirs))
+                             n_eta_d + seq_along(theta_dirs) else integer(0)))))
+      nm2 <- paste0("rx_f2_", eta_dirs[P2[, "i"]], "_", dirs[P2[, "j"]])
       f2  <- vapply(seq_len(nrow(P2)), function(r)
-                    paste0(nm2[r], "=", .admToRx(.g2(pred, P2$i[r], P2$j[r]))),
+                    paste0(nm2[r], "=",
+                           .admToRx(.g2(pred, eta_dirs[P2[r, "i"]], dirs[P2[r, "j"]]))),
                     character(1))
-      d2_cols <- matrix(nm2, nrow = length(eta_dirs), ncol = length(dirs),
+      key <- stats::setNames(nm2, paste(P2[, "i"], P2[, "j"], sep = "|"))
+      d2_cols <- matrix(NA_character_, nrow = n_eta_d, ncol = length(dirs),
                         dimnames = list(eta_dirs, dirs))
+      for (i in seq_len(n_eta_d)) for (b in seq_along(dirs)) {
+        cn <- if (b <= n_eta_d) c(min(i, b), max(i, b)) else c(i, b)
+        d2_cols[i, b] <- key[[paste(cn[1L], cn[2L], sep = "|")]]
+      }
+      if (anyNA(d2_cols)) return(NULL)
     }
 
     # Endpoint routing for a MULTI-ENDPOINT model. Its rx_pred_ is a CMT-conditional
@@ -569,7 +823,10 @@
 
     txt <- tryCatch(rxode2::rxOptExpr(txt, "admixr2 sensitivity model"),
                     error = function(e) txt)
-    mod <- rxode2::rxode2(txt, eventSens = "jump")
+    # Role-tagged and built outside rxTempDir() -- see .admRxode2(). This model's
+    # text is admixr2's own emission, but it shares a parsed md5 with any other
+    # build of the same text, and it is compiled with eventSens = "jump".
+    mod <- .admRxode2(txt, "admSens", eventSens = "jump")
     rxode2::rxLoad(mod)
     # This rxode2 cannot differentiate a dosing modifier one of our directions
     # feeds -> that column would be silently zero. Refuse the sens model entirely;
@@ -630,6 +887,27 @@
   # path (audited at ~5e-06), rather than gating grad in four drivers separately.
   .d <- tryCatch(as.character(ui$predDf$distribution), error = function(e) character(0))
   if (length(.d) > 0L && any(.d %in% c("ordinal", "dordinal"))) return(NULL)
+  # A TRANSFORMED endpoint cannot use the second-order block, so do not build it.
+  #
+  # .admSimulateSensRows() extracts d2_list and then drops it for a transformed
+  # endpoint (`d2_list <- NULL`, simulate.R) -- deliberately: chaining a second
+  # derivative through g() needs g''(z) z_p z_q + g'(z) z_pq, and a silently
+  # first-order-chained second derivative is the class of error that made lnorm's
+  # gradient ~200x wrong. But nothing STOPPED the order-2 build, so `cp ~
+  # lnorm(sd)` compiled and then integrated the cross compartments on every solve
+  # only to throw them away: for a 2-state / 2-eta / 1-unpaired-theta model that
+  # is 20 states instead of 8, ~2.5x the integrated system, with .adfoGrad's
+  # use_d2 FALSE and Pass 2's FD running exactly as before. Since grad =
+  # "analytical" is now the default, that was the default path for every
+  # lnorm/TBS adfo fit: strictly slower than 0.4.0 with no accuracy gain.
+  #
+  # Demoted HERE, above the cache key, so the order-1 model is also shared with
+  # the order-1 key rather than duplicated under an "order2" one.
+  if (order >= 2L) {
+    .tr0 <- tryCatch(as.character(ui$predDf$transform), error = function(e) character(0))
+    if (any(.tr0 %in% c("lnorm", "logit", "probit", "boxCox", "tbs",
+                        "yeoJohnson", "tbsYj"))) order <- 1L
+  }
   eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 &
                        !ini_df$fix, , drop = FALSE]
   # Order by neta1 so rename_map's ETA[i] labels below line up with
@@ -665,8 +943,8 @@
   else numeric(0)
 
   # Cache key: the MODEL (ui$lstExpr), the DIRECTION SET (unpaired -- so a model
-  # cached before a theta gained its own direction is a miss), a schema tag, and
-  # the rxode2 VERSION.
+  # cached before a theta gained its own direction is a miss), .admPkgKey(),
+  # and the rxode2 VERSION.
   # NOT digest(inner): ui$foceiModel$inner returns a DIFFERENT object on its first
   # access than on later ones, so digesting it gives an unstable key. The schema
   # tag ("+fixed-theta") makes a cache written before the fixed-theta fix a miss:
@@ -710,9 +988,14 @@
     # EMITS would be invisible to an existing entry. That used to rest on
     # remembering to edit a schema-tag string, and a stale "linCmt cannot do
     # order 2" entry outlived exactly such a change once already -- hence
-    # .admPkgKey(), which invalidates on every admixr2 version automatically.
+    # .admPkgKey(), which digests the emitter's own source as well as the package
+    # version, so an edit between releases invalidates the entry too.
            ".rds"))
 
+  # STAYS rxTempDir() -- see the same note in .admLoadModel(). The build
+  # directory is applied through .admRxode2()'s `wd =` argument, on the models
+  # admixr2 emits itself; setwd()ing the whole load path elsewhere breaks
+  # multi-endpoint models.
   .old_wd <- tryCatch(getwd(), error = function(e) NULL)
   on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
   setwd(rxode2::rxTempDir())
@@ -789,7 +1072,7 @@
   }
 
   # Session cache, ahead of the disk cache and on the same key (.cacheFile already
-  # digests the model, the direction set, the ini order, the schema tag, the
+  # digests the model, the direction set, the ini key, .admPkgKey(), the
   # rxode2 version and the ORDER -- upstream's "composite key covering everything
   # that changes the emitted model"). Same three reasons as .admLoadModel: skip a
   # readRDS + dyn.load, stop minting a finalizer-bearing object per call, and keep
@@ -813,7 +1096,11 @@
   if (file.exists(.cacheFile)) {
     result <- tryCatch({
       m <- readRDS(.cacheFile)
-      if (!.admRxLoadAll(m)) NULL else m
+      # Assert the payload's SHAPE before trusting the load. .admRxLoadAll is
+      # upstream's load step and is a no-op on anything not rxode2-classed, so it
+      # returns TRUE for a file that is not a sens result at all; see the same
+      # guard in .admLoadModel. Every branch below stores the model in $mod.
+      if (!inherits(m$mod, "rxode2") || !.admRxLoadAll(m)) NULL else m
     }, error = function(e) NULL)
     if (!is.null(result)) {
       # Overwrite the worker-inherited fields from the parent's fresh derivation
@@ -943,7 +1230,7 @@
   #
   # This mirrors nlmixr2est's ed03b8dfc, which found and fixed the same failure in
   # its own augmented-sensitivity solve. Stored on the result -- and folded into the
-  # cache schema tag above -- because a parallel worker reads the cache file directly
+  # cache key above, via .admPkgKey() -- because a parallel worker reads the file directly
   # and cannot re-derive it. NULL for an ordinary model, which leaves every existing
   # solve call byte-for-byte as it was.
   result$solve_args <- if (isTRUE(tryCatch(
@@ -955,7 +1242,9 @@
   # chain references the package namespace and serialising it warns "'package:
   # admixr2' may not be available when loading". Harmless -- a worker reloads the
   # DLL via rxLoad(), not from the serialised env (.admLoadModel does the same).
-  tryCatch(suppressWarnings(saveRDS(result, .cacheFile)), error = function(e) NULL)
+  # Bare, as upstream writes it -- see .admLoadModel(). suppressWarnings stays
+  # for the reason above; only the error-swallowing tryCatch is gone.
+  suppressWarnings(saveRDS(result, .cacheFile))
   .admCacheAssign(basename(.cacheFile), result, .adm_sens_env)
 }
 
@@ -985,14 +1274,22 @@
 
   .normMod <- tryCatch(rxode2::rxModelVars(inner)$model[["normModel"]],
                        error = function(e) NULL)
+  # THE collision this package was most exposed to: `.normMod` is nlmixr2est's
+  # OWN inner model text (rxModelVars(inner)$model[["normModel"]]), and admixr2
+  # rebuilds it with eventSens = "jump" where nlmixr2est built it with a
+  # different one. Anonymous, that is the same parsed md5 in the same directory
+  # emitting different C -- the later build wins for BOTH packages. Role-tagged
+  # and built in admixr2's own directory it cannot collide with either
+  # nlmixr2est's build or an anonymous one. See .admRxode2().
   mod <- if (!is.null(.normMod))
-    tryCatch({ m <- rxode2::rxode2(.normMod, eventSens = "jump"); rxode2::rxLoad(m); m },
+    tryCatch({ m <- .admRxode2(.normMod, "admSensInner", eventSens = "jump")
+               rxode2::rxLoad(m); m },
              error = function(e) NULL)
   else NULL
   if (is.null(mod))
     mod <- tryCatch({ rxode2::rxLoad(inner); inner }, error = function(e) NULL)
   if (is.null(mod))
-    mod <- tryCatch({ m <- rxode2::rxode2(inner); rxode2::rxLoad(m); m },
+    mod <- tryCatch({ m <- .admRxode2(inner, "admSensInnerRaw"); rxode2::rxLoad(m); m },
                     error = function(e) NULL)
   if (is.null(mod)) return(NULL)
 

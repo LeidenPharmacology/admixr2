@@ -125,7 +125,7 @@ adirmcControl <- function(
     calcTables      = FALSE,
     compress        = TRUE,
     ci              = 0.95,
-    sigdig          = 4,
+    sigdig          = NULL,
     sigdigTable     = NULL,
     addProp         = c("combined2", "combined1"),
     optExpression   = TRUE,
@@ -135,6 +135,8 @@ adirmcControl <- function(
     # LAST on purpose: inserting an argument mid-signature silently rebinds every
     # positional call -- adirmcControl(studies, 2000L) used to set n_sim = 2000.
     resid_nodes     = 81L,
+    # ... and this one after it, for the same reason.
+    gill            = FALSE,
     ...) {
 
   .xtra <- list(...)
@@ -167,6 +169,7 @@ adirmcControl <- function(
   checkmate::assertNumeric(grad_h,          lower = 0,   len = 1)
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
+  checkmate::assertFlag(gill, .var.name = "gill")
   checkmate::assertNumeric(phases,          lower = 0,   min.len = 1)
   checkmate::assertNumeric(convcrit,        lower = 0,   len = 1)
   checkmate::assertIntegerish(max_worse,    lower = 1L,  len = 1)
@@ -182,14 +185,22 @@ adirmcControl <- function(
   algorithm <- .algo$algorithm
   grad      <- .algo$grad
 
-  # sigdig = NULL means "leave rxode2's own solver defaults alone" -- the ONE
-  # setting whose meaning does not move under an rxode2 upgrade, and the only way
-  # back to the numerics every admixr2 fit had before sigdig reached the solves.
-  # It is needed because the sigdig -> tolerance map is one-dimensional while
-  # rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so no sigdig reproduces
-  # them, AND because rxode2 changed the map between 5.1.4 (sigdig 4 -> atol =
-  # rtol = 5e-7) and 5.1.5 (rtol = 1e-4, atol = 1e-7) -- 200x looser for the same
-  # request. The tables still need a number, so they fall back to 4.
+  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone".
+  # It is the one setting whose meaning does not move under an rxode2 upgrade,
+  # and it is the default because a looser solve is not free: this release is
+  # what first routed sigdig into the estimators' own rxSolve calls, and every
+  # finite-difference step that consumes those solves (grad_h 1e-4, cov_h 1e-3,
+  # cov_h_outer ~2.5e-3) is the same order as the tolerance sigdig = 4 asks for.
+  # rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4 (5.1.4 mapped it to 5e-7 -- 200x
+  # tighter for the same request), so differencing with a 1e-4 step differences
+  # noise: a moved objective and an indefinite Hessian, not an error. Shipping it
+  # on by default would have changed the numerics of every existing script
+  # silently, for a knob that looked like table formatting before this release.
+  #
+  # NULL is also the only way back: the sigdig -> tolerance map is
+  # one-dimensional while rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so
+  # no sigdig value reproduces them. The tables still need a number, so they fall
+  # back to 4 -- i.e. sigdigTable is unchanged whichever way sigdig is set.
   if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
     rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
@@ -215,6 +226,7 @@ adirmcControl <- function(
     grad_h          = grad_h,
     cov_h           = cov_h,
     cov_h_outer     = cov_h_outer,
+    gill            = gill,
     phases          = phases,
     convcrit        = convcrit,
     max_worse       = as.integer(max_worse),
@@ -855,6 +867,15 @@ nmObjGetControl.adirmc <- function(x, ...) {
   par_trace        <- NULL
   last_opt_message <- ""
 
+  # Inner FD step for grad_mode = "fd". Carried on `pinfo` rather than added to
+  # this function's formals, so .adirmcRestartWorker's signature is untouched --
+  # a daemon resolves that worker from the stale INSTALLED namespace, where a new
+  # argument throws `unused argument` before the patched dev body can run.
+  # `.gill_h` is filled on the first outer iteration and reused (see the note at
+  # the FD closure below).
+  .fd_h   <- pinfo$grad_h %||% 1e-6
+  .gill_h <- NULL
+
   # Proposal memo (one entry).
   #
   # Each iteration draws proposals at p_cur for the inner optimisation, and then
@@ -909,11 +930,32 @@ nmObjGetControl.adirmc <- function(x, ...) {
         eval_f <- function(p) .adirmcNLL(p, pinfo, studies, proposals)
         eval_grad_inner <- switch(grad_mode,
           fd = local({
-            h <- 1e-6
+            # The step used to be a hard-coded 1e-6 that ignored `grad_h`
+            # entirely, so adirmc was the one estimator whose documented
+            # finite-difference control did nothing to its gradient. It now
+            # honours grad_h, and under gill = TRUE takes Gill83's measured steps.
+            #
+            # Measured ONCE, on the FIRST outer iteration, and reused for the
+            # rest -- the same reuse FOCEI's numericGrad does at nF == 1. It has
+            # to be reuse rather than re-measurement: `proposals` are redrawn
+            # every outer iteration, so `eval_f` is strictly a different function
+            # each time, and re-probing it would cost 10 x n_par extra inner NLL
+            # evaluations PER ITERATION. The inner objective keeps the same
+            # noise and curvature character throughout, which is what the step
+            # depends on, so the first iteration's measurement stays apt.
+            if (isTRUE(pinfo$gill) && is.null(.gill_h)) {
+              .gill_h <<- .admGillGradH(eval_f, p_cur, seq_along(p_cur),
+                                        .fd_h, scaled = FALSE,
+                                        .var.name = "adirmc inner gradient")
+            }
+            h <- if (is.null(.gill_h)) .fd_h else .gill_h
             function(p) {
               f0 <- eval_f(p)
               g  <- numeric(length(p))
-              for (k in seq_along(p)) { p_h <- p; p_h[k] <- p_h[k] + h; g[k] <- (eval_f(p_h) - f0) / h }
+              for (k in seq_along(p)) {
+                hk <- .admGH(h, k)
+                p_h <- p; p_h[k] <- p_h[k] + hk; g[k] <- (eval_f(p_h) - f0) / hk
+              }
               g
             }
           }),
@@ -1000,7 +1042,11 @@ nmObjGetControl.adirmc <- function(x, ...) {
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   # adirmc has no sensitivity model (analytical inner gradient) -> no sens_* args.
-  m       <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores)
+  # pinfo IS passed: it carries the parent's simulation-model cache path, which
+  # the worker cannot recompute (it has no `ui`). Named, not positional -- and
+  # not a new formal of either function, so the dev-mode stale-daemon trap does
+  # not apply.
+  m       <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores, pinfo = pinfo)
   cores_w <- m$cores_w
   rxMod   <- m$rxMod
 
@@ -1157,6 +1203,21 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
   pinfo$sigdig           <- .ctl$sigdig
+  # Carried on `pinfo` so .adirmcPhaseLoop can reach them without a new formal on
+  # .adirmcRestartWorker (a daemon resolves that worker from the stale installed
+  # namespace, where a new argument throws before the dev body runs). grad_h
+  # replaces the hard-coded 1e-6 the inner FD used to use; gill turns on Gill83
+  # step selection for it.
+  pinfo$grad_h           <- .ctl$grad_h
+  pinfo$gill             <- .ctl$gill
+  # The compiled-model cache path, for the parallel workers. They have no `ui`,
+  # so they cannot derive the .admIniKey() component that keys a fix()ed
+  # parameter's VALUE -- and reading the wrong entry means solving at another
+  # model's fixed value, silently. Sent here rather than as a worker argument:
+  # a daemon resolves the worker from the stale INSTALLED namespace, where a new
+  # formal throws `unused argument` before the patched dev body can run, but
+  # pinfo travels by value. See .admModelCacheFile().
+  pinfo$sim_cache_file   <- tryCatch(.admModelCacheFile(.ui), error = function(e) NULL)
   # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
   pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
   output_var <- .admOutputVar(.ui)
@@ -1345,6 +1406,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
                   params_list, cores, cov_n_sim = .ctl$cov_n_sim,
                   use_grad = use_grad_cov, grad_h = .ctl$grad_h,
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
+                  gill = .ctl$gill,
                   sensModel = sensModel, sampling = .ctl$sampling),
       error = function(e) {
         warning("admCalcCov (adirmc) failed: ", conditionMessage(e))
@@ -1390,6 +1452,13 @@ nlmixr2Est.adirmc <- function(env, ...) {
                          sigma_is_lnorm = pinfo$sigma_is_lnorm,
                          # the TBS residual quadrature the FIT used -- see adfo.R
                          resid_nodes    = pinfo$resid_nodes,
+                        # ... and the solver tolerance the FIT used, for the
+                        # same reason: plot.admFit() re-solves the model to build
+                        # the predicted mean and covariance panels, and a fit run
+                        # at a looser sigdig diagnosed against rxode2's stock
+                        # tolerances shows standardised-residual structure the
+                        # objective was never minimised on.
+                         sigdig         = pinfo$sigdig,
                          omega          = final$omega,
                          L              = final$L,
                          eta_col_names  = pinfo$eta_col_names,

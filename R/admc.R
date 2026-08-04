@@ -123,7 +123,53 @@
 #'   empirically it matches the analytical (sensitivity-equation) Hessian ground
 #'   truth. Increase (e.g. to `5e-3` or `1e-2`) if the Hessian is non-positive
 #'   definite.
-#' @param grad_bounds Box-constraint half-width when using gradients.
+#' @param gill Use the Gill, Murray, Saunders & Wright (1983) algorithm to choose
+#'   the finite-difference steps, instead of the fixed `cov_h_outer` and `grad_h`
+#'   scales. `FALSE` (the default) keeps the existing steps, so nothing moves
+#'   unless you ask.
+#'
+#'   A fixed scale is one guess about how much noise the objective carries,
+#'   applied identically to every parameter -- and it is the guess behind the
+#'   "Hessian not positive definite ... try increasing `cov_h_outer`" warning.
+#'   Gill83 probes the objective instead and returns, per parameter, the step at
+#'   which condition error and truncation error balance, so a parameter the
+#'   objective is flat in and one it is sharp in get different steps and the
+#'   choice tracks the ODE tolerance rather than assuming one. It is the same
+#'   algorithm FOCEI uses for its own steps (`nlmixr2est::nlmixr2Gill83()`), so
+#'   the two packages agree on what a finite difference is. Worth trying first
+#'   when the Hessian comes back indefinite.
+#'
+#'   Applied to the post-fit covariance Hessian and to the optimizer's gradient,
+#'   for the parameters each actually steps in PARAMETER space: for `admc` the
+#'   whole vector when a joint (same-subject) study has no sensitivity model, and
+#'   otherwise the structural thetas the sensitivity model has no column for; for
+#'   `adirmc` the whole vector under `grad = "fd"`. A theta with no mu-referencing
+#'   eta does NOT qualify by itself -- the sensitivity model emits a direction for
+#'   each, so its gradient is exact and no step is chosen for it.
+#'
+#'   `admc`'s ETA perturbations keep the fixed `grad_h` regardless. They have no
+#'   parameter to key on, and they difference the PREDICTION rather than the
+#'   objective, which is a different function from the one Gill83 measured; under
+#'   common random numbers the two solves share their draws, so most of the MC
+#'   noise a step choice would guard against cancels anyway.
+#'
+#'   Measured ONCE per fit -- for the gradient at the starting values, as FOCEI
+#'   does at its first gradient evaluation. `adirmc` measures on its first outer
+#'   iteration and reuses: its proposals are redrawn each iteration, so
+#'   re-measuring would cost ten inner evaluations per parameter every time.
+#'   Costs up to ten extra objective evaluations per finite-differenced
+#'   parameter. A parameter Gill83 reports as flat or linear falls back to the
+#'   fixed scale.
+#'
+#'   Because it reaches the gradient, `gill = TRUE` can change the FIT and not
+#'   only the standard errors -- but only when the gradient has a
+#'   finite-differenced parameter to begin with.
+#' @param grad_bounds Box-constraint half-width when using gradients: the fit is
+#'   confined to `p0 +/- grad_bounds` on the optimizer scale, which for a
+#'   log-scale parameter is a factor of `exp(grad_bounds)` (~148 at the default
+#'   5). This bound is admixr2's, not the model's -- an unbounded parameter has
+#'   no other -- and nloptr reports normal convergence at a box corner, so a
+#'   warning is emitted if an estimate finishes on it.
 #' @param covMethod Covariance method: `"r"` (numerical Hessian over the
 #'   structural, residual-error and omega parameters) or `"none"`. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
@@ -157,16 +203,26 @@
 #'   the nlmixr2 output tables: `"combined2"` (default, variance form) or
 #'   `"combined1"` (SD form). Has no effect on admixr2's own estimation; passed
 #'   to `nlmixr2est::foceiControl()` for the table/output machinery only.
-#' @param sigdig Significant digits asked of the ODE solver. Passed to
-#'   `rxode2::rxSolve()`'s own `sigdig` argument for every solve the estimator
-#'   issues, so it is the lever for trading solver accuracy against speed --
-#'   rxode2 owns the mapping to `atol`/`rtol` and has changed it between
-#'   releases, which is why the digits, not the tolerances, are what travels.
-#'   Also passed to `nlmixr2est::foceiControl()` for the post-fit tables.
-#'   `NULL` leaves rxode2's own solver defaults alone -- the setting to use to
-#'   reproduce results from before `sigdig` reached the fit, or to hold the
-#'   tolerances fixed across an rxode2 upgrade (rxode2 has changed the
-#'   sigdig-to-tolerance map between releases). The tables then use 4.
+#' @param sigdig Significant digits asked of the ODE solver, or `NULL` (the
+#'   default) to leave rxode2's own solver tolerances alone. When set, it is
+#'   passed to `rxode2::rxSolve()`'s own `sigdig` argument for every solve the
+#'   estimator issues -- rxode2 owns the mapping to `atol`/`rtol` and has changed
+#'   it between releases, which is why the digits, not the tolerances, are what
+#'   travels -- and to `nlmixr2est::foceiControl()` for the post-fit tables.
+#'
+#'   It is a speed lever, and an opt-in one because it is not free. The
+#'   estimators finite-difference the solve with steps of the same order:
+#'   `grad_h` (1e-4), `cov_h` (1e-3) and `cov_h_outer` (~2.5e-3), while
+#'   `sigdig = 4` maps to a relative tolerance of ~1e-4 on current rxode2.
+#'   Differencing a solution whose own noise is 1e-4 with a 1e-4 step returns
+#'   noise, and it surfaces as a moved objective and an indefinite covariance
+#'   Hessian (every `SE` reported `NA`) rather than as an error. Most worthwhile
+#'   where the gradient is fully analytic and nothing differences the solve --
+#'   `adfoControl(grad = "analytical")` measured ~4.8x faster at `sigdig = 4`
+#'   with standard errors unchanged to 4 significant figures. Elsewhere, compare
+#'   the objective and the standard errors against `NULL` before relying on it.
+#'   Table formatting is unaffected either way: `sigdigTable` defaults to 4
+#'   regardless.
 #' @param calcTables,compress,ci,sigdigTable,optExpression,sumProd,literalFix
 #'   Passed to `nlmixr2est::foceiControl()` for the table/output machinery.
 #' @param returnAdmr If `TRUE`, return a plain list instead of a full nlmixr2
@@ -262,7 +318,7 @@ admControl <- function(
     calcTables    = FALSE,
     compress      = TRUE,
     ci            = 0.95,
-    sigdig        = 4,
+    sigdig        = NULL,
     sigdigTable   = NULL,
     addProp       = c("combined2", "combined1"),
     optExpression = TRUE,
@@ -272,6 +328,8 @@ admControl <- function(
     # LAST on purpose: inserting an argument mid-signature silently rebinds every
     # positional call -- admControl(studies, 20000L) used to set n_sim = 20000.
     resid_nodes = 81L,
+    # ... and this one after it, for the same reason.
+    gill        = FALSE,
     ...) {
 
   .xtra <- list(...)
@@ -301,6 +359,7 @@ admControl <- function(
   checkmate::assertNumeric(grad_h,      lower = 0,  len = 1, .var.name = "grad_h")
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
+  checkmate::assertFlag(gill, .var.name = "gill")
   checkmate::assertNumeric(grad_bounds, lower = 0,  len = 1, .var.name = "grad_bounds")
   covMethod <- match.arg(covMethod)
   checkmate::assertIntegerish(cov_n_sim,   lower = 1L, len = 1, .var.name = "cov_n_sim")
@@ -322,14 +381,22 @@ admControl <- function(
   algorithm <- .algo$algorithm
   grad      <- .algo$grad
 
-  # sigdig = NULL means "leave rxode2's own solver defaults alone" -- the ONE
-  # setting whose meaning does not move under an rxode2 upgrade, and the only way
-  # back to the numerics every admixr2 fit had before sigdig reached the solves.
-  # It is needed because the sigdig -> tolerance map is one-dimensional while
-  # rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so no sigdig reproduces
-  # them, AND because rxode2 changed the map between 5.1.4 (sigdig 4 -> atol =
-  # rtol = 5e-7) and 5.1.5 (rtol = 1e-4, atol = 1e-7) -- 200x looser for the same
-  # request. The tables still need a number, so they fall back to 4.
+  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone".
+  # It is the one setting whose meaning does not move under an rxode2 upgrade,
+  # and it is the default because a looser solve is not free: this release is
+  # what first routed sigdig into the estimators' own rxSolve calls, and every
+  # finite-difference step that consumes those solves (grad_h 1e-4, cov_h 1e-3,
+  # cov_h_outer ~2.5e-3) is the same order as the tolerance sigdig = 4 asks for.
+  # rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4 (5.1.4 mapped it to 5e-7 -- 200x
+  # tighter for the same request), so differencing with a 1e-4 step differences
+  # noise: a moved objective and an indefinite Hessian, not an error. Shipping it
+  # on by default would have changed the numerics of every existing script
+  # silently, for a knob that looked like table formatting before this release.
+  #
+  # NULL is also the only way back: the sigdig -> tolerance map is
+  # one-dimensional while rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so
+  # no sigdig value reproduces them. The tables still need a number, so they fall
+  # back to 4 -- i.e. sigdigTable is unchanged whichever way sigdig is set.
   if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
     rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
@@ -351,6 +418,7 @@ admControl <- function(
     grad_h        = grad_h,
     cov_h         = cov_h,
     cov_h_outer   = cov_h_outer,
+    gill          = gill,
     grad_bounds   = grad_bounds,
     covMethod     = covMethod,
     cov_n_sim     = as.integer(cov_n_sim),
@@ -409,6 +477,17 @@ nmObjGetControl.admc <- function(x, ...) {
   pars <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(Inf)
   if (pinfo$n_eta > 0 && any(diag(pars$omega) <= 0)) return(Inf)
+  # The same non-finite screen .adfoNLL and .adghNLL carry -- see the long note
+  # there. This function is what nloptr calls as admc's eval_f, and it had ONLY
+  # the omega-diagonal test above, which does not catch the case: `Inf > 0` is
+  # TRUE, so an overflowed residual (exp(p/2) = Inf, exactly what the covariance
+  # probe produces) passed straight through to .admSimulate -> rxSolve and lsoda
+  # answered with ~190k `intdy -- t = <denormal> illegal` warnings and a full
+  # useless solve before the caller discarded the result. Inline, not a shared
+  # predicate: this runs inside mirai daemons, where assignInNamespace can
+  # replace a binding but not ADD one.
+  if (!(all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
+        (pinfo$n_eta == 0L || all(is.finite(pars$omega))))) return(Inf)
 
   nll2     <- 0
   for (i in seq_along(studies)) {
@@ -488,14 +567,15 @@ nmObjGetControl.admc <- function(x, ...) {
   f0 <- if (use_central) NA_real_ else
     .admNLL(p, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
   vapply(seq_along(p), function(k) {
-    pp <- p; pp[k] <- p[k] + h
+    hk <- .admGH(h, k)
+    pp <- p; pp[k] <- p[k] + hk
     fp <- .admNLL(pp, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
     if (use_central) {
-      pm <- p; pm[k] <- p[k] - h
+      pm <- p; pm[k] <- p[k] - hk
       fm <- .admNLL(pm, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
-      (fp - fm) / (2 * h)
+      (fp - fm) / (2 * hk)
     } else {
-      (fp - f0) / h
+      (fp - f0) / hk
     }
   }, double(1))
 }
@@ -505,6 +585,24 @@ nmObjGetControl.admc <- function(x, ...) {
 .admGrad <- function(p, pinfo, studies, z_list, rxMod, output_var,
                      params_list, cores, h, sensModel = NULL,
                      use_central = FALSE) {
+  # `h` is either the fixed scalar or Gill83's per-parameter vector. It must be
+  # read through .admGH()/.admGH0() and NEVER used bare, because this function
+  # differences in two different spaces:
+  #
+  #   parameter space -- the unpaired struct thetas, keyed by unpaired_k[bi], and
+  #                      the joint objective FD, keyed by k_s: .admGH(h, k)
+  #   ETA space       -- eta_hi[, j] <- eta_hi[, j] + h, over n_sim rows, with no
+  #                      parameter index at all: .admGH0(h)
+  #
+  # Used bare, a length-n_par vector recycles into the n_sim-row perturbations
+  # and the n_sim x n_t divisions WITHOUT a warning (n_sim %% n_par is virtually
+  # always 0), handing every draw a different perturbation and returning a
+  # plausible, wrong gradient. Length is checked so a future caller cannot pass a
+  # vector of the wrong length and have it silently recycle instead.
+  if (length(h) != 1L && length(h) != length(p))
+    stop(".admGrad: `h` must be one step or one per parameter (got ",
+         length(h), " for ", length(p), " parameters).", call. = FALSE)
+  h_eta <- .admGH0(h)
   pars <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(rep(NA_real_, length(p)))
   # Non-finite parameters never reach rxSolve: the covariance probe can perturb
@@ -622,7 +720,8 @@ nmObjGetControl.admc <- function(x, ...) {
           nll0 <- nll_cov_cpp(as.numeric(s$E), s$V, mu, V, s$n)
           for (bi in seq_len(n_unp)) {
             k_s <- unpaired_k[bi]
-            pp  <- p; pp[k_s] <- p[k_s] + h
+            h_k <- .admGH(h, k_s)
+            pp  <- p; pp[k_s] <- p[k_s] + h_k
             pars_p <- .admUnpack(pp, pinfo)
             cp_p   <- .admSimulateJoint(rxMod, pars_p$struct, pinfo$sigma_names,
                                         eta_mat, s, pdf, cores,
@@ -632,7 +731,7 @@ nmObjGetControl.admc <- function(x, ...) {
                                         crossprod(sweep(cp_p, 2L, mus_p)) / n_sim,
                                         s, pinfo, pars_p$sigma_var)
             nllp <- nll_cov_cpp(as.numeric(s$E), s$V, jr_p$mu, jr_p$V, s$n)
-            grad[k_s] <- grad[k_s] + (nllp - nll0) / h
+            grad[k_s] <- grad[k_s] + (nllp - nll0) / h_k
           }
         }
       }
@@ -677,15 +776,15 @@ nmObjGetControl.admc <- function(x, ...) {
           for (j in seq_len(n_eta)) {
             rows_hi <- n_sim * (2L*j - 1L) + seq_len(n_sim)
             rows_lo <- n_sim * (2L*j)      + seq_len(n_sim)
-            eta_hi  <- eta_mat; eta_hi[, j] <- eta_hi[, j] + h
-            eta_lo  <- eta_mat; eta_lo[, j] <- eta_lo[, j] - h
+            eta_hi  <- eta_mat; eta_hi[, j] <- eta_hi[, j] + h_eta
+            eta_lo  <- eta_mat; eta_lo[, j] <- eta_lo[, j] - h_eta
             pdf_big[rows_hi, eta_col_names] <- eta_hi
             pdf_big[rows_lo, eta_col_names] <- eta_lo
           }
         } else {
           for (j in seq_len(n_eta)) {
             rows_hi <- n_sim * j + seq_len(n_sim)
-            eta_hi  <- eta_mat; eta_hi[, j] <- eta_hi[, j] + h
+            eta_hi  <- eta_mat; eta_hi[, j] <- eta_hi[, j] + h_eta
             pdf_big[rows_hi, eta_col_names] <- eta_hi
           }
         }
@@ -698,19 +797,20 @@ nmObjGetControl.admc <- function(x, ...) {
             rows_hi <- n_sim * (n_fwd_eta + 2L*bi - 1L) + seq_len(n_sim)
             rows_lo <- n_sim * (n_fwd_eta + 2L*bi)      + seq_len(n_sim)
             nm_u    <- pinfo$struct_names[unpaired_k[bi]]
+            h_u     <- .admGH(h, unpaired_k[bi])
             if (n_eta > 0L) {
               pdf_big[rows_hi, eta_col_names] <- eta_mat
               pdf_big[rows_lo, eta_col_names] <- eta_mat
             }
-            pdf_big[rows_hi, nm_u] <- pars$struct[nm_u] + h
-            pdf_big[rows_lo, nm_u] <- pars$struct[nm_u] - h
+            pdf_big[rows_hi, nm_u] <- pars$struct[nm_u] + h_u
+            pdf_big[rows_lo, nm_u] <- pars$struct[nm_u] - h_u
           }
         } else {
           for (bi in seq_len(n_unp)) {
             rows_hi <- n_sim * (n_fwd_eta + bi) + seq_len(n_sim)
             nm_u    <- pinfo$struct_names[unpaired_k[bi]]
             if (n_eta > 0L) pdf_big[rows_hi, eta_col_names] <- eta_mat
-            pdf_big[rows_hi, nm_u] <- pars$struct[nm_u] + h
+            pdf_big[rows_hi, nm_u] <- pars$struct[nm_u] + .admGH(h, unpaired_k[bi])
           }
         }
       }
@@ -750,13 +850,13 @@ nmObjGetControl.admc <- function(x, ...) {
             off_hi <- n_sim * n_t * (2L*j - 1L)
             off_lo <- n_sim * n_t * (2L*j)
             (matrix(vals_b[off_hi + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE) -
-             matrix(vals_b[off_lo + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE)) / (2 * h)
+             matrix(vals_b[off_lo + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE)) / (2 * h_eta)
           })
         } else {
           lapply(seq_len(n_eta), function(j) {
             off_hi <- n_sim * n_t * j
             (matrix(vals_b[off_hi + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE) -
-             cp_mat) / h
+             cp_mat) / h_eta
           })
         }
       } else list()
@@ -888,10 +988,11 @@ nmObjGetControl.admc <- function(x, ...) {
         for (bi in seq_len(n_unp)) {
           k_s     <- unpaired_k[bi]
           cp_hi_s <- batched_hi[[bi]]
+          h_u     <- .admGH(h, k_s)
           dpred <- if (use_central && !is.null(batched_lo))
-            (cp_hi_s - batched_lo[[bi]]) / (2 * h)
+            (cp_hi_s - batched_lo[[bi]]) / (2 * h_u)
           else
-            (cp_hi_s - cp_mat) / h
+            (cp_hi_s - cp_mat) / h_u
           grad[k_s] <- grad[k_s] +
             if (is_var)
               adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag_s, eff_dmu, inv_n)
@@ -910,7 +1011,7 @@ nmObjGetControl.admc <- function(x, ...) {
         for (bi in seq_len(n_unp)) {
           rows <- (bi - 1L) * n_sim + seq_len(n_sim)
           nm   <- pinfo$struct_names[unpaired_k[bi]]
-          pdf_hi[rows, nm] <- pars$struct[nm] + h
+          pdf_hi[rows, nm] <- pars$struct[nm] + .admGH(h, unpaired_k[bi])
         }
         out_hi  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                     events = s$ev_full, cores = cores,
@@ -925,7 +1026,7 @@ nmObjGetControl.admc <- function(x, ...) {
           for (bi in seq_len(n_unp)) {
             rows <- (bi - 1L) * n_sim + seq_len(n_sim)
             nm   <- pinfo$struct_names[unpaired_k[bi]]
-            pdf_lo[rows, nm] <- pars$struct[nm] - h
+            pdf_lo[rows, nm] <- pars$struct[nm] - .admGH(h, unpaired_k[bi])
           }
           out_lo  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_lo),
                                       events = s$ev_full, cores = cores,
@@ -940,11 +1041,12 @@ nmObjGetControl.admc <- function(x, ...) {
           k_s     <- unpaired_k[bi]
           idx     <- (bi - 1L) * n_sim * n_t + seq_len(n_sim * n_t)
           cp_hi_s <- matrix(vals_hi[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
+          h_u     <- .admGH(h, k_s)
           dpred <- if (use_central) {
             cp_lo_s <- matrix(vals_lo[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
-            (cp_hi_s - cp_lo_s) / (2 * h)
+            (cp_hi_s - cp_lo_s) / (2 * h_u)
           } else {
-            (cp_hi_s - cp_mat) / h
+            (cp_hi_s - cp_mat) / h_u
           }
           grad[k_s] <- grad[k_s] +
             if (is_var)
@@ -1115,6 +1217,11 @@ nmObjGetControl.admc <- function(x, ...) {
 .admGradBatch <- function(p_list, pinfo, studies, z_list, rxMod, output_var,
                            params_list, cores, h, sensModel = NULL,
                            use_central = FALSE) {
+  # Same two spaces as .admGrad -- see the note there. `h` is read through
+  # .admGH()/.admGH0() and never used bare.
+  if (length(h) != 1L && length(h) != length(p_list[[1L]]))
+    stop(".admGradBatch: `h` must be one step or one per parameter.", call. = FALSE)
+  h_eta <- .admGH0(h)
   n_c   <- length(p_list)
   if (n_c == 0L) return(matrix(0, 0, length(p_list[[1L]])))
 
@@ -1319,8 +1426,8 @@ nmObjGetControl.admc <- function(x, ...) {
             for (j in seq_len(n_eta)) {
               rows_hi <- cfg_base + n_sim * (2L*j - 1L) + seq_len(n_sim)
               rows_lo <- cfg_base + n_sim * (2L*j)      + seq_len(n_sim)
-              eta_hi  <- eta; eta_hi[, j] <- eta_hi[, j] + h
-              eta_lo  <- eta; eta_lo[, j] <- eta_lo[, j] - h
+              eta_hi  <- eta; eta_hi[, j] <- eta_hi[, j] + h_eta
+              eta_lo  <- eta; eta_lo[, j] <- eta_lo[, j] - h_eta
               for (nm in names(pars$struct)) {
                 pdf_mat[rows_hi, nm] <- pars$struct[nm]
                 pdf_mat[rows_lo, nm] <- pars$struct[nm]
@@ -1331,7 +1438,7 @@ nmObjGetControl.admc <- function(x, ...) {
           } else {
             for (j in seq_len(n_eta)) {
               rows_hi <- cfg_base + n_sim * j + seq_len(n_sim)
-              eta_hi  <- eta; eta_hi[, j] <- eta_hi[, j] + h
+              eta_hi  <- eta; eta_hi[, j] <- eta_hi[, j] + h_eta
               for (nm in names(pars$struct)) pdf_mat[rows_hi, nm] <- pars$struct[nm]
               pdf_mat[rows_hi, eta_col_names] <- eta_hi
             }
@@ -1356,13 +1463,13 @@ nmObjGetControl.admc <- function(x, ...) {
                 off_hi <- cfg_out_base + n_sim * n_t * (2L*j - 1L)
                 off_lo <- cfg_out_base + n_sim * n_t * (2L*j)
                 (matrix(vals[off_hi + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE) -
-                 matrix(vals[off_lo + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE)) / (2 * h)
+                 matrix(vals[off_lo + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE)) / (2 * h_eta)
               })
             } else {
               lapply(seq_len(n_eta), function(j) {
                 off_hi <- cfg_out_base + n_sim * n_t * j
                 (matrix(vals[off_hi + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE) -
-                 cp_mats[[ci]]) / h
+                 cp_mats[[ci]]) / h_eta
               })
             }
           }
@@ -1399,7 +1506,7 @@ nmObjGetControl.admc <- function(x, ...) {
         for (nm in names(pars$struct))       pdf_hi[rows, nm]               <- pars$struct[nm]
         for (j  in seq_along(eta_col_names)) pdf_hi[rows, eta_col_names[j]] <- eta[, j]
         nm_u <- pinfo$struct_names[unpaired_k[bi]]
-        pdf_hi[rows, nm_u] <- pars$struct[nm_u] + h
+        pdf_hi[rows, nm_u] <- pars$struct[nm_u] + .admGH(h, unpaired_k[bi])
       }
       out_hi <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                           events = s$ev_full, cores = cores,
@@ -1425,7 +1532,7 @@ nmObjGetControl.admc <- function(x, ...) {
           rows <- (cuki - 1L) * n_sim + seq_len(n_sim)
           pars <- pars_list[[ci]]
           nm_u <- pinfo$struct_names[unpaired_k[bi]]
-          pdf_lo[rows, nm_u] <- pars$struct[nm_u] - h
+          pdf_lo[rows, nm_u] <- pars$struct[nm_u] - .admGH(h, unpaired_k[bi])
         }
         out_lo <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_lo),
                                             events = s$ev_full, cores = cores,
@@ -1535,10 +1642,11 @@ nmObjGetControl.admc <- function(x, ...) {
           dth_ci[[pinfo$struct_names[k_s]]]            # exact, from the sens solve
         } else {
           cp_hi_s <- cp_hi_store[[ci]][[bi]]
+          h_u     <- .admGH(h, k_s)
           if (is.null(cp_hi_s)) NULL
           else if (use_central && !is.null(cp_lo_store[[ci]][[bi]]))
-            (cp_hi_s - cp_lo_store[[ci]][[bi]]) / (2 * h)
-          else (cp_hi_s - cp_mat) / h
+            (cp_hi_s - cp_lo_store[[ci]][[bi]]) / (2 * h_u)
+          else (cp_hi_s - cp_mat) / h_u
         }
         if (is.null(dpred)) next
         grad_acc[ci, k_s] <- grad_acc[ci, k_s] +
@@ -1568,7 +1676,7 @@ nmObjGetControl.admc <- function(x, ...) {
                         use_grad = FALSE, grad_h = 1e-4, cov_h = 1e-3,
                         cov_h_outer = .Machine$double.eps^(1/5),
                         sensModel = NULL, use_central = FALSE,
-                        sampling = "sobol") {
+                        sampling = "sobol", gill = FALSE) {
   np    <- length(p_hat)
   nms   <- names(p_hat)
 
@@ -1641,7 +1749,18 @@ nmObjGetControl.admc <- function(x, ...) {
     }
     H <- (H + t(H)) / 2
   } else {
-    h_gill  <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
+    # Step selection. `pmax(abs(p), 0.1) * cov_h_outer` is a guess about how much
+    # noise the objective carries, applied identically to every parameter -- and
+    # it is the guess behind the "Hessian not positive definite ... try
+    # increasing cov_h_outer" warning below. Gill83 measures instead: it probes
+    # THIS objective and returns the step where condition error and truncation
+    # error balance, per parameter. Exact fit here, since the function it probes
+    # is the one being differenced.
+    h_gill <- if (isTRUE(gill))
+      .admGillSteps(nll_fn, p_hat, cov_idx,
+                    fallback = pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer,
+                    .var.name = "admCalcCov")
+    else pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
     n_off   <- np_cov * (np_cov - 1L) / 2L
 
     # Perturb only struct+sigma entries; omega stays fixed at p_hat.
@@ -1942,35 +2061,65 @@ admStopWorkers <- function() {
     1L
   }
 
+  # nlmixr2est's load step (rxUiGet.foceiModel), INLINED rather than calling the
+  # .admRxLoadAll() that the parent uses. A daemon resolves this function from
+  # the INSTALLED namespace and .admDaemonRestart() patches the dev body in with
+  # assignInNamespace(), which can replace a binding but cannot ADD one -- so
+  # calling a helper that is new in this release fails with `could not find
+  # function` on every restart of a dev-mode fit against a stale install. Same
+  # constraint that keeps the non-finite guards inlined; see simulate.R's note.
+  .load_all <- function(x) {
+    .one <- function(e) {
+      if (!inherits(e, "rxode2")) return(TRUE)
+      tryCatch({ rxode2::rxLoad(e); TRUE }, error = function(err) FALSE)
+    }
+    if (inherits(x, "rxode2")) return(.one(x))
+    if (!is.list(x)) return(TRUE)
+    all(vapply(x, .one, logical(1)))
+  }
+
   if (!is.null(rxMod_direct)) {
     rxMod <- rxMod_direct
   } else {
-    .cacheFile <- file.path(rxode2::rxTempDir(),
-                            paste0("adm-sim-", digest::digest(ui_lstExpr), ".rds"))
-    # Retry briefly before giving up: the parent writes this file immediately
-    # before spawning the workers, and a just-written file is not always visible
-    # to a freshly started process. Then fail with something actionable -- the
-    # bare readRDS error identifies neither the file nor the cause, and this is
-    # the failure `test-integration-parallel` shows under a full-suite run.
-    rxMod <- NULL
-    for (.attempt in seq_len(3L)) {
-      if (file.exists(.cacheFile))
-        rxMod <- tryCatch(readRDS(.cacheFile), error = function(e) NULL)
-      if (!is.null(rxMod)) break
-      Sys.sleep(0.2)
-    }
+    # The parent's path, sent on `pinfo`, in preference to recomputing it. The
+    # worker has no `ui`, so it cannot derive the .admIniKey() component that
+    # keys a fix()ed parameter's VALUE into the simulation-model cache -- and
+    # without that key two models differing only in `theta <- fix(0.5)` vs
+    # `fix(0.9)` collide, so a restart would solve at the other model's fixed
+    # value. Recomputing the old lstExpr-only formula is kept as the fallback so
+    # a worker running a stale installed body still finds A file.
+    .cacheFile <- pinfo$sim_cache_file %||%
+      file.path(rxode2::rxTempDir(),
+                paste0("adm-sim-", digest::digest(ui_lstExpr), ".rds"))
+    # rxUiGet.foceiModel()'s read, verbatim in shape: file.exists() -> read ->
+    # load. No retry and no sleep -- upstream has neither, and a poll loop was
+    # this package's own invention.
+    rxMod <- if (file.exists(.cacheFile)) readRDS(.cacheFile) else NULL
     if (is.null(rxMod)) {
       stop("admixr2: a parallel worker could not read the compiled-model cache\n  ",
            .cacheFile,
            "\nThe parent writes it before starting workers, so this usually means ",
-           "the rxode2 temporary directory was cleared mid-session (rxode2::rxClean(), ",
-           "or a tempdir sweep). Re-run the fit, or use workers = 1.",
+           "either (a) devtools::load_all() in the parent against an OLDER INSTALLED ",
+           "admixr2 -- a daemon runs the installed one, and the two derive this path ",
+           "differently, so run devtools::install() first -- or (b) the rxode2 ",
+           "temporary directory was cleared mid-session (rxode2::rxClean(), or a ",
+           "tempdir sweep). Re-run the fit, or use workers = 1.",
            call. = FALSE)
     }
-    # .admRxLoadAll, not rxLoad(rxMod): re-load EVERY compiled model in the
-    # cached object. See its definition -- loading one element by name is correct
-    # only while each cached object holds exactly one model.
-    .admRxLoadAll(rxMod)
+    # Re-load EVERY compiled model in the cached object, and STOP if any of them
+    # will not load. The bare rxLoad() this replaced propagated its own error out
+    # of the worker, which .admRunRestarts() re-threw with the restart id; a
+    # discarded FALSE instead lets the worker walk on into .admRestartWorker with
+    # a live-looking model over an unloaded shared library, where the first
+    # rxSolve() dereferences a dead external pointer -- an opaque rxode2 error
+    # deep in the restart, or on Windows the STATUS_HEAP_CORRUPTION crash. Made
+    # likely by the drivers themselves: every nlmixr2Est.* runs
+    # gc(FALSE); rxUnloadAll() on exit. The sens branch below already did this.
+    if (!.load_all(rxMod))
+      stop("admixr2: a parallel worker read the compiled-model cache but could ",
+           "not load its shared library\n  ", .cacheFile,
+           "\nThe rxode2 temporary directory was most likely cleared or swept ",
+           "mid-session. Re-run the fit, or use workers = 1.", call. = FALSE)
   }
 
   # The cache file holds the full sens result list (type/mod/sens_cols/...), so
@@ -1981,26 +2130,31 @@ admStopWorkers <- function() {
   } else if (!is.null(sens_cache_file) && file.exists(sens_cache_file)) {
     tryCatch({
       m <- readRDS(sens_cache_file)
-      # Same iterate-the-container rule as the simulation model above.
-      if (!.admRxLoadAll(m)) stop("sens model failed to load")
+      # Same iterate-the-container rule as the simulation model above (and the
+      # same reason it is the inlined .load_all rather than .admRxLoadAll).
+      if (!inherits(m$mod, "rxode2") || !.load_all(m))
+        stop("sens model failed to load")
       # PREFER the parent's values over whatever is in the file. The worker cannot
       # re-derive these (it has no ui), so a cache written by an older admixr2 --
       # with the position-indexed rename_map, which puts a theta's value in the
       # wrong THETA[k] slot -- would otherwise be used verbatim and the parallel
       # fit would silently disagree with the sequential one. (The cache key now
-      # carries a schema tag too, so such a file is no longer even a hit; this is
+      # carries .admPkgKey() -- the admixr2 version plus a digest of the
+      # emitter's own source -- so such a file is no longer even a hit; this is
       # the belt to that pair of braces.)
       if (!is.null(sens_cols))   m$sens_cols  <- sens_cols
       if (!is.null(sens_rename)) m$rename_map <- sens_rename
       # m$theta_sens_cols and m$fixed_theta are NOT overwritten here -- the parent
       # does not thread them through (adding a worker-load argument would trip the
       # dev-mode stale-daemon `unused argument` trap; see .admRestartWorker's note).
-      # Their staleness is guarded solely by the "dirs-jump+fixed-theta" schema tag
-      # in the sens cache key: any change to how those fields are DERIVED must bump
-      # that tag, or a stale file would become a false hit and a worker could fill
-      # the wrong constant into a fixed theta's THETA[k] column, silently diverging
-      # from the sequential fit. Overwriting sens_cols/rename_map above is the belt;
-      # the schema tag is the braces for these two.
+      # Their staleness is guarded solely by the sens cache key, which digests
+      # .admIniKey(ui) -- including a FIXED parameter's value, which is exactly
+      # what fixed_theta carries -- and .admPkgKey(), which changes whenever the
+      # code that derives these fields changes. Without both, a stale file would
+      # be a false hit and a worker could fill the wrong constant into a fixed
+      # theta's THETA[k] column, silently diverging from the sequential fit.
+      # Overwriting sens_cols/rename_map above is the belt; the key is the braces
+      # for these two.
       #
       # pred_tbs MUST be re-derived, exactly as .admLoadSensModel() re-derives it
       # on the parent's cache-hit path. The cache key digests ui$lstExpr -- the
@@ -2352,6 +2506,14 @@ nlmixr2Est.admc <- function(env, ...) {
   pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
   pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
   pinfo$sigdig           <- .ctl$sigdig
+  # The compiled-model cache path, for the parallel workers. They have no `ui`,
+  # so they cannot derive the .admIniKey() component that keys a fix()ed
+  # parameter's VALUE -- and reading the wrong entry means solving at another
+  # model's fixed value, silently. Sent here rather than as a worker argument:
+  # a daemon resolves the worker from the stale INSTALLED namespace, where a new
+  # formal throws `unused argument` before the patched dev body can run, but
+  # pinfo travels by value. See .admModelCacheFile().
+  pinfo$sim_cache_file   <- tryCatch(.admModelCacheFile(.ui), error = function(e) NULL)
   # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
   pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
   output_var <- .admOutputVar(.ui)
@@ -2425,10 +2587,13 @@ nlmixr2Est.admc <- function(env, ...) {
   # mu-referenced theta at all, which used to force a full FD gradient. If the
   # augmentation was unavailable (theta_sens_cols NULL) the old behaviour stands:
   # sens for the paired thetas + FD for the unpaired, or full FD when none is paired.
+  # Hoisted out of the message block below: the gill gate reads it too, and a
+  # conditionally-defined flag would be an "object not found" the first time a
+  # model with no unpaired theta met `gill = TRUE`.
+  .theta_sens <- want_sens && !is.null(sensModel) &&
+    !is.null(sensModel$theta_sens_cols) &&
+    all(.unpaired %in% names(sensModel$theta_sens_cols))
   if (!any_joint && pinfo$n_eta > 0L && length(.unpaired) > 0L) {
-    .theta_sens <- want_sens && !is.null(sensModel) &&
-      !is.null(sensModel$theta_sens_cols) &&
-      all(.unpaired %in% names(sensModel$theta_sens_cols))
     if (.theta_sens) {
       message(sprintf(
         "admc: struct theta(s) without mu-referencing: %s. Sens model carries their sensitivities (no FD).",
@@ -2491,6 +2656,43 @@ nlmixr2Est.admc <- function(env, ...) {
   # Joint fits use FD only when no sens model is available; otherwise .admGrad's
   # joint branch computes the analytical stacked-MVN gradient.
   joint_fd <- any_joint && is.null(sensModel)
+
+  # gill = TRUE: measure the gradient's FD steps ONCE, here, for every later
+  # difference to reuse (FOCEI's numericGrad mechanism at nF == 1).
+  #
+  # The set is the parameters admc actually steps in PARAMETER space:
+  #   * joint study with no sens model -> .admNLLGradFD differences the objective
+  #     in every coordinate;
+  #   * otherwise the struct thetas the sens model has no THETA_j_ column for,
+  #     which .admGrad perturbs in the params frame. "Unpaired" alone does NOT
+  #     qualify: .admBuildThetaSens emits a direction per unpaired theta, and
+  #     .admGrad then reads d(pred)/d(theta) exactly and differences nothing.
+  #
+  # The ETA perturbations keep the fixed scale regardless. They carry no
+  # parameter index, so .admGrad/.admGradBatch read them through .admGH0(), which
+  # returns the scalar the Gill vector was built from -- indexing a per-parameter
+  # vector by an eta number would pick an unrelated parameter's step, and using
+  # it bare would recycle across the n_sim rows without a warning. That split is
+  # also the honest one: Gill83 measured the OBJECTIVE, and d(pred)/d(eta) is a
+  # different function.
+  #
+  # Note the struct-theta steps ARE applied to a prediction difference rather
+  # than an objective one. Under common random numbers both are limited by the
+  # same solver-tolerance floor (the draws are shared, so MC noise largely
+  # cancels from either), and the quantity being made accurate is d(NLL)/d(theta)
+  # either way -- the prediction difference is only the route to it. It remains a
+  # transfer, and worth knowing when reading a step back.
+  .fd_idx <- if (!want_grad) integer(0)
+    else if (joint_fd) seq_along(ov$p0)
+    else if (length(.unpaired) && !.theta_sens)
+      which(pinfo$struct_names %in% .unpaired)
+    else integer(0)
+  if (isTRUE(.ctl$gill) && length(.fd_idx))
+    grad_h <- .admGillGradH(
+      function(pp) .admNLL(pp, pinfo, studies, z_list, rxMod, output_var,
+                           params_list, cores),
+      ov$p0, .fd_idx, grad_h, scaled = FALSE, .var.name = "admc gradient")
+
   eval_grad_f <- if (!want_grad) NULL
     else if (joint_fd)
       function(p) .admNLLGradFD(p, pinfo, studies, z_list, rxMod, output_var,
@@ -2556,7 +2758,9 @@ nlmixr2Est.admc <- function(env, ...) {
                         ftol_rel     = .ctl$ftol_rel,
                         maxeval      = .ctl$maxeval,
                         use_grad     = want_grad,
-                        grad_h       = .ctl$grad_h,
+                        # The measured steps, not the constant -- restarts must
+                        # difference the same way the sequential path does.
+                        grad_h       = grad_h,
                         grad_bounds  = .ctl$grad_bounds,
                         output_var   = output_var,
                         sampling     = .ctl$sampling,
@@ -2572,6 +2776,10 @@ nlmixr2Est.admc <- function(env, ...) {
   }
 
   t_opt     <- (proc.time() - t0)["elapsed"]
+  # A gradient fit is confined to p0 +/- grad_bounds; say so if it stopped there
+  # rather than at an interior optimum.
+  if (want_grad)
+    .admWarnOnBounds(opt$solution, ov$p0, ov, .ctl$grad_bounds, pinfo)
   final     <- .admUnpack(opt$solution, pinfo)
   fullTheta <- .admFullTheta(final, pinfo)
 
@@ -2606,6 +2814,7 @@ nlmixr2Est.admc <- function(env, ...) {
                   params_list, cores, cov_n_sim = .ctl$cov_n_sim,
                   use_grad = use_grad_cov, grad_h = .ctl$grad_h,
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
+                  gill = .ctl$gill,
                   sensModel = sensModel, use_central = use_cent_cov,
                   sampling = .ctl$sampling),
       error = function(e) { warning("admCalcCov failed: ", conditionMessage(e)); NULL })
@@ -2651,6 +2860,13 @@ nlmixr2Est.admc <- function(env, ...) {
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
                         # the TBS residual quadrature the FIT used -- see adfo.R
                         resid_nodes   = pinfo$resid_nodes,
+                        # ... and the solver tolerance the FIT used, for the
+                        # same reason: plot.admFit() re-solves the model to build
+                        # the predicted mean and covariance panels, and a fit run
+                        # at a looser sigdig diagnosed against rxode2's stock
+                        # tolerances shows standardised-residual structure the
+                        # objective was never minimised on.
+                        sigdig        = pinfo$sigdig,
                         omega         = final$omega,
                         L             = final$L,
                         eta_col_names = pinfo$eta_col_names,
