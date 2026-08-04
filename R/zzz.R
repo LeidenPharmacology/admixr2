@@ -52,9 +52,26 @@
 #
 # nlmixr2est::.resetCacheIfNeeded(), with admixr2's version in place of its
 # build-time md5 constant. Same mechanism, same place in the load sequence:
-# stamp our identity into rxTempDir(), and clean when the stored stamp differs.
-# admixr2 had no equivalent, so superseded compiled models accumulated there
-# indefinitely.
+# stamp our identity into rxTempDir() and act when the stored stamp differs.
+#
+# IT DELETES NOTHING, and the comment here used to claim otherwise ("admixr2 had
+# no equivalent, so superseded compiled models accumulated there indefinitely").
+# They still do. Upstream can honestly say there is nothing to sweep -- its
+# focei-*.rds are keyed on model identity alone -- whereas .admPkgKey() puts a
+# SOURCE DIGEST in the sensitivity key, so every edit to an emitter orphans a
+# fresh adm-sens-*.rds.
+#
+# A targeted sweep of our own files on a stamp mismatch was considered and
+# REJECTED. The accumulation it would recover is bounded for a user: the digest
+# is constant within an installed version, so it is one set of files per version,
+# and the stamp changes exactly when those become dead. It is unbounded only
+# while DEVELOPING the emitters, where rxode2::rxClean() is already at hand. The
+# risk is not symmetric: a mirai daemon runs library(admixr2), so this hook fires
+# in the WORKER, and under the documented dev-mode version skew (daemon on a
+# different installed build) a mismatching daemon would delete the .rds the
+# parent wrote seconds earlier and its siblings are about to read. That trades
+# unbounded disk for a fit that fails -- a bad trade for a hygiene fix. Sweep
+# manually with rxode2::rxClean() instead.
 .admResetCacheIfNeeded <- function() {
   .wd <- rxode2::rxTempDir()
   if (.wd != "") {
