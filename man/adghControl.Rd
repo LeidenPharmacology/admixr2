@@ -27,7 +27,7 @@ adghControl(
   calcTables = FALSE,
   compress = TRUE,
   ci = 0.95,
-  sigdig = 4,
+  sigdig = NULL,
   sigdigTable = NULL,
   addProp = c("combined2", "combined1"),
   optExpression = TRUE,
@@ -35,6 +35,7 @@ adghControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
+  gill = FALSE,
   ...
 )
 }
@@ -77,7 +78,12 @@ output; lower it (e.g. \code{1000L}) to see progress during long fits.}
 \item{grad_h}{Finite-difference step for unpaired struct theta gradient and
 FD Jacobian fallback.}
 
-\item{grad_bounds}{Box-constraint half-width when using gradients.}
+\item{grad_bounds}{Box-constraint half-width when using gradients: the fit is
+confined to \verb{p0 +/- grad_bounds} on the optimizer scale, which for a
+log-scale parameter is a factor of \code{exp(grad_bounds)} (~148 at the default
+5). This bound is admixr2's, not the model's -- an unbounded parameter has
+no other -- and nloptr reports normal convergence at a box corner, so a
+warning is emitted if an estimate finishes on it.}
 
 \item{cov_h}{Inner FD step for the gradient-based Hessian (only used when
 \code{covMethod = "r"} and \code{grad != "none"}).}
@@ -112,16 +118,26 @@ each restart.}
 
 \item{calcTables, compress, ci, sigdigTable, optExpression, sumProd, literalFix}{Passed to \code{nlmixr2est::foceiControl()} for the table/output machinery.}
 
-\item{sigdig}{Significant digits asked of the ODE solver. Passed to
-\code{rxode2::rxSolve()}'s own \code{sigdig} argument for every solve the estimator
-issues, so it is the lever for trading solver accuracy against speed --
-rxode2 owns the mapping to \code{atol}/\code{rtol} and has changed it between
-releases, which is why the digits, not the tolerances, are what travels.
-Also passed to \code{nlmixr2est::foceiControl()} for the post-fit tables.
-\code{NULL} leaves rxode2's own solver defaults alone -- the setting to use to
-reproduce results from before \code{sigdig} reached the fit, or to hold the
-tolerances fixed across an rxode2 upgrade (rxode2 has changed the
-sigdig-to-tolerance map between releases). The tables then use 4.}
+\item{sigdig}{Significant digits asked of the ODE solver, or \code{NULL} (the
+default) to leave rxode2's own solver tolerances alone. When set, it is
+passed to \code{rxode2::rxSolve()}'s own \code{sigdig} argument for every solve the
+estimator issues -- rxode2 owns the mapping to \code{atol}/\code{rtol} and has changed
+it between releases, which is why the digits, not the tolerances, are what
+travels -- and to \code{nlmixr2est::foceiControl()} for the post-fit tables.
+
+It is a speed lever, and an opt-in one because it is not free. The
+estimators finite-difference the solve with steps of the same order:
+\code{grad_h} (1e-4), \code{cov_h} (1e-3) and \code{cov_h_outer} (~2.5e-3), while
+\code{sigdig = 4} maps to a relative tolerance of ~1e-4 on current rxode2.
+Differencing a solution whose own noise is 1e-4 with a 1e-4 step returns
+noise, and it surfaces as a moved objective and an indefinite covariance
+Hessian (every \code{SE} reported \code{NA}) rather than as an error. Most worthwhile
+where the gradient is fully analytic and nothing differences the solve --
+\code{adfoControl(grad = "analytical")} measured ~4.8x faster at \code{sigdig = 4}
+with standard errors unchanged to 4 significant figures. Elsewhere, compare
+the objective and the standard errors against \code{NULL} before relying on it.
+Table formatting is unaffected either way: \code{sigdigTable} defaults to 4
+regardless.}
 
 \item{addProp}{How combined additive+proportional error is parameterised in
 the nlmixr2 output tables: \code{"combined2"} (default) or \code{"combined1"}.}
@@ -143,6 +159,40 @@ This is an ACCURACY dial, not a speed one. The quadrature is linear in
 negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
 evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.}
+
+\item{gill}{Use the Gill, Murray, Saunders & Wright (1983) algorithm to choose
+the finite-difference steps, instead of the fixed \code{cov_h_outer} and \code{grad_h}
+scales. \code{FALSE} (the default) keeps the existing steps, so nothing moves
+unless you ask.
+
+A fixed scale is one guess about how much noise the objective carries,
+applied identically to every parameter -- and it is the guess behind the
+"Hessian not positive definite ... try increasing \code{cov_h_outer}" warning.
+Gill83 probes the objective instead and returns, per parameter, the step at
+which condition error and truncation error balance, so a parameter the
+objective is flat in and one it is sharp in get different steps and the
+choice tracks the ODE tolerance rather than assuming one. It is the same
+algorithm FOCEI uses for its own steps (\code{nlmixr2est::nlmixr2Gill83()}), so
+the two packages agree on what a finite difference is. Worth trying first
+when the Hessian comes back indefinite.
+
+Applied in both of the places adgh finite-differences the OBJECTIVE: the
+post-fit covariance Hessian, and the optimizer's gradient -- every parameter
+under \code{grad = "fd"}/\code{"cfd"}, otherwise only those structural thetas the
+sensitivity model could not build a column for. Note that a
+non-mu-referenced ("unpaired") theta is NOT one of those by default: the
+sensitivity model emits an explicit direction for each, so its gradient is
+exact and no step is chosen for it.
+
+Measured ONCE in each case -- for the gradient at the starting values, which
+is where FOCEI measures too (\code{numericGrad} runs Gill83 at its first
+evaluation and reuses the steps for the rest of the fit). Costs up to ten
+extra objective evaluations per finite-differenced parameter. A parameter
+Gill83 reports as flat or linear falls back to the fixed scale.
+
+Because it reaches the gradient, \code{gill = TRUE} can change the FIT and not
+only the standard errors -- but only when the gradient has a
+finite-differenced parameter to begin with.}
 
 \item{...}{Unused arguments (trigger an error).}
 }
