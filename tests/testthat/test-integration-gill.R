@@ -157,3 +157,37 @@ test_that(".admGrad rejects a step vector of the wrong length", {
     expect_false(grepl("one step or one per parameter", msg, fixed = TRUE))
   }
 })
+
+test_that("gill reaches adirmc's inner FD gradient", {
+  # adirmc's inner FD used a hard-coded 1e-6 and ignored grad_h entirely, so this
+  # is the only coverage of the path that now honours it. The step is measured on
+  # the FIRST outer iteration and reused, because proposals are redrawn each
+  # iteration -- so the probe must fire exactly once, not per iteration.
+  env <- .int_grad_setup()
+  # The counter lives in an env spliced into the tracer expression: a tracer runs
+  # in the TRACED function's frame, so `fired <<- fired + 1L` cannot see a local
+  # of this test and errors with "object 'fired' not found".
+  cnt <- new.env(parent = emptyenv()); cnt$n <- 0L
+  # assign()/get(), not `$<-`: bquote splices the environment in as a literal
+  # object, and `<env>$n <- ...` is then "target of assignment expands to
+  # non-language object".
+  trace(admixr2:::.admGillGradH,
+        tracer = bquote(assign("n", get("n", envir = .(cnt)) + 1L, envir = .(cnt))),
+        print = FALSE)
+  on.exit(untrace(admixr2:::.admGillGradH), add = TRUE)
+
+  run <- function(gill) suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+    one_cmt_fn, admData(), est = "adirmc",
+    control = adirmcControl(studies = env$studies, seed = 1L, grad = "fd",
+                            n_sim = 300L, phases = c(1, 0.5), outer_iter = 2L,
+                            maxeval = 20L, covMethod = "none", gill = gill))))
+
+  g0 <- run(FALSE)
+  expect_identical(cnt$n, 0L)          # nothing probed when the flag is off
+  g1 <- run(TRUE)
+  expect_gt(cnt$n, 0L)                 # ... and probed when it is on
+
+  expect_true(is.finite(g0$objective))
+  expect_true(is.finite(g1$objective))
+  expect_equal(g1$objective, g0$objective, tolerance = 1e-2)
+})

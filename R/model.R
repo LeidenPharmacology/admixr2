@@ -262,7 +262,18 @@
     # tempdir()/nlmixr2estSens (on 6.0.1/6.2.0 it lives in rxTempDir() and is
     # correctly out of scope here). Any artifact under a session-local *Sens build
     # directory must belong to THIS session.
-    if (grepl("(admixr2Sens|nlmixr2estSens)", .dll) &&
+    #
+    # NORMALISE BEFORE MATCHING. rxDll() hands back a path whose DIRECTORY
+    # components are in Windows 8.3 short form -- ".../Temp/RT4F27~1/ADMIXR~1/
+    # admSens_jump_<md5>.d/admSens_jump_<md5>_x64.dll" -- so a literal
+    # grepl("admixr2Sens", .) never matches and the guard silently does nothing.
+    # (The file NAME is not shortened, which is why an earlier basename test
+    # appeared to work; it just could not see the anonymous-fallback artifacts.)
+    # Verified by a two-process test: without this the second session accepts the
+    # first session's model.
+    .dllN <- tryCatch(normalizePath(.dll, winslash = "/", mustWork = FALSE),
+                      error = function(err) .dll)
+    if (grepl("(admixr2Sens|nlmixr2estSens)", .dllN) &&
         !.admSameDir(dirname(dirname(.dll)), .admModDir())) return(FALSE)
     tryCatch({ rxode2::rxLoad(e); TRUE }, error = function(err) FALSE)
   }
