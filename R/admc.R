@@ -2242,6 +2242,18 @@ admStopWorkers <- function() {
       NULL
     })
   } else {
+    # A path the parent SUPPLIED but this worker cannot find is the same silent
+    # divergence the warning above exists for -- the parent is running
+    # sensitivities and this worker is about to finite-difference, invisibly in
+    # the objective -- so say so. `sens_cache_file = NULL` is the different,
+    # legitimate case (the parent has no sensitivity model either) and stays
+    # quiet, or every gradient-free fit would warn on every restart.
+    if (!is.null(sens_cache_file))
+      warning("admixr2: a parallel worker could not find the sensitivity model ",
+              "cache (", sens_cache_file, ") -- this worker falls back to a ",
+              "finite-difference gradient while the parent uses sensitivities. ",
+              "Results may differ slightly from a workers = 1 fit.",
+              call. = FALSE)
     NULL
   }
 
