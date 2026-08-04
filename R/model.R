@@ -284,6 +284,27 @@
   identical(.a, .b)
 }
 
+# Does `path` lie inside THIS session's temporary directory?
+#
+# The session-ownership guard below wants "built by the session that is running
+# now", and more than one build directory satisfies that: admixr2's own
+# .admModDir() (<tempdir>/admixr2Sens) and nlmixr2est 7.x's <tempdir>/nlmixr2estSens.
+# Testing against .admModDir() alone can never accept the second one -- the two
+# paths differ in their last component by construction -- so a cached
+# .admSensFromInner() result was reported stale on EVERY call, in the very session
+# that built it, and the model was recompiled (~3 s) for every fit. That is the
+# endless-recompile failure this guard exists to prevent, caused by the guard.
+#
+# A prefix test rather than a fixed depth: it is the tempdir that identifies the
+# session, and nothing here should depend on how deep rxode2 nests a build.
+.admUnderTemp <- function(path) {
+  .n <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE),
+                             error = function(e) p, warning = function(w) p)
+  .p <- .n(path); .t <- sub("/+$", "", .n(tempdir()))
+  if (.Platform$OS.type == "windows") { .p <- tolower(.p); .t <- tolower(.t) }
+  identical(.p, .t) || startsWith(.p, paste0(.t, "/"))
+}
+
 .admRxLoadAll <- function(x) {
   .one <- function(e) {
     if (!inherits(e, "rxode2")) return(TRUE)
@@ -321,6 +342,10 @@
     # correctly out of scope here). Any artifact under a session-local *Sens build
     # directory must belong to THIS session.
     #
+    # Tested against the SESSION TEMPDIR, not against .admModDir(): there is more
+    # than one session-local *Sens directory and only the tempdir is common to
+    # them -- see .admUnderTemp().
+    #
     # NORMALISE BEFORE MATCHING. rxDll() hands back a path whose DIRECTORY
     # components are in Windows 8.3 short form -- ".../Temp/RT4F27~1/ADMIXR~1/
     # admSens_jump_<md5>.d/admSens_jump_<md5>_x64.dll" -- so a literal
@@ -332,7 +357,7 @@
     .dllN <- tryCatch(normalizePath(.dll, winslash = "/", mustWork = FALSE),
                       error = function(err) .dll)
     if (grepl("(admixr2Sens|nlmixr2estSens)", .dllN) &&
-        !.admSameDir(dirname(dirname(.dll)), .admModDir())) return(FALSE)
+        !.admUnderTemp(.dll)) return(FALSE)
     tryCatch({ rxode2::rxLoad(e); TRUE }, error = function(err) FALSE)
   }
   if (inherits(x, "rxode2")) return(.one(x))
@@ -434,12 +459,7 @@
   on.exit(if (!is.null(.old_wd)) setwd(.old_wd), add = TRUE)
   setwd(rxode2::rxTempDir())
   mod <- rxode2::rxode2(ui)$simulationModel
-  # Bare, as upstream writes it (`qs2::qs_save(.ret, .cacheFile)`): a write
-  # failure propagates rather than being swallowed. It used to be wrapped in
-  # tryCatch(..., error = function(e) NULL), which mattered once the parallel
-  # workers began finding this model by reading exactly this file -- a silent
-  # failure here surfaced much later as every restart failing to read the cache.
-  saveRDS(mod, .cacheFile)
+  .admCacheWrite(mod, .cacheFile, "simulation model")
   rxode2::rxLoad(mod)
   .admCacheAssign(.model_key, mod, .adm_model_env)
 }
@@ -949,6 +969,11 @@
     # the caller falls back to a finite-difference gradient.
     if (!.admJumpCovers(mod, s, dirs)) return(NULL)
     list(mod = mod, dirs = dirs, order = order,
+         # The iniDf these directions were NUMBERED from -- the promoted one for an
+         # order-2 linCmt build. The caller derives its rename_map from this rather
+         # than from its own `ui`, so the map that FILLS THETA[k] and the derivative
+         # that differentiates it cannot come from different frames.
+         ini_used = ini,
          sens_cols = paste0("rx_f1_", eta_dirs),
          theta_sens_cols = if (length(unpaired))
            stats::setNames(paste0("rx_f1_", theta_dirs), unpaired) else NULL,
@@ -977,6 +1002,57 @@
 #                       could not be built and we fell back to nlmixr2est's inner
 #                       model -- the estimators then finite-difference those thetas)
 #
+# Parameter names the estimators speak -> the model's THETA[j] / ETA[i], for one
+# iniDf. Returns list(rename_map, fixed_theta, n_eta), or NULL when the frame has
+# no estimated eta.
+#
+# ONE function because there are TWO frames it can legitimately be asked about,
+# and they must not diverge: an order-2 request on a linCmt() model promotes the
+# model to explicit ODE form (.admLinCmtToOde), and .admBuildThetaSens numbers its
+# emitted rx_f1_THETA_k_ / rx_f2_ETA_i_THETA_k_ directions from the PROMOTED
+# iniDf, while .admLoadSensModel used to build the rename_map -- which is what
+# actually FILLS those THETA[k] columns at solve time -- from the original. Any
+# iniDf difference across the promotion (a renumbered ntheta, an inserted or
+# dropped row, a reordered eta) therefore had each theta's value written into a
+# different slot than the one the emitted derivative differentiates. The solve
+# still succeeds; use_d2 being TRUE skips adfo's FD cross-check; the fit converges
+# to wrong estimates and wrong SEs with no error. Latent on every model measured
+# here -- linToOde() does preserve the iniDf on those -- but latent is not fixed.
+.admSensNameMaps <- function(ini_df) {
+  eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 &
+                       !ini_df$fix, , drop = FALSE]
+  # Order by neta1 so rename_map's ETA[i] labels line up with
+  # .admBuildThetaSens's ETA_i_ directions (which it numbers after order(neta1));
+  # otherwise, for an iniDf whose eta rows are out of neta1 order, sens_cols[i]
+  # would report d(pred)/d(eta) for a different eta than rename_map fills ETA[i].
+  eta_rows <- eta_rows[order(eta_rows$neta1), , drop = FALSE]
+  n_eta    <- nrow(eta_rows)
+  if (n_eta == 0L) return(NULL)
+
+  # Indexed by ntheta / neta1, NOT by position among the non-fixed thetas: the
+  # sens model's THETA[k] is numbered by ntheta and INCLUDES fixed thetas, so a
+  # position-indexed map would put every theta after a fixed one in the wrong slot.
+  th_rows    <- ini_df[!is.na(ini_df$ntheta), , drop = FALSE]
+  rename_map <- c(
+    stats::setNames(paste0("THETA[", th_rows$ntheta, "]"), th_rows$name),
+    stats::setNames(paste0("ETA[", seq_len(n_eta), "]"),
+                    paste0("eta.", gsub("^eta\\.", "", eta_rows$name))))
+
+  # A FIXED theta is not an estimated parameter, so it never reaches the solve
+  # paths (pinfo carries only the estimated ones) -- but the EMITTED sens model
+  # still has a THETA[k] slot for it (the model text references every theta) and
+  # rxSolve REQUIRES every parameter. Left unset the sens solve errors and returns
+  # NULL, which silently drops admc/adfo to a finite-difference gradient and, worse,
+  # made .adghGrad skip the study entirely. Carry the fixed values so the solve
+  # paths can fill those columns (.admFillFixedTheta in simulate.R).
+  fix_rows <- th_rows[th_rows$fix, , drop = FALSE]
+  fixed_theta <- if (nrow(fix_rows) > 0L)
+    stats::setNames(as.numeric(fix_rows$est), paste0("THETA[", fix_rows$ntheta, "]"))
+  else numeric(0)
+
+  list(rename_map = rename_map, fixed_theta = fixed_theta, n_eta = n_eta)
+}
+
 # Preferred model: admixr2's own direction-set model (.admBuildThetaSens), which
 # carries a direction per eta plus one per unpaired theta, and is compiled with
 # eventSens = "jump".
@@ -1024,39 +1100,13 @@
     if (any(.tr0 %in% c("lnorm", "logit", "probit", "boxCox", "tbs",
                         "yeoJohnson", "tbsYj"))) order <- 1L
   }
-  eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 &
-                       !ini_df$fix, , drop = FALSE]
-  # Order by neta1 so rename_map's ETA[i] labels below line up with
-  # .admBuildThetaSens's ETA_i_ directions (which it numbers after order(neta1));
-  # otherwise, for an iniDf whose eta rows are out of neta1 order, sens_cols[i]
-  # would report d(pred)/d(eta) for a different eta than rename_map fills ETA[i].
-  eta_rows <- eta_rows[order(eta_rows$neta1), , drop = FALSE]
-  n_eta    <- nrow(eta_rows)
-  if (n_eta == 0L) return(NULL)
+  .maps <- .admSensNameMaps(ini_df)
+  if (is.null(.maps)) return(NULL)
+  n_eta       <- .maps$n_eta
+  rename_map  <- .maps$rename_map
+  fixed_theta <- .maps$fixed_theta
 
   unpaired <- .admUnpairedThetas(ui)
-
-  # Parameter names the estimators speak -> the model's THETA[j] / ETA[i]. Indexed
-  # by ntheta / neta1, NOT by position among the non-fixed thetas: the sens model's
-  # THETA[k] is numbered by ntheta and INCLUDES fixed thetas, so a position-indexed
-  # map would put every theta after a fixed one in the wrong slot.
-  th_rows    <- ini_df[!is.na(ini_df$ntheta), , drop = FALSE]
-  rename_map <- c(
-    stats::setNames(paste0("THETA[", th_rows$ntheta, "]"), th_rows$name),
-    stats::setNames(paste0("ETA[", seq_len(n_eta), "]"),
-                    paste0("eta.", gsub("^eta\\.", "", eta_rows$name))))
-
-  # A FIXED theta is not an estimated parameter, so it never reaches the solve
-  # paths (pinfo carries only the estimated ones) -- but the EMITTED sens model
-  # still has a THETA[k] slot for it (the model text references every theta) and
-  # rxSolve REQUIRES every parameter. Left unset the sens solve errors and returns
-  # NULL, which silently drops admc/adfo to a finite-difference gradient and, worse,
-  # made .adghGrad skip the study entirely. Carry the fixed values so the solve
-  # paths can fill those columns (.admFillFixedTheta in simulate.R).
-  fix_rows <- th_rows[th_rows$fix, , drop = FALSE]
-  fixed_theta <- if (nrow(fix_rows) > 0L)
-    stats::setNames(as.numeric(fix_rows$est), paste0("THETA[", fix_rows$ntheta, "]"))
-  else numeric(0)
 
   # Cache key: the MODEL (ui$lstExpr), the DIRECTION SET (unpaired -- so a model
   # cached before a theta gained its own direction is a miss), .admPkgKey(),
@@ -1282,6 +1332,14 @@
   if (is.null(built) && order >= 2L)
     built <- .admBuildThetaSens(ui, unpaired, .pred_expr, order = 1L)
   if (!is.null(built)) {
+    # Adopt the frame the directions were actually numbered from. Identical to
+    # ini_df except across an order-2 linCmt promotion -- see .admSensNameMaps().
+    if (!is.null(built$ini_used) && !identical(built$ini_used, ini_df)) {
+      .m2 <- .admSensNameMaps(built$ini_used)
+      if (is.null(.m2)) return(NULL)
+      rename_map <- .m2$rename_map; fixed_theta <- .m2$fixed_theta
+      n_eta      <- .m2$n_eta
+    }
     result <- list(type = "dirs", mod = built$mod,
                    sens_cols = built$sens_cols,
                    theta_sens_cols = built$theta_sens_cols,
@@ -1354,13 +1412,7 @@
         error = function(e) FALSE)))
     list(method = "dop853", stiff2 = 0L, dense = TRUE) else NULL
 
-  # suppressWarnings: the sens model is compiled inside admixr2, so its environment
-  # chain references the package namespace and serialising it warns "'package:
-  # admixr2' may not be available when loading". Harmless -- a worker reloads the
-  # DLL via rxLoad(), not from the serialised env (.admLoadModel does the same).
-  # Bare, as upstream writes it -- see .admLoadModel(). suppressWarnings stays
-  # for the reason above; only the error-swallowing tryCatch is gone.
-  suppressWarnings(saveRDS(result, .cacheFile))
+  .admCacheWrite(result, .cacheFile, "sensitivity model")
   .admCacheAssign(basename(.cacheFile), result, .adm_sens_env)
 }
 

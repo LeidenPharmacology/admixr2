@@ -2010,10 +2010,38 @@ admStopWorkers <- function() {
                               cores_vec, effective_workers) {
   library(admixr2)
   .adm_ns <- asNamespace("admixr2")
-  for (.nm in names(fn_list))
-    tryCatch(utils::assignInNamespace(.nm, fn_list[[.nm]], ns = .adm_ns),
-             error = function(e) NULL)
-  wfn <- get(worker_fn_name, envir = .adm_ns, inherits = FALSE)
+  if (!length(fn_list)) {
+    wfn <- get(worker_fn_name, envir = .adm_ns, inherits = FALSE)
+  } else {
+    # A patch ENVIRONMENT, not assignInNamespace() alone.
+    #
+    # utils::assignInNamespace() can REPLACE a binding in the daemon's locked
+    # installed namespace but cannot ADD one -- and the error is swallowed by the
+    # tryCatch below, so a name the branch INTRODUCES is simply absent in the
+    # worker while everything looks healthy. Its callers then die with
+    # "could not find function", or worse compute a different answer: this is
+    # exactly how .ADM_SENS_EMITTERS made every daemon derive a different sens
+    # cache key from its parent, and how .admGH/.admGH0 -- called from .admGrad,
+    # .admGradBatch and .admNLLGradFD, all of which run in here -- would break
+    # every dev-mode parallel restart in this release.
+    #
+    # Re-parenting each patched closure onto an env that HOLDS the whole dev set
+    # makes new and existing names resolve alike, with the namespace as the
+    # fallback parent for everything not patched. So a new helper needs no
+    # bespoke handling and no inlining at its call sites; it just works.
+    .pe <- new.env(parent = .adm_ns)
+    for (.nm in names(fn_list)) {
+      .obj <- fn_list[[.nm]]
+      if (is.function(.obj)) environment(.obj) <- .pe
+      assign(.nm, .obj, envir = .pe)
+    }
+    # Existing names ALSO go back into the namespace, so a function we did not
+    # patch that calls one we did still gets the dev version.
+    for (.nm in names(fn_list))
+      tryCatch(utils::assignInNamespace(.nm, get(.nm, envir = .pe), ns = .adm_ns),
+               error = function(e) NULL)
+    wfn <- get(worker_fn_name, envir = .pe)
+  }
   args <- all_args
   args$cores <- cores_vec[[(r - 1L) %% effective_workers + 1L]]
   do.call(wfn, c(list(restart_id = r, p_init = inits[[r]]), args))
@@ -2322,6 +2350,13 @@ admStopWorkers <- function() {
   list(restart_id = restart_id,
        objective  = opt$objective,
        solution   = if (!is.null(opt$solution)) opt$solution * sc else p_init,
+       # The centre of THIS restart's box (lb/ub above), which is its own perturbed
+       # init and not the fit's p0. .admWarnOnBounds() needs the centre the solution
+       # is to be differenced against: judging a restart that started at
+       # p0 - restart_sd against p0 both MISSES a genuine box hit (the edge is at
+       # p0 - restart_sd - grad_bounds, so |d| never reaches grad_bounds) and
+       # invents spurious ones on the opposite side.
+       box_centre = p_init,
        n_iter     = .iter,
        nll_trace  = .nll_trace,
        par_trace  = .par_trace,
@@ -2368,6 +2403,14 @@ admStopWorkers <- function() {
     .fn_names <- ls(pkg_env, all.names = TRUE)
     .fn_names <- .fn_names[grepl("^\\.(adm|adfo|adirmc|adgh|softmax|logdmvnorm)", .fn_names)]
     .fn_list  <- setNames(lapply(.fn_names, get, envir = pkg_env), .fn_names)
+    # Code and constants travel; PER-PROCESS STATE does not. The name filter also
+    # catches the memo environments (.adm_model_env, .adm_sens_env, .adm_node_env,
+    # .adm_worker_env, ...), and an environment is serialised by VALUE -- so every
+    # dev-mode dispatch was shipping the parent's cached rxode2 models to every
+    # daemon. Heavy, and semantically wrong: a deserialised model carries a dead
+    # pointer, so the worker has to rebuild it anyway (.admRxLoadAll rejects it on
+    # the DLL check). Each daemon keeps its own.
+    .fn_list  <- .fn_list[!vapply(.fn_list, is.environment, logical(1))]
     .fn_list[[.worker_fn_name]] <- worker_fn
   }
 
@@ -2819,10 +2862,12 @@ nlmixr2Est.admc <- function(env, ...) {
   }
 
   t_opt     <- (proc.time() - t0)["elapsed"]
-  # A gradient fit is confined to p0 +/- grad_bounds; say so if it stopped there
-  # rather than at an interior optimum.
+  # A gradient fit is confined to <box centre> +/- grad_bounds; say so if it
+  # stopped there rather than at an interior optimum. The centre is the winning
+  # RESTART's own init where there was one -- see .admScaledOptimize()'s box_centre.
   if (want_grad)
-    .admWarnOnBounds(opt$solution, ov$p0, ov, .ctl$grad_bounds, pinfo)
+    .admWarnOnBounds(opt$solution, opt$box_centre %||% ov$p0, ov,
+                     .ctl$grad_bounds, pinfo)
   final     <- .admUnpack(opt$solution, pinfo)
   fullTheta <- .admFullTheta(final, pinfo)
 

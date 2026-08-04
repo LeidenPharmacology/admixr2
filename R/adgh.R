@@ -1435,10 +1435,12 @@ nlmixr2Est.adgh <- function(env, ...) {
   }
 
   t_opt  <- (proc.time() - t0)["elapsed"]
-  # A gradient fit is confined to p0 +/- grad_bounds; say so if it stopped there
-  # rather than at an interior optimum.
+  # A gradient fit is confined to <box centre> +/- grad_bounds; say so if it
+  # stopped there rather than at an interior optimum. The centre is the winning
+  # RESTART's own init where there was one -- see .admScaledOptimize()'s box_centre.
   if (want_grad)
-    .admWarnOnBounds(opt$solution, ov$p0, ov, .ctl$grad_bounds, pinfo)
+    .admWarnOnBounds(opt$solution, opt$box_centre %||% ov$p0, ov,
+                     .ctl$grad_bounds, pinfo)
   final  <- .admUnpack(opt$solution, pinfo)
   fullTheta <- .admFullTheta(final, pinfo)
   p_hat  <- setNames(opt$solution, names(ov$p0))

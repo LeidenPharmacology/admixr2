@@ -1075,6 +1075,16 @@ adfoControl <- function(
          paste(paste0("'", names(.xtra), "'"), collapse = ", "), call. = FALSE)
 
   addProp  <- match.arg(addProp)
+  # Whether the user NAMED `grad`, recorded before match.arg() erases the
+  # distinction. It decides how loudly the driver reports a fall-back to finite
+  # differences: an unavailable sensitivity model is routine for a defaulted
+  # grad (a fixed-effects-only model, an ordinal endpoint) and merits a message,
+  # but silently ignoring an EXPLICIT grad = "analytical" does not -- a message is
+  # swallowed by suppressMessages(), a knitr chunk with message = FALSE, or any
+  # stderr-capturing wrapper, leaving no durable record that the run used a
+  # gradient the control asked it not to use. A warning survives to warnings() and
+  # to options(warn = 2).
+  .grad_explicit <- !missing(grad)
   grad     <- match.arg(grad)
   covMethod <- match.arg(covMethod)
 
@@ -1148,6 +1158,7 @@ adfoControl <- function(
     cov_h         = cov_h,
     cov_h_outer   = cov_h_outer,
     gill          = gill,
+    grad_explicit = .grad_explicit,
     covMethod     = covMethod,
     n_restarts    = as.integer(n_restarts),
     restart_sd    = restart_sd,
@@ -1303,15 +1314,24 @@ nlmixr2Est.adfo <- function(env, ...) {
     .ord <- if (any_joint) 1L else 2L
     sm <- tryCatch(.admLoadSensModel(.ui, order = .ord), error = function(e) NULL)
     if (is.null(sm)) {
-      # message(), not warning(). NULL here is very often BY DESIGN, not a
-      # failure: .admLoadSensModel returns it for a fixed-effects-only model
-      # (n_eta == 0), an ordinal endpoint, and mixed transformed/untransformed
-      # endpoints. Those models ran BOBYQA silently under the old grad = "none"
-      # default; making "analytical" the default turned each of them into a
-      # warning on every single fit, for a condition the user cannot act on.
-      # State what actually happens instead -- the fit is correct either way,
+      # How loudly depends on whether the user ASKED for this gradient.
+      #
+      # Defaulted: a message. NULL here is very often BY DESIGN, not a failure --
+      # .admLoadSensModel returns it for a fixed-effects-only model (n_eta == 0),
+      # an ordinal endpoint, and mixed transformed/untransformed endpoints. Those
+      # models ran BOBYQA silently under the old grad = "none" default, and making
+      # "analytical" the default turned each of them into a warning on every fit,
+      # for a condition the user cannot act on. The fit is correct either way,
       # just finite-differenced, and grad_label below already says "FD".
-      message("adfo: no sensitivity model for this model -- gradient by forward FD.")
+      #
+      # Explicit: a warning. Quietly giving someone who wrote grad = "analytical"
+      # the gradient they wrote it to avoid is a different matter, and a message
+      # leaves no record of it -- see .grad_explicit in adfoControl().
+      .msg <- "adfo: no sensitivity model for this model -- gradient by forward FD."
+      if (isTRUE(.ctl$grad_explicit))
+        warning(sprintf("adfoControl(grad = '%s'): %s", .ctl$grad,
+                        sub("^adfo: ", "", .msg)), call. = FALSE)
+      else message(.msg)
       # ... and actually fall back. This only warned: want_sens stayed TRUE, so
       # .adfoGrad's ANALYTICAL path still ran on an FD Jacobian. adgh.R does this
       # correctly; adfo did not.
@@ -1479,11 +1499,15 @@ nlmixr2Est.adfo <- function(env, ...) {
   }
 
   t_opt     <- (proc.time() - t0)["elapsed"]
-  # A gradient fit is confined to p0 +/- grad_bounds; say so if it stopped there
-  # rather than at an interior optimum. adfo only acquired this constraint in
-  # 0.4.1, when grad = "analytical" became the default (want_grad gates it).
+  # A gradient fit is confined to <box centre> +/- grad_bounds; say so if it
+  # stopped there rather than at an interior optimum. adfo only acquired this
+  # constraint in 0.4.1, when grad = "analytical" became the default (want_grad
+  # gates it). The centre is the WINNING RESTART's own init, not p0 -- see
+  # .admScaledOptimize()'s box_centre; the sequential path has no restart and is
+  # centred on p0, hence the fallback.
   if (want_grad)
-    .admWarnOnBounds(opt$solution, ov$p0, ov, .ctl$grad_bounds, pinfo)
+    .admWarnOnBounds(opt$solution, opt$box_centre %||% ov$p0, ov,
+                     .ctl$grad_bounds, pinfo)
   final     <- .admUnpack(opt$solution, pinfo)
   fullTheta <- .admFullTheta(final, pinfo)
 

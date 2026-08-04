@@ -48,6 +48,47 @@
   value
 }
 
+# Write a compiled-model cache entry: neither swallowed nor fatal.
+#
+# SWALLOWED (`tryCatch(saveRDS(...), error = function(e) NULL)`, which is what
+# 0.4.0 did) is wrong because the parallel restart workers FIND these models by
+# reading exactly these files. A silent failure here surfaced much later, and
+# somewhere else, as every restart failing to read the cache.
+#
+# FATAL (a bare saveRDS, matching upstream's bare `qs2::qs_save`) is wrong too,
+# and is what this replaces. The cache is an OPTIMISATION -- by the time it is
+# written the model is already compiled and loaded -- so on an unwritable or full
+# rxTempDir() (a locked-down HPC home, a cache directory owned by another user) a
+# fit that used to work, slowly, died with `cannot open the connection` from
+# inside model loading. The sens model was worse: its callers wrap the whole build
+# in tryCatch(error = function(e) NULL), so a WRITE failure discarded a
+# successfully compiled model and silently dropped adfo from the order-2 analytic
+# structural gradient to forward FD.
+#
+# So: warn once per file, and carry on with the model already in hand. The next
+# fit recompiles, which is exactly the pre-cache behaviour.
+#
+# suppressWarnings: these models are compiled inside admixr2, so their environment
+# chain references the package namespace and serialising warns "'package:admixr2'
+# may not be available when loading". Harmless -- a worker reloads the DLL via
+# rxLoad(), not from the serialised environment.
+.admCacheWrite <- function(object, file, what) {
+  ok <- tryCatch({ suppressWarnings(saveRDS(object, file)); TRUE },
+                 error = function(e) {
+                   .adm_warn_once(paste0("cache_write:", file), sprintf(
+                     paste0("admixr2: could not write the %s cache to '%s' (%s). ",
+                            "The fit continues, but the model will be recompiled ",
+                            "for every fit in this session, and parallel restarts ",
+                            "(workers > 1) cannot read it."),
+                     what, file, conditionMessage(e)))
+                   FALSE
+                 })
+  # A half-written file is worse than none: a later session would read it back as
+  # a corrupt entry rather than a miss.
+  if (!ok && file.exists(file)) tryCatch(file.remove(file), error = function(e) NULL)
+  invisible(ok)
+}
+
 # Drop the disk cache when the package version changes.
 #
 # nlmixr2est::.resetCacheIfNeeded(), with admixr2's version in place of its

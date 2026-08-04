@@ -467,15 +467,25 @@ utils::globalVariables(c(
     return(invisible(character(0)))
   n <- min(length(p), length(p0))
   if (n == 0L) return(invisible(character(0)))
-  # Within 0.1% of the half-width counts as "on" it -- nloptr stops just inside.
-  # Checked per SIDE: a parameter that ran into the LOWER box is only admixr2's
-  # doing if the model declared no lower bound of its own. Sigmas do carry one,
-  # so a two-sided test would drop a genuine upper-box hit on them.
-  d  <- p[seq_len(n)] - p0[seq_len(n)]
+  p  <- p[seq_len(n)]; p0 <- p0[seq_len(n)]
   lo <- if (is.null(ov$lower)) rep(-Inf, n) else ov$lower[seq_len(n)]
   hi <- if (is.null(ov$upper)) rep(Inf,  n) else ov$upper[seq_len(n)]
-  hit <- (d <= -grad_bounds * 0.999 & !is.finite(lo)) |
-         (d >=  grad_bounds * 0.999 & !is.finite(hi))
+  # Reconstruct the box nloptr was actually given, and ask whether the solution
+  # sits on it. Within 0.1% of the half-width counts as "on" -- nloptr stops just
+  # inside.
+  #
+  # `lb > lo` / `ub < hi` is the whole point: it says the binding edge is
+  # ADMIXR2'S box and not a bound the model itself declared, which is the only
+  # case worth warning about. Testing `!is.finite(lo)` instead -- i.e. "warn only
+  # if the model declared no bound on that side at all" -- silently drops every
+  # hit on a parameter that has one, even when that bound is nowhere near and the
+  # box is what actually stopped the fit. A residual-error parameter carries a
+  # lower bound, so exactly the parameters most likely to run away were the ones
+  # that could never report it.
+  tol <- grad_bounds * 1e-3
+  lb  <- pmax(lo, p0 - grad_bounds)
+  ub  <- pmin(hi, p0 + grad_bounds)
+  hit <- ((p - lb) <= tol & lb > lo) | ((ub - p) <= tol & ub < hi)
   hit[is.na(hit)] <- FALSE
   if (!any(hit)) return(invisible(character(0)))
   # Same order .admBuildOptVec() packs the vector in (parse.R).
@@ -1048,7 +1058,28 @@ utils::globalVariables(c(
   # studies that then get normalised again by the driver -- which is how it was
   # found. Guarding here rather than in the fixtures because "normalise a study"
   # should not be an operation you can only safely perform once.
-  if (isTRUE(s$.adm_normalised)) return(s)
+  # ... but idempotent is not the same as INERT. The first pass may have run
+  # without a `default_output` (nothing but the driver knows the model's endpoint,
+  # and the fixtures normalise before there is a model), which leaves every unit
+  # with output = NULL. Short-circuiting outright made the driver's later pass --
+  # the one that DOES carry output_var -- a no-op, so the NULL was permanent: for a
+  # multi-endpoint model .admBuildEvFull(tag_cmt = TRUE) then has nothing to tag
+  # `cmt` with and the unit silently reads the wrong compartment's trajectory.
+  # Repeating the normalisation was masking that; so fill what is still missing,
+  # and only then return.
+  if (isTRUE(s$.adm_normalised)) {
+    if (!is.null(default_output)) {
+      if (is.null(s$output)) s$output <- default_output
+      # A JOINT unit is deliberately output-less: it stacks several endpoints and
+      # routes them per ROW (row_output / blocks), so stamping one output on it
+      # would tag the whole stack as a single compartment.
+      s$observations <- lapply(s$observations, function(u) {
+        if (is.null(u$output) && !isTRUE(u$is_joint)) u$output <- default_output
+        u
+      })
+    }
+    return(s)
+  }
   if (!is.null(s$data)) s <- .admExpandLongStudy(s, nm)
   if (!is.null(s$observations) &&
       (isTRUE(s$joint) || !is.null(s$cross) || !is.null(s$V))) {
