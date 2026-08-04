@@ -838,8 +838,14 @@
 #'   contractions through the sensitivity equations -- cheapest and exact.
 #'   `"fd"` uses forward finite differences; `"cfd"` uses central FD.
 #'   `"none"` uses derivative-free BOBYQA.
-#' @param algorithm nloptr algorithm. Automatically coerced to
-#'   `"NLOPT_LD_LBFGS"` when `grad != "none"`.
+#' @param algorithm nloptr algorithm, or `NULL` (default) to pick the default
+#'   that matches `grad`: `"NLOPT_LD_LBFGS"` with a gradient, `"NLOPT_LN_BOBYQA"`
+#'   when `grad = "none"`. Any algorithm reported by
+#'   [nloptr::nloptr.print.options()] is accepted. An explicit algorithm is
+#'   reconciled with `grad`: when `grad = "none"` a gradient-based algorithm
+#'   (`NLOPT_LD_*` / `NLOPT_GD_*`) falls back to `"NLOPT_LN_BOBYQA"`; when a
+#'   gradient is requested a derivative-free algorithm (`NLOPT_LN_*` /
+#'   `NLOPT_GN_*`) turns the gradient off. Both emit a message.
 #' @param maxeval Maximum function evaluations (default 500).
 #' @param ftol_rel Relative tolerance (default `sqrt(.Machine$double.eps)`).
 #' @param print Print-frequency for live progress (0 = silent).
@@ -1000,7 +1006,7 @@ adghControl <- function(
     studies     = list(),
     n_nodes     = 5L,
     grad        = c("analytical", "fd", "cfd", "none"),
-    algorithm   = "NLOPT_LN_BOBYQA",
+    algorithm   = NULL,
     maxeval     = 500L,
     ftol_rel    = .Machine$double.eps^(1/2),
     print       = 10L,
@@ -1049,7 +1055,9 @@ adghControl <- function(
   # the measured error at 5 nodes is already 3.3e-1. Refuse here, where the
   # message can name the argument, rather than silently scoring a wrong NLL.
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1)
-  checkmate::assertString(algorithm)
+  # NOT assertString(algorithm) here: NULL is now the default and means "pick the
+  # one that matches grad". .admResolveAlgorithm() asserts the string and checks
+  # it against the installed nloptr, which is more than this line ever did.
   checkmate::assertIntegerish(maxeval,     lower = 1L, len = 1)
   checkmate::assertNumeric(ftol_rel,       lower = 0,  len = 1)
   checkmate::assertIntegerish(print,       lower = 0L, len = 1)
@@ -1070,8 +1078,20 @@ adghControl <- function(
   checkmate::assertIntegerish(sigdig,      lower = 1L, len = 1)
   checkmate::assertLogical(returnAdmr,                 len = 1)
 
-  if (grad != "none" && algorithm == "NLOPT_LN_BOBYQA")
-    algorithm <- "NLOPT_LD_LBFGS"
+  # .admResolveAlgorithm(), like the other three controls -- adgh had its own
+  # two-line rule instead, and it was one-directional and unvalidated:
+  #   * adghControl(algorithm = "NOT_AN_ALGO") was ACCEPTED and carried all the
+  #     way to nloptr, where it surfaces as a cryptic error mid-fit;
+  #   * adghControl(grad = "analytical", algorithm = "NLOPT_LN_NELDERMEAD") kept
+  #     BOTH -- a derivative-free algorithm with the gradient still switched on,
+  #     so every iteration paid for a gradient nloptr discards. The other three
+  #     turn the gradient off here and say so.
+  # The four behaviours test-adgh-nodes.R pins are unchanged: NULL + grad "fd" /
+  # "cfd" / "analytical" -> LBFGS, grad "none" -> BOBYQA, and an explicit
+  # gradient-based algorithm is kept as given.
+  .alg <- .admResolveAlgorithm(algorithm, grad)
+  algorithm <- .alg$algorithm
+  grad      <- .alg$grad
 
   # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone".
   # It is the one setting whose meaning does not move under an rxode2 upgrade,

@@ -179,6 +179,13 @@ adirmcControl <- function(
   checkmate::assertIntegerish(n_restarts,   lower = 1L,  len = 1)
   checkmate::assertNumeric(restart_sd,      lower = 0,   len = 1)
   checkmate::assertIntegerish(workers,      lower = 1L,  len = 1)
+  # The other three controls validate these; adirmc did not, so adirmcControl(ci
+  # = 99) and adirmcControl(returnAdmr = "x") were accepted silently -- the first
+  # reaches the confidence-interval columns as a nonsense level, the second makes
+  # the driver's `isTRUE(returnAdmr)` quietly FALSE and returns a full fit where a
+  # plain list was asked for.
+  checkmate::assertNumeric(ci, lower = 0, upper = 1, len = 1, .var.name = "ci")
+  checkmate::assertLogical(returnAdmr,      len = 1, .var.name = "returnAdmr")
 
   .algo     <- .admResolveAlgorithm(algorithm, grad,
                                     .var.name = "adirmcControl: algorithm")

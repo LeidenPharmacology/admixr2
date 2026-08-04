@@ -198,6 +198,40 @@ argument. Neither is a bug fix, so both are listed here rather than below.
 
 ## Bug fixes
 
+* **The order-2 `linCmt()` promotion never ran, so adfo kept finite-differencing
+  its structural thetas on exactly the models this release advertises it for.**
+  `linCmt()` carries no second derivative, so an order-2 request is supposed to
+  promote the model to explicit ODE form and build from that. The gate detecting a
+  solved-form model read `ui$predDf$linCmt` -- which rxode2 5.1.4 leaves `FALSE`
+  for a genuine `cp <- linCmt()`, marking `ui$.linCmtM` instead. So the promotion
+  was never reached, `.admLoadSensModel(order = 2L)` served an order-1 model, and
+  every adfo fit on a `linCmt()` model silently kept the forward-FD struct-theta
+  pass (8e-04..1e-02 relative, against ~1e-09 for the analytic block). A correct
+  fit, just the slow noisy one. Detection now uses the exported
+  `rxode2::testRxLinCmt()`, which checks both markers. The two tests covering it
+  were skipping on `is.null(sm2$d2_cols)` -- a guard for an older rxode2 that
+  could not distinguish "unsupported here" from "never runs anywhere" -- so a
+  test that asserts the detection itself now runs ahead of them, unskippably.
+
+* **`adghControl()` accepted an invalid nloptr algorithm, and would hand a
+  derivative-free one a gradient.** It had its own two-line algorithm rule instead
+  of the shared `.admResolveAlgorithm()` the other three controls use, and that
+  rule was one-directional and unvalidated: `adghControl(algorithm =
+  "NOT_AN_ALGO")` was accepted and surfaced as a cryptic nloptr error mid-fit,
+  and `adghControl(grad = "analytical", algorithm = "NLOPT_LN_NELDERMEAD")` kept
+  both -- paying for a gradient the algorithm discards on every iteration. It now
+  goes through the shared reconciliation, so `grad == "none"` if and only if the
+  algorithm is derivative-free, as documented. `algorithm` now defaults to `NULL`
+  ("match `grad`"), which resolves to the same values as before for every
+  combination. `adgh`'s `cov_h_outer` default stays `eps^(1/4)` rather than the
+  other three's `eps^(1/5)` -- that difference is deliberate, since the
+  quadrature surface is noise-free.
+
+* **`adirmcControl()` validated neither `ci` nor `returnAdmr`.** `ci = 99` reached
+  the interval columns as a nonsense level and `returnAdmr = "x"` made the
+  driver's `isTRUE()` quietly `FALSE`, returning a full fit where a plain list was
+  requested. Both are now checked, as in the other three controls.
+
 * **A cache write that fails no longer discards the model it just compiled, or
   kills the fit.** Both disk caches wrote with a bare `saveRDS()`. The cache is an
   optimisation -- by the time it is written the model is compiled and loaded -- so
@@ -437,6 +471,13 @@ argument. Neither is a bug fix, so both are listed here rather than below.
   the same model is re-read, not how many are resident.
 
 ## Internal changes
+
+* **`print.admFit()` reaches nlmixr2est's printer through `getS3method()`.** It
+  used `get("print.nlmixr2FitCore", envir = asNamespace("nlmixr2est"))`, which is
+  semantically a `:::` call that merely evades `R CMD check`'s syntactic scan --
+  and carries exactly the upstream-refactor fragility the package's no-`:::`
+  policy exists to avoid. The function is a registered S3 method, so method
+  lookup is the supported public route to it.
 
 * **The sensitivity-model builder takes an `order` argument.**
   `.admBuildThetaSens()`/`.admLoadSensModel()` default to `order = 1L` -- the

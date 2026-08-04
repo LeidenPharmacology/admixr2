@@ -72,7 +72,13 @@ print.admFit <- function(x, ...) {
   saved_cl <- class(x)
   on.exit(tryCatch(class(x) <- saved_cl, error = function(e) NULL), add = TRUE)
 
-  fn <- get("print.nlmixr2FitCore", envir = asNamespace("nlmixr2est"), inherits = FALSE)
+  # getS3method(), not get(..., envir = asNamespace("nlmixr2est")).
+  # print.nlmixr2FitCore is NOT exported, so reaching into the namespace for it is
+  # semantically a ::: call that merely evades R CMD check's syntactic scan -- and
+  # it carries the same fragility the no-::: policy exists to avoid. It IS
+  # registered as an S3 method, so the method lookup is the supported public route
+  # to the same function.
+  fn <- utils::getS3method("print", "nlmixr2FitCore")
   class(x) <- class(x)[class(x) != "nlmixr2FitData"]
   fn(x, ...)
   invisible(x)
@@ -83,7 +89,7 @@ print.admFit <- function(x, ...) {
 # knit_print.admFit to avoid roxygen2 S3-method detection and spurious
 # NAMESPACE requirements.
 .admKnitPrint <- function(x, ...) {
-  fn <- get("print.nlmixr2FitCore", envir = asNamespace("nlmixr2est"), inherits = FALSE)
+  fn <- utils::getS3method("print", "nlmixr2FitCore")
   saved_cl <- class(x)
   on.exit(tryCatch(class(x) <- saved_cl, error = function(e) NULL))
   class(x) <- class(x)[class(x) != "nlmixr2FitData"]
