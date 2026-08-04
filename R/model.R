@@ -1,4 +1,4 @@
-# Cache-key material shared by the simulation and sensitivity models.
+﻿# Cache-key material shared by the simulation and sensitivity models.
 #
 # Names, fix flags and error types all change what gets emitted or what the
 # solve is handed. The fixed thetas' VALUES are in here for a sharper reason:
@@ -69,28 +69,30 @@
   # switches invalidation off altogether -- the worst possible failure for the
   # mechanism that exists to prevent a stale hit. A name that cannot be resolved
   # degrades to the name itself, so the other components still separate.
+  # The emitter list is a LOCAL, not a package-level constant, and deliberately.
+  # A daemon resolves this function from the stale INSTALLED namespace and
+  # .admDaemonRestart() patches the dev body in with assignInNamespace(), which
+  # can REPLACE a binding but cannot ADD one -- so a top-level .ADM_SENS_EMITTERS
+  # would be missing in the worker, the lapply below would error into the
+  # tryCatch, and the worker would compute a DIFFERENT key from its parent while
+  # looking perfectly healthy. Inlined, the list travels with the patched body.
+  .emitters <- c(
+    ".admBuildThetaSens",   # emits the direction set, the chains and the f2 block
+    ".admLoadSensModel",    # assembles the cached list and its fallbacks
+    ".admSensFromInner",    # builds the whole type = "inner" payload
+    ".admLinCmtToOde",      # emits the promoted ODE an order-2 linCmt differentiates
+    ".admRxode2",           # artifact name + wd + eventSens handed to the compiler
+    ".admModName",          # ... and the name itself
+    ".admJumpCovers")       # decides whether a model is cached at all
   .src <- tryCatch(
     digest::digest(c(
-      lapply(.ADM_SENS_EMITTERS,
+      lapply(.emitters,
              function(.n) tryCatch(deparse(body(get(.n))), error = function(e) .n)),
       list(.admDoseModRe, .ADM_TBS_YJ))),
     error = function(e) "NA")
   paste(.ver, .src, sep = "/")
 }
 
-# Everything whose edit changes what .admLoadSensModel() caches. A name list so a
-# new emitter is one line here rather than a silently missing digest component --
-# the failure mode being a cache HIT on a model built by superseded code, giving
-# a finite, plausible, silently wrong gradient under a normal-looking objective.
-# Between releases `Version:` does not move, so this digest is the only separator.
-.ADM_SENS_EMITTERS <- c(
-  ".admBuildThetaSens",   # emits the direction set, the chains and the f2 block
-  ".admLoadSensModel",    # assembles the cached list and its fallbacks
-  ".admSensFromInner",    # builds the whole type = "inner" payload
-  ".admLinCmtToOde",      # emits the promoted ODE an order-2 linCmt differentiates
-  ".admRxode2",           # artifact name + wd + eventSens handed to the compiler
-  ".admModName",          # ... and the name itself
-  ".admJumpCovers")       # decides whether a model is cached at all
 
 # Compile a generated model under a stable, role-tagged artifact name.
 #
@@ -121,7 +123,28 @@
   # The fallback must still build in OUR directory: dropping back to rxode2's own
   # naming AND its own directory puts the model right back where two builds of one
   # text overwrite each other, which is the failure this exists to prevent.
-  if (is.null(.nm)) return(rxode2::rxode2(model, wd = .wd, ...))
+  #
+  # So it SYNTHESISES a name rather than omitting one. Upstream's equivalent does
+  # `rxode2(model, wd = .wd)` here, which cannot work: rxode2 refuses a `wd`
+  # without a `modName` ("working directory specified, but modName not declared"),
+  # so that branch errors instead of falling back. Reachable two ways --
+  # an unusable `role`, and rxModelVars() failing to yield a parsed md5 -- and
+  # while every call site passes a literal role, the second does not depend on the
+  # caller at all. A fallback that throws is worse than no fallback.
+  #
+  # The synthesised name MUST fold in `...`, not just the model text. `...`
+  # carries eventSens, and two builds of one text differing only there is the
+  # entire mechanism of nlmixr2/rxode2#1171: name them alike and the second
+  # overwrites the first while earlier model objects keep resolving entry points
+  # by name. Digesting only (model, role) would reintroduce that bug in the one
+  # function written to prevent it.
+  #
+  # Note the fallback name is `admMod_*`, not `admSens*` -- which is why
+  # .admRxLoadAll() discriminates on the PATH (any artifact under a session-local
+  # *Sens build directory) rather than on the basename. A basename test would not
+  # recognise these as ours.
+  if (is.null(.nm))
+    .nm <- paste0("admMod_", digest::digest(list(model, role, list(...))))
   rxode2::rxode2(model, modName = .nm, wd = .wd, ...)
 }
 

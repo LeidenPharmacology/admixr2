@@ -173,3 +173,20 @@ test_that("the worker warns and degrades when the sens cache holds an unusable m
   expect_null(m$sensModel)
   expect_s3_class(m$rxMod, "rxode2")
 })
+
+test_that("the worker tolerates a cache payload holding no compiled model", {
+  # .load_all() is upstream's iterate-the-container step and is vacuously TRUE
+  # for anything that is not rxode2-classed. That is deliberate -- it is not this
+  # function's job to police the payload's shape -- so it must not error.
+  s <- .wl_setup()
+  odd <- file.path(tempdir(), "adm-sim-not-a-list.rds")
+  saveRDS(42, odd)
+  on.exit(unlink(odd), add = TRUE)
+  p <- s$pinfo
+  p$sim_cache_file <- odd
+  m <- admixr2:::.admWorkerLoadModels(
+    ui_lstExpr = s$ui$lstExpr, rxMod_direct = NULL, cores = 1L,
+    sens_cache_file = NULL, sens_cols = NULL, sens_rename = NULL,
+    sensModel_direct = NULL, pinfo = p)
+  expect_identical(m$rxMod, 42)
+})

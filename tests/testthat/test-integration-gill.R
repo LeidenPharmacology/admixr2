@@ -191,3 +191,35 @@ test_that("gill reaches adirmc's inner FD gradient", {
   expect_true(is.finite(g1$objective))
   expect_equal(g1$objective, g0$objective, tolerance = 1e-2)
 })
+
+test_that("gill reaches admc's gradient when a struct theta is finite-differenced", {
+  # admc probes only parameters it actually steps in PARAMETER space. With the
+  # sensitivity model supplying a column for every theta -- the default -- that
+  # set is empty and the probe is skipped, which is why no other test here
+  # reaches this branch. grad = "fd" turns the sens model off, and
+  # one_cmt_kappa_fn has a theta with no mu-referencing eta, so the set is not
+  # empty and the measurement runs.
+  env <- .int_grad_setup()
+  cnt <- new.env(parent = emptyenv()); cnt$n <- 0L
+  trace(admixr2:::.admGillGradH,
+        tracer = bquote(assign("n", get("n", envir = .(cnt)) + 1L, envir = .(cnt))),
+        print = FALSE)
+  on.exit(untrace(admixr2:::.admGillGradH), add = TRUE)
+
+  run <- function(gill) suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+    one_cmt_kappa_fn, admData(), est = "admc",
+    control = admControl(studies = env$studies, seed = 1L, grad = "fd",
+                         n_sim = 300L, maxeval = 15L, covMethod = "none",
+                         gill = gill))))
+
+  a <- run(FALSE)
+  expect_identical(cnt$n, 0L)
+  b <- run(TRUE)
+  expect_gt(cnt$n, 0L)
+
+  expect_true(is.finite(a$objective))
+  expect_true(is.finite(b$objective))
+  # Same objective surface, differently-stepped gradients at a small maxeval:
+  # they need only be in the same place, not identical.
+  expect_equal(b$objective, a$objective, tolerance = 5e-2)
+})

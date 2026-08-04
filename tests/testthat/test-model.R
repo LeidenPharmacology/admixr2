@@ -178,34 +178,47 @@ test_that(".admSameDir on a vanished directory is FALSE, not an error", {
   expect_false(admixr2:::.admSameDir(gone, tempdir()))
 })
 
-# --- .admPkgKey(): the emitter list must stay in step with the code ------------
+# --- .admPkgKey(): the emitter set must stay in step with the code ------------
 
-test_that(".admPkgKey digests every emitter it names, and they all exist", {
-  # A name that cannot be resolved degrades to the name itself rather than
-  # collapsing the whole digest -- but it must not come to that, so pin the list.
-  for (nm in admixr2:::.ADM_SENS_EMITTERS)
-    expect_true(is.function(get(nm, envir = asNamespace("admixr2"))),
-                info = nm)
-
+test_that(".admPkgKey is a version and a real digest, stable within a session", {
   k <- admixr2:::.admPkgKey()
   expect_type(k, "character")
   expect_length(k, 1L)
-  # version/source-digest, both non-empty
   parts <- strsplit(k, "/", fixed = TRUE)[[1L]]
   expect_length(parts, 2L)
-  expect_true(all(nzchar(parts)))
-  # the digest half must NOT be the "everything failed" sentinel
-  expect_false(identical(parts[2L], "NA"))
-  expect_identical(k, admixr2:::.admPkgKey())   # stable within a session
+  expect_identical(parts[[1L]], as.character(utils::packageVersion("admixr2")))
+  expect_true(nzchar(parts[[2L]]))
+  # "NA" is the sentinel the digest degrades to when nothing could be resolved.
+  # Seeing it here would mean cache invalidation is silently switched off.
+  expect_false(identical(parts[[2L]], "NA"))
+  expect_identical(k, admixr2:::.admPkgKey())
 })
 
-test_that(".admPkgKey covers the emitters that shape the cached payload", {
-  # Regression on the gap this list closed: digesting only the two entry points
-  # left .admSensFromInner/.admLinCmtToOde/.admRxode2/.admModName/.admJumpCovers
-  # able to change what is cached without changing the key.
-  expect_true(all(c(".admBuildThetaSens", ".admLoadSensModel", ".admSensFromInner",
-                    ".admLinCmtToOde", ".admRxode2", ".admModName",
-                    ".admJumpCovers") %in% admixr2:::.ADM_SENS_EMITTERS))
+test_that("editing ANY emitter changes .admPkgKey", {
+  # The property, asserted directly rather than by inspecting a list of names --
+  # the point of the key is that an edit to the code that decides what gets
+  # cached invalidates the cache, with nothing to remember. Digesting only the
+  # two entry points left .admSensFromInner/.admLinCmtToOde/.admRxode2/
+  # .admModName/.admJumpCovers free to change what is emitted without changing
+  # the key, which is a cache HIT on a model built by superseded code: a finite,
+  # plausible, silently wrong gradient under a normal-looking objective.
+  ns <- asNamespace("admixr2")
+  base <- admixr2:::.admPkgKey()
+  emitters <- c(".admBuildThetaSens", ".admLoadSensModel", ".admSensFromInner",
+                ".admLinCmtToOde", ".admRxode2", ".admModName", ".admJumpCovers")
+  for (nm in emitters) {
+    orig <- get(nm, envir = ns)
+    patched <- orig
+    # prepend a no-op: different source text, identical behaviour
+    body(patched) <- as.call(c(as.name("{"), quote(.adm_probe <- 1L),
+                               as.list(body(orig))[-1L]))
+    utils::assignInNamespace(nm, patched, ns = "admixr2")
+    moved <- !identical(admixr2:::.admPkgKey(), base)
+    utils::assignInNamespace(nm, orig, ns = "admixr2")
+    expect_true(moved, info = nm)
+  }
+  # ... and everything is restored, so the key is what it was
+  expect_identical(admixr2:::.admPkgKey(), base)
 })
 
 test_that(".admResetCacheIfNeeded survives a malformed version stamp", {
