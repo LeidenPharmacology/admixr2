@@ -78,7 +78,17 @@
     .verFile <- file.path(.wd, "admixr2.version")
     .ver <- as.character(utils::packageVersion("admixr2"))
     if (file.exists(.verFile)) {
-      if (readLines(.verFile) != .ver) {
+      ## n = 1L / warn = FALSE, and a length check, because `readLines(f) != .ver`
+      ## is not a scalar condition: an EMPTY stamp gives character(0) -> logical(0)
+      ## -> "argument is of length zero", and a multi-line one gives a vector,
+      ## which R >= 4.2 also errors on. .onLoad() wraps this in tryCatch(), so
+      ## either would be SWALLOWED -- the stamp would then never be refreshed and
+      ## the whole check would silently do nothing on every subsequent load. A
+      ## truncated or hand-edited stamp is exactly the state where it most needs
+      ## to work, so anything unexpected counts as a mismatch and is overwritten.
+      .stamp <- tryCatch(readLines(.verFile, n = 1L, warn = FALSE),
+                         error = function(e) character(0))
+      if (length(.stamp) != 1L || !identical(.stamp, .ver)) {
         ## Deliberately NOT rxClean() here -- upstream removed exactly this call
         ## (nlmixr2est fef5be69). It wipes the whole SHARED rxTempDir(), and
         ## deleting a generated model's compiled artifact out from under a live

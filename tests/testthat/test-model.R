@@ -151,12 +151,18 @@ test_that(".admSameDir equates spellings of one directory and separates two", {
   d <- normalizePath(tempdir(), winslash = "/", mustWork = FALSE)
 
   expect_true(admixr2:::.admSameDir(d, d))
-  # trailing separator, and the backslash spelling
-  expect_true(admixr2:::.admSameDir(paste0(d, "/"), d))
-  expect_true(admixr2:::.admSameDir(gsub("/", "\\\\", d), d))
-  # the 8.3 short form, where it exists (Windows only; a no-op elsewhere)
-  short <- tryCatch(utils::shortPathName(d), error = function(e) d)
-  expect_true(admixr2:::.admSameDir(short, d))
+  expect_true(admixr2:::.admSameDir(paste0(d, "/"), d))   # trailing separator
+
+  # The backslash spelling and the 8.3 short form are WINDOWS-ONLY spellings of a
+  # path. On Linux and macOS a backslash is an ordinary character in a file name,
+  # so "\tmp\RtmpX" names a different (non-existent) thing and .admSameDir is
+  # RIGHT to say FALSE -- asserting otherwise fails there and only there, which
+  # is how this first reached CI green on Windows and red on the other two.
+  if (.Platform$OS.type == "windows") {
+    expect_true(admixr2:::.admSameDir(gsub("/", "\\\\", d), d))
+    short <- tryCatch(utils::shortPathName(d), error = function(e) d)
+    expect_true(admixr2:::.admSameDir(short, d))
+  }
 
   # ... and it must still say FALSE for a genuinely different directory, or the
   # guard stops guarding.
@@ -200,4 +206,27 @@ test_that(".admPkgKey covers the emitters that shape the cached payload", {
   expect_true(all(c(".admBuildThetaSens", ".admLoadSensModel", ".admSensFromInner",
                     ".admLinCmtToOde", ".admRxode2", ".admModName",
                     ".admJumpCovers") %in% admixr2:::.ADM_SENS_EMITTERS))
+})
+
+test_that(".admResetCacheIfNeeded survives a malformed version stamp", {
+  # `readLines(f) != .ver` is not a scalar condition: an EMPTY stamp yields
+  # logical(0) ("argument is of length zero") and a multi-line one a vector,
+  # which R >= 4.2 also errors on. .onLoad() wraps this in tryCatch(), so either
+  # would be swallowed and the stamp never refreshed -- the check would then
+  # silently never run again. Anything unexpected must count as a mismatch.
+  wd <- rxode2::rxTempDir()
+  skip_if(!nzchar(wd) || !dir.exists(wd), "no rxode2 temp dir")
+  f <- file.path(wd, "admixr2.version")
+  keep <- if (file.exists(f)) readLines(f, warn = FALSE) else NULL
+  on.exit({
+    if (is.null(keep)) unlink(f) else writeLines(keep, f)
+  }, add = TRUE)
+
+  for (content in list(character(0), c("a", "b"), "")) {
+    writeLines(content, f)
+    expect_silent(admixr2:::.admResetCacheIfNeeded())
+    # ... and the stamp is repaired to this version, so the next load is a match
+    expect_identical(readLines(f, n = 1L, warn = FALSE),
+                     as.character(utils::packageVersion("admixr2")))
+  }
 })

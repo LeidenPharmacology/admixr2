@@ -184,6 +184,34 @@
 # its entry-point names, and the model then solves to garbage. An earlier version
 # of this comment asserted rxLoad would fail there; it does not, and until the
 # check was added every second session silently served a dead model.
+# A DELIBERATE DIVERGENCE FROM UPSTREAM, chosen with the alternatives measured --
+# do not "restore parity" by moving either half of it.
+#
+# nlmixr2est keeps one invariant that admixr2 does not: an artifact's lifetime
+# always equals its cache's. Its focei-*.rds holds models rxode2 built in
+# rxTempDir(), so both persist; its session-local models (built here, in a
+# <pkg>Sens directory) go in a session-only env, .foceiAnalyticAugCache. That is
+# why upstream can readRDS + rxLoad with no checks at all.
+#
+# admixr2 crosses them for the SENSITIVITY model only: session-local artifact,
+# persistent adm-sens-*.rds. The simulation model is on upstream's disk pairing
+# and needs nothing (file.exists() alone), which is the contrast to keep in mind.
+#
+# Three options were considered:
+#   A  session-only sens cache, exactly upstream. Deletes every guard below --
+#      but a mirai worker cannot read a session env and receives only
+#      ui_lstExpr, not a `ui`, so it could not obtain or rebuild the model:
+#      parallel grad = "sens" would break until the worker handoff is redesigned.
+#   B  keep the file, add a session token to its NAME, so a new session misses
+#      and rebuilds and can never SEE a foreign entry. Same cost as upstream
+#      (one compile per session), parallel untouched, guards unnecessary.
+#   C  keep the cross-session cache and guard it at runtime.  <-- CHOSEN
+# C keeps the measured cold-start win (a second session rebuilds nothing;
+# ~2.8x on that path) at the price of .admRxLoadAll()'s checks below. If that
+# price ever looks too high, B is the cheap way out and needs no redesign.
+#
+# When nlmixr2/rxode2#1171 is fixed, the constraint disappears entirely: both
+# packages can build into rxTempDir() again and the pairing repairs itself.
 .admModDir <- function() {
   .d <- file.path(tempdir(), "admixr2Sens")
   if (!dir.exists(.d)) {
@@ -223,7 +251,14 @@
 .admSameDir <- function(a, b) {
   .n <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE),
                              error = function(e) p, warning = function(w) p)
-  identical(tolower(.n(a)), tolower(.n(b)))
+  .a <- .n(a); .b <- .n(b)
+  # Case-fold on Windows ONLY. Its file system is case-insensitive, so two
+  # spellings of one directory must compare equal; Linux and macOS-with-a-
+  # case-sensitive-volume are not, and folding there would make two GENUINELY
+  # different directories compare equal -- which in this guard means accepting a
+  # foreign session's artifact, the exact thing it exists to refuse.
+  if (.Platform$OS.type == "windows") { .a <- tolower(.a); .b <- tolower(.b) }
+  identical(.a, .b)
 }
 
 .admRxLoadAll <- function(x) {
