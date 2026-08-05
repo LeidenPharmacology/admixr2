@@ -1551,46 +1551,10 @@ nlmixr2Est.adgh <- function(env, ...) {
                         sampling       = "sobol",
                         n_gh           = n_total_nodes)
 
-  nlmixr2est::.nlmixr2FitUpdateParams(.ret)
-  nmObjHandleControlObject.adghControl(.ctl, .ret)
-  if (exists("control", .ui)) rm(list = "control", envir = .ui)
-  .ret$control <- .admToFoceiControl(.ctl, .admCovSkip(.cov, .ui))
-  .focei_model <- suppressMessages(tryCatch(.ui$foceiModel, error = function(e) NULL))
-  if (!is.null(.focei_model)) .ret$model <- .focei_model
-
-  .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = if (multi_out) admData(.admEndpointNames(.ui)) else admData(),
-    control = .ret$control,
-    table = .ret$table, env = .ret, est = "adgh")
-
-  .fit$env$method   <- "adgh"
-  .admRestoreCovNames(.fit, .cov_nms)
-  .fit$env$studies  <- studies
-  .fit$env$admExtra <- .ret$admExtra
-  .admAttachParHist(.fit, .ret$admExtra$all_traces, .ret$admExtra$par_names, .ui)
-  # Store observed + predicted aggregate moments (E vector, V matrix) per study.
-  .admAttachAggData(.fit, .ret$admExtra, .ui)
-  .old_cls <- class(.fit)
-  .new_cls <- c("admFit", .old_cls)
-  attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")
-  class(.fit) <- .new_cls
-
-  .stats <- .admCalcObjStats(opt$objective, length(ov$p0), studies)
-  row.names(.stats$objDf) <- "adgh"
-  .fit$env$logLik    <- .stats$ll
-  .fit$env$nobs      <- .stats$nobs
-  .fit$env$objDf     <- .stats$objDf
-  .fit$env$OBJF      <- .stats$objDf$OBJF
-  .fit$env$AIC       <- .stats$objDf$AIC
-  .fit$env$BIC       <- .stats$objDf$BIC
-  .fit$env$objective <- opt$objective
-  .fit$env$time <- data.frame(
-    optimize   = t_opt,
-    covariance = t_cov,
-    other      = 0,
-    elapsed    = t_elapsed,
-    row.names  = NULL
-  )
-
-  .fit
+  .admFinaliseFit(.ret, .ui, .ctl, est = "adgh", objective = opt$objective,
+                  ov = ov, studies = studies, cov = .cov,
+                  cov_nms = .cov_nms, multi_out = multi_out,
+                  extra_field = "admExtra",
+                  handle_ctl = nmObjHandleControlObject.adghControl,
+                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed)
 }

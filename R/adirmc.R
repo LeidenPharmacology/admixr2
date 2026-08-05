@@ -853,6 +853,46 @@ nmObjGetControl.adirmc <- function(x, ...) {
   nll2
 }
 
+# -- Proposal-drawing closure --------------------------------------------------
+
+# Build the closure .adirmcPhaseLoop() calls to redraw proposals at a parameter
+# vector. It needs two of them per run -- one for the inner optimiser and one for
+# the exact-NLL check -- and they differ in EXACTLY ONE argument, `use_grad`
+# (the exact evaluation never needs the gradient-side quantities).
+#
+# That pair was written out longhand, and then the whole pair was written out
+# again in the restart worker: four copies of one 18-line call, differing in one
+# flag and in whether the captured names are the worker's (`studies`, `cores_w`,
+# `omega_expansion`) or the driver's (`studies_snap`, `cores`,
+# `.ctl$omega_expansion`). A factory takes those as arguments and the difference
+# stops being a copy.
+#
+# Kept as a factory returning ONE closure, rather than having .adirmcPhaseLoop
+# take a single function plus a flag: the phase loop's two-closure interface is
+# unchanged, so its signature -- and the worker's, which must stay stable for the
+# daemons -- does not move.
+.adirmcProposalFn <- function(rxMod, pinfo, studies, z_list, params_list,
+                              output_var, cores, omega_expansion,
+                              kappa_method, kappa_n_nodes, use_grad) {
+  function(p) {
+    pars  <- .admUnpack(p, pinfo)
+    props <- lapply(seq_along(studies), function(si)
+      .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
+                    pars$omega, omega_expansion, studies[[si]],
+                    z_list[[si]], output_var, params_list[[si]], cores,
+                    pinfo$eta_col_names,
+                    has_kappa         = pinfo$has_kappa,
+                    kappa_method      = kappa_method,
+                    kappa_n_nodes     = kappa_n_nodes,
+                    struct_transforms = pinfo$struct_transforms,
+                    struct_eta_idx    = pinfo$struct_eta_idx,
+                    use_grad          = use_grad,
+                    ndp               = pinfo$nDisplayProgress,
+                    sigdig            = pinfo$sigdig))
+    if (any(vapply(props, is.null, logical(1)))) NULL else props
+  }
+}
+
 # -- Shared outer phase loop ---------------------------------------------------
 
 # Runs all IRMC phases for one restart. draw_proposals_inner / draw_proposals_exact
@@ -1072,41 +1112,12 @@ nmObjGetControl.adirmc <- function(x, ...) {
     on.exit(tryCatch(rxode2::rxUnlock(rxMod), error = function(e) NULL), add = TRUE)
   }
 
-  .draw_proposals_inner <- function(p) {
-    pars  <- .admUnpack(p, pinfo)
-    props <- lapply(seq_along(studies), function(si)
-      .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pars$omega, omega_expansion, studies[[si]],
-                    z_list[[si]], output_var, params_list[[si]], cores_w,
-                    pinfo$eta_col_names,
-                    has_kappa         = pinfo$has_kappa,
-                    kappa_method      = kappa_method,
-                    kappa_n_nodes     = kappa_n_nodes,
-                    struct_transforms = pinfo$struct_transforms,
-                    struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = grad_mode == "analytical",
-                    ndp               = pinfo$nDisplayProgress,
-                    sigdig            = pinfo$sigdig))
-    if (any(vapply(props, is.null, logical(1)))) NULL else props
-  }
-
-  .draw_proposals_exact <- function(p) {
-    pars  <- .admUnpack(p, pinfo)
-    props <- lapply(seq_along(studies), function(si)
-      .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pars$omega, omega_expansion, studies[[si]],
-                    z_list[[si]], output_var, params_list[[si]], cores_w,
-                    pinfo$eta_col_names,
-                    has_kappa         = pinfo$has_kappa,
-                    kappa_method      = kappa_method,
-                    kappa_n_nodes     = kappa_n_nodes,
-                    struct_transforms = pinfo$struct_transforms,
-                    struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = FALSE,
-                    ndp               = pinfo$nDisplayProgress,
-                    sigdig            = pinfo$sigdig))
-    if (any(vapply(props, is.null, logical(1)))) NULL else props
-  }
+  .mk_prop <- function(use_grad)
+    .adirmcProposalFn(rxMod, pinfo, studies, z_list, params_list, output_var,
+                      cores_w, omega_expansion, kappa_method, kappa_n_nodes,
+                      use_grad)
+  .draw_proposals_inner <- .mk_prop(grad_mode == "analytical")
+  .draw_proposals_exact <- .mk_prop(FALSE)
 
   pl <- .adirmcPhaseLoop(
     best_p = best_p, best_nll = best_nll,
@@ -1291,41 +1302,12 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   grad_mode_inner <- if (.ctl$grad == "none") "none" else if (.ctl$grad == "fd") "fd" else "analytical"
 
-  .draw_proposals_inner <- function(p) {
-    pars <- .admUnpack(p, pinfo)
-    props <- lapply(seq_along(studies_snap), function(si)
-      .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pars$omega, .ctl$omega_expansion,
-                    studies_snap[[si]], z_list[[si]], output_var,
-                    params_list[[si]], cores, pinfo$eta_col_names,
-                    has_kappa         = pinfo$has_kappa,
-                    kappa_method      = .ctl$kappa_method,
-                    kappa_n_nodes     = .ctl$kappa_n_nodes,
-                    struct_transforms = pinfo$struct_transforms,
-                    struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = grad_mode_inner == "analytical",
-                    ndp               = pinfo$nDisplayProgress,
-                    sigdig            = pinfo$sigdig))
-    if (any(vapply(props, is.null, logical(1)))) NULL else props
-  }
-
-  .draw_proposals_exact <- function(p) {
-    pars <- .admUnpack(p, pinfo)
-    props <- lapply(seq_along(studies_snap), function(si)
-      .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pars$omega, .ctl$omega_expansion,
-                    studies_snap[[si]], z_list[[si]], output_var,
-                    params_list[[si]], cores, pinfo$eta_col_names,
-                    has_kappa         = pinfo$has_kappa,
-                    kappa_method      = .ctl$kappa_method,
-                    kappa_n_nodes     = .ctl$kappa_n_nodes,
-                    struct_transforms = pinfo$struct_transforms,
-                    struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = FALSE,
-                    ndp               = pinfo$nDisplayProgress,
-                    sigdig            = pinfo$sigdig))
-    if (any(vapply(props, is.null, logical(1)))) NULL else props
-  }
+  .mk_prop <- function(use_grad)
+    .adirmcProposalFn(rxMod, pinfo, studies_snap, z_list, params_list, output_var,
+                      cores, .ctl$omega_expansion, .ctl$kappa_method,
+                      .ctl$kappa_n_nodes, use_grad)
+  .draw_proposals_inner <- .mk_prop(grad_mode_inner == "analytical")
+  .draw_proposals_exact <- .mk_prop(FALSE)
 
   if (.ctl$n_restarts == 1L) {
     message(.admProgressHeader(pinfo, bottom = FALSE))
@@ -1482,46 +1464,10 @@ nlmixr2Est.adirmc <- function(env, ...) {
                          n_sim         = .ctl$n_sim,
                          sampling      = .ctl$sampling)
 
-  nlmixr2est::.nlmixr2FitUpdateParams(.ret)
-  nmObjHandleControlObject.adirmcControl(.ctl, .ret)
-  if (exists("control", .ui)) rm(list = "control", envir = .ui)
-  .ret$control <- .admToFoceiControl(.ctl, .admCovSkip(.cov, .ui))
-  .focei_model <- suppressMessages(tryCatch(.ui$foceiModel, error = function(e) NULL))
-  if (!is.null(.focei_model)) .ret$model <- .focei_model
-
-  .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = admData(), control = .ret$control,
-    table = .ret$table, env = .ret, est = "adirmc")
-
-  .fit$env$method    <- "adirmc"
-  .admRestoreCovNames(.fit, .cov_nms)
-  .fit$env$studies   <- studies
-  .fit$env$adirmcExtra <- .ret$adirmcExtra
-  # Populate nlmixr2-style parameter history so traceplot(fit) works natively.
-  .admAttachParHist(.fit, .ret$adirmcExtra$all_traces, .ret$adirmcExtra$par_names, .ui)
-  # Store observed + predicted aggregate moments (E vector, V matrix) per study.
-  .admAttachAggData(.fit, .ret$adirmcExtra, .ui)
-  .old_cls <- class(.fit)
-  .new_cls <- c("admFit", .old_cls)
-  attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")
-  class(.fit) <- .new_cls
-
-  .stats <- .admCalcObjStats(best_nll, length(ov$p0), studies)
-  row.names(.stats$objDf) <- "adirmc"
-  .fit$env$logLik    <- .stats$ll
-  .fit$env$nobs      <- .stats$nobs
-  .fit$env$objDf     <- .stats$objDf
-  .fit$env$OBJF      <- .stats$objDf$OBJF
-  .fit$env$AIC       <- .stats$objDf$AIC
-  .fit$env$BIC       <- .stats$objDf$BIC
-  .fit$env$objective <- best_nll
-  .fit$env$time      <- data.frame(
-    optimize   = t_opt,
-    covariance = t_cov,
-    other      = 0,
-    elapsed    = t_elapsed,
-    row.names  = NULL
-  )
-
-  .fit
+  .admFinaliseFit(.ret, .ui, .ctl, est = "adirmc", objective = best_nll,
+                  ov = ov, studies = studies, cov = .cov,
+                  cov_nms = .cov_nms, multi_out = FALSE,
+                  extra_field = "adirmcExtra",
+                  handle_ctl = nmObjHandleControlObject.adirmcControl,
+                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed)
 }
