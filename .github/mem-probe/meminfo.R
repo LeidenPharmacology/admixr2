@@ -38,17 +38,48 @@
   paths <- sub("^\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s*", "", mp)
   so <- unique(paths[grepl("\\.so($|\\.)", paths)])
 
+  # SYSTEM-WIDE, because the parent process is not the whole story: the suite
+  # spawns mirai daemons (test-integration-parallel), and a daemon's RSS is
+  # invisible to /proc/self. What kills a runner is total machine memory, so
+  # measure that too -- rss_all is every R process on the box, and sys_used is
+  # MemTotal - MemAvailable, i.e. what the OOM killer actually sees.
+  mi <- tryCatch(readLines("/proc/meminfo", warn = FALSE),
+                 error = function(e) character(0))
+  memtot <- if (length(mi)) .kv(mi, "MemTotal") else NA_real_
+  memav  <- if (length(mi)) .kv(mi, "MemAvailable") else NA_real_
+
+  rss_all <- NA_real_; n_r <- NA_real_
+  pids <- suppressWarnings(as.integer(list.files("/proc")))
+  pids <- pids[!is.na(pids)]
+  if (length(pids)) {
+    tot <- 0; k <- 0L
+    for (p in pids) {
+      st2 <- tryCatch(readLines(file.path("/proc", p, "status"), warn = FALSE),
+                      error = function(e) character(0))
+      if (!length(st2)) next
+      nm <- sub("^Name:\\s*", "", grep("^Name:", st2, value = TRUE)[1L])
+      if (is.na(nm) || !grepl("^(R|exec/R|Rscript)$", nm)) next
+      v <- .kv(st2, "VmRSS")
+      if (!is.na(v)) { tot <- tot + v; k <- k + 1L }
+    }
+    rss_all <- tot; n_r <- k
+  }
+
   gcv <- gc(verbose = FALSE)
   c(out,
     heap = sum(gcv[, 2L]),
     anon = anon,
     filebacked = if (is.na(anon)) NA_real_ else out[["rss"]] - anon,
     pdirty = pdirty, sclean = sclean,
-    n_maps = length(mp), n_so = length(so))
+    n_maps = length(mp), n_so = length(so),
+    rss_all = rss_all, n_rproc = n_r,
+    sys_used = if (is.na(memtot) || is.na(memav)) NA_real_ else memtot - memav,
+    sys_tot = memtot)
 }
 
 .MEM_COLS <- c("rss", "hwm", "vsz", "thr", "heap", "anon", "filebacked",
-               "pdirty", "sclean", "n_maps", "n_so")
+               "pdirty", "sclean", "n_maps", "n_so",
+               "rss_all", "n_rproc", "sys_used", "sys_tot")
 
 .memhdr <- function(prefix, extra = character(0)) {
   cat(paste0(prefix, "\t", paste(c(extra, .MEM_COLS), collapse = "\t"), "\n"))
@@ -57,8 +88,8 @@
 
 .memrow <- function(prefix, extra, m) {
   vals <- vapply(.MEM_COLS, function(k) {
-    v <- unname(m[[k]])
-    if (is.na(v)) "NA" else if (k %in% c("n_maps", "n_so", "thr"))
+    v <- if (k %in% names(m)) unname(m[[k]]) else NA_real_
+    if (is.na(v)) "NA" else if (k %in% c("n_maps", "n_so", "thr", "n_rproc"))
       sprintf("%d", as.integer(v)) else sprintf("%.1f", v)
   }, character(1))
   cat(paste0(prefix, "\t", paste(c(extra, vals), collapse = "\t"), "\n"))
