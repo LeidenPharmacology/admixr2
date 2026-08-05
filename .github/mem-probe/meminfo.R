@@ -105,6 +105,29 @@
   cat(sprintf("# R              : %s\n", R.version.string))
   cat(sprintf("# platform       : %s\n", R.version$platform))
   cat(sprintf("# MALLOC_ARENA_MAX: %s\n", Sys.getenv("MALLOC_ARENA_MAX", "<unset>")))
+  # srcref state -- the leading hypothesis for the devel/release heap gap.
+  # R_KEEP_PKG_SOURCE governs whether an INSTALLED package keeps a srcref per
+  # function; keep.source governs code parsed at RUNTIME. R-devel installs its
+  # whole stack from source on the runner, so the first one actually bites there
+  # while release gets pre-built binaries that carry none.
+  cat(sprintf("# R_KEEP_PKG_SOURCE: %s | keep.source: %s | keep.source.pkgs: %s\n",
+              Sys.getenv("R_KEEP_PKG_SOURCE", "<unset>"),
+              isTRUE(getOption("keep.source")),
+              isTRUE(getOption("keep.source.pkgs"))))
+  # Direct evidence: how many functions in the dependency carry a srcref.
+  for (p in c("rxode2", "nlmixr2est", "admixr2")) {
+    ns <- tryCatch(asNamespace(p), error = function(e) NULL)
+    if (is.null(ns)) next
+    nms <- tryCatch(ls(ns, all.names = TRUE), error = function(e) character(0))
+    n <- 0L; k <- 0L
+    for (x in nms) {
+      o <- tryCatch(get(x, envir = ns, inherits = FALSE), error = function(e) NULL)
+      if (!is.function(o)) next
+      k <- k + 1L
+      if (!is.null(attr(o, "srcref"))) n <- n + 1L
+    }
+    cat(sprintf("#   %-11s functions=%4d with srcref=%4d\n", p, k, n))
+  }
   cat(sprintf("# glibc          : %s\n",
               tryCatch(system("ldd --version 2>/dev/null | head -1", intern = TRUE)[1L],
                        error = function(e) "?")))
