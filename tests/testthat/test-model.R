@@ -206,7 +206,9 @@ test_that("editing ANY emitter changes .admPkgKey", {
   base <- admixr2:::.admPkgKey()
   emitters <- c(".admBuildThetaSens", ".admLoadSensModel", ".admSensNameMaps",
                 ".admSensFromInner", ".admLinCmtToOde", ".admRxode2",
-                ".admModName", ".admJumpCovers")
+                ".admModName", ".admJumpCovers", ".admToRx", ".admEndpointVar",
+                ".admCountSpec", ".admBetaSpec", ".admBetaPair", ".admDistArgs",
+                ".admIsLinCmtMod")
   for (nm in emitters) {
     orig <- get(nm, envir = ns)
     patched <- orig
@@ -220,6 +222,53 @@ test_that("editing ANY emitter changes .admPkgKey", {
   }
   # ... and everything is restored, so the key is what it was
   expect_identical(admixr2:::.admPkgKey(), base)
+})
+
+test_that("no function an emitter CALLS escapes the key unaccounted for", {
+  # The test above only checks the names it is handed, which is precisely how the
+  # count/beta helpers were missed: they were added to the emitter PATH long after
+  # the list was written, and an edit to .admEndpointVar was demonstrated serving
+  # a cached model whose rx_pred_ was 3x the prediction the objective scored --
+  # same session, no error.
+  #
+  # So walk the call graph instead. Every admixr2 function reachable from a listed
+  # emitter must be either listed itself, or on the allowlist below with a stated
+  # reason. A new helper in the emitter path fails this until someone decides
+  # which it is, which is the decision that was skipped.
+  ns <- asNamespace("admixr2")
+  emitters <- c(".admBuildThetaSens", ".admLoadSensModel", ".admSensNameMaps",
+                ".admSensFromInner", ".admLinCmtToOde", ".admRxode2",
+                ".admModName", ".admJumpCovers", ".admToRx", ".admEndpointVar",
+                ".admCountSpec", ".admBetaSpec", ".admBetaPair", ".admDistArgs",
+                ".admIsLinCmtMod")
+
+  # Reachable but deliberately NOT digested:
+  allow <- c(
+    # covered BY VALUE -- their result is itself a component of the cache key, so
+    # changing the body moves the key through the value
+    ".admIniKey", ".admUnpairedThetas", ".admMuRefPairs", ".admNameOccurrence",
+    # the key itself; it cannot digest its own body
+    ".admPkgKey",
+    # cache PLUMBING -- decides where a payload is stored or whether a stored one
+    # is usable, never what the payload contains
+    ".admCacheAssign", ".admCacheWrite", ".admRxLoadAll", ".admModDir",
+    ".admModelCacheFile", ".admNormPath", ".admSameDir", ".admUnderTemp",
+    ".admDropSimModelMeta", ".adm_warn_once")
+
+  called <- function(nm) {
+    o <- tryCatch(get(nm, envir = ns), error = function(e) NULL)
+    if (!is.function(o)) return(character(0))
+    b <- paste(deparse(body(o)), collapse = " ")
+    u <- unique(unlist(regmatches(b, gregexpr("\\.adm[A-Za-z0-9_]*", b))))
+    u[vapply(u, function(x)
+      exists(x, envir = ns, inherits = FALSE) && is.function(get(x, envir = ns)),
+      logical(1))]
+  }
+  reach <- unique(unlist(lapply(emitters, called)))
+  escaped <- setdiff(reach, c(emitters, allow))
+  expect_identical(escaped, character(0),
+                   info = paste("reachable from an emitter but neither digested",
+                                "nor allowlisted:", paste(escaped, collapse = ", ")))
 })
 
 test_that(".admResetCacheIfNeeded survives a malformed version stamp", {

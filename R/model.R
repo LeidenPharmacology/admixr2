@@ -76,12 +76,25 @@
   # would be missing in the worker, the lapply below would error into the
   # tryCatch, and the worker would compute a DIFFERENT key from its parent while
   # looking perfectly healthy. Inlined, the list travels with the patched body.
-  # EXTRACTING A HELPER OUT OF ONE OF THESE MOVES CODE OUT OF THE DIGEST. The key
-  # digests these bodies, so logic lifted into a new function is invisible to it
-  # unless the new name is added here in the SAME commit -- otherwise an edit to
-  # the extracted helper produces a cache HIT on a payload built by superseded
-  # code. That is how .admSensNameMaps got here: it was lifted out of
-  # .admLoadSensModel and had to join the list to stay covered.
+  # THE RULE: a function belongs here if changing its BODY changes the cached
+  # payload WITHOUT changing some other value that is already in the key. Adding
+  # a name is cheap; omitting one produces a cache HIT on a payload built by
+  # superseded code -- a finite, plausible, silently wrong gradient.
+  #
+  # Two ways a name gets missed, and both have happened:
+  #   * EXTRACTION -- logic lifted out of a listed function into a new one is
+  #     invisible to the digest from the moment it moves (.admSensNameMaps came
+  #     out of .admLoadSensModel and had to join the list in a follow-up).
+  #   * GROWTH -- a helper the emitters START calling. The count/beta endpoint
+  #     helpers were added after this list was written and never joined it, so an
+  #     edit to .admEndpointVar was demonstrated serving a cached model whose
+  #     rx_pred_ was 3x the prediction the objective scored, in the same session,
+  #     with no error.
+  #
+  # Covered BY VALUE and deliberately absent: .admUnpairedThetas / .admMuRefPairs
+  # (their result is the `unpaired` vector, which the cache key digests directly)
+  # and .admIniKey (its result is the .ini_key component). Changing those bodies
+  # moves the key through the value, so listing them would be redundant.
   .emitters <- c(
     ".admBuildThetaSens",   # emits the direction set, the chains and the f2 block
     ".admLoadSensModel",    # assembles the cached list and its fallbacks
@@ -90,7 +103,14 @@
     ".admLinCmtToOde",      # emits the promoted ODE an order-2 linCmt differentiates
     ".admRxode2",           # artifact name + wd + eventSens handed to the compiler
     ".admModName",          # ... and the name itself
-    ".admJumpCovers")       # decides whether a model is cached at all
+    ".admJumpCovers",       # decides whether a model is cached at all
+    ".admToRx",             # rxFromSE wrapper -- emits EVERY line of the model text
+    ".admEndpointVar",      # which variable an endpoint's sensitivities follow
+    ".admCountSpec",        # ... and the two it delegates to for a discrete or
+    ".admBetaSpec",         #     bounded endpoint, which shape the same pred_expr
+    ".admBetaPair",         # the beta shape pair the emitted pred_expr is built from
+    ".admDistArgs",         #     ... and the argument parser those two locate it with
+    ".admIsLinCmtMod")      # fills the cached is_lincmt flag the consumers branch on
   .src <- tryCatch(
     digest::digest(c(
       lapply(.emitters,
@@ -430,9 +450,23 @@
 # left the worker recomputing the old formula, so the parent wrote one file name
 # and all four restarts looked for another.
 .admModelCacheFile <- function(ui) {
+  # The rxode2 VERSION is part of the key, as it already is for the sens cache.
+  # rxTempDir() is a persistent user cache (R_user_dir), and nothing in admixr2
+  # or rxode2 sweeps it -- .admResetCacheIfNeeded() deliberately deletes nothing.
+  # rxode2 itself treats its own binary as part of a model's identity (rxMd5
+  # folds in a digest of the loaded rxode2 DLL and the rxode2 version), so after
+  # an rxode2-only upgrade a fresh compile takes a NEW artifact name while this
+  # entry still points at the old one. Without the version here that stale entry
+  # is served indefinitely.
+  #
+  # In practice nlmixr2est's own .resetCacheIfNeeded() calls rxClean() on ITS
+  # version change and the two are usually upgraded together, which is why this
+  # has not bitten -- but that is someone else's hook doing our invalidation.
+  .rx_ver <- tryCatch(as.character(utils::packageVersion("rxode2")),
+                      error = function(e) "NA")
   file.path(rxode2::rxTempDir(),
             paste0("adm-sim-",
-                   digest::digest(list(ui$lstExpr, .admIniKey(ui))), ".rds"))
+                   digest::digest(list(ui$lstExpr, .admIniKey(ui), .rx_ver)), ".rds"))
 }
 
 # Load (or compile + cache) the rxode2 simulation model.
@@ -1305,11 +1339,26 @@
   # and fix flags but not their VALUES, so `lam <- 0.5` and `lam <- 0.7` collide;
   # serving a stale pred_tbs left the objective bit-identical and the gradient
   # 1e2-1e4x wrong. Sharing that hazard with the disk path is the point.
+  # Re-derive the name maps from the frame the CACHED build numbered its
+  # directions from, not from this call's `ini_df`. They differ only across an
+  # order-2 linCmt promotion -- but there, rebuilding from ini_df puts each
+  # theta's value in a different THETA[k] slot than the emitted derivative
+  # differentiates, so a warm hit would disagree with the cold build that wrote
+  # the file. Falls back to the caller's maps when the entry predates ini_used.
+  .fromCached <- function(m) {
+    if (is.null(m$ini_used) || identical(m$ini_used, ini_df))
+      return(list(rename_map = rename_map, fixed_theta = fixed_theta))
+    .mm <- .admSensNameMaps(m$ini_used)
+    if (is.null(.mm)) return(list(rename_map = rename_map, fixed_theta = fixed_theta))
+    list(rename_map = .mm$rename_map, fixed_theta = .mm$fixed_theta)
+  }
+
   .smemo <- get0(basename(.cacheFile), envir = .adm_sens_env, inherits = FALSE)
   if (!is.null(.smemo) && file.exists(.cacheFile) && .admRxLoadAll(.smemo)) {
+    .mp <- .fromCached(.smemo)
     .smemo$cache_file  <- .cacheFile
-    .smemo$rename_map  <- rename_map
-    .smemo$fixed_theta <- fixed_theta
+    .smemo$rename_map  <- .mp$rename_map
+    .smemo$fixed_theta <- .mp$fixed_theta
     .smemo$pred_tbs    <- .pred_tbs
     return(.smemo)
   }
@@ -1331,9 +1380,10 @@
       # diverge the parallel fit from the sequential one. (sens_cols / dirs are NOT
       # re-derived: they are keyed by `unpaired` in the cache path, so a hit is
       # guaranteed to have the same direction set.)
+      .mp <- .fromCached(result)           # ... from the frame THIS entry was built on
       result$cache_file  <- .cacheFile
-      result$rename_map  <- rename_map
-      result$fixed_theta <- fixed_theta
+      result$rename_map  <- .mp$rename_map
+      result$fixed_theta <- .mp$fixed_theta
       result$pred_tbs    <- .pred_tbs      # see the derivation above -- key collision
       return(.admCacheAssign(basename(.cacheFile), result, .adm_sens_env))
     }
@@ -1405,6 +1455,16 @@
                    dirs = built$dirs,
                    rename_map = rename_map,
                    fixed_theta = fixed_theta,
+                   # The frame the directions were NUMBERED from -- the promoted
+                   # one across an order-2 linCmt build. Stored so the cache-hit
+                   # paths can re-derive the maps from it too: they re-derive
+                   # (correctly, the ui may have moved) but had only `ini_df`, the
+                   # UNPROMOTED frame, so a warm hit rebuilt the map from a
+                   # different iniDf than the cold build used and overwrote the
+                   # right answer with the wrong one. Latent while linToOde()
+                   # preserves the iniDf, which is the same status as the bug this
+                   # mirrors -- fixed on the cold path only until now.
+                   ini_used = built$ini_used,
                    is_lincmt = .admIsLinCmtMod(built$mod),
                    cache_file = .cacheFile)
   } else if (!is.null(.pred_expr)) {
