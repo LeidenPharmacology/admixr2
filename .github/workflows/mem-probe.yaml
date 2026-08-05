@@ -80,7 +80,16 @@ jobs:
         run: Rscript .github/mem-probe/models.R arena2
 
       - name: Install admixr2
-        run: R CMD INSTALL --no-multiarch --with-keep.source .
+        run: |
+          # src/ carries git-tracked WINDOWS build artifacts (admixr2.dll,
+          # nll.o, RcppExports.o -- deliberately, see CLAUDE.md). make sees a
+          # .o at least as new as its .cpp and links the COFF object, so a
+          # direct source install on Linux dies with
+          #   dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+          # `R CMD build` strips src/*.o|so|dll into the tarball, which is why
+          # the real check workflow never hits this and this probe did.
+          rm -f src/*.o src/*.so src/*.dll
+          R CMD INSTALL --no-multiarch --with-keep.source .
 
       # Probe B -- expected to be OOM-killed on devel. The per-file rows are
       # flushed as they are produced, so the curve survives the kill.
