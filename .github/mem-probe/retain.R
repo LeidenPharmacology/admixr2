@@ -43,11 +43,32 @@ suppressMessages(library(testthat))
   c(mb = tot, n = length(nms))
 }
 
+
+# base::memory.profile() counts LIVE SEXPs by type. This is the instrument
+# object.size() cannot be: it does not care who references what, so nothing can
+# hide in a closure environment. If devel retains something release does not, a
+# type count has to diverge -- and WHICH type names the culprit (LANGSXP/EXPRSXP
+# => parsed code and srcrefs; ENVSXP => environments; PROMSXP => unforced
+# promises; REALSXP => numeric data).
+.prof0 <- NULL
+.profdiff <- function() {
+  p <- tryCatch(base::memory.profile(), error = function(e) NULL)
+  if (is.null(p)) return(invisible())
+  if (is.null(.prof0)) { .prof0 <<- p; return(invisible()) }
+  d <- p - .prof0[names(p)]
+  d <- d[order(-abs(d))]
+  d <- d[abs(d) > 1000][seq_len(min(8L, sum(abs(d) > 1000)))]
+  if (!length(d)) return(invisible())
+  cat("  SEXP delta vs baseline: ",
+      paste(sprintf("%s %+d", names(d), as.integer(d)), collapse = "  "), "\n")
+}
+
 .report <- function(label) {
   gc(full = TRUE)
   m <- .meminfo()
-  cat(sprintf("\n===== %s : heap %.1f MB | rss %.1f MB =====\n",
-              label, m[["heap"]], m[["rss"]]))
+  cat(sprintf("\n===== %s : heap %.1f MB (ncells %.1f / vcells %.1f) | rss %.1f MB =====\n",
+              label, m[["heap"]], m[["ncells"]], m[["vcells"]], m[["rss"]]))
+  .profdiff()
 
   rows <- list()
   add <- function(nm, e) {
@@ -83,8 +104,13 @@ on.exit(setwd(owd), add = TRUE)
 for (h in list.files(".", "^helper.*\\.R$")) sys.source(h, envir = globalenv())
 .report("baseline (helpers only)")
 
-for (f in c("test-integration-cache-hit.R", "test-integration-edge-cases.R",
-            "test-integration-gill.R")) {
+# The files that carried the growth on devel in the run-3 curve, in suite order.
+# Three files from a cold session only reached 1.3 GB; the 5.3 GB figure is
+# CUMULATIVE, so the sequence has to be long enough to show the accumulation.
+for (f in c("test-adgh-nodes.R", "test-datagen.R", "test-integration-beta.R",
+            "test-integration-cache-hit.R", "test-integration-cold-session.R",
+            "test-integration-datagen-roundtrip.R",
+            "test-integration-edge-cases.R", "test-integration-gill.R")) {
   if (!file.exists(f)) { cat(sprintf("# missing: %s\n", f)); next }
   t <- system.time(tryCatch(testthat::test_file(f, reporter = "silent"),
                             error = function(e)

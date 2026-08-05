@@ -28,7 +28,7 @@ jobs:
     name: mem-probe (${{ matrix.r }})
     # Never let a probe fail the branch -- devel is EXPECTED to be killed here.
     continue-on-error: true
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     strategy:
       fail-fast: false

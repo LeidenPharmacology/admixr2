@@ -65,9 +65,14 @@
     rss_all <- tot; n_r <- k
   }
 
+  # Ncells vs Vcells splits the heap by KIND, which object.size() cannot do:
+  # Ncells are cons cells -- language objects, closures, environments, srcrefs;
+  # Vcells are vector payloads -- numeric data. Which one grows says whether
+  # the retained material is CODE/structure or DATA.
   gcv <- gc(verbose = FALSE)
   c(out,
     heap = sum(gcv[, 2L]),
+    ncells = gcv[1L, 2L], vcells = gcv[2L, 2L],
     anon = anon,
     filebacked = if (is.na(anon)) NA_real_ else out[["rss"]] - anon,
     pdirty = pdirty, sclean = sclean,
@@ -77,8 +82,8 @@
     sys_tot = memtot)
 }
 
-.MEM_COLS <- c("rss", "hwm", "vsz", "thr", "heap", "anon", "filebacked",
-               "pdirty", "sclean", "n_maps", "n_so",
+.MEM_COLS <- c("rss", "hwm", "vsz", "thr", "heap", "ncells", "vcells",
+               "anon", "filebacked", "pdirty", "sclean", "n_maps", "n_so",
                "rss_all", "n_rproc", "sys_used", "sys_tot")
 
 .memhdr <- function(prefix, extra = character(0)) {
