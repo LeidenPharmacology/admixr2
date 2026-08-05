@@ -1,0 +1,88 @@
+# TEMPORARY diagnostic -- delete once the devel memory question is settled.
+#
+# Isolates why `ubuntu-latest (devel)` in R-CMD-check.yaml is SIGTERM'd during
+# `checking tests` while `ubuntu-latest (release)` runs the same suite fine.
+# Already ruled out by inspecting the R-CMD-check logs of 95d66ba: the two jobs
+# resolve an IDENTICAL dependency stack (rxode2 5.1.6, nlmixr2est 7.0.2,
+# RcppEigen 0.3.4.0.2, RcppParallel 6.2.0), so the difference is R itself.
+#
+# Probe A (cheap, no admixr2): does compiling/loading N rxode2 models leak native
+#   memory, and at what rate per R version? Run twice per job -- with and without
+#   MALLOC_ARENA_MAX=2 -- which tests the glibc-arena hypothesis directly.
+# Probe B: the full per-file suite curve on both R versions from one commit.
+#
+# Push to a `ci/mem-probe**` branch to run it; nothing else triggers it.
+
+on:
+  push:
+    branches: ['ci/mem-probe**']
+  workflow_dispatch:
+
+name: mem-probe
+
+permissions: read-all
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    name: mem-probe (${{ matrix.r }})
+    # Never let a probe fail the branch -- devel is EXPECTED to be killed here.
+    continue-on-error: true
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        r: ['release', 'devel']
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+      # Deliberately NOT set here -- Probe A sets it per invocation instead.
+      # MALLOC_ARENA_MAX
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.r }}
+          http-user-agent: ${{ matrix.r == 'devel' && 'release' || 'default' }}
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: 4
+          extra-packages: any::testthat
+          needs: check
+
+      # Same failure mode the real workflow guards against; fail here, legibly,
+      # rather than 20 minutes into a probe.
+      - name: Confirm rxode2 loads
+        run: library(rxode2)
+        shell: Rscript {0}
+
+      - name: Environment
+        run: |
+          uname -a
+          ldd --version | head -1
+          free -m
+          nproc
+          Rscript -e 'cat(R.version.string, "\n"); print(utils::packageVersion("rxode2")); print(utils::packageVersion("nlmixr2est"))'
+
+      # Probe A -- twice, to test the arena hypothesis directly.
+      - name: Probe A -- rxode2 model compile/load, default arenas
+        run: Rscript .github/mem-probe/models.R default
+
+      - name: Probe A -- rxode2 model compile/load, MALLOC_ARENA_MAX=2
+        env:
+          MALLOC_ARENA_MAX: "2"
+        run: Rscript .github/mem-probe/models.R arena2
+
+      - name: Install admixr2
+        run: R CMD INSTALL --no-multiarch --with-keep.source .
+
+      # Probe B -- expected to be OOM-killed on devel. The per-file rows are
+      # flushed as they are produced, so the curve survives the kill.
+      - name: Probe B -- full suite, per-file memory curve
+        run: Rscript .github/mem-probe/suite.R
