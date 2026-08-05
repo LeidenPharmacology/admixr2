@@ -8,7 +8,7 @@ adghControl(
   studies = list(),
   n_nodes = 5L,
   grad = c("analytical", "fd", "cfd", "none"),
-  algorithm = "NLOPT_LN_BOBYQA",
+  algorithm = NULL,
   maxeval = 500L,
   ftol_rel = .Machine$double.eps^(1/2),
   print = 10L,
@@ -55,8 +55,14 @@ contractions through the sensitivity equations -- cheapest and exact.
 \code{"fd"} uses forward finite differences; \code{"cfd"} uses central FD.
 \code{"none"} uses derivative-free BOBYQA.}
 
-\item{algorithm}{nloptr algorithm. Automatically coerced to
-\code{"NLOPT_LD_LBFGS"} when \code{grad != "none"}.}
+\item{algorithm}{nloptr algorithm, or \code{NULL} (default) to pick the default
+that matches \code{grad}: \code{"NLOPT_LD_LBFGS"} with a gradient, \code{"NLOPT_LN_BOBYQA"}
+when \code{grad = "none"}. Any algorithm reported by
+\code{\link[nloptr:nloptr.print.options]{nloptr::nloptr.print.options()}} is accepted. An explicit algorithm is
+reconciled with \code{grad}: when \code{grad = "none"} a gradient-based algorithm
+(\verb{NLOPT_LD_*} / \verb{NLOPT_GD_*}) falls back to \code{"NLOPT_LN_BOBYQA"}; when a
+gradient is requested a derivative-free algorithm (\verb{NLOPT_LN_*} /
+\verb{NLOPT_GN_*}) turns the gradient off. Both emit a message.}
 
 \item{maxeval}{Maximum function evaluations (default 500).}
 
