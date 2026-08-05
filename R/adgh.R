@@ -1089,7 +1089,8 @@ adghControl <- function(
   # The four behaviours test-adgh-nodes.R pins are unchanged: NULL + grad "fd" /
   # "cfd" / "analytical" -> LBFGS, grad "none" -> BOBYQA, and an explicit
   # gradient-based algorithm is kept as given.
-  .alg <- .admResolveAlgorithm(algorithm, grad)
+  .alg <- .admResolveAlgorithm(algorithm, grad,
+                               .var.name = "adghControl: algorithm")
   algorithm <- .alg$algorithm
   grad      <- .alg$grad
 
@@ -1238,9 +1239,14 @@ nlmixr2Est.adgh <- function(env, ...) {
     # objective through phi as well as through mu, and every gradient path here
     # chains through mu alone. BOBYQA differences the objective itself.
     if (.ctl$grad != "none") {
+      # Name the ALGORITHM change too. This is the one place an algorithm is
+      # chosen outside .admResolveAlgorithm(), and it overrides whatever the user
+      # asked for -- reporting only the grad change left an explicit
+      # algorithm = "NLOPT_LD_SLSQP" silently replaced by BOBYQA.
       message("adghControl: a beta() endpoint is fitted derivative-free ",
-              "(grad = \"none\"): its precision is solved from the structural ",
-              "model, and the gradient paths carry only d(prediction)/d(theta).")
+              "(grad = \"none\", algorithm = \"", .admDefaultAlgorithm("none"),
+              "\"): its precision is solved from the structural model, and the ",
+              "gradient paths carry only d(prediction)/d(theta).")
       .ctl$grad      <- "none"
       .ctl$algorithm <- .admDefaultAlgorithm("none")
     }

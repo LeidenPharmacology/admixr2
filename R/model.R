@@ -310,9 +310,36 @@
 #
 # A prefix test rather than a fixed depth: it is the tempdir that identifies the
 # session, and nothing here should depend on how deep rxode2 nests a build.
+#
+# BOTH SPELLINGS OF tempdir(), and this is not belt-and-braces. normalizePath()
+# resolves symlinks only for a path that EXISTS -- for a missing one it returns
+# its input untouched. On macOS tempdir() is /var/folders/... which is a symlink
+# to /private/var/folders/..., so tempdir() itself resolves while a not-yet-built
+# artifact path under it does not, and the two spellings of one directory fail a
+# prefix test against each other. Comparing against both makes the answer
+# independent of whether the artifact happens to exist yet.
+#
+# In production it always does -- .admRxLoadAll() checks file.exists(.dll) before
+# reaching here -- so this was luck of ordering rather than a live defect. It was
+# caught by the macOS CI run of the test that pins the nlmixr2estSens case.
 .admUnderTemp <- function(path) {
-  .p <- .admNormPath(path); .t <- sub("/+$", "", .admNormPath(tempdir()))
-  identical(.p, .t) || startsWith(.p, paste0(.t, "/"))
+  # Collapse repeated separators before comparing. R's tempdir() on macOS is
+  # commonly ".../T//RtmpXXXX" (TMPDIR already ends in a slash), and an unresolved
+  # path keeps that doubled slash while a resolved one loses it -- which defeats a
+  # prefix test between two spellings of the same directory. A LEADING "//" is
+  # preserved, since that is a UNC root and not a separator run.
+  .sq <- function(x) gsub("(?<=.)/{2,}", "/", x, perl = TRUE)
+  .p     <- .sq(.admNormPath(path))
+  # The raw spelling still has to match .admNormPath()'s conventions -- forward
+  # slashes, and case-folded on Windows -- or it is not a candidate at all, just
+  # a string that can never match.
+  .raw   <- gsub("\\\\", "/", tempdir())
+  if (.Platform$OS.type == "windows") .raw <- tolower(.raw)
+  .cands <- unique(.sq(c(.admNormPath(tempdir()), .raw)))
+  any(vapply(.cands, function(.t) {
+    .t <- sub("/+$", "", .t)
+    identical(.p, .t) || startsWith(.p, paste0(.t, "/"))
+  }, logical(1)))
 }
 
 .admRxLoadAll <- function(x) {

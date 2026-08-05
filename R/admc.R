@@ -2616,9 +2616,14 @@ nlmixr2Est.admc <- function(env, ...) {
     # should. .adfoNLL/.adirmcNLL refuse beta outright for the related reason
     # that they have no phi at all.
     if (.ctl$grad != "none") {
+      # Name the ALGORITHM change too. This is the one place an algorithm is
+      # chosen outside .admResolveAlgorithm(), and it overrides whatever the user
+      # asked for -- reporting only the grad change left an explicit
+      # algorithm = "NLOPT_LD_SLSQP" silently replaced by BOBYQA.
       message("admControl: a beta() endpoint is fitted derivative-free ",
-              "(grad = \"none\"): its precision is solved from the structural ",
-              "model, and the gradient paths carry only d(prediction)/d(theta).")
+              "(grad = \"none\", algorithm = \"", .admDefaultAlgorithm("none"),
+              "\"): its precision is solved from the structural model, and the ",
+              "gradient paths carry only d(prediction)/d(theta).")
       .ctl$grad      <- "none"
       .ctl$algorithm <- .admDefaultAlgorithm("none")
     }
