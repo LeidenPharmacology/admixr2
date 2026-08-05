@@ -6,6 +6,61 @@
 # repairing what nlmixr2est does to it on the way back -- was written out four
 # times, token for token, differing only in an estimator name and a field name.
 
+# Apply the per-fit settings that every driver copies from its control onto
+# `pinfo`, and return the endpoint name alongside.
+#
+# These four fields travel on `pinfo` rather than as arguments for one reason,
+# recorded here once instead of four times: a mirai daemon resolves the restart
+# worker from the STALE INSTALLED namespace, so a new formal on
+# `.admRestartWorker` (or its three siblings) throws `unused argument` before the
+# patched dev body can run -- but `pinfo` is sent by value and carries anything.
+#
+# Single-sourced because the set GROWS. Each of `sigdig`, `sim_cache_file` and
+# `resid_nodes` was added to four drivers by hand, and a field set in three of
+# them is not an error anywhere -- it is a silent divergence in whichever
+# estimator was missed (`sim_cache_file` decides which compiled model a parallel
+# worker reads; `resid_nodes` decides the accuracy a transform-both-sides
+# residual is integrated at).
+#
+# adirmc adds `grad_h`/`gill` of its own after this returns; it is the only
+# estimator whose inner optimiser finite-differences on a separate path.
+.admDriverPinfo <- function(.ui, .ctl) {
+  pinfo <- .admParseIniDf(.ui$iniDf, .ui)
+  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
+  pinfo$sigdig           <- .ctl$sigdig
+  # The compiled-model cache path, for the parallel workers. They have no `ui`,
+  # so they cannot derive the .admIniKey() component that keys a fix()ed
+  # parameter's VALUE -- reading the wrong entry means solving at another model's
+  # fixed value, silently. See .admModelCacheFile().
+  pinfo$sim_cache_file   <- tryCatch(.admModelCacheFile(.ui), error = function(e) NULL)
+  # Residual-quadrature nodes travel pinfo -> arr -> .admResidApply/.admResidDeriv.
+  pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
+  pinfo
+}
+
+# Normalise the studies, flatten them to observation units, and report the two
+# model-level flags every driver derives from the result.
+#
+# `multi_out` is MODEL-level (`length(.admOutputVars(ui)) > 1`), not study-level,
+# so a multi-endpoint model always tags observations by `cmt` -- the solve cannot
+# disambiguate endpoints otherwise. `any_joint` is study-level and gates the
+# paths that have no joint implementation.
+#
+# `tag_cmt` defaults to `multi_out`, which is what three drivers pass. adirmc
+# refuses both multi-output and joint studies, and does so BETWEEN the flatten and
+# the ev_full build -- so it calls this with `ev_full = FALSE`, runs its refusal,
+# and builds ev_full itself. Keeping that as a flag rather than moving the refusal
+# is deliberate: an error must fire where it fires now.
+.admDriverUnits <- function(studies, .ui, output_var, ev_full = TRUE) {
+  for (nm in names(studies))
+    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
+  studies   <- .admFlattenStudies(studies)
+  multi_out <- length(.admOutputVars(.ui)) > 1L
+  any_joint <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
+  if (ev_full) studies <- .admBuildEvFull(studies, tag_cmt = multi_out)
+  list(studies = studies, multi_out = multi_out, any_joint = any_joint)
+}
+
 # Turn a fully-populated `.ret` environment into the returned nlmixr2 fit.
 #
 # The variation points are ARGUMENTS, never inferred:

@@ -1240,19 +1240,7 @@ nlmixr2Est.adfo <- function(env, ...) {
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
 
-  pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
-  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
-  pinfo$sigdig           <- .ctl$sigdig
-  # The compiled-model cache path, for the parallel workers. They have no `ui`,
-  # so they cannot derive the .admIniKey() component that keys a fix()ed
-  # parameter's VALUE -- and reading the wrong entry means solving at another
-  # model's fixed value, silently. Sent here rather than as a worker argument:
-  # a daemon resolves the worker from the stale INSTALLED namespace, where a new
-  # formal throws `unused argument` before the patched dev body can run, but
-  # pinfo travels by value. See .admModelCacheFile().
-  pinfo$sim_cache_file   <- tryCatch(.admModelCacheFile(.ui), error = function(e) NULL)
-  # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
-  pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
+  pinfo      <- .admDriverPinfo(.ui, .ctl)
   output_var <- .admOutputVar(.ui)
   # A beta endpoint's precision phi is SOLVED, not fitted: .admSimulate() returns
   # it as an attribute on cp_mat and admc/adgh patch it into the residual rows.
@@ -1267,18 +1255,18 @@ nlmixr2Est.adfo <- function(env, ...) {
          "  Use est = \"admc\" or est = \"adgh\" for this model.", call. = FALSE)
 
 
-  for (nm in names(studies))
-    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
-  studies    <- .admFlattenStudies(studies)
-  # AFTER flattening: both checks inspect per-unit fields (`method`, `is_joint`,
-  # `blocks`), which only exist on flattened units -- adgh/admc call them at the
-  # equivalent point. Checking the un-flattened studies made every ordinal fit
-  # fail its own block-count check.
+  # ev_full = FALSE: the three checks below run BETWEEN the flatten and the
+  # ev_full build, and must keep doing so. They inspect per-unit fields
+  # (`method`, `is_joint`, `blocks`) that only exist on flattened units -- checking
+  # the un-flattened studies made every ordinal fit fail its own block-count
+  # check -- and adgh/admc call them at the equivalent point.
+  .u         <- .admDriverUnits(studies, .ui, output_var, ev_full = FALSE)
+  studies    <- .u$studies
+  multi_out  <- .u$multi_out
+  any_joint  <- .u$any_joint
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)
-  multi_out  <- length(.admOutputVars(.ui)) > 1L
-  any_joint  <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
   studies    <- .admBuildEvFull(studies, tag_cmt = multi_out)
 
   want_grad   <- .ctl$grad != "none"

@@ -1169,7 +1169,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
 
-  pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
+  pinfo      <- .admDriverPinfo(.ui, .ctl)
   # IRMC draws its importance-sampling proposals FROM the random-effect
   # distribution, so a model with no random effect has nothing to propose: the
   # proposal draw is degenerate and the fit returned a silent objective = Inf
@@ -1219,32 +1219,18 @@ nlmixr2Est.adirmc <- function(env, ...) {
   Use est = \"admc\" or est = \"adgh\" for this model.",
          call. = FALSE)
 
-  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
-  pinfo$sigdig           <- .ctl$sigdig
-  # Carried on `pinfo` so .adirmcPhaseLoop can reach them without a new formal on
-  # .adirmcRestartWorker (a daemon resolves that worker from the stale installed
-  # namespace, where a new argument throws before the dev body runs). grad_h
-  # replaces the hard-coded 1e-6 the inner FD used to use; gill turns on Gill83
-  # step selection for it.
+  # adirmc only: its inner optimiser finite-differences on a separate path.
+  # Same pinfo-not-a-formal reason as .admDriverPinfo() records.
   pinfo$grad_h           <- .ctl$grad_h
   pinfo$gill             <- .ctl$gill
-  # The compiled-model cache path, for the parallel workers. They have no `ui`,
-  # so they cannot derive the .admIniKey() component that keys a fix()ed
-  # parameter's VALUE -- and reading the wrong entry means solving at another
-  # model's fixed value, silently. Sent here rather than as a worker argument:
-  # a daemon resolves the worker from the stale INSTALLED namespace, where a new
-  # formal throws `unused argument` before the patched dev body can run, but
-  # pinfo travels by value. See .admModelCacheFile().
-  pinfo$sim_cache_file   <- tryCatch(.admModelCacheFile(.ui), error = function(e) NULL)
-  # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
-  pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
   output_var <- .admOutputVar(.ui)
 
-  for (nm in names(studies))
-    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
-  studies    <- .admFlattenStudies(studies)
-  .adm_multi_out <- length(.admOutputVars(.ui)) > 1L
-  .adm_joint     <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
+  # ev_full = FALSE: the refusal below must fire BEFORE ev_full is built, so
+  # adirmc builds it itself once it knows the study set is one it supports.
+  .u <- .admDriverUnits(studies, .ui, output_var, ev_full = FALSE)
+  studies        <- .u$studies
+  .adm_multi_out <- .u$multi_out
+  .adm_joint     <- .u$any_joint
   if (.adm_multi_out || .adm_joint)
     stop("adirmc does not yet support multiple observed outputs (multi-compartment observations). ",
          "Use est = 'admc', 'adfo', or 'adgh' for multi-output fits.", call. = FALSE)

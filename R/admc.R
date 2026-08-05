@@ -2589,30 +2589,13 @@ nlmixr2Est.admc <- function(env, ...) {
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
 
-  pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
-  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
-  pinfo$sigdig           <- .ctl$sigdig
-  # The compiled-model cache path, for the parallel workers. They have no `ui`,
-  # so they cannot derive the .admIniKey() component that keys a fix()ed
-  # parameter's VALUE -- and reading the wrong entry means solving at another
-  # model's fixed value, silently. Sent here rather than as a worker argument:
-  # a daemon resolves the worker from the stale INSTALLED namespace, where a new
-  # formal throws `unused argument` before the patched dev body can run, but
-  # pinfo travels by value. See .admModelCacheFile().
-  pinfo$sim_cache_file   <- tryCatch(.admModelCacheFile(.ui), error = function(e) NULL)
-  # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
-  pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
+  pinfo      <- .admDriverPinfo(.ui, .ctl)
   output_var <- .admOutputVar(.ui)
 
-  for (nm in names(studies))
-    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
-  # Flatten to observation units (independent single-output blocks, or one joint
-  # unit per same-subject study) and attach ev_full. multi_out is model-level
-  # (the model has >1 endpoint) so a multi-endpoint model always tags obs by cmt.
-  studies    <- .admFlattenStudies(studies)
-  multi_out  <- length(.admOutputVars(.ui)) > 1L
-  any_joint  <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
-  studies    <- .admBuildEvFull(studies, tag_cmt = multi_out)
+  .u         <- .admDriverUnits(studies, .ui, output_var)
+  studies    <- .u$studies
+  multi_out  <- .u$multi_out
+  any_joint  <- .u$any_joint
 
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
