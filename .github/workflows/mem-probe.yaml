@@ -79,6 +79,12 @@ jobs:
           MALLOC_ARENA_MAX: "2"
         run: Rscript .github/mem-probe/models.R arena2
 
+      # Probe C -- per-SOLVE vs per-MODEL. Probe A's ~1.7 MB/model cannot
+      # explain multi-GB suite growth from ~57 distinct models, so the
+      # candidate is rxSolve() on an already-compiled model.
+      - name: Probe C -- repeated rxSolve on one model
+        run: Rscript .github/mem-probe/solves.R default
+
       - name: Install admixr2
         run: |
           # src/ carries git-tracked WINDOWS build artifacts (admixr2.dll,
