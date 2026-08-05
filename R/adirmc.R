@@ -1247,7 +1247,20 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   # See model.R for rationale (linCmt foceiModel FD-path caching inner=NULL).
-  sensModel <- if (.ctl$grad == "analytical")
+  # GATED ON covMethod TOO, because that is what actually consumes it.
+  #
+  # adirmc is the one estimator whose FIT never reads a sensitivity model: the
+  # inner gradient is analytic through the softmax/MVN chain (.adirmcInnerGrad)
+  # and .adirmcProposal() takes no sens argument. The only consumer is
+  # .admCalcCov() for the post-fit Hessian, which runs only under
+  # covMethod = "r". Gating on `grad` alone therefore compiled a sensitivity
+  # model -- ~3.6s cold -- and then never read it for every
+  # adirmcControl(grad = "analytical", covMethod = "none") fit.
+  #
+  # Behaviour-preserving: the progress label that also reads `sensModel` is
+  # itself appended only `if (.ctl$covMethod == "r")`, so the covMethod = "none"
+  # header is unchanged.
+  sensModel <- if (.ctl$covMethod == "r" && .ctl$grad == "analytical")
     tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
   else NULL
 
