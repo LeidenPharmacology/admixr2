@@ -511,7 +511,13 @@
     if (load_ok) {
       return(.admCacheAssign(.model_key, mod, .adm_model_env))
     }
-    tryCatch(file.remove(.cacheFile), error = function(e) NULL)
+    # suppressWarnings: file.remove() signals a WARNING on failure, not an error,
+    # so tryCatch(error=) alone lets it through. This is the source of the two
+    # "cannot remove file '...adm-sim-....rds', reason 'Permission denied'"
+    # warnings the suite emits from test-integration-resid-moments.R -- a stale
+    # entry whose DLL is still loaded cannot be unlinked on Windows. Recompiling
+    # is the correct recovery either way; the warning is noise.
+    tryCatch(suppressWarnings(file.remove(.cacheFile)), error = function(e) NULL)
   }
   # rxode2 compilation calls setwd() internally -- save/restore to avoid
   # "cannot change working directory" error on first compile (Windows).

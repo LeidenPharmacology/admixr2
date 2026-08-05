@@ -795,10 +795,16 @@
   }
 
   # adgh loads its own model in-process and does not lock (single-nloptr path).
-  .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
+  .res <- .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
                      use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
                      nll_fn, grad_fn, pinfo, print_progress, print,
                      lock_rxMod = NULL)
+  # Carried back so .admRunRestarts() can report a worker that silently
+  # dropped to a finite-difference gradient -- a daemon's own warning is
+  # swallowed by mirai. NOT a new worker ARGUMENT: the signatures must stay
+  # stable for a daemon resolving them from the installed namespace.
+  .res$sens_fallback <- m$sens_fallback
+  .res
 }
 
 # -- Control object ------------------------------------------------------------

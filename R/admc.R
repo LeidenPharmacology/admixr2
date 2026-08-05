@@ -1916,10 +1916,16 @@ nmObjGetControl.admc <- function(x, ...) {
   # workers (each holds its own independent model instance -> no_lock).
   lock_rxMod <- if (is.null(rxMod_direct) && !no_lock) m$rxMod else NULL
 
-  .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
+  .res <- .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
                      use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
                      nll_fn, grad_fn, pinfo, print_progress, print,
                      lock_rxMod = lock_rxMod)
+  # Carried back so .admRunRestarts() can report a worker that silently
+  # dropped to a finite-difference gradient -- a daemon's own warning is
+  # swallowed by mirai. NOT a new worker ARGUMENT: the signatures must stay
+  # stable for a daemon resolving them from the installed namespace.
+  .res$sens_fallback <- m$sens_fallback
+  .res
 }
 
 # -- Multi-restart orchestration -----------------------------------------------
@@ -2081,6 +2087,9 @@ admStopWorkers <- function() {
                                  sens_cache_file = NULL, sens_cols = NULL,
                                  sens_rename = NULL, sensModel_direct = NULL,
                                  pinfo = NULL) {
+  # Set by the sens-fallback branches below and returned to the caller, because a
+  # warning() raised in a mirai daemon never reaches the parent. See there.
+  .adm_sens_fallback <- NULL
   cores_w <- if (!is.null(cores)) {
     cores
   } else if (!is.null(rxMod_direct)) {
@@ -2152,8 +2161,19 @@ admStopWorkers <- function() {
     # NULL path: `file.exists(NULL)` is logical(0) and `if (logical(0))` is an
     # "argument is of length zero" error, which would replace the message below
     # with an opaque one at the point it is most needed.
+    # tryCatch, as the parent does (model.R). saveRDS is NOT atomic and this file
+    # lives in a SHARED persistent rxTempDir(), so a concurrent session
+    # recompiling the same key can be observed mid-write: a bare readRDS then dies
+    # with "error reading from connection", which .admRunRestarts re-throws as
+    # `parallel restart N failed: error reading from connection` -- losing the
+    # message below at exactly the moment its stated cause (b) applies.
     rxMod <- if (!is.null(.cacheFile) && file.exists(.cacheFile))
-      readRDS(.cacheFile) else NULL
+      tryCatch(readRDS(.cacheFile), error = function(e) NULL) else NULL
+    # ... and assert the SHAPE, which the parent also does and this did not:
+    # .admRxLoadAll/.load_all are no-ops on anything not rxode2-classed, so a
+    # readable .rds holding something else is not merely accepted, it is handed on
+    # as `rxMod` -- the exact outcome the load check below was added to prevent.
+    if (!is.null(rxMod) && !inherits(rxMod, "rxode2")) rxMod <- NULL
     if (is.null(rxMod)) {
       stop("admixr2: a parallel worker could not read the compiled-model cache\n  ",
            .cacheFile %||% "<no path supplied by the parent>",
@@ -2262,11 +2282,14 @@ admStopWorkers <- function() {
       # grad = "sens", so this worker is now computing a DIFFERENT gradient from
       # the sequential fit, which is exactly the divergence the field overwrites
       # above exist to prevent, and it is invisible in the objective.
-      warning("admixr2: a parallel worker could not load the sensitivity model (",
-              conditionMessage(e), ") -- this worker falls back to a ",
-              "finite-difference gradient while the parent uses sensitivities. ",
-              "Results may differ slightly from a workers = 1 fit.",
-              call. = FALSE)
+      # warning() here is INERT -- mirai does not relay a daemon's conditions to
+      # the parent, and this branch is reachable ONLY in a daemon (the sequential
+      # path passes sensModel_direct and never reaches it). So the package's one
+      # signal for "this worker computed a different gradient" fired exclusively
+      # where it was guaranteed to be swallowed. Record it on the RESULT instead;
+      # .admRunRestarts() raises it in the parent, where it can be seen.
+      .adm_sens_fallback <<- paste0(
+        "could not load the sensitivity model (", conditionMessage(e), ")")
       NULL
     })
   } else {
@@ -2276,16 +2299,22 @@ admStopWorkers <- function() {
     # the objective -- so say so. `sens_cache_file = NULL` is the different,
     # legitimate case (the parent has no sensitivity model either) and stays
     # quiet, or every gradient-free fit would warn on every restart.
+    # Same reason as above: recorded, not warned, because a daemon's warning
+    # never reaches the parent. `sens_cache_file = NULL` is the different,
+    # legitimate case (the parent has no sensitivity model either) and stays
+    # quiet, or every gradient-free fit would report on every restart.
+    # `<-`, NOT `<<-`: if/else does not create an environment, so this runs in
+    # the function frame and a `<<-` here would skip the local and assign into
+    # the NAMESPACE. (The tryCatch handler above is a real function, so its
+    # `<<-` correctly reaches this frame -- the two are not interchangeable.)
     if (!is.null(sens_cache_file))
-      warning("admixr2: a parallel worker could not find the sensitivity model ",
-              "cache (", sens_cache_file, ") -- this worker falls back to a ",
-              "finite-difference gradient while the parent uses sensitivities. ",
-              "Results may differ slightly from a workers = 1 fit.",
-              call. = FALSE)
+      .adm_sens_fallback <- paste0(
+        "could not find the sensitivity model cache (", sens_cache_file, ")")
     NULL
   }
 
-  list(cores_w = cores_w, rxMod = rxMod, sensModel = sensModel)
+  list(cores_w = cores_w, rxMod = rxMod, sensModel = sensModel,
+       sens_fallback = .adm_sens_fallback)
 }
 
 # Scaled, box-constrained single-nloptr optimisation with NLL/par trace
@@ -2401,7 +2430,14 @@ admStopWorkers <- function() {
     .fn_list <- list()
   } else {
     .fn_names <- ls(pkg_env, all.names = TRUE)
-    .fn_names <- .fn_names[grepl("^\\.(adm|adfo|adirmc|adgh|softmax|logdmvnorm)", .fn_names)]
+    # CASE-INSENSITIVE: the package's constants are `.ADM_*` (.ADM_MODEL_CACHE_MAX,
+    # .ADM_TBS_YJ, .ADM_RESID_*), and a case-sensitive `^\\.adm` misses every one
+    # of them. That is the same hole .ADM_SENS_EMITTERS fell through -- a constant
+    # read by a patched function, absent in the daemon, no error, a different
+    # answer. The patch environment fixes how a missing name is INJECTED; it
+    # cannot help with a name that was never collected.
+    .fn_names <- .fn_names[grepl("^\\.(adm|adfo|adirmc|adgh|softmax|logdmvnorm)",
+                                 .fn_names, ignore.case = TRUE)]
     .fn_list  <- setNames(lapply(.fn_names, get, envir = pkg_env), .fn_names)
     # Code and constants travel; PER-PROCESS STATE does not. The name filter also
     # catches the memo environments (.adm_model_env, .adm_sens_env, .adm_node_env,
@@ -2548,6 +2584,23 @@ admStopWorkers <- function() {
       res
     })
   }
+
+  # Report any worker that silently dropped to a finite-difference gradient.
+  #
+  # RAISED HERE, IN THE PARENT, because mirai does not relay a daemon's
+  # conditions: the warning these branches used to issue inside
+  # .admWorkerLoadModels was inert, and that branch is reachable ONLY in a daemon
+  # (the sequential path passes sensModel_direct and short-circuits). So the one
+  # signal for "this restart computed a different gradient from the sequential
+  # fit" fired exclusively where nothing could hear it -- and the difference is
+  # invisible in the objective, which is why it needs saying at all.
+  .fb <- unique(unlist(lapply(results, function(r) r$sens_fallback)))
+  if (length(.fb))
+    warning("admixr2: ", length(.fb), " parallel worker(s) fell back to a ",
+            "finite-difference gradient while the parent uses sensitivities -- ",
+            paste(.fb, collapse = "; "),
+            ". Results may differ slightly from a workers = 1 fit.",
+            call. = FALSE)
 
   nlls <- vapply(results, function(r) r$objective, double(1))
   best <- which.min(nlls)

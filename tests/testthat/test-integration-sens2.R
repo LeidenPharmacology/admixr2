@@ -43,21 +43,43 @@ test_that("the second-order columns match a central difference of the first-orde
 
 test_that("a solved-form linCmt model is DETECTED, whichever marker rxode2 uses", {
   # The gate that decides whether an order-2 request promotes the model. It read
-  # `ui$predDf$linCmt`, which rxode2 5.1.4 leaves FALSE for a genuine
-  # `cp <- linCmt()` (it marks `ui$.linCmtM` instead) -- so the gate never fired,
-  # every order-2 linCmt build returned NULL, and adfo silently kept the
-  # finite-difference struct-theta pass the order-2 block exists to replace.
+  # `ui$predDf$linCmt`, and on rxode2 5.1.4 that column depends on how the model
+  # is WRITTEN: TRUE for `linCmt() ~ add(a)`, FALSE for `cp <- linCmt()`, which
+  # marks `ui$.linCmtM` instead. So the gate fired for the first form and not the
+  # second, and on the second adfo silently kept the finite-difference
+  # struct-theta pass the order-2 block exists to replace.
   #
-  # Asserted on the PREDICATE and on d2_cols, with NO skip: the test below skips
-  # on `is.null(sm2$d2_cols)` to tolerate an old rxode2, and that guard is exactly
-  # what hid this -- a feature that never ran looks identical to a feature the
-  # platform cannot support. This one must fail rather than skip.
+  # Asserted with NO skip on the predicate: the test below skips on
+  # `is.null(sm2$d2_cols)` to tolerate an old rxode2, and a feature that never
+  # runs is indistinguishable from a platform that cannot run it. This one must
+  # fail rather than skip.
   env <- .int_sens2_setup()$lin
   skip_if(is.null(env) || is.null(env$ui), "linCmt fixture unavailable")
 
   expect_true(isTRUE(rxode2::testRxLinCmt(env$ui)))
   # ... and the promotion it gates actually happened.
   expect_false(is.null(env$sm2$d2_cols))
+
+  # THE FORM THAT ACTUALLY CHANGED. The fixture above writes the residual line
+  # straight onto the call (`linCmt() ~ add(...)`), and for THAT form rxode2 5.1.4
+  # does set predDf$linCmt, so the old gate fired and this fixture was never
+  # broken. Assigning the call to a variable first -- the common way to write it --
+  # leaves predDf$linCmt FALSE, and there the promotion was never reached.
+  # Asserted on both markers so the test says which one carries the information.
+  .assigned <- function() {
+    ini({ tka <- log(1.2); tcl <- log(5); tv <- log(20); add.err <- 0.3
+          eta.cl ~ 0.09; eta.v ~ 0.04 })
+    model({ ka <- exp(tka); cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v)
+            cp <- linCmt()
+            cp ~ add(add.err) })
+  }
+  ui2 <- rxode2::rxode2(.assigned)
+  expect_false(isTRUE(any(as.logical(ui2$predDf$linCmt), na.rm = TRUE)))  # the trap
+  expect_true(isTRUE(rxode2::testRxLinCmt(ui2)))                          # the fix
+  sm2 <- admixr2:::.admLoadSensModel(ui2, order = 2L)
+  skip_if(is.null(sm2), "sensitivity model unavailable")
+  expect_false(is.null(sm2$d2_cols))
+  expect_false(isTRUE(sm2$is_lincmt))   # promoted: no linCmtB left in the model
 })
 
 test_that("linCmt is promoted to ODE form for order 2 and stays solved-form at order 1", {

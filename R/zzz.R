@@ -85,7 +85,12 @@
                  })
   # A half-written file is worse than none: a later session would read it back as
   # a corrupt entry rather than a miss.
-  if (!ok && file.exists(file)) tryCatch(file.remove(file), error = function(e) NULL)
+  # suppressWarnings, not just tryCatch(error=): file.remove() signals a WARNING
+  # on failure, not an error, so an error handler alone lets "cannot remove file
+  # ..., reason 'Permission denied'" leak out right behind the warning above --
+  # two warnings for one event, the second of them noise.
+  if (!ok && file.exists(file))
+    tryCatch(suppressWarnings(file.remove(file)), error = function(e) NULL)
   invisible(ok)
 }
 

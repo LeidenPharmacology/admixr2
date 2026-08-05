@@ -198,20 +198,29 @@ argument. Neither is a bug fix, so both are listed here rather than below.
 
 ## Bug fixes
 
-* **The order-2 `linCmt()` promotion never ran, so adfo kept finite-differencing
-  its structural thetas on exactly the models this release advertises it for.**
-  `linCmt()` carries no second derivative, so an order-2 request is supposed to
-  promote the model to explicit ODE form and build from that. The gate detecting a
-  solved-form model read `ui$predDf$linCmt` -- which rxode2 5.1.4 leaves `FALSE`
-  for a genuine `cp <- linCmt()`, marking `ui$.linCmtM` instead. So the promotion
-  was never reached, `.admLoadSensModel(order = 2L)` served an order-1 model, and
-  every adfo fit on a `linCmt()` model silently kept the forward-FD struct-theta
-  pass (8e-04..1e-02 relative, against ~1e-09 for the analytic block). A correct
-  fit, just the slow noisy one. Detection now uses the exported
-  `rxode2::testRxLinCmt()`, which checks both markers. The two tests covering it
-  were skipping on `is.null(sm2$d2_cols)` -- a guard for an older rxode2 that
-  could not distinguish "unsupported here" from "never runs anywhere" -- so a
-  test that asserts the detection itself now runs ahead of them, unskippably.
+* **The order-2 `linCmt()` promotion did not run for a linCmt assigned to a
+  variable, so adfo kept finite-differencing its structural thetas there.**
+  `linCmt()` carries no second derivative, so an order-2 request promotes the
+  model to explicit ODE form and builds from that. The gate detecting a
+  solved-form model read `ui$predDf$linCmt`, and on rxode2 5.1.4 that column
+  depends on how the model is *written*:
+
+  | model line | `predDf$linCmt` | promoted before | promoted now |
+  |---|---|---|---|
+  | `linCmt() ~ add(a)` | `TRUE` | yes | yes |
+  | `cp <- linCmt(); cp ~ add(a)` | `FALSE` | **no** | **yes** |
+  | `cp <- 2 * linCmt(); cp ~ add(a)` | `FALSE` | no | no -- see below |
+
+  The assigned form is the common way to write it, and there the promotion was
+  never reached: `.admLoadSensModel(order = 2L)` served an order-1 model and adfo
+  silently kept the forward-FD struct-theta pass (8e-04..1e-02 relative, against
+  ~1e-09 for the analytic block). A correct fit, just the slow noisy one.
+
+  Detection now uses the exported `rxode2::testRxLinCmt()`, which checks
+  `ui$.linCmtM` as well and is `TRUE` for all three forms. The third still yields
+  no cross block, because `rxode2::linToOde()` hands a derived `linCmt` back
+  unchanged; the `linCmtB` text backstop then correctly refuses and the caller
+  falls back to order 1. So this widens the fix rather than completing it.
 
 * **`adghControl()` accepted an invalid nloptr algorithm, and would hand a
   derivative-free one a gradient.** It had its own two-line algorithm rule instead
@@ -222,10 +231,28 @@ argument. Neither is a bug fix, so both are listed here rather than below.
   both -- paying for a gradient the algorithm discards on every iteration. It now
   goes through the shared reconciliation, so `grad == "none"` if and only if the
   algorithm is derivative-free, as documented. `algorithm` now defaults to `NULL`
-  ("match `grad`"), which resolves to the same values as before for every
-  combination. `adgh`'s `cov_h_outer` default stays `eps^(1/4)` rather than the
-  other three's `eps^(1/5)` -- that difference is deliberate, since the
+  ("match `grad`"). `adgh`'s `cov_h_outer` default stays `eps^(1/4)` rather than
+  the other three's `eps^(1/5)` -- that difference is deliberate, since the
   quadrature surface is noise-free.
+
+  **One combination changes, and it is the one worth knowing about.** The old
+  two-line rule existed to special-case exactly `"NLOPT_LN_BOBYQA"`, upgrading it
+  to LBFGS whenever a gradient was requested -- because BOBYQA was `adghControl`'s
+  own *default*, so naming it could not be distinguished from leaving it alone.
+  With the default now `NULL`, naming a derivative-free algorithm is unambiguous
+  and is honoured:
+
+  | `adghControl(...)` | 0.4.0 | 0.4.1 |
+  |---|---|---|
+  | `grad = "analytical"`, `algorithm = "NLOPT_LN_BOBYQA"` | `analytical` + LBFGS | **`none` + BOBYQA** |
+  | `grad = "fd"`, `algorithm = "NLOPT_LN_BOBYQA"` | `fd` + LBFGS | **`none` + BOBYQA** |
+
+  So a script that explicitly restated the old default now gets a
+  derivative-free fit where it had a quasi-Newton one. It says so (the
+  reconciliation emits a message), but if you wrote `algorithm =
+  "NLOPT_LN_BOBYQA"` meaning "the default", **delete the argument** -- `NULL`
+  now picks LBFGS for you. Every other combination is unchanged, including the
+  four pinned in `test-adgh-nodes.R`.
 
 * **`adirmcControl()` validated neither `ci` nor `returnAdmr`.** `ci = 99` reached
   the interval columns as a nonsense level and `returnAdmr = "x"` made the
@@ -292,6 +319,14 @@ argument. Neither is a bug fix, so both are listed here rather than below.
   by `suppressMessages()`, by a knitr chunk with `message = FALSE`, and by any
   stderr-capturing wrapper, leaving no record that the fit used the gradient the
   control asked it not to use.
+
+  Where it survives is worth stating precisely, because the obvious answer is
+  wrong: nlmixr2est intercepts and muffles conditions raised inside
+  `nlmixr2Est.*`, so this warning does **not** reach `warnings()` and
+  `options(warn = 2)` does **not** turn it into an error. It is recorded on
+  `fit$warnings`, which `print(fit)` displays. That is a durable record where a
+  `message()` left none, which is the point -- but do not rely on
+  `options(warn = 2)` to catch it.
 
 * **Normalising a study twice no longer leaves its endpoint unset.** The
   idempotence guard added in this release returned before the point where a unit's

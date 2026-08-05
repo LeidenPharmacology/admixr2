@@ -90,21 +90,27 @@ test_that("a worker with no sens model at all is quiet", {
   expect_null(m$sensModel)
 })
 
-test_that("a worker degrades to FD, with a warning, when the sens cache is gone", {
+test_that("a worker degrades to FD, and REPORTS it, when the sens cache is gone", {
   # Not an error: a worker without a sensitivity model still fits, by finite
   # differences. But it must SAY so -- it is then computing a different gradient
   # from the parent, which is invisible in the objective.
+  #
+  # Reported on the RETURN VALUE, not by warning(). This branch is reachable only
+  # inside a mirai daemon (the sequential path passes sensModel_direct and
+  # short-circuits), and mirai does not relay a daemon's conditions to the parent
+  # -- so the warning this used to assert was raised exactly where nothing could
+  # hear it. .admRunRestarts() collects the field and warns in the parent.
   s <- .wl_setup()
   skip_if(!file.exists(s$pinfo$sim_cache_file), "simulation cache not written")
-  expect_warning(
-    m <- admixr2:::.admWorkerLoadModels(
-      ui_lstExpr = s$ui$lstExpr, rxMod_direct = NULL, cores = 1L,
-      sens_cache_file = file.path(tempdir(), "adm-sens-gone.rds"),
-      sens_cols = NULL, sens_rename = NULL, sensModel_direct = NULL,
-      pinfo = s$pinfo),
-    "sensitivity model")
+  m <- admixr2:::.admWorkerLoadModels(
+    ui_lstExpr = s$ui$lstExpr, rxMod_direct = NULL, cores = 1L,
+    sens_cache_file = file.path(tempdir(), "adm-sens-gone.rds"),
+    sens_cols = NULL, sens_rename = NULL, sensModel_direct = NULL,
+    pinfo = s$pinfo)
   expect_null(m$sensModel)
   expect_s3_class(m$rxMod, "rxode2")
+  expect_true(is.character(m$sens_fallback) && nzchar(m$sens_fallback))
+  expect_match(m$sens_fallback, "sensitivity model cache")
 })
 
 test_that("rxMod_direct short-circuits the cache read entirely", {
@@ -154,39 +160,51 @@ test_that("the worker refuses a cached model whose shared library is gone", {
     "could not (read|load)")
 })
 
-test_that("the worker warns and degrades when the sens cache holds an unusable model", {
+test_that("the worker REPORTS and degrades when the sens cache holds an unusable model", {
   # A file that exists but whose $mod is not an rxode2 object: the load must fail
-  # INSIDE the tryCatch and become a warning plus an FD gradient, not an error
-  # that kills the restart.
+  # INSIDE the tryCatch and become an FD gradient plus a recorded reason, not an
+  # error that kills the restart.
+  #
+  # Recorded on the return value rather than warned -- see the cache-is-gone test
+  # above for why a daemon's warning cannot reach the parent.
   s <- .wl_setup()
   skip_if(!file.exists(s$pinfo$sim_cache_file), "simulation cache not written")
   bad <- file.path(tempdir(), "adm-sens-not-a-model.rds")
   saveRDS(list(mod = 42, sens_cols = "rx_f1_ETA_1_"), bad)
   on.exit(unlink(bad), add = TRUE)
 
-  expect_warning(
-    m <- admixr2:::.admWorkerLoadModels(
-      ui_lstExpr = s$ui$lstExpr, rxMod_direct = NULL, cores = 1L,
-      sens_cache_file = bad, sens_cols = NULL, sens_rename = NULL,
-      sensModel_direct = NULL, pinfo = s$pinfo),
-    "sensitivity model")
+  m <- admixr2:::.admWorkerLoadModels(
+    ui_lstExpr = s$ui$lstExpr, rxMod_direct = NULL, cores = 1L,
+    sens_cache_file = bad, sens_cols = NULL, sens_rename = NULL,
+    sensModel_direct = NULL, pinfo = s$pinfo)
   expect_null(m$sensModel)
   expect_s3_class(m$rxMod, "rxode2")
+  expect_true(is.character(m$sens_fallback) && nzchar(m$sens_fallback))
+  expect_match(m$sens_fallback, "could not load the sensitivity model")
 })
 
-test_that("the worker tolerates a cache payload holding no compiled model", {
-  # .load_all() is upstream's iterate-the-container step and is vacuously TRUE
-  # for anything that is not rxode2-classed. That is deliberate -- it is not this
-  # function's job to police the payload's shape -- so it must not error.
+test_that("the worker REFUSES a cache payload holding no compiled model", {
+  # This test used to assert the opposite -- that shape is "not this function's
+  # job" -- and that was wrong. .load_all() is upstream's iterate-the-container
+  # step and is vacuously TRUE for anything not rxode2-classed, so a readable
+  # .rds holding something else was not merely accepted, it was handed on AS
+  # `rxMod`: the first rxSolve() then dereferences a non-model, which is an
+  # opaque error deep in the restart or, on Windows, the STATUS_HEAP_CORRUPTION
+  # crash the surrounding comment warns about.
+  #
+  # The parent asserts the same shape (.admLoadModel) and recovers by deleting
+  # and rebuilding. A worker cannot rebuild -- it has no `ui`, which is the whole
+  # reason the cache exists -- so its only correct move is the legible stop().
   s <- .wl_setup()
   odd <- file.path(tempdir(), "adm-sim-not-a-list.rds")
   saveRDS(42, odd)
   on.exit(unlink(odd), add = TRUE)
   p <- s$pinfo
   p$sim_cache_file <- odd
-  m <- admixr2:::.admWorkerLoadModels(
-    ui_lstExpr = s$ui$lstExpr, rxMod_direct = NULL, cores = 1L,
-    sens_cache_file = NULL, sens_cols = NULL, sens_rename = NULL,
-    sensModel_direct = NULL, pinfo = p)
-  expect_identical(m$rxMod, 42)
+  expect_error(
+    admixr2:::.admWorkerLoadModels(
+      ui_lstExpr = s$ui$lstExpr, rxMod_direct = NULL, cores = 1L,
+      sens_cache_file = NULL, sens_cols = NULL, sens_rename = NULL,
+      sensModel_direct = NULL, pinfo = p),
+    "could not read the compiled-model cache")
 })

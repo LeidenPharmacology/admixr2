@@ -806,10 +806,16 @@
   }
 
   # adfo loads its own model in-process and does not lock (single-nloptr path).
-  .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
+  .res <- .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
                      use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
                      nll_fn, grad_fn, pinfo, print_progress, print,
                      lock_rxMod = NULL)
+  # Carried back so .admRunRestarts() can report a worker that silently
+  # dropped to a finite-difference gradient -- a daemon's own warning is
+  # swallowed by mirai. NOT a new worker ARGUMENT: the signatures must stay
+  # stable for a daemon resolving them from the installed namespace.
+  .res$sens_fallback <- m$sens_fallback
+  .res
 }
 
 # -- Control object ------------------------------------------------------------
@@ -1082,8 +1088,16 @@ adfoControl <- function(
   # but silently ignoring an EXPLICIT grad = "analytical" does not -- a message is
   # swallowed by suppressMessages(), a knitr chunk with message = FALSE, or any
   # stderr-capturing wrapper, leaving no durable record that the run used a
-  # gradient the control asked it not to use. A warning survives to warnings() and
-  # to options(warn = 2).
+  # gradient the control asked it not to use.
+  #
+  # WHERE THE WARNING ACTUALLY SURVIVES, measured rather than assumed: NOT to
+  # warnings(), and options(warn = 2) does NOT turn it into an error -- nlmixr2est
+  # intercepts and muffles conditions raised inside nlmixr2Est.*, so even a
+  # deliberately injected probe warning never reaches a withCallingHandlers()
+  # around nlmixr2(). It survives on `fit$warnings`, which print(fit) shows. That
+  # is still a durable record where a message() leaves none, which is the point --
+  # but it is a weaker guarantee than the obvious one, so do not reason from
+  # options(warn = 2) here.
   .grad_explicit <- !missing(grad)
   grad     <- match.arg(grad)
   covMethod <- match.arg(covMethod)
