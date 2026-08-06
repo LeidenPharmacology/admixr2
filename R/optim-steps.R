@@ -251,12 +251,30 @@
                   error = function(e) NULL)
   lab <- if (!is.null(nms) && length(nms) >= n) nms[seq_len(n)][hit]
          else paste0("p", which(hit))
-  warning(sprintf(
+  .txt <- sprintf(
     paste0("admixr2: %s finished on the gradient box constraint (grad_bounds = %g ",
            "from the starting value), not at an interior optimum. The reported ",
            "estimate and SE are those of a constrained fit. Widen grad_bounds, or ",
            "start closer to the expected value."),
-    paste(lab, collapse = ", "), grad_bounds), call. = FALSE)
+    paste(lab, collapse = ", "), grad_bounds)
+  # BOTH channels, deliberately.
+  #
+  # warning() is what lands in fit$warnings, so print(fit) surfaces it later --
+  # but nlmixr2est muffles conditions inside nlmixr2Est.*, so it never reaches
+  # warnings() and a batch script that only writes coefficients to disk sees
+  # nothing. That matters more since 0.4.1: adfo's grad default moved
+  # "none" -> "analytical", which also flips want_grad and therefore imposes this
+  # box where the derivative-free path used -Inf/Inf. A start value far from the
+  # optimum now converges to a corner with nloptr reporting success and a finite
+  # estimate and SE printed. (admc and adgh have always defaulted to a gradient
+  # AND grad_bounds = 5, so this aligned adfo with them rather than singling it
+  # out -- which is why the box stays and the reporting is what changes.)
+  #
+  # message() is the channel the live progress table already uses, so it is
+  # visible as the fit runs. Redundant in an interactive session; the only way to
+  # see it in a non-interactive one.
+  message(.txt)
+  warning(.txt, call. = FALSE)
   invisible(lab)
 }
 

@@ -192,9 +192,20 @@ argument. Neither is a bug fix, so both are listed here rather than below.
   to that box.
 
   This is rarely reachable -- it takes a starting value off by more than ~148x --
-  and a fit that stops on the box now says so, via the new bounds warning. Set
-  `grad_bounds = Inf` for the old behaviour with the new gradient, or
-  `grad = "none"` for the old behaviour entirely.
+  and a fit that stops on the box now says so. Set `grad_bounds = Inf` for the
+  old behaviour with the new gradient, or `grad = "none"` for the old behaviour
+  entirely.
+
+  The box itself is not an adfo peculiarity: `admControl()` (`grad = "sens"`) and
+  `adghControl()` (`grad = "analytical"`) have always defaulted to a gradient
+  *and* `grad_bounds = 5`, so this aligned adfo with them rather than singling it
+  out. That is why the default stays and the REPORTING is what changed: the
+  bounds notice is now emitted as a `message()` as well as a `warning()`.
+  nlmixr2est muffles conditions inside `nlmixr2Est.*`, so the warning reaches
+  `fit$warnings` -- where `print(fit)` surfaces it -- but never `warnings()`. A
+  batch script that writes coefficients to disk without printing the fit would
+  have seen nothing at all; the message goes to the same channel as the live
+  progress table, which such a script does see.
 
 ## Bug fixes
 

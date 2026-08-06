@@ -110,7 +110,15 @@ adirmcControl <- function(
     grad            = c("analytical", "none", "fd"),
     kappa_method    = c("exact", "linearized", "linearized_gh"),
     kappa_n_nodes   = 5L,
-    grad_h          = 1e-4,
+    # 1e-6, not the 1e-4 the other controls use. The IRMC inner NLL is
+    # DETERMINISTIC given fixed proposals, so its optimal forward step is near
+    # sqrt(eps)*|p| ~ 1e-8 -- there is no MC noise to step over, which is the
+    # whole reason the sampling estimators want a coarser one. The inner FD was a
+    # hard-coded 1e-6 until this branch made it honour grad_h; inheriting a 1e-4
+    # default silently made every `grad = "fd"` adirmc fit converge on a gradient
+    # 100x coarser than the one the loop was tuned for. Honouring grad_h is right;
+    # the default it inherited was not.
+    grad_h          = 1e-6,
     cov_h           = 1e-3,
     cov_h_outer     = .Machine$double.eps^(1/5),
     phases          = c(2, 1, 0.5, 0.01),
