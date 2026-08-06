@@ -60,13 +60,13 @@ plot(fit)   # observed mean vs prediction, ±1 SD</code></pre>
 <div class="adm-sec">
 <div class="adm-kick">Documentation</div>
 <h2>Guides, grouped by what you're doing</h2>
-<p class="adm-lead">Nine worked vignettes, from your first fit to publication-grade diagnostics.</p>
+<p class="adm-lead">Ten worked vignettes, from your first fit to publication-grade diagnostics.</p>
 </div>
 <div class="adm-vcards">
 <div class="adm-vcard"><h3>Getting started</h3><ul><li><a href="articles/admixr2.html">Introduction to admixr2</a></li></ul></div>
 <div class="adm-vcard"><h3>Inputs — data &amp; models</h3><ul><li><a href="articles/aggregate-data.html">From a published figure to E, V and n</a></li><li><a href="articles/datagen.html">Simulating data &amp; using published models</a></li></ul></div>
 <div class="adm-vcard"><h3>Meta-analysis across studies</h3><ul><li><a href="articles/multiple-studies.html">Multiple studies</a></li><li><a href="articles/multi-compartment.html">Several outputs (plasma + brain)</a></li><li><a href="articles/pkpd.html">PD and PK/PD data</a></li></ul></div>
-<div class="adm-vcard"><h3>Estimation &amp; diagnostics</h3><ul><li><a href="articles/estimator-comparison.html">Comparing the estimators</a></li><li><a href="articles/advanced.html">Advanced usage</a></li><li><a href="articles/diagnostic-plots.html">Diagnostic plots</a></li></ul></div>
+<div class="adm-vcard"><h3>Estimation &amp; diagnostics</h3><ul><li><a href="articles/estimator-comparison.html">Comparing the estimators</a></li><li><a href="articles/error-models.html">Choosing a residual error model</a></li><li><a href="articles/advanced.html">Advanced usage</a></li><li><a href="articles/diagnostic-plots.html">Diagnostic plots</a></li></ul></div>
 </div>
 
 <div class="adm-close">
