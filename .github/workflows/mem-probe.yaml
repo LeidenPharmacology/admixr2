@@ -34,20 +34,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Controls, already characterised: release 569 MB heap after Probe D's
-          # 8 files, devel 6134 MB -- 10.8x, with `character` +17.6x and
-          # `integer` +18.1x leading. Those two are what a srcref is made of.
-          - {r: 'release', keepsrc: 'yes', cache: 4}
-          - {r: 'devel',   keepsrc: 'yes', cache: 4}
-          # THE TEST. R-devel has no P3M binaries, so its whole dependency stack
-          # is built FROM SOURCE on the runner -- and R_KEEP_PKG_SOURCE=yes bakes
-          # a srcref into every function of rxode2/nlmixr2est. Release installs
-          # pre-built binaries that carry none. That is the one input that
-          # differs and plausibly multiplies retained parsed code.
-          # A distinct cache-version is REQUIRED: the dependency cache key does
-          # not include R_KEEP_PKG_SOURCE, so cache-version 4 would restore the
-          # srcref-laden build and silently test nothing.
-          - {r: 'devel',   keepsrc: 'no',  cache: 91}
+          # VALIDATION RUN. The srcref hypothesis is confirmed on 8 files:
+          #   release            heap  569 MB   gill 27.2s
+          #   devel keepsrc=yes  heap 6134 MB   gill 268.0s   (rxode2 1541/1544 srcrefs)
+          #   devel keepsrc=no   heap  556 MB   gill 25.4s    (rxode2    0/1544 srcrefs)
+          # What is NOT yet shown is that the FULL suite completes on devel with
+          # srcrefs off -- Probe B was gated off that arm to save time. This run
+          # ungates it. Release is already known to finish all 58 files at
+          # 2290 MB, so it is not repeated.
+          - {r: 'devel', keepsrc: 'no', cache: 91}
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
@@ -123,5 +118,4 @@ jobs:
       # Probe B -- devel is ~6x slower here and may hit the job cap partway.
       # The per-file rows are flushed as produced, so a partial curve survives.
       - name: Probe B -- full suite, per-file memory curve
-        if: matrix.keepsrc == 'yes'
         run: Rscript .github/mem-probe/suite.R
