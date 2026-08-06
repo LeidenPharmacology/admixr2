@@ -34,8 +34,11 @@ test_that("restart workers run with non-cp output_var", {
     studies = env$studies, n_sim = 1L, seed = 123L,
     algorithm = "NLOPT_LN_BOBYQA", ftol_rel = 1e-8, maxeval = 1L,
     use_grad = FALSE, grad_h = 1e-3, grad_bounds = 1,
-    output_var = env$output_var, sampling = "sobol",
-    use_central = FALSE, use_pure_fd = FALSE,
+    # No `use_central` here: .adfoRestartWorker lost it in 0.4.1 when forward
+    # differencing was removed and central became the only form. .admRestartWorker
+    # below still takes it -- admc's batched-solve offsets are written in terms of
+    # it -- so the asymmetry is deliberate, not an oversight.
+    output_var = env$output_var, sampling = "sobol", use_pure_fd = FALSE,
     print_progress = FALSE, print = 0L, cores = 1L, no_lock = TRUE,
     rxMod_direct = env$rxMod, sensModel_direct = env$sensModel
   )

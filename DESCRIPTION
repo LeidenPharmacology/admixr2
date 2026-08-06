@@ -1,7 +1,7 @@
 Package: admixr2
 Type: Package
 Title: Aggregate Data Modelling
-Version: 0.4.0
+Version: 0.4.1
 Authors@R: c(
         person("H.", "van de Beek", email = "h.van.de.beek@lacdr.leidenuniv.nl", role = c("aut", "cre")),
         person("P.A.J.", "Välitalo", role = "aut"),
@@ -51,4 +51,5 @@ Suggests:
     testthat (>= 3.0.0)
 VignetteBuilder: knitr
 Config/testthat/edition: 3
+Config/testthat/parallel: true
 Config/roxygen2/version: 8.0.0

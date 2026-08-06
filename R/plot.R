@@ -72,7 +72,13 @@ print.admFit <- function(x, ...) {
   saved_cl <- class(x)
   on.exit(tryCatch(class(x) <- saved_cl, error = function(e) NULL), add = TRUE)
 
-  fn <- get("print.nlmixr2FitCore", envir = asNamespace("nlmixr2est"), inherits = FALSE)
+  # getS3method(), not get(..., envir = asNamespace("nlmixr2est")).
+  # print.nlmixr2FitCore is NOT exported, so reaching into the namespace for it is
+  # semantically a ::: call that merely evades R CMD check's syntactic scan -- and
+  # it carries the same fragility the no-::: policy exists to avoid. It IS
+  # registered as an S3 method, so the method lookup is the supported public route
+  # to the same function.
+  fn <- utils::getS3method("print", "nlmixr2FitCore")
   class(x) <- class(x)[class(x) != "nlmixr2FitData"]
   fn(x, ...)
   invisible(x)
@@ -83,7 +89,7 @@ print.admFit <- function(x, ...) {
 # knit_print.admFit to avoid roxygen2 S3-method detection and spurious
 # NAMESPACE requirements.
 .admKnitPrint <- function(x, ...) {
-  fn <- get("print.nlmixr2FitCore", envir = asNamespace("nlmixr2est"), inherits = FALSE)
+  fn <- utils::getS3method("print", "nlmixr2FitCore")
   saved_cl <- class(x)
   on.exit(tryCatch(class(x) <- saved_cl, error = function(e) NULL))
   class(x) <- class(x)[class(x) != "nlmixr2FitData"]
@@ -348,10 +354,19 @@ head.paged_df <- function(x, n = 6L, ...) {
       # vector; .admSimulate() solves a single output, so it returned the first
       # endpoint's trajectory for every row. Same shared-eta solve the estimators
       # use, for the same unit.
+      # sigdig: the tolerance the FIT solved at (extra$sigdig), not rxode2's
+      # default. Without it the predicted-mean, residual and predicted-covariance
+      # panels are computed from a different integration than the objective was
+      # minimised on, and the standardised-residual panel can show structure the
+      # fit never saw -- an artefact that moves with sigdig and disappears when
+      # it is NULL. NULL for a fit made before this field existed, which is
+      # exactly the previous behaviour.
       if (isTRUE(s$is_joint))
-        .admSimulateJoint(rxMod, extra$struct, sig_nms, eta_mat, s, params_df, 1L)
+        .admSimulateJoint(rxMod, extra$struct, sig_nms, eta_mat, s, params_df, 1L,
+                          sigdig = extra$sigdig)
       else
-        .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L),
+        .admSimulate(rxMod, extra$struct, sig_nms, eta_mat, s, ov, params_df, 1L,
+                     sigdig = extra$sigdig),
       error = function(e) {
         if (warn) warning("plot.admFit: simulation failed: ", e$message, call. = FALSE)
         NULL

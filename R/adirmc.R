@@ -12,8 +12,8 @@
 #' @inheritParams admControl
 #' @param grad Gradient mode for the inner optimiser: `"analytical"` (default,
 #'   closed-form weight-path gradient), `"none"` (derivative-free BOBYQA), or
-#'   `"fd"` (finite differences). Note: `"sens"` and `"cfd"` are not available
-#'   for the IRMC estimator.
+#'   `"fd"` (central finite differences). Note: `"sens"` is not available for the
+#'   IRMC estimator.
 #' @param kappa_method Kappa correction method for models with non-mu-referenced
 #'   struct thetas: `"exact"` (default, re-evaluates population prediction `f(theta, 0)`
 #'   via rxSolve at each inner step), `"linearized"` (precomputes `J = df/d(theta)`
@@ -21,6 +21,13 @@
 #'   or `"linearized_gh"` (same linear approximation but baseline and Jacobian use
 #'   Gauss-Hermite quadrature `E_GH[f(theta, eta)]` instead of `f(theta, 0)` — more
 #'   accurate baseline at any IIV magnitude, still zero rxSolve per inner step).
+#' @param grad_h Step size for the inner optimiser's finite-difference gradient
+#'   (`grad = "fd"`). Defaults to `1e-6`, not the `1e-4` the other three
+#'   controls use: the IRMC inner NLL is deterministic given fixed proposals, so
+#'   there is no Monte Carlo noise to step over and the truncation-versus-noise
+#'   balance that sets `1e-4` elsewhere does not apply. The inner step was a
+#'   hard-coded `1e-6` until it was made to honour `grad_h`; inheriting the
+#'   coarser default would have changed the gradient the loop was tuned for.
 #' @param kappa_n_nodes Number of GH nodes per eta dimension for
 #'   `kappa_method = "linearized_gh"` (default 5). Total quadrature points =
 #'   `kappa_n_nodes^n_eta`. Ignored for other kappa methods.
@@ -110,7 +117,15 @@ adirmcControl <- function(
     grad            = c("analytical", "none", "fd"),
     kappa_method    = c("exact", "linearized", "linearized_gh"),
     kappa_n_nodes   = 5L,
-    grad_h          = 1e-4,
+    # 1e-6, not the 1e-4 the other controls use. The IRMC inner NLL is
+    # DETERMINISTIC given fixed proposals, so its optimal forward step is near
+    # sqrt(eps)*|p| ~ 1e-8 -- there is no MC noise to step over, which is the
+    # whole reason the sampling estimators want a coarser one. The inner FD was a
+    # hard-coded 1e-6 until this branch made it honour grad_h; inheriting a 1e-4
+    # default silently made every `grad = "fd"` adirmc fit converge on a gradient
+    # 100x coarser than the one the loop was tuned for. Honouring grad_h is right;
+    # the default it inherited was not.
+    grad_h          = 1e-6,
     cov_h           = 1e-3,
     cov_h_outer     = .Machine$double.eps^(1/5),
     phases          = c(2, 1, 0.5, 0.01),
@@ -125,7 +140,7 @@ adirmcControl <- function(
     calcTables      = FALSE,
     compress        = TRUE,
     ci              = 0.95,
-    sigdig          = 4,
+    sigdig          = NULL,
     sigdigTable     = NULL,
     addProp         = c("combined2", "combined1"),
     optExpression   = TRUE,
@@ -135,6 +150,7 @@ adirmcControl <- function(
     # LAST on purpose: inserting an argument mid-signature silently rebinds every
     # positional call -- adirmcControl(studies, 2000L) used to set n_sim = 2000.
     resid_nodes     = 81L,
+    # ... and this one after it, for the same reason.
     ...) {
 
   .xtra <- list(...)
@@ -161,6 +177,7 @@ adirmcControl <- function(
   checkmate::assertNumeric(omega_expansion, lower = 1,   len = 1)
   checkmate::assertIntegerish(seed,                      len = 1)
   checkmate::assertIntegerish(cores,        lower = 1L,  len = 1)
+  if (!is.null(sigdig)) checkmate::assertIntegerish(sigdig, lower = 1L, len = 1)
   checkmate::assertIntegerish(nDisplayProgress, lower = 1L, len = 1,
                               .var.name = "nDisplayProgress")
   checkmate::assertNumeric(grad_h,          lower = 0,   len = 1)
@@ -175,14 +192,39 @@ adirmcControl <- function(
   checkmate::assertIntegerish(n_restarts,   lower = 1L,  len = 1)
   checkmate::assertNumeric(restart_sd,      lower = 0,   len = 1)
   checkmate::assertIntegerish(workers,      lower = 1L,  len = 1)
+  # The other three controls validate these; adirmc did not, so adirmcControl(ci
+  # = 99) and adirmcControl(returnAdmr = "x") were accepted silently -- the first
+  # reaches the confidence-interval columns as a nonsense level, the second makes
+  # the driver's `isTRUE(returnAdmr)` quietly FALSE and returns a full fit where a
+  # plain list was asked for.
+  checkmate::assertNumeric(ci, lower = 0, upper = 1, len = 1, .var.name = "ci")
+  checkmate::assertLogical(returnAdmr,      len = 1, .var.name = "returnAdmr")
 
   .algo     <- .admResolveAlgorithm(algorithm, grad,
                                     .var.name = "adirmcControl: algorithm")
   algorithm <- .algo$algorithm
   grad      <- .algo$grad
 
-  if (is.null(rxControl))   rxControl   <- rxode2::rxControl(sigdig = sigdig)
-  if (is.null(sigdigTable)) sigdigTable <- max(round(sigdig), 3L)
+  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone".
+  # It is the one setting whose meaning does not move under an rxode2 upgrade,
+  # and it is the default because a looser solve is not free: this release is
+  # what first routed sigdig into the estimators' own rxSolve calls, and every
+  # finite-difference step that consumes those solves (grad_h 1e-4, cov_h 1e-3,
+  # cov_h_outer ~2.5e-3) is the same order as the tolerance sigdig = 4 asks for.
+  # rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4 (5.1.4 mapped it to 5e-7 -- 200x
+  # tighter for the same request), so differencing with a 1e-4 step differences
+  # noise: a moved objective and an indefinite Hessian, not an error. Shipping it
+  # on by default would have changed the numerics of every existing script
+  # silently, for a knob that looked like table formatting before this release.
+  #
+  # NULL is also the only way back: the sigdig -> tolerance map is
+  # one-dimensional while rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so
+  # no sigdig value reproduces them. The tables still need a number, so they fall
+  # back to 4 -- i.e. sigdigTable is unchanged whichever way sigdig is set.
+  if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
+    rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
+  if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
+    max(round(sigdig), 3L)
 
   .ret <- list(
     studies         = studies,
@@ -532,7 +574,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
                           kappa_method = "exact",
                           kappa_n_nodes = 5L,
                           struct_transforms = NULL, struct_eta_idx = NULL,
-                          use_grad = TRUE, ndp = .Machine$integer.max) {
+                          use_grad = TRUE, ndp = .Machine$integer.max,
+                          sigdig = NULL) {
   Omega_prop <- omega * omega_expansion
   L_prop     <- tryCatch(t(chol(Omega_prop)), error = function(e) {
     message("adirmc: proposal:chol(Omega_prop) failed: ", conditionMessage(e))
@@ -619,7 +662,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
   out      <- rxode2::rxSolve(rxMod, params = as.data.frame(params_df_ext),
                               events = study$ev_full,
                               cores = cores,
-                              nDisplayProgress = ndp)
+                              nDisplayProgress = ndp,
+                              sigdig = sigdig)
   keep     <- out[["time"]] %in% study$times
   obs_vals <- out[[output_var]][keep]
   if (is.null(obs_vals)) obs_vals <- out[["ipredSim"]][keep]
@@ -722,7 +766,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
             params_cand[1L, nm] <- struct_cand[[nm]]
           out_c  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_cand),
                                     events = study$ev_full, cores = cores,
-                                    nDisplayProgress = ndp)
+                                    nDisplayProgress = ndp,
+                                    sigdig = sigdig)
           keep_c  <- out_c[["time"]] %in% study$times
           vals_c1 <- out_c[[output_var]][keep_c]
           if (is.null(vals_c1)) vals_c1 <- out_c[["ipredSim"]][keep_c]
@@ -747,7 +792,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
             }
             out_b  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_bat),
                                       events = study$ev_full, cores = cores,
-                                      nDisplayProgress = ndp)
+                                      nDisplayProgress = ndp,
+                                      sigdig = sigdig)
             keep_b  <- out_b[["time"]] %in% study$times
             vals_b1 <- out_b[[output_var]][keep_b]
             if (is.null(vals_b1)) vals_b1 <- out_b[["ipredSim"]][keep_b]
@@ -819,6 +865,46 @@ nmObjGetControl.adirmc <- function(x, ...) {
   nll2
 }
 
+# -- Proposal-drawing closure --------------------------------------------------
+
+# Build the closure .adirmcPhaseLoop() calls to redraw proposals at a parameter
+# vector. It needs two of them per run -- one for the inner optimiser and one for
+# the exact-NLL check -- and they differ in EXACTLY ONE argument, `use_grad`
+# (the exact evaluation never needs the gradient-side quantities).
+#
+# That pair was written out longhand, and then the whole pair was written out
+# again in the restart worker: four copies of one 18-line call, differing in one
+# flag and in whether the captured names are the worker's (`studies`, `cores_w`,
+# `omega_expansion`) or the driver's (`studies_snap`, `cores`,
+# `.ctl$omega_expansion`). A factory takes those as arguments and the difference
+# stops being a copy.
+#
+# Kept as a factory returning ONE closure, rather than having .adirmcPhaseLoop
+# take a single function plus a flag: the phase loop's two-closure interface is
+# unchanged, so its signature -- and the worker's, which must stay stable for the
+# daemons -- does not move.
+.adirmcProposalFn <- function(rxMod, pinfo, studies, z_list, params_list,
+                              output_var, cores, omega_expansion,
+                              kappa_method, kappa_n_nodes, use_grad) {
+  function(p) {
+    pars  <- .admUnpack(p, pinfo)
+    props <- lapply(seq_along(studies), function(si)
+      .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
+                    pars$omega, omega_expansion, studies[[si]],
+                    z_list[[si]], output_var, params_list[[si]], cores,
+                    pinfo$eta_col_names,
+                    has_kappa         = pinfo$has_kappa,
+                    kappa_method      = kappa_method,
+                    kappa_n_nodes     = kappa_n_nodes,
+                    struct_transforms = pinfo$struct_transforms,
+                    struct_eta_idx    = pinfo$struct_eta_idx,
+                    use_grad          = use_grad,
+                    ndp               = pinfo$nDisplayProgress,
+                    sigdig            = pinfo$sigdig))
+    if (any(vapply(props, is.null, logical(1)))) NULL else props
+  }
+}
+
 # -- Shared outer phase loop ---------------------------------------------------
 
 # Runs all IRMC phases for one restart. draw_proposals_inner / draw_proposals_exact
@@ -839,6 +925,15 @@ nmObjGetControl.adirmc <- function(x, ...) {
   nll_trace        <- numeric(0)
   par_trace        <- NULL
   last_opt_message <- ""
+
+  # Inner FD step for grad_mode = "fd". Carried on `pinfo` rather than added to
+  # this function's formals, so .adirmcRestartWorker's signature is untouched --
+  # a daemon resolves that worker from the stale INSTALLED namespace, where a new
+  # argument throws `unused argument` before the patched dev body can run.
+  # `.shi_h` is filled on the first outer iteration and reused (see the note at
+  # the FD closure below).
+  .fd_h   <- pinfo$grad_h %||% 1e-6
+  .shi_h <- NULL
 
   # Proposal memo (one entry).
   #
@@ -894,11 +989,33 @@ nmObjGetControl.adirmc <- function(x, ...) {
         eval_f <- function(p) .adirmcNLL(p, pinfo, studies, proposals)
         eval_grad_inner <- switch(grad_mode,
           fd = local({
-            h <- 1e-6
+            # The step used to be a hard-coded 1e-6 that ignored `grad_h`
+            # entirely, so adirmc was the one estimator whose documented
+            # finite-difference control did nothing to its gradient. It now
+            # honours grad_h, and takes Shi21's measured steps when they can be
+            # measured, falling back to grad_h when they cannot.
+            #
+            # Measured ONCE, on the FIRST outer iteration, and reused for the
+            # rest -- the same reuse FOCEI's numericGrad does at nF == 1. It has
+            # to be reuse rather than re-measurement: `proposals` are redrawn
+            # every outer iteration, so `eval_f` is strictly a different function
+            # each time, and re-probing it would cost 10 x n_par extra inner NLL
+            # evaluations PER ITERATION. The inner objective keeps the same
+            # noise and curvature character throughout, which is what the step
+            # depends on, so the first iteration's measurement stays apt.
+            if (is.null(.shi_h)) {
+              .shi_h <<- .admShi21GradH(eval_f, p_cur, seq_along(p_cur),
+                                        .fd_h, scaled = FALSE,
+                                        .var.name = "adirmc inner gradient")
+            }
+            h <- if (is.null(.shi_h)) .fd_h else .shi_h
             function(p) {
               f0 <- eval_f(p)
               g  <- numeric(length(p))
-              for (k in seq_along(p)) { p_h <- p; p_h[k] <- p_h[k] + h; g[k] <- (eval_f(p_h) - f0) / h }
+              for (k in seq_along(p)) {
+                hk <- .admGH(h, k)
+                p_h <- p; p_h[k] <- p_h[k] + hk; g[k] <- (eval_f(p_h) - f0) / hk
+              }
               g
             }
           }),
@@ -985,7 +1102,11 @@ nmObjGetControl.adirmc <- function(x, ...) {
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
   # adirmc has no sensitivity model (analytical inner gradient) -> no sens_* args.
-  m       <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores)
+  # pinfo IS passed: it carries the parent's simulation-model cache path, which
+  # the worker cannot recompute (it has no `ui`). Named, not positional -- and
+  # not a new formal of either function, so the dev-mode stale-daemon trap does
+  # not apply.
+  m       <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores, pinfo = pinfo)
   cores_w <- m$cores_w
   rxMod   <- m$rxMod
 
@@ -1004,39 +1125,12 @@ nmObjGetControl.adirmc <- function(x, ...) {
     on.exit(tryCatch(rxode2::rxUnlock(rxMod), error = function(e) NULL), add = TRUE)
   }
 
-  .draw_proposals_inner <- function(p) {
-    pars  <- .admUnpack(p, pinfo)
-    props <- lapply(seq_along(studies), function(si)
-      .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pars$omega, omega_expansion, studies[[si]],
-                    z_list[[si]], output_var, params_list[[si]], cores_w,
-                    pinfo$eta_col_names,
-                    has_kappa         = pinfo$has_kappa,
-                    kappa_method      = kappa_method,
-                    kappa_n_nodes     = kappa_n_nodes,
-                    struct_transforms = pinfo$struct_transforms,
-                    struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = grad_mode == "analytical",
-                    ndp               = pinfo$nDisplayProgress))
-    if (any(vapply(props, is.null, logical(1)))) NULL else props
-  }
-
-  .draw_proposals_exact <- function(p) {
-    pars  <- .admUnpack(p, pinfo)
-    props <- lapply(seq_along(studies), function(si)
-      .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pars$omega, omega_expansion, studies[[si]],
-                    z_list[[si]], output_var, params_list[[si]], cores_w,
-                    pinfo$eta_col_names,
-                    has_kappa         = pinfo$has_kappa,
-                    kappa_method      = kappa_method,
-                    kappa_n_nodes     = kappa_n_nodes,
-                    struct_transforms = pinfo$struct_transforms,
-                    struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = FALSE,
-                    ndp               = pinfo$nDisplayProgress))
-    if (any(vapply(props, is.null, logical(1)))) NULL else props
-  }
+  .mk_prop <- function(use_grad)
+    .adirmcProposalFn(rxMod, pinfo, studies, z_list, params_list, output_var,
+                      cores_w, omega_expansion, kappa_method, kappa_n_nodes,
+                      use_grad)
+  .draw_proposals_inner <- .mk_prop(grad_mode == "analytical")
+  .draw_proposals_exact <- .mk_prop(FALSE)
 
   pl <- .adirmcPhaseLoop(
     best_p = best_p, best_nll = best_nll,
@@ -1088,7 +1182,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
 
-  pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
+  pinfo      <- .admDriverPinfo(.ui, .ctl)
   # IRMC draws its importance-sampling proposals FROM the random-effect
   # distribution, so a model with no random effect has nothing to propose: the
   # proposal draw is degenerate and the fit returned a silent objective = Inf
@@ -1138,16 +1232,17 @@ nlmixr2Est.adirmc <- function(env, ...) {
   Use est = \"admc\" or est = \"adgh\" for this model.",
          call. = FALSE)
 
-  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
-  # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
-  pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
+  # adirmc only: its inner optimiser finite-differences on a separate path.
+  # Same pinfo-not-a-formal reason as .admDriverPinfo() records.
+  pinfo$grad_h           <- .ctl$grad_h
   output_var <- .admOutputVar(.ui)
 
-  for (nm in names(studies))
-    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
-  studies    <- .admFlattenStudies(studies)
-  .adm_multi_out <- length(.admOutputVars(.ui)) > 1L
-  .adm_joint     <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
+  # ev_full = FALSE: the refusal below must fire BEFORE ev_full is built, so
+  # adirmc builds it itself once it knows the study set is one it supports.
+  .u <- .admDriverUnits(studies, .ui, output_var, ev_full = FALSE)
+  studies        <- .u$studies
+  .adm_multi_out <- .u$multi_out
+  .adm_joint     <- .u$any_joint
   if (.adm_multi_out || .adm_joint)
     stop("adirmc does not yet support multiple observed outputs (multi-compartment observations). ",
          "Use est = 'admc', 'adfo', or 'adgh' for multi-output fits.", call. = FALSE)
@@ -1164,7 +1259,36 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   # See model.R for rationale (linCmt foceiModel FD-path caching inner=NULL).
-  sensModel <- if (.ctl$grad == "analytical")
+  # GATED ON covMethod TOO, because that is what actually consumes it.
+  #
+  # adirmc is the one estimator whose FIT never reads a sensitivity model: the
+  # inner gradient is analytic through the softmax/MVN chain (.adirmcInnerGrad)
+  # and .adirmcProposal() takes no sens argument. The only consumer is
+  # .admCalcCov() for the post-fit Hessian, which runs only under
+  # covMethod = "r". Gating on `grad` alone therefore compiled a sensitivity
+  # model -- ~3.6s cold -- and then never read it for every
+  # adirmcControl(grad = "analytical", covMethod = "none") fit.
+  #
+  # Behaviour-preserving: the progress label that also reads `sensModel` is
+  # itself appended only `if (.ctl$covMethod == "r")`, so the covMethod = "none"
+  # header is unchanged.
+  #
+  # ...but skipping the load outright would break the model-compilation ORDERING
+  # INVARIANT. `.admLoadSensModel()` must run before `.admLoadModel()`, because
+  # the latter's cache-MISS path calls `rxode2::rxode2(ui)`, and that caches
+  # `ui$foceiModel$inner` as NULL. Nothing in this fit reads `inner`, but a LATER
+  # admc/adgh/adfo fit whose `.admBuildThetaSens()` bails falls back to
+  # `.admSensFromInner()`, gets NULL, and silently drops to an FD gradient -- and
+  # the stale-cache recovery that used to repair this no longer exists, so the
+  # ordering is the only defence. It persists via rxTempDir().
+  #
+  # The compile only happens on a cache MISS, and `.admModelCacheFile()` is pure
+  # -- it derives the path without compiling anything. So ask first: skip the
+  # sens load only when `.admLoadModel()` is going to take its cache-HIT branch
+  # and therefore cannot poison anything. Cold cache keeps the old ordering.
+  .sim_warm <- isTRUE(tryCatch(file.exists(.admModelCacheFile(.ui)),
+                               error = function(e) FALSE))
+  sensModel <- if ((.ctl$covMethod == "r" && .ctl$grad == "analytical") || !.sim_warm)
     tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
   else NULL
 
@@ -1205,39 +1329,12 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   grad_mode_inner <- if (.ctl$grad == "none") "none" else if (.ctl$grad == "fd") "fd" else "analytical"
 
-  .draw_proposals_inner <- function(p) {
-    pars <- .admUnpack(p, pinfo)
-    props <- lapply(seq_along(studies_snap), function(si)
-      .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pars$omega, .ctl$omega_expansion,
-                    studies_snap[[si]], z_list[[si]], output_var,
-                    params_list[[si]], cores, pinfo$eta_col_names,
-                    has_kappa         = pinfo$has_kappa,
-                    kappa_method      = .ctl$kappa_method,
-                    kappa_n_nodes     = .ctl$kappa_n_nodes,
-                    struct_transforms = pinfo$struct_transforms,
-                    struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = grad_mode_inner == "analytical",
-                    ndp               = pinfo$nDisplayProgress))
-    if (any(vapply(props, is.null, logical(1)))) NULL else props
-  }
-
-  .draw_proposals_exact <- function(p) {
-    pars <- .admUnpack(p, pinfo)
-    props <- lapply(seq_along(studies_snap), function(si)
-      .adirmcProposal(rxMod, pars$struct, pinfo$sigma_names,
-                    pars$omega, .ctl$omega_expansion,
-                    studies_snap[[si]], z_list[[si]], output_var,
-                    params_list[[si]], cores, pinfo$eta_col_names,
-                    has_kappa         = pinfo$has_kappa,
-                    kappa_method      = .ctl$kappa_method,
-                    kappa_n_nodes     = .ctl$kappa_n_nodes,
-                    struct_transforms = pinfo$struct_transforms,
-                    struct_eta_idx    = pinfo$struct_eta_idx,
-                    use_grad          = FALSE,
-                    ndp               = pinfo$nDisplayProgress))
-    if (any(vapply(props, is.null, logical(1)))) NULL else props
-  }
+  .mk_prop <- function(use_grad)
+    .adirmcProposalFn(rxMod, pinfo, studies_snap, z_list, params_list, output_var,
+                      cores, .ctl$omega_expansion, .ctl$kappa_method,
+                      .ctl$kappa_n_nodes, use_grad)
+  .draw_proposals_inner <- .mk_prop(grad_mode_inner == "analytical")
+  .draw_proposals_exact <- .mk_prop(FALSE)
 
   if (.ctl$n_restarts == 1L) {
     message(.admProgressHeader(pinfo, bottom = FALSE))
@@ -1370,6 +1467,13 @@ nlmixr2Est.adirmc <- function(env, ...) {
                          sigma_is_lnorm = pinfo$sigma_is_lnorm,
                          # the TBS residual quadrature the FIT used -- see adfo.R
                          resid_nodes    = pinfo$resid_nodes,
+                        # ... and the solver tolerance the FIT used, for the
+                        # same reason: plot.admFit() re-solves the model to build
+                        # the predicted mean and covariance panels, and a fit run
+                        # at a looser sigdig diagnosed against rxode2's stock
+                        # tolerances shows standardised-residual structure the
+                        # objective was never minimised on.
+                         sigdig         = pinfo$sigdig,
                          omega          = final$omega,
                          L              = final$L,
                          eta_col_names  = pinfo$eta_col_names,
@@ -1386,46 +1490,10 @@ nlmixr2Est.adirmc <- function(env, ...) {
                          n_sim         = .ctl$n_sim,
                          sampling      = .ctl$sampling)
 
-  nlmixr2est::.nlmixr2FitUpdateParams(.ret)
-  nmObjHandleControlObject.adirmcControl(.ctl, .ret)
-  if (exists("control", .ui)) rm(list = "control", envir = .ui)
-  .ret$control <- .admToFoceiControl(.ctl, .admCovSkip(.cov, .ui))
-  .focei_model <- suppressMessages(tryCatch(.ui$foceiModel, error = function(e) NULL))
-  if (!is.null(.focei_model)) .ret$model <- .focei_model
-
-  .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = admData(), control = .ret$control,
-    table = .ret$table, env = .ret, est = "adirmc")
-
-  .fit$env$method    <- "adirmc"
-  .admRestoreCovNames(.fit, .cov_nms)
-  .fit$env$studies   <- studies
-  .fit$env$adirmcExtra <- .ret$adirmcExtra
-  # Populate nlmixr2-style parameter history so traceplot(fit) works natively.
-  .admAttachParHist(.fit, .ret$adirmcExtra$all_traces, .ret$adirmcExtra$par_names, .ui)
-  # Store observed + predicted aggregate moments (E vector, V matrix) per study.
-  .admAttachAggData(.fit, .ret$adirmcExtra, .ui)
-  .old_cls <- class(.fit)
-  .new_cls <- c("admFit", .old_cls)
-  attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")
-  class(.fit) <- .new_cls
-
-  .stats <- .admCalcObjStats(best_nll, length(ov$p0), studies)
-  row.names(.stats$objDf) <- "adirmc"
-  .fit$env$logLik    <- .stats$ll
-  .fit$env$nobs      <- .stats$nobs
-  .fit$env$objDf     <- .stats$objDf
-  .fit$env$OBJF      <- .stats$objDf$OBJF
-  .fit$env$AIC       <- .stats$objDf$AIC
-  .fit$env$BIC       <- .stats$objDf$BIC
-  .fit$env$objective <- best_nll
-  .fit$env$time      <- data.frame(
-    optimize   = t_opt,
-    covariance = t_cov,
-    other      = 0,
-    elapsed    = t_elapsed,
-    row.names  = NULL
-  )
-
-  .fit
+  .admFinaliseFit(.ret, .ui, .ctl, est = "adirmc", objective = best_nll,
+                  ov = ov, studies = studies, cov = .cov,
+                  cov_nms = .cov_nms, multi_out = FALSE,
+                  extra_field = "adirmcExtra",
+                  handle_ctl = nmObjHandleControlObject.adirmcControl,
+                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed)
 }

@@ -1,3 +1,680 @@
+# admixr2 0.4.1
+
+## New features
+
+* **`sigdig` now controls the fit, not just the output tables -- and it is
+  opt-in.** The `sigdig` and `rxControl` arguments were documented as solver
+  controls, but the object they built only ever reached nlmixr2's *post-fit*
+  table solves: every optimizer solve ran at rxode2's own default tolerances, so
+  setting `sigdig` changed nothing about the fit. It is now passed to
+  `rxode2::rxSolve()`'s own `sigdig` argument at every solve the estimators
+  issue.
+
+  **The default is `sigdig = NULL`, so default fit results are unchanged.**
+  `NULL` means "leave rxode2's own tolerances alone", which is exactly the
+  numerics every admixr2 fit had before. It is the default because a looser
+  solve is not free: the estimators finite-difference these solves with steps of
+  the same order -- `grad_h` 1e-4, `cov_h` 1e-3, `cov_h_outer` ~2.5e-3 -- while
+  rxode2 5.1.5 maps `sigdig = 4` to `rtol = 1e-4`. Differencing a solution whose
+  own relative noise is 1e-4 with a 1e-4 step returns noise, and it surfaces as a
+  moved objective and an indefinite covariance Hessian (every `SE` reported `NA`)
+  rather than as an error. Turning that on by default would have changed the
+  numerics of every existing script silently, for a knob that looked like table
+  formatting before this release.
+
+  Set explicitly, it is the lever for trading solver accuracy against speed.
+  Measured on a 1-cmt oral ODE model with two studies, at a fixed iteration
+  count, `sigdig = 4` makes **adfo 4.8x faster**, `admc` 1.3x, and `adgh`
+  unchanged (its batched quadrature solve is not integration-bound); the
+  objective moves by 5e-09 relative and the `covMethod = "r"` standard errors are
+  unchanged to four significant figures. It is most worthwhile where the gradient
+  is fully analytic and nothing differences the solve, which after this release
+  is `adfoControl(grad = "analytical")`. Elsewhere, compare the objective and the
+  standard errors against `NULL` before relying on it.
+
+  Passing the digits rather than re-deriving tolerances keeps the mapping
+  rxode2's business, which matters because rxode2 has changed it between
+  releases: `sigdig = 4` is `atol = rtol = 5e-07` on rxode2 5.1.4 but
+  `rtol = 1e-04` on 5.1.5. `sigdig = NULL` is the one setting whose meaning does
+  not move under an upgrade -- and no single `sigdig` value reproduces rxode2's
+  defaults anyway, since they are asymmetric (`atol` 1e-8 against `rtol` 1e-6)
+  while the `sigdig` map is one-dimensional. Table formatting is unaffected
+  either way: `sigdigTable` falls back to 4 when `sigdig` is `NULL`.
+
+  `plot()` now solves at the tolerance the fit used, so the diagnostic panels
+  describe the same integration the objective was minimised on. `datagen()`
+  deliberately does not -- it generates the reference, and integrates at
+  rxode2's own tolerances regardless.
+
+* **adfo differentiates its structural thetas analytically, and
+  `grad = "analytical"` (LBFGS) is now the default.** adfo was the last estimator
+  with a finite-difference component: its `V_pred = J Omega J' + resid` depends on
+  a structural theta through `J`, so the gradient needs `dJ/dtheta`, a *second*
+  derivative that the first-order sensitivity model does not carry. It therefore
+  finite-differenced the whole objective -- differencing a log-determinant and a
+  quadratic form, the noisiest construction in the package.
+
+  `.admBuildThetaSens()` now emits a second-order **cross block**
+  `d2f/(d eta d dir)` on request, and `.adfoGrad()` contracts it against the same
+  `dNLL/dV` matrix the omega path already uses, so the two cannot drift apart.
+  Against a central difference of the objective the structural gradient is
+  accurate to 2e-07..2e-06, where the finite-difference pass it replaces reached
+  8e-04..1e-02 (worst case `tv`, 1.4%).
+
+  Because the gradient is now exact, LBFGS on it beats the derivative-free
+  BOBYQA that `grad = "none"` used, so the default changed. `grad = "none"`
+  remains available, and any model whose second-order model cannot be built
+  falls back to the previous finite-difference gradient automatically.
+
+  **That default flip changes three more things than the gradient**, because
+  `grad != "none"` is the switch for all four. Spelled out, since only the first
+  is obvious:
+
+  1. The gradient itself, as above.
+  2. **A box constraint.** A gradient fit is confined to `p0 +/- grad_bounds`
+     (default 5) on the optimizer scale -- a factor of ~148 on the log scale.
+     adfo fits were unbounded before. nloptr reports normal convergence at a box
+     corner, so admixr2 now *warns* when an estimate finishes on that bound and
+     the model itself declared none; `admc`/`adgh` have always run this way and
+     gained the same warning.
+  3. **The covariance method.** `covMethod = "r"` builds its Hessian by
+     forward-differencing the gradient rather than the objective when a gradient
+     is available. That is now gated on the struct-theta gradient being genuinely
+     analytic, not merely on `grad != "none"`: with an order-1 fallback or a
+     transformed endpoint the gradient is itself a finite difference, and
+     differencing it again produced a singular Hessian and "standard errors are
+     unavailable for this fit". Those cases keep the objective-FD Hessian
+     that 0.4.0 used.
+  4. **Whether a sensitivity model is asked for at all.** `.admLoadSensModel()`
+     returns `NULL` by design for a fixed-effects-only model, an ordinal
+     endpoint, and mixed transformed/untransformed endpoints. Each used to run
+     BOBYQA silently and briefly warned on every fit; they now emit a single
+     plain message saying the gradient is finite-differenced.
+
+  The startup line distinguishes the two analytic levels: `Grad: Analytical`
+  means the struct thetas come from the second-order block, `Analytical (struct
+  FD)` means the omega/sigma blocks are analytic and the struct thetas are not.
+
+* **`linCmt()` models are supported at second order, by promotion.** `linCmt()`
+  has no second derivative -- `rxFromSE()` cannot emit the nested `linCmtB`
+  derivative, which is why nlmixr2est refuses `linCmt()` outright for its own
+  analytic gradient and covariance. admixr2 instead promotes the model to its
+  explicit ODE form with the exported `rxode2::linToOde()` and builds the
+  second-order block from that. The promoted solve reproduces the analytic
+  `linCmt()` prediction to 1.8e-08 relative.
+
+  Only the `order = 2` request promotes: `admc`/`adgh` continue to use the fast
+  solved form, which is all their first-order moments need.
+
+* **Finite-difference steps measured per parameter (Shi 2021), replacing the
+  fixed scale.** Every finite difference in admixr2 took its step from the same
+  heuristic -- `pmax(abs(p), 0.1) * h`, with `h` a fixed constant. That is a
+  single guess about how much noise the objective carries, applied identically
+  to every parameter. A parameter the objective is flat in and one it is sharp
+  in want different steps, and the right step moves with the ODE tolerance.
+
+  admixr2 now measures. For a central difference the error is
+  `(h^2/6)|f'''| + eps_f/h`, minimised at `h* = (3 * eps_f/|f'''|)^(1/3)`, and
+  the procedure estimates `|f'''|` from a symmetric third difference taken where
+  that difference stands clear of the noise floor. The noise level `eps_f`
+  itself comes from More & Wild's ECnoise. Applied at both places admixr2
+  finite-differences the objective: the post-fit covariance Hessian, and the
+  optimizer's gradient (measured once at the starting values and reused, the
+  mechanism FOCEI's `numericGrad` uses at its first evaluation).
+
+  nlmixr2est ships this algorithm as `shi21CentralWrap`, but it is not exported
+  and admixr2 makes no `:::` calls into it, so it is reimplemented here. That
+  also buys the input the upstream route cannot take: `eps_f` is a real
+  argument, and it is the one that matters (`h*` scales as `eps_f^(1/3)`).
+  `test-optim-steps-shi.R` scores the reimplementation against the upstream
+  routine as an oracle -- the intervals agree to within a factor of 1.15 and the
+  derivatives to `10 * eps_f^(2/3)`.
+
+## Changes that can move an existing fit
+
+Several changes in this release alter results for scripts that do not name a new
+argument. None is a bug fix, so all are listed here rather than below.
+
+* **Finite-difference steps are now MEASURED per parameter, by the Shi (2021)
+  procedure, and this is not optional.** Every finite difference admixr2 takes
+  of the objective -- the optimizer's gradient under `grad = "fd"`, and the
+  post-fit covariance Hessian -- previously used `pmax(abs(p), 0.1) * h` with a
+  fixed `h` (`grad_h`, `cov_h_outer`). That is one guess about how much noise the
+  objective carries, applied identically to every parameter, and it is the guess
+  behind the "Hessian not positive definite ... try increasing `cov_h_outer`"
+  advice. The step is now chosen per parameter by probing the objective, with the
+  noise level itself estimated by Moré & Wild's ECnoise. `grad_h` remains as the
+  FALLBACK a parameter takes when the measurement cannot be made (a direction
+  the objective is flat in, or a failed noise estimate).
+
+  The covariance Hessian gets the measured NOISE but not the gradient's step: a
+  Hessian is a second difference, whose error is `(h^2/12)|f4| + 4*eps_f/h^2`
+  (with `f4` the fourth derivative) and whose optimum scales as `eps_f^(1/4)`,
+  about ten times larger than the first-derivative `eps_f^(1/3)`. Too fine a
+  step there amplifies noise as `4*eps_f/h^2` -- exactly what tips a marginal
+  Hessian out of positive definiteness. Measured 6x to 385x worse across noise
+  levels from 1e-15 to 1e-7 if the gradient's step is reused.
+
+  `cov_h_outer` SCALES the measured Hessian step rather than merely backing it
+  up, and `grad_h` is the gradient's fallback. The distinction matters: the
+  measurement almost always succeeds, so a fallback-only `cov_h_outer` would be
+  inert in practice -- and it is the escape hatch the documentation points at
+  ("Hessian not positive definite ... try increasing `cov_h_outer`"). Raising it
+  by 100 still gives a step 100 times larger.
+
+  Measured against the analytic gradient on the integration model, maximum
+  relative error over all five parameters:
+
+  | step | adirmc inner NLL | adfo NLL |
+  |---|---|---|
+  | fixed 1e-6 | 7.3e-06 | 9.8e-06 |
+  | Shi21 | **2.8e-10** | **3.9e-08** |
+
+  Standard errors and any `grad = "fd"` fit will move. They should move toward
+  the truth, but they will move.
+
+* **`gill` is REMOVED from all four controls.** It selected Gill (1983) step
+  selection, added in this same development cycle and never released. It is
+  removed rather than kept alongside Shi21 because measurement showed it was
+  worse than the fixed step it was meant to improve on -- 8.1e-04 (adirmc) and
+  7.9e-04 (adfo) against the fixed step's 7.3e-06 and 9.8e-06, at four times the
+  evaluations. The cause is not a mistake in the wiring: `nlmixr2Gill83()`'s
+  exported wrapper accepts `gillRtol`/`gillK`/`gillStep`/`gillFtol` and then
+  hardcodes the defaults in the inner call, so it always assumes an objective
+  accurate to about eight significant digits. That is right for FOCEI's
+  per-subject objective and wrong for admixr2's aggregate one. `gill = TRUE` is
+  now an error.
+
+* **Forward finite differences are removed; `grad = "fd"` is a CENTRAL
+  difference, and `grad = "cfd"` is gone.** Central was 10^2 to 10^4 times more
+  accurate at every site measured, and the one solve per parameter that forward
+  differencing saved does not pay for a gradient the optimizer cannot descend.
+  Scripts passing `grad = "cfd"` must pass `grad = "fd"`; scripts passing
+  `grad = "fd"` keep working and get the central difference.
+
+* **`adirmcControl(grad = "fd")` now differences with `grad_h`, not a hard-coded
+  `1e-6`.** The IRMC *inner* gradient ignored `grad_h` entirely -- it was the one
+  finite difference in the package that could not be tuned, which is why the new
+  measured step selection could not reach it either. It now honours the
+  argument, and takes Shi21's measured step where one can be measured.
+
+  `adirmcControl()`'s `grad_h` default moves to `1e-6` to match, so **a fit that
+  does not name `grad_h` is unchanged**. The IRMC inner NLL is deterministic given
+  fixed proposals, so it wants a finer step than the sampling estimators, whose
+  `1e-4` default exists to step over Monte Carlo noise; inheriting that common
+  default would have made every `grad = "fd"` adirmc fit converge on a step 100x
+  coarser than the inner loop was tuned for.
+
+  **A script that sets `grad_h` explicitly does change**: the value was ignored
+  here before and is applied now, so the objective and estimates can move. Every
+  other estimator already used `grad_h` for this step, so this also removes a
+  discrepancy -- the same control meant something different for adirmc than for
+  the other three.
+
+* **`adfoControl()`'s new `grad = "analytical"` default brings the `grad_bounds`
+  box with it.** The box constraint (`p0 +/- grad_bounds`, default 5 on the
+  optimizer scale, a factor of ~148 for a log-scale theta) applies only to
+  gradient-based fits, so under the previous `grad = "none"` default an adfo fit
+  was unconstrained. A default `adfoControl(studies = ...)` call is now confined
+  to that box.
+
+  This is rarely reachable -- it takes a starting value off by more than ~148x --
+  and a fit that stops on the box now says so. Set `grad_bounds = Inf` for the
+  old behaviour with the new gradient, or `grad = "none"` for the old behaviour
+  entirely.
+
+  The box itself is not an adfo peculiarity: `admControl()` (`grad = "sens"`) and
+  `adghControl()` (`grad = "analytical"`) have always defaulted to a gradient
+  *and* `grad_bounds = 5`, so this aligned adfo with them rather than singling it
+  out. That is why the default stays and the REPORTING is what changed: the
+  bounds notice is now emitted as a `message()` as well as a `warning()`.
+  nlmixr2est muffles conditions inside `nlmixr2Est.*`, so the warning reaches
+  `fit$warnings` -- where `print(fit)` surfaces it -- but never `warnings()`. A
+  batch script that writes coefficients to disk without printing the fit would
+  have seen nothing at all; the message goes to the same channel as the live
+  progress table, which such a script does see.
+
+## Bug fixes
+
+* **Parallel restarts (`workers > 1`) could fail with "a parallel worker could
+  not read the compiled-model cache" whenever a second R session was using
+  admixr2 at the same time.** The compiled-model and sensitivity-model caches are
+  content-addressed files in a *shared*, persistent `rxode2::rxTempDir()`, so any
+  other process fitting the same model writes the same path -- and a parallel
+  fit's own daemons are readers of that path by design. The entries were written
+  with a bare in-place `saveRDS()`, which publishes the file the instant it opens
+  the connection: it exists at **zero bytes** and is filled in afterwards. A
+  reader landing in that window is handed a truncated payload, and truncation at
+  any fraction makes `readRDS()` fail -- `file.exists()` is `TRUE` for every one
+  of them, so the existence check could not screen it out.
+
+  Cache entries are now published atomically: serialised to a temporary file in
+  the same directory, then `file.rename()`d over the target. A reader now sees
+  either the previous complete entry or the new complete entry, never a prefix of
+  one. Measured with a single competing writer, reads of a corrupt entry went
+  from **64.7%** to **0**, and the affected test file went from `1 failure,
+  2 errors` to clean under a sustained competing publisher.
+
+  A **second, independent cause** of the same failure is fixed alongside it: a
+  worker's own startup could delete the cache entry it was about to read.
+  `library(admixr2)` in a daemon loads nlmixr2est, and the installed 6.2.0's
+  `.resetCacheIfNeeded()` calls `rxode2::rxClean()` -- which wipes the whole
+  shared `rxTempDir()` -- whenever its version stamp does not match. That branch
+  never rewrites the stamp, so the mismatch is permanent rather than
+  self-healing, and it fires in every daemon on every fit. Having two nlmixr2est
+  builds in play is enough to trigger it, which is an ordinary state when working
+  against an upstream source tree. Restarts now load admixr2 in every worker
+  *before* any of them reads the cache, and rebuild the model if that startup
+  cleared it.
+
+  Two consequences worth knowing. A rename can legitimately be refused while
+  another process holds the entry open (Windows reports "Access is denied"); the
+  cache write then reports a warning and the fit continues from the model it
+  already has, which is correct because the existing entry is by construction a
+  valid payload for that key. And the guarantee is only as strong as the *other*
+  process's version -- a peer running admixr2 < 0.4.1 still writes in place.
+
+* **adfo could report `NA` for every standard error on a fit that converged
+  normally.** The driver decided whether to build the covariance Hessian by
+  forward-differencing the *gradient* from the sensitivity model's shape alone,
+  while `.adfoGrad()` re-derives that decision at run time with stricter
+  requirements -- every study's cached `dJ` present, every theta's direction
+  resolvable. When they disagreed, the gradient was itself finite-differenced and
+  the Hessian then finite-differenced *that*, which is exactly the nested FD the
+  gate exists to prevent. `.adfoGrad()` now reports what it actually did and the
+  driver believes that, falling back to the NLL-FD Hessian otherwise.
+
+* **A joint (same-subject) study normalised before the model was known kept
+  `NULL` block outputs.** Only the driver's pass carries the endpoint name, and
+  the short-circuit for an already-normalised study skipped joint units
+  altogether, so each block's `cmt` tag stayed empty: the joint sensitivity solve
+  either dropped the fit to finite differences or read an untagged compartment,
+  giving a finite but wrong joint objective with no warning.
+
+* **`.admCacheWrite()` could delete another session's valid cache entry.** The
+  cleanup that removes a half-written file ran on any `saveRDS` failure,
+  including one that fails at open time and leaves a complete pre-existing entry
+  untouched. A concurrent fit of the same model could therefore have its compiled
+  model removed underneath its parallel workers, which then fail with
+  "parallel restart N failed". It now only removes a file that call created.
+
+* **A sensitivity model that failed to build was reported as quietly as one
+  refused by design.** `.admLoadSensModel()` returns `NULL` both for models that
+  cannot have one (no random effects, ordinal, mixed or unlike endpoint
+  transforms) and for genuine failures such as an unwritable `rxode2::rxTempDir()`.
+  The second case now warns rather than messages, and says what to check --
+  previously the same script silently produced a coarser gradient, and different
+  estimates and standard errors, on a machine with a read-only cache directory.
+
+* **A fit that stops on the gradient box constraint now says so audibly.**
+  nlmixr2est muffles conditions raised inside `nlmixr2Est.*`, so the warning
+  reached `fit$warnings` -- where `print(fit)` shows it -- but never `warnings()`.
+  A script that writes coefficients to disk without printing the fit saw nothing
+  at all. The notice is now also a `message()`, on the same channel as the live
+  progress table.
+
+* **The order-2 `linCmt()` promotion did not run for a linCmt assigned to a
+  variable, so adfo kept finite-differencing its structural thetas there.**
+  `linCmt()` carries no second derivative, so an order-2 request promotes the
+  model to explicit ODE form and builds from that. The gate detecting a
+  solved-form model read `ui$predDf$linCmt`, and on rxode2 5.1.4 that column
+  depends on how the model is *written*:
+
+  | model line | `predDf$linCmt` | promoted before | promoted now |
+  |---|---|---|---|
+  | `linCmt() ~ add(a)` | `TRUE` | yes | yes |
+  | `cp <- linCmt(); cp ~ add(a)` | `FALSE` | **no** | **yes** |
+  | `cp <- 2 * linCmt(); cp ~ add(a)` | `FALSE` | no | no -- see below |
+
+  The assigned form is the common way to write it, and there the promotion was
+  never reached: `.admLoadSensModel(order = 2L)` served an order-1 model and adfo
+  silently kept the forward-FD struct-theta pass (8e-04..1e-02 relative, against
+  ~1e-09 for the analytic block). A correct fit, just the slow noisy one.
+
+  Detection now uses the exported `rxode2::testRxLinCmt()`, which checks
+  `ui$.linCmtM` as well and is `TRUE` for all three forms. The third still yields
+  no cross block, because `rxode2::linToOde()` hands a derived `linCmt` back
+  unchanged; the `linCmtB` text backstop then correctly refuses and the caller
+  falls back to order 1. So this widens the fix rather than completing it.
+
+* **`adghControl()` accepted an invalid nloptr algorithm, and would hand a
+  derivative-free one a gradient.** It had its own two-line algorithm rule instead
+  of the shared `.admResolveAlgorithm()` the other three controls use, and that
+  rule was one-directional and unvalidated: `adghControl(algorithm =
+  "NOT_AN_ALGO")` was accepted and surfaced as a cryptic nloptr error mid-fit,
+  and `adghControl(grad = "analytical", algorithm = "NLOPT_LN_NELDERMEAD")` kept
+  both -- paying for a gradient the algorithm discards on every iteration. It now
+  goes through the shared reconciliation, so `grad == "none"` if and only if the
+  algorithm is derivative-free, as documented. `algorithm` now defaults to `NULL`
+  ("match `grad`"). `adgh`'s `cov_h_outer` default stays `eps^(1/4)` rather than
+  the other three's `eps^(1/5)` -- that difference is deliberate, since the
+  quadrature surface is noise-free.
+
+  **One combination changes, and it is the one worth knowing about.** The old
+  two-line rule existed to special-case exactly `"NLOPT_LN_BOBYQA"`, upgrading it
+  to LBFGS whenever a gradient was requested -- because BOBYQA was `adghControl`'s
+  own *default*, so naming it could not be distinguished from leaving it alone.
+  With the default now `NULL`, naming a derivative-free algorithm is unambiguous
+  and is honoured:
+
+  | `adghControl(...)` | 0.4.0 | 0.4.1 |
+  |---|---|---|
+  | `grad = "analytical"`, `algorithm = "NLOPT_LN_BOBYQA"` | `analytical` + LBFGS | **`none` + BOBYQA** |
+  | `grad = "fd"`, `algorithm = "NLOPT_LN_BOBYQA"` | `fd` + LBFGS | **`none` + BOBYQA** |
+
+  So a script that explicitly restated the old default now gets a
+  derivative-free fit where it had a quasi-Newton one. It says so (the
+  reconciliation emits a message), but if you wrote `algorithm =
+  "NLOPT_LN_BOBYQA"` meaning "the default", **delete the argument** -- `NULL`
+  now picks LBFGS for you. Every other combination is unchanged, including the
+  four pinned in `test-adgh-nodes.R`.
+
+* **`adirmcControl()` validated neither `ci` nor `returnAdmr`.** `ci = 99` reached
+  the interval columns as a nonsense level and `returnAdmr = "x"` made the
+  driver's `isTRUE()` quietly `FALSE`, returning a full fit where a plain list was
+  requested. Both are now checked, as in the other three controls.
+
+* **A cache write that fails no longer discards the model it just compiled, or
+  kills the fit.** Both disk caches wrote with a bare `saveRDS()`. The cache is an
+  optimisation -- by the time it is written the model is compiled and loaded -- so
+  an unwritable or full `rxTempDir()` (a locked-down HPC home, a cache directory
+  owned by another user) should cost speed, not correctness. Instead
+  `.admLoadModel()` propagated the error and failed the whole `nlmixr2()` call
+  with `cannot open the connection`, while `.admLoadSensModel()`'s callers wrap
+  the build in `tryCatch(error = function(e) NULL)`, so a write failure threw away
+  a *successfully compiled* sensitivity model and dropped adfo from its order-2
+  analytic structural gradient to forward FD, silently. Both now warn once per
+  file and carry on with the model in hand. (The previous release swallowed the
+  error entirely, which was also wrong -- the parallel restart workers find these
+  models by reading exactly these files, so a silent failure resurfaced much later
+  as every restart failing to read the cache.)
+
+* **The session-ownership guard on a cached model rejected nlmixr2est's own
+  sensitivity model unconditionally.** `.admRxLoadAll()` requires an artifact
+  under a session-local `*Sens` build directory to belong to the running session,
+  and tested that by comparing against `.admModDir()` -- which is
+  `<tempdir>/admixr2Sens`, and so can never equal nlmixr2est 7.x's
+  `<tempdir>/nlmixr2estSens`. A cached `.admSensFromInner()` result was therefore
+  reported stale on every call *in the session that built it*, and the model
+  recompiled (~3 s) for every fit -- the endless-recompile failure the guard
+  exists to prevent, caused by the guard. It now tests membership of the current
+  session's `tempdir()`, which is what identifies the session and covers both
+  build directories.
+
+* **The order-2 `linCmt()` promotion could write a theta's value into the wrong
+  `THETA[k]` slot.** An order-2 request on a solved-form `linCmt()` model promotes
+  it to explicit ODE form, and `.admBuildThetaSens()` numbers its emitted
+  derivative directions from the *promoted* `iniDf`; `.admLoadSensModel()` built
+  the `rename_map` that fills those columns at solve time from the *original* one.
+  Any difference across the promotion -- a renumbered `ntheta`, an inserted or
+  dropped row, a reordered eta -- meant each theta was differentiated in one slot
+  and filled in another. The solve still succeeds and `use_d2` skips adfo's FD
+  cross-check, so the fit would converge to wrong estimates and wrong standard
+  errors with no error and no warning. Both are now derived from the same frame by
+  construction (`.admSensNameMaps()`). Latent on every model measured here --
+  `linToOde()` does preserve the `iniDf` on those -- but not guaranteed.
+
+* **The gradient-box warning judged the fit against the wrong point, and stayed
+  silent for the parameters most likely to need it.** It differenced the solution
+  against the fit's `p0`, but each restart's box is centred on its own perturbed
+  starting value, so a restart pinned to its box was not reported (its distance
+  from `p0` never reaches `grad_bounds`) while an interior one could be reported
+  spuriously. It also suppressed any hit on a parameter whose model declares a
+  bound on that side -- a residual-error parameter always does -- even when that
+  bound was nowhere near and admixr2's box was what stopped the fit. It now
+  reconstructs the box actually given to nloptr, centred on the winning restart's
+  own init, and reports a hit only when that box, rather than a model-declared
+  bound, is the binding edge.
+
+* **An explicit `adfoControl(grad = "analytical")` that cannot build a
+  sensitivity model warns again.** 0.4.1 demoted this to a `message()`, which is
+  right when `grad` was left at its (new) default -- an unavailable sensitivity
+  model is routine and unactionable for a fixed-effects-only model or an ordinal
+  endpoint -- but wrong when the user named the argument: a message is swallowed
+  by `suppressMessages()`, by a knitr chunk with `message = FALSE`, and by any
+  stderr-capturing wrapper, leaving no record that the fit used the gradient the
+  control asked it not to use.
+
+  Where it survives is worth stating precisely, because the obvious answer is
+  wrong: nlmixr2est intercepts and muffles conditions raised inside
+  `nlmixr2Est.*`, so this warning does **not** reach `warnings()` and
+  `options(warn = 2)` does **not** turn it into an error. It is recorded on
+  `fit$warnings`, which `print(fit)` displays. That is a durable record where a
+  `message()` left none, which is the point -- but do not rely on
+  `options(warn = 2)` to catch it.
+
+* **Normalising a study twice no longer leaves its endpoint unset.** The
+  idempotence guard added in this release returned before the point where a unit's
+  `output` is filled from the caller's default, so a study first normalised
+  without one (which is what the test fixtures do) kept `output = NULL`
+  permanently -- and for a multi-endpoint model `.admBuildEvFull(tag_cmt = TRUE)`
+  then has nothing to tag `cmt` with, so the unit reads the wrong compartment's
+  trajectory. A second pass now fills what is still missing before returning.
+
+* **Dev-mode parallel restarts could not see any function this release
+  introduced.** `utils::assignInNamespace()` can replace a binding in a daemon's
+  locked installed namespace but cannot *add* one, and the failure was swallowed,
+  so a newly introduced helper was simply absent in the worker while everything
+  looked healthy -- `.admGH()`/`.admGH0()`, called from every finite-difference
+  site in `.admGrad()`/`.admGradBatch()`, would have broken every dev-mode
+  `workers > 1` restart. Dev functions are now injected via a patch *environment*
+  that patched closures are re-parented onto, so new and existing names resolve
+  alike and a future helper needs no special handling. The same dispatch stopped
+  shipping the parent's model-cache environments to each daemon: an environment
+  serialises by value, so every dev-mode restart was copying compiled rxode2
+  models that the worker has to rebuild anyway.
+
+* **Generated models are built under role-tagged names, in their own directory,
+  and a cached one is checked before it is trusted.** rxode2 names an anonymous
+  model's `.c`/`.so` from the parsed model text alone, but the emitted C also
+  depends on inputs that text cannot see -- above all the event-sensitivity code,
+  which is injected afterwards. Two builds of one text that differ there land on
+  a single artifact, and because entry points resolve by NAME (`R_GetCCallable`)
+  a model bound to the earlier one silently starts executing the replacement
+  (nlmixr2/rxode2#1171). admixr2 is exposed in the worst way of any package:
+  `.admSensFromInner()` recompiles *nlmixr2est's own* inner model text with
+  `eventSens = "jump"`, where nlmixr2est built the same text with a different
+  one. Generated models now carry a name folding in the role and `eventSens`
+  alongside the parsed md5, and are built in a session-local directory rather
+  than the persistent `rxTempDir()`.
+
+  The `.rds` caches stay in `rxTempDir()`, which persists, so a cache entry
+  written by an earlier session necessarily references an artifact this session
+  does not have. `.admRxLoadAll()` therefore checks that a cached model's DLL
+  exists **and** belongs to this session's build directory, and reports the entry
+  as stale otherwise so it is rebuilt. Both halves are load-bearing:
+  `rxode2::rxLoad()` on a vanished DLL does not reliably error -- it returns
+  quietly and the model then solves to garbage (a prediction frozen at its `t = 0`
+  value, and `NA` structural gradients) -- and R removes its temp directory only
+  on a clean exit, so a killed session leaves one behind that satisfies
+  `file.exists()` indefinitely.
+
+* **Normalising a study twice turned it into a joint (same-subject) study.**
+  `.admNormaliseStudy()` was not idempotent, and the second pass changed the
+  likelihood. Normalising a legacy single-output study ADDS an `observations`
+  list while KEEPING its top-level `V` -- which is exactly the signature the
+  joint branch tests for (`!is.null(s$observations) && !is.null(s$V)`), so a
+  second pass collapsed it into one joint unit:
+
+  ```
+  pass 1  is_joint = FALSE      pass 2  is_joint = TRUE      pass 3  TRUE
+  ```
+
+  No error, no warning, and a perfectly plausible fit -- down a different
+  likelihood path, and with adfo's `have_d2` forced `FALSE` (it requires
+  `!any_joint`), so the order-2 analytical structural gradient this release adds
+  quietly turned itself off. Each estimator normalises exactly once, so a normal
+  fit never reached it; the test fixtures hand out pre-normalised studies that
+  the driver then normalises again, which is how it was found -- meaning a number
+  of end-to-end tests had been exercising the joint path while appearing to test
+  the ordinary one. `.admNormaliseStudy()` now marks what it has normalised and
+  returns such a study untouched. Genuine joint studies are detected exactly as
+  before.
+
+* **Non-finite parameters no longer reach the ODE solver.** The screen that
+  rejects an unusable parameter vector before a solve tested that the omega
+  diagonal was positive -- and `Inf > 0` is `TRUE`. A covariance probe that
+  perturbs a residual parameter to `exp(1e5/2)` therefore handed `Inf` to
+  `rxSolve()`, which integrated garbage and emitted on the order of 190,000
+  `intdy -- t = <denormal> illegal` and `lsoda -- h too small` warnings before
+  the caller discarded the result anyway. The parameter vector is now also
+  checked for finiteness, at the objective *and* gradient entry points of all
+  three affected estimators (the gradients unpack the optimizer vector
+  themselves, so the objective's guard did not cover them). Aside from the
+  console noise, this removes a guaranteed-useless ODE solve every time the
+  optimizer or the covariance step overflows a parameter.
+
+* **A cache-key collision solved fits at another model's fixed value.** A
+  `fix()`ed parameter never reaches the optimizer, so it travels to the solve as
+  data -- either baked into `$simulationModel` as that parameter's default, or
+  carried on the cached sensitivity object. Both caches were keyed on the
+  `model({})` block, which does not distinguish `theta <- fix(0.5)` from
+  `fix(0.9)`. Two such fits therefore shared one compiled model, and the second
+  silently solved at the first's fixed value: a plausible objective, plausible
+  estimates and plausible standard errors for a model the user never wrote, with
+  no error and no warning, persisting across sessions because the cache directory
+  does. Fixed values now key both caches; ordinary *starting* values deliberately
+  do not, since a starting value is optimizer state and keying it would force a
+  recompile for nothing.
+
+  The parallel workers are why this needed more than a longer key: a worker has
+  no `ui` to re-derive from, and it recomputed the cache path itself. The parent
+  now sends the path on `pinfo` (which travels by value, so no worker signature
+  changes). One consequence for developers only: a `devtools::load_all()` parent
+  and an older INSTALLED admixr2 derive that path differently, so a daemon
+  started from a stale install cannot find the file -- run `devtools::install()`
+  before testing parallel restarts, as the contributor notes already say. The
+  worker's error message names that as the first thing to check.
+
+* **A stale sensitivity cache entry could survive a change to what it caches.**
+  The order-1 fallback is stored under the order-2 key, so editing what the
+  order-2 build emits has to invalidate the entry -- otherwise the previously
+  compiled model is served and `.adfoGrad()` contracts its second-order columns
+  against the new code's direction map: a finite, plausible, silently wrong
+  structural gradient with a normal-looking objective. That used to rest on
+  editing a schema-tag string by hand, and was forgotten once during this work.
+  The key now carries the package version *and* a digest of the emitter's own
+  source, so an edit between releases invalidates it too, with nothing to
+  remember.
+
+* **`linCmt()` second-order promotion built its direction set from the
+  pre-promotion model.** `.admBuildThetaSens()` swapped in the `linToOde()`
+  model but kept the parameter rows derived from the original, despite a comment
+  claiming otherwise. Any `iniDf` difference across promotion -- a renumbered
+  `ntheta`, an added or dropped row, a different eta ordering -- would have made
+  the emitted `rx_f1_THETA_k_`/`rx_f2_ETA_i_THETA_k_` differentiate a different
+  parameter, and with `grad = "analytical"` now the default and the FD pass
+  skipped, adfo would descend a gradient computed for the wrong theta. Latent
+  rather than firing (promotion preserves the `iniDf` on the models measured
+  here), but nothing enforced it.
+
+* **A struct theta missing from the cached direction map crashed the fit.** The
+  intended fallback -- turn the analytic pass off and finite-difference -- was
+  unreachable, because `[[` with an unmatched name on an atomic vector throws
+  rather than returning `NULL`. `.adfoGrad()` is not wrapped in a `tryCatch`
+  there, so the whole nloptr run died with a bare `subscript out of bounds`.
+
+* **A transformed endpoint no longer pays for second-order compartments it
+  cannot use.** The solve paths deliberately discard the second-order block for
+  an `lnorm`/`boxCox`/`yeoJohnson`/`logit`/`probit` endpoint (chaining a second
+  derivative through the transform needs terms the first-order chain does not
+  carry), but nothing stopped it being *built*: a 2-state, 2-eta, 1-unpaired-theta
+  `lnorm` model integrated 20 states instead of 8 on every solve and then threw
+  the extra away. Those endpoints now build the order-1 model directly.
+
+* **A parallel worker no longer walks on from a model it could not load.** The
+  worker's re-load step discarded its own failure return, so a model whose shared
+  library had been unloaded was handed to the estimator as if live and the first
+  `rxSolve()` dereferenced a dead pointer -- an opaque error deep in the restart,
+  or a heap-corruption crash on Windows. It now stops with the cache path and the
+  likely cause. A cache file whose contents are not a compiled model at all is
+  also detected again and rebuilt, rather than being reported as loaded.
+
+* **`.admNLL()` gained the non-finite screen the other estimators got.** admc's
+  objective -- the function nloptr calls as `eval_f` -- still carried only the
+  omega-diagonal test described below, which `Inf` passes, so admc users kept
+  seeing the console flood that adfo and adgh users no longer do.
+
+* **Compiled models are held in a session cache.** `.admLoadModel()` and
+  `.admLoadSensModel()` reloaded their model from the disk cache on EVERY call --
+  a `readRDS()` of a compiled model plus a `dyn.load()`, for every fit and every
+  test -- and handed back a fresh wrapper object each time. A repeat load now
+  costs a hash lookup instead: measured at roughly 50 ms to 0.5 ms.
+
+  The mechanism is `nlmixr2est`'s, deliberately rather than invented: an
+  `emptyenv()`-parented environment per purpose, a composite key covering
+  everything that changes the emitted model, and a wholesale wipe at 64 entries
+  to bound retained compiled models -- the same shape as its
+  `.foceiAnalyticAugCache`. The load step matches `rxUiGet.foceiModel()` too,
+  which re-loads EVERY `rxode2` element of a cached object rather than one by
+  name.
+
+  A cached model is only served while its disk cache file still exists, so
+  `rxode2::rxClean()` still forces a genuine recompile, and the metadata the key
+  cannot capture (a `boxCox`/`yeoJohnson` lambda's VALUE) is re-derived on every
+  hit exactly as the disk path already did.
+
+  Note what this does NOT change: memory. A session's footprint is set by how
+  many DISTINCT models it compiles and loads -- measured at roughly 4-10 MB and
+  two shared libraries each, and nothing unloads them -- so a session fitting
+  many different models grows regardless of caching. Caching changes how often
+  the same model is re-read, not how many are resident.
+
+## Internal changes
+
+* **`print.admFit()` reaches nlmixr2est's printer through `getS3method()`.** It
+  used `get("print.nlmixr2FitCore", envir = asNamespace("nlmixr2est"))`, which is
+  semantically a `:::` call that merely evades `R CMD check`'s syntactic scan --
+  and carries exactly the upstream-refactor fragility the package's no-`:::`
+  policy exists to avoid. The function is a registered S3 method, so method
+  lookup is the supported public route to it.
+
+* **The sensitivity-model builder takes an `order` argument.**
+  `.admBuildThetaSens()`/`.admLoadSensModel()` default to `order = 1L` -- the
+  existing first-order direction set, unchanged, which is what `admc`/`adgh`
+  read. `order = 2L` additionally emits the eta x direction cross block that
+  `adfo` needs. The block is deliberately asymmetric: `rxode2::rxExpandSens2_()`
+  accepts two different direction sets, so no theta x theta compartment is
+  generated, and admixr2 needs none of the residual-variance chains that
+  dominate nlmixr2est's own second-order build (`errmodel.R` derives the
+  residual analytically). Second-order initial conditions are emitted too,
+  without which a parameter-dependent IC leaves the cross compartment at zero.
+
+  The eta x eta half of that block is SYMMETRIC and `rxExpandSens2_()` does not
+  know it: asked for the full rectangle it emits `d2/(d eta_1 d eta_2)` and
+  `d2/(d eta_2 d eta_1)` as two variational compartments carrying the same
+  equation. The block is therefore requested one eta row at a time, against only
+  the directions at or after it, and the name matrix mirrors the duplicate cell
+  onto the canonical one -- exact, since mixed partials of a smooth prediction
+  commute, and it means the redundant chain expression is not emitted either.
+  Saves `n_states * n_eta(n_eta - 1)/2` integrated states: 20 -> 18 on a
+  2-state/2-eta/1-theta model, 63 -> 54 on a 3-state/3-eta/2-theta one. A joint
+  fit now also asks for order 1, since `have_d2` excludes joint units and the
+  cross block it used to compile was integrated on every solve for a result
+  nothing read.
+
+  The sensitivity cache key includes the order; see the cache-invalidation fix
+  above for how a change to what the order-2 build emits invalidates an existing
+  entry.
+
+  A `fix()`ed parameter's VALUE now keys the cache too. A fixed parameter never
+  reaches the optimizer, so it travels to the solve as data carried on the cached
+  object -- and a parallel worker, which reads that file and has no `ui` to
+  re-derive from, used the value it found. Two fits of the same model differing
+  only in `theta <- fix(0.5)` versus `fix(0.9)` therefore shared one cache entry,
+  and every parallel restart solved at the other fit's fixed value: silently, and
+  across sessions, since the cache directory persists. Starting values
+  deliberately do not key the cache -- they are optimizer state, and invalidating
+  on them would force a recompile for nothing.
+
+* **CI: `R-CMD-check` gained a `workflow_dispatch` trigger** and a dependency
+  cache-version bump. The RcppParallel/TBB -> stringfish -> qs2 -> rxode2 stack
+  has broken twice from CRAN-side rebuilds alone, with no commit of this
+  package's involved, so being able to ask "does the current CRAN state still
+  build?" without pushing a dummy commit is worth two lines. Pair it with a
+  cache-version bump for a genuinely cold resolve -- a warm dependency cache is
+  what made macOS look healthy right through the RcppParallel 6.0.0 break.
+
 # admixr2 0.4.0
 
 ## New features

@@ -115,8 +115,8 @@ test_that("adghControl(): grad='fd' coerces BOBYQA to LBFGS", {
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
-test_that("adghControl(): grad='cfd' coerces BOBYQA to LBFGS", {
-  ctl <- adghControl(grad = "cfd")
+test_that("adghControl(): grad='fd' coerces BOBYQA to LBFGS", {
+  ctl <- adghControl(grad = "fd")
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
@@ -128,6 +128,30 @@ test_that("adghControl(): grad='none' keeps BOBYQA", {
 test_that("adghControl(): grad != 'none' + explicit non-BOBYQA algorithm kept", {
   ctl <- adghControl(grad = "fd", algorithm = "NLOPT_LD_SLSQP")
   expect_equal(ctl$algorithm, "NLOPT_LD_SLSQP")
+})
+
+test_that("adghControl(): an EXPLICIT derivative-free algorithm turns the gradient off", {
+  # The combination that changed in 0.4.1, and the one this file did not pin.
+  #
+  # adgh used to special-case exactly "NLOPT_LN_BOBYQA" and upgrade it to LBFGS
+  # whenever a gradient was requested -- necessarily, because BOBYQA was
+  # adghControl's own DEFAULT, so naming it was indistinguishable from leaving it
+  # alone. With the default now NULL that ambiguity is gone, and naming a
+  # derivative-free algorithm means what it says, exactly as it does for the
+  # other three controls.
+  #
+  # Pinned because it is a silent change for anyone who explicitly restated the
+  # old default: they get a derivative-free fit where they had a quasi-Newton one.
+  for (g in c("analytical", "fd")) {
+    ctl <- suppressMessages(adghControl(grad = g, algorithm = "NLOPT_LN_BOBYQA"))
+    expect_equal(ctl$algorithm, "NLOPT_LN_BOBYQA", info = g)
+    expect_equal(ctl$grad, "none", info = g)
+  }
+  # ... and it is not silent: the reconciliation says so.
+  expect_message(adghControl(grad = "analytical", algorithm = "NLOPT_LN_BOBYQA"))
+  # The documented escape hatch -- drop the argument and NULL picks LBFGS.
+  expect_equal(adghControl(grad = "analytical")$algorithm, "NLOPT_LD_LBFGS")
+  expect_equal(adghControl(grad = "analytical")$grad, "analytical")
 })
 
 test_that("adghControl(): internal n_sim=1L for .admRunRestarts() compat", {

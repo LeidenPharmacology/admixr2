@@ -1,5 +1,49 @@
 # ---- datagenControl() unit tests (no rxode2) -----------------------------------
 
+# ---- shared fixtures ---------------------------------------------------------
+#
+# ONE definition each, at file level rather than inside every test_that().
+# This model was written out NINE times in this file -- seven copies of pk_model
+# plus pk_err, all byte-identical, and pk_noerr differing only by the dropped
+# error line. test_that() evaluates in a child of this environment, so a
+# file-level definition is visible to all of them.
+pk_model <- function() {
+  ini({
+    tcl <- log(5)
+    tv  <- log(30)
+    prop.sd <- c(0, 0.2)
+    eta.cl ~ 0.09
+    eta.v  ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.v)
+    d/dt(central) <- -(cl/v) * central
+    cp <- central / v
+    cp ~ prop(prop.sd)
+  })
+}
+
+# The same model under the name the error-vs-no-error comparison uses.
+pk_err <- pk_model
+
+# Same structural model, no error term -> V should carry IIV only.
+pk_noerr <- function() {
+  ini({
+    tcl <- log(5)
+    tv  <- log(30)
+    eta.cl ~ 0.09
+    eta.v  ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.v)
+    d/dt(central) <- -(cl/v) * central
+    cp <- central / v
+  })
+}
+
+
 test_that("datagenControl() returns correct class and defaults", {
   ctl <- datagenControl()
   expect_s3_class(ctl, "datagenControl")
@@ -129,23 +173,6 @@ test_that("datagen(): produces E and V with correct dimensions for single study"
   skip_if_not_installed("rxode2")
   skip_on_cran()
 
-  pk_model <- function() {
-    ini({
-      tcl <- log(5)
-      tv  <- log(30)
-      prop.sd <- c(0, 0.2)
-      eta.cl ~ 0.09
-      eta.v  ~ 0.04
-    })
-    model({
-      cl <- exp(tcl + eta.cl)
-      v  <- exp(tv  + eta.v)
-      d/dt(central) <- -(cl/v) * central
-      cp <- central / v
-      cp ~ prop(prop.sd)
-    })
-  }
-
   times   <- c(1, 2, 4, 8)
   studies <- list(
     s1 = list(times = times, ev = rxode2::et(amt = 100), n = 200L)
@@ -168,23 +195,6 @@ test_that("datagen(): return_samples=TRUE includes samples matrix", {
   skip_if_not_installed("rxode2")
   skip_on_cran()
 
-  pk_model <- function() {
-    ini({
-      tcl <- log(5)
-      tv  <- log(30)
-      prop.sd <- c(0, 0.2)
-      eta.cl ~ 0.09
-      eta.v  ~ 0.04
-    })
-    model({
-      cl <- exp(tcl + eta.cl)
-      v  <- exp(tv  + eta.v)
-      d/dt(central) <- -(cl/v) * central
-      cp <- central / v
-      cp ~ prop(prop.sd)
-    })
-  }
-
   times   <- c(1, 4)
   n_sim   <- 300L
   studies <- list(s1 = list(times = times, ev = rxode2::et(amt = 100)))
@@ -201,38 +211,7 @@ test_that("datagen(): a model without a residual-error term yields IIV-only V", 
   skip_on_cran()
 
   # With residual error.
-  pk_err <- function() {
-    ini({
-      tcl <- log(5)
-      tv  <- log(30)
-      prop.sd <- c(0, 0.2)
-      eta.cl ~ 0.09
-      eta.v  ~ 0.04
-    })
-    model({
-      cl <- exp(tcl + eta.cl)
-      v  <- exp(tv  + eta.v)
-      d/dt(central) <- -(cl/v) * central
-      cp <- central / v
-      cp ~ prop(prop.sd)
-    })
-  }
   # Same structural model, no error term -> V should carry IIV only.
-  pk_noerr <- function() {
-    ini({
-      tcl <- log(5)
-      tv  <- log(30)
-      eta.cl ~ 0.09
-      eta.v  ~ 0.04
-    })
-    model({
-      cl <- exp(tcl + eta.cl)
-      v  <- exp(tv  + eta.v)
-      d/dt(central) <- -(cl/v) * central
-      cp <- central / v
-    })
-  }
-
   times   <- c(1, 4)
   studies <- list(s1 = list(times = times, ev = rxode2::et(amt = 100)))
 
@@ -250,23 +229,6 @@ test_that("datagen(): multi-study with per-study model", {
   skip_if_not_installed("rxode2")
   skip_on_cran()
 
-  pk_model <- function() {
-    ini({
-      tcl <- log(5)
-      tv  <- log(30)
-      prop.sd <- c(0, 0.2)
-      eta.cl ~ 0.09
-      eta.v  ~ 0.04
-    })
-    model({
-      cl <- exp(tcl + eta.cl)
-      v  <- exp(tv  + eta.v)
-      d/dt(central) <- -(cl/v) * central
-      cp <- central / v
-      cp ~ prop(prop.sd)
-    })
-  }
-
   studies <- list(
     s1 = list(times = c(1, 2), ev = rxode2::et(amt = 100), n = 100L),
     s2 = list(times = c(1, 4, 8), ev = rxode2::et(amt = 200), n = 50L)
@@ -283,23 +245,6 @@ test_that("datagen(): multi-study with per-study model", {
 test_that("datagen(method='fo'): produces finite E and V with correct dims", {
   skip_if_not_installed("rxode2")
   skip_on_cran()
-
-  pk_model <- function() {
-    ini({
-      tcl <- log(5)
-      tv  <- log(30)
-      prop.sd <- c(0, 0.2)
-      eta.cl ~ 0.09
-      eta.v  ~ 0.04
-    })
-    model({
-      cl <- exp(tcl + eta.cl)
-      v  <- exp(tv  + eta.v)
-      d/dt(central) <- -(cl/v) * central
-      cp <- central / v
-      cp ~ prop(prop.sd)
-    })
-  }
 
   times   <- c(1, 2, 4, 8)
   studies <- list(s1 = list(times = times, ev = rxode2::et(amt = 100), n = 200L))
@@ -324,23 +269,6 @@ test_that("datagen(method='fo'): E matches the closed-form f(theta, 0)", {
 
   # 1-cmt bolus, eta = 0: cl = 5, v = 30, dose 100 -> cp(t) = (100/30) exp(-t/6).
   # Proportional error leaves the FO mean uncorrected, so E should equal it.
-  pk_model <- function() {
-    ini({
-      tcl <- log(5)
-      tv  <- log(30)
-      prop.sd <- c(0, 0.2)
-      eta.cl ~ 0.09
-      eta.v  ~ 0.04
-    })
-    model({
-      cl <- exp(tcl + eta.cl)
-      v  <- exp(tv  + eta.v)
-      d/dt(central) <- -(cl/v) * central
-      cp <- central / v
-      cp ~ prop(prop.sd)
-    })
-  }
-
   times   <- c(1, 2, 4, 8)
   studies <- list(s1 = list(times = times, ev = rxode2::et(amt = 100)))
 
@@ -354,23 +282,6 @@ test_that("datagen(method='fo'): E matches the closed-form f(theta, 0)", {
 test_that("datagen(method='fo'): deterministic (seed/n_sim irrelevant)", {
   skip_if_not_installed("rxode2")
   skip_on_cran()
-
-  pk_model <- function() {
-    ini({
-      tcl <- log(5)
-      tv  <- log(30)
-      prop.sd <- c(0, 0.2)
-      eta.cl ~ 0.09
-      eta.v  ~ 0.04
-    })
-    model({
-      cl <- exp(tcl + eta.cl)
-      v  <- exp(tv  + eta.v)
-      d/dt(central) <- -(cl/v) * central
-      cp <- central / v
-      cp ~ prop(prop.sd)
-    })
-  }
 
   studies <- list(s1 = list(times = c(1, 4), ev = rxode2::et(amt = 100)))
 
@@ -386,23 +297,6 @@ test_that("datagen(method='fo'): deterministic (seed/n_sim irrelevant)", {
 test_that("datagen(): unnamed studies get auto-names", {
   skip_if_not_installed("rxode2")
   skip_on_cran()
-
-  pk_model <- function() {
-    ini({
-      tcl <- log(5)
-      tv  <- log(30)
-      prop.sd <- c(0, 0.2)
-      eta.cl ~ 0.09
-      eta.v  ~ 0.04
-    })
-    model({
-      cl <- exp(tcl + eta.cl)
-      v  <- exp(tv  + eta.v)
-      d/dt(central) <- -(cl/v) * central
-      cp <- central / v
-      cp ~ prop(prop.sd)
-    })
-  }
 
   studies <- list(
     list(times = c(1, 2), ev = rxode2::et(amt = 100))

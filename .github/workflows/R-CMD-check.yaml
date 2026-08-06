@@ -3,6 +3,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual trigger. The dependency stack below us (RcppParallel/TBB -> stringfish ->
+  # qs2 -> rxode2) has broken twice from CRAN-side rebuilds alone, with no commit of
+  # ours involved, so being able to ask "does the current CRAN state still build?"
+  # without pushing a dummy commit is worth the two lines. Pair it with a
+  # cache-version bump when you want a genuinely cold resolve -- a warm cache is
+  # what made macOS look healthy right through the RcppParallel 6.0.0 break.
+  workflow_dispatch:
 
 name: R-CMD-check
 
@@ -25,16 +32,42 @@ jobs:
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      R_KEEP_PKG_SOURCE: yes
-      # Belt-and-braces against malloc arena fragmentation. NOTE: profiling the
-      # whole suite per file showed the devel job's growth is NATIVE memory that
-      # accumulates in proportion to WORK DONE (models compiled/loaded per fit,
-      # which rxode2 never returns) and is spread diffusely across ~19 files --
-      # not one hot file and not the rxode2 model registry, both of which were
-      # measured and ruled out. So this alone does not fix devel; the NOT_CRAN
-      # scoping on the check step below is what does.
-      MALLOC_ARENA_MAX: "2"
+      # NOT `yes` on devel, and that is the whole fix for the job that used to die
+      # during `checking tests`.
+      #
+      # This is r-lib boilerplate, and release quietly IGNORES it: P3M ships
+      # pre-built binaries, which carry no srcrefs whatever this says. R-devel has
+      # no P3M binaries, so it compiles the entire dependency stack from source on
+      # the runner and the flag bites -- ~3000 functions across rxode2 and
+      # nlmixr2est each keep their source text plus an integer position vector.
+      # Every model compile then retains ~11x more parsed code, the R heap reaches
+      # GBs, gc() cost rises with the LIVE heap, and the suite slows ~6x. Devel
+      # becomes the last job still running and walks the box toward its 16 GB, at
+      # which point the runner dies -- logging `received a shutdown signal` and
+      # exit 143, which reads as a hang rather than as memory.
+      #
+      # Measured on the mem-probe workflow (branch ci/mem-probe), Probe D, same 8
+      # files, and then validated over the full suite:
+      #                      heap    gill    rxode2 srcrefs   full suite
+      #   release            569 MB   27.2s      0/1544       58 files, 2290 MB
+      #   devel keepsrc=yes 6134 MB  268.0s   1541/1544       died at file 27
+      #   devel keepsrc=no   556 MB   25.4s      0/1544       58 files, 1641 MB, 0 fail
+      #
+      # Retired by the same measurements: it is NOT native memory beyond gc()'s
+      # reach (every reading is taken after a full gc(); the objects are live), and
+      # it is NOT glibc arena fragmentation -- MALLOC_ARENA_MAX=2 moved the curve
+      # by <0.01 MB/model on both R versions, so the cap that used to sit here was
+      # provably inert and has been removed.
+      R_KEEP_PKG_SOURCE: ${{ matrix.config.r == 'devel' && 'no' || 'yes' }}
 
+      # DESCRIPTION turns on Config/testthat/parallel; testthat's own default is
+      # 2 workers (default_num_cpus()), which is the CRAN-safe number and the one
+      # a plain `R CMD check` should keep. GitHub runners have 4 cores, so raise
+      # it here only. Measured on the full suite (61 files): serial 795.6s,
+      # 2 workers 375.0s, 4 workers 321.6s -- the gain flattens after 2 because
+      # wall clock is bounded by the single longest file
+      # (test-integration-multi-output.R, ~220s), not by the worker count.
+      TESTTHAT_CPUS: 4
 
     steps:
       - uses: actions/checkout@v4
@@ -74,27 +107,79 @@ jobs:
           library(qs2)  # fail here, not 20 minutes later inside R CMD check
         shell: Rscript {0}
 
+      # Bump history: v4 forced a cold resolve against post-RcppParallel-6.2.0
+      # CRAN (6.2.0 landed 2026-07-30; the v3 caches were built 2026-07-29
+      # against 6.1.x). v5 is the R_KEEP_PKG_SOURCE change below.
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          cache-version: 3
+          # 4 -> 5 is REQUIRED by the R_KEEP_PKG_SOURCE change above, not
+          # incidental: the dependency cache key does not include that variable,
+          # so devel would restore its previously cached srcref-laden build and
+          # the fix would silently do nothing.
+          cache-version: 5
           extra-packages: any::rcmdcheck
           needs: check
 
+      # rxode2 links RcppParallel's TBB, so it must be loadable against whichever
+      # RcppParallel the resolver installed -- and right now it is not, on Windows.
+      # RcppParallel 6.2.0 (Windows binary 2026-08-01) moved Windows from a static
+      # TBB to a shipped shared tbb.dll and removed the compatibility stub, while
+      # CRAN still serves the rxode2 5.1.5 Windows binary built 2026-07-30 against
+      # the previous generation, so rxode2.dll imports a procedure that no longer
+      # exists. Each package is individually fine; only the COMBINATION is broken,
+      # which is why a dated snapshot is the right shape of fix -- and a Windows
+      # source build of rxode2 against 6.2.0 does not link (nlmixr2est hit that).
+      #
+      # The date is chosen from what the snapshots actually serve, not guessed:
+      #   2026-07-29  RcppParallel 6.1.1  rxode2 5.1.5   (win binaries: both)
+      #   2026-07-30  RcppParallel 6.1.1  rxode2 5.1.5   (win binaries: both)
+      #   2026-07-31  RcppParallel 6.2.0  rxode2 -       (no rxode2 win binary)
+      #   latest      RcppParallel 6.2.0  rxode2 -
+      # 6.2.0's SOURCE reached CRAN on 07-30, so a 07-31 snapshot still serves
+      # it and pins nothing -- which is what the first attempt at this did.
+      # 07-30 is the last date with the consistent pair.
+      #
+      # DETECT and REPAIR are separate steps on purpose. Merely testing whether
+      # rxode2 loads pulls RcppParallel's DLL into the session, and Windows will
+      # not overwrite a loaded DLL -- doing both in one step fails with "cannot
+      # remove prior installation of package 'RcppParallel'". Each `Rscript {0}`
+      # step is a fresh R process, so the lock is gone by the time we install.
+      #
+      # Conditional, so it costs one requireNamespace() on a healthy platform and
+      # removes itself once CRAN rebuilds the rxode2 binary -- same shape as the
+      # stringfish/qs2 guard above. Delete both once they are no-ops everywhere.
+      - name: Detect whether rxode2 loads against the installed RcppParallel
+        id: rxode2-load
+        run: |
+          .ok <- requireNamespace("rxode2", quietly = TRUE)
+          cat(paste0("needs_pin=", if (.ok) "false" else "true"),
+              file = Sys.getenv("GITHUB_OUTPUT"), append = TRUE, fill = TRUE)
+        shell: Rscript {0}
+
+      - name: Pin RcppParallel to a consistent snapshot if it does not
+        if: steps.rxode2-load.outputs.needs_pin == 'true'
+        run: |
+          message("rxode2 does not load -- pinning RcppParallel to the snapshot ",
+                  "its binary was built against")
+          install.packages("RcppParallel",
+                           repos = "https://packagemanager.posit.co/cran/2026-07-30")
+        shell: Rscript {0}
+
+      - name: Confirm rxode2 loads
+        run: library(rxode2)   # fail here, with this message, not later and opaquely
+        shell: Rscript {0}
+
       - uses: r-lib/actions/check-r-package@v2
         env:
-          # Run the integration suite everywhere EXCEPT ubuntu-devel.
+          # Back ON for devel too, now that the cause of its failures is fixed at
+          # the source (R_KEEP_PKG_SOURCE above) rather than worked around here.
           #
-          # These tests are all skip_on_cran()'d, so CRAN itself never runs them;
-          # NOT_CRAN = "true" is what forces them on under rcmdcheck. On devel they
-          # accumulate ~1 GB+ of unreclaimable native memory (see MALLOC_ARENA_MAX
-          # above) and the job is SIGTERM'd mid-`checking tests` -- kill times vary
-          # (30-44 min) and devel PASSES on main at 42-69 min, so it is a memory
-          # ceiling, not a timeout and not a hang.
-          #
-          # No coverage is lost: the compat-oldstack job already runs the full
-          # integration suite on ubuntu in ~8 min. The devel entry exists to check
-          # R-devel compliance, which is exactly what remains.
-          NOT_CRAN: ${{ matrix.config.r == 'devel' && 'false' || 'true' }}
+          # This used to be scoped off for devel, which skipped 114 test blocks /
+          # 1163 assertions there -- every skip_on_cran()'d integration test. The
+          # justification was a memory ceiling; the measurements say otherwise, and
+          # with srcrefs off devel runs the full suite in ~7 min at 1641 MB peak
+          # with 0 failures. Nothing about these tests was ever devel-incompatible.
+          NOT_CRAN: "true"
         with:
           upload-snapshots: true
           build_args: 'c("--no-manual", "--no-build-vignettes")'

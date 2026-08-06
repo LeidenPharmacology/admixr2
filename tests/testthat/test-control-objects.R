@@ -199,14 +199,31 @@ test_that("admControl(): grad_h, grad_bounds, cov_h stored", {
   expect_equal(ctl$cov_h,       5e-4)
 })
 
+test_that("adirmcControl()'s grad_h default is DELIBERATELY finer than the rest", {
+  # The IRMC inner NLL is deterministic given fixed proposals, so its optimal
+  # forward step is near sqrt(eps)*|p| ~ 1e-8; the sampling estimators want a
+  # coarser step only because they have MC noise to get over. The inner FD was a
+  # hard-coded 1e-6 until it was made to honour grad_h, at which point inheriting
+  # the common 1e-4 default made every `grad = "fd"` adirmc fit converge on a
+  # gradient 100x coarser than the loop was tuned for.
+  #
+  # This is the same shape as adgh's cov_h_outer keeping eps^(1/4) where admc
+  # uses eps^(1/5): a principled difference, not drift. Do not "harmonise" it.
+  expect_equal(adirmcControl()$grad_h, 1e-6)
+  for (ctl in list(adfoControl(), adghControl(), admControl()))
+    expect_equal(ctl$grad_h, 1e-4)
+  # ... and an explicit value still wins.
+  expect_equal(adirmcControl(grad_h = 1e-5)$grad_h, 1e-5)
+})
+
 test_that("admControl(): covMethod 'none' accepted", {
   ctl <- admControl(covMethod = "none")
   expect_equal(ctl$covMethod, "none")
 })
 
-test_that("admControl(): grad = 'cfd' accepted", {
-  ctl <- admControl(grad = "cfd")
-  expect_equal(ctl$grad, "cfd")
+test_that("admControl(): grad = 'fd' accepted", {
+  ctl <- admControl(grad = "fd")
+  expect_equal(ctl$grad, "fd")
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
@@ -537,4 +554,29 @@ test_that("a new control argument cannot silently rebind a positional call", {
   expect_identical(adfoControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
   expect_identical(adirmcControl(list(), resid_nodes = 31L)$resid_nodes, 31L)
   expect_identical(datagenControl(resid_nodes = 31L)$resid_nodes, 31L)
+})
+
+
+test_that("sigdig defaults to NULL in every control, and tables still get 4", {
+  # This release is what first routed sigdig into the estimators' own rxSolve
+  # calls. It is OFF by default because a looser solve is differenced by the
+  # estimators' own FD steps -- grad_h 1e-4, cov_h 1e-3, cov_h_outer ~2.5e-3 --
+  # and rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4, the same order. Shipping it
+  # on would have moved the objective and the standard errors of every existing
+  # script silently, for a knob that looked like table formatting before.
+  for (ctl in list(adfoControl(), adghControl(), admControl(), adirmcControl())) {
+    expect_null(ctl$sigdig)
+    # Table formatting must be untouched by that choice.
+    expect_identical(ctl$sigdigTable, 4L)
+  }
+})
+
+test_that("sigdig is opt-in and reaches both the solve and the tables", {
+  for (ctl in list(adfoControl(sigdig = 4L), adghControl(sigdig = 4L),
+                   admControl(sigdig = 4L), adirmcControl(sigdig = 4L))) {
+    expect_identical(ctl$sigdig, 4L)
+    expect_identical(ctl$sigdigTable, 4L)
+  }
+  # ... and a value below the table floor still leaves the tables readable.
+  expect_identical(adfoControl(sigdig = 2L)$sigdigTable, 3L)
 })
