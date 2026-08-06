@@ -143,10 +143,15 @@ plot(fit)
 | Vignette | Topic |
 |----------|-------|
 | [Getting started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.html) | Core workflow: data prep, model, fit, diagnostics |
-| [Diagnostic plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.html) | All four plot panels explained; IIV heatmap |
+| [From a published figure to E, V and n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.html) | Error-bar semantics (SD vs SEM vs LS-mean SE), diagonal `V`, assumed-`V` sensitivity |
+| [Simulating data & using published models](https://leidenpharmacology.github.io/admixr2/articles/datagen.html) | `datagen()` for simulation studies and for supplying published models as input |
 | [Multiple studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.html) | Joint fitting across studies with different designs |
+| [Several outputs (plasma + brain)](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.html) | Multiple observed compartments; joint same-subject `V` |
+| [PD and PK/PD data](https://leidenpharmacology.github.io/admixr2/articles/pkpd.html) | Effect as a second endpoint, baseline, Emax, predicting an unstudied dose |
 | [Estimator comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html) | adfo, admc, adgh and adirmc: mathematical foundations and when to use each |
+| [Choosing a residual error model](https://leidenpharmacology.github.io/admixr2/articles/error-models.html) | What `cp ~ prop(...)` does to `E`/`V`, the supported/refused menu, `resid_nodes` |
 | [Advanced usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html) | Gradient modes, parallel restarts, AIC/BIC model comparison |
+| [Diagnostic plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.html) | All four plot panels explained; IIV heatmap |
 
 ## Citation
 
