@@ -2102,28 +2102,67 @@ admStopWorkers <- function() {
     # NULL path: `file.exists(NULL)` is logical(0) and `if (logical(0))` is an
     # "argument is of length zero" error, which would replace the message below
     # with an opaque one at the point it is most needed.
-    # tryCatch, as the parent does (model.R). saveRDS is NOT atomic and this file
-    # lives in a SHARED persistent rxTempDir(), so a concurrent session
-    # recompiling the same key can be observed mid-write: a bare readRDS then dies
-    # with "error reading from connection", which .admRunRestarts re-throws as
+    # tryCatch, as the parent does (model.R). This file lives in a SHARED
+    # persistent rxTempDir(), so a concurrent session recompiling the same key
+    # writes this very path; a bare readRDS on a half-written entry dies with
+    # "error reading from connection", which .admRunRestarts re-throws as
     # `parallel restart N failed: error reading from connection` -- losing the
-    # message below at exactly the moment its stated cause (b) applies.
-    rxMod <- if (!is.null(.cacheFile) && file.exists(.cacheFile))
-      tryCatch(readRDS(.cacheFile), error = function(e) NULL) else NULL
-    # ... and assert the SHAPE, which the parent also does and this did not:
-    # .admRxLoadAll/.load_all are no-ops on anything not rxode2-classed, so a
-    # readable .rds holding something else is not merely accepted, it is handed on
-    # as `rxMod` -- the exact outcome the load check below was added to prevent.
-    if (!is.null(rxMod) && !inherits(rxMod, "rxode2")) rxMod <- NULL
+    # message below at exactly the moment it is most needed.
+    #
+    # .admCacheWrite() now publishes by rename, so no admixr2 from 0.4.1 on can
+    # produce a half-written entry -- that was the cause of the intermittent
+    # parallel-restart failures, and it is fixed at the writer. This stays
+    # because the guarantee is only as good as the OTHER process's version: a
+    # pre-0.4.1 session sharing this cache still writes in place.
+    # WHICH of the three ways this can fail is recorded, because they have
+    # completely different causes and the message used to name none of them:
+    # absent means the path is wrong or the entry was swept; unreadable-at-N-bytes
+    # means a half-written entry (a pre-0.4.1 peer publishing in place); and
+    # wrong-shape means a digest collision or a foreign file. Diagnosing this from
+    # the outside is near-impossible -- the branch runs only in a daemon, and by
+    # the time the parent reports the error the file is usually complete again --
+    # so the worker has to say what it saw at the moment it looked.
+    .why <- NULL
+    rxMod <- NULL
+    .sz <- NA_real_
+    if (is.null(.cacheFile)) {
+      .why <- "the parent supplied no path"
+    } else if (!file.exists(.cacheFile)) {
+      .why <- "no file at that path"
+    } else {
+      .sz <- tryCatch(file.size(.cacheFile), error = function(e) NA_real_)
+      # `<<-`, not `<-`: the handler is a real function, so it must reach out to
+      # this frame. (The if/else branches above are NOT functions and correctly
+      # use `<-`; see the same distinction on .adm_sens_fallback below.)
+      rxMod <- tryCatch(readRDS(.cacheFile),
+                        error = function(e) {
+                          .why <<- sprintf("the %.0f-byte file could not be read (%s)",
+                                           .sz, conditionMessage(e))
+                          NULL
+                        })
+      # ... and assert the SHAPE, which the parent also does and this did not:
+      # .admRxLoadAll/.load_all are no-ops on anything not rxode2-classed, so a
+      # readable .rds holding something else is not merely accepted, it is handed
+      # on as `rxMod` -- the exact outcome the load check below was added to
+      # prevent.
+      if (!is.null(rxMod) && !inherits(rxMod, "rxode2")) {
+        .why <- sprintf("the %.0f-byte file holds a '%s', not a compiled model",
+                        .sz, class(rxMod)[[1L]])
+        rxMod <- NULL
+      }
+    }
     if (is.null(rxMod)) {
       stop("admixr2: a parallel worker could not read the compiled-model cache\n  ",
            .cacheFile %||% "<no path supplied by the parent>",
+           "\n  (", .why %||% "unknown", ")",
            "\nThe parent writes it before starting workers, so this usually means ",
            "either (a) devtools::load_all() in the parent against an OLDER INSTALLED ",
            "admixr2 -- a daemon runs the installed one, and the two derive this path ",
-           "differently, so run devtools::install() first -- or (b) the rxode2 ",
+           "differently, so run devtools::install() first -- (b) the rxode2 ",
            "temporary directory was cleared mid-session (rxode2::rxClean(), or a ",
-           "tempdir sweep). Re-run the fit, or use workers = 1.",
+           "tempdir sweep) -- or (c) another process running a PRE-0.4.1 admixr2 ",
+           "is republishing this entry, which it does in place, so a reader can ",
+           "see it half-written. Re-run the fit, or use workers = 1.",
            call. = FALSE)
     }
     # Re-load EVERY compiled model in the cached object, and STOP if any of them
@@ -2334,6 +2373,52 @@ admStopWorkers <- function() {
        message    = opt$message)
 }
 
+# Load admixr2 in every daemon BEFORE any of them is asked to read the model
+# cache, then repair the cache if that load destroyed it.
+#
+# A daemon's `library(admixr2)` loads nlmixr2est, whose .resetCacheIfNeeded()
+# does this (verified in the INSTALLED 6.2.0, which is what a daemon loads --
+# upstream main having dropped the call is irrelevant here):
+#
+#     if (.md5 != nlmixr2.md5) { message("detected new version ..."); rxClean() }
+#
+# rxClean() wipes the whole SHARED rxTempDir(), including the adm-sim-*.rds the
+# parent wrote seconds earlier and these very daemons are about to read -- so the
+# worker deletes its own input and stops with "a parallel worker could not read
+# the compiled-model cache". Two details make it far worse than a one-off:
+# the mismatch branch never REWRITES the stamp, so the mismatch is permanent
+# rather than self-healing, and it fires per daemon, on every fit.
+#
+# It is triggered by having more than one nlmixr2est build in play (a
+# pkgload::load_all() of a source tree alongside the installed package, which is
+# ordinary during upstream development) -- and it was the second, independent
+# cause of the intermittent parallel-restart failures, the one that survived
+# making the cache writes atomic.
+#
+# The order is the fix: warm first, so every daemon-side clean has already
+# happened, then re-derive. .admLoadSensModel()/.admLoadModel() are cache-keyed
+# and cost nothing when the entries survived (the common case); when they did
+# not, they recompile and republish, which is exactly the repair. The ordering
+# invariant between the two still applies, so they are called in that order.
+.admWarmDaemons <- function(ui, pinfo, sens_cache_file = NULL) {
+  # A mirai without everywhere() just means the warm-up is skipped; the repair
+  # below still runs and is the half that matters, so this must not return early.
+  tryCatch(mirai::everywhere({ library(admixr2) }, .compute = .adm_compute),
+           error = function(e) NULL)
+  .gone <- function(f) !is.null(f) && length(f) == 1L && !is.na(f) && !file.exists(f)
+  if (!.gone(pinfo$sim_cache_file) && !.gone(sens_cache_file))
+    return(invisible(TRUE))
+  message("  Worker startup cleared the rxode2 cache -- rebuilding the model")
+  tryCatch({
+    .admLoadSensModel(ui)               # INVARIANT: sens model before sim model
+    .admLoadModel(ui)
+  }, error = function(e)
+    warning("admixr2: could not rebuild the model cache after worker startup ",
+            "cleared it (", conditionMessage(e), "). Restarts may fail; ",
+            "use workers = 1.", call. = FALSE))
+  invisible(TRUE)
+}
+
 .admRunRestarts <- function(worker_fn, p0, ov, pinfo, .ctl, ui, studies,
                             extra_args = list()) {
   n_r <- .ctl$n_restarts
@@ -2409,6 +2494,7 @@ admStopWorkers <- function() {
 
   if (use_parallel) {
     effective_workers <- .adm_worker_env$n
+    .admWarmDaemons(ui, pinfo, all_args$sens_cache_file)
     base_tpw          <- max(1L, floor(.ctl$cores / effective_workers))
     remainder         <- max(0L, .ctl$cores - base_tpw * effective_workers)
     cores_vec         <- c(rep(base_tpw + 1L, remainder), rep(base_tpw, effective_workers - remainder))

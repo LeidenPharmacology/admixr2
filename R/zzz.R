@@ -73,41 +73,76 @@
 # may not be available when loading". Harmless -- a worker reloads the DLL via
 # rxLoad(), not from the serialised environment.
 .admCacheWrite <- function(object, file, what) {
-  # Sampled before the write: afterwards a failed-at-open call and a
-  # failed-halfway call look identical, and only the second one made the mess.
-  .pre_existing <- file.exists(file)
-  ok <- tryCatch({ suppressWarnings(saveRDS(object, file)); TRUE },
-                 error = function(e) {
-                   .adm_warn_once(paste0("cache_write:", file), sprintf(
-                     paste0("admixr2: could not write the %s cache to '%s' (%s). ",
-                            "The fit continues, but the model will be recompiled ",
-                            "for every fit in this session, and parallel restarts ",
-                            "(workers > 1) cannot read it."),
-                     what, file, conditionMessage(e)))
-                   FALSE
-                 })
-  # A half-written file is worse than none: a later session would read it back as
-  # a corrupt entry rather than a miss.
+  # WRITE-THEN-RENAME, never in place. These files are content-addressed entries
+  # in a SHARED, persistent rxTempDir(), so "who else is looking at this exact
+  # path right now" is not under our control: any other process fitting the same
+  # model derives the same name, and a parallel fit's own daemons are readers of
+  # it by design.
   #
-  # But only clean up a file THIS call created. `ok` is FALSE for any saveRDS
-  # failure, including one that fails at open time and so leaves a complete,
-  # valid pre-existing entry untouched -- and the caches are shared, keyed only
-  # by model content, across sessions and processes. Session A writes
-  # adm-sim-<hash>.rds and starts daemons about to read it; session B fits the
-  # same model, its write fails (disk full, or the file momentarily open on
-  # Windows), and an unconditional remove deletes A's entry. A's workers take the
-  # deliberately fallback-free `.cacheFile <- pinfo$sim_cache_file` branch, find
-  # nothing and stop() -- surfacing as "parallel restart 1 failed" on a fit that
-  # was running correctly.
+  # A bare saveRDS(object, file) -- what this did until 0.4.1 -- publishes the
+  # target the instant it opens the connection, and it is then ZERO BYTES until
+  # the serialiser catches up (measured: the file exists at size 0 from the open;
+  # ~10 ms for a small linCmt model, and a 780 KB ODE model was caught at 0 bytes
+  # in a live cache directory). Every reader in that window sees file.exists() ==
+  # TRUE and a truncated payload -- and a truncated payload at ANY fraction (0%,
+  # 1%, 25%, 50%, 99% all measured) makes readRDS() error, which
+  # .admWorkerLoadModels() turns into
+  #     "a parallel worker could not read the compiled-model cache"
+  # and .admRunRestarts() re-throws as "parallel restart N failed". That is the
+  # whole of the intermittent parallel-restart failure this package chased as a
+  # test-ordering artifact: it is neither ordering nor a cold cache (both were
+  # reproduced clean), it is two processes and one non-atomic write.
   #
-  # existed-before is sampled BEFORE the write, because after a partial write the
-  # two cases are indistinguishable from the file alone.
-  # suppressWarnings, not just tryCatch(error=): file.remove() signals a WARNING
-  # on failure, not an error, so an error handler alone lets "cannot remove file
-  # ..., reason 'Permission denied'" leak out right behind the warning above --
-  # two warnings for one event, the second of them noise.
-  if (!ok && !.pre_existing && file.exists(file))
-    tryCatch(suppressWarnings(file.remove(file)), error = function(e) NULL)
+  # rename() is atomic on both POSIX and Windows (MoveFileEx), so a reader now
+  # sees either the previous complete entry or the new complete entry, never a
+  # prefix of one. The temp file goes in the SAME directory so the rename stays a
+  # metadata operation on one volume -- across volumes it degrades to copy+delete
+  # and the atomicity is lost.
+  #
+  # tempfile() for the name, NOT sample()/runif(): it draws from an internal
+  # counter plus the process id, so it cannot perturb the RNG stream. Anything
+  # that consumed R's RNG here would silently move every Sobol/rnorm draw in the
+  # fit that happens to compile a model -- a seed-dependent result change from a
+  # caching detail. (Verified: identical draws either side of a tempfile() call.)
+  .tmp <- tryCatch(
+    tempfile(pattern = paste0(basename(file), ".tmp"), tmpdir = dirname(file)),
+    error = function(e) NULL)
+  .fail <- function(e) {
+    .adm_warn_once(paste0("cache_write:", file), sprintf(
+      paste0("admixr2: could not write the %s cache to '%s' (%s). ",
+             "The fit continues, but the model will be recompiled ",
+             "for every fit in this session, and parallel restarts ",
+             "(workers > 1) cannot read it."),
+      what, file, conditionMessage(e)))
+    FALSE
+  }
+  ok <- if (is.null(.tmp)) .fail(simpleError("no writable temporary name")) else
+    tryCatch({ suppressWarnings(saveRDS(object, .tmp)); TRUE }, error = .fail)
+  if (ok) {
+    # file.rename() signals a WARNING on failure, not an error, and returns FALSE
+    # -- so tryCatch(error=) alone would let "cannot rename file ..." leak out and
+    # then treat the failure as success.
+    #
+    # It CAN legitimately fail: on Windows a target currently open for reading
+    # gives "Access is denied" (measured). That is precisely a concurrent reader,
+    # and leaving that reader's complete entry in place is the correct outcome --
+    # the payload is content-addressed, so whatever is already there is a valid
+    # entry for this key. The fit continues from the model it already holds.
+    ok <- isTRUE(tryCatch(suppressWarnings(file.rename(.tmp, file)),
+                          error = function(e) FALSE))
+    if (!ok)
+      .adm_warn_once(paste0("cache_write:", file), sprintf(
+        paste0("admixr2: could not publish the %s cache entry '%s' ",
+               "(another process is most likely reading it). The fit continues ",
+               "using the model already in hand."), what, file))
+  }
+  # The temp file is ours alone, so removing it is unconditional and cannot touch
+  # anyone else's entry. This is what replaced the old "delete the target if this
+  # call created it" cleanup, whose whole difficulty was that a failed write and
+  # another session's good entry were indistinguishable at the same path -- with
+  # the target never opened for writing, that ambiguity no longer exists.
+  if (!is.null(.tmp) && file.exists(.tmp))
+    tryCatch(suppressWarnings(file.remove(.tmp)), error = function(e) NULL)
   invisible(ok)
 }
 

@@ -236,6 +236,44 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 ## Bug fixes
 
+* **Parallel restarts (`workers > 1`) could fail with "a parallel worker could
+  not read the compiled-model cache" whenever a second R session was using
+  admixr2 at the same time.** The compiled-model and sensitivity-model caches are
+  content-addressed files in a *shared*, persistent `rxode2::rxTempDir()`, so any
+  other process fitting the same model writes the same path -- and a parallel
+  fit's own daemons are readers of that path by design. The entries were written
+  with a bare in-place `saveRDS()`, which publishes the file the instant it opens
+  the connection: it exists at **zero bytes** and is filled in afterwards. A
+  reader landing in that window is handed a truncated payload, and truncation at
+  any fraction makes `readRDS()` fail -- `file.exists()` is `TRUE` for every one
+  of them, so the existence check could not screen it out.
+
+  Cache entries are now published atomically: serialised to a temporary file in
+  the same directory, then `file.rename()`d over the target. A reader now sees
+  either the previous complete entry or the new complete entry, never a prefix of
+  one. Measured with a single competing writer, reads of a corrupt entry went
+  from **64.7%** to **0**, and the affected test file went from `1 failure,
+  2 errors` to clean under a sustained competing publisher.
+
+  A **second, independent cause** of the same failure is fixed alongside it: a
+  worker's own startup could delete the cache entry it was about to read.
+  `library(admixr2)` in a daemon loads nlmixr2est, and the installed 6.2.0's
+  `.resetCacheIfNeeded()` calls `rxode2::rxClean()` -- which wipes the whole
+  shared `rxTempDir()` -- whenever its version stamp does not match. That branch
+  never rewrites the stamp, so the mismatch is permanent rather than
+  self-healing, and it fires in every daemon on every fit. Having two nlmixr2est
+  builds in play is enough to trigger it, which is an ordinary state when working
+  against an upstream source tree. Restarts now load admixr2 in every worker
+  *before* any of them reads the cache, and rebuild the model if that startup
+  cleared it.
+
+  Two consequences worth knowing. A rename can legitimately be refused while
+  another process holds the entry open (Windows reports "Access is denied"); the
+  cache write then reports a warning and the fit continues from the model it
+  already has, which is correct because the existing entry is by construction a
+  valid payload for that key. And the guarantee is only as strong as the *other*
+  process's version -- a peer running admixr2 < 0.4.1 still writes in place.
+
 * **adfo could report `NA` for every standard error on a fit that converged
   normally.** The driver decided whether to build the covariance Hessian by
   forward-differencing the *gradient* from the sensitivity model's shape alone,

@@ -183,6 +183,42 @@ test_that("the worker REPORTS and degrades when the sens cache holds an unusable
   expect_match(m$sens_fallback, "could not load the sensitivity model")
 })
 
+test_that("the worker refuses a TRUNCATED cache entry rather than using it", {
+  # The concurrency signature. A cache entry is content-addressed, so any other
+  # process fitting the same model writes the same path -- and an in-place
+  # saveRDS() (what .admCacheWrite did until 0.4.1) publishes that path the
+  # instant it opens the connection, at ZERO bytes, filling it in afterwards.
+  # A reader in that window gets a prefix.
+  #
+  # Measured with one competing writer: 65% of reads corrupt in-place, 0 of 2236
+  # once the write became temp-file-plus-rename. This test is the reader half --
+  # that a prefix is REFUSED legibly rather than handed on as a model -- and
+  # test-cache-atomic.R is the writer half, that no prefix is ever published.
+  #
+  # Every fraction, because file.exists() is TRUE for all of them: the existence
+  # check cannot double as a validity check, which is exactly why this failed as
+  # "a parallel worker could not read the compiled-model cache" instead of as a
+  # cache miss.
+  s <- .wl_setup()
+  skip_if(!file.exists(s$pinfo$sim_cache_file), "simulation cache not written")
+  raw <- readBin(s$pinfo$sim_cache_file, "raw", file.size(s$pinfo$sim_cache_file))
+
+  for (frac in c(0, 0.5, 0.99)) {
+    f <- file.path(tempdir(), sprintf("adm-sim-truncated-%02.0f.rds", frac * 100))
+    n <- floor(length(raw) * frac)
+    if (n > 0L) writeBin(raw[seq_len(n)], f) else file.create(f)
+    p <- s$pinfo; p$sim_cache_file <- f
+    expect_true(file.exists(f))
+    expect_error(
+      admixr2:::.admWorkerLoadModels(
+        ui_lstExpr = s$ui$lstExpr, rxMod_direct = NULL, cores = 1L,
+        sens_cache_file = NULL, sens_cols = NULL, sens_rename = NULL,
+        sensModel_direct = NULL, pinfo = p),
+      "could not read the compiled-model cache")
+    unlink(f)
+  }
+})
+
 test_that("the worker REFUSES a cache payload holding no compiled model", {
   # This test used to assert the opposite -- that shape is "not this function's
   # job" -- and that was wrong. .load_all() is upstream's iterate-the-container
