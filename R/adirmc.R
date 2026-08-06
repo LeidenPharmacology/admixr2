@@ -21,6 +21,13 @@
 #'   or `"linearized_gh"` (same linear approximation but baseline and Jacobian use
 #'   Gauss-Hermite quadrature `E_GH[f(theta, eta)]` instead of `f(theta, 0)` — more
 #'   accurate baseline at any IIV magnitude, still zero rxSolve per inner step).
+#' @param grad_h Step size for the inner optimiser's finite-difference gradient
+#'   (`grad = "fd"`). Defaults to `1e-6`, not the `1e-4` the other three
+#'   controls use: the IRMC inner NLL is deterministic given fixed proposals, so
+#'   there is no Monte Carlo noise to step over and the truncation-versus-noise
+#'   balance that sets `1e-4` elsewhere does not apply. The inner step was a
+#'   hard-coded `1e-6` until it was made to honour `grad_h`; inheriting the
+#'   coarser default would have changed the gradient the loop was tuned for.
 #' @param kappa_n_nodes Number of GH nodes per eta dimension for
 #'   `kappa_method = "linearized_gh"` (default 5). Total quadrature points =
 #'   `kappa_n_nodes^n_eta`. Ignored for other kappa methods.

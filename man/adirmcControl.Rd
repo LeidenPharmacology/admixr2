@@ -20,7 +20,7 @@ adirmcControl(
   grad = c("analytical", "none", "fd"),
   kappa_method = c("exact", "linearized", "linearized_gh"),
   kappa_n_nodes = 5L,
-  grad_h = 1e-04,
+  grad_h = 1e-06,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
   phases = c(2, 1, 0.5, 0.01),
@@ -161,11 +161,13 @@ accurate baseline at any IIV magnitude, still zero rxSolve per inner step).}
 \code{kappa_method = "linearized_gh"} (default 5). Total quadrature points =
 \code{kappa_n_nodes^n_eta}. Ignored for other kappa methods.}
 
-\item{grad_h}{Step size for finite-difference gradient evaluation during
-optimization (used by \code{grad = "fd"} or \code{"cfd"}). The default 1e-4 is near
-the optimal balance between truncation error (grows with \code{h}) and MC noise
-amplification (grows as \code{1/h}) for forward FD. Central FD (\code{"cfd"}) has a
-slightly wider optimum around 1e-3, but 1e-4 works well for both.}
+\item{grad_h}{Step size for the inner optimiser's finite-difference gradient
+(\code{grad = "fd"}). Defaults to \code{1e-6}, not the \code{1e-4} the other three
+controls use: the IRMC inner NLL is deterministic given fixed proposals, so
+there is no Monte Carlo noise to step over and the truncation-versus-noise
+balance that sets \code{1e-4} elsewhere does not apply. The inner step was a
+hard-coded \code{1e-6} until it was made to honour \code{grad_h}; inheriting the
+coarser default would have changed the gradient the loop was tuned for.}
 
 \item{cov_h}{Inner FD step for the gradient-based Hessian (only used when
 \code{covMethod = "r"} and \code{grad != "none"}). Each gradient evaluation has MC

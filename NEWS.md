@@ -177,11 +177,17 @@ argument. Neither is a bug fix, so both are listed here rather than below.
   `gill = TRUE` option could not reach it either. It now honours the argument, and
   under `gill = TRUE` takes Gill83's measured steps.
 
-  **The default `grad_h` is `1e-4`, so an existing `grad = "fd"` adirmc fit
-  differences with a step 100x larger than before** and can return a different
-  objective and different estimates. Pass `grad_h = 1e-6` to reproduce 0.4.0
-  exactly. Every other estimator already used `grad_h` here, so this also removes
-  a discrepancy: the same control meant something different for adirmc than for
+  `adirmcControl()`'s `grad_h` default moves to `1e-6` to match, so **a fit that
+  does not name `grad_h` is unchanged**. The IRMC inner NLL is deterministic given
+  fixed proposals, so it wants a finer step than the sampling estimators, whose
+  `1e-4` default exists to step over Monte Carlo noise; inheriting that common
+  default would have made every `grad = "fd"` adirmc fit converge on a step 100x
+  coarser than the inner loop was tuned for.
+
+  **A script that sets `grad_h` explicitly does change**: the value was ignored
+  here before and is applied now, so the objective and estimates can move. Every
+  other estimator already used `grad_h` for this step, so this also removes a
+  discrepancy -- the same control meant something different for adirmc than for
   the other three.
 
 * **`adfoControl()`'s new `grad = "analytical"` default brings the `grad_bounds`
@@ -240,13 +246,6 @@ argument. Neither is a bug fix, so both are listed here rather than below.
   The second case now warns rather than messages, and says what to check --
   previously the same script silently produced a coarser gradient, and different
   estimates and standard errors, on a machine with a read-only cache directory.
-
-* **`adirmcControl()`'s `grad_h` now defaults to `1e-6`, not `1e-4`.** Making the
-  IRMC inner finite difference honour `grad_h` was right, but inheriting the
-  common default made every `grad = "fd"` adirmc fit converge on a step 100x
-  coarser than the inner loop was tuned for. The IRMC inner NLL is deterministic
-  given fixed proposals, so it wants a finer step than the sampling estimators,
-  whose coarser default exists to step over Monte Carlo noise.
 
 * **A fit that stops on the gradient box constraint now says so audibly.**
   nlmixr2est muffles conditions raised inside `nlmixr2Est.*`, so the warning
