@@ -1357,8 +1357,25 @@ nlmixr2Est.adfo <- function(env, ...) {
       # Explicit: a warning. Quietly giving someone who wrote grad = "analytical"
       # the gradient they wrote it to avoid is a different matter, and a message
       # leaves no record of it -- see .grad_explicit in adfoControl().
-      .msg <- "adfo: no sensitivity model for this model -- gradient by forward FD."
-      if (isTRUE(.ctl$grad_explicit))
+      #
+      # ... and equally on whether NULL was EXPECTED. .admLoadSensModel() also
+      # returns NULL when it genuinely failed -- a compile error, or an
+      # unwritable rxTempDir() whose .admCacheWrite() failure the caller's
+      # tryCatch swallows along with a model that did compile. That is not a
+      # by-design refusal and the user CAN act on it (it is usually a permissions
+      # problem), but the defaulted path would have said it in a message that
+      # suppressMessages() or a knitr chunk discards, leaving the same script
+      # converging to different estimates on a writable machine. So an
+      # unexplained NULL warns even when the gradient was defaulted.
+      .by_design <- tryCatch(.admSensNullByDesign(.ui, pinfo),
+                             error = function(e) TRUE)
+      .msg <- if (.by_design)
+        "adfo: no sensitivity model for this model -- gradient by forward FD."
+      else
+        paste0("adfo: the sensitivity model could not be built for this model, ",
+               "which is not one of the cases that refuse one by design (check ",
+               "that rxode2::rxTempDir() is writable) -- gradient by forward FD.")
+      if (isTRUE(.ctl$grad_explicit) || !.by_design)
         warning(sprintf("adfoControl(grad = '%s'): %s", .ctl$grad,
                         sub("^adfo: ", "", .msg)), call. = FALSE)
       else message(.msg)

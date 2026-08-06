@@ -187,3 +187,36 @@ test_that("Long-format input errors are informative", {
     regexp = "shares one `ev`")
 })
 
+
+test_that("a second normalisation fills a JOINT unit's per-block output", {
+  skip_if_not_installed("rxode2")
+  # The fixtures (and anything that prepares studies before a model exists)
+  # normalise without a default_output, so every blk$output comes out NULL --
+  # .admBuildJointUnit() takes each from `ob$output %||% default_output`. The
+  # driver's later pass is the ONLY chance to fill them, and the short-circuit
+  # for an already-normalised study used to skip joint units entirely, making the
+  # NULL permanent. .admBuildEvFull() then calls et(blk$times, cmt = NULL) per
+  # block: the joint sens solve either errors (dropping to FD) or reads an
+  # untagged compartment -- a finite but wrong joint objective, silently.
+  ev <- rxode2::et(amt = 100)
+  raw <- list(n = 40L, ev = ev, joint = TRUE,
+              observations = list(
+                a = list(times = c(1, 2), E = c(5, 4), V = diag(c(1, 1))),
+                b = list(times = c(3),    E = 3,       V = matrix(1))))
+
+  once <- admixr2:::.admNormaliseStudy(raw, "s")               # no model yet
+  u1   <- once$observations[[1L]]
+  expect_true(isTRUE(u1$is_joint))
+  expect_null(u1$blocks[[1L]]$output)                          # the NULL in question
+
+  twice <- admixr2:::.admNormaliseStudy(once, "s", default_output = "cp")
+  u2    <- twice$observations[[1L]]
+  expect_true(isTRUE(u2$is_joint))
+  expect_identical(vapply(u2$blocks, `[[`, character(1), "output"),
+                   c("cp", "cp"))
+  # The unit's own `output` exists only for cmt-tagging and is taken from
+  # blocks[[1]], not stamped independently.
+  expect_identical(u2$output, "cp")
+  # row_output holds block INDICES, so it must be untouched by any of this.
+  expect_identical(u2$row_output, once$observations[[1L]]$row_output)
+})

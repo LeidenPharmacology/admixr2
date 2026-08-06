@@ -331,3 +331,54 @@ test_that(".admRxLoadAll is TRUE for a payload holding no compiled model", {
   expect_true(admixr2:::.admRxLoadAll("not a model"))
   expect_true(admixr2:::.admRxLoadAll(list(a = 1, b = "x")))
 })
+
+# ---- .admSensNullByDesign() --------------------------------------------------
+#
+# .admLoadSensModel() returns NULL both for refusals that are correct and
+# permanent and for genuine failures (a compile error, or an unwritable
+# rxTempDir() whose cache-write failure the caller's tryCatch swallows). The
+# drivers report those differently -- message vs warning -- so the classifier has
+# to be right about which is which.
+
+test_that(".admSensNullByDesign flags the refusals, not an ordinary model", {
+  ord <- function(d) list(predDf = data.frame(distribution = d,
+                                              transform = "untransformed",
+                                              trLow = NA, trHi = NA,
+                                              stringsAsFactors = FALSE))
+  # An ordinary single untransformed endpoint with etas: NOT by design, so a NULL
+  # from the loader means something actually broke.
+  expect_false(admixr2:::.admSensNullByDesign(ord("norm"), list(n_eta = 2L)))
+  # No random effects.
+  expect_true(admixr2:::.admSensNullByDesign(ord("norm"), list(n_eta = 0L)))
+  # Ordinal.
+  expect_true(admixr2:::.admSensNullByDesign(ord("ordinal"), list(n_eta = 2L)))
+  expect_true(admixr2:::.admSensNullByDesign(ord("dordinal"), list(n_eta = 2L)))
+})
+
+test_that(".admSensNullByDesign flags mixed and unlike endpoint transforms", {
+  mk <- function(tr, lo = NA, hi = NA)
+    list(predDf = data.frame(distribution = rep("norm", length(tr)),
+                             transform = tr, trLow = lo, trHi = hi,
+                             stringsAsFactors = FALSE))
+  p <- list(n_eta = 2L)
+  # One transformed, one not: rx_pred_ carries different scales per row.
+  expect_true(admixr2:::.admSensNullByDesign(mk(c("lnorm", "untransformed")), p))
+  # Both transformed, but not the SAME way -- pred_tbs is one spec for all rows.
+  expect_true(admixr2:::.admSensNullByDesign(mk(c("lnorm", "boxCox")), p))
+  # Same transform, different bounds.
+  expect_true(admixr2:::.admSensNullByDesign(mk(c("logit", "logit"),
+                                                lo = c(0, 1), hi = c(1, 2)), p))
+  # Same transform, same bounds: fine, the single spec applies to every row.
+  expect_false(admixr2:::.admSensNullByDesign(mk(c("lnorm", "lnorm")), p))
+  # A single transformed endpoint is obviously fine.
+  expect_false(admixr2:::.admSensNullByDesign(mk("lnorm"), p))
+})
+
+test_that(".admSensNullByDesign falls back to the iniDf when pinfo is absent", {
+  ui <- list(predDf = data.frame(distribution = "norm", transform = "untransformed",
+                                 trLow = NA, trHi = NA, stringsAsFactors = FALSE),
+             iniDf = data.frame(neta1 = c(NA, NA), stringsAsFactors = FALSE))
+  expect_true(admixr2:::.admSensNullByDesign(ui))            # no etas in iniDf
+  ui$iniDf <- data.frame(neta1 = c(NA, 1L), stringsAsFactors = FALSE)
+  expect_false(admixr2:::.admSensNullByDesign(ui))
+})

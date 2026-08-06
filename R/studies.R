@@ -5,9 +5,11 @@
 # Split out of utils.R; contents unchanged (see R/covreport.R for why that is
 # safe). This is the largest single concern that file held, and the one with the
 # most invariants: `multi_out` is MODEL-level while `is_joint` is study-level, a
-# joint unit is deliberately output-less (it routes per ROW via row_output), and
-# normalising twice must be idempotent WITHOUT being inert -- a second pass still
-# has to fill an output the first pass had no default for.
+# joint unit routes per ROW (row_output) and so has no endpoint of its own --
+# though it still carries one copied off blocks[[1]] for cmt-tagging, and its
+# BLOCKS each have a real one -- and normalising twice must be idempotent WITHOUT
+# being inert: a second pass still has to fill an output the first pass had no
+# default for, in the blocks as well as in the plain units.
 
 
 # Internal nlmixr2 linCmt names (rxLinCmt, linCmtB, ...) don't appear in the
@@ -525,11 +527,35 @@
   if (isTRUE(s$.adm_normalised)) {
     if (!is.null(default_output)) {
       if (is.null(s$output)) s$output <- default_output
-      # A JOINT unit is deliberately output-less: it stacks several endpoints and
-      # routes them per ROW (row_output / blocks), so stamping one output on it
-      # would tag the whole stack as a single compartment.
       s$observations <- lapply(s$observations, function(u) {
-        if (is.null(u$output) && !isTRUE(u$is_joint)) u$output <- default_output
+        if (!isTRUE(u$is_joint)) {
+          if (is.null(u$output)) u$output <- default_output
+          return(u)
+        }
+        # A JOINT unit routes per ROW, so it carries no endpoint of its own --
+        # except the one .admBuildJointUnit() copies off blocks[[1]] purely for
+        # cmt-tagging. Skipping joint units ENTIRELY here was too strong: their
+        # BLOCKS each do have an output, taken from `ob$output %||% default_output`
+        # at construction, so a study normalised before the model was known (the
+        # fixtures do exactly this) leaves every blk$output NULL -- and nothing
+        # later fills it, because this short-circuit is the only second pass.
+        #
+        # .admBuildEvFull() then runs `et(blk$times, cmt = blk$output)` per block
+        # with cmt = NULL, so the joint sens solve either errors out of
+        # .admSimulateJointSens() -- dropping the fit to FD -- or reads an
+        # untagged compartment, giving a finite but wrong joint objective with no
+        # warning.
+        #
+        # `row_output` needs nothing: it holds block INDICES, not names.
+        if (!is.null(u$blocks))
+          u$blocks <- lapply(u$blocks, function(blk) {
+            if (is.null(blk$output)) blk$output <- default_output
+            blk
+          })
+        # Restore the tagging endpoint the constructor would have set, rather
+        # than stamping default_output over a stack that names its own endpoints.
+        if (is.null(u$output) && length(u$blocks))
+          u$output <- u$blocks[[1L]]$output
         u
       })
     }

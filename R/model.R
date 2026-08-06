@@ -1162,6 +1162,55 @@
 # the cross second-order block d2(pred)/(d eta d dir) that adfo needs for dJ/dtheta;
 # it costs extra state compartments, so only adfo asks for it, and a failed order-2
 # build falls back to order 1 (adfo then keeps its finite-difference pass).
+# Would .admLoadSensModel() return NULL for this model BY DESIGN?
+#
+# It returns NULL for two very different reasons and the callers could not tell
+# them apart: refusals that are correct and permanent (below), and genuine
+# failures -- a compile error inside .admBuildThetaSens(), or an unwritable
+# rxTempDir() where .admCacheWrite() fails and the caller's tryCatch(error =)
+# discards a model that actually compiled. A user on a locked-down HPC home
+# directory then silently gets a struct-theta gradient at 8e-4..1e-2 relative
+# instead of 2e-7 -- converging to different estimates and SEs than the same
+# script on a writable machine, with nothing said.
+#
+# So the drivers ask this first: by-design NULL stays a message (the fit is
+# correct, just finite-differenced, and there is nothing to act on), while an
+# unexplained NULL becomes a warning, which is the case worth a record.
+#
+# Deliberately a SEPARATE predicate rather than a reason code returned from
+# .admLoadSensModel(): that function's body is digested into the sens cache key
+# (see .admPkgKey), so touching it to add plumbing would invalidate every cached
+# model for a change that emits nothing. It is also not called by any emitter, so
+# it stays out of the call-graph reachability check for the same reason.
+#
+# Mirrors the guards in .admLoadSensModel(); if one moves, this moves with it.
+.admSensNullByDesign <- function(ui, pinfo = NULL) {
+  # 1. No random effects: there is nothing to take a sensitivity with respect to.
+  .n_eta <- tryCatch(pinfo$n_eta, error = function(e) NULL)
+  if (is.null(.n_eta))
+    .n_eta <- tryCatch(sum(!is.na(ui$iniDf$neta1)), error = function(e) NA_integer_)
+  if (isTRUE(.n_eta == 0L)) return(TRUE)
+  # 2. Ordinal: rx_pred_ is the ordinal log-likelihood, not a category
+  #    probability, so its columns differentiate a different function.
+  .d <- tryCatch(as.character(ui$predDf$distribution), error = function(e) character(0))
+  if (length(.d) > 0L && any(.d %in% c("ordinal", "dordinal"))) return(TRUE)
+  # 3. Mixed transformed/untransformed endpoints, or several endpoints that are
+  #    transformed DIFFERENTLY: rx_pred_ carries different scales per row with no
+  #    per-row map to undo it.
+  .tr <- tryCatch(as.character(ui$predDf$transform), error = function(e) character(0))
+  .ln <- .tr %in% c("lnorm", "logit", "probit", "boxCox", "tbs",
+                    "yeoJohnson", "tbsYj")
+  if (length(.ln) > 0L && any(.ln) && !all(.ln)) return(TRUE)
+  if (length(.ln) > 0L && all(.ln) && length(.tr) > 1L) {
+    .bnd <- tryCatch(
+      paste(suppressWarnings(as.numeric(ui$predDf$trLow)),
+            suppressWarnings(as.numeric(ui$predDf$trHi))),
+      error = function(e) rep("", length(.tr)))
+    if (length(unique(.tr)) > 1L || length(unique(.bnd)) > 1L) return(TRUE)
+  }
+  FALSE
+}
+
 .admLoadSensModel <- function(ui, order = 1L) {
   order <- as.integer(order)
   ini_df <- tryCatch(ui$iniDf, error = function(e) NULL)
