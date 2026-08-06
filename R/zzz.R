@@ -73,6 +73,9 @@
 # may not be available when loading". Harmless -- a worker reloads the DLL via
 # rxLoad(), not from the serialised environment.
 .admCacheWrite <- function(object, file, what) {
+  # Sampled before the write: afterwards a failed-at-open call and a
+  # failed-halfway call look identical, and only the second one made the mess.
+  .pre_existing <- file.exists(file)
   ok <- tryCatch({ suppressWarnings(saveRDS(object, file)); TRUE },
                  error = function(e) {
                    .adm_warn_once(paste0("cache_write:", file), sprintf(
@@ -85,11 +88,25 @@
                  })
   # A half-written file is worse than none: a later session would read it back as
   # a corrupt entry rather than a miss.
+  #
+  # But only clean up a file THIS call created. `ok` is FALSE for any saveRDS
+  # failure, including one that fails at open time and so leaves a complete,
+  # valid pre-existing entry untouched -- and the caches are shared, keyed only
+  # by model content, across sessions and processes. Session A writes
+  # adm-sim-<hash>.rds and starts daemons about to read it; session B fits the
+  # same model, its write fails (disk full, or the file momentarily open on
+  # Windows), and an unconditional remove deletes A's entry. A's workers take the
+  # deliberately fallback-free `.cacheFile <- pinfo$sim_cache_file` branch, find
+  # nothing and stop() -- surfacing as "parallel restart 1 failed" on a fit that
+  # was running correctly.
+  #
+  # existed-before is sampled BEFORE the write, because after a partial write the
+  # two cases are indistinguishable from the file alone.
   # suppressWarnings, not just tryCatch(error=): file.remove() signals a WARNING
   # on failure, not an error, so an error handler alone lets "cannot remove file
   # ..., reason 'Permission denied'" leak out right behind the warning above --
   # two warnings for one event, the second of them noise.
-  if (!ok && file.exists(file))
+  if (!ok && !.pre_existing && file.exists(file))
     tryCatch(suppressWarnings(file.remove(file)), error = function(e) NULL)
   invisible(ok)
 }

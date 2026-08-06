@@ -1,6 +1,21 @@
 # Tier 1 unit tests for .admDropSimModelMeta() (the #81 recursion fix).
 # No rxode2 required: a ui is mocked as a list with a plain `meta` environment.
 
+# The sens-cache emitter list, stated ONCE for the whole file.
+#
+# It is deliberately an independent restatement of the `.emitters` local inside
+# `.admPkgKey()` -- the two are meant to be compared, so deriving this from the
+# package would make both tests vacuous. But it was written out twice WITHIN this
+# file, for the two tests below, and CLAUDE.md's warning that "the two drift
+# together if you forget" then understates it: updating one copy leaves the
+# call-graph escape check exercising a stale list, which is the exact mechanism
+# that let .admSensNameMaps and .admEndpointVar escape the key in the first place.
+.EMITTERS <- c(".admBuildThetaSens", ".admLoadSensModel", ".admSensNameMaps",
+               ".admSensFromInner", ".admLinCmtToOde", ".admRxode2",
+               ".admModName", ".admJumpCovers", ".admToRx", ".admEndpointVar",
+               ".admCountSpec", ".admBetaSpec", ".admBetaPair", ".admDistArgs",
+               ".admIsLinCmtMod")
+
 test_that(".admDropSimModelMeta drops rxode2 envs from ui$meta, keeps everything else", {
   meta <- new.env(parent = emptyenv())
 
@@ -204,11 +219,7 @@ test_that("editing ANY emitter changes .admPkgKey", {
   # plausible, silently wrong gradient under a normal-looking objective.
   ns <- asNamespace("admixr2")
   base <- admixr2:::.admPkgKey()
-  emitters <- c(".admBuildThetaSens", ".admLoadSensModel", ".admSensNameMaps",
-                ".admSensFromInner", ".admLinCmtToOde", ".admRxode2",
-                ".admModName", ".admJumpCovers", ".admToRx", ".admEndpointVar",
-                ".admCountSpec", ".admBetaSpec", ".admBetaPair", ".admDistArgs",
-                ".admIsLinCmtMod")
+  emitters <- .EMITTERS
   for (nm in emitters) {
     orig <- get(nm, envir = ns)
     patched <- orig
@@ -236,11 +247,7 @@ test_that("no function an emitter CALLS escapes the key unaccounted for", {
   # reason. A new helper in the emitter path fails this until someone decides
   # which it is, which is the decision that was skipped.
   ns <- asNamespace("admixr2")
-  emitters <- c(".admBuildThetaSens", ".admLoadSensModel", ".admSensNameMaps",
-                ".admSensFromInner", ".admLinCmtToOde", ".admRxode2",
-                ".admModName", ".admJumpCovers", ".admToRx", ".admEndpointVar",
-                ".admCountSpec", ".admBetaSpec", ".admBetaPair", ".admDistArgs",
-                ".admIsLinCmtMod")
+  emitters <- .EMITTERS
 
   # Reachable but deliberately NOT digested:
   allow <- c(

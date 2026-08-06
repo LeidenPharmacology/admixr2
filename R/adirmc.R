@@ -1260,7 +1260,23 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # Behaviour-preserving: the progress label that also reads `sensModel` is
   # itself appended only `if (.ctl$covMethod == "r")`, so the covMethod = "none"
   # header is unchanged.
-  sensModel <- if (.ctl$covMethod == "r" && .ctl$grad == "analytical")
+  #
+  # ...but skipping the load outright would break the model-compilation ORDERING
+  # INVARIANT. `.admLoadSensModel()` must run before `.admLoadModel()`, because
+  # the latter's cache-MISS path calls `rxode2::rxode2(ui)`, and that caches
+  # `ui$foceiModel$inner` as NULL. Nothing in this fit reads `inner`, but a LATER
+  # admc/adgh/adfo fit whose `.admBuildThetaSens()` bails falls back to
+  # `.admSensFromInner()`, gets NULL, and silently drops to an FD gradient -- and
+  # the stale-cache recovery that used to repair this no longer exists, so the
+  # ordering is the only defence. It persists via rxTempDir().
+  #
+  # The compile only happens on a cache MISS, and `.admModelCacheFile()` is pure
+  # -- it derives the path without compiling anything. So ask first: skip the
+  # sens load only when `.admLoadModel()` is going to take its cache-HIT branch
+  # and therefore cannot poison anything. Cold cache keeps the old ordering.
+  .sim_warm <- isTRUE(tryCatch(file.exists(.admModelCacheFile(.ui)),
+                               error = function(e) FALSE))
+  sensModel <- if ((.ctl$covMethod == "r" && .ctl$grad == "analytical") || !.sim_warm)
     tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
   else NULL
 

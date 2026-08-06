@@ -1,3 +1,27 @@
+# Did .adfoGrad's last call actually take the order-2 path?
+#
+# The driver's `have_d2` is computed from the cached sens model's SHAPE alone
+# (`!is.null(sensModel$d2_cols) && !any_joint`). `.adfoGrad` then re-derives its
+# own `use_d2` with strictly more requirements that are only knowable at run
+# time: every study's `muj_cache[[i]]$dJ` must be present (it is NULL whenever
+# `.admSimulateSensRows()` returns no `d2_list` and `.admGetMuJBatch` falls
+# through to the FD-Jacobian branch), and every theta's direction must resolve
+# in `dJ`/`dth`.
+#
+# When they disagree, `.adfoGrad` forward-differences the whole NLL per theta
+# while the driver has already decided `use_grad_cov <- want_grad && have_d2` and
+# asks `.adfoCalcCov(use_grad = TRUE)` to forward-difference THAT -- the nested
+# FD the gate exists to prevent, surfacing as a normal-looking fit whose every
+# `parFixedDf$SE` is NA. So `.adfoGrad` publishes what it actually did and the
+# driver believes that instead of its own prediction.
+#
+# `use_d2` is a property of (sensModel, pinfo, studies), not of the parameter
+# vector, so the last call's value describes them all. Unset means no gradient
+# ran in THIS process -- parallel restarts run in daemons -- and the driver then
+# declines the grad-FD Hessian and takes the Gill NLL-FD one: slower, correct,
+# and the same path 0.4.0 used by default.
+.adfo_d2_env <- new.env(parent = emptyenv())
+
 # -- FO (First-Order) aggregate data estimator ---------------------------------
 # Approximates the aggregate NLL analytically:
 #   mu_pred = f(theta, 0)        population prediction at eta = 0
@@ -376,6 +400,10 @@
                          all(pinfo$struct_names[unp] %in% names(mc$dth)))),
         logical(1)))
   }
+  # Report the decision to the driver, which cannot derive it (see .adfo_d2_env).
+  # Written on EVERY call, including the FALSE ones -- the driver reads the last
+  # value, and a stale TRUE from an earlier fit is exactly the wrong answer.
+  .adfo_d2_env$used_d2 <- use_d2
 
   # --- Pass 2: struct theta forward FD (reuses cached nll_0 as baseline) -------
   #
@@ -1348,6 +1376,11 @@ nlmixr2Est.adfo <- function(env, ...) {
   # alike -- adfo's struct gradient has always been the FD one). Also FALSE for a
   # joint fit, whose Pass 3 is not implemented.
   have_d2 <- want_sens && !is.null(sensModel$d2_cols) && !any_joint
+  # Clear any decision left by a PREVIOUS fit in this session before the
+  # optimizer starts writing its own; see .adfo_d2_env. Without this a
+  # grad = "none" fit (no .adfoGrad call at all) would inherit the last fit's
+  # TRUE and ask for a grad-FD Hessian over a gradient that never ran.
+  .adfo_d2_env$used_d2 <- NULL
 
   # Say so whenever they really are finite-differenced.
   #
@@ -1533,9 +1566,16 @@ nlmixr2Est.adfo <- function(env, ...) {
     #   * a transformed endpoint, where the order-2 block is deliberately absent
     #     and Pass 2 already forward-differences the whole NLL at grad_h = 1e-4 --
     #     so the covariance FD at cov_h_outer ~ 2.4e-3 nested on top of it.
+    #   * and the runtime case `have_d2` cannot see: the sens model HAS a d2
+    #     block, but `.admGetMuJBatch` fell through to its FD-Jacobian branch, so
+    #     no study carries `dJ` and .adfoGrad finite-differenced after all.
     # Both then take the Gill NLL-FD Hessian, which is what 0.4.0 used by default
     # and what the covariance calibration in the docs was measured on.
-    use_grad_cov <- want_grad && have_d2
+    #
+    # The third case is only knowable from what .adfoGrad DID, so require that
+    # too. NULL (no gradient ran in this process, i.e. parallel restarts) is not
+    # TRUE, so the safe NLL-FD branch is taken.
+    use_grad_cov <- want_grad && have_d2 && isTRUE(.adfo_d2_env$used_d2)
     n_evals <- if (use_grad_cov) {
       np_cov + 1L
     } else {
