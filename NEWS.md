@@ -209,6 +209,52 @@ argument. Neither is a bug fix, so both are listed here rather than below.
 
 ## Bug fixes
 
+* **adfo could report `NA` for every standard error on a fit that converged
+  normally.** The driver decided whether to build the covariance Hessian by
+  forward-differencing the *gradient* from the sensitivity model's shape alone,
+  while `.adfoGrad()` re-derives that decision at run time with stricter
+  requirements -- every study's cached `dJ` present, every theta's direction
+  resolvable. When they disagreed, the gradient was itself finite-differenced and
+  the Hessian then finite-differenced *that*, which is exactly the nested FD the
+  gate exists to prevent. `.adfoGrad()` now reports what it actually did and the
+  driver believes that, falling back to the Gill NLL-FD Hessian otherwise.
+
+* **A joint (same-subject) study normalised before the model was known kept
+  `NULL` block outputs.** Only the driver's pass carries the endpoint name, and
+  the short-circuit for an already-normalised study skipped joint units
+  altogether, so each block's `cmt` tag stayed empty: the joint sensitivity solve
+  either dropped the fit to finite differences or read an untagged compartment,
+  giving a finite but wrong joint objective with no warning.
+
+* **`.admCacheWrite()` could delete another session's valid cache entry.** The
+  cleanup that removes a half-written file ran on any `saveRDS` failure,
+  including one that fails at open time and leaves a complete pre-existing entry
+  untouched. A concurrent fit of the same model could therefore have its compiled
+  model removed underneath its parallel workers, which then fail with
+  "parallel restart N failed". It now only removes a file that call created.
+
+* **A sensitivity model that failed to build was reported as quietly as one
+  refused by design.** `.admLoadSensModel()` returns `NULL` both for models that
+  cannot have one (no random effects, ordinal, mixed or unlike endpoint
+  transforms) and for genuine failures such as an unwritable `rxode2::rxTempDir()`.
+  The second case now warns rather than messages, and says what to check --
+  previously the same script silently produced a coarser gradient, and different
+  estimates and standard errors, on a machine with a read-only cache directory.
+
+* **`adirmcControl()`'s `grad_h` now defaults to `1e-6`, not `1e-4`.** Making the
+  IRMC inner finite difference honour `grad_h` was right, but inheriting the
+  common default made every `grad = "fd"` adirmc fit converge on a step 100x
+  coarser than the inner loop was tuned for. The IRMC inner NLL is deterministic
+  given fixed proposals, so it wants a finer step than the sampling estimators,
+  whose coarser default exists to step over Monte Carlo noise.
+
+* **A fit that stops on the gradient box constraint now says so audibly.**
+  nlmixr2est muffles conditions raised inside `nlmixr2Est.*`, so the warning
+  reached `fit$warnings` -- where `print(fit)` shows it -- but never `warnings()`.
+  A script that writes coefficients to disk without printing the fit saw nothing
+  at all. The notice is now also a `message()`, on the same channel as the live
+  progress table.
+
 * **The order-2 `linCmt()` promotion did not run for a linCmt assigned to a
   variable, so adfo kept finite-differencing its structural thetas there.**
   `linCmt()` carries no second derivative, so an order-2 request promotes the

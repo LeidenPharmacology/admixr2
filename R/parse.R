@@ -402,6 +402,36 @@ covariance for admixr2 to match"),
 # - sigma: 1 (log(sigma^2) encoding self-normalizing).
 # - omega diagonal: 1 (log(Omega_ii) encoding self-normalizing).
 # - omega off-diagonal: pmax(|L_ij_init|, 0.1) (raw L values need magnitude scaling).
+# Are these unpacked parameters usable at all?
+#
+# A NON-FINITE parameter cannot produce a finite objective, but it CAN be handed
+# to rxSolve, which then integrates garbage: the covariance probe legitimately
+# perturbs a sigma to exp(1e5/2) = Inf (cov_h_outer is deliberately huge in the
+# guard tests), and lsoda answers with ~120k `intdy -- t = <denormal> illegal` /
+# `h too small` warnings before the caller's finite-check rejects the result
+# anyway. Rejecting it up front costs one comparison, removes a guaranteed-useless
+# solve, and keeps the console readable.
+#
+# This lived INLINE at eight sites (.adfoNLL, .adfoGrad, .adghNLL, .adghGrad,
+# .admNLL, .admGrad, .admNLLBatch, .admGradBatch), each carrying a ~10-line
+# comment explaining that it could not be a shared predicate because these run
+# inside mirai daemons, "where assignInNamespace can replace a binding but not ADD
+# one, so a brand-new helper would be missing".
+#
+# That rationale is obsolete, and it was this branch that obsoleted it:
+# .admDaemonRestart() now builds a patch environment parented on the namespace and
+# re-parents every patched closure onto it, so new and existing names resolve
+# alike and a new helper needs no special handling. Pinned by
+# test-integration-daemon-patch.R, which runs in a real daemon.
+#
+# NULL `pars` (an .admUnpack that threw) is folded in, so the callers that tested
+# it separately can drop that too.
+.admParsFinite <- function(pars, pinfo) {
+  !is.null(pars) &&
+    all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
+    (pinfo$n_eta == 0L || all(is.finite(pars$omega)))
+}
+
 .admComputeScaleC <- function(pinfo) {
   struct_sc <- vapply(pinfo$struct_names, function(nm) {
     tr <- pinfo$struct_transforms[[nm]]

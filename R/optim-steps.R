@@ -158,6 +158,28 @@
     if (is.null(h0)) h[[1L]] else h0
   }
 
+# Per-parameter FD steps for the covariance HESSIAN.
+#
+# Trivial, and that is the point: this exact five-line expression was written out
+# in .adfoCalcCov(), .adghCalcCov() and .admCalcCov(), byte-identical but for the
+# label handed to .admGillSteps() -- and the fixed-step fallback
+# `pmax(abs(p[idx]), 0.1) * cov_h_outer` appeared TWICE inside each copy (once as
+# the Gill fallback, once as the non-Gill branch), so the heuristic was restated
+# six times across three files.
+#
+# The two occurrences within a copy are not independent: the fallback exists so a
+# failed Gill probe lands exactly where `gill = FALSE` would have. Single-sourcing
+# them makes that structural instead of a coincidence -- and the docs already
+# invite users to change the heuristic ("Hessian not positive definite ... try
+# increasing cov_h_outer"), which is the kind of edit that would otherwise be
+# applied to some copies and not others.
+.admHessSteps <- function(fn, p, idx, cov_h_outer, gill = FALSE,
+                          .var.name = "CalcCov") {
+  fixed <- pmax(abs(p[idx]), 0.1) * cov_h_outer
+  if (!isTRUE(gill)) return(fixed)
+  .admGillSteps(fn, p, idx, fallback = fixed, .var.name = .var.name)
+}
+
 # Per-parameter FD steps for the OPTIMIZER's gradient, measured once at the point
 # the fit starts from.
 #

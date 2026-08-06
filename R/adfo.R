@@ -217,18 +217,8 @@
                       params_list, cores, muj_cache = NULL) {
   pars  <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(Inf)
-  # A NON-FINITE parameter cannot produce a finite objective, but it CAN be handed
-  # to rxSolve, which then integrates garbage: the covariance probe legitimately
-  # perturbs a sigma to exp(1e5/2) = Inf (cov_h_outer is deliberately huge in the
-  # guard tests), and lsoda answers with ~120k `intdy -- t = <denormal> illegal` /
-  # `h too small` warnings before the caller's finite-check rejects the result
-  # anyway. Rejecting it HERE costs one comparison, removes a guaranteed-useless
-  # solve, and keeps the console readable. Written inline rather than as a shared
-  # predicate: this runs inside mirai daemons, where assignInNamespace
-  # can replace a binding but not ADD one, so a brand-new helper would be missing
-  # (see the note at the top of simulate.R).
-  if (!(all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
-        (pinfo$n_eta == 0L || all(is.finite(pars$omega))))) return(Inf)
+  # Reject non-finite parameters before the solve; see .admParsFinite().
+  if (!.admParsFinite(pars, pinfo)) return(Inf)
   total <- 0
   .mkey <- .adfoMuJKey(pars, sensModel)
 
@@ -296,8 +286,7 @@
   # too, because the gradient unpacks `p` itself rather than going through the
   # NLL. Inline, not a shared predicate (mirai daemons cannot gain a new
   # binding -- see the note at the top of simulate.R).
-  if (!(all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
-        (pinfo$n_eta == 0L || all(is.finite(pars$omega))))) return(rep(NA_real_, length(p)))
+  if (!.admParsFinite(pars, pinfo)) return(rep(NA_real_, length(p)))
 
   n_s   <- length(pinfo$struct_names)
   n_e   <- length(pinfo$sigma_names)
@@ -719,11 +708,8 @@
     # THIS objective and returns the step where condition error and truncation
     # error balance, per parameter. Exact fit here, since the function it probes
     # is the one being differenced.
-    h_gill <- if (isTRUE(gill))
-      .admGillSteps(nll_fn, p_hat, cov_idx,
-                    fallback = pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer,
-                    .var.name = "adfoCalcCov")
-    else pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
+    h_gill <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer, gill,
+                            .var.name = "adfoCalcCov")
     for (k in seq_len(np_cov)) {
       ki  <- cov_idx[k]; hk  <- h_gill[k]
       p_p <- p_hat; p_p[ki] <- p_p[ki] + hk

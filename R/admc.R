@@ -486,8 +486,7 @@ nmObjGetControl.admc <- function(x, ...) {
   # useless solve before the caller discarded the result. Inline, not a shared
   # predicate: this runs inside mirai daemons, where assignInNamespace can
   # replace a binding but not ADD one.
-  if (!(all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
-        (pinfo$n_eta == 0L || all(is.finite(pars$omega))))) return(Inf)
+  if (!.admParsFinite(pars, pinfo)) return(Inf)
 
   nll2     <- 0
   for (i in seq_along(studies)) {
@@ -612,8 +611,7 @@ nmObjGetControl.admc <- function(x, ...) {
   # too, because the gradient unpacks `p` itself rather than going through the
   # NLL. Inline, not a shared predicate (mirai daemons cannot gain a new
   # binding -- see the note at the top of simulate.R).
-  if (!(all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
-        (pinfo$n_eta == 0L || all(is.finite(pars$omega))))) return(rep(NA_real_, length(p)))
+  if (!.admParsFinite(pars, pinfo)) return(rep(NA_real_, length(p)))
 
   n_s   <- length(pinfo$struct_names)
   n_e   <- length(pinfo$sigma_names)
@@ -1086,21 +1084,13 @@ nmObjGetControl.admc <- function(x, ...) {
 
   pars_list <- vector("list", n_c)
   valid     <- logical(n_c)
-  # A NON-FINITE parameter cannot produce a finite objective, but it CAN be handed
-  # to rxSolve, which then integrates garbage: the covariance probe legitimately
-  # perturbs a sigma to exp(1e5/2) = Inf (cov_h_outer is deliberately huge in the
-  # guard tests), and lsoda answers with ~120k `intdy -- t = <denormal> illegal` /
-  # `h too small` warnings before the caller's finite-check rejects the result
-  # anyway. Rejecting it HERE costs one comparison, removes a guaranteed-useless
-  # solve, and keeps the console readable. Written inline rather than as a shared
-  # predicate: these functions run inside mirai daemons, where assignInNamespace
-  # can replace a binding but not ADD one, so a brand-new helper would be missing
-  # (see the note at the top of simulate.R).
+  # Reject non-finite parameters before the solve; see .admParsFinite().
   for (ci in seq_len(n_c)) {
     pars <- tryCatch(.admUnpack(p_list[[ci]], pinfo), error = function(e) NULL)
-    if (!is.null(pars) && (pinfo$n_eta == 0L || all(diag(pars$omega) > 0)) &&
-        all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
-        (pinfo$n_eta == 0L || all(is.finite(pars$omega)))) {
+    # The positive-diagonal test is this path's own: a non-PD omega is not a
+    # non-finite parameter, and only the batch NLL screens for it here.
+    if (.admParsFinite(pars, pinfo) &&
+        (pinfo$n_eta == 0L || all(diag(pars$omega) > 0))) {
       pars_list[[ci]] <- pars; valid[ci] <- TRUE
     }
   }
@@ -1248,10 +1238,8 @@ nmObjGetControl.admc <- function(x, ...) {
   pars_list <- lapply(p_list, function(p)
     tryCatch(.admUnpack(p, pinfo), error = function(e) NULL))
   # Non-finite parameters: rejected before the solve, same reason as .admNLLBatch.
-  valid <- vapply(pars_list, function(pars)
-    !is.null(pars) && all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
-        (pinfo$n_eta == 0L || all(is.finite(pars$omega))),
-    logical(1))
+  valid <- vapply(pars_list, function(pars) .admParsFinite(pars, pinfo),
+                  logical(1))
 
   grad_acc <- matrix(0, nrow = n_c, ncol = np,
                      dimnames = list(NULL, names(p_list[[1L]])))
@@ -1756,11 +1744,8 @@ nmObjGetControl.admc <- function(x, ...) {
     # THIS objective and returns the step where condition error and truncation
     # error balance, per parameter. Exact fit here, since the function it probes
     # is the one being differenced.
-    h_gill <- if (isTRUE(gill))
-      .admGillSteps(nll_fn, p_hat, cov_idx,
-                    fallback = pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer,
-                    .var.name = "admCalcCov")
-    else pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
+    h_gill <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer, gill,
+                            .var.name = "admCalcCov")
     n_off   <- np_cov * (np_cov - 1L) / 2L
 
     # Perturb only struct+sigma entries; omega stays fixed at p_hat.
