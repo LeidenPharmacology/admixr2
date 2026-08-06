@@ -83,7 +83,7 @@
      analytic, not merely on `grad != "none"`: with an order-1 fallback or a
      transformed endpoint the gradient is itself a finite difference, and
      differencing it again produced a singular Hessian and "standard errors are
-     unavailable for this fit". Those cases keep the Gill objective-FD Hessian
+     unavailable for this fit". Those cases keep the objective-FD Hessian
      that 0.4.0 used.
   4. **Whether a sensitivity model is asked for at all.** `.admLoadSensModel()`
      returns `NULL` by design for a fixed-effects-only model, an ordinal
@@ -106,76 +106,97 @@
   Only the `order = 2` request promotes: `admc`/`adgh` continue to use the fast
   solved form, which is all their first-order moments need.
 
-* **Gill (1983) finite-difference steps (`gill = TRUE`), for the covariance
-  Hessian and for the optimizer's gradient.** Every finite difference in admixr2
-  took its step from the same heuristic -- `pmax(abs(p), 0.1) * h`, with `h` a
-  fixed constant. That is a single guess about how much noise the objective
-  carries, applied identically to every parameter, and it is the guess behind
-  the "Hessian not positive definite ... try increasing `cov_h_outer`" warning:
-  too small a step and the difference is swamped by solver noise, too large and
-  it is swamped by curvature the second-order term does not model. A parameter
-  the objective is flat in and one it is sharp in want different steps, and the
-  right step moves with the ODE tolerance.
+* **Finite-difference steps measured per parameter (Shi 2021), replacing the
+  fixed scale.** Every finite difference in admixr2 took its step from the same
+  heuristic -- `pmax(abs(p), 0.1) * h`, with `h` a fixed constant. That is a
+  single guess about how much noise the objective carries, applied identically
+  to every parameter. A parameter the objective is flat in and one it is sharp
+  in want different steps, and the right step moves with the ODE tolerance.
 
-  `gill = TRUE` measures instead of guessing. It calls
-  `nlmixr2est::nlmixr2Gill83()` -- exported, so no `:::`, and the same algorithm
-  FOCEI uses for its own steps -- which probes the objective and returns, per
-  parameter, the step where condition error and truncation error balance.
-  Available on all four estimator controls. Try it first when the covariance
-  comes back indefinite.
+  admixr2 now measures. For a central difference the error is
+  `(h^2/6)|f'''| + eps_f/h`, minimised at `h* = (3 * eps_f/|f'''|)^(1/3)`, and
+  the procedure estimates `|f'''|` from a symmetric third difference taken where
+  that difference stands clear of the noise floor. The noise level `eps_f`
+  itself comes from More & Wild's ECnoise. Applied at both places admixr2
+  finite-differences the objective: the post-fit covariance Hessian, and the
+  optimizer's gradient (measured once at the starting values and reused, the
+  mechanism FOCEI's `numericGrad` uses at its first evaluation).
 
-  Applied wherever admixr2 finite-differences the OBJECTIVE: the post-fit
-  covariance Hessian, and the optimizer's gradient. The gradient steps are
-  measured ONCE, at the starting values, and reused for the rest of the fit --
-  the mechanism FOCEI uses, whose `numericGrad` runs Gill83 at its first
-  evaluation (`nF == 1`) and finite-differences with the resulting `aEps`/`rEps`
-  thereafter. Only the parameters actually differenced are probed: under
-  `grad = "fd"`/`"cfd"` that is all of them, otherwise only those the sensitivity
-  model could not supply a column for, and when it supplies all of them the probe
-  is skipped entirely. A theta with no mu-referencing eta does **not** qualify by
-  itself -- `.admBuildThetaSens()` emits a direction for each, so its gradient is
-  exact and no step is chosen for it.
-
-  Two places keep the fixed scale on purpose. admc's ETA perturbations
-  (`eta_hi[, j] + h`, over `n_sim` rows) have no parameter to key on and
-  difference the *prediction*, not the objective; under common random numbers the
-  two solves share their draws, so most of the noise a step choice would guard
-  against cancels anyway. And the gradient-FD covariance branch differences the
-  analytic gradient, whose error is not what Gill83 measures.
-
-  What it buys, measured on a 1-cmt ODE fit with `grad = "fd"`, against the
-  analytical gradient: it **flattens** the error rather than uniformly shrinking
-  it. Worst-parameter relative error `2.2e-03 -> 7.9e-04` (2.8x better); median
-  `2.1e-04 -> 3.9e-04` (1.8x worse). The chosen steps span 20x across parameters
-  (5.4e-05 to 1.7e-03) where the heuristic spans 3x, so it fixes the outliers --
-  the structural thetas, which one shared constant suited badly -- and gives a
-  little back on the parameters that constant already suited. For a quasi-Newton
-  step the worst component is the binding one, but "more accurate everywhere"
-  would be an overclaim. Cost: 20 objective evaluations for 5 parameters (~14
-  NLL-equivalents), once; the end-to-end fit measured 4.4 s -> 4.1 s, i.e. the
-  probe pays for itself rather than being a tax.
-
-  Default `FALSE`, so nothing moves unless asked. Because it now reaches the
-  gradient, `gill = TRUE` can change the fit and not only the standard errors --
-  but only when the gradient has a finite-differenced parameter to begin with.
-
-  One thing worth knowing if you read a step back: the acceptance rule keeps
-  Gill83's `hf` for every return code except `"Not Assessed"`, `"Constant Grad"`
-  and `"Odd/Linear Grad"`. `"High Grad Error"` is *kept*, because with the
-  upstream default `fTol = 0` it is the ordinary return, not a failure -- a
-  noiseless quadratic with an exact second derivative reports it. Rejecting
-  everything but `"Good"` makes the whole option a silent no-op.
+  nlmixr2est ships this algorithm as `shi21CentralWrap`, but it is not exported
+  and admixr2 makes no `:::` calls into it, so it is reimplemented here. That
+  also buys the input the upstream route cannot take: `eps_f` is a real
+  argument, and it is the one that matters (`h*` scales as `eps_f^(1/3)`).
+  `test-optim-steps-shi.R` scores the reimplementation against the upstream
+  routine as an oracle -- the intervals agree to within a factor of 1.15 and the
+  derivatives to `10 * eps_f^(2/3)`.
 
 ## Changes that can move an existing fit
 
-Two changes in this release alter results for scripts that do not name a new
-argument. Neither is a bug fix, so both are listed here rather than below.
+Several changes in this release alter results for scripts that do not name a new
+argument. None is a bug fix, so all are listed here rather than below.
+
+* **Finite-difference steps are now MEASURED per parameter, by the Shi (2021)
+  procedure, and this is not optional.** Every finite difference admixr2 takes
+  of the objective -- the optimizer's gradient under `grad = "fd"`, and the
+  post-fit covariance Hessian -- previously used `pmax(abs(p), 0.1) * h` with a
+  fixed `h` (`grad_h`, `cov_h_outer`). That is one guess about how much noise the
+  objective carries, applied identically to every parameter, and it is the guess
+  behind the "Hessian not positive definite ... try increasing `cov_h_outer`"
+  advice. The step is now chosen per parameter by probing the objective, with the
+  noise level itself estimated by Moré & Wild's ECnoise. `grad_h` remains as the
+  FALLBACK a parameter takes when the measurement cannot be made (a direction
+  the objective is flat in, or a failed noise estimate).
+
+  The covariance Hessian gets the measured NOISE but not the gradient's step: a
+  Hessian is a second difference, whose error is `(h^2/12)|f4| + 4*eps_f/h^2`
+  (with `f4` the fourth derivative) and whose optimum scales as `eps_f^(1/4)`,
+  about ten times larger than the first-derivative `eps_f^(1/3)`. Too fine a
+  step there amplifies noise as `4*eps_f/h^2` -- exactly what tips a marginal
+  Hessian out of positive definiteness. Measured 6x to 385x worse across noise
+  levels from 1e-15 to 1e-7 if the gradient's step is reused.
+
+  `cov_h_outer` SCALES the measured Hessian step rather than merely backing it
+  up, and `grad_h` is the gradient's fallback. The distinction matters: the
+  measurement almost always succeeds, so a fallback-only `cov_h_outer` would be
+  inert in practice -- and it is the escape hatch the documentation points at
+  ("Hessian not positive definite ... try increasing `cov_h_outer`"). Raising it
+  by 100 still gives a step 100 times larger.
+
+  Measured against the analytic gradient on the integration model, maximum
+  relative error over all five parameters:
+
+  | step | adirmc inner NLL | adfo NLL |
+  |---|---|---|
+  | fixed 1e-6 | 7.3e-06 | 9.8e-06 |
+  | Shi21 | **2.8e-10** | **3.9e-08** |
+
+  Standard errors and any `grad = "fd"` fit will move. They should move toward
+  the truth, but they will move.
+
+* **`gill` is REMOVED from all four controls.** It selected Gill (1983) step
+  selection, added in this same development cycle and never released. It is
+  removed rather than kept alongside Shi21 because measurement showed it was
+  worse than the fixed step it was meant to improve on -- 8.1e-04 (adirmc) and
+  7.9e-04 (adfo) against the fixed step's 7.3e-06 and 9.8e-06, at four times the
+  evaluations. The cause is not a mistake in the wiring: `nlmixr2Gill83()`'s
+  exported wrapper accepts `gillRtol`/`gillK`/`gillStep`/`gillFtol` and then
+  hardcodes the defaults in the inner call, so it always assumes an objective
+  accurate to about eight significant digits. That is right for FOCEI's
+  per-subject objective and wrong for admixr2's aggregate one. `gill = TRUE` is
+  now an error.
+
+* **Forward finite differences are removed; `grad = "fd"` is a CENTRAL
+  difference, and `grad = "cfd"` is gone.** Central was 10^2 to 10^4 times more
+  accurate at every site measured, and the one solve per parameter that forward
+  differencing saved does not pay for a gradient the optimizer cannot descend.
+  Scripts passing `grad = "cfd"` must pass `grad = "fd"`; scripts passing
+  `grad = "fd"` keep working and get the central difference.
 
 * **`adirmcControl(grad = "fd")` now differences with `grad_h`, not a hard-coded
   `1e-6`.** The IRMC *inner* gradient ignored `grad_h` entirely -- it was the one
   finite difference in the package that could not be tuned, which is why the new
-  `gill = TRUE` option could not reach it either. It now honours the argument, and
-  under `gill = TRUE` takes Gill83's measured steps.
+  measured step selection could not reach it either. It now honours the
+  argument, and takes Shi21's measured step where one can be measured.
 
   `adirmcControl()`'s `grad_h` default moves to `1e-6` to match, so **a fit that
   does not name `grad_h` is unchanged**. The IRMC inner NLL is deterministic given
@@ -223,7 +244,7 @@ argument. Neither is a bug fix, so both are listed here rather than below.
   resolvable. When they disagreed, the gradient was itself finite-differenced and
   the Hessian then finite-differenced *that*, which is exactly the nested FD the
   gate exists to prevent. `.adfoGrad()` now reports what it actually did and the
-  driver believes that, falling back to the Gill NLL-FD Hessian otherwise.
+  driver believes that, falling back to the NLL-FD Hessian otherwise.
 
 * **A joint (same-subject) study normalised before the model was known kept
   `NULL` block outputs.** Only the driver's pass carries the endpoint name, and

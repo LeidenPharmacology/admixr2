@@ -615,31 +615,25 @@
 }
 
 # Pure finite-difference gradient of FO NLL w.r.t. all optimizer parameters.
-# Used for grad = "fd" (forward FD) and grad = "cfd" (central FD).
+# Used for grad = "fd", which is a CENTRAL difference. Forward differencing was
+# removed in 0.4.1: measured against the analytic gradient it was 10^2-10^4x
+# less accurate at every site, and the saving it bought (one solve per parameter
+# instead of two) is not worth a gradient the optimizer cannot descend.
 # No analytical chain rule -- every parameter differentiated by perturbing the NLL.
 # The sens model is still used inside .adfoNLL() for efficient J computation.
 #' @noRd
 .adfoFDGrad <- function(p, pinfo, studies, sensModel, rxMod, output_var,
-                         params_list, cores, grad_h = 1e-4, use_central = FALSE) {
+                         params_list, cores, grad_h = 1e-4) {
   g <- numeric(length(p)); names(g) <- names(p)
   # Shared (mu, J) memo: the omega and sigma directions perturb nothing the solve
   # sees, so they all hit the base entry and cost no rxSolve at all.
   cache <- new.env(parent = emptyenv())
-  if (use_central) {
-    for (k in seq_along(p)) {
-      hk <- pmax(abs(p[k]), 0.1) * .admGH(grad_h, k)
-      pp <- p; pp[k] <- p[k] + hk
-      pm <- p; pm[k] <- p[k] - hk
-      g[k] <- (.adfoNLL(pp, pinfo, studies, sensModel, rxMod, output_var, params_list, cores, cache) -
-               .adfoNLL(pm, pinfo, studies, sensModel, rxMod, output_var, params_list, cores, cache)) / (2 * hk)
-    }
-  } else {
-    nll0 <- .adfoNLL(p, pinfo, studies, sensModel, rxMod, output_var, params_list, cores, cache)
-    for (k in seq_along(p)) {
-      hk <- pmax(abs(p[k]), 0.1) * .admGH(grad_h, k)
-      ph <- p; ph[k] <- p[k] + hk
-      g[k] <- (.adfoNLL(ph, pinfo, studies, sensModel, rxMod, output_var, params_list, cores, cache) - nll0) / hk
-    }
+  for (k in seq_along(p)) {
+    hk <- pmax(abs(p[k]), 0.1) * .admGH(grad_h, k)
+    pp <- p; pp[k] <- p[k] + hk
+    pm <- p; pm[k] <- p[k] - hk
+    g[k] <- (.adfoNLL(pp, pinfo, studies, sensModel, rxMod, output_var, params_list, cores, cache) -
+             .adfoNLL(pm, pinfo, studies, sensModel, rxMod, output_var, params_list, cores, cache)) / (2 * hk)
   }
   g
 }
@@ -653,8 +647,8 @@
 .adfoCalcCov <- function(p_hat, pinfo, studies, sensModel, rxMod, output_var,
                           params_list, cores,
                           use_grad = FALSE, grad_h = 1e-4, cov_h = 1e-3,
-                          cov_h_outer = .Machine$double.eps^(1/5),
-                          gill = FALSE) {
+                          cov_h_outer = .Machine$double.eps^(1/5)
+                          ) {
   n_s     <- length(pinfo$struct_names)
   n_e     <- length(pinfo$sigma_names)
   n_o     <- length(pinfo$omega_par)
@@ -708,10 +702,10 @@
     # THIS objective and returns the step where condition error and truncation
     # error balance, per parameter. Exact fit here, since the function it probes
     # is the one being differenced.
-    h_gill <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer, gill,
+    h_fd <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer,
                             .var.name = "adfoCalcCov")
     for (k in seq_len(np_cov)) {
-      ki  <- cov_idx[k]; hk  <- h_gill[k]
+      ki  <- cov_idx[k]; hk  <- h_fd[k]
       p_p <- p_hat; p_p[ki] <- p_p[ki] + hk
       p_m <- p_hat; p_m[ki] <- p_m[ki] - hk
       H[k, k] <- (nll_fn(p_p) - 2 * nll0 + nll_fn(p_m)) / hk^2
@@ -719,7 +713,7 @@
     for (i in seq_len(np_cov - 1L)) {
       for (j in seq(i + 1L, np_cov)) {
         ii <- cov_idx[i]; ji <- cov_idx[j]
-        hi <- h_gill[i];  hj <- h_gill[j]
+        hi <- h_fd[i];  hj <- h_fd[j]
         p_pp <- p_hat; p_pp[ii] <- p_pp[ii] + hi; p_pp[ji] <- p_pp[ji] + hj
         p_pm <- p_hat; p_pm[ii] <- p_pm[ii] + hi; p_pm[ji] <- p_pm[ji] - hj
         p_mp <- p_hat; p_mp[ii] <- p_mp[ii] - hi; p_mp[ji] <- p_mp[ji] + hj
@@ -745,8 +739,8 @@
   .red <- .admReduceNpdOmega(H, H_eigs, eig_dec, nms_cov, n_o, n_sub)
   if (.red$reduced)
     warning("adfoCalcCov: the full Hessian including omega was not positive ",
-            "definite; reporting structural and sigma standard errors only.",
-            call. = FALSE)
+            "definite or was numerically singular; reporting structural and ",
+            "sigma standard errors only.", call. = FALSE)
   H <- .red$H; nms_cov <- .red$nms_cov; np_cov <- .red$np_cov
   eig_dec <- .red$eig_dec; H_eigs <- .red$H_eigs
 
@@ -778,14 +772,13 @@
 # Self-contained FO optimization run (one restart); serializable to a worker.
 # Signature mirrors .admRestartWorker: same base_args from .admRunRestarts().
 # n_sim, sampling accepted for interface compatibility but not used.
-# use_pure_fd: TRUE for grad="fd"/"cfd"; dispatches to .adfoFDGrad() instead of .adfoGrad().
+# use_pure_fd: TRUE for grad="fd"; dispatches to .adfoFDGrad() instead of .adfoGrad().
 .adfoRestartWorker <- function(restart_id, p_init, ui_lstExpr, pinfo,
                                 ov_lower, ov_upper, scale_c = NULL, studies, n_sim,
                                 seed, algorithm, ftol_rel, maxeval,
                                 use_grad, grad_h, grad_bounds,
                                 output_var = "cp",
                                 sampling = "sobol",
-                                use_central = FALSE,
                                 use_pure_fd = FALSE,
                                 print_progress = TRUE, print = 10L,
                                 cores = NULL, no_lock = FALSE,
@@ -813,7 +806,7 @@
 
   grad_fn <- if (use_pure_fd) {
     function(p) .adfoFDGrad(p, pinfo, studies, m$sensModel, m$rxMod, output_var,
-                            params_list, m$cores_w, grad_h, use_central)
+                            params_list, m$cores_w, grad_h)
   } else {
     function(p) .adfoGrad(p, pinfo, studies, m$sensModel, m$rxMod, output_var,
                           params_list, m$cores_w, grad_h)
@@ -860,9 +853,10 @@
 #'   with a large residual SD; there is little to gain by lowering it.
 #' @param grad Gradient mode.  `"analytical"` (default) uses the closed-form FO
 #'   gradient with LBFGS; `"none"` uses derivative-free BOBYQA; `"fd"` uses
-#'   forward finite differences of the full NLL; `"cfd"` uses central finite
-#'   differences for struct theta gradient (more accurate than `"fd"`, roughly
-#'   twice as many NLL evaluations per step).
+#'   central finite differences of the full NLL. Forward differencing was
+#'   removed in 0.4.1 -- it was 10^2 to 10^4 times less accurate than a central
+#'   difference at every site measured, and the one solve per parameter it saved
+#'   did not pay for a gradient the optimizer struggles to descend.
 #'
 #'   The default was `"none"` up to 0.4.0, because the structural thetas were
 #'   finite-differenced through the whole NLL and the resulting gradient was too
@@ -900,38 +894,6 @@
 #'   no other -- and nloptr reports normal convergence at a box corner, so a
 #'   warning is emitted if an estimate finishes on it.
 #' @param cov_h_outer Outer step scale for NLL-FD Hessian.
-#' @param gill Use the Gill, Murray, Saunders & Wright (1983) algorithm to choose
-#'   the finite-difference steps, instead of the fixed `cov_h_outer` and `grad_h`
-#'   scales. `FALSE` (the default) keeps the existing steps, so nothing moves
-#'   unless you ask.
-#'
-#'   A fixed scale is one guess about how much noise the objective carries,
-#'   applied identically to every parameter -- and it is the guess behind the
-#'   "Hessian not positive definite ... try increasing `cov_h_outer`" warning.
-#'   Gill83 probes the objective instead and returns, per parameter, the step at
-#'   which condition error and truncation error balance, so a parameter the
-#'   objective is flat in and one it is sharp in get different steps and the
-#'   choice tracks the ODE tolerance rather than assuming one. It is the same
-#'   algorithm FOCEI uses for its own steps (`nlmixr2est::nlmixr2Gill83()`), so
-#'   the two packages agree on what a finite difference is. Worth trying first
-#'   when the Hessian comes back indefinite.
-#'
-#'   Applied in both of the places adfo finite-differences the OBJECTIVE:
-#'   the post-fit covariance Hessian, and the optimizer's gradient -- every
-#'   parameter under `grad = "fd"`/`"cfd"`, or the structural thetas when the
-#'   second-order sensitivity model is unavailable and they are differenced
-#'   through the whole NLL. When that model IS available no structural theta is
-#'   finite-differenced at all and the gradient probe is skipped.
-#'
-#'   Measured ONCE in each case -- for the gradient at the starting values, which
-#'   is where FOCEI measures too (`numericGrad` runs Gill83 at its first
-#'   evaluation and reuses the steps for the rest of the fit). Costs up to ten
-#'   extra objective evaluations per finite-differenced parameter. A parameter
-#'   Gill83 reports as flat or linear falls back to the fixed scale.
-#'
-#'   Because it reaches the gradient, `gill = TRUE` can change the FIT and not
-#'   only the standard errors -- but only when the gradient has a
-#'   finite-differenced parameter to begin with.
 #' @param covMethod `"r"` computes covariance via a numerical Hessian over the
 #'   structural, residual-error and omega parameters; `"none"` skips it. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
@@ -1055,7 +1017,7 @@
 #' @export
 adfoControl <- function(
     studies    = list(),
-    grad        = c("analytical", "none", "fd", "cfd"),
+    grad        = c("analytical", "none", "fd"),
     algorithm  = NULL,
     maxeval    = 500L,
     ftol_rel   = .Machine$double.eps^(1/2),
@@ -1086,7 +1048,6 @@ adfoControl <- function(
     # positional call -- adfoControl(studies, "fd") used to set grad = "fd".
     resid_nodes = 81L,
     # ... and this one after it, for the same reason.
-    gill        = FALSE,
     ...) {
 
   .xtra <- list(...)
@@ -1133,7 +1094,6 @@ adfoControl <- function(
   checkmate::assertNumeric(grad_bounds,   lower = 0,  len = 1)
   checkmate::assertNumeric(cov_h,         lower = 0,  len = 1)
   checkmate::assertNumeric(cov_h_outer,   lower = 0,  len = 1)
-  checkmate::assertFlag(gill, .var.name = "gill")
   checkmate::assertIntegerish(n_restarts, lower = 1L, len = 1)
   checkmate::assertNumeric(restart_sd,    lower = 0,  len = 1)
   checkmate::assertIntegerish(workers,    lower = 1L, len = 1)
@@ -1185,7 +1145,6 @@ adfoControl <- function(
     grad_bounds   = grad_bounds,
     cov_h         = cov_h,
     cov_h_outer   = cov_h_outer,
-    gill          = gill,
     grad_explicit = .grad_explicit,
     covMethod     = covMethod,
     n_restarts    = as.integer(n_restarts),
@@ -1299,12 +1258,11 @@ nlmixr2Est.adfo <- function(env, ...) {
 
   want_grad   <- .ctl$grad != "none"
   want_sens   <- .ctl$grad == "analytical"
-  use_central <- .ctl$grad == "cfd"
-  use_pure_fd <- .ctl$grad %in% c("fd", "cfd")
+  use_pure_fd <- .ctl$grad == "fd"
   # Joint (same-subject) fits keep the analytical FO gradient: .adfoGrad's joint
   # branch applies the omega/sigma chain rule to the stacked V = J Omega J' + res
   # (struct thetas via FD of the joint-aware .adfoNLL, as in the single-output
-  # path). grad = "fd"/"cfd" still use the pure FD gradient.
+  # path). grad = "fd" still uses the pure FD gradient.
   # Multi-compartment fits use the same per-unit gradient as single-output: the
   # analytical omega/sigma chain rule and struct-theta FD apply per observed
   # output (each is an independent block with its own residual error).
@@ -1434,19 +1392,18 @@ nlmixr2Est.adfo <- function(env, ...) {
     val
   }
 
-  # gill = TRUE: measure the gradient's FD steps ONCE, here, and let every later
-  # difference reuse them (the mechanism FOCEI's numericGrad uses at nF == 1).
-  # Only for the parameters that are ACTUALLY finite-differenced -- under
-  # grad = "fd"/"cfd" that is all of them, otherwise just the struct thetas of
-  # Pass 2, and when Pass 3 has the order-2 block there are none at all and the
-  # probe is skipped entirely. `.ctl$grad_h` stays a scalar unless this fires, so
-  # gill = FALSE is bit-for-bit unchanged.
+  # Measure the gradient's FD steps ONCE, here, and let every later difference
+  # reuse them (the mechanism FOCEI's numericGrad uses at nF == 1). Only for the
+  # parameters that are ACTUALLY finite-differenced -- under grad = "fd" that is
+  # all of them, otherwise just the struct thetas of Pass 2, and when Pass 3 has
+  # the order-2 block there are none at all and the probe is skipped entirely,
+  # leaving `.ctl$grad_h` the scalar it was.
   .fd_idx <- if (!want_grad) integer(0)
     else if (use_pure_fd) seq_along(ov$p0)
     else if (!have_d2) seq_len(length(pinfo$struct_names))
     else integer(0)
-  grad_h_v <- if (isTRUE(.ctl$gill) && length(.fd_idx))
-    .admGillGradH(function(p) .adfoNLL(p, pinfo, studies, sensModel, rxMod,
+  grad_h_v <- if (length(.fd_idx))
+    .admShi21GradH(function(p) .adfoNLL(p, pinfo, studies, sensModel, rxMod,
                                        output_var, params_list, cores),
                   ov$p0, .fd_idx, .ctl$grad_h, scaled = TRUE,
                   .var.name = "adfo gradient")
@@ -1456,7 +1413,7 @@ nlmixr2Est.adfo <- function(env, ...) {
     NULL
   } else if (use_pure_fd) {
     function(p) .adfoFDGrad(p, pinfo, studies, sensModel, rxMod, output_var,
-                              params_list, cores, grad_h_v, use_central)
+                              params_list, cores, grad_h_v)
   } else {
     function(p) .adfoGrad(p, pinfo, studies, sensModel, rxMod, output_var,
                            params_list, cores, grad_h_v)
@@ -1469,7 +1426,7 @@ nlmixr2Est.adfo <- function(env, ...) {
   grad_label <- if (!want_grad) "none"
     else if (have_d2) "Analytical"
     else if (!is.null(sensModel)) "Analytical (struct FD)"
-    else if (use_central) "CFD" else "FD"
+    else "CFD"
   message("=== admixr2: Aggregate Data Modeling (FO) ===")
   message(sprintf("  Obs units: %d | Params: %d | Cores: %d | Grad: %s | Restarts: %d",
                   length(studies), length(ov$p0), cores, grad_label, .ctl$n_restarts))
@@ -1519,7 +1476,6 @@ nlmixr2Est.adfo <- function(env, ...) {
                         ftol_rel        = .ctl$ftol_rel,
                         maxeval         = .ctl$maxeval,
                         use_grad        = want_grad,
-                        use_central     = use_central,
                         use_pure_fd     = use_pure_fd,
                         # The measured steps, not the constant -- restarts must
                         # difference the same way the sequential path does.
@@ -1594,7 +1550,7 @@ nlmixr2Est.adfo <- function(env, ...) {
       .adfoCalcCov(p_hat, pinfo, studies, sensModel, rxMod, output_var,
                    params_list, cores, use_grad = use_grad_cov,
                    grad_h = .ctl$grad_h, cov_h = .ctl$cov_h,
-                   cov_h_outer = .ctl$cov_h_outer, gill = .ctl$gill),
+                   cov_h_outer = .ctl$cov_h_outer),
       error = function(e) { warning("adfoCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
   # A NULL covariance used to be completely silent: no warning reached the user,

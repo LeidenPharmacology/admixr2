@@ -3,7 +3,7 @@
 # admc's default is grad = "sens" with a sensitivity model available, so the
 # common-random-number finite-difference blocks -- the ones that perturb an eta
 # or a struct theta inside the params frame -- only run as a FALLBACK, and their
-# central-difference variants only when grad = "cfd". Neither is reached by any
+# central-difference form is now the only one there is. It is not reached by any
 # end-to-end fit in the suite, which is why the step re-keying done in this
 # release (.admGH / .admGH0) landed there untested.
 #

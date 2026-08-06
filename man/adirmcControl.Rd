@@ -43,7 +43,6 @@ adirmcControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
-  gill = FALSE,
   ...
 )
 }
@@ -146,8 +145,8 @@ progress during long interactive fits.}
 
 \item{grad}{Gradient mode for the inner optimiser: \code{"analytical"} (default,
 closed-form weight-path gradient), \code{"none"} (derivative-free BOBYQA), or
-\code{"fd"} (finite differences). Note: \code{"sens"} and \code{"cfd"} are not available
-for the IRMC estimator.}
+\code{"fd"} (central finite differences). Note: \code{"sens"} is not available for the
+IRMC estimator.}
 
 \item{kappa_method}{Kappa correction method for models with non-mu-referenced
 struct thetas: \code{"exact"} (default, re-evaluates population prediction \code{f(theta, 0)}
@@ -272,48 +271,6 @@ This is an ACCURACY dial, not a speed one. The quadrature is linear in
 negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
 evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.}
-
-\item{gill}{Use the Gill, Murray, Saunders & Wright (1983) algorithm to choose
-the finite-difference steps, instead of the fixed \code{cov_h_outer} and \code{grad_h}
-scales. \code{FALSE} (the default) keeps the existing steps, so nothing moves
-unless you ask.
-
-A fixed scale is one guess about how much noise the objective carries,
-applied identically to every parameter -- and it is the guess behind the
-"Hessian not positive definite ... try increasing \code{cov_h_outer}" warning.
-Gill83 probes the objective instead and returns, per parameter, the step at
-which condition error and truncation error balance, so a parameter the
-objective is flat in and one it is sharp in get different steps and the
-choice tracks the ODE tolerance rather than assuming one. It is the same
-algorithm FOCEI uses for its own steps (\code{nlmixr2est::nlmixr2Gill83()}), so
-the two packages agree on what a finite difference is. Worth trying first
-when the Hessian comes back indefinite.
-
-Applied to the post-fit covariance Hessian and to the optimizer's gradient,
-for the parameters each actually steps in PARAMETER space: for \code{admc} the
-whole vector when a joint (same-subject) study has no sensitivity model, and
-otherwise the structural thetas the sensitivity model has no column for; for
-\code{adirmc} the whole vector under \code{grad = "fd"}. A theta with no mu-referencing
-eta does NOT qualify by itself -- the sensitivity model emits a direction for
-each, so its gradient is exact and no step is chosen for it.
-
-\code{admc}'s ETA perturbations keep the fixed \code{grad_h} regardless. They have no
-parameter to key on, and they difference the PREDICTION rather than the
-objective, which is a different function from the one Gill83 measured; under
-common random numbers the two solves share their draws, so most of the MC
-noise a step choice would guard against cancels anyway.
-
-Measured ONCE per fit -- for the gradient at the starting values, as FOCEI
-does at its first gradient evaluation. \code{adirmc} measures on its first outer
-iteration and reuses: its proposals are redrawn each iteration, so
-re-measuring would cost ten inner evaluations per parameter every time.
-Costs up to ten extra objective evaluations per finite-differenced
-parameter. A parameter Gill83 reports as flat or linear falls back to the
-fixed scale.
-
-Because it reaches the gradient, \code{gill = TRUE} can change the FIT and not
-only the standard errors -- but only when the gradient has a
-finite-differenced parameter to begin with.}
 
 \item{...}{Additional arguments (none allowed; triggers an error).}
 }

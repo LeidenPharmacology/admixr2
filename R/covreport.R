@@ -109,8 +109,33 @@
 # threshold -- one helper removes the three-way replicate). Returns the (possibly
 # reduced) H with its names and eigendecomposition; `reduced` flags whether the
 # fallback fired, so each caller can warn once with its own estimator label.
+#
+# The trigger is CONDITIONING, not sign. `min(H_eigs) < 0` alone was relying on
+# an accident: an unidentified omega has no curvature, so the entry it produces
+# is numerical junk, and whether that junk lands negative depends on the FD step
+# rather than on anything about the model. It did land negative under the old
+# fixed step, which is why the sign test appeared to work. Under Shi21's finer,
+# better step the same flat direction returns ~0 from the POSITIVE side
+# (measured 8.66e-19 against a largest eigenvalue of 1.1e-3, a condition number
+# of ~1e16) -- so the sign test silently stopped firing and an IIV estimated at
+# 1e-13 was reported with an SE of 9.3e-10, which reads as a precise estimate.
+# A singularity test should test for singularity; this one catches the old case
+# too, since a negative eigenvalue of that magnitude is also below the tolerance.
+# sqrt(eps), the conventional numerical-singularity tolerance: the covariance is
+# H inverted, so a reciprocal condition number below this means the reported SE
+# carries no significant digits. Measured on the flat-omega case the ratio is
+# 1.8e-12 (omega eigenvalues 2.0e-08 against a largest of 11290, i.e. a condition
+# number of 5.6e11) -- so a tighter 1e-12 threshold, tried first, did NOT fire.
+.ADM_NPD_RCOND <- sqrt(.Machine$double.eps)
+
 .admReduceNpdOmega <- function(H, H_eigs, eig_dec, nms_cov, n_o, n_sub) {
-  if (n_o > 0L && (is.null(eig_dec) || min(H_eigs) < 0)) {
+  .singular <- function(e) {
+    if (is.null(e) || !length(e) || any(!is.finite(e))) return(TRUE)
+    mx <- max(abs(e))
+    if (!is.finite(mx) || mx <= 0) return(TRUE)
+    min(e) < .ADM_NPD_RCOND * mx
+  }
+  if (n_o > 0L && (is.null(eig_dec) || .singular(H_eigs))) {
     .sub <- seq_len(n_sub)
     .Hs  <- H[.sub, .sub, drop = FALSE]
     .es  <- tryCatch(eigen(.Hs, symmetric = TRUE), error = function(e) NULL)

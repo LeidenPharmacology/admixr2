@@ -1,9 +1,9 @@
-# Optimizer plumbing: nloptr algorithm selection, Gill (1983) finite-difference
+# Optimizer plumbing: nloptr algorithm selection, Shi (2021) finite-difference
 # step selection, and the box-constraint warning.
 #
-# Split out of utils.R; contents unchanged (see R/covreport.R for why that is
+# Split out of utils.R (see R/covreport.R for why that is
 # safe). The two step accessors .admGH()/.admGH0() look collapsible and are not:
-# indexing a per-parameter Gill vector by an ETA number would silently recycle
+# indexing a per-parameter measured-step vector by an ETA number would recycle
 # across the n_sim rows of an eta perturbation and return a plausible wrong
 # gradient, which is exactly what .admGH0() exists to prevent.
 
@@ -32,109 +32,15 @@
 .admDefaultAlgorithm <- function(grad)
   if (grad == "none") "NLOPT_LN_BOBYQA" else "NLOPT_LD_LBFGS"
 
-# Per-parameter finite-difference steps by Gill, Murray, Saunders & Wright (1983),
-# via nlmixr2est's own implementation.
-#
-# Everything in admixr2 that finite-differences picks its step from the same
-# heuristic: `pmax(abs(p), 0.1) * h`, with h a fixed constant (`cov_h_outer`
-# defaults to eps^(1/5)). That is a guess about one thing -- how much noise the
-# objective carries -- applied identically to every parameter, and it is the
-# guess behind the "Hessian not positive definite ... try increasing
-# cov_h_outer" warning: too small a step and the difference is dominated by
-# solver noise; too large and it is dominated by curvature the second-order term
-# does not capture. A parameter the objective is flat in and one it is sharp in
-# want different steps, and the right step also moves with the ODE tolerance.
-#
-# Gill83 measures instead of guessing: it probes the objective, estimates the
-# condition error and the second derivative, and returns the step where the two
-# error sources balance. This is the algorithm FOCEI uses to choose its own
-# steps, so admixr2 and nlmixr2est now agree about what a finite difference is.
-#
-# nlmixr2est::nlmixr2Gill83 is EXPORTED (no ::: call), and returns a data.frame
-# with ONE ROW PER PARAMETER of `p` -- `hf` (the forward step), `df` (the
-# derivative at it), `err`, and `info`, a factor whose non-"Good" levels flag a
-# parameter whose step could not be assessed. Those fall back to the caller's
-# heuristic rather than being trusted.
-#
-# Two things about the upstream function worth knowing:
-#  * `which` MASKS rather than subsets -- an excluded parameter still occupies a
-#    row, as "Not Assessed" with hf = NA -- so the result is indexed by `idx`,
-#    not consumed in order.
-#  * its wrapper drops the tuning arguments it accepts (gillRtol / gillK /
-#    gillStep / gillFtol are re-supplied as defaults in the inner call), so only
-#    the defaults are reachable through the exported entry point. That is fine
-#    here -- they are FOCEI's own defaults -- but do not add a control for them
-#    expecting it to have any effect.
-#
-# Cost: up to gillK (10) extra objective evaluations per parameter, ONCE. So it
-# must never run INSIDE a gradient the optimizer calls thousands of times -- but
-# it can perfectly well choose the step that gradient then reuses, which is
-# exactly what FOCEI does (`numericGrad` runs gill83 on the first evaluation,
-# `nF == 1`, stores aEps/rEps per parameter and finite-differences with them for
-# the rest of the fit). See .admGillGradH().
-#
-# Returns a numeric vector the length of `idx`, never NA, never non-positive.
-.admGillSteps <- function(fn, p, idx = seq_along(p), fallback = NULL,
-                          .var.name = "cov") {
-  if (is.null(fallback))
-    fallback <- pmax(abs(p[idx]), 0.1) * .Machine$double.eps^(1/5)
-  fallback <- rep_len(as.numeric(fallback), length(idx))
-  if (!requireNamespace("nlmixr2est", quietly = TRUE)) return(fallback)
-  .which <- rep(FALSE, length(p))
-  .which[idx] <- TRUE
-  g <- tryCatch(
-    nlmixr2est::nlmixr2Gill83(fn, p, which = .which),
-    error = function(e) NULL)
-  # One row per parameter of `p` -- NOT one per requested index. A parameter
-  # `which` excludes still gets a row, with info = "Not Assessed" and hf = NA.
-  # (Checked against nlmixr2est rather than assumed: reading it the other way
-  # silently returned the fallback for every subset request.)
-  if (is.null(g) || is.null(g$hf) || length(g$hf) != length(p)) {
-    warning(sprintf(
-      "%s: Gill83 step selection failed -- falling back to the fixed step scale.",
-      .var.name), call. = FALSE)
-    return(fallback)
-  }
-  h <- as.numeric(g$hf)[idx]
-  # `info` is a factor. Which levels to accept is NOT "only Good" -- that reading
-  # made the whole option a no-op and it took a probe to notice:
-  #
-  #   nlmixr2Gill83(function(p) sum((p - 1)^2), 0.5)
-  #   #>   info            hf         df df2
-  #   #>   High Grad Error 0.000149505 -0.9998505 2
-  #
-  # A noiseless quadratic, an exact second derivative, a textbook-perfect step --
-  # reported as "High Grad Error", because that level means "the derivative
-  # estimate's error is `fTol` or more of the derivative" and `fTol` defaults to
-  # ZERO. Any error at all trips it, so it is the ORDINARY return, not a failure.
-  # FOCEI agrees in the only way that matters: `numericGrad` takes gill83's `hf`
-  # into aEps/rEps unconditionally, whatever the return code.
-  #
-  # The levels that genuinely leave no step to use are the ones describing a
-  # function the algorithm cannot fit a step to at all:
-  #   "Not Assessed"    -- masked out by `which`; hf is NA anyway
-  #   "Constant Grad"   -- flat in this parameter, so no h is better than another
-  #   "Odd/Linear Grad" -- df2 ~ 0, and h balances condition error against df2
-  # "Grad changes quickly" IS kept: FOCEI's response to it is to use the step now
-  # and re-measure later (repeatGill), and using it beats the blanket constant --
-  # but we do not re-measure, so it is the least confident step we accept.
-  ok <- is.finite(h) & h > 0
-  if (!is.null(g$info))
-    ok <- ok & !(as.character(g$info)[idx] %in%
-                   c("Not Assessed", "Constant Grad", "Odd/Linear Grad"))
-  h[!ok] <- fallback[!ok]
-  h
-}
-
-# Index a finite-difference step that may be a SCALAR -- the fixed heuristic, one
-# constant shared by every parameter -- or a per-parameter VECTOR of Gill83's
+# Index a finite-difference step that may be a SCALAR -- the fixed fallback, one
+# constant shared by every parameter -- or a per-parameter VECTOR of Shi21's
 # measured steps.
 #
 # Every FD site in the package reads its step through this or .admGH0(), which is
-# what lets `gill = TRUE` reach the optimizer's gradient without a single
+# what lets measured steps reach the optimizer's gradient without a single
 # signature change: the driver hands the gradient a vector where it used to hand
-# it a number. A scalar takes the identity branch, so `gill = FALSE` (the
-# default) is bit-for-bit what it was.
+# it a number. A scalar takes the identity branch, which is the path taken
+# whenever the measurement could not be made.
 .admGH <- function(h, idx) if (length(h) == 1L) h else h[idx]
 
 # The step for a difference that has NO parameter index to key on.
@@ -148,10 +54,10 @@
 # rows without a warning (n_sim %% n_par is virtually always 0), handing every
 # draw a different perturbation and returning a plausible, wrong gradient.
 #
-# So a Gill vector carries the scalar it was built from as attr(, "h0"), and
-# index-less sites read that. The eta step therefore stays exactly what it was
-# before `gill = TRUE`, which is also the honest answer: Gill83 measured the
-# OBJECTIVE, and d(pred)/d(eta) is a different function.
+# So a measured-step vector carries the scalar it was built from as attr(, "h0"),
+# and index-less sites read that. The eta step therefore stays the fixed one,
+# which is also the honest answer: the probe measured the OBJECTIVE, and
+# d(pred)/d(eta) is a different function.
 .admGH0 <- function(h)
   if (length(h) == 1L) h else {
     h0 <- attr(h, "h0", exact = TRUE)
@@ -160,63 +66,87 @@
 
 # Per-parameter FD steps for the covariance HESSIAN.
 #
-# Trivial, and that is the point: this exact five-line expression was written out
-# in .adfoCalcCov(), .adghCalcCov() and .admCalcCov(), byte-identical but for the
-# label handed to .admGillSteps() -- and the fixed-step fallback
-# `pmax(abs(p[idx]), 0.1) * cov_h_outer` appeared TWICE inside each copy (once as
-# the Gill fallback, once as the non-Gill branch), so the heuristic was restated
-# six times across three files.
+# `pmax(abs(p[idx]), 0.1) * cov_h_outer` -- one constant applied to every
+# parameter -- is the FALLBACK now, not the behaviour. It is a guess about how
+# much noise the objective carries, and it is the guess behind the "Hessian not
+# positive definite ... try increasing cov_h_outer" advice: too fine a step and
+# the difference is noise, too coarse and it is curvature the second-order term
+# does not capture. Shi21 measures the objective instead of guessing, per
+# parameter (see .admShi21Central).
 #
-# The two occurrences within a copy are not independent: the fallback exists so a
-# failed Gill probe lands exactly where `gill = FALSE` would have. Single-sourcing
-# them makes that structural instead of a coincidence -- and the docs already
-# invite users to change the heuristic ("Hessian not positive definite ... try
-# increasing cov_h_outer"), which is the kind of edit that would otherwise be
-# applied to some copies and not others.
-.admHessSteps <- function(fn, p, idx, cov_h_outer, gill = FALSE,
-                          .var.name = "CalcCov") {
+# Single-sourced because this expression used to be written out in
+# .adfoCalcCov(), .adghCalcCov() and .admCalcCov(), byte-identical but for the
+# label -- and the fixed-step form appeared TWICE inside each copy, so the
+# heuristic was restated six times across three files. The fallback exists so a
+# failed probe lands exactly where the fixed step would have.
+#
+# NOT .admShi21Steps(). That returns the optimum for a FIRST central derivative,
+# `h ~ (3 eps_f/|f'''|)^(1/3)`, and the Hessian takes a SECOND difference, whose
+# error is `(h^2/12)|f''''| + 4 eps_f/h^2` and whose optimum therefore scales as
+# `eps_f^(1/4)` -- around ten times larger at a machine-precision objective. Too
+# fine a step in a second difference amplifies noise as `4 eps_f/h^2`, which is
+# precisely what tips a marginal Hessian out of positive-definiteness. Measured
+# against an exact second derivative, the first-derivative step was 6x to 385x
+# worse across noise levels from 1e-15 to 1e-7.
+#
+# So what is reused here is the MEASUREMENT -- `eps_f` from ECnoise, the thing
+# `cov_h_outer` could only guess -- fed to the second-difference rule rather than
+# the first-difference one.
+# `cov_h_outer` SCALES the measured step; it does not merely back it up. Making
+# it a pure fallback was tried and is wrong: the measurement almost always
+# succeeds, so the argument would be inert in practice -- and it is the escape
+# hatch the docs point users at ("Hessian not positive definite ... try
+# increasing cov_h_outer"). An argument that looks like it does something and
+# does not is the exact failure mode `nlmixr2Gill83`'s dropped tuning arguments
+# are an example of. So the step is the measured one at the DEFAULT
+# `cov_h_outer`, and moves proportionally when the user changes it.
+.ADM_COV_H_REF <- .Machine$double.eps^(1/5)
+
+.admHessSteps <- function(fn, p, idx, cov_h_outer, .var.name = "CalcCov") {
   fixed <- pmax(abs(p[idx]), 0.1) * cov_h_outer
-  if (!isTRUE(gill)) return(fixed)
-  .admGillSteps(fn, p, idx, fallback = fixed, .var.name = .var.name)
+  if (length(idx) == 0L) return(fixed)
+  eps_f <- tryCatch(.admEcNoise(fn, p, idx[[1L]]), error = function(e) NA_real_)
+  f0    <- tryCatch(abs(fn(p)), error = function(e) NA_real_)
+  if (!is.finite(eps_f) || eps_f <= 0 || !is.finite(f0)) {
+    warning(sprintf(
+      "%s: could not estimate the objective's noise level -- falling back to the fixed step scale.",
+      .var.name), call. = FALSE)
+    return(fixed)
+  }
+  # adgh deliberately ships a finer cov_h_outer than the sampling estimators
+  # (its quadrature objective is noise-free); expressing the user's value as a
+  # ratio to one reference keeps that relative intent instead of erasing it.
+  pmax(abs(p[idx]), 0.1) * (eps_f / max(f0, 1))^(1/4) *
+    (cov_h_outer / .ADM_COV_H_REF)
 }
 
 # Per-parameter FD steps for the OPTIMIZER's gradient, measured once at the point
 # the fit starts from.
 #
-# The covariance Hessian can afford to call .admGillSteps() directly: it runs
+# The covariance Hessian can afford to call .admShi21Steps() directly: it runs
 # once, post-fit, at a known parameter vector. A gradient cannot -- the optimizer
-# calls it thousands of times. FOCEI's answer, which this mirrors, is to measure
-# once and REUSE: gill83 runs at the first gradient evaluation, its `hf` is
-# folded into per-parameter aEps/rEps, and every later difference is taken with
-# those. Here the measurement happens in the driver, before the optimizer is
-# handed anything, and the result travels as the `grad_h` argument that was
-# already there.
+# calls it thousands of times. So measure once and REUSE, which is what FOCEI
+# does too (its gill83 runs at the first gradient evaluation, `nF == 1`, and
+# every later difference uses the stored per-parameter step). Here the
+# measurement happens in the driver, before the optimizer is handed anything, and
+# travels as the `grad_h` argument that was already there.
 #
-# `hf` is an ABSOLUTE step at `p`. The estimators express theirs differently --
-# adfo/adgh scale by `pmax(abs(p), 0.1)`, admc uses the raw number -- so the
-# measured step is divided by whatever that site will multiply it back by
-# (`scaled`). The step is therefore exactly Gill's at `p`, and tracks the
-# parameter afterwards under the convention that site already had, rather than
-# freezing an absolute number that stops making sense once the optimizer has
-# moved a decade.
-#
-# One deliberate difference from FOCEI, which tracks with `h = |p|*rEps + aEps`
-# (aEps = rEps = hf/(|p0| + 1), so `hf * (|p| + 1)/(|p0| + 1)`) against
-# admixr2's `hf * max(|p|, 0.1)/max(|p0|, 0.1)`. Both reproduce `hf` exactly at
-# the point it was measured and both scale mildly and monotonically away from it;
-# what Gill83 actually contributes -- the MAGNITUDE, which moves by orders of
-# magnitude between parameters -- is identical either way. Keeping admixr2's own
-# law means `gill = TRUE` changes one thing rather than two, and every FD site
-# keeps a single scaling convention.
+# The measured step is ABSOLUTE at `p`. The estimators express theirs
+# differently -- adfo/adgh scale by `pmax(abs(p), 0.1)`, admc uses the raw
+# number -- so it is divided by whatever that site will multiply it back by
+# (`scaled`). The step is therefore exactly the measured one at `p`, and tracks
+# the parameter afterwards under the convention that site already had, rather
+# than freezing an absolute number that stops making sense once the optimizer
+# has moved a decade.
 #
 # `idx` is the set of parameters that will actually be finite-differenced;
 # everything else keeps the constant and costs nothing. Passing `integer(0)` --
 # a fit whose gradient is fully analytic -- skips the probe entirely.
-.admGillGradH <- function(fn, p, idx, grad_h, scaled = TRUE, .var.name = "grad") {
+.admShi21GradH <- function(fn, p, idx, grad_h, scaled = TRUE, .var.name = "grad") {
   if (length(idx) == 0L) return(grad_h)
   out <- rep_len(as.numeric(grad_h), length(p))
   base <- if (scaled) pmax(abs(p[idx]), 0.1) else rep(1, length(idx))
-  hf <- .admGillSteps(fn, p, idx, fallback = base * grad_h, .var.name = .var.name)
+  hf <- .admShi21Steps(fn, p, idx, fallback = base * grad_h, .var.name = .var.name)
   out[idx] <- hf / base
   # The scalar every index-less difference keeps using -- see .admGH0().
   attr(out, "h0") <- as.numeric(grad_h)[[1L]]
@@ -350,4 +280,167 @@
   }
 
   list(algorithm = algorithm, grad = grad)
+}
+
+# -- Shi (2021) adaptive CENTRAL-difference intervals ---------------------------
+#
+# Gill83, above, answers "what forward step balances condition error against
+# curvature". Shi/Xie/Xu/Nocedal (2021) answer the same question for a CENTRAL
+# difference, and measurement says they answer it far better on this package's
+# objectives. Scored against the analytic gradient (exact; cross-checked to 3e-9
+# against a high-accuracy central difference), max relative error over the five
+# parameters of the integration model:
+#
+#                       adirmc inner NLL   adfo NLL
+#   forward fixed 1e-4       7.3e-04        8.6e-04
+#   forward fixed 1e-6       7.3e-06        9.8e-06
+#   gill83 forward           8.1e-04        7.9e-04
+#   shi21 central            7.0e-08        9.5e-08
+#
+# Gill83 is not merely beaten, it is beaten by the FIXED step it exists to
+# improve on: its measured steps come out 5e-5..1.7e-3 where the objective wants
+# ~1e-8..1e-6. It is not mis-implemented here -- FOCEI's own defaults are what
+# the exported wrapper reaches, and those are
+# tuned for a per-subject objective carrying real solver noise, not for an
+# aggregate objective evaluated to near machine precision.
+#
+# WHY REIMPLEMENTED rather than called. nlmixr2est HAS this algorithm, as
+# `shi21CentralWrap`, but it is not exported -- and admixr2 makes zero `:::`
+# calls into nlmixr2est, a rule that covers reaching in via asNamespace() just as
+# much as the `:::` token. Reimplementing also buys the thing the gill83 path
+# cannot have: `eps_f` is a real argument here. It is the single input that
+# matters (h* scales as eps_f^(1/3)), and nlmixr2Gill83's wrapper drops every
+# tuning argument it accepts, so its noise assumption is unreachable. Measured
+# against the upstream routine as an ORACLE in test-optim-steps-shi.R.
+#
+# The maths. For a central difference the two error terms are
+#     truncation  (h^2/6)|f'''|      noise  eps_f/h
+# minimised together at
+#     h* = (3 * eps_f / |f'''|)^(1/3)
+# and the whole job is estimating |f'''| without knowing it. The symmetric third
+# difference does that:
+#     D3(h) = f(p+2h) - 2f(p+h) + 2f(p-h) - f(p-2h)  ~  2 h^3 f'''
+# It is used only when it stands clear of the noise floor: its four evaluations
+# carry coefficients (1,2,2,1), so noise in D3 has scale sqrt(1+4+4+1) = 3.16
+# eps_f, and a D3 below a multiple of that is measuring nothing but noise -- the
+# signal that h is too SMALL, which is the one failure a fixed step cannot detect
+# and the reason a too-fine step degrades so sharply (a fixed 1e-6 on an
+# objective with 1e-8 relative noise measured 2.55 relative error, i.e. no
+# correct digits at all).
+#
+# Returns list(h, gr): the chosen step and the central-difference derivative at
+# it, per requested index. `gr` is free -- the last iterate already evaluated it.
+.admShi21Central <- function(fn, p, k, eps_f, h0 = NULL, maxiter = 10L) {
+  scale <- max(abs(p[k]), 0.1)
+  # Start where a unit third derivative would put the optimum, but never finer
+  # than the scale-relative cube root of machine precision.
+  h <- if (!is.null(h0)) h0 else
+    max((3 * eps_f)^(1/3), scale * .Machine$double.eps^(1/3))
+  at <- function(d) { q <- p; q[k] <- q[k] + d; fn(q) }
+  # Do NOT iterate h to a fixed point of h* = (3 eps_f/|f'''|)^(1/3). That was
+  # tried and it CANNOT converge, for a reason worth recording: at the optimum
+  # h*^3 = 3 eps_f/|f'''|, so the third difference there is d3 ~ 2 h*^3 |f'''| =
+  # 6 eps_f -- only about twice the sqrt(1+4+4+1) = 3.16 eps_f of noise it
+  # carries. Any floor high enough to trust d3 therefore REJECTS h* itself, and
+  # the iteration limit-cycles: grow because d3 is under the floor, refine back
+  # down to h*, get rejected, grow again. It ran to maxiter every time, at 4
+  # evaluations an iteration, and returned the starting guess unrefined.
+  #
+  # |f'''| is a property of the FUNCTION, not of h, so estimate it ONCE at a
+  # probe step deliberately coarse enough for d3 to stand far clear of the noise
+  # (100x), then evaluate the formula. Monotone, terminating, and it uses the
+  # regime where the third difference is actually informative.
+  d3_noise <- 3.1623 * eps_f
+  f3 <- NA_real_
+  for (i in seq_len(maxiter)) {
+    fp2 <- at(2 * h); fp1 <- at(h); fm1 <- at(-h); fm2 <- at(-2 * h)
+    if (!all(is.finite(c(fp2, fp1, fm1, fm2)))) { h <- h / 4; next }
+    d3 <- fp2 - 2 * fp1 + 2 * fm1 - fm2
+    if (abs(d3) >= 100 * d3_noise) { f3 <- abs(d3) / (2 * h^3); break }
+    h <- h * 4
+    if (h > 1e3 * scale) break     # flat in this parameter; keep the last h
+  }
+  # `measured` is load-bearing, not decoration. When the third difference never
+  # clears the noise floor there is no |f'''| and hence no h*, and the loop exits
+  # holding whatever h it had grown to -- which is the CAP, i.e. a step the size
+  # of the parameter. Returning that silently would be the worst outcome of the
+  # three: a converged NLL is near-quadratic, so |f'''| is smallest exactly where
+  # fits end up, and a step that size perturbs omega out of positive-definiteness
+  # or sigma to Inf. The caller substitutes its fixed fallback instead.
+  measured <- is.finite(f3) && f3 > 0
+  hs <- if (measured) (3 * eps_f / f3)^(1/3) else h
+  # Never so fine it is pure cancellation, nor larger than the parameter itself.
+  hs <- min(max(hs, scale * 1e-12), scale)
+  q1 <- p; q1[k] <- q1[k] + hs; q2 <- p; q2[k] <- q2[k] - hs
+  list(h = hs, gr = (fn(q1) - fn(q2)) / (2 * hs), measured = measured)
+}
+
+# Per-parameter central steps: a numeric vector
+# the length of `idx`, never NA, never non-positive, falling back per parameter
+# rather than all-or-nothing.
+#
+# `eps_f` is the ABSOLUTE noise level of `fn`. Supplied by the caller when it
+# knows one; otherwise estimated by .admEcNoise(). Do NOT default it to a
+# relative quantity -- h* scales as eps_f^(1/3), so a value wrong by 10^6 moves
+# the step by 10^2, which is the whole difference between the gill83 and shi21
+# rows in the table above.
+.admShi21Steps <- function(fn, p, idx = seq_along(p), fallback = NULL,
+                           eps_f = NULL, .var.name = "cov") {
+  if (is.null(fallback))
+    fallback <- pmax(abs(p[idx]), 0.1) * .Machine$double.eps^(1/3)
+  fallback <- rep_len(as.numeric(fallback), length(idx))
+  if (is.null(eps_f))
+    eps_f <- tryCatch(.admEcNoise(fn, p, idx[[1L]]), error = function(e) NA_real_)
+  if (!is.finite(eps_f) || eps_f <= 0) {
+    warning(sprintf(
+      "%s: could not estimate the objective's noise level -- falling back to the fixed step scale.",
+      .var.name), call. = FALSE)
+    return(fallback)
+  }
+  h <- vapply(seq_along(idx), function(j) {
+    r <- tryCatch(.admShi21Central(fn, p, idx[[j]], eps_f), error = function(e) NULL)
+    if (is.null(r) || !isTRUE(r$measured) || !is.finite(r$h) || r$h <= 0)
+      fallback[[j]] else r$h
+  }, numeric(1))
+  h
+}
+
+# Moré & Wild (2011) ECnoise: the noise level of `fn` from a short line of
+# equally spaced evaluations.
+#
+# Needed because eps_f is the one input .admShi21Central() cannot guess. The
+# construction: differences of order j annihilate any polynomial of degree < j,
+# so once j exceeds the local smoothness of `fn` the j-th differences are pure
+# noise, amplified by a known factor gamma_j = (j!)^2/(2j)!. The estimate is the
+# level at which successive estimates stop moving AND the differences alternate
+# in sign -- both, because either alone is fooled (a still-smooth level looks
+# stable; a genuinely noisy one need not alternate every single time).
+.admEcNoise <- function(fn, p, k, h = NULL, m = 6L) {
+  scale <- max(abs(p[k]), 0.1)
+  if (is.null(h)) h <- scale * .Machine$double.eps^(1/3)
+  d <- seq(-m/2, m/2) * h
+  f <- vapply(d, function(dd) { q <- p; q[k] <- q[k] + dd; fn(q) }, numeric(1))
+  if (!all(is.finite(f))) return(NA_real_)
+  # A perfectly constant slice carries no noise information at all.
+  if (all(f == f[[1L]])) return(NA_real_)
+  tab <- f
+  gamma <- 1
+  est <- rep(NA_real_, m)
+  alt <- rep(NA_real_, m)
+  for (j in seq_len(m)) {
+    tab <- diff(tab)
+    gamma <- gamma * (j^2) / (2 * j * (2 * j - 1))
+    est[j] <- sqrt(gamma * mean(tab^2))
+    s <- sign(tab); s <- s[s != 0]
+    alt[j] <- if (length(s) < 2L) 0 else mean(s[-1] != s[-length(s)])
+  }
+  for (j in seq_len(m - 2L)) {
+    trio <- est[j:(j + 2L)]
+    if (any(!is.finite(trio)) || any(trio <= 0)) next
+    if (max(trio) / min(trio) <= 100 && alt[j] >= 0.5) return(est[[j]])
+  }
+  # Nothing stabilised: the smallest positive estimate is the least-bad answer,
+  # and is at worst an OVER-estimate, which errs toward a coarser step.
+  ok <- is.finite(est) & est > 0
+  if (!any(ok)) NA_real_ else min(est[ok])
 }

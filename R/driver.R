@@ -22,7 +22,7 @@
 # worker reads; `resid_nodes` decides the accuracy a transform-both-sides
 # residual is integrated at).
 #
-# adirmc adds `grad_h`/`gill` of its own after this returns; it is the only
+# adirmc adds `grad_h` of its own after this returns; it is the only
 # estimator whose inner optimiser finite-differences on a separate path.
 .admDriverPinfo <- function(.ui, .ctl) {
   pinfo <- .admParseIniDf(.ui$iniDf, .ui)

@@ -15,7 +15,7 @@ admControl(
   seed = 12345L,
   cores = rxode2::rxCores(),
   nDisplayProgress = .Machine$integer.max,
-  grad = c("sens", "fd", "cfd", "none"),
+  grad = c("sens", "fd", "none"),
   grad_h = 1e-04,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
@@ -37,7 +37,6 @@ admControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
-  gill = FALSE,
   ...
 )
 }
@@ -135,16 +134,16 @@ for scripts, vignettes and logs; lower it (e.g. \code{1000L}) to see solver
 progress during long interactive fits.}
 
 \item{grad}{Gradient mode: \code{"sens"} (sensitivity equations, default), \code{"fd"}
-(forward finite differences), \code{"cfd"} (central finite differences), or
+(central finite differences; forward was removed in 0.4.1), or
 \code{"none"} (derivative-free). A warning is issued when \code{"sens"} is requested
 but the sensitivity model is unavailable; the estimator then falls back to
 forward finite differences.}
 
 \item{grad_h}{Step size for finite-difference gradient evaluation during
-optimization (used by \code{grad = "fd"} or \code{"cfd"}). The default 1e-4 is near
-the optimal balance between truncation error (grows with \code{h}) and MC noise
-amplification (grows as \code{1/h}) for forward FD. Central FD (\code{"cfd"}) has a
-slightly wider optimum around 1e-3, but 1e-4 works well for both.}
+optimization (used by \code{grad = "fd"}). This is the FALLBACK step: the step
+is normally measured per parameter by the Shi (2021) procedure, and \code{grad_h}
+is what a parameter falls back to when that measurement cannot be made
+(a direction the objective is flat in, or a failed noise estimate).}
 
 \item{cov_h}{Inner FD step for the gradient-based Hessian (only used when
 \code{covMethod = "r"} and \code{grad != "none"}). Each gradient evaluation has MC
@@ -249,48 +248,6 @@ This is an ACCURACY dial, not a speed one. The quadrature is linear in
 negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
 evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.}
-
-\item{gill}{Use the Gill, Murray, Saunders & Wright (1983) algorithm to choose
-the finite-difference steps, instead of the fixed \code{cov_h_outer} and \code{grad_h}
-scales. \code{FALSE} (the default) keeps the existing steps, so nothing moves
-unless you ask.
-
-A fixed scale is one guess about how much noise the objective carries,
-applied identically to every parameter -- and it is the guess behind the
-"Hessian not positive definite ... try increasing \code{cov_h_outer}" warning.
-Gill83 probes the objective instead and returns, per parameter, the step at
-which condition error and truncation error balance, so a parameter the
-objective is flat in and one it is sharp in get different steps and the
-choice tracks the ODE tolerance rather than assuming one. It is the same
-algorithm FOCEI uses for its own steps (\code{nlmixr2est::nlmixr2Gill83()}), so
-the two packages agree on what a finite difference is. Worth trying first
-when the Hessian comes back indefinite.
-
-Applied to the post-fit covariance Hessian and to the optimizer's gradient,
-for the parameters each actually steps in PARAMETER space: for \code{admc} the
-whole vector when a joint (same-subject) study has no sensitivity model, and
-otherwise the structural thetas the sensitivity model has no column for; for
-\code{adirmc} the whole vector under \code{grad = "fd"}. A theta with no mu-referencing
-eta does NOT qualify by itself -- the sensitivity model emits a direction for
-each, so its gradient is exact and no step is chosen for it.
-
-\code{admc}'s ETA perturbations keep the fixed \code{grad_h} regardless. They have no
-parameter to key on, and they difference the PREDICTION rather than the
-objective, which is a different function from the one Gill83 measured; under
-common random numbers the two solves share their draws, so most of the MC
-noise a step choice would guard against cancels anyway.
-
-Measured ONCE per fit -- for the gradient at the starting values, as FOCEI
-does at its first gradient evaluation. \code{adirmc} measures on its first outer
-iteration and reuses: its proposals are redrawn each iteration, so
-re-measuring would cost ten inner evaluations per parameter every time.
-Costs up to ten extra objective evaluations per finite-differenced
-parameter. A parameter Gill83 reports as flat or linear falls back to the
-fixed scale.
-
-Because it reaches the gradient, \code{gill = TRUE} can change the FIT and not
-only the standard errors -- but only when the gradient has a
-finite-differenced parameter to begin with.}
 
 \item{...}{Additional arguments (none allowed; triggers an error).}
 }

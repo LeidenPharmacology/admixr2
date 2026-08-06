@@ -55,19 +55,13 @@ test_that(".adghNLL(): scalar (not vector) returned", {
 
 # ---- FD gradient (no sens model needed) -------------------------------------
 
-test_that(".adghFDGrad(): finite at truth (forward FD)", {
+test_that(".adghFDGrad(): finite at truth", {
+  # One case, not two: .adghFDGrad lost its `use_central` argument in 0.4.1 when
+  # forward differencing was removed, so central is the only form there is.
   env  <- .int_adgh_setup()
   g_fd <- admixr2:::.adghFDGrad(env$p0, env$pinfo, env$studies,
                                   env$rxMod, env$output_var, env$grid,
-                                  cores = 1L, grad_h = 1e-4, use_central = FALSE)
-  expect_true(all(is.finite(g_fd)))
-})
-
-test_that(".adghFDGrad(): finite at truth (central FD)", {
-  env  <- .int_adgh_setup()
-  g_fd <- admixr2:::.adghFDGrad(env$p0, env$pinfo, env$studies,
-                                  env$rxMod, env$output_var, env$grid,
-                                  cores = 1L, grad_h = 1e-4, use_central = TRUE)
+                                  cores = 1L, grad_h = 1e-4)
   expect_true(all(is.finite(g_fd)))
 })
 

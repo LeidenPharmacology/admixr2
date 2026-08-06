@@ -221,9 +221,9 @@ test_that("admControl(): covMethod 'none' accepted", {
   expect_equal(ctl$covMethod, "none")
 })
 
-test_that("admControl(): grad = 'cfd' accepted", {
-  ctl <- admControl(grad = "cfd")
-  expect_equal(ctl$grad, "cfd")
+test_that("admControl(): grad = 'fd' accepted", {
+  ctl <- admControl(grad = "fd")
+  expect_equal(ctl$grad, "fd")
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 

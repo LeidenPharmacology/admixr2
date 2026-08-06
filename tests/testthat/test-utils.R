@@ -400,7 +400,7 @@ test_that(".admWarnOnBounds tolerates a missing or degenerate input", {
   expect_silent(admixr2:::.admWarnOnBounds(numeric(0), numeric(0), ov, 5, .wb_pinfo))
 })
 
-# ---- .admGillSteps -----------------------------------------------------------
+# ---- .admShi21Steps ----------------------------------------------------------
 #
 # Gill, Murray, Saunders & Wright (1983) step selection, via nlmixr2est's own
 # exported implementation. Everything admixr2 finite-differences used the same
@@ -408,54 +408,55 @@ test_that(".admWarnOnBounds tolerates a missing or degenerate input", {
 # applied identically to every parameter, and the guess behind the "Hessian not
 # positive definite ... try increasing cov_h_outer" warning.
 
-test_that(".admGillSteps returns one positive finite step per requested parameter", {
-  skip_if_not_installed("nlmixr2est")
+test_that(".admShi21Steps returns one positive finite step per requested parameter", {
   f  <- function(p) sum(exp(p)^2) + 3 * p[[2L]]^2
   p0 <- c(0.5, -1.2, 2.0)
-  h  <- admixr2:::.admGillSteps(f, p0)
+  h  <- admixr2:::.admShi21Steps(f, p0)
   expect_length(h, 3L)
   expect_true(all(is.finite(h) & h > 0))
   # The whole point: the steps are NOT all the same multiple of the parameter,
   # which is what the heuristic they replace always produces.
-  fixed <- pmax(abs(p0), 0.1) * .Machine$double.eps^(1/5)
+  fixed <- pmax(abs(p0), 0.1) * .Machine$double.eps^(1/3)
   expect_false(isTRUE(all.equal(h / fixed, rep(h[[1L]] / fixed[[1L]], 3L))))
 })
 
-test_that(".admGillSteps honours `idx` and returns steps in that order", {
-  skip_if_not_installed("nlmixr2est")
+test_that(".admShi21Steps honours `idx` and returns steps in that order", {
   f  <- function(p) sum(exp(p)^2) + 3 * p[[2L]]^2
   p0 <- c(0.5, -1.2, 2.0)
-  all3 <- admixr2:::.admGillSteps(f, p0)
-  sub  <- admixr2:::.admGillSteps(f, p0, idx = c(1L, 3L))
+  all3 <- admixr2:::.admShi21Steps(f, p0)
+  sub  <- admixr2:::.admShi21Steps(f, p0, idx = c(1L, 3L))
   expect_length(sub, 2L)
   expect_equal(sub, all3[c(1L, 3L)])
 })
 
-test_that(".admGillSteps falls back rather than propagating a failure", {
-  skip_if_not_installed("nlmixr2est")
+test_that(".admShi21Steps falls back rather than propagating a failure", {
   p0  <- c(0.5, -1.2)
   fb  <- c(0.01, 0.02)
-  # A function Gill83 cannot assess must not take the covariance step down with
-  # it -- a fixed-step Hessian is far better than none.
+  # A function the probe cannot assess must not take the covariance step down
+  # with it -- a fixed-step Hessian is far better than none.
   bad <- function(p) stop("objective exploded")
-  h   <- suppressWarnings(admixr2:::.admGillSteps(bad, p0, fallback = fb))
+  h   <- suppressWarnings(admixr2:::.admShi21Steps(bad, p0, fallback = fb))
   expect_equal(h, fb)
-  # ... and a flat objective (no curvature to bracket) likewise.
+  # ... and a flat objective (no noise to estimate, no curvature to bracket).
   flat <- function(p) 1
-  hf   <- suppressWarnings(admixr2:::.admGillSteps(flat, p0, fallback = fb))
+  hf   <- suppressWarnings(admixr2:::.admShi21Steps(flat, p0, fallback = fb))
   expect_true(all(is.finite(hf) & hf > 0))
 })
 
-test_that("gill is the LAST control formal and defaults to FALSE", {
-  # Standard errors must not move unless asked for. Same positional-call rule
-  # resid_nodes is pinned by above: a new argument goes at the END.
-  for (ctl in list(adfoControl(), adghControl(), admControl(), adirmcControl()))
-    expect_false(ctl$gill)
+test_that("`gill` is gone from every control", {
+  # Removed in 0.4.1: Gill83's steps were measured 10^2-10^4x worse than the
+  # fixed step it was meant to improve on, at both FD sites. Shi21 replaced it
+  # as the unconditional default, so there is no flag left to set.
+  for (f in list(adfoControl, adghControl, admControl, adirmcControl))
+    expect_false("gill" %in% names(formals(f)))
+  expect_error(adfoControl(gill = TRUE))
+})
+
+test_that("resid_nodes is the LAST control formal", {
+  # Positional calls are part of the interface: a new argument goes at the END.
   for (f in list(adfoControl, adghControl, admControl, adirmcControl)) {
     nms <- names(formals(f))
     nms <- nms[nms != "..."]                    # every control ends with `...`
-    expect_identical(nms[[length(nms)]], "gill")
+    expect_identical(nms[[length(nms)]], "resid_nodes")
   }
-  expect_true(adfoControl(gill = TRUE)$gill)
-  expect_error(adfoControl(gill = "yes"), regexp = "gill")
 })

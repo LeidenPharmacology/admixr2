@@ -6,7 +6,7 @@
 \usage{
 adfoControl(
   studies = list(),
-  grad = c("analytical", "none", "fd", "cfd"),
+  grad = c("analytical", "none", "fd"),
   algorithm = NULL,
   maxeval = 500L,
   ftol_rel = .Machine$double.eps^(1/2),
@@ -34,7 +34,6 @@ adfoControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
-  gill = FALSE,
   ...
 )
 }
@@ -45,9 +44,10 @@ adfoControl(
 
 \item{grad}{Gradient mode.  \code{"analytical"} (default) uses the closed-form FO
 gradient with LBFGS; \code{"none"} uses derivative-free BOBYQA; \code{"fd"} uses
-forward finite differences of the full NLL; \code{"cfd"} uses central finite
-differences for struct theta gradient (more accurate than \code{"fd"}, roughly
-twice as many NLL evaluations per step).
+central finite differences of the full NLL. Forward differencing was
+removed in 0.4.1 -- it was 10^2 to 10^4 times less accurate than a central
+difference at every site measured, and the one solve per parameter it saved
+did not pay for a gradient the optimizer struggles to descend.
 
 The default was \code{"none"} up to 0.4.0, because the structural thetas were
 finite-differenced through the whole NLL and the resulting gradient was too
@@ -174,39 +174,6 @@ This is an ACCURACY dial, not a speed one. The quadrature is linear in
 negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
 evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.}
-
-\item{gill}{Use the Gill, Murray, Saunders & Wright (1983) algorithm to choose
-the finite-difference steps, instead of the fixed \code{cov_h_outer} and \code{grad_h}
-scales. \code{FALSE} (the default) keeps the existing steps, so nothing moves
-unless you ask.
-
-A fixed scale is one guess about how much noise the objective carries,
-applied identically to every parameter -- and it is the guess behind the
-"Hessian not positive definite ... try increasing \code{cov_h_outer}" warning.
-Gill83 probes the objective instead and returns, per parameter, the step at
-which condition error and truncation error balance, so a parameter the
-objective is flat in and one it is sharp in get different steps and the
-choice tracks the ODE tolerance rather than assuming one. It is the same
-algorithm FOCEI uses for its own steps (\code{nlmixr2est::nlmixr2Gill83()}), so
-the two packages agree on what a finite difference is. Worth trying first
-when the Hessian comes back indefinite.
-
-Applied in both of the places adfo finite-differences the OBJECTIVE:
-the post-fit covariance Hessian, and the optimizer's gradient -- every
-parameter under \code{grad = "fd"}/\code{"cfd"}, or the structural thetas when the
-second-order sensitivity model is unavailable and they are differenced
-through the whole NLL. When that model IS available no structural theta is
-finite-differenced at all and the gradient probe is skipped.
-
-Measured ONCE in each case -- for the gradient at the starting values, which
-is where FOCEI measures too (\code{numericGrad} runs Gill83 at its first
-evaluation and reuses the steps for the rest of the fit). Costs up to ten
-extra objective evaluations per finite-differenced parameter. A parameter
-Gill83 reports as flat or linear falls back to the fixed scale.
-
-Because it reaches the gradient, \code{gill = TRUE} can change the FIT and not
-only the standard errors -- but only when the gradient has a
-finite-differenced parameter to begin with.}
 
 \item{...}{Unused arguments (trigger an error).}
 }

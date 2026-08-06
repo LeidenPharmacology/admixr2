@@ -115,8 +115,8 @@ test_that("adghControl(): grad='fd' coerces BOBYQA to LBFGS", {
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
-test_that("adghControl(): grad='cfd' coerces BOBYQA to LBFGS", {
-  ctl <- adghControl(grad = "cfd")
+test_that("adghControl(): grad='fd' coerces BOBYQA to LBFGS", {
+  ctl <- adghControl(grad = "fd")
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
@@ -142,7 +142,7 @@ test_that("adghControl(): an EXPLICIT derivative-free algorithm turns the gradie
   #
   # Pinned because it is a silent change for anyone who explicitly restated the
   # old default: they get a derivative-free fit where they had a quasi-Newton one.
-  for (g in c("analytical", "fd", "cfd")) {
+  for (g in c("analytical", "fd")) {
     ctl <- suppressMessages(adghControl(grad = g, algorithm = "NLOPT_LN_BOBYQA"))
     expect_equal(ctl$algorithm, "NLOPT_LN_BOBYQA", info = g)
     expect_equal(ctl$grad, "none", info = g)

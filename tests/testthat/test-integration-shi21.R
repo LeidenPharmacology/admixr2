@@ -1,100 +1,90 @@
-# Gill (1983) step selection, end to end.
+# Shi (2021) step selection, end to end.
 #
 # The fixed `pmax(abs(p), 0.1) * h` scale is one guess about how much noise the
 # objective carries, applied identically to every parameter -- and it is the
 # guess behind the "Hessian not positive definite ... try increasing
-# cov_h_outer" warning. Gill83 probes the objective and balances condition
-# against truncation error per parameter. What must hold: the covariance is
-# still SPD, the standard errors agree with the fixed-step ones to within the
-# accuracy either can claim, and `gill = FALSE` changes nothing at all.
+# cov_h_outer" warning. Shi21 probes the objective and balances truncation
+# against noise per parameter, and since 0.4.1 it is the unconditional default
+# with that fixed scale demoted to a fallback. There is no flag to toggle, so
+# what these tests assert is that the measured steps REACH each site and that
+# the fits they produce are sane: SPD covariance, finite SEs, convergence.
 skip_on_cran()
 skip_if_not_installed("rxode2")
 skip_if_not_installed("nlmixr2est")
 
-.gill_fit <- function(gill, maxeval = 40L, ...) {
+.shi_fit <- function(maxeval = 40L, ...) {
   env <- .int_grad_setup()
   suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
     one_cmt_fn, admData(), est = "adfo",
     control = adfoControl(studies = env$studies, maxeval = maxeval, seed = 1L,
-                          covMethod = "r", gill = gill, ...))))
+                          covMethod = "r", ...))))
 }
 
-test_that("gill = TRUE gives an SPD covariance and SEs consistent with the fixed step", {
-  f0 <- .gill_fit(FALSE)
-  f1 <- .gill_fit(TRUE)
-
+test_that("the measured covariance step gives an SPD covariance and finite SEs", {
+  f1 <- .shi_fit()
   expect_s3_class(f1, "admFit")
-  # This model builds the order-2 sensitivity block, so NO structural theta is
-  # finite-differenced and .fd_idx is empty: the gradient probe never runs and
-  # gill reaches only the covariance step. The objective is therefore still
-  # bit-identical -- but that is a property of THIS model, not of the flag, which
-  # is why the fd/cfd case below is tested separately.
-  expect_identical(f1$objective, f0$objective)
-
-  skip_if(is.null(f0$cov) || is.null(f1$cov), "covariance unavailable")
+  expect_true(is.finite(f1$objective))
+  skip_if(is.null(f1$cov), "covariance unavailable")
   expect_true(all(eigen(f1$cov, symmetric = TRUE, only.values = TRUE)$values > 0))
-  expect_identical(dimnames(f1$cov), dimnames(f0$cov))
-
-  se0 <- sqrt(diag(f0$cov)); se1 <- sqrt(diag(f1$cov))
+  se1 <- sqrt(diag(f1$cov))
   expect_true(all(is.finite(se1) & se1 > 0))
-  # Two different-but-valid step choices for the same Hessian: they should agree
-  # to a few percent, not to machine precision. A tight tolerance here would be
-  # asserting that the step does not matter, which is the opposite of the point.
-  expect_lt(max(abs(se1 - se0) / se0), 0.15)
 })
 
-test_that("gill = FALSE leaves the covariance exactly as it was", {
-  # The default must not move anyone's standard errors.
-  a <- .gill_fit(FALSE)
-  b <- .gill_fit(FALSE)
+test_that("the step measurement is deterministic", {
+  # Shi21 probes with fixed offsets and ECnoise with a fixed grid -- no RNG
+  # anywhere -- so two identical fits must agree bit-for-bit. If this ever fails
+  # something stochastic has entered the step choice, which would make every
+  # covariance irreproducible.
+  a <- .shi_fit()
+  b <- .shi_fit()
   skip_if(is.null(a$cov) || is.null(b$cov), "covariance unavailable")
-  expect_equal(a$cov, b$cov)
+  expect_identical(a$cov, b$cov)
+  expect_identical(a$objective, b$objective)
 })
 
-test_that("gill reaches the optimizer's FD gradient under grad = 'fd'", {
+test_that("grad = 'fd' converges to the same optimum as the analytic gradient", {
   # grad = "fd" finite-differences EVERY parameter through the whole NLL, so the
-  # gradient probe does run here. The fit is allowed to move -- a different step
-  # is a different gradient, and a different iterate sequence -- but it must not
-  # land somewhere WORSE, which is the only thing that makes a step choice
-  # legitimate.
-  #
-  # maxeval is deliberately generous. At maxeval = 40 the two runs stop at
-  # different points along their descent (measured 713.3 vs 715.6, the Gill run
-  # ahead), and asserting they agree there would be asserting that the step makes
-  # no difference -- the opposite of the point.
-  g0 <- .gill_fit(FALSE, grad = "fd", maxeval = 300L)
-  g1 <- .gill_fit(TRUE,  grad = "fd", maxeval = 300L)
+  # gradient step probe does run here. The FD fit is a different iterate
+  # sequence from the analytic one, but it must reach the same place -- that is
+  # the only thing that makes a step choice legitimate. maxeval is deliberately
+  # generous so both are compared AT convergence rather than mid-descent.
+  ga <- .shi_fit(grad = "analytical", maxeval = 300L)
+  gf <- .shi_fit(grad = "fd",         maxeval = 300L)
 
-  expect_s3_class(g1, "admFit")
-  expect_true(is.finite(g1$objective))
-  # Converged to the same optimum, by differently-stepped gradients.
-  expect_equal(g1$objective, g0$objective, tolerance = 1e-2)
-  th0 <- g0$parFixedDf$Estimate; th1 <- g1$parFixedDf$Estimate
-  expect_equal(th1, th0, tolerance = 5e-2)
+  expect_s3_class(gf, "admFit")
+  expect_true(is.finite(gf$objective))
+  expect_equal(gf$objective, ga$objective, tolerance = 1e-2)
+  expect_equal(gf$parFixedDf$Estimate, ga$parFixedDf$Estimate, tolerance = 5e-2)
 })
 
-test_that("the Gill step vector really is per-parameter and reaches the sites", {
-  # Two regressions in one: (a) the acceptance rule must not reject the ordinary
-  # "High Grad Error" return -- doing so silently made gill a no-op everywhere;
-  # (b) .admGH must index a vector and pass a scalar straight through, which is
-  # what lets a vector reach every FD site with no signature change.
-  f <- function(p) sum((p - c(1, 2, 3))^2)
+test_that("the measured step vector really is per-parameter and reaches the sites", {
+  # .admGH must index a vector and pass a scalar straight through, which is what
+  # lets a measured vector reach every FD site with no signature change.
+  # Deliberately NOT a quadratic. A quadratic has no third derivative, so the
+  # probe cannot measure a step and correctly falls back for every parameter --
+  # which would make the per-parameter assertions below vacuously true.
+  f <- function(p) sum(exp(p))
   p <- c(0.5, 1.5, 2.5)
 
-  h <- admixr2:::.admGillGradH(f, p, c(1L, 3L), 1e-4, scaled = TRUE)
+  h <- admixr2:::.admShi21GradH(f, p, c(1L, 3L), 1e-4, scaled = TRUE)
   expect_length(h, 3L)
   expect_identical(h[2], 1e-4)                 # not requested -> untouched
   expect_true(all(h[c(1, 3)] != 1e-4))         # requested -> actually measured
   expect_true(all(is.finite(h) & h > 0))
-  # scaled = TRUE means the site's own pmax(abs(p), 0.1) * h reproduces Gill's
-  # absolute step; so the two requested parameters differ in proportion to |p|.
-  expect_equal(h[1] / h[3], pmax(abs(p[3]), 0.1) / pmax(abs(p[1]), 0.1),
-               tolerance = 1e-6)
+  # `scaled` is the whole contract: the stored value is the measured ABSOLUTE
+  # step divided by whatever the call site will multiply it back by, so that
+  # `pmax(abs(p), 0.1) * h` reproduces the measurement exactly. Assert that
+  # directly. (It is NOT that the entries differ in proportion to |p| -- that
+  # held for Gill83, whose step keys off f'', but Shi21's keys off f''', so the
+  # ratio carries the curvature too and the old assertion was measuring nothing.)
+  h_unscaled <- admixr2:::.admShi21GradH(f, p, c(1L, 3L), 1e-4, scaled = FALSE)
+  expect_equal(h[c(1, 3)] * pmax(abs(p[c(1, 3)]), 0.1), h_unscaled[c(1, 3)],
+               tolerance = 1e-8)
 
   expect_identical(admixr2:::.admGH(1e-4, c(1L, 3L)), 1e-4)
   expect_identical(admixr2:::.admGH(c(1, 2, 3, 4), c(1L, 3L)), c(1, 3))
   # An empty index set must skip the probe entirely and change nothing.
-  expect_true(all(admixr2:::.admGillGradH(f, p, integer(0), 1e-4) == 1e-4))
+  expect_true(all(admixr2:::.admShi21GradH(f, p, integer(0), 1e-4) == 1e-4))
 })
 
 test_that(".admGrad with a uniform step vector reproduces the scalar exactly", {
@@ -158,11 +148,9 @@ test_that(".admGrad rejects a step vector of the wrong length", {
   }
 })
 
-test_that("gill reaches adirmc's inner FD gradient", {
+test_that("the measured step reaches adirmc's inner FD gradient, once", {
   # adirmc's inner FD used a hard-coded 1e-6 and ignored grad_h entirely, so this
-  # is the only coverage of the path that now honours it. The step is measured on
-  # the FIRST outer iteration and reused, because proposals are redrawn each
-  # iteration -- so the probe must fire exactly once, not per iteration.
+  # is the only coverage of the path that now measures its step.
   env <- .int_grad_setup()
   # The counter lives in an env spliced into the tracer expression: a tracer runs
   # in the TRACED function's frame, so `fired <<- fired + 1L` cannot see a local
@@ -171,55 +159,43 @@ test_that("gill reaches adirmc's inner FD gradient", {
   # assign()/get(), not `$<-`: bquote splices the environment in as a literal
   # object, and `<env>$n <- ...` is then "target of assignment expands to
   # non-language object".
-  trace(admixr2:::.admGillGradH,
+  trace(admixr2:::.admShi21GradH,
         tracer = bquote(assign("n", get("n", envir = .(cnt)) + 1L, envir = .(cnt))),
         print = FALSE)
-  on.exit(untrace(admixr2:::.admGillGradH), add = TRUE)
+  on.exit(untrace(admixr2:::.admShi21GradH), add = TRUE)
 
-  run <- function(gill) suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+  g1 <- suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
     one_cmt_fn, admData(), est = "adirmc",
     control = adirmcControl(studies = env$studies, seed = 1L, grad = "fd",
                             n_sim = 300L, phases = c(1, 0.5), outer_iter = 2L,
-                            maxeval = 20L, covMethod = "none", gill = gill))))
+                            maxeval = 20L, covMethod = "none"))))
 
-  g0 <- run(FALSE)
-  expect_identical(cnt$n, 0L)          # nothing probed when the flag is off
-  g1 <- run(TRUE)
-  expect_gt(cnt$n, 0L)                 # ... and probed when it is on
-
-  expect_true(is.finite(g0$objective))
+  # Fired -- but ONCE, not once per outer iteration. Proposals are redrawn every
+  # iteration, so re-probing would cost 10 x n_par extra inner NLL evaluations
+  # each time; the measurement is taken on the first and reused.
+  expect_identical(cnt$n, 1L)
   expect_true(is.finite(g1$objective))
-  expect_equal(g1$objective, g0$objective, tolerance = 1e-2)
 })
 
-test_that("gill reaches admc's gradient when a struct theta is finite-differenced", {
+test_that("the measured step reaches admc's gradient for a finite-differenced theta", {
   # admc probes only parameters it actually steps in PARAMETER space. With the
   # sensitivity model supplying a column for every theta -- the default -- that
-  # set is empty and the probe is skipped, which is why no other test here
-  # reaches this branch. grad = "fd" turns the sens model off, and
+  # set is empty and the probe is skipped entirely, which is why no other test
+  # here reaches this branch. grad = "fd" turns the sens model off, and
   # one_cmt_kappa_fn has a theta with no mu-referencing eta, so the set is not
   # empty and the measurement runs.
   env <- .int_grad_setup()
   cnt <- new.env(parent = emptyenv()); cnt$n <- 0L
-  trace(admixr2:::.admGillGradH,
+  trace(admixr2:::.admShi21GradH,
         tracer = bquote(assign("n", get("n", envir = .(cnt)) + 1L, envir = .(cnt))),
         print = FALSE)
-  on.exit(untrace(admixr2:::.admGillGradH), add = TRUE)
+  on.exit(untrace(admixr2:::.admShi21GradH), add = TRUE)
 
-  run <- function(gill) suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+  b <- suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
     one_cmt_kappa_fn, admData(), est = "admc",
     control = admControl(studies = env$studies, seed = 1L, grad = "fd",
-                         n_sim = 300L, maxeval = 15L, covMethod = "none",
-                         gill = gill))))
+                         n_sim = 300L, maxeval = 15L, covMethod = "none"))))
 
-  a <- run(FALSE)
-  expect_identical(cnt$n, 0L)
-  b <- run(TRUE)
   expect_gt(cnt$n, 0L)
-
-  expect_true(is.finite(a$objective))
   expect_true(is.finite(b$objective))
-  # Same objective surface, differently-stepped gradients at a small maxeval:
-  # they need only be in the same place, not identical.
-  expect_equal(b$objective, a$objective, tolerance = 5e-2)
 })

@@ -26,8 +26,8 @@ test_that("adfoControl(): grad = 'fd' defaults to LBFGS", {
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
-test_that("adfoControl(): grad = 'cfd' defaults to LBFGS", {
-  ctl <- adfoControl(grad = "cfd")
+test_that("adfoControl(): grad = 'fd' defaults to LBFGS", {
+  ctl <- adfoControl(grad = "fd")
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 

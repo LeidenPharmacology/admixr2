@@ -100,15 +100,15 @@
 #'   for scripts, vignettes and logs; lower it (e.g. `1000L`) to see solver
 #'   progress during long interactive fits.
 #' @param grad Gradient mode: `"sens"` (sensitivity equations, default), `"fd"`
-#'   (forward finite differences), `"cfd"` (central finite differences), or
+#'   (central finite differences; forward was removed in 0.4.1), or
 #'   `"none"` (derivative-free). A warning is issued when `"sens"` is requested
 #'   but the sensitivity model is unavailable; the estimator then falls back to
 #'   forward finite differences.
 #' @param grad_h Step size for finite-difference gradient evaluation during
-#'   optimization (used by `grad = "fd"` or `"cfd"`). The default 1e-4 is near
-#'   the optimal balance between truncation error (grows with `h`) and MC noise
-#'   amplification (grows as `1/h`) for forward FD. Central FD (`"cfd"`) has a
-#'   slightly wider optimum around 1e-3, but 1e-4 works well for both.
+#'   optimization (used by `grad = "fd"`). This is the FALLBACK step: the step
+#'   is normally measured per parameter by the Shi (2021) procedure, and `grad_h`
+#'   is what a parameter falls back to when that measurement cannot be made
+#'   (a direction the objective is flat in, or a failed noise estimate).
 #' @param cov_h Inner FD step for the gradient-based Hessian (only used when
 #'   `covMethod = "r"` and `grad != "none"`). Each gradient evaluation has MC
 #'   noise of order `sigma / cov_h`; the Hessian divides that noise by the outer
@@ -123,47 +123,6 @@
 #'   empirically it matches the analytical (sensitivity-equation) Hessian ground
 #'   truth. Increase (e.g. to `5e-3` or `1e-2`) if the Hessian is non-positive
 #'   definite.
-#' @param gill Use the Gill, Murray, Saunders & Wright (1983) algorithm to choose
-#'   the finite-difference steps, instead of the fixed `cov_h_outer` and `grad_h`
-#'   scales. `FALSE` (the default) keeps the existing steps, so nothing moves
-#'   unless you ask.
-#'
-#'   A fixed scale is one guess about how much noise the objective carries,
-#'   applied identically to every parameter -- and it is the guess behind the
-#'   "Hessian not positive definite ... try increasing `cov_h_outer`" warning.
-#'   Gill83 probes the objective instead and returns, per parameter, the step at
-#'   which condition error and truncation error balance, so a parameter the
-#'   objective is flat in and one it is sharp in get different steps and the
-#'   choice tracks the ODE tolerance rather than assuming one. It is the same
-#'   algorithm FOCEI uses for its own steps (`nlmixr2est::nlmixr2Gill83()`), so
-#'   the two packages agree on what a finite difference is. Worth trying first
-#'   when the Hessian comes back indefinite.
-#'
-#'   Applied to the post-fit covariance Hessian and to the optimizer's gradient,
-#'   for the parameters each actually steps in PARAMETER space: for `admc` the
-#'   whole vector when a joint (same-subject) study has no sensitivity model, and
-#'   otherwise the structural thetas the sensitivity model has no column for; for
-#'   `adirmc` the whole vector under `grad = "fd"`. A theta with no mu-referencing
-#'   eta does NOT qualify by itself -- the sensitivity model emits a direction for
-#'   each, so its gradient is exact and no step is chosen for it.
-#'
-#'   `admc`'s ETA perturbations keep the fixed `grad_h` regardless. They have no
-#'   parameter to key on, and they difference the PREDICTION rather than the
-#'   objective, which is a different function from the one Gill83 measured; under
-#'   common random numbers the two solves share their draws, so most of the MC
-#'   noise a step choice would guard against cancels anyway.
-#'
-#'   Measured ONCE per fit -- for the gradient at the starting values, as FOCEI
-#'   does at its first gradient evaluation. `adirmc` measures on its first outer
-#'   iteration and reuses: its proposals are redrawn each iteration, so
-#'   re-measuring would cost ten inner evaluations per parameter every time.
-#'   Costs up to ten extra objective evaluations per finite-differenced
-#'   parameter. A parameter Gill83 reports as flat or linear falls back to the
-#'   fixed scale.
-#'
-#'   Because it reaches the gradient, `gill = TRUE` can change the FIT and not
-#'   only the standard errors -- but only when the gradient has a
-#'   finite-differenced parameter to begin with.
 #' @param grad_bounds Box-constraint half-width when using gradients: the fit is
 #'   confined to `p0 +/- grad_bounds` on the optimizer scale, which for a
 #'   log-scale parameter is a factor of `exp(grad_bounds)` (~148 at the default
@@ -304,7 +263,7 @@ admControl <- function(
     seed       = 12345L,
     cores      = rxode2::rxCores(),
     nDisplayProgress = .Machine$integer.max,
-    grad        = c("sens", "fd", "cfd", "none"),
+    grad        = c("sens", "fd", "none"),
     grad_h      = 1e-4,
     cov_h       = 1e-3,
     cov_h_outer = .Machine$double.eps^(1/5),
@@ -329,7 +288,6 @@ admControl <- function(
     # positional call -- admControl(studies, 20000L) used to set n_sim = 20000.
     resid_nodes = 81L,
     # ... and this one after it, for the same reason.
-    gill        = FALSE,
     ...) {
 
   .xtra <- list(...)
@@ -359,7 +317,6 @@ admControl <- function(
   checkmate::assertNumeric(grad_h,      lower = 0,  len = 1, .var.name = "grad_h")
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
-  checkmate::assertFlag(gill, .var.name = "gill")
   checkmate::assertNumeric(grad_bounds, lower = 0,  len = 1, .var.name = "grad_bounds")
   covMethod <- match.arg(covMethod)
   checkmate::assertIntegerish(cov_n_sim,   lower = 1L, len = 1, .var.name = "cov_n_sim")
@@ -418,7 +375,6 @@ admControl <- function(
     grad_h        = grad_h,
     cov_h         = cov_h,
     cov_h_outer   = cov_h_outer,
-    gill          = gill,
     grad_bounds   = grad_bounds,
     covMethod     = covMethod,
     cov_n_sim     = as.integer(cov_n_sim),
@@ -1664,7 +1620,7 @@ nmObjGetControl.admc <- function(x, ...) {
                         use_grad = FALSE, grad_h = 1e-4, cov_h = 1e-3,
                         cov_h_outer = .Machine$double.eps^(1/5),
                         sensModel = NULL, use_central = FALSE,
-                        sampling = "sobol", gill = FALSE) {
+                        sampling = "sobol") {
   np    <- length(p_hat)
   nms   <- names(p_hat)
 
@@ -1744,7 +1700,7 @@ nmObjGetControl.admc <- function(x, ...) {
     # THIS objective and returns the step where condition error and truncation
     # error balance, per parameter. Exact fit here, since the function it probes
     # is the one being differenced.
-    h_gill <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer, gill,
+    h_fd <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer,
                             .var.name = "admCalcCov")
     n_off   <- np_cov * (np_cov - 1L) / 2L
 
@@ -1752,8 +1708,8 @@ nmObjGetControl.admc <- function(x, ...) {
     diag_p <- vector("list", 2L * np_cov)
     for (k in seq_len(np_cov)) {
       ki <- cov_idx[k]
-      ph <- p_hat; ph[ki] <- ph[ki] + h_gill[k]; diag_p[[2L*k - 1L]] <- ph
-      pl <- p_hat; pl[ki] <- pl[ki] - h_gill[k]; diag_p[[2L*k]]      <- pl
+      ph <- p_hat; ph[ki] <- ph[ki] + h_fd[k]; diag_p[[2L*k - 1L]] <- ph
+      pl <- p_hat; pl[ki] <- pl[ki] - h_fd[k]; diag_p[[2L*k]]      <- pl
     }
     off_p  <- vector("list", 4L * n_off)
     off_ij <- matrix(0L, n_off, 2L)
@@ -1762,7 +1718,7 @@ nmObjGetControl.admc <- function(x, ...) {
       for (j in seq(i + 1L, np_cov)) {
         oci <- oci + 1L; off_ij[oci, ] <- c(i, j)
         ii <- cov_idx[i]; ji <- cov_idx[j]
-        hi <- h_gill[i];  hj <- h_gill[j]
+        hi <- h_fd[i];  hj <- h_fd[j]
         p_pp <- p_hat; p_pp[ii] <- p_pp[ii] + hi; p_pp[ji] <- p_pp[ji] + hj
         p_pm <- p_hat; p_pm[ii] <- p_pm[ii] + hi; p_pm[ji] <- p_pm[ji] - hj
         p_mp <- p_hat; p_mp[ii] <- p_mp[ii] - hi; p_mp[ji] <- p_mp[ji] + hj
@@ -1777,12 +1733,12 @@ nmObjGetControl.admc <- function(x, ...) {
 
     H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
     for (k in seq_len(np_cov)) {
-      hk <- h_gill[k]
+      hk <- h_fd[k]
       H[k, k] <- (nll_all[2L*k - 1L] - 2*nll0 + nll_all[2L*k]) / hk^2
     }
     for (oci in seq_len(n_off)) {
       i <- off_ij[oci, 1L]; j <- off_ij[oci, 2L]
-      hi <- h_gill[i]; hj <- h_gill[j]
+      hi <- h_fd[i]; hj <- h_fd[j]
       base <- 2L * np_cov + (oci - 1L) * 4L
       H[i, j] <- H[j, i] <-
         (nll_all[base + 1L] - nll_all[base + 2L] -
@@ -1803,8 +1759,8 @@ nmObjGetControl.admc <- function(x, ...) {
   .red <- .admReduceNpdOmega(H, H_eigs, eig_dec, nms_cov, n_o, n_sub)
   if (.red$reduced)
     warning("admCalcCov: the full Hessian including omega was not positive ",
-            "definite; reporting structural and sigma standard errors only.",
-            call. = FALSE)
+            "definite or was numerically singular; reporting structural and ",
+            "sigma standard errors only.", call. = FALSE)
   H <- .red$H; nms_cov <- .red$nms_cov; np_cov <- .red$np_cov
   eig_dec <- .red$eig_dec; H_eigs <- .red$H_eigs
 
@@ -2669,7 +2625,12 @@ nlmixr2Est.admc <- function(env, ...) {
 
   want_grad    <- .ctl$grad != "none"
   want_sens    <- .ctl$grad == "sens"
-  want_central <- .ctl$grad == "cfd"
+  # Central is the only differencing admixr2 does: `grad = "fd"` IS central, and
+  # the forward option was removed in 0.4.1 (10^2-10^4x less accurate at every
+  # site measured). `use_central` survives as internal plumbing because admc's
+  # batched-solve offsets and block counts are written in terms of it; it is
+  # never FALSE.
+  want_central <- TRUE
   # Multi-compartment gradient. Independent blocks use the per-output analytical/
   # sens gradient. Joint (same-subject) fits are scored by a stacked MVN: with a
   # sens model + etas the joint gradient is analytical (.admGrad joint branch);
@@ -2699,9 +2660,9 @@ nlmixr2Est.admc <- function(env, ...) {
   # mu-referenced theta at all, which used to force a full FD gradient. If the
   # augmentation was unavailable (theta_sens_cols NULL) the old behaviour stands:
   # sens for the paired thetas + FD for the unpaired, or full FD when none is paired.
-  # Hoisted out of the message block below: the gill gate reads it too, and a
-  # conditionally-defined flag would be an "object not found" the first time a
-  # model with no unpaired theta met `gill = TRUE`.
+  # Hoisted out of the message block below: the FD-index gate reads it too, and
+  # a conditionally-defined flag would be an "object not found" the first time a
+  # model with no unpaired theta reached the step probe.
   .theta_sens <- want_sens && !is.null(sensModel) &&
     !is.null(sensModel$theta_sens_cols) &&
     all(.unpaired %in% names(sensModel$theta_sens_cols))
@@ -2769,8 +2730,8 @@ nlmixr2Est.admc <- function(env, ...) {
   # joint branch computes the analytical stacked-MVN gradient.
   joint_fd <- any_joint && is.null(sensModel)
 
-  # gill = TRUE: measure the gradient's FD steps ONCE, here, for every later
-  # difference to reuse (FOCEI's numericGrad mechanism at nF == 1).
+  # Measure the gradient's FD steps ONCE, here, for every later difference to
+  # reuse (FOCEI's numericGrad mechanism at nF == 1).
   #
   # The set is the parameters admc actually steps in PARAMETER space:
   #   * joint study with no sens model -> .admNLLGradFD differences the objective
@@ -2799,8 +2760,8 @@ nlmixr2Est.admc <- function(env, ...) {
     else if (length(.unpaired) && !.theta_sens)
       which(pinfo$struct_names %in% .unpaired)
     else integer(0)
-  if (isTRUE(.ctl$gill) && length(.fd_idx))
-    grad_h <- .admGillGradH(
+  if (length(.fd_idx))
+    grad_h <- .admShi21GradH(
       function(pp) .admNLL(pp, pinfo, studies, z_list, rxMod, output_var,
                            params_list, cores),
       ov$p0, .fd_idx, grad_h, scaled = FALSE, .var.name = "admc gradient")
@@ -2815,11 +2776,11 @@ nlmixr2Est.admc <- function(env, ...) {
                               use_central = want_central)
 
   grad_label <- if (!want_grad) "none"
-  else if (joint_fd) (if (want_central) "central FD (joint)" else "forward FD (joint)")
+  else if (joint_fd) "central FD (joint)"
   else if (any_joint) "Sens (joint)"
   else if (!is.null(sensModel))
     if (pinfo$has_kappa) "Sens+FD" else "Sens"
-  else if (want_central) "central FD" else "forward FD"
+  else "central FD"
   message("=== admixr2: Aggregate Data Modeling (MC) ===")
   message(sprintf("  Obs units: %d | MC samples: %d | Params: %d | Cores: %d | Grad: %s | Restarts: %d",
                   length(studies), .ctl$n_sim, length(ov$p0), cores,
@@ -2928,7 +2889,6 @@ nlmixr2Est.admc <- function(env, ...) {
                   params_list, cores, cov_n_sim = .ctl$cov_n_sim,
                   use_grad = use_grad_cov, grad_h = .ctl$grad_h,
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
-                  gill = .ctl$gill,
                   sensModel = sensModel, use_central = use_cent_cov,
                   sampling = .ctl$sampling),
       error = function(e) { warning("admCalcCov failed: ", conditionMessage(e)); NULL })

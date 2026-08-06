@@ -12,8 +12,8 @@
 #' @inheritParams admControl
 #' @param grad Gradient mode for the inner optimiser: `"analytical"` (default,
 #'   closed-form weight-path gradient), `"none"` (derivative-free BOBYQA), or
-#'   `"fd"` (finite differences). Note: `"sens"` and `"cfd"` are not available
-#'   for the IRMC estimator.
+#'   `"fd"` (central finite differences). Note: `"sens"` is not available for the
+#'   IRMC estimator.
 #' @param kappa_method Kappa correction method for models with non-mu-referenced
 #'   struct thetas: `"exact"` (default, re-evaluates population prediction `f(theta, 0)`
 #'   via rxSolve at each inner step), `"linearized"` (precomputes `J = df/d(theta)`
@@ -151,7 +151,6 @@ adirmcControl <- function(
     # positional call -- adirmcControl(studies, 2000L) used to set n_sim = 2000.
     resid_nodes     = 81L,
     # ... and this one after it, for the same reason.
-    gill            = FALSE,
     ...) {
 
   .xtra <- list(...)
@@ -184,7 +183,6 @@ adirmcControl <- function(
   checkmate::assertNumeric(grad_h,          lower = 0,   len = 1)
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
-  checkmate::assertFlag(gill, .var.name = "gill")
   checkmate::assertNumeric(phases,          lower = 0,   min.len = 1)
   checkmate::assertNumeric(convcrit,        lower = 0,   len = 1)
   checkmate::assertIntegerish(max_worse,    lower = 1L,  len = 1)
@@ -248,7 +246,6 @@ adirmcControl <- function(
     grad_h          = grad_h,
     cov_h           = cov_h,
     cov_h_outer     = cov_h_outer,
-    gill            = gill,
     phases          = phases,
     convcrit        = convcrit,
     max_worse       = as.integer(max_worse),
@@ -933,10 +930,10 @@ nmObjGetControl.adirmc <- function(x, ...) {
   # this function's formals, so .adirmcRestartWorker's signature is untouched --
   # a daemon resolves that worker from the stale INSTALLED namespace, where a new
   # argument throws `unused argument` before the patched dev body can run.
-  # `.gill_h` is filled on the first outer iteration and reused (see the note at
+  # `.shi_h` is filled on the first outer iteration and reused (see the note at
   # the FD closure below).
   .fd_h   <- pinfo$grad_h %||% 1e-6
-  .gill_h <- NULL
+  .shi_h <- NULL
 
   # Proposal memo (one entry).
   #
@@ -995,7 +992,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
             # The step used to be a hard-coded 1e-6 that ignored `grad_h`
             # entirely, so adirmc was the one estimator whose documented
             # finite-difference control did nothing to its gradient. It now
-            # honours grad_h, and under gill = TRUE takes Gill83's measured steps.
+            # honours grad_h, and takes Shi21's measured steps when they can be
+            # measured, falling back to grad_h when they cannot.
             #
             # Measured ONCE, on the FIRST outer iteration, and reused for the
             # rest -- the same reuse FOCEI's numericGrad does at nF == 1. It has
@@ -1005,12 +1003,12 @@ nmObjGetControl.adirmc <- function(x, ...) {
             # evaluations PER ITERATION. The inner objective keeps the same
             # noise and curvature character throughout, which is what the step
             # depends on, so the first iteration's measurement stays apt.
-            if (isTRUE(pinfo$gill) && is.null(.gill_h)) {
-              .gill_h <<- .admGillGradH(eval_f, p_cur, seq_along(p_cur),
+            if (is.null(.shi_h)) {
+              .shi_h <<- .admShi21GradH(eval_f, p_cur, seq_along(p_cur),
                                         .fd_h, scaled = FALSE,
                                         .var.name = "adirmc inner gradient")
             }
-            h <- if (is.null(.gill_h)) .fd_h else .gill_h
+            h <- if (is.null(.shi_h)) .fd_h else .shi_h
             function(p) {
               f0 <- eval_f(p)
               g  <- numeric(length(p))
@@ -1237,7 +1235,6 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # adirmc only: its inner optimiser finite-differences on a separate path.
   # Same pinfo-not-a-formal reason as .admDriverPinfo() records.
   pinfo$grad_h           <- .ctl$grad_h
-  pinfo$gill             <- .ctl$gill
   output_var <- .admOutputVar(.ui)
 
   # ev_full = FALSE: the refusal below must fire BEFORE ev_full is built, so
@@ -1425,7 +1422,6 @@ nlmixr2Est.adirmc <- function(env, ...) {
                   params_list, cores, cov_n_sim = .ctl$cov_n_sim,
                   use_grad = use_grad_cov, grad_h = .ctl$grad_h,
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
-                  gill = .ctl$gill,
                   sensModel = sensModel, sampling = .ctl$sampling),
       error = function(e) {
         warning("admCalcCov (adirmc) failed: ", conditionMessage(e))
