@@ -60,6 +60,14 @@ jobs:
       # provably inert and has been removed.
       R_KEEP_PKG_SOURCE: ${{ matrix.config.r == 'devel' && 'no' || 'yes' }}
 
+      # DESCRIPTION turns on Config/testthat/parallel; testthat's own default is
+      # 2 workers (default_num_cpus()), which is the CRAN-safe number and the one
+      # a plain `R CMD check` should keep. GitHub runners have 4 cores, so raise
+      # it here only. Measured on the full suite (61 files): serial 795.6s,
+      # 2 workers 375.0s, 4 workers 321.6s -- the gain flattens after 2 because
+      # wall clock is bounded by the single longest file
+      # (test-integration-multi-output.R, ~220s), not by the worker count.
+      TESTTHAT_CPUS: 4
 
     steps:
       - uses: actions/checkout@v4

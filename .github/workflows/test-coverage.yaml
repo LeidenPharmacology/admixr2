@@ -22,6 +22,17 @@ jobs:
       # integration tier. This entry is kept as documentation / belt-and-braces.
       NOT_CRAN: "true"
 
+      # See R-CMD-check.yaml for the measured numbers. Coverage collection
+      # survives parallel testthat because covr instruments the INSTALLED copy
+      # and appends
+      #   reg.finalizer(ns, function(...) covr:::save_trace(COVERAGE_DIR), onexit = TRUE)
+      # to its load script: every process that loads that copy -- including each
+      # testthat worker, which is an ordinary callr subprocess that exits
+      # normally -- dumps its own counters into the shared COVERAGE_DIR, and covr
+      # merges them all. If that ever stops holding, the symptom is loud (the
+      # reported percentage collapses), not silent.
+      TESTTHAT_CPUS: 4
+
     steps:
       - uses: actions/checkout@v4
 

@@ -37,6 +37,9 @@ jobs:
       # 6134 MB heap; see the note there.
       R_KEEP_PKG_SOURCE: yes
 
+      # See R-CMD-check.yaml for the measured numbers.
+      TESTTHAT_CPUS: 4
+
     steps:
       - uses: actions/checkout@v4
 
