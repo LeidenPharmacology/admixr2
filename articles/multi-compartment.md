@@ -80,20 +80,20 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 
 ── Time (sec fit_plasma$time): ──
 
-        optimize covariance elapsed other
-elapsed    0.613      0.115   0.728 6.509
+        optimize covariance other elapsed other
+elapsed    0.592      0.106     0   0.698 7.205
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
             Est.      SE  %RSE      Back-transformed(95%CI) BSV(CV%)
-tcl      0.03321 0.03416 102.8        1.034 (0.9668, 1.105)     27.9
-tv1        2.292 0.06685 2.917          9.89 (8.676, 11.27)     15.1
-tq        0.8829  0.5801  65.7        2.418 (0.7757, 7.537)         
-tv2       0.8678  0.2125 24.49          2.382 (1.57, 3.612)         
+tcl      0.03321 0.03416 102.8        1.034 (0.9668, 1.105)    27.92
+tv1        2.292 0.06685 2.917         9.890 (8.676, 11.27)    15.12
+tq        0.8829  0.5801 65.70        2.418 (0.7757, 7.537)         
+tv2       0.8678  0.2125 24.49         2.382 (1.570, 3.612)         
 prop.cp 0.004104 0.04529  1104 0.004104 (-0.08467, 0.09288)         
         Shrink(SD)%
-tcl                
-tv1                
+tcl             NaN
+tv1             NaN
 tq                 
 tv2                
 prop.cp            
@@ -194,16 +194,16 @@ adgh -88.59587 -72.59587 -36.65795       44.29794
 
 ── Time (sec fit_cns$time): ──
 
-        optimize covariance elapsed other
-elapsed    0.763      0.236   0.999 7.147
+        optimize covariance other elapsed other
+elapsed     0.69      0.216     0   0.906 8.003
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
            Est.      SE   %RSE    Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl     0.04104 0.01899  46.27       1.042 (1.004, 1.081)     27.0            
-tv1       2.269 0.01038 0.4573       9.674 (9.479, 9.872)     13.9            
-tqin      1.085 0.03669  3.381        2.96 (2.755, 3.181)                     
-tqout      1.78 0.04218  2.369       5.932 (5.461, 6.443)                     
+tcl     0.04104 0.01899  46.27       1.042 (1.004, 1.081)    27.03         NaN
+tv1       2.269 0.01038 0.4573       9.674 (9.479, 9.872)    13.85         NaN
+tqin      1.085 0.03669  3.381       2.960 (2.755, 3.181)                     
+tqout     1.780 0.04218  2.369       5.932 (5.461, 6.443)                     
 prop.cp 0.04848 0.01803  37.19 0.04848 (0.01314, 0.08382)                     
 add.cb  0.01999  0.1742  871.2  0.01999 (-0.3213, 0.3613)                     
  

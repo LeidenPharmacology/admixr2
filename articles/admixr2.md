@@ -196,24 +196,24 @@ admc -3690.254 -3668.254 -3597.724       1845.127
 
 ── Time (sec fit$time): ──
 
-  optimize covariance elapsed
-1    18.19      8.588  26.778
+  optimize covariance other elapsed
+1   18.513       8.79     0  27.303
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
-                                  Parameter    Est.      SE  %RSE
-tcl                    Log clearance (L/hr)   1.602 0.01956 1.221
-tv1                  Log central volume (L)   2.328  0.1207 5.183
-tv2               Log peripheral volume (L)   3.398 0.05196 1.529
-tq        Log inter-compartmental CL (L/hr)   2.276 0.02652 1.165
-tka     Log absorption rate constant (1/hr) 0.02992  0.1138 380.5
-prop.sd      Proportional residual error SD  0.1895 0.00321 1.694
+                                  Parameter    Est.       SE  %RSE
+tcl                    Log clearance (L/hr)   1.602  0.01956 1.221
+tv1                  Log central volume (L)   2.328   0.1207 5.183
+tv2               Log peripheral volume (L)   3.398  0.05196 1.529
+tq        Log inter-compartmental CL (L/hr)   2.276  0.02652 1.165
+tka     Log absorption rate constant (1/hr) 0.02992   0.1138 380.5
+prop.sd      Proportional residual error SD  0.1895 0.003210 1.694
         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl        4.963 (4.776, 5.157)     32.6            
-tv1           10.26 (8.098, 13)     32.8            
-tv2         29.9 (27.01, 33.11)     32.0            
-tq          9.74 (9.247, 10.26)     33.7            
-tka        1.03 (0.8243, 1.288)     32.2            
+tcl        4.963 (4.776, 5.157)    32.61         NaN
+tv1        10.26 (8.098, 13.00)    32.77         NaN
+tv2        29.90 (27.01, 33.11)    31.99         NaN
+tq         9.740 (9.247, 10.26)    33.66         NaN
+tka       1.030 (0.8243, 1.288)    32.19         NaN
 prop.sd 0.1895 (0.1832, 0.1958)                     
  
   Covariance Type (fit$covMethod): r

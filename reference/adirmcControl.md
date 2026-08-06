@@ -489,18 +489,18 @@ print(fit)
 #> 
 #> ── Time (sec fit$time): ──
 #> 
-#>   optimize covariance elapsed
-#> 1    1.182      9.057  10.239
+#>   optimize covariance other elapsed
+#> 1    1.246      9.423     0  10.669
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
-#>           Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl      1.597 0.04205 2.633    4.939 (4.548, 5.363)     35.6            
-#> tv1      2.065  0.3248 15.73     7.885 (4.172, 14.9)     28.4            
-#> tv2       3.45  0.1365 3.957     31.5 (24.11, 41.16)     30.8            
-#> tq        2.18  0.1072 4.916    8.851 (7.174, 10.92)     8.23            
-#> tka     -0.229  0.2938 128.3  0.7954 (0.4472, 1.415)     37.2            
-#> prop.sd 0.1856 0.01504   8.1 0.1856 (0.1562, 0.2151)                     
+#>            Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+#> tcl       1.597 0.04205 2.633    4.939 (4.548, 5.363)    35.57         NaN
+#> tv1       2.065  0.3248 15.73    7.885 (4.172, 14.90)    28.42         NaN
+#> tv2       3.450  0.1365 3.957    31.50 (24.11, 41.16)    30.75         NaN
+#> tq        2.180  0.1072 4.916    8.851 (7.174, 10.92)    8.229         NaN
+#> tka     -0.2290  0.2938 128.3  0.7954 (0.4472, 1.415)    37.18         NaN
+#> prop.sd  0.1856 0.01504 8.100 0.1856 (0.1562, 0.2151)                     
 #>  
 #>   Covariance Type (fit$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix

@@ -103,7 +103,7 @@ Documentation
 
 ## Guides, grouped by what you’re doing
 
-Nine worked vignettes, from your first fit to publication-grade
+Ten worked vignettes, from your first fit to publication-grade
 diagnostics.
 
 ### Getting started
@@ -131,6 +131,8 @@ diagnostics.
 
 - [Comparing the
   estimators](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
+- [Choosing a residual error
+  model](https://leidenpharmacology.github.io/admixr2/articles/error-models.md)
 - [Advanced
   usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.md)
 - [Diagnostic

@@ -455,32 +455,6 @@ admixr2 refuses rather than fitting something else:</p>
 <code class="sourceCode R"><span><span class="va">bad</span> <span class="op">&lt;-</span> <span class="va">mod_prop</span> <span class="op">|&gt;</span> <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/model.html" class="external-link">model</a></span><span class="op">(</span><span class="va">cp</span> <span class="op">~</span> <span class="fu">lnorm</span><span class="op">(</span><span class="va">res.sd</span><span class="op">)</span> <span class="op">+</span> <span class="fu">prop</span><span class="op">(</span><span class="va">b</span><span class="op">)</span><span class="op">)</span> <span class="op">|&gt;</span> <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span>b <span class="op">=</span> <span class="fl">0.2</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu">nlmixr2</span><span class="op">(</span><span class="va">bad</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"adgh"</span>, control <span class="op">=</span> <span class="fu"><a href="../reference/adghControl.html">adghControl</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="va">gen</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; Error : Unsupported residual error model for endpoint 'cp': lnorm() combined with a proportional or power term.</span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt;   Why: lnorm()'s parameter is the SD on the LOG scale, which already makes</span></span>
-<span><span class="co">#&gt;   the residual proportional to the prediction; adding prop()/pow() on top</span></span>
-<span><span class="co">#&gt;   has no single well-defined aggregate variance.</span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt;   admixr2 fits AGGREGATE data -- each study contributes a mean and a</span></span>
-<span><span class="co">#&gt;   covariance, scored as a multivariate normal -- so the residual model must</span></span>
-<span><span class="co">#&gt;   reduce to a mean and a variance on the natural scale.</span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt;   Fix: Use lnorm(a) alone, or add(a) + prop(b) on the natural scale.</span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; Supported residual error models (f = the model prediction):</span></span>
-<span><span class="co">#&gt;   add(a)              var = a^2</span></span>
-<span><span class="co">#&gt;   prop(b)             var = (b*f)^2</span></span>
-<span><span class="co">#&gt;   pow(b, c)           var = (b*f^c)^2</span></span>
-<span><span class="co">#&gt;   lnorm(a)            lognormal, moment-matched</span></span>
-<span><span class="co">#&gt;   add(a) + prop(b)    var = a^2 + (b*f)^2   [combined2, the default]</span></span>
-<span><span class="co">#&gt;                       var = (a + b*f)^2     [combined1, via combined1()]</span></span>
-<span><span class="co">#&gt;   add(a) + pow(b, c)  either combined form</span></span>
-<span><span class="co">#&gt;   ... + t(nu)         any of the above with Student-t residuals (nu &gt; 2):</span></span>
-<span><span class="co">#&gt;                       the scale family, var = &lt;above&gt; * nu/(nu-2)</span></span>
-<span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt;   Note: earlier versions of admixr2 accepted this model with a warning and</span></span>
-<span><span class="co">#&gt;   then fitted it as ADDITIVE error. Any results carried over from that are</span></span>
-<span><span class="co">#&gt;   not the model you specified.</span></span>
 <span><span class="co">#&gt; Error:</span></span>
 <span><span class="co">#&gt; ! Unsupported residual error model for endpoint 'cp': lnorm() combined with a proportional or power term.</span></span>
 <span><span class="co">#&gt; </span></span>

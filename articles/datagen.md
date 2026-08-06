@@ -201,20 +201,20 @@ admc -7359.742 -7345.742 -7302.618       3679.871
 
 ── Time (sec fit_sim$time): ──
 
-  optimize covariance elapsed
-1    38.71      7.148  45.858
+  optimize covariance other elapsed
+1   38.298      6.921     0  45.219
 
 ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 
                         Parameter     Est.       SE   %RSE
-tcl           Log clearance (L/h)    1.608   0.0143 0.8892
+tcl           Log clearance (L/h)    1.608  0.01430 0.8892
 tv                 Log volume (L)    2.303  0.01975 0.8577
 tka     Log absorption rate (1/h) 0.001082  0.02627   2429
 prop.sd     Proportional error SD   0.2001 0.004181  2.089
         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl        4.991 (4.853, 5.133)     30.4            
-tv             10 (9.623, 10.4)     19.6            
-tka       1.001 (0.9508, 1.054)     20.9            
+tcl        4.991 (4.853, 5.133)    30.41         NaN
+tv         10.00 (9.623, 10.40)    19.60         NaN
+tka       1.001 (0.9508, 1.054)    20.88         NaN
 prop.sd 0.2001 (0.1919, 0.2083)                     
  
   Covariance Type (fit_sim$covMethod): r

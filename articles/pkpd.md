@@ -155,23 +155,23 @@ adgh 1749.121 1769.121 1820.975      -874.5605
 
 ── Time (sec fit$time): ──
 
-        optimize covariance elapsed other
-elapsed    3.042       0.69   3.732 6.368
+        optimize covariance other elapsed other
+elapsed    2.678      0.619     0   3.297   7.6
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                                          Parameter    Est.      SE   %RSE
 tcl                            Log clearance (L/h)   1.595 0.01608  1.008
-tv                                  Log volume (L)    3.91 0.01155 0.2954
+tv                                  Log volume (L)   3.910 0.01155 0.2954
 te0                        Log baseline DBP (mmHg)   4.563 0.01519 0.3329
 temax             Log maximum DBP reduction (mmHg)   2.826  0.1148  4.062
 tec50                              Log EC50 (mg/L)  0.6864  0.4847  70.62
 prop.cp Proportional residual error, concentration 0.09973 0.04479  44.91
 add.dbp        Additive residual error, DBP (mmHg)   3.012   26.64  884.2
           Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl          4.927 (4.774, 5.085)     30.5            
-tv           49.89 (48.78, 51.04)     19.1            
-te0          95.85 (93.04, 98.75)     8.50            
+tcl          4.927 (4.774, 5.085)    30.46         NaN
+tv           49.89 (48.78, 51.04)    19.15         NaN
+te0          95.85 (93.04, 98.75)    8.498         NaN
 temax        16.88 (13.48, 21.14)                     
 tec50       1.986 (0.7683, 5.137)                     
 prop.cp 0.09973 (0.01194, 0.1875)                     

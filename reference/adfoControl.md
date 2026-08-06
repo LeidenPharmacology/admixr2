@@ -243,17 +243,20 @@ ctl2 <- adfoControl(grad = "analytical", maxeval = 1000L)
 
 # \donttest{
 library(rxode2)
-#> rxode2 5.1.5 using 2 threads (see ?getRxThreads)
+#> rxode2 5.1.6 using 2 threads (see ?getRxThreads)
 #>   no cache: create with `rxCreateCache()`
 library(nlmixr2)
-#> ── Attaching packages ───────────────────────────────────────── nlmixr2 5.0.0 ──
-#> ✔ lotri        1.0.4      ✔ nlmixr2extra 5.1.0 
-#> ✔ nlmixr2data  2.0.10     ✔ nlmixr2plot  5.0.2 
-#> ✔ nlmixr2est   6.0.1      
-#> ── Optional Packages Loaded/Ignored ─────────────────────────── nlmixr2 5.0.0 ──
-#> ✖ babelmixr2     ✖ nonmem2rx
-#> ✖ ggPMX     ✖ posologyr
-#> ✖ monolix2rx     ✖ shinyMixR
+#> ── Attaching packages ───────────────────────────────────────── nlmixr2 7.0.1 ──
+#> ★ lotri        1.0.4      ★ nlmixr2est   7.0.2 
+#> ★ nlmixr2data  2.0.10     ★ nlmixr2extra 5.2.0 
+#> ★ nlmixr2save  0.2.0      ★ nlmixr2plot  5.1.0 
+#> ── Optional Packages Not Installed ──────────────────────────── nlmixr2 7.0.1 ──
+#> ✖ babelmixr2     ✖ nlmixr2targets
+#> ✖ FME     ✖ nonmem2rx
+#> ✖ ggPMX     ✖ pmxNODE
+#> ✖ monolix2rx     ✖ PopED
+#> ✖ nlmixr2auto     ✖ posologyr
+#> ✖ nlmixr2autoinit     ✖ shinyMixR
 #> ✖ nlmixr2lib     ✖ xpose.nlmixr2
 #> ✖ nlmixr2rpt     
 #> ── Conflicts ───────────────────────────────────────────── nlmixr2conflicts() ──
@@ -333,15 +336,15 @@ print(fit)
 #> 
 #> ── Time (sec fit$time): ──
 #> 
-#>         optimize covariance elapsed other
-#> elapsed    1.298        0.1   1.398 3.175
+#>         optimize covariance other elapsed other
+#> elapsed    1.333      0.108     0   1.441 3.579
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
-#>          Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl     1.767 0.008944 0.5062    5.853 (5.751, 5.957)     14.6            
-#> tv      3.635  0.01258 0.3461    37.91 (36.99, 38.86)     22.0            
-#> prop.sd  0.39 0.006145  1.576    0.39 (0.3779, 0.402)                     
+#>           Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+#> tcl      1.767 0.008944 0.5062    5.853 (5.751, 5.957)    14.64         NaN
+#> tv       3.635  0.01258 0.3461    37.91 (36.99, 38.86)    21.98         NaN
+#> prop.sd 0.3900 0.006145  1.576 0.3900 (0.3779, 0.4020)                     
 #>  
 #>   Covariance Type (fit$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix

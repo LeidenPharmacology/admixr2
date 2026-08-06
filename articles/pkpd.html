@@ -251,23 +251,23 @@ Otherwise this is an ordinary admixr2 fit:</p>
 <span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a></span>
 <span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a></span>
-<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>        optimize covariance elapsed other</span>
-<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">3.042</span>       <span class="fl">0.69</span>   <span class="fl">3.732</span> <span class="fl">6.368</span></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>        optimize covariance other elapsed other</span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">2.678</span>      <span class="fl">0.619</span>     <span class="dv">0</span>   <span class="fl">3.297</span>   <span class="fl">7.6</span></span>
 <span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a></span>
 <span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a></span>
 <span id="cb5-17"><a href="#cb5-17" tabindex="-1"></a>                                         Parameter    Est.      SE   %RSE</span>
 <span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a>tcl                            Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)   <span class="fl">1.595</span> <span class="fl">0.01608</span>  <span class="fl">1.008</span></span>
-<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a>tv                                  Log <span class="fu">volume</span> (L)    <span class="fl">3.91</span> <span class="fl">0.01155</span> <span class="fl">0.2954</span></span>
+<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a>tv                                  Log <span class="fu">volume</span> (L)   <span class="fl">3.910</span> <span class="fl">0.01155</span> <span class="fl">0.2954</span></span>
 <span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a>te0                        Log baseline <span class="fu">DBP</span> (mmHg)   <span class="fl">4.563</span> <span class="fl">0.01519</span> <span class="fl">0.3329</span></span>
 <span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a>temax             Log maximum DBP <span class="fu">reduction</span> (mmHg)   <span class="fl">2.826</span>  <span class="fl">0.1148</span>  <span class="fl">4.062</span></span>
 <span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a>tec50                              Log <span class="fu">EC50</span> (mg<span class="sc">/</span>L)  <span class="fl">0.6864</span>  <span class="fl">0.4847</span>  <span class="fl">70.62</span></span>
 <span id="cb5-23"><a href="#cb5-23" tabindex="-1"></a>prop.cp Proportional residual error, concentration <span class="fl">0.09973</span> <span class="fl">0.04479</span>  <span class="fl">44.91</span></span>
 <span id="cb5-24"><a href="#cb5-24" tabindex="-1"></a>add.dbp        Additive residual error, <span class="fu">DBP</span> (mmHg)   <span class="fl">3.012</span>   <span class="fl">26.64</span>  <span class="fl">884.2</span></span>
 <span id="cb5-25"><a href="#cb5-25" tabindex="-1"></a>          Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
-<span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a>tcl          <span class="fl">4.927</span> (<span class="fl">4.774</span>, <span class="fl">5.085</span>)     <span class="fl">30.5</span>            </span>
-<span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a>tv           <span class="fl">49.89</span> (<span class="fl">48.78</span>, <span class="fl">51.04</span>)     <span class="fl">19.1</span>            </span>
-<span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a>te0          <span class="fl">95.85</span> (<span class="fl">93.04</span>, <span class="fl">98.75</span>)     <span class="fl">8.50</span>            </span>
+<span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a>tcl          <span class="fl">4.927</span> (<span class="fl">4.774</span>, <span class="fl">5.085</span>)    <span class="fl">30.46</span>         <span class="cn">NaN</span></span>
+<span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a>tv           <span class="fl">49.89</span> (<span class="fl">48.78</span>, <span class="fl">51.04</span>)    <span class="fl">19.15</span>         <span class="cn">NaN</span></span>
+<span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a>te0          <span class="fl">95.85</span> (<span class="fl">93.04</span>, <span class="fl">98.75</span>)    <span class="fl">8.498</span>         <span class="cn">NaN</span></span>
 <span id="cb5-29"><a href="#cb5-29" tabindex="-1"></a>temax        <span class="fl">16.88</span> (<span class="fl">13.48</span>, <span class="fl">21.14</span>)                     </span>
 <span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a>tec50       <span class="fl">1.986</span> (<span class="fl">0.7683</span>, <span class="fl">5.137</span>)                     </span>
 <span id="cb5-31"><a href="#cb5-31" tabindex="-1"></a>prop.cp <span class="fl">0.09973</span> (<span class="fl">0.01194</span>, <span class="fl">0.1875</span>)                     </span>

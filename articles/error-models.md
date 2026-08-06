@@ -224,32 +224,6 @@ admixr2 refuses rather than fitting something else:
 bad <- mod_prop |> model(cp ~ lnorm(res.sd) + prop(b)) |> ini(b = 0.2)
 
 nlmixr2(bad, admData(), est = "adgh", control = adghControl(studies = gen))
-#> Error : Unsupported residual error model for endpoint 'cp': lnorm() combined with a proportional or power term.
-#> 
-#>   Why: lnorm()'s parameter is the SD on the LOG scale, which already makes
-#>   the residual proportional to the prediction; adding prop()/pow() on top
-#>   has no single well-defined aggregate variance.
-#> 
-#>   admixr2 fits AGGREGATE data -- each study contributes a mean and a
-#>   covariance, scored as a multivariate normal -- so the residual model must
-#>   reduce to a mean and a variance on the natural scale.
-#> 
-#>   Fix: Use lnorm(a) alone, or add(a) + prop(b) on the natural scale.
-#> 
-#> Supported residual error models (f = the model prediction):
-#>   add(a)              var = a^2
-#>   prop(b)             var = (b*f)^2
-#>   pow(b, c)           var = (b*f^c)^2
-#>   lnorm(a)            lognormal, moment-matched
-#>   add(a) + prop(b)    var = a^2 + (b*f)^2   [combined2, the default]
-#>                       var = (a + b*f)^2     [combined1, via combined1()]
-#>   add(a) + pow(b, c)  either combined form
-#>   ... + t(nu)         any of the above with Student-t residuals (nu > 2):
-#>                       the scale family, var = <above> * nu/(nu-2)
-#> 
-#>   Note: earlier versions of admixr2 accepted this model with a warning and
-#>   then fitted it as ADDITIVE error. Any results carried over from that are
-#>   not the model you specified.
 #> Error:
 #> ! Unsupported residual error model for endpoint 'cp': lnorm() combined with a proportional or power term.
 #> 

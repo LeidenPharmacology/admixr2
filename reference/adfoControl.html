@@ -296,17 +296,20 @@ makes the fallback unreachable:</p><div class="sourceCode"><pre><code><span><spa
 <span class="r-in"><span></span></span>
 <span class="r-in"><span><span class="co"># \donttest{</span></span></span>
 <span class="r-in"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span></span></span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> rxode2 5.1.5 using 2 threads (see ?getRxThreads)</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> rxode2 5.1.6 using 2 threads (see ?getRxThreads)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   no cache: create with `rxCreateCache()`</span>
 <span class="r-in"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.org/" class="external-link">nlmixr2</a></span><span class="op">)</span></span></span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> ── <span style="font-weight: bold;">Attaching packages</span> ───────────────────────────────────────── nlmixr2 5.0.0 ──</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">✔</span> <span style="color: #0000BB;">lotri       </span> 1.0.4      <span style="color: #00BB00;">✔</span> <span style="color: #0000BB;">nlmixr2extra</span> 5.1.0 </span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">✔</span> <span style="color: #0000BB;">nlmixr2data </span> 2.0.10     <span style="color: #00BB00;">✔</span> <span style="color: #0000BB;">nlmixr2plot </span> 5.0.2 </span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">✔</span> <span style="color: #0000BB;">nlmixr2est  </span> 6.0.1      </span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> ── <span style="font-weight: bold;">Optional Packages Loaded/Ignored</span> ─────────────────────────── nlmixr2 5.0.0 ──</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">babelmixr2</span>     <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">nonmem2rx</span></span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">ggPMX</span>     <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">posologyr</span></span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">monolix2rx</span>     <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">shinyMixR</span></span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> ── <span style="font-weight: bold;">Attaching packages</span> ───────────────────────────────────────── nlmixr2 7.0.1 ──</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">lotri       </span> 1.0.4      <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2est  </span> 7.0.2 </span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2data </span> 2.0.10     <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2extra</span> 5.2.0 </span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2save </span> 0.2.0      <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2plot </span> 5.1.0 </span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> ── <span style="font-weight: bold;">Optional Packages Not Installed</span> ──────────────────────────── nlmixr2 7.0.1 ──</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">babelmixr2</span>     <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">nlmixr2targets</span></span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">FME</span>     <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">nonmem2rx</span></span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">ggPMX</span>     <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">pmxNODE</span></span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">monolix2rx</span>     <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">PopED</span></span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">nlmixr2auto</span>     <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">posologyr</span></span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">nlmixr2autoinit</span>     <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">shinyMixR</span></span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">nlmixr2lib</span>     <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">xpose.nlmixr2</span></span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #BB0000;">✖</span> <span style="color: #BB0000;">nlmixr2rpt</span>     </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> ── <span style="font-weight: bold;">Conflicts</span> ───────────────────────────────────────────── nlmixr2conflicts() ──</span>
@@ -386,15 +389,15 @@ makes the fallback unreachable:</p><div class="sourceCode"><pre><code><span><spa
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>         optimize covariance elapsed other</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> elapsed    1.298        0.1   1.398 3.175</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>         optimize covariance other elapsed other</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> elapsed    1.333      0.108     0   1.441 3.579</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>          <span style="font-weight: bold;">Est.</span>       <span style="font-weight: bold;">SE</span>   <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>     1.767 0.008944 0.5062    5.853 (5.751, 5.957)     14.6            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv</span>      3.635  0.01258 0.3461    37.91 (36.99, 38.86)     22.0            </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span>  0.39 0.006145  1.576    0.39 (0.3779, 0.402)                     </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>           <span style="font-weight: bold;">Est.</span>       <span style="font-weight: bold;">SE</span>   <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>      1.767 0.008944 0.5062    5.853 (5.751, 5.957)    14.64         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv</span>       3.635  0.01258 0.3461    37.91 (36.99, 38.86)    21.98         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span> 0.3900 0.006145  1.576 0.3900 (0.3779, 0.4020)                     </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Covariance Type (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   No correlations in between subject variability (BSV) matrix</span>

@@ -91,7 +91,7 @@ fit <- nlmixr2(
 #> | 0090     |  1050.92 |    5.746 |    37.23 |   0.3671 |  0.02109 |  0.06168 |
 #> | 0100     |  1018.46 |    5.853 |    37.91 |     0.39 |  0.02121 |  0.04717 |
 #> | 0102 ✓   |  1018.46 |    5.853 |    37.91 |     0.39 |  0.02121 |  0.04717 |
-#> | 1.0 sec  |          |          |          |          |          |          |
+#> | 1.1 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, 51 NLL evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
@@ -104,15 +104,15 @@ print(fit)
 #> 
 #> ── Time (sec fit$time): ──
 #> 
-#>   optimize covariance elapsed
-#> 1    1.026      0.104    1.13
+#>   optimize covariance other elapsed
+#> 1    1.096      0.106     0   1.202
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
-#>          Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl     1.767 0.008944 0.5062    5.853 (5.751, 5.957)     14.6            
-#> tv      3.635  0.01258 0.3461    37.91 (36.99, 38.86)     22.0            
-#> prop.sd  0.39 0.006145  1.576    0.39 (0.3779, 0.402)                     
+#>           Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+#> tcl      1.767 0.008944 0.5062    5.853 (5.751, 5.957)    14.64         NaN
+#> tv       3.635  0.01258 0.3461    37.91 (36.99, 38.86)    21.98         NaN
+#> prop.sd 0.3900 0.006145  1.576 0.3900 (0.3779, 0.4020)                     
 #>  
 #>   Covariance Type (fit$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix

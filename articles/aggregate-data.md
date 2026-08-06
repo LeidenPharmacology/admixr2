@@ -157,8 +157,8 @@ adgh -1323.144 -1313.144 -1292.943       661.5719
 
 ── Time (sec fit$time): ──
 
-        optimize covariance elapsed other
-elapsed    0.437      0.093    0.53 3.594
+        optimize covariance other elapsed other
+elapsed     0.45      0.099     0   0.549 4.201
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -166,10 +166,10 @@ elapsed    0.437      0.093    0.53 3.594
 tcl             Log clearance (L/h)   1.556 0.02018  1.297
 tv                   Log volume (L)   3.911 0.01594 0.4075
 prop.cp Proportional residual error 0.09732 0.05238  53.83
-         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl          4.738 (4.555, 4.93)     25.8            
-tv          49.96 (48.42, 51.55)     19.7            
-prop.cp 0.09732 (-0.005352, 0.2)                     
+            Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl            4.738 (4.555, 4.930)    25.77         NaN
+tv             49.96 (48.42, 51.55)    19.68         NaN
+prop.cp 0.09732 (-0.005352, 0.2000)                     
  
   Covariance Type (fit$covMethod): r
   No correlations in between subject variability (BSV) matrix
@@ -199,8 +199,8 @@ adgh -2942.688 -2932.688 -2912.487       1471.344
 
 ── Time (sec fit_wrong$time): ──
 
-  optimize covariance elapsed
-1    0.752       0.07   0.822
+  optimize covariance other elapsed
+1    0.809      0.074     0   0.883
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
@@ -208,10 +208,10 @@ adgh -2942.688 -2932.688 -2912.487       1471.344
 tcl             Log clearance (L/h)    1.558 0.003134  0.2012
 tv                   Log volume (L)    3.908 0.002285 0.05848
 prop.cp Proportional residual error 0.008208 0.005405   65.85
-             Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl             4.749 (4.719, 4.778)     4.18            
-tv              49.79 (49.57, 50.01)     2.94            
-prop.cp 0.008208 (-0.002386, 0.0188)                     
+              Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl              4.749 (4.719, 4.778)    4.181         NaN
+tv               49.79 (49.57, 50.01)    2.935         NaN
+prop.cp 0.008208 (-0.002386, 0.01880)                     
  
   Covariance Type (fit_wrong$covMethod): r
   No correlations in between subject variability (BSV) matrix
