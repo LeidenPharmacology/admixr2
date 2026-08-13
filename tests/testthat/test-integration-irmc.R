@@ -148,3 +148,37 @@ test_that("a paired theta's IS shift is the identity p-shift for every transform
                  label = sprintf("%s mean_new", nm))
   }
 })
+
+test_that("adirmc builds no sensitivity model when nothing will read one", {
+  # adirmc is the one estimator whose FIT never reads a sensitivity model: its
+  # inner gradient is analytic through the softmax/MVN chain, and
+  # .adirmcProposal() takes no sens argument. The sole consumer is .admCalcCov()
+  # for the post-fit Hessian, which runs only under covMethod = "r".
+  #
+  # Gating the load on `grad` alone therefore compiled one (~3.6s cold) and threw
+  # it away on every covMethod = "none" fit. Pinned by COUNTING the loads, since
+  # the waste is invisible in the result -- which is exactly why it survived.
+  env <- .int_grad_setup()
+  cnt <- new.env(parent = emptyenv()); cnt$n <- 0L
+  trace(admixr2:::.admLoadSensModel,
+        tracer = bquote(assign("n", get("n", envir = .(cnt)) + 1L, envir = .(cnt))),
+        print = FALSE)
+  on.exit(untrace(admixr2:::.admLoadSensModel), add = TRUE)
+
+  fit <- function(cm) suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+    one_cmt_fn, admData(), est = "adirmc",
+    control = adirmcControl(studies = env$studies, seed = 1L, grad = "analytical",
+                            n_sim = 300L, phases = c(1), outer_iter = 1L,
+                            maxeval = 10L, covMethod = cm))))
+
+  cnt$n <- 0L; f0 <- fit("none")
+  expect_identical(cnt$n, 0L)
+  expect_null(f0$cov)
+
+  cnt$n <- 0L; f1 <- fit("r")
+  expect_gt(cnt$n, 0L)          # ... and it IS built when the Hessian needs it
+  expect_false(is.null(f1$cov))
+
+  # The fit itself is unaffected either way -- the model was never in that path.
+  expect_identical(f0$objective, f1$objective)
+})

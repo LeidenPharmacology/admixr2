@@ -7,11 +7,14 @@ on:
 
 name: compat-oldstack
 
-# Runs the FULL integration suite (NOT_CRAN=true) against the packages CRAN
-# currently serves (public RSPM = current CRAN: rxode2 5.1.2 / nlmixr2est 6.0.1),
-# NOT the r-universe pre-release (rxode2 5.1.3 / nlmixr2est 6.2.0). R-CMD-check
-# and CRAN's own incoming check skip these tests (skip_on_cran), so this is the
-# only signal that the sensitivity feature DEGRADES GRACEFULLY on the older stack
+# Runs the FULL integration suite (NOT_CRAN=true) against whatever packages CRAN
+# currently serves (public RSPM). The version pair named here has moved more than
+# once -- it was rxode2 5.1.2 / nlmixr2est 6.0.1 when this job was written, and is
+# rxode2 5.1.6 / nlmixr2est 7.0.2 as of 2026-08-06, which is NEWER than the 6.2.0
+# most local development runs against. Do not trust a hardcoded pair in a comment;
+# read it off the run. CRAN's own incoming check skips these tests (skip_on_cran),
+# so this is the only signal that the sensitivity feature DEGRADES GRACEFULLY on
+# whichever stack CRAN is serving
 # -- e.g. a dosing modifier whose jump derivative 5.1.2 lacks must fall back to
 # finite differences, not error. The jump-dependent tests are expected to SKIP
 # here; nothing should FAIL.
@@ -25,10 +28,31 @@ jobs:
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      # R_KEEP_PKG_SOURCE is INERT here and that is worth knowing: this job runs R
+      # release, so its dependencies arrive as pre-built P3M binaries, which carry
+      # no srcrefs whatever this says (measured: rxode2 0/1544 functions with a
+      # srcref on release, against 1541/1544 when the same flag is applied to a
+      # source-installed R-devel stack). It is scoped OFF for ubuntu-devel in
+      # R-CMD-check.yaml, where it is the difference between a 569 MB and a
+      # 6134 MB heap; see the note there.
       R_KEEP_PKG_SOURCE: yes
-      # glibc arena retention across many rxode2 fits inflates RSS on ubuntu; cap
-      # arenas so the heavy integration suite does not OOM (see the teardown fix).
-      MALLOC_ARENA_MAX: "2"
+
+      # DESCRIPTION carries Config/testthat/parallel, and this job must OPT OUT.
+      # TESTTHAT_PARALLEL short-circuits find_parallel() before it reads
+      # DESCRIPTION, so this is the override and no branch file changes.
+      #
+      # This job calls testthat::test_dir() from a plain Rscript against the
+      # INSTALLED package, not through R CMD check, and that combination cannot
+      # start a parallel worker -- on 3a49e43:
+      #   ! testthat subprocess failed to start.
+      #     Error in .Internal(getRegisteredNamespace(name)) %||% loadNamespace(name):
+      #     attempt to use zero-length variable name
+      #     Calls: callr_startup_hook ... is_environment -> asNamespace
+      # The same DESCRIPTION runs parallel FINE under R CMD check (ubuntu-devel
+      # passed on that commit), so this is about the invocation, not the flag.
+      # It is the same test_dir()-in-the-global-env quirk that makes this job the
+      # only one where a bare `.admFoo()` reference fails.
+      TESTTHAT_PARALLEL: "false"
 
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +85,55 @@ jobs:
           cache-version: 3
           extra-packages: any::testthat
           needs: check                    # pulls Suggests (rxode2, nlmixr2, mirai, ...)
+
+      # rxode2 links RcppParallel's TBB, so it must be loadable against whichever
+      # RcppParallel the resolver installed -- and right now it is not, on Windows.
+      # RcppParallel 6.2.0 (Windows binary 2026-08-01) moved Windows from a static
+      # TBB to a shipped shared tbb.dll and removed the compatibility stub, while
+      # CRAN still serves the rxode2 5.1.5 Windows binary built 2026-07-30 against
+      # the previous generation, so rxode2.dll imports a procedure that no longer
+      # exists. Each package is individually fine; only the COMBINATION is broken,
+      # which is why a dated snapshot is the right shape of fix -- and a Windows
+      # source build of rxode2 against 6.2.0 does not link (nlmixr2est hit that).
+      #
+      # The date is chosen from what the snapshots actually serve, not guessed:
+      #   2026-07-29  RcppParallel 6.1.1  rxode2 5.1.5   (win binaries: both)
+      #   2026-07-30  RcppParallel 6.1.1  rxode2 5.1.5   (win binaries: both)
+      #   2026-07-31  RcppParallel 6.2.0  rxode2 -       (no rxode2 win binary)
+      #   latest      RcppParallel 6.2.0  rxode2 -
+      # 6.2.0's SOURCE reached CRAN on 07-30, so a 07-31 snapshot still serves
+      # it and pins nothing -- which is what the first attempt at this did.
+      # 07-30 is the last date with the consistent pair.
+      #
+      # DETECT and REPAIR are separate steps on purpose. Merely testing whether
+      # rxode2 loads pulls RcppParallel's DLL into the session, and Windows will
+      # not overwrite a loaded DLL -- doing both in one step fails with "cannot
+      # remove prior installation of package 'RcppParallel'". Each `Rscript {0}`
+      # step is a fresh R process, so the lock is gone by the time we install.
+      #
+      # Conditional, so it costs one requireNamespace() on a healthy platform and
+      # removes itself once CRAN rebuilds the rxode2 binary -- same shape as the
+      # stringfish/qs2 guard above. Delete both once they are no-ops everywhere.
+      - name: Detect whether rxode2 loads against the installed RcppParallel
+        id: rxode2-load
+        run: |
+          .ok <- requireNamespace("rxode2", quietly = TRUE)
+          cat(paste0("needs_pin=", if (.ok) "false" else "true"),
+              file = Sys.getenv("GITHUB_OUTPUT"), append = TRUE, fill = TRUE)
+        shell: Rscript {0}
+
+      - name: Pin RcppParallel to a consistent snapshot if it does not
+        if: steps.rxode2-load.outputs.needs_pin == 'true'
+        run: |
+          message("rxode2 does not load -- pinning RcppParallel to the snapshot ",
+                  "its binary was built against")
+          install.packages("RcppParallel",
+                           repos = "https://packagemanager.posit.co/cran/2026-07-30")
+        shell: Rscript {0}
+
+      - name: Confirm rxode2 loads
+        run: library(rxode2)   # fail here, with this message, not later and opaquely
+        shell: Rscript {0}
 
       - name: Confirm this is the OLD (current-CRAN) stack
         run: |

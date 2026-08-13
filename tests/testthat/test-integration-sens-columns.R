@@ -279,17 +279,41 @@ test_that("d(pred)/d(lag) is undefined AT the dose boundary (documented, not a b
                 pmax(abs(fd[!at_boundary]), 1e-8)), 1e-4)
 })
 
-test_that("a worker re-derives pred_tbs, so a fixed lambda cannot be served stale", {
-  # The sens cache key digests the model({}) block, the iniDf NAMES, the fix()
-  # flags and the err column -- but NOT the estimates. Two models differing only
-  # in the VALUE of a fix()ed boxCox lambda therefore share one cache file. The
-  # parent re-derives pred_tbs on a hit; a worker cannot (it has no ui), so it
-  # used to invert the transform with the OTHER model's lambda and the parallel
-  # restarts minimised a different objective from the sequential ones -- silently,
-  # since the NLL itself stays bit-identical.
+test_that("a FIXED lambda's value keys the cache, so two models cannot share a file", {
+  # A fix()ed parameter never reaches the optimizer, so its value travels to the
+  # solve as DATA on the cached object (sensModel$fixed_theta) and a worker -- no
+  # ui, so nothing to re-derive from -- uses whatever the file holds. Two models
+  # differing only in a fixed value therefore MUST NOT share a cache entry; when
+  # they did, every parallel restart solved at the other fit's fixed value,
+  # silently and across sessions (rxTempDir is a persistent user cache).
   skip_on_cran(); skip_if_not_installed("rxode2")
   mk <- function(lam) suppressMessages(rxode2::rxode2(eval(parse(text = sprintf(
     'function() { ini({ tcl <- log(5); tv <- log(20); a <- 0.3; lam <- fix(%g)
+                        eta.cl ~ 0.09 })
+       model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+               d/dt(central) <- -(cl/v)*central; cp <- central/v
+               cp ~ add(a) + boxCox(lam) }) }', lam)))))
+  ui_a <- mk(0.4); ui_b <- mk(0.9)
+  sm_a <- suppressMessages(admixr2:::.admLoadSensModel(ui_a))
+  sm_b <- suppressMessages(admixr2:::.admLoadSensModel(ui_b))
+  skip_if(is.null(sm_a) || is.null(sm_b), "sensitivity model unavailable")
+  expect_false(identical(sm_a$cache_file, sm_b$cache_file))
+  expect_equal(sm_a$pred_tbs$lam, 0.4)
+  expect_equal(sm_b$pred_tbs$lam, 0.9)
+})
+
+test_that("a worker re-derives pred_tbs, so an estimated lambda cannot be served stale", {
+  # An ESTIMATED lambda is the case the key deliberately does NOT separate: its
+  # value is a starting value, i.e. optimizer state, and keying it would force a
+  # recompile for every tweak. So two such models DO share one cache file, the
+  # parent re-derives pred_tbs on a hit, and a worker -- which has no ui -- must
+  # re-derive it from pinfo. Before it did, it inverted the transform with the
+  # other model's lambda and the parallel restarts minimised a different
+  # objective from the sequential ones, silently, since the NLL stays
+  # bit-identical.
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  mk <- function(lam) suppressMessages(rxode2::rxode2(eval(parse(text = sprintf(
+    'function() { ini({ tcl <- log(5); tv <- log(20); a <- 0.3; lam <- %g
                         eta.cl ~ 0.09 })
        model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
                d/dt(central) <- -(cl/v)*central; cp <- central/v
@@ -306,6 +330,11 @@ test_that("a worker re-derives pred_tbs, so a fixed lambda cannot be served stal
 
   invisible(admixr2:::.admLoadModel(ui_a))
   p_a <- suppressWarnings(admixr2:::.admParseIniDf(ui_a$iniDf, ui_a))
+  # The simulation-model cache path travels on pinfo, exactly as the estimator
+  # drivers set it: a worker has no `ui`, so it cannot derive the .admIniKey()
+  # component that keys a fix()ed parameter's VALUE. .admParseIniDf() does not
+  # set it (only the drivers do), so a hand-built pinfo has to supply it here.
+  p_a$sim_cache_file <- admixr2:::.admModelCacheFile(ui_a)
   w   <- admixr2:::.admWorkerLoadModels(ui_a$lstExpr, NULL, 1L, sm_a$cache_file,
                                         sm_a$sens_cols, sm_a$rename_map, NULL, p_a)
   skip_if(is.null(w$sensModel), "worker could not load the sensitivity model")

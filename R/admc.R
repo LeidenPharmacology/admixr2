@@ -100,15 +100,15 @@
 #'   for scripts, vignettes and logs; lower it (e.g. `1000L`) to see solver
 #'   progress during long interactive fits.
 #' @param grad Gradient mode: `"sens"` (sensitivity equations, default), `"fd"`
-#'   (forward finite differences), `"cfd"` (central finite differences), or
+#'   (central finite differences; forward was removed in 0.4.1), or
 #'   `"none"` (derivative-free). A warning is issued when `"sens"` is requested
 #'   but the sensitivity model is unavailable; the estimator then falls back to
-#'   forward finite differences.
+#'   central finite differences.
 #' @param grad_h Step size for finite-difference gradient evaluation during
-#'   optimization (used by `grad = "fd"` or `"cfd"`). The default 1e-4 is near
-#'   the optimal balance between truncation error (grows with `h`) and MC noise
-#'   amplification (grows as `1/h`) for forward FD. Central FD (`"cfd"`) has a
-#'   slightly wider optimum around 1e-3, but 1e-4 works well for both.
+#'   optimization (used by `grad = "fd"`). This is the FALLBACK step: the step
+#'   is normally measured per parameter by the Shi (2021) procedure, and `grad_h`
+#'   is what a parameter falls back to when that measurement cannot be made
+#'   (a direction the objective is flat in, or a failed noise estimate).
 #' @param cov_h Inner FD step for the gradient-based Hessian (only used when
 #'   `covMethod = "r"` and `grad != "none"`). Each gradient evaluation has MC
 #'   noise of order `sigma / cov_h`; the Hessian divides that noise by the outer
@@ -123,7 +123,12 @@
 #'   empirically it matches the analytical (sensitivity-equation) Hessian ground
 #'   truth. Increase (e.g. to `5e-3` or `1e-2`) if the Hessian is non-positive
 #'   definite.
-#' @param grad_bounds Box-constraint half-width when using gradients.
+#' @param grad_bounds Box-constraint half-width when using gradients: the fit is
+#'   confined to `p0 +/- grad_bounds` on the optimizer scale, which for a
+#'   log-scale parameter is a factor of `exp(grad_bounds)` (~148 at the default
+#'   5). This bound is admixr2's, not the model's -- an unbounded parameter has
+#'   no other -- and nloptr reports normal convergence at a box corner, so a
+#'   warning is emitted if an estimate finishes on it.
 #' @param covMethod Covariance method: `"r"` (numerical Hessian over the
 #'   structural, residual-error and omega parameters) or `"none"`. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
@@ -157,7 +162,27 @@
 #'   the nlmixr2 output tables: `"combined2"` (default, variance form) or
 #'   `"combined1"` (SD form). Has no effect on admixr2's own estimation; passed
 #'   to `nlmixr2est::foceiControl()` for the table/output machinery only.
-#' @param calcTables,compress,ci,sigdig,sigdigTable,optExpression,sumProd,literalFix
+#' @param sigdig Significant digits asked of the ODE solver, or `NULL` (the
+#'   default) to leave rxode2's own solver tolerances alone. When set, it is
+#'   passed to `rxode2::rxSolve()`'s own `sigdig` argument for every solve the
+#'   estimator issues -- rxode2 owns the mapping to `atol`/`rtol` and has changed
+#'   it between releases, which is why the digits, not the tolerances, are what
+#'   travels -- and to `nlmixr2est::foceiControl()` for the post-fit tables.
+#'
+#'   It is a speed lever, and an opt-in one because it is not free. The
+#'   estimators finite-difference the solve with steps of the same order:
+#'   `grad_h` (1e-4), `cov_h` (1e-3) and `cov_h_outer` (~2.5e-3), while
+#'   `sigdig = 4` maps to a relative tolerance of ~1e-4 on current rxode2.
+#'   Differencing a solution whose own noise is 1e-4 with a 1e-4 step returns
+#'   noise, and it surfaces as a moved objective and an indefinite covariance
+#'   Hessian (every `SE` reported `NA`) rather than as an error. Most worthwhile
+#'   where the gradient is fully analytic and nothing differences the solve --
+#'   `adfoControl(grad = "analytical")` measured ~4.8x faster at `sigdig = 4`
+#'   with standard errors unchanged to 4 significant figures. Elsewhere, compare
+#'   the objective and the standard errors against `NULL` before relying on it.
+#'   Table formatting is unaffected either way: `sigdigTable` defaults to 4
+#'   regardless.
+#' @param calcTables,compress,ci,sigdigTable,optExpression,sumProd,literalFix
 #'   Passed to `nlmixr2est::foceiControl()` for the table/output machinery.
 #' @param returnAdmr If `TRUE`, return a plain list instead of a full nlmixr2
 #'   fit object (useful for debugging).
@@ -238,7 +263,7 @@ admControl <- function(
     seed       = 12345L,
     cores      = rxode2::rxCores(),
     nDisplayProgress = .Machine$integer.max,
-    grad        = c("sens", "fd", "cfd", "none"),
+    grad        = c("sens", "fd", "none"),
     grad_h      = 1e-4,
     cov_h       = 1e-3,
     cov_h_outer = .Machine$double.eps^(1/5),
@@ -252,7 +277,7 @@ admControl <- function(
     calcTables    = FALSE,
     compress      = TRUE,
     ci            = 0.95,
-    sigdig        = 4,
+    sigdig        = NULL,
     sigdigTable   = NULL,
     addProp       = c("combined2", "combined1"),
     optExpression = TRUE,
@@ -262,6 +287,7 @@ admControl <- function(
     # LAST on purpose: inserting an argument mid-signature silently rebinds every
     # positional call -- admControl(studies, 20000L) used to set n_sim = 20000.
     resid_nodes = 81L,
+    # ... and this one after it, for the same reason.
     ...) {
 
   .xtra <- list(...)
@@ -303,6 +329,7 @@ admControl <- function(
       as.integer(cores), as.integer(workers)
     ))
   checkmate::assertNumeric(ci,         lower = 0, upper = 1, len = 1, .var.name = "ci")
+  if (!is.null(sigdig))
   checkmate::assertIntegerish(sigdig,  lower = 1L, len = 1, .var.name = "sigdig")
   checkmate::assertLogical(returnAdmr,             len = 1, .var.name = "returnAdmr")
 
@@ -311,8 +338,26 @@ admControl <- function(
   algorithm <- .algo$algorithm
   grad      <- .algo$grad
 
-  if (is.null(rxControl))   rxControl   <- rxode2::rxControl(sigdig = sigdig)
-  if (is.null(sigdigTable)) sigdigTable <- max(round(sigdig), 3L)
+  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone".
+  # It is the one setting whose meaning does not move under an rxode2 upgrade,
+  # and it is the default because a looser solve is not free: this release is
+  # what first routed sigdig into the estimators' own rxSolve calls, and every
+  # finite-difference step that consumes those solves (grad_h 1e-4, cov_h 1e-3,
+  # cov_h_outer ~2.5e-3) is the same order as the tolerance sigdig = 4 asks for.
+  # rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4 (5.1.4 mapped it to 5e-7 -- 200x
+  # tighter for the same request), so differencing with a 1e-4 step differences
+  # noise: a moved objective and an indefinite Hessian, not an error. Shipping it
+  # on by default would have changed the numerics of every existing script
+  # silently, for a knob that looked like table formatting before this release.
+  #
+  # NULL is also the only way back: the sigdig -> tolerance map is
+  # one-dimensional while rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so
+  # no sigdig value reproduces them. The tables still need a number, so they fall
+  # back to 4 -- i.e. sigdigTable is unchanged whichever way sigdig is set.
+  if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
+    rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
+  if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
+    max(round(sigdig), 3L)
 
   .ret <- list(
     studies       = studies,
@@ -388,6 +433,16 @@ nmObjGetControl.admc <- function(x, ...) {
   pars <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(Inf)
   if (pinfo$n_eta > 0 && any(diag(pars$omega) <= 0)) return(Inf)
+  # The same non-finite screen .adfoNLL and .adghNLL carry -- see the long note
+  # there. This function is what nloptr calls as admc's eval_f, and it had ONLY
+  # the omega-diagonal test above, which does not catch the case: `Inf > 0` is
+  # TRUE, so an overflowed residual (exp(p/2) = Inf, exactly what the covariance
+  # probe produces) passed straight through to .admSimulate -> rxSolve and lsoda
+  # answered with ~190k `intdy -- t = <denormal> illegal` warnings and a full
+  # useless solve before the caller discarded the result. Inline, not a shared
+  # predicate: this runs inside mirai daemons, where assignInNamespace can
+  # replace a binding but not ADD one.
+  if (!.admParsFinite(pars, pinfo)) return(Inf)
 
   nll2     <- 0
   for (i in seq_along(studies)) {
@@ -407,7 +462,8 @@ nmObjGetControl.admc <- function(x, ...) {
     if (isTRUE(s$is_joint)) {
       cp_mat <- tryCatch(
         .admSimulateJoint(rxMod, pars$struct, pinfo$sigma_names, eta_mat, s,
-                          params_list[[i]], cores, pinfo$nDisplayProgress),
+                          params_list[[i]], cores, pinfo$nDisplayProgress,
+                          pinfo$sigdig),
         error = function(e) NULL)
       if (is.null(cp_mat) || anyNA(cp_mat)) return(Inf)
       mu_struct <- colMeans(cp_mat)
@@ -420,7 +476,8 @@ nmObjGetControl.admc <- function(x, ...) {
 
     cp_mat <- tryCatch(
       .admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta_mat, s,
-                   ov, params_list[[i]], cores, pinfo$nDisplayProgress),
+                   ov, params_list[[i]], cores, pinfo$nDisplayProgress,
+                          pinfo$sigdig),
       error = function(e) NULL)
     if (is.null(cp_mat) || anyNA(cp_mat)) return(Inf)
 
@@ -465,14 +522,15 @@ nmObjGetControl.admc <- function(x, ...) {
   f0 <- if (use_central) NA_real_ else
     .admNLL(p, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
   vapply(seq_along(p), function(k) {
-    pp <- p; pp[k] <- p[k] + h
+    hk <- .admGH(h, k)
+    pp <- p; pp[k] <- p[k] + hk
     fp <- .admNLL(pp, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
     if (use_central) {
-      pm <- p; pm[k] <- p[k] - h
+      pm <- p; pm[k] <- p[k] - hk
       fm <- .admNLL(pm, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
-      (fp - fm) / (2 * h)
+      (fp - fm) / (2 * hk)
     } else {
-      (fp - f0) / h
+      (fp - f0) / hk
     }
   }, double(1))
 }
@@ -482,8 +540,34 @@ nmObjGetControl.admc <- function(x, ...) {
 .admGrad <- function(p, pinfo, studies, z_list, rxMod, output_var,
                      params_list, cores, h, sensModel = NULL,
                      use_central = FALSE) {
+  # `h` is either the fixed scalar or Gill83's per-parameter vector. It must be
+  # read through .admGH()/.admGH0() and NEVER used bare, because this function
+  # differences in two different spaces:
+  #
+  #   parameter space -- the unpaired struct thetas, keyed by unpaired_k[bi], and
+  #                      the joint objective FD, keyed by k_s: .admGH(h, k)
+  #   ETA space       -- eta_hi[, j] <- eta_hi[, j] + h, over n_sim rows, with no
+  #                      parameter index at all: .admGH0(h)
+  #
+  # Used bare, a length-n_par vector recycles into the n_sim-row perturbations
+  # and the n_sim x n_t divisions WITHOUT a warning (n_sim %% n_par is virtually
+  # always 0), handing every draw a different perturbation and returning a
+  # plausible, wrong gradient. Length is checked so a future caller cannot pass a
+  # vector of the wrong length and have it silently recycle instead.
+  if (length(h) != 1L && length(h) != length(p))
+    stop(".admGrad: `h` must be one step or one per parameter (got ",
+         length(h), " for ", length(p), " parameters).", call. = FALSE)
+  h_eta <- .admGH0(h)
   pars <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(rep(NA_real_, length(p)))
+  # Non-finite parameters never reach rxSolve: the covariance probe can perturb
+  # a sigma to Inf, and the solver answers a poisoned parameter with tens of
+  # thousands of `intdy`/`h too small` warnings before the caller discards the
+  # result anyway. Same guard as the NLL entry points -- and it has to be HERE
+  # too, because the gradient unpacks `p` itself rather than going through the
+  # NLL. Inline, not a shared predicate (mirai daemons cannot gain a new
+  # binding -- see the note at the top of simulate.R).
+  if (!.admParsFinite(pars, pinfo)) return(rep(NA_real_, length(p)))
 
   n_s   <- length(pinfo$struct_names)
   n_e   <- length(pinfo$sigma_names)
@@ -518,7 +602,7 @@ nmObjGetControl.admc <- function(x, ...) {
       if (n_eta == 0L || is.null(sensModel)) return(rep(NA_real_, length(p)))
       js <- .admSimulateJointSens(sensModel, pars$struct, pinfo$sigma_names,
                                   eta_mat, s, cores, pinfo$nDisplayProgress,
-                                  pars$sigma_var)
+                                  pars$sigma_var, pinfo$sigdig)
       if (is.null(js) || anyNA(js$cp_mat)) return(rep(NA_real_, length(p)))
       cp_mat <- js$cp_mat; dpred_list <- js$dpred_list
       n_t    <- s$n_total
@@ -590,16 +674,18 @@ nmObjGetControl.admc <- function(x, ...) {
           nll0 <- nll_cov_cpp(as.numeric(s$E), s$V, mu, V, s$n)
           for (bi in seq_len(n_unp)) {
             k_s <- unpaired_k[bi]
-            pp  <- p; pp[k_s] <- p[k_s] + h
+            h_k <- .admGH(h, k_s)
+            pp  <- p; pp[k_s] <- p[k_s] + h_k
             pars_p <- .admUnpack(pp, pinfo)
             cp_p   <- .admSimulateJoint(rxMod, pars_p$struct, pinfo$sigma_names,
-                                        eta_mat, s, pdf, cores, pinfo$nDisplayProgress)
+                                        eta_mat, s, pdf, cores,
+                                        pinfo$nDisplayProgress, pinfo$sigdig)
             mus_p  <- colMeans(cp_p)
             jr_p   <- .admJointResidual(mus_p,
                                         crossprod(sweep(cp_p, 2L, mus_p)) / n_sim,
                                         s, pinfo, pars_p$sigma_var)
             nllp <- nll_cov_cpp(as.numeric(s$E), s$V, jr_p$mu, jr_p$V, s$n)
-            grad[k_s] <- grad[k_s] + (nllp - nll0) / h
+            grad[k_s] <- grad[k_s] + (nllp - nll0) / h_k
           }
         }
       }
@@ -612,7 +698,7 @@ nmObjGetControl.admc <- function(x, ...) {
     if (use_sens) {
       sens_out <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names,
                                    eta_mat, s, cores, pinfo$nDisplayProgress,
-                                   pars$sigma_var)
+                                   pars$sigma_var, pinfo$sigdig)
       if (is.null(sens_out) || anyNA(sens_out$cp_mat)) {
         use_sens <- FALSE
       } else {
@@ -644,15 +730,15 @@ nmObjGetControl.admc <- function(x, ...) {
           for (j in seq_len(n_eta)) {
             rows_hi <- n_sim * (2L*j - 1L) + seq_len(n_sim)
             rows_lo <- n_sim * (2L*j)      + seq_len(n_sim)
-            eta_hi  <- eta_mat; eta_hi[, j] <- eta_hi[, j] + h
-            eta_lo  <- eta_mat; eta_lo[, j] <- eta_lo[, j] - h
+            eta_hi  <- eta_mat; eta_hi[, j] <- eta_hi[, j] + h_eta
+            eta_lo  <- eta_mat; eta_lo[, j] <- eta_lo[, j] - h_eta
             pdf_big[rows_hi, eta_col_names] <- eta_hi
             pdf_big[rows_lo, eta_col_names] <- eta_lo
           }
         } else {
           for (j in seq_len(n_eta)) {
             rows_hi <- n_sim * j + seq_len(n_sim)
-            eta_hi  <- eta_mat; eta_hi[, j] <- eta_hi[, j] + h
+            eta_hi  <- eta_mat; eta_hi[, j] <- eta_hi[, j] + h_eta
             pdf_big[rows_hi, eta_col_names] <- eta_hi
           }
         }
@@ -665,26 +751,28 @@ nmObjGetControl.admc <- function(x, ...) {
             rows_hi <- n_sim * (n_fwd_eta + 2L*bi - 1L) + seq_len(n_sim)
             rows_lo <- n_sim * (n_fwd_eta + 2L*bi)      + seq_len(n_sim)
             nm_u    <- pinfo$struct_names[unpaired_k[bi]]
+            h_u     <- .admGH(h, unpaired_k[bi])
             if (n_eta > 0L) {
               pdf_big[rows_hi, eta_col_names] <- eta_mat
               pdf_big[rows_lo, eta_col_names] <- eta_mat
             }
-            pdf_big[rows_hi, nm_u] <- pars$struct[nm_u] + h
-            pdf_big[rows_lo, nm_u] <- pars$struct[nm_u] - h
+            pdf_big[rows_hi, nm_u] <- pars$struct[nm_u] + h_u
+            pdf_big[rows_lo, nm_u] <- pars$struct[nm_u] - h_u
           }
         } else {
           for (bi in seq_len(n_unp)) {
             rows_hi <- n_sim * (n_fwd_eta + bi) + seq_len(n_sim)
             nm_u    <- pinfo$struct_names[unpaired_k[bi]]
             if (n_eta > 0L) pdf_big[rows_hi, eta_col_names] <- eta_mat
-            pdf_big[rows_hi, nm_u] <- pars$struct[nm_u] + h
+            pdf_big[rows_hi, nm_u] <- pars$struct[nm_u] + .admGH(h, unpaired_k[bi])
           }
         }
       }
 
       out_b  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_big),
                                  events = s$ev_full, cores = cores,
-                                 nDisplayProgress = pinfo$nDisplayProgress)
+                                 nDisplayProgress = pinfo$nDisplayProgress,
+                                 sigdig = pinfo$sigdig)
       keep_b <- out_b[["time"]] %in% s$times
       # beta: the prediction is DERIVED from two solved columns, mu = b1/(b1+b2),
       # and the precision phi = b1 + b2 is solved rather than fitted. Reading
@@ -716,13 +804,13 @@ nmObjGetControl.admc <- function(x, ...) {
             off_hi <- n_sim * n_t * (2L*j - 1L)
             off_lo <- n_sim * n_t * (2L*j)
             (matrix(vals_b[off_hi + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE) -
-             matrix(vals_b[off_lo + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE)) / (2 * h)
+             matrix(vals_b[off_lo + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE)) / (2 * h_eta)
           })
         } else {
           lapply(seq_len(n_eta), function(j) {
             off_hi <- n_sim * n_t * j
             (matrix(vals_b[off_hi + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE) -
-             cp_mat) / h
+             cp_mat) / h_eta
           })
         }
       } else list()
@@ -854,10 +942,11 @@ nmObjGetControl.admc <- function(x, ...) {
         for (bi in seq_len(n_unp)) {
           k_s     <- unpaired_k[bi]
           cp_hi_s <- batched_hi[[bi]]
+          h_u     <- .admGH(h, k_s)
           dpred <- if (use_central && !is.null(batched_lo))
-            (cp_hi_s - batched_lo[[bi]]) / (2 * h)
+            (cp_hi_s - batched_lo[[bi]]) / (2 * h_u)
           else
-            (cp_hi_s - cp_mat) / h
+            (cp_hi_s - cp_mat) / h_u
           grad[k_s] <- grad[k_s] +
             if (is_var)
               adm_grad_partial_var_cpp(cp_c, dpred, dNLL_dV_diag_s, eff_dmu, inv_n)
@@ -876,11 +965,12 @@ nmObjGetControl.admc <- function(x, ...) {
         for (bi in seq_len(n_unp)) {
           rows <- (bi - 1L) * n_sim + seq_len(n_sim)
           nm   <- pinfo$struct_names[unpaired_k[bi]]
-          pdf_hi[rows, nm] <- pars$struct[nm] + h
+          pdf_hi[rows, nm] <- pars$struct[nm] + .admGH(h, unpaired_k[bi])
         }
         out_hi  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                     events = s$ev_full, cores = cores,
-                                    nDisplayProgress = pinfo$nDisplayProgress)
+                                    nDisplayProgress = pinfo$nDisplayProgress,
+                                    sigdig = pinfo$sigdig)
         keep_hi <- out_hi[["time"]] %in% s$times
         vals_hi <- out_hi[[ov]][keep_hi]
         if (is.null(vals_hi)) vals_hi <- out_hi[["ipredSim"]][keep_hi]
@@ -890,11 +980,12 @@ nmObjGetControl.admc <- function(x, ...) {
           for (bi in seq_len(n_unp)) {
             rows <- (bi - 1L) * n_sim + seq_len(n_sim)
             nm   <- pinfo$struct_names[unpaired_k[bi]]
-            pdf_lo[rows, nm] <- pars$struct[nm] - h
+            pdf_lo[rows, nm] <- pars$struct[nm] - .admGH(h, unpaired_k[bi])
           }
           out_lo  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_lo),
                                       events = s$ev_full, cores = cores,
-                                      nDisplayProgress = pinfo$nDisplayProgress)
+                                      nDisplayProgress = pinfo$nDisplayProgress,
+                                      sigdig = pinfo$sigdig)
           keep_lo <- out_lo[["time"]] %in% s$times
           vals_lo <- out_lo[[ov]][keep_lo]
           if (is.null(vals_lo)) vals_lo <- out_lo[["ipredSim"]][keep_lo]
@@ -904,11 +995,12 @@ nmObjGetControl.admc <- function(x, ...) {
           k_s     <- unpaired_k[bi]
           idx     <- (bi - 1L) * n_sim * n_t + seq_len(n_sim * n_t)
           cp_hi_s <- matrix(vals_hi[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
+          h_u     <- .admGH(h, k_s)
           dpred <- if (use_central) {
             cp_lo_s <- matrix(vals_lo[idx], nrow = n_sim, ncol = n_t, byrow = TRUE)
-            (cp_hi_s - cp_lo_s) / (2 * h)
+            (cp_hi_s - cp_lo_s) / (2 * h_u)
           } else {
-            (cp_hi_s - cp_mat) / h
+            (cp_hi_s - cp_mat) / h_u
           }
           grad[k_s] <- grad[k_s] +
             if (is_var)
@@ -948,9 +1040,13 @@ nmObjGetControl.admc <- function(x, ...) {
 
   pars_list <- vector("list", n_c)
   valid     <- logical(n_c)
+  # Reject non-finite parameters before the solve; see .admParsFinite().
   for (ci in seq_len(n_c)) {
     pars <- tryCatch(.admUnpack(p_list[[ci]], pinfo), error = function(e) NULL)
-    if (!is.null(pars) && (pinfo$n_eta == 0L || all(diag(pars$omega) > 0))) {
+    # The positive-diagonal test is this path's own: a non-PD omega is not a
+    # non-finite parameter, and only the batch NLL screens for it here.
+    if (.admParsFinite(pars, pinfo) &&
+        (pinfo$n_eta == 0L || all(diag(pars$omega) > 0))) {
       pars_list[[ci]] <- pars; valid[ci] <- TRUE
     }
   }
@@ -987,7 +1083,8 @@ nmObjGetControl.admc <- function(x, ...) {
       out <- tryCatch(
         rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                         events = s$ev_full, cores = cores,
-                        nDisplayProgress = pinfo$nDisplayProgress),
+                        nDisplayProgress = pinfo$nDisplayProgress,
+                        sigdig = pinfo$sigdig),
         error = function(e) NULL)
       if (is.null(out)) { for (ci in chunk) finite[ci] <- FALSE; next }
 
@@ -1061,11 +1158,16 @@ nmObjGetControl.admc <- function(x, ...) {
 # -- Batched gradient evaluation -----------------------------------------------
 # Evaluates the gradient for a list of parameter vectors via batched rxSolve
 # calls (one per study). Returns a (n_c x np) gradient matrix.
-# Used by .admCalcCov (use_grad=TRUE) to compute the Hessian via forward FD
+# Used by .admCalcCov (use_grad=TRUE) to compute the Hessian via central FD
 # of the gradient -- all np+1 configs packed into a single rxSolve call per study.
 .admGradBatch <- function(p_list, pinfo, studies, z_list, rxMod, output_var,
                            params_list, cores, h, sensModel = NULL,
                            use_central = FALSE) {
+  # Same two spaces as .admGrad -- see the note there. `h` is read through
+  # .admGH()/.admGH0() and never used bare.
+  if (length(h) != 1L && length(h) != length(p_list[[1L]]))
+    stop(".admGradBatch: `h` must be one step or one per parameter.", call. = FALSE)
+  h_eta <- .admGH0(h)
   n_c   <- length(p_list)
   if (n_c == 0L) return(matrix(0, 0, length(p_list[[1L]])))
 
@@ -1091,7 +1193,9 @@ nmObjGetControl.admc <- function(x, ...) {
 
   pars_list <- lapply(p_list, function(p)
     tryCatch(.admUnpack(p, pinfo), error = function(e) NULL))
-  valid <- !vapply(pars_list, is.null, logical(1))
+  # Non-finite parameters: rejected before the solve, same reason as .admNLLBatch.
+  valid <- vapply(pars_list, function(pars) .admParsFinite(pars, pinfo),
+                  logical(1))
 
   grad_acc <- matrix(0, nrow = n_c, ncol = np,
                      dimnames = list(NULL, names(p_list[[1L]])))
@@ -1178,7 +1282,8 @@ nmObjGetControl.admc <- function(x, ...) {
           do.call(rxode2::rxSolve,
                   c(list(sensModel$mod, params = inner_df,
                          events = s$ev_full, cores = cores,
-                         nDisplayProgress = pinfo$nDisplayProgress),
+                         nDisplayProgress = pinfo$nDisplayProgress,
+                         sigdig = pinfo$sigdig),
                     sensModel$solve_args))),
         error = function(e) NULL)
       if (is.null(out) || !all(sensModel$sens_cols %in% names(out))) {
@@ -1233,7 +1338,8 @@ nmObjGetControl.admc <- function(x, ...) {
         }
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
-                                         nDisplayProgress = pinfo$nDisplayProgress),
+                                         nDisplayProgress = pinfo$nDisplayProgress,
+                                         sigdig = pinfo$sigdig),
                         error = function(e) NULL)
         if (is.null(out)) { valid[] <- FALSE } else {
           keep <- out[["time"]] %in% s$times
@@ -1264,8 +1370,8 @@ nmObjGetControl.admc <- function(x, ...) {
             for (j in seq_len(n_eta)) {
               rows_hi <- cfg_base + n_sim * (2L*j - 1L) + seq_len(n_sim)
               rows_lo <- cfg_base + n_sim * (2L*j)      + seq_len(n_sim)
-              eta_hi  <- eta; eta_hi[, j] <- eta_hi[, j] + h
-              eta_lo  <- eta; eta_lo[, j] <- eta_lo[, j] - h
+              eta_hi  <- eta; eta_hi[, j] <- eta_hi[, j] + h_eta
+              eta_lo  <- eta; eta_lo[, j] <- eta_lo[, j] - h_eta
               for (nm in names(pars$struct)) {
                 pdf_mat[rows_hi, nm] <- pars$struct[nm]
                 pdf_mat[rows_lo, nm] <- pars$struct[nm]
@@ -1276,7 +1382,7 @@ nmObjGetControl.admc <- function(x, ...) {
           } else {
             for (j in seq_len(n_eta)) {
               rows_hi <- cfg_base + n_sim * j + seq_len(n_sim)
-              eta_hi  <- eta; eta_hi[, j] <- eta_hi[, j] + h
+              eta_hi  <- eta; eta_hi[, j] <- eta_hi[, j] + h_eta
               for (nm in names(pars$struct)) pdf_mat[rows_hi, nm] <- pars$struct[nm]
               pdf_mat[rows_hi, eta_col_names] <- eta_hi
             }
@@ -1284,7 +1390,8 @@ nmObjGetControl.admc <- function(x, ...) {
         }
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
-                                         nDisplayProgress = pinfo$nDisplayProgress),
+                                         nDisplayProgress = pinfo$nDisplayProgress,
+                                         sigdig = pinfo$sigdig),
                         error = function(e) NULL)
         if (is.null(out)) { valid[] <- FALSE } else {
           keep <- out[["time"]] %in% s$times
@@ -1300,13 +1407,13 @@ nmObjGetControl.admc <- function(x, ...) {
                 off_hi <- cfg_out_base + n_sim * n_t * (2L*j - 1L)
                 off_lo <- cfg_out_base + n_sim * n_t * (2L*j)
                 (matrix(vals[off_hi + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE) -
-                 matrix(vals[off_lo + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE)) / (2 * h)
+                 matrix(vals[off_lo + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE)) / (2 * h_eta)
               })
             } else {
               lapply(seq_len(n_eta), function(j) {
                 off_hi <- cfg_out_base + n_sim * n_t * j
                 (matrix(vals[off_hi + seq_len(n_sim * n_t)], nrow = n_sim, ncol = n_t, byrow = TRUE) -
-                 cp_mats[[ci]]) / h
+                 cp_mats[[ci]]) / h_eta
               })
             }
           }
@@ -1343,11 +1450,12 @@ nmObjGetControl.admc <- function(x, ...) {
         for (nm in names(pars$struct))       pdf_hi[rows, nm]               <- pars$struct[nm]
         for (j  in seq_along(eta_col_names)) pdf_hi[rows, eta_col_names[j]] <- eta[, j]
         nm_u <- pinfo$struct_names[unpaired_k[bi]]
-        pdf_hi[rows, nm_u] <- pars$struct[nm_u] + h
+        pdf_hi[rows, nm_u] <- pars$struct[nm_u] + .admGH(h, unpaired_k[bi])
       }
       out_hi <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                           events = s$ev_full, cores = cores,
-                                          nDisplayProgress = pinfo$nDisplayProgress),
+                                          nDisplayProgress = pinfo$nDisplayProgress,
+                                          sigdig = pinfo$sigdig),
                          error = function(e) NULL)
       if (!is.null(out_hi)) {
         vals_hi <- out_hi[[ovb]][out_hi[["time"]] %in% s$times]
@@ -1368,11 +1476,12 @@ nmObjGetControl.admc <- function(x, ...) {
           rows <- (cuki - 1L) * n_sim + seq_len(n_sim)
           pars <- pars_list[[ci]]
           nm_u <- pinfo$struct_names[unpaired_k[bi]]
-          pdf_lo[rows, nm_u] <- pars$struct[nm_u] - h
+          pdf_lo[rows, nm_u] <- pars$struct[nm_u] - .admGH(h, unpaired_k[bi])
         }
         out_lo <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_lo),
                                             events = s$ev_full, cores = cores,
-                                            nDisplayProgress = pinfo$nDisplayProgress),
+                                            nDisplayProgress = pinfo$nDisplayProgress,
+                                            sigdig = pinfo$sigdig),
                            error = function(e) NULL)
         if (!is.null(out_lo)) {
           vals_lo <- out_lo[[ovb]][out_lo[["time"]] %in% s$times]
@@ -1477,10 +1586,11 @@ nmObjGetControl.admc <- function(x, ...) {
           dth_ci[[pinfo$struct_names[k_s]]]            # exact, from the sens solve
         } else {
           cp_hi_s <- cp_hi_store[[ci]][[bi]]
+          h_u     <- .admGH(h, k_s)
           if (is.null(cp_hi_s)) NULL
           else if (use_central && !is.null(cp_lo_store[[ci]][[bi]]))
-            (cp_hi_s - cp_lo_store[[ci]][[bi]]) / (2 * h)
-          else (cp_hi_s - cp_mat) / h
+            (cp_hi_s - cp_lo_store[[ci]][[bi]]) / (2 * h_u)
+          else (cp_hi_s - cp_mat) / h_u
         }
         if (is.null(dpred)) next
         grad_acc[ci, k_s] <- grad_acc[ci, k_s] +
@@ -1563,35 +1673,52 @@ nmObjGetControl.admc <- function(x, ...) {
   }
 
   if (use_grad) {
-    h_fwd    <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
+    h_c      <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
     # Inner step: larger than grad_h to reduce gradient noise amplification.
     # Hessian FD divides by h_outer, so gradient noise is scaled up by 1/h_outer.
     h_inner  <- cov_h
-    # np_cov+1 param vectors: p_hat followed by np_cov forward-perturbed versions
-    # (only struct+sigma entries perturbed; omega stays fixed at p_hat).
-    p_list <- c(list(p_hat), lapply(seq_len(np_cov), function(jj) {
-      ph <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_fwd[jj]; ph
-    }))
+    # CENTRAL difference of the gradient -- see .adfoCalcCov() for the reasoning.
+    # 2*np_cov param vectors: rows 1..np_cov are p + h_jj, rows np_cov+1..2*np_cov
+    # are p - h_jj in the SAME order (only struct+sigma entries perturbed; omega
+    # stays fixed at p_hat). Both halves go through ONE .admGradBatch call, which
+    # is what the batching exists for, so this costs extra ROWS rather than extra
+    # rxSolve calls -- and the baseline vector is gone, a central difference never
+    # evaluating the centre.
+    p_list <- c(
+      lapply(seq_len(np_cov), function(jj) {
+        ph <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_c[jj]; ph
+      }),
+      lapply(seq_len(np_cov), function(jj) {
+        pm <- p_hat; pm[cov_idx[jj]] <- pm[cov_idx[jj]] - h_c[jj]; pm
+      }))
     grads <- .admGradBatch(p_list, pinfo, studies, z_list, rxMod, output_var,
                             params_list, cores, h_inner, sensModel,
                             use_central = use_central)
-    g0 <- grads[1L, cov_idx]
     H  <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
     for (jj in seq_len(np_cov)) {
-      gj     <- grads[jj + 1L, cov_idx]
-      H[, jj] <- if (anyNA(gj)) 0 else (gj - g0) / h_fwd[jj]
+      gp      <- grads[jj, cov_idx]
+      gm      <- grads[np_cov + jj, cov_idx]
+      H[, jj] <- if (anyNA(gp) || anyNA(gm)) 0 else (gp - gm) / (2 * h_c[jj])
     }
     H <- (H + t(H)) / 2
   } else {
-    h_gill  <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
+    # Step selection. `pmax(abs(p), 0.1) * cov_h_outer` is a guess about how much
+    # noise the objective carries, applied identically to every parameter -- and
+    # it is the guess behind the "Hessian not positive definite ... try
+    # increasing cov_h_outer" warning below. Gill83 measures instead: it probes
+    # THIS objective and returns the step where condition error and truncation
+    # error balance, per parameter. Exact fit here, since the function it probes
+    # is the one being differenced.
+    h_fd <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer,
+                            .var.name = "admCalcCov")
     n_off   <- np_cov * (np_cov - 1L) / 2L
 
     # Perturb only struct+sigma entries; omega stays fixed at p_hat.
     diag_p <- vector("list", 2L * np_cov)
     for (k in seq_len(np_cov)) {
       ki <- cov_idx[k]
-      ph <- p_hat; ph[ki] <- ph[ki] + h_gill[k]; diag_p[[2L*k - 1L]] <- ph
-      pl <- p_hat; pl[ki] <- pl[ki] - h_gill[k]; diag_p[[2L*k]]      <- pl
+      ph <- p_hat; ph[ki] <- ph[ki] + h_fd[k]; diag_p[[2L*k - 1L]] <- ph
+      pl <- p_hat; pl[ki] <- pl[ki] - h_fd[k]; diag_p[[2L*k]]      <- pl
     }
     off_p  <- vector("list", 4L * n_off)
     off_ij <- matrix(0L, n_off, 2L)
@@ -1600,7 +1727,7 @@ nmObjGetControl.admc <- function(x, ...) {
       for (j in seq(i + 1L, np_cov)) {
         oci <- oci + 1L; off_ij[oci, ] <- c(i, j)
         ii <- cov_idx[i]; ji <- cov_idx[j]
-        hi <- h_gill[i];  hj <- h_gill[j]
+        hi <- h_fd[i];  hj <- h_fd[j]
         p_pp <- p_hat; p_pp[ii] <- p_pp[ii] + hi; p_pp[ji] <- p_pp[ji] + hj
         p_pm <- p_hat; p_pm[ii] <- p_pm[ii] + hi; p_pm[ji] <- p_pm[ji] - hj
         p_mp <- p_hat; p_mp[ii] <- p_mp[ii] - hi; p_mp[ji] <- p_mp[ji] + hj
@@ -1615,12 +1742,12 @@ nmObjGetControl.admc <- function(x, ...) {
 
     H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
     for (k in seq_len(np_cov)) {
-      hk <- h_gill[k]
+      hk <- h_fd[k]
       H[k, k] <- (nll_all[2L*k - 1L] - 2*nll0 + nll_all[2L*k]) / hk^2
     }
     for (oci in seq_len(n_off)) {
       i <- off_ij[oci, 1L]; j <- off_ij[oci, 2L]
-      hi <- h_gill[i]; hj <- h_gill[j]
+      hi <- h_fd[i]; hj <- h_fd[j]
       base <- 2L * np_cov + (oci - 1L) * 4L
       H[i, j] <- H[j, i] <-
         (nll_all[base + 1L] - nll_all[base + 2L] -
@@ -1641,8 +1768,8 @@ nmObjGetControl.admc <- function(x, ...) {
   .red <- .admReduceNpdOmega(H, H_eigs, eig_dec, nms_cov, n_o, n_sub)
   if (.red$reduced)
     warning("admCalcCov: the full Hessian including omega was not positive ",
-            "definite; reporting structural and sigma standard errors only.",
-            call. = FALSE)
+            "definite or was numerically singular; reporting structural and ",
+            "sigma standard errors only.", call. = FALSE)
   H <- .red$H; nms_cov <- .red$nms_cov; np_cov <- .red$np_cov
   eig_dec <- .red$eig_dec; H_eigs <- .red$H_eigs
 
@@ -1739,10 +1866,16 @@ nmObjGetControl.admc <- function(x, ...) {
   # workers (each holds its own independent model instance -> no_lock).
   lock_rxMod <- if (is.null(rxMod_direct) && !no_lock) m$rxMod else NULL
 
-  .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
+  .res <- .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
                      use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
                      nll_fn, grad_fn, pinfo, print_progress, print,
                      lock_rxMod = lock_rxMod)
+  # Carried back so .admRunRestarts() can report a worker that silently
+  # dropped to a finite-difference gradient -- a daemon's own warning is
+  # swallowed by mirai. NOT a new worker ARGUMENT: the signatures must stay
+  # stable for a daemon resolving them from the installed namespace.
+  .res$sens_fallback <- m$sens_fallback
+  .res
 }
 
 # -- Multi-restart orchestration -----------------------------------------------
@@ -1833,10 +1966,38 @@ admStopWorkers <- function() {
                               cores_vec, effective_workers) {
   library(admixr2)
   .adm_ns <- asNamespace("admixr2")
-  for (.nm in names(fn_list))
-    tryCatch(utils::assignInNamespace(.nm, fn_list[[.nm]], ns = .adm_ns),
-             error = function(e) NULL)
-  wfn <- get(worker_fn_name, envir = .adm_ns, inherits = FALSE)
+  if (!length(fn_list)) {
+    wfn <- get(worker_fn_name, envir = .adm_ns, inherits = FALSE)
+  } else {
+    # A patch ENVIRONMENT, not assignInNamespace() alone.
+    #
+    # utils::assignInNamespace() can REPLACE a binding in the daemon's locked
+    # installed namespace but cannot ADD one -- and the error is swallowed by the
+    # tryCatch below, so a name the branch INTRODUCES is simply absent in the
+    # worker while everything looks healthy. Its callers then die with
+    # "could not find function", or worse compute a different answer: this is
+    # exactly how .ADM_SENS_EMITTERS made every daemon derive a different sens
+    # cache key from its parent, and how .admGH/.admGH0 -- called from .admGrad,
+    # .admGradBatch and .admNLLGradFD, all of which run in here -- would break
+    # every dev-mode parallel restart in this release.
+    #
+    # Re-parenting each patched closure onto an env that HOLDS the whole dev set
+    # makes new and existing names resolve alike, with the namespace as the
+    # fallback parent for everything not patched. So a new helper needs no
+    # bespoke handling and no inlining at its call sites; it just works.
+    .pe <- new.env(parent = .adm_ns)
+    for (.nm in names(fn_list)) {
+      .obj <- fn_list[[.nm]]
+      if (is.function(.obj)) environment(.obj) <- .pe
+      assign(.nm, .obj, envir = .pe)
+    }
+    # Existing names ALSO go back into the namespace, so a function we did not
+    # patch that calls one we did still gets the dev version.
+    for (.nm in names(fn_list))
+      tryCatch(utils::assignInNamespace(.nm, get(.nm, envir = .pe), ns = .adm_ns),
+               error = function(e) NULL)
+    wfn <- get(worker_fn_name, envir = .pe)
+  }
   args <- all_args
   args$cores <- cores_vec[[(r - 1L) %% effective_workers + 1L]]
   do.call(wfn, c(list(restart_id = r, p_init = inits[[r]]), args))
@@ -1876,6 +2037,9 @@ admStopWorkers <- function() {
                                  sens_cache_file = NULL, sens_cols = NULL,
                                  sens_rename = NULL, sensModel_direct = NULL,
                                  pinfo = NULL) {
+  # Set by the sens-fallback branches below and returned to the caller, because a
+  # warning() raised in a mirai daemon never reaches the parent. See there.
+  .adm_sens_fallback <- NULL
   cores_w <- if (!is.null(cores)) {
     cores
   } else if (!is.null(rxMod_direct)) {
@@ -1884,13 +2048,146 @@ admStopWorkers <- function() {
     1L
   }
 
+  # nlmixr2est's load step (rxUiGet.foceiModel), INLINED rather than calling the
+  # .admRxLoadAll() that the parent uses. A daemon resolves this function from
+  # the INSTALLED namespace and .admDaemonRestart() patches the dev body in with
+  # assignInNamespace(), which can replace a binding but cannot ADD one -- so
+  # calling a helper that is new in this release fails with `could not find
+  # function` on every restart of a dev-mode fit against a stale install. Same
+  # constraint that keeps the non-finite guards inlined; see simulate.R's note.
+  #
+  # THE PARENT'S DIRECTORY CHECK IS DELIBERATELY OMITTED HERE -- do not "restore
+  # parity" by adding it. .admRxLoadAll() rejects any artifact under a
+  # session-local *Sens build directory that is not THIS session's .admModDir().
+  # A mirai daemon has its OWN tempdir(), so the parent-built sensitivity DLL --
+  # which lives under the PARENT's tempdir()/admixr2Sens -- fails that test in
+  # every worker. Copying the check faithfully would return NULL for the sens
+  # model on every restart, and each worker would silently drop to a
+  # finite-difference gradient while the parent ran sensitivities: exactly the
+  # divergence the cache-key fixes in this release exist to prevent, and one that
+  # is invisible in the objective.
+  #
+  # Cross-session staleness is handled for the worker by the parent instead: all
+  # four drivers call .admLoadSensModel()/.admLoadModel() -- which DO run the full
+  # guard, and delete and rebuild on failure -- before .admSetupDaemons(), so a
+  # worker only ever reads an entry the parent refreshed in this session. Only
+  # the DLL-existence half is inlined below; it has no cross-process semantics.
+  .load_all <- function(x) {
+    .one <- function(e) {
+      if (!inherits(e, "rxode2")) return(TRUE)
+      # .admRxLoadAll()'s DLL-existence half, inlined. rxLoad() does not error on
+      # a model whose shared object has gone -- it silently re-runs the deferred
+      # compile (~2.9 s), and with several daemons reading one cache entry they
+      # would all recompile concurrently into the same output path.
+      .dll <- tryCatch(rxode2::rxDll(e), error = function(err) NA_character_)
+      if (is.na(.dll) || !nzchar(.dll) || !file.exists(.dll)) return(FALSE)
+      tryCatch({ rxode2::rxLoad(e); TRUE }, error = function(err) FALSE)
+    }
+    if (inherits(x, "rxode2")) return(.one(x))
+    if (!is.list(x)) return(TRUE)
+    all(vapply(x, .one, logical(1)))
+  }
+
   if (!is.null(rxMod_direct)) {
     rxMod <- rxMod_direct
   } else {
-    .cacheFile <- file.path(rxode2::rxTempDir(),
-                            paste0("adm-sim-", digest::digest(ui_lstExpr), ".rds"))
-    rxMod <- readRDS(.cacheFile)
-    rxode2::rxLoad(rxMod)
+    # The parent's path, sent on `pinfo`. The worker has no `ui`, so it CANNOT
+    # derive the .admIniKey() component that keys a fix()ed parameter's VALUE
+    # into the simulation-model cache -- without it, two models differing only in
+    # `theta <- fix(0.5)` vs `fix(0.9)` collide and a restart solves at the other
+    # model's fixed value.
+    #
+    # There is deliberately NO fallback. This used to recompute the old
+    # lstExpr-only name "so a worker running a stale installed body still finds A
+    # file" -- but finding *a* file is the bug, not the mitigation: that formula
+    # is precisely the one with the fix()-value collision, rxTempDir() is not
+    # swept, and an adm-sim-<digest(lstExpr)>.rds written before that key was
+    # widened can still be sitting there to be false-hit. If the parent did not
+    # supply a path, the right outcome is the legible stop() below.
+    .cacheFile <- pinfo$sim_cache_file
+    # rxUiGet.foceiModel()'s read, verbatim in shape: file.exists() -> read ->
+    # load. No retry and no sleep -- upstream has neither, and a poll loop was
+    # this package's own invention.
+    # NULL path: `file.exists(NULL)` is logical(0) and `if (logical(0))` is an
+    # "argument is of length zero" error, which would replace the message below
+    # with an opaque one at the point it is most needed.
+    # tryCatch, as the parent does (model.R). This file lives in a SHARED
+    # persistent rxTempDir(), so a concurrent session recompiling the same key
+    # writes this very path; a bare readRDS on a half-written entry dies with
+    # "error reading from connection", which .admRunRestarts re-throws as
+    # `parallel restart N failed: error reading from connection` -- losing the
+    # message below at exactly the moment it is most needed.
+    #
+    # .admCacheWrite() now publishes by rename, so no admixr2 from 0.4.1 on can
+    # produce a half-written entry -- that was the cause of the intermittent
+    # parallel-restart failures, and it is fixed at the writer. This stays
+    # because the guarantee is only as good as the OTHER process's version: a
+    # pre-0.4.1 session sharing this cache still writes in place.
+    # WHICH of the three ways this can fail is recorded, because they have
+    # completely different causes and the message used to name none of them:
+    # absent means the path is wrong or the entry was swept; unreadable-at-N-bytes
+    # means a half-written entry (a pre-0.4.1 peer publishing in place); and
+    # wrong-shape means a digest collision or a foreign file. Diagnosing this from
+    # the outside is near-impossible -- the branch runs only in a daemon, and by
+    # the time the parent reports the error the file is usually complete again --
+    # so the worker has to say what it saw at the moment it looked.
+    .why <- NULL
+    rxMod <- NULL
+    .sz <- NA_real_
+    if (is.null(.cacheFile)) {
+      .why <- "the parent supplied no path"
+    } else if (!file.exists(.cacheFile)) {
+      .why <- "no file at that path"
+    } else {
+      .sz <- tryCatch(file.size(.cacheFile), error = function(e) NA_real_)
+      # `<<-`, not `<-`: the handler is a real function, so it must reach out to
+      # this frame. (The if/else branches above are NOT functions and correctly
+      # use `<-`; see the same distinction on .adm_sens_fallback below.)
+      rxMod <- tryCatch(readRDS(.cacheFile),
+                        error = function(e) {
+                          .why <<- sprintf("the %.0f-byte file could not be read (%s)",
+                                           .sz, conditionMessage(e))
+                          NULL
+                        })
+      # ... and assert the SHAPE, which the parent also does and this did not:
+      # .admRxLoadAll/.load_all are no-ops on anything not rxode2-classed, so a
+      # readable .rds holding something else is not merely accepted, it is handed
+      # on as `rxMod` -- the exact outcome the load check below was added to
+      # prevent.
+      if (!is.null(rxMod) && !inherits(rxMod, "rxode2")) {
+        .why <- sprintf("the %.0f-byte file holds a '%s', not a compiled model",
+                        .sz, class(rxMod)[[1L]])
+        rxMod <- NULL
+      }
+    }
+    if (is.null(rxMod)) {
+      stop("admixr2: a parallel worker could not read the compiled-model cache\n  ",
+           .cacheFile %||% "<no path supplied by the parent>",
+           "\n  (", .why %||% "unknown", ")",
+           "\nThe parent writes it before starting workers, so this usually means ",
+           "either (a) devtools::load_all() in the parent against an OLDER INSTALLED ",
+           "admixr2 -- a daemon runs the installed one, and the two derive this path ",
+           "differently, so run devtools::install() first -- (b) the rxode2 ",
+           "temporary directory was cleared mid-session (rxode2::rxClean(), or a ",
+           "tempdir sweep) -- or (c) another process running a PRE-0.4.1 admixr2 ",
+           "is republishing this entry, which it does in place, so a reader can ",
+           "see it half-written. Re-run the fit, or use workers = 1.",
+           call. = FALSE)
+    }
+    # Re-load EVERY compiled model in the cached object, and STOP if any of them
+    # will not load. The bare rxLoad() this replaced propagated its own error out
+    # of the worker, which .admRunRestarts() re-threw with the restart id; a
+    # discarded FALSE instead lets the worker walk on into .admRestartWorker with
+    # a live-looking model over an unloaded shared library, where the first
+    # rxSolve() dereferences a dead external pointer -- an opaque rxode2 error
+    # deep in the restart, or on Windows the STATUS_HEAP_CORRUPTION crash. Made
+    # likely by the drivers themselves: every nlmixr2Est.* runs
+    # gc(FALSE); rxUnloadAll() on exit. The sens branch below already did this.
+    if (!.load_all(rxMod))
+      stop("admixr2: a parallel worker read the compiled-model cache but could ",
+           "not load its shared library\n  ", .cacheFile,
+           "\nThe rxode2 temporary directory was most likely cleared or swept ",
+           "mid-session. Re-run the fit, or use workers = 1.", call. = FALSE)
   }
 
   # The cache file holds the full sens result list (type/mod/sens_cols/...), so
@@ -1901,25 +2198,31 @@ admStopWorkers <- function() {
   } else if (!is.null(sens_cache_file) && file.exists(sens_cache_file)) {
     tryCatch({
       m <- readRDS(sens_cache_file)
-      rxode2::rxLoad(m$mod)
+      # Same iterate-the-container rule as the simulation model above (and the
+      # same reason it is the inlined .load_all rather than .admRxLoadAll).
+      if (!inherits(m$mod, "rxode2") || !.load_all(m))
+        stop("sens model failed to load")
       # PREFER the parent's values over whatever is in the file. The worker cannot
       # re-derive these (it has no ui), so a cache written by an older admixr2 --
       # with the position-indexed rename_map, which puts a theta's value in the
       # wrong THETA[k] slot -- would otherwise be used verbatim and the parallel
       # fit would silently disagree with the sequential one. (The cache key now
-      # carries a schema tag too, so such a file is no longer even a hit; this is
+      # carries .admPkgKey() -- the admixr2 version plus a digest of the
+      # emitter's own source -- so such a file is no longer even a hit; this is
       # the belt to that pair of braces.)
       if (!is.null(sens_cols))   m$sens_cols  <- sens_cols
       if (!is.null(sens_rename)) m$rename_map <- sens_rename
       # m$theta_sens_cols and m$fixed_theta are NOT overwritten here -- the parent
       # does not thread them through (adding a worker-load argument would trip the
       # dev-mode stale-daemon `unused argument` trap; see .admRestartWorker's note).
-      # Their staleness is guarded solely by the "dirs-jump+fixed-theta" schema tag
-      # in the sens cache key: any change to how those fields are DERIVED must bump
-      # that tag, or a stale file would become a false hit and a worker could fill
-      # the wrong constant into a fixed theta's THETA[k] column, silently diverging
-      # from the sequential fit. Overwriting sens_cols/rename_map above is the belt;
-      # the schema tag is the braces for these two.
+      # Their staleness is guarded solely by the sens cache key, which digests
+      # .admIniKey(ui) -- including a FIXED parameter's value, which is exactly
+      # what fixed_theta carries -- and .admPkgKey(), which changes whenever the
+      # code that derives these fields changes. Without both, a stale file would
+      # be a false hit and a worker could fill the wrong constant into a fixed
+      # theta's THETA[k] column, silently diverging from the sequential fit.
+      # Overwriting sens_cols/rename_map above is the belt; the key is the braces
+      # for these two.
       #
       # pred_tbs MUST be re-derived, exactly as .admLoadSensModel() re-derives it
       # on the parent's cache-hit path. The cache key digests ui$lstExpr -- the
@@ -1962,12 +2265,45 @@ admStopWorkers <- function() {
         }
       }
       m
-    }, error = function(e) NULL)
+    }, error = function(e) {
+      # Do not fail the restart: a worker without a sens model still fits, by
+      # finite differences. But do not do it silently -- the parent is running
+      # grad = "sens", so this worker is now computing a DIFFERENT gradient from
+      # the sequential fit, which is exactly the divergence the field overwrites
+      # above exist to prevent, and it is invisible in the objective.
+      # warning() here is INERT -- mirai does not relay a daemon's conditions to
+      # the parent, and this branch is reachable ONLY in a daemon (the sequential
+      # path passes sensModel_direct and never reaches it). So the package's one
+      # signal for "this worker computed a different gradient" fired exclusively
+      # where it was guaranteed to be swallowed. Record it on the RESULT instead;
+      # .admRunRestarts() raises it in the parent, where it can be seen.
+      .adm_sens_fallback <<- paste0(
+        "could not load the sensitivity model (", conditionMessage(e), ")")
+      NULL
+    })
   } else {
+    # A path the parent SUPPLIED but this worker cannot find is the same silent
+    # divergence the warning above exists for -- the parent is running
+    # sensitivities and this worker is about to finite-difference, invisibly in
+    # the objective -- so say so. `sens_cache_file = NULL` is the different,
+    # legitimate case (the parent has no sensitivity model either) and stays
+    # quiet, or every gradient-free fit would warn on every restart.
+    # Same reason as above: recorded, not warned, because a daemon's warning
+    # never reaches the parent. `sens_cache_file = NULL` is the different,
+    # legitimate case (the parent has no sensitivity model either) and stays
+    # quiet, or every gradient-free fit would report on every restart.
+    # `<-`, NOT `<<-`: if/else does not create an environment, so this runs in
+    # the function frame and a `<<-` here would skip the local and assign into
+    # the NAMESPACE. (The tryCatch handler above is a real function, so its
+    # `<<-` correctly reaches this frame -- the two are not interchangeable.)
+    if (!is.null(sens_cache_file))
+      .adm_sens_fallback <- paste0(
+        "could not find the sensitivity model cache (", sens_cache_file, ")")
     NULL
   }
 
-  list(cores_w = cores_w, rxMod = rxMod, sensModel = sensModel)
+  list(cores_w = cores_w, rxMod = rxMod, sensModel = sensModel,
+       sens_fallback = .adm_sens_fallback)
 }
 
 # Scaled, box-constrained single-nloptr optimisation with NLL/par trace
@@ -2032,11 +2368,64 @@ admStopWorkers <- function() {
   list(restart_id = restart_id,
        objective  = opt$objective,
        solution   = if (!is.null(opt$solution)) opt$solution * sc else p_init,
+       # The centre of THIS restart's box (lb/ub above), which is its own perturbed
+       # init and not the fit's p0. .admWarnOnBounds() needs the centre the solution
+       # is to be differenced against: judging a restart that started at
+       # p0 - restart_sd against p0 both MISSES a genuine box hit (the edge is at
+       # p0 - restart_sd - grad_bounds, so |d| never reaches grad_bounds) and
+       # invents spurious ones on the opposite side.
+       box_centre = p_init,
        n_iter     = .iter,
        nll_trace  = .nll_trace,
        par_trace  = .par_trace,
        elapsed    = as.numeric((proc.time() - t0)["elapsed"]),
        message    = opt$message)
+}
+
+# Load admixr2 in every daemon BEFORE any of them is asked to read the model
+# cache, then repair the cache if that load destroyed it.
+#
+# A daemon's `library(admixr2)` loads nlmixr2est, whose .resetCacheIfNeeded()
+# does this (verified in the INSTALLED 6.2.0, which is what a daemon loads --
+# upstream main having dropped the call is irrelevant here):
+#
+#     if (.md5 != nlmixr2.md5) { message("detected new version ..."); rxClean() }
+#
+# rxClean() wipes the whole SHARED rxTempDir(), including the adm-sim-*.rds the
+# parent wrote seconds earlier and these very daemons are about to read -- so the
+# worker deletes its own input and stops with "a parallel worker could not read
+# the compiled-model cache". Two details make it far worse than a one-off:
+# the mismatch branch never REWRITES the stamp, so the mismatch is permanent
+# rather than self-healing, and it fires per daemon, on every fit.
+#
+# It is triggered by having more than one nlmixr2est build in play (a
+# pkgload::load_all() of a source tree alongside the installed package, which is
+# ordinary during upstream development) -- and it was the second, independent
+# cause of the intermittent parallel-restart failures, the one that survived
+# making the cache writes atomic.
+#
+# The order is the fix: warm first, so every daemon-side clean has already
+# happened, then re-derive. .admLoadSensModel()/.admLoadModel() are cache-keyed
+# and cost nothing when the entries survived (the common case); when they did
+# not, they recompile and republish, which is exactly the repair. The ordering
+# invariant between the two still applies, so they are called in that order.
+.admWarmDaemons <- function(ui, pinfo, sens_cache_file = NULL) {
+  # A mirai without everywhere() just means the warm-up is skipped; the repair
+  # below still runs and is the half that matters, so this must not return early.
+  tryCatch(mirai::everywhere({ library(admixr2) }, .compute = .adm_compute),
+           error = function(e) NULL)
+  .gone <- function(f) !is.null(f) && length(f) == 1L && !is.na(f) && !file.exists(f)
+  if (!.gone(pinfo$sim_cache_file) && !.gone(sens_cache_file))
+    return(invisible(TRUE))
+  message("  Worker startup cleared the rxode2 cache -- rebuilding the model")
+  tryCatch({
+    .admLoadSensModel(ui)               # INVARIANT: sens model before sim model
+    .admLoadModel(ui)
+  }, error = function(e)
+    warning("admixr2: could not rebuild the model cache after worker startup ",
+            "cleared it (", conditionMessage(e), "). Restarts may fail; ",
+            "use workers = 1.", call. = FALSE))
+  invisible(TRUE)
 }
 
 .admRunRestarts <- function(worker_fn, p0, ov, pinfo, .ctl, ui, studies,
@@ -2076,8 +2465,23 @@ admStopWorkers <- function() {
     .fn_list <- list()
   } else {
     .fn_names <- ls(pkg_env, all.names = TRUE)
-    .fn_names <- .fn_names[grepl("^\\.(adm|adfo|adirmc|adgh|softmax|logdmvnorm)", .fn_names)]
+    # CASE-INSENSITIVE: the package's constants are `.ADM_*` (.ADM_MODEL_CACHE_MAX,
+    # .ADM_TBS_YJ, .ADM_RESID_*), and a case-sensitive `^\\.adm` misses every one
+    # of them. That is the same hole .ADM_SENS_EMITTERS fell through -- a constant
+    # read by a patched function, absent in the daemon, no error, a different
+    # answer. The patch environment fixes how a missing name is INJECTED; it
+    # cannot help with a name that was never collected.
+    .fn_names <- .fn_names[grepl("^\\.(adm|adfo|adirmc|adgh|softmax|logdmvnorm)",
+                                 .fn_names, ignore.case = TRUE)]
     .fn_list  <- setNames(lapply(.fn_names, get, envir = pkg_env), .fn_names)
+    # Code and constants travel; PER-PROCESS STATE does not. The name filter also
+    # catches the memo environments (.adm_model_env, .adm_sens_env, .adm_node_env,
+    # .adm_worker_env, ...), and an environment is serialised by VALUE -- so every
+    # dev-mode dispatch was shipping the parent's cached rxode2 models to every
+    # daemon. Heavy, and semantically wrong: a deserialised model carries a dead
+    # pointer, so the worker has to rebuild it anyway (.admRxLoadAll rejects it on
+    # the DLL check). Each daemon keeps its own.
+    .fn_list  <- .fn_list[!vapply(.fn_list, is.environment, logical(1))]
     .fn_list[[.worker_fn_name]] <- worker_fn
   }
 
@@ -2099,6 +2503,7 @@ admStopWorkers <- function() {
 
   if (use_parallel) {
     effective_workers <- .adm_worker_env$n
+    .admWarmDaemons(ui, pinfo, all_args$sens_cache_file)
     base_tpw          <- max(1L, floor(.ctl$cores / effective_workers))
     remainder         <- max(0L, .ctl$cores - base_tpw * effective_workers)
     cores_vec         <- c(rep(base_tpw + 1L, remainder), rep(base_tpw, effective_workers - remainder))
@@ -2216,6 +2621,23 @@ admStopWorkers <- function() {
     })
   }
 
+  # Report any worker that silently dropped to a finite-difference gradient.
+  #
+  # RAISED HERE, IN THE PARENT, because mirai does not relay a daemon's
+  # conditions: the warning these branches used to issue inside
+  # .admWorkerLoadModels was inert, and that branch is reachable ONLY in a daemon
+  # (the sequential path passes sensModel_direct and short-circuits). So the one
+  # signal for "this restart computed a different gradient from the sequential
+  # fit" fired exclusively where nothing could hear it -- and the difference is
+  # invisible in the objective, which is why it needs saying at all.
+  .fb <- unique(unlist(lapply(results, function(r) r$sens_fallback)))
+  if (length(.fb))
+    warning("admixr2: ", length(.fb), " parallel worker(s) fell back to a ",
+            "finite-difference gradient while the parent uses sensitivities -- ",
+            paste(.fb, collapse = "; "),
+            ". Results may differ slightly from a workers = 1 fit.",
+            call. = FALSE)
+
   nlls <- vapply(results, function(r) r$objective, double(1))
   best <- which.min(nlls)
   best_result <- results[[best]]
@@ -2256,21 +2678,13 @@ nlmixr2Est.admc <- function(env, ...) {
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
 
-  pinfo      <- .admParseIniDf(.ui$iniDf, .ui)
-  pinfo$nDisplayProgress <- .ctl$nDisplayProgress %||% pinfo$nDisplayProgress
-  # Residual-quadrature nodes travel on pinfo -> arr -> .admResidApply/.admResidDeriv.
-  pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
+  pinfo      <- .admDriverPinfo(.ui, .ctl)
   output_var <- .admOutputVar(.ui)
 
-  for (nm in names(studies))
-    studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
-  # Flatten to observation units (independent single-output blocks, or one joint
-  # unit per same-subject study) and attach ev_full. multi_out is model-level
-  # (the model has >1 endpoint) so a multi-endpoint model always tags obs by cmt.
-  studies    <- .admFlattenStudies(studies)
-  multi_out  <- length(.admOutputVars(.ui)) > 1L
-  any_joint  <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
-  studies    <- .admBuildEvFull(studies, tag_cmt = multi_out)
+  .u         <- .admDriverUnits(studies, .ui, output_var)
+  studies    <- .u$studies
+  multi_out  <- .u$multi_out
+  any_joint  <- .u$any_joint
 
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
@@ -2291,9 +2705,14 @@ nlmixr2Est.admc <- function(env, ...) {
     # should. .adfoNLL/.adirmcNLL refuse beta outright for the related reason
     # that they have no phi at all.
     if (.ctl$grad != "none") {
+      # Name the ALGORITHM change too. This is the one place an algorithm is
+      # chosen outside .admResolveAlgorithm(), and it overrides whatever the user
+      # asked for -- reporting only the grad change left an explicit
+      # algorithm = "NLOPT_LD_SLSQP" silently replaced by BOBYQA.
       message("admControl: a beta() endpoint is fitted derivative-free ",
-              "(grad = \"none\"): its precision is solved from the structural ",
-              "model, and the gradient paths carry only d(prediction)/d(theta).")
+              "(grad = \"none\", algorithm = \"", .admDefaultAlgorithm("none"),
+              "\"): its precision is solved from the structural model, and the ",
+              "gradient paths carry only d(prediction)/d(theta).")
       .ctl$grad      <- "none"
       .ctl$algorithm <- .admDefaultAlgorithm("none")
     }
@@ -2301,7 +2720,12 @@ nlmixr2Est.admc <- function(env, ...) {
 
   want_grad    <- .ctl$grad != "none"
   want_sens    <- .ctl$grad == "sens"
-  want_central <- .ctl$grad == "cfd"
+  # Central is the only differencing admixr2 does: `grad = "fd"` IS central, and
+  # the forward option was removed in 0.4.1 (10^2-10^4x less accurate at every
+  # site measured). `use_central` survives as internal plumbing because admc's
+  # batched-solve offsets and block counts are written in terms of it; it is
+  # never FALSE.
+  want_central <- TRUE
   # Multi-compartment gradient. Independent blocks use the per-output analytical/
   # sens gradient. Joint (same-subject) fits are scored by a stacked MVN: with a
   # sens model + etas the joint gradient is analytical (.admGrad joint branch);
@@ -2319,7 +2743,7 @@ nlmixr2Est.admc <- function(env, ...) {
   sensModel <- if (want_sens) {
     sm <- tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
     if (is.null(sm))
-      warning("admControl(grad='sens'): sensitivity model unavailable -- falling back to forward FD")
+      warning("admControl(grad='sens'): sensitivity model unavailable -- falling back to central FD")
     else if (isTRUE(sm$is_lincmt))
       warning("admControl(grad='sens'): linCmt sensitivity model detected; grad='fd' is typically faster for linCmt models -- consider switching to admControl(grad='fd')")
     sm
@@ -2331,16 +2755,19 @@ nlmixr2Est.admc <- function(env, ...) {
   # mu-referenced theta at all, which used to force a full FD gradient. If the
   # augmentation was unavailable (theta_sens_cols NULL) the old behaviour stands:
   # sens for the paired thetas + FD for the unpaired, or full FD when none is paired.
+  # Hoisted out of the message block below: the FD-index gate reads it too, and
+  # a conditionally-defined flag would be an "object not found" the first time a
+  # model with no unpaired theta reached the step probe.
+  .theta_sens <- want_sens && !is.null(sensModel) &&
+    !is.null(sensModel$theta_sens_cols) &&
+    all(.unpaired %in% names(sensModel$theta_sens_cols))
   if (!any_joint && pinfo$n_eta > 0L && length(.unpaired) > 0L) {
-    .theta_sens <- want_sens && !is.null(sensModel) &&
-      !is.null(sensModel$theta_sens_cols) &&
-      all(.unpaired %in% names(sensModel$theta_sens_cols))
     if (.theta_sens) {
       message(sprintf(
         "admc: struct theta(s) without mu-referencing: %s. Sens model carries their sensitivities (no FD).",
         paste(.unpaired, collapse = ", ")))
     } else if (want_sens && all(!pinfo$struct_has_eta)) {
-      message(sprintf("admc: no mu-referenced struct thetas (%s); falling back to full forward FD.",
+      message(sprintf("admc: no mu-referenced struct thetas (%s); falling back to full central FD.",
                       paste(.unpaired, collapse = ", ")))
       want_sens <- FALSE
       sensModel <- NULL
@@ -2397,6 +2824,43 @@ nlmixr2Est.admc <- function(env, ...) {
   # Joint fits use FD only when no sens model is available; otherwise .admGrad's
   # joint branch computes the analytical stacked-MVN gradient.
   joint_fd <- any_joint && is.null(sensModel)
+
+  # Measure the gradient's FD steps ONCE, here, for every later difference to
+  # reuse (FOCEI's numericGrad mechanism at nF == 1).
+  #
+  # The set is the parameters admc actually steps in PARAMETER space:
+  #   * joint study with no sens model -> .admNLLGradFD differences the objective
+  #     in every coordinate;
+  #   * otherwise the struct thetas the sens model has no THETA_j_ column for,
+  #     which .admGrad perturbs in the params frame. "Unpaired" alone does NOT
+  #     qualify: .admBuildThetaSens emits a direction per unpaired theta, and
+  #     .admGrad then reads d(pred)/d(theta) exactly and differences nothing.
+  #
+  # The ETA perturbations keep the fixed scale regardless. They carry no
+  # parameter index, so .admGrad/.admGradBatch read them through .admGH0(), which
+  # returns the scalar the Gill vector was built from -- indexing a per-parameter
+  # vector by an eta number would pick an unrelated parameter's step, and using
+  # it bare would recycle across the n_sim rows without a warning. That split is
+  # also the honest one: Gill83 measured the OBJECTIVE, and d(pred)/d(eta) is a
+  # different function.
+  #
+  # Note the struct-theta steps ARE applied to a prediction difference rather
+  # than an objective one. Under common random numbers both are limited by the
+  # same solver-tolerance floor (the draws are shared, so MC noise largely
+  # cancels from either), and the quantity being made accurate is d(NLL)/d(theta)
+  # either way -- the prediction difference is only the route to it. It remains a
+  # transfer, and worth knowing when reading a step back.
+  .fd_idx <- if (!want_grad) integer(0)
+    else if (joint_fd) seq_along(ov$p0)
+    else if (length(.unpaired) && !.theta_sens)
+      which(pinfo$struct_names %in% .unpaired)
+    else integer(0)
+  if (length(.fd_idx))
+    grad_h <- .admShi21GradH(
+      function(pp) .admNLL(pp, pinfo, studies, z_list, rxMod, output_var,
+                           params_list, cores),
+      ov$p0, .fd_idx, grad_h, scaled = FALSE, .var.name = "admc gradient")
+
   eval_grad_f <- if (!want_grad) NULL
     else if (joint_fd)
       function(p) .admNLLGradFD(p, pinfo, studies, z_list, rxMod, output_var,
@@ -2407,11 +2871,11 @@ nlmixr2Est.admc <- function(env, ...) {
                               use_central = want_central)
 
   grad_label <- if (!want_grad) "none"
-  else if (joint_fd) (if (want_central) "central FD (joint)" else "forward FD (joint)")
+  else if (joint_fd) "central FD (joint)"
   else if (any_joint) "Sens (joint)"
   else if (!is.null(sensModel))
     if (pinfo$has_kappa) "Sens+FD" else "Sens"
-  else if (want_central) "central FD" else "forward FD"
+  else "central FD"
   message("=== admixr2: Aggregate Data Modeling (MC) ===")
   message(sprintf("  Obs units: %d | MC samples: %d | Params: %d | Cores: %d | Grad: %s | Restarts: %d",
                   length(studies), .ctl$n_sim, length(ov$p0), cores,
@@ -2462,7 +2926,9 @@ nlmixr2Est.admc <- function(env, ...) {
                         ftol_rel     = .ctl$ftol_rel,
                         maxeval      = .ctl$maxeval,
                         use_grad     = want_grad,
-                        grad_h       = .ctl$grad_h,
+                        # The measured steps, not the constant -- restarts must
+                        # difference the same way the sequential path does.
+                        grad_h       = grad_h,
                         grad_bounds  = .ctl$grad_bounds,
                         output_var   = output_var,
                         sampling     = .ctl$sampling,
@@ -2478,6 +2944,12 @@ nlmixr2Est.admc <- function(env, ...) {
   }
 
   t_opt     <- (proc.time() - t0)["elapsed"]
+  # A gradient fit is confined to <box centre> +/- grad_bounds; say so if it
+  # stopped there rather than at an interior optimum. The centre is the winning
+  # RESTART's own init where there was one -- see .admScaledOptimize()'s box_centre.
+  if (want_grad)
+    .admWarnOnBounds(opt$solution, opt$box_centre %||% ov$p0, ov,
+                     .ctl$grad_bounds, pinfo)
   final     <- .admUnpack(opt$solution, pinfo)
   fullTheta <- .admFullTheta(final, pinfo)
 
@@ -2557,6 +3029,13 @@ nlmixr2Est.admc <- function(env, ...) {
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
                         # the TBS residual quadrature the FIT used -- see adfo.R
                         resid_nodes   = pinfo$resid_nodes,
+                        # ... and the solver tolerance the FIT used, for the
+                        # same reason: plot.admFit() re-solves the model to build
+                        # the predicted mean and covariance panels, and a fit run
+                        # at a looser sigdig diagnosed against rxode2's stock
+                        # tolerances shows standardised-residual structure the
+                        # objective was never minimised on.
+                        sigdig        = pinfo$sigdig,
                         omega         = final$omega,
                         L             = final$L,
                         eta_col_names = pinfo$eta_col_names,
@@ -2574,47 +3053,10 @@ nlmixr2Est.admc <- function(env, ...) {
                         n_sim         = .ctl$n_sim,
                         sampling      = .ctl$sampling)
 
-  nlmixr2est::.nlmixr2FitUpdateParams(.ret)
-  nmObjHandleControlObject.admControl(.ctl, .ret)
-  if (exists("control", .ui)) rm(list = "control", envir = .ui)
-  .ret$control <- .admToFoceiControl(.ctl, .admCovSkip(.cov, .ui))
-  .focei_model <- suppressMessages(tryCatch(.ui$foceiModel, error = function(e) NULL))
-  if (!is.null(.focei_model)) .ret$model <- .focei_model
-
-  .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = if (multi_out) admData(.admEndpointNames(.ui)) else admData(),
-    control = .ret$control,
-    table = .ret$table, env = .ret, est = "admc")
-
-  .fit$env$method   <- "admc"
-  .admRestoreCovNames(.fit, .cov_nms)
-  .fit$env$studies  <- studies
-  .fit$env$admExtra <- .ret$admExtra
-  # Populate nlmixr2-style parameter history so traceplot(fit) works natively.
-  .admAttachParHist(.fit, .ret$admExtra$all_traces, .ret$admExtra$par_names, .ui)
-  # Store observed + predicted aggregate moments (E vector, V matrix) per study.
-  .admAttachAggData(.fit, .ret$admExtra, .ui)
-  .old_cls <- class(.fit)
-  .new_cls <- c("admFit", .old_cls)
-  attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")
-  class(.fit) <- .new_cls
-
-  .stats <- .admCalcObjStats(opt$objective, length(ov$p0), studies)
-  row.names(.stats$objDf) <- "admc"
-  .fit$env$logLik    <- .stats$ll
-  .fit$env$nobs      <- .stats$nobs
-  .fit$env$objDf     <- .stats$objDf
-  .fit$env$OBJF      <- .stats$objDf$OBJF
-  .fit$env$AIC       <- .stats$objDf$AIC
-  .fit$env$BIC       <- .stats$objDf$BIC
-  .fit$env$objective <- opt$objective
-  .fit$env$time     <- data.frame(
-    optimize   = t_opt,
-    covariance = t_cov,
-    other      = 0,
-    elapsed    = t_elapsed,
-    row.names  = NULL
-  )
-
-  .fit
+  .admFinaliseFit(.ret, .ui, .ctl, est = "admc", objective = opt$objective,
+                  ov = ov, studies = studies, cov = .cov,
+                  cov_nms = .cov_nms, multi_out = multi_out,
+                  extra_field = "admExtra",
+                  handle_ctl = nmObjHandleControlObject.admControl,
+                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed)
 }

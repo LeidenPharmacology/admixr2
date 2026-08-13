@@ -7,8 +7,8 @@
 adghControl(
   studies = list(),
   n_nodes = 5L,
-  grad = c("analytical", "fd", "cfd", "none"),
-  algorithm = "NLOPT_LN_BOBYQA",
+  grad = c("analytical", "fd", "none"),
+  algorithm = NULL,
   maxeval = 500L,
   ftol_rel = .Machine$double.eps^(1/2),
   print = 10L,
@@ -27,7 +27,7 @@ adghControl(
   calcTables = FALSE,
   compress = TRUE,
   ci = 0.95,
-  sigdig = 4,
+  sigdig = NULL,
   sigdigTable = NULL,
   addProp = c("combined2", "combined1"),
   optExpression = TRUE,
@@ -51,11 +51,18 @@ For models with >= 5 etas the node count grows steeply; consider reducing
 
 \item{grad}{Gradient mode. \code{"analytical"} (default) uses closed-form
 contractions through the sensitivity equations -- cheapest and exact.
-\code{"fd"} uses forward finite differences; \code{"cfd"} uses central FD.
+\code{"fd"} uses central finite differences (forward differencing was removed
+in 0.4.1; see \code{adfoControl()}).
 \code{"none"} uses derivative-free BOBYQA.}
 
-\item{algorithm}{nloptr algorithm. Automatically coerced to
-\code{"NLOPT_LD_LBFGS"} when \code{grad != "none"}.}
+\item{algorithm}{nloptr algorithm, or \code{NULL} (default) to pick the default
+that matches \code{grad}: \code{"NLOPT_LD_LBFGS"} with a gradient, \code{"NLOPT_LN_BOBYQA"}
+when \code{grad = "none"}. Any algorithm reported by
+\code{\link[nloptr:nloptr.print.options]{nloptr::nloptr.print.options()}} is accepted. An explicit algorithm is
+reconciled with \code{grad}: when \code{grad = "none"} a gradient-based algorithm
+(\verb{NLOPT_LD_*} / \verb{NLOPT_GD_*}) falls back to \code{"NLOPT_LN_BOBYQA"}; when a
+gradient is requested a derivative-free algorithm (\verb{NLOPT_LN_*} /
+\verb{NLOPT_GN_*}) turns the gradient off. Both emit a message.}
 
 \item{maxeval}{Maximum function evaluations (default 500).}
 
@@ -77,7 +84,12 @@ output; lower it (e.g. \code{1000L}) to see progress during long fits.}
 \item{grad_h}{Finite-difference step for unpaired struct theta gradient and
 FD Jacobian fallback.}
 
-\item{grad_bounds}{Box-constraint half-width when using gradients.}
+\item{grad_bounds}{Box-constraint half-width when using gradients: the fit is
+confined to \verb{p0 +/- grad_bounds} on the optimizer scale, which for a
+log-scale parameter is a factor of \code{exp(grad_bounds)} (~148 at the default
+5). This bound is admixr2's, not the model's -- an unbounded parameter has
+no other -- and nloptr reports normal convergence at a box corner, so a
+warning is emitted if an estimate finishes on it.}
 
 \item{cov_h}{Inner FD step for the gradient-based Hessian (only used when
 \code{covMethod = "r"} and \code{grad != "none"}).}
@@ -110,7 +122,28 @@ each restart.}
 
 \item{rxControl}{\code{rxode2::rxControl()} object. Created automatically when \code{NULL}.}
 
-\item{calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd, literalFix}{Passed to \code{nlmixr2est::foceiControl()} for the table/output machinery.}
+\item{calcTables, compress, ci, sigdigTable, optExpression, sumProd, literalFix}{Passed to \code{nlmixr2est::foceiControl()} for the table/output machinery.}
+
+\item{sigdig}{Significant digits asked of the ODE solver, or \code{NULL} (the
+default) to leave rxode2's own solver tolerances alone. When set, it is
+passed to \code{rxode2::rxSolve()}'s own \code{sigdig} argument for every solve the
+estimator issues -- rxode2 owns the mapping to \code{atol}/\code{rtol} and has changed
+it between releases, which is why the digits, not the tolerances, are what
+travels -- and to \code{nlmixr2est::foceiControl()} for the post-fit tables.
+
+It is a speed lever, and an opt-in one because it is not free. The
+estimators finite-difference the solve with steps of the same order:
+\code{grad_h} (1e-4), \code{cov_h} (1e-3) and \code{cov_h_outer} (~2.5e-3), while
+\code{sigdig = 4} maps to a relative tolerance of ~1e-4 on current rxode2.
+Differencing a solution whose own noise is 1e-4 with a 1e-4 step returns
+noise, and it surfaces as a moved objective and an indefinite covariance
+Hessian (every \code{SE} reported \code{NA}) rather than as an error. Most worthwhile
+where the gradient is fully analytic and nothing differences the solve --
+\code{adfoControl(grad = "analytical")} measured ~4.8x faster at \code{sigdig = 4}
+with standard errors unchanged to 4 significant figures. Elsewhere, compare
+the objective and the standard errors against \code{NULL} before relying on it.
+Table formatting is unaffected either way: \code{sigdigTable} defaults to 4
+regardless.}
 
 \item{addProp}{How combined additive+proportional error is parameterised in
 the nlmixr2 output tables: \code{"combined2"} (default) or \code{"combined1"}.}

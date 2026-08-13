@@ -1264,3 +1264,128 @@ one_cmt_transit_fn <- function() {
   )
   .int_pipeline_cache
 }
+
+# ---- Second-order sensitivities (adfo's dJ/dtheta) ---------------------------
+#
+# Cache lives here, not in the test file: a binding in a test file's eval-env is
+# GC'd when the file finishes, which unloads the rxMod DLL and crashes any later
+# rxSolve (see the note at the top of this file).
+.int_sens2_cache <- NULL
+
+# Both models carry an UNPAIRED theta (tka, no eta) alongside two mu-referenced
+# ones, so the theta-column path and the eta-column path are both exercised.
+.sens2_ode_fn <- function() {
+  ini({
+    tka     <- log(1.2) ; label("Log ka (unpaired)")
+    tcl     <- log(5)   ; label("Log CL")
+    tv      <- log(20)  ; label("Log V")
+    add.err <- 0.3      ; label("Additive SD")
+    eta.cl  ~ 0.09
+    eta.v   ~ 0.04
+  })
+  model({
+    ka <- exp(tka)
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.v)
+    d/dt(depot)   <- -ka * depot
+    d/dt(central) <-  ka * depot - (cl / v) * central
+    cp <- central / v
+    cp ~ add(add.err)
+  })
+}
+
+.sens2_lincmt_fn <- function() {
+  ini({
+    tka     <- log(1.2) ; label("Log ka (unpaired)")
+    tcl     <- log(5)   ; label("Log CL")
+    tv      <- log(20)  ; label("Log V")
+    add.err <- 0.3      ; label("Additive SD")
+    eta.cl  ~ 0.09
+    eta.v   ~ 0.04
+  })
+  model({
+    ka <- exp(tka)
+    cl <- exp(tcl + eta.cl)
+    v  <- exp(tv  + eta.v)
+    linCmt() ~ add(add.err)
+  })
+}
+
+# Analytic 1-cmt oral mean, for the aggregate "observed" data.
+.sens2_mean <- function(ka, cl, v, dose, times) {
+  ke <- cl / v
+  (dose * ka) / (v * (ka - ke)) * (exp(-ke * times) - exp(-ka * times))
+}
+
+.int_sens2_setup <- function() {
+  if (!is.null(.int_sens2_cache)) return(.int_sens2_cache)
+
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  skip_if_not_installed("nlmixr2est")
+
+  times <- c(0.25, 0.5, 1, 2, 4, 8, 12)
+  E1    <- .sens2_mean(1.2, 5, 20, 100, times)
+  st    <- list(E = E1, V = diag((0.25 * E1)^2), n = 200L, times = times,
+                ev = rxode2::et(amt = 100))
+
+  one <- function(fn) {
+    ui <- suppressMessages(tryCatch(rxode2::rxode2(fn), error = function(e) NULL))
+    if (is.null(ui)) return(NULL)
+    ov    <- admixr2:::.admOutputVar(ui)
+    pinfo <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+    sm2   <- suppressMessages(tryCatch(admixr2:::.admLoadSensModel(ui, order = 2L),
+                                       error = function(e) NULL))
+    sm1   <- suppressMessages(tryCatch(admixr2:::.admLoadSensModel(ui, order = 1L),
+                                       error = function(e) NULL))
+    rxMod <- suppressMessages(tryCatch(admixr2:::.admLoadModel(ui), error = function(e) NULL))
+    studies <- admixr2:::.admBuildEvFull(
+      admixr2:::.admFlattenStudies(
+        list(s1 = admixr2:::.admNormaliseStudy(st, "s1", ov))))
+    list(ui = ui, ov = ov, pinfo = pinfo, sm1 = sm1, sm2 = sm2, rxMod = rxMod,
+         studies = studies,
+         params_list = admixr2:::.admMakeParamsList(1L, pinfo, length(studies)),
+         p0 = admixr2:::.admBuildOptVec(pinfo)$p0)
+  }
+
+  .int_sens2_cache <<- list(ode = one(.sens2_ode_fn), lin = one(.sens2_lincmt_fn),
+                            times = times)
+  .int_sens2_cache
+}
+
+# Central difference of the order-2 model's own FIRST-order columns -- an
+# independent check, since f1 comes from the variational compartments and f2 from
+# a separate second-order expansion.
+.sens2_cfd_check <- function(env, h = 1e-5) {
+  sm <- env$sm2
+  ev <- env$studies[[1L]]$ev_full
+  tms <- .int_sens2_cache$times
+  r  <- sm$rename_map
+  eta_nms <- paste0("eta.", sub("^eta[.]", "", env$pinfo$eta_names))
+  base <- stats::setNames(
+    as.list(c(log(1.2), log(5), log(20), 0.3, 0, 0)),
+    c(r[["tka"]], r[["tcl"]], r[["tv"]], r[["add.err"]],
+      r[[eta_nms[1L]]], r[[eta_nms[2L]]]))
+  solve1 <- function(p) {
+    out <- rxode2::rxSolve(sm$mod, params = as.data.frame(p, check.names = FALSE),
+                           events = ev, nDisplayProgress = .Machine$integer.max)
+    out[out[["time"]] %in% tms, , drop = FALSE]
+  }
+  o0 <- solve1(base)
+  worst <- 0
+  for (i in seq_along(sm$eta_dirs)) for (b in seq_along(sm$dirs)) {
+    d <- sm$dirs[b]
+    # The direction's index, without a regex backreference: the ETA_i_ / THETA_j_
+    # names are structured enough to split, and a backreference here is one more
+    # thing to get wrong in a file this long.
+    .idx <- as.integer(gsub("[^0-9]", "", d))
+    par_b <- if (grepl("^ETA_", d)) r[[eta_nms[.idx]]]
+             else paste0("THETA[", .idx, "]")
+    ph <- base; ph[[par_b]] <- ph[[par_b]] + h
+    pl <- base; pl[[par_b]] <- pl[[par_b]] - h
+    cfd <- (solve1(ph)[[sm$sens_cols[i]]] - solve1(pl)[[sm$sens_cols[i]]]) / (2 * h)
+    ana <- o0[[sm$d2_cols[i, b]]]
+    worst <- max(worst, max(abs(ana - cfd)) / max(1e-12, max(abs(cfd))))
+  }
+  worst
+}

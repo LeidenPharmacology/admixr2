@@ -381,6 +381,12 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         } else {
           eta_mat <- matrix(0, control$n_sim, 0L)
         }
+        # No sigdig: datagen() generates the TRUTH, so it integrates at rxode2's
+        # own tolerances regardless of what any later fit asks for. That matches
+        # the default fit exactly (the estimator controls default sigdig = NULL);
+        # a fit that opts into a looser sigdig is then measured against a
+        # reference tighter than itself, which is the right way round -- the
+        # alternative attributes the solver gap to the estimator.
         cp_mat <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, eta_mat,
                                study_tmp, ov, params_list[[1L]], control$cores)
         # beta precision (SOLVED) rides back on cp_mat; fold it into the row array

@@ -22,6 +22,25 @@ jobs:
       # integration tier. This entry is kept as documentation / belt-and-braces.
       NOT_CRAN: "true"
 
+      # DESCRIPTION carries Config/testthat/parallel, and coverage must OPT OUT
+      # of it. TESTTHAT_PARALLEL short-circuits find_parallel() before it reads
+      # DESCRIPTION, so this is the override and no branch file changes.
+      #
+      # It was reasoned that covr would survive parallel testthat, because covr
+      # instruments the INSTALLED copy and appends
+      #   reg.finalizer(ns, function(...) covr:::save_trace(COVERAGE_DIR), onexit = TRUE)
+      # to its load script, so every process loading that copy -- including each
+      # testthat worker, an ordinary callr subprocess that exits normally --
+      # should dump its counters into the shared COVERAGE_DIR for covr to merge.
+      # MEASUREMENT SAYS OTHERWISE. On 3a49e43 the suite ran to completion and
+      # then died in the merge:
+      #   Error in readRDS(f) : error reading from connection
+      #   Calls: <Anonymous> ... merge_coverage.character -> lapply -> FUN
+      # The workers do write traces; what does not hold is that every trace is
+      # complete and readable by the time covr walks the directory. Note the
+      # failure is LOUD, which is the one thing the original reasoning got right.
+      TESTTHAT_PARALLEL: "false"
+
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +70,55 @@ jobs:
           extra-packages: any::covr, any::xml2
           needs: coverage
 
+      # rxode2 links RcppParallel's TBB, so it must be loadable against whichever
+      # RcppParallel the resolver installed -- and right now it is not, on Windows.
+      # RcppParallel 6.2.0 (Windows binary 2026-08-01) moved Windows from a static
+      # TBB to a shipped shared tbb.dll and removed the compatibility stub, while
+      # CRAN still serves the rxode2 5.1.5 Windows binary built 2026-07-30 against
+      # the previous generation, so rxode2.dll imports a procedure that no longer
+      # exists. Each package is individually fine; only the COMBINATION is broken,
+      # which is why a dated snapshot is the right shape of fix -- and a Windows
+      # source build of rxode2 against 6.2.0 does not link (nlmixr2est hit that).
+      #
+      # The date is chosen from what the snapshots actually serve, not guessed:
+      #   2026-07-29  RcppParallel 6.1.1  rxode2 5.1.5   (win binaries: both)
+      #   2026-07-30  RcppParallel 6.1.1  rxode2 5.1.5   (win binaries: both)
+      #   2026-07-31  RcppParallel 6.2.0  rxode2 -       (no rxode2 win binary)
+      #   latest      RcppParallel 6.2.0  rxode2 -
+      # 6.2.0's SOURCE reached CRAN on 07-30, so a 07-31 snapshot still serves
+      # it and pins nothing -- which is what the first attempt at this did.
+      # 07-30 is the last date with the consistent pair.
+      #
+      # DETECT and REPAIR are separate steps on purpose. Merely testing whether
+      # rxode2 loads pulls RcppParallel's DLL into the session, and Windows will
+      # not overwrite a loaded DLL -- doing both in one step fails with "cannot
+      # remove prior installation of package 'RcppParallel'". Each `Rscript {0}`
+      # step is a fresh R process, so the lock is gone by the time we install.
+      #
+      # Conditional, so it costs one requireNamespace() on a healthy platform and
+      # removes itself once CRAN rebuilds the rxode2 binary -- same shape as the
+      # stringfish/qs2 guard above. Delete both once they are no-ops everywhere.
+      - name: Detect whether rxode2 loads against the installed RcppParallel
+        id: rxode2-load
+        run: |
+          .ok <- requireNamespace("rxode2", quietly = TRUE)
+          cat(paste0("needs_pin=", if (.ok) "false" else "true"),
+              file = Sys.getenv("GITHUB_OUTPUT"), append = TRUE, fill = TRUE)
+        shell: Rscript {0}
+
+      - name: Pin RcppParallel to a consistent snapshot if it does not
+        if: steps.rxode2-load.outputs.needs_pin == 'true'
+        run: |
+          message("rxode2 does not load -- pinning RcppParallel to the snapshot ",
+                  "its binary was built against")
+          install.packages("RcppParallel",
+                           repos = "https://packagemanager.posit.co/cran/2026-07-30")
+        shell: Rscript {0}
+
+      - name: Confirm rxode2 loads
+        run: library(rxode2)   # fail here, with this message, not later and opaquely
+        shell: Rscript {0}
+
       - name: Test coverage
         run: |
           cov <- covr::package_coverage(
@@ -59,7 +127,28 @@ jobs:
             install_path = file.path(normalizePath(Sys.getenv("RUNNER_TEMP"), winslash = "/"), "package")
           )
           covr::to_cobertura(cov)
+          # Line-level detail alongside the cobertura upload. codecov's own UI
+          # gives per-file percentages but reading which LINES are uncovered
+          # means clicking through a SPA, and covr does not run to completion on
+          # Windows (it dies in merge_coverage reading a trace file), so there is
+          # no local route to the same numbers.
+          .z <- subset(as.data.frame(covr::tally_coverage(cov)), value == 0)
+          writeLines(
+            unlist(lapply(sort(unique(.z$filename)), function(f)
+              c(paste0("### ", f, " (", sum(.z$filename == f), " uncovered)"),
+                paste(sort(unique(.z$line[.z$filename == f])), collapse = " ")))),
+            "uncovered-lines.txt")
         shell: Rscript {0}
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ github.sha }}
+          path: |
+            cobertura.xml
+            uncovered-lines.txt
+          if-no-files-found: warn
 
       - uses: codecov/codecov-action@v4
         with:

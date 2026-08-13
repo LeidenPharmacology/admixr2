@@ -15,7 +15,7 @@ admControl(
   seed = 12345L,
   cores = rxode2::rxCores(),
   nDisplayProgress = .Machine$integer.max,
-  grad = c("sens", "fd", "cfd", "none"),
+  grad = c("sens", "fd", "none"),
   grad_h = 1e-04,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
@@ -29,7 +29,7 @@ admControl(
   calcTables = FALSE,
   compress = TRUE,
   ci = 0.95,
-  sigdig = 4,
+  sigdig = NULL,
   sigdigTable = NULL,
   addProp = c("combined2", "combined1"),
   optExpression = TRUE,
@@ -134,16 +134,16 @@ for scripts, vignettes and logs; lower it (e.g. \code{1000L}) to see solver
 progress during long interactive fits.}
 
 \item{grad}{Gradient mode: \code{"sens"} (sensitivity equations, default), \code{"fd"}
-(forward finite differences), \code{"cfd"} (central finite differences), or
+(central finite differences; forward was removed in 0.4.1), or
 \code{"none"} (derivative-free). A warning is issued when \code{"sens"} is requested
 but the sensitivity model is unavailable; the estimator then falls back to
-forward finite differences.}
+central finite differences.}
 
 \item{grad_h}{Step size for finite-difference gradient evaluation during
-optimization (used by \code{grad = "fd"} or \code{"cfd"}). The default 1e-4 is near
-the optimal balance between truncation error (grows with \code{h}) and MC noise
-amplification (grows as \code{1/h}) for forward FD. Central FD (\code{"cfd"}) has a
-slightly wider optimum around 1e-3, but 1e-4 works well for both.}
+optimization (used by \code{grad = "fd"}). This is the FALLBACK step: the step
+is normally measured per parameter by the Shi (2021) procedure, and \code{grad_h}
+is what a parameter falls back to when that measurement cannot be made
+(a direction the objective is flat in, or a failed noise estimate).}
 
 \item{cov_h}{Inner FD step for the gradient-based Hessian (only used when
 \code{covMethod = "r"} and \code{grad != "none"}). Each gradient evaluation has MC
@@ -161,7 +161,12 @@ empirically it matches the analytical (sensitivity-equation) Hessian ground
 truth. Increase (e.g. to \code{5e-3} or \code{1e-2}) if the Hessian is non-positive
 definite.}
 
-\item{grad_bounds}{Box-constraint half-width when using gradients.}
+\item{grad_bounds}{Box-constraint half-width when using gradients: the fit is
+confined to \verb{p0 +/- grad_bounds} on the optimizer scale, which for a
+log-scale parameter is a factor of \code{exp(grad_bounds)} (~148 at the default
+5). This bound is admixr2's, not the model's -- an unbounded parameter has
+no other -- and nloptr reports normal convergence at a box corner, so a
+warning is emitted if an estimate finishes on it.}
 
 \item{covMethod}{Covariance method: \code{"r"} (numerical Hessian over the
 structural, residual-error and omega parameters) or \code{"none"}. Omega is
@@ -198,7 +203,28 @@ a fit is interrupted, \code{admStopWorkers()} cleans up any survivors.}
 
 \item{rxControl}{\code{rxode2::rxControl()} object. Created automatically when \code{NULL}.}
 
-\item{calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd, literalFix}{Passed to \code{nlmixr2est::foceiControl()} for the table/output machinery.}
+\item{calcTables, compress, ci, sigdigTable, optExpression, sumProd, literalFix}{Passed to \code{nlmixr2est::foceiControl()} for the table/output machinery.}
+
+\item{sigdig}{Significant digits asked of the ODE solver, or \code{NULL} (the
+default) to leave rxode2's own solver tolerances alone. When set, it is
+passed to \code{rxode2::rxSolve()}'s own \code{sigdig} argument for every solve the
+estimator issues -- rxode2 owns the mapping to \code{atol}/\code{rtol} and has changed
+it between releases, which is why the digits, not the tolerances, are what
+travels -- and to \code{nlmixr2est::foceiControl()} for the post-fit tables.
+
+It is a speed lever, and an opt-in one because it is not free. The
+estimators finite-difference the solve with steps of the same order:
+\code{grad_h} (1e-4), \code{cov_h} (1e-3) and \code{cov_h_outer} (~2.5e-3), while
+\code{sigdig = 4} maps to a relative tolerance of ~1e-4 on current rxode2.
+Differencing a solution whose own noise is 1e-4 with a 1e-4 step returns
+noise, and it surfaces as a moved objective and an indefinite covariance
+Hessian (every \code{SE} reported \code{NA}) rather than as an error. Most worthwhile
+where the gradient is fully analytic and nothing differences the solve --
+\code{adfoControl(grad = "analytical")} measured ~4.8x faster at \code{sigdig = 4}
+with standard errors unchanged to 4 significant figures. Elsewhere, compare
+the objective and the standard errors against \code{NULL} before relying on it.
+Table formatting is unaffected either way: \code{sigdigTable} defaults to 4
+regardless.}
 
 \item{addProp}{How combined additive+proportional error is parameterised in
 the nlmixr2 output tables: \code{"combined2"} (default, variance form) or

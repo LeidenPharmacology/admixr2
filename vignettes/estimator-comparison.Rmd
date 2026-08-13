@@ -411,7 +411,7 @@ normal and expected.
 # adfo key arguments (fastest; linearised likelihood)
 adfoControl(
   studies    = list(...),
-  grad       = "none",      # "none" (BOBYQA), "analytical", "fd", "cfd"
+  grad       = "none",      # "none" (BOBYQA), "analytical", "fd"
   maxeval    = 500L,
   n_restarts = 1L,
   covMethod  = "r",         # SEs for struct+sigma only; omega SEs are not computed
@@ -422,7 +422,7 @@ adfoControl(
 admControl(
   studies    = list(...),
   n_sim      = 5000L,       # MC sample count
-  grad       = "sens",      # gradient mode: "sens", "fd", "cfd", "none"
+  grad       = "sens",      # gradient mode: "sens", "fd", "none"
   n_restarts = 1L,          # number of optimizer restarts
   workers    = 1L,          # parallel workers for restarts
   covMethod  = "r",         # SEs for struct+sigma only; omega SEs are not computed
@@ -433,7 +433,7 @@ admControl(
 adghControl(
   studies    = list(...),
   n_nodes    = 5L,          # nodes per eta dimension; total = n_nodes^n_eta
-  grad       = "analytical",# gradient mode: "analytical", "fd", "cfd", "none"
+  grad       = "analytical",# gradient mode: "analytical", "fd", "none"
   n_restarts = 1L,
   workers    = 1L,
   covMethod  = "r",         # SEs for struct+sigma only
