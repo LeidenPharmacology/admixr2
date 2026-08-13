@@ -37,8 +37,22 @@ jobs:
       # 6134 MB heap; see the note there.
       R_KEEP_PKG_SOURCE: yes
 
-      # See R-CMD-check.yaml for the measured numbers.
-      TESTTHAT_CPUS: 4
+      # DESCRIPTION carries Config/testthat/parallel, and this job must OPT OUT.
+      # TESTTHAT_PARALLEL short-circuits find_parallel() before it reads
+      # DESCRIPTION, so this is the override and no branch file changes.
+      #
+      # This job calls testthat::test_dir() from a plain Rscript against the
+      # INSTALLED package, not through R CMD check, and that combination cannot
+      # start a parallel worker -- on 3a49e43:
+      #   ! testthat subprocess failed to start.
+      #     Error in .Internal(getRegisteredNamespace(name)) %||% loadNamespace(name):
+      #     attempt to use zero-length variable name
+      #     Calls: callr_startup_hook ... is_environment -> asNamespace
+      # The same DESCRIPTION runs parallel FINE under R CMD check (ubuntu-devel
+      # passed on that commit), so this is about the invocation, not the flag.
+      # It is the same test_dir()-in-the-global-env quirk that makes this job the
+      # only one where a bare `.admFoo()` reference fails.
+      TESTTHAT_PARALLEL: "false"
 
     steps:
       - uses: actions/checkout@v4

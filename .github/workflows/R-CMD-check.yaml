@@ -67,6 +67,13 @@ jobs:
       # 2 workers 375.0s, 4 workers 321.6s -- the gain flattens after 2 because
       # wall clock is bounded by the single longest file
       # (test-integration-multi-output.R, ~220s), not by the worker count.
+      #
+      # THIS is the job parallel testthat works in -- through R CMD check, on all
+      # four platforms. test-coverage and compat-oldstack both invoke testthat
+      # themselves rather than via R CMD check, and both BROKE on 3a49e43 (covr's
+      # merge_coverage hit an unreadable trace; test_dir() could not start a
+      # worker at all). They opt out with TESTTHAT_PARALLEL: "false"; see the
+      # comments there. Do not "harmonise" that by turning it off here too.
       TESTTHAT_CPUS: 4
 
     steps:
