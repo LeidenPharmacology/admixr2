@@ -151,10 +151,13 @@ D 3 pops, means AND sds differ     109.499   31.647    0.000   34.143  133.254
 
 A covariate on a parameter with **no** random effect is not on this ridge.
 
-An identifiability **warning** was drafted (`.admWarnCovIdentifiability`,
-`.admCovSdOf`) but **NOT committed** — HvdB pushed back that multi-study identifies
-it, and although the ridge test says design variation alone does not break it, the
-disagreement is unresolved. Do not add it without settling that.
+An identifiability **warning** exists and is unit-tested
+(`.admWarnCovIdentifiability`, `R/covariate.R:1106`, `test-covariate.R:403`) but is
+**called from nowhere** — no driver invokes it. That is deliberate: HvdB pushed back
+that multiple studies identify the effect, and although the ridge test says design
+variation alone does not break it, the disagreement is unresolved. Either wire it
+into `.admCheckCovariates()` or delete it; leaving tested-but-dead code is the worst
+of the three.
 
 ## 7. PAGE case study
 
@@ -201,7 +204,26 @@ The sketch (`sketch_aggdata_covariates.docx`) claims simulating individuals and
 pseudo-group averaging are "equivalent". §5 shows they are not. That claim must not
 carry over.
 
-## 9. Open items
+## 9. The branch carries TWO covariate interfaces — decide before merging
+
+This is the biggest unresolved item, and it is a **public-interface** one.
+
+| | old (rebased in, `dff8eb1`) | new (this session) |
+|---|---|---|
+| study field | `covariate = list(wt = list(mu, sd), method, n_nodes)` | `cov_dist = list(WT = list(...))` |
+| construction | stratified quadrature — `datagen()` emits one weighted study per node | covariate-marginal moments, one study |
+| public surface | exported `admBuildQuadrature()`, `datagen(covariate=)`, `plot(which="covariate")`, `vignettes/covariate-marginalisation.Rmd`, two `_pkgdown.yml` entries | none — no Rd, no vignette, no pkgdown |
+
+So the **documented public face of the branch is the construction §5 shows is biased
+~58% low**, while the construction that recovers truth exactly is undocumented. A
+user following the vignette gets the wrong one. Options, in the order I would take
+them: retire the old interface (it is `method = "gl"/"gh"/"taylor"` — all three are
+node constructions, all on the wrong side of §5) and rewrite the vignette around
+`cov_dist`; or keep both and have the vignette say plainly which to use and why.
+Either way `admBuildQuadrature()` is exported, so removing it is a breaking change —
+though the branch is unreleased, so the window is now.
+
+## 10. Open items
 
 1. **Coverage at ~100 replicates**, across admc/adgh/adfo. If the under-coverage
    appears in all three it is a property of the aggregate likelihood, which is a
@@ -210,7 +232,7 @@ carry over.
    `d(u)/d(s)` matches FD to 7e-11, so the implicit-function derivative is ready);
    the chain rule into `.admGrad` is not. Until then `uq` never runs with gradients.
 3. **adfo** covariate support (needs `J` per covariate value).
-4. **Documentation** — `cov_dist` is in no Rd and no vignette.
+4. **Documentation** — `cov_dist` is in no Rd and no vignette; see §9.
 5. **Issue #120** (nloptr `xtol_rel` default 1e-4) — evidence posted, fix not made.
    Do **not** set `xtol_rel = 0` (BOBYQA hits ROUNDOFF_LIMITED); pick a finite value
    against the measured noise floor. Affects every derivative-free fit.
@@ -220,7 +242,7 @@ carry over.
    be the marginal method. Worth establishing what "did not work" meant.
 7. Run HvdB's original PAGE script for a genuine external cross-check.
 
-## 10. Process notes — these cost real time
+## 11. Process notes — these cost real time
 
 **Silent no-ops, four times.** A discarded return value (`.admCheckCovariates`
 annotations); `library(admixr2)` instead of `load_all`; a python `replace` that did
