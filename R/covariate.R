@@ -760,6 +760,18 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
   .admCovInflateL(pars, pinfo, s)
 }
 
+# Covariate columns for a params frame that stacks `n_blk` blocks of `n_sim`
+# rows, each block a PERTURBATION OF THE SAME SUBJECTS (the finite-difference
+# frames in .admGrad). The covariate rows are tiled per block so every block sees
+# the same subjects' covariates -- which is exactly what makes the difference a
+# common-random-numbers one. Tiling with the wrong stride would give each
+# perturbation different subjects and quietly turn the gradient into noise.
+.admCovColsTiled <- function(mat, mod_params, s, n_sim, n_blk) {
+  cr <- s[["cov_rows"]]
+  if (!is.null(cr)) cr <- cr[rep(seq_len(n_sim), times = n_blk), , drop = FALSE]
+  .admCovCols(mat, mod_params, s[["cov"]], cr)
+}
+
 # Attach per-row covariate values to a study for the GENERAL path. Returns the
 # study unchanged on the collapse path (where the covariate is held at its mean
 # and its variance lives in Omega) and when no distribution is declared.
@@ -792,15 +804,6 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
   has <- vapply(studies, function(s) !is.null(s$cov_dist), logical(1))
   if (!any(has)) return(studies)
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
-
-  # The gradient paths differentiate Omega and do not carry a per-row covariate
-  # through their finite differences, so any mode other than derivative-free
-  # would descend a direction the objective does not follow.
-  if (!identical(grad, "none"))
-    bad("covariate marginalisation currently requires `grad = \"none\"` ",
-        "(derivative-free). The gradient paths have not been extended through ",
-        "it, so any other mode would differentiate a different function than ",
-        "the objective. Got grad = \"", grad, "\".")
 
   cmap <- pinfo$cov_map
   covs <- tryCatch(.ui$allCovs, error = function(e) character(0))
@@ -862,6 +865,22 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
     studies[[nm]]$.adm_cov_collapse <- ok_collapse
     studies[[nm]]$.adm_cov_uq <- if (ok_uq) uq else NULL
   }
+
+  # Gradients: allowed on "rows", refused on "collapse"/"uq".
+  #
+  # On "rows" the covariate is data -- a per-row column -- so the existing
+  # sensitivity machinery differentiates exactly the function the NLL evaluates,
+  # with no new chain rule. "collapse" moves Omega itself (Omega + J Sigma_a J',
+  # and J carries the covariate coefficient), and "uq" replaces an eta column
+  # with u = F_u^-1(Phi(z)); neither derivative is carried yet, so a gradient
+  # there would descend a direction the objective does not follow.
+  pth <- vapply(studies[has], function(s) s$.adm_cov_path %||% "", character(1))
+  if (!identical(grad, "none") && any(pth %in% c("collapse", "uq")))
+    bad("covariate marginalisation via the '",
+        paste(unique(pth[pth %in% c("collapse", "uq")]), collapse = "'/'"),
+        "' path requires `grad = \"none\"` (derivative-free): the gradient has ",
+        "not been extended through it. The general per-row path DOES support ",
+        "gradients. Got grad = \"", grad, "\".")
   studies
 }
 

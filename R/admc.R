@@ -610,6 +610,19 @@ nmObjGetControl.admc <- function(x, ...) {
     eta_mat <- if (pinfo$n_eta > 0L) {          # zero-eta guard -- see .admNLL
       .em <- z %*% t(pars$L); colnames(.em) <- eta_col_names; .em
     } else matrix(0, nrow(z), 0L)
+    # Covariate marginalisation, "rows" path only (the collapse and u-quantile
+    # move Omega / the eta column themselves, which the chain rules below do not
+    # yet carry -- .admCheckCovariates refuses a gradient for those).
+    #
+    # Nothing else has to change here: on this path the covariate is DATA, a
+    # per-row column of the params frame like a time-varying covariate. The sens
+    # model's d(pred)/d(theta) columns are evaluated at each row's own covariate
+    # value, and a covariate coefficient is an unpaired struct theta that already
+    # gets its own THETA_j direction. .admCovRowsFor is deterministic given
+    # (cov_dist, n, n_eta), so these are the SAME rows the NLL used -- which is
+    # what keeps the common-random-numbers gradient valid.
+    if (identical(s$.adm_cov_path, "rows"))
+      s <- .admStudyCovRows(s, pinfo, nrow(eta_mat))
 
     unpaired_k <- which(vapply(pinfo$struct_names, function(nm)
       is.null(pinfo$struct_has_eta) || !isTRUE(pinfo$struct_has_eta[nm]), logical(1)))
@@ -745,6 +758,7 @@ nmObjGetControl.admc <- function(x, ...) {
       for (nm in names(pars$struct)) pdf_big[, nm] <- pars$struct[nm]
       for (nm in pinfo$sigma_names)  pdf_big[, nm] <- 0
       if (n_eta > 0L) pdf_big[seq_len(n_sim), eta_col_names] <- eta_mat
+      pdf_big <- .admCovColsTiled(pdf_big, rxMod$params, s, n_sim, n_runs)
 
       # eta perturbation rows
       if (n_eta > 0L) {
@@ -989,6 +1003,7 @@ nmObjGetControl.admc <- function(x, ...) {
           nm   <- pinfo$struct_names[unpaired_k[bi]]
           pdf_hi[rows, nm] <- pars$struct[nm] + .admGH(h, unpaired_k[bi])
         }
+        pdf_hi <- .admCovColsTiled(pdf_hi, rxMod$params, s, n_sim, n_unp)
         out_hi  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                     events = s$ev_full, cores = cores,
                                     nDisplayProgress = pinfo$nDisplayProgress,

@@ -248,3 +248,66 @@ test_that("routing prefers the most efficient VALID path", {
     .cov_setup(.cov_linear, list(WT = list(values = c(0, 1), probs = c(.6, .4))),
                list(WT = 0.4), E0, V0)$st[[1L]]$.adm_cov_path, "uq")
 })
+
+# ---- gradients on the general path -------------------------------------------
+
+test_that("the general path supports ANALYTIC gradients (vs central FD)", {
+  # The covariate is DATA here -- a per-row params column -- so the existing
+  # sensitivity directions already differentiate the function the NLL evaluates:
+  # a covariate coefficient is an unpaired struct theta with its own THETA_j
+  # direction, and the eta draws are untouched. Nothing new is derived, but the
+  # FINITE-DIFFERENCE frames in .admGrad build their params matrix by hand and
+  # had to be given the covariate columns explicitly (tiled per block, or the
+  # difference stops being common-random-numbers).
+  ml <- log(72); sl <- 0.28
+  r  <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
+                  function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
+  Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
+  st0 <- list(s1 = list(E = r$E, V = Vo, n = 300L, times = .cov_TIMES,
+                        ev = rxode2::et(amt = .cov_DOSE),
+                        cov_dist = list(WT = list(meanlog = ml, sdlog = sl))))
+  ui <- suppressMessages(rxode2::rxode2(.cov_both))
+  ovar <- admixr2:::.admOutputVar(ui)
+
+  for (g in c("sens", "fd")) {
+    ctl   <- admControl(studies = st0, grad = g, n_sim = 3000L, print = 0L,
+                        covMethod = "none")
+    pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
+    ov    <- admixr2:::.admBuildOptVec(pinfo)
+    u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
+    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, g)
+    expect_identical(stu[[1L]]$.adm_cov_path, "rows")   # gradients allowed here
+
+    zl <- admixr2:::.admMakeZ(3000L, pinfo, 1L, "sobol")
+    pl <- admixr2:::.admMakeParamsList(3000L, pinfo, 1L)
+    rx <- admixr2:::.admLoadModel(ui)
+    sm <- if (g == "sens") tryCatch(admixr2:::.admLoadSensModel(ui),
+                                    error = function(e) NULL) else NULL
+    f  <- function(pp) admixr2:::.admNLL(pp, pinfo, stu, zl, rx, ovar, pl, 1L)
+    ga <- admixr2:::.admGrad(ov$p0, pinfo, stu, zl, rx, ovar, pl, 1L, 1e-4,
+                             sensModel = sm)
+    h  <- 1e-5
+    gf <- vapply(seq_along(ov$p0), function(k) {
+      a <- b <- ov$p0; a[k] <- a[k] + h; b[k] <- b[k] - h
+      (f(a) - f(b)) / (2 * h)
+    }, numeric(1))
+    expect_true(all(is.finite(ga)))
+    # both covariate coefficients must be right, not just the ones with an eta
+    expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-8)), 2e-2)
+  }
+})
+
+test_that("collapse and u-quantile still refuse a gradient, and say why", {
+  E0 <- rep(1, length(.cov_TIMES)); V0 <- diag(length(.cov_TIMES))
+  ui <- suppressMessages(rxode2::rxode2(.cov_linear))
+  pinfo <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  pinfo$cov_map <- admixr2:::.admCovMap(ui)
+  s <- list(E = E0, V = V0, n = 300L, times = .cov_TIMES,
+            ev = rxode2::et(amt = .cov_DOSE),
+            cov = list(WT = 0.2), cov_dist = list(WT = list(mu = 0.2, sd = 0.35)))
+  st <- admixr2:::.admFlattenStudies(
+          list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
+  expect_error(admixr2:::.admCheckCovariates(ui, pinfo, st, "sens"),
+               "requires `grad = \"none\"`", fixed = TRUE)
+  expect_silent(admixr2:::.admCheckCovariates(ui, pinfo, st, "none"))
+})
