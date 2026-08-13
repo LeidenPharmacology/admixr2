@@ -396,3 +396,89 @@ test_that("adgh's ANALYTIC gradient carries the covariate product grid", {
   expect_gt(max(abs(gf)), 100)                       # the test has real signal
   expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-6)), 1e-3)
 })
+
+# -- A covariate that scales the DOSE, not just the parameters -----------------
+#
+# `f(centr) <- WT` (a mg/kg dose) is the PAGE case study's shape: the same WT
+# draw has to reach the dosing modifier AND cl/vp/q in the same solve. Nothing
+# else covers a covariate entering a dosing modifier, and the failure mode is
+# quiet -- a WT that reaches the parameters but not f() gives a fit that
+# converges to plausible numbers for a dose it was not given.
+#
+# Reference is INDEPENDENT: subjects drawn with their own WT and etas, solved by
+# plain rxode2, reduced to (E, V). No admixr2 covariate machinery in it.
+
+test_that("a covariate scaling the dose is marginalised correctly", {
+  WT <- list(meanlog = log(18.4), sdlog = 0.45)
+  TT <- c(0.5, 1, 2, 4, 6)
+  EV <- rxode2::et(amt = 17.5, dur = 1)
+  PR <- 0.12
+
+  mk <- function(dose_scaled) {
+    if (dose_scaled)
+      function() {
+        ini({lcl <- log(0.16); lvc <- log(3.86); clwt <- 0.97
+             eta.cl ~ 0.062; prop.err <- 0.12})
+        model({cl <- exp(lcl + eta.cl) * WT^clwt; vc <- exp(lvc)
+               f(centr) <- WT
+               d/dt(centr) <- -cl / vc * centr
+               cp <- centr / vc; cp ~ prop(prop.err)})
+      }
+    else
+      function() {
+        ini({lcl <- log(0.16); lvc <- log(3.86); clwt <- 0.97
+             eta.cl ~ 0.062; prop.err <- 0.12})
+        model({cl <- exp(lcl + eta.cl) * WT^clwt; vc <- exp(lvc)
+               d/dt(centr) <- -cl / vc * centr
+               cp <- centr / vc; cp ~ prop(prop.err)})
+      }
+  }
+
+  ref <- function(fn, n = 40000L) {
+    ui <- suppressMessages(rxode2::rxode2(fn))
+    rx <- suppressMessages(rxode2::rxode2(ui$simulationModel))
+    set.seed(11L)
+    p  <- data.frame(lcl = log(0.16), lvc = log(3.86), clwt = 0.97,
+                     prop.err = PR, rxerr.cp = 0,
+                     eta.cl = sqrt(0.062) * stats::rnorm(n),
+                     WT = exp(WT$meanlog + WT$sdlog * stats::rnorm(n)))
+    out <- rxode2::rxSolve(rx, params = p, events = EV |> rxode2::et(TT),
+                           cores = 1L, nDisplayProgress = .Machine$integer.max)
+    cpm <- matrix(out[["cp"]][out[["time"]] %in% TT], nrow = n, byrow = TRUE)
+    mu  <- colMeans(cpm); V <- crossprod(sweep(cpm, 2L, mu)) / n
+    diag(V) <- diag(V) + PR^2 * (mu^2 + diag(V))   # law of total variance
+    list(E = mu, V = V)
+  }
+
+  adm <- function(fn) {
+    ui    <- suppressMessages(rxode2::rxode2(fn))
+    ovar  <- admixr2:::.admOutputVar(ui)
+    ctl   <- adghControl(studies = list(A = list(
+               E = rep(1, length(TT)), V = diag(length(TT)) + 0.01, n = 20L,
+               times = TT, ev = EV, cov_dist = list(WT = WT))),
+               grad = "analytical", n_nodes = 9L, print = 0L,
+               covMethod = "none")
+    pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
+    u  <- admixr2:::.admCheckCovariates(
+            ui, pinfo, admixr2:::.admDriverUnits(ctl$studies, ui, ovar)$studies,
+            "analytical", "adgh")
+    pars <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pinfo)$p0, pinfo)
+    list(m = admixr2:::.adghMoments(pars, pinfo, u[[1L]], ui |>
+                                      admixr2:::.admLoadModel(), ovar,
+                                    admixr2:::.adghNodeGrid(9L, pinfo$n_eta), 1L),
+         path = u[[1L]]$.adm_cov_path)
+  }
+
+  a <- adm(mk(TRUE)); r <- ref(mk(TRUE))
+  # per-subject covariates: the same draw feeds f() and cl in one solve
+  expect_equal(a$path, "rows")
+  expect_lt(max(abs(a$m$E - r$E) / abs(r$E)), 0.01)
+  expect_lt(max(abs(a$m$V - r$V)) / max(abs(r$V)), 0.02)
+
+  # the check must be SENSITIVE to the dose term, or it proves nothing: dropping
+  # f(centr) <- WT moves the mean by more than an order of magnitude
+  r0 <- ref(mk(FALSE))
+  expect_gt(max(abs(r$E - r0$E) / r0$E), 5)
+  a0 <- adm(mk(FALSE))
+  expect_lt(max(abs(a0$m$E - r0$E) / abs(r0$E)), 0.01)
+})
