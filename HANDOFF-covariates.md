@@ -177,9 +177,11 @@ Both of HvdB's observations follow, and neither contradicts §5:
   they do not merely acquire the -0.44 bias — on one population they run to the
   search boundary.
 
-**Do not cite the Rmd as evidence that node constructions are unbiased**, and do not
-build a validation on conditional-per-node observed data: it is information no
-aggregate dataset contains, and it makes any weighting scheme look correct.
+**Scope the claim to the data shape.** §5's bias is a property of the node methods
+*given one pooled `(E, V)`*. Given per-node data they are exact — reproduced inside
+admixr2 in §9a. A validation built on conditional-per-node data cannot distinguish
+weighting schemes at all, since every term is separately minimised at truth; that is
+what makes it useless as evidence about the pooled case, not wrong in itself.
 
 ## 6. Identifiability (do not lose this)
 
@@ -258,24 +260,62 @@ The sketch (`sketch_aggdata_covariates.docx`) claims simulating individuals and
 pseudo-group averaging are "equivalent". §5 shows they are not. That claim must not
 carry over.
 
-## 9. The branch carries TWO covariate interfaces — decide before merging
+## 9. Two interfaces, and they are two DATA SHAPES — both now wired
 
-This is the biggest unresolved item, and it is a **public-interface** one.
+Earlier drafts of this file called this an unresolved duplication. It is not: the
+two interfaces correspond to the two shapes aggregate covariate data comes in, and
+both are supported as of `154c087`.
 
-| | old (rebased in, `dff8eb1`) | new (this session) |
+| | node route | marginal route |
 |---|---|---|
-| study field | `covariate = list(wt = list(mu, sd), method, n_nodes)` | `cov_dist = list(WT = list(...))` |
-| construction | stratified quadrature — `datagen()` emits one weighted study per node | covariate-marginal moments, one study |
-| public surface | exported `admBuildQuadrature()`, `datagen(covariate=)`, `plot(which="covariate")`, `vignettes/covariate-marginalisation.Rmd`, two `_pkgdown.yml` entries | none — no Rd, no vignette, no pkgdown |
+| study fields | `covariate = list(WT = list(...))` at `datagen()`, or `cov_dist` + `cov_method = "gl"/"gh"/"taylor"` | `cov_dist`, `cov_method = "marginal"` (default) |
+| data it needs | one `(E, V)` **per covariate node** — summaries by stratum | the one pooled `(E, V)` a publication reports |
+| objective | `sum_k c_k * NLL_k`, each node scored at its own covariate | one score against covariate-marginal moments |
+| recovers the effect | **yes, exactly**, from a single population (§9a) | yes, given between-study variation in the covariate distribution (§6) |
+| estimators | admc, adgh (adfo/adirmc refuse explicitly) | admc, adgh |
 
-So the **documented public face of the branch is the construction §5 shows is biased
-~58% low**, while the construction that recovers truth exactly is undocumented. A
-user following the vignette gets the wrong one. Options, in the order I would take
-them: retire the old interface (it is `method = "gl"/"gh"/"taylor"` — all three are
-node constructions, all on the wrong side of §5) and rewrite the vignette around
-`cov_dist`; or keep both and have the vignette say plainly which to use and why.
-Either way `admBuildQuadrature()` is exported, so removing it is a breaking change —
-though the branch is unreleased, so the window is now.
+Mechanism, common to both: the combination coefficient is folded into the node
+study's `n`. Every kernel takes `n` as a double and uses it as a linear multiplier
+on `log|V| + tr(V^-1 V_obs) + r'V^-1 r`, so `n_k = c_k * n` contributes exactly
+`c_k * NLL_k` — for the NLL, the analytic gradient and both batch paths, with no
+accumulation site aware nodes exist. Taylor's central coefficient is `1 - sigma^2/h^2`
+and so is **negative**; that `n` is a combination coefficient, not a subject count,
+which is why the fold happens after `.admNormaliseStudy` has validated.
+
+### 9a. The node methods on per-node data (`validation/covariate-node-data.R`)
+
+```
+method        tcov      bias       tcl        om    secs
+TRUTH       0.7500              0.0000    0.3000
+gh          0.7500   -0.0000   -0.0000    0.3000       8
+gl          0.7500   -0.0000   -0.0000    0.3000       5
+taylor      0.7500   +0.0000   -0.0000    0.3000       1
+```
+
+One population, exact recovery, seconds. This reproduces the development Rmd
+(§5a) inside the package, and it is why §5's bias is a statement about **pooled**
+data specifically — never about the methods in the abstract. Say it that way in the
+manuscript.
+
+> **The bug this route shipped with.** `admBuildCovStudies()` read
+> `quad$weights[k] %||% 1`. A taylor quadrature has **no weights at all**, so every
+> node got 1 and the three stencil points were summed as though they were a
+> quadrature — a different objective, every number finite and plausible.
+> Coefficients now come from `.admCovNodeCoefs()` for every method, single-sourced
+> with `datagen()`. Pinned in `test-covariate.R`.
+
+Two further silent-wrong-answer paths were closed at the same time, both of the
+same shape — a coefficient that quietly becomes 1:
+- `weight` now reaches the **unit**. The -2LL is summed over units, so a
+  coefficient left behind on the study was a silent 1.
+- adfo/adirmc refuse node studies **explicitly**. A node study carries no
+  `cov_dist`, so the existing refusal never saw it, and those estimators would have
+  ignored the coefficient.
+
+**Still open**: `vignettes/covariate-marginalisation.Rmd` documents only the node
+route (and now actually runs, which it did not before). It needs `cov_dist` +
+`cov_method` and a paragraph on which data shape you have. `cov_dist` is still in
+no Rd.
 
 ## 10. Open items
 
