@@ -312,6 +312,41 @@ same shape — a coefficient that quietly becomes 1:
   `cov_dist`, so the existing refusal never saw it, and those estimators would have
   ignored the coefficient.
 
+### 9b. Taylor's `h` is a data-design parameter, not just an FD step
+
+`validation/page-taylor-h.R`. Taylor's peripheral parameters ran away in the PAGE
+comparison; sweeping `h` says that was the weight range its nodes span:
+
+```
+param    taylor_h0.5 taylor_h1.0 taylor_h2.0    (gh)
+WT nodes  14.8-22.8   11.9-28.4    7.7-43.8
+lvp          -6.6607     -2.9404     -2.3546   -2.4762
+lq            2.9598     -1.9212     -1.5661   -1.5407
+vpwt          2.6178      1.4477      1.2676    1.3064
+qwt          -0.2993      1.1940      1.0986    1.0894
+secs              81          21          33
+```
+
+At `h = 2*sigma` Taylor matches gh on every parameter, and fits 2-4x faster because
+the optimiser stops wandering a flat direction. `vpwt`/`qwt` sit on parameters with
+**no random effect**, so they are identified only by how the prediction changes
+across weight, and three nodes spanning 14.8-22.8 against a distribution covering
+roughly 8-49 leaves almost nothing to identify them from.
+
+Two things to keep straight:
+- The stencil width and the data design are coupled **only because `datagen()`
+  generates at the nodes**. On real data the strata are whatever the publication
+  reports and `h` is fixed by them, so "widen `h`" is advice about designing a
+  simulation, not a knob available in an analysis.
+- It runs against Taylor's own logic: `h` is the step of a second difference, so
+  truncation error *grows* with `h`. Identifiability dominating truncation this
+  heavily is itself the finding, and it means tuning `h` for approximation accuracy
+  is the wrong instinct here.
+
+`datagenControl`'s default is `h = 2.0` in **raw covariate units** — enormous for a
+log-scale lognormal covariate, and meaningless without knowing the covariate's
+units. Worth changing to a multiple of the spread.
+
 **Still open**: `vignettes/covariate-marginalisation.Rmd` documents only the node
 route (and now actually runs, which it did not before). It needs `cov_dist` +
 `cov_method` and a paragraph on which data shape you have. `cov_dist` is still in
