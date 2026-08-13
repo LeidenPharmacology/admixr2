@@ -895,6 +895,21 @@
 #' @param studies Named list of study specifications (same format as
 #'   [admControl()]: `E`, `V`, `n`, `times`, `ev`, optional `method`; or an
 #'   `observations` list for multi-compartment fits -- see [admControl()]).
+#' @param cov_nodes Gauss-Hermite nodes per covariate used to integrate the
+#'   COVARIATE distribution when a study declares `cov_dist` (default 11). This is
+#'   a separate dial from `n_nodes`, which refines the random-effect dimensions
+#'   only: raising `n_nodes` alone leaves the covariate integration exactly where
+#'   it was. Measured on a two-compartment model with an allometric weight effect
+#'   and a lognormal weight distribution, 7 nodes place the marginal moments
+#'   within 2e-06 (mean) and 2e-05 (covariance) of an exact reference, and the
+#'   remaining error is the ODE solver's rather than the quadrature's. A wider or
+#'   more skewed covariate distribution, or a more strongly non-linear covariate
+#'   effect, warrants more. Measured against an exact reference on a
+#'   two-compartment model with an allometric weight effect and a lognormal
+#'   weight distribution: 3 nodes give 7.3e-04 / 8.2e-03 (mean / covariance),
+#'   5 give 2.8e-05 / 3.7e-04, 7 give 2.2e-06 / 2.4e-05, and 9 onwards sit at
+#'   ~1.2e-06 / ~1.0e-06, which is the ODE solver's accuracy rather than the
+#'   quadrature's. The default is set past that knee.
 #' @param resid_nodes Gauss-Hermite nodes used to integrate the RESIDUAL for a
 #'   transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
 #'   `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean and
@@ -1083,6 +1098,9 @@ adghControl <- function(
     # LAST on purpose: inserting an argument mid-signature silently rebinds every
     # positional call -- adghControl(studies, 7L) used to set n_nodes = 7.
     resid_nodes   = 81L,
+    # LAST on purpose: a new argument inserted mid-signature silently rebinds
+    # every positional call. See the resid_nodes note in CLAUDE.md.
+    cov_nodes     = 11L,
     # ... and this one after it, for the same reason.
     ...) {
 
@@ -1102,6 +1120,7 @@ adghControl <- function(
   # the measured error at 5 nodes is already 3.3e-1. Refuse here, where the
   # message can name the argument, rather than silently scoring a wrong NLL.
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1)
+  checkmate::assertIntegerish(cov_nodes, lower = 1L, len = 1)
   # NOT assertString(algorithm) here: NULL is now the default and means "pick the
   # one that matches grad". .admResolveAlgorithm() asserts the string and checks
   # it against the installed nloptr, which is more than this line ever did.
@@ -1164,6 +1183,7 @@ adghControl <- function(
   .ret <- list(
     studies       = studies,
     resid_nodes   = as.integer(resid_nodes),
+    cov_nodes     = as.integer(cov_nodes),
     n_nodes       = as.integer(n_nodes),
     n_sim         = 1L,       # interface compat with .admRunRestarts()
     sampling      = "sobol",  # idem

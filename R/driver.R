@@ -39,6 +39,13 @@
   # Travels on pinfo for the same reason everything else here does: the parallel
   # workers have no `ui`.
   pinfo$cov_map          <- tryCatch(.admCovMap(.ui), error = function(e) NULL)
+  # Nodes for the COVARIATE dimension of the adgh product grid. Read in exactly
+  # one place (.admCovGrid via .adghGrid) and, until this line existed, set
+  # nowhere -- so the `%||% 7L` fallback there always fired and the covariate
+  # integration was fixed at 7 nodes with no way to change it. That is what made
+  # the accuracy sweep plateau: raising n_nodes refines only the random-effect
+  # dimensions, so the covariate error never moved.
+  pinfo$cov_nodes        <- .ctl$cov_nodes %||% 7L
   pinfo
 }
 
