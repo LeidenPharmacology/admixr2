@@ -350,3 +350,36 @@ test_that(".admCheckCovariates still errors on genuinely unsupportable input", {
                                                   cov_dist = list(WT = spec))), "none"),
       "not a supported distribution")
 })
+
+test_that(".admCovUQuantile solves F_u(u) = p exactly, and smoothly", {
+  # Newton on the exact mixture CDF, not interpolation on a grid. The grid made
+  # u piecewise-linear in the parameters, which is the mismatch that stops an
+  # analytic gradient being consistent with the objective it differentiates.
+  g  <- admixr2:::.adghNodes1(32L)
+  dl <- list(delta = 0.75 * log(exp(log(72) + 0.28 * g$x) / 72), w = g$w)
+  s  <- 0.30
+  p  <- (seq_len(2000L) - 0.5) / 2000L
+  u  <- admixr2:::.admCovUQuantile(dl, s, p)
+
+  Fu <- as.numeric(pnorm(outer(u, dl$delta, "-") / s) %*% dl$w)
+  expect_lt(max(abs(Fu - p)), 1e-10)          # solves its defining equation
+  expect_true(all(diff(u) > 0))               # monotone
+  expect_true(all(is.finite(u)))
+
+  # SHIFTING every Delta by eps must shift u by exactly eps: an exact identity,
+  # and one a grid interpolant cannot reproduce without quantisation.
+  eps <- 1e-7
+  u2  <- admixr2:::.admCovUQuantile(list(delta = dl$delta + eps, w = dl$w), s, p)
+  expect_equal(mean((u2 - u) / eps), 1, tolerance = 1e-6)
+  expect_lt(sd((u2 - u) / eps), 1e-6)
+
+  # the implicit-function derivative wrt the eta SD matches finite differences,
+  # which is what a future analytic gradient would rely on
+  e2 <- 1e-6
+  fd <- (admixr2:::.admCovUQuantile(dl, s + e2, p) -
+         admixr2:::.admCovUQuantile(dl, s - e2, p)) / (2 * e2)
+  z  <- outer(u, dl$delta, "-") / s
+  fu <- as.numeric(dnorm(z) %*% dl$w) / s
+  an <- -as.numeric((dnorm(z) * (-z / s)) %*% dl$w) / fu
+  expect_lt(max(abs(an - fd) / pmax(abs(fd), 1e-8)), 1e-6)
+})

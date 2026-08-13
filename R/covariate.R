@@ -1028,8 +1028,13 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
 # Costs one extra rxSolve call (~11 ms) per objective evaluation. Delta depends
 # on the covariate coefficients, which move, so it cannot be cached across
 # iterations -- but 11 ms against a solve budget in seconds is noise.
+# ngrid = 32: Gauss-Hermite over a smooth Delta converges long before this.
+# Measured against a 200-node reference, F_u agreed to 3.8e-15 at 16 nodes and
+# 2.2e-15 at 24, over covariate spreads from sdlog 0.15 to 0.45. The node count
+# costs twice -- once in the probe's rxSolve rows, once in every Newton
+# iteration's n_sim x n_node matrices -- so 64 was paying for nothing.
 .admCovDelta <- function(rxMod, pars, pinfo, s, cov, param_nm, cores,
-                         ngrid = 64L) {
+                         ngrid = 32L) {
   spec  <- s$cov_dist[[cov]]
   a_ref <- s[["cov"]][[cov]]
   if (is.null(a_ref)) return(NULL)
@@ -1095,11 +1100,39 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
 
 # Inverse CDF of u = Delta(a) + eta, evaluated at the uniforms `p`.
 # Phi carries the tails analytically, which a grid of summed draws cannot.
-.admCovUQuantile <- function(dl, sd_eta, p, ngrid = 8192L) {
+# Inverse CDF of u = Delta(a) + eta at the uniforms `p`, by NEWTON on the exact
+# mixture CDF rather than interpolation on a grid.
+#
+# F_u(t) = sum_j w_j Phi((t - Delta_j)/s) is smooth and strictly increasing, and
+# its density is available in closed form, so Newton converges in a handful of
+# steps from a moment-matched normal start.
+#
+# Why not the grid: interpolating F_u on a grid makes u PIECEWISE LINEAR in the
+# parameters, because Delta and s move the grid's knots. The objective then has
+# small kinks, which (a) is the exact mismatch that stops an analytic gradient
+# being consistent with the objective it differentiates, and (b) defeats a
+# trust-region derivative-free search, which builds quadratic models. Newton
+# gives the true implicit function, so d(u)/d(theta) = -(dF_u/d(theta)) / f_u(u)
+# is the derivative of what is actually computed.
+#
+# Bracketed and clamped: f_u underflows in the far tails, so an undamped Newton
+# step there can throw the iterate out of the support entirely.
+.admCovUQuantile <- function(dl, sd_eta, p, tol = 1e-11, maxit = 50L) {
   d <- dl$delta; w <- dl$w
-  t <- seq(min(d) - 9 * sd_eta, max(d) + 9 * sd_eta, length.out = ngrid)
-  Fu <- as.numeric(stats::pnorm(outer(t, d, "-") / sd_eta) %*% w)
-  stats::approx(Fu, t, xout = p, rule = 2)$y
+  lo <- min(d) - 12 * sd_eta
+  hi <- max(d) + 12 * sd_eta
+  # moment-matched normal start: exact when Delta is degenerate, close otherwise
+  m  <- sum(w * d)
+  sdu <- sqrt(sum(w * (d - m)^2) + sd_eta^2)
+  u  <- pmin(pmax(m + sdu * stats::qnorm(p), lo), hi)
+  for (it in seq_len(maxit)) {
+    z  <- outer(u, d, "-") / sd_eta
+    r  <- as.numeric(stats::pnorm(z) %*% w) - p
+    if (max(abs(r)) < tol) break
+    fu <- as.numeric(stats::dnorm(z) %*% w) / sd_eta
+    u  <- pmin(pmax(u - r / pmax(fu, 1e-300), lo), hi)
+  }
+  u
 }
 # Replace the covariate-affected eta column with draws of u = Delta(a) + eta.
 #
