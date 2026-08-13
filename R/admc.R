@@ -453,8 +453,14 @@ nmObjGetControl.admc <- function(x, ...) {
     # is not a matrix"). adfo and adgh guard this; admc must too (.admNLLBatch
     # already does). A 0-column eta_mat flows correctly through .admSimulate and the
     # n_eta-indexed kernels (all seq_len(0) no-ops). For n_eta > 0 this is identical.
+    # .admStudyL is pars$L, EXCEPT for a study whose subjects span a covariate
+    # distribution: then it is chol(Omega + J Sigma_a J'), which reproduces the
+    # marginal moments exactly at the cost of a no-covariate fit. See
+    # .admCovInflateL(). The covariate itself is solved at its mean, supplied
+    # through study$cov by .admCovCols().
+    .sL <- .admStudyL(pars, pinfo, s)
     eta_mat <- if (pinfo$n_eta > 0L) {
-      .em <- z %*% t(pars$L); colnames(.em) <- pinfo$eta_col_names; .em
+      .em <- z %*% t(.sL); colnames(.em) <- pinfo$eta_col_names; .em
     } else matrix(0, nrow(z), 0L)
 
     # Joint (same-subject) unit: one shared-eta solve produces every output;
@@ -2677,20 +2683,23 @@ nlmixr2Est.admc <- function(env, ...) {
     stop("admControl(studies=...) required", call. = FALSE)
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
-  # Covariate marginalisation is NOT wired into this estimator. R/covariate.R
-  # provides admBuildQuadrature()/admBuildCovStudies() and the combine rules,
-  # and datagen(covariate=) generates node-stratified data -- but .admNLL and
-  # .admGrad combine studies by a plain sum. Running a node-stratified fit
-  # through them silently integrates over the covariate with every node weighted
-  # 1, which is a different (wrong) objective, not a rougher one. Refuse it
-  # rather than return a plausible number.
-  .cov_st <- vapply(studies, function(s) !is.null(s$cov) && length(s$cov) > 0L,
-                    logical(1))
-  if (any(.cov_st) || !is.null(attr(.ctl$studies, "quadrature", exact = TRUE)))
-    stop("admixr2: covariate marginalisation is not yet supported by `admc`. ",
-         "Studies carrying `cov` (or a `quadrature` attribute) would be summed ",
-         "with equal weight, which is not the marginal objective. See ",
-         "R/covariate.R.", call. = FALSE)
+  # Two covariate routes, and only one of them is wired.
+  #
+  #   study$cov_dist -> the COLLAPSE: Omega is inflated to Omega + J Sigma_a J'
+  #     and the covariate solved at its mean, which is the exact marginal for a
+  #     linear effect on the mu-referenced scale and a normal covariate. Costs
+  #     what a no-covariate fit costs. Supported.
+  #
+  #   study$weight / a quadrature attribute -> the node-quadrature route, whose
+  #     combine rule (.adm_combine_nll) is NOT called by .admNLL. Running it
+  #     would sum the nodes with weight 1, which is a different objective, not a
+  #     coarser one -- so refuse rather than return a plausible number.
+  .quad <- !is.null(attr(.ctl$studies, "quadrature", exact = TRUE)) ||
+           any(vapply(studies, function(s) !is.null(s$weight), logical(1)))
+  if (.quad)
+    stop("admixr2: node-quadrature covariate marginalisation is not yet wired ",
+         "into `admc`. Give the study a `cov_dist` instead, which is solved by ",
+         "the exact collapse. See R/covariate.R.", call. = FALSE)
 
   pinfo      <- .admDriverPinfo(.ui, .ctl)
   output_var <- .admOutputVar(.ui)

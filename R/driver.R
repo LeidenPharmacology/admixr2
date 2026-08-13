@@ -35,6 +35,10 @@
   pinfo$sim_cache_file   <- tryCatch(.admModelCacheFile(.ui), error = function(e) NULL)
   # Residual-quadrature nodes travel pinfo -> arr -> .admResidApply/.admResidDeriv.
   pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
+  # covariate -> (coefficient theta, eta), from rxode2's mu-reference metadata.
+  # Travels on pinfo for the same reason everything else here does: the parallel
+  # workers have no `ui`.
+  pinfo$cov_map          <- tryCatch(.admCovMap(.ui), error = function(e) NULL)
   pinfo
 }
 
@@ -89,6 +93,30 @@
 #     built, because parFixedDf$SE is filled positionally against skipCov.
 #   * the class rewrite must carry `.foceiEnv` across, or the fit loses the
 #     environment nlmixr2est's own methods reach through.
+# The dummy frame the post-fit output stage solves over.
+#
+# A model that READS a covariate needs that covariate present here, or rxode2
+# stops with "the following parameter(s) are required for solving: <name>" --
+# AFTER the whole optimisation has run, so the fit is lost at the last step. The
+# frame is built by the driver, not taken from the caller, so adding the column
+# to the data passed to nlmixr2() does not help; it has to happen here.
+#
+# The VALUE is immaterial to the result -- this row carries the non-NA
+# placeholder DV and never enters the reported objective, which every estimator
+# overwrites with its own aggregate -2LL. It must merely be finite and not
+# something the model divides by, so use the studies' own covariate values when
+# they carry any and fall back to 1 rather than 0.
+.admDummyData <- function(.ui, multi_out, studies) {
+  d  <- if (multi_out) admData(.admEndpointNames(.ui)) else admData()
+  cv <- tryCatch(.ui$allCovs, error = function(e) NULL)
+  for (nm in cv) {
+    vals <- unlist(lapply(studies, function(s) s$cov[[nm]]), use.names = FALSE)
+    vals <- vals[is.finite(vals)]
+    d[[nm]] <- if (length(vals)) mean(vals) else 1
+  }
+  d
+}
+
 .admFinaliseFit <- function(.ret, .ui, .ctl, est, objective, ov, studies,
                             cov, cov_nms, multi_out, extra_field, handle_ctl,
                             t_opt, t_cov, t_elapsed) {
@@ -102,7 +130,7 @@
   if (!is.null(.focei_model)) .ret$model <- .focei_model
 
   .fit <- nlmixr2est::nlmixr2CreateOutputFromUi(
-    .ui, data = if (multi_out) admData(.admEndpointNames(.ui)) else admData(),
+    .ui, data = .admDummyData(.ui, multi_out, studies),
     control = .ret$control,
     table = .ret$table, env = .ret, est = est)
 

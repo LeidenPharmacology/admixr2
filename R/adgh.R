@@ -66,9 +66,13 @@
 # error added to the diagonal exactly as adfo/admc.
 # Quadrature grid (eta nodes + weights) for the current Omega. Shared by the
 # single and batched moment paths.
-.adghGrid <- function(pars, pinfo, grid) {
+.adghGrid <- function(pars, pinfo, grid, s = NULL) {
   if (pinfo$n_eta > 0L) {
-    eta <- grid$X %*% t(pars$L)
+    # Covariate collapse: for a study spanning a covariate distribution the node
+    # grid is scaled by chol(Omega + J Sigma_a J') instead of chol(Omega), which
+    # is the exact marginal. NULL `s` (and any study without cov_dist) keeps the
+    # plain Cholesky, so nothing changes for an ordinary fit.
+    eta <- grid$X %*% t(if (is.null(s)) pars$L else .admStudyL(pars, pinfo, s))
     colnames(eta) <- pinfo$eta_col_names
     list(eta = eta, W = grid$W)
   } else {
@@ -94,7 +98,7 @@
 }
 
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
-  g  <- .adghGrid(pars, pinfo, grid)
+  g  <- .adghGrid(pars, pinfo, grid, study)
   pm <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
                      out_var, pm, cores, pinfo$nDisplayProgress,
@@ -107,12 +111,26 @@
 # structural thetas move -- so the n_cfg quadrature solves stack into one call
 # of n_cfg * n_node subjects instead of n_cfg calls of n_node.
 .adghMomentsBatch <- function(struct_mat, pars, pinfo, study, rxMod, out_var, grid, cores) {
-  g     <- .adghGrid(pars, pinfo, grid)
+  g     <- .adghGrid(pars, pinfo, grid, study)
   Q     <- nrow(g$eta)
   n_cfg <- nrow(struct_mat)
 
   sm_big  <- struct_mat[rep(seq_len(n_cfg), each = Q), , drop = FALSE]
-  eta_big <- g$eta[rep(seq_len(Q), times = n_cfg), , drop = FALSE]
+  # The node grid is shared across configurations EXCEPT when the study spans a
+  # covariate distribution: Omega* = Omega + J Sigma_a J' then depends on the
+  # covariate COEFFICIENT, which is itself a structural theta and so moves
+  # between configurations. Rescale each block by its own configuration's
+  # Cholesky -- the single rxSolve is preserved, the constant-Omega assumption
+  # this function was built on is not silently violated.
+  eta_big <- if (is.null(study$cov_dist) || pinfo$n_eta == 0L) {
+    g$eta[rep(seq_len(Q), times = n_cfg), , drop = FALSE]
+  } else {
+    do.call(rbind, lapply(seq_len(n_cfg), function(k) {
+      pk <- pars
+      pk$struct[colnames(struct_mat)] <- struct_mat[k, ]
+      grid$X %*% t(.admStudyL(pk, pinfo, study))
+    }))
+  }
   colnames(eta_big) <- colnames(g$eta)
 
   pm     <- .admMakeParamsList(n_cfg * Q, pinfo, 1L)[[1L]]

@@ -23,9 +23,12 @@
 #'   overwrites it with its own aggregate -2LL). When `NULL` (default) the
 #'   single-endpoint dummy frame is returned unchanged.
 #'
-#' Covariate columns are not needed here: when a model references a covariate,
-#' the estimator supplies it automatically from each study's `cov` value, so
-#' `admData()` works unchanged for covariate-marginalisation fits.
+#' Covariate columns are added by the driver, not by the caller. A model that
+#' READS a covariate needs it present in the frame the post-fit output stage
+#' solves over, or rxode2 stops with "the following parameter(s) are required
+#' for solving" -- after the whole optimisation has run. The driver builds that
+#' frame itself (`.admDummyData()`), so adding the column to the data passed to
+#' `nlmixr2()` has no effect; it is handled for you.
 #'
 #' @return A data frame with columns `ID`, `TIME`, `DV`, `AMT`, `EVID`, `CMT`
 #'   (single-endpoint), plus a `DVID` endpoint column when `outputs` is given.

@@ -660,3 +660,79 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
 
   list(cp = cp_list, dpred = dpred_list, hi = hi_list, lo = lo_list)
 }
+
+# =============================================================================
+# Covariate collapse (exact marginal moments, no nodes)
+# =============================================================================
+
+# Map covariate -> (coefficient theta, eta) from rxode2's OWN mu-reference
+# metadata, so nothing has to be declared by hand. muRefCovariateDataFrame gives
+# (theta, covariate, covariateParameter); muRefDataFrame gives (theta, eta).
+# Joining on `theta` says which eta's mu-referenced argument each covariate
+# enters, and with which coefficient.
+.admCovMap <- function(ui) {
+  cd <- tryCatch(ui$muRefCovariateDataFrame, error = function(e) NULL)
+  md <- tryCatch(ui$muRefDataFrame,          error = function(e) NULL)
+  if (is.null(cd) || is.null(md)) return(NULL)
+  if (!NROW(cd) || !NROW(md)) return(NULL)
+  m <- merge(cd, md, by = "theta")
+  if (!NROW(m)) return(NULL)
+  data.frame(covariate = as.character(m$covariate),
+             coef      = as.character(m$covariateParameter),
+             eta       = as.character(m$eta),
+             stringsAsFactors = FALSE)
+}
+
+# Sigma_a for the named covariates, in the order given.
+.admCovDistSigma <- function(cov_dist, nms) {
+  d   <- length(nms)
+  sds <- vapply(nms, function(n) as.numeric(cov_dist[[n]]$sd), numeric(1))
+  if (!is.null(cov_dist$Sigma)) return(cov_dist$Sigma[nms, nms, drop = FALSE])
+  rho <- cov_dist$rho %||% 0
+  S <- diag(sds^2, d)
+  if (d >= 2L && abs(rho) > 1e-12)
+    for (i in seq_len(d - 1L)) for (j in seq(i + 1L, d))
+      S[i, j] <- S[j, i] <- rho * sds[i] * sds[j]
+  S
+}
+
+# Effective Cholesky for a study whose subjects SPAN a covariate distribution.
+#
+# With mu-referencing the covariate and the random effect enter the SAME
+# argument:  param <- g(theta + theta_cov*a + eta).  So for a ~ N(mu_a, Sigma_a),
+#
+#     theta + theta_cov*a + eta  ==  theta + theta_cov*mu_a + s,
+#     s ~ N(0, Omega + J Sigma_a J'),      J[eta_k, k] = theta_cov_k
+#
+# EXACTLY. Solving at the covariate MEAN and inflating Omega therefore reproduces
+# the marginal moments with one solve set -- no quadrature nodes, no importance
+# weights, and the same cost as a fit with no covariate at all.
+#
+# Exact only for a LINEAR covariate effect on the mu-referenced scale and a
+# normal covariate. Returns NULL whenever that cannot be established, so every
+# caller falls back to the plain Cholesky rather than silently approximating.
+.admCovInflateL <- function(pars, pinfo, s) {
+  cd <- s$cov_dist
+  if (is.null(cd) || pinfo$n_eta == 0L || is.null(pars$L)) return(NULL)
+  cmap <- pinfo$cov_map
+  if (is.null(cmap) || !NROW(cmap)) return(NULL)
+  eta_nms <- pinfo$eta_col_names
+  has_sd  <- vapply(names(cd), function(n)
+    is.list(cd[[n]]) && !is.null(cd[[n]]$sd), logical(1))
+  keep <- cmap$covariate %in% names(cd)[has_sd] & cmap$eta %in% eta_nms
+  use  <- cmap[keep, , drop = FALSE]
+  if (!NROW(use)) return(NULL)
+  J <- matrix(0, pinfo$n_eta, NROW(use))
+  for (k in seq_len(NROW(use))) {
+    cf <- pars$struct[[use$coef[k]]]
+    if (is.null(cf) || !is.finite(cf)) return(NULL)
+    J[match(use$eta[k], eta_nms), k] <- cf
+  }
+  Sig <- .admCovDistSigma(cd, use$covariate)
+  Om  <- tcrossprod(pars$L) + J %*% Sig %*% t(J)
+  tryCatch(t(chol(Om)), error = function(e) NULL)
+}
+
+# The Cholesky a given study should be simulated with: inflated when the study
+# declares a covariate DISTRIBUTION, the plain one otherwise.
+.admStudyL <- function(pars, pinfo, s) .admCovInflateL(pars, pinfo, s) %||% pars$L
