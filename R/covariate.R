@@ -255,7 +255,7 @@
     # "declares cov_dist for 'rho', which the model never reads" -- a message
     # pointing at the wrong thing, and the reason .admCovDistSigma()'s
     # correlated branch was unreachable.
-    for (cv in setdiff(names(cd), c("rho", "Sigma"))) {
+    for (cv in setdiff(names(cd), c("rho", "Sigma", "joint"))) {
       if (!cv %in% covs)
         bad("study '", nm, "' declares `cov_dist` for '", cv,
             "', which the model never reads. Model covariates: ",
@@ -374,6 +374,23 @@
     # box, since every estimator defaults to a gradient.
     if (!identical(grad, "none")) { ok_collapse <- FALSE; ok_uq <- FALSE }
 
+    # A JOINT sampler describes a DEPENDENT covariate distribution, and neither
+    # closed form can represent one: the collapse assembles Sigma_a from
+    # per-covariate variances plus an optional scalar rho, and adgh's product
+    # grid is a tensor product of per-covariate quadratures, which IS the
+    # independence assumption. Only the per-subject path carries dependence,
+    # because there the covariate is data. So refuse adgh outright rather than
+    # integrate the wrong distribution, and force the general path elsewhere.
+    if (is.function(cd[["joint"]])) {
+      ok_collapse <- FALSE
+      if (identical(est, "adgh"))
+        bad("study '", nm, "' declares a `joint` covariate sampler, which ",
+            "describes a DEPENDENT covariate distribution. `adgh` integrates ",
+            "covariates on a product grid, which assumes independence, so it ",
+            "cannot represent one. Use `admc`, whose per-subject draws carry ",
+            "the dependence directly.")
+    }
+
 
     # Most efficient VALID path wins. "rows" assumes nothing at all: every
     # simulated subject carries its own covariate value, so rxode2 evaluates the
@@ -434,14 +451,68 @@
 # Drawing a separate halton/sobol sequence instead would NOT: every low-
 # discrepancy family starts from the same base-2 van der Corput sequence, so
 # covariate column 1 would have been a copy of eta column 1.
+# Per-subject covariate draws for the general path.
+#
+# DEPENDENT COVARIATES. `cov_dist$joint` is a function taking the n x d matrix of
+# uniforms admixr2 draws and returning the n x d matrix of covariate values. That
+# is exactly the shape a copula produces -- an R-vine included: sample the vine
+# on the uniform scale, then push each column through its own marginal quantile
+# function. Aggregate patient statistics are dependent (weight with age, weight
+# with height, creatinine with age), and the per-covariate branch below draws
+# each margin independently, so it cannot represent that.
+#
+# The uniforms come from ADMIXR2's Sobol stream, deliberately, and a user sampler
+# must consume them rather than draw its own. The stream is what makes the
+# objective a deterministic function of the parameters: common random numbers
+# across optimizer iterations is what lets a finite difference of it mean
+# anything, and a sampler calling RVineSim() internally would reseed every
+# evaluation and turn the objective into noise. The dimensions sit AFTER the
+# random-effect dimensions so the eta draws are unchanged by adding a covariate.
+#
+#   cov_dist = list(
+#     WT  = list(quantile = function(u) qlnorm(u, log(70), 0.25)),
+#     AGE = list(quantile = function(u) qgamma(u, 9, 0.3)),
+#     joint = function(u) {                       # u is n x 2, columns WT, AGE
+#       v <- VineCopula::RVineSim(nrow(u), RVM, U = u)   # dependence
+#       cbind(WT  = qlnorm(v[, 1], log(70), 0.25),
+#             AGE = qgamma(v[, 2], 9, 0.3))
+#     })
+#
+# Passing `U` keeps the vine driven by admixr2's stream. A sampler that ignores
+# its argument still runs, and still gives the right MARGINAL answer in
+# expectation, but the objective becomes stochastic and gradients degrade -- so
+# the contract is stated here rather than enforced, since only the caller knows
+# whether its sampler is deterministic in `u`.
 .admCovRowsFor <- function(cov_dist, n, n_eta) {
-  nms <- names(cov_dist)
+  # `rho`/`Sigma` are metadata for the collapse; `joint` is the sampler itself.
+  nms <- setdiff(names(cov_dist), c("rho", "Sigma", "joint"))
   d   <- length(nms)
   u   <- randtoolbox::sobol(n, dim = n_eta + d)
   if (!is.matrix(u)) u <- matrix(u, nrow = n)
   u   <- u[, n_eta + seq_len(d), drop = FALSE]
   # sobol emits an exact 0 in its first row; qnorm(0) is -Inf.
   u   <- pmin(pmax(u, .Machine$double.eps), 1 - .Machine$double.eps)
+  colnames(u) <- nms
+
+  jf <- cov_dist[["joint"]]
+  if (is.function(jf)) {
+    out <- tryCatch(as.matrix(jf(u)), error = function(e)
+      stop("cov_dist$joint failed on the ", n, " x ", d, " uniform matrix: ",
+           conditionMessage(e), call. = FALSE))
+    if (!is.matrix(out) || nrow(out) != n)
+      stop("cov_dist$joint must return a matrix with one ROW per subject (",
+           n, "); got ", nrow(out), ".", call. = FALSE)
+    if (is.null(colnames(out)) || !setequal(colnames(out), nms))
+      stop("cov_dist$joint must return columns named ",
+           paste(sQuote(nms), collapse = ", "), "; got ",
+           if (is.null(colnames(out))) "none" else
+             paste(sQuote(colnames(out)), collapse = ", "), ".", call. = FALSE)
+    out <- out[, nms, drop = FALSE]
+    if (!all(is.finite(out)))
+      stop("cov_dist$joint returned non-finite covariate values.", call. = FALSE)
+    return(out)
+  }
+
   out <- vapply(seq_len(d), function(k) .admCovQuantile(cov_dist[[nms[k]]], u[, k]),
                 numeric(n))
   if (!is.matrix(out)) out <- matrix(out, nrow = n)
