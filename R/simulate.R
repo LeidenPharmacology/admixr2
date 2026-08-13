@@ -76,6 +76,15 @@
   for (nm in colnames(struct_mat)) params_mat[, nm] <- struct_mat[, nm]
   if (length(eta_cols) > 0L)       params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)          params_mat[, nm] <- 0
+  # Covariates, exactly as .admSimulate() and .admSimulateSens() do. Omitting
+  # this made .adghMomentsBatch() -- which sets study$cov_rows itself, with a
+  # comment explaining the tiling stride -- fail outright with "The following
+  # parameter(s) are required for solving: WT". Reachable in a real fit through
+  # .adghGradNLL's unpaired-struct-theta FD fallback, i.e. any model with an
+  # unpaired theta plus a cov_dist study whose theta sensitivities are
+  # unavailable. Not wrapped in tryCatch there, so it aborted the whole fit.
+  params_mat <- .admCovCols(params_mat, rxMod$params, study[["cov"]],
+                            study[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = study$ev_full, cores = cores,
                           nDisplayProgress = ndp,

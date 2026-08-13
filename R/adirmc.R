@@ -1194,6 +1194,15 @@ nlmixr2Est.adirmc <- function(env, ...) {
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
 
+  # BEFORE .admDriverUnits(). The guard reads user-supplied TOP-LEVEL fields
+  # (`weight`, `cov_method`), and normalising/flattening strips them -- so run
+  # after it, the guard inspects a list the fields have already been removed
+  # from and never fires. That is not hypothetical: with the call downstream, a
+  # node study list carrying weight = 0.5 on two nodes FITTED in all four
+  # estimators at exactly twice the correct objective (720.715 against 360.358),
+  # which is the silent-wrong-answer this guard exists to prevent.
+  .admRefuseNodeStudies(studies)
+
   pinfo      <- .admDriverPinfo(.ui, .ctl)
   # IRMC draws its importance-sampling proposals FROM the random-effect
   # distribution, so a model with no random effect has nothing to propose: the
@@ -1255,7 +1264,6 @@ nlmixr2Est.adirmc <- function(env, ...) {
   studies        <- .u$studies
   .adm_multi_out <- .u$multi_out
   .adm_joint     <- .u$any_joint
-  .admRefuseNodeStudies(.u$studies)
   .admRefuseCovariates(.u$studies, "adirmc")
   if (.adm_multi_out || .adm_joint)
     stop("adirmc does not yet support multiple observed outputs (multi-compartment observations). ",

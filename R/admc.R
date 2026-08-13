@@ -1117,12 +1117,20 @@ nmObjGetControl.admc <- function(x, ...) {
           eta_mat <- z %*% t(.admStudyL(pars, pinfo, s))
           pdf_mat[rows, pinfo$eta_col_names] <- eta_mat
         }
-        if (identical(s$.adm_cov_path, "rows")) {
-          .cr <- .admCovRowsFor(s$cov_dist, n_sim, pinfo$n_eta)
-          for (.cn in intersect(colnames(.cr), colnames(pdf_mat)))
-            pdf_mat[rows, .cn] <- .cr[, .cn]
-        }
       }
+      # Covariates. This USED to sit inside the loop above as
+      #   for (.cn in intersect(colnames(.cr), colnames(pdf_mat))) ...
+      # which is a silent no-op: .admMakeParamsList() builds struct + eta +
+      # sigma + rxerr columns only, so the intersect was always empty and the
+      # covariate column was never created. rxSolve then failed on the missing
+      # parameter, the failure was swallowed by the tryCatch below into
+      # finite[ci] <- FALSE, and .admCalcCov reported a non-finite HESSIAN --
+      # naming the symptom, not the cause. Net effect: covMethod = "r" returned
+      # no covariance at all for any admc covariate fit.
+      # .admCovColsTiled() reads s$cov_rows, which only .admGrad set; the batch
+      # paths never did, so it would have tiled NULL and stayed a no-op.
+      s       <- .admStudyCovRows(s, pinfo, n_sim)
+      pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim, n_c)
 
       out <- tryCatch(
         rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
@@ -1380,6 +1388,10 @@ nmObjGetControl.admc <- function(x, ...) {
           pars <- pars_list[[ci]]
           for (nm in names(pars$struct)) pdf_mat[rows, nm] <- pars$struct[nm]
         }
+        # covariates, tiled across the configuration blocks (see .admNLLBatch)
+        s       <- .admStudyCovRows(s, pinfo, n_sim)
+        pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim,
+                                    nrow(pdf_mat) %/% n_sim)
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
                                          nDisplayProgress = pinfo$nDisplayProgress,
@@ -1432,6 +1444,10 @@ nmObjGetControl.admc <- function(x, ...) {
             }
           }
         }
+        # covariates, tiled across the configuration blocks (see .admNLLBatch)
+        s       <- .admStudyCovRows(s, pinfo, n_sim)
+        pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim,
+                                    nrow(pdf_mat) %/% n_sim)
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
                                          nDisplayProgress = pinfo$nDisplayProgress,
@@ -2737,6 +2753,15 @@ nlmixr2Est.admc <- function(env, ...) {
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
 
+  # BEFORE .admDriverUnits(). The guard reads user-supplied TOP-LEVEL fields
+  # (`weight`, `cov_method`), and normalising/flattening strips them -- so run
+  # after it, the guard inspects a list the fields have already been removed
+  # from and never fires. That is not hypothetical: with the call downstream, a
+  # node study list carrying weight = 0.5 on two nodes FITTED in all four
+  # estimators at exactly twice the correct objective (720.715 against 360.358),
+  # which is the silent-wrong-answer this guard exists to prevent.
+  .admRefuseNodeStudies(studies)
+
   pinfo      <- .admDriverPinfo(.ui, .ctl)
   output_var <- .admOutputVar(.ui)
 
@@ -2745,7 +2770,6 @@ nlmixr2Est.admc <- function(env, ...) {
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
 
-  .admRefuseNodeStudies(studies)
 
   # RETURNS the studies, annotated with which covariate path each takes.
   # Discarding the value silently disables covariate handling entirely.

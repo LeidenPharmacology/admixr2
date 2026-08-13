@@ -1280,6 +1280,15 @@ nlmixr2Est.adgh <- function(env, ...) {
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
 
+  # BEFORE .admDriverUnits(). The guard reads user-supplied TOP-LEVEL fields
+  # (`weight`, `cov_method`), and normalising/flattening strips them -- so run
+  # after it, the guard inspects a list the fields have already been removed
+  # from and never fires. That is not hypothetical: with the call downstream, a
+  # node study list carrying weight = 0.5 on two nodes FITTED in all four
+  # estimators at exactly twice the correct objective (720.715 against 360.358),
+  # which is the silent-wrong-answer this guard exists to prevent.
+  .admRefuseNodeStudies(studies)
+
   pinfo      <- .admDriverPinfo(.ui, .ctl)
   output_var <- .admOutputVar(.ui)
   n_nodes    <- .ctl$n_nodes
@@ -1289,7 +1298,6 @@ nlmixr2Est.adgh <- function(env, ...) {
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
 
-  .admRefuseNodeStudies(studies)
 
   # RETURNS the studies, annotated with which covariate path each takes.
   # Discarding the value silently disables covariate handling entirely.

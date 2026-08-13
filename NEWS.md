@@ -1,5 +1,28 @@
 # admixr2 0.4.1
 
+## Breaking changes
+
+* **Node-quadrature covariate marginalisation (`"gl"` / `"gh"` / `"taylor"`) has
+  been removed**, along with the exported `admBuildQuadrature()` and
+  `admBuildCovStudies()`, `datagen()`'s `covariate` argument (and its
+  `quad_method` / `n_nodes` / `truncation_sd` / `h` / `order` formals), and the
+  `plot(which = "covariate")` panel.
+
+  Those methods score a study at fixed covariate values and combine the per-node
+  -2LL linearly. Given the ONE pooled `(E, V)` a publication reports, that sum is
+  `E_a[-2LL]` -- an average of log-densities, so `-2 log` of an unnormalised
+  geometric mean of densities, which is not a likelihood. Given per-node data it
+  *is* one, but only because `sum_k c_k n NLL_k` is identically
+  `sum_k n_k NLL_k` with `n_k = c_k n`: ordinary multi-study fitting with
+  quadrature weights standing in for stratum sizes. A publication reporting
+  strata reports their real sizes, which are strictly better. So the machinery
+  was redundant where it was valid and invalid where it was not.
+
+  Give each study its `cov_dist` and admixr2 marginalises over it. For summaries
+  by covariate stratum, pass the strata as ordinary studies, each with its own
+  `cov` and its own `n`. Old study lists carrying `weight` or `cov_method` are
+  refused rather than silently fitted as an unweighted sum.
+
 ## New features
 
 * **`sigdig` now controls the fit, not just the output tables -- and it is

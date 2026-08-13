@@ -94,9 +94,13 @@ test_that(".admCheckCovariates ROUTES rather than refuses, most efficient first"
 
   # bare theta*COV + normal + single occurrence -> closed form
   expect_identical(path(), "collapse")
-  # non-normal spec: the closed form does not apply, but u-quantile does
+  # non-normal spec: the closed form does not apply. It used to fall to the
+  # u-quantile path; that path is no longer routed to, because on a DISCRETE
+  # covariate its unbracketed Newton solve silently returns garbage quantiles
+  # (measured: 13-20% on the mean, 3-5x on the covariance). The general per-row
+  # path assumes nothing and was exact on every configuration tested.
   expect_identical(path(st = list(a = list(cov = list(WT = 0),
-      cov_dist = list(WT = list(values = c(0, 1), probs = c(.6, .4)))))), "uq")
+      cov_dist = list(WT = list(values = c(0, 1), probs = c(.6, .4)))))), "rows")
   # covariate used in a SECOND place -> its whole effect no longer fits in one
   # eta column, so the general per-row path takes over
   expect_identical(path(ui = .cov_ui(expr = list(

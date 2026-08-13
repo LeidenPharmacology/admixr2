@@ -1283,6 +1283,15 @@ nlmixr2Est.adfo <- function(env, ...) {
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
 
+  # BEFORE .admDriverUnits(). The guard reads user-supplied TOP-LEVEL fields
+  # (`weight`, `cov_method`), and normalising/flattening strips them -- so run
+  # after it, the guard inspects a list the fields have already been removed
+  # from and never fires. That is not hypothetical: with the call downstream, a
+  # node study list carrying weight = 0.5 on two nodes FITTED in all four
+  # estimators at exactly twice the correct objective (720.715 against 360.358),
+  # which is the silent-wrong-answer this guard exists to prevent.
+  .admRefuseNodeStudies(studies)
+
   pinfo      <- .admDriverPinfo(.ui, .ctl)
   output_var <- .admOutputVar(.ui)
   # A beta endpoint's precision phi is SOLVED, not fitted: .admSimulate() returns
@@ -1307,7 +1316,6 @@ nlmixr2Est.adfo <- function(env, ...) {
   studies    <- .u$studies
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
-  .admRefuseNodeStudies(studies)
   .admRefuseCovariates(studies, "adfo")
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)

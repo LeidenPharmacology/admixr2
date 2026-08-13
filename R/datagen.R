@@ -105,6 +105,7 @@ datagenControl <- function(
 #'       optionally `ev`/`n` (inherited from the study otherwise). When present,
 #'       the study result carries a matching `observations` list of per-output
 #'       `E`/`V`, ready to pass straight to `admControl(studies = ...)`.}
+#'   }
 #' @param model Optional default model function used for any study that does not
 #'   supply its own `model` element.  At least one of `model` or each
 #'   study's `model` must be non-`NULL`.

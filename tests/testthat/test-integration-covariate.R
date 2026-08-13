@@ -121,9 +121,10 @@ test_that("u-quantile reproduces exact nested quadrature for an ALLOMETRIC effec
   Vo  <- ref$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
   d <- .cov_setup(.cov_allometric, list(WT = list(meanlog = ml, sdlog = sl)),
                   list(WT = exp(ml)), ref$E, Vo)
-  # this model is NOT a bare theta*WT product -> u-quantile, not the collapse
+  # this model is NOT a bare theta*WT product, so not the collapse; it now takes
+  # the general per-row path rather than the u-quantile one (see .admCheckCovariates)
   expect_false(isTRUE(d$st[[1L]]$.adm_cov_collapse))
-  expect_false(is.null(d$st[[1L]]$.adm_cov_uq))
+  expect_identical(d$st[[1L]]$.adm_cov_path, "rows")
   p <- .cov_pred(d)
   expect_lt(max(abs(p$E / ref$E - 1)), 5e-3)
   expect_lt(max(abs(p$V / ref$V - 1)), 3e-2)
@@ -239,14 +240,17 @@ test_that("routing prefers the most efficient VALID path", {
   expect_identical(
     .cov_setup(.cov_linear, list(WT = list(mu = 0.2, sd = 0.35)),
                list(WT = 0.2), E0, V0)$st[[1L]]$.adm_cov_path, "collapse")
-  # allometric, single parameter with an eta -> measured Delta
+  # Everything the closed form does not cover goes to the general per-row path.
+  # The u-quantile route is no longer selected: it needs a smooth unimodal
+  # covariate, a log-scale multiplicative effect and one covariate per eta, none
+  # of which can be established from the model text, and each of which was
+  # measured to be silently wrong when assumed and false.
   expect_identical(
     .cov_setup(.cov_allometric, list(WT = list(meanlog = ml, sdlog = sl)),
-               list(WT = exp(ml)), E0, V0)$st[[1L]]$.adm_cov_path, "uq")
-  # bare theta*WT but NOT normal -> the closed form does not apply
+               list(WT = exp(ml)), E0, V0)$st[[1L]]$.adm_cov_path, "rows")
   expect_identical(
     .cov_setup(.cov_linear, list(WT = list(values = c(0, 1), probs = c(.6, .4))),
-               list(WT = 0.4), E0, V0)$st[[1L]]$.adm_cov_path, "uq")
+               list(WT = 0.4), E0, V0)$st[[1L]]$.adm_cov_path, "rows")
 })
 
 # ---- gradients on the general path -------------------------------------------
@@ -481,4 +485,56 @@ test_that("a covariate scaling the dose is marginalised correctly", {
   expect_gt(max(abs(r$E - r0$E) / r0$E), 5)
   a0 <- adm(mk(FALSE))
   expect_lt(max(abs(a0$m$E - r0$E) / abs(r0$E)), 0.01)
+})
+
+# -- The node-study guard must fire THROUGH A DRIVER --------------------------
+#
+# test-covariate.R exercises .admRefuseNodeStudies() on a raw study list, which
+# is not the shape any driver hands it. That gap hid a real defect: the drivers
+# called the guard AFTER .admDriverUnits(), which strips the top-level `weight`
+# and `cov_method` fields it reads, so the guard never fired and a node study
+# list FITTED in all four estimators -- at exactly twice the correct objective
+# (720.715 against 360.358), weights silently ignored. Only an end-to-end test
+# can catch that, so this one goes through nlmixr2().
+
+test_that("a node study list is refused by every estimator, end to end", {
+  skip_if_not_installed("nlmixr2est")
+  m <- function() {
+    ini({tcl <- log(1); tv <- log(10); add.err <- 0.3; eta.cl ~ 0.09})
+    model({cl <- exp(tcl + eta.cl); v <- exp(tv)
+           d/dt(centr) <- -cl / v * centr; cp <- centr / v; cp ~ add(add.err)})
+  }
+  TT <- c(0.5, 1, 2, 4, 8); EV <- rxode2::et(amt = 100)
+  g  <- datagen(list(s = list(model = m, times = TT, ev = EV, n = 100L)),
+                control = datagenControl(n_sim = 2000L, seed = 3L))
+  nodes <- list(n1 = c(g$s, list(weight = 0.5)), n2 = c(g$s, list(weight = 0.5)))
+
+  for (est in c("admc", "adgh", "adfo", "adirmc")) {
+    ctl <- switch(est, admc = admControl, adgh = adghControl,
+                  adfo = adfoControl, adirmc = adirmcControl)
+    expect_error(
+      suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+        m, admData(), est = est,
+        control = ctl(studies = nodes, print = 0L, covMethod = "none",
+                      maxeval = 3L)))),
+      "was removed", info = est)
+  }
+
+  # a multi-output study can carry the field per OBSERVATION rather than at the
+  # top level; the guard has to look there too
+  nodes2 <- list(s = list(n = 100L, ev = EV, observations = list(
+    o1 = list(E = g$s$E, V = g$s$V, times = TT, output = "cp", weight = 0.5))))
+  expect_error(
+    suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+      m, admData(), est = "adgh",
+      control = adghControl(studies = nodes2, print = 0L, covMethod = "none",
+                            maxeval = 3L)))),
+    "was removed")
+
+  # ... and an ordinary study list must still fit
+  expect_no_error(
+    suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+      m, admData(), est = "adgh",
+      control = adghControl(studies = g, print = 0L, covMethod = "none",
+                            maxeval = 3L)))))
 })

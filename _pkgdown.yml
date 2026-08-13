@@ -62,7 +62,6 @@ navbar:
           href: articles/aggregate-data.html
         - text: Simulating data & using published models
           href: articles/datagen.html
-        - text: Covariate marginalisation
         - text: "---"
         - text: Meta-analysis across studies
         - text: Multiple studies
