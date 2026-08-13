@@ -328,12 +328,12 @@ test_that("adgh marginalises a covariate by a PRODUCT GRID, not Monte Carlo", {
                        cov_dist = list(WT = list(meanlog = ml, sdlog = sl))))
   ui   <- suppressMessages(rxode2::rxode2(.cov_both))
   ovar <- admixr2:::.admOutputVar(ui)
-  for (g in c("none", "analytical")) {
+  for (g in c("none", "fd")) {
     ctl   <- adghControl(studies = st0, grad = g, n_nodes = 9L, print = 0L,
                          covMethod = "none")
     pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
     u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
-    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, g)
+    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, g, "adgh")
     expect_identical(stu[[1L]]$.adm_cov_path, "rows")
     prs  <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pinfo)$p0, pinfo)
     grid <- admixr2:::.adghNodeGrid(9L, pinfo$n_eta)
@@ -355,4 +355,30 @@ test_that("estimators without a covariate path REFUSE cov_dist", {
     expect_error(admixr2:::.admRefuseCovariates(st, est),
                  "does not support covariate marginalisation")
   expect_silent(admixr2:::.admRefuseCovariates(list(a = list(), b = list()), "adfo"))
+})
+
+test_that("adgh refuses its ANALYTIC gradient with a covariate, but not FD", {
+  # .adghGradNLL builds its quadrature from pars$L, not through .adghGrid(), so
+  # it never sees the covariate product grid the objective uses. .adghFDGrad
+  # differences .adghNLL, which does.
+  ml <- log(72); sl <- 0.28
+  E0 <- rep(1, length(.cov_TIMES)); V0 <- diag(length(.cov_TIMES))
+  st0 <- list(s = list(E = E0, V = V0, n = 300L, times = .cov_TIMES,
+                       ev = rxode2::et(amt = .cov_DOSE),
+                       cov_dist = list(WT = list(meanlog = ml, sdlog = sl))))
+  ui    <- suppressMessages(rxode2::rxode2(.cov_both))
+  pinfo <- admixr2:::.admDriverPinfo(
+    ui, adghControl(studies = st0, grad = "none", print = 0L, covMethod = "none"))
+  u <- admixr2:::.admDriverUnits(st0, ui, admixr2:::.admOutputVar(ui))
+  expect_error(
+    admixr2:::.admCheckCovariates(ui, pinfo, u$studies, "analytical", "adgh"),
+    "cannot use grad = \"analytical\"", fixed = TRUE)
+  for (g in c("fd", "none"))
+    expect_identical(
+      admixr2:::.admCheckCovariates(ui, pinfo, u$studies, g, "adgh")[[1L]]$.adm_cov_path,
+      if (g == "none") "rows" else "rows")
+  # admc is unaffected -- its analytical/sens path IS covariate-aware
+  expect_identical(
+    admixr2:::.admCheckCovariates(ui, pinfo, u$studies, "sens", "admc")[[1L]]$.adm_cov_path,
+    "rows")
 })

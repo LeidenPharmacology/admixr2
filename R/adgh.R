@@ -715,6 +715,16 @@
 
   H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
 
+  # Covariate studies: differentiate the NLL, not the gradient. The gradient
+  # supplied here is .adghGrad -> .adghGradNLL, which builds its quadrature from
+  # pars$L rather than through .adghGrid(), so it does not carry the covariate
+  # product grid. A Hessian from it would be of a mean-only objective while the
+  # estimates are from a marginalised one -- plausible standard errors for the
+  # wrong model. The NLL-FD form goes through .adghNLL, which IS aware.
+  if (isTRUE(use_grad) &&
+      any(vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))))
+    use_grad <- FALSE
+
   if (use_grad) {
     # CENTRAL difference of the gradient -- see .adfoCalcCov() for the reasoning
     # and the cost (2*np_cov gradient evaluations against the old np_cov+1).
@@ -1249,7 +1259,7 @@ nlmixr2Est.adgh <- function(env, ...) {
 
   # RETURNS the studies, annotated with which covariate path each takes.
   # Discarding the value silently disables covariate handling entirely.
-  studies <- .admCheckCovariates(.ui, pinfo, studies, .ctl$grad)
+  studies <- .admCheckCovariates(.ui, pinfo, studies, .ctl$grad, "adgh")
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)

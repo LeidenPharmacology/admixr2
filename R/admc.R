@@ -1686,6 +1686,21 @@ nmObjGetControl.admc <- function(x, ...) {
                  function(x) identical(x$form, .ADM_RESID_BETA), logical(1))))
     use_grad <- FALSE
 
+  # Same shape of problem for a covariate study, and the same remedy.
+  # .admGradBatch() builds FIVE params frames by hand -- the sens inner_df and
+  # four pdf_mat/pdf_hi/pdf_lo blocks, each with its own stride -- and none of
+  # them carries the per-row covariate. The Hessian would then be of a DIFFERENT
+  # objective than the one that was minimised: covariate held at its mean, so the
+  # reported standard errors would be those of a mean-only fit while the
+  # estimates are those of a marginalised one. Finite, plausible, and wrong.
+  #
+  # .admNLLBatch() IS covariate-aware, so route the Hessian through it rather
+  # than tile five more frames correctly. Costs the gradient path's speed on
+  # covariate fits only.
+  if (isTRUE(use_grad) &&
+      any(vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))))
+    use_grad <- FALSE
+
   # Hessian over struct + sigma + omega (falls back to struct+sigma if not PD).
   # Matches nlmixr2 FOCEI: omega entries are in the optimizer but skipped for cov.
   n_s     <- length(pinfo$struct_names)
