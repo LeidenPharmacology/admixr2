@@ -396,3 +396,113 @@ test_that("adgh's ANALYTIC gradient carries the covariate product grid", {
   expect_gt(max(abs(gf)), 100)                       # the test has real signal
   expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-6)), 1e-3)
 })
+
+# -- Node objectives: is folding the coefficient into `n` the intended sum? ----
+#
+# The whole node implementation rests on one identity: every kernel multiplies
+# (log|V| + tr(V^-1 V_obs) + r'V^-1 r) by `n`, so setting n_k = c_k * n makes a
+# node's contribution c_k * NLL_k. If that stops holding -- a kernel using `n`
+# for something else, an `n` coerced to integer -- the objective silently
+# becomes a different one, with every number still finite. Checked against the
+# sum assembled by hand from the package's own per-node moments.
+
+# Internal state for a node-method study, without going through a driver.
+.cov_node_setup <- function(cov_dist, meth, ctl, n = 60L) {
+  ui    <- suppressMessages(rxode2::rxode2(.cov_linear))
+  pinfo <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  pinfo$cov_map <- admixr2:::.admCovMap(ui)
+  pinfo$nDisplayProgress <- .Machine$integer.max
+  nt <- length(.cov_TIMES)
+  # NOT diagonal: .admNormaliseStudy() auto-detects a diagonal V and forces
+  # method = "var", which routes .adghNLL to nll_var_cpp -- so a diagonal V here
+  # would compare the var branch against a hand-built cov sum.
+  V  <- matrix(0.1, nt, nt) + diag(0.9, nt)
+  s  <- list(E = rep(1, nt), V = V, n = n, times = .cov_TIMES,
+             ev = rxode2::et(amt = .cov_DOSE), cov_dist = cov_dist,
+             cov_method = meth, cov_control = ctl)
+  st <- admixr2:::.admBuildEvFull(admixr2:::.admFlattenStudies(
+          list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp"))))
+  st <- admixr2:::.admCovExpandNodes(st)
+  ov <- admixr2:::.admBuildOptVec(pinfo)
+  list(ui = ui, pinfo = pinfo, st = st, ov = ov,
+       rxMod = admixr2:::.admLoadModel(ui),
+       pars = admixr2:::.admUnpack(ov$p0, pinfo),
+       grid = admixr2:::.adghNodeGrid(7L, pinfo$n_eta))
+}
+
+test_that("a node study's contribution is exactly c_k * NLL_k", {
+  cd <- list(WT = list(mu = 0.1, sd = 0.5))
+  for (meth in c("gh", "gl", "taylor")) {
+    d <- .cov_node_setup(cd, meth, list(n_nodes = 5L, h = 0.25))
+    expect_equal(sum(vapply(d$st, `[[`, numeric(1), ".adm_node_c")), 1,
+                 tolerance = 1e-8, info = meth)
+
+    got <- admixr2:::.adghNLL(d$ov$p0, d$pinfo, d$st, d$rxMod, "cp", d$grid, 1L)
+
+    want <- sum(vapply(d$st, function(s) {
+      s0 <- s; s0$n <- s$.adm_node_n            # undo the fold
+      m  <- admixr2:::.adghMoments(d$pars, d$pinfo, s0, d$rxMod, "cp",
+                                   d$grid, 1L)
+      s$.adm_node_c * admixr2:::nll_cov_cpp(s0$E, s0$V, m$E, m$V, s0$n)
+    }, numeric(1)))
+
+    expect_equal(got, want, tolerance = 1e-10, info = meth)
+    expect_true(is.finite(got), info = meth)
+  }
+  # taylor's centre really does carry a negative multiplier
+  d <- .cov_node_setup(cd, "taylor", list(h = 0.25))
+  expect_true(any(vapply(d$st, `[[`, numeric(1), "n") < 0))
+})
+
+test_that("per-node data recovers the covariate effect a pooled (E,V) cannot", {
+  # The two routes differ ONLY in what the data is: one (E, V) per node, each
+  # scored at its own covariate, versus one pooled (E, V) scored at every node.
+  # Same model, same nodes, same coefficients, same estimator, one population.
+  ui    <- suppressMessages(rxode2::rxode2(.cov_linear))
+  pinfo <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  pinfo$cov_map <- admixr2:::.admCovMap(ui)
+  pinfo$nDisplayProgress <- .Machine$integer.max
+  TCOV  <- 0.75
+  cd    <- list(WT = list(mu = 0.0, sd = 0.55))
+  nd    <- admixr2:::.admCovNodes(cd, "gh", list(n_nodes = 7L))
+  q     <- .cov_gh(40L)
+
+  # conditional moments at a FIXED covariate value: integrate over eta only
+  cond <- function(a) {
+    Y  <- t(vapply(q$x, function(z)
+      as.numeric(.cov_conc(exp(.cov_TCL + TCOV * a + .cov_OM * z))),
+      numeric(length(.cov_TIMES))))
+    E  <- as.numeric(crossprod(q$w, Y)); Yc <- sweep(Y, 2L, E)
+    V  <- t(Yc) %*% (Yc * q$w); diag(V) <- diag(V) + .cov_ADD^2
+    list(E = E, V = V)
+  }
+  per_node <- stats::setNames(lapply(seq_len(nrow(nd$values)), function(k) {
+    a <- unname(nd$values[k, 1L]); m <- cond(a)
+    list(E = m$E, V = m$V, n = 80L, times = .cov_TIMES,
+         ev = rxode2::et(amt = .cov_DOSE), cov = list(WT = a),
+         weight = nd$coefs[[k]])
+  }), sprintf("node%02d", seq_len(nrow(nd$values))))
+
+  st <- admixr2:::.admBuildEvFull(admixr2:::.admFlattenStudies(
+          stats::setNames(lapply(names(per_node), function(nm)
+            admixr2:::.admNormaliseStudy(per_node[[nm]], nm, "cp")),
+            names(per_node))))
+  st <- admixr2:::.admCovApplyNodeWeights(st)
+  # the coefficient must reach the UNIT -- a weight left on the study is a
+  # silent 1, and the objective is then a plain sum over nodes
+  expect_equal(sum(vapply(st, `[[`, numeric(1), ".adm_node_c")), 1,
+               tolerance = 1e-8)
+
+  ov   <- admixr2:::.admBuildOptVec(pinfo)
+  rx   <- admixr2:::.admLoadModel(ui)
+  grid <- admixr2:::.adghNodeGrid(7L, pinfo$n_eta)
+  j    <- which(pinfo$struct_names == "tcov")
+  f    <- function(tcov) {
+    p <- ov$p0; p[[j]] <- tcov
+    admixr2:::.adghNLL(p, pinfo, st, rx, "cp", grid, 1L)
+  }
+  # minimised AT the true coefficient, with curvature on both sides
+  f_true <- f(TCOV)
+  expect_lt(f_true, f(TCOV - 0.25))
+  expect_lt(f_true, f(TCOV + 0.25))
+})

@@ -2736,23 +2736,10 @@ nlmixr2Est.admc <- function(env, ...) {
     stop("admControl(studies=...) required", call. = FALSE)
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
-  # Two covariate routes, and only one of them is wired.
-  #
-  #   study$cov_dist -> the COLLAPSE: Omega is inflated to Omega + J Sigma_a J'
-  #     and the covariate solved at its mean, which is the exact marginal for a
-  #     linear effect on the mu-referenced scale and a normal covariate. Costs
-  #     what a no-covariate fit costs. Supported.
-  #
-  #   study$weight / a quadrature attribute -> the node-quadrature route, whose
-  #     combine rule (.adm_combine_nll) is NOT called by .admNLL. Running it
-  #     would sum the nodes with weight 1, which is a different objective, not a
-  #     coarser one -- so refuse rather than return a plausible number.
-  .quad <- !is.null(attr(.ctl$studies, "quadrature", exact = TRUE)) ||
-           any(vapply(studies, function(s) !is.null(s$weight), logical(1)))
-  if (.quad)
-    stop("admixr2: node-quadrature covariate marginalisation is not yet wired ",
-         "into `admc`. Give the study a `cov_dist` instead, which is solved by ",
-         "the exact collapse. See R/covariate.R.", call. = FALSE)
+  # Per-node aggregate data -- a `weight` on each study, or a `quadrature`
+  # attribute from admBuildCovStudies() -- is the construction the development
+  # workflow used and is supported: .admCovApplyNodeWeights() folds each node's
+  # combination coefficient into its `n` above. Nothing to refuse here.
 
   pinfo      <- .admDriverPinfo(.ui, .ctl)
   output_var <- .admOutputVar(.ui)
@@ -2761,6 +2748,16 @@ nlmixr2Est.admc <- function(env, ...) {
   studies    <- .u$studies
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
+
+  # A node method (gl/gh/taylor) scores the study's ONE aggregate (E, V) at
+  # fixed covariate values and combines the per-node -2LL values linearly, so it
+  # expands into ordinary fixed-covariate studies BEFORE the covariate check --
+  # which then sees no cov_dist on them and correctly does nothing. See the node
+  # section of R/covariate.R.
+  studies <- .admCovExpandNodes(studies)
+  # ... and per-node aggregate data (datagen(covariate=) / admBuildCovStudies())
+  # arrives already expanded, carrying its coefficient as `weight`.
+  studies <- .admCovApplyNodeWeights(studies)
 
   # RETURNS the studies, annotated with which covariate path each takes.
   # Discarding the value silently disables covariate handling entirely.

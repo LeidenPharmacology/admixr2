@@ -510,12 +510,19 @@ datagen <- function(studies, model = NULL, control = datagenControl(),
       results[[i]] <- one_result(obs_specs[[1L]])
     } else {
       # --- covariate study: one sub-study per quadrature node ----------------
-      quad    <- admBuildQuadrature(s$covariate, method = quad_method,
-                                    n_nodes = n_nodes,
-                                    truncation_sd = truncation_sd,
-                                    h = h, order = order)
-      multi_d <- is.matrix(quad$wt_nodes)
-      cov_nms <- if (multi_d) quad$cov_names else (quad$cov_names %||% quad$cov_name)
+      # Nodes and COMBINATION COEFFICIENTS from the single source both routes
+      # use (.admCovNodes -> .admCovNodeCoefs). Going through it rather than
+      # admBuildQuadrature() directly buys two things: Taylor's coefficients are
+      # its Laplace stencil rather than a vector of 1s, and a lognormal
+      # covariate gets its nodes on the LOG scale. Moment-matching a normal to
+      # WT ~ lognormal(log 20.2, 0.45) instead puts the 3.5-SD Gauss-Legendre
+      # lower limit -- and the outer Gauss-Hermite nodes -- at a NEGATIVE
+      # weight, where WT^clwt does not exist.
+      nd      <- .admCovNodes(s$covariate, quad_method,
+                              list(n_nodes = n_nodes,
+                                   truncation_sd = truncation_sd,
+                                   h = h, order = order))
+      cov_nms <- colnames(nd$values)
 
       # A covariate the model never reads generates data identical at every node,
       # which looks like a fit with no covariate effect rather than like a typo.
@@ -527,21 +534,23 @@ datagen <- function(studies, model = NULL, control = datagenControl(),
                         paste(.miss, collapse = ", "), nm), call. = FALSE)
 
       spec1  <- obs_specs[[1L]]
-      n_node <- if (multi_d) nrow(quad$wt_nodes) else length(quad$wt_nodes)
-      # Taylor uses the same per-node data as gl/gh; only the combination during
-      # fitting differs (.adm_combine_nll).
-      node_res <- lapply(seq_len(n_node), function(k) {
-        node_vals <- if (multi_d) setNames(quad$wt_nodes[k, , drop = TRUE], cov_nms)
-                     else         setNames(quad$wt_nodes[[k]], cov_nms)
-        one_result(spec1, node_vals)
-      })
-      grp <- admBuildCovStudies(lapply(node_res, `[`, c("E", "V")), quad,
-                                spec1$ev, spec1$times, s$n %||% NA_integer_,
-                                prefix = nm)
-      if (control$return_samples)
-        for (k in seq_along(grp)) grp[[k]]$samples <- node_res[[k]]$samples
+      n_node <- nrow(nd$values)
+      # Taylor uses the same per-node data as gl/gh; only the coefficients the
+      # nodes are combined with differ.
+      node_res <- lapply(seq_len(n_node), function(k)
+        one_result(spec1, setNames(nd$values[k, ], cov_nms)))
+      grp <- setNames(lapply(seq_len(n_node), function(k) {
+        st <- .admNormaliseStudy(
+          list(E = node_res[[k]]$E, V = node_res[[k]]$V,
+               n = s$n %||% NA_integer_, times = spec1$times, ev = spec1$ev,
+               cov = as.list(setNames(nd$values[k, ], cov_nms)),
+               weight = nd$coefs[[k]]),
+          sprintf("%s%02d", nm, k))
+        if (control$return_samples) st$samples <- node_res[[k]]$samples
+        st
+      }), sprintf("%s%02d", nm, seq_len(n_node)))
       results[[i]] <- grp
-      cov_quad     <- quad
+      cov_quad     <- nd$quad
     }
   }
 

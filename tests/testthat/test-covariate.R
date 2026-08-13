@@ -419,3 +419,122 @@ test_that(".admCovSdOf reports the spread the ridge depends on", {
   expect_equal(admixr2:::.admCovSdOf(list(meanlog = log(70), sdlog = 0.2)), 0.2)
   expect_equal(admixr2:::.admCovSdOf(list(values = c(0, 1), probs = c(0.5, 0.5))), 0.5)
 })
+
+# -- Node objectives (gl / gh / taylor) ---------------------------------------
+
+test_that(".admCovNodeCoefs returns quadrature weights for gl/gh", {
+  for (m in c("gl", "gh")) {
+    q <- admBuildQuadrature(list(wt = list(mu = 70, sd = 10)), m, n_nodes = 9L)
+    cf <- admixr2:::.admCovNodeCoefs(q)
+    expect_equal(cf, as.numeric(q$weights))
+    # a constant per-node NLL must survive the combination unchanged
+    expect_equal(sum(cf), 1, tolerance = 1e-8)
+  }
+})
+
+test_that(".admCovNodeCoefs returns the LAPLACE STENCIL for taylor, not ones", {
+  # This is the bug the node route shipped with: admBuildCovStudies() read
+  # `quad$weights[k] %||% 1`, and a taylor quadrature has NO weights, so every
+  # node got 1 and the three stencil points were summed as if they were a
+  # quadrature -- a different objective, with every number finite and plausible.
+  sd <- 10; h <- 5
+  q  <- admBuildQuadrature(list(wt = list(mu = 70, sd = sd)), "taylor", h = h)
+  cf <- admixr2:::.admCovNodeCoefs(q)
+  # NLL(mu) + 0.5*sd^2 * (f+ - 2 f0 + f-)/h^2
+  a  <- 0.5 * sd^2 / h^2
+  expect_equal(sort(cf), sort(c(a, 1 - 2 * a, a)))
+  expect_true(any(cf < 0))          # the central coefficient IS negative
+  expect_equal(sum(cf), 1)          # ... and they still sum to 1
+  expect_false(isTRUE(all.equal(cf, rep(1, length(cf)))))
+})
+
+test_that(".admCovNodeCoefs reproduces the 4th-order taylor stencil", {
+  sd <- 10; h <- 5
+  q  <- admBuildQuadrature(list(wt = list(mu = 70, sd = sd)), "taylor", h = h,
+                           order = 4L)
+  cf <- admixr2:::.admCovNodeCoefs(q)
+  a2 <- 0.5 * sd^2 / h^2
+  a4 <- sd^4 / 8 / h^4
+  ns <- q$node_signs[, 1L]
+  expect_equal(cf[ns ==  0L], 1 - 2 * a2 + 6 * a4)
+  expect_equal(cf[ns == +1L], a2 - 4 * a4)
+  expect_equal(cf[ns == +2L], a4)
+  expect_equal(sum(cf), 1)
+})
+
+test_that("admBuildCovStudies carries the coefficient, not the raw weight", {
+  q  <- admBuildQuadrature(list(wt = list(mu = 70, sd = 10)), "taylor", h = 5)
+  ag <- replicate(3L, list(E = c(1, 2), V = diag(2)), simplify = FALSE)
+  st <- admBuildCovStudies(ag, q, rxode2::et(amt = 1), c(1, 2), n = 50L)
+  w  <- vapply(st, function(s) s$weight, numeric(1))
+  expect_equal(unname(w), admixr2:::.admCovNodeCoefs(q))
+  expect_true(any(w < 0))
+})
+
+test_that(".admCovApplyNodeWeights folds the coefficient into n", {
+  st <- list(a = list(n = 100, weight = 2), b = list(n = 100, weight = -3),
+             c = list(n = 100, weight = 2))
+  out <- admixr2:::.admCovApplyNodeWeights(st)
+  expect_equal(vapply(out, `[[`, numeric(1), "n"), c(a = 200, b = -300, c = 200))
+  # the original count is kept for reporting, and `weight` is consumed
+  expect_equal(out$b$.adm_node_n, 100)
+  expect_equal(out$b$.adm_node_c, -3)
+  expect_null(out$b$weight)
+  # a study with no weight is untouched, and an all-1 list is returned as-is
+  plain <- list(a = list(n = 10), b = list(n = 20, weight = 1))
+  expect_identical(admixr2:::.admCovApplyNodeWeights(plain), plain)
+})
+
+test_that(".admCovNodes puts lognormal nodes on the log scale", {
+  # A normal moment-matched to WT ~ lognormal(log 20.2, 0.45) has its outer
+  # Gauss-Hermite / 3.5-SD Gauss-Legendre nodes at NEGATIVE weight, where
+  # WT^clwt does not exist.
+  cd <- list(WT = list(meanlog = log(20.2), sdlog = 0.45))
+  for (m in c("gh", "gl", "taylor")) {
+    nd <- admixr2:::.admCovNodes(cd, m, list(n_nodes = 9L, h = 0.225))
+    expect_true(all(nd$values > 0), info = m)
+    expect_equal(sum(nd$coefs), 1, tolerance = 1e-8, info = m)
+    expect_equal(colnames(nd$values), "WT")
+  }
+})
+
+test_that(".admCovNodes refuses a spec these methods cannot expand around", {
+  expect_error(
+    admixr2:::.admCovNodes(list(G = list(values = c(0, 1))), "gh"),
+    "mean and a spread")
+  expect_error(
+    admixr2:::.admCovNodes(list(G = list(quantile = function(u) u)), "taylor"),
+    "mean and a spread")
+})
+
+test_that(".admCovExpandNodes expands a pooled study into weighted nodes", {
+  mk <- function(meth) list(p = list(
+    E = rep(1, 2), V = diag(2), n = 100, times = c(1, 2),
+    cov_dist = list(WT = list(mu = 70, sd = 10)), cov_method = meth,
+    cov_control = list(n_nodes = 9L, h = 5)))
+  ex <- admixr2:::.admCovExpandNodes(mk("gh")$p |> list() |> setNames("p"))
+  expect_length(ex, 9L)
+  expect_equal(sum(vapply(ex, `[[`, numeric(1), ".adm_node_c")), 1,
+               tolerance = 1e-8)
+  # a node study is an ORDINARY fixed-covariate study
+  expect_null(ex[[1L]][["cov_dist"]])
+  expect_null(ex[[1L]][["cov_method"]])
+  expect_equal(names(ex[[1L]][["cov"]]), "WT")
+  expect_equal(ex[[3L]]$n, 100 * ex[[3L]]$.adm_node_c)
+  # marginal passes through untouched
+  m <- mk("marginal"); expect_identical(admixr2:::.admCovExpandNodes(m), m)
+  # taylor: 3 nodes, negative centre
+  tay <- admixr2:::.admCovExpandNodes(setNames(list(mk("taylor")$p), "p"))
+  expect_length(tay, 3L)
+  expect_true(any(vapply(tay, `[[`, numeric(1), "n") < 0))
+})
+
+test_that(".admCovExpandNodes refuses what it cannot do", {
+  s <- list(p = list(E = 1, V = 1, n = 10, cov_method = "nope"))
+  expect_error(admixr2:::.admCovExpandNodes(s), "Unknown cov_method")
+  s2 <- list(p = list(E = 1, V = 1, n = 10, cov_method = "gh"))
+  expect_error(admixr2:::.admCovExpandNodes(s2), "no `cov_dist`")
+  s3 <- list(p = list(E = 1, V = 1, n = 10, cov_method = "gh", is_joint = TRUE,
+                      cov_dist = list(WT = list(mu = 70, sd = 10))))
+  expect_error(admixr2:::.admCovExpandNodes(s3), "joint")
+})

@@ -266,6 +266,14 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
       "admBuildCovStudies: length(agg_list) (%d) must match the number of quadrature nodes (%d).",
       length(agg_list), n_nodes), call. = FALSE)
 
+  # The COMBINATION coefficient, not the raw quadrature weight. For gl/gh they
+  # are the same thing; for taylor the quadrature has no weights at all and the
+  # coefficients are the Laplace stencil (1 - sigma^2/h^2 in the centre, so
+  # negative). Taking `quad$weights[k] %||% 1` here gave every Taylor node a
+  # weight of 1, i.e. summed the stencil's evaluation points as if they were a
+  # quadrature -- a different objective, silently.
+  coefs <- .admCovNodeCoefs(quad)
+
   out <- lapply(seq_along(agg_list), function(k) {
     a <- agg_list[[k]]
     node_vals <- if (multi_d)
@@ -275,7 +283,7 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
     nm <- sprintf("%s%02d", prefix, k)
     s  <- .admNormaliseStudy(
       list(E = a$E, V = a$V, n = n, times = times, ev = ev,
-           cov = node_vals, weight = (quad$weights[k]) %||% 1),
+           cov = node_vals, weight = coefs[[k]]),
       nm)
     s
   })
@@ -808,6 +816,26 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
 # a fit whose omega has quietly absorbed the between-subject covariate spread.
 # Measured on the general path's own test model, that is omega 0.30 -> 0.44.
 .admRefuseCovariates <- function(studies, est) {
+  # A NODE study carries no `cov_dist` -- its covariate is a fixed value -- so
+  # the cov_dist test below does not see it. What makes it a node is its
+  # combination coefficient, and only the estimators that call
+  # .admCovApplyNodeWeights() apply one. Here the coefficient would simply be
+  # ignored and the nodes summed with weight 1: for gl/gh that inflates the
+  # objective by ~1/w, for taylor it sums three stencil points as though they
+  # were a quadrature. Both are finite, plausible and wrong.
+  wt <- vapply(studies, function(s) {
+    x <- s[["weight"]] %||% s[[".adm_node_c"]]
+    if (is.null(x)) 1 else as.numeric(x)[[1L]]
+  }, numeric(1))
+  if (any(wt != 1))
+    stop("admixr2: `", est, "` does not support node-quadrature covariate ",
+         "studies (gl/gh/taylor). Stud",
+         if (sum(wt != 1) > 1L) "ies " else "y ",
+         paste(sQuote(names(studies)[wt != 1]), collapse = ", "),
+         " carr", if (sum(wt != 1) > 1L) "y " else "ies ",
+         "a combination coefficient that only `admc` and `adgh` apply; ",
+         "summing the nodes here would give a different objective, not a ",
+         "coarser one.", call. = FALSE)
   has <- vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))
   if (!any(has)) return(invisible(NULL))
   stop("admixr2: `", est, "` does not support covariate marginalisation. ",
@@ -1217,3 +1245,241 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
   eta_mat
 }
 
+
+# =============================================================================
+# Node objectives: gl / gh / taylor, on the data a study actually reports
+# =============================================================================
+#
+# These are the published alternatives to marginalisation. Each scores ONE
+# study's aggregate (E, V) at a set of fixed covariate values and combines the
+# per-node -2LL values linearly:
+#
+#     -2LL_study = sum_k c_k * NLL( E_obs, V_obs ; prediction at covariate a_k )
+#
+# All three are that sum; only the coefficients c_k differ. Taylor's stencil,
+#
+#     NLL(mu) + 0.5*sigma^2 * [NLL(mu+h) - 2 NLL(mu) + NLL(mu-h)] / h^2 ,
+#
+# is a linear combination too, so it folds into the same shape instead of
+# needing a combiner of its own -- and the gradient of a linear combination is
+# that combination of the gradients, which is why no gradient path has to know
+# any of this exists.
+#
+# IMPLEMENTATION. c_k is folded into the node study's `n`. Every C++ kernel
+# takes `n` as a double and uses it as a linear multiplier on
+# (log|V| + tr(V^-1 V_obs) + r'V^-1 r), so n_k = c_k * n IS c_k * NLL_k --
+# exactly, for the NLL, for the analytic gradient and for both batch paths,
+# with no accumulation site aware that nodes exist. Taylor's central
+# coefficient is 1 - sigma^2/h^2 and so is normally NEGATIVE: that `n` is a
+# combination coefficient, not a subject count, which is why .admCovExpandNodes
+# writes it after .admNormaliseStudy has done its validation.
+#
+# CONTRAST with admBuildCovStudies(), which pairs each node with its OWN
+# aggregate data. That construction recovers truth exactly -- see
+# validation/covariate-matched-conditional.R -- but it needs one (E, V) per
+# node, 17 datasets for GH-17, which no published study reports. Scoring every
+# node against the single (E, V) a study does report is what these methods
+# amount to in practice, and is what this builds.
+
+.ADM_COV_NODE_METHODS <- c("gl", "gh", "taylor")
+
+# Linear combination coefficients, one per node, such that the study objective
+# is sum_k c_k * NLL_k. For gl/gh these ARE the quadrature weights; for taylor
+# they are the FD stencil, assembled to match .adm_combine_nll() term for term.
+.admCovNodeCoefs <- function(quad) {
+  if (!identical(quad$method, "taylor")) {
+    w <- quad$weights
+    if (is.null(w))
+      stop(".admCovNodeCoefs: method '", quad$method, "' produced no weights.",
+           call. = FALSE)
+    return(as.numeric(w))
+  }
+  ns <- quad$node_signs
+  K  <- nrow(ns); d <- quad$d; h <- rep_len(quad$h, d)
+  cf <- numeric(K)
+  ci <- which(rowSums(abs(ns)) == 0L)
+  cf[ci] <- 1
+  axis_only <- function(j)
+    if (d > 1L) rowSums(abs(ns[, -j, drop = FALSE])) == 0L else rep(TRUE, K)
+
+  # 2nd-order diagonal: 0.5 * sigma_jj * (f_+1 - 2 f_0 + f_-1) / h_j^2
+  for (j in seq_len(d)) {
+    o  <- axis_only(j)
+    a  <- 0.5 * quad$Sigma_cov[j, j] / h[j]^2
+    p1 <- which(ns[, j] == +1L & o); m1 <- which(ns[, j] == -1L & o)
+    cf[p1] <- cf[p1] + a; cf[m1] <- cf[m1] + a; cf[ci] <- cf[ci] - 2 * a
+  }
+  # 2nd-order cross terms (correlated covariates)
+  if (isTRUE(quad$is_correlated) && d > 1L) {
+    for (i in seq_len(d - 1L)) for (j in seq(i + 1L, d)) {
+      if (abs(quad$Sigma_cov[i, j]) < 1e-12) next
+      a  <- 0.5 * quad$Sigma_cov[i, j] / (h[i] * h[j])
+      pp <- which(ns[, i] == +1L & ns[, j] == +1L)
+      pm <- which(ns[, i] == +1L & ns[, j] == -1L)
+      mp <- which(ns[, i] == -1L & ns[, j] == +1L)
+      mm <- which(ns[, i] == -1L & ns[, j] == -1L)
+      cf[pp] <- cf[pp] + a; cf[mm] <- cf[mm] + a
+      cf[pm] <- cf[pm] - a; cf[mp] <- cf[mp] - a
+    }
+  }
+  # 4th-order diagonal
+  if ((quad$order %||% 2L) >= 4L) {
+    for (j in seq_len(d)) {
+      o  <- axis_only(j)
+      a  <- quad$Sigma_cov[j, j]^2 / 8 / h[j]^4
+      p2 <- which(ns[, j] == +2L & o); m2 <- which(ns[, j] == -2L & o)
+      p1 <- which(ns[, j] == +1L & o); m1 <- which(ns[, j] == -1L & o)
+      cf[p2] <- cf[p2] + a;     cf[m2] <- cf[m2] + a
+      cf[p1] <- cf[p1] - 4 * a; cf[m1] <- cf[m1] - 4 * a
+      cf[ci] <- cf[ci] + 6 * a
+    }
+  }
+  cf
+}
+
+# (mu, sd, link) per covariate for the node builders.
+#
+# gl/gh/taylor are all defined for a NORMAL covariate. A lognormal spec is
+# handled on the log scale and the nodes exponentiated -- which is exact
+# quadrature for the lognormal, and the only stable choice: moment-matching a
+# normal to WT ~ lognormal(log 20.2, 0.45) puts the 3.5-SD Gauss-Legendre
+# lower limit at a NEGATIVE weight, and WT^clwt is not defined there.
+# Everything else (discrete `values`, a bare `quantile` function) has no mean
+# and spread these methods can expand around, and is refused rather than
+# silently moment-matched.
+.admCovNodeSpec <- function(cd, method) {
+  cd  <- cd[!names(cd) %in% c("rho", "Sigma")]
+  out <- lapply(names(cd), function(nm) {
+    sp <- cd[[nm]]
+    if (!is.null(sp$mu) && !is.null(sp$sd))
+      return(list(mu = sp$mu, sd = sp$sd, link = "identity"))
+    if (!is.null(sp$meanlog) && !is.null(sp$sdlog))
+      return(list(mu = sp$meanlog, sd = sp$sdlog, link = "exp"))
+    stop("cov_method = '", method, "' needs a covariate with a mean and a ",
+         "spread to expand around; covariate ", sQuote(nm), " is specified as ",
+         paste(sQuote(names(sp)), collapse = "/"), ".\n",
+         "  gl, gh and taylor are all defined for a normal covariate (a ",
+         "lognormal is handled on the log scale).\n",
+         "  Use cov_method = 'marginal', which integrates over the ",
+         "distribution as given.", call. = FALSE)
+  })
+  stats::setNames(out, names(cd))
+}
+
+# Node values and combination coefficients for one study's covariate spec.
+# Returns `values` (n_node x d, on the covariate's own scale) and `coefs`.
+.admCovNodes <- function(cd, method, ctl = list()) {
+  sp <- .admCovNodeSpec(cd, method)
+  d  <- length(sp)
+  if (d == 0L)
+    stop("cov_method = '", method, "' but the study declares no covariate.",
+         call. = FALSE)
+  links <- vapply(sp, `[[`, character(1), "link")
+  if (d > 1L && any(links == "exp"))
+    stop("cov_method = '", method, "' with a lognormal covariate is supported ",
+         "for a single covariate only (the nodes are built on the log scale, ",
+         "and mixing scales in one product grid is not something these methods ",
+         "define).", call. = FALSE)
+  # admBuildQuadrature() works in (mu, sd); hand it the linked scale.
+  lin <- stats::setNames(lapply(sp, function(x) list(mu = x$mu, sd = x$sd)),
+                         names(sp))
+  if (!is.null(cd$rho))   lin$rho   <- cd$rho
+  if (!is.null(cd$Sigma)) lin$Sigma <- cd$Sigma
+  quad <- admBuildQuadrature(
+    lin,
+    method        = method,
+    n_nodes       = ctl$n_nodes       %||% 9L,
+    truncation_sd = ctl$truncation_sd %||% 3.5,
+    h             = ctl$h             %||% (vapply(sp, `[[`, numeric(1), "sd") / 2),
+    order         = ctl$order         %||% 2L)
+  vals <- quad$wt_nodes
+  if (!is.matrix(vals))
+    vals <- matrix(vals, ncol = 1L, dimnames = list(NULL, names(sp)))
+  colnames(vals) <- names(sp)
+  for (j in seq_len(d)) if (links[[j]] == "exp") vals[, j] <- exp(vals[, j])
+  list(values = vals, coefs = .admCovNodeCoefs(quad), quad = quad)
+}
+
+# Expand every node-method study into its nodes. Marginal studies pass through.
+#
+# A node study is an ORDINARY fixed-covariate study: cov_dist is dropped, so
+# nothing downstream marginalises and `.adm_cov_path` is never set. The
+# combination coefficient rides in `n` (see the section header).
+.admCovExpandNodes <- function(studies) {
+  meth <- vapply(studies, function(s) s[["cov_method"]] %||% "marginal",
+                 character(1))
+  if (all(meth == "marginal")) return(studies)
+  bad <- setdiff(unique(meth), c("marginal", .ADM_COV_NODE_METHODS))
+  if (length(bad))
+    stop("Unknown cov_method ", paste(sQuote(bad), collapse = ", "), ". ",
+         "Use one of: ",
+         paste(sQuote(c("marginal", .ADM_COV_NODE_METHODS)), collapse = ", "),
+         ".", call. = FALSE)
+  snames <- names(studies) %||% paste0("study", seq_along(studies))
+  out <- list(); onames <- character(0)
+  for (i in seq_along(studies)) {
+    s <- studies[[i]]; m <- meth[[i]]
+    if (identical(m, "marginal")) {
+      out <- c(out, list(s)); onames <- c(onames, snames[[i]]); next
+    }
+    if (isTRUE(s$is_joint))
+      stop("cov_method = '", m, "' is not supported for a joint (same-subject) ",
+           "unit.", call. = FALSE)
+    cd <- s[["cov_dist"]]
+    if (is.null(cd))
+      stop("Study ", sQuote(snames[[i]]), " sets cov_method = '", m,
+           "' but declares no `cov_dist` to integrate over.", call. = FALSE)
+    nd <- .admCovNodes(cd, m, s[["cov_control"]] %||% list())
+    for (k in seq_len(nrow(nd$values))) {
+      sk <- s
+      sk[["cov"]] <- as.list(stats::setNames(nd$values[k, ],
+                                             colnames(nd$values)))
+      sk[["cov_dist"]]    <- NULL
+      sk[["cov_rows"]]    <- NULL
+      sk[["cov_method"]]  <- NULL
+      sk[["cov_control"]] <- NULL
+      # The combination coefficient, folded into the likelihood's multiplier.
+      sk$n            <- nd$coefs[[k]] * s$n
+      sk$.adm_node_of <- snames[[i]]
+      sk$.adm_node_k  <- k
+      sk$.adm_node_c  <- nd$coefs[[k]]
+      sk$.adm_node_n  <- s$n
+      out    <- c(out, list(sk))
+      onames <- c(onames, sprintf("%s.node%02d", snames[[i]], k))
+    }
+  }
+  stats::setNames(out, onames)
+}
+
+# Fold each node study's combination coefficient into its `n`.
+#
+# This is the route the development workflow used, and the one datagen(covariate=)
+# generates: each node carries its OWN aggregate (E, V), simulated at that node's
+# covariate value, and the study objective is sum_k c_k * NLL_k. A publication
+# reporting summaries BY COVARIATE STRATUM gives exactly this shape.
+#
+# Same mechanism as .admCovExpandNodes(): `n` is a linear multiplier on the -2LL
+# in every kernel, so n_k = c_k * n IS c_k * NLL_k -- for the NLL, the analytic
+# gradient and both batch paths alike.
+#
+# `weight` is set by admBuildCovStudies() from .admCovNodeCoefs(), so Taylor's
+# negative central coefficient arrives here already correct. A study with no
+# weight is an ordinary study and passes through untouched.
+.admCovApplyNodeWeights <- function(studies) {
+  w <- vapply(studies, function(s) {
+    x <- s[["weight"]]
+    if (is.null(x)) 1 else as.numeric(x)[[1L]]
+  }, numeric(1))
+  if (all(w == 1)) return(studies)
+  if (anyNA(w))
+    stop("A study carries a non-numeric `weight`; it must be the node's ",
+         "combination coefficient.", call. = FALSE)
+  for (i in seq_along(studies)) {
+    if (w[[i]] == 1) next
+    studies[[i]]$.adm_node_n <- studies[[i]]$n
+    studies[[i]]$.adm_node_c <- w[[i]]
+    studies[[i]]$n           <- w[[i]] * studies[[i]]$n
+    studies[[i]]$weight      <- NULL
+  }
+  studies
+}
