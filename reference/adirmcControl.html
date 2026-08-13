@@ -9,7 +9,7 @@ Monte Carlo estimator.'><meta property="og:image" content="https://leidenpharmac
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -87,7 +87,7 @@ Monte Carlo estimator.</p>
 <span>  grad <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"analytical"</span>, <span class="st">"none"</span>, <span class="st">"fd"</span><span class="op">)</span>,</span>
 <span>  kappa_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"exact"</span>, <span class="st">"linearized"</span>, <span class="st">"linearized_gh"</span><span class="op">)</span>,</span>
 <span>  kappa_n_nodes <span class="op">=</span> <span class="fl">5L</span>,</span>
-<span>  grad_h <span class="op">=</span> <span class="fl">1e-04</span>,</span>
+<span>  grad_h <span class="op">=</span> <span class="fl">1e-06</span>,</span>
 <span>  cov_h <span class="op">=</span> <span class="fl">0.001</span>,</span>
 <span>  cov_h_outer <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">double.eps</span><span class="op">^</span><span class="op">(</span><span class="fl">1</span><span class="op">/</span><span class="fl">5</span><span class="op">)</span>,</span>
 <span>  phases <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">2</span>, <span class="fl">1</span>, <span class="fl">0.5</span>, <span class="fl">0.01</span><span class="op">)</span>,</span>
@@ -102,7 +102,7 @@ Monte Carlo estimator.</p>
 <span>  calcTables <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  compress <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  ci <span class="op">=</span> <span class="fl">0.95</span>,</span>
-<span>  sigdig <span class="op">=</span> <span class="fl">4</span>,</span>
+<span>  sigdig <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  sigdigTable <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  addProp <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"combined2"</span>, <span class="st">"combined1"</span><span class="op">)</span>,</span>
 <span>  optExpression <span class="op">=</span> <span class="cn">TRUE</span>,</span>
@@ -230,8 +230,8 @@ progress during long interactive fits.</p></dd>
 <dt id="arg-grad">grad<a class="anchor" aria-label="anchor" href="#arg-grad"></a></dt>
 <dd><p>Gradient mode for the inner optimiser: <code>"analytical"</code> (default,
 closed-form weight-path gradient), <code>"none"</code> (derivative-free BOBYQA), or
-<code>"fd"</code> (finite differences). Note: <code>"sens"</code> and <code>"cfd"</code> are not available
-for the IRMC estimator.</p></dd>
+<code>"fd"</code> (central finite differences). Note: <code>"sens"</code> is not available for the
+IRMC estimator.</p></dd>
 
 
 <dt id="arg-kappa-method">kappa_method<a class="anchor" aria-label="anchor" href="#arg-kappa-method"></a></dt>
@@ -251,11 +251,13 @@ accurate baseline at any IIV magnitude, still zero rxSolve per inner step).</p><
 
 
 <dt id="arg-grad-h">grad_h<a class="anchor" aria-label="anchor" href="#arg-grad-h"></a></dt>
-<dd><p>Step size for finite-difference gradient evaluation during
-optimization (used by <code>grad = "fd"</code> or <code>"cfd"</code>). The default 1e-4 is near
-the optimal balance between truncation error (grows with <code>h</code>) and MC noise
-amplification (grows as <code>1/h</code>) for forward FD. Central FD (<code>"cfd"</code>) has a
-slightly wider optimum around 1e-3, but 1e-4 works well for both.</p></dd>
+<dd><p>Step size for the inner optimiser's finite-difference gradient
+(<code>grad = "fd"</code>). Defaults to <code>1e-6</code>, not the <code>1e-4</code> the other three
+controls use: the IRMC inner NLL is deterministic given fixed proposals, so
+there is no Monte Carlo noise to step over and the truncation-versus-noise
+balance that sets <code>1e-4</code> elsewhere does not apply. The inner step was a
+hard-coded <code>1e-6</code> until it was made to honour <code>grad_h</code>; inheriting the
+coarser default would have changed the gradient the loop was tuned for.</p></dd>
 
 
 <dt id="arg-cov-h">cov_h<a class="anchor" aria-label="anchor" href="#arg-cov-h"></a></dt>
@@ -337,8 +339,30 @@ a fit is interrupted, <code><a href="admStopWorkers.html">admStopWorkers()</a></
 <dd><p><code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxode2::rxControl()</a></code> object. Created automatically when <code>NULL</code>.</p></dd>
 
 
-<dt id="arg-calctables-compress-ci-sigdig-sigdigtable-optexpression-sumprod-literalfix">calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd, literalFix<a class="anchor" aria-label="anchor" href="#arg-calctables-compress-ci-sigdig-sigdigtable-optexpression-sumprod-literalfix"></a></dt>
+<dt id="arg-calctables-compress-ci-sigdigtable-optexpression-sumprod-literalfix">calcTables, compress, ci, sigdigTable, optExpression, sumProd, literalFix<a class="anchor" aria-label="anchor" href="#arg-calctables-compress-ci-sigdigtable-optexpression-sumprod-literalfix"></a></dt>
 <dd><p>Passed to <code><a href="https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html" class="external-link">nlmixr2est::foceiControl()</a></code> for the table/output machinery.</p></dd>
+
+
+<dt id="arg-sigdig">sigdig<a class="anchor" aria-label="anchor" href="#arg-sigdig"></a></dt>
+<dd><p>Significant digits asked of the ODE solver, or <code>NULL</code> (the
+default) to leave rxode2's own solver tolerances alone. When set, it is
+passed to <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxode2::rxSolve()</a></code>'s own <code>sigdig</code> argument for every solve the
+estimator issues – rxode2 owns the mapping to <code>atol</code>/<code>rtol</code> and has changed
+it between releases, which is why the digits, not the tolerances, are what
+travels – and to <code><a href="https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html" class="external-link">nlmixr2est::foceiControl()</a></code> for the post-fit tables.</p>
+<p>It is a speed lever, and an opt-in one because it is not free. The
+estimators finite-difference the solve with steps of the same order:
+<code>grad_h</code> (1e-4), <code>cov_h</code> (1e-3) and <code>cov_h_outer</code> (~2.5e-3), while
+<code>sigdig = 4</code> maps to a relative tolerance of ~1e-4 on current rxode2.
+Differencing a solution whose own noise is 1e-4 with a 1e-4 step returns
+noise, and it surfaces as a moved objective and an indefinite covariance
+Hessian (every <code>SE</code> reported <code>NA</code>) rather than as an error. Most worthwhile
+where the gradient is fully analytic and nothing differences the solve –
+<code>adfoControl(grad = "analytical")</code> measured ~4.8x faster at <code>sigdig = 4</code>
+with standard errors unchanged to 4 significant figures. Elsewhere, compare
+the objective and the standard errors against <code>NULL</code> before relying on it.
+Table formatting is unaffected either way: <code>sigdigTable</code> defaults to 4
+regardless.</p></dd>
 
 
 <dt id="arg-addprop">addProp<a class="anchor" aria-label="anchor" href="#arg-addprop"></a></dt>
@@ -499,7 +523,7 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0027     | -1266.48 |    4.939 |    7.884 |     31.5 |     8.85 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0028     | -1266.48 |    4.939 |    7.884 |     31.5 |    8.851 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0029 ✓   | -1266.48 |    4.939 |    7.885 |     31.5 |    8.851 |   0.7954 |   0.1856 |   0.1191 |  0.07769 |  0.09037 | 0.006749 |   0.1295 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 1.2 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 1.4 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, MC NLL, Sens-Hessian, 12 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
@@ -513,17 +537,17 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance other elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    1.246      9.423     0  10.669</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1    1.424     13.914     0  15.338</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>            <span style="font-weight: bold;">Est.</span>      <span style="font-weight: bold;">SE</span>  <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>       1.597 0.04205 2.633    4.939 (4.548, 5.363)    35.57         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv1</span>       2.065  0.3248 15.73    7.885 (4.172, 14.90)    28.42         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv2</span>       3.450  0.1365 3.957    31.50 (24.11, 41.16)    30.75         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tq</span>        2.180  0.1072 4.916    8.851 (7.174, 10.92)    8.229         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tka</span>     -0.2290  0.2938 128.3  0.7954 (0.4472, 1.415)    37.18         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span>  0.1856 0.01504 8.100 0.1856 (0.1562, 0.2151)                     </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>       1.597 0.04576 2.865    4.939 (4.515, 5.402)    35.57         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv1</span>       2.065  0.3649 17.67    7.885 (3.857, 16.12)    28.42         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv2</span>       3.450  0.1515 4.392    31.50 (23.41, 42.39)    30.75         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tq</span>        2.180  0.1191 5.463    8.851 (7.008, 11.18)    8.229         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tka</span>     -0.2290  0.3296 143.9  0.7954 (0.4169, 1.517)    37.18         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span>  0.1856 0.01563 8.418 0.1856 (0.1550, 0.2163)                     </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Covariance Type (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   No correlations in between subject variability (BSV) matrix</span>

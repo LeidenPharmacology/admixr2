@@ -279,6 +279,11 @@ fit_fo <- nlmixr2(
     seed     = 1L
   )
 )
+#> 
+#> 
+#> 
+#> 
+#> 
 ```
 
 ## Fitting with admc
@@ -371,17 +376,17 @@ knitr::kable(tbl, caption = "Parameter estimates vs true values")
 
 | Parameter   |  True |    adfo |    admc |
 |:------------|------:|--------:|--------:|
-| exp(tcl)    |  5.00 |  4.9866 |  4.9626 |
-| exp(tv1)    | 10.00 |  8.5523 | 10.2582 |
-| exp(tv2)    | 30.00 | 30.4149 | 29.9032 |
-| exp(tq)     | 10.00 | 10.7936 |  9.7400 |
-| exp(tka)    |  1.00 |  0.9455 |  1.0304 |
-| var(eta.cl) |  0.09 |  0.0958 |  0.1011 |
-| var(eta.v1) |  0.09 |  0.1065 |  0.1020 |
-| var(eta.v2) |  0.09 |  0.0836 |  0.0975 |
-| var(eta.q)  |  0.09 |  0.1007 |  0.1073 |
-| var(eta.ka) |  0.09 |  0.0967 |  0.0986 |
-| prop.sd     |  0.20 |  0.1900 |  0.1895 |
+| exp(tcl)    |  5.00 |  4.9083 |  4.9626 |
+| exp(tv1)    | 10.00 |  7.3067 | 10.2582 |
+| exp(tv2)    | 30.00 | 32.3871 | 29.9032 |
+| exp(tq)     | 10.00 | 10.0790 |  9.7400 |
+| exp(tka)    |  1.00 |  0.8033 |  1.0304 |
+| var(eta.cl) |  0.09 |  0.0969 |  0.1011 |
+| var(eta.v1) |  0.09 |  0.1424 |  0.1020 |
+| var(eta.v2) |  0.09 |  0.0904 |  0.0975 |
+| var(eta.q)  |  0.09 |  0.0932 |  0.1073 |
+| var(eta.ka) |  0.09 |  0.0779 |  0.0986 |
+| prop.sd     |  0.20 |  0.1908 |  0.1895 |
 
 Parameter estimates vs true values {.table}
 
@@ -395,7 +400,7 @@ objectives or used for cross-estimator AIC:
 ``` r
 
 cat(sprintf("adfo  -2LL = %.2f   AIC = %.2f\n", fit_fo$objective, AIC(fit_fo)))
-#> adfo  -2LL = -3665.64   AIC = -3643.64
+#> adfo  -2LL = -3676.41   AIC = -3654.41
 cat(sprintf("admc  -2LL = %.2f   AIC = %.2f\n", fit_mc$objective, AIC(fit_mc)))
 #> admc  -2LL = -3690.25   AIC = -3668.25
 ```
@@ -452,7 +457,7 @@ tighten) are normal and expected.
 # adfo key arguments (fastest; linearised likelihood)
 adfoControl(
   studies    = list(...),
-  grad       = "none",      # "none" (BOBYQA), "analytical", "fd", "cfd"
+  grad       = "none",      # "none" (BOBYQA), "analytical", "fd"
   maxeval    = 500L,
   n_restarts = 1L,
   covMethod  = "r",         # SEs for struct+sigma only; omega SEs are not computed
@@ -463,7 +468,7 @@ adfoControl(
 admControl(
   studies    = list(...),
   n_sim      = 5000L,       # MC sample count
-  grad       = "sens",      # gradient mode: "sens", "fd", "cfd", "none"
+  grad       = "sens",      # gradient mode: "sens", "fd", "none"
   n_restarts = 1L,          # number of optimizer restarts
   workers    = 1L,          # parallel workers for restarts
   covMethod  = "r",         # SEs for struct+sigma only; omega SEs are not computed
@@ -474,7 +479,7 @@ admControl(
 adghControl(
   studies    = list(...),
   n_nodes    = 5L,          # nodes per eta dimension; total = n_nodes^n_eta
-  grad       = "analytical",# gradient mode: "analytical", "fd", "cfd", "none"
+  grad       = "analytical",# gradient mode: "analytical", "fd", "none"
   n_restarts = 1L,
   workers    = 1L,
   covMethod  = "r",         # SEs for struct+sigma only

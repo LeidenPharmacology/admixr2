@@ -29,7 +29,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -252,34 +252,36 @@ Otherwise this is an ordinary admixr2 fit:</p>
 <span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a></span>
 <span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">2.678</span>      <span class="fl">0.619</span>     <span class="dv">0</span>   <span class="fl">3.297</span>   <span class="fl">7.6</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed     <span class="fl">2.01</span>        <span class="fl">0.8</span>     <span class="dv">0</span>    <span class="fl">2.81</span>   <span class="fl">5.5</span></span>
 <span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a></span>
 <span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a></span>
 <span id="cb5-17"><a href="#cb5-17" tabindex="-1"></a>                                         Parameter    Est.      SE   %RSE</span>
-<span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a>tcl                            Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)   <span class="fl">1.595</span> <span class="fl">0.01608</span>  <span class="fl">1.008</span></span>
-<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a>tv                                  Log <span class="fu">volume</span> (L)   <span class="fl">3.910</span> <span class="fl">0.01155</span> <span class="fl">0.2954</span></span>
-<span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a>te0                        Log baseline <span class="fu">DBP</span> (mmHg)   <span class="fl">4.563</span> <span class="fl">0.01519</span> <span class="fl">0.3329</span></span>
-<span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a>temax             Log maximum DBP <span class="fu">reduction</span> (mmHg)   <span class="fl">2.826</span>  <span class="fl">0.1148</span>  <span class="fl">4.062</span></span>
-<span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a>tec50                              Log <span class="fu">EC50</span> (mg<span class="sc">/</span>L)  <span class="fl">0.6864</span>  <span class="fl">0.4847</span>  <span class="fl">70.62</span></span>
-<span id="cb5-23"><a href="#cb5-23" tabindex="-1"></a>prop.cp Proportional residual error, concentration <span class="fl">0.09973</span> <span class="fl">0.04479</span>  <span class="fl">44.91</span></span>
-<span id="cb5-24"><a href="#cb5-24" tabindex="-1"></a>add.dbp        Additive residual error, <span class="fu">DBP</span> (mmHg)   <span class="fl">3.012</span>   <span class="fl">26.64</span>  <span class="fl">884.2</span></span>
+<span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a>tcl                            Log <span class="fu">clearance</span> (L<span class="sc">/</span>h)   <span class="fl">1.595</span> <span class="fl">0.01548</span> <span class="fl">0.9704</span></span>
+<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a>tv                                  Log <span class="fu">volume</span> (L)   <span class="fl">3.910</span> <span class="fl">0.01117</span> <span class="fl">0.2856</span></span>
+<span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a>te0                        Log baseline <span class="fu">DBP</span> (mmHg)   <span class="fl">4.563</span> <span class="fl">0.01244</span> <span class="fl">0.2726</span></span>
+<span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a>temax             Log maximum DBP <span class="fu">reduction</span> (mmHg)   <span class="fl">2.826</span>  <span class="fl">0.1148</span>  <span class="fl">4.063</span></span>
+<span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a>tec50                              Log <span class="fu">EC50</span> (mg<span class="sc">/</span>L)  <span class="fl">0.6864</span>  <span class="fl">0.4852</span>  <span class="fl">70.70</span></span>
+<span id="cb5-23"><a href="#cb5-23" tabindex="-1"></a>prop.cp Proportional residual error, concentration <span class="fl">0.09973</span> <span class="fl">0.01248</span>  <span class="fl">12.52</span></span>
+<span id="cb5-24"><a href="#cb5-24" tabindex="-1"></a>add.dbp        Additive residual error, <span class="fu">DBP</span> (mmHg)   <span class="fl">3.012</span>  <span class="fl">0.8829</span>  <span class="fl">29.31</span></span>
 <span id="cb5-25"><a href="#cb5-25" tabindex="-1"></a>          Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
-<span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a>tcl          <span class="fl">4.927</span> (<span class="fl">4.774</span>, <span class="fl">5.085</span>)    <span class="fl">30.46</span>         <span class="cn">NaN</span></span>
-<span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a>tv           <span class="fl">49.89</span> (<span class="fl">48.78</span>, <span class="fl">51.04</span>)    <span class="fl">19.15</span>         <span class="cn">NaN</span></span>
-<span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a>te0          <span class="fl">95.85</span> (<span class="fl">93.04</span>, <span class="fl">98.75</span>)    <span class="fl">8.498</span>         <span class="cn">NaN</span></span>
+<span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a>tcl          <span class="fl">4.927</span> (<span class="fl">4.780</span>, <span class="fl">5.079</span>)    <span class="fl">30.46</span>         <span class="cn">NaN</span></span>
+<span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a>tv           <span class="fl">49.89</span> (<span class="fl">48.81</span>, <span class="fl">51.00</span>)    <span class="fl">19.15</span>         <span class="cn">NaN</span></span>
+<span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a>te0          <span class="fl">95.85</span> (<span class="fl">93.54</span>, <span class="fl">98.22</span>)    <span class="fl">8.498</span>         <span class="cn">NaN</span></span>
 <span id="cb5-29"><a href="#cb5-29" tabindex="-1"></a>temax        <span class="fl">16.88</span> (<span class="fl">13.48</span>, <span class="fl">21.14</span>)                     </span>
-<span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a>tec50       <span class="fl">1.986</span> (<span class="fl">0.7683</span>, <span class="fl">5.137</span>)                     </span>
-<span id="cb5-31"><a href="#cb5-31" tabindex="-1"></a>prop.cp <span class="fl">0.09973</span> (<span class="fl">0.01194</span>, <span class="fl">0.1875</span>)                     </span>
-<span id="cb5-32"><a href="#cb5-32" tabindex="-1"></a>add.dbp     <span class="fl">3.012</span> (<span class="sc">-</span><span class="fl">49.19</span>, <span class="fl">55.22</span>)                     </span>
+<span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a>tec50       <span class="fl">1.986</span> (<span class="fl">0.7675</span>, <span class="fl">5.142</span>)                     </span>
+<span id="cb5-31"><a href="#cb5-31" tabindex="-1"></a>prop.cp <span class="fl">0.09973</span> (<span class="fl">0.07526</span>, <span class="fl">0.1242</span>)                     </span>
+<span id="cb5-32"><a href="#cb5-32" tabindex="-1"></a>add.dbp      <span class="fl">3.012</span> (<span class="fl">1.282</span>, <span class="fl">4.743</span>)                     </span>
 <span id="cb5-33"><a href="#cb5-33" tabindex="-1"></a> </span>
 <span id="cb5-34"><a href="#cb5-34" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit<span class="sc">$</span>covMethod)<span class="sc">:</span> r</span>
 <span id="cb5-35"><a href="#cb5-35" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
 <span id="cb5-36"><a href="#cb5-36" tabindex="-1"></a>  Full BSV <span class="fu">covariance</span> (fit<span class="sc">$</span>omega) or <span class="fu">correlation</span> (fit<span class="sc">$</span>omegaR; <span class="at">diagonals=</span>SDs) </span>
 <span id="cb5-37"><a href="#cb5-37" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> fit<span class="sc">$</span>shrink </span>
-<span id="cb5-38"><a href="#cb5-38" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
-<span id="cb5-39"><a href="#cb5-39" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit<span class="sc">$</span>message)<span class="sc">:</span>  </span>
-<span id="cb5-40"><a href="#cb5-40" tabindex="-1"></a>    NLOPT_XTOL_REACHED<span class="sc">:</span> Optimization stopped because xtol_rel or <span class="fu">xtol_abs</span> (above) was reached. </span></code></pre></div>
+<span id="cb5-38"><a href="#cb5-38" tabindex="-1"></a>  Information about run <span class="fu">found</span> (fit<span class="sc">$</span>runInfo)<span class="sc">:</span></span>
+<span id="cb5-39"><a href="#cb5-39" tabindex="-1"></a>   • adghCalcCov<span class="sc">:</span> the full Hessian including omega was not positive definite or was numerically singular; reporting structural and sigma standard errors only. </span>
+<span id="cb5-40"><a href="#cb5-40" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
+<span id="cb5-41"><a href="#cb5-41" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit<span class="sc">$</span>message)<span class="sc">:</span>  </span>
+<span id="cb5-42"><a href="#cb5-42" tabindex="-1"></a>    NLOPT_XTOL_REACHED<span class="sc">:</span> Optimization stopped because xtol_rel or <span class="fu">xtol_abs</span> (above) was reached. </span></code></pre></div>
 <p><code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> returns one observed-vs-predicted panel per
 observed output:</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
@@ -397,7 +399,7 @@ plateau is not identified at all:</li>
 <span><span class="op">}</span> <span class="kw">else</span> <span class="op">{</span></span>
 <span>  <span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">cv</span><span class="op">[</span><span class="st">"temax"</span>, <span class="st">"tec50"</span><span class="op">]</span> <span class="op">/</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="va">cv</span><span class="op">[</span><span class="st">"temax"</span>, <span class="st">"temax"</span><span class="op">]</span> <span class="op">*</span> <span class="va">cv</span><span class="op">[</span><span class="st">"tec50"</span>, <span class="st">"tec50"</span><span class="op">]</span><span class="op">)</span>, <span class="fl">3</span><span class="op">)</span></span>
 <span><span class="op">}</span></span>
-<span><span class="co">#&gt; [1] 0.579</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 0.578</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="notes">Notes<a class="anchor" aria-label="anchor" href="#notes"></a>

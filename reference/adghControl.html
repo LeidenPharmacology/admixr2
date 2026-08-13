@@ -17,7 +17,7 @@ FO), noise-free (unlike MC), and much faster than MC for models with up to
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -86,8 +86,8 @@ FO), noise-free (unlike MC), and much faster than MC for models with up to
     <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">adghControl</span><span class="op">(</span></span>
 <span>  studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  n_nodes <span class="op">=</span> <span class="fl">5L</span>,</span>
-<span>  grad <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"analytical"</span>, <span class="st">"fd"</span>, <span class="st">"cfd"</span>, <span class="st">"none"</span><span class="op">)</span>,</span>
-<span>  algorithm <span class="op">=</span> <span class="st">"NLOPT_LN_BOBYQA"</span>,</span>
+<span>  grad <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"analytical"</span>, <span class="st">"fd"</span>, <span class="st">"none"</span><span class="op">)</span>,</span>
+<span>  algorithm <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  maxeval <span class="op">=</span> <span class="fl">500L</span>,</span>
 <span>  ftol_rel <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">double.eps</span><span class="op">^</span><span class="op">(</span><span class="fl">1</span><span class="op">/</span><span class="fl">2</span><span class="op">)</span>,</span>
 <span>  print <span class="op">=</span> <span class="fl">10L</span>,</span>
@@ -106,7 +106,7 @@ FO), noise-free (unlike MC), and much faster than MC for models with up to
 <span>  calcTables <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  compress <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  ci <span class="op">=</span> <span class="fl">0.95</span>,</span>
-<span>  sigdig <span class="op">=</span> <span class="fl">4</span>,</span>
+<span>  sigdig <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  sigdigTable <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  addProp <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"combined2"</span>, <span class="st">"combined1"</span><span class="op">)</span>,</span>
 <span>  optExpression <span class="op">=</span> <span class="cn">TRUE</span>,</span>
@@ -139,13 +139,20 @@ For models with &gt;= 5 etas the node count grows steeply; consider reducing
 <dt id="arg-grad">grad<a class="anchor" aria-label="anchor" href="#arg-grad"></a></dt>
 <dd><p>Gradient mode. <code>"analytical"</code> (default) uses closed-form
 contractions through the sensitivity equations – cheapest and exact.
-<code>"fd"</code> uses forward finite differences; <code>"cfd"</code> uses central FD.
+<code>"fd"</code> uses central finite differences (forward differencing was removed
+in 0.4.1; see <code><a href="adfoControl.html">adfoControl()</a></code>).
 <code>"none"</code> uses derivative-free BOBYQA.</p></dd>
 
 
 <dt id="arg-algorithm">algorithm<a class="anchor" aria-label="anchor" href="#arg-algorithm"></a></dt>
-<dd><p>nloptr algorithm. Automatically coerced to
-<code>"NLOPT_LD_LBFGS"</code> when <code>grad != "none"</code>.</p></dd>
+<dd><p>nloptr algorithm, or <code>NULL</code> (default) to pick the default
+that matches <code>grad</code>: <code>"NLOPT_LD_LBFGS"</code> with a gradient, <code>"NLOPT_LN_BOBYQA"</code>
+when <code>grad = "none"</code>. Any algorithm reported by
+<code><a href="https://astamm.github.io/nloptr/reference/nloptr.print.options.html" class="external-link">nloptr::nloptr.print.options()</a></code> is accepted. An explicit algorithm is
+reconciled with <code>grad</code>: when <code>grad = "none"</code> a gradient-based algorithm
+(<code>NLOPT_LD_*</code> / <code>NLOPT_GD_*</code>) falls back to <code>"NLOPT_LN_BOBYQA"</code>; when a
+gradient is requested a derivative-free algorithm (<code>NLOPT_LN_*</code> /
+<code>NLOPT_GN_*</code>) turns the gradient off. Both emit a message.</p></dd>
 
 
 <dt id="arg-maxeval">maxeval<a class="anchor" aria-label="anchor" href="#arg-maxeval"></a></dt>
@@ -183,7 +190,12 @@ FD Jacobian fallback.</p></dd>
 
 
 <dt id="arg-grad-bounds">grad_bounds<a class="anchor" aria-label="anchor" href="#arg-grad-bounds"></a></dt>
-<dd><p>Box-constraint half-width when using gradients.</p></dd>
+<dd><p>Box-constraint half-width when using gradients: the fit is
+confined to <code>p0 +/- grad_bounds</code> on the optimizer scale, which for a
+log-scale parameter is a factor of <code>exp(grad_bounds)</code> (~148 at the default
+5). This bound is admixr2's, not the model's – an unbounded parameter has
+no other – and nloptr reports normal convergence at a box corner, so a
+warning is emitted if an estimate finishes on it.</p></dd>
 
 
 <dt id="arg-cov-h">cov_h<a class="anchor" aria-label="anchor" href="#arg-cov-h"></a></dt>
@@ -230,8 +242,30 @@ each restart.</p></dd>
 <dd><p><code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxode2::rxControl()</a></code> object. Created automatically when <code>NULL</code>.</p></dd>
 
 
-<dt id="arg-calctables-compress-ci-sigdig-sigdigtable-optexpression-sumprod-literalfix">calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd, literalFix<a class="anchor" aria-label="anchor" href="#arg-calctables-compress-ci-sigdig-sigdigtable-optexpression-sumprod-literalfix"></a></dt>
+<dt id="arg-calctables-compress-ci-sigdigtable-optexpression-sumprod-literalfix">calcTables, compress, ci, sigdigTable, optExpression, sumProd, literalFix<a class="anchor" aria-label="anchor" href="#arg-calctables-compress-ci-sigdigtable-optexpression-sumprod-literalfix"></a></dt>
 <dd><p>Passed to <code><a href="https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html" class="external-link">nlmixr2est::foceiControl()</a></code> for the table/output machinery.</p></dd>
+
+
+<dt id="arg-sigdig">sigdig<a class="anchor" aria-label="anchor" href="#arg-sigdig"></a></dt>
+<dd><p>Significant digits asked of the ODE solver, or <code>NULL</code> (the
+default) to leave rxode2's own solver tolerances alone. When set, it is
+passed to <code><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxode2::rxSolve()</a></code>'s own <code>sigdig</code> argument for every solve the
+estimator issues – rxode2 owns the mapping to <code>atol</code>/<code>rtol</code> and has changed
+it between releases, which is why the digits, not the tolerances, are what
+travels – and to <code><a href="https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html" class="external-link">nlmixr2est::foceiControl()</a></code> for the post-fit tables.</p>
+<p>It is a speed lever, and an opt-in one because it is not free. The
+estimators finite-difference the solve with steps of the same order:
+<code>grad_h</code> (1e-4), <code>cov_h</code> (1e-3) and <code>cov_h_outer</code> (~2.5e-3), while
+<code>sigdig = 4</code> maps to a relative tolerance of ~1e-4 on current rxode2.
+Differencing a solution whose own noise is 1e-4 with a 1e-4 step returns
+noise, and it surfaces as a moved objective and an indefinite covariance
+Hessian (every <code>SE</code> reported <code>NA</code>) rather than as an error. Most worthwhile
+where the gradient is fully analytic and nothing differences the solve –
+<code>adfoControl(grad = "analytical")</code> measured ~4.8x faster at <code>sigdig = 4</code>
+with standard errors unchanged to 4 significant figures. Elsewhere, compare
+the objective and the standard errors against <code>NULL</code> before relying on it.
+Table formatting is unaffected either way: <code>sigdigTable</code> defaults to 4
+regardless.</p></dd>
 
 
 <dt id="arg-addprop">addProp<a class="anchor" aria-label="anchor" href="#arg-addprop"></a></dt>
@@ -343,7 +377,7 @@ with a large residual SD; there is little to gain by lowering it.</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0010     |  1000.18 |    6.203 |    35.45 |   0.3103 |  0.08888 |  0.05562 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0020     |   805.78 |    6.666 |    37.33 |   0.3781 |   0.1041 |  0.05946 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0022 ✓   |   805.78 |    6.667 |    37.33 |    0.378 |    0.104 |  0.05944 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0.2 sec  |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0.4 sec  |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, Analytical-Hessian, 6 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>

@@ -158,18 +158,18 @@ adgh -1323.144 -1313.144 -1292.943       661.5719
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed     0.45      0.099     0   0.549 4.201
+elapsed     0.39      0.108     0   0.498 3.654
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                           Parameter    Est.      SE   %RSE
 tcl             Log clearance (L/h)   1.556 0.02018  1.297
 tv                   Log volume (L)   3.911 0.01594 0.4075
-prop.cp Proportional residual error 0.09732 0.05238  53.83
+prop.cp Proportional residual error 0.09732 0.05262  54.07
             Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 tcl            4.738 (4.555, 4.930)    25.77         NaN
 tv             49.96 (48.42, 51.55)    19.68         NaN
-prop.cp 0.09732 (-0.005352, 0.2000)                     
+prop.cp 0.09732 (-0.005812, 0.2005)                     
  
   Covariance Type (fit$covMethod): r
   No correlations in between subject variability (BSV) matrix
@@ -200,24 +200,26 @@ adgh -2942.688 -2932.688 -2912.487       1471.344
 ── Time (sec fit_wrong$time): ──
 
   optimize covariance other elapsed
-1    0.809      0.074     0   0.883
+1    0.575       0.08     0   0.655
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
                           Parameter     Est.       SE    %RSE
 tcl             Log clearance (L/h)    1.558 0.003134  0.2012
-tv                   Log volume (L)    3.908 0.002285 0.05848
-prop.cp Proportional residual error 0.008208 0.005405   65.85
+tv                   Log volume (L)    3.908 0.002282 0.05841
+prop.cp Proportional residual error 0.008208 0.005416   65.98
               Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 tcl              4.749 (4.719, 4.778)    4.181         NaN
 tv               49.79 (49.57, 50.01)    2.935         NaN
-prop.cp 0.008208 (-0.002386, 0.01880)                     
+prop.cp 0.008208 (-0.002407, 0.01882)                     
  
   Covariance Type (fit_wrong$covMethod): r
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit_wrong$omega) 
     or correlation (fit_wrong$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
+  Information about run found (fit_wrong$runInfo):
+   • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. 
   Censoring (fit_wrong$censInformation): No censoring
   Minimization message (fit_wrong$message):  
     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 

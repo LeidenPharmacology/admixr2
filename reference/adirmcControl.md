@@ -22,7 +22,7 @@ adirmcControl(
   grad = c("analytical", "none", "fd"),
   kappa_method = c("exact", "linearized", "linearized_gh"),
   kappa_n_nodes = 5L,
-  grad_h = 1e-04,
+  grad_h = 1e-06,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
   phases = c(2, 1, 0.5, 0.01),
@@ -37,7 +37,7 @@ adirmcControl(
   calcTables = FALSE,
   compress = TRUE,
   ci = 0.95,
-  sigdig = 4,
+  sigdig = NULL,
   sigdigTable = NULL,
   addProp = c("combined2", "combined1"),
   optExpression = TRUE,
@@ -191,7 +191,7 @@ adirmcControl(
 
   Gradient mode for the inner optimiser: `"analytical"` (default,
   closed-form weight-path gradient), `"none"` (derivative-free BOBYQA),
-  or `"fd"` (finite differences). Note: `"sens"` and `"cfd"` are not
+  or `"fd"` (central finite differences). Note: `"sens"` is not
   available for the IRMC estimator.
 
 - kappa_method:
@@ -214,12 +214,14 @@ adirmcControl(
 
 - grad_h:
 
-  Step size for finite-difference gradient evaluation during
-  optimization (used by `grad = "fd"` or `"cfd"`). The default 1e-4 is
-  near the optimal balance between truncation error (grows with `h`) and
-  MC noise amplification (grows as `1/h`) for forward FD. Central FD
-  (`"cfd"`) has a slightly wider optimum around 1e-3, but 1e-4 works
-  well for both.
+  Step size for the inner optimiser's finite-difference gradient
+  (`grad = "fd"`). Defaults to `1e-6`, not the `1e-4` the other three
+  controls use: the IRMC inner NLL is deterministic given fixed
+  proposals, so there is no Monte Carlo noise to step over and the
+  truncation-versus-noise balance that sets `1e-4` elsewhere does not
+  apply. The inner step was a hard-coded `1e-6` until it was made to
+  honour `grad_h`; inheriting the coarser default would have changed the
+  gradient the loop was tuned for.
 
 - cov_h:
 
@@ -306,12 +308,37 @@ adirmcControl(
   [`rxode2::rxControl()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
   object. Created automatically when `NULL`.
 
-- calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd,
+- calcTables, compress, ci, sigdigTable, optExpression, sumProd,
   literalFix:
 
   Passed to
   [`nlmixr2est::foceiControl()`](https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html)
   for the table/output machinery.
+
+- sigdig:
+
+  Significant digits asked of the ODE solver, or `NULL` (the default) to
+  leave rxode2's own solver tolerances alone. When set, it is passed to
+  [`rxode2::rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)'s
+  own `sigdig` argument for every solve the estimator issues – rxode2
+  owns the mapping to `atol`/`rtol` and has changed it between releases,
+  which is why the digits, not the tolerances, are what travels – and to
+  [`nlmixr2est::foceiControl()`](https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html)
+  for the post-fit tables.
+
+  It is a speed lever, and an opt-in one because it is not free. The
+  estimators finite-difference the solve with steps of the same order:
+  `grad_h` (1e-4), `cov_h` (1e-3) and `cov_h_outer` (~2.5e-3), while
+  `sigdig = 4` maps to a relative tolerance of ~1e-4 on current rxode2.
+  Differencing a solution whose own noise is 1e-4 with a 1e-4 step
+  returns noise, and it surfaces as a moved objective and an indefinite
+  covariance Hessian (every `SE` reported `NA`) rather than as an error.
+  Most worthwhile where the gradient is fully analytic and nothing
+  differences the solve – `adfoControl(grad = "analytical")` measured
+  ~4.8x faster at `sigdig = 4` with standard errors unchanged to 4
+  significant figures. Elsewhere, compare the objective and the standard
+  errors against `NULL` before relying on it. Table formatting is
+  unaffected either way: `sigdigTable` defaults to 4 regardless.
 
 - addProp:
 
@@ -476,7 +503,7 @@ fit <- nlmixr2(
 #> | 0027     | -1266.48 |    4.939 |    7.884 |     31.5 |     8.85 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |
 #> | 0028     | -1266.48 |    4.939 |    7.884 |     31.5 |    8.851 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |
 #> | 0029 ✓   | -1266.48 |    4.939 |    7.885 |     31.5 |    8.851 |   0.7954 |   0.1856 |   0.1191 |  0.07769 |  0.09037 | 0.006749 |   0.1295 |
-#> | 1.2 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 1.4 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, MC NLL, Sens-Hessian, 12 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
@@ -490,17 +517,17 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance other elapsed
-#> 1    1.246      9.423     0  10.669
+#> 1    1.424     13.914     0  15.338
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>            Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl       1.597 0.04205 2.633    4.939 (4.548, 5.363)    35.57         NaN
-#> tv1       2.065  0.3248 15.73    7.885 (4.172, 14.90)    28.42         NaN
-#> tv2       3.450  0.1365 3.957    31.50 (24.11, 41.16)    30.75         NaN
-#> tq        2.180  0.1072 4.916    8.851 (7.174, 10.92)    8.229         NaN
-#> tka     -0.2290  0.2938 128.3  0.7954 (0.4472, 1.415)    37.18         NaN
-#> prop.sd  0.1856 0.01504 8.100 0.1856 (0.1562, 0.2151)                     
+#> tcl       1.597 0.04576 2.865    4.939 (4.515, 5.402)    35.57         NaN
+#> tv1       2.065  0.3649 17.67    7.885 (3.857, 16.12)    28.42         NaN
+#> tv2       3.450  0.1515 4.392    31.50 (23.41, 42.39)    30.75         NaN
+#> tq        2.180  0.1191 5.463    8.851 (7.008, 11.18)    8.229         NaN
+#> tka     -0.2290  0.3296 143.9  0.7954 (0.4169, 1.517)    37.18         NaN
+#> prop.sd  0.1856 0.01563 8.418 0.1856 (0.1550, 0.2163)                     
 #>  
 #>   Covariance Type (fit$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix

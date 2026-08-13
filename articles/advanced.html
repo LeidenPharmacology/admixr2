@@ -29,7 +29,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -159,10 +159,17 @@ a published table of means and SDs) or when runtime is a priority.</p>
 <p><code><a href="../reference/admControl.html">admControl()</a></code> and <code><a href="../reference/adfoControl.html">adfoControl()</a></code> offer
 gradient strategies via the <code>grad</code> argument.
 <code><a href="../reference/adghControl.html">adghControl()</a></code> offers <code>"analytical"</code>,
-<code>"fd"</code>, <code>"cfd"</code>, and <code>"none"</code>.
-<code><a href="../reference/adirmcControl.html">adirmcControl()</a></code> offers <code>"analytical"</code>,
-<code>"none"</code>, and <code>"fd"</code> only (no <code>"sens"</code>
-or <code>"cfd"</code>).</p>
+<code>"fd"</code>, and <code>"none"</code>. <code><a href="../reference/adirmcControl.html">adirmcControl()</a></code>
+offers <code>"analytical"</code>, <code>"none"</code>, and
+<code>"fd"</code> only (no <code>"sens"</code>).</p>
+<p><code>"fd"</code> is a <strong>central</strong> difference. Forward
+differencing was removed in 0.4.1: measured against the analytic
+gradient it was 10<sup>2</sup> to 10<sup>4</sup> times less accurate,
+and the one solve per parameter it saved did not pay for a gradient the
+optimizer struggles to descend. The step is not a fixed constant either
+– it is measured per parameter by the Shi (2021) procedure, with
+<code>grad_h</code> kept as the fallback when no measurement can be
+made.</p>
 <p><strong><code><a href="../reference/admControl.html">admControl()</a></code> gradient modes:</strong></p>
 <table class="table">
 <colgroup>
@@ -183,16 +190,11 @@ or <code>"cfd"</code>).</p>
 </tr>
 <tr class="even">
 <td><code>"fd"</code></td>
-<td>Forward finite differences</td>
-<td>Falls back to this if sens unavailable</td>
+<td>Central finite differences</td>
+<td>Falls back to this if sens unavailable; step measured per
+parameter</td>
 </tr>
 <tr class="odd">
-<td><code>"cfd"</code></td>
-<td>Central finite differences</td>
-<td>More accurate FD; ~2× slower than <code>"fd"</code>
-</td>
-</tr>
-<tr class="even">
 <td><code>"none"</code></td>
 <td>BOBYQA (derivative-free)</td>
 <td>No gradient; useful for debugging or simple models</td>
@@ -214,24 +216,20 @@ or <code>"cfd"</code>).</p>
 <tbody>
 <tr class="odd">
 <td>
-<code>"none"</code> (default)</td>
-<td>BOBYQA</td>
-<td>Derivative-free; robust starting point for FO</td>
+<code>"analytical"</code> (default)</td>
+<td>Chain rule through V_pred</td>
+<td>Omega/sigma analytical; struct thetas from the order-2 sensitivity
+model, FD only if it cannot be built</td>
 </tr>
 <tr class="even">
-<td><code>"analytical"</code></td>
-<td>Chain rule through V_pred</td>
-<td>Omega/sigma analytical; struct thetas FD only</td>
+<td><code>"none"</code></td>
+<td>BOBYQA</td>
+<td>Derivative-free; was the default up to 0.4.0</td>
 </tr>
 <tr class="odd">
 <td><code>"fd"</code></td>
-<td>Forward FD of full NLL</td>
-<td>All parameters; <code>n_p + 1</code> NLL evals per step</td>
-</tr>
-<tr class="even">
-<td><code>"cfd"</code></td>
 <td>Central FD of full NLL</td>
-<td>More accurate; <code>2 n_p</code> NLL evals per step</td>
+<td>All parameters; <code>2 n_p</code> NLL evals per step</td>
 </tr>
 </tbody>
 </table>
@@ -257,16 +255,10 @@ node grid</td>
 </tr>
 <tr class="even">
 <td><code>"fd"</code></td>
-<td>Forward FD of full NLL</td>
-<td>All parameters</td>
+<td>Central FD of full NLL</td>
+<td>All parameters; <code>2 n_p</code> NLL evals per step</td>
 </tr>
 <tr class="odd">
-<td><code>"cfd"</code></td>
-<td>Central FD of full NLL</td>
-<td>More accurate; ~2× slower than <code>"fd"</code>
-</td>
-</tr>
-<tr class="even">
 <td><code>"none"</code></td>
 <td>BOBYQA (derivative-free)</td>
 <td>No gradient</td>

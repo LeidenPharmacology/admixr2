@@ -10,7 +10,7 @@ non-linear individual predictions.
 ``` r
 adfoControl(
   studies = list(),
-  grad = c("none", "analytical", "fd", "cfd"),
+  grad = c("analytical", "none", "fd"),
   algorithm = NULL,
   maxeval = 500L,
   ftol_rel = .Machine$double.eps^(1/2),
@@ -30,7 +30,7 @@ adfoControl(
   calcTables = FALSE,
   compress = TRUE,
   ci = 0.95,
-  sigdig = 4,
+  sigdig = NULL,
   sigdigTable = NULL,
   addProp = c("combined2", "combined1"),
   optExpression = TRUE,
@@ -54,12 +54,23 @@ adfoControl(
 
 - grad:
 
-  Gradient mode. `"none"` (default) uses derivative-free BOBYQA;
-  `"analytical"` uses the closed-form FO gradient (requires sensitivity
-  equations); `"fd"` uses forward finite differences of the full NLL;
-  `"cfd"` uses central finite differences for struct theta gradient
-  (more accurate than `"fd"`, roughly twice as many NLL evaluations per
-  step).
+  Gradient mode. `"analytical"` (default) uses the closed-form FO
+  gradient with LBFGS; `"none"` uses derivative-free BOBYQA; `"fd"` uses
+  central finite differences of the full NLL. Forward differencing was
+  removed in 0.4.1 – it was 10^2 to 10^4 times less accurate than a
+  central difference at every site measured, and the one solve per
+  parameter it saved did not pay for a gradient the optimizer struggles
+  to descend.
+
+  The default was `"none"` up to 0.4.0, because the structural thetas
+  were finite-differenced through the whole NLL and the resulting
+  gradient was too noisy for a quasi-Newton step to pay off. They are
+  now differentiated analytically from a second-order sensitivity model
+  (relative error ~1e-7 against a central difference, where the
+  finite-difference pass reached 1e-2), so LBFGS on the exact gradient
+  is the better default. A model that cannot build that sensitivity
+  model falls back to the finite-difference gradient automatically, and
+  `grad = "none"` remains available.
 
 - algorithm:
 
@@ -113,7 +124,12 @@ adfoControl(
 
 - grad_bounds:
 
-  Box-constraint half-width when using gradients.
+  Box-constraint half-width when using gradients: the fit is confined to
+  `p0 +/- grad_bounds` on the optimizer scale, which for a log-scale
+  parameter is a factor of `exp(grad_bounds)` (~148 at the default 5).
+  This bound is admixr2's, not the model's – an unbounded parameter has
+  no other – and nloptr reports normal convergence at a box corner, so a
+  warning is emitted if an estimate finishes on it.
 
 - cov_h:
 
@@ -167,12 +183,37 @@ adfoControl(
   [`rxode2::rxControl()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
   object. Created automatically when `NULL`.
 
-- calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd,
+- calcTables, compress, ci, sigdigTable, optExpression, sumProd,
   literalFix:
 
   Passed to
   [`nlmixr2est::foceiControl()`](https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html)
   for the table/output machinery.
+
+- sigdig:
+
+  Significant digits asked of the ODE solver, or `NULL` (the default) to
+  leave rxode2's own solver tolerances alone. When set, it is passed to
+  [`rxode2::rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)'s
+  own `sigdig` argument for every solve the estimator issues – rxode2
+  owns the mapping to `atol`/`rtol` and has changed it between releases,
+  which is why the digits, not the tolerances, are what travels – and to
+  [`nlmixr2est::foceiControl()`](https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html)
+  for the post-fit tables.
+
+  It is a speed lever, and an opt-in one because it is not free. The
+  estimators finite-difference the solve with steps of the same order:
+  `grad_h` (1e-4), `cov_h` (1e-3) and `cov_h_outer` (~2.5e-3), while
+  `sigdig = 4` maps to a relative tolerance of ~1e-4 on current rxode2.
+  Differencing a solution whose own noise is 1e-4 with a 1e-4 step
+  returns noise, and it surfaces as a moved objective and an indefinite
+  covariance Hessian (every `SE` reported `NA`) rather than as an error.
+  Most worthwhile where the gradient is fully analytic and nothing
+  differences the solve – `adfoControl(grad = "analytical")` measured
+  ~4.8x faster at `sigdig = 4` with standard errors unchanged to 4
+  significant figures. Elsewhere, compare the objective and the standard
+  errors against `NULL` before relying on it. Table formatting is
+  unaffected either way: `sigdigTable` defaults to 4 regardless.
 
 - addProp:
 
@@ -234,7 +275,7 @@ overhead is measurable (roughly 17% of an FO gradient). Installing
 # Inspect defaults
 ctl <- adfoControl()
 ctl$grad
-#> [1] "none"
+#> [1] "analytical"
 ctl$maxeval
 #> [1] 500
 
@@ -303,28 +344,30 @@ fit <- nlmixr2(
 #>  
 #> ℹ parameter labels from comments are typically ignored in non-interactive mode
 #> ℹ Need to run with the source intact to parse comments
+#> → loading into symengine environment...
+#> → pruning branches (`if`/`else`) of full model...
+#> ✔ done
+#> → calculate sensitivities
+#> → calculate sensitivities
+#> → calculate sensitivities
+#> → finding duplicate expressions in admixr2 sensitivity model...
+#> → optimizing duplicate expressions in admixr2 sensitivity model...
+#>  
+#>  
 #>  
 #>  
 #>  
 #>  
 #> === admixr2: Aggregate Data Modeling (FO) ===
-#>   Obs units: 1 | Params: 5 | Cores: 2 | Grad: none | Restarts: 1
+#>   Obs units: 1 | Params: 5 | Cores: 2 | Grad: Analytical | Restarts: 1
 #> +----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |       tv |  prop.sd |   eta.cl |    eta.v |
 #> +----------+----------+----------+----------+----------+----------+----------+
-#> | 0010     |  1.5e+29 |        5 |        1 |      0.2 |     0.09 |     0.04 |
-#> | 0020     |  2351.54 |        5 |     23.2 |   0.2232 |     0.09 |    1.588 |
-#> | 0030     |  1826.01 |    5.246 |    27.66 |   0.2112 |  0.05607 |   0.9401 |
-#> | 0040     |  1693.60 |    5.429 |    29.31 |   0.2266 |   0.0586 |   0.9714 |
-#> | 0050     |  1459.82 |    5.752 |     33.9 |   0.2796 |  0.04258 |   0.6821 |
-#> | 0060     |  1339.28 |     5.96 |    35.23 |   0.3241 |  0.03856 |   0.5019 |
-#> | 0070     |  1323.48 |    5.712 |    40.83 |   0.3624 |   0.0265 |   0.2476 |
-#> | 0080     |  1137.41 |    5.855 |    35.91 |   0.3459 |  0.02343 |   0.1307 |
-#> | 0090     |  1050.92 |    5.746 |    37.23 |   0.3671 |  0.02109 |  0.06168 |
-#> | 0100     |  1018.46 |    5.853 |    37.91 |     0.39 |  0.02121 |  0.04717 |
-#> | 0102 ✓   |  1018.46 |    5.853 |    37.91 |     0.39 |  0.02121 |  0.04717 |
-#> | 1.3 sec  |          |          |          |          |          |          |
-#>   Computing covariance (R method, 51 NLL evaluations)
+#> | 0010     |  1768.15 |    4.967 |    29.88 |   0.2587 |   0.0888 |  0.04603 |
+#> | 0020     |   862.47 |    6.391 |    37.74 |   0.3864 |  0.08003 |   0.0422 |
+#> | 0029 ✓   |   861.90 |    6.384 |    38.03 |     0.39 |  0.08051 |  0.04074 |
+#> | 0.7 sec  |          |          |          |          |          |          |
+#>   Computing covariance (R method, Analytical-Hessian, 6 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  
@@ -332,28 +375,26 @@ print(fit)
 #> ── nlmixr² adfo ──
 #> 
 #>          OBJF      AIC      BIC Log-likelihood
-#> adfo 1018.459 1028.459 1060.518      -509.2295
+#> adfo 861.8956 871.8956 903.9548      -430.9478
 #> 
 #> ── Time (sec fit$time): ──
 #> 
 #>         optimize covariance other elapsed other
-#> elapsed    1.333      0.108     0   1.441 3.579
+#> elapsed     0.71      0.159     0   0.869 4.612
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>           Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl      1.767 0.008944 0.5062    5.853 (5.751, 5.957)    14.64         NaN
-#> tv       3.635  0.01258 0.3461    37.91 (36.99, 38.86)    21.98         NaN
-#> prop.sd 0.3900 0.006145  1.576 0.3900 (0.3779, 0.4020)                     
+#> tcl      1.854  0.01620 0.8742    6.384 (6.184, 6.590)    28.95         NaN
+#> tv       3.638  0.01234 0.3391    38.03 (37.13, 38.96)    20.39         NaN
+#> prop.sd 0.3900 0.006554  1.681 0.3900 (0.3771, 0.4028)                     
 #>  
 #>   Covariance Type (fit$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
-#>   Information about run found (fit$runInfo):
-#>    • adfoCalcCov: the full Hessian including omega was not positive definite; reporting structural and sigma standard errors only. 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  
-#>     NLOPT_MAXEVAL_REACHED: Optimization stopped because maxeval (above) was reached. 
+#>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 # }
 ```

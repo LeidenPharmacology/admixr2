@@ -13,8 +13,8 @@ etas.
 adghControl(
   studies = list(),
   n_nodes = 5L,
-  grad = c("analytical", "fd", "cfd", "none"),
-  algorithm = "NLOPT_LN_BOBYQA",
+  grad = c("analytical", "fd", "none"),
+  algorithm = NULL,
   maxeval = 500L,
   ftol_rel = .Machine$double.eps^(1/2),
   print = 10L,
@@ -33,7 +33,7 @@ adghControl(
   calcTables = FALSE,
   compress = TRUE,
   ci = 0.95,
-  sigdig = 4,
+  sigdig = NULL,
   sigdigTable = NULL,
   addProp = c("combined2", "combined1"),
   optExpression = TRUE,
@@ -67,13 +67,22 @@ adghControl(
 
   Gradient mode. `"analytical"` (default) uses closed-form contractions
   through the sensitivity equations – cheapest and exact. `"fd"` uses
-  forward finite differences; `"cfd"` uses central FD. `"none"` uses
-  derivative-free BOBYQA.
+  central finite differences (forward differencing was removed in 0.4.1;
+  see
+  [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md)).
+  `"none"` uses derivative-free BOBYQA.
 
 - algorithm:
 
-  nloptr algorithm. Automatically coerced to `"NLOPT_LD_LBFGS"` when
-  `grad != "none"`.
+  nloptr algorithm, or `NULL` (default) to pick the default that matches
+  `grad`: `"NLOPT_LD_LBFGS"` with a gradient, `"NLOPT_LN_BOBYQA"` when
+  `grad = "none"`. Any algorithm reported by
+  [`nloptr::nloptr.print.options()`](https://astamm.github.io/nloptr/reference/nloptr.print.options.html)
+  is accepted. An explicit algorithm is reconciled with `grad`: when
+  `grad = "none"` a gradient-based algorithm (`NLOPT_LD_*` /
+  `NLOPT_GD_*`) falls back to `"NLOPT_LN_BOBYQA"`; when a gradient is
+  requested a derivative-free algorithm (`NLOPT_LN_*` / `NLOPT_GN_*`)
+  turns the gradient off. Both emit a message.
 
 - maxeval:
 
@@ -115,7 +124,12 @@ adghControl(
 
 - grad_bounds:
 
-  Box-constraint half-width when using gradients.
+  Box-constraint half-width when using gradients: the fit is confined to
+  `p0 +/- grad_bounds` on the optimizer scale, which for a log-scale
+  parameter is a factor of `exp(grad_bounds)` (~148 at the default 5).
+  This bound is admixr2's, not the model's – an unbounded parameter has
+  no other – and nloptr reports normal convergence at a box corner, so a
+  warning is emitted if an estimate finishes on it.
 
 - cov_h:
 
@@ -162,12 +176,37 @@ adghControl(
   [`rxode2::rxControl()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
   object. Created automatically when `NULL`.
 
-- calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd,
+- calcTables, compress, ci, sigdigTable, optExpression, sumProd,
   literalFix:
 
   Passed to
   [`nlmixr2est::foceiControl()`](https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html)
   for the table/output machinery.
+
+- sigdig:
+
+  Significant digits asked of the ODE solver, or `NULL` (the default) to
+  leave rxode2's own solver tolerances alone. When set, it is passed to
+  [`rxode2::rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)'s
+  own `sigdig` argument for every solve the estimator issues – rxode2
+  owns the mapping to `atol`/`rtol` and has changed it between releases,
+  which is why the digits, not the tolerances, are what travels – and to
+  [`nlmixr2est::foceiControl()`](https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html)
+  for the post-fit tables.
+
+  It is a speed lever, and an opt-in one because it is not free. The
+  estimators finite-difference the solve with steps of the same order:
+  `grad_h` (1e-4), `cov_h` (1e-3) and `cov_h_outer` (~2.5e-3), while
+  `sigdig = 4` maps to a relative tolerance of ~1e-4 on current rxode2.
+  Differencing a solution whose own noise is 1e-4 with a 1e-4 step
+  returns noise, and it surfaces as a moved objective and an indefinite
+  covariance Hessian (every `SE` reported `NA`) rather than as an error.
+  Most worthwhile where the gradient is fully analytic and nothing
+  differences the solve – `adfoControl(grad = "analytical")` measured
+  ~4.8x faster at `sigdig = 4` with standard errors unchanged to 4
+  significant figures. Elsewhere, compare the objective and the standard
+  errors against `NULL` before relying on it. Table formatting is
+  unaffected either way: `sigdigTable` defaults to 4 regardless.
 
 - addProp:
 
@@ -282,7 +321,7 @@ fit <- nlmixr2(
 #> | 0010     |  1000.18 |    6.203 |    35.45 |   0.3103 |  0.08888 |  0.05562 |
 #> | 0020     |   805.78 |    6.666 |    37.33 |   0.3781 |   0.1041 |  0.05946 |
 #> | 0022 ✓   |   805.78 |    6.667 |    37.33 |    0.378 |    0.104 |  0.05944 |
-#> | 0.2 sec  |          |          |          |          |          |          |
+#> | 0.4 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, Analytical-Hessian, 6 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  

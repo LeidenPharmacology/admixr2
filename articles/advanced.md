@@ -41,10 +41,17 @@ and
 [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md)
 offer gradient strategies via the `grad` argument.
 [`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md)
-offers `"analytical"`, `"fd"`, `"cfd"`, and `"none"`.
+offers `"analytical"`, `"fd"`, and `"none"`.
 [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)
-offers `"analytical"`, `"none"`, and `"fd"` only (no `"sens"` or
-`"cfd"`).
+offers `"analytical"`, `"none"`, and `"fd"` only (no `"sens"`).
+
+`"fd"` is a **central** difference. Forward differencing was removed in
+0.4.1: measured against the analytic gradient it was 10² to 10⁴ times
+less accurate, and the one solve per parameter it saved did not pay for
+a gradient the optimizer struggles to descend. The step is not a fixed
+constant either – it is measured per parameter by the Shi (2021)
+procedure, with `grad_h` kept as the fallback when no measurement can be
+made.
 
 **[`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
 gradient modes:**
@@ -52,8 +59,7 @@ gradient modes:**
 | `grad =` | Method | Notes |
 |----|----|----|
 | `"sens"` | Sensitivity equations (default) | Analytical; requires ODE or `linCmt()` model |
-| `"fd"` | Forward finite differences | Falls back to this if sens unavailable |
-| `"cfd"` | Central finite differences | More accurate FD; ~2× slower than `"fd"` |
+| `"fd"` | Central finite differences | Falls back to this if sens unavailable; step measured per parameter |
 | `"none"` | BOBYQA (derivative-free) | No gradient; useful for debugging or simple models |
 
 **[`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md)
@@ -61,10 +67,9 @@ gradient modes:**
 
 | `grad =` | Method | Notes |
 |----|----|----|
-| `"none"` (default) | BOBYQA | Derivative-free; robust starting point for FO |
-| `"analytical"` | Chain rule through V_pred | Omega/sigma analytical; struct thetas FD only |
-| `"fd"` | Forward FD of full NLL | All parameters; `n_p + 1` NLL evals per step |
-| `"cfd"` | Central FD of full NLL | More accurate; `2 n_p` NLL evals per step |
+| `"analytical"` (default) | Chain rule through V_pred | Omega/sigma analytical; struct thetas from the order-2 sensitivity model, FD only if it cannot be built |
+| `"none"` | BOBYQA | Derivative-free; was the default up to 0.4.0 |
+| `"fd"` | Central FD of full NLL | All parameters; `2 n_p` NLL evals per step |
 
 **[`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md)
 gradient modes:**
@@ -72,8 +77,7 @@ gradient modes:**
 | `grad =` | Method | Notes |
 |----|----|----|
 | `"analytical"` (default) | Closed-form contractions through sensitivity equations | Exact and cheapest; one batched sensitivity solve per study over the node grid |
-| `"fd"` | Forward FD of full NLL | All parameters |
-| `"cfd"` | Central FD of full NLL | More accurate; ~2× slower than `"fd"` |
+| `"fd"` | Central FD of full NLL | All parameters; `2 n_p` NLL evals per step |
 | `"none"` | BOBYQA (derivative-free) | No gradient |
 
 Because the GH objective is **noise-free** (deterministic quadrature, no

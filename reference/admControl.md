@@ -17,7 +17,7 @@ admControl(
   seed = 12345L,
   cores = rxode2::rxCores(),
   nDisplayProgress = .Machine$integer.max,
-  grad = c("sens", "fd", "cfd", "none"),
+  grad = c("sens", "fd", "none"),
   grad_h = 1e-04,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
@@ -31,7 +31,7 @@ admControl(
   calcTables = FALSE,
   compress = TRUE,
   ci = 0.95,
-  sigdig = 4,
+  sigdig = NULL,
   sigdigTable = NULL,
   addProp = c("combined2", "combined1"),
   optExpression = TRUE,
@@ -176,19 +176,19 @@ admControl(
 - grad:
 
   Gradient mode: `"sens"` (sensitivity equations, default), `"fd"`
-  (forward finite differences), `"cfd"` (central finite differences), or
+  (central finite differences; forward was removed in 0.4.1), or
   `"none"` (derivative-free). A warning is issued when `"sens"` is
   requested but the sensitivity model is unavailable; the estimator then
-  falls back to forward finite differences.
+  falls back to central finite differences.
 
 - grad_h:
 
   Step size for finite-difference gradient evaluation during
-  optimization (used by `grad = "fd"` or `"cfd"`). The default 1e-4 is
-  near the optimal balance between truncation error (grows with `h`) and
-  MC noise amplification (grows as `1/h`) for forward FD. Central FD
-  (`"cfd"`) has a slightly wider optimum around 1e-3, but 1e-4 works
-  well for both.
+  optimization (used by `grad = "fd"`). This is the FALLBACK step: the
+  step is normally measured per parameter by the Shi (2021) procedure,
+  and `grad_h` is what a parameter falls back to when that measurement
+  cannot be made (a direction the objective is flat in, or a failed
+  noise estimate).
 
 - cov_h:
 
@@ -213,7 +213,12 @@ admControl(
 
 - grad_bounds:
 
-  Box-constraint half-width when using gradients.
+  Box-constraint half-width when using gradients: the fit is confined to
+  `p0 +/- grad_bounds` on the optimizer scale, which for a log-scale
+  parameter is a factor of `exp(grad_bounds)` (~148 at the default 5).
+  This bound is admixr2's, not the model's – an unbounded parameter has
+  no other – and nloptr reports normal convergence at a box corner, so a
+  warning is emitted if an estimate finishes on it.
 
 - covMethod:
 
@@ -266,12 +271,37 @@ admControl(
   [`rxode2::rxControl()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
   object. Created automatically when `NULL`.
 
-- calcTables, compress, ci, sigdig, sigdigTable, optExpression, sumProd,
+- calcTables, compress, ci, sigdigTable, optExpression, sumProd,
   literalFix:
 
   Passed to
   [`nlmixr2est::foceiControl()`](https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html)
   for the table/output machinery.
+
+- sigdig:
+
+  Significant digits asked of the ODE solver, or `NULL` (the default) to
+  leave rxode2's own solver tolerances alone. When set, it is passed to
+  [`rxode2::rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)'s
+  own `sigdig` argument for every solve the estimator issues – rxode2
+  owns the mapping to `atol`/`rtol` and has changed it between releases,
+  which is why the digits, not the tolerances, are what travels – and to
+  [`nlmixr2est::foceiControl()`](https://nlmixr2.github.io/nlmixr2est/reference/foceiControl.html)
+  for the post-fit tables.
+
+  It is a speed lever, and an opt-in one because it is not free. The
+  estimators finite-difference the solve with steps of the same order:
+  `grad_h` (1e-4), `cov_h` (1e-3) and `cov_h_outer` (~2.5e-3), while
+  `sigdig = 4` maps to a relative tolerance of ~1e-4 on current rxode2.
+  Differencing a solution whose own noise is 1e-4 with a 1e-4 step
+  returns noise, and it surfaces as a moved objective and an indefinite
+  covariance Hessian (every `SE` reported `NA`) rather than as an error.
+  Most worthwhile where the gradient is fully analytic and nothing
+  differences the solve – `adfoControl(grad = "analytical")` measured
+  ~4.8x faster at `sigdig = 4` with standard errors unchanged to 4
+  significant figures. Elsewhere, compare the objective and the standard
+  errors against `NULL` before relying on it. Table formatting is
+  unaffected either way: `sigdigTable` defaults to 4 regardless.
 
 - addProp:
 
@@ -387,12 +417,13 @@ fit <- nlmixr2(
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
 #> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |
 #> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+
-#> | 0010     | -3677.06 |    4.983 |     11.9 |    27.87 |    9.692 |    1.205 |   0.1934 |   0.0924 |  0.09106 |  0.09019 |  0.09241 |  0.09143 |
-#> | 0020     | -3689.96 |    4.963 |    10.47 |    29.64 |    9.746 |    1.051 |   0.1896 |   0.1027 |   0.1028 |  0.09784 |   0.1103 |   0.1058 |
-#> | 0030     | -3690.05 |    4.957 |    10.37 |    29.86 |    9.747 |    1.042 |   0.1895 |   0.1032 |   0.1087 |   0.1021 |   0.1091 |  0.09925 |
-#> | 0040     | -3690.08 |    4.956 |    10.24 |    29.91 |    9.733 |    1.031 |   0.1894 |   0.1034 |   0.1118 |  0.09989 |   0.1081 |   0.0964 |
-#> | 0041 ✓   | -3690.08 |    4.956 |    10.25 |    29.91 |    9.734 |    1.031 |   0.1894 |   0.1034 |   0.1118 |  0.09989 |   0.1081 |  0.09638 |
-#> | 4.6 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 0010     | -3667.69 |    4.896 |    11.82 |    27.71 |    9.353 |    1.208 |   0.1949 |  0.09176 |  0.09044 |  0.09008 |  0.09218 |  0.09068 |
+#> | 0020     | -3689.45 |    4.992 |    10.83 |    29.16 |    9.664 |     1.08 |     0.19 |   0.1069 |    0.104 |   0.0955 |   0.1058 |   0.1078 |
+#> | 0030     | -3690.00 |    4.967 |     10.4 |     29.7 |     9.75 |    1.047 |   0.1896 |   0.1035 |   0.1027 |  0.09876 |   0.1106 |   0.1041 |
+#> | 0040     | -3690.05 |    4.958 |    10.37 |    29.81 |    9.743 |    1.043 |   0.1894 |   0.1033 |   0.1087 |   0.1018 |   0.1092 |  0.09935 |
+#> | 0050     | -3690.08 |    4.956 |    10.25 |     29.9 |    9.734 |    1.031 |   0.1894 |   0.1034 |   0.1118 |  0.09989 |   0.1081 |  0.09633 |
+#> | 0050 ✓   | -3690.08 |    4.956 |    10.25 |     29.9 |    9.734 |    1.031 |   0.1894 |   0.1034 |   0.1118 |  0.09989 |   0.1081 |  0.09633 |
+#> | 6.1 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, Sens-Hessian, 12 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
@@ -406,17 +437,17 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance other elapsed
-#> 1    4.556      8.283     0  12.839
+#> 1    6.065     12.453     0  18.518
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>            Est.       SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl       1.601  0.01957 1.223    4.956 (4.770, 5.150)    33.00         NaN
-#> tv1       2.327   0.1157 4.972    10.25 (8.167, 12.85)    34.39         NaN
-#> tv2       3.398  0.05101 1.501    29.91 (27.06, 33.05)    32.41         NaN
-#> tq        2.276  0.02685 1.180    9.734 (9.235, 10.26)    33.78         NaN
-#> tka     0.03048   0.1093 358.5   1.031 (0.8322, 1.277)    31.81         NaN
-#> prop.sd  0.1894 0.003221 1.700 0.1894 (0.1831, 0.1958)                     
+#> tcl       1.601  0.01961 1.225    4.956 (4.769, 5.150)    33.00         NaN
+#> tv1       2.327   0.1171 5.033    10.25 (8.147, 12.89)    34.39         NaN
+#> tv2       3.398  0.05143 1.514    29.90 (27.03, 33.07)    32.41         NaN
+#> tq        2.276  0.02683 1.179    9.734 (9.236, 10.26)    33.79         NaN
+#> tka     0.03083   0.1105 358.5   1.031 (0.8304, 1.281)    31.80         NaN
+#> prop.sd  0.1894 0.003220 1.700 0.1894 (0.1831, 0.1958)                     
 #>  
 #>   Covariance Type (fit$covMethod): r
 #>   No correlations in between subject variability (BSV) matrix

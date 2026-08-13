@@ -81,16 +81,16 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.592      0.106     0   0.698 7.205
+elapsed    0.456      0.132     0   0.588 5.655
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
             Est.      SE  %RSE      Back-transformed(95%CI) BSV(CV%)
-tcl      0.03321 0.03416 102.8        1.034 (0.9668, 1.105)    27.92
-tv1        2.292 0.06685 2.917         9.890 (8.676, 11.27)    15.12
-tq        0.8829  0.5801 65.70        2.418 (0.7757, 7.537)         
-tv2       0.8678  0.2125 24.49         2.382 (1.570, 3.612)         
-prop.cp 0.004104 0.04529  1104 0.004104 (-0.08467, 0.09288)         
+tcl      0.03321 0.03419 102.9        1.034 (0.9668, 1.105)    27.92
+tv1        2.292 0.06733 2.938         9.890 (8.668, 11.29)    15.12
+tq        0.8829  0.5840 66.14        2.418 (0.7698, 7.595)         
+tv2       0.8678  0.2138 24.64         2.382 (1.566, 3.621)         
+prop.cp 0.004104 0.04531  1104 0.004104 (-0.08470, 0.09291)         
         Shrink(SD)%
 tcl             NaN
 tv1             NaN
@@ -103,6 +103,8 @@ prop.cp
   Full BSV covariance (fit_plasma$omega) 
     or correlation (fit_plasma$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
+  Information about run found (fit_plasma$runInfo):
+   • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. 
   Censoring (fit_plasma$censInformation): No censoring
   Minimization message (fit_plasma$message):  
     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
@@ -195,17 +197,17 @@ adgh -88.59587 -72.59587 -36.65795       44.29794
 ── Time (sec fit_cns$time): ──
 
         optimize covariance other elapsed other
-elapsed     0.69      0.216     0   0.906 8.003
+elapsed    0.507      0.262     0   0.769 5.918
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
            Est.      SE   %RSE    Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 tcl     0.04104 0.01899  46.27       1.042 (1.004, 1.081)    27.03         NaN
-tv1       2.269 0.01038 0.4573       9.674 (9.479, 9.872)    13.85         NaN
-tqin      1.085 0.03669  3.381       2.960 (2.755, 3.181)                     
-tqout     1.780 0.04218  2.369       5.932 (5.461, 6.443)                     
-prop.cp 0.04848 0.01803  37.19 0.04848 (0.01314, 0.08382)                     
-add.cb  0.01999  0.1742  871.2  0.01999 (-0.3213, 0.3613)                     
+tv1       2.269 0.01038 0.4574       9.674 (9.479, 9.872)    13.85         NaN
+tqin      1.085 0.03671  3.382       2.960 (2.755, 3.181)                     
+tqout     1.780 0.04220  2.371       5.932 (5.461, 6.443)                     
+prop.cp 0.04848 0.01805  37.23 0.04848 (0.01310, 0.08386)                     
+add.cb  0.01999  0.1743  871.8  0.01999 (-0.3216, 0.3615)                     
  
   Covariance Type (fit_cns$covMethod): r
   No correlations in between subject variability (BSV) matrix

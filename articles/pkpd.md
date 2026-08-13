@@ -156,31 +156,33 @@ adgh 1749.121 1769.121 1820.975      -874.5605
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    2.678      0.619     0   3.297   7.6
+elapsed     2.01        0.8     0    2.81   5.5
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                                          Parameter    Est.      SE   %RSE
-tcl                            Log clearance (L/h)   1.595 0.01608  1.008
-tv                                  Log volume (L)   3.910 0.01155 0.2954
-te0                        Log baseline DBP (mmHg)   4.563 0.01519 0.3329
-temax             Log maximum DBP reduction (mmHg)   2.826  0.1148  4.062
-tec50                              Log EC50 (mg/L)  0.6864  0.4847  70.62
-prop.cp Proportional residual error, concentration 0.09973 0.04479  44.91
-add.dbp        Additive residual error, DBP (mmHg)   3.012   26.64  884.2
+tcl                            Log clearance (L/h)   1.595 0.01548 0.9704
+tv                                  Log volume (L)   3.910 0.01117 0.2856
+te0                        Log baseline DBP (mmHg)   4.563 0.01244 0.2726
+temax             Log maximum DBP reduction (mmHg)   2.826  0.1148  4.063
+tec50                              Log EC50 (mg/L)  0.6864  0.4852  70.70
+prop.cp Proportional residual error, concentration 0.09973 0.01248  12.52
+add.dbp        Additive residual error, DBP (mmHg)   3.012  0.8829  29.31
           Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl          4.927 (4.774, 5.085)    30.46         NaN
-tv           49.89 (48.78, 51.04)    19.15         NaN
-te0          95.85 (93.04, 98.75)    8.498         NaN
+tcl          4.927 (4.780, 5.079)    30.46         NaN
+tv           49.89 (48.81, 51.00)    19.15         NaN
+te0          95.85 (93.54, 98.22)    8.498         NaN
 temax        16.88 (13.48, 21.14)                     
-tec50       1.986 (0.7683, 5.137)                     
-prop.cp 0.09973 (0.01194, 0.1875)                     
-add.dbp     3.012 (-49.19, 55.22)                     
+tec50       1.986 (0.7675, 5.142)                     
+prop.cp 0.09973 (0.07526, 0.1242)                     
+add.dbp      3.012 (1.282, 4.743)                     
  
   Covariance Type (fit$covMethod): r
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
+  Information about run found (fit$runInfo):
+   • adghCalcCov: the full Hessian including omega was not positive definite or was numerically singular; reporting structural and sigma standard errors only. 
   Censoring (fit$censInformation): No censoring
   Minimization message (fit$message):  
     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
@@ -310,7 +312,7 @@ if (is.null(cv)) {
 } else {
   round(cv["temax", "tec50"] / sqrt(cv["temax", "temax"] * cv["tec50", "tec50"]), 3)
 }
-#> [1] 0.579
+#> [1] 0.578
 ```
 
 ## Notes
