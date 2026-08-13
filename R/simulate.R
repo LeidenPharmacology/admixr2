@@ -246,6 +246,16 @@
   for (nm in names(struct_theta)) params_mat[, nm] <- struct_theta[nm]
   if (length(eta_cols) > 0L)      params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)         params_mat[, nm] <- 0
+  # Covariates, as .admSimulate() and .admSimulateRows() do. Without this a JOINT
+  # (same-subject) unit never sees them: .admCheckCovariates routes the study to
+  # "rows" and .admStudyCovRows attaches cov_rows, and the joint solve read
+  # neither. It does not even need a distribution -- a plain cov = list(WT = 72)
+  # on a same-subject multi-compartment study was enough, and ordinal endpoints
+  # are ALWAYS joint, so covariate + ordinal was affected too. admc's joint
+  # branch wraps this solve in tryCatch(error = NULL), so the symptom was an Inf
+  # objective at every parameter vector with no diagnosis at all.
+  params_mat <- .admCovCols(params_mat, rxMod$params, unit[["cov"]],
+                            unit[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = unit$ev_full, cores = cores,
                           nDisplayProgress = ndp,
@@ -283,7 +293,10 @@
     stats::setNames(lapply(th_nms, function(nm) matrix(0, n_sim, unit$n_total)), th_nms)
   else NULL
   for (blk in unit$blocks) {
-    bs  <- list(ev_full = blk$ev_full, times = blk$times)
+    # carry the covariate onto the per-block study: .admSimulateSens WOULD inject
+    # it, but only from the study it is handed, and this list dropped both fields
+    bs  <- list(ev_full = blk$ev_full, times = blk$times,
+                cov = unit[["cov"]], cov_rows = unit[["cov_rows"]])
     res <- .admSimulateSens(sensModel, struct, sigma_names, eta_mat, bs, cores, ndp,
                             sigma_var, sigdig)
     if (is.null(res)) return(NULL)

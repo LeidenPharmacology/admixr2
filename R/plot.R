@@ -314,6 +314,13 @@ head.paged_df <- function(x, n = 6L, ...) {
                     sigma_output  = rep(NA_character_, length(sv)),
                     sigma_is_prop  = as.list(grepl("prop",  sig_nms, ignore.case = TRUE)),
                     sigma_is_lnorm = as.list(grepl("lnorm", sig_nms, ignore.case = TRUE)))
+  # ... and no cov_map either, for the same reason: the DRIVERS build it from the
+  # ui via .admDriverPinfo(). .admStudyL() needs it to rebuild the covariate-
+  # inflated Cholesky, and .admStudyCovRows() needs n_eta, so a diagnostic plot
+  # of a covariate fit would otherwise silently fall back to the plain Omega.
+  if (is.null(pinfo_r$cov_map))
+    pinfo_r$cov_map <- tryCatch(.admCovMap(ui), error = function(e) NULL)
+  if (is.null(pinfo_r$n_eta)) pinfo_r$n_eta <- n_eta
   # .admParseIniDf() carries no resid_nodes -- only the DRIVERS set it, from the
   # control. Restore the count the fit actually used, or the diagnostics rebuild
   # V_pred on the 81-node default and a fit run with resid_nodes = 31L (or 201L)
@@ -335,11 +342,25 @@ head.paged_df <- function(x, n = 6L, ...) {
         rnorm  = matrix(rnorm(n_sim * n_eta), nrow = n_sim),
         qnorm(randtoolbox::sobol(n = n_sim, dim = n_eta))
       )
-      eta_mat <- z_s %*% t(L)
+      # The COVARIATE-effective Cholesky, not the plain one. A study whose
+      # subjects span a covariate distribution predicts with
+      # chol(Omega + J Sigma_a J') on the collapse path; using pars$L here draws
+      # the fit's IIV and drops the covariate spread entirely.
+      .Ls <- tryCatch(.admStudyL(list(L = L, struct = extra$struct), pinfo_r, s),
+                      error = function(e) NULL)
+      eta_mat <- z_s %*% t(.Ls %||% L)
       colnames(eta_mat) <- eta_nms
     } else {
       eta_mat <- matrix(0, nrow = n_sim, ncol = 0)
     }
+    # ... and on the general path every simulated subject carries its own
+    # covariate value. Without this the solve succeeds AT THE COVARIATE MEAN and
+    # the residual is composed onto a var_f with the covariate spread removed,
+    # while the OBSERVED V in the same panel still carries it: predicted
+    # covariances measured 29-35% low and off-diagonals 61% low on an audited
+    # model, i.e. structured standardised residuals for a fit that is fine.
+    s <- tryCatch(.admStudyCovRows(s, pinfo_r, nrow(eta_mat)),
+                  error = function(e) s)
     # One residual placeholder per observed output (rxerr.<output>); a
     # multi-endpoint solve needs every endpoint's rxerr present. rxSolve
     # defaults everything else (CMT, hard-coded constants).
