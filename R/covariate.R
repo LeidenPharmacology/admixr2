@@ -855,6 +855,18 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
                                          idx = match(pe$eta, pinfo$eta_col_names))
     }
 
+    # A GRADIENT is only carried through the general path. On "rows" the
+    # covariate is data -- a per-row params column -- so the existing sensitivity
+    # directions differentiate exactly the function the NLL evaluates, with no
+    # new chain rule. "collapse" moves Omega itself (Omega + J Sigma_a J', with J
+    # carrying the covariate coefficient) and "uq" replaces an eta column with
+    # u = F_u^-1(Phi(z)); neither derivative exists yet.
+    #
+    # So the gradient mode is part of what makes a path VALID, not a reason to
+    # refuse the fit. Erroring here would make a covariate model fail out of the
+    # box, since every estimator defaults to a gradient.
+    if (!identical(grad, "none")) { ok_collapse <- FALSE; ok_uq <- FALSE }
+
     # Most efficient VALID path wins. "rows" assumes nothing at all: every
     # simulated subject carries its own covariate value, so rxode2 evaluates the
     # whole model -- covariate on several parameters, on a parameter with no eta,
@@ -866,21 +878,6 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
     studies[[nm]]$.adm_cov_uq <- if (ok_uq) uq else NULL
   }
 
-  # Gradients: allowed on "rows", refused on "collapse"/"uq".
-  #
-  # On "rows" the covariate is data -- a per-row column -- so the existing
-  # sensitivity machinery differentiates exactly the function the NLL evaluates,
-  # with no new chain rule. "collapse" moves Omega itself (Omega + J Sigma_a J',
-  # and J carries the covariate coefficient), and "uq" replaces an eta column
-  # with u = F_u^-1(Phi(z)); neither derivative is carried yet, so a gradient
-  # there would descend a direction the objective does not follow.
-  pth <- vapply(studies[has], function(s) s$.adm_cov_path %||% "", character(1))
-  if (!identical(grad, "none") && any(pth %in% c("collapse", "uq")))
-    bad("covariate marginalisation via the '",
-        paste(unique(pth[pth %in% c("collapse", "uq")]), collapse = "'/'"),
-        "' path requires `grad = \"none\"` (derivative-free): the gradient has ",
-        "not been extended through it. The general per-row path DOES support ",
-        "gradients. Got grad = \"", grad, "\".")
   studies
 }
 

@@ -279,6 +279,21 @@ test_that(".admCheckCovariates is a no-op when no study declares cov_dist", {
                                               list(a = list()), "sens"))
 })
 
+test_that("a gradient mode routes to the general path rather than erroring", {
+  # Every estimator defaults to a gradient, so refusing here would make a
+  # covariate model fail out of the box. Only "rows" carries a gradient.
+  ok_st <- list(a = list(cov = list(WT = 0),
+                         cov_dist = list(WT = list(mu = 0, sd = 0.6))))
+  for (g in c("sens", "analytical", "fd", "cfd"))
+    expect_identical(
+      admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), ok_st, g)$a$.adm_cov_path,
+      "rows")
+  # derivative-free still gets the exact closed form
+  expect_identical(
+    admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), ok_st, "none")$a$.adm_cov_path,
+    "collapse")
+})
+
 test_that(".admCheckCovariates ROUTES rather than refuses, most efficient first", {
   ok_st <- list(a = list(cov = list(WT = 0), cov_dist = list(WT = list(mu = 0, sd = 0.6))))
   path <- function(ui = .cov_ui(), pi = .cov_pinfo(), st = ok_st)
@@ -320,11 +335,6 @@ test_that("a study omitting `cov` has it filled in from `cov_dist`", {
 
 test_that(".admCheckCovariates still errors on genuinely unsupportable input", {
   ok_st <- list(a = list(cov = list(WT = 0), cov_dist = list(WT = list(mu = 0, sd = 0.6))))
-
-  # a gradient mode that does not differentiate what the objective computes
-  for (g in c("sens", "analytical", "fd", "cfd"))
-    expect_error(admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), ok_st, g),
-                 'requires `grad = "none"`', fixed = TRUE)
 
   # covariate the model never reads -- almost always a typo
   expect_error(

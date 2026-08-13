@@ -297,17 +297,17 @@ test_that("the general path supports ANALYTIC gradients (vs central FD)", {
   }
 })
 
-test_that("collapse and u-quantile still refuse a gradient, and say why", {
+test_that("a gradient mode selects the general path, and none keeps the collapse", {
   E0 <- rep(1, length(.cov_TIMES)); V0 <- diag(length(.cov_TIMES))
-  ui <- suppressMessages(rxode2::rxode2(.cov_linear))
-  pinfo <- admixr2:::.admParseIniDf(ui$iniDf, ui)
-  pinfo$cov_map <- admixr2:::.admCovMap(ui)
-  s <- list(E = E0, V = V0, n = 300L, times = .cov_TIMES,
-            ev = rxode2::et(amt = .cov_DOSE),
-            cov = list(WT = 0.2), cov_dist = list(WT = list(mu = 0.2, sd = 0.35)))
-  st <- admixr2:::.admFlattenStudies(
-          list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
-  expect_error(admixr2:::.admCheckCovariates(ui, pinfo, st, "sens"),
-               "requires `grad = \"none\"`", fixed = TRUE)
-  expect_silent(admixr2:::.admCheckCovariates(ui, pinfo, st, "none"))
+  d_none <- .cov_setup(.cov_linear, list(WT = list(mu = 0.2, sd = 0.35)),
+                       list(WT = 0.2), E0, V0)
+  expect_identical(d_none$st[[1L]]$.adm_cov_path, "collapse")
+  ui <- d_none$ui; pinfo <- d_none$pinfo
+  st <- admixr2:::.admFlattenStudies(list(s1 = admixr2:::.admNormaliseStudy(
+    list(E = E0, V = V0, n = 300L, times = .cov_TIMES,
+         ev = rxode2::et(amt = .cov_DOSE), cov = list(WT = 0.2),
+         cov_dist = list(WT = list(mu = 0.2, sd = 0.35))), "s1", "cp")))
+  for (g in c("sens", "fd"))
+    expect_identical(
+      admixr2:::.admCheckCovariates(ui, pinfo, st, g)[[1L]]$.adm_cov_path, "rows")
 })

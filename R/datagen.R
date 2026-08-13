@@ -396,6 +396,30 @@ datagen <- function(studies, model = NULL, control = datagenControl(),
       .adghNodeGrid(control$n_nodes, pinfo$n_eta) else NULL
 
     # Moments (mu, V) for one observed compartment via the chosen method.
+    # A study carrying `cov_dist` is generated MARGINAL over that distribution:
+    # each simulated subject gets its own covariate value, exactly as the
+    # estimator's general path does, so datagen() and the fit integrate the
+    # covariate identically rather than by two constructions that could drift.
+    # This is the ADM idiom -- a published model plus a study DESIGN (its dosing,
+    # its sampling times, its population) produces that study's aggregate data.
+    cov_rows_of <- function(n) {
+      if (is.null(s[["cov_dist"]])) return(NULL)
+      if (!identical(control$method, "mc"))
+        stop(sprintf(paste("Study '%s': `cov_dist` needs datagenControl(method =",
+                           "\"mc\"); the gh/fo moment paths integrate over the",
+                           "random effects only."), nm), call. = FALSE)
+      .admCovRowsFor(s[["cov_dist"]], n, pinfo$n_eta)
+    }
+    # A study may fix a covariate VALUE (`cov`) instead of, or as well as, a
+    # distribution. Deriving only from `cov_dist` left a study with a fixed
+    # covariate unable to solve at all -- the model reads the covariate and
+    # nothing supplies it.
+    cov_ref_of <- function() {
+      if (!is.null(s[["cov"]])) return(s[["cov"]])
+      if (is.null(s[["cov_dist"]])) return(NULL)
+      stats::setNames(lapply(s[["cov_dist"]], .admCovMeanOf), names(s[["cov_dist"]]))
+    }
+
     compute_moments <- function(spec, cov_vals = NULL) {
       ov  <- spec$output
       n_t <- length(spec$times)
@@ -411,7 +435,9 @@ datagen <- function(studies, model = NULL, control = datagenControl(),
       # `cov` rides on the study exactly as it does on the fit path, so the
       # solve paths pick it up through the same channel.
       study_tmp <- list(ev_full = evf, times = spec$times,
-                        out_pair = .admBetaPair(ui), cov = cov_vals)
+                        out_pair = .admBetaPair(ui),
+                        cov = cov_vals %||% cov_ref_of(),
+                        cov_rows = if (is.null(cov_vals)) cov_rows_of(control$n_sim))
 
       if (control$method == "gh") {
         m <- .adghMoments(pars, pinfo, study_tmp, rxMod, ov, grid, control$cores)
@@ -465,6 +491,12 @@ datagen <- function(studies, model = NULL, control = datagenControl(),
       names(mu) <- t_lbl; dimnames(V) <- list(t_lbl, t_lbl)
       r <- list(E = mu, V = V, n = spec$n %||% NA_integer_,
                 times = spec$times, ev = spec$ev)
+      # Carry the covariate distribution onto the result so the generated study
+      # is directly fittable: the estimator must marginalise over the same
+      # population the data were generated for, and making the caller restate it
+      # is a way for the two to disagree.
+      if (!is.null(s[["cov_dist"]])) { r$cov_dist <- s[["cov_dist"]] }
+      if (!is.null(cov_ref_of()))     { r$cov      <- cov_ref_of() }
       if (!is.null(spec$output)) r$output <- spec$output
       if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
       r
