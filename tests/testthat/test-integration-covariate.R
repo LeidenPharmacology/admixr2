@@ -311,3 +311,48 @@ test_that("a gradient mode selects the general path, and none keeps the collapse
     expect_identical(
       admixr2:::.admCheckCovariates(ui, pinfo, st, g)[[1L]]$.adm_cov_path, "rows")
 })
+
+# ---- adgh: deterministic product grid ---------------------------------------
+
+test_that("adgh marginalises a covariate by a PRODUCT GRID, not Monte Carlo", {
+  # adgh's analogue of admc's per-row draws is a product grid over the covariate
+  # quadrature and the eta grid -- still ONE rxSolve, but deterministic, so adgh
+  # keeps its noise-free objective. Accuracy is correspondingly ~1e-6 rather
+  # than admc's ~1e-4/1e-3 at a comparable cost.
+  ml <- log(72); sl <- 0.28
+  r  <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
+                  function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
+  Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
+  st0 <- list(s = list(E = r$E, V = Vo, n = 300L, times = .cov_TIMES,
+                       ev = rxode2::et(amt = .cov_DOSE),
+                       cov_dist = list(WT = list(meanlog = ml, sdlog = sl))))
+  ui   <- suppressMessages(rxode2::rxode2(.cov_both))
+  ovar <- admixr2:::.admOutputVar(ui)
+  for (g in c("none", "analytical")) {
+    ctl   <- adghControl(studies = st0, grad = g, n_nodes = 9L, print = 0L,
+                         covMethod = "none")
+    pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
+    u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
+    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, g)
+    expect_identical(stu[[1L]]$.adm_cov_path, "rows")
+    prs  <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pinfo)$p0, pinfo)
+    grid <- admixr2:::.adghNodeGrid(9L, pinfo$n_eta)
+    mm   <- admixr2:::.adghMoments(prs, pinfo, stu[[1L]],
+                                   admixr2:::.admLoadModel(ui), ovar, grid, 1L)
+    expect_lt(max(abs(mm$E / r$E - 1)), 1e-4)
+    # diag(0.09) would be a 0x0 matrix -- the diag(scalar) trap
+    expect_lt(max(abs((mm$V - diag(.cov_ADD^2, length(.cov_TIMES))) / r$V - 1)), 1e-4)
+  }
+})
+
+test_that("estimators without a covariate path REFUSE cov_dist", {
+  # The dangerous outcome is silence: every study also carries a covariate VALUE,
+  # so an unwired estimator does not fail -- it solves at the covariate mean and
+  # reports a fit whose omega has absorbed the covariate spread.
+  st <- list(a = list(cov_dist = list(WT = list(mu = 0, sd = 1))),
+             b = list())
+  for (est in c("adfo", "adirmc"))
+    expect_error(admixr2:::.admRefuseCovariates(st, est),
+                 "does not support covariate marginalisation")
+  expect_silent(admixr2:::.admRefuseCovariates(list(a = list(), b = list()), "adfo"))
+})

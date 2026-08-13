@@ -74,10 +74,33 @@
     # plain Cholesky, so nothing changes for an ordinary fit.
     eta <- grid$X %*% t(if (is.null(s)) pars$L else .admStudyL(pars, pinfo, s))
     colnames(eta) <- pinfo$eta_col_names
-    list(eta = eta, W = grid$W)
+    g <- list(eta = eta, W = grid$W, cov_rows = NULL)
   } else {
-    list(eta = matrix(0, 1L, 0L), W = 1)
+    g <- list(eta = matrix(0, 1L, 0L), W = 1, cov_rows = NULL)
   }
+  # General path, adgh's analogue of admc's per-row covariate draws: a PRODUCT
+  # GRID over the covariate quadrature and the eta grid. Deterministic, so adgh
+  # stays noise-free, and it is still ONE rxSolve -- n_cov x n_node rows rather
+  # than n_node. The eta block cycles fastest, so the weights are
+  # rep(W_eta, times = n_cov) * rep(W_cov, each = n_eta), which is what
+  # as.numeric(outer(W_eta, W_cov)) produces column-major.
+  if (!is.null(s) && !identical(s$.adm_cov_path, "collapse") &&
+      !is.null(s[["cov_dist"]])) {
+    cg <- .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
+    nq <- max(nrow(g$eta), 1L); nc <- nrow(cg$X)
+    g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
+    colnames(g$eta) <- pinfo$eta_col_names
+    g$cov_rows <- cg$X[rep(seq_len(nc), each = nq), , drop = FALSE]
+    g$W        <- as.numeric(outer(g$W, cg$W))
+  }
+  g
+}
+
+# Attach the grid's per-row covariate values to a study, so .admSimulate writes
+# them into the params frame. Returns the study untouched when there are none.
+.adghStudyCov <- function(study, g) {
+  if (!is.null(g$cov_rows)) study$cov_rows <- g$cov_rows
+  study
 }
 
 # Weighted moments + residual error from an already-solved quadrature matrix.
@@ -99,6 +122,7 @@
 
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
   g  <- .adghGrid(pars, pinfo, grid, study)
+  study <- .adghStudyCov(study, g)
   pm <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
                      out_var, pm, cores, pinfo$nDisplayProgress,
@@ -112,10 +136,16 @@
 # of n_cfg * n_node subjects instead of n_cfg calls of n_node.
 .adghMomentsBatch <- function(struct_mat, pars, pinfo, study, rxMod, out_var, grid, cores) {
   g     <- .adghGrid(pars, pinfo, grid, study)
+  study <- .adghStudyCov(study, g)
   Q     <- nrow(g$eta)
   n_cfg <- nrow(struct_mat)
 
   sm_big  <- struct_mat[rep(seq_len(n_cfg), each = Q), , drop = FALSE]
+  # The frame stacks n_cfg blocks of Q rows, so the grid's covariate rows have to
+  # be tiled to match -- every configuration must see the SAME covariate nodes,
+  # or the struct-theta differences stop comparing like with like.
+  if (!is.null(g$cov_rows))
+    study$cov_rows <- g$cov_rows[rep(seq_len(Q), times = n_cfg), , drop = FALSE]
   # The node grid is shared across configurations EXCEPT when the study spans a
   # covariate distribution: Omega* = Omega + J Sigma_a J' then depends on the
   # covariate COEFFICIENT, which is itself a structural theta and so moves
@@ -157,6 +187,12 @@
 .adghMomentsJoint <- function(pars, pinfo, unit, rxMod, grid, cores) {
   n_eta <- pinfo$n_eta
   if (n_eta > 0L) {
+    if (!is.null(unit[["cov_dist"]]) &&
+        !identical(unit$.adm_cov_path, "collapse"))
+      stop("admixr2: covariate marginalisation is not supported for a JOINT ",
+           "(same-subject, multi-output) unit. The shared-eta joint solve has ",
+           "no per-row covariate path, so this would silently solve at the ",
+           "covariate mean.", call. = FALSE)
     eta <- grid$X %*% t(.admStudyL(pars, pinfo, unit))
     colnames(eta) <- pinfo$eta_col_names; W <- grid$W
   } else { eta <- matrix(0, 1L, 0L); W <- 1 }

@@ -800,6 +800,24 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
 # is still refused here, because rxode2's metadata cannot distinguish it from the
 # Emax form. Refusing is the safe direction: the alternative is a fit that runs,
 # converges, and reports an omega that has quietly eaten the covariate spread.
+# Refuse `cov_dist` for an estimator that has no covariate path.
+#
+# Silence here is the dangerous outcome, not an error: every study carries a
+# covariate VALUE as well (derived from the distribution when not given), so an
+# unwired estimator does not fail -- it solves at the covariate mean and reports
+# a fit whose omega has quietly absorbed the between-subject covariate spread.
+# Measured on the general path's own test model, that is omega 0.30 -> 0.44.
+.admRefuseCovariates <- function(studies, est) {
+  has <- vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))
+  if (!any(has)) return(invisible(NULL))
+  stop("admixr2: `", est, "` does not support covariate marginalisation. ",
+       "Stud", if (sum(has) > 1L) "ies " else "y ",
+       paste(sQuote(names(studies)[has]), collapse = ", "),
+       " declare(s) `cov_dist`. Use `admc`, which marginalises over the ",
+       "covariate distribution; running here would silently solve at the ",
+       "covariate mean and inflate omega instead.", call. = FALSE)
+}
+
 .admCheckCovariates <- function(.ui, pinfo, studies, grad) {
   has <- vapply(studies, function(s) !is.null(s$cov_dist), logical(1))
   if (!any(has)) return(studies)

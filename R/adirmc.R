@@ -1255,6 +1255,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   studies        <- .u$studies
   .adm_multi_out <- .u$multi_out
   .adm_joint     <- .u$any_joint
+  .admRefuseCovariates(.u$studies, "adirmc")
   if (.adm_multi_out || .adm_joint)
     stop("adirmc does not yet support multiple observed outputs (multi-compartment observations). ",
          "Use est = 'admc', 'adfo', or 'adgh' for multi-output fits.", call. = FALSE)
