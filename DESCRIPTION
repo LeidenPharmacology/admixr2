@@ -48,6 +48,7 @@ Suggests:
     nlmixr2data,
     patchwork,
     rmarkdown,
+    statmod,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr
 Config/testthat/edition: 3

@@ -456,13 +456,21 @@ head.paged_df <- function(x, n = 6L, ...) {
 #'    back-transformed, sigma as SD, omega diagonal as variance labelled
 #'    `V(eta.x)`). Facets ordered as in the model `ini()` block. Restarts
 #'    coloured with the Okabe-Ito palette.
+#' 5. `"covariate"` -- Covariate marginalisation diagnostics (only for fits with
+#'    covariate strata, i.e. `study$cov`). Top: observed vs predicted mean
+#'    concentration as a function of the (first) covariate, faceted by time.
+#'    Bottom: quadrature node weights vs covariate, with the assumed normal
+#'    density (scaled) overlaid when an `admBuildQuadrature()` object is present.
 #'
 #' @param x An `admFit` object returned by `nlmixr2()` with
 #'   `est = "adfo"`, `est = "admc"`, `est = "adgh"`, or `est = "adirmc"`.
 #' @param which Character vector selecting which panel types to produce.
-#'   Any subset of `c("mean", "cov", "nll", "par")`. Defaults to all four.
+#'   Any subset of `c("mean", "cov", "nll", "par", "covariate")`. When `NULL`
+#'   (default), produces the first four panels plus `"covariate"` when the fit
+#'   has covariate strata.
 #' @param n_sim Number of MC samples for the final prediction. Defaults to the
-#'   value used during fitting. Only used when `"mean"` or `"cov"` is in `which`.
+#'   value used during fitting. Only used when `"mean"`, `"cov"` or
+#'   `"covariate"` is in `which`.
 #' @param seed Random seed for reproducibility.
 #' @param ... Unused.
 #'
@@ -550,9 +558,8 @@ head.paged_df <- function(x, n = 6L, ...) {
 #' }
 #'
 #' @export
-plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
-                        n_sim = NULL, seed = 1L, ...) {
-  which <- match.arg(which, c("mean", "cov", "nll", "par"), several.ok = TRUE)
+plot.admFit <- function(x, which = NULL, n_sim = NULL, seed = 1L, ...) {
+  .all_panels <- c("mean", "cov", "nll", "par", "covariate")
   fit <- x
   if (!requireNamespace("ggplot2", quietly = TRUE))
     stop("ggplot2 required for plot.admFit", call. = FALSE)
@@ -561,9 +568,17 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
     stop("No admExtra/adirmcExtra on fit object", call. = FALSE)
 
   studies  <- extra$studies
+  # "covariate" panel is added to the default only when the fit has covariate
+  # strata (study$cov); explicit `which` is honoured as given.
+  .has_cov <- any(vapply(studies, function(s)
+    !is.null(s$cov) && length(s$cov) > 0, logical(1)))
+  if (is.null(which))
+    which <- c("mean", "cov", "nll", "par", if (.has_cov) "covariate")
+  which <- match.arg(which, .all_panels, several.ok = TRUE)
+
   n_sim    <- n_sim %||% extra$n_sim %||% 5000L
 
-  need_sim_local <- any(c("mean", "cov") %in% which)
+  need_sim_local <- any(c("mean", "cov", "covariate") %in% which)
   # Observed + predicted aggregate moments per study (mean vector + cov matrix).
   # Reuse the fit's stored `aggData` slot when it matches the requested n_sim/seed
   # (avoids a redundant simulation); otherwise recompute via the shared helper.
@@ -805,6 +820,95 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
     print_keys <- c(print_keys, paste0("cov_", nm))
   }
   } # end if ("cov" %in% which)
+
+  # -- Covariate marginalisation panel --------------------------------------
+  # Two stacked sub-panels:
+  #   (top) observed vs predicted mean concentration as a function of the
+  #         (first) covariate, faceted by observation time -- shows whether the
+  #         model's covariate effect tracks the stratified data.
+  #   (bottom) quadrature node weights vs covariate (stems), with the assumed
+  #         normal density (scaled to the weights) overlaid when available.
+  if ("covariate" %in% which) {
+    if (!.has_cov) {
+      message("plot.admFit: no covariate strata (study$cov) -- skipping 'covariate' panel.")
+    } else {
+      quad   <- extra$quadrature
+      .first_cov_study <- studies[[base::which(vapply(studies,
+        function(s) !is.null(s$cov) && length(s$cov) > 0, logical(1)))[1]]]
+      cov_nm <- names(.first_cov_study$cov)[1]
+
+      cp_rows <- list(); w_rows <- list()
+      for (nm in names(studies)) {
+        s <- studies[[nm]]
+        if (is.null(s$cov) || length(s$cov) == 0) next
+        cv <- unname(s$cov[[1]])
+        w_rows[[nm]] <- data.frame(cov = cv, weight = s$weight %||% 1)
+        ag <- agg[[nm]]
+        if (is.null(ag)) next
+        # main's .admAggData already composes the residual into pred$E (the ms
+        # factor on lnorm rows), so this is mu_pred -- not the raw colMeans of
+        # the structural draws the covariate branch used to take here.
+        cp_rows[[nm]] <- data.frame(cov = cv, time = ag$times,
+                                    obs  = as.numeric(ag$obs$E),
+                                    pred = as.numeric(ag$pred$E))
+      }
+      df_cp <- do.call(rbind, cp_rows)
+      df_w  <- do.call(rbind, w_rows)
+
+      if (!is.null(df_cp) && nrow(df_cp) > 0) {
+        df_long <- rbind(
+          data.frame(cov = df_cp$cov, time = df_cp$time, value = df_cp$obs,  kind = "Observed"),
+          data.frame(cov = df_cp$cov, time = df_cp$time, value = df_cp$pred, kind = "Predicted"))
+        df_long$time <- factor(df_long$time,
+                               levels = sort(unique(df_long$time)),
+                               labels = paste0("t=", sort(unique(df_long$time))))
+        cov_cols <- c(Observed = "#000000", Predicted = "#D55E00")
+
+        p_cp <- ggplot2::ggplot(df_long, ggplot2::aes(x = cov, y = value, colour = kind)) +
+          ggplot2::geom_line(data = df_long[df_long$kind == "Predicted", ], linewidth = 0.8) +
+          ggplot2::geom_point(size = 1.8) +
+          ggplot2::facet_wrap(~time, scales = "free_y") +
+          ggplot2::scale_colour_manual(values = cov_cols, name = NULL) +
+          ggplot2::labs(title = "Observed vs predicted mean across covariate strata",
+                        subtitle = sprintf("x = %s  |  points = stratum means, line = model prediction", cov_nm),
+                        x = cov_nm, y = "Mean concentration") +
+          ggplot2::theme_bw() +
+          ggplot2::theme(legend.position = "top",
+                         plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
+                                                               face = "plain"))
+
+        # Quadrature weights stem + (optional) scaled normal density overlay.
+        p_w <- ggplot2::ggplot(df_w, ggplot2::aes(x = cov, y = weight)) +
+          ggplot2::geom_segment(ggplot2::aes(xend = cov, yend = 0), colour = "grey50") +
+          ggplot2::geom_point(size = 2.5, colour = "#0072B2")
+        dens_note <- ""
+        if (!is.null(quad) && !is.null(quad$mu) && !is.null(quad$sd)) {
+          mu1 <- quad$mu[[1]]; sd1 <- quad$sd[[1]]
+          xs  <- seq(min(df_w$cov), max(df_w$cov), length.out = 200)
+          dens <- dnorm(xs, mu1, sd1)
+          dens <- dens / max(dens) * max(df_w$weight)   # scale to weight axis
+          df_d <- data.frame(cov = xs, weight = dens)
+          p_w <- p_w + ggplot2::geom_line(data = df_d, colour = "grey40", linetype = "dashed")
+          dens_note <- "  |  dashed = N(mu, sd) density (scaled)"
+        }
+        p_w <- p_w +
+          ggplot2::labs(title = "Quadrature nodes & weights",
+                        subtitle = sprintf("%s node values; weight = integration mass%s",
+                                           quad$method %||% "covariate", dens_note),
+                        x = cov_nm, y = "Weight") +
+          ggplot2::theme_bw() +
+          ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
+                                                               face = "plain"))
+
+        if (requireNamespace("patchwork", quietly = TRUE)) {
+          plots[["covariate"]] <- patchwork::wrap_plots(p_cp, p_w, ncol = 1,
+                                                        heights = c(3, 1))
+        } else {
+          plots[["covariate"]] <- list(conc = p_cp, weights = p_w)
+        }
+      }
+    }
+  } # end if ("covariate" %in% which)
 
   # -- NLL trace per restart -------------------------------------------------
   all_traces <- extra$all_traces

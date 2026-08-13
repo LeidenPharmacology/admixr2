@@ -1,0 +1,210 @@
+﻿---
+title: "Covariate marginalisation"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Covariate marginalisation}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>",
+  message = FALSE, warning = FALSE,
+  fig.width = 7, fig.height = 5
+)
+```
+
+## The problem
+
+Aggregate data are frequently **stratified by a covariate**: each study
+arm reports a mean vector and covariance matrix for a sub-population with
+a known covariate value (e.g. a body-weight band). To recover the
+population model we must marginalise the prediction over the covariate
+distribution.
+
+`admixr2` treats each stratum as a *study* carrying its covariate value
+and an integration `weight`, then combines the per-stratum $-2\log L$
+contributions. Three rules are available:
+
+| Method     | Combine                                              | Use when                          |
+|------------|------------------------------------------------------|-----------------------------------|
+| `"gl"`     | weighted sum (Gauss–Legendre)                        | general purpose, truncated normal |
+| `"gh"`     | weighted sum (Gauss–Hermite)                         | exact normal, few nodes           |
+| `"taylor"` | Laplace (Hessian combine); `order=2`: 3 nodes, `order=4`: 5 nodes | fastest, mild–moderate non-linearity |
+
+All three methods expand the covariate study into **per-stratum studies**, each
+evaluated at a fixed covariate value. For `"gl"` and `"gh"` the per-study
+$-2\log L$ values are combined as a weighted sum. For `"taylor"` exactly three
+per-stratum studies are built (covariate $-h$, centre, $+h$) and combined via
+the 2nd-order Laplace approximation:
+
+$$\mathrm{NLL}_\mathrm{Taylor}
+  = \mathrm{NLL}_0
+    + \tfrac{1}{2}\,\sigma^2_\mathrm{cov}\,
+      \frac{\mathrm{NLL}_+ - 2\,\mathrm{NLL}_0 + \mathrm{NLL}_-}{h^2}$$
+
+where $\sigma^2_\mathrm{cov}$ is the covariate variance. For correlated
+multi-covariate distributions, additional cross-node evaluations supply the
+off-diagonal Hessian terms.
+
+The whole setup — building the quadrature grid, simulating aggregate data, and
+assembling the studies — is done by a single [`datagen()`](datagen.html) call.
+
+## Two models: data-generating and fitting
+
+Clearance scales allometrically with body weight,
+$\mathrm{CL} = \theta_{CL}\,e^{\eta_{CL}}\,(WT/70)^{\theta_{CLWT}}$, with
+$WT \sim N(70, 10^2)$. `datagen()` reads true parameters from a model's
+`ini()` block, so we use one model at the truth to *generate* data and a
+second with off-truth starting values to *fit*.
+
+```{r model}
+library(admixr2)
+library(rxode2)
+library(nlmixr2)
+
+# data-generating model: ini() = truth
+pk_true <- function() {
+  ini({
+    tcl <- log(5); tv <- log(30); tka <- log(1); clwt <- 1.25
+    prop.err <- 0.2
+    eta.cl ~ 0.09; eta.v ~ 0.04
+  })
+  model({
+    cl <- exp(tcl + eta.cl) * (wt / 70)^clwt
+    v  <- exp(tv  + eta.v); ka <- exp(tka)
+    d/dt(depot)   <- -ka * depot
+    d/dt(central) <- ka * depot - (cl/v) * central
+    cp <- central / v
+    cp ~ prop(prop.err)
+  })
+}
+
+# fitting model: same structure, off-truth ini() = starting guess
+pk_fit <- function() {
+  ini({
+    tcl <- log(4); tv <- log(25); tka <- log(0.8); clwt <- 1.0
+    prop.err <- 0.3
+    eta.cl ~ 0.05; eta.v ~ 0.05
+  })
+  model({
+    cl <- exp(tcl + eta.cl) * (wt / 70)^clwt
+    v  <- exp(tv  + eta.v); ka <- exp(tka)
+    d/dt(depot)   <- -ka * depot
+    d/dt(central) <- ka * depot - (cl/v) * central
+    cp <- central / v
+    cp ~ prop(prop.err)
+  })
+}
+```
+
+## Generate the covariate-stratified studies in one call
+
+Add a `covariate` field to the study spec. `datagen()` builds the
+quadrature grid, simulates the aggregate `E`/`V` at each weight node, and
+returns a weighted `studies` list with the quadrature attached:
+
+```{r datagen}
+times <- c(0.5, 1, 2, 4, 8, 12)
+
+cov_data <- datagen(
+  studies = list(pop = list(
+    times     = times,
+    ev        = rxode2::et(amt = 100, cmt = "depot"),
+    n         = 300L,
+    covariate = list(wt      = list(mu = 70, sd = 10),
+                     method  = "gl",
+                     n_nodes = 11L))),
+  model   = pk_true,
+  control = datagenControl(n_sim = 10000L))
+
+length(cov_data)                       # 7 weight strata
+attr(cov_data, "quadrature")$method    # "gl"
+```
+
+## Fit — exactly like a multiple-studies model
+
+Pass the studies straight to `admControl()` and fit with `nlmixr2()`; `admData()`
+is the usual placeholder (no covariate column needed — the estimator supplies
+the covariate from each stratum automatically). The quadrature rides along on
+the studies as an attribute:
+
+```{r fit}
+fit_gl <- nlmixr2(
+  pk_fit, admData(), est = "admc",
+  control = admControl(studies = cov_data, n_sim = 1000L,
+                       grad = "sens", maxeval = 150L, print = 1L, cores = 10))
+```
+
+The result is a genuine `admFit` object — `print()`, `AIC()`, standard
+errors and `plot()` all work:
+
+```{r results}
+ax <- fit_gl$env$admExtra
+data.frame(
+  param    = c("CL", "V", "KA", "clwt", "om.cl", "sig2"),
+  true     = c(5, 30, 1, 1.25, 0.09, 0.04),
+  estimate = round(c(exp(ax$struct["tcl"]), exp(ax$struct["tv"]),
+                     exp(ax$struct["tka"]), ax$struct["clwt"],
+                     ax$omega[1, 1], ax$sigma_var[1]), 3),
+  row.names = NULL)
+```
+
+## Covariate diagnostics
+
+The `"covariate"` panel (added automatically to `plot()` for covariate
+fits) shows observed vs predicted mean across the weight strata plus the
+quadrature grid:
+
+```{r plot, fig.height=6}
+plot(fit_gl, which = "covariate")
+```
+
+## Switching methods
+
+All three methods are one-word (or one-argument) swaps in the `datagen()`
+study spec — everything downstream is identical:
+
+```{r switch, eval=FALSE}
+# Gauss–Hermite
+gh_data <- datagen(
+  studies = list(pop = list(
+    times = times, ev = rxode2::et(amt = 100, cmt = "depot"), n = 300L,
+    covariate = list(wt = list(mu = 70, sd = 10), method = "gh", n_nodes = 5L))),
+  model = pk_true, control = datagenControl(n_sim = 2000L))
+
+# 2nd-order Taylor (3 nodes per covariate)
+ty_data <- datagen(
+  studies = list(pop = list(
+    times = times, ev = rxode2::et(amt = 100, cmt = "depot"), n = 300L,
+    covariate = list(wt = list(mu = 70, sd = 10), method = "taylor", h = 2))),
+  model = pk_true, control = datagenControl(n_sim = 10000L))
+
+# 4th-order Taylor (5 nodes per covariate — adds sigma^4 * NLL'''' / 8 term)
+ty4_data <- datagen(
+  studies = list(pop = list(
+    times = times, ev = rxode2::et(amt = 100, cmt = "depot"), n = 300L,
+    covariate = list(wt = list(mu = 70, sd = 10), method = "taylor", h = 2, order = 4L))),
+  model = pk_true, control = datagenControl(n_sim = 10000L))
+fit_gh  <- nlmixr2(pk_fit, admData(), est = "admc",
+                   control = admControl(studies = gh_data,  n_sim = 600L,
+                                        grad = "sens", maxeval = 150L))
+fit_ty  <- nlmixr2(pk_fit, admData(), est = "admc",
+                   control = admControl(studies = ty_data,  n_sim = 1000L,
+                                        grad = "sens", maxeval = 150L, print = 1, cores = 10))
+fit_ty4 <- nlmixr2(pk_fit, admData(), est = "admc",
+                   control = admControl(studies = ty4_data, n_sim = 1000L,
+                                        grad = "sens", maxeval = 150L, print = 1, cores = 10))
+```
+
+The default `order = 2` Taylor uses 3 per-stratum studies and combines them
+via $\mathrm{NLL}_0 + \tfrac{1}{2}\sigma^2\,\mathrm{NLL}''$. Setting
+`order = 4` adds two more axis nodes (at covariate $\pm 2h$) and includes the
+next correction term $\tfrac{\sigma^4}{8}\,\mathrm{NLL}''''$, which matters
+when the model response is moderately curved over the covariate range.
+Gauss–Legendre/Hermite are more accurate still for strongly nonlinear
+covariate effects.

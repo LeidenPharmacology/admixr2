@@ -35,6 +35,11 @@ event-table translation rejects a dataset with no non-\code{NA} observation rows
 ("no rows in event table or input data"), the same reason the multi-endpoint
 frame below uses a placeholder \code{DV}.
 }
+\details{
+Covariate columns are not needed here: when a model references a covariate,
+the estimator supplies it automatically from each study's \code{cov} value, so
+\code{admData()} works unchanged for covariate-marginalisation fits.
+}
 \examples{
 admData()
 admData(c("cp", "cCSF"))

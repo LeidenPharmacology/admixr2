@@ -4,17 +4,20 @@
 \alias{plot.admFit}
 \title{Diagnostic plots for an admixr2 fit}
 \usage{
-\method{plot}{admFit}(x, which = c("mean", "cov", "nll", "par"), n_sim = NULL, seed = 1L, ...)
+\method{plot}{admFit}(x, which = NULL, n_sim = NULL, seed = 1L, ...)
 }
 \arguments{
 \item{x}{An \code{admFit} object returned by \code{nlmixr2()} with
 \code{est = "adfo"}, \code{est = "admc"}, \code{est = "adgh"}, or \code{est = "adirmc"}.}
 
 \item{which}{Character vector selecting which panel types to produce.
-Any subset of \code{c("mean", "cov", "nll", "par")}. Defaults to all four.}
+Any subset of \code{c("mean", "cov", "nll", "par", "covariate")}. When \code{NULL}
+(default), produces the first four panels plus \code{"covariate"} when the fit
+has covariate strata.}
 
 \item{n_sim}{Number of MC samples for the final prediction. Defaults to the
-value used during fitting. Only used when \code{"mean"} or \code{"cov"} is in \code{which}.}
+value used during fitting. Only used when \code{"mean"}, \code{"cov"} or
+\code{"covariate"} is in \code{which}.}
 
 \item{seed}{Random seed for reproducibility.}
 
@@ -53,6 +56,11 @@ coloured with the Okabe-Ito palette.
 back-transformed, sigma as SD, omega diagonal as variance labelled
 \code{V(eta.x)}). Facets ordered as in the model \code{ini()} block. Restarts
 coloured with the Okabe-Ito palette.
+\item \code{"covariate"} -- Covariate marginalisation diagnostics (only for fits with
+covariate strata, i.e. \code{study$cov}). Top: observed vs predicted mean
+concentration as a function of the (first) covariate, faceted by time.
+Bottom: quadrature node weights vs covariate, with the assumed normal
+density (scaled) overlaid when an \code{admBuildQuadrature()} object is present.
 }
 }
 \section{Aggregate data slot}{

@@ -2677,6 +2677,20 @@ nlmixr2Est.admc <- function(env, ...) {
     stop("admControl(studies=...) required", call. = FALSE)
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
+  # Covariate marginalisation is NOT wired into this estimator. R/covariate.R
+  # provides admBuildQuadrature()/admBuildCovStudies() and the combine rules,
+  # and datagen(covariate=) generates node-stratified data -- but .admNLL and
+  # .admGrad combine studies by a plain sum. Running a node-stratified fit
+  # through them silently integrates over the covariate with every node weighted
+  # 1, which is a different (wrong) objective, not a rougher one. Refuse it
+  # rather than return a plausible number.
+  .cov_st <- vapply(studies, function(s) !is.null(s$cov) && length(s$cov) > 0L,
+                    logical(1))
+  if (any(.cov_st) || !is.null(attr(.ctl$studies, "quadrature", exact = TRUE)))
+    stop("admixr2: covariate marginalisation is not yet supported by `admc`. ",
+         "Studies carrying `cov` (or a `quadrature` attribute) would be summed ",
+         "with equal weight, which is not the marginal objective. See ",
+         "R/covariate.R.", call. = FALSE)
 
   pinfo      <- .admDriverPinfo(.ui, .ctl)
   output_var <- .admOutputVar(.ui)

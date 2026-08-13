@@ -1,4 +1,4 @@
-﻿#' Dummy data frame for nlmixr2 dispatch
+#' Dummy data frame for nlmixr2 dispatch
 #'
 #' Returns a minimal NONMEM-style data frame that satisfies nlmixr2's data
 #' argument requirement. The single observation row carries a non-`NA`
@@ -22,6 +22,10 @@
 #'   purely for dispatch and never enters the reported objective (each estimator
 #'   overwrites it with its own aggregate -2LL). When `NULL` (default) the
 #'   single-endpoint dummy frame is returned unchanged.
+#'
+#' Covariate columns are not needed here: when a model references a covariate,
+#' the estimator supplies it automatically from each study's `cov` value, so
+#' `admData()` works unchanged for covariate-marginalisation fits.
 #'
 #' @return A data frame with columns `ID`, `TIME`, `DV`, `AMT`, `EVID`, `CMT`
 #'   (single-endpoint), plus a `DVID` endpoint column when `outputs` is given.

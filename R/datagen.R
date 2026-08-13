@@ -105,11 +105,29 @@ datagenControl <- function(
 #'       optionally `ev`/`n` (inherited from the study otherwise). When present,
 #'       the study result carries a matching `observations` list of per-output
 #'       `E`/`V`, ready to pass straight to `admControl(studies = ...)`.}
+#'     \item{`covariate`}{(Optional) named covariate distribution for this
+#'       study, e.g. `list(wt = list(mu = 70, sd = 10))`. Each entry is a list
+#'       with `mu` and `sd`; an optional scalar `rho` or an explicit `Sigma`
+#'       describes a multi-covariate distribution. When present the study is
+#'       **expanded** into one sub-study per quadrature node, using the
+#'       `quad_method` / `n_nodes` / `truncation_sd` / `h` / `order` arguments.
+#'       The returned list carries the quadrature object as
+#'       `attr(., "quadrature")`, so passing it to `admControl(studies = .)`
+#'       enables covariate marginalisation automatically. Cannot be combined
+#'       with `observations`, and at most one study may carry it.}
 #'   }
 #' @param model Optional default model function used for any study that does not
 #'   supply its own `model` element.  At least one of `model` or each
 #'   study's `model` must be non-`NULL`.
 #' @param control A [datagenControl()] object.
+#' @param quad_method Quadrature rule used to marginalise over a study's
+#'   `covariate` distribution: `"gl"` (Gauss-Legendre over a truncated normal),
+#'   `"gh"` (Gauss-Hermite) or `"taylor"` (second-order correction of the
+#'   central node). Ignored when no study carries a `covariate`.
+#' @param n_nodes Number of quadrature nodes per covariate.
+#' @param truncation_sd Truncation half-width, in SDs, for `"gl"`.
+#' @param h Node spacing multiplier for `"taylor"`.
+#' @param order Expansion order for `"taylor"`.
 #'
 #' @return A named list with one element per study.  Each element contains:
 #'   \describe{
@@ -197,10 +215,18 @@ datagenControl <- function(
 #' round(study_data$study1$E, 2)
 #' }
 #' @export
-datagen <- function(studies, model = NULL, control = datagenControl()) {
+datagen <- function(studies, model = NULL, control = datagenControl(),
+                    quad_method = c("gl", "gh", "taylor"),
+                    n_nodes = 9L, truncation_sd = 3.5, h = 2.0, order = 2L) {
   checkmate::assertList(studies, min.len = 1L)
   if (!inherits(control, "datagenControl"))
     stop("`control` must be created via `datagenControl()`", call. = FALSE)
+
+  # Quadrature settings are datagen() formals rather than datagenControl()
+  # fields, so they go LAST and no positional datagenControl() call moves.
+  quad_method <- match.arg(quad_method)
+  order       <- as.integer(order)
+  n_nodes     <- as.integer(n_nodes)
 
   # Per-study model loading populates rxode2's global model registry; free it with
   # rxode2's own idiom on exit so repeated datagen() runs stay bounded.
@@ -211,6 +237,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 
   # Validate study specs and resolve per-study model
   study_models <- vector("list", length(studies))
+  has_cov      <- logical(length(studies))
   for (i in seq_along(studies)) {
     nm <- study_names[[i]]
     s  <- studies[[i]]
@@ -221,6 +248,16 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         call. = FALSE)
     if (!is.function(m))
       stop(sprintf("Study '%s': `model` must be a function.", nm), call. = FALSE)
+    has_cov[i] <- !is.null(s$covariate)
+    # Covariate marginalisation expands ONE study into one sub-study per
+    # quadrature node, each carrying a single E/V. A multi-output study is
+    # already a list of per-output blocks, and nothing downstream defines what
+    # the product of the two should be -- so refuse it rather than emit a shape
+    # no estimator reads.
+    if (has_cov[i] && !is.null(s$observations))
+      stop(sprintf(paste("Study '%s': `covariate` and `observations` cannot be",
+                         "combined -- covariate marginalisation is",
+                         "single-output only."), nm), call. = FALSE)
     if (!is.null(s$observations)) {
       if (!is.list(s$observations) || length(s$observations) == 0L)
         stop(sprintf("Study '%s': `observations` must be a non-empty list.", nm),
@@ -248,6 +285,20 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   # studies compile only once.
 
   if (control$sampling %in% c("rnorm", "lhs")) set.seed(control$seed)
+
+  # A covariate study expands into one sub-study per quadrature node, and the
+  # combine rule (gl/gh/taylor weights) is a single global property of the fit --
+  # so at most one covariate group is meaningful.
+  if (sum(has_cov) > 1L)
+    stop("datagen(): at most one study may carry `covariate` -- the quadrature ",
+         "combine rule is global to the fit.", call. = FALSE)
+  # A covariate study expands into weighted nodes; a plain study is an ordinary
+  # summand. The combine rule applies to every study in the fit, so there is no
+  # defined weight for the plain one -- refuse rather than pick one silently.
+  if (any(has_cov) && !all(has_cov))
+    stop("datagen(): covariate and non-covariate studies cannot be mixed -- the ",
+         "quadrature weights apply to every study in the fit.", call. = FALSE)
+  cov_quad <- NULL
 
   results <- vector("list", length(studies))
   for (i in seq_along(studies)) {
@@ -345,7 +396,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       .adghNodeGrid(control$n_nodes, pinfo$n_eta) else NULL
 
     # Moments (mu, V) for one observed compartment via the chosen method.
-    compute_moments <- function(spec) {
+    compute_moments <- function(spec, cov_vals = NULL) {
       ov  <- spec$output
       n_t <- length(spec$times)
       arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
@@ -357,8 +408,10 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       # first shape parameter, so datagen() returned an `E` that was a shape (an
       # arbitrary positive number, not a probability) and a `V` whose diagonal was
       # entirely NA, with no error and no warning.
+      # `cov` rides on the study exactly as it does on the fit path, so the
+      # solve paths pick it up through the same channel.
       study_tmp <- list(ev_full = evf, times = spec$times,
-                        out_pair = .admBetaPair(ui))
+                        out_pair = .admBetaPair(ui), cov = cov_vals)
 
       if (control$method == "gh") {
         m <- .adghMoments(pars, pinfo, study_tmp, rxMod, ov, grid, control$cores)
@@ -405,8 +458,8 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       }
     }
 
-    one_result <- function(spec) {
-      m     <- compute_moments(spec)
+    one_result <- function(spec, cov_vals = NULL) {
+      m     <- compute_moments(spec, cov_vals)
       t_lbl <- as.character(spec$times)
       mu <- m$mu; V <- m$V
       names(mu) <- t_lbl; dimnames(V) <- list(t_lbl, t_lbl)
@@ -421,10 +474,55 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       obs_res <- lapply(obs_specs, one_result)
       names(obs_res) <- vapply(obs_specs, `[[`, character(1), "name")
       results[[i]] <- list(observations = obs_res, n = s$n %||% NA_integer_)
-    } else {
+    } else if (!has_cov[i]) {
       results[[i]] <- one_result(obs_specs[[1L]])
+    } else {
+      # --- covariate study: one sub-study per quadrature node ----------------
+      quad    <- admBuildQuadrature(s$covariate, method = quad_method,
+                                    n_nodes = n_nodes,
+                                    truncation_sd = truncation_sd,
+                                    h = h, order = order)
+      multi_d <- is.matrix(quad$wt_nodes)
+      cov_nms <- if (multi_d) quad$cov_names else (quad$cov_names %||% quad$cov_name)
+
+      # A covariate the model never reads generates data identical at every node,
+      # which looks like a fit with no covariate effect rather than like a typo.
+      .miss <- setdiff(cov_nms, rxMod$params)
+      if (length(.miss) > 0L)
+        warning(sprintf(paste("datagen(): covariate(s) %s are not referenced by",
+                              "the model for study '%s' -- they will have no",
+                              "effect on the generated data."),
+                        paste(.miss, collapse = ", "), nm), call. = FALSE)
+
+      spec1  <- obs_specs[[1L]]
+      n_node <- if (multi_d) nrow(quad$wt_nodes) else length(quad$wt_nodes)
+      # Taylor uses the same per-node data as gl/gh; only the combination during
+      # fitting differs (.adm_combine_nll).
+      node_res <- lapply(seq_len(n_node), function(k) {
+        node_vals <- if (multi_d) setNames(quad$wt_nodes[k, , drop = TRUE], cov_nms)
+                     else         setNames(quad$wt_nodes[[k]], cov_nms)
+        one_result(spec1, node_vals)
+      })
+      grp <- admBuildCovStudies(lapply(node_res, `[`, c("E", "V")), quad,
+                                spec1$ev, spec1$times, s$n %||% NA_integer_,
+                                prefix = nm)
+      if (control$return_samples)
+        for (k in seq_along(grp)) grp[[k]]$samples <- node_res[[k]]$samples
+      results[[i]] <- grp
+      cov_quad     <- quad
     }
   }
 
-  setNames(results, study_names)
+  # Flatten: an ordinary study contributes one entry under its own name, a
+  # covariate study contributes its whole node group under the names
+  # admBuildCovStudies() assigned.
+  out <- list()
+  for (i in seq_along(results)) {
+    if (has_cov[i]) out <- c(out, results[[i]])
+    else            out[[study_names[[i]]]] <- results[[i]]
+  }
+  # The combine rule travels with the data, so admControl(studies = .) picks it
+  # up without the caller restating it.
+  if (!is.null(cov_quad)) attr(out, "quadrature") <- cov_quad
+  out
 }

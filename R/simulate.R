@@ -18,6 +18,10 @@
   for (nm in sigma_names)         params_mat[, nm] <- 0
   # Only the parameters we vary are supplied; rxSolve fills the rest (rxerr.*,
   # CMT, hard-coded model constants) from the model's own defaults.
+  # Covariates are the one exception: a model reading `wt` has no default for
+  # it, so each study's own value is written in -- and ONLY that, never a
+  # blanket setdiff() fill. See .admCovCols().
+  params_mat <- .admCovCols(params_mat, rxMod$params, study$cov)
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = study$ev_full, cores = cores,
                           nDisplayProgress = ndp,
@@ -351,6 +355,9 @@
 
   # do.call + sensModel$solve_args: DDE sensitivity solves are forced onto pure
   # dop853 (see .admLoadSensModel); NULL, hence a no-op, for every other model.
+
+  # Model covariates for this study (only names in study$cov -- see .admCovCols).
+  inner_df <- .admCovCols(inner_df, sensModel$mod$params, study$cov)
   out <- tryCatch(
     suppressWarnings(
       do.call(rxode2::rxSolve,
