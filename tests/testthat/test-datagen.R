@@ -341,3 +341,18 @@ test_that("datagen() refuses the endpoints it cannot generate, rather than emitt
             model = bet, control = datagenControl(method = "fo", seed = 1L)),
     "beta")
 })
+
+test_that("datagen() refuses the removed `covariate` node generation", {
+  skip_if_not_installed("rxode2")
+  m <- function() {
+    ini({tcl <- log(1); tv <- log(10); add.err <- 0.3; eta.cl ~ 0.09})
+    model({cl <- exp(tcl + eta.cl); v <- exp(tv)
+           d/dt(centr) <- -cl / v * centr; cp <- centr / v
+           cp ~ add(add.err)})
+  }
+  expect_error(
+    datagen(list(p = list(model = m, times = c(1, 2), n = 10L,
+                          covariate = list(WT = list(mu = 70, sd = 10)))),
+            control = datagenControl(n_sim = 50L)),
+    "was removed")
+})

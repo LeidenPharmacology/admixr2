@@ -1307,6 +1307,7 @@ nlmixr2Est.adfo <- function(env, ...) {
   studies    <- .u$studies
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
+  .admRefuseNodeStudies(studies)
   .admRefuseCovariates(studies, "adfo")
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)

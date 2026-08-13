@@ -63,7 +63,6 @@ navbar:
         - text: Simulating data & using published models
           href: articles/datagen.html
         - text: Covariate marginalisation
-          href: articles/covariate-marginalisation.html
         - text: "---"
         - text: Meta-analysis across studies
         - text: Multiple studies
@@ -105,7 +104,6 @@ articles:
     contents:
       - aggregate-data
       - datagen
-      - covariate-marginalisation
 
   - title: Meta-analysis across studies
     desc: >
@@ -139,13 +137,6 @@ reference:
     contents:
       - datagen
       - datagenControl
-
-  - title: Covariate marginalisation
-    desc: Build quadrature grids and covariate-stratified study lists.
-    contents:
-      - admCovariateStudies
-      - admBuildQuadrature
-      - admBuildCovStudies
 
   - title: Control objects
     desc: Configuration for each estimator.

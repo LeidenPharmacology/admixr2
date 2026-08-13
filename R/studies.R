@@ -201,14 +201,6 @@
   # the distribution those subjects span (which drives the Omega collapse).
   ob[["cov"]]      <- ob[["cov"]]      %||% defaults[["cov"]]
   ob[["cov_dist"]] <- ob[["cov_dist"]] %||% defaults[["cov_dist"]]
-  # How that distribution is integrated over. A node method expands each unit
-  # into its own nodes, which is equivalent to expanding the study: the study's
-  # -2LL is the sum over units, and sum_k c_k sum_u NLL_u = sum_u sum_k c_k NLL_u.
-  ob[["cov_method"]]  <- ob[["cov_method"]]  %||% defaults[["cov_method"]]
-  ob[["cov_control"]] <- ob[["cov_control"]] %||% defaults[["cov_control"]]
-  # A node study's combination coefficient. It must reach the UNIT: the -2LL is
-  # summed over units, and a weight left behind on the study is silently 1.
-  ob[["weight"]]      <- ob[["weight"]]      %||% defaults[["weight"]]
   for (f in c("n", "E", "V", "times"))
     if (is.null(ob[[f]])) stop(sprintf("Study '%s' missing '%s'", label, f), call. = FALSE)
   ob$E <- as.numeric(ob$E)
@@ -337,8 +329,6 @@
 
   list(is_joint = TRUE, label = nm, n = s$n, ev = s$ev,
        cov = s[["cov"]], cov_dist = s[["cov_dist"]],
-       cov_method = s[["cov_method"]], cov_control = s[["cov_control"]],
-       weight = s[["weight"]],
        output = blocks[[1L]]$output,   # any valid endpoint, for cmt-tagging
        times  = sort(unique(unlist(lapply(blocks, `[[`, "times")))),
        method = "cov", E = E_stacked, V = V, blocks = blocks,
@@ -597,9 +587,7 @@
     if (is.null(onames) || any(!nzchar(onames)))
       onames <- paste0("obs", seq_along(s$observations))
     defaults <- list(n = s$n, ev = s$ev, output = s$output %||% default_output,
-                     cov = s[["cov"]], cov_dist = s[["cov_dist"]],
-                     cov_method = s[["cov_method"]], cov_control = s[["cov_control"]],
-                     weight = s[["weight"]])
+                     cov = s[["cov"]], cov_dist = s[["cov_dist"]])
     s$observations <- setNames(lapply(seq_along(s$observations), function(k)
       .admNormaliseObs(s$observations[[k]], paste0(nm, ".", onames[k]), defaults)),
       onames)
@@ -608,9 +596,7 @@
     unit <- .admNormaliseObs(
       list(E = s$E, V = s$V, n = s$n, times = s$times, ev = s$ev,
            method = s$method, output = s$output %||% default_output,
-           cov = s[["cov"]], cov_dist = s[["cov_dist"]],
-           cov_method = s[["cov_method"]], cov_control = s[["cov_control"]],
-           weight = s[["weight"]]), nm)
+           cov = s[["cov"]], cov_dist = s[["cov_dist"]]), nm)
     # Preserve top-level normalised fields (legacy callers / tests read these).
     s$E <- unit$E; s$V <- unit$V; s$method <- unit$method
     s$v_diag <- unit$v_diag; s$output <- unit$output
