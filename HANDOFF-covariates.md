@@ -104,7 +104,7 @@ coverage 85–90% against nominal 95%. Predicted by `tr(V_pred^-1 V_obs)` treati
 **Value of the covariate** — same data, with and without:
 `delta -2LL 227.4` on 1 df; omega 0.3134 → 0.4942 (+58%); residual unchanged.
 
-## 5. THE definitive result (`scratchpad/threeway.R`)
+## 5. THE definitive result (`validation/covariate-threeway.R`)
 
 Three objectives, exact marginal data at truth, 3 identifying populations,
 `tcl`/`omega`/`add.err` profiled out:
@@ -126,6 +126,60 @@ sparse    1000     0.7501     0.3477     0.3624 |    +0.0001    -0.4023    -0.38
 
 Per subject at truth: `gh - marginal` = 8.47 (rich) / 5.21 (sparse);
 `taylor - gh` = -1.16 / -0.71.
+
+### 5a. Why the development Rmd showed no bias — settled
+
+`validation/covariate-matched-conditional.R`. The question was live for a while
+because HvdB's `covariate workflow.Rmd` fits the same model three ways (NAIVE, GH,
+Laplace) and reported GH and Laplace converging to the same, unbiased estimates.
+
+Its GH/Laplace/Sobol chunks (lines 815 / 1082 / 1348) build the objective as
+
+```r
+logLik_given_wt <- function(wt, theta, opts, ev_seed) {
+  obsEV  <- EV_given_wt(wt, ...)                  # obs REGENERATED at this wt
+  predEV <- predEV_given_wt_theta(wt, theta, opts)
+```
+
+so the observed data is **conditional on the same covariate value as the
+prediction**. At truth every node's term is individually minimised, hence the sum is
+minimised at truth *for any weights* — which is exactly why GH and Laplace agree
+there. Adding that fourth objective (`gh_matched`) to the threeway:
+
+```
+== ONE population ==
+objective                              argmin       bias   profile spread over tcov 0.45..1.05
+marginal      (obs = marginal)         0.8956    +0.1456      0.000    0.000    0.000    0.000    5.912
+gh            (obs = marginal)         0.0502    -0.6998      0.000   30.809   66.668  105.914  147.158  [boundary]
+taylor        (obs = marginal)         0.0502    -0.6998      0.000   26.045   53.623   81.203  108.171  [boundary]
+gh_matched  (obs = CONDITIONAL)        0.7500    -0.0000     34.794    9.422    0.000    9.573   35.655
+
+== THREE populations ==
+marginal      (obs = marginal)         0.7500    +0.0000     43.903   12.416    0.000   14.797   60.511
+gh            (obs = marginal)         0.3045    -0.4455      0.000   48.552  125.104  223.187  335.985
+taylor        (obs = marginal)         0.3128    -0.4372      0.000   40.317  101.772  177.100  260.251
+gh_matched  (obs = CONDITIONAL)        0.7501    +0.0001    110.949   30.244    0.000   30.369  111.505
+```
+
+Both of HvdB's observations follow, and neither contradicts §5:
+
+- **NAIVE "did not work" on a single dataset** because the marginal profile there is
+  flat — `0.000 0.000 0.000 0.000` — so `tcov` is not identified and 0.8956 is just
+  where the optimiser stopped. That is §6's ridge, not a defect. Multiple datasets
+  with differing covariate distributions break it, which is his "works for multiple
+  datasets".
+- **GH/Laplace looked unbiased** because `obs = EV_given_wt(wt)` hands them 21
+  aggregate datasets at 21 known distinct weights, which breaks the ridge directly —
+  `gh_matched` recovers truth from ONE population, with real curvature both sides.
+  That chunk validated the quadrature machinery under matched conditional data,
+  where it cannot fail. It did not test the estimator on aggregate data. Give the
+  same two constructions the single marginal `(E, V)` a published study reports and
+  they do not merely acquire the -0.44 bias — on one population they run to the
+  search boundary.
+
+**Do not cite the Rmd as evidence that node constructions are unbiased**, and do not
+build a validation on conditional-per-node observed data: it is information no
+aggregate dataset contains, and it makes any weighting scheme look correct.
 
 ## 6. Identifiability (do not lose this)
 
@@ -236,11 +290,10 @@ though the branch is unreleased, so the window is now.
 5. **Issue #120** (nloptr `xtol_rel` default 1e-4) — evidence posted, fix not made.
    Do **not** set `xtol_rel = 0` (BOBYQA hits ROUNDOFF_LIMITED); pick a finite value
    against the measured noise floor. Affects every derivative-free fit.
-6. **HvdB says the admr "naive method" did not work** — unresolved. `genopts.R`
-   lines 196–225 draw covariates per simulated subject from Sobol dims *after* the
-   Omega dims (the same construction as `.admCovRowsFor`), so on its face it should
-   be the marginal method. Worth establishing what "did not work" meant.
-7. Run HvdB's original PAGE script for a genuine external cross-check.
+6. Run HvdB's original PAGE script for a genuine external cross-check.
+
+(The "why did the development Rmd show no bias / why did NAIVE not work" question is
+closed — see §5a.)
 
 ## 11. Process notes — these cost real time
 
