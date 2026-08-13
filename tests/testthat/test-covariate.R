@@ -225,3 +225,96 @@ test_that("datagen rejects multiple/mixed covariate studies (validation)", {
     "cannot be mixed")
 })
 
+
+# ---- covariate collapse ------------------------------------------------------
+
+.cov_pinfo <- function(n_eta = 1L, cmap = data.frame(covariate = "WT",
+                                                     coef = "tcov",
+                                                     eta = "eta.cl",
+                                                     stringsAsFactors = FALSE))
+  list(n_eta = n_eta,
+       eta_col_names = if (n_eta == 1L) "eta.cl" else c("eta.cl", "eta.v"),
+       cov_map = cmap)
+
+.cov_ui <- function(cov = "WT",
+                    expr = list(quote(cl <- exp(tcl + tcov * WT + eta.cl))))
+  list(allCovs = cov, lstExpr = expr)
+
+test_that(".admCovInflateL folds theta_cov^2 * Sigma_a into Omega", {
+  Om   <- matrix(0.09, 1L, 1L)
+  pars <- list(L = t(chol(Om)), struct = c(tcl = 0, tcov = 0.75))
+  s    <- list(cov_dist = list(WT = list(mu = 0, sd = 0.6)))
+  L2   <- admixr2:::.admCovInflateL(pars, .cov_pinfo(), s)
+  # 0.09 + 0.75^2 * 0.6^2 = 0.2925
+  expect_equal(as.numeric(tcrossprod(L2)), 0.2925)
+  # and it really is a Cholesky of that
+  expect_equal(L2[lower.tri(L2)], numeric(0))
+})
+
+test_that(".admCovInflateL puts the variance on the RIGHT eta only", {
+  Om   <- diag(c(0.09, 0.04))
+  pars <- list(L = t(chol(Om)), struct = c(tcov = 0.5))
+  cmap <- data.frame(covariate = "WT", coef = "tcov", eta = "eta.v",
+                     stringsAsFactors = FALSE)
+  s    <- list(cov_dist = list(WT = list(mu = 0, sd = 2)))
+  L2   <- admixr2:::.admCovInflateL(pars, .cov_pinfo(2L, cmap), s)
+  Om2  <- tcrossprod(L2)
+  expect_equal(Om2[1, 1], 0.09)              # eta.cl untouched
+  expect_equal(Om2[2, 2], 0.04 + 0.5^2 * 4)  # eta.v inflated
+  expect_equal(Om2[1, 2], 0)
+})
+
+test_that(".admStudyL returns the plain Cholesky when no cov_dist is declared", {
+  pars <- list(L = t(chol(matrix(0.09, 1L, 1L))), struct = c(tcov = 0.75))
+  expect_identical(admixr2:::.admStudyL(pars, .cov_pinfo(), list()), pars$L)
+})
+
+test_that(".admCheckCovariates accepts a supported mu-referenced covariate", {
+  st <- list(a = list(cov_dist = list(WT = list(mu = 0, sd = 0.6))))
+  expect_silent(admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), st, "none"))
+})
+
+test_that(".admCheckCovariates is a no-op when no study declares cov_dist", {
+  expect_silent(admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(),
+                                              list(a = list()), "sens"))
+})
+
+test_that(".admCheckCovariates refuses what the collapse cannot do exactly", {
+  ok_st <- list(a = list(cov_dist = list(WT = list(mu = 0, sd = 0.6))))
+
+  # no random effect to inflate
+  expect_error(
+    admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(0L), ok_st, "none"),
+    "no random effects")
+
+  # a gradient mode that does not differentiate the inflated Omega
+  for (g in c("sens", "analytical", "fd", "cfd"))
+    expect_error(admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), ok_st, g),
+                 'requires `grad = "none"`', fixed = TRUE)
+
+  # covariate the model never reads
+  expect_error(
+    admixr2:::.admCheckCovariates(.cov_ui(cov = "AGE"), .cov_pinfo(), ok_st, "none"),
+    "which the model never reads")
+
+  # used in a second place -> reported as such, not as "not mu-referenced"
+  expect_error(
+    admixr2:::.admCheckCovariates(
+      .cov_ui(expr = list(quote(cl <- exp(tcl + tcov * WT + eta.cl)),
+                          quote(v  <- exp(tv) * (1 + 0.01 * WT)))),
+      .cov_pinfo(), ok_st, "none"),
+    "appears more than once")
+
+  # not a bare theta * COV product (power/exponential/allometric/Emax)
+  expect_error(
+    admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(cmap = NULL), ok_st, "none"),
+    "is not mu-referenced as a plain")
+
+  # non-normal covariate specs
+  for (spec in list(list(levels = c(0, 1), probs = c(.5, .5)),
+                    list(mu = 0), list(mu = 0, sd = 0), list(mu = 0, sd = NA_real_)))
+    expect_error(
+      admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(),
+                                    list(a = list(cov_dist = list(WT = spec))), "none"),
+      "finite `mu` and `sd`")
+})

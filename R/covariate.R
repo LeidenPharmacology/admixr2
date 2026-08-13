@@ -33,7 +33,20 @@
 # Named .adm* on purpose: the dev-mode daemon payload is collected by a
 # /^\.(adm|adfo|adgh|adirmc)/i regex, so a helper named .cov_fills would be
 # missing inside every parallel-restart worker.
-.admCovCols <- function(mat, mod_params, cov_s) {
+.admCovCols <- function(mat, mod_params, cov_s, cov_rows = NULL) {
+  # PER-ROW values (general path): each simulated subject carries its own
+  # covariate, so rxode2 evaluates whatever functional form the model contains.
+  if (!is.null(cov_rows)) {
+    nms <- setdiff(intersect(colnames(cov_rows), mod_params), colnames(mat))
+    if (length(nms) == 0L) return(mat)
+    if (nrow(cov_rows) != nrow(mat))
+      stop(".admCovCols: cov_rows has ", nrow(cov_rows), " rows but the params ",
+           "frame has ", nrow(mat), ". Recycling here would hand subjects the ",
+           "wrong covariate values silently.", call. = FALSE)
+    add <- as.matrix(cov_rows[, nms, drop = FALSE])
+    return(if (is.data.frame(mat)) cbind(mat, as.data.frame(add, check.names = FALSE))
+           else                    cbind(mat, add))
+  }
   if (is.null(cov_s) || length(cov_s) == 0L) return(mat)
   nms <- setdiff(intersect(names(cov_s), mod_params), colnames(mat))
   if (length(nms) == 0L) return(mat)
@@ -735,4 +748,180 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
 
 # The Cholesky a given study should be simulated with: inflated when the study
 # declares a covariate DISTRIBUTION, the plain one otherwise.
-.admStudyL <- function(pars, pinfo, s) .admCovInflateL(pars, pinfo, s) %||% pars$L
+#
+# Returns NULL -- never a silent fall back to pars$L -- when a study DOES declare
+# cov_dist and the inflation cannot be built. Falling back there would solve at
+# the covariate mean and understate the variance, which is a plausible-looking
+# fit of the wrong model. Callers treat NULL as "cannot evaluate" (Inf / NA).
+# .admCheckCovariates() rejects the reachable causes up front, so in practice
+# this only fires on a pathological Omega.
+.admStudyL <- function(pars, pinfo, s) {
+  if (is.null(s$cov_dist) || !isTRUE(s$.adm_cov_collapse)) return(pars$L)
+  .admCovInflateL(pars, pinfo, s)
+}
+
+# Attach per-row covariate values to a study for the GENERAL path. Returns the
+# study unchanged on the collapse path (where the covariate is held at its mean
+# and its variance lives in Omega) and when no distribution is declared.
+.admStudyCovRows <- function(s, pinfo, n_row) {
+  if (is.null(s$cov_dist) || isTRUE(s$.adm_cov_collapse)) return(s)
+  s$cov_rows <- .admCovRowsFor(s$cov_dist, n_row, pinfo$n_eta)
+  s
+}
+
+# Up-front validation for every study that declares a covariate distribution.
+#
+# Scope, deliberately narrow and enforced rather than assumed: the collapse is
+# EXACT only for a covariate that enters as a bare `theta * COV` product inside a
+# mu-referenced expression, appears nowhere else in the model, and is normally
+# distributed. rxode2 records the first of those in muRefCovariateDataFrame --
+# and records it ONLY for that bare product. Measured on 6 covariate models:
+#
+#   cl <- exp(tcl + tcov*WT + eta.cl)              -> 1 row   (collapsible)
+#   cl <- exp(tcl + tcov*log(WT/70) + eta.cl)      -> 0 rows
+#   cl <- exp(tcl + eta.cl)*(WT/70)^tcov           -> 0 rows
+#   cl <- exp(tcl + eta.cl)*exp(tcov*WT)           -> 0 rows
+#   cl <- exp(tcl + eta.cl)*(1 + emax*WT/(ec50+WT))-> 0 rows
+#   cl <- exp(tcl + tcov*SEX + eta.cl)             -> 1 row   (but SEX is not normal)
+#
+# The allometric form is mathematically collapsible (it is linear in log(WT)) and
+# is still refused here, because rxode2's metadata cannot distinguish it from the
+# Emax form. Refusing is the safe direction: the alternative is a fit that runs,
+# converges, and reports an omega that has quietly eaten the covariate spread.
+.admCheckCovariates <- function(.ui, pinfo, studies, grad) {
+  has <- vapply(studies, function(s) !is.null(s$cov_dist), logical(1))
+  if (!any(has)) return(studies)
+  bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
+
+  # The gradient paths differentiate Omega, and (general path) do not carry the
+  # per-row covariate through their finite differences either, so any mode other
+  # than derivative-free would descend a direction the objective does not follow.
+  if (!identical(grad, "none"))
+    bad("covariate marginalisation currently requires `grad = \"none\"` ",
+        "(derivative-free). The gradient paths have not been extended through ",
+        "it, so any other mode would differentiate a different function than ",
+        "the objective. Got grad = \"", grad, "\".")
+
+  cmap <- pinfo$cov_map
+  covs <- tryCatch(.ui$allCovs, error = function(e) character(0))
+  for (nm in names(studies)[has]) {
+    cd <- studies[[nm]]$cov_dist
+    collapse <- TRUE
+    for (cv in names(cd)) {
+      if (!cv %in% covs)
+        bad("study '", nm, "' declares `cov_dist` for '", cv,
+            "', which the model never reads. Model covariates: ",
+            if (length(covs)) paste(covs, collapse = ", ") else "(none)", ".")
+      sp <- cd[[cv]]
+      if (!is.list(sp))
+        bad("`cov_dist` for '", cv, "' in study '", nm, "' must be a list.")
+      normal <- !is.null(sp$mu) && !is.null(sp$sd) &&
+                is.finite(sp$mu) && is.finite(sp$sd) && sp$sd > 0
+      lnorm  <- !is.null(sp$meanlog) && !is.null(sp$sdlog) &&
+                is.finite(sp$meanlog) && is.finite(sp$sdlog) && sp$sdlog > 0
+      disc   <- !is.null(sp$values) && length(sp$values) > 0L &&
+                all(is.finite(sp$values))
+      userq  <- is.function(sp$quantile)
+      if (!(normal || lnorm || disc || userq))
+        bad("`cov_dist` for '", cv, "' in study '", nm, "' is not a supported ",
+            "distribution. Give one of: `mu`+`sd` (normal), `meanlog`+`sdlog` ",
+            "(lognormal), `values`(+`probs`) (discrete/categorical), or ",
+            "`quantile` (a function of a uniform).")
+      # The COLLAPSE is exact only for a normal covariate entering as a single
+      # bare `theta * COV` term. Anything else is handled by the general path,
+      # which is why these are not errors.
+      if (!normal ||
+          is.null(cmap) || !cv %in% cmap$covariate ||
+          .admNameOccurrence(.ui, cv)[[cv]] != 1L)
+        collapse <- FALSE
+    }
+    if (collapse && pinfo$n_eta == 0L) collapse <- FALSE
+    studies[[nm]]$.adm_cov_collapse <- collapse
+  }
+  studies
+}
+
+# =============================================================================
+# General covariate marginalisation (ANY functional form)
+# =============================================================================
+#
+# The collapse above is exact but narrow: it needs the covariate to enter as a
+# bare `theta * COV` term so its variance can be folded into Omega. Everything
+# else -- (WT/70)^theta, exp(theta*WT), allometric-in-log, Emax, if/else,
+# categorical -- goes through here instead.
+#
+# The trick is that we never have to KNOW the functional form. A covariate
+# reaches rxode2 only as a column of the params frame, so if each simulated
+# subject carries its OWN covariate value, rxode2 evaluates whatever the model
+# contains and the aggregate moments come out of the pooled ensemble. That is
+# also why it costs nothing extra for admc: n_sim subjects still means n_sim
+# rows, each now carrying its own (covariate, eta) pair rather than a shared
+# covariate.
+
+# Quantile function for one covariate spec. Supported:
+#   list(mu, sd)              normal
+#   list(meanlog, sdlog)      lognormal
+#   list(values, probs)       discrete / categorical (probs default to uniform)
+#   list(quantile = f(u))     anything else, supplied by the caller
+.admCovQuantile <- function(spec, u) {
+  if (is.function(spec$quantile)) return(as.numeric(spec$quantile(u)))
+  if (!is.null(spec$values)) {
+    pr <- spec$probs %||% rep(1 / length(spec$values), length(spec$values))
+    pr <- pr / sum(pr)
+    return(as.numeric(spec$values)[findInterval(u, cumsum(pr), rightmost.closed = TRUE) + 1L])
+  }
+  if (!is.null(spec$meanlog)) return(stats::qlnorm(u, spec$meanlog, spec$sdlog))
+  stats::qnorm(u, spec$mu, spec$sd)
+}
+
+# Deterministic per-row covariate values for `n` simulated subjects.
+#
+# Deterministic on purpose: the covariate distribution is DATA, not a parameter,
+# so the same rows must come back on every objective evaluation or the optimizer
+# sees noise. Common random numbers therefore hold with no seed plumbing.
+#
+# The uniforms are taken from Sobol dimensions AFTER the eta dimensions.
+# sobol(n, dim = k)[, 1:j] is exactly sobol(n, dim = j) (verified), so this
+# yields dimensions genuinely different from the ones .admMakeZ used for eta.
+# Drawing a separate halton/sobol sequence instead would NOT: every low-
+# discrepancy family starts from the same base-2 van der Corput sequence, so
+# covariate column 1 would have been a copy of eta column 1.
+.admCovRowsFor <- function(cov_dist, n, n_eta) {
+  nms <- names(cov_dist)
+  d   <- length(nms)
+  u   <- randtoolbox::sobol(n, dim = n_eta + d)
+  if (!is.matrix(u)) u <- matrix(u, nrow = n)
+  u   <- u[, n_eta + seq_len(d), drop = FALSE]
+  # sobol emits an exact 0 in its first row; qnorm(0) is -Inf.
+  u   <- pmin(pmax(u, .Machine$double.eps), 1 - .Machine$double.eps)
+  out <- vapply(seq_len(d), function(k) .admCovQuantile(cov_dist[[nms[k]]], u[, k]),
+                numeric(n))
+  if (!is.matrix(out)) out <- matrix(out, nrow = n)
+  colnames(out) <- nms
+  out
+}
+
+# Deterministic quadrature nodes + weights for one covariate (adgh path).
+# Discrete specs enumerate exactly; normal/lognormal use Gauss-Hermite.
+.admCovNodesFor <- function(spec, n_nodes) {
+  if (!is.null(spec$values)) {
+    pr <- spec$probs %||% rep(1 / length(spec$values), length(spec$values))
+    return(list(x = as.numeric(spec$values), w = pr / sum(pr)))
+  }
+  g <- .adghNodes1(n_nodes)                       # standard-normal nodes/weights
+  if (!is.null(spec$meanlog)) list(x = exp(spec$meanlog + spec$sdlog * g$x), w = g$w)
+  else                        list(x = spec$mu + spec$sd * g$x,              w = g$w)
+}
+
+# Product grid over several covariates: every combination, weights multiplied.
+.admCovGrid <- function(cov_dist, n_nodes) {
+  nms <- names(cov_dist)
+  one <- lapply(nms, function(n) .admCovNodesFor(cov_dist[[n]], n_nodes))
+  X   <- as.matrix(expand.grid(lapply(one, `[[`, "x"), KEEP.OUT.ATTRS = FALSE))
+  W   <- Reduce(`*`, lapply(seq_along(one), function(k)
+           rep(rep(one[[k]]$w, each = prod(vapply(one[seq_len(k - 1L)],
+                 function(o) length(o$x), integer(1)))),
+               length.out = nrow(X))))
+  colnames(X) <- nms
+  list(X = X, W = W / sum(W))
+}

@@ -459,9 +459,15 @@ nmObjGetControl.admc <- function(x, ...) {
     # .admCovInflateL(). The covariate itself is solved at its mean, supplied
     # through study$cov by .admCovCols().
     .sL <- .admStudyL(pars, pinfo, s)
+    # NULL means a declared covariate distribution could not be folded in; do not
+    # fall back to the plain Cholesky, which would silently drop the spread.
+    if (is.null(.sL) && isTRUE(s$.adm_cov_collapse)) return(Inf)
     eta_mat <- if (pinfo$n_eta > 0L) {
       .em <- z %*% t(.sL); colnames(.em) <- pinfo$eta_col_names; .em
     } else matrix(0, nrow(z), 0L)
+    # General path: every simulated subject carries its own covariate value, so
+    # rxode2 evaluates whatever functional form the model contains.
+    s <- .admStudyCovRows(s, pinfo, nrow(eta_mat))
 
     # Joint (same-subject) unit: one shared-eta solve produces every output;
     # score the stacked vector with a single MVN over the joint covariance.
@@ -1081,8 +1087,15 @@ nmObjGetControl.admc <- function(x, ...) {
         rows <- (cii - 1L) * n_sim + seq_len(n_sim)
         for (nm in pinfo$struct_names) pdf_mat[rows, nm] <- pars$struct[nm]
         if (pinfo$n_eta > 0L) {
-          eta_mat <- z %*% t(pars$L)
+          # Same effective Cholesky the NLL uses, or the post-fit Hessian is of a
+          # different objective than the one that was minimised.
+          eta_mat <- z %*% t(.admStudyL(pars, pinfo, s))
           pdf_mat[rows, pinfo$eta_col_names] <- eta_mat
+        }
+        if (!is.null(s$cov_dist) && !isTRUE(s$.adm_cov_collapse)) {
+          .cr <- .admCovRowsFor(s$cov_dist, n_sim, pinfo$n_eta)
+          for (.cn in intersect(colnames(.cr), colnames(pdf_mat)))
+            pdf_mat[rows, .cn] <- .cr[, .cn]
         }
       }
 
@@ -2709,6 +2722,7 @@ nlmixr2Est.admc <- function(env, ...) {
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
 
+  .admCheckCovariates(.ui, pinfo, studies, .ctl$grad)
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)

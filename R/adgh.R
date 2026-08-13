@@ -157,7 +157,8 @@
 .adghMomentsJoint <- function(pars, pinfo, unit, rxMod, grid, cores) {
   n_eta <- pinfo$n_eta
   if (n_eta > 0L) {
-    eta <- grid$X %*% t(pars$L); colnames(eta) <- pinfo$eta_col_names; W <- grid$W
+    eta <- grid$X %*% t(.admStudyL(pars, pinfo, unit))
+    colnames(eta) <- pinfo$eta_col_names; W <- grid$W
   } else { eta <- matrix(0, 1L, 0L); W <- 1 }
   pm <- .admMakeParamsList(nrow(eta), pinfo, 1L)[[1L]]
   cp <- .admSimulateJoint(rxMod, pars$struct, pinfo$sigma_names, eta, unit, pm, cores,
@@ -1210,6 +1211,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
 
+  .admCheckCovariates(.ui, pinfo, studies, .ctl$grad)
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)
