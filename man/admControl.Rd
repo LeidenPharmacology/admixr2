@@ -137,7 +137,7 @@ progress during long interactive fits.}
 (central finite differences; forward was removed in 0.4.1), or
 \code{"none"} (derivative-free). A warning is issued when \code{"sens"} is requested
 but the sensitivity model is unavailable; the estimator then falls back to
-forward finite differences.}
+central finite differences.}
 
 \item{grad_h}{Step size for finite-difference gradient evaluation during
 optimization (used by \code{grad = "fd"}). This is the FALLBACK step: the step

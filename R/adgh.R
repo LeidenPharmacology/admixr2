@@ -182,7 +182,7 @@
 # Analytic gradient of the GH NLL w.r.t. optimizer vector p.
 # One batched sensitivity solve per study over the node grid; closed-form
 # contractions for struct thetas, omega Cholesky, sigma (add/prop/lnorm).
-# Unpaired struct thetas: forward FD of .adghNLL (like admc).
+# Unpaired struct thetas: central FD of .adghNLL (like admc).
 #
 # Var-method studies use a diagonal derivative path; cov-method uses full B.
 # For lnorm sigma: Jl scaled by exp(sv/2) for mean path; analytical sigma grad.
@@ -483,39 +483,54 @@
     return(list(grad = grad, nll = if (is.finite(nll_total)) nll_total else Inf))
   }
 
-  # Otherwise forward FD of .adghNLL.
+  # Otherwise CENTRAL FD of .adghNLL.
   #
-  # The baseline and every perturbed configuration differ only in their
-  # structural thetas -- same node grid, same Omega, same sigma -- so they all
-  # share one solve per study (.adghMomentsBatch), with the baseline carried as
-  # configuration 1. That also removes the separate baseline .adghNLL(p) pass,
-  # which re-solved every study to recompute a value this loop already needs.
+  # Every perturbed configuration differs from the others only in its structural
+  # thetas -- same node grid, same Omega, same sigma -- so they all share one
+  # solve per study (.adghMomentsBatch).
   #
-  # Joint units keep the per-configuration path (their solve is per output block).
+  # CENTRAL, not forward, and the STEP is the reason: `grad_h` arrives here as
+  # Shi21's measured per-parameter step (.admShi21GradH, probed over exactly this
+  # parameter set), and Shi21 minimises the error of a CENTRAL difference,
+  # h* = (3 eps_f/|f'''|)^(1/3). The forward optimum is a square root and far
+  # coarser, so a forward difference at the central step lands where the eps_f/h
+  # noise term dominates. The baseline configuration that used to ride along as
+  # configuration 1 is gone with it -- a central difference never evaluates the
+  # centre -- so this is 2*n_u configurations against the old n_u + 1, still ONE
+  # rxSolve per study, which is the cost that matters (~11 ms per CALL).
+  #
+  # Joint units keep the per-configuration path (their solve is per output block)
+  # and do pay: 2*n_u .adghNLL calls against the old n_u + 1.
   if (length(unpaired_k) > 0L) {
     n_u <- length(unpaired_k)
     hs  <- pmax(abs(p[unpaired_k]), 0.1) * .admGH(grad_h, unpaired_k)
-    p_pert <- lapply(seq_len(n_u), function(i) {
-      pp <- p; pp[unpaired_k[i]] <- p[unpaired_k[i]] + hs[i]; pp
-    })
+    # 1..n_u are p + h_i; n_u+1..2*n_u are p - h_i, SAME order, so the two halves
+    # pair off by index.
+    p_pert <- c(
+      lapply(seq_len(n_u), function(i) {
+        pp <- p; pp[unpaired_k[i]] <- p[unpaired_k[i]] + hs[i]; pp
+      }),
+      lapply(seq_len(n_u), function(i) {
+        pp <- p; pp[unpaired_k[i]] <- p[unpaired_k[i]] - hs[i]; pp
+      }))
+    n_cfg <- length(p_pert)
 
     if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))) {
-      nll0 <- .adghNLL(p, pinfo, studies, rxMod, out_var, grid, cores)
       for (i in seq_len(n_u))
         grad[unpaired_k[i]] <-
-          (.adghNLL(p_pert[[i]], pinfo, studies, rxMod, out_var, grid, cores) - nll0) / hs[i]
+          (.adghNLL(p_pert[[i]], pinfo, studies, rxMod, out_var, grid, cores) -
+             .adghNLL(p_pert[[n_u + i]], pinfo, studies, rxMod, out_var, grid, cores)) /
+          (2 * hs[i])
     } else {
-      # configuration 1 = baseline, 1 + i = unpaired theta i perturbed
-      struct_mat <- do.call(rbind, c(
-        list(pars$struct),
-        lapply(p_pert, function(pp) .admUnpack(pp, pinfo)$struct)))
+      struct_mat <- do.call(rbind,
+        lapply(p_pert, function(pp) .admUnpack(pp, pinfo)$struct))
       colnames(struct_mat) <- names(pars$struct)
 
-      nll_cfg <- numeric(n_u + 1L)
+      nll_cfg <- numeric(n_cfg)
       for (s in studies) {
         ovs <- s$output %||% out_var
         ms  <- .adghMomentsBatch(struct_mat, pars, pinfo, s, rxMod, ovs, grid, cores)
-        for (cfg in seq_len(n_u + 1L)) {
+        for (cfg in seq_len(n_cfg)) {
           if (!is.finite(nll_cfg[cfg])) next
           m     <- ms[[cfg]]
           nll_c <- if (identical(s$method, "var"))
@@ -525,7 +540,10 @@
           nll_cfg[cfg] <- if (is.finite(nll_c)) nll_cfg[cfg] + nll_c else Inf
         }
       }
-      grad[unpaired_k] <- (nll_cfg[-1L] - nll_cfg[1L]) / hs
+      gk <- (nll_cfg[seq_len(n_u)] - nll_cfg[n_u + seq_len(n_u)]) / (2 * hs)
+      # Inf - Inf is NaN; see the same guard in .adfoGrad's Pass 2.
+      gk[is.nan(gk)] <- Inf
+      grad[unpaired_k] <- gk
     }
   }
 
@@ -599,7 +617,7 @@
 # Post-fit covariance via numerical Hessian over struct + sigma + omega
 # (falls back to the struct+sigma sub-block if the full Hessian is not PD).
 # Noise-free GH surface -> use tighter eps^(1/4) default step vs admc's eps^(1/5).
-# use_grad=TRUE: forward FD of gradient (np+1 grad evals).
+# use_grad=TRUE: central FD of gradient (2*np grad evals).
 # use_grad=FALSE: full NLL-FD quadratic form (1+2*np+4*n_off NLL evals).
 .adghCalcCov <- function(p_hat, pinfo, studies, sensModel, rxMod, out_var,
                            grid, cores,
@@ -643,12 +661,15 @@
   H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
 
   if (use_grad) {
-    h_fwd <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
-    g0    <- grad_fn(p_hat)[cov_idx]
+    # CENTRAL difference of the gradient -- see .adfoCalcCov() for the reasoning
+    # and the cost (2*np_cov gradient evaluations against the old np_cov+1).
+    h_c <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
     for (jj in seq_len(np_cov)) {
-      ph       <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_fwd[jj]
-      gj       <- grad_fn(ph)[cov_idx]
-      H[, jj]  <- if (anyNA(gj)) 0 else (gj - g0) / h_fwd[jj]
+      ph      <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_c[jj]
+      pm      <- p_hat; pm[cov_idx[jj]] <- pm[cov_idx[jj]] - h_c[jj]
+      gp      <- grad_fn(ph)[cov_idx]
+      gm      <- grad_fn(pm)[cov_idx]
+      H[, jj] <- if (anyNA(gp) || anyNA(gm)) 0 else (gp - gm) / (2 * h_c[jj])
     }
     H <- (H + t(H)) / 2
   } else {

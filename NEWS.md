@@ -192,6 +192,35 @@ argument. None is a bug fix, so all are listed here rather than below.
   Scripts passing `grad = "cfd"` must pass `grad = "fd"`; scripts passing
   `grad = "fd"` keep working and get the central difference.
 
+  **Every remaining finite difference in the package is now central too.** The
+  first pass of this change converted the whole-NLL `grad = "fd"` paths and left
+  five forward differences behind, three of which were being handed Shi21's
+  measured step -- and that step minimises the error of a CENTRAL difference,
+  `h* = (3 eps_f/|f'''|)^(1/3)`. The forward optimum is a square root,
+  `~2 sqrt(eps_f/|f''|)`, and far coarser, so a forward difference taken at the
+  central step sits where its `eps_f/h` noise term dominates: the measured step
+  made those sites *worse*, not better. Converted:
+
+  - `.adfoGrad()` Pass 2 (structural thetas) and `.adghGrad()`'s unpaired-theta
+    block. Both are on the **default** `grad = "analytical"` path -- they run
+    whenever the order-2 block or the theta-sensitivity columns are unavailable.
+    Both already batch their configurations into one `rxSolve` per study, so the
+    extra evaluations are extra ROWS, not extra calls; the joint-unit branches
+    do pay per configuration.
+  - the IRMC inner gradient (`adirmcControl(grad = "fd")`), now `2n` inner NLL
+    evaluations against `n+1`.
+  - the gradient-differenced Hessian (`use_grad = TRUE`) in all three of
+    `.adfoCalcCov()`, `.adghCalcCov()` and `.admCalcCov()`. This one runs only
+    when the gradient is analytic, so it was differencing a smooth exact
+    function with a coarse forward step and then symmetrising away the
+    asymmetry that produced. **Reported standard errors will move.**
+  - the FD-Jacobian fallback in `.adfoGetMuJBatch()` and `.adfoGetMuJJoint()`,
+    used when no sensitivity model could be built. Unlike the others this J
+    enters `V_pred = J Omega J'`, so **the adfo objective itself moves on that
+    path**, not just the gradient -- toward the truth, but it moves. The batched
+    form absorbs the extra eta rows into the same solve; the joint form cannot
+    batch and costs `2*n_eta` solves against `n_eta`.
+
 * **`adirmcControl(grad = "fd")` now differences with `grad_h`, not a hard-coded
   `1e-6`.** The IRMC *inner* gradient ignored `grad_h` entirely -- it was the one
   finite difference in the package that could not be tuned, which is why the new

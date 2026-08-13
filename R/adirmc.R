@@ -118,9 +118,11 @@ adirmcControl <- function(
     kappa_method    = c("exact", "linearized", "linearized_gh"),
     kappa_n_nodes   = 5L,
     # 1e-6, not the 1e-4 the other controls use. The IRMC inner NLL is
-    # DETERMINISTIC given fixed proposals, so its optimal forward step is near
-    # sqrt(eps)*|p| ~ 1e-8 -- there is no MC noise to step over, which is the
-    # whole reason the sampling estimators want a coarser one. The inner FD was a
+    # DETERMINISTIC given fixed proposals -- there is no MC noise to step over,
+    # which is the whole reason the sampling estimators want a coarser one. The
+    # inner difference is CENTRAL, whose optimum on such a function sits near
+    # eps^(1/3)*|p| ~ 6e-6, so 1e-6 is the right neighbourhood for the fallback
+    # (Shi21 measures the step when it can). The inner FD was a
     # hard-coded 1e-6 until this branch made it honour grad_h; inheriting a 1e-4
     # default silently made every `grad = "fd"` adirmc fit converge on a gradient
     # 100x coarser than the one the loop was tuned for. Honouring grad_h is right;
@@ -1009,12 +1011,22 @@ nmObjGetControl.adirmc <- function(x, ...) {
                                         .var.name = "adirmc inner gradient")
             }
             h <- if (is.null(.shi_h)) .fd_h else .shi_h
+            # CENTRAL, and it has to be: the step above is Shi21's, which
+            # minimises the error of a CENTRAL difference -- h* = (3 eps_f /
+            # |f'''|)^(1/3). A forward difference is optimal at the SQUARE root,
+            # h ~ 2 sqrt(eps_f/|f''|), which is far coarser, so feeding it the
+            # central step leaves the eps_f/h noise term dominant and can be
+            # worse than the fixed 1e-6 the measurement replaced. Central costs
+            # 2n inner NLL evaluations against forward's n+1; the inner NLL is
+            # deterministic given fixed proposals, so what is bought is real
+            # accuracy rather than averaged-down noise.
             function(p) {
-              f0 <- eval_f(p)
-              g  <- numeric(length(p))
+              g <- numeric(length(p))
               for (k in seq_along(p)) {
                 hk <- .admGH(h, k)
-                p_h <- p; p_h[k] <- p_h[k] + hk; g[k] <- (eval_f(p_h) - f0) / hk
+                p_h <- p; p_h[k] <- p_h[k] + hk
+                p_m <- p; p_m[k] <- p_m[k] - hk
+                g[k] <- (eval_f(p_h) - eval_f(p_m)) / (2 * hk)
               }
               g
             }
@@ -1311,7 +1323,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   irmc_grad_label <- if (.ctl$grad == "none") "none" else {
     cov_label <- if (!is.null(sensModel)) "+Sens-Hessian" else "+FD-Hessian"
-    grad_inner_label <- if (.ctl$grad == "fd") "forward FD" else "analytic"
+    grad_inner_label <- if (.ctl$grad == "fd") "central FD" else "analytic"
     paste0(grad_inner_label, if (.ctl$covMethod == "r") cov_label else "")
   }
   message("=== admixr2: Aggregate Data Modeling (IR-MC) ===")

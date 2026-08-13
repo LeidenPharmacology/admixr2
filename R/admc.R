@@ -103,7 +103,7 @@
 #'   (central finite differences; forward was removed in 0.4.1), or
 #'   `"none"` (derivative-free). A warning is issued when `"sens"` is requested
 #'   but the sensitivity model is unavailable; the estimator then falls back to
-#'   forward finite differences.
+#'   central finite differences.
 #' @param grad_h Step size for finite-difference gradient evaluation during
 #'   optimization (used by `grad = "fd"`). This is the FALLBACK step: the step
 #'   is normally measured per parameter by the Shi (2021) procedure, and `grad_h`
@@ -1158,7 +1158,7 @@ nmObjGetControl.admc <- function(x, ...) {
 # -- Batched gradient evaluation -----------------------------------------------
 # Evaluates the gradient for a list of parameter vectors via batched rxSolve
 # calls (one per study). Returns a (n_c x np) gradient matrix.
-# Used by .admCalcCov (use_grad=TRUE) to compute the Hessian via forward FD
+# Used by .admCalcCov (use_grad=TRUE) to compute the Hessian via central FD
 # of the gradient -- all np+1 configs packed into a single rxSolve call per study.
 .admGradBatch <- function(p_list, pinfo, studies, z_list, rxMod, output_var,
                            params_list, cores, h, sensModel = NULL,
@@ -1673,23 +1673,32 @@ nmObjGetControl.admc <- function(x, ...) {
   }
 
   if (use_grad) {
-    h_fwd    <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
+    h_c      <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
     # Inner step: larger than grad_h to reduce gradient noise amplification.
     # Hessian FD divides by h_outer, so gradient noise is scaled up by 1/h_outer.
     h_inner  <- cov_h
-    # np_cov+1 param vectors: p_hat followed by np_cov forward-perturbed versions
-    # (only struct+sigma entries perturbed; omega stays fixed at p_hat).
-    p_list <- c(list(p_hat), lapply(seq_len(np_cov), function(jj) {
-      ph <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_fwd[jj]; ph
-    }))
+    # CENTRAL difference of the gradient -- see .adfoCalcCov() for the reasoning.
+    # 2*np_cov param vectors: rows 1..np_cov are p + h_jj, rows np_cov+1..2*np_cov
+    # are p - h_jj in the SAME order (only struct+sigma entries perturbed; omega
+    # stays fixed at p_hat). Both halves go through ONE .admGradBatch call, which
+    # is what the batching exists for, so this costs extra ROWS rather than extra
+    # rxSolve calls -- and the baseline vector is gone, a central difference never
+    # evaluating the centre.
+    p_list <- c(
+      lapply(seq_len(np_cov), function(jj) {
+        ph <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_c[jj]; ph
+      }),
+      lapply(seq_len(np_cov), function(jj) {
+        pm <- p_hat; pm[cov_idx[jj]] <- pm[cov_idx[jj]] - h_c[jj]; pm
+      }))
     grads <- .admGradBatch(p_list, pinfo, studies, z_list, rxMod, output_var,
                             params_list, cores, h_inner, sensModel,
                             use_central = use_central)
-    g0 <- grads[1L, cov_idx]
     H  <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
     for (jj in seq_len(np_cov)) {
-      gj     <- grads[jj + 1L, cov_idx]
-      H[, jj] <- if (anyNA(gj)) 0 else (gj - g0) / h_fwd[jj]
+      gp      <- grads[jj, cov_idx]
+      gm      <- grads[np_cov + jj, cov_idx]
+      H[, jj] <- if (anyNA(gp) || anyNA(gm)) 0 else (gp - gm) / (2 * h_c[jj])
     }
     H <- (H + t(H)) / 2
   } else {
@@ -2734,7 +2743,7 @@ nlmixr2Est.admc <- function(env, ...) {
   sensModel <- if (want_sens) {
     sm <- tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
     if (is.null(sm))
-      warning("admControl(grad='sens'): sensitivity model unavailable -- falling back to forward FD")
+      warning("admControl(grad='sens'): sensitivity model unavailable -- falling back to central FD")
     else if (isTRUE(sm$is_lincmt))
       warning("admControl(grad='sens'): linCmt sensitivity model detected; grad='fd' is typically faster for linCmt models -- consider switching to admControl(grad='fd')")
     sm
@@ -2758,7 +2767,7 @@ nlmixr2Est.admc <- function(env, ...) {
         "admc: struct theta(s) without mu-referencing: %s. Sens model carries their sensitivities (no FD).",
         paste(.unpaired, collapse = ", ")))
     } else if (want_sens && all(!pinfo$struct_has_eta)) {
-      message(sprintf("admc: no mu-referenced struct thetas (%s); falling back to full forward FD.",
+      message(sprintf("admc: no mu-referenced struct thetas (%s); falling back to full central FD.",
                       paste(.unpaired, collapse = ", ")))
       want_sens <- FALSE
       sensModel <- NULL
