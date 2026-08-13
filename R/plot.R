@@ -571,7 +571,7 @@ plot.admFit <- function(x, which = NULL, n_sim = NULL, seed = 1L, ...) {
   # "covariate" panel is added to the default only when the fit has covariate
   # strata (study$cov); explicit `which` is honoured as given.
   .has_cov <- any(vapply(studies, function(s)
-    !is.null(s$cov) && length(s$cov) > 0, logical(1)))
+    !is.null(s[["cov"]]) && length(s[["cov"]]) > 0, logical(1)))
   if (is.null(which))
     which <- c("mean", "cov", "nll", "par", if (.has_cov) "covariate")
   which <- match.arg(which, .all_panels, several.ok = TRUE)
@@ -834,14 +834,14 @@ plot.admFit <- function(x, which = NULL, n_sim = NULL, seed = 1L, ...) {
     } else {
       quad   <- extra$quadrature
       .first_cov_study <- studies[[base::which(vapply(studies,
-        function(s) !is.null(s$cov) && length(s$cov) > 0, logical(1)))[1]]]
-      cov_nm <- names(.first_cov_study$cov)[1]
+        function(s) !is.null(s[["cov"]]) && length(s[["cov"]]) > 0, logical(1)))[1]]]
+      cov_nm <- names(.first_cov_study[["cov"]])[1]
 
       cp_rows <- list(); w_rows <- list()
       for (nm in names(studies)) {
         s <- studies[[nm]]
-        if (is.null(s$cov) || length(s$cov) == 0) next
-        cv <- unname(s$cov[[1]])
+        if (is.null(s[["cov"]]) || length(s[["cov"]]) == 0) next
+        cv <- unname(s[["cov"]][[1]])
         w_rows[[nm]] <- data.frame(cov = cv, weight = s$weight %||% 1)
         ag <- agg[[nm]]
         if (is.null(ag)) next

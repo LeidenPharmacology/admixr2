@@ -1211,7 +1211,9 @@ nlmixr2Est.adgh <- function(env, ...) {
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
 
-  .admCheckCovariates(.ui, pinfo, studies, .ctl$grad)
+  # RETURNS the studies, annotated with which covariate path each takes.
+  # Discarding the value silently disables covariate handling entirely.
+  studies <- .admCheckCovariates(.ui, pinfo, studies, .ctl$grad)
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)

@@ -110,7 +110,7 @@
   d  <- if (multi_out) admData(.admEndpointNames(.ui)) else admData()
   cv <- tryCatch(.ui$allCovs, error = function(e) NULL)
   for (nm in cv) {
-    vals <- unlist(lapply(studies, function(s) s$cov[[nm]]), use.names = FALSE)
+    vals <- unlist(lapply(studies, function(s) s[["cov"]][[nm]]), use.names = FALSE)
     vals <- vals[is.finite(vals)]
     d[[nm]] <- if (length(vals)) mean(vals) else 1
   }

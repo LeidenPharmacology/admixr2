@@ -279,42 +279,64 @@ test_that(".admCheckCovariates is a no-op when no study declares cov_dist", {
                                               list(a = list()), "sens"))
 })
 
-test_that(".admCheckCovariates refuses what the collapse cannot do exactly", {
-  ok_st <- list(a = list(cov_dist = list(WT = list(mu = 0, sd = 0.6))))
+test_that(".admCheckCovariates ROUTES rather than refuses, most efficient first", {
+  ok_st <- list(a = list(cov = list(WT = 0), cov_dist = list(WT = list(mu = 0, sd = 0.6))))
+  path <- function(ui = .cov_ui(), pi = .cov_pinfo(), st = ok_st)
+    admixr2:::.admCheckCovariates(ui, pi, st, "none")$a$.adm_cov_path
 
-  # no random effect to inflate
-  expect_error(
-    admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(0L), ok_st, "none"),
-    "no random effects")
+  # bare theta*COV + normal + single occurrence -> closed form
+  expect_identical(path(), "collapse")
+  # non-normal spec: the closed form does not apply, but u-quantile does
+  expect_identical(path(st = list(a = list(cov = list(WT = 0),
+      cov_dist = list(WT = list(values = c(0, 1), probs = c(.6, .4)))))), "uq")
+  # covariate used in a SECOND place -> its whole effect no longer fits in one
+  # eta column, so the general per-row path takes over
+  expect_identical(path(ui = .cov_ui(expr = list(
+      quote(cl <- exp(tcl + tcov * WT + eta.cl)),
+      quote(v  <- exp(tv) * (1 + 0.01 * WT))))), "rows")
+  # no eta to inflate or to carry a shift -> general path
+  expect_identical(path(pi = .cov_pinfo(0L)), "rows")
+  # no `cov` value given -> derived from the distribution, so the path is
+  # unaffected (and the user cannot state a mean that contradicts cov_dist)
+  expect_identical(path(st = list(a = list(
+      cov_dist = list(WT = list(mu = 0, sd = 0.6))))), "collapse")
+})
 
-  # a gradient mode that does not differentiate the inflated Omega
+test_that(".admCovMeanOf gives the solve value each path needs", {
+  expect_equal(admixr2:::.admCovMeanOf(list(mu = 70, sd = 10)), 70)
+  expect_equal(admixr2:::.admCovMeanOf(list(meanlog = log(70), sdlog = 0.2)),
+               exp(log(70) + 0.2^2 / 2))
+  expect_equal(admixr2:::.admCovMeanOf(list(values = c(0, 1), probs = c(0.6, 0.4))), 0.4)
+  expect_equal(admixr2:::.admCovMeanOf(list(quantile = function(p) qnorm(p, 5, 1))),
+               5, tolerance = 1e-6)
+})
+
+test_that("a study omitting `cov` has it filled in from `cov_dist`", {
+  st <- admixr2:::.admCheckCovariates(
+    .cov_ui(), .cov_pinfo(),
+    list(a = list(cov_dist = list(WT = list(mu = 70, sd = 10)))), "none")
+  expect_equal(st$a$cov$WT, 70)
+})
+
+test_that(".admCheckCovariates still errors on genuinely unsupportable input", {
+  ok_st <- list(a = list(cov = list(WT = 0), cov_dist = list(WT = list(mu = 0, sd = 0.6))))
+
+  # a gradient mode that does not differentiate what the objective computes
   for (g in c("sens", "analytical", "fd", "cfd"))
     expect_error(admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), ok_st, g),
                  'requires `grad = "none"`', fixed = TRUE)
 
-  # covariate the model never reads
+  # covariate the model never reads -- almost always a typo
   expect_error(
     admixr2:::.admCheckCovariates(.cov_ui(cov = "AGE"), .cov_pinfo(), ok_st, "none"),
     "which the model never reads")
 
-  # used in a second place -> reported as such, not as "not mu-referenced"
-  expect_error(
-    admixr2:::.admCheckCovariates(
-      .cov_ui(expr = list(quote(cl <- exp(tcl + tcov * WT + eta.cl)),
-                          quote(v  <- exp(tv) * (1 + 0.01 * WT)))),
-      .cov_pinfo(), ok_st, "none"),
-    "appears more than once")
-
-  # not a bare theta * COV product (power/exponential/allometric/Emax)
-  expect_error(
-    admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(cmap = NULL), ok_st, "none"),
-    "is not mu-referenced as a plain")
-
-  # non-normal covariate specs
-  for (spec in list(list(levels = c(0, 1), probs = c(.5, .5)),
-                    list(mu = 0), list(mu = 0, sd = 0), list(mu = 0, sd = NA_real_)))
+  # distributions we cannot draw from
+  for (spec in list(list(mu = 0), list(mu = 0, sd = 0), list(mu = 0, sd = NA_real_),
+                    list(values = numeric(0))))
     expect_error(
       admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(),
-                                    list(a = list(cov_dist = list(WT = spec))), "none"),
-      "finite `mu` and `sd`")
+                                    list(a = list(cov = list(WT = 0),
+                                                  cov_dist = list(WT = spec))), "none"),
+      "not a supported distribution")
 })

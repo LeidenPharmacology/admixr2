@@ -199,8 +199,8 @@
   # Covariates describe the study's SUBJECTS, so every observed output of that
   # study inherits them: `cov` is the value written into the solve, `cov_dist`
   # the distribution those subjects span (which drives the Omega collapse).
-  ob$cov      <- ob$cov      %||% defaults$cov
-  ob$cov_dist <- ob$cov_dist %||% defaults$cov_dist
+  ob[["cov"]]      <- ob[["cov"]]      %||% defaults[["cov"]]
+  ob[["cov_dist"]] <- ob[["cov_dist"]] %||% defaults[["cov_dist"]]
   for (f in c("n", "E", "V", "times"))
     if (is.null(ob[[f]])) stop(sprintf("Study '%s' missing '%s'", label, f), call. = FALSE)
   ob$E <- as.numeric(ob$E)
@@ -328,7 +328,7 @@
                  nm), call. = FALSE)
 
   list(is_joint = TRUE, label = nm, n = s$n, ev = s$ev,
-       cov = s$cov, cov_dist = s$cov_dist,
+       cov = s[["cov"]], cov_dist = s[["cov_dist"]],
        output = blocks[[1L]]$output,   # any valid endpoint, for cmt-tagging
        times  = sort(unique(unlist(lapply(blocks, `[[`, "times")))),
        method = "cov", E = E_stacked, V = V, blocks = blocks,
@@ -587,7 +587,7 @@
     if (is.null(onames) || any(!nzchar(onames)))
       onames <- paste0("obs", seq_along(s$observations))
     defaults <- list(n = s$n, ev = s$ev, output = s$output %||% default_output,
-                     cov = s$cov, cov_dist = s$cov_dist)
+                     cov = s[["cov"]], cov_dist = s[["cov_dist"]])
     s$observations <- setNames(lapply(seq_along(s$observations), function(k)
       .admNormaliseObs(s$observations[[k]], paste0(nm, ".", onames[k]), defaults)),
       onames)
@@ -596,7 +596,7 @@
     unit <- .admNormaliseObs(
       list(E = s$E, V = s$V, n = s$n, times = s$times, ev = s$ev,
            method = s$method, output = s$output %||% default_output,
-           cov = s$cov, cov_dist = s$cov_dist), nm)
+           cov = s[["cov"]], cov_dist = s[["cov_dist"]]), nm)
     # Preserve top-level normalised fields (legacy callers / tests read these).
     s$E <- unit$E; s$V <- unit$V; s$method <- unit$method
     s$v_diag <- unit$v_diag; s$output <- unit$output

@@ -21,7 +21,7 @@
   # Covariates are the one exception: a model reading `wt` has no default for
   # it, so each study's own value is written in -- and ONLY that, never a
   # blanket setdiff() fill. See .admCovCols().
-  params_mat <- .admCovCols(params_mat, rxMod$params, study$cov, study$cov_rows)
+  params_mat <- .admCovCols(params_mat, rxMod$params, study[["cov"]], study[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = study$ev_full, cores = cores,
                           nDisplayProgress = ndp,
@@ -357,7 +357,7 @@
   # dop853 (see .admLoadSensModel); NULL, hence a no-op, for every other model.
 
   # Model covariates for this study (only names in study$cov -- see .admCovCols).
-  inner_df <- .admCovCols(inner_df, sensModel$mod$params, study$cov, study$cov_rows)
+  inner_df <- .admCovCols(inner_df, sensModel$mod$params, study[["cov"]], study[["cov_rows"]])
   out <- tryCatch(
     suppressWarnings(
       do.call(rxode2::rxSolve,

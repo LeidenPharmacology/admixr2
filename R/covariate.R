@@ -422,7 +422,7 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
 # not setdiff(mod$params, colnames(mat)) -- see .admCovCols() for the two bugs
 # that pattern caused.
 .admCovNodeNames <- function(mat, mod_params, studies) {
-  nms <- unique(unlist(lapply(studies, function(s) names(s$cov))))
+  nms <- unique(unlist(lapply(studies, function(s) names(s[["cov"]]))))
   setdiff(intersect(nms, mod_params), colnames(mat))
 }
 
@@ -476,7 +476,7 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
     cm <- matrix(0, n_nodes * n_sim, length(extra), dimnames = list(NULL, extra))
     for (i in seq_len(n_nodes))
       cm[(i - 1L) * n_sim + seq_len(n_sim), ] <-
-        matrix(rep(.admCovNodeVals(studies[[i]]$cov, extra), each = n_sim), n_sim, length(extra))
+        matrix(rep(.admCovNodeVals(studies[[i]][["cov"]], extra), each = n_sim), n_sim, length(extra))
     M <- cbind(M, cm)
   }
 
@@ -540,7 +540,7 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
       cm <- matrix(0, n_nodes * n_sim, length(extra_s), dimnames = list(NULL, extra_s))
       for (i in seq_len(n_nodes))
         cm[(i - 1L) * n_sim + seq_len(n_sim), ] <-
-          matrix(rep(.admCovNodeVals(studies[[i]]$cov, extra_s), each = n_sim), n_sim, length(extra_s))
+          matrix(rep(.admCovNodeVals(studies[[i]][["cov"]], extra_s), each = n_sim), n_sim, length(extra_s))
       inner_df <- cbind(inner_df, as.data.frame(cm, check.names = FALSE))
     }
     out <- tryCatch(suppressWarnings(
@@ -593,7 +593,7 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
       cm <- matrix(0, nrow(M), length(extra_m), dimnames = list(NULL, extra_m))
       for (i in seq_len(n_nodes)) {
         rows <- (i - 1L) * n_blk * n_sim + seq_len(n_blk * n_sim)
-        cm[rows, ] <- matrix(rep(.admCovNodeVals(studies[[i]]$cov, extra_m), each = n_blk * n_sim),
+        cm[rows, ] <- matrix(rep(.admCovNodeVals(studies[[i]][["cov"]], extra_m), each = n_blk * n_sim),
                              n_blk * n_sim, length(extra_m))
       }
       M <- cbind(M, cm)
@@ -648,7 +648,7 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
         cm <- matrix(0, nrow(M), length(extra), dimnames = list(NULL, extra)); cu <- 0L
         for (i in seq_len(n_nodes)) for (bi in seq_len(n_unp)) {
           cu <- cu + 1L; rows <- (cu - 1L) * n_sim + seq_len(n_sim)
-          cm[rows, ] <- matrix(rep(.admCovNodeVals(studies[[i]]$cov, extra), each = n_sim),
+          cm[rows, ] <- matrix(rep(.admCovNodeVals(studies[[i]][["cov"]], extra), each = n_sim),
                                n_sim, length(extra))
         }
         M <- cbind(M, cm)
@@ -756,7 +756,7 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
 # .admCheckCovariates() rejects the reachable causes up front, so in practice
 # this only fires on a pathological Omega.
 .admStudyL <- function(pars, pinfo, s) {
-  if (is.null(s$cov_dist) || !isTRUE(s$.adm_cov_collapse)) return(pars$L)
+  if (!identical(s$.adm_cov_path, "collapse")) return(pars$L)
   .admCovInflateL(pars, pinfo, s)
 }
 
@@ -764,7 +764,7 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
 # study unchanged on the collapse path (where the covariate is held at its mean
 # and its variance lives in Omega) and when no distribution is declared.
 .admStudyCovRows <- function(s, pinfo, n_row) {
-  if (is.null(s$cov_dist) || isTRUE(s$.adm_cov_collapse)) return(s)
+  if (!identical(s$.adm_cov_path, "rows")) return(s)
   s$cov_rows <- .admCovRowsFor(s$cov_dist, n_row, pinfo$n_eta)
   s
 }
@@ -793,9 +793,9 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
   if (!any(has)) return(studies)
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
 
-  # The gradient paths differentiate Omega, and (general path) do not carry the
-  # per-row covariate through their finite differences either, so any mode other
-  # than derivative-free would descend a direction the objective does not follow.
+  # The gradient paths differentiate Omega and do not carry a per-row covariate
+  # through their finite differences, so any mode other than derivative-free
+  # would descend a direction the objective does not follow.
   if (!identical(grad, "none"))
     bad("covariate marginalisation currently requires `grad = \"none\"` ",
         "(derivative-free). The gradient paths have not been extended through ",
@@ -806,15 +806,17 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
   covs <- tryCatch(.ui$allCovs, error = function(e) character(0))
   for (nm in names(studies)[has]) {
     cd <- studies[[nm]]$cov_dist
-    collapse <- TRUE
+    ok_collapse <- pinfo$n_eta > 0L
+    ok_uq       <- pinfo$n_eta > 0L
+    uq          <- list()
+
     for (cv in names(cd)) {
       if (!cv %in% covs)
         bad("study '", nm, "' declares `cov_dist` for '", cv,
             "', which the model never reads. Model covariates: ",
             if (length(covs)) paste(covs, collapse = ", ") else "(none)", ".")
       sp <- cd[[cv]]
-      if (!is.list(sp))
-        bad("`cov_dist` for '", cv, "' in study '", nm, "' must be a list.")
+      if (!is.list(sp)) bad("`cov_dist` for '", cv, "' must be a list.")
       normal <- !is.null(sp$mu) && !is.null(sp$sd) &&
                 is.finite(sp$mu) && is.finite(sp$sd) && sp$sd > 0
       lnorm  <- !is.null(sp$meanlog) && !is.null(sp$sdlog) &&
@@ -827,16 +829,38 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
             "distribution. Give one of: `mu`+`sd` (normal), `meanlog`+`sdlog` ",
             "(lognormal), `values`(+`probs`) (discrete/categorical), or ",
             "`quantile` (a function of a uniform).")
-      # The COLLAPSE is exact only for a normal covariate entering as a single
-      # bare `theta * COV` term. Anything else is handled by the general path,
-      # which is why these are not errors.
-      if (!normal ||
-          is.null(cmap) || !cv %in% cmap$covariate ||
-          .admNameOccurrence(.ui, cv)[[cv]] != 1L)
-        collapse <- FALSE
+
+      # Fill the solve value from the distribution when the study omits it.
+      if (is.null(studies[[nm]][["cov"]][[cv]])) {
+        m <- .admCovMeanOf(sp)
+        if (!is.null(m) && is.finite(m)) studies[[nm]][["cov"]][[cv]] <- m
+      }
+
+      once <- .admNameOccurrence(.ui, cv)[[cv]] == 1L
+      pe   <- if (once) .admCovParamEta(.ui, cv, pinfo$eta_col_names) else NULL
+
+      # COLLAPSE: exact closed form. Needs a normal covariate entering as a
+      # single bare `theta * COV` term.
+      if (!normal || is.null(cmap) || !cv %in% cmap$covariate || !once)
+        ok_collapse <- FALSE
+      # u-QUANTILE: any functional form, but the covariate's WHOLE effect has to
+      # fit in one eta column -- so it must appear exactly once, in a parameter
+      # assignment that also carries an eta, with a reference value to measure
+      # Delta against.
+      if (!once || is.null(pe) || is.null(studies[[nm]][["cov"]][[cv]])) ok_uq <- FALSE
+      else uq[[length(uq) + 1L]] <- list(cov = cv, param = pe$param, eta = pe$eta,
+                                         idx = match(pe$eta, pinfo$eta_col_names))
     }
-    if (collapse && pinfo$n_eta == 0L) collapse <- FALSE
-    studies[[nm]]$.adm_cov_collapse <- collapse
+
+    # Most efficient VALID path wins. "rows" assumes nothing at all: every
+    # simulated subject carries its own covariate value, so rxode2 evaluates the
+    # whole model -- covariate on several parameters, on a parameter with no eta,
+    # or interacting with one. It is the only path with no structural
+    # precondition, hence the fallback.
+    studies[[nm]]$.adm_cov_path <- if (ok_collapse) "collapse"
+                                   else if (ok_uq)  "uq" else "rows"
+    studies[[nm]]$.adm_cov_collapse <- ok_collapse
+    studies[[nm]]$.adm_cov_uq <- if (ok_uq) uq else NULL
   }
   studies
 }
@@ -925,3 +949,147 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
   colnames(X) <- nms
   list(X = X, W = W / sum(W))
 }
+
+# =============================================================================
+# u-quantile marginalisation -- ANY functional form
+# =============================================================================
+#
+# The model sees the covariate and the random effect only through their sum in
+# the mu-referenced argument, u = Delta(a) + eta. Delta(a) is arithmetic, so u's
+# distribution can be pinned down exactly BEFORE any solve, and the whole solve
+# budget spent representing it:
+#
+#     F_u(t) = E_a[ Phi( (t - Delta(a)) / sd_eta ) ]
+#
+# Nothing here inspects the functional form. Delta is measured from the model
+# itself (see .admCovDelta), so power, exponential, allometric, Emax, if/else
+# and categorical covariate effects are all handled identically.
+
+# Which parameter assignment does the covariate enter, and which eta shares it?
+# The shift structure the whole method rests on is exactly "covariate and eta in
+# the same mu-referenced argument", so this also decides whether it applies.
+.admCovParamEta <- function(ui, cov, eta_names) {
+  lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
+  if (is.null(lst)) return(NULL)
+  for (e in lst) {
+    if (!is.call(e) || length(e) < 3L) next
+    if (!as.character(e[[1L]])[1L] %in% c("<-", "=")) next
+    v <- all.vars(e[[3L]])
+    if (!cov %in% v) next
+    et <- intersect(eta_names, v)
+    if (length(et) != 1L) next
+    return(list(param = as.character(e[[2L]])[1L], eta = et))
+  }
+  NULL
+}
+
+# Delta(a) MEASURED from the model, not parsed out of it.
+#
+# One rxSolve at eta = 0 over a covariate grid; the mu-referenced parameter comes
+# back as an lhs column, and Delta(a) = log(param(a) / param(a_ref)). Exact to
+# machine precision (measured 8e-17 on an allometric model) and indifferent to
+# how the covariate effect is written.
+#
+# Costs one extra rxSolve call (~11 ms) per objective evaluation. Delta depends
+# on the covariate coefficients, which move, so it cannot be cached across
+# iterations -- but 11 ms against a solve budget in seconds is noise.
+.admCovDelta <- function(rxMod, pars, pinfo, s, cov, param_nm, cores,
+                         ngrid = 64L) {
+  spec  <- s$cov_dist[[cov]]
+  a_ref <- s[["cov"]][[cov]]
+  if (is.null(a_ref)) return(NULL)
+  an <- .admCovANodes(spec, ngrid)
+  a  <- an$x
+  aa <- c(a, a_ref)
+  pm <- .admMakeParamsList(length(aa), pinfo, 1L)[[1L]]
+  for (nm in pinfo$struct_names) pm[, nm] <- pars$struct[[nm]]
+  pm <- .admCovCols(pm, rxMod$params, NULL,
+                    matrix(aa, ncol = 1L, dimnames = list(NULL, cov)))
+  out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pm),
+                                  events = s$ev_full, cores = cores,
+                                  nDisplayProgress = .Machine$integer.max),
+                  error = function(e) NULL)
+  if (is.null(out) || is.null(out[[param_nm]])) return(NULL)
+  v <- out[[param_nm]][out[["time"]] == s$times[[1L]]]
+  if (length(v) != length(aa) || any(!is.finite(v)) || any(v <= 0)) return(NULL)
+  list(a = a, delta = log(v[seq_along(a)]) - log(v[length(aa)]), w = an$w)
+}
+
+# The covariate value the model is SOLVED at when the study does not name one.
+#
+# Every path needs it: the collapse solves at the covariate mean so the model
+# itself produces the mean shift, and u-quantile measures Delta relative to it.
+# Deriving it from `cov_dist` rather than making the user restate it removes a
+# way for the two to disagree silently.
+.admCovMeanOf <- function(spec) {
+  if (!is.null(spec$values)) {
+    pr <- spec$probs %||% rep(1, length(spec$values))
+    return(sum(as.numeric(spec$values) * pr) / sum(pr))
+  }
+  if (is.function(spec$quantile))
+    return(mean(spec$quantile((seq_len(1024L) - 0.5) / 1024L)))
+  if (!is.null(spec$meanlog)) return(exp(spec$meanlog + spec$sdlog^2 / 2))
+  spec$mu
+}
+
+# Nodes + weights for the a-integral inside F_u.
+#
+# GAUSS-HERMITE, not equal-weight quantiles. Here we are INTEGRATING over the
+# covariate, and GH carries the tails through its weights; N equal-weight
+# quantiles truncate the covariate at the (0.5/N) and (1-0.5/N) points and drop
+# the tail mass entirely. That understates the spread of Delta, and the fit then
+# inflates the covariate coefficient to make up the missing variance -- measured
+# as tcov 0.80 against a truth of 0.75 on an allometric model, while omega stayed
+# correct. The mirror-image mistake (using GH to REPRESENT u's distribution) is
+# equally wrong; see .admCovUQuantile, which uses the closed-form CDF.
+.admCovANodes <- function(spec, ngrid) {
+  if (!is.null(spec$values)) {
+    pr <- spec$probs %||% rep(1, length(spec$values))
+    return(list(x = as.numeric(spec$values), w = pr / sum(pr)))
+  }
+  if (is.function(spec$quantile)) {           # arbitrary user CDF: no GH rule
+    p <- (seq_len(ngrid) - 0.5) / ngrid
+    return(list(x = spec$quantile(p), w = rep(1 / ngrid, ngrid)))
+  }
+  g <- .adghNodes1(ngrid)                     # standard-normal nodes/weights
+  if (!is.null(spec$meanlog))
+    list(x = exp(spec$meanlog + spec$sdlog * g$x), w = g$w)
+  else
+    list(x = spec$mu + spec$sd * g$x, w = g$w)
+}
+
+# Inverse CDF of u = Delta(a) + eta, evaluated at the uniforms `p`.
+# Phi carries the tails analytically, which a grid of summed draws cannot.
+.admCovUQuantile <- function(dl, sd_eta, p, ngrid = 8192L) {
+  d <- dl$delta; w <- dl$w
+  t <- seq(min(d) - 9 * sd_eta, max(d) + 9 * sd_eta, length.out = ngrid)
+  Fu <- as.numeric(stats::pnorm(outer(t, d, "-") / sd_eta) %*% w)
+  stats::approx(Fu, t, xout = p, rule = 2)$y
+}
+# Replace the covariate-affected eta column with draws of u = Delta(a) + eta.
+#
+# The substitution is by INVERSE TRANSFORM of the very dimension that would have
+# produced that eta: u = F_u^-1(Phi(z_j)). So the low-discrepancy quality of the
+# existing draws carries over, u gets exactly the right marginal, and its
+# independence from the other eta columns is preserved by construction -- which
+# a sorted set of quantiles pasted in would have destroyed.
+#
+# Requires Omega DIAGONAL in the affected row (or a single eta): with a
+# correlated Omega, column j is a mixture of several z columns and replacing it
+# would break the joint distribution. Enforced by .admCheckCovariates().
+.admCovUQEta <- function(eta_mat, z, pars, pinfo, s, rxMod, cores) {
+  info <- s$.adm_cov_uq
+  if (is.null(info)) return(eta_mat)
+  for (k in seq_along(info)) {
+    it <- info[[k]]
+    dl <- .admCovDelta(rxMod, pars, pinfo, s, it$cov, it$param, cores)
+    if (is.null(dl)) return(NULL)                 # never silently fall back
+    j  <- match(it$eta, pinfo$eta_col_names)
+    sd_eta <- sqrt(tcrossprod(pars$L)[j, j])
+    u <- .admCovUQuantile(dl, sd_eta, stats::pnorm(z[, j]))
+    if (any(!is.finite(u))) return(NULL)
+    eta_mat[, j] <- u
+  }
+  eta_mat
+}
+
