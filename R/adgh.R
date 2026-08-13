@@ -74,9 +74,9 @@
     # plain Cholesky, so nothing changes for an ordinary fit.
     eta <- grid$X %*% t(if (is.null(s)) pars$L else .admStudyL(pars, pinfo, s))
     colnames(eta) <- pinfo$eta_col_names
-    g <- list(eta = eta, W = grid$W, cov_rows = NULL)
+    g <- list(eta = eta, W = grid$W, X = grid$X, cov_rows = NULL)
   } else {
-    g <- list(eta = matrix(0, 1L, 0L), W = 1, cov_rows = NULL)
+    g <- list(eta = matrix(0, 1L, 0L), W = 1, X = grid$X, cov_rows = NULL)
   }
   # General path, adgh's analogue of admc's per-row covariate draws: a PRODUCT
   # GRID over the covariate quadrature and the eta grid. Deterministic, so adgh
@@ -90,6 +90,10 @@
     nq <- max(nrow(g$eta), 1L); nc <- nrow(cg$X)
     g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
     colnames(g$eta) <- pinfo$eta_col_names
+    # The node matrix has to be expanded with the SAME stride: the omega chain
+    # differentiates eta = X %*% t(L) row by row, so a gradient using the
+    # unexpanded X against an expanded eta would be silently misaligned.
+    g$X        <- g$X[rep(seq_len(nq), times = nc), , drop = FALSE]
     g$cov_rows <- cg$X[rep(seq_len(nc), each = nq), , drop = FALSE]
     g$W        <- as.numeric(outer(g$W, cg$W))
   }
@@ -283,7 +287,15 @@
   g_theta       <- numeric(length(p))
 
   for (s in studies) {
-    eta <- X %*% t(L)
+    # Per study, through the SAME helper the objective uses. Deriving the grid
+    # here from pars$L instead is what made adgh's analytical gradient blind to
+    # the covariate product grid -- it differentiated a different function than
+    # .adghNLL evaluated. X, W and eta must all come from one place.
+    .gS <- .adghGrid(pars, pinfo, grid, s)
+    X   <- .gS$X
+    W   <- .gS$W
+    s   <- .adghStudyCov(s, .gS)
+    eta <- .gS$eta
     colnames(eta) <- pinfo$eta_col_names
 
     # --- Joint (same-subject) analytical quadrature gradient -----------------

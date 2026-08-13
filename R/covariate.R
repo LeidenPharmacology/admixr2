@@ -885,17 +885,6 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
     # box, since every estimator defaults to a gradient.
     if (!identical(grad, "none")) { ok_collapse <- FALSE; ok_uq <- FALSE }
 
-    # adgh's ANALYTIC gradient (.adghGradNLL) builds its quadrature from pars$L
-    # directly rather than through .adghGrid(), so it does not see the covariate
-    # product grid the objective uses -- it would differentiate a different
-    # function than it evaluates. Its FD gradient differences .adghNLL, which IS
-    # covariate-aware, so that one stays available.
-    if (identical(est, "adgh") && identical(grad, "analytical"))
-      bad("`adgh` cannot use grad = \"analytical\" with covariate ",
-          "marginalisation: its analytical gradient does not carry the ",
-          "covariate quadrature, so it would differentiate a different function ",
-          "than the objective. Use grad = \"fd\" (a gradient, and consistent ",
-          "with the objective) or grad = \"none\".")
 
     # Most efficient VALID path wins. "rows" assumes nothing at all: every
     # simulated subject carries its own covariate value, so rxode2 evaluates the

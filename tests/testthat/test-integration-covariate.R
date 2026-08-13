@@ -328,7 +328,7 @@ test_that("adgh marginalises a covariate by a PRODUCT GRID, not Monte Carlo", {
                        cov_dist = list(WT = list(meanlog = ml, sdlog = sl))))
   ui   <- suppressMessages(rxode2::rxode2(.cov_both))
   ovar <- admixr2:::.admOutputVar(ui)
-  for (g in c("none", "fd")) {
+  for (g in c("none", "analytical")) {
     ctl   <- adghControl(studies = st0, grad = g, n_nodes = 9L, print = 0L,
                          covMethod = "none")
     pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
@@ -357,28 +357,42 @@ test_that("estimators without a covariate path REFUSE cov_dist", {
   expect_silent(admixr2:::.admRefuseCovariates(list(a = list(), b = list()), "adfo"))
 })
 
-test_that("adgh refuses its ANALYTIC gradient with a covariate, but not FD", {
-  # .adghGradNLL builds its quadrature from pars$L, not through .adghGrid(), so
-  # it never sees the covariate product grid the objective uses. .adghFDGrad
-  # differences .adghNLL, which does.
+test_that("adgh's ANALYTIC gradient carries the covariate product grid", {
+  # .adghGradNLL used to build its quadrature from pars$L directly, so it never
+  # saw the covariate grid .adghNLL evaluates on -- it differentiated a different
+  # function than the objective, during the FIT. It now derives the grid per
+  # study through .adghGrid(), the same helper the objective uses.
+  #
+  # Evaluated AWAY from the optimum on purpose: the reference data are generated
+  # at the true parameters, so at p0 every component is ~0 and the comparison
+  # could not tell a correct gradient from a broken one.
   ml <- log(72); sl <- 0.28
-  E0 <- rep(1, length(.cov_TIMES)); V0 <- diag(length(.cov_TIMES))
-  st0 <- list(s = list(E = E0, V = V0, n = 300L, times = .cov_TIMES,
+  r  <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
+                  function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
+  Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
+  st0 <- list(s = list(E = r$E, V = Vo, n = 300L, times = .cov_TIMES,
                        ev = rxode2::et(amt = .cov_DOSE),
                        cov_dist = list(WT = list(meanlog = ml, sdlog = sl))))
   ui    <- suppressMessages(rxode2::rxode2(.cov_both))
-  pinfo <- admixr2:::.admDriverPinfo(
-    ui, adghControl(studies = st0, grad = "none", print = 0L, covMethod = "none"))
-  u <- admixr2:::.admDriverUnits(st0, ui, admixr2:::.admOutputVar(ui))
-  expect_error(
-    admixr2:::.admCheckCovariates(ui, pinfo, u$studies, "analytical", "adgh"),
-    "cannot use grad = \"analytical\"", fixed = TRUE)
-  for (g in c("fd", "none"))
-    expect_identical(
-      admixr2:::.admCheckCovariates(ui, pinfo, u$studies, g, "adgh")[[1L]]$.adm_cov_path,
-      if (g == "none") "rows" else "rows")
-  # admc is unaffected -- its analytical/sens path IS covariate-aware
-  expect_identical(
-    admixr2:::.admCheckCovariates(ui, pinfo, u$studies, "sens", "admc")[[1L]]$.adm_cov_path,
-    "rows")
+  ovar  <- admixr2:::.admOutputVar(ui)
+  ctl   <- adghControl(studies = st0, grad = "analytical", n_nodes = 7L,
+                       print = 0L, covMethod = "none")
+  pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
+  u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
+  stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, "analytical", "adgh")
+  expect_identical(stu[[1L]]$.adm_cov_path, "rows")
+
+  sm   <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
+  rx   <- admixr2:::.admLoadModel(ui)
+  ov   <- admixr2:::.admBuildOptVec(pinfo)
+  grid <- admixr2:::.adghNodeGrid(7L, pinfo$n_eta)
+  f    <- function(pp) admixr2:::.adghNLL(pp, pinfo, stu, rx, ovar, grid, 1L)
+  p1   <- ov$p0 + c(0.15, -0.10, 0.20, -0.18, 0.25, 0.30)[seq_along(ov$p0)]
+  ga   <- admixr2:::.adghGrad(p1, pinfo, stu, sm, rx, ovar, grid, 1L, 1e-4)
+  h    <- 1e-5
+  gf   <- vapply(seq_along(p1), function(k) {
+    a <- b <- p1; a[k] <- a[k] + h; b[k] <- b[k] - h; (f(a) - f(b)) / (2 * h)
+  }, numeric(1))
+  expect_gt(max(abs(gf)), 100)                       # the test has real signal
+  expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-6)), 1e-3)
 })
