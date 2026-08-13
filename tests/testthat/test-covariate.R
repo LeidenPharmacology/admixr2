@@ -383,3 +383,39 @@ test_that(".admCovUQuantile solves F_u(u) = p exactly, and smoothly", {
   an <- -as.numeric((dnorm(z) * (-z / s)) %*% dl$w) / fu
   expect_lt(max(abs(an - fd) / pmax(abs(fd), 1e-8)), 1e-6)
 })
+
+test_that("an unidentifiable covariate coefficient is warned about", {
+  # One population, or several with the SAME covariate distribution, cannot
+  # identify a coefficient that shares its argument with a random effect: the
+  # likelihood is exactly flat along
+  #   theta' = theta + (b-b')*mu_a ,  omega'^2 = omega^2 + (b^2-b'^2)*sd_a^2
+  # (verified bit-identical across b = 0.40 .. 1.10). Only between-study
+  # variation in the covariate DISTRIBUTION breaks it.
+  ui <- .cov_ui()   # cl <- exp(tcl + tcov*WT + eta.cl)
+  one  <- list(a = list(cov_dist = list(WT = list(mu = 0, sd = 0.6))))
+  same <- list(a = list(cov_dist = list(WT = list(mu = 0, sd = 0.6))),
+               b = list(cov_dist = list(WT = list(mu = 0, sd = 0.6))))
+  diff_mu <- list(a = list(cov_dist = list(WT = list(mu = 0.0, sd = 0.6))),
+                  b = list(cov_dist = list(WT = list(mu = 0.4, sd = 0.6))))
+  diff_sd <- list(a = list(cov_dist = list(WT = list(mu = 0, sd = 0.6))),
+                  b = list(cov_dist = list(WT = list(mu = 0, sd = 0.9))))
+
+  expect_warning(admixr2:::.admWarnCovIdentifiability(ui, .cov_pinfo(), one),
+                 "not identifiable")
+  expect_warning(admixr2:::.admWarnCovIdentifiability(ui, .cov_pinfo(), same),
+                 "not identifiable")
+  # differing MEANS break the first equation, differing SPREADS the second
+  expect_silent(admixr2:::.admWarnCovIdentifiability(ui, .cov_pinfo(), diff_mu))
+  expect_silent(admixr2:::.admWarnCovIdentifiability(ui, .cov_pinfo(), diff_sd))
+
+  # a covariate on a parameter with NO random effect is NOT on the ridge: there
+  # is no omega for its variance to hide in, so one population is enough
+  ui2 <- .cov_ui(expr = list(quote(v <- exp(tv) * WT^vwt)))
+  expect_silent(admixr2:::.admWarnCovIdentifiability(ui2, .cov_pinfo(), one))
+})
+
+test_that(".admCovSdOf reports the spread the ridge depends on", {
+  expect_equal(admixr2:::.admCovSdOf(list(mu = 70, sd = 10)), 10)
+  expect_equal(admixr2:::.admCovSdOf(list(meanlog = log(70), sdlog = 0.2)), 0.2)
+  expect_equal(admixr2:::.admCovSdOf(list(values = c(0, 1), probs = c(0.5, 0.5))), 0.5)
+})

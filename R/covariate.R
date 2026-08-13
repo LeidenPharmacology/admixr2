@@ -1072,6 +1072,62 @@ admBuildCovStudies <- function(agg_list, quad, ev, times, n, prefix = "study") {
   spec$mu
 }
 
+# Spread of a covariate spec, on the scale the identifiability ridge lives on.
+.admCovSdOf <- function(spec) {
+  if (!is.null(spec$values)) {
+    pr <- spec$probs %||% rep(1, length(spec$values)); pr <- pr / sum(pr)
+    m <- sum(as.numeric(spec$values) * pr)
+    return(sqrt(sum(pr * (as.numeric(spec$values) - m)^2)))
+  }
+  if (is.function(spec$quantile))
+    return(stats::sd(spec$quantile((seq_len(1024L) - 0.5) / 1024L)))
+  if (!is.null(spec$meanlog)) return(spec$sdlog)
+  spec$sd
+}
+
+# Warn when a covariate coefficient cannot be identified from the data supplied.
+#
+# When a covariate shares a mu-referenced argument with a random effect, the
+# model sees only u = Delta(a) + eta, so ONE population determines just two
+# quantities -- u's mean and variance -- against three parameters. The likelihood
+# is then EXACTLY flat along
+#
+#     theta'   = theta + (b - b')*mu_a
+#     omega'^2 = omega^2 + (b^2 - b'^2)*sd_a^2
+#
+# (verified: the objective is bit-identical across b from 0.40 to 1.10). Only
+# BETWEEN-STUDY variation in the covariate distribution breaks it -- differing
+# means break the first equation, differing spreads the second. Note this is
+# variation in the DATA, not a between-study random effect: admixr2 has none, and
+# a tau^2 would in fact compete with the covariate for the same signal.
+#
+# A covariate on a parameter with NO random effect is not affected: there is no
+# omega for its variance to be absorbed into, so it is identified by shape.
+.admWarnCovIdentifiability <- function(.ui, pinfo, studies) {
+  has <- vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))
+  if (!any(has)) return(invisible(NULL))
+  cds <- lapply(studies[has], `[[`, "cov_dist")
+  for (cv in unique(unlist(lapply(cds, names)))) {
+    # only covariates that share an argument with an eta sit on the ridge
+    if (is.null(.admCovParamEta(.ui, cv, pinfo$eta_col_names))) next
+    sp <- Filter(Negate(is.null), lapply(cds, `[[`, cv))
+    if (length(sp) == 0L) next
+    mu <- vapply(sp, function(x) .admCovMeanOf(x) %||% NA_real_, numeric(1))
+    sd <- vapply(sp, function(x) .admCovSdOf(x)  %||% NA_real_, numeric(1))
+    varies <- (length(unique(signif(mu, 10))) > 1L) ||
+              (length(unique(signif(sd, 10))) > 1L)
+    if (!varies)
+      warning("admixr2: the coefficient on covariate '", cv, "' is not ",
+              "identifiable from these data. It enters the same argument as a ",
+              "random effect, and every study declaring it has the SAME ",
+              "covariate distribution, so the likelihood is exactly flat along ",
+              "a trade-off between that coefficient, the corresponding fixed ",
+              "effect and omega. Identification needs studies whose covariate ",
+              "MEANS or SPREADS differ.", call. = FALSE)
+  }
+  invisible(NULL)
+}
+
 # Nodes + weights for the a-integral inside F_u.
 #
 # GAUSS-HERMITE, not equal-weight quantiles. Here we are INTEGRATING over the
