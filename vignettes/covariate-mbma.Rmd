@@ -325,7 +325,7 @@ knitr::kable(res2, digits = 4, row.names = FALSE,
              caption = "The same three studies with an R-vine copula per study. `adgh` refuses a joint sampler by design: its covariate grid is a tensor product of per-covariate quadratures, which *is* the independence assumption, so it cannot represent a dependent distribution and declines rather than integrating the wrong one.")
 ```
 
-# What the covariates look like, and what the fits made of them
+# Act I: what the analysis is actually given
 
 The three studies have to differ in their covariate distributions for the
 coefficients to be estimable at all, and the two dependent versions have to
@@ -394,7 +394,7 @@ invisible(par(op))
 The marginals differ between studies, which is what makes the coefficients
 estimable; the independent version shows no tilt, and both dependent versions do.
 
-# The estimated covariate effect
+# Act II: what the fits concluded --- and the number that looks wrong
 
 Each fit is summarised by what it says about clearance: how it scales with weight
 at a typical creatinine clearance, and with creatinine clearance at a typical
@@ -456,7 +456,123 @@ covariate handling caused --- it is a property of reconciling three different
 generating structures into one, and would need a profile over that coefficient,
 or a wider unifying model, to pursue.
 
-# What to take from this
+# Act III: why one coefficient is three times too steep
+
+An exponent of about 1.5 against generating values of 0.38--0.52 is a large
+displacement, and it is the same in all three covariate descriptions --- so
+whatever causes it, the covariate handling does not.
+
+It is confounding, and the three studies are built to produce it. They differ in
+baseline clearance (`lcl` of log 3.2, log 2.6 and log 3.9) as well as in their
+covariate coefficients, while the unifying model has a single `lcl`. They also
+differ in mean creatinine clearance (98, 92 and 105). A between-study difference
+in baseline clearance and a between-study difference in a covariate are not
+separable from summary data: the only place the first can go is the slope of the
+second. This is the aggregate-data form of the ecological fallacy, and it is a
+property of the design rather than of the estimator.
+
+Seeing it is easier than reading it. Each study has a true relationship between
+clearance and creatinine clearance --- a line whose SLOPE is the covariate effect
+we want. But each study also sits at its own HEIGHT, because its baseline
+clearance differs. A single model with one baseline cannot reproduce three
+heights, so it tilts instead: the only way one line can pass near three offset
+segments is to be steeper than any of them.
+
+```{r ecological, fig.width = 7.5, fig.height = 3.8, echo = FALSE}
+GEN <- list(A = c(lcl = log(3.2), clwt = 0.75, clcr = 0.45),
+            B = c(lcl = log(2.6), clwt = 0.68, clcr = 0.38),
+            C = c(lcl = log(3.9), clwt = 0.82, clcr = 0.52))
+COM <- c(lcl = log(3.2), clwt = 0.75, clcr = 0.45)
+MEAN_WT <- c(A = 58, B = 74, C = 91); MEAN_CR <- c(A = 98, B = 92, C = 105)
+SD_CR   <- c(A = 22, B = 26, C = 19)
+cols <- c(A = "#1b6ca8", B = "#c1121f", C = "#2a9d8f")
+
+panel <- function(par_of, fitted, ttl) {
+  plot(NA, xlim = c(55, 150), ylim = c(0.6, 2.4), bty = "l", log = "x",
+       xlab = "creatinine clearance", ylab = "log clearance", main = ttl)
+  ## each study's OWN relationship, over the range its patients actually cover
+  for (k in names(GEN)) {
+    pk <- par_of(k)
+    xr <- MEAN_CR[k] + c(-1.1, 1.1) * SD_CR[k]
+    x  <- seq(xr[1], xr[2], length.out = 40)
+    y  <- pk[["lcl"]] + pk[["clwt"]] * log(MEAN_WT[k] / 70) +
+          pk[["clcr"]] * log(x / 95)
+    lines(x, y, col = cols[k], lwd = 3)
+    ym <- pk[["lcl"]] + pk[["clwt"]] * log(MEAN_WT[k] / 70) +
+          pk[["clcr"]] * log(MEAN_CR[k] / 95)
+    points(MEAN_CR[k], ym, pch = 21, bg = cols[k], col = "white", cex = 1.6)
+  }
+  ## the single unifying model that was fitted to all three
+  x <- seq(55, 150, length.out = 60)
+  lines(x, fitted[["lcl"]] + fitted[["clwt"]] * log(mean(MEAN_WT) / 70) +
+           fitted[["clcr"]] * log(x / 95), col = "black", lwd = 2.6, lty = 2)
+  legend("topleft", c(paste("study", names(GEN)), "unifying fit"),
+         col = c(cols, "black"), lwd = c(3, 3, 3, 2.6),
+         lty = c(1, 1, 1, 2), bty = "n", cex = 0.8)
+}
+op <- par(mfrow = c(1, 2), mar = c(4, 4.2, 2.4, 1), mgp = c(2.4, 0.7, 0))
+f0 <- res0[res0$status == "fitted", ][1, ]
+panel(function(k) GEN[[k]],
+      c(lcl = f0$lcl, clwt = f0$clwt, clcr = f0$clcr),
+      sprintf("as published (fitted slope %.2f)", f0$clcr))
+panel(function(k) COM, COM,
+      sprintf("one common model (true slope %.2f)", COM[["clcr"]]))
+invisible(par(op))
+```
+
+On the left the three coloured segments sit at visibly different heights, and
+the dashed line --- the model actually fitted --- is far steeper than any of
+them. On the right, where the studies share a generating model, the segments line
+up and a single line reproduces them with the right slope. Nothing about the
+estimator differs between the two panels; only whether the studies were the same
+underneath.
+
+The way to show that is to remove the confounding and refit. Below, all three
+studies are generated from ONE model --- same `lcl`, same coefficients --- and
+differ only in their design and their covariate distribution, which is what the
+coefficients are supposed to be estimated from.
+
+```{r confound}
+mod_common <- function() {
+  ini({lcl <- log(3.2); lv <- log(21); clwt <- 0.75; clcr <- 0.45
+       eta.cl ~ 0.09; prop.err <- 0.13})
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
+         v  <- exp(lv)
+         d/dt(centr) <- -cl / v * centr
+         cp <- centr / v
+         cp ~ prop(prop.err)})
+}
+studies_common <- datagen(
+  setNames(lapply(names(DESIGN), function(k)
+    list(model = mod_common, times = DESIGN[[k]]$times, ev = DESIGN[[k]]$ev,
+         n = DESIGN[[k]]$n, cov_dist = WT_INDEP[[k]])), names(DESIGN)),
+  control = datagenControl(n_sim = 30000L, seed = 4321L))
+
+fit_c <- suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
+  mod_unify, admData(), est = "adgh",
+  control = adghControl(studies = studies_common, n_nodes = 7L, print = 0L,
+                        covMethod = "none", maxeval = 2000L))))
+ax <- fit_c$env$admExtra
+knitr::kable(data.frame(
+  parameter = c("lcl", "clwt", "clcr"),
+  truth     = c(log(3.2), 0.75, 0.45),
+  estimate  = c(ax$struct[["lcl"]], ax$struct[["clwt"]], ax$struct[["clcr"]])),
+  digits = 4, row.names = FALSE,
+  caption = "Three studies from ONE generating model, differing only in design and covariate distribution.")
+```
+
+Every parameter comes back, the creatinine-clearance exponent included. So the
+displacement in the earlier tables is not the estimator, the covariate
+description, or the reweighting --- it is three different models being summarised
+by one, and it would appear in exactly the same way in an individual-level
+analysis of the same three studies.
+
+The practical reading is that a covariate coefficient estimated across studies
+carries whatever else differs between those studies. Where the studies are
+structurally different, as here, that is a reason to widen the unifying model or
+to admit a between-study term --- not to trust the coefficient.
+
+# What to take away
 
 The estimates agree across every cell that runs. That is the point of the
 comparison: the four combinations evaluate the same integral by different means,
