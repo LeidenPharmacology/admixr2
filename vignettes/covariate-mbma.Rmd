@@ -30,8 +30,7 @@ aggregate data. Two ways of describing those subjects are compared:
   margins and dependence structure, which is what you would fit if you had access
   to the individual covariate records even though the outcomes remain aggregate.
 
-Each is run through both estimators, and each estimator is run in its ordinary
-form and with covariate reweighting enabled.
+Each is run through both estimators.
 
 ```{r libs}
 library(admixr2)
@@ -143,54 +142,47 @@ The last column is the one that matters. The three studies enrolled the same
 *kind* of patients but report a visibly different link between weight and renal
 function, and that is what the three descriptions below either keep or discard.
 
-```{r lnpar}
-## Both margins are LOGNORMAL, matched to the reported mean and SD. A normal
-## margin would be the obvious reading of "mean and standard deviation", but it
-## puts mass at and below zero -- and (CRCL/95)^clcr with a negative base and a
-## fractional exponent is NaN, which reaches the objective as a missing value
-## rather than as an error. A positive covariate needs a positive margin.
-ln_par <- function(m, s) c(meanlog = log(m^2 / sqrt(s^2 + m^2)),
-                           sdlog   = sqrt(log(1 + s^2 / m^2)))
-MARG <- lapply(stats::setNames(names(WT_M), names(WT_M)), function(k)
-  list(pw = ln_par(REPORTED[k, "wt_mean"], REPORTED[k, "wt_sd"]),
-       pc = ln_par(REPORTED[k, "cr_mean"], REPORTED[k, "cr_sd"])))
-```
-
-All three versions below use these same margins. They differ **only** in the
-dependence, which is what makes them comparable at all.
-
 # Version 0: independent margins
 
 The covariates described by their own distributions, with nothing linking them.
 This is the version `adgh` can also evaluate, because a product grid over
 independent margins is exactly what it builds.
 
+A covariate is declared with the mean and standard deviation the paper reports,
+on the scale the paper reports them. The margin is lognormal by default, since a
+normal one puts mass at and below zero and `(CRCL/95)^clcr` with a negative base
+is `NaN` --- which would reach the objective as a missing value rather than as an
+error.
+
 ```{r covindep}
-WT_INDEP <- lapply(MARG, function(m)
-  list(WT   = list(meanlog = m$pw[[1]], sdlog = m$pw[[2]]),
-       CRCL = list(meanlog = m$pc[[1]], sdlog = m$pc[[2]])))
+WT_INDEP <- lapply(stats::setNames(names(WT_M), names(WT_M)), function(k)
+  list(WT   = list(mean = REPORTED[k, "wt_mean"], sd = REPORTED[k, "wt_sd"]),
+       CRCL = list(mean = REPORTED[k, "cr_mean"], sd = REPORTED[k, "cr_sd"])))
 ```
 
 # Version 1: summary statistics with the reported correlation
 
 A mean, a standard deviation and a correlation --- what a baseline table gives
-you. The correlation only reaches the likelihood if the covariates are drawn
-JOINTLY, so it is expressed as a Gaussian copula over the two margins: the
-simplest joint distribution consistent with what was reported.
+you. Adding `cor` is the whole difference: the correlation only reaches the
+likelihood if the covariates are drawn JOINTLY, and admixr2 expands it into a
+Gaussian copula over the two margins, which is the simplest joint distribution
+consistent with what was reported.
 
 ```{r covsummary}
-gauss_pair <- function(pw, pc, rho) function(u) {
-  z  <- stats::qnorm(u)
-  z2 <- rho * z[, 1] + sqrt(1 - rho^2) * z[, 2]
-  cbind(WT   = stats::qlnorm(stats::pnorm(z[, 1]), pw[1], pw[2]),
-        CRCL = stats::qlnorm(stats::pnorm(z2),     pc[1], pc[2]))
-}
-WT_SUMMARY <- lapply(stats::setNames(names(WT_M), names(WT_M)), function(k) {
-  m <- MARG[[k]]
-  list(WT    = list(quantile = function(u) stats::qlnorm(u, m$pw[1], m$pw[2])),
-       CRCL  = list(quantile = function(u) stats::qlnorm(u, m$pc[1], m$pc[2])),
-       joint = gauss_pair(m$pw, m$pc, REPORTED[k, "cor"]))
-})
+WT_SUMMARY <- lapply(stats::setNames(names(WT_M), names(WT_M)), function(k)
+  c(WT_INDEP[[k]], list(cor = REPORTED[k, "cor"])))
+```
+
+The margins are identical to version 0 by construction --- the two versions
+differ **only** in the dependence, which is what makes them comparable at all.
+
+```{r marg}
+## the vine below needs the same margins as quantile functions, so derive them
+## once explicitly -- the same lognormal moment match admixr2 applies to mean/sd
+ln_par <- function(m, s) c(log(m^2 / sqrt(s^2 + m^2)), sqrt(log(1 + s^2 / m^2)))
+MARG <- lapply(stats::setNames(names(WT_M), names(WT_M)), function(k)
+  list(pw = ln_par(REPORTED[k, "wt_mean"], REPORTED[k, "wt_sd"]),
+       pc = ln_par(REPORTED[k, "cr_mean"], REPORTED[k, "cr_sd"])))
 ```
 
 # Version 2: the covariate as an R-vine copula
@@ -326,23 +318,16 @@ mod_unify <- function() {
 }
 ```
 
-# Fitting: two estimators, ordinary and reweighted
+# Fitting
 
-`adgh` integrates the covariate on a deterministic product grid; `admc`
-integrates it by simulating subjects. `cov_reweight = TRUE` changes how that
-integral is evaluated in both: the covariate is carried in an importance weight
-rather than in the grid or the sample, so `adgh` drops the covariate dimension
-from its grid and `admc` shares one simulation ensemble across studies that
-differ only in their covariate distribution.
-
-It is opt-in and self-declining. The substitution it relies on — that the
-prediction depends on the covariate and the random effect only through their
-sum — is a property of the model, and it is checked numerically once per fit
-rather than inferred from how the model is written. Anything that fails the check
-keeps the ordinary path, so the flag can only make a qualifying fit cheaper.
+`adgh` integrates the covariate on a deterministic product grid, so its cost
+grows with `cov_nodes`; `admc` integrates it by simulating subjects, so the
+covariate rides along in the draws it already makes and costs nothing extra.
+Running both is a check that the answer comes from the integral rather than from
+the machinery.
 
 ```{r fitfun}
-fit_one <- function(studies, est, reweight) {
+fit_one <- function(studies, est) {
   ## Each call compiles and solves models whose finalizers hold external
   ## pointers. On Windows a GC firing during a later allocation can unload a DLL
   ## mid-allocation and corrupt the heap, which surfaces as a segfault rather
@@ -351,10 +336,10 @@ fit_one <- function(studies, est, reweight) {
   invisible(gc(FALSE))
   ctl <- if (est == "adgh")
     adghControl(studies = studies, n_nodes = 7L, print = 0L,
-                covMethod = "none", maxeval = 400L, cov_reweight = reweight)
+                covMethod = "none", maxeval = 400L)
   else
     admControl(studies = studies, n_sim = 3000L, print = 0L,
-               covMethod = "none", maxeval = 400L, cov_reweight = reweight)
+               covMethod = "none", maxeval = 400L)
   t0 <- Sys.time()
   f  <- try(suppressWarnings(suppressMessages(
     nlmixr2est::nlmixr2(mod_unify, admData(), est = est, control = ctl))),
@@ -367,13 +352,13 @@ fit_one <- function(studies, est, reweight) {
     msg <- conditionMessage(attr(f, "condition"))
     st  <- if (grepl("does not support|cannot represent|joint", msg))
       "refused" else paste0("ERROR: ", substr(msg, 1, 90))
-    return(data.frame(estimator = est, reweight = reweight, status = st,
+    return(data.frame(estimator = est, status = st,
                       lcl = NA, lv = NA, clwt = NA, clcr = NA, iiv = NA,
                       objective = NA, secs = dt))
   }
   ax <- f$env$admExtra
   on.exit(invisible(gc(FALSE)), add = TRUE)
-  data.frame(estimator = est, reweight = reweight, status = "fitted",
+  data.frame(estimator = est, status = "fitted",
              lcl = unname(ax$struct[["lcl"]]), lv = unname(ax$struct[["lv"]]),
              clwt = unname(ax$struct[["clwt"]]),
              clcr = unname(ax$struct[["clcr"]]),
@@ -385,20 +370,17 @@ fit_one <- function(studies, est, reweight) {
 ## Version 0 — independent margins
 
 ```{r run0}
+ESTS <- c("adgh", "admc")
 studies_indep <- as_described(WT_INDEP)
-grid1 <- expand.grid(est = c("adgh", "admc"), rw = c(FALSE, TRUE),
-                     stringsAsFactors = FALSE)
-res0 <- do.call(rbind, Map(function(e, r)
-  fit_one(studies_indep, e, r), grid1$est, grid1$rw))
+res0 <- do.call(rbind, lapply(ESTS, function(e) fit_one(studies_indep, e)))
 knitr::kable(res0, digits = 4, row.names = FALSE,
-             caption = "Independent covariate margins. Both estimators apply, and reweighting reproduces the unweighted answer.")
+             caption = "Independent covariate margins. Both estimators apply and agree.")
 ```
 
 ## Version 1 — summary statistics
 
 ```{r run1}
-res1 <- do.call(rbind, Map(function(e, r)
-  fit_one(as_described(WT_SUMMARY), e, r), grid1$est, grid1$rw))
+res1 <- do.call(rbind, lapply(ESTS, function(e) fit_one(as_described(WT_SUMMARY), e)))
 knitr::kable(res1, digits = 4, row.names = FALSE,
              caption = "Three studies described by summary statistics.")
 ```
@@ -406,9 +388,7 @@ knitr::kable(res1, digits = 4, row.names = FALSE,
 ## Version 2 — R-vine copulas
 
 ```{r run2, eval = has_vine}
-studies_vine <- as_described(WT_VINE)
-res2 <- do.call(rbind, Map(function(e, r)
-  fit_one(studies_vine, e, r), grid1$est, grid1$rw))
+res2 <- do.call(rbind, lapply(ESTS, function(e) fit_one(as_described(WT_VINE), e)))
 knitr::kable(res2, digits = 4, row.names = FALSE,
              caption = "The same three studies with an R-vine copula per study. `adgh` refuses a joint sampler by design: its covariate grid is a tensor product of per-covariate quadratures, which *is* the independence assumption, so it cannot represent a dependent distribution and declines rather than integrating the wrong one.")
 ```
@@ -420,16 +400,12 @@ coefficients to be estimable at all, and the two dependent versions have to
 actually carry dependence. Both are worth seeing rather than asserting.
 
 ```{r covplots, fig.width = 7.5, fig.height = 7.5, echo = FALSE}
-draw_cov <- function(spec, n = 4000L) {
-  ## the same dimensions the estimator integrates over: admixr2 uses 1 for the
-  ## random effect and 2:3 for the two covariates, so the picture shows the
-  ## covariate cloud the likelihood actually sees
-  u <- randtoolbox::sobol(n, dim = 3)[, 2:3, drop = FALSE]
-  u <- pmin(pmax(u, 1e-9), 1 - 1e-9)
-  if (is.function(spec$joint)) return(spec$joint(u))
-  cbind(WT   = stats::qlnorm(u[, 1], spec$WT$meanlog,   spec$WT$sdlog),
-        CRCL = stats::qlnorm(u[, 2], spec$CRCL$meanlog, spec$CRCL$sdlog))
-}
+## covDraw() returns exactly what the estimator would simulate from a
+## specification, so these panels show the covariate cloud the likelihood
+## actually integrates over rather than a re-implementation of it. n_eta = 1
+## because the model has one random effect, and the covariate draws come from
+## the Sobol dimensions after it.
+draw_cov <- function(spec, n = 4000L) covDraw(spec, n = n, n_eta = 1L)
 SPECS <- list("independent" = WT_INDEP, "correlation" = WT_SUMMARY)
 if (has_vine) SPECS[["R-vine"]] <- WT_VINE
 cols <- c(A = "#1b6ca8", B = "#c1121f", C = "#2a9d8f")
@@ -607,14 +583,31 @@ The coefficients come back close to the models that generated them, which is not
 automatic --- it is a property of this study set, and it is worth knowing which
 property.
 
-A covariate slope is learned two ways, and they are very unequal. *Within* a
-study it enters through the variance, because the spread of weights and renal
-function among that study's subjects inflates the observed covariance. That is
-weak information. *Between* studies it enters through the mean levels, which is
-strong --- but it is also exactly where a difference in baseline clearance would
-land. Three studies and three parameters means the between-study system is
-exactly determined, so any baseline disagreement is absorbed by the slopes
-rather than resisted.
+A covariate slope enters both moments the likelihood scores: the predicted mean,
+because a study's covariate distribution shifts it, and the predicted covariance,
+because the spread of weights and renal function among that study's subjects
+inflates it. It is worth being precise about which of those actually identifies
+the slope, because the answer is neither of them on its own.
+
+*Within* a single study, the slope is not identified at all. The variance gives
+one equation, `Var(log CL) = clwt^2 * Var(log WT) + omega^2`, in two unknowns, so
+the fit slides along that ridge: fitting one study alone returns a slope near
+0.14 against a true 0.75 while omega inflates from 0.09 to 0.13, trading one for
+the other.
+
+What identifies it is a *contrast between* studies --- and either moment will
+serve. Studies differing in mean weight recover the slope essentially exactly;
+so, remarkably, do studies that share a mean weight but differ in how widely
+weight is spread, because that changes the variance each study should show.
+
+The catch is that both routes are between-study, so both carry whatever else
+differs between the studies. Three studies and three parameters means the
+between-study system is exactly determined, so any baseline disagreement is
+absorbed by the slopes rather than resisted. Nor is the variance route a refuge
+from that: with baselines disagreeing by 20% the mean-contrast design put the
+slope 63% high, and the spread-contrast design sent it to *negative* 0.58 --- it
+has less leverage on the mean level, so it has to distort further to absorb the
+same discrepancy.
 
 What protects this analysis is that the covariate contrast is far larger than the
 disagreement it has to survive. Mean creatinine clearance runs from
@@ -746,9 +739,28 @@ carries whatever else differs between those studies. It is trustworthy to the
 extent that the covariate contrast is large compared with those differences ---
 here a
 `r sprintf("%.1f-fold", max(REPORTED[, "cr_mean"]) / min(REPORTED[, "cr_mean"]))`
-renal range against 6% baseline disagreement --- and it stops
-being trustworthy when that ratio reverses, whether the analysis is of aggregate
-data or of individual records.
+renal range against 6% baseline disagreement --- and it stops being trustworthy
+when that ratio reverses.
+
+This is the ecological fallacy, and it is a property of the DATA rather than of
+the estimator: the model can represent "heavier", but it cannot represent
+"study 3", so everything that distinguishes study 3 is billed to weight. Two
+things do not fix it, and both are worth naming because both look as though they
+should. Integrating over the covariate distribution rather than plugging in a
+mean covariate addresses a DIFFERENT problem --- aggregation bias, `g(E[x])`
+against `E[g(x)]` --- which this vignette does throughout and which leaves the
+ecological exposure untouched. And reporting each study in covariate subgroups
+does not fix it either: subgroups add evidence but not parameters, so with one
+baseline in the model the between-study discrepancy is still billed to the slope.
+
+What does fix it is a parameter for the thing being confounded --- a per-study
+baseline, or a random study effect --- so between-study differences have
+somewhere of their own to go. The catch is that this removes the between-study
+covariate channel at the same time, because it is the same degrees of freedom,
+and what remains must be within-study contrast: covariate subgroups, or
+individual-level records for at least one study. Neither is available here, which
+is why this analysis relies on a large covariate contrast and closely agreeing
+models, and why the check below matters.
 
 # What to take away
 
@@ -756,10 +768,6 @@ The estimates agree across every cell that runs. That is the point of the
 comparison: the four combinations evaluate the same integral by different means,
 so agreement is evidence that the integral, and not the machinery, is what
 determines the answer.
-
-Reweighting is a speed setting, not a modelling choice. It changes how the
-covariate integral is evaluated and nothing about what is being estimated, which
-is why the estimates match rather than merely resemble each other.
 
 How the covariates are DESCRIBED is a modelling choice, and it shows up in a
 specific place. The covariate exponents came back the same under all three

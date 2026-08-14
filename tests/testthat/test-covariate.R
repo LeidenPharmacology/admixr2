@@ -246,3 +246,74 @@ test_that("the message points at BOTH replacements, not just cov_dist", {
   expect_match(msg, "cov_dist")
   expect_match(msg, "its own `cov` and its own `n`")
 })
+
+test_that("the friendly cov_dist grammar is EXACTLY the hand-written one", {
+  # mean/sd on the natural scale, and `cor`, exist so a user can transcribe a
+  # baseline-characteristics table directly. They must therefore produce the
+  # identical distribution to the canonical spelling -- a convenience that
+  # shifted the covariate distribution even slightly would move every estimate
+  # while looking like a formatting choice.
+  ml <- log(72^2 / sqrt(16^2 + 72^2)); sl <- sqrt(log(1 + 16^2 / 72^2))
+  friendly <- admixr2:::.admCovDistCanon(list(WT = list(mean = 72, sd = 16)))
+  expect_equal(friendly$WT$meanlog, ml)
+  expect_equal(friendly$WT$sdlog,   sl)
+  # the natural-scale moments are matched, which is the whole point
+  q <- stats::qlnorm(stats::ppoints(200000), friendly$WT$meanlog,
+                     friendly$WT$sdlog)
+  expect_equal(mean(q), 72, tolerance = 1e-3)
+  expect_equal(stats::sd(q), 16, tolerance = 5e-3)
+
+  # `cor` must reproduce a hand-written Gaussian copula draw for draw
+  rho <- 0.6
+  mc  <- log(90^2 / sqrt(25^2 + 90^2)); sc <- sqrt(log(1 + 25^2 / 90^2))
+  cd  <- admixr2:::.admCovDistCanon(
+    list(WT = list(mean = 72, sd = 16), CRCL = list(mean = 90, sd = 25),
+         cor = rho))
+  expect_true(is.function(cd$joint))
+  expect_null(cd$cor)                       # consumed, so nothing else sees it
+  u <- randtoolbox::sobol(4000L, dim = 2)
+  u <- pmin(pmax(u, 1e-12), 1 - 1e-12)
+  got <- cd$joint(u)
+  z   <- stats::qnorm(u)
+  z2  <- rho * z[, 1] + sqrt(1 - rho^2) * z[, 2]
+  want <- cbind(WT   = stats::qlnorm(stats::pnorm(z[, 1]), ml, sl),
+                CRCL = stats::qlnorm(stats::pnorm(z2),     mc, sc))
+  expect_equal(unname(got), unname(want), tolerance = 1e-8)
+  expect_identical(colnames(got), c("WT", "CRCL"))
+  # a Gaussian copula on lognormal margins has correlation exactly rho on the
+  # LOG scale, which is the check that `cor` means what a reader expects
+  expect_equal(stats::cor(log(got[, 1]), log(got[, 2])), rho, tolerance = 1e-2)
+
+  # idempotent: applying it twice must not re-expand anything
+  expect_equal(admixr2:::.admCovDistCanon(cd)$WT, cd$WT)
+
+  # an explicit canonical spelling always wins over the shorthand
+  keep <- admixr2:::.admCovDistCanon(
+    list(WT = list(mean = 999, meanlog = ml, sdlog = sl)))
+  expect_equal(keep$WT$meanlog, ml)
+})
+
+test_that("the friendly grammar refuses what it cannot represent", {
+  expect_error(admixr2:::.admCovDistCanon(list(WT = list(mean = 72))), "sd")
+  expect_error(admixr2:::.admCovDistCanon(list(WT = list(mean = -1, sd = 2))),
+               "lognormal")
+  expect_error(admixr2:::.admCovDistCanon(list(WT = list(mean = 72, sd = 16),
+                                               cor = 0.5)),
+               "at least two")
+  # a scalar cor with three covariates is ambiguous, not a broadcast
+  three <- list(A = list(mean = 1, sd = .1), B = list(mean = 1, sd = .1),
+                C = list(mean = 1, sd = .1), cor = 0.5)
+  expect_error(admixr2:::.admCovDistCanon(three), "two covariates")
+  # a correlation matrix that is not a correlation matrix
+  bad <- list(A = list(mean = 1, sd = .1), B = list(mean = 1, sd = .1),
+              cor = matrix(c(1, 1.4, 1.4, 1), 2, 2))
+  expect_error(admixr2:::.admCovDistCanon(bad), "positive definite")
+  # a named matrix given in the other order is REORDERED, not misapplied
+  R <- matrix(c(1, 0.7, 0.7, 1), 2, 2,
+              dimnames = list(c("B", "A"), c("B", "A")))
+  ok <- admixr2:::.admCovDistCanon(
+    list(A = list(mean = 10, sd = 1), B = list(mean = 100, sd = 20), cor = R))
+  expect_true(is.function(ok$joint))
+  expect_identical(colnames(ok$joint(matrix(c(.2, .8, .4, .6), 2, 2))),
+                   c("A", "B"))
+})

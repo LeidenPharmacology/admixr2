@@ -565,7 +565,7 @@
         u
       })
     }
-    return(s)
+    return(.admStampStudy(s, nm))
   }
   if (!is.null(s$data)) s <- .admExpandLongStudy(s, nm)
   if (!is.null(s$observations) &&
@@ -603,8 +603,55 @@
     s$observations <- setNames(list(unit), nm)
     s$multi <- FALSE
   }
+  s <- .admStampStudy(s, nm)
   s$.adm_normalised <- TRUE
   s
+}
+
+# Stamp every observation unit with the STUDY it came from.
+#
+# `label` identifies a unit; `study` identifies the trial. For a single-output
+# study they coincide, and for a multi-output or joint study several units share
+# one `study`. Nothing today reads it, and it is here because the things that
+# will read it need it to have been recorded from the start:
+#
+#   * WITHIN- vs BETWEEN-study covariate effects. A covariate coefficient
+#     estimated across studies is confounded with everything else that differs
+#     between them -- measured on a confounded three-trial design, a true 0.75
+#     comes back at 1.14. Separating a within-study from a between-study
+#     coefficient, or giving each study its own baseline so the between-study
+#     differences stop being billed to the covariate, both need to know which
+#     units belong to the same trial. Units alone cannot say: covariate STRATA of
+#     one trial are separate units that must share a baseline, and reporting them
+#     as separate studies is exactly the mistake (measured: strata alone recover
+#     almost nothing, 1.11 against the same 0.75, because the model has no
+#     parameter for "trial" and the slope absorbs it regardless).
+#   * A random study effect (tau^2) on the baseline, which is the same grouping.
+#   * Joint individual + aggregate fits, where an aggregate study and an
+#     individual dataset from the same trial share study-level parameters.
+#
+# Recording it costs nothing and cannot be reconstructed later: once units are
+# flattened, `label` is all that survives, and a label is deliberately allowed to
+# be anything. Callers that build units by hand (fixtures) may not set it, so
+# .admUnitStudy() falls back to the label rather than failing -- one unit per
+# study is the right reading of a unit that never declared otherwise.
+.admStampStudy <- function(s, nm) {
+  if (is.null(s$observations)) return(s)
+  s$observations <- lapply(s$observations, function(u) {
+    if (is.null(u$study)) u$study <- nm
+    u
+  })
+  s
+}
+
+# The study a unit belongs to. See .admStampStudy() for why this is not `label`.
+.admUnitStudy <- function(u) u$study %||% u$label
+
+# Units grouped by study, in first-appearance order. The grouping every
+# study-level parameter will index off.
+.admStudyGroups <- function(units) {
+  k <- vapply(units, .admUnitStudy, character(1))
+  split(seq_along(units), factor(k, levels = unique(k)))
 }
 
 # Flatten normalised studies into a single list of independent observation units.

@@ -220,3 +220,39 @@ test_that("a second normalisation fills a JOINT unit's per-block output", {
   # row_output holds block INDICES, so it must be untouched by any of this.
   expect_identical(u2$row_output, once$observations[[1L]]$row_output)
 })
+
+test_that("every unit records the STUDY it came from", {
+  # `label` identifies a unit, `study` identifies the trial, and they are not
+  # the same thing as soon as a study has several outputs. Study-level effects
+  # -- a per-study baseline, a random study effect, within- vs between-study
+  # covariate coefficients -- all group by trial, and once units are flattened
+  # the trial is unrecoverable unless it was recorded here.
+  E <- c(1, 2); V <- diag(2); tm <- c(1, 2)
+  one <- admixr2:::.admNormaliseStudy(
+    list(E = E, V = V, n = 10L, times = tm), "trialA")
+  expect_identical(one$observations[[1L]]$study, "trialA")
+
+  multi <- admixr2:::.admNormaliseStudy(
+    list(n = 10L, ev = rxode2::et(amt = 1), observations = list(
+      plasma = list(output = "cp", times = tm, E = E, V = V),
+      csf    = list(output = "cc", times = tm, E = E, V = V))), "trialB")
+  us <- multi$observations
+  expect_true(all(vapply(us, function(u) u$study, character(1)) == "trialB"))
+  # ... while the labels stay distinct, which is the point
+  expect_equal(length(unique(vapply(us, function(u) u$label, character(1)))), 2L)
+
+  # grouping survives flattening, which is where `label` alone would lose it
+  flat <- admixr2:::.admFlattenStudies(list(trialA = one, trialB = multi))
+  g <- admixr2:::.admStudyGroups(flat)
+  expect_identical(names(g), c("trialA", "trialB"))
+  expect_identical(lengths(g), c(trialA = 1L, trialB = 2L))
+
+  # a hand-built unit that never declared a study reads as its own study,
+  # which is the right default for one unit per study
+  expect_identical(admixr2:::.admUnitStudy(list(label = "solo")), "solo")
+
+  # idempotent: normalising twice must not disturb it
+  expect_identical(
+    admixr2:::.admNormaliseStudy(one, "trialA")$observations[[1L]]$study,
+    "trialA")
+})

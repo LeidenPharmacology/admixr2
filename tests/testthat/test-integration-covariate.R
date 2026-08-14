@@ -538,3 +538,75 @@ test_that("a node study list is refused by every estimator, end to end", {
       control = adghControl(studies = g, print = 0L, covMethod = "none",
                             maxeval = 3L)))))
 })
+
+test_that("a DEPENDENT covariate distribution supports analytic gradients", {
+  # The `joint` sampler is the newest covariate path and the one a copula or an
+  # R-vine arrives through. It reaches the solve as per-row params columns, the
+  # same as the independent path, so the sensitivity directions still
+  # differentiate the function the NLL evaluates -- but the FD frames in
+  # .admGrad/.adghGrad tile those columns by hand, and a sampler consumes TWO
+  # uniform columns rather than one. Nothing else pins that, and a joint sampler
+  # dropped from a tiled frame would be a silently wrong gradient under a
+  # finite, plausible objective.
+  skip_if_not_installed("rxode2")
+  ml <- log(72); sl <- 0.28; mc <- log(90); sc <- 0.30; rho <- 0.6
+  # A Gaussian copula written the way a user would: consume the supplied
+  # uniforms, return one column per declared covariate.
+  jf <- function(u) {
+    z  <- stats::qnorm(pmin(pmax(u, 1e-9), 1 - 1e-9))
+    z2 <- rho * z[, 1] + sqrt(1 - rho^2) * z[, 2]
+    cbind(WT   = stats::qlnorm(stats::pnorm(z[, 1]), ml, sl),
+          CRCL = stats::qlnorm(stats::pnorm(z2),     mc, sc))
+  }
+  cd <- list(WT   = list(quantile = function(u) stats::qlnorm(u, ml, sl)),
+             CRCL = list(quantile = function(u) stats::qlnorm(u, mc, sc)),
+             joint = jf)
+  mod <- function() {
+    ini({tcl <- log(3.2); tv <- log(21); bwt <- 0.75; bcr <- 0.45
+         eta.cl ~ 0.09; add.err <- 0.6})
+    model({cl <- exp(tcl + eta.cl) * (WT / 70)^bwt * (CRCL / 95)^bcr
+           v  <- exp(tv)
+           d/dt(centr) <- -cl / v * centr
+           cp <- centr / v
+           cp ~ add(add.err)})
+  }
+  ui   <- suppressMessages(rxode2::rxode2(mod))
+  ovar <- admixr2:::.admOutputVar(ui)
+  tms  <- c(1, 2, 4, 8)
+  st0  <- list(s1 = list(E = rep(1.5, length(tms)), V = diag(length(tms)),
+                         n = 200L, times = tms,
+                         ev = rxode2::et(amt = 100), cov_dist = cd))
+
+  ## ---- admc: per-subject draws --------------------------------------------
+  ctl   <- admControl(studies = st0, grad = "sens", n_sim = 4000L, print = 0L,
+                      covMethod = "none")
+  pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
+  ov    <- admixr2:::.admBuildOptVec(pinfo)
+  u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
+  stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, "sens")
+  expect_identical(stu[[1L]]$.adm_cov_path, "rows")
+  zl <- admixr2:::.admMakeZ(4000L, pinfo, 1L, "sobol")
+  pl <- admixr2:::.admMakeParamsList(4000L, pinfo, 1L)
+  rx <- admixr2:::.admLoadModel(ui)
+  sm <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
+  f  <- function(pp) admixr2:::.admNLL(pp, pinfo, stu, zl, rx, ovar, pl, 1L)
+  ga <- admixr2:::.admGrad(ov$p0, pinfo, stu, zl, rx, ovar, pl, 1L, 1e-4,
+                           sensModel = sm)
+  h  <- 1e-5
+  gf <- vapply(seq_along(ov$p0), function(k) {
+    a <- b <- ov$p0; a[k] <- a[k] + h; b[k] <- b[k] - h
+    (f(a) - f(b)) / (2 * h)
+  }, numeric(1))
+  expect_true(all(is.finite(ga)))
+  expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-8)), 2e-2)
+
+  ## ---- adgh REFUSES a dependent joint, and says so ------------------------
+  # A product grid over per-covariate quadratures IS the independence
+  # assumption, so integrating one would be integrating the wrong distribution.
+  expect_error(
+    suppressMessages(nlmixr2est::nlmixr2(
+      mod, admData(), est = "adgh",
+      control = adghControl(studies = st0, print = 0L, covMethod = "none",
+                            maxeval = 2L))),
+    "joint|cannot represent")
+})

@@ -84,25 +84,6 @@
   # than n_node. The eta block cycles fastest, so the weights are
   # rep(W_eta, times = n_cov) * rep(W_cov, each = n_eta), which is what
   # as.numeric(outer(W_eta, W_cov)) produces column-major.
-  # REWEIGHTING: the covariate is integrated in the WEIGHT, so it never enters
-  # the grid. Nodes come from the proposal (the collapse's covariance, shifted by
-  # E[Delta]) and each carries p_u/p_prop. Cost falls from n_node * cov_nodes
-  # solves to n_node -- the covariate dimension simply is not there.
-  if (!is.null(s) && identical(s$.adm_cov_path, "reweight") &&
-      !is.null(s$.adm_cov_shift)) {
-    sh   <- s$.adm_cov_shift
-    prop <- .admCovShiftProposal(pars, pinfo, sh)
-    if (!is.null(prop)) {
-      eta <- sweep(grid$X %*% t(prop$L), 2L, prop$mu, "+")
-      colnames(eta) <- pinfo$eta_col_names
-      w <- .admCovShiftWeights(eta[, sh$idx], sh, prop)
-      if (!is.null(w)) {
-        Wr <- grid$W * w
-        return(list(eta = eta, W = Wr / sum(Wr), X = grid$X, cov_rows = NULL,
-                    ess = .admCovShiftESS(grid$W * w)))
-      }
-    }
-  }
   if (!is.null(s) && !identical(s$.adm_cov_path, "collapse") &&
       !is.null(s[["cov_dist"]])) {
     cg <- .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
@@ -1120,12 +1101,6 @@ adghControl <- function(
     # LAST on purpose: a new argument inserted mid-signature silently rebinds
     # every positional call. See the resid_nodes note in CLAUDE.md.
     cov_nodes     = 11L,
-    # LAST, after cov_nodes. Opt-in: it changes how the covariate integral is
-    # evaluated, and it is declined automatically for any model whose prediction
-    # does not depend on the covariate and the random effect only through their
-    # sum, so enabling it can only make a qualifying fit cheaper.
-    cov_reweight  = FALSE,
-    # ... and this one after it, for the same reason.
     ...) {
 
   .xtra <- list(...)
@@ -1145,7 +1120,6 @@ adghControl <- function(
   # message can name the argument, rather than silently scoring a wrong NLL.
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1)
   checkmate::assertIntegerish(cov_nodes, lower = 1L, len = 1)
-  checkmate::assertLogical(cov_reweight, len = 1)
   # NOT assertString(algorithm) here: NULL is now the default and means "pick the
   # one that matches grad". .admResolveAlgorithm() asserts the string and checks
   # it against the installed nloptr, which is more than this line ever did.
@@ -1209,7 +1183,6 @@ adghControl <- function(
     studies       = studies,
     resid_nodes   = as.integer(resid_nodes),
     cov_nodes     = as.integer(cov_nodes),
-    cov_reweight  = isTRUE(cov_reweight),
     n_nodes       = as.integer(n_nodes),
     n_sim         = 1L,       # interface compat with .admRunRestarts()
     sampling      = "sobol",  # idem
@@ -1401,15 +1374,6 @@ nlmixr2Est.adgh <- function(env, ...) {
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
 
-  # Covariate reweighting, when the control asks for it. Deciding it needs the
-  # compiled model -- Delta is measured from the model and the u-substitution is
-  # verified numerically -- so it happens here rather than in
-  # .admCheckCovariates(). It can only ever make a qualifying study cheaper; a
-  # study that does not qualify keeps the path it already had.
-  if (isTRUE(.ctl$cov_reweight))
-    studies <- .admCovPromoteReweight(
-      .ui, studies, .admUnpack(ov$p0, pinfo), pinfo, rxMod, .ctl$cores %||% 1L,
-      verbose = isTRUE((.ctl$print %||% 0L) > 0L))
   # Free the models this fit registered with rxode2's own idiom (the same
   # gc(); rxUnloadAll() nlmixr2est runs), so many fits in a session stay bounded.
   on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); gc(FALSE); rxode2::rxUnloadAll() },
