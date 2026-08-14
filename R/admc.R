@@ -2905,9 +2905,10 @@ nlmixr2Est.admc <- function(env, ...) {
   if (!is.null(.ctl$ipd)) {
     .ui_ipd <- .admIpdSetup(.ui, .ctl$ipd)
     message("admc: EXPERIMENTAL joint fit with ", length(unique(.ctl$ipd$ID)),
-            " individual subject(s); the individual term is evaluated by FOCEI, ",
-            "so this fit is derivative-free and its objective is NOT comparable ",
-            "with an aggregate-only fit (differing likelihood constants).")
+            " individual subject(s). The individual term is evaluated by FOCEI ",
+            "and finite-differenced; the aggregate gradient stays analytic. Its ",
+            "objective is NOT comparable with an aggregate-only fit (differing ",
+            "likelihood constants).")
   }
 
   .nll_trace <- numeric(0)
@@ -2980,12 +2981,22 @@ nlmixr2Est.admc <- function(env, ...) {
                               params_list, cores, grad_h, sensModel,
                               use_central = want_central)
 
+  # The joint objective is a sum, so its gradient is the sum of the two. Only the
+  # individual half is finite-differenced; the aggregate half stays analytic.
+  if (!is.null(.ui_ipd) && !is.null(eval_grad_f)) {
+    .agg_grad <- eval_grad_f
+    eval_grad_f <- function(p)
+      .agg_grad(p) + .admIpdGrad(p, pinfo, .ui_ipd, .ctl$ipd, grad_h)
+  }
+
   grad_label <- if (!want_grad) "none"
-  else if (joint_fd) "central FD (joint)"
-  else if (any_joint) "Sens (joint)"
-  else if (!is.null(sensModel))
-    if (pinfo$has_kappa) "Sens+FD" else "Sens"
-  else "central FD"
+  else paste0(
+    if (joint_fd) "central FD (joint)"
+    else if (any_joint) "Sens (joint)"
+    else if (!is.null(sensModel))
+      if (pinfo$has_kappa) "Sens+FD" else "Sens"
+    else "central FD",
+    if (!is.null(.ui_ipd)) " + FD(ipd)" else "")
   message("=== admixr2: Aggregate Data Modeling (MC) ===")
   message(sprintf("  Obs units: %d | MC samples: %d | Params: %d | Cores: %d | Grad: %s | Restarts: %d",
                   length(studies), .ctl$n_sim, length(ov$p0), cores,

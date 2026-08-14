@@ -40,9 +40,14 @@ utils::globalVariables(c(
 
 # Compute objective function statistics for a completed fit.
 # nobs = sum(n_subjects * n_times) across studies, matching nlmixr2's individual-level convention.
-.admCalcObjStats <- function(objective, npar, studies) {
+# extra_nobs: observations contributing to `objective` that are NOT in `studies`
+# -- individual-level records in a joint fit (#60). The objective already counts
+# them, so leaving them out of nobs made BIC penalise with the wrong sample size
+# and stamped logLik with an nobs that did not match the value it carried.
+.admCalcObjStats <- function(objective, npar, studies, extra_nobs = 0L) {
   nobs <- sum(vapply(studies, function(s)
-    as.integer(s$n) * (s$n_total %||% length(s$times)), integer(1)))
+    as.integer(s$n) * (s$n_total %||% length(s$times)), integer(1))) +
+    as.integer(extra_nobs)
   ll   <- -objective / 2
   attr(ll, "df")   <- npar
   attr(ll, "nobs") <- nobs

@@ -244,7 +244,11 @@ test_that("the message points at BOTH replacements, not just cov_dist", {
   msg <- tryCatch(admixr2:::.admRefuseNodeStudies(list(a = list(n = 1, weight = 2))),
                   error = conditionMessage)
   expect_match(msg, "cov_dist")
-  expect_match(msg, "its own `cov` and its own `n`")
+  # strata must carry their own DISTRIBUTION, not a point `cov`: plugging in the
+  # stratum mean is the ecological plug-in and biases the coefficient upward
+  # (+17% at 2 strata, +4.3% at 4). The message has to say so.
+  expect_match(msg, "its own `n` and its own `cov_dist`")
+  expect_match(msg, "Do NOT give a stratum a point `cov`")
 })
 
 test_that("the friendly cov_dist grammar is EXACTLY the hand-written one", {

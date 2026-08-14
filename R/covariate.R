@@ -24,7 +24,19 @@
 # quadrature weights standing in for stratum sizes. When a publication reports
 # strata it also reports their real n_k, which is strictly better, so the
 # machinery was redundant where valid and invalid where it was not. Fit stratum
-# summaries as ordinary studies, each with its own `cov` and `n`.
+# summaries as ordinary studies, each with its own `n` and its own `cov_dist` --
+# NOT `cov`.
+#
+# `cov` is a POINT value, and plugging the stratum's mean covariate in is the
+# ecological plug-in, which reintroduces the same bias at stratum scale: the
+# aggregate relation equals the individual one only if the model is affine over
+# that stratum's covariate support, or the stratum is degenerate. Measured
+# against a true coefficient of 0.75, marginalising within the stratum recovers
+# 0.7500 at every K, while plugging in the stratum mean gives 0.875 at K = 2
+# (+17%), 0.782 at K = 4 (+4.3%) and 0.757 at K = 8 -- dying only as K grows.
+# Note the sign: the plug-in biases UPWARD, the mirror of the node route's
+# downward pull. A subgroup table reports the stratum's own mean and SD, which is
+# exactly the truncated `cov_dist` this needs.
 #
 # (`%||%` is defined in utils.R.)
 
@@ -929,9 +941,13 @@
        "  For ONE pooled (E, V) per study -- what a publication reports -- give ",
        "the study its\n  `cov_dist` and let admixr2 marginalise over it.\n",
        "  For summaries BY COVARIATE STRATUM, pass the strata as ordinary ",
-       "studies, each with\n  its own `cov` and its own `n`: that is the same ",
-       "likelihood the node route computed,\n  with the real stratum sizes ",
-       "instead of quadrature weights standing in for them.",
+       "studies, each with\n  its own `n` and its own `cov_dist` -- that ",
+       "stratum's own mean and SD, which is\n  what a subgroup table reports. ",
+       "That is the same likelihood the node route\n  computed, with the real ",
+       "stratum sizes instead of quadrature weights standing in\n  for them. Do ",
+       "NOT give a stratum a point `cov`: plugging in the stratum mean is\n  the ",
+       "ecological plug-in, and it biases the coefficient upward (+17% at 2 ",
+       "strata,\n  +4.3% at 4, for a lognormal covariate).",
        call. = FALSE)
 }
 
