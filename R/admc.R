@@ -287,6 +287,11 @@ admControl <- function(
     # LAST on purpose: inserting an argument mid-signature silently rebinds every
     # positional call -- admControl(studies, 20000L) used to set n_sim = 20000.
     resid_nodes = 81L,
+    # LAST. EXPERIMENTAL (#60): a data frame of individual-level records fitted
+    # JOINTLY with the aggregate studies. The individual term is evaluated by
+    # nlmixr2est's FOCEI at the parameters admixr2 proposes, so a joint fit is
+    # derivative-free and much slower. See R/ipd.R.
+    ipd = NULL,
     ...) {
 
   .xtra <- list(...)
@@ -361,6 +366,7 @@ admControl <- function(
   .ret <- list(
     studies       = studies,
     resid_nodes   = as.integer(resid_nodes),
+    ipd           = ipd,
     n_sim         = as.integer(n_sim),
     sampling      = sampling,
     algorithm     = algorithm,
@@ -2891,6 +2897,19 @@ nlmixr2Est.admc <- function(env, ...) {
   cores  <- .ctl$cores
   grad_h <- .ctl$grad_h
 
+  # EXPERIMENTAL joint individual + aggregate term (#60). Reparsed once, not per
+  # evaluation. There is no gradient through FOCEI's inner problem, so a joint
+  # fit is derivative-free whatever `grad` asked for -- said out loud, because
+  # silently ignoring `grad` would look like the analytical path was being used.
+  .ui_ipd <- NULL
+  if (!is.null(.ctl$ipd)) {
+    .ui_ipd <- .admIpdSetup(.ui, .ctl$ipd)
+    message("admc: EXPERIMENTAL joint fit with ", length(unique(.ctl$ipd$ID)),
+            " individual subject(s); the individual term is evaluated by FOCEI, ",
+            "so this fit is derivative-free and its objective is NOT comparable ",
+            "with an aggregate-only fit (differing likelihood constants).")
+  }
+
   .nll_trace <- numeric(0)
   .par_trace <- NULL
   .best_nll  <- Inf
@@ -2898,6 +2917,8 @@ nlmixr2Est.admc <- function(env, ...) {
   eval_f <- function(p) {
     .iter <<- .iter + 1L
     val <- .admNLL(p, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
+    if (!is.null(.ui_ipd) && is.finite(val))
+      val <- val + .admIpdNLL(.admUnpack(p, pinfo), pinfo, .ui_ipd, .ctl$ipd)
     if (is.finite(val) && val < .best_nll) {
       .best_nll  <<- val
       .nll_trace <<- c(.nll_trace, val)

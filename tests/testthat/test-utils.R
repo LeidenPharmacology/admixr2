@@ -460,7 +460,7 @@ test_that("a new control argument goes LAST in the formals", {
   # The tail records what was appended last, in order. cov_nodes sets the
   # covariate dimension of adgh's product grid (n_nodes does not).
   last <- list(adfoControl = "resid_nodes", adirmcControl = "resid_nodes",
-               admControl = "resid_nodes", adghControl = "cov_nodes")
+               admControl = "ipd", adghControl = "cov_nodes")
   for (nm in names(last)) {
     nms <- names(formals(get(nm)))
     nms <- nms[nms != "..."]                    # every control ends with `...`
