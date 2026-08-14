@@ -148,18 +148,18 @@ probability-integral transform, then an unconstrained fit that selects the
 structure from the data.
 
 ```{r covvine, eval = has_vine}
-fit_vine <- function(seed, wt_med, wt_cv) {
+fit_vine <- function(seed) {
   set.seed(seed); m <- 4000
+  ## an individual covariate record, of the kind a vine would be fitted to
   age  <- stats::rgamma(m, 9, 0.25)
   ht   <- 150 + 0.25 * age + stats::rnorm(m, 0, 9)
-  wt   <- exp(log(wt_med) + 0.012 * (ht - 160) + wt_cv * stats::rnorm(m))
+  wt   <- exp(log(70) + 0.012 * (ht - 160) + 0.25 * stats::rnorm(m))
   crcl <- pmax(20, 130 - 0.9 * age + 0.35 * wt + stats::rnorm(m, 0, 12))
-  X    <- cbind(WT = wt, HEIGHT = ht, AGE = age, CRCL = crcl)
-  mg   <- lapply(seq_len(4), function(j) kde1d::kde1d(X[, j]))
-  U    <- vapply(seq_len(4), function(j) kde1d::pkde1d(X[, j], mg[[j]]),
-                 numeric(m))
-  ## free R-vine: no structure imposed, families selected from the data
-  list(vc = rvinecopulib::vinecop(U, family_set = "all"), mg = mg)
+  U    <- apply(cbind(wt, ht, age, crcl), 2L,
+                function(z) rank(z) / (length(z) + 1))
+  ## free R-vine: no structure imposed, families selected from the data. Only
+  ## the COPULA is kept -- the margins come from the reported summaries.
+  list(vc = rvinecopulib::vinecop(U, family_set = "all"))
 }
 ```
 
@@ -172,8 +172,7 @@ in `validation/covariate-rvine-sampling-check.R`, where the mean log vine densit
 of the two agrees to 0.18 standard errors.
 
 ```{r vinesampler, eval = has_vine}
-vine_sampler <- function(fitted) {
-  vc <- fitted$vc; mg <- fitted$mg
+vine_sampler <- function(vc, pw, pc) {
   function(u) {
     ## admixr2 supplies one uniform column per DECLARED covariate (WT, CRCL);
     ## the vine is 4-dimensional, so the two nuisance dimensions are filled from
@@ -185,18 +184,29 @@ vine_sampler <- function(fitted) {
     ## the vine is fitted over four covariates, but only the two the model
     ## reads are returned -- the others are in the vine because they carry the
     ## dependence that shapes these two, not because the model needs them
-    cbind(WT   = kde1d::qkde1d(v[, 1], mg[[1]]),
-          CRCL = kde1d::qkde1d(v[, 4], mg[[4]]))
+    cbind(WT   = stats::qlnorm(v[, 1], pw[1], pw[2]),
+          CRCL = stats::qlnorm(v[, 4], pc[1], pc[2]))
   }
 }
-VINES <- list(A = fit_vine(11, 58, 0.22),
-              B = fit_vine(12, 74, 0.31),
-              C = fit_vine(13, 91, 0.18))
+## The vine supplies the DEPENDENCE; the margins are the same lognormals version
+## 1 reports. That is what makes the two versions comparable -- they describe the
+## same patients and differ only in how the two covariates are linked.
+##
+## Fitting the vine to synthetic data with its own marginal scales instead was
+## the first attempt, and it silently changed the population: study B's
+## creatinine clearance came out centred at 124 rather than the reported 92, so
+## the two versions were fitting different patients and their coefficients were
+## never comparable. Same margins, different dependence.
+VINES <- list(A = fit_vine(11), B = fit_vine(12), C = fit_vine(13))
+PARS  <- list(A = c(58, 13,  98, 22), B = c(74, 23,  92, 26),
+              C = c(91, 16, 105, 19))
 WT_VINE <- lapply(names(VINES), function(k) {
-  mg <- VINES[[k]]$mg
-  list(WT    = list(quantile = function(u) kde1d::qkde1d(u, mg[[1]])),
-       CRCL  = list(quantile = function(u) kde1d::qkde1d(u, mg[[4]])),
-       joint = vine_sampler(VINES[[k]]))
+  vc <- VINES[[k]]$vc
+  pw <- ln_par(PARS[[k]][1], PARS[[k]][2])
+  pc <- ln_par(PARS[[k]][3], PARS[[k]][4])
+  list(WT    = list(quantile = function(u) stats::qlnorm(u, pw[1], pw[2])),
+       CRCL  = list(quantile = function(u) stats::qlnorm(u, pc[1], pc[2])),
+       joint = vine_sampler(vc, pw, pc))
 })
 names(WT_VINE) <- names(VINES)
 ```
@@ -429,23 +439,22 @@ for (which_v in c("WT", "CRCL")) {
 invisible(par(op))
 ```
 
-Neither coefficient is pinned down, and the plot says so more usefully than the
-tables do.
+The three covariate descriptions barely matter, and one coefficient is
+displaced. Both are worth reading off the plot rather than the table.
 
-The weight exponent comes out at 0.69 and 0.61 under the two independent-margin
-and correlated descriptions — close to the generating values of 0.68–0.82 — but
-at 0.26 under the vine, well below all three. The creatinine-clearance exponent
-is estimated at 1.48–2.70 against generating values of 0.38–0.52, so it is high
-by a factor of three to five in every description.
+The weight exponent comes out at 0.69, 0.61 and 0.66 across the three
+descriptions, against generating values of 0.68--0.82: consistent between
+descriptions, and at or just below the range the generating models span. The
+creatinine-clearance exponent is 1.48--1.58 everywhere, against generating values
+of 0.38--0.52 --- high by roughly a factor of three, and equally so in all three.
 
-Two readings are consistent with that, and this vignette does not separate them.
-The unifying model reconciles three different generating structures, so no single
-pair of coefficients is correct and some displacement is expected. But
-coefficients that move this much *with the covariate description* are not
-well determined by the data, and the two exponents can trade against each other
-whenever weight and creatinine clearance are correlated — which is exactly what
-the dependent versions introduce. Deciding between those readings needs a
-profile over each coefficient, which is beyond what a fit summary can show.
+That the three descriptions agree is the robustness result: how the covariates
+are described, and whether their dependence is modelled at all, moves the
+estimates by less than the difference between the generating models. The
+displacement in the creatinine-clearance exponent is therefore not something the
+covariate handling caused --- it is a property of reconciling three different
+generating structures into one, and would need a profile over that coefficient,
+or a wider unifying model, to pursue.
 
 # What to take from this
 
