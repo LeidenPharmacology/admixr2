@@ -58,7 +58,7 @@ slopes are where it goes.
 
 ```{r models}
 mod_A <- function() {          # rich single dose, preserved renal function
-  ini({lcl <- log(3.1); lv <- log(20.5); clwt <- 0.72; clcr <- 0.40
+  ini({lcl <- log(3.1); lv <- log(20.5); clwt <- 0.95; clcr <- 0.95
        eta.cl ~ 0.085; prop.err <- 0.12})
   model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
@@ -67,7 +67,7 @@ mod_A <- function() {          # rich single dose, preserved renal function
          cp ~ prop(prop.err)})
 }
 mod_B <- function() {          # multiple dose at steady state, moderate impairment
-  ini({lcl <- log(3.2); lv <- log(21.0); clwt <- 0.75; clcr <- 0.45
+  ini({lcl <- log(3.2); lv <- log(21.0); clwt <- 1.00; clcr <- 1.00
        eta.cl ~ 0.090; prop.err <- 0.13})
   model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
@@ -76,7 +76,7 @@ mod_B <- function() {          # multiple dose at steady state, moderate impairm
          cp ~ prop(prop.err)})
 }
 mod_C <- function() {          # sparse, severe impairment
-  ini({lcl <- log(3.3); lv <- log(21.5); clwt <- 0.78; clcr <- 0.50
+  ini({lcl <- log(3.3); lv <- log(21.5); clwt <- 1.05; clcr <- 1.05
        eta.cl ~ 0.095; prop.err <- 0.14})
   model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
@@ -85,24 +85,65 @@ mod_C <- function() {          # sparse, severe impairment
          cp ~ prop(prop.err)})
 }
 DESIGN <- list(
-  A = list(model = mod_A, times = c(0.5, 1, 2, 4, 6, 8, 12),
+  A = list(model = mod_A, times = c(1, 2, 4, 8, 12, 24),
            ev = rxode2::et(amt = 100, dur = 0.5), n = 48L),
-  B = list(model = mod_B, times = c(1, 3, 6, 12),
+  B = list(model = mod_B, times = c(2, 6, 12, 24),
            ev = rxode2::et(amt = 80, ii = 12, addl = 4, dur = 0.5), n = 96L),
-  C = list(model = mod_C, times = c(2, 8),
+  C = list(model = mod_C, times = c(6, 24),
            ev = rxode2::et(amt = 120, dur = 0.5), n = 30L))
 ```
 
-# Version 1: the covariate as summary statistics
+# The patients behind the three studies
 
-Each study reports a mean and standard deviation of weight. This is the ordinary
-case, and it is all a baseline-characteristics table gives you.
+The three descriptions compared below are three descriptions of *the same
+patients*, at increasing fidelity. So it is worth being explicit about who those
+patients are, because what separates the descriptions is not the covariates
+themselves but **how the two covariates are linked** --- and that link differs
+from study to study, for a physiological reason.
 
-```{r covsummary}
-## A baseline table gives a mean and SD per covariate and a correlation between
-## them. That correlation only reaches the likelihood if the covariates are drawn
-## JOINTLY, so it is expressed as a Gaussian copula over the two margins -- the
-## simplest joint distribution consistent with what was reported.
+Creatinine clearance is weight-dependent: Cockcroft-Gault makes it proportional
+to body weight. In a population with preserved renal function that term
+dominates, so weight and creatinine clearance travel together closely. As
+impairment worsens, between-patient differences in residual nephron function grow
+until they swamp the weight term, and the two decouple. The three cohorts are
+generated that way --- one relationship, three points along it.
+
+```{r cohorts}
+## The individual covariate records behind each publication. None of this is
+## given to the estimator: the analysis sees only the aggregate outcomes plus one
+## of the three DESCRIPTIONS of these patients built below.
+SCR   <- c(A = 0.9, B = 1.8, C = 3.4)    # serum creatinine, mg/dL
+WEXP  <- c(A = 1.0, B = 0.5, C = 0.1)    # how far weight still predicts clearance
+KVAR  <- c(A = 0.12, B = 0.30, C = 0.55) # spread in residual nephron function
+AGE_R <- c(A = 0.28, B = 0.22, C = 0.20) # gamma rate; lower = older cohort
+WT_M  <- c(A = 55, B = 95, C = 72)       # the crossed weight design
+
+cohort <- function(k, m = 4000L) {
+  set.seed(700L + match(k, names(WT_M)))
+  age  <- stats::rgamma(m, 12, AGE_R[[k]])
+  ht   <- 150 + 0.25 * age + stats::rnorm(m, 0, 9)
+  wt   <- exp(log(WT_M[[k]]) + 0.012 * (ht - 160) + 0.26 * stats::rnorm(m))
+  ## Cockcroft-Gault, with the weight term progressively overwhelmed by
+  ## between-patient variation in whatever renal function remains
+  crcl <- pmax(5, (140 - age) * (wt / 70)^WEXP[[k]] * 70 /
+                  (72 * SCR[[k]]) * exp(KVAR[[k]] * stats::rnorm(m)))
+  cbind(WT = wt, HEIGHT = ht, AGE = age, CRCL = crcl)
+}
+COH <- lapply(stats::setNames(names(WT_M), names(WT_M)), cohort)
+## what each study's baseline table would report
+REPORTED <- t(vapply(COH, function(X) c(
+  wt_mean = mean(X[, "WT"]),   wt_sd = stats::sd(X[, "WT"]),
+  cr_mean = mean(X[, "CRCL"]), cr_sd = stats::sd(X[, "CRCL"]),
+  cor     = stats::cor(log(X[, "WT"]), log(X[, "CRCL"]))), numeric(5)))
+knitr::kable(REPORTED, digits = c(1, 1, 1, 1, 2),
+             caption = "The baseline-characteristics table each study published.")
+```
+
+The last column is the one that matters. The three studies enrolled the same
+*kind* of patients but report a visibly different link between weight and renal
+function, and that is what the three descriptions below either keep or discard.
+
+```{r lnpar}
 ## Both margins are LOGNORMAL, matched to the reported mean and SD. A normal
 ## margin would be the obvious reading of "mean and standard deviation", but it
 ## puts mass at and below zero -- and (CRCL/95)^clcr with a negative base and a
@@ -110,66 +151,69 @@ case, and it is all a baseline-characteristics table gives you.
 ## rather than as an error. A positive covariate needs a positive margin.
 ln_par <- function(m, s) c(meanlog = log(m^2 / sqrt(s^2 + m^2)),
                            sdlog   = sqrt(log(1 + s^2 / m^2)))
+MARG <- lapply(stats::setNames(names(WT_M), names(WT_M)), function(k)
+  list(pw = ln_par(REPORTED[k, "wt_mean"], REPORTED[k, "wt_sd"]),
+       pc = ln_par(REPORTED[k, "cr_mean"], REPORTED[k, "cr_sd"])))
+```
+
+All three versions below use these same margins. They differ **only** in the
+dependence, which is what makes them comparable at all.
+
+# Version 0: independent margins
+
+The covariates described by their own distributions, with nothing linking them.
+This is the version `adgh` can also evaluate, because a product grid over
+independent margins is exactly what it builds.
+
+```{r covindep}
+WT_INDEP <- lapply(MARG, function(m)
+  list(WT   = list(meanlog = m$pw[[1]], sdlog = m$pw[[2]]),
+       CRCL = list(meanlog = m$pc[[1]], sdlog = m$pc[[2]])))
+```
+
+# Version 1: summary statistics with the reported correlation
+
+A mean, a standard deviation and a correlation --- what a baseline table gives
+you. The correlation only reaches the likelihood if the covariates are drawn
+JOINTLY, so it is expressed as a Gaussian copula over the two margins: the
+simplest joint distribution consistent with what was reported.
+
+```{r covsummary}
 gauss_pair <- function(pw, pc, rho) function(u) {
   z  <- stats::qnorm(u)
   z2 <- rho * z[, 1] + sqrt(1 - rho^2) * z[, 2]
   cbind(WT   = stats::qlnorm(stats::pnorm(z[, 1]), pw[1], pw[2]),
         CRCL = stats::qlnorm(stats::pnorm(z2),     pc[1], pc[2]))
 }
-mk_summary <- function(m_wt, s_wt, m_cr, s_cr, rho) {
-  pw <- ln_par(m_wt, s_wt); pc <- ln_par(m_cr, s_cr)
-  list(WT    = list(quantile = function(u) stats::qlnorm(u, pw[1], pw[2])),
-       CRCL  = list(quantile = function(u) stats::qlnorm(u, pc[1], pc[2])),
-       joint = gauss_pair(pw, pc, rho))
-}
-WT_SUMMARY <- list(
-  A = mk_summary(55, 12, 120, 26, 0.45),
-  B = mk_summary(95, 20,  55, 14, 0.38),
-  C = mk_summary(72, 16,  28,  8, 0.52))
-```
-
-# Version 0: independent margins
-
-Before the two dependent versions, the case where the covariates are described
-only by their own distributions and nothing links them. This is the one `adgh`
-can also evaluate, because a product grid over independent margins is exactly
-what it builds.
-
-```{r covindep}
-WT_INDEP <- lapply(list(c(55, 12, 120, 26), c(95, 20, 55, 14), c(72, 16, 28, 8)),
-  function(p) {
-    pw <- ln_par(p[1], p[2]); pc <- ln_par(p[3], p[4])
-    list(WT   = list(meanlog = pw[[1]], sdlog = pw[[2]]),
-         CRCL = list(meanlog = pc[[1]], sdlog = pc[[2]]))
-  })
-names(WT_INDEP) <- names(DESIGN)
+WT_SUMMARY <- lapply(stats::setNames(names(WT_M), names(WT_M)), function(k) {
+  m <- MARG[[k]]
+  list(WT    = list(quantile = function(u) stats::qlnorm(u, m$pw[1], m$pw[2])),
+       CRCL  = list(quantile = function(u) stats::qlnorm(u, m$pc[1], m$pc[2])),
+       joint = gauss_pair(m$pw, m$pc, REPORTED[k, "cor"]))
+})
 ```
 
 # Version 2: the covariate as an R-vine copula
 
-Real patient statistics are dependent: weight travels with height, and renal
-function with age. An R-vine describes that joint distribution directly, with its
-own margins and its own pair-copula for each edge of the tree — so the tails and
-the asymmetries survive, which a correlation matrix cannot represent.
+A correlation is one number, and one number can only describe a dependence that
+is the same everywhere in the distribution. Real covariates are not like that:
+here the link between weight and clearance is tight among the smallest patients
+and loose among the largest, and no single correlation represents both. An R-vine
+fits a separate pair-copula to each edge of a tree, so asymmetry and tail
+behaviour survive.
 
-Each study gets its own vine, fitted the usual way: non-parametric marginals, the
-probability-integral transform, then an unconstrained fit that selects the
-structure from the data.
+Each study gets its own vine, fitted the usual way to that study's own records:
+the probability-integral transform, then an unconstrained fit that selects the
+structure and the families from the data.
 
 ```{r covvine, eval = has_vine}
-fit_vine <- function(seed) {
-  set.seed(seed); m <- 4000
-  ## an individual covariate record, of the kind a vine would be fitted to
-  age  <- stats::rgamma(m, 9, 0.25)
-  ht   <- 150 + 0.25 * age + stats::rnorm(m, 0, 9)
-  wt   <- exp(log(70) + 0.012 * (ht - 160) + 0.25 * stats::rnorm(m))
-  crcl <- pmax(20, 130 - 0.9 * age + 0.35 * wt + stats::rnorm(m, 0, 12))
-  U    <- apply(cbind(wt, ht, age, crcl), 2L,
-                function(z) rank(z) / (length(z) + 1))
+fit_vine <- function(X) {
+  U <- apply(X, 2L, function(z) rank(z) / (length(z) + 1))
   ## free R-vine: no structure imposed, families selected from the data. Only
   ## the COPULA is kept -- the margins come from the reported summaries.
-  list(vc = rvinecopulib::vinecop(U, family_set = "all"))
+  rvinecopulib::vinecop(U, family_set = "all")
 }
+VINES <- lapply(COH, fit_vine)
 ```
 
 The sampler must be driven by admixr2's own uniforms, or the objective stops
@@ -182,42 +226,56 @@ of the two agrees to 0.18 standard errors.
 
 ```{r vinesampler, eval = has_vine}
 vine_sampler <- function(vc, pw, pc) {
+  ## The filler block depends on nothing but the number of rows, so it is built
+  ## once per size rather than on every objective evaluation. Calling into
+  ## randtoolbox from inside the sampler would allocate a fresh matrix for every
+  ## NLL and gradient evaluation, for a result that never changes.
+  .fill <- new.env(parent = emptyenv())
   function(u) {
-    ## admixr2 supplies one uniform column per DECLARED covariate (WT, CRCL);
-    ## the vine is 4-dimensional, so the two nuisance dimensions are filled from
-    ## the same stream by a fixed deterministic rotation -- still a function of
-    ## `u` alone, which is what keeps the objective deterministic.
-    uu <- cbind(u[, 1], (u[, 1] + u[, 2]) %% 1, (u[, 1] + 2 * u[, 2]) %% 1, u[, 2])
-    v  <- rvinecopulib::inverse_rosenblatt(
-      pmin(pmax(uu, 1e-9), 1 - 1e-9), vc)
-    ## the vine is fitted over four covariates, but only the two the model
-    ## reads are returned -- the others are in the vine because they carry the
+    ## admixr2 supplies one uniform column per DECLARED covariate (WT, CRCL), but
+    ## the vine is 4-dimensional. The inverse Rosenblatt transform is SEQUENTIAL
+    ## -- column 4 is conditioned on columns 1 to 3 -- so the nuisance dimensions
+    ## must carry variation of their own. Filling them with deterministic
+    ## functions of the supplied columns corrupts what comes out at position 4.
+    ##
+    ## They must also come from Sobol dimensions NOBODY ELSE IS USING. Every
+    ## low-discrepancy family starts from the same base-2 van der Corput
+    ## sequence, so `sobol(n, dim = k)[, 1:j]` IS `sobol(n, dim = j)`: a fresh
+    ## sobol(n, dim = 2) here would return dimensions 1 and 2, which are the
+    ## random effect's dimension and weight's -- and the nuisance covariates
+    ## would then be deterministic copies of them, inducing a correlation
+    ## between height, age, the random effect and weight that no cohort has.
+    ## admixr2 draws sobol(n, dim = n_eta + d) and hands over the columns after
+    ## the etas, so with one random effect and two covariates dimensions 1 to 3
+    ## are spoken for and the filler takes 4 and 5.
+    key <- as.character(nrow(u))
+    if (is.null(.fill[[key]]))
+      .fill[[key]] <- randtoolbox::sobol(nrow(u), dim = 5)[, 4:5, drop = FALSE]
+    fl <- .fill[[key]]
+    uu <- cbind(u[, 1], fl[, 1], fl[, 2], u[, 2])
+    v   <- rvinecopulib::inverse_rosenblatt(pmin(pmax(uu, 1e-9), 1 - 1e-9), vc)
+    ## the vine is fitted over four covariates, but only the two the model reads
+    ## are returned -- the others are in the vine because they carry the
     ## dependence that shapes these two, not because the model needs them
     cbind(WT   = stats::qlnorm(v[, 1], pw[1], pw[2]),
           CRCL = stats::qlnorm(v[, 4], pc[1], pc[2]))
   }
 }
-## The vine supplies the DEPENDENCE; the margins are the same lognormals version
-## 1 reports. That is what makes the two versions comparable -- they describe the
-## same patients and differ only in how the two covariates are linked.
+## The vine supplies the DEPENDENCE; the margins are the same lognormals that
+## versions 0 and 1 use. That is what makes the three comparable -- they describe
+## the same patients and differ only in how the two covariates are linked.
 ##
 ## Fitting the vine to synthetic data with its own marginal scales instead was
 ## the first attempt, and it silently changed the population: study B's
 ## creatinine clearance came out centred at 124 rather than the reported 92, so
-## the two versions were fitting different patients and their coefficients were
-## never comparable. Same margins, different dependence.
-VINES <- list(A = fit_vine(11), B = fit_vine(12), C = fit_vine(13))
-PARS  <- list(A = c(55, 12, 120, 26), B = c(95, 20, 55, 14),
-              C = c(72, 16,  28,  8))
-WT_VINE <- lapply(names(VINES), function(k) {
-  vc <- VINES[[k]]$vc
-  pw <- ln_par(PARS[[k]][1], PARS[[k]][2])
-  pc <- ln_par(PARS[[k]][3], PARS[[k]][4])
-  list(WT    = list(quantile = function(u) stats::qlnorm(u, pw[1], pw[2])),
-       CRCL  = list(quantile = function(u) stats::qlnorm(u, pc[1], pc[2])),
-       joint = vine_sampler(vc, pw, pc))
+## the versions were fitting different patients and their coefficients were never
+## comparable. Same margins, different dependence.
+WT_VINE <- lapply(stats::setNames(names(WT_M), names(WT_M)), function(k) {
+  m <- MARG[[k]]
+  list(WT    = list(quantile = function(u) stats::qlnorm(u, m$pw[1], m$pw[2])),
+       CRCL  = list(quantile = function(u) stats::qlnorm(u, m$pc[1], m$pc[2])),
+       joint = vine_sampler(VINES[[k]], m$pw, m$pc))
 })
-names(WT_VINE) <- names(VINES)
 ```
 
 
@@ -234,8 +292,21 @@ make_studies <- function(cov_spec) {
     control = datagenControl(n_sim = 30000L, seed = 4321L))
   g
 }
-studies_summary <- make_studies(WT_SUMMARY)
-str(lapply(studies_summary, function(s) round(s$E, 2)))
+## ONE dataset. These patients exist and produced one set of aggregate outcomes;
+## the vine is the closest of the three descriptions to the patients themselves,
+## so it is what generates.
+##
+## Generating each version from its own description instead -- which an earlier
+## draft did -- makes every fit correctly specified for its own data, so the
+## three necessarily agree and the comparison measures nothing. What is worth
+## measuring is what a SIMPLER description of the same patients costs.
+studies_truth <- make_studies(WT_VINE)
+as_described <- function(spec) {
+  st <- studies_truth
+  for (k in names(st)) st[[k]]$cov_dist <- spec[[k]]
+  st
+}
+str(lapply(studies_truth, function(s) round(s$E, 2)))
 ```
 
 # The unifying model
@@ -272,6 +343,12 @@ keeps the ordinary path, so the flag can only make a qualifying fit cheaper.
 
 ```{r fitfun}
 fit_one <- function(studies, est, reweight) {
+  ## Each call compiles and solves models whose finalizers hold external
+  ## pointers. On Windows a GC firing during a later allocation can unload a DLL
+  ## mid-allocation and corrupt the heap, which surfaces as a segfault rather
+  ## than an error -- collecting at a safe point between fits keeps the
+  ## finalizers off the allocation path.
+  invisible(gc(FALSE))
   ctl <- if (est == "adgh")
     adghControl(studies = studies, n_nodes = 7L, print = 0L,
                 covMethod = "none", maxeval = 400L, cov_reweight = reweight)
@@ -291,14 +368,16 @@ fit_one <- function(studies, est, reweight) {
     st  <- if (grepl("does not support|cannot represent|joint", msg))
       "refused" else paste0("ERROR: ", substr(msg, 1, 90))
     return(data.frame(estimator = est, reweight = reweight, status = st,
-                      lcl = NA, lv = NA, clwt = NA, clcr = NA,
+                      lcl = NA, lv = NA, clwt = NA, clcr = NA, iiv = NA,
                       objective = NA, secs = dt))
   }
   ax <- f$env$admExtra
+  on.exit(invisible(gc(FALSE)), add = TRUE)
   data.frame(estimator = est, reweight = reweight, status = "fitted",
              lcl = unname(ax$struct[["lcl"]]), lv = unname(ax$struct[["lv"]]),
              clwt = unname(ax$struct[["clwt"]]),
              clcr = unname(ax$struct[["clcr"]]),
+             iiv = unname(ax$omega[1, 1]),
              objective = f$objective, secs = dt)
 }
 ```
@@ -306,7 +385,7 @@ fit_one <- function(studies, est, reweight) {
 ## Version 0 — independent margins
 
 ```{r run0}
-studies_indep <- make_studies(WT_INDEP)
+studies_indep <- as_described(WT_INDEP)
 grid1 <- expand.grid(est = c("adgh", "admc"), rw = c(FALSE, TRUE),
                      stringsAsFactors = FALSE)
 res0 <- do.call(rbind, Map(function(e, r)
@@ -319,7 +398,7 @@ knitr::kable(res0, digits = 4, row.names = FALSE,
 
 ```{r run1}
 res1 <- do.call(rbind, Map(function(e, r)
-  fit_one(studies_summary, e, r), grid1$est, grid1$rw))
+  fit_one(as_described(WT_SUMMARY), e, r), grid1$est, grid1$rw))
 knitr::kable(res1, digits = 4, row.names = FALSE,
              caption = "Three studies described by summary statistics.")
 ```
@@ -327,7 +406,7 @@ knitr::kable(res1, digits = 4, row.names = FALSE,
 ## Version 2 — R-vine copulas
 
 ```{r run2, eval = has_vine}
-studies_vine <- make_studies(WT_VINE)
+studies_vine <- as_described(WT_VINE)
 res2 <- do.call(rbind, Map(function(e, r)
   fit_one(studies_vine, e, r), grid1$est, grid1$rw))
 knitr::kable(res2, digits = 4, row.names = FALSE,
@@ -342,7 +421,10 @@ actually carry dependence. Both are worth seeing rather than asserting.
 
 ```{r covplots, fig.width = 7.5, fig.height = 7.5, echo = FALSE}
 draw_cov <- function(spec, n = 4000L) {
-  u <- randtoolbox::sobol(n, dim = 2)
+  ## the same dimensions the estimator integrates over: admixr2 uses 1 for the
+  ## random effect and 2:3 for the two covariates, so the picture shows the
+  ## covariate cloud the likelihood actually sees
+  u <- randtoolbox::sobol(n, dim = 3)[, 2:3, drop = FALSE]
   u <- pmin(pmax(u, 1e-9), 1 - 1e-9)
   if (is.function(spec$joint)) return(spec$joint(u))
   cbind(WT   = stats::qlnorm(u[, 1], spec$WT$meanlog,   spec$WT$sdlog),
@@ -412,9 +494,9 @@ truth here, since the unifying model is one structure reconciling three, so the
 generating curves bracket rather than define the answer.
 
 ```{r effectplot, fig.width = 7.5, fig.height = 3.6, echo = FALSE}
-gen <- list(A = c(clwt = 0.72, clcr = 0.40),
-            B = c(clwt = 0.75, clcr = 0.45),
-            C = c(clwt = 0.78, clcr = 0.50))
+gen <- list(A = c(clwt = 0.95, clcr = 0.95),
+            B = c(clwt = 1.00, clcr = 1.00),
+            C = c(clwt = 1.05, clcr = 1.05))
 FITS <- list()
 pick <- function(df) { d <- df[df$status == "fitted", ]; if (nrow(d)) d[1, ] else NULL }
 if (!is.null(pick(res0))) FITS[["independent"]] <- pick(res0)
@@ -450,23 +532,74 @@ invisible(par(op))
 
 ```{r effectsummary, echo = FALSE}
 .f <- function(d) { r <- d[d$status == "fitted", ]; if (nrow(r)) r[1, ] else NULL }
+.f <<- .f
 .rows <- Filter(Negate(is.null), list(independent = .f(res0), correlation = .f(res1),
                                       `R-vine` = if (exists("res2")) .f(res2)))
 .tab <- do.call(rbind, lapply(names(.rows), function(k) data.frame(
-  description = k, clwt = .rows[[k]]$clwt, clcr = .rows[[k]]$clcr)))
-.tab$`clwt vs 0.75` <- sprintf("%+.0f%%", 100 * (.tab$clwt / 0.75 - 1))
-.tab$`clcr vs 0.45` <- sprintf("%+.0f%%", 100 * (.tab$clcr / 0.45 - 1))
+  description = k, clwt = .rows[[k]]$clwt, clcr = .rows[[k]]$clcr,
+  iiv = .rows[[k]]$iiv)))
+.tab$`clwt vs 1.00` <- sprintf("%+.0f%%", 100 * (.tab$clwt / 1.00 - 1))
+.tab$`clcr vs 1.00` <- sprintf("%+.0f%%", 100 * (.tab$clcr / 1.00 - 1))
+.tab$`CV%` <- sprintf("%.0f%%", 100 * sqrt(exp(.tab$iiv) - 1))
+.tab$`IIV vs 0.09` <- sprintf("%+.0f%%", 100 * (.tab$iiv / 0.09 - 1))
+.tab <- .tab[, c("description", "clwt", "clwt vs 1.00", "clcr", "clcr vs 1.00",
+                 "iiv", "IIV vs 0.09", "CV%")]
 knitr::kable(.tab, digits = 3, row.names = FALSE,
-             caption = "Estimated covariate exponents against the average of the three generating models.")
+             caption = "What each description concluded. The generating models average 1.00 for both exponents and 0.09 for the random-effect variance.")
 ```
 
-Both coefficients come back close to the models that generated them, and --- more
-usefully --- they barely move between the three covariate descriptions. How the
-covariates are described, and whether their dependence is modelled at all, shifts
-the estimates by less than the generating models differ from each other.
+Two different things happen in that table, and they are worth separating.
 
-That is the robustness result. It is also not automatic, and the next section is
-about what makes it hold.
+**The covariate exponents are comparatively robust.** The renal exponent comes
+back within a few percent of the generating models under all three descriptions,
+and the weight exponent moves more but stays within about 15%. Neither is
+distorted the way the random-effect variance is: the answer to "how does
+clearance scale with renal function" largely survives a description that throws
+the dependence away.
+
+**The random-effect variance is not.** Describing the covariates as independent
+inflates it by about
+`r sprintf("%.0f%%", 100*(.f(res0)$iiv/0.09 - 1))`. Either dependent description
+removes essentially all of that. In the units the parameter is actually read in,
+that is
+`r sprintf("%.0f%%", 100*sqrt(exp(.f(res0)$iiv)-1))` between-subject variability
+on clearance under the independent description against
+`r sprintf("%.0f%%", 100*sqrt(exp(.f(res1)$iiv)-1))` under the correlation, with
+a true value near `r sprintf("%.0f%%", 100*sqrt(exp(0.09)-1))` --- a gap that
+changes what a dosing recommendation looks like.
+
+That split is not a coincidence, and it is what the algebra predicts. With
+`log CL = lcl + a*log(WT/70) + b*log(CRCL/95) + eta`, the dependence between the
+two covariates enters as `2*a*b*cov(log WT, log CRCL)` --- a contribution to the
+**variance** of clearance, not to its mean. A description that omits the
+dependence does not lose that variance; it simply has nowhere to put it except
+`eta.cl`. The covariate slopes, which are identified by the differences in mean
+level *between* studies, are left alone.
+
+It also says how much description is enough, and the answer here is less than
+one might expect. The reported correlations ---
+`r sprintf("%.2f, %.2f and %.2f", REPORTED["A","cor"], REPORTED["B","cor"], REPORTED["C","cor"])`
+--- already capture that the three populations are differently linked, and that
+is all the likelihood needs: the vine and the correlation land on the same
+answer to within
+`r sprintf("%.0f%%", 100*abs(.f(res2)$iiv/.f(res1)$iiv - 1))`
+on the random-effect variance.
+
+That is not an argument against vines, and it is worth being precise about why.
+The aggregate likelihood scores a mean vector and a covariance matrix, and the
+dependence reaches those through a covariance term --- which a correlation
+already carries. Tail shape and asymmetry, which are exactly what a vine keeps
+and a correlation cannot, move those two moments very little: measured directly
+on the predicted moments, replacing a Gaussian copula with a strongly
+lower-tail-dependent one at matched association changes the predicted mean by
+under 1%. A vine earns its place when the quantity of interest is itself a tail
+--- the fraction of patients above a toxicity threshold, say --- rather than
+when the data are a mean and a covariance.
+
+So the ranking to remember is that modelling the dependence AT ALL is what
+matters, and the choice of how to model it matters much less. The exponents being
+comparatively robust is still the more useful result day to day. It is also not
+automatic, and the next section is about what makes it hold.
 
 # Act III: why this works, and when it would not
 
@@ -484,9 +617,11 @@ exactly determined, so any baseline disagreement is absorbed by the slopes
 rather than resisted.
 
 What protects this analysis is that the covariate contrast is far larger than the
-disagreement it has to survive. Creatinine clearance runs from 28 to 120 across
-the three studies --- a factor of four --- while the models themselves agree to
-within about 6%.
+disagreement it has to survive. Mean creatinine clearance runs from
+`r sprintf("%.0f to %.0f", min(REPORTED[, "cr_mean"]), max(REPORTED[, "cr_mean"]))`
+across the three studies --- a factor of
+`r sprintf("%.1f", max(REPORTED[, "cr_mean"]) / min(REPORTED[, "cr_mean"]))` ---
+while the models themselves agree to within about 6% on baseline clearance.
 
 And "disagreement" means EVERY parameter the unifying model collapses to one, not
 just baseline clearance. Volume, the random-effect magnitude and the residual
@@ -501,21 +636,22 @@ about while leaving the others free.
 
 Take that away and the same machinery gives a different answer. The right-hand
 panel below is the same three designs with creatinine clearance varying by 13%
-between studies instead of fourfold, and baseline clearances spread over 50%
-instead of 6%. Every study still has a slope near 0.45, and the fitted slope is
-1.41.
+between studies instead of severalfold, and baseline clearances spread over 50%
+instead of 6%. Every study there still has a slope near 1.00, and the fitted
+slope is 1.41.
 
 ```{r ecological, fig.width = 7.5, fig.height = 3.8, echo = FALSE}
-GEN <- list(A = c(lcl = log(3.1), clwt = 0.72, clcr = 0.40),
-            B = c(lcl = log(3.2), clwt = 0.75, clcr = 0.45),
-            C = c(lcl = log(3.3), clwt = 0.78, clcr = 0.50))
-MEAN_WT <- c(A = 55, B = 95, C = 72); MEAN_CR <- c(A = 120, B = 55, C = 28)
-SD_CR   <- c(A = 26, B = 14, C = 8)
+GEN <- list(A = c(lcl = log(3.1), clwt = 0.95, clcr = 0.95),
+            B = c(lcl = log(3.2), clwt = 1.00, clcr = 1.00),
+            C = c(lcl = log(3.3), clwt = 1.05, clcr = 1.05))
+MEAN_WT <- stats::setNames(REPORTED[, "wt_mean"], rownames(REPORTED))
+MEAN_CR <- stats::setNames(REPORTED[, "cr_mean"], rownames(REPORTED))
+SD_CR   <- stats::setNames(REPORTED[, "cr_sd"],   rownames(REPORTED))
 ## the cautionary set: baselines spread over 50% instead of 6%, and creatinine
-## clearance varying by 13% between studies instead of fourfold
-BAD     <- list(A = c(lcl = log(3.2), clwt = 0.75, clcr = 0.45),
-                B = c(lcl = log(2.6), clwt = 0.68, clcr = 0.38),
-                C = c(lcl = log(3.9), clwt = 0.82, clcr = 0.52))
+## clearance varying by 13% between studies instead of severalfold
+BAD     <- list(A = c(lcl = log(3.2), clwt = 1.00, clcr = 1.00),
+                B = c(lcl = log(2.6), clwt = 0.92, clcr = 0.85),
+                C = c(lcl = log(3.9), clwt = 1.08, clcr = 1.15))
 BAD_WT  <- c(A = 58, B = 74, C = 91); BAD_CR <- c(A = 98, B = 92, C = 105)
 BAD_SD  <- c(A = 22, B = 26, C = 19)
 cols <- c(A = "#1b6ca8", B = "#c1121f", C = "#2a9d8f")
@@ -558,12 +694,14 @@ panel(BAD, BAD_WT, BAD_CR, BAD_SD, c(lcl = 1.16, clwt = 0.81, clcr = 1.41),
 invisible(par(op))
 ```
 
-On the left the three coloured segments sit at visibly different heights, and
-the dashed line --- the model actually fitted --- is far steeper than any of
-them. On the right, where the studies share a generating model, the segments line
-up and a single line reproduces them with the right slope. Nothing about the
-estimator differs between the two panels; only whether the studies were the same
-underneath.
+On the left the three coloured segments occupy separate stretches of the renal
+range but sit on a common trend, and the dashed line --- the model actually
+fitted --- runs along it with about the right slope. On the right the segments
+overlap almost completely in creatinine clearance while sitting at visibly
+different heights, so the only way a single line can pass near all three is by
+tilting: the dashed line there is far steeper than any study's own slope. Nothing
+about the estimator differs between the panels. What differs is how much
+covariate contrast is available to outvote the baseline disagreement.
 
 The cleanest version of the same point removes the disagreement entirely. Below, all three
 studies are generated from ONE model --- same `lcl`, same coefficients --- and
@@ -572,7 +710,7 @@ coefficients are supposed to be estimated from.
 
 ```{r confound}
 mod_common <- function() {
-  ini({lcl <- log(3.2); lv <- log(21); clwt <- 0.75; clcr <- 0.45
+  ini({lcl <- log(3.2); lv <- log(21); clwt <- 1.00; clcr <- 1.00
        eta.cl ~ 0.09; prop.err <- 0.13})
   model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
@@ -593,7 +731,7 @@ fit_c <- suppressWarnings(suppressMessages(nlmixr2est::nlmixr2(
 ax <- fit_c$env$admExtra
 knitr::kable(data.frame(
   parameter = c("lcl", "clwt", "clcr"),
-  truth     = c(log(3.2), 0.75, 0.45),
+  truth     = c(log(3.2), 1.00, 1.00),
   estimate  = c(ax$struct[["lcl"]], ax$struct[["clwt"]], ax$struct[["clcr"]])),
   digits = 4, row.names = FALSE,
   caption = "Three studies from ONE generating model, differing only in design and covariate distribution.")
@@ -606,7 +744,9 @@ estimator recovers what generated the data.
 The practical reading is that a covariate coefficient estimated across studies
 carries whatever else differs between those studies. It is trustworthy to the
 extent that the covariate contrast is large compared with those differences ---
-here a fourfold renal range against 6% baseline disagreement --- and it stops
+here a
+`r sprintf("%.1f-fold", max(REPORTED[, "cr_mean"]) / min(REPORTED[, "cr_mean"]))`
+renal range against 6% baseline disagreement --- and it stops
 being trustworthy when that ratio reverses, whether the analysis is of aggregate
 data or of individual records.
 
@@ -620,6 +760,15 @@ determines the answer.
 Reweighting is a speed setting, not a modelling choice. It changes how the
 covariate integral is evaluated and nothing about what is being estimated, which
 is why the estimates match rather than merely resemble each other.
+
+How the covariates are DESCRIBED is a modelling choice, and it shows up in a
+specific place. The covariate exponents came back the same under all three
+descriptions; the random-effect variance did not, because dependence between
+covariates contributes to the variance of clearance and a description that omits
+it leaves `eta.cl` to absorb the difference. If the studies report different
+dependence --- as they do here, since renal impairment decouples clearance from
+body weight --- then modelling that dependence is what keeps the reported
+between-subject variability honest.
 
 `adgh` and a dependent covariate distribution do not combine. That is a refusal
 and not a limitation to work around: a product grid assumes independence, and
