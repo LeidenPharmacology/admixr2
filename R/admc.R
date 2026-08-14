@@ -287,6 +287,8 @@ admControl <- function(
     # LAST on purpose: inserting an argument mid-signature silently rebinds every
     # positional call -- admControl(studies, 20000L) used to set n_sim = 20000.
     resid_nodes = 81L,
+    # LAST. See adghControl() for what it does and why it is opt-in.
+    cov_reweight  = FALSE,
     # ... and this one after it, for the same reason.
     ...) {
 
@@ -362,6 +364,7 @@ admControl <- function(
   .ret <- list(
     studies       = studies,
     resid_nodes   = as.integer(resid_nodes),
+    cov_reweight  = isTRUE(cov_reweight),
     n_sim         = as.integer(n_sim),
     sampling      = sampling,
     algorithm     = algorithm,
@@ -458,13 +461,28 @@ nmObjGetControl.admc <- function(x, ...) {
     # marginal moments exactly at the cost of a no-covariate fit. See
     # .admCovInflateL(). The covariate itself is solved at its mean, supplied
     # through study$cov by .admCovCols().
-    .sL <- .admStudyL(pars, pinfo, s)
+    # REWEIGHTING: draw u from the proposal and carry p_u/p_prop as weights, so
+    # the covariate integral is a deterministic sum over quadrature nodes inside
+    # the weight rather than a sampled dimension. Same number of rows, one fewer
+    # Monte Carlo dimension.
+    .rw <- NULL
+    if (identical(s$.adm_cov_path, "reweight") && !is.null(s$.adm_cov_shift)) {
+      .sh   <- s$.adm_cov_shift
+      .prop <- .admCovShiftProposal(pars, pinfo, .sh)
+      if (!is.null(.prop)) .rw <- list(sh = .sh, prop = .prop)
+    }
+    .sL <- if (!is.null(.rw)) .rw$prop$L else .admStudyL(pars, pinfo, s)
     # NULL means a declared covariate distribution could not be folded in; do not
     # fall back to the plain Cholesky, which would silently drop the spread.
     if (is.null(.sL) && identical(s$.adm_cov_path, "collapse")) return(Inf)
     eta_mat <- if (pinfo$n_eta > 0L) {
-      .em <- z %*% t(.sL); colnames(.em) <- pinfo$eta_col_names; .em
+      .em <- z %*% t(.sL)
+      if (!is.null(.rw)) .em <- sweep(.em, 2L, .rw$prop$mu, "+")
+      colnames(.em) <- pinfo$eta_col_names; .em
     } else matrix(0, nrow(z), 0L)
+    .wts <- if (!is.null(.rw))
+      .admCovShiftWeights(eta_mat[, .rw$sh$idx], .rw$sh, .rw$prop) else NULL
+    if (!is.null(.rw) && is.null(.wts)) return(Inf)
     # Covariate marginalisation, by the path chosen in .admCheckCovariates():
     #   "collapse"  Omega already inflated above; nothing further
     #   "uq"        covariate held at its reference, affected eta column carries
@@ -507,7 +525,9 @@ nmObjGetControl.admc <- function(x, ...) {
     # does not apply another compartment's error model here (no-op single-output).
     ar <- .admUnitResidRows(pinfo, ov, pars$sigma_var, length(s$times),
                             phi = attr(cp_mat, "phi"))
-    if (.admResidCppOK(ar)) {
+    # The fused kernels compute their own UNWEIGHTED moments internally, so a
+    # reweighted study must take the R path and score pre-computed weighted ones.
+    if (.admResidCppOK(ar) && is.null(.wts)) {
       # forms the fused C++ kernels implement (combined1/2, lnorm, no ar)
       if (identical(s$method, "var")) {
         nll2 <- nll2 + nll_var_from_samples_cpp(cp_mat, as.numeric(s$E), s$v_diag,
@@ -519,9 +539,14 @@ nmObjGetControl.admc <- function(x, ...) {
     } else {
       # everything else: assemble the moments in R (form-agnostic), then score
       # with the plain kernels. See .admResidCppOK() for why.
-      mu_s <- colMeans(cp_mat)
-      cpc  <- sweep(cp_mat, 2L, mu_s)
-      Vs   <- crossprod(cpc) / nrow(cp_mat)
+      if (!is.null(.wts)) {
+        .wm  <- weighted_meancov_cpp(cp_mat, .wts / sum(.wts))
+        mu_s <- as.numeric(.wm$mu); Vs <- .wm$V
+      } else {
+        mu_s <- colMeans(cp_mat)
+        cpc  <- sweep(cp_mat, 2L, mu_s)
+        Vs   <- crossprod(cpc) / nrow(cp_mat)
+      }
       ap   <- .admResidApply(mu_s, diag(Vs), ar, s$times, Vs)
       if (identical(s$method, "var")) {
         nll2 <- nll2 + nll_var_cpp(as.numeric(s$E), s$v_diag, ap$mu, ap$dv, s$n)
@@ -2870,6 +2895,16 @@ nlmixr2Est.admc <- function(env, ...) {
   }
 
   rxMod <- .admLoadModel(.ui)
+
+  # Covariate reweighting, when the control asks for it. Deciding it needs the
+  # compiled model -- Delta is measured from the model and the u-substitution is
+  # verified numerically -- so it happens here rather than in
+  # .admCheckCovariates(). It can only ever make a qualifying study cheaper; a
+  # study that does not qualify keeps the path it already had.
+  if (isTRUE(.ctl$cov_reweight))
+    studies <- .admCovPromoteReweight(
+      .ui, studies, .admUnpack(ov$p0, pinfo), pinfo, rxMod, .ctl$cores %||% 1L,
+      verbose = isTRUE((.ctl$print %||% 0L) > 0L))
   rxode2::rxLock(rxMod)
   # Reclaim compiled models with rxode2's own idiom -- the gc(); rxUnloadAll()
   # nlmixr2est runs per fit -- so a session of many fits does not accumulate models

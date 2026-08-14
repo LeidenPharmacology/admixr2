@@ -868,3 +868,224 @@
   inner <- sub("^[^(]*[(]", "", ln[1L])
   grepl(cov, inner, fixed = TRUE)
 }
+
+# =============================================================================
+# Covariate reweighting: integrate the covariate in the WEIGHT, not the grid
+# =============================================================================
+#
+# With mu-referencing the covariate and the random effect enter one argument,
+# param <- h(theta + Delta(a) + eta), so the prediction depends on them only
+# through u = Delta(a) + eta. One ensemble indexed by u therefore serves the
+# whole covariate distribution, if it is reweighted from the eta density to the
+# u density:
+#
+#     w(u) = p_u(u) / p_prop(u),   p_u(u) = sum_k pw_k * phi(u; Delta_k, omega_j)
+#
+# The proposal is NOT N(0, Omega). Weights from that degenerate as the covariate
+# effect grows against Omega, and because they are a deterministic function of
+# the parameters under common random numbers, the error is a WARP OF THE
+# OBJECTIVE SURFACE rather than noise -- it does not average out over an
+# optimisation. Measured on three identifying populations: the objective error
+# changes sign across the region an optimiser walks (+124 to -126), falls
+# monotonically as Omega grows so the optimiser is paid to inflate it, and
+# displaces the fit by 5.7% on the coefficient and 10.5% on Omega. On a flat
+# ridge the same distortion drove the coefficient to the search boundary.
+#
+# The proposal is the COLLAPSE's own covariance, Omega + J Sigma_a J', which is
+# the u-distribution's spread by construction. Weights are then near 1, and
+# identically 1 for a linear effect on a normal covariate, where this reduces
+# exactly to the collapse. Displacement falls to 0.0002 on both parameters and
+# the effective sample size stays above 84% even at ten times Omega.
+#
+# WHAT IT BUYS. adgh: the covariate leaves the product grid, so the solve count
+# falls by a factor of cov_nodes. admc: the covariate integral moves into the
+# weight, where it is a deterministic sum over quadrature nodes, so only u is
+# sampled and the Monte Carlo dimension drops by one.
+#
+# WHAT IT COSTS. The substitution is a property of the model, not of the text
+# describing it, and no syntactic check decides it: a test for exp( plus the
+# covariate name accepts cl <- exp(tcl + eta) + tcov*WT, where it is false. So
+# .admCovShiftGate() checks it NUMERICALLY and anything failing falls back to
+# the per-subject path.
+
+# Measure Delta(a) on the eta scale at each covariate quadrature node.
+#
+# Delta(a) = hinv(p(a)) - hinv(p(a_ref)) at eta = 0, where h is the parameter's
+# mu-reference transform. Measured from the model rather than derived from the
+# coefficient, so allometric, exponential and arbitrary covariate forms are all
+# handled: Delta is only ever a number per node. NULL whenever it cannot be
+# established, so callers fall back.
+.admCovShift <- function(ui, rxMod, pars, pinfo, s, cores = 1L, n_nodes = 21L) {
+  cd <- s[["cov_dist"]]
+  if (is.null(cd) || pinfo$n_eta == 0L || is.null(pars$L)) return(NULL)
+  cnms <- setdiff(names(cd), c("rho", "Sigma", "joint"))
+  if (length(cnms) != 1L) return(NULL)
+  cv <- cnms[[1L]]
+  # (parameter, eta) for this covariate. NOT pinfo$cov_map: that is built from
+  # rxode2's mu-reference metadata, which only populates for a bare theta*COV
+  # product -- allometric, power, exponential and Emax forms all give zero rows,
+  # and those are exactly the forms this path exists to serve.
+  # .admCovParamEta() reads the model text and returns a pair only when the
+  # covariate shares its assignment with exactly one eta, which is the condition
+  # the substitution needs anyway.
+  pe <- tryCatch(.admCovParamEta(ui, cv, pinfo$eta_col_names),
+                 error = function(e) NULL)
+  if (is.null(pe)) return(NULL)
+  j <- match(pe$eta, pinfo$eta_col_names)
+  if (is.na(j)) return(NULL)
+  pnm <- as.character(pe$param)
+  if (!nzchar(pnm)) return(NULL)
+
+  nd    <- .admCovNodesFor(cd[[cv]], n_nodes)
+  a_ref <- as.numeric(s[["cov"]][[cv]] %||% .admCovMeanOf(cd[[cv]]))
+  if (!is.finite(a_ref)) return(NULL)
+
+  a_all <- c(nd$x, a_ref)
+  pm <- .admMakeParamsList(length(a_all), pinfo, 1L)[[1L]]
+  for (nm in names(pars$struct)) pm[, nm] <- pars$struct[nm]
+  for (nm in pinfo$sigma_names)  pm[, nm] <- 0
+  if (pinfo$n_eta > 0L) pm[, pinfo$eta_col_names] <- 0
+  pm <- .admCovCols(pm, rxMod$params, NULL,
+                    matrix(a_all, ncol = 1L, dimnames = list(NULL, cv)))
+  out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pm),
+                                  events = s$ev_full, cores = cores,
+                                  nDisplayProgress = .Machine$integer.max),
+                  error = function(e) NULL)
+  if (is.null(out)) return(NULL)
+  v <- out[[pnm]]
+  if (is.null(v)) return(NULL)
+  ids  <- out[["sim.id"]]
+  if (is.null(ids)) ids <- out[["id"]]
+  keep <- !duplicated(ids)
+  v <- as.numeric(v[keep])
+  if (length(v) != length(a_all) || !all(is.finite(v))) return(NULL)
+
+  # The mu-reference transform is a property of the THETA paired with this eta,
+  # and pinfo$struct_transform is keyed by theta name -- not by the PARAMETER
+  # name .admCovParamEta() returns. Looking it up by parameter gave NULL, and
+  # nzchar(character(0)) in the guard below then errored rather than falling back.
+  .k  <- which(!is.na(pinfo$struct_eta_idx) & pinfo$struct_eta_idx == j)
+  .th <- if (length(.k) == 1L) pinfo$struct_names[[.k]] else NA_character_
+  tr  <- tryCatch(if (is.na(.th)) NULL else
+                    as.character(pinfo$struct_transform[[.th]])[1L],
+                  error = function(e) NULL)
+  if (length(tr) != 1L || is.na(tr) || !nzchar(tr)) tr <- "exp"
+  inv <- switch(tr,
+                exp = function(x) { if (any(x <= 0)) return(NULL); log(x) },
+                identity = function(x) x,
+                expit = stats::qlogis, probit = stats::qnorm,
+                function(x) { if (any(x <= 0)) return(NULL); log(x) })
+  hv <- tryCatch(inv(v), error = function(e) NULL)
+  if (is.null(hv) || !all(is.finite(hv))) return(NULL)
+  delta <- hv[seq_along(nd$x)] - hv[length(hv)]
+  mu_d  <- sum(nd$w * delta)
+  sd_d  <- sqrt(max(sum(nd$w * (delta - mu_d)^2), 0))
+  if (!is.finite(sd_d) || sd_d <= 0) return(NULL)
+  list(cov = cv, param = pnm, idx = j, a_ref = a_ref, a_nodes = nd$x,
+       delta = delta, w = nd$w, mu = mu_d, sd = sd_d)
+}
+
+# Is the substitution valid for THIS model? Compare predictions at (a, eta)
+# pairs sharing a u against the reference covariate. Structural, so checked once.
+.admCovShiftGate <- function(rxMod, pars, pinfo, s, sh, cores = 1L, tol = 1e-6) {
+  if (is.null(sh)) return(FALSE)
+  k    <- length(sh$delta)
+  pick <- unique(pmax(1L, pmin(k, round(c(0.15, 0.5, 0.85) * k))))
+  us   <- c(-0.25, 0.25)
+  grid <- expand.grid(i = pick, u = us)
+  n    <- nrow(grid) + length(us)
+  pm <- .admMakeParamsList(n, pinfo, 1L)[[1L]]
+  for (nm in names(pars$struct)) pm[, nm] <- pars$struct[nm]
+  for (nm in pinfo$sigma_names)  pm[, nm] <- 0
+  if (pinfo$n_eta > 0L) pm[, pinfo$eta_col_names] <- 0
+  a_col <- c(sh$a_nodes[grid$i], rep(sh$a_ref, length(us)))
+  e_col <- c(grid$u - sh$delta[grid$i], us)
+  pm[, pinfo$eta_col_names[sh$idx]] <- e_col
+  pm <- .admCovCols(pm, rxMod$params, NULL,
+                    matrix(a_col, ncol = 1L, dimnames = list(NULL, sh$cov)))
+  out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pm),
+                                  events = s$ev_full, cores = cores,
+                                  nDisplayProgress = .Machine$integer.max),
+                  error = function(e) NULL)
+  if (is.null(out)) return(FALSE)
+  ov   <- s$output %||% "cp"
+  vals <- out[[ov]]
+  if (is.null(vals)) vals <- out[["ipredSim"]]
+  if (is.null(vals)) return(FALSE)
+  keep <- out[["time"]] %in% s$times
+  M <- matrix(vals[keep], nrow = n, byrow = TRUE)
+  if (!all(is.finite(M))) return(FALSE)
+  worst <- 0
+  for (r in seq_len(nrow(grid))) {
+    ref <- M[nrow(grid) + match(grid$u[r], us), ]
+    worst <- max(worst, max(abs(M[r, ] - ref) / pmax(abs(ref), 1e-12)))
+  }
+  isTRUE(worst < tol)
+}
+
+# Proposal moments: the collapse's covariance, built from the MEASURED spread of
+# Delta so a non-linear covariate effect is covered as well as a linear one.
+.admCovShiftProposal <- function(pars, pinfo, sh) {
+  Om <- tcrossprod(pars$L)
+  om_j <- sqrt(Om[sh$idx, sh$idx])
+  Om[sh$idx, sh$idx] <- Om[sh$idx, sh$idx] + sh$sd^2
+  L <- tryCatch(t(chol(Om)), error = function(e) NULL)
+  if (is.null(L)) return(NULL)
+  mu <- numeric(pinfo$n_eta); mu[sh$idx] <- sh$mu
+  list(L = L, mu = mu, om_j = om_j, sd_p = sqrt(Om[sh$idx, sh$idx]))
+}
+
+# w = p_u / p_prop on the shifted coordinate, normalised to mean 1.
+.admCovShiftWeights <- function(x_j, sh, prop) {
+  pu <- rowSums(vapply(seq_along(sh$delta),
+        function(k) sh$w[k] * stats::dnorm(x_j, sh$delta[k], prop$om_j),
+        numeric(length(x_j))))
+  pp <- stats::dnorm(x_j, prop$mu[sh$idx], prop$sd_p)
+  w  <- pu / pp
+  w[!is.finite(w)] <- 0
+  if (sum(w) <= 0) return(NULL)
+  w / sum(w) * length(w)
+}
+
+# Effective sample size fraction, the diagnostic for weight degeneracy. NOT a
+# check on validity: every model form that fails .admCovShiftGate() has an ESS
+# of 100%, so the two failures are independent and both need watching.
+.admCovShiftESS <- function(w) if (is.null(w)) 0 else
+  (sum(w)^2 / sum(w^2)) / length(w)
+
+# Promote qualifying covariate studies to the reweighting path.
+#
+# Runs at DRIVER SETUP rather than in .admCheckCovariates(), because deciding it
+# needs the compiled model: Delta is measured from the model and the validity of
+# the u-substitution is checked numerically. Both are structural, so this happens
+# once per fit rather than per objective evaluation.
+#
+# Anything that does not qualify is left exactly as .admCheckCovariates() routed
+# it, so this can only ever turn "rows" into something cheaper, never change what
+# a fit computes when it does not apply.
+.admCovPromoteReweight <- function(ui, studies, pars, pinfo, rxMod, cores = 1L,
+                                   verbose = FALSE) {
+  for (nm in names(studies)) {
+    s <- studies[[nm]]
+    if (is.null(s[["cov_dist"]]) || isTRUE(s$is_joint)) next
+    if (identical(s$.adm_cov_path, "collapse")) next   # already exact and free
+    sh <- tryCatch(.admCovShift(ui, rxMod, pars, pinfo, s, cores),
+                   error = function(e) NULL)
+    if (is.null(sh)) next
+    ok <- tryCatch(.admCovShiftGate(rxMod, pars, pinfo, s, sh, cores),
+                   error = function(e) FALSE)
+    if (!isTRUE(ok)) {
+      if (verbose)
+        message("  study ", sQuote(nm), ": covariate reweighting declined ",
+                "(the prediction does not depend on the covariate and the ",
+                "random effect only through their sum)")
+      next
+    }
+    studies[[nm]]$.adm_cov_path  <- "reweight"
+    studies[[nm]]$.adm_cov_shift <- sh
+    if (verbose)
+      message("  study ", sQuote(nm), ": covariate reweighting enabled ",
+              "(sd(Delta) = ", signif(sh$sd, 3), ")")
+  }
+  studies
+}

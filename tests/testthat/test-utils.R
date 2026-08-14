@@ -457,12 +457,11 @@ test_that("a new control argument goes LAST in the formals", {
   # always meant n_nodes = 7, so anything inserted mid-signature silently
   # rebinds it. The rule is that new arguments are APPENDED, and this pins the
   # tail of each control as the record of what was appended last.
-  last <- list(adfoControl = "resid_nodes", admControl = "resid_nodes",
-               adirmcControl = "resid_nodes",
-               # cov_nodes was appended after resid_nodes: it is the number of
-               # quadrature nodes for the COVARIATE dimension of adgh's product
-               # grid, which n_nodes does not control.
-               adghControl = "cov_nodes")
+  # The tail records what was appended last, in order. cov_nodes sets the
+  # covariate dimension of adgh's product grid (n_nodes does not); cov_reweight
+  # switches the covariate from the grid into an importance weight.
+  last <- list(adfoControl = "resid_nodes", adirmcControl = "resid_nodes",
+               admControl = "cov_reweight", adghControl = "cov_reweight")
   for (nm in names(last)) {
     nms <- names(formals(get(nm)))
     nms <- nms[nms != "..."]                    # every control ends with `...`
