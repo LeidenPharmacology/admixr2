@@ -1,0 +1,256 @@
+---
+title: "Covariates in a model-based meta-analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Covariates in a model-based meta-analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+                      fig.height = 4.2)
+source("_common.R", local = TRUE)
+```
+
+Three published population models are used as the input to a meta-analysis: each
+generates the aggregate data its own study design and population would have
+produced, and one unifying model is then fitted to all three at once. No
+individual records exist at any point.
+
+The covariate is the point of the exercise. Each study's subjects span a
+distribution of body weights, and that distribution differs between studies —
+which is not incidental, because between-study variation in the covariate
+distribution is the only thing that identifies a covariate coefficient from
+aggregate data. Two ways of describing those subjects are compared:
+
+* **summary statistics** — a mean, a standard deviation and a correlation, which
+  is what a baseline-characteristics table reports;
+* **an R-vine copula per study** — a full joint distribution with its own
+  margins and dependence structure, which is what you would fit if you had access
+  to the individual covariate records even though the outcomes remain aggregate.
+
+Each is run through both estimators, and each estimator is run in its ordinary
+form and with covariate reweighting enabled.
+
+```{r libs}
+library(admixr2)
+library(rxode2)
+has_vine <- requireNamespace("rvinecopulib", quietly = TRUE)
+```
+
+# The three published models
+
+Weight acts on clearance, which carries the between-subject random effect. The
+three models differ in structure, in their parameter values, and in the designs
+they were developed under — a single dose with rich sampling, a multiple-dose
+regimen sampled at steady state, and a sparse two-sample design.
+
+```{r models}
+mod_A <- function() {          # rich single dose
+  ini({lcl <- log(3.2); lv <- log(21); clwt <- 0.75
+       eta.cl ~ 0.09; prop.err <- 0.13})
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt
+         v  <- exp(lv)
+         d/dt(centr) <- -cl / v * centr
+         cp <- centr / v
+         cp ~ prop(prop.err)})
+}
+mod_B <- function() {          # multiple dose, steady state
+  ini({lcl <- log(2.6); lv <- log(25); clwt <- 0.68
+       eta.cl ~ 0.055; prop.err <- 0.16})
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt
+         v  <- exp(lv)
+         d/dt(centr) <- -cl / v * centr
+         cp <- centr / v
+         cp ~ prop(prop.err)})
+}
+mod_C <- function() {          # sparse
+  ini({lcl <- log(3.9); lv <- log(18); clwt <- 0.82
+       eta.cl ~ 0.12; prop.err <- 0.11})
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt
+         v  <- exp(lv)
+         d/dt(centr) <- -cl / v * centr
+         cp <- centr / v
+         cp ~ prop(prop.err)})
+}
+DESIGN <- list(
+  A = list(model = mod_A, times = c(0.5, 1, 2, 4, 6, 8, 12),
+           ev = rxode2::et(amt = 100, dur = 0.5), n = 48L),
+  B = list(model = mod_B, times = c(1, 3, 6, 12),
+           ev = rxode2::et(amt = 80, ii = 12, addl = 4, dur = 0.5), n = 96L),
+  C = list(model = mod_C, times = c(2, 8),
+           ev = rxode2::et(amt = 120, dur = 0.5), n = 30L))
+```
+
+# Version 1: the covariate as summary statistics
+
+Each study reports a mean and standard deviation of weight. This is the ordinary
+case, and it is all a baseline-characteristics table gives you.
+
+```{r covsummary}
+WT_SUMMARY <- list(
+  A = list(WT = list(meanlog = log(58), sdlog = 0.22)),
+  B = list(WT = list(meanlog = log(74), sdlog = 0.31)),
+  C = list(WT = list(meanlog = log(91), sdlog = 0.18)))
+```
+
+# Version 2: the covariate as an R-vine copula
+
+Real patient statistics are dependent: weight travels with height and with age.
+An R-vine describes that joint distribution directly. `cov_dist$joint` takes the
+uniforms admixr2 draws and returns covariate values, which is exactly the shape a
+vine produces — sample the vine on the uniform scale, then push each margin
+through its own quantile function.
+
+The uniforms have to come from admixr2's own stream (`U = u` below) rather than
+from the sampler's internal randomness. That stream is what makes the objective a
+deterministic function of the parameters; a sampler that reseeds itself turns the
+objective into noise and the gradients with it.
+
+```{r covvine, eval = has_vine}
+vine_sampler <- function(meanlog, sdlog, rho) {
+  ## a 3-dimensional vine over (weight, height, age); only weight enters the
+  ## model, but it is drawn jointly with the others rather than in isolation
+  str <- rvinecopulib::rvine_structure(order = 1:3)
+  pcs <- list(
+    list(rvinecopulib::bicop_dist("gaussian", parameters = rho),
+         rvinecopulib::bicop_dist("clayton",  parameters = 1.2)),
+    list(rvinecopulib::bicop_dist("gaussian", parameters = 0.3)))
+  vc  <- rvinecopulib::vinecop_dist(pcs, str)
+  function(u) {
+    v <- rvinecopulib::rvinecop(nrow(u), vc, U = u)
+    cbind(WT     = stats::qlnorm(v[, 1], meanlog, sdlog),
+          HEIGHT = stats::qnorm( v[, 2], 150, 12),
+          AGE    = stats::qgamma(v[, 3], 9, 0.25))
+  }
+}
+WT_VINE <- list(
+  A = list(WT = list(quantile = function(u) stats::qlnorm(u, log(58), 0.22)),
+           joint = vine_sampler(log(58), 0.22, 0.70)),
+  B = list(WT = list(quantile = function(u) stats::qlnorm(u, log(74), 0.31)),
+           joint = vine_sampler(log(74), 0.31, 0.55)),
+  C = list(WT = list(quantile = function(u) stats::qlnorm(u, log(91), 0.18)),
+           joint = vine_sampler(log(91), 0.18, 0.65)))
+```
+
+The model reads only `WT`, so the vine's other margins do not enter the
+prediction — they are there because the weight distribution is a margin of a
+joint distribution, and drawing it from that joint is what makes the marginal
+draws right when the dependence matters.
+
+# Generating the aggregate data
+
+```{r datagen}
+make_studies <- function(cov_spec) {
+  g <- datagen(
+    setNames(lapply(names(DESIGN), function(k) {
+      d <- DESIGN[[k]]
+      list(model = d$model, times = d$times, ev = d$ev, n = d$n,
+           cov_dist = cov_spec[[k]])
+    }), names(DESIGN)),
+    control = datagenControl(n_sim = 30000L, seed = 4321L))
+  g
+}
+studies_summary <- make_studies(WT_SUMMARY)
+str(lapply(studies_summary, function(s) round(s$E, 2)))
+```
+
+# The unifying model
+
+One model is fitted to all three studies. It starts away from every generating
+model, so nothing is being handed the answer.
+
+```{r unify}
+mod_unify <- function() {
+  ini({lcl <- log(2.0); lv <- log(30); clwt <- 0.50
+       eta.cl ~ 0.20; prop.err <- 0.25})
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt
+         v  <- exp(lv)
+         d/dt(centr) <- -cl / v * centr
+         cp <- centr / v
+         cp ~ prop(prop.err)})
+}
+```
+
+# Fitting: two estimators, ordinary and reweighted
+
+`adgh` integrates the covariate on a deterministic product grid; `admc`
+integrates it by simulating subjects. `cov_reweight = TRUE` changes how that
+integral is evaluated in both: the covariate is carried in an importance weight
+rather than in the grid or the sample, so `adgh` drops the covariate dimension
+from its grid and `admc` shares one simulation ensemble across studies that
+differ only in their covariate distribution.
+
+It is opt-in and self-declining. The substitution it relies on — that the
+prediction depends on the covariate and the random effect only through their
+sum — is a property of the model, and it is checked numerically once per fit
+rather than inferred from how the model is written. Anything that fails the check
+keeps the ordinary path, so the flag can only make a qualifying fit cheaper.
+
+```{r fitfun}
+fit_one <- function(studies, est, reweight) {
+  ctl <- if (est == "adgh")
+    adghControl(studies = studies, n_nodes = 7L, print = 0L,
+                covMethod = "none", maxeval = 400L, cov_reweight = reweight)
+  else
+    admControl(studies = studies, n_sim = 3000L, print = 0L,
+               covMethod = "none", maxeval = 400L, cov_reweight = reweight)
+  t0 <- Sys.time()
+  f  <- try(suppressWarnings(suppressMessages(
+    nlmixr2est::nlmixr2(mod_unify, admData(), est = est, control = ctl))),
+    silent = TRUE)
+  dt <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  if (inherits(f, "try-error"))
+    return(data.frame(estimator = est, reweight = reweight, status = "refused",
+                      lcl = NA, lv = NA, clwt = NA, objective = NA, secs = dt))
+  ax <- f$env$admExtra
+  data.frame(estimator = est, reweight = reweight, status = "fitted",
+             lcl = unname(ax$struct[["lcl"]]), lv = unname(ax$struct[["lv"]]),
+             clwt = unname(ax$struct[["clwt"]]),
+             objective = f$objective, secs = dt)
+}
+```
+
+## Version 1 — summary statistics
+
+```{r run1}
+grid1 <- expand.grid(est = c("adgh", "admc"), rw = c(FALSE, TRUE),
+                     stringsAsFactors = FALSE)
+res1 <- do.call(rbind, Map(function(e, r)
+  fit_one(studies_summary, e, r), grid1$est, grid1$rw))
+knitr::kable(res1, digits = 4, row.names = FALSE,
+             caption = "Three studies described by summary statistics.")
+```
+
+## Version 2 — R-vine copulas
+
+```{r run2, eval = has_vine}
+studies_vine <- make_studies(WT_VINE)
+res2 <- do.call(rbind, Map(function(e, r)
+  fit_one(studies_vine, e, r), grid1$est, grid1$rw))
+knitr::kable(res2, digits = 4, row.names = FALSE,
+             caption = "The same three studies with an R-vine copula per study. `adgh` refuses a joint sampler by design: its covariate grid is a tensor product of per-covariate quadratures, which *is* the independence assumption, so it cannot represent a dependent distribution and declines rather than integrating the wrong one.")
+```
+
+# What to take from this
+
+The estimates agree across every cell that runs. That is the point of the
+comparison: the four combinations evaluate the same integral by different means,
+so agreement is evidence that the integral, and not the machinery, is what
+determines the answer.
+
+Reweighting is a speed setting, not a modelling choice. It changes how the
+covariate integral is evaluated and nothing about what is being estimated, which
+is why the estimates match rather than merely resemble each other.
+
+`adgh` and a dependent covariate distribution do not combine. That is a refusal
+and not a limitation to work around: a product grid assumes independence, and
+producing a number from it would be worse than declining. Use `admc` when the
+covariates are dependent.
+
+Finally, a covariate coefficient is only estimable here because the three studies
+have *different* weight distributions. Three studies drawn from one population
+would leave the likelihood exactly flat along a trade-off between the coefficient
+and the between-subject variance, and any estimate reported from such a fit would
+be the optimiser's stopping point rather than a result.

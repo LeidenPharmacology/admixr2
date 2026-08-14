@@ -919,7 +919,7 @@
   cd <- s[["cov_dist"]]
   if (is.null(cd) || pinfo$n_eta == 0L || is.null(pars$L)) return(NULL)
   cnms <- setdiff(names(cd), c("rho", "Sigma", "joint"))
-  if (length(cnms) != 1L) return(NULL)
+  if (length(cnms) < 1L) return(NULL)
   cv <- cnms[[1L]]
   # (parameter, eta) for this covariate. NOT pinfo$cov_map: that is built from
   # rxode2's mu-reference metadata, which only populates for a bare theta*COV
@@ -945,17 +945,32 @@
   pnm <- as.character(pe$param)
   if (!nzchar(pnm)) return(NULL)
 
-  nd    <- .admCovNodesFor(cd[[cv]], n_nodes)
-  a_ref <- as.numeric(s[["cov"]][[cv]] %||% .admCovMeanOf(cd[[cv]]))
-  if (!is.finite(a_ref)) return(NULL)
-
-  a_all <- c(nd$x, a_ref)
-  pm <- .admMakeParamsList(length(a_all), pinfo, 1L)[[1L]]
+  # The covariate sample Delta is measured over. Several covariates may act on
+  # the same parameter, in which case Delta is their COMBINED shift, so the node
+  # set is their joint distribution: a product grid when the margins are
+  # independent, and a draw from the sampler itself when they are not -- a
+  # product grid IS the independence assumption and would discard exactly the
+  # dependence a copula was supplied to express.
+  jf <- cd[["joint"]]
+  if (is.function(jf)) {
+    X  <- tryCatch(.admCovRowsFor(cd, 2048L, pinfo$n_eta), error = function(e) NULL)
+    if (is.null(X)) return(NULL)
+    Wt <- rep(1 / nrow(X), nrow(X))
+  } else {
+    cg <- tryCatch(.admCovGrid(cd[cnms], n_nodes), error = function(e) NULL)
+    if (is.null(cg)) return(NULL)
+    X <- cg$X; Wt <- cg$W
+  }
+  X <- X[, cnms, drop = FALSE]
+  a_ref <- vapply(cnms, function(k)
+    as.numeric(s[["cov"]][[k]] %||% .admCovMeanOf(cd[[k]])), numeric(1))
+  if (!all(is.finite(a_ref))) return(NULL)
+  Xall <- rbind(X, matrix(a_ref, nrow = 1L, dimnames = list(NULL, cnms)))
+  pm <- .admMakeParamsList(nrow(Xall), pinfo, 1L)[[1L]]
   for (nm in names(pars$struct)) pm[, nm] <- pars$struct[nm]
   for (nm in pinfo$sigma_names)  pm[, nm] <- 0
   if (pinfo$n_eta > 0L) pm[, pinfo$eta_col_names] <- 0
-  pm <- .admCovCols(pm, rxMod$params, NULL,
-                    matrix(a_all, ncol = 1L, dimnames = list(NULL, cv)))
+  pm <- .admCovCols(pm, rxMod$params, NULL, Xall)
   out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pm),
                                   events = s$ev_full, cores = cores,
                                   nDisplayProgress = .Machine$integer.max),
@@ -967,7 +982,7 @@
   if (is.null(ids)) ids <- out[["id"]]
   keep <- !duplicated(ids)
   v <- as.numeric(v[keep])
-  if (length(v) != length(a_all) || !all(is.finite(v))) return(NULL)
+  if (length(v) != nrow(Xall) || !all(is.finite(v))) return(NULL)
 
   # The mu-reference transform is a property of the THETA paired with this eta,
   # and pinfo$struct_transform is keyed by theta name -- not by the PARAMETER
@@ -986,19 +1001,33 @@
                 function(x) { if (any(x <= 0)) return(NULL); log(x) })
   hv <- tryCatch(inv(v), error = function(e) NULL)
   if (is.null(hv) || !all(is.finite(hv))) return(NULL)
-  delta <- hv[seq_along(nd$x)] - hv[length(hv)]
-  mu_d  <- sum(nd$w * delta)
-  sd_d  <- sqrt(max(sum(nd$w * (delta - mu_d)^2), 0))
+  delta <- hv[seq_len(nrow(X))] - hv[length(hv)]
+  # p_u is a mixture with one component per node, evaluated at every draw on
+  # every objective call, so a 2048-row joint sample or a 3-covariate product
+  # grid must be summarised before it becomes the inner loop. Reduce to K
+  # weighted quantiles of Delta: that preserves the distribution that matters
+  # and keeps the mixture small. `dgate` keeps the UNREDUCED values, which the
+  # gate needs because they still align with the covariate rows.
+  dgate <- delta; Xg <- X
+  K <- 51L
+  if (length(delta) > K) {
+    o  <- order(delta); dd <- delta[o]; ww <- Wt[o]
+    cw <- cumsum(ww) / sum(ww)
+    delta <- stats::approx(cw, dd, xout = (seq_len(K) - 0.5) / K, rule = 2)$y
+    Wt    <- rep(1 / K, K)
+  }
+  mu_d  <- sum(Wt * delta)
+  sd_d  <- sqrt(max(sum(Wt * (delta - mu_d)^2), 0))
   if (!is.finite(sd_d) || sd_d <= 0) return(NULL)
-  list(cov = cv, param = pnm, idx = j, a_ref = a_ref, a_nodes = nd$x,
-       delta = delta, w = nd$w, mu = mu_d, sd = sd_d)
+  list(cov = cnms, param = pnm, idx = j, a_ref = a_ref, a_nodes = Xg,
+       dgate = dgate, delta = delta, w = Wt, mu = mu_d, sd = sd_d)
 }
 
 # Is the substitution valid for THIS model? Compare predictions at (a, eta)
 # pairs sharing a u against the reference covariate. Structural, so checked once.
 .admCovShiftGate <- function(rxMod, pars, pinfo, s, sh, cores = 1L, tol = 1e-6) {
   if (is.null(sh)) return(FALSE)
-  k    <- length(sh$delta)
+  k    <- length(sh$dgate)
   pick <- unique(pmax(1L, pmin(k, round(c(0.15, 0.5, 0.85) * k))))
   us   <- c(-0.25, 0.25)
   grid <- expand.grid(i = pick, u = us)
@@ -1007,11 +1036,13 @@
   for (nm in names(pars$struct)) pm[, nm] <- pars$struct[nm]
   for (nm in pinfo$sigma_names)  pm[, nm] <- 0
   if (pinfo$n_eta > 0L) pm[, pinfo$eta_col_names] <- 0
-  a_col <- c(sh$a_nodes[grid$i], rep(sh$a_ref, length(us)))
-  e_col <- c(grid$u - sh$delta[grid$i], us)
-  pm[, pinfo$eta_col_names[sh$idx]] <- e_col
-  pm <- .admCovCols(pm, rxMod$params, NULL,
-                    matrix(a_col, ncol = 1L, dimnames = list(NULL, sh$cov)))
+  # a_nodes is a MATRIX (one column per covariate) and dgate is its unreduced
+  # Delta, so the two still align row by row.
+  A <- rbind(sh$a_nodes[grid$i, , drop = FALSE],
+             matrix(rep(sh$a_ref, each = length(us)), nrow = length(us),
+                    dimnames = list(NULL, colnames(sh$a_nodes))))
+  pm[, pinfo$eta_col_names[sh$idx]] <- c(grid$u - sh$dgate[grid$i], us)
+  pm <- .admCovCols(pm, rxMod$params, NULL, A)
   out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pm),
                                   events = s$ev_full, cores = cores,
                                   nDisplayProgress = .Machine$integer.max),
