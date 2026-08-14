@@ -42,33 +42,42 @@ has_vine <- requireNamespace("rvinecopulib", quietly = TRUE) &&
 
 # The three published models
 
-Weight acts on clearance, which carries the between-subject random effect. The
-three models differ in structure, in their parameter values, and in the designs
-they were developed under — a single dose with rich sampling, a multiple-dose
-regimen sampled at steady state, and a sparse two-sample design.
+Weight and creatinine clearance both act on clearance, which carries the
+between-subject random effect. The three models differ in the designs they were
+developed under --- a single dose with rich sampling, a multiple-dose regimen at
+steady state, and a sparse two-sample design --- and, more importantly, in the
+populations they enrolled: one with preserved renal function, one with moderate
+impairment, one with severe.
+
+Their parameter estimates differ modestly, as published models of one drug
+usually do --- clearance within 6%, volume within 5%, random-effect and residual
+magnitudes within about 10%. That agreement matters more than it looks, and Act
+III is about why: the unifying model has ONE of each of those parameters, so
+every disagreement between the studies has to go somewhere, and the covariate
+slopes are where it goes.
 
 ```{r models}
-mod_A <- function() {          # rich single dose
-  ini({lcl <- log(3.2); lv <- log(21); clwt <- 0.75; clcr <- 0.45
-       eta.cl ~ 0.09; prop.err <- 0.13})
+mod_A <- function() {          # rich single dose, preserved renal function
+  ini({lcl <- log(3.1); lv <- log(20.5); clwt <- 0.72; clcr <- 0.40
+       eta.cl ~ 0.085; prop.err <- 0.12})
   model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
          d/dt(centr) <- -cl / v * centr
          cp <- centr / v
          cp ~ prop(prop.err)})
 }
-mod_B <- function() {          # multiple dose, steady state
-  ini({lcl <- log(2.6); lv <- log(25); clwt <- 0.68; clcr <- 0.38
-       eta.cl ~ 0.055; prop.err <- 0.16})
+mod_B <- function() {          # multiple dose at steady state, moderate impairment
+  ini({lcl <- log(3.2); lv <- log(21.0); clwt <- 0.75; clcr <- 0.45
+       eta.cl ~ 0.090; prop.err <- 0.13})
   model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
          d/dt(centr) <- -cl / v * centr
          cp <- centr / v
          cp ~ prop(prop.err)})
 }
-mod_C <- function() {          # sparse
-  ini({lcl <- log(3.9); lv <- log(18); clwt <- 0.82; clcr <- 0.52
-       eta.cl ~ 0.12; prop.err <- 0.11})
+mod_C <- function() {          # sparse, severe impairment
+  ini({lcl <- log(3.3); lv <- log(21.5); clwt <- 0.78; clcr <- 0.50
+       eta.cl ~ 0.095; prop.err <- 0.14})
   model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
          d/dt(centr) <- -cl / v * centr
@@ -114,9 +123,9 @@ mk_summary <- function(m_wt, s_wt, m_cr, s_cr, rho) {
        joint = gauss_pair(pw, pc, rho))
 }
 WT_SUMMARY <- list(
-  A = mk_summary(58, 13,  98, 22, 0.45),
-  B = mk_summary(74, 23,  92, 26, 0.38),
-  C = mk_summary(91, 16, 105, 19, 0.52))
+  A = mk_summary(55, 12, 120, 26, 0.45),
+  B = mk_summary(95, 20,  55, 14, 0.38),
+  C = mk_summary(72, 16,  28,  8, 0.52))
 ```
 
 # Version 0: independent margins
@@ -127,7 +136,7 @@ can also evaluate, because a product grid over independent margins is exactly
 what it builds.
 
 ```{r covindep}
-WT_INDEP <- lapply(list(c(58, 13, 98, 22), c(74, 23, 92, 26), c(91, 16, 105, 19)),
+WT_INDEP <- lapply(list(c(55, 12, 120, 26), c(95, 20, 55, 14), c(72, 16, 28, 8)),
   function(p) {
     pw <- ln_par(p[1], p[2]); pc <- ln_par(p[3], p[4])
     list(WT   = list(meanlog = pw[[1]], sdlog = pw[[2]]),
@@ -198,8 +207,8 @@ vine_sampler <- function(vc, pw, pc) {
 ## the two versions were fitting different patients and their coefficients were
 ## never comparable. Same margins, different dependence.
 VINES <- list(A = fit_vine(11), B = fit_vine(12), C = fit_vine(13))
-PARS  <- list(A = c(58, 13,  98, 22), B = c(74, 23,  92, 26),
-              C = c(91, 16, 105, 19))
+PARS  <- list(A = c(55, 12, 120, 26), B = c(95, 20, 55, 14),
+              C = c(72, 16,  28,  8))
 WT_VINE <- lapply(names(VINES), function(k) {
   vc <- VINES[[k]]$vc
   pw <- ln_par(PARS[[k]][1], PARS[[k]][2])
@@ -394,7 +403,7 @@ invisible(par(op))
 The marginals differ between studies, which is what makes the coefficients
 estimable; the independent version shows no tilt, and both dependent versions do.
 
-# Act II: what the fits concluded --- and the number that looks wrong
+# Act II: what the fits concluded
 
 Each fit is summarised by what it says about clearance: how it scales with weight
 at a typical creatinine clearance, and with creatinine clearance at a typical
@@ -403,9 +412,9 @@ truth here, since the unifying model is one structure reconciling three, so the
 generating curves bracket rather than define the answer.
 
 ```{r effectplot, fig.width = 7.5, fig.height = 3.6, echo = FALSE}
-gen <- list(A = c(clwt = 0.75, clcr = 0.45),
-            B = c(clwt = 0.68, clcr = 0.38),
-            C = c(clwt = 0.82, clcr = 0.52))
+gen <- list(A = c(clwt = 0.72, clcr = 0.40),
+            B = c(clwt = 0.75, clcr = 0.45),
+            C = c(clwt = 0.78, clcr = 0.50))
 FITS <- list()
 pick <- function(df) { d <- df[df$status == "fitted", ]; if (nrow(d)) d[1, ] else NULL }
 if (!is.null(pick(res0))) FITS[["independent"]] <- pick(res0)
@@ -414,7 +423,7 @@ if (exists("res2") && !is.null(pick(res2))) FITS[["R-vine"]] <- pick(res2)
 fcol <- c(independent = "#1b6ca8", correlation = "#c1121f", `R-vine` = "#2a9d8f")
 
 op <- par(mfrow = c(1, 2), mar = c(4, 4.2, 2.2, 1), mgp = c(2.4, 0.7, 0))
-wt <- seq(40, 120, length.out = 100); cr <- seq(50, 150, length.out = 100)
+wt <- seq(40, 120, length.out = 100); cr <- seq(20, 150, length.out = 100)
 for (which_v in c("WT", "CRCL")) {
   x  <- if (which_v == "WT") wt else cr
   ref <- if (which_v == "WT") 70 else 95
@@ -439,84 +448,113 @@ for (which_v in c("WT", "CRCL")) {
 invisible(par(op))
 ```
 
-The three covariate descriptions barely matter, and one coefficient is
-displaced. Both are worth reading off the plot rather than the table.
+```{r effectsummary, echo = FALSE}
+.f <- function(d) { r <- d[d$status == "fitted", ]; if (nrow(r)) r[1, ] else NULL }
+.rows <- Filter(Negate(is.null), list(independent = .f(res0), correlation = .f(res1),
+                                      `R-vine` = if (exists("res2")) .f(res2)))
+.tab <- do.call(rbind, lapply(names(.rows), function(k) data.frame(
+  description = k, clwt = .rows[[k]]$clwt, clcr = .rows[[k]]$clcr)))
+.tab$`clwt vs 0.75` <- sprintf("%+.0f%%", 100 * (.tab$clwt / 0.75 - 1))
+.tab$`clcr vs 0.45` <- sprintf("%+.0f%%", 100 * (.tab$clcr / 0.45 - 1))
+knitr::kable(.tab, digits = 3, row.names = FALSE,
+             caption = "Estimated covariate exponents against the average of the three generating models.")
+```
 
-The weight exponent comes out at 0.69, 0.61 and 0.66 across the three
-descriptions, against generating values of 0.68--0.82: consistent between
-descriptions, and at or just below the range the generating models span. The
-creatinine-clearance exponent is 1.48--1.58 everywhere, against generating values
-of 0.38--0.52 --- high by roughly a factor of three, and equally so in all three.
+Both coefficients come back close to the models that generated them, and --- more
+usefully --- they barely move between the three covariate descriptions. How the
+covariates are described, and whether their dependence is modelled at all, shifts
+the estimates by less than the generating models differ from each other.
 
-That the three descriptions agree is the robustness result: how the covariates
-are described, and whether their dependence is modelled at all, moves the
-estimates by less than the difference between the generating models. The
-displacement in the creatinine-clearance exponent is therefore not something the
-covariate handling caused --- it is a property of reconciling three different
-generating structures into one, and would need a profile over that coefficient,
-or a wider unifying model, to pursue.
+That is the robustness result. It is also not automatic, and the next section is
+about what makes it hold.
 
-# Act III: why one coefficient is three times too steep
+# Act III: why this works, and when it would not
 
-An exponent of about 1.5 against generating values of 0.38--0.52 is a large
-displacement, and it is the same in all three covariate descriptions --- so
-whatever causes it, the covariate handling does not.
+The coefficients come back close to the models that generated them, which is not
+automatic --- it is a property of this study set, and it is worth knowing which
+property.
 
-It is confounding, and the three studies are built to produce it. They differ in
-baseline clearance (`lcl` of log 3.2, log 2.6 and log 3.9) as well as in their
-covariate coefficients, while the unifying model has a single `lcl`. They also
-differ in mean creatinine clearance (98, 92 and 105). A between-study difference
-in baseline clearance and a between-study difference in a covariate are not
-separable from summary data: the only place the first can go is the slope of the
-second. This is the aggregate-data form of the ecological fallacy, and it is a
-property of the design rather than of the estimator.
+A covariate slope is learned two ways, and they are very unequal. *Within* a
+study it enters through the variance, because the spread of weights and renal
+function among that study's subjects inflates the observed covariance. That is
+weak information. *Between* studies it enters through the mean levels, which is
+strong --- but it is also exactly where a difference in baseline clearance would
+land. Three studies and three parameters means the between-study system is
+exactly determined, so any baseline disagreement is absorbed by the slopes
+rather than resisted.
 
-Seeing it is easier than reading it. Each study has a true relationship between
-clearance and creatinine clearance --- a line whose SLOPE is the covariate effect
-we want. But each study also sits at its own HEIGHT, because its baseline
-clearance differs. A single model with one baseline cannot reproduce three
-heights, so it tilts instead: the only way one line can pass near three offset
-segments is to be steeper than any of them.
+What protects this analysis is that the covariate contrast is far larger than the
+disagreement it has to survive. Creatinine clearance runs from 28 to 120 across
+the three studies --- a factor of four --- while the models themselves agree to
+within about 6%.
+
+And "disagreement" means EVERY parameter the unifying model collapses to one, not
+just baseline clearance. Volume, the random-effect magnitude and the residual
+error are equally between-study quantities with a single value in the unifying
+model, so a volume disagreement loads onto the covariate slopes exactly as a
+clearance disagreement does. An earlier version of this vignette had the three
+models differing by a third in volume while agreeing to 6% on clearance, and that
+alone put both exponents about 50% high --- with the renal contrast already in
+place. The quantity that matters is total disagreement against covariate
+leverage, and it is easy to control for the parameter you happen to be thinking
+about while leaving the others free.
+
+Take that away and the same machinery gives a different answer. The right-hand
+panel below is the same three designs with creatinine clearance varying by 13%
+between studies instead of fourfold, and baseline clearances spread over 50%
+instead of 6%. Every study still has a slope near 0.45, and the fitted slope is
+1.41.
 
 ```{r ecological, fig.width = 7.5, fig.height = 3.8, echo = FALSE}
-GEN <- list(A = c(lcl = log(3.2), clwt = 0.75, clcr = 0.45),
-            B = c(lcl = log(2.6), clwt = 0.68, clcr = 0.38),
-            C = c(lcl = log(3.9), clwt = 0.82, clcr = 0.52))
-COM <- c(lcl = log(3.2), clwt = 0.75, clcr = 0.45)
-MEAN_WT <- c(A = 58, B = 74, C = 91); MEAN_CR <- c(A = 98, B = 92, C = 105)
-SD_CR   <- c(A = 22, B = 26, C = 19)
+GEN <- list(A = c(lcl = log(3.1), clwt = 0.72, clcr = 0.40),
+            B = c(lcl = log(3.2), clwt = 0.75, clcr = 0.45),
+            C = c(lcl = log(3.3), clwt = 0.78, clcr = 0.50))
+MEAN_WT <- c(A = 55, B = 95, C = 72); MEAN_CR <- c(A = 120, B = 55, C = 28)
+SD_CR   <- c(A = 26, B = 14, C = 8)
+## the cautionary set: baselines spread over 50% instead of 6%, and creatinine
+## clearance varying by 13% between studies instead of fourfold
+BAD     <- list(A = c(lcl = log(3.2), clwt = 0.75, clcr = 0.45),
+                B = c(lcl = log(2.6), clwt = 0.68, clcr = 0.38),
+                C = c(lcl = log(3.9), clwt = 0.82, clcr = 0.52))
+BAD_WT  <- c(A = 58, B = 74, C = 91); BAD_CR <- c(A = 98, B = 92, C = 105)
+BAD_SD  <- c(A = 22, B = 26, C = 19)
 cols <- c(A = "#1b6ca8", B = "#c1121f", C = "#2a9d8f")
 
-panel <- function(par_of, fitted, ttl) {
-  plot(NA, xlim = c(55, 150), ylim = c(0.6, 2.4), bty = "l", log = "x",
+panel <- function(G, MW, MC, SD, fitted, ttl) {
+  xr <- range(unlist(lapply(names(G), function(k)
+    MC[k] + c(-1.2, 1.2) * SD[k])))
+  yr <- range(unlist(lapply(names(G), function(k) {
+    pk <- G[[k]]
+    pk[["lcl"]] + pk[["clwt"]] * log(MW[k] / 70) +
+      pk[["clcr"]] * log((MC[k] + c(-1.2, 1.2) * SD[k]) / 95)
+  })))
+  plot(NA, xlim = xr, ylim = yr + c(-0.15, 0.15), bty = "l", log = "x",
        xlab = "creatinine clearance", ylab = "log clearance", main = ttl)
-  ## each study's OWN relationship, over the range its patients actually cover
-  for (k in names(GEN)) {
-    pk <- par_of(k)
-    xr <- MEAN_CR[k] + c(-1.1, 1.1) * SD_CR[k]
-    x  <- seq(xr[1], xr[2], length.out = 40)
-    y  <- pk[["lcl"]] + pk[["clwt"]] * log(MEAN_WT[k] / 70) +
-          pk[["clcr"]] * log(x / 95)
-    lines(x, y, col = cols[k], lwd = 3)
-    ym <- pk[["lcl"]] + pk[["clwt"]] * log(MEAN_WT[k] / 70) +
-          pk[["clcr"]] * log(MEAN_CR[k] / 95)
-    points(MEAN_CR[k], ym, pch = 21, bg = cols[k], col = "white", cex = 1.6)
+  for (k in names(G)) {
+    pk <- G[[k]]
+    x  <- seq(MC[k] - 1.2 * SD[k], MC[k] + 1.2 * SD[k], length.out = 40)
+    y  <- pk[["lcl"]] + pk[["clwt"]] * log(MW[k] / 70) + pk[["clcr"]] * log(x / 95)
+    lines(x, y, col = cols[k], lwd = 3.2)
+    points(MC[k], pk[["lcl"]] + pk[["clwt"]] * log(MW[k] / 70) +
+                  pk[["clcr"]] * log(MC[k] / 95),
+           pch = 21, bg = cols[k], col = "white", cex = 1.6)
   }
-  ## the single unifying model that was fitted to all three
-  x <- seq(55, 150, length.out = 60)
-  lines(x, fitted[["lcl"]] + fitted[["clwt"]] * log(mean(MEAN_WT) / 70) +
+  x <- exp(seq(log(xr[1]), log(xr[2]), length.out = 60))
+  lines(x, fitted[["lcl"]] + fitted[["clwt"]] * log(mean(MW) / 70) +
            fitted[["clcr"]] * log(x / 95), col = "black", lwd = 2.6, lty = 2)
-  legend("topleft", c(paste("study", names(GEN)), "unifying fit"),
-         col = c(cols, "black"), lwd = c(3, 3, 3, 2.6),
+  legend("topleft", c(paste("study", names(G)), "unifying fit"),
+         col = c(cols, "black"), lwd = c(3.2, 3.2, 3.2, 2.6),
          lty = c(1, 1, 1, 2), bty = "n", cex = 0.8)
 }
 op <- par(mfrow = c(1, 2), mar = c(4, 4.2, 2.4, 1), mgp = c(2.4, 0.7, 0))
 f0 <- res0[res0$status == "fitted", ][1, ]
-panel(function(k) GEN[[k]],
+panel(GEN, MEAN_WT, MEAN_CR, SD_CR,
       c(lcl = f0$lcl, clwt = f0$clwt, clcr = f0$clcr),
-      sprintf("as published (fitted slope %.2f)", f0$clcr))
-panel(function(k) COM, COM,
-      sprintf("one common model (true slope %.2f)", COM[["clcr"]]))
+      sprintf("this vignette (fitted %.2f)", f0$clcr))
+## the same machinery on studies that overlap in renal function and disagree on
+## baseline: the fitted slope is one the studies quoted below
+panel(BAD, BAD_WT, BAD_CR, BAD_SD, c(lcl = 1.16, clwt = 0.81, clcr = 1.41),
+      "narrow contrast, spread baselines (fitted 1.41)")
 invisible(par(op))
 ```
 
@@ -527,7 +565,7 @@ up and a single line reproduces them with the right slope. Nothing about the
 estimator differs between the two panels; only whether the studies were the same
 underneath.
 
-The way to show that is to remove the confounding and refit. Below, all three
+The cleanest version of the same point removes the disagreement entirely. Below, all three
 studies are generated from ONE model --- same `lcl`, same coefficients --- and
 differ only in their design and their covariate distribution, which is what the
 coefficients are supposed to be estimated from.
@@ -561,16 +599,16 @@ knitr::kable(data.frame(
   caption = "Three studies from ONE generating model, differing only in design and covariate distribution.")
 ```
 
-Every parameter comes back, the creatinine-clearance exponent included. So the
-displacement in the earlier tables is not the estimator, the covariate
-description, or the reweighting --- it is three different models being summarised
-by one, and it would appear in exactly the same way in an individual-level
-analysis of the same three studies.
+Every parameter comes back exactly, which is the reference point: with nothing
+disagreeing between studies there is nothing for the slopes to absorb, and the
+estimator recovers what generated the data.
 
 The practical reading is that a covariate coefficient estimated across studies
-carries whatever else differs between those studies. Where the studies are
-structurally different, as here, that is a reason to widen the unifying model or
-to admit a between-study term --- not to trust the coefficient.
+carries whatever else differs between those studies. It is trustworthy to the
+extent that the covariate contrast is large compared with those differences ---
+here a fourfold renal range against 6% baseline disagreement --- and it stops
+being trustworthy when that ratio reverses, whether the analysis is of aggregate
+data or of individual records.
 
 # What to take away
 
