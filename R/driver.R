@@ -46,6 +46,9 @@
   # the accuracy sweep plateau: raising n_nodes refines only the random-effect
   # dimensions, so the covariate error never moved.
   pinfo$cov_nodes        <- .ctl$cov_nodes %||% 7L
+  # Whether covariate reweighting was asked for. On pinfo because the estimators
+  # read it inside the objective, where the control is not in scope.
+  pinfo$cov_reweight     <- isTRUE(.ctl$cov_reweight)
   pinfo
 }
 

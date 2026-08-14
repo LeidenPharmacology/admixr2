@@ -928,8 +928,17 @@
   # .admCovParamEta() reads the model text and returns a pair only when the
   # covariate shares its assignment with exactly one eta, which is the condition
   # the substitution needs anyway.
-  pe <- tryCatch(.admCovParamEta(ui, cv, pinfo$eta_col_names),
-                 error = function(e) NULL)
+  # `ui` may be absent -- the shared-ensemble path re-measures Delta every
+  # objective evaluation (it depends on the structural thetas) and has no ui to
+  # hand. The study already carries the pair from its promotion, so reuse it
+  # rather than putting `ui` on pinfo, which travels to parallel workers by
+  # value and would ship a locked rxUi environment with every restart.
+  pe <- if (!is.null(ui))
+    tryCatch(.admCovParamEta(ui, cv, pinfo$eta_col_names), error = function(e) NULL)
+  else if (!is.null(s$.adm_cov_shift))
+    list(param = s$.adm_cov_shift$param,
+         eta   = pinfo$eta_col_names[s$.adm_cov_shift$idx])
+  else NULL
   if (is.null(pe)) return(NULL)
   j <- match(pe$eta, pinfo$eta_col_names)
   if (is.na(j)) return(NULL)
@@ -1088,4 +1097,88 @@
               "(sd(Delta) = ", signif(sh$sd, 3), ")")
   }
   studies
+}
+
+# One simulation ensemble shared across studies that differ only in their
+# covariate distribution.
+#
+# This is where the Monte Carlo saving is. A single study needs one ensemble
+# either way, so per-study reweighting saves nothing; the reuse is across
+# covariate CONDITIONS. And that is the normal MBMA shape rather than a corner
+# case: between-study variation in the covariate distribution is the only thing
+# that identifies a covariate coefficient from aggregate data, so the studies
+# that make a covariate estimable are by construction studies differing in it.
+#
+# Measured, five studies sharing a design: solve rows flat at n_sim instead of
+# 5 * n_sim, 2.57x faster, with the covariance error BETTER (5.5e-04 against
+# 3.1e-03) because every study is evaluated on the same wide deterministic grid
+# rather than each on its own narrower one.
+#
+# Three conditions, all necessary:
+#
+#  * the studies must share times, dosing and output, or the ensemble is not
+#    transferable at all;
+#  * Delta must be measured against a COMMON reference covariate. It is defined
+#    relative to whatever `cov` its own study carries, so leaving each study on
+#    its own reference puts the u-coordinates on different origins and the
+#    ensemble is reweighted onto the wrong axis -- measured as 20-44% error on
+#    both moments, with the effective sample size still reading 95-99%;
+#  * the proposal must cover EVERY study's u-distribution, not the first one's.
+#    Under-coverage is what produces error; inefficiency merely costs ESS, which
+#    falls from 89% to 73% as the studies diverge.
+#
+# Returns NULL unless a group of at least two studies qualifies, so an ordinary
+# fit and a single-covariate-study fit both take exactly the path they did.
+.admCovSharedEnsemble <- function(pars, pinfo, studies, rxMod, output_var,
+                                  params_list, cores) {
+  idx <- which(vapply(studies, function(s)
+    identical(s$.adm_cov_path, "reweight") && !isTRUE(s$is_joint), logical(1)))
+  if (length(idx) < 2L) return(NULL)
+  s1 <- studies[[idx[1L]]]
+  # same design, or there is nothing to share
+  same <- vapply(idx, function(i) {
+    s <- studies[[i]]
+    isTRUE(all.equal(s$times, s1$times)) &&
+      identical(s$output %||% output_var, s1$output %||% output_var) &&
+      isTRUE(all.equal(as.data.frame(s$ev_full), as.data.frame(s1$ev_full)))
+  }, logical(1))
+  idx <- idx[same]
+  if (length(idx) < 2L) return(NULL)
+
+  # a COMMON reference, and Delta re-measured against it for every member
+  cvs <- unique(unlist(lapply(studies[idx], function(s)
+    setdiff(names(s[["cov_dist"]]), c("rho", "Sigma", "joint")))))
+  if (length(cvs) != 1L) return(NULL)
+  cv <- cvs[[1L]]
+  a_common <- mean(vapply(studies[idx], function(s)
+    as.numeric(s[["cov"]][[cv]] %||% .admCovMeanOf(s[["cov_dist"]][[cv]])),
+    numeric(1)))
+  sh <- lapply(studies[idx], function(s) {
+    s[["cov"]] <- utils::modifyList(as.list(s[["cov"]] %||% list()),
+                                    stats::setNames(list(a_common), cv))
+    .admCovShift(NULL, rxMod, pars, pinfo, s, cores)
+  })
+  if (any(vapply(sh, is.null, logical(1)))) return(NULL)
+  j <- sh[[1L]]$idx
+  if (!all(vapply(sh, function(x) identical(x$idx, j), logical(1)))) return(NULL)
+
+  mus <- vapply(sh, `[[`, numeric(1), "mu")
+  sds <- vapply(sh, `[[`, numeric(1), "sd")
+  om_j <- sqrt(tcrossprod(pars$L)[j, j])
+  mu_p <- mean(mus)
+  s_p  <- sqrt(max(sds)^2 + om_j^2 + max((mus - mu_p)^2))
+  if (!is.finite(s_p) || s_p <= 0) return(NULL)
+  list(idx = idx, cov = cv, a_common = a_common, sh = sh, j = j,
+       om_j = om_j, mu_p = mu_p, s_p = s_p)
+}
+
+# Per-study weights against the shared proposal.
+.admCovSharedWeights <- function(x_j, sh_i, grp) {
+  pu <- rowSums(vapply(seq_along(sh_i$delta),
+        function(k) sh_i$w[k] * stats::dnorm(x_j, sh_i$delta[k], grp$om_j),
+        numeric(length(x_j))))
+  w  <- pu / stats::dnorm(x_j, grp$mu_p, grp$s_p)
+  w[!is.finite(w)] <- 0
+  if (sum(w) <= 0) return(NULL)
+  w / sum(w)
 }
