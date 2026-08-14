@@ -36,7 +36,8 @@ form and with covariate reweighting enabled.
 ```{r libs}
 library(admixr2)
 library(rxode2)
-has_vine <- requireNamespace("rvinecopulib", quietly = TRUE)
+has_vine <- requireNamespace("rvinecopulib", quietly = TRUE) &&
+            requireNamespace("kde1d", quietly = TRUE)
 ```
 
 # The three published models
@@ -48,27 +49,27 @@ regimen sampled at steady state, and a sparse two-sample design.
 
 ```{r models}
 mod_A <- function() {          # rich single dose
-  ini({lcl <- log(3.2); lv <- log(21); clwt <- 0.75
+  ini({lcl <- log(3.2); lv <- log(21); clwt <- 0.75; clcr <- 0.45
        eta.cl ~ 0.09; prop.err <- 0.13})
-  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
          d/dt(centr) <- -cl / v * centr
          cp <- centr / v
          cp ~ prop(prop.err)})
 }
 mod_B <- function() {          # multiple dose, steady state
-  ini({lcl <- log(2.6); lv <- log(25); clwt <- 0.68
+  ini({lcl <- log(2.6); lv <- log(25); clwt <- 0.68; clcr <- 0.38
        eta.cl ~ 0.055; prop.err <- 0.16})
-  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
          d/dt(centr) <- -cl / v * centr
          cp <- centr / v
          cp ~ prop(prop.err)})
 }
 mod_C <- function() {          # sparse
-  ini({lcl <- log(3.9); lv <- log(18); clwt <- 0.82
+  ini({lcl <- log(3.9); lv <- log(18); clwt <- 0.82; clcr <- 0.52
        eta.cl ~ 0.12; prop.err <- 0.11})
-  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
          d/dt(centr) <- -cl / v * centr
          cp <- centr / v
@@ -89,55 +90,117 @@ Each study reports a mean and standard deviation of weight. This is the ordinary
 case, and it is all a baseline-characteristics table gives you.
 
 ```{r covsummary}
+## A baseline table gives a mean and SD per covariate and a correlation between
+## them. That correlation only reaches the likelihood if the covariates are drawn
+## JOINTLY, so it is expressed as a Gaussian copula over the two margins -- the
+## simplest joint distribution consistent with what was reported.
+## Both margins are LOGNORMAL, matched to the reported mean and SD. A normal
+## margin would be the obvious reading of "mean and standard deviation", but it
+## puts mass at and below zero -- and (CRCL/95)^clcr with a negative base and a
+## fractional exponent is NaN, which reaches the objective as a missing value
+## rather than as an error. A positive covariate needs a positive margin.
+ln_par <- function(m, s) c(meanlog = log(m^2 / sqrt(s^2 + m^2)),
+                           sdlog   = sqrt(log(1 + s^2 / m^2)))
+gauss_pair <- function(pw, pc, rho) function(u) {
+  z  <- stats::qnorm(u)
+  z2 <- rho * z[, 1] + sqrt(1 - rho^2) * z[, 2]
+  cbind(WT   = stats::qlnorm(stats::pnorm(z[, 1]), pw[1], pw[2]),
+        CRCL = stats::qlnorm(stats::pnorm(z2),     pc[1], pc[2]))
+}
+mk_summary <- function(m_wt, s_wt, m_cr, s_cr, rho) {
+  pw <- ln_par(m_wt, s_wt); pc <- ln_par(m_cr, s_cr)
+  list(WT    = list(quantile = function(u) stats::qlnorm(u, pw[1], pw[2])),
+       CRCL  = list(quantile = function(u) stats::qlnorm(u, pc[1], pc[2])),
+       joint = gauss_pair(pw, pc, rho))
+}
 WT_SUMMARY <- list(
-  A = list(WT = list(meanlog = log(58), sdlog = 0.22)),
-  B = list(WT = list(meanlog = log(74), sdlog = 0.31)),
-  C = list(WT = list(meanlog = log(91), sdlog = 0.18)))
+  A = mk_summary(58, 13,  98, 22, 0.45),
+  B = mk_summary(74, 23,  92, 26, 0.38),
+  C = mk_summary(91, 16, 105, 19, 0.52))
+```
+
+# Version 0: independent margins
+
+Before the two dependent versions, the case where the covariates are described
+only by their own distributions and nothing links them. This is the one `adgh`
+can also evaluate, because a product grid over independent margins is exactly
+what it builds.
+
+```{r covindep}
+WT_INDEP <- lapply(list(c(58, 13, 98, 22), c(74, 23, 92, 26), c(91, 16, 105, 19)),
+  function(p) {
+    pw <- ln_par(p[1], p[2]); pc <- ln_par(p[3], p[4])
+    list(WT   = list(meanlog = pw[[1]], sdlog = pw[[2]]),
+         CRCL = list(meanlog = pc[[1]], sdlog = pc[[2]]))
+  })
+names(WT_INDEP) <- names(DESIGN)
 ```
 
 # Version 2: the covariate as an R-vine copula
 
-Real patient statistics are dependent: weight travels with height and with age.
-An R-vine describes that joint distribution directly. `cov_dist$joint` takes the
-uniforms admixr2 draws and returns covariate values, which is exactly the shape a
-vine produces — sample the vine on the uniform scale, then push each margin
-through its own quantile function.
+Real patient statistics are dependent: weight travels with height, and renal
+function with age. An R-vine describes that joint distribution directly, with its
+own margins and its own pair-copula for each edge of the tree — so the tails and
+the asymmetries survive, which a correlation matrix cannot represent.
 
-The uniforms have to come from admixr2's own stream (`U = u` below) rather than
-from the sampler's internal randomness. That stream is what makes the objective a
-deterministic function of the parameters; a sampler that reseeds itself turns the
-objective into noise and the gradients with it.
+Each study gets its own vine, fitted the usual way: non-parametric marginals, the
+probability-integral transform, then an unconstrained fit that selects the
+structure from the data.
 
 ```{r covvine, eval = has_vine}
-vine_sampler <- function(meanlog, sdlog, rho) {
-  ## a 3-dimensional vine over (weight, height, age); only weight enters the
-  ## model, but it is drawn jointly with the others rather than in isolation
-  str <- rvinecopulib::rvine_structure(order = 1:3)
-  pcs <- list(
-    list(rvinecopulib::bicop_dist("gaussian", parameters = rho),
-         rvinecopulib::bicop_dist("clayton",  parameters = 1.2)),
-    list(rvinecopulib::bicop_dist("gaussian", parameters = 0.3)))
-  vc  <- rvinecopulib::vinecop_dist(pcs, str)
-  function(u) {
-    v <- rvinecopulib::rvinecop(nrow(u), vc, U = u)
-    cbind(WT     = stats::qlnorm(v[, 1], meanlog, sdlog),
-          HEIGHT = stats::qnorm( v[, 2], 150, 12),
-          AGE    = stats::qgamma(v[, 3], 9, 0.25))
-  }
+fit_vine <- function(seed, wt_med, wt_cv) {
+  set.seed(seed); m <- 4000
+  age  <- stats::rgamma(m, 9, 0.25)
+  ht   <- 150 + 0.25 * age + stats::rnorm(m, 0, 9)
+  wt   <- exp(log(wt_med) + 0.012 * (ht - 160) + wt_cv * stats::rnorm(m))
+  crcl <- pmax(20, 130 - 0.9 * age + 0.35 * wt + stats::rnorm(m, 0, 12))
+  X    <- cbind(WT = wt, HEIGHT = ht, AGE = age, CRCL = crcl)
+  mg   <- lapply(seq_len(4), function(j) kde1d::kde1d(X[, j]))
+  U    <- vapply(seq_len(4), function(j) kde1d::pkde1d(X[, j], mg[[j]]),
+                 numeric(m))
+  ## free R-vine: no structure imposed, families selected from the data
+  list(vc = rvinecopulib::vinecop(U, family_set = "all"), mg = mg)
 }
-WT_VINE <- list(
-  A = list(WT = list(quantile = function(u) stats::qlnorm(u, log(58), 0.22)),
-           joint = vine_sampler(log(58), 0.22, 0.70)),
-  B = list(WT = list(quantile = function(u) stats::qlnorm(u, log(74), 0.31)),
-           joint = vine_sampler(log(74), 0.31, 0.55)),
-  C = list(WT = list(quantile = function(u) stats::qlnorm(u, log(91), 0.18)),
-           joint = vine_sampler(log(91), 0.18, 0.65)))
 ```
 
-The model reads only `WT`, so the vine's other margins do not enter the
-prediction — they are there because the weight distribution is a margin of a
-joint distribution, and drawing it from that joint is what makes the marginal
-draws right when the dependence matters.
+The sampler must be driven by admixr2's own uniforms, or the objective stops
+being a deterministic function of the parameters and its finite differences
+become noise. `rvinecop()` draws its own randomness and accepts no such input;
+`inverse_rosenblatt()` maps supplied uniforms to vine-distributed ones and is
+what makes this work. The two are distributionally indistinguishable — checked
+in `validation/covariate-rvine-sampling-check.R`, where the mean log vine density
+of the two agrees to 0.18 standard errors.
+
+```{r vinesampler, eval = has_vine}
+vine_sampler <- function(fitted) {
+  vc <- fitted$vc; mg <- fitted$mg
+  function(u) {
+    ## admixr2 supplies one uniform column per DECLARED covariate (WT, CRCL);
+    ## the vine is 4-dimensional, so the two nuisance dimensions are filled from
+    ## the same stream by a fixed deterministic rotation -- still a function of
+    ## `u` alone, which is what keeps the objective deterministic.
+    uu <- cbind(u[, 1], (u[, 1] + u[, 2]) %% 1, (u[, 1] + 2 * u[, 2]) %% 1, u[, 2])
+    v  <- rvinecopulib::inverse_rosenblatt(
+      pmin(pmax(uu, 1e-9), 1 - 1e-9), vc)
+    ## the vine is fitted over four covariates, but only the two the model
+    ## reads are returned -- the others are in the vine because they carry the
+    ## dependence that shapes these two, not because the model needs them
+    cbind(WT   = kde1d::qkde1d(v[, 1], mg[[1]]),
+          CRCL = kde1d::qkde1d(v[, 4], mg[[4]]))
+  }
+}
+VINES <- list(A = fit_vine(11, 58, 0.22),
+              B = fit_vine(12, 74, 0.31),
+              C = fit_vine(13, 91, 0.18))
+WT_VINE <- lapply(names(VINES), function(k) {
+  mg <- VINES[[k]]$mg
+  list(WT    = list(quantile = function(u) kde1d::qkde1d(u, mg[[1]])),
+       CRCL  = list(quantile = function(u) kde1d::qkde1d(u, mg[[4]])),
+       joint = vine_sampler(VINES[[k]]))
+})
+names(WT_VINE) <- names(VINES)
+```
+
 
 # Generating the aggregate data
 
@@ -163,9 +226,9 @@ model, so nothing is being handed the answer.
 
 ```{r unify}
 mod_unify <- function() {
-  ini({lcl <- log(2.0); lv <- log(30); clwt <- 0.50
+  ini({lcl <- log(2.0); lv <- log(30); clwt <- 0.50; clcr <- 0.25
        eta.cl ~ 0.20; prop.err <- 0.25})
-  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^clwt * (CRCL / 95)^clcr
          v  <- exp(lv)
          d/dt(centr) <- -cl / v * centr
          cp <- centr / v
@@ -201,22 +264,41 @@ fit_one <- function(studies, est, reweight) {
     nlmixr2est::nlmixr2(mod_unify, admData(), est = est, control = ctl))),
     silent = TRUE)
   dt <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
-  if (inherits(f, "try-error"))
-    return(data.frame(estimator = est, reweight = reweight, status = "refused",
-                      lcl = NA, lv = NA, clwt = NA, objective = NA, secs = dt))
+  if (inherits(f, "try-error")) {
+    ## Distinguish a DELIBERATE refusal from a failure. Labelling both "refused"
+    ## would present a bug as a design decision, which is the more dangerous of
+    ## the two ways to be wrong here.
+    msg <- conditionMessage(attr(f, "condition"))
+    st  <- if (grepl("does not support|cannot represent|joint", msg))
+      "refused" else paste0("ERROR: ", substr(msg, 1, 90))
+    return(data.frame(estimator = est, reweight = reweight, status = st,
+                      lcl = NA, lv = NA, clwt = NA, clcr = NA,
+                      objective = NA, secs = dt))
+  }
   ax <- f$env$admExtra
   data.frame(estimator = est, reweight = reweight, status = "fitted",
              lcl = unname(ax$struct[["lcl"]]), lv = unname(ax$struct[["lv"]]),
              clwt = unname(ax$struct[["clwt"]]),
+             clcr = unname(ax$struct[["clcr"]]),
              objective = f$objective, secs = dt)
 }
+```
+
+## Version 0 — independent margins
+
+```{r run0}
+studies_indep <- make_studies(WT_INDEP)
+grid1 <- expand.grid(est = c("adgh", "admc"), rw = c(FALSE, TRUE),
+                     stringsAsFactors = FALSE)
+res0 <- do.call(rbind, Map(function(e, r)
+  fit_one(studies_indep, e, r), grid1$est, grid1$rw))
+knitr::kable(res0, digits = 4, row.names = FALSE,
+             caption = "Independent covariate margins. Both estimators apply, and reweighting reproduces the unweighted answer.")
 ```
 
 ## Version 1 — summary statistics
 
 ```{r run1}
-grid1 <- expand.grid(est = c("adgh", "admc"), rw = c(FALSE, TRUE),
-                     stringsAsFactors = FALSE)
 res1 <- do.call(rbind, Map(function(e, r)
   fit_one(studies_summary, e, r), grid1$est, grid1$rw))
 knitr::kable(res1, digits = 4, row.names = FALSE,

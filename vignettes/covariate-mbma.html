@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Covariates in a model-based meta-analysis</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Covariates in a model-based
+meta-analysis</h1>
+
+
+
+<p>Three published population models are used as the input to a
+meta-analysis: each generates the aggregate data its own study design
+and population would have produced, and one unifying model is then
+fitted to all three at once. No individual records exist at any
+point.</p>
+<p>The covariate is the point of the exercise. Each study’s subjects
+span a distribution of body weights, and that distribution differs
+between studies — which is not incidental, because between-study
+variation in the covariate distribution is the only thing that
+identifies a covariate coefficient from aggregate data. Two ways of
+describing those subjects are compared:</p>
+<ul>
+<li><strong>summary statistics</strong> — a mean, a standard deviation
+and a correlation, which is what a baseline-characteristics table
+reports;</li>
+<li><strong>an R-vine copula per study</strong> — a full joint
+distribution with its own margins and dependence structure, which is
+what you would fit if you had access to the individual covariate records
+even though the outcomes remain aggregate.</li>
+</ul>
+<p>Each is run through both estimators, and each estimator is run in its
+ordinary form and with covariate reweighting enabled.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(admixr2)</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="fu">library</span>(rxode2)</span>
+<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="co">#&gt; rxode2 5.1.4 using 7 threads (see ?getRxThreads)</span></span>
+<span id="cb1-4"><a href="#cb1-4" tabindex="-1"></a>has_vine <span class="ot">&lt;-</span> <span class="fu">requireNamespace</span>(<span class="st">&quot;rvinecopulib&quot;</span>, <span class="at">quietly =</span> <span class="cn">TRUE</span>) <span class="sc">&amp;&amp;</span></span>
+<span id="cb1-5"><a href="#cb1-5" tabindex="-1"></a>            <span class="fu">requireNamespace</span>(<span class="st">&quot;kde1d&quot;</span>, <span class="at">quietly =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
+<div id="the-three-published-models" class="section level1">
+<h1>The three published models</h1>
+<p>Weight acts on clearance, which carries the between-subject random
+effect. The three models differ in structure, in their parameter values,
+and in the designs they were developed under — a single dose with rich
+sampling, a multiple-dose regimen sampled at steady state, and a sparse
+two-sample design.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>mod_A <span class="ot">&lt;-</span> <span class="cf">function</span>() {          <span class="co"># rich single dose</span></span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>  <span class="fu">ini</span>({lcl <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="fl">3.2</span>); lv <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="dv">21</span>); clwt <span class="ot">&lt;-</span> <span class="fl">0.75</span>; clcr <span class="ot">&lt;-</span> <span class="fl">0.45</span></span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>       eta.cl <span class="sc">~</span> <span class="fl">0.09</span>; prop.err <span class="ot">&lt;-</span> <span class="fl">0.13</span>})</span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a>  <span class="fu">model</span>({cl <span class="ot">&lt;-</span> <span class="fu">exp</span>(lcl <span class="sc">+</span> eta.cl) <span class="sc">*</span> (WT <span class="sc">/</span> <span class="dv">70</span>)<span class="sc">^</span>clwt <span class="sc">*</span> (CRCL <span class="sc">/</span> <span class="dv">95</span>)<span class="sc">^</span>clcr</span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a>         v  <span class="ot">&lt;-</span> <span class="fu">exp</span>(lv)</span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>         d<span class="sc">/</span><span class="fu">dt</span>(centr) <span class="ot">&lt;-</span> <span class="sc">-</span>cl <span class="sc">/</span> v <span class="sc">*</span> centr</span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a>         cp <span class="ot">&lt;-</span> centr <span class="sc">/</span> v</span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a>         cp <span class="sc">~</span> <span class="fu">prop</span>(prop.err)})</span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a>}</span>
+<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a>mod_B <span class="ot">&lt;-</span> <span class="cf">function</span>() {          <span class="co"># multiple dose, steady state</span></span>
+<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a>  <span class="fu">ini</span>({lcl <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="fl">2.6</span>); lv <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="dv">25</span>); clwt <span class="ot">&lt;-</span> <span class="fl">0.68</span>; clcr <span class="ot">&lt;-</span> <span class="fl">0.38</span></span>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a>       eta.cl <span class="sc">~</span> <span class="fl">0.055</span>; prop.err <span class="ot">&lt;-</span> <span class="fl">0.16</span>})</span>
+<span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a>  <span class="fu">model</span>({cl <span class="ot">&lt;-</span> <span class="fu">exp</span>(lcl <span class="sc">+</span> eta.cl) <span class="sc">*</span> (WT <span class="sc">/</span> <span class="dv">70</span>)<span class="sc">^</span>clwt <span class="sc">*</span> (CRCL <span class="sc">/</span> <span class="dv">95</span>)<span class="sc">^</span>clcr</span>
+<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a>         v  <span class="ot">&lt;-</span> <span class="fu">exp</span>(lv)</span>
+<span id="cb2-15"><a href="#cb2-15" tabindex="-1"></a>         d<span class="sc">/</span><span class="fu">dt</span>(centr) <span class="ot">&lt;-</span> <span class="sc">-</span>cl <span class="sc">/</span> v <span class="sc">*</span> centr</span>
+<span id="cb2-16"><a href="#cb2-16" tabindex="-1"></a>         cp <span class="ot">&lt;-</span> centr <span class="sc">/</span> v</span>
+<span id="cb2-17"><a href="#cb2-17" tabindex="-1"></a>         cp <span class="sc">~</span> <span class="fu">prop</span>(prop.err)})</span>
+<span id="cb2-18"><a href="#cb2-18" tabindex="-1"></a>}</span>
+<span id="cb2-19"><a href="#cb2-19" tabindex="-1"></a>mod_C <span class="ot">&lt;-</span> <span class="cf">function</span>() {          <span class="co"># sparse</span></span>
+<span id="cb2-20"><a href="#cb2-20" tabindex="-1"></a>  <span class="fu">ini</span>({lcl <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="fl">3.9</span>); lv <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="dv">18</span>); clwt <span class="ot">&lt;-</span> <span class="fl">0.82</span>; clcr <span class="ot">&lt;-</span> <span class="fl">0.52</span></span>
+<span id="cb2-21"><a href="#cb2-21" tabindex="-1"></a>       eta.cl <span class="sc">~</span> <span class="fl">0.12</span>; prop.err <span class="ot">&lt;-</span> <span class="fl">0.11</span>})</span>
+<span id="cb2-22"><a href="#cb2-22" tabindex="-1"></a>  <span class="fu">model</span>({cl <span class="ot">&lt;-</span> <span class="fu">exp</span>(lcl <span class="sc">+</span> eta.cl) <span class="sc">*</span> (WT <span class="sc">/</span> <span class="dv">70</span>)<span class="sc">^</span>clwt <span class="sc">*</span> (CRCL <span class="sc">/</span> <span class="dv">95</span>)<span class="sc">^</span>clcr</span>
+<span id="cb2-23"><a href="#cb2-23" tabindex="-1"></a>         v  <span class="ot">&lt;-</span> <span class="fu">exp</span>(lv)</span>
+<span id="cb2-24"><a href="#cb2-24" tabindex="-1"></a>         d<span class="sc">/</span><span class="fu">dt</span>(centr) <span class="ot">&lt;-</span> <span class="sc">-</span>cl <span class="sc">/</span> v <span class="sc">*</span> centr</span>
+<span id="cb2-25"><a href="#cb2-25" tabindex="-1"></a>         cp <span class="ot">&lt;-</span> centr <span class="sc">/</span> v</span>
+<span id="cb2-26"><a href="#cb2-26" tabindex="-1"></a>         cp <span class="sc">~</span> <span class="fu">prop</span>(prop.err)})</span>
+<span id="cb2-27"><a href="#cb2-27" tabindex="-1"></a>}</span>
+<span id="cb2-28"><a href="#cb2-28" tabindex="-1"></a>DESIGN <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb2-29"><a href="#cb2-29" tabindex="-1"></a>  <span class="at">A =</span> <span class="fu">list</span>(<span class="at">model =</span> mod_A, <span class="at">times =</span> <span class="fu">c</span>(<span class="fl">0.5</span>, <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">4</span>, <span class="dv">6</span>, <span class="dv">8</span>, <span class="dv">12</span>),</span>
+<span id="cb2-30"><a href="#cb2-30" tabindex="-1"></a>           <span class="at">ev =</span> rxode2<span class="sc">::</span><span class="fu">et</span>(<span class="at">amt =</span> <span class="dv">100</span>, <span class="at">dur =</span> <span class="fl">0.5</span>), <span class="at">n =</span> <span class="dv">48</span><span class="dt">L</span>),</span>
+<span id="cb2-31"><a href="#cb2-31" tabindex="-1"></a>  <span class="at">B =</span> <span class="fu">list</span>(<span class="at">model =</span> mod_B, <span class="at">times =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">3</span>, <span class="dv">6</span>, <span class="dv">12</span>),</span>
+<span id="cb2-32"><a href="#cb2-32" tabindex="-1"></a>           <span class="at">ev =</span> rxode2<span class="sc">::</span><span class="fu">et</span>(<span class="at">amt =</span> <span class="dv">80</span>, <span class="at">ii =</span> <span class="dv">12</span>, <span class="at">addl =</span> <span class="dv">4</span>, <span class="at">dur =</span> <span class="fl">0.5</span>), <span class="at">n =</span> <span class="dv">96</span><span class="dt">L</span>),</span>
+<span id="cb2-33"><a href="#cb2-33" tabindex="-1"></a>  <span class="at">C =</span> <span class="fu">list</span>(<span class="at">model =</span> mod_C, <span class="at">times =</span> <span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">8</span>),</span>
+<span id="cb2-34"><a href="#cb2-34" tabindex="-1"></a>           <span class="at">ev =</span> rxode2<span class="sc">::</span><span class="fu">et</span>(<span class="at">amt =</span> <span class="dv">120</span>, <span class="at">dur =</span> <span class="fl">0.5</span>), <span class="at">n =</span> <span class="dv">30</span><span class="dt">L</span>))</span></code></pre></div>
+</div>
+<div id="version-1-the-covariate-as-summary-statistics" class="section level1">
+<h1>Version 1: the covariate as summary statistics</h1>
+<p>Each study reports a mean and standard deviation of weight. This is
+the ordinary case, and it is all a baseline-characteristics table gives
+you.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="do">## A baseline table gives a mean and SD per covariate and a correlation between</span></span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a><span class="do">## them. That correlation only reaches the likelihood if the covariates are drawn</span></span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a><span class="do">## JOINTLY, so it is expressed as a Gaussian copula over the two margins -- the</span></span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a><span class="do">## simplest joint distribution consistent with what was reported.</span></span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a><span class="do">## Both margins are LOGNORMAL, matched to the reported mean and SD. A normal</span></span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a><span class="do">## margin would be the obvious reading of &quot;mean and standard deviation&quot;, but it</span></span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a><span class="do">## puts mass at and below zero -- and (CRCL/95)^clcr with a negative base and a</span></span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a><span class="do">## fractional exponent is NaN, which reaches the objective as a missing value</span></span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a><span class="do">## rather than as an error. A positive covariate needs a positive margin.</span></span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a>ln_par <span class="ot">&lt;-</span> <span class="cf">function</span>(m, s) <span class="fu">c</span>(<span class="at">meanlog =</span> <span class="fu">log</span>(m<span class="sc">^</span><span class="dv">2</span> <span class="sc">/</span> <span class="fu">sqrt</span>(s<span class="sc">^</span><span class="dv">2</span> <span class="sc">+</span> m<span class="sc">^</span><span class="dv">2</span>)),</span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a>                           <span class="at">sdlog   =</span> <span class="fu">sqrt</span>(<span class="fu">log</span>(<span class="dv">1</span> <span class="sc">+</span> s<span class="sc">^</span><span class="dv">2</span> <span class="sc">/</span> m<span class="sc">^</span><span class="dv">2</span>)))</span>
+<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a>gauss_pair <span class="ot">&lt;-</span> <span class="cf">function</span>(pw, pc, rho) <span class="cf">function</span>(u) {</span>
+<span id="cb3-13"><a href="#cb3-13" tabindex="-1"></a>  z  <span class="ot">&lt;-</span> stats<span class="sc">::</span><span class="fu">qnorm</span>(u)</span>
+<span id="cb3-14"><a href="#cb3-14" tabindex="-1"></a>  z2 <span class="ot">&lt;-</span> rho <span class="sc">*</span> z[, <span class="dv">1</span>] <span class="sc">+</span> <span class="fu">sqrt</span>(<span class="dv">1</span> <span class="sc">-</span> rho<span class="sc">^</span><span class="dv">2</span>) <span class="sc">*</span> z[, <span class="dv">2</span>]</span>
+<span id="cb3-15"><a href="#cb3-15" tabindex="-1"></a>  <span class="fu">cbind</span>(<span class="at">WT   =</span> stats<span class="sc">::</span><span class="fu">qlnorm</span>(stats<span class="sc">::</span><span class="fu">pnorm</span>(z[, <span class="dv">1</span>]), pw[<span class="dv">1</span>], pw[<span class="dv">2</span>]),</span>
+<span id="cb3-16"><a href="#cb3-16" tabindex="-1"></a>        <span class="at">CRCL =</span> stats<span class="sc">::</span><span class="fu">qlnorm</span>(stats<span class="sc">::</span><span class="fu">pnorm</span>(z2),     pc[<span class="dv">1</span>], pc[<span class="dv">2</span>]))</span>
+<span id="cb3-17"><a href="#cb3-17" tabindex="-1"></a>}</span>
+<span id="cb3-18"><a href="#cb3-18" tabindex="-1"></a>mk_summary <span class="ot">&lt;-</span> <span class="cf">function</span>(m_wt, s_wt, m_cr, s_cr, rho) {</span>
+<span id="cb3-19"><a href="#cb3-19" tabindex="-1"></a>  pw <span class="ot">&lt;-</span> <span class="fu">ln_par</span>(m_wt, s_wt); pc <span class="ot">&lt;-</span> <span class="fu">ln_par</span>(m_cr, s_cr)</span>
+<span id="cb3-20"><a href="#cb3-20" tabindex="-1"></a>  <span class="fu">list</span>(<span class="at">WT    =</span> <span class="fu">list</span>(<span class="at">quantile =</span> <span class="cf">function</span>(u) stats<span class="sc">::</span><span class="fu">qlnorm</span>(u, pw[<span class="dv">1</span>], pw[<span class="dv">2</span>])),</span>
+<span id="cb3-21"><a href="#cb3-21" tabindex="-1"></a>       <span class="at">CRCL  =</span> <span class="fu">list</span>(<span class="at">quantile =</span> <span class="cf">function</span>(u) stats<span class="sc">::</span><span class="fu">qlnorm</span>(u, pc[<span class="dv">1</span>], pc[<span class="dv">2</span>])),</span>
+<span id="cb3-22"><a href="#cb3-22" tabindex="-1"></a>       <span class="at">joint =</span> <span class="fu">gauss_pair</span>(pw, pc, rho))</span>
+<span id="cb3-23"><a href="#cb3-23" tabindex="-1"></a>}</span>
+<span id="cb3-24"><a href="#cb3-24" tabindex="-1"></a>WT_SUMMARY <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb3-25"><a href="#cb3-25" tabindex="-1"></a>  <span class="at">A =</span> <span class="fu">mk_summary</span>(<span class="dv">58</span>, <span class="dv">13</span>,  <span class="dv">98</span>, <span class="dv">22</span>, <span class="fl">0.45</span>),</span>
+<span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a>  <span class="at">B =</span> <span class="fu">mk_summary</span>(<span class="dv">74</span>, <span class="dv">23</span>,  <span class="dv">92</span>, <span class="dv">26</span>, <span class="fl">0.38</span>),</span>
+<span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a>  <span class="at">C =</span> <span class="fu">mk_summary</span>(<span class="dv">91</span>, <span class="dv">16</span>, <span class="dv">105</span>, <span class="dv">19</span>, <span class="fl">0.52</span>))</span></code></pre></div>
+</div>
+<div id="version-0-independent-margins" class="section level1">
+<h1>Version 0: independent margins</h1>
+<p>Before the two dependent versions, the case where the covariates are
+described only by their own distributions and nothing links them. This
+is the one <code>adgh</code> can also evaluate, because a product grid
+over independent margins is exactly what it builds.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>WT_INDEP <span class="ot">&lt;-</span> <span class="fu">lapply</span>(<span class="fu">list</span>(<span class="fu">c</span>(<span class="dv">58</span>, <span class="dv">13</span>, <span class="dv">98</span>, <span class="dv">22</span>), <span class="fu">c</span>(<span class="dv">74</span>, <span class="dv">23</span>, <span class="dv">92</span>, <span class="dv">26</span>), <span class="fu">c</span>(<span class="dv">91</span>, <span class="dv">16</span>, <span class="dv">105</span>, <span class="dv">19</span>)),</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a>  <span class="cf">function</span>(p) {</span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a>    pw <span class="ot">&lt;-</span> <span class="fu">ln_par</span>(p[<span class="dv">1</span>], p[<span class="dv">2</span>]); pc <span class="ot">&lt;-</span> <span class="fu">ln_par</span>(p[<span class="dv">3</span>], p[<span class="dv">4</span>])</span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a>    <span class="fu">list</span>(<span class="at">WT   =</span> <span class="fu">list</span>(<span class="at">meanlog =</span> pw[[<span class="dv">1</span>]], <span class="at">sdlog =</span> pw[[<span class="dv">2</span>]]),</span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>         <span class="at">CRCL =</span> <span class="fu">list</span>(<span class="at">meanlog =</span> pc[[<span class="dv">1</span>]], <span class="at">sdlog =</span> pc[[<span class="dv">2</span>]]))</span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>  })</span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a><span class="fu">names</span>(WT_INDEP) <span class="ot">&lt;-</span> <span class="fu">names</span>(DESIGN)</span></code></pre></div>
+</div>
+<div id="version-2-the-covariate-as-an-r-vine-copula" class="section level1">
+<h1>Version 2: the covariate as an R-vine copula</h1>
+<p>Real patient statistics are dependent: weight travels with height,
+and renal function with age. An R-vine describes that joint distribution
+directly, with its own margins and its own pair-copula for each edge of
+the tree — so the tails and the asymmetries survive, which a correlation
+matrix cannot represent.</p>
+<p>Each study gets its own vine, fitted the usual way: non-parametric
+marginals, the probability-integral transform, then an unconstrained fit
+that selects the structure from the data.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a>fit_vine <span class="ot">&lt;-</span> <span class="cf">function</span>(seed, wt_med, wt_cv) {</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a>  <span class="fu">set.seed</span>(seed); m <span class="ot">&lt;-</span> <span class="dv">4000</span></span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>  age  <span class="ot">&lt;-</span> stats<span class="sc">::</span><span class="fu">rgamma</span>(m, <span class="dv">9</span>, <span class="fl">0.25</span>)</span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a>  ht   <span class="ot">&lt;-</span> <span class="dv">150</span> <span class="sc">+</span> <span class="fl">0.25</span> <span class="sc">*</span> age <span class="sc">+</span> stats<span class="sc">::</span><span class="fu">rnorm</span>(m, <span class="dv">0</span>, <span class="dv">9</span>)</span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a>  wt   <span class="ot">&lt;-</span> <span class="fu">exp</span>(<span class="fu">log</span>(wt_med) <span class="sc">+</span> <span class="fl">0.012</span> <span class="sc">*</span> (ht <span class="sc">-</span> <span class="dv">160</span>) <span class="sc">+</span> wt_cv <span class="sc">*</span> stats<span class="sc">::</span><span class="fu">rnorm</span>(m))</span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a>  crcl <span class="ot">&lt;-</span> <span class="fu">pmax</span>(<span class="dv">20</span>, <span class="dv">130</span> <span class="sc">-</span> <span class="fl">0.9</span> <span class="sc">*</span> age <span class="sc">+</span> <span class="fl">0.35</span> <span class="sc">*</span> wt <span class="sc">+</span> stats<span class="sc">::</span><span class="fu">rnorm</span>(m, <span class="dv">0</span>, <span class="dv">12</span>))</span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a>  X    <span class="ot">&lt;-</span> <span class="fu">cbind</span>(<span class="at">WT =</span> wt, <span class="at">HEIGHT =</span> ht, <span class="at">AGE =</span> age, <span class="at">CRCL =</span> crcl)</span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a>  mg   <span class="ot">&lt;-</span> <span class="fu">lapply</span>(<span class="fu">seq_len</span>(<span class="dv">4</span>), <span class="cf">function</span>(j) kde1d<span class="sc">::</span><span class="fu">kde1d</span>(X[, j]))</span>
+<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a>  U    <span class="ot">&lt;-</span> <span class="fu">vapply</span>(<span class="fu">seq_len</span>(<span class="dv">4</span>), <span class="cf">function</span>(j) kde1d<span class="sc">::</span><span class="fu">pkde1d</span>(X[, j], mg[[j]]),</span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a>                 <span class="fu">numeric</span>(m))</span>
+<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a>  <span class="do">## free R-vine: no structure imposed, families selected from the data</span></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>  <span class="fu">list</span>(<span class="at">vc =</span> rvinecopulib<span class="sc">::</span><span class="fu">vinecop</span>(U, <span class="at">family_set =</span> <span class="st">&quot;all&quot;</span>), <span class="at">mg =</span> mg)</span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>}</span></code></pre></div>
+<p>The sampler must be driven by admixr2’s own uniforms, or the
+objective stops being a deterministic function of the parameters and its
+finite differences become noise. <code>rvinecop()</code> draws its own
+randomness and accepts no such input; <code>inverse_rosenblatt()</code>
+maps supplied uniforms to vine-distributed ones and is what makes this
+work. The two are distributionally indistinguishable — checked in
+<code>validation/covariate-rvine-sampling-check.R</code>, where the mean
+log vine density of the two agrees to 0.18 standard errors.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>vine_sampler <span class="ot">&lt;-</span> <span class="cf">function</span>(fitted) {</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a>  vc <span class="ot">&lt;-</span> fitted<span class="sc">$</span>vc; mg <span class="ot">&lt;-</span> fitted<span class="sc">$</span>mg</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a>  <span class="cf">function</span>(u) {</span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>    <span class="do">## admixr2 supplies one uniform column per DECLARED covariate (WT, CRCL);</span></span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>    <span class="do">## the vine is 4-dimensional, so the two nuisance dimensions are filled from</span></span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>    <span class="do">## the same stream by a fixed deterministic rotation -- still a function of</span></span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>    <span class="do">## `u` alone, which is what keeps the objective deterministic.</span></span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a>    uu <span class="ot">&lt;-</span> <span class="fu">cbind</span>(u[, <span class="dv">1</span>], (u[, <span class="dv">1</span>] <span class="sc">+</span> u[, <span class="dv">2</span>]) <span class="sc">%%</span> <span class="dv">1</span>, (u[, <span class="dv">1</span>] <span class="sc">+</span> <span class="dv">2</span> <span class="sc">*</span> u[, <span class="dv">2</span>]) <span class="sc">%%</span> <span class="dv">1</span>, u[, <span class="dv">2</span>])</span>
+<span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>    v  <span class="ot">&lt;-</span> rvinecopulib<span class="sc">::</span><span class="fu">inverse_rosenblatt</span>(</span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a>      <span class="fu">pmin</span>(<span class="fu">pmax</span>(uu, <span class="fl">1e-9</span>), <span class="dv">1</span> <span class="sc">-</span> <span class="fl">1e-9</span>), vc)</span>
+<span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>    <span class="do">## the vine is fitted over four covariates, but only the two the model</span></span>
+<span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>    <span class="do">## reads are returned -- the others are in the vine because they carry the</span></span>
+<span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a>    <span class="do">## dependence that shapes these two, not because the model needs them</span></span>
+<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a>    <span class="fu">cbind</span>(<span class="at">WT   =</span> kde1d<span class="sc">::</span><span class="fu">qkde1d</span>(v[, <span class="dv">1</span>], mg[[<span class="dv">1</span>]]),</span>
+<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a>          <span class="at">CRCL =</span> kde1d<span class="sc">::</span><span class="fu">qkde1d</span>(v[, <span class="dv">4</span>], mg[[<span class="dv">4</span>]]))</span>
+<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a>  }</span>
+<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a>}</span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a>VINES <span class="ot">&lt;-</span> <span class="fu">list</span>(<span class="at">A =</span> <span class="fu">fit_vine</span>(<span class="dv">11</span>, <span class="dv">58</span>, <span class="fl">0.22</span>),</span>
+<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a>              <span class="at">B =</span> <span class="fu">fit_vine</span>(<span class="dv">12</span>, <span class="dv">74</span>, <span class="fl">0.31</span>),</span>
+<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a>              <span class="at">C =</span> <span class="fu">fit_vine</span>(<span class="dv">13</span>, <span class="dv">91</span>, <span class="fl">0.18</span>))</span>
+<span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a>WT_VINE <span class="ot">&lt;-</span> <span class="fu">lapply</span>(<span class="fu">names</span>(VINES), <span class="cf">function</span>(k) {</span>
+<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a>  mg <span class="ot">&lt;-</span> VINES[[k]]<span class="sc">$</span>mg</span>
+<span id="cb6-23"><a href="#cb6-23" tabindex="-1"></a>  <span class="fu">list</span>(<span class="at">WT    =</span> <span class="fu">list</span>(<span class="at">quantile =</span> <span class="cf">function</span>(u) kde1d<span class="sc">::</span><span class="fu">qkde1d</span>(u, mg[[<span class="dv">1</span>]])),</span>
+<span id="cb6-24"><a href="#cb6-24" tabindex="-1"></a>       <span class="at">CRCL  =</span> <span class="fu">list</span>(<span class="at">quantile =</span> <span class="cf">function</span>(u) kde1d<span class="sc">::</span><span class="fu">qkde1d</span>(u, mg[[<span class="dv">4</span>]])),</span>
+<span id="cb6-25"><a href="#cb6-25" tabindex="-1"></a>       <span class="at">joint =</span> <span class="fu">vine_sampler</span>(VINES[[k]]))</span>
+<span id="cb6-26"><a href="#cb6-26" tabindex="-1"></a>})</span>
+<span id="cb6-27"><a href="#cb6-27" tabindex="-1"></a><span class="fu">names</span>(WT_VINE) <span class="ot">&lt;-</span> <span class="fu">names</span>(VINES)</span></code></pre></div>
+</div>
+<div id="generating-the-aggregate-data" class="section level1">
+<h1>Generating the aggregate data</h1>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>make_studies <span class="ot">&lt;-</span> <span class="cf">function</span>(cov_spec) {</span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>  g <span class="ot">&lt;-</span> <span class="fu">datagen</span>(</span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>    <span class="fu">setNames</span>(<span class="fu">lapply</span>(<span class="fu">names</span>(DESIGN), <span class="cf">function</span>(k) {</span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a>      d <span class="ot">&lt;-</span> DESIGN[[k]]</span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a>      <span class="fu">list</span>(<span class="at">model =</span> d<span class="sc">$</span>model, <span class="at">times =</span> d<span class="sc">$</span>times, <span class="at">ev =</span> d<span class="sc">$</span>ev, <span class="at">n =</span> d<span class="sc">$</span>n,</span>
+<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a>           <span class="at">cov_dist =</span> cov_spec[[k]])</span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>    }), <span class="fu">names</span>(DESIGN)),</span>
+<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a>    <span class="at">control =</span> <span class="fu">datagenControl</span>(<span class="at">n_sim =</span> <span class="dv">30000</span><span class="dt">L</span>, <span class="at">seed =</span> <span class="dv">4321</span><span class="dt">L</span>))</span>
+<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>  g</span>
+<span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a>}</span>
+<span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>studies_summary <span class="ot">&lt;-</span> <span class="fu">make_studies</span>(WT_SUMMARY)</span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a><span class="co">#&gt; ℹ parameter labels from comments are typically ignored in non-interactive mode</span></span>
+<span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a><span class="co">#&gt; ℹ Need to run with the source intact to parse comments</span></span>
+<span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a><span class="co">#&gt; ℹ parameter labels from comments are typically ignored in non-interactive mode</span></span>
+<span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a><span class="co">#&gt; ℹ Need to run with the source intact to parse comments</span></span>
+<span id="cb7-16"><a href="#cb7-16" tabindex="-1"></a><span class="co">#&gt; ℹ parameter labels from comments are typically ignored in non-interactive mode</span></span>
+<span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a><span class="co">#&gt; ℹ Need to run with the source intact to parse comments</span></span>
+<span id="cb7-18"><a href="#cb7-18" tabindex="-1"></a><span class="fu">str</span>(<span class="fu">lapply</span>(studies_summary, <span class="cf">function</span>(s) <span class="fu">round</span>(s<span class="sc">$</span>E, <span class="dv">2</span>)))</span>
+<span id="cb7-19"><a href="#cb7-19" tabindex="-1"></a><span class="co">#&gt; List of 3</span></span>
+<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a><span class="co">#&gt;  $ A: Named num [1:7] 4.6 4.29 3.75 2.87 2.23 1.74 1.09</span></span>
+<span id="cb7-21"><a href="#cb7-21" tabindex="-1"></a><span class="co">#&gt;   ..- attr(*, &quot;names&quot;)= chr [1:7] &quot;0.5&quot; &quot;1&quot; &quot;2&quot; &quot;4&quot; ...</span></span>
+<span id="cb7-22"><a href="#cb7-22" tabindex="-1"></a><span class="co">#&gt;  $ B: Named num [1:4] 2.95 2.39 1.76 0.98</span></span>
+<span id="cb7-23"><a href="#cb7-23" tabindex="-1"></a><span class="co">#&gt;   ..- attr(*, &quot;names&quot;)= chr [1:4] &quot;1&quot; &quot;3&quot; &quot;6&quot; &quot;12&quot;</span></span>
+<span id="cb7-24"><a href="#cb7-24" tabindex="-1"></a><span class="co">#&gt;  $ C: Named num [1:2] 4.03 0.92</span></span>
+<span id="cb7-25"><a href="#cb7-25" tabindex="-1"></a><span class="co">#&gt;   ..- attr(*, &quot;names&quot;)= chr [1:2] &quot;2&quot; &quot;8&quot;</span></span></code></pre></div>
+</div>
+<div id="the-unifying-model" class="section level1">
+<h1>The unifying model</h1>
+<p>One model is fitted to all three studies. It starts away from every
+generating model, so nothing is being handed the answer.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>mod_unify <span class="ot">&lt;-</span> <span class="cf">function</span>() {</span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a>  <span class="fu">ini</span>({lcl <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="fl">2.0</span>); lv <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="dv">30</span>); clwt <span class="ot">&lt;-</span> <span class="fl">0.50</span>; clcr <span class="ot">&lt;-</span> <span class="fl">0.25</span></span>
+<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a>       eta.cl <span class="sc">~</span> <span class="fl">0.20</span>; prop.err <span class="ot">&lt;-</span> <span class="fl">0.25</span>})</span>
+<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a>  <span class="fu">model</span>({cl <span class="ot">&lt;-</span> <span class="fu">exp</span>(lcl <span class="sc">+</span> eta.cl) <span class="sc">*</span> (WT <span class="sc">/</span> <span class="dv">70</span>)<span class="sc">^</span>clwt <span class="sc">*</span> (CRCL <span class="sc">/</span> <span class="dv">95</span>)<span class="sc">^</span>clcr</span>
+<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a>         v  <span class="ot">&lt;-</span> <span class="fu">exp</span>(lv)</span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a>         d<span class="sc">/</span><span class="fu">dt</span>(centr) <span class="ot">&lt;-</span> <span class="sc">-</span>cl <span class="sc">/</span> v <span class="sc">*</span> centr</span>
+<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>         cp <span class="ot">&lt;-</span> centr <span class="sc">/</span> v</span>
+<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a>         cp <span class="sc">~</span> <span class="fu">prop</span>(prop.err)})</span>
+<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a>}</span></code></pre></div>
+</div>
+<div id="fitting-two-estimators-ordinary-and-reweighted" class="section level1">
+<h1>Fitting: two estimators, ordinary and reweighted</h1>
+<p><code>adgh</code> integrates the covariate on a deterministic product
+grid; <code>admc</code> integrates it by simulating subjects.
+<code>cov_reweight = TRUE</code> changes how that integral is evaluated
+in both: the covariate is carried in an importance weight rather than in
+the grid or the sample, so <code>adgh</code> drops the covariate
+dimension from its grid and <code>admc</code> shares one simulation
+ensemble across studies that differ only in their covariate
+distribution.</p>
+<p>It is opt-in and self-declining. The substitution it relies on — that
+the prediction depends on the covariate and the random effect only
+through their sum — is a property of the model, and it is checked
+numerically once per fit rather than inferred from how the model is
+written. Anything that fails the check keeps the ordinary path, so the
+flag can only make a qualifying fit cheaper.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a>fit_one <span class="ot">&lt;-</span> <span class="cf">function</span>(studies, est, reweight) {</span>
+<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a>  ctl <span class="ot">&lt;-</span> <span class="cf">if</span> (est <span class="sc">==</span> <span class="st">&quot;adgh&quot;</span>)</span>
+<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a>    <span class="fu">adghControl</span>(<span class="at">studies =</span> studies, <span class="at">n_nodes =</span> <span class="dv">7</span><span class="dt">L</span>, <span class="at">print =</span> <span class="dv">0</span><span class="dt">L</span>,</span>
+<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a>                <span class="at">covMethod =</span> <span class="st">&quot;none&quot;</span>, <span class="at">maxeval =</span> <span class="dv">400</span><span class="dt">L</span>, <span class="at">cov_reweight =</span> reweight)</span>
+<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a>  <span class="cf">else</span></span>
+<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a>    <span class="fu">admControl</span>(<span class="at">studies =</span> studies, <span class="at">n_sim =</span> <span class="dv">3000</span><span class="dt">L</span>, <span class="at">print =</span> <span class="dv">0</span><span class="dt">L</span>,</span>
+<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a>               <span class="at">covMethod =</span> <span class="st">&quot;none&quot;</span>, <span class="at">maxeval =</span> <span class="dv">400</span><span class="dt">L</span>, <span class="at">cov_reweight =</span> reweight)</span>
+<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a>  t0 <span class="ot">&lt;-</span> <span class="fu">Sys.time</span>()</span>
+<span id="cb9-9"><a href="#cb9-9" tabindex="-1"></a>  f  <span class="ot">&lt;-</span> <span class="fu">try</span>(<span class="fu">suppressWarnings</span>(<span class="fu">suppressMessages</span>(</span>
+<span id="cb9-10"><a href="#cb9-10" tabindex="-1"></a>    nlmixr2est<span class="sc">::</span><span class="fu">nlmixr2</span>(mod_unify, <span class="fu">admData</span>(), <span class="at">est =</span> est, <span class="at">control =</span> ctl))),</span>
+<span id="cb9-11"><a href="#cb9-11" tabindex="-1"></a>    <span class="at">silent =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb9-12"><a href="#cb9-12" tabindex="-1"></a>  dt <span class="ot">&lt;-</span> <span class="fu">as.numeric</span>(<span class="fu">difftime</span>(<span class="fu">Sys.time</span>(), t0, <span class="at">units =</span> <span class="st">&quot;secs&quot;</span>))</span>
+<span id="cb9-13"><a href="#cb9-13" tabindex="-1"></a>  <span class="cf">if</span> (<span class="fu">inherits</span>(f, <span class="st">&quot;try-error&quot;</span>)) {</span>
+<span id="cb9-14"><a href="#cb9-14" tabindex="-1"></a>    <span class="do">## Distinguish a DELIBERATE refusal from a failure. Labelling both &quot;refused&quot;</span></span>
+<span id="cb9-15"><a href="#cb9-15" tabindex="-1"></a>    <span class="do">## would present a bug as a design decision, which is the more dangerous of</span></span>
+<span id="cb9-16"><a href="#cb9-16" tabindex="-1"></a>    <span class="do">## the two ways to be wrong here.</span></span>
+<span id="cb9-17"><a href="#cb9-17" tabindex="-1"></a>    msg <span class="ot">&lt;-</span> <span class="fu">conditionMessage</span>(<span class="fu">attr</span>(f, <span class="st">&quot;condition&quot;</span>))</span>
+<span id="cb9-18"><a href="#cb9-18" tabindex="-1"></a>    st  <span class="ot">&lt;-</span> <span class="cf">if</span> (<span class="fu">grepl</span>(<span class="st">&quot;does not support|cannot represent|joint&quot;</span>, msg))</span>
+<span id="cb9-19"><a href="#cb9-19" tabindex="-1"></a>      <span class="st">&quot;refused&quot;</span> <span class="cf">else</span> <span class="fu">paste0</span>(<span class="st">&quot;ERROR: &quot;</span>, <span class="fu">substr</span>(msg, <span class="dv">1</span>, <span class="dv">90</span>))</span>
+<span id="cb9-20"><a href="#cb9-20" tabindex="-1"></a>    <span class="fu">return</span>(<span class="fu">data.frame</span>(<span class="at">estimator =</span> est, <span class="at">reweight =</span> reweight, <span class="at">status =</span> st,</span>
+<span id="cb9-21"><a href="#cb9-21" tabindex="-1"></a>                      <span class="at">lcl =</span> <span class="cn">NA</span>, <span class="at">lv =</span> <span class="cn">NA</span>, <span class="at">clwt =</span> <span class="cn">NA</span>, <span class="at">clcr =</span> <span class="cn">NA</span>,</span>
+<span id="cb9-22"><a href="#cb9-22" tabindex="-1"></a>                      <span class="at">objective =</span> <span class="cn">NA</span>, <span class="at">secs =</span> dt))</span>
+<span id="cb9-23"><a href="#cb9-23" tabindex="-1"></a>  }</span>
+<span id="cb9-24"><a href="#cb9-24" tabindex="-1"></a>  ax <span class="ot">&lt;-</span> f<span class="sc">$</span>env<span class="sc">$</span>admExtra</span>
+<span id="cb9-25"><a href="#cb9-25" tabindex="-1"></a>  <span class="fu">data.frame</span>(<span class="at">estimator =</span> est, <span class="at">reweight =</span> reweight, <span class="at">status =</span> <span class="st">&quot;fitted&quot;</span>,</span>
+<span id="cb9-26"><a href="#cb9-26" tabindex="-1"></a>             <span class="at">lcl =</span> <span class="fu">unname</span>(ax<span class="sc">$</span>struct[[<span class="st">&quot;lcl&quot;</span>]]), <span class="at">lv =</span> <span class="fu">unname</span>(ax<span class="sc">$</span>struct[[<span class="st">&quot;lv&quot;</span>]]),</span>
+<span id="cb9-27"><a href="#cb9-27" tabindex="-1"></a>             <span class="at">clwt =</span> <span class="fu">unname</span>(ax<span class="sc">$</span>struct[[<span class="st">&quot;clwt&quot;</span>]]),</span>
+<span id="cb9-28"><a href="#cb9-28" tabindex="-1"></a>             <span class="at">clcr =</span> <span class="fu">unname</span>(ax<span class="sc">$</span>struct[[<span class="st">&quot;clcr&quot;</span>]]),</span>
+<span id="cb9-29"><a href="#cb9-29" tabindex="-1"></a>             <span class="at">objective =</span> f<span class="sc">$</span>objective, <span class="at">secs =</span> dt)</span>
+<span id="cb9-30"><a href="#cb9-30" tabindex="-1"></a>}</span></code></pre></div>
+<div id="version-0-independent-margins-1" class="section level2">
+<h2>Version 0 — independent margins</h2>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a>studies_indep <span class="ot">&lt;-</span> <span class="fu">make_studies</span>(WT_INDEP)</span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a><span class="co">#&gt; ℹ parameter labels from comments are typically ignored in non-interactive mode</span></span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a><span class="co">#&gt; ℹ Need to run with the source intact to parse comments</span></span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a><span class="co">#&gt; ℹ parameter labels from comments are typically ignored in non-interactive mode</span></span>
+<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a><span class="co">#&gt; ℹ Need to run with the source intact to parse comments</span></span>
+<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a><span class="co">#&gt; ℹ parameter labels from comments are typically ignored in non-interactive mode</span></span>
+<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a><span class="co">#&gt; ℹ Need to run with the source intact to parse comments</span></span>
+<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a>grid1 <span class="ot">&lt;-</span> <span class="fu">expand.grid</span>(<span class="at">est =</span> <span class="fu">c</span>(<span class="st">&quot;adgh&quot;</span>, <span class="st">&quot;admc&quot;</span>), <span class="at">rw =</span> <span class="fu">c</span>(<span class="cn">FALSE</span>, <span class="cn">TRUE</span>),</span>
+<span id="cb10-9"><a href="#cb10-9" tabindex="-1"></a>                     <span class="at">stringsAsFactors =</span> <span class="cn">FALSE</span>)</span>
+<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a>res0 <span class="ot">&lt;-</span> <span class="fu">do.call</span>(rbind, <span class="fu">Map</span>(<span class="cf">function</span>(e, r)</span>
+<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a>  <span class="fu">fit_one</span>(studies_indep, e, r), grid1<span class="sc">$</span>est, grid1<span class="sc">$</span>rw))</span>
+<span id="cb10-12"><a href="#cb10-12" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb10-13"><a href="#cb10-13" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb10-14"><a href="#cb10-14" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb10-15"><a href="#cb10-15" tabindex="-1"></a>knitr<span class="sc">::</span><span class="fu">kable</span>(res0, <span class="at">digits =</span> <span class="dv">4</span>, <span class="at">row.names =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb10-16"><a href="#cb10-16" tabindex="-1"></a>             <span class="at">caption =</span> <span class="st">&quot;Independent covariate margins. Both estimators apply, and reweighting reproduces the unweighted answer.&quot;</span>)</span></code></pre></div>
+<table>
+<caption>Independent covariate margins. Both estimators apply, and
+reweighting reproduces the unweighted answer.</caption>
+<colgroup>
+<col width="13%" />
+<col width="12%" />
+<col width="9%" />
+<col width="9%" />
+<col width="9%" />
+<col width="9%" />
+<col width="9%" />
+<col width="13%" />
+<col width="11%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th align="left">estimator</th>
+<th align="left">reweight</th>
+<th align="left">status</th>
+<th align="right">lcl</th>
+<th align="right">lv</th>
+<th align="right">clwt</th>
+<th align="right">clcr</th>
+<th align="right">objective</th>
+<th align="right">secs</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td align="left">adgh</td>
+<td align="left">FALSE</td>
+<td align="left">fitted</td>
+<td align="right">1.1659</td>
+<td align="right">3.1075</td>
+<td align="right">0.6874</td>
+<td align="right">1.5821</td>
+<td align="right">-393.4220</td>
+<td align="right">10.3782</td>
+</tr>
+<tr class="even">
+<td align="left">admc</td>
+<td align="left">FALSE</td>
+<td align="left">fitted</td>
+<td align="right">1.1662</td>
+<td align="right">3.1075</td>
+<td align="right">0.6873</td>
+<td align="right">1.5876</td>
+<td align="right">-393.4109</td>
+<td align="right">26.4613</td>
+</tr>
+<tr class="odd">
+<td align="left">adgh</td>
+<td align="left">TRUE</td>
+<td align="left">fitted</td>
+<td align="right">1.1659</td>
+<td align="right">3.1075</td>
+<td align="right">0.6874</td>
+<td align="right">1.5821</td>
+<td align="right">-393.4220</td>
+<td align="right">7.0790</td>
+</tr>
+<tr class="even">
+<td align="left">admc</td>
+<td align="left">TRUE</td>
+<td align="left">fitted</td>
+<td align="right">1.1662</td>
+<td align="right">3.1075</td>
+<td align="right">0.6873</td>
+<td align="right">1.5876</td>
+<td align="right">-393.4109</td>
+<td align="right">26.5694</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div id="version-1-summary-statistics" class="section level2">
+<h2>Version 1 — summary statistics</h2>
+<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a>res1 <span class="ot">&lt;-</span> <span class="fu">do.call</span>(rbind, <span class="fu">Map</span>(<span class="cf">function</span>(e, r)</span>
+<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a>  <span class="fu">fit_one</span>(studies_summary, e, r), grid1<span class="sc">$</span>est, grid1<span class="sc">$</span>rw))</span>
+<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a>knitr<span class="sc">::</span><span class="fu">kable</span>(res1, <span class="at">digits =</span> <span class="dv">4</span>, <span class="at">row.names =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a>             <span class="at">caption =</span> <span class="st">&quot;Three studies described by summary statistics.&quot;</span>)</span></code></pre></div>
+<table style="width:100%;">
+<caption>Three studies described by summary statistics.</caption>
+<colgroup>
+<col width="13%" />
+<col width="12%" />
+<col width="10%" />
+<col width="9%" />
+<col width="9%" />
+<col width="9%" />
+<col width="9%" />
+<col width="13%" />
+<col width="10%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th align="left">estimator</th>
+<th align="left">reweight</th>
+<th align="left">status</th>
+<th align="right">lcl</th>
+<th align="right">lv</th>
+<th align="right">clwt</th>
+<th align="right">clcr</th>
+<th align="right">objective</th>
+<th align="right">secs</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td align="left">adgh</td>
+<td align="left">FALSE</td>
+<td align="left">refused</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">0.1293</td>
+</tr>
+<tr class="even">
+<td align="left">admc</td>
+<td align="left">FALSE</td>
+<td align="left">fitted</td>
+<td align="right">1.1627</td>
+<td align="right">3.1071</td>
+<td align="right">0.6132</td>
+<td align="right">1.4751</td>
+<td align="right">-374.0868</td>
+<td align="right">28.7301</td>
+</tr>
+<tr class="odd">
+<td align="left">adgh</td>
+<td align="left">TRUE</td>
+<td align="left">refused</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">0.1369</td>
+</tr>
+<tr class="even">
+<td align="left">admc</td>
+<td align="left">TRUE</td>
+<td align="left">fitted</td>
+<td align="right">1.1627</td>
+<td align="right">3.1071</td>
+<td align="right">0.6132</td>
+<td align="right">1.4751</td>
+<td align="right">-374.0868</td>
+<td align="right">29.2646</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div id="version-2-r-vine-copulas" class="section level2">
+<h2>Version 2 — R-vine copulas</h2>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a>studies_vine <span class="ot">&lt;-</span> <span class="fu">make_studies</span>(WT_VINE)</span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a><span class="co">#&gt; ℹ parameter labels from comments are typically ignored in non-interactive mode</span></span>
+<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a><span class="co">#&gt; ℹ Need to run with the source intact to parse comments</span></span>
+<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a><span class="co">#&gt; ℹ parameter labels from comments are typically ignored in non-interactive mode</span></span>
+<span id="cb12-5"><a href="#cb12-5" tabindex="-1"></a><span class="co">#&gt; ℹ Need to run with the source intact to parse comments</span></span>
+<span id="cb12-6"><a href="#cb12-6" tabindex="-1"></a><span class="co">#&gt; ℹ parameter labels from comments are typically ignored in non-interactive mode</span></span>
+<span id="cb12-7"><a href="#cb12-7" tabindex="-1"></a><span class="co">#&gt; ℹ Need to run with the source intact to parse comments</span></span>
+<span id="cb12-8"><a href="#cb12-8" tabindex="-1"></a>res2 <span class="ot">&lt;-</span> <span class="fu">do.call</span>(rbind, <span class="fu">Map</span>(<span class="cf">function</span>(e, r)</span>
+<span id="cb12-9"><a href="#cb12-9" tabindex="-1"></a>  <span class="fu">fit_one</span>(studies_vine, e, r), grid1<span class="sc">$</span>est, grid1<span class="sc">$</span>rw))</span>
+<span id="cb12-10"><a href="#cb12-10" tabindex="-1"></a>knitr<span class="sc">::</span><span class="fu">kable</span>(res2, <span class="at">digits =</span> <span class="dv">4</span>, <span class="at">row.names =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb12-11"><a href="#cb12-11" tabindex="-1"></a>             <span class="at">caption =</span> <span class="st">&quot;The same three studies with an R-vine copula per study. `adgh` refuses a joint sampler by design: its covariate grid is a tensor product of per-covariate quadratures, which *is* the independence assumption, so it cannot represent a dependent distribution and declines rather than integrating the wrong one.&quot;</span>)</span></code></pre></div>
+<table style="width:100%;">
+<caption>The same three studies with an R-vine copula per study.
+<code>adgh</code> refuses a joint sampler by design: its covariate grid
+is a tensor product of per-covariate quadratures, which <em>is</em> the
+independence assumption, so it cannot represent a dependent distribution
+and declines rather than integrating the wrong one.</caption>
+<colgroup>
+<col width="13%" />
+<col width="12%" />
+<col width="10%" />
+<col width="8%" />
+<col width="9%" />
+<col width="9%" />
+<col width="9%" />
+<col width="13%" />
+<col width="12%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th align="left">estimator</th>
+<th align="left">reweight</th>
+<th align="left">status</th>
+<th align="right">lcl</th>
+<th align="right">lv</th>
+<th align="right">clwt</th>
+<th align="right">clcr</th>
+<th align="right">objective</th>
+<th align="right">secs</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td align="left">adgh</td>
+<td align="left">FALSE</td>
+<td align="left">refused</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">0.1291</td>
+</tr>
+<tr class="even">
+<td align="left">admc</td>
+<td align="left">FALSE</td>
+<td align="left">fitted</td>
+<td align="right">0.542</td>
+<td align="right">3.1136</td>
+<td align="right">0.2595</td>
+<td align="right">2.6984</td>
+<td align="right">-434.5557</td>
+<td align="right">110.2554</td>
+</tr>
+<tr class="odd">
+<td align="left">adgh</td>
+<td align="left">TRUE</td>
+<td align="left">refused</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">NA</td>
+<td align="right">0.1370</td>
+</tr>
+<tr class="even">
+<td align="left">admc</td>
+<td align="left">TRUE</td>
+<td align="left">fitted</td>
+<td align="right">0.542</td>
+<td align="right">3.1136</td>
+<td align="right">0.2595</td>
+<td align="right">2.6984</td>
+<td align="right">-434.5557</td>
+<td align="right">109.9678</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="what-to-take-from-this" class="section level1">
+<h1>What to take from this</h1>
+<p>The estimates agree across every cell that runs. That is the point of
+the comparison: the four combinations evaluate the same integral by
+different means, so agreement is evidence that the integral, and not the
+machinery, is what determines the answer.</p>
+<p>Reweighting is a speed setting, not a modelling choice. It changes
+how the covariate integral is evaluated and nothing about what is being
+estimated, which is why the estimates match rather than merely resemble
+each other.</p>
+<p><code>adgh</code> and a dependent covariate distribution do not
+combine. That is a refusal and not a limitation to work around: a
+product grid assumes independence, and producing a number from it would
+be worse than declining. Use <code>admc</code> when the covariates are
+dependent.</p>
+<p>Finally, a covariate coefficient is only estimable here because the
+three studies have <em>different</em> weight distributions. Three
+studies drawn from one population would leave the likelihood exactly
+flat along a trade-off between the coefficient and the between-subject
+variance, and any estimate reported from such a fit would be the
+optimiser’s stopping point rather than a result.</p>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

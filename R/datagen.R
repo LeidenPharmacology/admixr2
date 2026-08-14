@@ -377,7 +377,11 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     cov_ref_of <- function() {
       if (!is.null(s[["cov"]])) return(s[["cov"]])
       if (is.null(s[["cov_dist"]])) return(NULL)
-      stats::setNames(lapply(s[["cov_dist"]], .admCovMeanOf), names(s[["cov_dist"]]))
+      # `rho`, `Sigma` and `joint` are metadata and a sampler, not covariate
+      # specs -- .admCovMeanOf() has nothing to compute from a function.
+      .cd <- s[["cov_dist"]][setdiff(names(s[["cov_dist"]]),
+                                     c("rho", "Sigma", "joint"))]
+      stats::setNames(lapply(.cd, .admCovMeanOf), names(.cd))
     }
 
     compute_moments <- function(spec, cov_vals = NULL) {

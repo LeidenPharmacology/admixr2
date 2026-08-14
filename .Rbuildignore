@@ -28,3 +28,4 @@
 ^CRAN-SUBMISSION$
 ^\.git$
 ^\.covrignore$
+^vignettes/covariate-mbma\.Rmd$
