@@ -315,6 +315,138 @@ knitr::kable(res2, digits = 4, row.names = FALSE,
              caption = "The same three studies with an R-vine copula per study. `adgh` refuses a joint sampler by design: its covariate grid is a tensor product of per-covariate quadratures, which *is* the independence assumption, so it cannot represent a dependent distribution and declines rather than integrating the wrong one.")
 ```
 
+# What the covariates look like, and what the fits made of them
+
+The three studies have to differ in their covariate distributions for the
+coefficients to be estimable at all, and the two dependent versions have to
+actually carry dependence. Both are worth seeing rather than asserting.
+
+```{r covplots, fig.width = 7.5, fig.height = 7.5, echo = FALSE}
+draw_cov <- function(spec, n = 4000L) {
+  u <- randtoolbox::sobol(n, dim = 2)
+  u <- pmin(pmax(u, 1e-9), 1 - 1e-9)
+  if (is.function(spec$joint)) return(spec$joint(u))
+  cbind(WT   = stats::qlnorm(u[, 1], spec$WT$meanlog,   spec$WT$sdlog),
+        CRCL = stats::qlnorm(u[, 2], spec$CRCL$meanlog, spec$CRCL$sdlog))
+}
+SPECS <- list("independent" = WT_INDEP, "correlation" = WT_SUMMARY)
+if (has_vine) SPECS[["R-vine"]] <- WT_VINE
+cols <- c(A = "#1b6ca8", B = "#c1121f", C = "#2a9d8f")
+
+op <- par(mfrow = c(3, 2), mar = c(4, 4, 2.2, 1), mgp = c(2.3, 0.7, 0))
+
+## row 1: the marginal distributions, which differ BETWEEN studies -- the only
+## reason a covariate coefficient is identifiable from aggregate data
+for (v in c("WT", "CRCL")) {
+  X <- lapply(names(DESIGN), function(k) draw_cov(WT_INDEP[[k]])[, v])
+  xl <- range(unlist(X))
+  plot(NA, xlim = xl, ylim = c(0, max(vapply(X, function(z)
+        max(stats::density(z)$y), 0)) * 1.05), bty = "l",
+       xlab = v, ylab = "density",
+       main = sprintf("%s by study", v))
+  for (i in seq_along(X)) lines(stats::density(X[[i]]), col = cols[i], lwd = 2)
+  legend("topright", names(DESIGN), col = cols, lwd = 2, bty = "n", cex = 0.9)
+}
+
+## row 2: dependence. Independent margins give a cloud with no tilt; the
+## Gaussian copula tilts it; the vine tilts it AND shapes the tails.
+for (nm in names(SPECS)[1:2]) {
+  Z <- draw_cov(SPECS[[nm]][["B"]], 3000L)
+  plot(Z[, "WT"], Z[, "CRCL"], pch = 16, cex = 0.25,
+       col = grDevices::adjustcolor("#333333", 0.35), bty = "l",
+       xlab = "WT", ylab = "CRCL",
+       main = sprintf("study B: %s (r = %.2f)", nm, cor(Z[, 1], Z[, 2])))
+}
+
+## row 3: the vine, and the aggregate data the whole analysis actually sees
+if (has_vine) {
+  Z <- draw_cov(WT_VINE[["B"]], 3000L)
+  plot(Z[, "WT"], Z[, "CRCL"], pch = 16, cex = 0.25,
+       col = grDevices::adjustcolor("#333333", 0.35), bty = "l",
+       xlab = "WT", ylab = "CRCL",
+       main = sprintf("study B: R-vine (r = %.2f)", cor(Z[, 1], Z[, 2])))
+} else plot.new()
+
+rng <- range(unlist(lapply(studies_indep, function(s)
+  c(s$E - sqrt(diag(as.matrix(s$V))), s$E + sqrt(diag(as.matrix(s$V)))))))
+plot(NA, xlim = c(0, 13), ylim = rng, bty = "l", xlab = "time (h)",
+     ylab = "concentration", main = "aggregate data (mean +- SD)")
+for (i in seq_along(studies_indep)) {
+  st <- studies_indep[[i]]; sd_i <- sqrt(diag(as.matrix(st$V)))
+  arrows(st$times, st$E - sd_i, st$times, st$E + sd_i, code = 3, angle = 90,
+         length = 0.03, col = cols[i])
+  points(st$times, st$E, pch = 16, col = cols[i]); lines(st$times, st$E, col = cols[i])
+}
+legend("topright", names(DESIGN), col = cols, lwd = 2, bty = "n", cex = 0.9)
+invisible(par(op))
+```
+
+The marginals differ between studies, which is what makes the coefficients
+estimable; the independent version shows no tilt, and both dependent versions do.
+
+# The estimated covariate effect
+
+Each fit is summarised by what it says about clearance: how it scales with weight
+at a typical creatinine clearance, and with creatinine clearance at a typical
+weight. The three generating models are drawn for comparison — there is no single
+truth here, since the unifying model is one structure reconciling three, so the
+generating curves bracket rather than define the answer.
+
+```{r effectplot, fig.width = 7.5, fig.height = 3.6, echo = FALSE}
+gen <- list(A = c(clwt = 0.75, clcr = 0.45),
+            B = c(clwt = 0.68, clcr = 0.38),
+            C = c(clwt = 0.82, clcr = 0.52))
+FITS <- list()
+pick <- function(df) { d <- df[df$status == "fitted", ]; if (nrow(d)) d[1, ] else NULL }
+if (!is.null(pick(res0))) FITS[["independent"]] <- pick(res0)
+if (!is.null(pick(res1))) FITS[["correlation"]] <- pick(res1)
+if (exists("res2") && !is.null(pick(res2))) FITS[["R-vine"]] <- pick(res2)
+fcol <- c(independent = "#1b6ca8", correlation = "#c1121f", `R-vine` = "#2a9d8f")
+
+op <- par(mfrow = c(1, 2), mar = c(4, 4.2, 2.2, 1), mgp = c(2.4, 0.7, 0))
+wt <- seq(40, 120, length.out = 100); cr <- seq(50, 150, length.out = 100)
+for (which_v in c("WT", "CRCL")) {
+  x  <- if (which_v == "WT") wt else cr
+  ref <- if (which_v == "WT") 70 else 95
+  plot(NA, xlim = range(x), ylim = c(0.4, 2.2), bty = "l", xlab = which_v,
+       ylab = "clearance relative to a typical patient",
+       main = sprintf("effect of %s", which_v))
+  abline(h = 1, col = "grey80")
+  for (k in names(gen)) {
+    e <- gen[[k]][[if (which_v == "WT") "clwt" else "clcr"]]
+    lines(x, (x / ref)^e, col = "grey55", lty = 2)
+  }
+  for (nm in names(FITS)) {
+    e <- FITS[[nm]][[if (which_v == "WT") "clwt" else "clcr"]]
+    lines(x, (x / ref)^e, col = fcol[nm], lwd = 2.4)
+  }
+  if (which_v == "WT")
+    legend("topleft", c(names(FITS), "generating models"),
+           col = c(fcol[names(FITS)], "grey55"),
+           lwd = c(rep(2.4, length(FITS)), 1), lty = c(rep(1, length(FITS)), 2),
+           bty = "n", cex = 0.85)
+}
+invisible(par(op))
+```
+
+Neither coefficient is pinned down, and the plot says so more usefully than the
+tables do.
+
+The weight exponent comes out at 0.69 and 0.61 under the two independent-margin
+and correlated descriptions — close to the generating values of 0.68–0.82 — but
+at 0.26 under the vine, well below all three. The creatinine-clearance exponent
+is estimated at 1.48–2.70 against generating values of 0.38–0.52, so it is high
+by a factor of three to five in every description.
+
+Two readings are consistent with that, and this vignette does not separate them.
+The unifying model reconciles three different generating structures, so no single
+pair of coefficients is correct and some displacement is expected. But
+coefficients that move this much *with the covariate description* are not
+well determined by the data, and the two exponents can trade against each other
+whenever weight and creatinine clearance are correlated — which is exactly what
+the dependent versions introduce. Deciding between those readings needs a
+profile over each coefficient, which is beyond what a fit summary can show.
+
 # What to take from this
 
 The estimates agree across every cell that runs. That is the point of the
