@@ -62,7 +62,6 @@ skip_if_not_installed("rxode2")
 .cov_setup <- function(fn, cov_dist, cov_ref, E, V) {
   ui    <- suppressMessages(rxode2::rxode2(fn))
   pinfo <- admixr2:::.admParseIniDf(ui$iniDf, ui)
-  pinfo$cov_map <- admixr2:::.admCovMap(ui)
   pinfo$nDisplayProgress <- .Machine$integer.max
   s <- list(E = E, V = V, n = 300L, times = .cov_TIMES,
             ev = rxode2::et(amt = .cov_DOSE),
@@ -87,11 +86,7 @@ skip_if_not_installed("rxode2")
   # helper handled only "uq" and silently held the covariate at its reference on
   # the "rows" path -- i.e. it reproduced the very bug the tests exist to catch.
   su <- d$st[[1L]]
-  if (identical(su$.adm_cov_path, "uq")) {
-    eta <- admixr2:::.admCovUQEta(eta, z, d$pars, d$pinfo, su, d$rxMod, 1L)
-    expect_false(is.null(eta))
-    colnames(eta) <- d$pinfo$eta_col_names
-  } else if (identical(su$.adm_cov_path, "rows")) {
+  if (identical(su$.adm_cov_path, "rows")) {
     su <- admixr2:::.admStudyCovRows(su, d$pinfo, nrow(eta))
     expect_false(is.null(su$cov_rows))
   }
@@ -103,53 +98,67 @@ skip_if_not_installed("rxode2")
   list(E = mu, V = crossprod(sweep(cp, 2L, mu)) / n_sim)
 }
 
-test_that(".admCovDelta measures Delta(a) from the model, exactly", {
+test_that(".admShiftDelta measures Delta(a) from the model, exactly", {
+  # The replacement for the retired .admCovDelta, which measured the same shift
+  # with an extra rxSolve per objective evaluation. .admShiftDelta evaluates the
+  # model's OWN parameter assignment in R instead, so it costs no solve at all
+  # -- and it is the quantity .admShiftVerify() then checks against the compiled
+  # model, which is what makes the shift path admissible where uq was not.
   cd <- list(WT = list(meanlog = log(72), sdlog = 0.28))
   d  <- .cov_setup(.cov_allometric, cd, list(WT = 72),
                    rep(1, length(.cov_TIMES)), diag(length(.cov_TIMES)))
-  dl <- admixr2:::.admCovDelta(d$rxMod, d$pars, d$pinfo, d$st[[1L]], "WT", "cl", 1L)
-  expect_false(is.null(dl))
+  sp <- admixr2:::.admShiftSpec(d$ui, "WT", d$pinfo$eta_col_names)
+  expect_false(is.null(sp))
+  expect_identical(sp$param, "cl")
+  expect_identical(sp$eta, "eta.cl")
+
+  a  <- exp(log(72) + 0.28 * admixr2:::.adghNodes1(15L)$x)
+  X  <- matrix(a, ncol = 1L, dimnames = list(NULL, "WT"))
+  D  <- admixr2:::.admShiftDelta(sp, admixr2:::.admShiftStruct(d$pinfo),
+                                 X, list(WT = 72))
   # the model is cl = exp(tcl+eta)*(WT/70)^tcov, so Delta(a) = tcov*log(a/72)
-  # measured against the study's own reference value of 72
-  expect_equal(dl$delta, 0.75 * log(dl$a / 72), tolerance = 1e-9)
-  expect_equal(sum(dl$w), 1)
+  # measured against the reference value of 72
+  expect_equal(as.numeric(D), 0.75 * log(a / 72), tolerance = 1e-12)
 })
 
-test_that("u-quantile reproduces exact nested quadrature for an ALLOMETRIC effect", {
+test_that("the general path reproduces exact nested quadrature for an ALLOMETRIC effect", {
   ml <- log(72); sl <- 0.28
   ref <- .cov_ref(function(wt, eta) exp(.cov_TCL + eta) * (wt / 70)^0.75, ml, sl)
   Vo  <- ref$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
   d <- .cov_setup(.cov_allometric, list(WT = list(meanlog = ml, sdlog = sl)),
                   list(WT = exp(ml)), ref$E, Vo)
-  # this model is NOT a bare theta*WT product, so not the collapse; it now takes
-  # the general per-row path rather than the u-quantile one (see .admCheckCovariates)
-  expect_false(isTRUE(d$st[[1L]]$.adm_cov_collapse))
   expect_identical(d$st[[1L]]$.adm_cov_path, "rows")
   p <- .cov_pred(d)
   expect_lt(max(abs(p$E / ref$E - 1)), 5e-3)
   expect_lt(max(abs(p$V / ref$V - 1)), 3e-2)
 })
 
-test_that("collapse and u-quantile agree on a LINEAR model, where both are valid", {
-  # Two independent code paths -- closed-form Omega inflation vs a measured
-  # Delta and an inverse-CDF draw -- must land on the same moments.
+test_that("the general path matches the retired collapse's closed form", {
+  # `cl <- exp(tcl + tcov*WT + eta.cl)` with a NORMAL WT is the one and only
+  # configuration the retired "collapse" path covered. Its closed form is
+  #   Omega* = Omega + tcov^2 * Var(WT),
+  # solved at the covariate mean -- so the general path, which knows none of
+  # that, must reproduce exactly those moments. This is the check that the
+  # capability was not lost with the code.
   mu <- 0.20; sd <- 0.35
-  d_uq <- .cov_setup(.cov_linear, list(WT = list(mu = mu, sd = sd)),
-                     list(WT = mu), rep(1, length(.cov_TIMES)),
-                     diag(length(.cov_TIMES)))
-  expect_true(isTRUE(d_uq$st[[1L]]$.adm_cov_collapse))   # collapse claimed
-  p_col <- .cov_pred(d_uq)
+  d <- .cov_setup(.cov_linear, list(WT = list(mu = mu, sd = sd)),
+                  list(WT = mu), rep(1, length(.cov_TIMES)),
+                  diag(length(.cov_TIMES)))
+  expect_identical(d$st[[1L]]$.adm_cov_path, "rows")
+  p <- .cov_pred(d, n_sim = 12000L)
 
-  # force the u-quantile route on the same model/study
-  d_uq$st[[1L]]$.adm_cov_collapse <- FALSE
-  pe <- admixr2:::.admCovParamEta(d_uq$ui, "WT", d_uq$pinfo$eta_col_names)
-  expect_equal(pe$param, "cl")
-  d_uq$st[[1L]]$.adm_cov_uq <- list(list(cov = "WT", param = pe$param,
-                                         eta = pe$eta, idx = 1L))
-  p_uq <- .cov_pred(d_uq)
-
-  expect_lt(max(abs(p_uq$E / p_col$E - 1)), 5e-3)
-  expect_lt(max(abs(p_uq$V / p_col$V - 1)), 3e-2)
+  # the closed form, computed here rather than by the package
+  om2 <- .cov_OM^2 + 0.75^2 * sd^2
+  ref <- .cov_ref(function(wt, eta) exp(.cov_TCL + 0.75 * mu + eta),
+                  0, 0)                      # covariate spread folded into eta
+  q   <- .cov_gh(60L); m1 <- 0; M2 <- 0
+  for (i in seq_along(q$x)) {
+    Y  <- as.numeric(.cov_conc(exp(.cov_TCL + 0.75 * mu + sqrt(om2) * q$x[i])))
+    m1 <- m1 + q$w[i] * Y; M2 <- M2 + q$w[i] * outer(Y, Y)
+  }
+  Vc <- M2 - outer(m1, m1)
+  expect_lt(max(abs(p$E / m1 - 1)), 5e-3)
+  expect_lt(max(abs(p$V / Vc - 1)), 3e-2)
 })
 
 test_that("a declared covariate distribution is never silently ignored", {
@@ -162,8 +171,7 @@ test_that("a declared covariate distribution is never silently ignored", {
   d <- .cov_setup(.cov_allometric, list(WT = list(meanlog = ml, sdlog = sl)),
                   list(WT = exp(ml)), ref$E, Vo)
   p_on <- .cov_pred(d)
-  d$st[[1L]]$.adm_cov_uq <- NULL          # covariate held at its mean
-  d$st[[1L]]$.adm_cov_path <- NULL
+  d$st[[1L]]$.adm_cov_path <- NULL        # covariate held at its mean
   p_off <- .cov_pred(d)
   expect_gt(max(abs(diag(p_on$V) / diag(p_off$V) - 1)), 0.05)
 })
@@ -233,18 +241,17 @@ test_that("a covariate on a parameter with NO random effect is supported", {
   expect_lt(max(abs(p$V / r$V - 1)), 3e-2)
 })
 
-test_that("routing prefers the most efficient VALID path", {
+test_that("the general path is the default route for every covariate form", {
+  # Neither "collapse" (a bare theta*COV product, a NORMAL covariate, the study
+  # solved at the covariate mean, and grad = "none") nor "uq" (four conditions
+  # inferred from the model TEXT, each measured to be silently wrong when
+  # assumed and false) is routed to any more. cov_integration = "shift"/"auto"
+  # is the only route off "rows", and it is admitted numerically.
   ml <- log(72); sl <- 0.28
   E0 <- rep(1, length(.cov_TIMES)); V0 <- diag(length(.cov_TIMES))
-  # bare theta*WT + normal -> closed form
   expect_identical(
     .cov_setup(.cov_linear, list(WT = list(mu = 0.2, sd = 0.35)),
-               list(WT = 0.2), E0, V0)$st[[1L]]$.adm_cov_path, "collapse")
-  # Everything the closed form does not cover goes to the general per-row path.
-  # The u-quantile route is no longer selected: it needs a smooth unimodal
-  # covariate, a log-scale multiplicative effect and one covariate per eta, none
-  # of which can be established from the model text, and each of which was
-  # measured to be silently wrong when assumed and false.
+               list(WT = 0.2), E0, V0)$st[[1L]]$.adm_cov_path, "rows")
   expect_identical(
     .cov_setup(.cov_allometric, list(WT = list(meanlog = ml, sdlog = sl)),
                list(WT = exp(ml)), E0, V0)$st[[1L]]$.adm_cov_path, "rows")
@@ -301,11 +308,11 @@ test_that("the general path supports ANALYTIC gradients (vs central FD)", {
   }
 })
 
-test_that("a gradient mode selects the general path, and none keeps the collapse", {
+test_that("`grad` does not change the covariate path, end to end", {
   E0 <- rep(1, length(.cov_TIMES)); V0 <- diag(length(.cov_TIMES))
   d_none <- .cov_setup(.cov_linear, list(WT = list(mu = 0.2, sd = 0.35)),
-                       list(WT = 0.2), E0, V0)
-  expect_identical(d_none$st[[1L]]$.adm_cov_path, "collapse")
+                       list(WT = 0.2), E0, V0)                   # grad = "none"
+  expect_identical(d_none$st[[1L]]$.adm_cov_path, "rows")
   ui <- d_none$ui; pinfo <- d_none$pinfo
   st <- admixr2:::.admFlattenStudies(list(s1 = admixr2:::.admNormaliseStudy(
     list(E = E0, V = V0, n = 300L, times = .cov_TIMES,
@@ -909,4 +916,53 @@ test_that("the shift path is REFUSED when its identity does not hold", {
     model({cl <- exp(tcl + eta.cl); v <- exp(tv)*(WT/70)^b2
            d/dt(centr) <- -cl/v*centr; cp <- centr/v; cp ~ add(a)}) }),
     "exactly one random effect")
+})
+
+test_that('cov_integration = "auto" takes the shift exactly where it verifies', {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  Sa <- .shift_setup("auto")
+  Ss <- .shift_setup("shift")
+  expect_identical(Sa$stu[[1L]]$.adm_cov_path, "shift")
+  # it must build the SAME shift the explicit setting does, not a variant
+  expect_equal(Sa$stu[[1L]]$.adm_cov_shift, Ss$stu[[1L]]$.adm_cov_shift)
+
+  # ... and where the identity fails it FALLS BACK, never errors. "auto" is a
+  # speed lever and the fallback is the more accurate path, so a refusal must
+  # cost solve rows and nothing else. The reason is recorded on the study as
+  # well as messaged -- a message is easy to lose in a fit's output.
+  expect_message(
+    Sb <- .shift_setup("auto", mod = function() {
+      ini({tcl <- log(4); tv <- log(30); b1 <- 0.02; eta.cl ~ 0.09; a <- 0.1})
+      model({cl <- exp(tcl + eta.cl) + b1*(WT - 70); v <- exp(tv)
+             d/dt(centr) <- -cl/v*centr; cp <- centr/v; cp ~ add(a)}) }),
+    "shift identity")
+  expect_identical(Sb$stu[[1L]]$.adm_cov_path, "rows")
+  expect_match(Sb$stu[[1L]]$.adm_cov_shift_why, "shift identity")
+  # the default is unchanged: "quadrature" never tries the shift
+  expect_identical(.shift_setup("quadrature")$stu[[1L]]$.adm_cov_path, "rows")
+})
+
+test_that("a shift study's FD gradient is not batched onto a stale node grid", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # .adghMomentsBatch scores every perturbed configuration against ONE node grid
+  # and ONE weight vector -- true once "collapse" is gone, EXCEPT on the shift
+  # path, where Delta moves the u nodes and their weights with the structural
+  # thetas. Batching there differences the objective on the unperturbed grid: a
+  # finite, plausible, wrong gradient. .adghGrad routes shift studies to the
+  # per-configuration path instead.
+  S  <- .shift_setup("shift", grad = "analytical")
+  skip_if(is.null(S$sM), "no sensitivity model")
+  # Drop the theta directions to force the FD block: .admThetaSens() returns
+  # NULL without them, which is exactly what a model that cannot build an
+  # augmented sens model does. (Passing sensModel = NULL is NOT the same thing
+  # -- .admSimulateSens dereferences it unconditionally.)
+  sM <- S$sM; sM$theta_sens_cols <- NULL
+  f  <- function(p) admixr2:::.adghNLL(p, S$pin, S$stu, S$rx, S$ov, S$g, 1L)
+  ga <- admixr2:::.adghGrad(S$p0, S$pin, S$stu, sM, S$rx, S$ov, S$g, 1L, 1e-4)
+  h  <- 1e-5
+  gf <- vapply(seq_along(S$p0), function(j) {
+    a <- b <- S$p0; a[j] <- a[j] + h; b[j] <- b[j] - h
+    (f(a) - f(b)) / (2 * h) }, 0)
+  expect_true(all(is.finite(ga)))
+  expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-4)), 1e-2)
 })

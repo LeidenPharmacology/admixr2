@@ -153,8 +153,8 @@
   # cross-category entry replaces V_struct outright (see .admResidApply). This used
   # to pass neither, so ap$rmat was silently discarded for joint units.
   rt  <- .admRowTimes(unit, n_t)
-  ap  <- .admResidApply(mu_struct, diag(V_pred), arr, rt, V_pred)
-  list(mu = ap$mu, V = .admApplyResidTail(V_pred, ap))
+  m <- .admResidMoments(mu_struct, diag(V_pred), arr, V_pred, rt)
+  list(mu = m$mu, V = m$V)
 }
 
 # Observation time governing each row of a unit's stacked mean vector -- the

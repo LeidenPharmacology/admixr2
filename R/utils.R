@@ -52,10 +52,18 @@ utils::globalVariables(c(
   attr(ll, "df")   <- npar
   attr(ll, "nobs") <- nobs
   class(ll) <- "logLik"
+  # AIC/BIC from stats' own methods on the logLik built two lines up, rather than
+  # rewriting `objective + 2*npar` / `objective + log(nobs)*npar` here: `ll`
+  # already carries the df and nobs those formulas need, so stats::AIC()/BIC()
+  # have every input and the numbers admixr2 PRINTS are then the same ones a user
+  # calling AIC(fit)/BIC(fit) gets, by construction rather than by agreement.
+  # Bit-identical to the hand-written forms -- `-2 * (-objective/2)` is exact in
+  # binary floating point -- checked with identical() over objective in
+  # {0, 1e-16, 50, 1234.5678901234, 1e12, -3.25} x npar {1..11} x nobs {1..120000}.
   objDf <- data.frame(
     OBJF             = objective,
-    AIC              = objective + 2 * npar,
-    BIC              = objective + log(nobs) * npar,
+    AIC              = stats::AIC(ll),
+    BIC              = stats::BIC(ll),
     "Log-likelihood" = as.numeric(ll),
     check.names      = FALSE
   )

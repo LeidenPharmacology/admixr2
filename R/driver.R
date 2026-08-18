@@ -35,10 +35,6 @@
   pinfo$sim_cache_file   <- tryCatch(.admModelCacheFile(.ui), error = function(e) NULL)
   # Residual-quadrature nodes travel pinfo -> arr -> .admResidApply/.admResidDeriv.
   pinfo$resid_nodes      <- .ctl$resid_nodes %||% .ADM_TBS_NODES
-  # covariate -> (coefficient theta, eta), from rxode2's mu-reference metadata.
-  # Travels on pinfo for the same reason everything else here does: the parallel
-  # workers have no `ui`.
-  pinfo$cov_map          <- tryCatch(.admCovMap(.ui), error = function(e) NULL)
   # Nodes for the COVARIATE dimension of the adgh product grid. Read in exactly
   # one place (.admCovGrid via .adghGrid) and, until this line existed, set
   # nowhere -- so the `%||% 7L` fallback there always fired and the covariate

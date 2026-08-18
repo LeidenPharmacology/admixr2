@@ -381,7 +381,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
     mu_struct <- mu
     arr   <- .admResidRows(pinfo, s$output, pars$sigma_var, length(mu))
     var_f <- diag(V)                       # Var_eta(f), pre-residual
-    ap    <- .admResidApply(mu_struct, var_f, arr, s$times, cov_f)
+    ap    <- .admResidMoments(mu_struct, var_f, arr, cov_f, s$times)$ap
     mu    <- ap$mu
     V     <- .admApplyResidTail(V, ap)
 
@@ -446,26 +446,25 @@ nmObjGetControl.adirmc <- function(x, ...) {
     # eff_dNLL_dmu folds in the residual's sensitivity to mu_struct: the lnorm
     # mean scaling, plus the dependence of the residual variance on mu.
     .is_var_s <- identical(s$method, "var")
-    .dres        <- .admResidDeriv(mu_struct, var_f, arr, pinfo)   # once, reused below
-    eff_dNLL_dmu <- dNLL_dmu +
-      .admResidMuCoupling(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                          if (.is_var_s) NULL else dNLL_dV,
-                          if (.is_var_s) NULL else cov_f, s$times, deriv = .dres)
+    # ONE moment tail for this study: .admResidDeriv, the V_pred -> V_struct
+    # chain, the TBS mean-from-covariance fold and both contractions.
+    ch <- .admResidChain(mu_struct, var_f, arr, pinfo, dNLL_dmu, dNLL_dV_diag,
+                         if (.is_var_s) NULL else dNLL_dV,
+                         if (.is_var_s) NULL else cov_f, s$times)
+    .dres        <- ch$deriv
+    eff_dNLL_dmu <- dNLL_dmu + ch$mu_coupling()
 
     d_mat <- sweep(bi, 2L, mean_new)
 
     # The kernels differentiate the STRUCTURAL weighted covariance, so dNLL_dV
     # must be chained from V_pred (identity for additive error).
-    vchain         <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times, deriv = .dres)
-    .dmv           <- attr(vchain, "dmu_dv0") %||% numeric(length(mu_struct))
-    dNLL_dV_diag_s <- dNLL_dV_diag * diag(vchain) + dNLL_dmu * .dmv
+    dNLL_dV_diag_s <- ch$dV_diag
 
     gk <- if (identical(s$method, "var"))
       irmc_grad_kernel_var_cpp(F, w, mu, d_mat, invO, eff_dNLL_dmu, dNLL_dV_diag_s)
     else
       irmc_grad_kernel_cpp(F, w, mu, d_mat, invO, eff_dNLL_dmu,
-                           { .b <- dNLL_dV * vchain
-                             diag(.b) <- diag(.b) + dNLL_dmu * .dmv; .b })
+                           ch$dV)
     dNLL_dmean_new <- as.numeric(gk$dNLL_dmean_new)
 
     for (k in seq_along(paired_nms)) {
@@ -510,9 +509,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
     n_e <- length(pars$sigma_var)
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-      .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                    if (.is_var_s) NULL else dNLL_dV, s$times,
-                    if (.is_var_s) NULL else cov_f, deriv = .dres)
+      ch$sigma_grad()
   }
 
   list(nll = nll2, grad = grad)

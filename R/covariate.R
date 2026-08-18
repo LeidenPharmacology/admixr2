@@ -9,9 +9,42 @@
 #   mu = E_{a,eta}[f]        V = Cov_{a,eta}(f) + residual
 #
 # Covariate-induced between-subject variability belongs INSIDE V_pred, because
-# that is where the observed V carries it. Three paths compute those moments --
-# collapse, u-quantile and the general per-row path -- chosen per study by
-# .admCheckCovariates(); see each section below.
+# that is where the observed V carries it. Two paths compute those moments --
+# the general per-row/product-grid path ("rows") and the shift path ("shift") --
+# chosen per study by .admCheckCovariates(); see each section below. adgh's
+# `cov_integration` selects between the product grid, its second-order Taylor
+# surrogate and the shift.
+#
+# TWO EARLIER PATHS WERE REMOVED, and the reasons generalise:
+#
+#  * "collapse" folded a normal covariate's variance into Omega in closed form
+#    (Omega + J Sigma_a J'). Exact, but it needed a bare `theta * COV` product,
+#    a NORMAL covariate, the study solved at the covariate mean, AND grad =
+#    "none" -- and every estimator defaults to a gradient, so it was unreachable
+#    in a real fit. It was gated on rxode2's muRefCovariateDataFrame, which
+#    recognises 1 of 8 realistic covariate parameterisations (the table that
+#    used to sit here).
+#
+#    It is the GAUSSIAN SPECIAL CASE OF THE SHIFT, not a separate method: for a
+#    linear Delta and a normal covariate, u = Delta(a) + eta is itself normal
+#    with variance Omega + beta^2 Var(a), which is precisely the inflation.
+#    Verified with the ODE solver taken out of the comparison (analytic 1-cmt f
+#    over both node sets): 6.7e-16 on the mean and 5.0e-13 on the covariance at
+#    31 covariate nodes, 2.5e-10 / 2.7e-8 at the default 7 -- an order of
+#    magnitude under the solver's own ~1e-6 floor, which is why the same
+#    comparison run THROUGH the solver bottoms out at 1.5e-06 / 1.7e-05 and
+#    says nothing. "shift" covers the case with no distributional restriction
+#    and with a gradient.
+#  * "uq" replaced the affected eta column with quantiles of u = Delta(a) + eta.
+#    That is the right idea, and it is what "shift" does -- but it INFERRED the
+#    shift property from the model TEXT, which has four measured silent-wrong-
+#    answer modes (discrete/multi-modal covariate 13-20% on the mean and 3-5x on
+#    the covariance; a non-log link or additive effect 16-21% on the covariance;
+#    two covariates on one eta leaving the result bit-for-bit the second
+#    covariate alone; a user `quantile` integrated by 32 equal-weight midpoints
+#    biasing the coefficient ~7% high). It had been disabled (`ok_uq <- FALSE`,
+#    unconditional) rather than deleted, pending exactly the positive numerical
+#    check that .admShiftVerify() now performs.
 #
 # THE RULE, of which everything below is a consequence: a block's PREDICTION
 # must integrate over the same covariate distribution its DATA were aggregated
@@ -92,10 +125,7 @@
     # distribution for one covariate and a constant for another; returning here
     # dropped every constant one, so a model reading both could not solve at all
     # ("parameter(s) are required for solving: SEX"), swallowed by .admNLL's
-    # tryCatch into an Inf objective everywhere. It also made .admCovDelta's
-    # probe -- which passes cov_s = NULL with a probe matrix -- unable to supply
-    # a second covariate, which is what killed the u-quantile path for any model
-    # with more than one covariate.
+    # tryCatch into an Inf objective everywhere.
     cov_s <- cov_s[setdiff(names(cov_s), colnames(cov_rows))]
   }
   if (is.null(cov_s) || length(cov_s) == 0L) return(mat)
@@ -109,107 +139,28 @@
 }
 
 # =============================================================================
-# Covariate collapse (exact marginal moments, no nodes)
+# Study-level Cholesky
 # =============================================================================
 
-# Map covariate -> (coefficient theta, eta) from rxode2's OWN mu-reference
-# metadata, so nothing has to be declared by hand. muRefCovariateDataFrame gives
-# (theta, covariate, covariateParameter); muRefDataFrame gives (theta, eta).
-# Joining on `theta` says which eta's mu-referenced argument each covariate
-# enters, and with which coefficient.
-.admCovMap <- function(ui) {
-  cd <- tryCatch(ui$muRefCovariateDataFrame, error = function(e) NULL)
-  md <- tryCatch(ui$muRefDataFrame,          error = function(e) NULL)
-  if (is.null(cd) || is.null(md)) return(NULL)
-  if (!NROW(cd) || !NROW(md)) return(NULL)
-  m <- merge(cd, md, by = "theta")
-  if (!NROW(m)) return(NULL)
-  data.frame(covariate = as.character(m$covariate),
-             coef      = as.character(m$covariateParameter),
-             eta       = as.character(m$eta),
-             stringsAsFactors = FALSE)
-}
-
-# Sigma_a for the named covariates, in the order given.
-.admCovDistSigma <- function(cov_dist, nms) {
-  d   <- length(nms)
-  # [["sd"]] not $sd: `$` PARTIAL-MATCHES, so a lognormal spec's `sdlog` was
-  # returned as if it were a natural-scale `sd` -- one routing change away from
-  # folding a log-scale spread into Omega.
-  sds <- vapply(nms, function(n) {
-    v <- cov_dist[[n]][["sd"]]
-    if (is.null(v)) NA_real_ else as.numeric(v)
-  }, numeric(1))
-  if (anyNA(sds))
-    stop(".admCovDistSigma: covariate(s) ",
-         paste(sQuote(nms[is.na(sds)]), collapse = ", "),
-         " have no natural-scale `sd`; the collapse is defined for normal ",
-         "covariates only.", call. = FALSE)
-  if (!is.null(cov_dist$Sigma)) return(cov_dist$Sigma[nms, nms, drop = FALSE])
-  rho <- cov_dist$rho %||% 0
-  S <- diag(sds^2, d)
-  if (d >= 2L && abs(rho) > 1e-12)
-    for (i in seq_len(d - 1L)) for (j in seq(i + 1L, d))
-      S[i, j] <- S[j, i] <- rho * sds[i] * sds[j]
-  S
-}
-
-# Effective Cholesky for a study whose subjects SPAN a covariate distribution.
+# The Cholesky a given study is simulated with. IDENTITY, and it should be
+# DELETED -- `R/admc.R` (.admNLL, .admGradBatch) calls it unguarded on every
+# objective evaluation, so removing it from here alone breaks every admc fit.
 #
-# With mu-referencing the covariate and the random effect enter the SAME
-# argument:  param <- g(theta + theta_cov*a + eta).  So for a ~ N(mu_a, Sigma_a),
-#
-#     theta + theta_cov*a + eta  ==  theta + theta_cov*mu_a + s,
-#     s ~ N(0, Omega + J Sigma_a J'),      J[eta_k, k] = theta_cov_k
-#
-# EXACTLY. Solving at the covariate MEAN and inflating Omega therefore reproduces
-# the marginal moments with one solve set -- no quadrature nodes, no importance
-# weights, and the same cost as a fit with no covariate at all.
-#
-# Exact only for a LINEAR covariate effect on the mu-referenced scale and a
-# normal covariate. Returns NULL whenever that cannot be established, so every
-# caller falls back to the plain Cholesky rather than silently approximating.
-.admCovInflateL <- function(pars, pinfo, s) {
-  cd <- s$cov_dist
-  if (is.null(cd) || pinfo$n_eta == 0L || is.null(pars$L)) return(NULL)
-  cmap <- pinfo$cov_map
-  if (is.null(cmap) || !NROW(cmap)) return(NULL)
-  eta_nms <- pinfo$eta_col_names
-  has_sd  <- vapply(names(cd), function(n)
-    is.list(cd[[n]]) && !is.null(cd[[n]]$sd), logical(1))
-  keep <- cmap$covariate %in% names(cd)[has_sd] & cmap$eta %in% eta_nms
-  use  <- cmap[keep, , drop = FALSE]
-  if (!NROW(use)) return(NULL)
-  J <- matrix(0, pinfo$n_eta, NROW(use))
-  for (k in seq_len(NROW(use))) {
-    # pars$struct holds ESTIMATED thetas only. `[[` with an unmatched name on a
-    # LIST errors rather than returning NULL, so the guard below was dead and a
-    # fix()ed covariate coefficient killed the fit at the first objective
-    # evaluation (.admNLL calls .admStudyL with no tryCatch). Look the value up
-    # by name, falling back to the model's fixed value.
-    cf <- if (use$coef[k] %in% names(pars$struct))
-      pars$struct[[use$coef[k]]] else pinfo$fixed_theta[[use$coef[k]]]
-    if (is.null(cf) || !is.finite(cf)) return(NULL)
-    J[match(use$eta[k], eta_nms), k] <- cf
-  }
-  Sig <- .admCovDistSigma(cd, use$covariate)
-  Om  <- tcrossprod(pars$L) + J %*% Sig %*% t(J)
-  tryCatch(t(chol(Om)), error = function(e) NULL)
-}
-
-# The Cholesky a given study should be simulated with: inflated when the study
-# declares a covariate DISTRIBUTION, the plain one otherwise.
-#
-# Returns NULL -- never a silent fall back to pars$L -- when a study DOES declare
-# cov_dist and the inflation cannot be built. Falling back there would solve at
-# the covariate mean and understate the variance, which is a plausible-looking
-# fit of the wrong model. Callers treat NULL as "cannot evaluate" (Inf / NA).
-# .admCheckCovariates() rejects the reachable causes up front, so in practice
-# this only fires on a pathological Omega.
-.admStudyL <- function(pars, pinfo, s) {
-  if (!identical(s$.adm_cov_path, "collapse")) return(pars$L)
-  .admCovInflateL(pars, pinfo, s)
-}
+# It used to return chol(Omega + J Sigma_a J') for a study spanning a covariate
+# distribution: the "collapse" path, which solved at the covariate mean and
+# folded the covariate's variance into Omega. That is exactly the Gaussian
+# special case of the shift path -- for a linear Delta and a normal covariate
+# u = Delta(a) + eta is itself normal with variance Omega + beta^2 Var(a), so
+# the closed form and the shift's mixture inversion are the same object.
+# Verified with the solver taken out of the comparison (analytic 1-cmt f, both
+# node sets): relative agreement 6.7e-16 on the mean and 5.0e-13 on the
+# covariance once the covariate rule is resolved (31 nodes); 2.5e-10 / 2.7e-8 at
+# the default cov_nodes = 7, an order of magnitude under the ODE solver's own
+# ~1e-6 floor. So nothing was lost with the closed form -- only its four
+# preconditions (bare `theta * COV`, normal covariate, solved at the mean,
+# grad = "none") and the silent omega inflation that followed when they were
+# assumed rather than checked.
+.admStudyL <- function(pars, pinfo, s) pars$L
 
 # Covariate columns for a params frame that stacks `n_blk` blocks of `n_sim`
 # rows, each block a PERTURBATION OF THE SAME SUBJECTS (the finite-difference
@@ -224,33 +175,15 @@
 }
 
 # Attach per-row covariate values to a study for the GENERAL path. Returns the
-# study unchanged on the collapse path (where the covariate is held at its mean
-# and its variance lives in Omega) and when no distribution is declared.
+# study unchanged on the shift path (where the covariate is held at its
+# reference and its whole effect rides in the shifted eta column) and when no
+# distribution is declared.
 .admStudyCovRows <- function(s, pinfo, n_row) {
   if (!identical(s$.adm_cov_path, "rows")) return(s)
   s$cov_rows <- .admCovRowsFor(s$cov_dist, n_row, pinfo$n_eta)
   s
 }
 
-# Up-front validation for every study that declares a covariate distribution.
-#
-# Scope, deliberately narrow and enforced rather than assumed: the collapse is
-# EXACT only for a covariate that enters as a bare `theta * COV` product inside a
-# mu-referenced expression, appears nowhere else in the model, and is normally
-# distributed. rxode2 records the first of those in muRefCovariateDataFrame --
-# and records it ONLY for that bare product. Measured on 6 covariate models:
-#
-#   cl <- exp(tcl + tcov*WT + eta.cl)              -> 1 row   (collapsible)
-#   cl <- exp(tcl + tcov*log(WT/70) + eta.cl)      -> 0 rows
-#   cl <- exp(tcl + eta.cl)*(WT/70)^tcov           -> 0 rows
-#   cl <- exp(tcl + eta.cl)*exp(tcov*WT)           -> 0 rows
-#   cl <- exp(tcl + eta.cl)*(1 + emax*WT/(ec50+WT))-> 0 rows
-#   cl <- exp(tcl + tcov*SEX + eta.cl)             -> 1 row   (but SEX is not normal)
-#
-# The allometric form is mathematically collapsible (it is linear in log(WT)) and
-# is still refused here, because rxode2's metadata cannot distinguish it from the
-# Emax form. Refusing is the safe direction: the alternative is a fit that runs,
-# converges, and reports an omega that has quietly eaten the covariate spread.
 # Refuse `cov_dist` for an estimator that has no covariate path.
 #
 # Silence here is the dangerous outcome, not an error: every study carries a
@@ -270,17 +203,23 @@
        call. = FALSE)
 }
 
+# `grad` and `est` are both VESTIGIAL as of the collapse/uq removal -- neither
+# enters the routing any more (see the note on the default path below) -- and
+# they are kept only because all four drivers call this positionally. Drop them
+# when those call sites are next touched.
 .admCheckCovariates <- function(.ui, pinfo, studies, grad, est = NULL) {
   has <- vapply(studies, function(s) !is.null(s$cov_dist), logical(1))
   if (!any(has)) return(studies)
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
 
   # Expand the friendly grammar ONCE, before anything routes on it: `cor`
-  # becomes a `joint` sampler, and `joint` is what adgh refuses.
+  # becomes a `joint` sampler, and every downstream consumer (the per-row
+  # draws, the product grid, the Taylor design, the shift grid) reads `joint`
+  # rather than the margins. Expanding later would let a path integrate margins
+  # whose correlation it had silently dropped.
   for (nm in names(studies)[has])
     studies[[nm]]$cov_dist <- .admCovDistCanon(studies[[nm]]$cov_dist)
 
-  cmap <- pinfo$cov_map
   covs <- tryCatch(.ui$allCovs, error = function(e) character(0))
 
   for (nm in names(studies)[has]) {
@@ -293,15 +232,10 @@
     # `cov_dist`. Coerced once, at the only place that writes into it.
     if (!is.null(studies[[nm]][["cov"]]) && !is.list(studies[[nm]][["cov"]]))
       studies[[nm]][["cov"]] <- as.list(studies[[nm]][["cov"]])
-    ok_collapse <- pinfo$n_eta > 0L
-    ok_uq       <- pinfo$n_eta > 0L
-    uq          <- list()
-
     # `rho` and `Sigma` are metadata siblings of the covariate specs, not
     # covariates. Looping over them made a correlated spec fail with
     # "declares cov_dist for 'rho', which the model never reads" -- a message
-    # pointing at the wrong thing, and the reason .admCovDistSigma()'s
-    # correlated branch was unreachable.
+    # pointing at the wrong thing.
     for (cv in .admCovSpecNames(cd)) {
       if (!cv %in% covs)
         bad("study '", nm, "' declares `cov_dist` for '", cv,
@@ -327,131 +261,50 @@
         m <- .admCovMeanOf(sp)
         if (!is.null(m) && is.finite(m)) studies[[nm]][["cov"]][[cv]] <- m
       }
-
-      once <- .admNameOccurrence(.ui, cv)[[cv]] == 1L
-      pe   <- if (once) .admCovParamEta(.ui, cv, pinfo$eta_col_names) else NULL
-
-      # COLLAPSE: exact closed form. Needs a normal covariate entering as a
-      # single bare `theta * COV` term.
-      # The collapse is exact only when the model is solved AT the covariate
-      # mean: Omega + J Sigma_a J' reproduces the marginal moments about mu_a and
-      # nothing else. `cov` is filled from the distribution above when absent,
-      # but a user-supplied value passes straight through -- and a reference
-      # weight supplied alongside a distribution then biases the whole study
-      # silently (measured: 13-19% on the mean, 10-14% on the covariance for a
-      # value 0.2 away from the mean). The "rows" path ignores `cov` entirely, so
-      # the two paths would also disagree on identical input.
-      .mu_a <- .admCovMeanOf(sp)
-      .at_mean <- !is.null(.mu_a) && is.finite(.mu_a) &&
-                  isTRUE(all.equal(as.numeric(studies[[nm]][["cov"]][[cv]]),
-                                   as.numeric(.mu_a), tolerance = 1e-8))
-      if (!normal || is.null(cmap) || !cv %in% cmap$covariate || !once ||
-          !.at_mean)
-        ok_collapse <- FALSE
-      # u-QUANTILE: the covariate's WHOLE effect has to fit in one eta column, as
-      # u = Delta(a) + eta. That substitution is only valid under conditions the
-      # path cannot check for itself, so it is granted only when EVERY one of
-      # them is positively established, and refused by default:
-      #
-      #  * exactly once in the model, sharing a parameter assignment with an eta,
-      #    with a reference value to measure Delta against (the original test);
-      #  * a SMOOTH, UNIMODAL covariate distribution. .admCovUQuantile solves the
-      #    mixture CDF by clamped Newton with no bracketing: on a discrete or
-      #    multi-modal Delta the iterate oscillates between the clamps, exits at
-      #    maxit WITHOUT warning, and the garbage quantiles go straight into the
-      #    eta column. Measured on a two-point covariate: 13-20% on the mean and
-      #    3-5x on the covariance, and SMALLER omega makes it worse.
-      #  * a Gauss-Hermite-representable spec. A user `quantile` is integrated by
-      #    32 equal-weight midpoints, which understates the spread of Delta
-      #    (measured: sd 0.44117 against a truth of 0.45000) and biases the
-      #    coefficient upward by ~7%.
-      #  * ONE covariate per eta. .admCovUQEta writes u into eta_mat[, j] per
-      #    covariate, so two covariates resolving to the same j silently destroy
-      #    each other -- the result is bit-for-bit the second covariate alone.
-      #
-      # Delta is also measured as a LOG shift (.admCovDelta), so the covariate
-      # must act multiplicatively on a log-mu-referenced parameter. An additive
-      # effect, an identity mu-reference or an expit link all break it (16-21% on
-      # the covariance). That one is checked by .admCovDeltaValid() below.
-      #
-      # "rows" costs more and assumes nothing; it was exact in every
-      # configuration tested. When in doubt this must fall back to it.
-      # ... and the honest answer is that admixr2 cannot establish them. Each of
-      # the four conditions above is a property of the MODEL TEXT, and the
-      # syntactic checks that would decide them are exactly as fragile as the
-      # assumption they are meant to protect: a check on `exp(` and the covariate
-      # name accepts `cl <- exp(tcl + eta.cl) + tcov*WT`, where the covariate is
-      # outside the exp and the shift does not hold. So the path is NOT ROUTED TO.
-      #
-      # It is an optimisation, not a capability: "rows" computes the same moments
-      # without any of these preconditions, and was exact in every configuration
-      # an independent audit could construct (residual 2e-5..1.6e-3, i.e. Monte
-      # Carlo noise). uq is also only ever reachable with grad = "none", which no
-      # estimator defaults to. So what it bought was speed in one narrow case, at
-      # the cost of four measured silent-wrong-answer paths:
-      #   - a discrete or multi-modal covariate breaks .admCovUQuantile's
-      #     unbracketed Newton solve: 13-20% on the mean, 3-5x on the covariance,
-      #     WORSE for smaller omega, with no warning;
-      #   - a non-log link or an additive effect breaks .admCovDelta's log-shift:
-      #     16-21% on the covariance;
-      #   - two covariates on one eta silently overwrite each other, leaving the
-      #     result bit-for-bit identical to the second covariate alone;
-      #   - a user `quantile` is integrated by 32 equal-weight midpoints, which
-      #     understates the spread and biases the coefficient ~7% high.
-      #
-      # .admCovUQuantile/.admCovDelta/.admCovUQEta and their tests are kept: the
-      # quantile solve is correct and well-tested where Delta is smooth and
-      # unimodal, and the u-distribution framing is the basis for handling
-      # dependent covariates. Reinstating the route needs a POSITIVE check of the
-      # shift property, and the way to do that is numerically -- verify
-      # f(a, eta) == f(a_ref, eta + Delta(a)) at a couple of (a, eta) points --
-      # not by reading the model text.
-      ok_uq <- FALSE
     }
 
-    # A GRADIENT is only carried through the general path. On "rows" the
-    # covariate is data -- a per-row params column -- so the existing sensitivity
-    # directions differentiate exactly the function the NLL evaluates, with no
-    # new chain rule. "collapse" moves Omega itself (Omega + J Sigma_a J', with J
-    # carrying the covariate coefficient) and "uq" replaces an eta column with
-    # u = F_u^-1(Phi(z)); neither derivative exists yet.
+    # THE DEFAULT PATH IS "rows", and it assumes nothing at all: every simulated
+    # subject (admc) or grid point (adgh) carries its own covariate value, so
+    # rxode2 evaluates the whole model -- covariate on several parameters, on a
+    # parameter with no random effect, or interacting with one. It also carries
+    # a gradient with no new chain rule, because on this path the covariate is
+    # DATA (a per-row params column) and the existing sensitivity directions
+    # differentiate exactly the function the NLL scores.
     #
-    # So the gradient mode is part of what makes a path VALID, not a reason to
-    # refuse the fit. Erroring here would make a covariate model fail out of the
-    # box, since every estimator defaults to a gradient.
-    if (!identical(grad, "none")) { ok_collapse <- FALSE; ok_uq <- FALSE }
+    # It is the fallback for every refusal below, so a refusal costs solve rows
+    # and never accuracy. `grad` no longer enters the choice at all: the two
+    # paths that had no derivative (collapse, uq) are gone, and both survivors
+    # ("rows" and "shift") are differentiable.
+    studies[[nm]]$.adm_cov_path <- "rows"
 
-    # A JOINT sampler describes a DEPENDENT covariate distribution, which the
-    # COLLAPSE still cannot represent: it assembles Sigma_a from per-covariate
-    # variances plus an optional scalar rho, so it is refused and the general
-    # path takes over.
+    # SHIFT. If the covariates act only as a shift of a mu-referenced argument
+    # -- f(a, eta) == f(a_ref, eta + Delta(a)) -- the whole covariate dimension
+    # leaves the solve: the covariates are held at their reference and the
+    # affected eta column carries quantiles of u = Delta(a) + eta instead. Cost
+    # becomes CONSTANT in the number of covariates, against the product grid's
+    # cov_nodes^p.
     #
-    # adgh no longer refuses one. Its grid is a tensor product over the
-    # SAMPLER'S UNIFORMS, not over the covariates, and a copula's uniforms are
-    # independent by construction -- that is what a copula is -- so the product
-    # rule is exact there whatever the dependence. See .admCovGrid(). The
-    # earlier refusal read the product grid as "assumes independence", which is
-    # true of a grid over covariate margins and false of a grid over u.
-    if (is.function(cd[["joint"]])) ok_collapse <- FALSE
-
-
-    # Most efficient VALID path wins. "rows" assumes nothing at all: every
-    # simulated subject carries its own covariate value, so rxode2 evaluates the
-    # whole model -- covariate on several parameters, on a parameter with no eta,
-    # or interacting with one. It is the only path with no structural
-    # precondition, hence the fallback.
-    studies[[nm]]$.adm_cov_path <- if (ok_collapse) "collapse"
-                                   else if (ok_uq)  "uq" else "rows"
-    studies[[nm]]$.adm_cov_collapse <- ok_collapse
-    studies[[nm]]$.adm_cov_uq <- if (ok_uq) uq else NULL
-
-    # cov_integration = "shift": if the covariates act only as a shift of a
-    # mu-referenced argument, the whole covariate dimension leaves the solve.
-    # ADMITTED BY NUMERICAL VERIFICATION, not by reading the model text -- the
-    # earlier `uq` route inferred this property from syntax and had four
-    # measured silent-wrong-answer modes as a result.
+    # ADMITTED BY NUMERICAL VERIFICATION, never by reading the model text. The
+    # retired `uq` route inferred exactly this property from syntax and had four
+    # measured silent-wrong-answer modes as a result (see the file header);
+    # .admShiftVerify() evaluates the identity against the COMPILED model and
+    # separates valid forms (1e-12..1e-14) from invalid ones (3e-02..7e-01) by
+    # ten orders of magnitude.
+    #
+    #   "shift"  demand it; a refusal is an ERROR naming the reason, because the
+    #            user asked for this path specifically.
+    #   "auto"   try it; a refusal falls back to the product grid with a
+    #            message. Never an error -- "auto" is a speed lever, and the
+    #            fallback is the more accurate path, so a refusal costs solve
+    #            rows and nothing else.
+    #
+    # `"auto"` is NOT the default. Turning it on changes every existing
+    # covariate fit's numbers at the ~1e-5 level (that is the tolerance the
+    # shift-vs-grid agreement test pins), and a default that silently moves
+    # results is the class of change this package keeps paying for. Opt in.
+    .ci <- pinfo$cov_integration %||% "quadrature"
     if (identical(studies[[nm]]$.adm_cov_path, "rows") &&
-        identical(pinfo$cov_integration %||% "quadrature", "shift")) {
+        .ci %in% c("shift", "auto")) {
       .cn  <- .admCovSpecNames(cd)
       .sp  <- .admShiftSpec(.ui, .cn, pinfo$eta_col_names)
       .ar  <- if (is.null(.sp)) NULL else .admShiftRef(cd, .cn)
@@ -460,6 +313,20 @@
         "the covariates do not all enter one model assignment together with ",
         "exactly one random effect, so no single shifted column can carry them")
       else if (is.null(.ar)) .why <- "a covariate has no finite mean to shift against"
+      if (is.null(.why)) {
+        # The shift replaces ONE eta column. If that eta is correlated with
+        # another, its marginal is no longer sqrt(Omega_jj) and the column
+        # cannot be substituted independently, so refuse rather than quietly
+        # use the diagonal. Checked BEFORE the verification, which costs solves.
+        .j <- match(.sp$eta, pinfo$eta_col_names)
+        if (length(which(!pinfo$chol_diag &
+                         (pinfo$chol_i %in% .j | pinfo$chol_j %in% .j))))
+          .why <- paste0(
+            "the random effect(s) ", paste(sQuote(.sp$eta), collapse = ", "),
+            " that would carry the covariate are CORRELATED (an off-diagonal ",
+            "Omega element is estimated), so the marginal is not ",
+            "sqrt(Omega_jj) and the column cannot be substituted on its own")
+      }
       if (is.null(.why)) {
         .w <- .admShiftVerify(.sp, .ui, NULL, pinfo, studies[[nm]], NULL,
                               .cn, .ar)
@@ -470,39 +337,33 @@
           "); an additive covariate effect, a link the covariate sits outside ",
           "of, or a covariate on a parameter with no random effect all do this")
       }
-      if (!is.null(.why))
+      if (!is.null(.why) && identical(.ci, "shift"))
         bad("study '", nm, "': cov_integration = \"shift\" is not applicable -- ",
             .why, ". Use cov_integration = \"quadrature\".")
-      # The shift replaces ONE eta column. If that eta is correlated with
-      # another, its marginal is no longer sqrt(Omega_jj) and the column cannot
-      # be substituted independently, so refuse rather than quietly use the
-      # diagonal.
-      .j <- match(.sp$eta, pinfo$eta_col_names)
-      .off <- which(!pinfo$chol_diag &
-                    (pinfo$chol_i %in% .j | pinfo$chol_j %in% .j))
-      if (length(.off))
-        bad("study '", nm, "': cov_integration = \"shift\" is not applicable -- ",
-            "the random effect(s) ", paste(sQuote(.sp$eta), collapse = ", "),
-            " that would carry the covariate are CORRELATED (an off-diagonal ",
-            "Omega element is estimated), ",
-            "element is estimated), so its marginal is not sqrt(Omega_jj) and ",
-            "the column cannot be substituted on its own. Use ",
-            "cov_integration = \"quadrature\".")
-      .g <- .admCovGrid(cd, pinfo$cov_nodes %||% 7L)
-      studies[[nm]]$.adm_cov_shift <- list(
-        spec = .sp, aref = .ar, cov_names = .cn,
-        eta_idx = match(.sp$eta, pinfo$eta_col_names),
-        m = length(.sp$eta), X = .g$X, W = .g$W)
-      studies[[nm]]$.adm_cov_path <- "shift"
+      if (!is.null(.why)) {
+        # Recorded on the study as well as messaged: a message is easy to miss
+        # in a fit's output, and "why did auto not take the fast path" is the
+        # question this answers.
+        studies[[nm]]$.adm_cov_shift_why <- .why
+        message("admixr2: study '", nm, "': cov_integration = \"auto\" is ",
+                "using the covariate product grid -- ", .why, ".")
+      } else {
+        .g <- .admCovGrid(cd, pinfo$cov_nodes %||% 7L)
+        studies[[nm]]$.adm_cov_shift <- list(
+          spec = .sp, aref = .ar, cov_names = .cn,
+          eta_idx = match(.sp$eta, pinfo$eta_col_names),
+          m = length(.sp$eta), X = .g$X, W = .g$W)
+        studies[[nm]]$.adm_cov_path <- "shift"
+      }
     }
 
     # cov_integration = "taylor" replaces the product grid on the "rows" path
-    # (and only there -- the collapse is exact and cheaper still). Its refusals
-    # are properties of `cov_dist` alone, so build the design once HERE, where
-    # the message can name the study, rather than letting the first objective
-    # evaluation error out of the middle of a fit.
+    # (and only there -- a study that took the shift has no product grid left to
+    # expand). Its refusals are properties of `cov_dist` alone, so build the
+    # design once HERE, where the message can name the study, rather than
+    # letting the first objective evaluation error out of the middle of a fit.
     if (identical(studies[[nm]]$.adm_cov_path, "rows") &&
-        identical(pinfo$cov_integration %||% "quadrature", "taylor")) {
+        identical(.ci, "taylor")) {
       .td <- tryCatch(.admCovTaylorDesign(cd, pinfo$cov_taylor_h %||% 1),
                       error = function(e) conditionMessage(e))
       if (is.character(.td))
@@ -553,10 +414,10 @@
 # General covariate marginalisation (ANY functional form)
 # =============================================================================
 #
-# The collapse above is exact but narrow: it needs the covariate to enter as a
-# bare `theta * COV` term so its variance can be folded into Omega. Everything
-# else -- (WT/70)^theta, exp(theta*WT), allometric-in-log, Emax, if/else,
-# categorical -- goes through here instead.
+# The DEFAULT path, and the fallback for every refusal the shift path makes.
+# (WT/70)^theta, exp(theta*WT), allometric-in-log, Emax, if/else, categorical, a
+# covariate on several parameters or on one with no random effect -- all of it
+# goes through here, with no structural precondition of any kind.
 #
 # The trick is that we never have to KNOW the functional form. A covariate
 # reaches rxode2 only as a column of the params frame, so if each simulated
@@ -642,12 +503,11 @@
   }
 
   # THREE spellings of the same statement, and they must all reach every path.
-  # `cor` is the user-facing one; `rho`/`Sigma` are the collapse's older
-  # normal-scale form. Until this was unified, a spec written with `rho` built
-  # its Gaussian copula for the collapse and a DIAGONAL grid for everything
-  # else -- the correlation silently present in one path and absent in the
-  # other. `rho`/`Sigma` are left in place afterwards, because
-  # .admCovDistSigma() still reads them directly.
+  # `cor` is the user-facing one; `rho`/`Sigma` are the retired collapse's older
+  # normal-scale form, still accepted because published specs are written that
+  # way. Until this was unified, a spec written with `rho` built its Gaussian
+  # copula for the collapse and a DIAGONAL grid for everything else -- the
+  # correlation silently present in one path and absent in the other.
   d  <- length(nms)
   cr <- cov_dist[["cor"]]
   cov_dist[["cor"]] <- NULL
@@ -690,7 +550,7 @@
     if (d < 2L)
       stop("admixr2: `rho` needs at least two covariates; ", d, " declared.",
            call. = FALSE)
-    # scalar rho applies to EVERY pair -- .admCovDistSigma's own convention
+    # scalar rho applies to EVERY pair
     R <- matrix(rr, d, d); diag(R) <- 1
   }
   if (is.null(R)) return(cov_dist)
@@ -782,7 +642,7 @@
 # the contract is stated here rather than enforced, since only the caller knows
 # whether its sampler is deterministic in `u`.
 .admCovRowsFor <- function(cov_dist, n, n_eta) {
-  # `rho`/`Sigma` are metadata for the collapse; `joint` is the sampler itself.
+  # `rho`/`Sigma` are dependence metadata; `joint` is the sampler itself.
   cov_dist <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cov_dist)
   d   <- length(nms)
@@ -872,8 +732,9 @@
 #
 # THE THIRD TERM IS THE POINT. `sum_j v_j g' g''` is Cov_a(g(a)) -- the
 # between-subject covariance the covariate itself induces, and to second order
-# it IS the omega'^2 = omega^2 + beta^2 Var(a) inflation the collapse computes
-# in closed form, appearing here as a rank-p addition to V. Dropping it leaves
+# it IS the omega'^2 = omega^2 + beta^2 Var(a) inflation a linear covariate
+# effect produces in closed form, appearing here as a rank-p addition to V.
+# Dropping it leaves
 # E_a[Vc(a)], i.e. the average WITHIN-covariate covariance, which is the same
 # class of mistake as writing V_struct + Sigma(mu) for the residual: a number
 # that is finite, plausible and biased low, with the covariate's whole
@@ -1268,7 +1129,9 @@
 # arbitrary sampler. A copula maps INDEPENDENT uniforms to dependent values, so
 # holding the leading uniforms fixed and varying the rest samples the
 # conditional distribution -- for a vine those uniforms are its Rosenblatt
-# coordinates, which are independent by construction whatever the dependence.
+# coordinates. Those are the INDEPENDENT uniforms the sampler's
+# inverse-Rosenblatt step consumes, not the copula's own margins -- a copula's
+# margins are uniform but DEPENDENT, since the copula is the dependence.
 # Nothing here has to invert the sampler, and no forward Rosenblatt transform
 # is needed, because a stratum is defined BY ITS NODE IN U-SPACE and the
 # covariate value at that node is read off the sampler rather than solved for.
@@ -2011,23 +1874,22 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 }
 
 # =============================================================================
-# u-quantile marginalisation -- ANY functional form
+# Covariate spec moments, and the identifiability warning
 # =============================================================================
-#
-# The model sees the covariate and the random effect only through their sum in
-# the mu-referenced argument, u = Delta(a) + eta. Delta(a) is arithmetic, so u's
-# distribution can be pinned down exactly BEFORE any solve, and the whole solve
-# budget spent representing it:
-#
-#     F_u(t) = E_a[ Phi( (t - Delta(a)) / sd_eta ) ]
-#
-# Nothing here inspects the functional form. Delta is measured from the model
-# itself (see .admCovDelta), so power, exponential, allometric, Emax, if/else
-# and categorical covariate effects are all handled identically.
 
-# Which parameter assignment does the covariate enter, and which eta shares it?
-# The shift structure the whole method rests on is exactly "covariate and eta in
-# the same mu-referenced argument", so this also decides whether it applies.
+# Which parameter assignment does a covariate enter, and which eta shares it?
+#
+# The ONLY consumer is .admWarnCovIdentifiability(), which needs to know whether
+# a covariate sits on the flat (theta, omega, beta) ridge -- it does exactly when
+# it shares a mu-referenced argument with a random effect. That is a question
+# about whether a warning applies, so a syntactic answer is adequate: the cost of
+# being wrong is a missing or spurious warning.
+#
+# It is NOT adequate for ROUTING, and must never be used for it again. The
+# retired `uq` path made this decision from the same syntax and was silently
+# wrong in four measured ways (see the file header). .admShiftSpec() +
+# .admShiftVerify() are the routing pair: same question, answered against the
+# compiled model.
 .admCovParamEta <- function(ui, cov, eta_names) {
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
   if (is.null(lst)) return(NULL)
@@ -2043,47 +1905,10 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   NULL
 }
 
-# Delta(a) MEASURED from the model, not parsed out of it.
-#
-# One rxSolve at eta = 0 over a covariate grid; the mu-referenced parameter comes
-# back as an lhs column, and Delta(a) = log(param(a) / param(a_ref)). Exact to
-# machine precision (measured 8e-17 on an allometric model) and indifferent to
-# how the covariate effect is written.
-#
-# Costs one extra rxSolve call (~11 ms) per objective evaluation. Delta depends
-# on the covariate coefficients, which move, so it cannot be cached across
-# iterations -- but 11 ms against a solve budget in seconds is noise.
-# ngrid = 32: Gauss-Hermite over a smooth Delta converges long before this.
-# Measured against a 200-node reference, F_u agreed to 3.8e-15 at 16 nodes and
-# 2.2e-15 at 24, over covariate spreads from sdlog 0.15 to 0.45. The node count
-# costs twice -- once in the probe's rxSolve rows, once in every Newton
-# iteration's n_sim x n_node matrices -- so 64 was paying for nothing.
-.admCovDelta <- function(rxMod, pars, pinfo, s, cov, param_nm, cores,
-                         ngrid = 32L) {
-  spec  <- s$cov_dist[[cov]]
-  a_ref <- s[["cov"]][[cov]]
-  if (is.null(a_ref)) return(NULL)
-  an <- .admCovANodes(spec, ngrid)
-  a  <- an$x
-  aa <- c(a, a_ref)
-  pm <- .admMakeParamsList(length(aa), pinfo, 1L)[[1L]]
-  for (nm in pinfo$struct_names) pm[, nm] <- pars$struct[[nm]]
-  pm <- .admCovCols(pm, rxMod$params, NULL,
-                    matrix(aa, ncol = 1L, dimnames = list(NULL, cov)))
-  out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pm),
-                                  events = s$ev_full, cores = cores,
-                                  nDisplayProgress = .Machine$integer.max),
-                  error = function(e) NULL)
-  if (is.null(out) || is.null(out[[param_nm]])) return(NULL)
-  v <- out[[param_nm]][out[["time"]] == s$times[[1L]]]
-  if (length(v) != length(aa) || any(!is.finite(v)) || any(v <= 0)) return(NULL)
-  list(a = a, delta = log(v[seq_along(a)]) - log(v[length(aa)]), w = an$w)
-}
-
 # The covariate value the model is SOLVED at when the study does not name one.
 #
-# Every path needs it: the collapse solves at the covariate mean so the model
-# itself produces the mean shift, and u-quantile measures Delta relative to it.
+# The shift path measures Delta(a) relative to it (.admShiftRef), and any study
+# mixing a fixed `cov` with a distributed one needs a value for the fixed part.
 # Deriving it from `cov_dist` rather than making the user restate it removes a
 # way for the two to disagree silently.
 .admCovMeanOf <- function(spec) {
@@ -2177,95 +2002,6 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
               "MEANS or SPREADS differ.", call. = FALSE)
   }
   invisible(NULL)
-}
-
-# Nodes + weights for the a-integral inside F_u.
-#
-# GAUSS-HERMITE, not equal-weight quantiles. Here we are INTEGRATING over the
-# covariate, and GH carries the tails through its weights; N equal-weight
-# quantiles truncate the covariate at the (0.5/N) and (1-0.5/N) points and drop
-# the tail mass entirely. That understates the spread of Delta, and the fit then
-# inflates the covariate coefficient to make up the missing variance -- measured
-# as tcov 0.80 against a truth of 0.75 on an allometric model, while omega stayed
-# correct. The mirror-image mistake (using GH to REPRESENT u's distribution) is
-# equally wrong; see .admCovUQuantile, which uses the closed-form CDF.
-.admCovANodes <- function(spec, ngrid) {
-  if (!is.null(spec$values)) {
-    pr <- spec$probs %||% rep(1, length(spec$values))
-    return(list(x = as.numeric(spec$values), w = pr / sum(pr)))
-  }
-  if (is.function(spec$quantile)) {           # arbitrary user CDF: no GH rule
-    p <- (seq_len(ngrid) - 0.5) / ngrid
-    return(list(x = spec$quantile(p), w = rep(1 / ngrid, ngrid)))
-  }
-  g <- .adghNodes1(ngrid)                     # standard-normal nodes/weights
-  if (!is.null(spec$meanlog))
-    list(x = exp(spec$meanlog + spec$sdlog * g$x), w = g$w)
-  else
-    list(x = spec$mu + spec$sd * g$x, w = g$w)
-}
-
-# Inverse CDF of u = Delta(a) + eta, evaluated at the uniforms `p`.
-# Phi carries the tails analytically, which a grid of summed draws cannot.
-# Inverse CDF of u = Delta(a) + eta at the uniforms `p`, by NEWTON on the exact
-# mixture CDF rather than interpolation on a grid.
-#
-# F_u(t) = sum_j w_j Phi((t - Delta_j)/s) is smooth and strictly increasing, and
-# its density is available in closed form, so Newton converges in a handful of
-# steps from a moment-matched normal start.
-#
-# Why not the grid: interpolating F_u on a grid makes u PIECEWISE LINEAR in the
-# parameters, because Delta and s move the grid's knots. The objective then has
-# small kinks, which (a) is the exact mismatch that stops an analytic gradient
-# being consistent with the objective it differentiates, and (b) defeats a
-# trust-region derivative-free search, which builds quadratic models. Newton
-# gives the true implicit function, so d(u)/d(theta) = -(dF_u/d(theta)) / f_u(u)
-# is the derivative of what is actually computed.
-#
-# Bracketed and clamped: f_u underflows in the far tails, so an undamped Newton
-# step there can throw the iterate out of the support entirely.
-.admCovUQuantile <- function(dl, sd_eta, p, tol = 1e-11, maxit = 50L) {
-  d <- dl$delta; w <- dl$w
-  lo <- min(d) - 12 * sd_eta
-  hi <- max(d) + 12 * sd_eta
-  # moment-matched normal start: exact when Delta is degenerate, close otherwise
-  m  <- sum(w * d)
-  sdu <- sqrt(sum(w * (d - m)^2) + sd_eta^2)
-  u  <- pmin(pmax(m + sdu * stats::qnorm(p), lo), hi)
-  for (it in seq_len(maxit)) {
-    z  <- outer(u, d, "-") / sd_eta
-    r  <- as.numeric(stats::pnorm(z) %*% w) - p
-    if (max(abs(r)) < tol) break
-    fu <- as.numeric(stats::dnorm(z) %*% w) / sd_eta
-    u  <- pmin(pmax(u - r / pmax(fu, 1e-300), lo), hi)
-  }
-  u
-}
-# Replace the covariate-affected eta column with draws of u = Delta(a) + eta.
-#
-# The substitution is by INVERSE TRANSFORM of the very dimension that would have
-# produced that eta: u = F_u^-1(Phi(z_j)). So the low-discrepancy quality of the
-# existing draws carries over, u gets exactly the right marginal, and its
-# independence from the other eta columns is preserved by construction -- which
-# a sorted set of quantiles pasted in would have destroyed.
-#
-# Requires Omega DIAGONAL in the affected row (or a single eta): with a
-# correlated Omega, column j is a mixture of several z columns and replacing it
-# would break the joint distribution. Enforced by .admCheckCovariates().
-.admCovUQEta <- function(eta_mat, z, pars, pinfo, s, rxMod, cores) {
-  info <- s$.adm_cov_uq
-  if (is.null(info)) return(eta_mat)
-  for (k in seq_along(info)) {
-    it <- info[[k]]
-    dl <- .admCovDelta(rxMod, pars, pinfo, s, it$cov, it$param, cores)
-    if (is.null(dl)) return(NULL)                 # never silently fall back
-    j  <- match(it$eta, pinfo$eta_col_names)
-    sd_eta <- sqrt(tcrossprod(pars$L)[j, j])
-    u <- .admCovUQuantile(dl, sd_eta, stats::pnorm(z[, j]))
-    if (any(!is.finite(u))) return(NULL)
-    eta_mat[, j] <- u
-  }
-  eta_mat
 }
 
 # Refuse the removed node-quadrature inputs, loudly.

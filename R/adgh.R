@@ -68,11 +68,7 @@
 # single and batched moment paths.
 .adghGrid <- function(pars, pinfo, grid, s = NULL) {
   if (pinfo$n_eta > 0L) {
-    # Covariate collapse: for a study spanning a covariate distribution the node
-    # grid is scaled by chol(Omega + J Sigma_a J') instead of chol(Omega), which
-    # is the exact marginal. NULL `s` (and any study without cov_dist) keeps the
-    # plain Cholesky, so nothing changes for an ordinary fit.
-    eta <- grid$X %*% t(if (is.null(s)) pars$L else .admStudyL(pars, pinfo, s))
+    eta <- grid$X %*% t(pars$L)
     colnames(eta) <- pinfo$eta_col_names
     g <- list(eta = eta, W = grid$W, X = grid$X, cov_rows = NULL)
   } else {
@@ -154,8 +150,8 @@
                   shift = shinfo))
     }
   }
-  if (!is.null(s) && !identical(s$.adm_cov_path, "collapse") &&
-      !identical(s$.adm_cov_path, "shift") && !is.null(s[["cov_dist"]])) {
+  if (!is.null(s) && !identical(s$.adm_cov_path, "shift") &&
+      !is.null(s[["cov_dist"]])) {
     nq <- max(nrow(g$eta), 1L)
     # cov_integration = "taylor": 1 + 2p design points in place of the product
     # grid's n_nodes^p, with SIGNED combination weights. Every expansion below
@@ -247,8 +243,8 @@
   # Restrict residual error to this output's sigma(s) (no-op single-output).
   arr <- .admUnitResidRows(pinfo, out_var, pars$sigma_var, length(mu),
                            phi = attr(cp, "phi"))   # beta precision (SOLVED)
-  ap  <- .admResidApply(mu, diag(V), arr, times)
-  list(E = ap$mu, V = .admApplyResidTail(V, ap))
+  m <- .admResidMoments(mu, diag(V), arr, V, times)
+  list(E = m$mu, V = m$V)
 }
 
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
@@ -277,24 +273,19 @@
   # or the struct-theta differences stop comparing like with like.
   if (!is.null(g$cov_rows))
     study$cov_rows <- g$cov_rows[rep(seq_len(Q), times = n_cfg), , drop = FALSE]
-  # The node grid is shared across configurations EXCEPT when the study spans a
-  # covariate distribution: Omega* = Omega + J Sigma_a J' then depends on the
-  # covariate COEFFICIENT, which is itself a structural theta and so moves
-  # between configurations. Rescale each block by its own configuration's
-  # Cholesky -- the single rxSolve is preserved, the constant-Omega assumption
-  # this function was built on is not silently violated.
-  eta_big <- if (is.null(study$cov_dist) || pinfo$n_eta == 0L) {
-    g$eta[rep(seq_len(Q), times = n_cfg), , drop = FALSE]
-  } else {
-    do.call(rbind, lapply(seq_len(n_cfg), function(k) {
-      pk <- pars
-      pk$struct[colnames(struct_mat)] <- struct_mat[k, ]
-      # g$X, NOT grid$X: on a covariate path .adghGrid() expands the node matrix
-      # to Q = n_node * n_cov rows, and grid$X here would have handed the solve
-      # n_node rows against a Q-row params frame.
-      g$X %*% t(.admStudyL(pk, pinfo, study))
-    }))
-  }
+  # ONE node grid for every configuration. It used to be rebuilt per
+  # configuration whenever the study declared a covariate distribution, because
+  # the retired "collapse" path made Omega itself a function of the covariate
+  # COEFFICIENT -- a structural theta, so it moved between configurations. With
+  # collapse gone the grid depends only on Omega, which does not move here.
+  #
+  # The SHIFT path does still move its grid with the structural thetas (Delta,
+  # and hence the u nodes AND their weights, are functions of the covariate
+  # coefficient), and a per-configuration weight vector is something this
+  # function cannot express -- it assembles every block against the single
+  # `g$W`. .adghGrad therefore never routes a shift study here; see the guard on
+  # its FD block.
+  eta_big <- g$eta[rep(seq_len(Q), times = n_cfg), , drop = FALSE]
   colnames(eta_big) <- colnames(g$eta)
 
   pm     <- .admMakeParamsList(n_cfg * Q, pinfo, 1L)[[1L]]
@@ -321,13 +312,12 @@
 .adghMomentsJoint <- function(pars, pinfo, unit, rxMod, grid, cores) {
   n_eta <- pinfo$n_eta
   if (n_eta > 0L) {
-    if (!is.null(unit[["cov_dist"]]) &&
-        !identical(unit$.adm_cov_path, "collapse"))
+    if (!is.null(unit[["cov_dist"]]))
       stop("admixr2: covariate marginalisation is not supported for a JOINT ",
            "(same-subject, multi-output) unit. The shared-eta joint solve has ",
            "no per-row covariate path, so this would silently solve at the ",
            "covariate mean.", call. = FALSE)
-    eta <- grid$X %*% t(.admStudyL(pars, pinfo, unit))
+    eta <- grid$X %*% t(pars$L)
     colnames(eta) <- pinfo$eta_col_names; W <- grid$W
   } else { eta <- matrix(0, 1L, 0L); W <- 1 }
   pm <- .admMakeParamsList(nrow(eta), pinfo, 1L)[[1L]]
@@ -461,11 +451,6 @@
       arr    <- .admResidRows(pinfo, .admRowOutput(s, s$n_total), pars$sigma_var, s$n_total)
       V_str  <- crossprod(cpc, W * cpc)
       var_f  <- diag(V_str)                 # Var_eta(f), pre-residual
-      dres   <- .admResidDeriv(mu, var_f, arr, pinfo)
-      ls_vec <- dres$dmu_df            # d(mu_pred)/df -- see the single-output branch
-
-      vchain <- .admResidVChain(mu, var_f, arr, pinfo,
-                                .admRowTimes(s, length(mu)), deriv = dres)
       jr <- .admJointResidual(mu, V_str, s, pinfo, pars$sigma_var)
       mu_sigma <- jr$mu; V <- jr$V
       nll_total <- nll_total + nll_cov_cpp(s$E, s$V, mu_sigma, V, s$n)
@@ -485,9 +470,13 @@
       # dv_dv0 on it), so contrib_j takes the RAW Jacobian -- see the
       # single-output branch below for why pre-scaling the caller's gmat is wrong.
       Bdiag <- diag(B)
-      Bsj   <- B * vchain
-      diag(Bsj) <- diag(Bsj) +            # mean-from-covariance path (TBS only)
-        dNLL_dmu_sig * (attr(vchain, "dmu_dv0") %||% numeric(length(mu)))
+      # ONE moment tail for this unit: .admResidDeriv, the V_pred -> V_struct
+      # chain, the TBS mean-from-covariance diagonal fold, the sigma contraction.
+      ch     <- .admResidChain(mu, var_f, arr, pinfo, dNLL_dmu_sig, Bdiag, B,
+                               V_str, .admRowTimes(s, length(mu)))
+      dres   <- ch$deriv
+      ls_vec <- ch$dmu_df              # d(mu_pred)/df -- see the single-output branch
+      Bsj    <- ch$dV
       Bt <- cpc %*% Bsj
       contrib_j <- function(graw) {              # graw = d(f)/dpsi rows, RAW
         dmu <- as.numeric(crossprod(W, graw))
@@ -531,8 +520,7 @@
       }
       # sigma (each row's own endpoint; other endpoints' derivatives are zero)
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-        .admSigmaGrad(mu, arr, pinfo, Bdiag, dNLL_dmu_sig, var_f, B,
-                      .admRowTimes(s, length(mu)), V_str, deriv = dres)
+        ch$sigma_grad()
       next
     }
 
@@ -558,9 +546,9 @@
     # Residual error (and its lnorm scaling of the mean) -- this output only
     arr   <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
     var_f <- diag(V)                      # Var_eta(f), pre-residual
-    ap    <- .admResidApply(mu, var_f, arr, s$times, cov_f)
-    V <- .admApplyResidTail(V, ap)
-    mu_sigma <- ap$mu
+    pm <- .admResidMoments(mu, var_f, arr, cov_f, s$times)
+    V  <- pm$V
+    mu_sigma <- pm$mu
 
     # The sens Jacobians give d(f)/d(psi). `contrib()` below takes them RAW and
     # applies the two chains itself:
@@ -573,7 +561,6 @@
     # d(mu_pred)/d(f), which is ap$ms for every form EXCEPT TBS -- there the mean
     # carries a curvature term of its own. ap$ms stays the COVARIANCE scale.
     lnorm_scale <- dres$dmu_df
-    vchain      <- .admResidVChain(mu, var_f, arr, pinfo, s$times, deriv = dres)
 
     r <- as.numeric(s$E) - mu_sigma
 
@@ -590,8 +577,12 @@
       dNLL_dmu_sig  <- as.numeric(-2 * s$n * r / V_diag)  # d(NLL)/d(mu_sigma)
       dNLL_dV_diag  <- s$n * (1/V_diag - (s$v_diag + r^2) / V_diag^2)
       # + the mean's dependence on Var_eta(f) (TBS only; see .admResidVChain).
-      dNLL_dV_dg_s  <- dNLL_dV_diag * diag(vchain) +      # -> d(NLL)/d(var_f)
-        dNLL_dmu_sig * (attr(vchain, "dmu_dv0") %||% numeric(length(mu)))
+      # The moment tail, once: the V_pred -> V_struct chain plus the TBS
+      # mean-from-covariance diagonal. NULL dNLL_dV/cov_f: diagonal path.
+      ch            <- .admResidChain(mu, var_f, arr, pinfo, dNLL_dmu_sig,
+                                      dNLL_dV_diag, NULL, NULL, s$times,
+                                      deriv = dres)
+      dNLL_dV_dg_s  <- ch$dV_diag                        # -> d(NLL)/d(var_f)
 
       contrib <- function(graw) {
         # graw: Q x n_t, RAW derivative of the structural f w.r.t. psi
@@ -620,9 +611,9 @@
       B         <- s$n * (G - G %*% Vhat %*% G)
       dNLL_dmu_sig <- as.numeric(-2 * s$n * (G %*% r))  # d(NLL)/d(mu_sigma)
       Bdiag     <- diag(B)
-      Bs        <- B * vchain
-      diag(Bs)  <- diag(Bs) +             # mean-from-covariance path (TBS only)
-        dNLL_dmu_sig * (attr(vchain, "dmu_dv0") %||% numeric(length(mu)))
+      ch        <- .admResidChain(mu, var_f, arr, pinfo, dNLL_dmu_sig, Bdiag, B,
+                                  cov_f, s$times, deriv = dres)
+      Bs        <- ch$dV                  # mean-from-covariance fold included
       Bt        <- cpc %*% Bs             # Q x n_t; chained to V_struct
 
       # Bs is symmetric (B and the vchain both are), so the rank-p term's
@@ -718,9 +709,7 @@
 
     # Sigma. Only this output's residual parameters have a nonzero derivative.
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-      .admSigmaGrad(mu, arr, pinfo, Bvec, dNLL_dmu_sig, var_f,
-                    if (is_var) NULL else B, s$times,
-                    if (is_var) NULL else cov_f, deriv = dres)
+      ch$sigma_grad()
   }
 
   # Unpaired struct thetas: the sens path above already has them exactly.
@@ -761,7 +750,14 @@
       }))
     n_cfg <- length(p_pert)
 
-    if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))) {
+    # A SHIFT study joins the joint units on the per-configuration route. Its
+    # node grid is a function of the structural thetas (Delta moves the u nodes
+    # and their weights), and .adghMomentsBatch assembles every configuration
+    # against ONE weight vector, so batching it would score each perturbed
+    # configuration on the unperturbed grid -- a finite, plausible, wrong
+    # gradient. The shift solve is small enough that 2*n_u of them is cheap.
+    if (any(vapply(studies, function(u) isTRUE(u$is_joint) ||
+                     identical(u$.adm_cov_path, "shift"), logical(1)))) {
       for (i in seq_len(n_u))
         grad[unpaired_k[i]] <-
           (.adghNLL(p_pert[[i]], pinfo, studies, rxMod, out_var, grid, cores) -
@@ -1126,6 +1122,25 @@
 #'   differencing step would land between the levels), and (near-)perfectly
 #'   collinear covariates (the step along the null direction collapses, so the
 #'   second difference is cancellation rather than a derivative).
+#'
+#'   `"shift"` removes the covariate from the solve entirely. When the
+#'   covariates act on the model only through a mu-referenced argument they are
+#'   a pure shift of that argument's random effect,
+#'   \eqn{f(a,\eta) = f(a_{ref}, \eta + \Delta(a))}, so the two-dimensional
+#'   \eqn{(a, \eta)} integral collapses onto one over \eqn{u = \Delta(a) +
+#'   \eta}. The solve cost is then CONSTANT in the number of covariates, against
+#'   `cov_nodes^p` for the grid, and it holds for any covariate distribution ---
+#'   discrete, skewed, dependent alike. The precondition is checked NUMERICALLY
+#'   against the compiled model, never read off the model text (measured
+#'   separation on the probe set: valid forms 1e-12--1e-14, invalid forms
+#'   3e-02--7e-01), and a model that fails it is an ERROR naming the reason.
+#'
+#'   `"auto"` tries `"shift"` and falls back to `"quadrature"` with a message
+#'   when the identity does not hold, so it is the fast route wherever the fast
+#'   route is valid and the accurate route everywhere else. It is not the
+#'   default only because switching it on moves an existing covariate fit's
+#'   numbers at the ~1e-5 level (the tolerance at which shift and grid agree);
+#'   for a new fit it is the recommended setting.
 #' @param cov_taylor_h Radius of the design points for
 #'   `cov_integration = "taylor"`, as a multiple of the moment-matched radius
 #'   \eqn{\sqrt{3\lambda_k}} along each expansion direction (default 1). The
@@ -1334,7 +1349,7 @@ adghControl <- function(
     # LAST on purpose, as above. These two are the covariate-integration pair:
     # cov_integration selects the method, cov_taylor_h the differencing step it
     # uses. Appended together so the tail of this signature reads as one addition.
-    cov_integration = c("quadrature", "taylor", "shift"),
+    cov_integration = c("quadrature", "auto", "taylor", "shift"),
     cov_taylor_h    = 1,
     ...) {
 

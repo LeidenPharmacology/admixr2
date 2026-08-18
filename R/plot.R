@@ -314,12 +314,11 @@ head.paged_df <- function(x, n = 6L, ...) {
                     sigma_output  = rep(NA_character_, length(sv)),
                     sigma_is_prop  = as.list(grepl("prop",  sig_nms, ignore.case = TRUE)),
                     sigma_is_lnorm = as.list(grepl("lnorm", sig_nms, ignore.case = TRUE)))
-  # ... and no cov_map either, for the same reason: the DRIVERS build it from the
-  # ui via .admDriverPinfo(). .admStudyL() needs it to rebuild the covariate-
-  # inflated Cholesky, and .admStudyCovRows() needs n_eta, so a diagnostic plot
-  # of a covariate fit would otherwise silently fall back to the plain Omega.
-  if (is.null(pinfo_r$cov_map))
-    pinfo_r$cov_map <- tryCatch(.admCovMap(ui), error = function(e) NULL)
+  # No cov_map is rebuilt here any more. It existed only for the retired
+  # `collapse` path, whose covariate-inflated Cholesky .admStudyL() no longer
+  # builds -- every study now uses the plain Omega and carries its covariates as
+  # per-row data or as a shifted eta column, neither of which needs the map.
+  # .admStudyCovRows() still needs n_eta, so that stays.
   if (is.null(pinfo_r$n_eta)) pinfo_r$n_eta <- n_eta
   # .admParseIniDf() carries no resid_nodes -- only the DRIVERS set it, from the
   # control. Restore the count the fit actually used, or the diagnostics rebuild
@@ -406,8 +405,8 @@ head.paged_df <- function(x, n = 6L, ...) {
     # ordinal) were dropped, so the predicted-covariance diagnostic panel showed
     # an independent-residual V for exactly the models whose off-diagonal is the
     # point of fitting them.
-    ap  <- .admResidApply(mu, diag(V), arr, times, V)
-    list(V = .admApplyResidTail(V, ap), mu = ap$mu)
+    m <- .admResidMoments(mu, diag(V), arr, V, times)
+    list(V = m$V, mu = m$mu)
   }
 
   setNames(lapply(names(studies), function(nm) {

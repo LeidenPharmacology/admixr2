@@ -1646,6 +1646,67 @@ without that parameter there is no residual to integrate"),
   list(mu = mu, dv = dvo, ms = ms, ev = ev, rmat = rmat)
 }
 
+# ---------------------------------------------------------------------------
+# The MOMENT TAIL, once.
+#
+# .admResidApply -> .admApplyResidTail (objective) and .admResidDeriv ->
+# .admResidVChain -> .admSigmaGrad/.admResidMuCoupling (gradient) are two fixed
+# sequences, but every estimator hand-assembled them: six consumers (.admGrad,
+# .adghGrad/.adghMomentsFromCp, .admNLLBatch, .admGradBatch, datagen() and
+# .admAggData) plus adfo/adirmc/plot/studies each wrote the same four to six
+# lines, and every "applied at some call sites but not others" review finding
+# came from one of them being missed. .admUnitResidRows() already collapsed the
+# BUILD half (arr + phi); these collapse the tail.
+#
+# Two traps are encoded here rather than left to each caller to remember:
+#
+#  1. THE VAR BRANCH MUST NOT SEE `times`/`cov_f`. arr$rho and the ordinal
+#     same-time cross term both key off `times`, so forwarding it
+#     unconditionally CHANGES the var-branch NLL. .admResidMoments() forwards
+#     `times` only when a structural covariance is supplied, so a diagonal-path
+#     caller physically cannot turn those terms on.
+#  2. `cov_f` and `times` are in OPPOSITE ORDER in .admSigmaGrad() (…, times,
+#     cov_f) and .admResidMuCoupling() (…, cov_f, times). Both are optional and
+#     both are plain numerics, so swapping them is silent. .admResidChain()
+#     takes each once and dispatches, so the two can no longer disagree.
+# ---------------------------------------------------------------------------
+
+# Objective half: structural (mu, var) -> predicted (mu, diag, full V).
+#
+#   mu_struct  structural mean E_eta[f]
+#   var_f      diag(Cov_eta(f)) -- the STRUCTURAL variance
+#   arr        row array from .admUnitResidRows()
+#   cov_f      full Cov_eta(f), or NULL on the diagonal ("var" method) path
+#   times      observation times; forwarded ONLY alongside cov_f (trap 1)
+#   compose    build the full V_pred matrix. Defaults to "whenever a structural
+#              covariance was supplied"; the two sample-scoring call sites hold a
+#              covariance but score a diagonal, and pass FALSE.
+#
+# Returns mu/dv (always) and V (when composed), plus the raw .admResidApply
+# result as `ap` for the handful of callers that want ms/ev/rmat.
+.admResidMoments <- function(mu_struct, var_f, arr, cov_f = NULL, times = NULL,
+                             compose = !is.null(cov_f)) {
+  ap <- if (is.null(cov_f)) .admResidApply(mu_struct, var_f, arr)
+        else                .admResidApply(mu_struct, var_f, arr, times, cov_f)
+  list(mu = ap$mu, dv = ap$dv, ms = ap$ms, ev = ap$ev, rmat = ap$rmat, ap = ap,
+       V = if (compose && !is.null(cov_f)) .admApplyResidTail(cov_f, ap) else NULL)
+}
+
+# The same tail starting from a MC sample matrix (n_sim x n_t). .admNLL() and
+# .admNLLBatch() carried this block verbatim -- centre, ML crossprod, apply,
+# compose -- and it is also what plot.R's .admAggData() and datagen()'s mc
+# branch do. The ML denominator is nrow(cp) (see the NLL convention note).
+.admResidSampleMoments <- function(cp, arr, times = NULL) {
+  mu_struct <- colMeans(cp)
+  cp_c      <- sweep(cp, 2L, mu_struct)
+  cov_f     <- crossprod(cp_c) / nrow(cp)
+  m <- .admResidMoments(mu_struct, diag(cov_f), arr, cov_f, times)
+  m$mu_struct <- mu_struct
+  m$cov_f     <- cov_f
+  m$cp_c      <- cp_c
+  m
+}
+
 # Derivatives of the residual w.r.t. the residual parameters (optimizer scale)
 # and w.r.t. the structural prediction f.
 #
@@ -2304,4 +2365,65 @@ without that parameter there is no residual to integrate"),
     out <- out + 2 * drop((dNLL_dV * same) %*% (-mu_struct))
   }
   out
+}
+
+# Gradient half of the moment tail -- ONE object per study/unit per evaluation.
+#
+# Every estimator's gradient path runs the same five steps on the same inputs:
+#
+#   d      <- .admResidDeriv(mu_struct, var_f, arr, pinfo)          # once
+#   M      <- .admResidVChain(..., times, deriv = d)                # V_pred -> V_struct
+#   dmv    <- attr(M, "dmu_dv0")                                    # TBS mean-from-cov
+#   dV_diag<- dNLL_dV_diag * diag(M) + dNLL_dmu * dmv               # what kernels take
+#   dV     <- dNLL_dV * M; diag(dV) <- diag(dV) + dNLL_dmu * dmv    # cov branch only
+#
+# then contract the residual parameters with .admSigmaGrad() and the structural
+# mean with .admResidMuCoupling(). That was written out at seven sites, each of
+# which had to remember to (a) thread `deriv =` so a TBS endpoint does not run
+# its 81-node quadrature three times, (b) pass `cov_f`/`dNLL_dV` as NULL on the
+# var branch, and (c) get `cov_f` and `times` the right way round in two helpers
+# that take them in opposite orders. Building the object once removes all three.
+#
+# Arguments mirror .admResidVChain()'s, with the study's two MVN-score
+# derivatives added:
+#   dNLL_dmu       d(-2LL)/d(mu_pred)      length n_t
+#   dNLL_dV_diag   d(-2LL)/d(diag V_pred)  length n_t
+#   dNLL_dV        d(-2LL)/d(V_pred)       n_t x n_t, or NULL on the var branch
+#   cov_f          structural Cov_eta(f),  or NULL on the var branch
+#   times          observation times (row times for a joint unit)
+#   deriv          precomputed .admResidDeriv, if the caller already holds one
+#
+# `mu_coupling` and `sigma_grad` are CLOSURES, not values: adgh needs neither
+# (it contracts the same quantities against its quadrature weights itself) and a
+# TBS/logitNorm endpoint would otherwise pay for two contractions nobody reads.
+.admResidChain <- function(mu_struct, var_f, arr, pinfo, dNLL_dmu, dNLL_dV_diag,
+                           dNLL_dV = NULL, cov_f = NULL, times = NULL,
+                           deriv = NULL) {
+  d   <- deriv %||% .admResidDeriv(mu_struct, var_f, arr, pinfo)
+  M   <- .admResidVChain(mu_struct, var_f, arr, pinfo, times, deriv = d)
+  dmv <- attr(M, "dmu_dv0") %||% numeric(length(mu_struct))
+  dV  <- NULL
+  if (!is.null(dNLL_dV)) {
+    dV <- dNLL_dV * M
+    diag(dV) <- diag(dV) + dNLL_dmu * dmv
+  }
+  list(
+    deriv   = d,
+    vchain  = M,
+    dmu_dv0 = dmv,
+    # d(mu_pred)/d(f): ap$ms for every form EXCEPT TBS, where the mean carries a
+    # curvature term of its own. adgh's `lnorm_scale`/`ls_vec`.
+    dmu_df  = d$dmu_df,
+    dV_diag = dNLL_dV_diag * diag(M) + dNLL_dmu * dmv,
+    dV      = dV,
+    # The EXCESS mu-sensitivity the plain dNLL_dmu path does not carry; add it to
+    # dNLL_dmu before the eta/omega chain rule (admc's `sigma_mu_scale`).
+    mu_coupling = function()
+      .admResidMuCoupling(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
+                          dNLL_dV, cov_f, times, deriv = d),
+    # Residual-parameter gradient. Defaults to the chain's own score vectors;
+    # adfo's joint branch and adgh pass their own.
+    sigma_grad = function(dNLL_dvar = dNLL_dV_diag, dNLL_dmu_s = dNLL_dmu)
+      .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dvar, dNLL_dmu_s, var_f,
+                    dNLL_dV, times, cov_f, deriv = d))
 }

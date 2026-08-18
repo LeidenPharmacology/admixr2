@@ -149,9 +149,9 @@
   # pass s$times to .admSigmaGrad -- returned a non-zero rho gradient. The optimiser
   # therefore walked a direction the objective could not move along, and adfo
   # reported a completely different objective from adgh/admc on identical data.
-  ap <- .admResidApply(mu_pred, diag(V), arr, times, V)
-  V <- .admApplyResidTail(V, ap)
-  list(V = V, mu_sigma = ap$mu, JL = JL, ms = ap$ms, var_f = diag(tcrossprod(JL)))
+  pm <- .admResidMoments(mu_pred, diag(V), arr, V, times)
+  list(V = pm$V, mu_sigma = pm$mu, JL = JL, ms = pm$ms,
+       var_f = diag(tcrossprod(JL)))
 }
 
 # -- NLL -----------------------------------------------------------------------
@@ -294,9 +294,20 @@
 # This avoids the redundant extra rxSolve that would occur if .adfoNLL() were
 # called separately for the baseline and then .admSimulateSens() called again
 # for the analytical gradient.
+#
+# `mj_memo` is the SAME (mu, J) environment .adfoNLL() takes as its `muj_cache`
+# (see .adfoMuJMemo). Every gradient-based nloptr algorithm evaluates eval_f(p)
+# and eval_grad_f(p) at the same p, and under FO both need exactly one
+# (mu, J) per study at the SAME structural thetas -- so without a shared memo
+# the pair costs two identical solves per study per iteration. Passing one
+# environment through both halves adfo's optimisation-loop solve count. NULL
+# (the default) restores the old behaviour, and every existing caller that
+# does not want sharing keeps it. LAST in the formals on purpose -- see the
+# CLAUDE.md note on positional control arguments; `grad_h` is passed
+# positionally at three call sites.
 #' @noRd
 .adfoGrad <- function(p, pinfo, studies, sensModel, rxMod, output_var,
-                       params_list, cores, grad_h = 1e-4) {
+                       params_list, cores, grad_h = 1e-4, mj_memo = NULL) {
   pars <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(rep(NA_real_, length(p)))
   # Non-finite parameters never reach rxSolve: the covariance probe can perturb
@@ -319,6 +330,9 @@
   # Results cached for struct theta FD baseline and omega/sigma gradient.
   nll_0    <- 0
   muj_cache <- vector("list", length(studies))
+  # Key for the CROSS-CALL memo shared with .adfoNLL (`mj_memo`). Distinct from
+  # `muj_cache` above, which holds this call's DERIVED per-study quantities.
+  .mkey <- .adfoMuJKey(pars, sensModel)
 
   for (s_idx in seq_along(studies)) {
     s   <- studies[[s_idx]]
@@ -327,7 +341,8 @@
     # output residual. Analytical omega/sigma in Pass 3; struct thetas are FD of
     # the joint-aware .adfoNLL in Pass 2 (unchanged).
     if (isTRUE(s$is_joint)) {
-      mj <- .adfoGetMuJJoint(pars, pinfo, s, sensModel, rxMod, params_list[[s_idx]], cores)
+      mj <- .adfoMuJMemo(mj_memo, s_idx, .mkey, function()
+        .adfoGetMuJJoint(pars, pinfo, s, sensModel, rxMod, params_list[[s_idx]], cores))
       JL <- if (n_eta > 0L) mj$J %*% pars$L else matrix(0, s$n_total, 0)
       Vs <- if (n_eta > 0L) tcrossprod(JL) else matrix(0, s$n_total, s$n_total)
       jr <- .admJointResidual(mj$mu, Vs, s, pinfo, pars$sigma_var)
@@ -346,8 +361,9 @@
     n_t <- length(s$times)
     arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
 
-    mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
-                        params_list[[s_idx]], cores)
+    mj  <- .adfoMuJMemo(mj_memo, s_idx, .mkey, function()
+      .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
+                  params_list[[s_idx]], cores))
     vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, n_eta, s$times)
 
     nll_s <- if (s$method == "var") {
@@ -513,16 +529,16 @@
       dNLL_dV      <- s$n * (invV - invV %*% (s$V + tcrossprod(r)) %*% invV)
       dNLL_dV_diag <- diag(dNLL_dV)
       # V_pred -> V_struct chain (see the single-output branch below)
-      var_f_j  <- diag(tcrossprod(JL))
-      .dres_j  <- .admResidDeriv(mu_pred, var_f_j, mc$arr, pinfo)   # once, reused below
-      vchain_j <- .admResidVChain(mu_pred, var_f_j, mc$arr, pinfo,
-                                  .admRowTimes(s, length(mu_pred)), deriv = .dres_j)
+      .cov_f_j <- tcrossprod(JL)              # STRUCTURAL J Omega J'
+      var_f_j  <- diag(.cov_f_j)
       dNLL_dmu_full <- drop(-2 * s$n * invV %*% r)
+      # ONE moment tail for this unit: .admResidDeriv, the V_pred -> V_struct
+      # chain, the TBS mean-from-covariance diagonal fold, the sigma contraction.
+      ch_j <- .admResidChain(mu_pred, var_f_j, mc$arr, pinfo, dNLL_dmu_full,
+                             dNLL_dV_diag, dNLL_dV, .cov_f_j,
+                             .admRowTimes(s, length(mu_pred)))
       if (n_eta > 0L && n_o > 0L) {
-        .bj <- dNLL_dV * vchain_j
-        diag(.bj) <- diag(.bj) +           # mean-from-covariance path (TBS only)
-          dNLL_dmu_full * (attr(vchain_j, "dmu_dv0") %||% numeric(length(mu_pred)))
-        ML <- crossprod(J, .bj %*% JL)
+        ML <- crossprod(J, ch_j$dV %*% JL)
         for (r_idx in seq_along(pinfo$omega_par)) {
           i <- pinfo$chol_i[r_idx]; jj <- pinfo$chol_j[r_idx]
           grad[n_s + n_e + r_idx] <- grad[n_s + n_e + r_idx] +
@@ -531,9 +547,7 @@
         }
       }
       grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-        .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu_full, var_f_j,
-                      dNLL_dV, .admRowTimes(s, length(mu_pred)), tcrossprod(JL),
-                      deriv = .dres_j)
+        ch_j$sigma_grad()
       next
     }
 
@@ -545,8 +559,7 @@
 
     if (is_var) {
       v_pred       <- diag(V_pred)
-      dNLL_dv_pred <-      s$n * (1/v_pred - (s$v_diag + r^2) / v_pred^2)
-      dNLL_dV_diag <- dNLL_dv_pred
+      dNLL_dV_diag <- s$n * (1/v_pred - (s$v_diag + r^2) / v_pred^2)
     } else {
       invV <- tryCatch(
         chol2inv(chol(V_pred)),
@@ -562,11 +575,14 @@
     # residual is f-dependent (ms_i*ms_j off-diagonal, dv_dv0 on it); identity
     # for purely additive error, so add() models are unchanged.
     var_f  <- vp$var_f
-    .dres  <- .admResidDeriv(mu_pred, var_f, mc$arr, pinfo)   # once, reused below
-    vchain <- .admResidVChain(mu_pred, var_f, mc$arr, pinfo, s$times, deriv = .dres)
     # Needed by the omega block below as well as the sigma block, so compute it here.
     dNLL_dmu <- if (is_var) -2 * s$n * r / diag(V_pred) else
       drop(-2 * s$n * invV %*% r)
+    # cov_f: the STRUCTURAL covariance J Omega J'. NULL on the diagonal path, so
+    # the off-diagonal ms terms stay skipped exactly as they were.
+    .cov_f <- if (is_var) NULL else tcrossprod(mc$JL)
+    ch <- .admResidChain(mu_pred, var_f, mc$arr, pinfo, dNLL_dmu, dNLL_dV_diag,
+                         if (is_var) NULL else dNLL_dV, .cov_f, s$times)
 
     # + dNLL_dmu * dmu_dv0 on the diagonal: for TBS the predicted MEAN depends on
     # Var_eta(f) = diag(J Omega J'), so omega -- and a structural theta -- reach
@@ -574,7 +590,6 @@
     # .admResidVChain). Hoisted out of the omega block so that block and the
     # struct-theta block below share ONE value by construction: they are two
     # contractions of the same object and must not drift apart.
-    .dmv <- attr(vchain, "dmu_dv0") %||% numeric(length(mu_pred))
 
     # Omega gradient: d(-2LL)/d(L[i,j]) via ML = t(J) dNLL_dV JL
     # (JL cached from Pass 1 -- avoids materialising M = t(J) dNLL_dV J separately)
@@ -585,13 +600,8 @@
     # Off-diagonal p = L_ij:    chain rule gives 2*(ML)[i,j]
     if (n_eta > 0L && n_o > 0L) {
       JL <- mc$JL
-      ML <- if (is_var)
-        crossprod(J, JL * (dNLL_dv_pred * diag(vchain) + dNLL_dmu * .dmv))
-      else {
-        .b <- dNLL_dV * vchain
-        diag(.b) <- diag(.b) + dNLL_dmu * .dmv
-        crossprod(J, .b %*% JL)
-      }
+      ML <- if (is_var) crossprod(J, JL * ch$dV_diag)
+            else            crossprod(J, ch$dV %*% JL)
       d  <- pinfo$chol_diag
       for (r_idx in seq_along(pinfo$omega_par)) {
         i  <- pinfo$chol_i[r_idx]; jj <- pinfo$chol_j[r_idx]
@@ -621,21 +631,12 @@
     # eta's for a mu-referenced theta, its own THETA_j_ column for an unpaired one.
     if (use_d2) {
       .JO <- mc$JL %*% t(pars$L)                         # J Omega
-      .G  <- if (is_var) .JO * (dNLL_dv_pred * diag(vchain) + dNLL_dmu * .dmv)
-             else {
-               .bt <- dNLL_dV * vchain
-               diag(.bt) <- diag(.bt) + dNLL_dmu * .dmv
-               .bt %*% .JO
-             }
+      .G  <- if (is_var) .JO * ch$dV_diag else ch$dV %*% .JO
       # The residual makes the objective depend on mu beyond the plain r = E - mu
       # path (its variance is mu-dependent, and for TBS so is the mean scale).
       # .admResidMuCoupling returns exactly that EXCESS, so it adds to dNLL_dmu --
       # the same helper admc/adgh/adirmc use, rather than a fourth copy of it.
-      .dmu_eff <- dNLL_dmu +
-        .admResidMuCoupling(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                            if (is_var) NULL else dNLL_dV,
-                            if (is_var) NULL else tcrossprod(mc$JL), s$times,
-                            deriv = .dres)
+      .dmu_eff <- dNLL_dmu + ch$mu_coupling()
       for (k in seq_len(n_s)) {
         .dmu_k <- if (unp[k]) mc$dth[[pinfo$struct_names[k]]]
                   else mc$J[, which(pinfo$struct_eta_idx == k)[[1L]]]
@@ -653,9 +654,7 @@
     # Under FO the struct thetas are finite-differenced through the full NLL, so
     # only the sigma path needs this; omega's ms factor is already in vchain.
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-      .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                    if (is_var) NULL else dNLL_dV, s$times,
-                    if (is_var) NULL else tcrossprod(mc$JL), deriv = .dres)
+      ch$sigma_grad()
   }
 
   grad
@@ -670,11 +669,69 @@
 # The sens model is still used inside .adfoNLL() for efficient J computation.
 #' @noRd
 .adfoFDGrad <- function(p, pinfo, studies, sensModel, rxMod, output_var,
-                         params_list, cores, grad_h = 1e-4) {
+                         params_list, cores, grad_h = 1e-4, mj_memo = NULL) {
   g <- numeric(length(p)); names(g) <- names(p)
   # Shared (mu, J) memo: the omega and sigma directions perturb nothing the solve
   # sees, so they all hit the base entry and cost no rxSolve at all.
-  cache <- new.env(parent = emptyenv())
+  # When the caller supplies `mj_memo` (the driver's per-parameter-point memo,
+  # also handed to .adfoNLL) that base entry is already populated by the
+  # objective evaluation at the same p, so it costs no solve either.
+  cache <- if (is.null(mj_memo)) new.env(parent = emptyenv()) else mj_memo
+
+  # Every point this gradient visits is known BEFORE any of them is evaluated,
+  # so the distinct structural vectors among them are stacked into ONE rxSolve
+  # per study and written into the memo up front. The loop below is then
+  # unchanged and simply hits the memo. Solve count per study collapses from
+  # (1 + 2 * n_struct) to 1.
+  #
+  # Row-stacking is BIT-IDENTICAL to solving each configuration alone -- measured
+  # over 40 configurations, sens branch and FD branch, in
+  # validation/adfo-batch-bitidentity.R. That is a different operation from
+  # merging studies over a UNION of observation times, which changes the output
+  # grid and moves predictions ~1e-7 (CLAUDE.md records that one as tried and
+  # reverted).
+  #
+  # Inlined rather than factored into a helper: this function runs inside mirai
+  # daemons, and .admPatchDevNamespace() uses assignInNamespace(), which can
+  # REPLACE a binding but cannot ADD one -- a new helper would be missing there.
+  .adfo_prime <- function(p_pts) {
+    # A transform-both-sides lambda reaches rx_pred_ and so joins the memo key
+    # (see .adfoMuJKey), but one batched solve can carry only ONE lambda. When a
+    # lambda is estimated the priming is skipped and the per-point path runs
+    # exactly as before.
+    .tbn <- if (is.null(sensModel)) NULL else sensModel$pred_tbs$lam_name
+    if (!is.null(.tbn) && !is.na(.tbn)) return(invisible(NULL))
+    prs <- lapply(p_pts, function(pp) tryCatch(.admUnpack(pp, pinfo), error = function(e) NULL))
+    ok  <- vapply(prs, function(pr) !is.null(pr) && .admParsFinite(pr, pinfo), logical(1))
+    prs <- prs[ok]
+    if (length(prs) == 0L) return(invisible(NULL))
+    keys <- vapply(prs, function(pr)
+      paste(sprintf("%.17g", .adfoMuJKey(pr, sensModel)), collapse = ","), character(1))
+    uq   <- !duplicated(keys)
+    keys <- keys[uq]; prs <- prs[uq]
+    for (s_idx in seq_along(studies)) {
+      s <- studies[[s_idx]]
+      if (isTRUE(s$is_joint)) next            # joint units have no batched path
+      need <- which(vapply(keys, function(kk)
+        is.null(cache[[paste0(s_idx, ":", kk)]]), logical(1)))
+      if (length(need) < 2L) next             # nothing to gain over the memo
+      sm <- do.call(rbind, lapply(prs[need], function(pr) pr$struct))
+      colnames(sm) <- names(prs[[need[1L]]]$struct)
+      res <- .adfoGetMuJBatch(sm, pinfo, s, sensModel, rxMod,
+                              s$output %||% output_var, cores,
+                              prs[[need[1L]]]$sigma_var)
+      if (is.null(res)) next
+      for (i in seq_along(need))
+        cache[[paste0(s_idx, ":", keys[need[i]])]] <- res[[i]]
+    }
+    invisible(NULL)
+  }
+
+  hs <- pmax(abs(p), 0.1) * .admGH(grad_h, seq_along(p))
+  .adfo_prime(c(
+    lapply(seq_along(p), function(k) { pp <- p; pp[k] <- p[k] + hs[k]; pp }),
+    lapply(seq_along(p), function(k) { pp <- p; pp[k] <- p[k] - hs[k]; pp })))
+
   for (k in seq_along(p)) {
     hk <- pmax(abs(p[k]), 0.1) * .admGH(grad_h, k)
     pp <- p; pp[k] <- p[k] + hk
@@ -719,9 +776,60 @@
   nll_fn <- function(p)
     suppressMessages(.adfoNLL(p, pinfo, studies, sensModel, rxMod, output_var,
                                params_list, cores, cache))
+  # The gradient takes the SAME memo. Every sigma and omega direction of the
+  # Hessian leaves the structural thetas untouched, so its Pass-1 (mu, J) is the
+  # one already solved for p_hat -- those columns now cost no solve at all.
   grad_fn <- function(p)
     suppressMessages(.adfoGrad(p, pinfo, studies, sensModel, rxMod, output_var,
-                                params_list, cores, grad_h = cov_h))
+                                params_list, cores, grad_h = cov_h,
+                                mj_memo = cache))
+
+  # Prime that memo from a KNOWN set of parameter points.
+  #
+  # Both Hessian schemes below enumerate all their evaluation points before
+  # evaluating any of them, and under FO the solve sees only the structural
+  # thetas. So the distinct structural vectors across the whole set are stacked
+  # as rows of ONE rxSolve per study (chunked only to bound memory) and written
+  # into the memo; every later nll_fn / grad_fn call then hits it.
+  #
+  # Row-stacking is BIT-IDENTICAL to solving each configuration alone, and the
+  # batch size does not change any row -- measured over 40 configurations, sens
+  # and FD branch, in validation/adfo-batch-bitidentity.R. That is a different
+  # operation from merging studies over a UNION of observation times, which does
+  # change the output grid (CLAUDE.md: tried and reverted).
+  .prime <- function(p_pts) {
+    # A transform-both-sides lambda reaches rx_pred_ and so joins the memo key
+    # (.adfoMuJKey), but one batched solve can carry only ONE lambda. When one is
+    # estimated, priming is skipped and the per-point path runs as before.
+    .tbn <- if (is.null(sensModel)) NULL else sensModel$pred_tbs$lam_name
+    if (!is.null(.tbn) && !is.na(.tbn)) return(invisible(NULL))
+    prs <- lapply(p_pts, function(pp) tryCatch(.admUnpack(pp, pinfo), error = function(e) NULL))
+    ok  <- vapply(prs, function(pr) !is.null(pr) && .admParsFinite(pr, pinfo), logical(1))
+    prs <- prs[ok]
+    if (length(prs) == 0L) return(invisible(NULL))
+    keys <- vapply(prs, function(pr)
+      paste(sprintf("%.17g", .adfoMuJKey(pr, sensModel)), collapse = ","), character(1))
+    uq   <- !duplicated(keys)
+    keys <- keys[uq]; prs <- prs[uq]
+    for (s_idx in seq_along(studies)) {
+      s <- studies[[s_idx]]
+      if (isTRUE(s$is_joint)) next            # joint units have no batched path
+      need <- which(vapply(keys, function(kk)
+        is.null(cache[[paste0(s_idx, ":", kk)]]), logical(1)))
+      if (length(need) < 2L) next             # nothing to gain over the memo
+      for (ch in split(need, ceiling(seq_along(need) / 250L))) {
+        sm <- do.call(rbind, lapply(prs[ch], function(pr) pr$struct))
+        colnames(sm) <- names(prs[[ch[1L]]]$struct)
+        res <- .adfoGetMuJBatch(sm, pinfo, s, sensModel, rxMod,
+                                s$output %||% output_var, cores,
+                                prs[[ch[1L]]]$sigma_var)
+        if (is.null(res)) next
+        for (i in seq_along(ch))
+          cache[[paste0(s_idx, ":", keys[ch[i]])]] <- res[[i]]
+      }
+    }
+    invisible(NULL)
+  }
 
   nll0 <- nll_fn(p_hat)
   if (!is.finite(nll0)) {
@@ -742,6 +850,14 @@
     # below was papering over the asymmetry that error produced.
     # Cost: 2*np_cov gradient evaluations against the old np_cov+1.
     h_c <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
+    # All 2*np_cov gradient points are known here; prime the memo with one solve
+    # per study. Only the struct directions need one at all -- every sigma and
+    # omega direction shares p_hat's structural vector.
+    .prime(unlist(lapply(seq_len(np_cov), function(jj) {
+      ph <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_c[jj]
+      pm <- p_hat; pm[cov_idx[jj]] <- pm[cov_idx[jj]] - h_c[jj]
+      list(ph, pm)
+    }), recursive = FALSE))
     for (jj in seq_len(np_cov)) {
       ph      <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_c[jj]
       pm      <- p_hat; pm[cov_idx[jj]] <- pm[cov_idx[jj]] - h_c[jj]
@@ -760,6 +876,25 @@
     # is the one being differenced.
     h_fd <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer,
                             .var.name = "adfoCalcCov")
+
+    # Once h_fd is known, EVERY point the two loops below visit is determined,
+    # so the whole set is primed with one batched solve per study and the
+    # (1 + 2*np_cov + 4*n_off) NLL evaluations below cost no further solves.
+    .pts <- list()
+    for (k in seq_len(np_cov)) {
+      ki <- cov_idx[k]; hk <- h_fd[k]
+      pp <- p_hat; pp[ki] <- pp[ki] + hk; .pts[[length(.pts) + 1L]] <- pp
+      pm <- p_hat; pm[ki] <- pm[ki] - hk; .pts[[length(.pts) + 1L]] <- pm
+    }
+    if (np_cov > 1L) for (i in seq_len(np_cov - 1L)) for (j in seq(i + 1L, np_cov)) {
+      ii <- cov_idx[i]; ji <- cov_idx[j]; hi <- h_fd[i]; hj <- h_fd[j]
+      for (si in c(1, -1)) for (sj in c(1, -1)) {
+        q <- p_hat; q[ii] <- q[ii] + si * hi; q[ji] <- q[ji] + sj * hj
+        .pts[[length(.pts) + 1L]] <- q
+      }
+    }
+    .prime(.pts)
+
     for (k in seq_len(np_cov)) {
       ki  <- cov_idx[k]; hk  <- h_fd[k]
       p_p <- p_hat; p_p[ki] <- p_p[ki] + hk
@@ -857,15 +992,30 @@
 
   set.seed(seed + restart_id)
 
+  # One-parameter-point (mu, J) memo shared by the objective and the gradient --
+  # see the note at the same construct in nlmixr2Est.adfo(). Built as a local
+  # closure rather than a helper: a daemon resolves this worker from the
+  # INSTALLED namespace, so nothing here may depend on a new binding.
+  .mj_env <- new.env(parent = emptyenv())
+  .mj_p   <- NULL
+  .mjSync <- function(p) {
+    if (!identical(p, .mj_p)) {
+      rm(list = ls(.mj_env, all.names = TRUE), envir = .mj_env)
+      .mj_p <<- p
+    }
+    .mj_env
+  }
+
   nll_fn <- function(p)
-    .adfoNLL(p, pinfo, studies, m$sensModel, m$rxMod, output_var, params_list, m$cores_w)
+    .adfoNLL(p, pinfo, studies, m$sensModel, m$rxMod, output_var, params_list,
+             m$cores_w, .mjSync(p))
 
   grad_fn <- if (use_pure_fd) {
     function(p) .adfoFDGrad(p, pinfo, studies, m$sensModel, m$rxMod, output_var,
-                            params_list, m$cores_w, grad_h)
+                            params_list, m$cores_w, grad_h, .mjSync(p))
   } else {
     function(p) .adfoGrad(p, pinfo, studies, m$sensModel, m$rxMod, output_var,
-                          params_list, m$cores_w, grad_h)
+                          params_list, m$cores_w, grad_h, .mjSync(p))
   }
 
   # adfo loads its own model in-process and does not lock (single-nloptr path).
@@ -1443,9 +1593,30 @@ nlmixr2Est.adfo <- function(env, ...) {
   .par_trace <- NULL
   .best_nll  <- Inf
 
+  # (mu, J) memo shared by eval_f and eval_grad_f.
+  #
+  # Every gradient-based nloptr algorithm evaluates the objective and the
+  # gradient at the SAME p, and under FO both need the same (mu, J) per study --
+  # the solve depends only on the structural thetas. Without sharing, the second
+  # call of each pair repeats a solve the first has already paid for.
+  #
+  # Bounded to ONE parameter point: the entries are dropped as soon as p moves,
+  # so the memo cannot grow with the iteration count, and a stale (mu, J) can
+  # never be served for a different p.
+  .mj_env <- new.env(parent = emptyenv())
+  .mj_p   <- NULL
+  .mjSync <- function(p) {
+    if (!identical(p, .mj_p)) {
+      rm(list = ls(.mj_env, all.names = TRUE), envir = .mj_env)
+      .mj_p <<- p
+    }
+    .mj_env
+  }
+
   eval_f <- function(p) {
     .iter <<- .iter + 1L
-    val <- .adfoNLL(p, pinfo, studies, sensModel, rxMod, output_var, params_list, cores)
+    val <- .adfoNLL(p, pinfo, studies, sensModel, rxMod, output_var, params_list,
+                    cores, .mjSync(p))
     if (is.finite(val) && val < .best_nll) {
       .best_nll  <<- val
       .nll_trace <<- c(.nll_trace, val)
@@ -1479,10 +1650,10 @@ nlmixr2Est.adfo <- function(env, ...) {
     NULL
   } else if (use_pure_fd) {
     function(p) .adfoFDGrad(p, pinfo, studies, sensModel, rxMod, output_var,
-                              params_list, cores, grad_h_v)
+                              params_list, cores, grad_h_v, .mjSync(p))
   } else {
     function(p) .adfoGrad(p, pinfo, studies, sensModel, rxMod, output_var,
-                           params_list, cores, grad_h_v)
+                           params_list, cores, grad_h_v, .mjSync(p))
   }
 
   # "Analytical" is claimed only when the struct thetas really are analytic. With

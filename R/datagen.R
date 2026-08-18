@@ -466,16 +466,13 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         # beta precision (SOLVED) rides back on cp_mat; fold it into the row array
         arr  <- .admUnitResidRows(pinfo, ov, pars$sigma_var, n_t,
                                   phi = attr(cp_mat, "phi"))
-        mu   <- colMeans(cp_mat)
-        cp_c <- sweep(cp_mat, 2L, mu)
-        V    <- crossprod(cp_c) / control$n_sim
         # This output's residual error only. `times` + the structural covariance are
         # needed by the off-diagonal forms (ar, ordinal); without them datagen()
         # emitted a V that contradicted the model it was handed -- and disagreed
         # with its own method = "gh" branch, which went through .adghMoments and
         # did include them.
-        ap   <- .admResidApply(mu, diag(V), arr, study_tmp$times, V)
-        list(mu = ap$mu, V = .admApplyResidTail(V, ap), cp_mat = cp_mat)
+        m <- .admResidSampleMoments(cp_mat, arr, study_tmp$times)
+        list(mu = m$mu, V = m$V, cp_mat = cp_mat)
       }
     }
 

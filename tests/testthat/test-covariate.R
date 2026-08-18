@@ -1,18 +1,18 @@
 # Tier 1 -- covariate marginalisation helpers (no rxode2).
 #
-# gl/gh/taylor node quadrature was removed; what remains is the marginal route
-# (collapse, u-quantile, general per-row) plus the refusal that keeps old
-# node-style study lists from being fitted as something else.
+# gl/gh/taylor node quadrature was removed, and so were the "collapse" and "uq"
+# paths (see the header of R/covariate.R). What remains is the general per-row /
+# product-grid route, the shift route, and the refusal that keeps old node-style
+# study lists from being fitted as something else.
 
-# ---- covariate collapse ------------------------------------------------------
+# ---- routing -----------------------------------------------------------------
 
-.cov_pinfo <- function(n_eta = 1L, cmap = data.frame(covariate = "WT",
-                                                     coef = "tcov",
-                                                     eta = "eta.cl",
-                                                     stringsAsFactors = FALSE))
+.cov_pinfo <- function(n_eta = 1L, cov_integration = NULL)
   list(n_eta = n_eta,
        eta_col_names = if (n_eta == 1L) "eta.cl" else c("eta.cl", "eta.v"),
-       cov_map = cmap)
+       cov_integration = cov_integration,
+       chol_diag = rep(TRUE, n_eta),
+       chol_i = seq_len(n_eta), chol_j = seq_len(n_eta))
 
 .cov_ui <- function(cov = "WT",
                     expr = list(quote(cl <- exp(tcl + tcov * WT + eta.cl))))
@@ -33,33 +33,18 @@ test_that(".admCovCols adds ONLY declared covariates, never a blanket fill", {
   expect_identical(admixr2:::.admCovCols(m, c("tcl", "wt"), NULL), m)
 })
 
-test_that(".admCovInflateL folds theta_cov^2 * Sigma_a into Omega", {
-  Om   <- matrix(0.09, 1L, 1L)
-  pars <- list(L = t(chol(Om)), struct = c(tcl = 0, tcov = 0.75))
-  s    <- list(cov_dist = list(WT = list(mu = 0, sd = 0.6)))
-  L2   <- admixr2:::.admCovInflateL(pars, .cov_pinfo(), s)
-  # 0.09 + 0.75^2 * 0.6^2 = 0.2925
-  expect_equal(as.numeric(tcrossprod(L2)), 0.2925)
-  # and it really is a Cholesky of that
-  expect_equal(L2[lower.tri(L2)], numeric(0))
-})
-
-test_that(".admCovInflateL puts the variance on the RIGHT eta only", {
-  Om   <- diag(c(0.09, 0.04))
-  pars <- list(L = t(chol(Om)), struct = c(tcov = 0.5))
-  cmap <- data.frame(covariate = "WT", coef = "tcov", eta = "eta.v",
-                     stringsAsFactors = FALSE)
-  s    <- list(cov_dist = list(WT = list(mu = 0, sd = 2)))
-  L2   <- admixr2:::.admCovInflateL(pars, .cov_pinfo(2L, cmap), s)
-  Om2  <- tcrossprod(L2)
-  expect_equal(Om2[1, 1], 0.09)              # eta.cl untouched
-  expect_equal(Om2[2, 2], 0.04 + 0.5^2 * 4)  # eta.v inflated
-  expect_equal(Om2[1, 2], 0)
-})
-
-test_that(".admStudyL returns the plain Cholesky when no cov_dist is declared", {
+test_that(".admStudyL is the plain Cholesky for EVERY study", {
+  # The "collapse" path -- chol(Omega + J Sigma_a J'), which folded a normal
+  # covariate's variance into Omega -- was retired, so no study-specific Omega
+  # remains. Pinned because R/admc.R and R/plot.R call this on every objective
+  # evaluation: an inflated Omega reaching them again would be a plausible fit
+  # of a different model, which is exactly how the collapse used to fail.
   pars <- list(L = t(chol(matrix(0.09, 1L, 1L))), struct = c(tcov = 0.75))
   expect_identical(admixr2:::.admStudyL(pars, .cov_pinfo(), list()), pars$L)
+  expect_identical(
+    admixr2:::.admStudyL(pars, .cov_pinfo(),
+                         list(cov_dist = list(WT = list(mu = 0, sd = 0.6)))),
+    pars$L)
 })
 
 test_that(".admCheckCovariates accepts a supported mu-referenced covariate", {
@@ -72,46 +57,63 @@ test_that(".admCheckCovariates is a no-op when no study declares cov_dist", {
                                               list(a = list()), "sens"))
 })
 
-test_that("a gradient mode routes to the general path rather than erroring", {
-  # Every estimator defaults to a gradient, so refusing here would make a
-  # covariate model fail out of the box. Only "rows" carries a gradient.
+test_that("`grad` no longer enters the covariate path choice", {
+  # It used to: "collapse" and "uq" had no derivative, so a gradient mode forced
+  # "rows" and grad = "none" got the closed form. Both of those paths are gone
+  # and both survivors are differentiable, so every mode must land identically.
+  # This is what made "collapse" unreachable in a real fit -- every estimator
+  # defaults to a gradient -- and the reason it was retired rather than repaired.
   ok_st <- list(a = list(cov = list(WT = 0),
                          cov_dist = list(WT = list(mu = 0, sd = 0.6))))
-  for (g in c("sens", "analytical", "fd", "cfd"))
+  for (g in c("none", "sens", "analytical", "fd", "cfd"))
     expect_identical(
       admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), ok_st, g)$a$.adm_cov_path,
       "rows")
-  # derivative-free still gets the exact closed form
-  expect_identical(
-    admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), ok_st, "none")$a$.adm_cov_path,
-    "collapse")
 })
 
-test_that(".admCheckCovariates ROUTES rather than refuses, most efficient first", {
+test_that(".admCheckCovariates routes to the general path by default", {
   ok_st <- list(a = list(cov = list(WT = 0), cov_dist = list(WT = list(mu = 0, sd = 0.6))))
   path <- function(ui = .cov_ui(), pi = .cov_pinfo(), st = ok_st)
     admixr2:::.admCheckCovariates(ui, pi, st, "none")$a$.adm_cov_path
 
-  # bare theta*COV + normal + single occurrence -> closed form
-  expect_identical(path(), "collapse")
-  # non-normal spec: the closed form does not apply. It used to fall to the
-  # u-quantile path; that path is no longer routed to, because on a DISCRETE
-  # covariate its unbracketed Newton solve silently returns garbage quantiles
-  # (measured: 13-20% on the mean, 3-5x on the covariance). The general per-row
-  # path assumes nothing and was exact on every configuration tested.
+  # the bare theta*COV product the retired collapse needed -- now "rows" like
+  # everything else. adgh reaches the same moments through the shift path when
+  # cov_integration says so, and that route is admitted numerically rather than
+  # by rxode2's muRefCovariateDataFrame (which recognises 1 of 8 realistic
+  # covariate parameterisations).
+  expect_identical(path(), "rows")
   expect_identical(path(st = list(a = list(cov = list(WT = 0),
       cov_dist = list(WT = list(values = c(0, 1), probs = c(.6, .4)))))), "rows")
-  # covariate used in a SECOND place -> its whole effect no longer fits in one
-  # eta column, so the general per-row path takes over
   expect_identical(path(ui = .cov_ui(expr = list(
       quote(cl <- exp(tcl + tcov * WT + eta.cl)),
       quote(v  <- exp(tv) * (1 + 0.01 * WT))))), "rows")
-  # no eta to inflate or to carry a shift -> general path
   expect_identical(path(pi = .cov_pinfo(0L)), "rows")
-  # no `cov` value given -> derived from the distribution, so the path is
-  # unaffected (and the user cannot state a mean that contradicts cov_dist)
+  # no `cov` value given -> derived from the distribution
   expect_identical(path(st = list(a = list(
-      cov_dist = list(WT = list(mu = 0, sd = 0.6))))), "collapse")
+      cov_dist = list(WT = list(mu = 0, sd = 0.6))))), "rows")
+})
+
+test_that('cov_integration = "auto" falls back where "shift" errors', {
+  # `v <- exp(tv) * WT^vwt` has no random effect in the assignment carrying the
+  # covariate, so there is no column to shift. .admShiftSpec() decides that from
+  # the model text alone, which is why it is reachable without a compiled model;
+  # everything subtler is decided by .admShiftVerify() against the solver.
+  ui <- .cov_ui(expr = list(quote(v <- exp(tv) * WT^vwt)))
+  st <- list(a = list(cov_dist = list(WT = list(mu = 70, sd = 10))))
+
+  expect_error(
+    admixr2:::.admCheckCovariates(ui, .cov_pinfo(cov_integration = "shift"),
+                                  st, "none"),
+    "exactly one random effect")
+
+  # "auto" is a SPEED lever, and the fallback is the more accurate path, so a
+  # refusal must never be an error -- only a message and the reason recorded.
+  expect_message(
+    got <- admixr2:::.admCheckCovariates(
+      ui, .cov_pinfo(cov_integration = "auto"), st, "none"),
+    "auto")
+  expect_identical(got$a$.adm_cov_path, "rows")
+  expect_match(got$a$.adm_cov_shift_why, "exactly one random effect")
 })
 
 test_that(".admCovMeanOf gives the solve value each path needs", {
@@ -148,37 +150,49 @@ test_that(".admCheckCovariates still errors on genuinely unsupportable input", {
       "not a supported distribution")
 })
 
-test_that(".admCovUQuantile solves F_u(u) = p exactly, and smoothly", {
-  # Newton on the exact mixture CDF, not interpolation on a grid. The grid made
-  # u piecewise-linear in the parameters, which is the mismatch that stops an
-  # analytic gradient being consistent with the objective it differentiates.
-  g  <- admixr2:::.adghNodes1(32L)
-  dl <- list(delta = 0.75 * log(exp(log(72) + 0.28 * g$x) / 72), w = g$w)
-  s  <- 0.30
-  p  <- (seq_len(2000L) - 0.5) / 2000L
-  u  <- admixr2:::.admCovUQuantile(dl, s, p)
+test_that(".admShiftNodes solves F_u(u) = Phi(z) exactly, and smoothly", {
+  # The shift path's inversion, and the direct replacement for the retired
+  # .admCovUQuantile: Newton on the exact mixture CDF of u = Delta(a) + eta,
+  # never interpolation on a grid. A grid makes u piecewise-linear in the
+  # parameters, which is the mismatch that stops an analytic gradient being
+  # consistent with the objective it differentiates.
+  g   <- admixr2:::.adghNodes1(32L)
+  D   <- 0.75 * log(exp(log(72) + 0.28 * g$x) / 72)   # allometric Delta
+  om  <- 0.30
+  # 25, not more: beyond ~8 SD pnorm() saturates at exactly 1, so the target
+  # probability carries no information and Newton leaves those nodes wherever it
+  # found them (documented in .admShiftNodes -- their GH weight is ~1e-23, so
+  # they cannot move a moment). .adghNodes1(41) reaches there; 25 does not.
+  n_u <- 25L
+  un  <- admixr2:::.admShiftNodes(D, g$w, om, n_u)
+  tg  <- pnorm(admixr2:::.adghNodes1(n_u)$x)
 
-  Fu <- as.numeric(pnorm(outer(u, dl$delta, "-") / s) %*% dl$w)
-  expect_lt(max(abs(Fu - p)), 1e-10)          # solves its defining equation
-  expect_true(all(diff(u) > 0))               # monotone
-  expect_true(all(is.finite(u)))
+  Fu <- as.numeric(pnorm(outer(un$u, D, "-") / om) %*% g$w)
+  expect_lt(max(abs(Fu - tg)), 1e-10)         # solves its defining equation
+  # monotone IN z. The nodes come back in .adghNodes1's own order, which is
+  # descending -- asserting diff(u) > 0 instead pins the ordering convention of
+  # a helper this function only borrows.
+  expect_true(all(diff(un$u[order(tg)]) > 0))
+  expect_true(all(is.finite(un$u)))
+  expect_equal(sum(un$w), 1)
 
   # SHIFTING every Delta by eps must shift u by exactly eps: an exact identity,
   # and one a grid interpolant cannot reproduce without quantisation.
   eps <- 1e-7
-  u2  <- admixr2:::.admCovUQuantile(list(delta = dl$delta + eps, w = dl$w), s, p)
-  expect_equal(mean((u2 - u) / eps), 1, tolerance = 1e-6)
-  expect_lt(sd((u2 - u) / eps), 1e-6)
+  u2  <- admixr2:::.admShiftNodes(D + eps, g$w, om, n_u)$u
+  expect_equal(mean((u2 - un$u) / eps), 1, tolerance = 1e-6)
+  expect_lt(sd((u2 - un$u) / eps), 1e-6)
 
-  # the implicit-function derivative wrt the eta SD matches finite differences,
-  # which is what a future analytic gradient would rely on
-  e2 <- 1e-6
-  fd <- (admixr2:::.admCovUQuantile(dl, s + e2, p) -
-         admixr2:::.admCovUQuantile(dl, s - e2, p)) / (2 * e2)
-  z  <- outer(u, dl$delta, "-") / s
-  fu <- as.numeric(dnorm(z) %*% dl$w) / s
-  an <- -as.numeric((dnorm(z) * (-z / s)) %*% dl$w) / fu
-  expect_lt(max(abs(an - fd) / pmax(abs(fd), 1e-8)), 1e-6)
+  # u's first two moments are known in closed form (E[Delta], Var(Delta)+om^2),
+  # so the node set must reproduce them -- that is what the quadrature is for.
+  mD <- sum(g$w * D); vD <- sum(g$w * D^2) - mD^2
+  expect_equal(sum(un$w * un$u), mD, tolerance = 1e-6)
+  expect_equal(sum(un$w * (un$u - mD)^2), vD + om^2, tolerance = 1e-4)
+
+  # the vector driver must agree with the scalar one at m = 1
+  m1 <- admixr2:::.admShiftNodesMulti(matrix(D, ncol = 1L), g$w, om, n_u)
+  expect_equal(as.numeric(m1$u), un$u)
+  expect_equal(m1$w, un$w)
 })
 
 test_that("an unidentifiable covariate coefficient is warned about", {
@@ -691,9 +705,11 @@ test_that("the grid and the per-subject sampler see the SAME distribution", {
 })
 
 test_that("`cor`, `rho` and `Sigma` are ONE statement, honoured by every path", {
-  # They used to diverge: `rho` built a copula for the collapse and a DIAGONAL
-  # grid for everything else, so the correlation was present in one path and
-  # silently absent in the other.
+  # They used to diverge: `rho` built a copula for the retired collapse and a
+  # DIAGONAL grid for everything else, so the correlation was present in one
+  # path and silently absent in the other. All three spellings are still
+  # accepted -- published specs are written every which way -- so all three must
+  # still land on the same latent correlation.
   base <- list(A = list(mu = 0, sd = 2, dist = "normal"),
                B = list(mu = 0, sd = 3, dist = "normal"))
   sig <- function(x) admixr2:::.admCovDistMoments(x)$Sigma
@@ -702,10 +718,13 @@ test_that("`cor`, `rho` and `Sigma` are ONE statement, honoured by every path", 
   expect_equal(sig(c(base, list(Sigma = matrix(c(4, 3, 3, 9), 2, 2)))), s_cor,
                tolerance = 0)
   expect_equal(unname(s_cor), matrix(c(4, 3, 3, 9), 2, 2), tolerance = 1e-2)
-  # and the collapse still reads rho/Sigma directly off the canonical spec
-  expect_equal(unname(admixr2:::.admCovDistSigma(
-    admixr2:::.admCovDistCanon(c(base, list(rho = 0.5))), c("A", "B"))),
-    matrix(c(4, 3, 3, 9), 2, 2), tolerance = 1e-12)
+  # ... and all three canonicalise to the same latent correlation matrix, which
+  # is the single object every consumer (the joint sampler, the product grid,
+  # the Taylor design, the shift grid) reads.
+  lr <- function(x) admixr2:::.admCovDistCanon(x)[["latentR"]]
+  expect_equal(lr(c(base, list(rho = 0.5))), lr(c(base, list(cor = 0.5))))
+  expect_equal(lr(c(base, list(Sigma = matrix(c(4, 3, 3, 9), 2, 2)))),
+               lr(c(base, list(cor = 0.5))))
 })
 
 test_that(".admCovDistMoments is diagonal exactly when the covariates are independent", {
@@ -758,7 +777,7 @@ test_that("the Taylor design is built ONCE and cached on the study", {
                              CRCL = list(mean = 90, sd = 25), cor = 0.6))))
   ui  <- list(allCovs = c("WT", "CRCL"),
               lstExpr = list(quote(cl <- exp(tcl + bw*WT + bc*CRCL + eta.cl))))
-  pin <- list(n_eta = 1L, eta_col_names = "eta.cl", cov_map = NULL,
+  pin <- list(n_eta = 1L, eta_col_names = "eta.cl",
               cov_integration = "taylor", cov_taylor_h = 0.5)
   out <- admixr2:::.admCheckCovariates(ui, pin, st, "sens")
   td  <- out$s$.adm_cov_taylor

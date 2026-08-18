@@ -440,16 +440,47 @@ covariance for admixr2 to match"),
     switch(tr$curEval,
       exp = ,
       log = 1.0,
+      # Both bounded branches are the same quantity -- the transform's VALUE
+      # divided by its DERIVATIVE at the starting point -- and both used to spell
+      # each half out by hand. They are now written as `transform / derivative`
+      # using the transform .admBackTransform() actually applies (rxode2::expit /
+      # rxode2::probitInv) over its derivative from stats (dlogis / dnorm), so the
+      # scale and the back-transform cannot drift apart, and neither half is
+      # re-derived here.
+      #
+      # One deliberate behaviour change: rxode2's transforms assert on their
+      # bounds, so a `curEval` of "expit"/"probit" carrying an NA low/hi now
+      # errors here where the hand-written arithmetic returned NA (an NA scale_c
+      # poisons every optimizer step that follows). That model was already fatal
+      # one step later -- .admBackTransform() calls the same rxode2::expit() with
+      # the same `tr` on the first progress row -- so this only moves the error to
+      # the point the metadata is first used.
       expit = ,
       logit = {
         a <- tr$low; b <- tr$hi
-        pmax(exp(p) * (1 + exp(-p))^2 * (a + (b - a) / (1 + exp(-p))) / (b - a), 0.01)
+        # rxode2::expit(p, a, b) == a + (b - a) * plogis(p) (bit-identical to
+        # plogis at a = 0, b = 1), so d/dp == (b - a) * dlogis(p).
+        # Verified against the old
+        #   exp(p) * (1 + exp(-p))^2 * (a + (b-a)/(1 + exp(-p))) / (b - a)
+        # over p in [-50, 50] x four bound pairs: max relative difference 8.9e-16
+        # (1 ulp). The old form also OVERFLOWED in the left tail -- (1+exp(-p))^2
+        # is Inf from p <= -355 -- and returned Inf, which as a scale_c divides
+        # the parameter out of the optimizer entirely; this returns the correct
+        # finite ratio (1.0 at p = -360, a = 0, b = 1).
+        pmax(rxode2::expit(p, a, b) / ((b - a) * stats::dlogis(p)), 0.01)
       },
       probitInv = ,
       probit = {
         a <- tr$low; b <- tr$hi
-        pmax(sqrt(2) * exp(0.5 * p^2) * sqrt(pi) *
-               (a + 0.5 * (b - a) * (1 + rxode2::erf(p / sqrt(2)))) / (b - a), 0.01)
+        # rxode2::probitInv(p, a, b) == a + (b - a) * pnorm(p) (bit-identical to
+        # pnorm at a = 0, b = 1 across the tails), so d/dp == (b - a) * dnorm(p),
+        # and 1/dnorm(p) is exactly the sqrt(2)*sqrt(pi)*exp(p^2/2) the old line
+        # spelled out. Max relative difference vs the erf form 5.7e-14 over
+        # p in [-50, 50] wherever a != 0. At a = 0 the erf form CANCELS:
+        # 0.5*(1 + erf(p/sqrt(2))) loses its last correct digit by p = -6.5 and is
+        # exactly 0 from p = -8.5, so it returned the 0.01 floor where the true
+        # ratio is ~1/|p|. pnorm has no such cancellation.
+        pmax(rxode2::probitInv(p, a, b) / ((b - a) * stats::dnorm(p)), 0.01)
       },
       1.0)
   }, double(1))
