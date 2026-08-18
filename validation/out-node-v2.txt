@@ -1,0 +1,19 @@
+Truth tcov = 0.7500      exact (noiseless) data, 3 populations
+
+objective  [construction]                          argmin      error      rel
+M  marginal, shipped            [1 correct]        0.7500    +0.0000     0.0%
+T  taylor on the MOMENTS        [3 approx ]        0.7354    -0.0146    -1.9%
+D  gh, NODE data + V_cond       [2 stratif]        0.7500    +0.0000     0.0%
+A  gh, pooled data, V_cond      [4 MISMATCHED]     0.3045    -0.4455   -59.4%
+B  gh, pooled data, V_marginal  [4 MISMATCHED]     0.4567    -0.2933   -39.1%
+C  gh, cond obs V + V_cond      [4 MISMATCHED]     0.3248    -0.4252   -56.7%
+
+Rows [1], [2], [3] are the constructions that target the aggregate
+likelihood. Rows [4] score a MARGINAL observation against a CONDITIONAL
+prediction and are a category error, not a quadrature method.
+
+Mean-term decomposition at the true parameters (population 2, n=1):
+  sum_j w_j r_j' Vi r_j        =     0.852572
+  rbar' Vi rbar                =     0.000000
+  tr(Vi %*% Cov_a(mu))          =     0.852572
+  sum of the two               =     0.852572   (matches: TRUE)

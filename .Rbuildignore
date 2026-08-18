@@ -28,4 +28,8 @@
 ^CRAN-SUBMISSION$
 ^\.git$
 ^\.covrignore$
-^vignettes/covariate-mbma\.Rmd$
+^vignettes/covariates\.Rmd$
+^vignettes/covariates-split\.Rmd$
+^vignettes/model-synthesis\.Rmd$
+^lit$
+^validation$

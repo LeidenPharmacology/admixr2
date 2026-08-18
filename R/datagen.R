@@ -99,6 +99,30 @@ datagenControl <- function(
 #'     \item{`ev`}{A dosing event table created with `rxode2::et()`.}
 #'     \item{`n`}{(Optional) integer sample size; stored as metadata and
 #'       used when supplying the result to `admControl()`.}
+#'     \item{`cov_dist`}{(Optional) the covariate distribution this study's
+#'       subjects span --- see [covDraw()] for the grammar. The generated
+#'       `E`/`V` are MARGINAL over it, which is what a publication reports.
+#'       Needs `datagenControl(method = "mc")`.}
+#'     \item{`stratify`}{(Optional) `TRUE` to stratify on every covariate this
+#'       study's OWN data-generating model conditions on, marginalising the
+#'       rest --- the split is read from the model, so it cannot disagree with
+#'       it. Two sources sharing one `cov_dist` therefore stratify differently,
+#'       each according to what it fitted. A character vector names the
+#'       covariates explicitly instead. The study is expanded into
+#'       one ordinary study per covariate stratum, named `<study>_s1`,
+#'       `<study>_s2`, ..., each pinned at its own covariate value, carrying its
+#'       own effective size `n_k` (the quadrature weight times `n`, summing to
+#'       `n`), and marginalising the remaining covariates over their
+#'       distribution CONDITIONAL on that stratum. Use it when the source
+#'       reports --- or, being a published model, can report --- summaries by
+#'       covariate subgroup. Stratify only on what the source actually fitted:
+#'       a source with no term in a covariate has no contrast in it to give, and
+#'       nodes that vary it manufacture a null one. See [covStrata()].}
+#'     \item{`strata_nodes`}{(Optional) strata per stratified covariate
+#'       (default 5); a discrete covariate is cut at its levels instead. Each
+#'       stratum costs a solve and more of them do not buy accuracy: a matched
+#'       one-covariate fit recovers 0.7000 / 0.7002 / 0.7005 at 3 / 4 / 10
+#'       strata against a true 0.700. See [covStrata()].}
 #'     \item{`observations`}{(Optional) a named list to generate data for several
 #'       observed outputs (multi-compartment). Each entry gives one output's
 #'       `output` (model prediction variable, e.g. `"cp"`), `times`, and
@@ -207,6 +231,13 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 
   # Ensure studies are named
   study_names <- names(studies) %||% paste0("study", seq_along(studies))
+
+  # A study declaring `stratify` is expanded HERE, into one ordinary study per
+  # covariate stratum, before anything else looks at it. Everything downstream
+  # -- generation, and then the fit -- then sees plain studies and needs no
+  # knowledge of where they came from.
+  .ex <- .admExpandStrata(studies, study_names, model)
+  studies <- .ex$studies; study_names <- .ex$names
 
   # Validate study specs and resolve per-study model
   study_models <- vector("list", length(studies))
@@ -380,7 +411,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       # `rho`, `Sigma` and `joint` are metadata and a sampler, not covariate
       # specs -- .admCovMeanOf() has nothing to compute from a function.
       .cd <- s[["cov_dist"]][setdiff(names(s[["cov_dist"]]),
-                                     c("rho", "Sigma", "joint"))]
+                                     .ADM_COV_META)]
       stats::setNames(lapply(.cd, .admCovMeanOf), names(.cd))
     }
 

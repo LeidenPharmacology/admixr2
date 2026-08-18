@@ -1,0 +1,383 @@
+---
+title: "Covariates"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Covariates}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+                      fig.height = 3.0, dpi = 110, warning = FALSE,
+                      message = FALSE)
+source("_common.R", local = TRUE)
+```
+
+```{r libs}
+library(admixr2)
+library(rxode2)
+library(nlmixr2)
+library(ggplot2)
+```
+
+```{r theme, include = FALSE}
+NAVY <- "#001158"; ORANGE <- "#DD6B2A"
+theme_set(theme_bw(base_size = 10))
+```
+
+A published model tells you what a drug did in the patients that study enrolled.
+Pool several such models and you can, in principle, describe patients none of
+them enrolled --- but only if you are careful about who was in each study and
+what each study actually measured.
+
+This vignette covers that: how to describe a study's population, how admixr2
+integrates over it, and the three ways it can go wrong.
+
+# The covariate distribution
+
+The aggregate `E` and `V` a paper reports are **marginal** over its patients'
+covariates. So the prediction has to be marginal too. Evaluating the model at
+the *average* patient and comparing that to the *average* concentration is the
+ecological fallacy, because $\mathbb{E}[g(a)] \neq g(\mathbb{E}[a])$ for any
+nonlinear model.
+
+`covDist()` takes what a baseline-characteristics table reports:
+
+```{r covdist}
+pop <- covDist(WT   = c(mean = 78, sd = 14),
+               CRCL = c(mean = 112, sd = 24),
+               cor  = 0.55, dist = "lnorm")
+pop
+```
+
+It prints the distribution it *realised*, not the numbers you typed, so a
+transcription slip surfaces here instead of inside a fit.
+
+## Choosing the margin
+
+`dist = "normal"` is the default --- `mean` and `sd` read as a normal
+distribution, which is what most people expect. **But weight, renal function,
+age and most other PK covariates are positive and right-skewed, and belong in
+`dist = "lnorm"`.**
+
+That is not a stylistic preference. A normal margin is unbounded below, and the
+quadrature reaches 3.75 standard deviations at the default `cov_nodes = 7`:
+
+```{r reach, echo = FALSE}
+z7 <- max(abs(admixr2:::.adghNodes1(7L)$x))
+knitr::kable(data.frame(
+  covariate = c("weight", "creatinine clearance", "age"),
+  mean = c(78, 112, 54), sd = c(14, 24, 11),
+  `lowest node if normal` = round(c(78, 112, 54) - z7 * c(14, 24, 11), 1),
+  check.names = FALSE),
+  caption = "A normal margin reaches below zero for ordinary PK covariates.")
+```
+
+A negative weight in `(WT/70)^theta` is `NaN`. A lognormal margin is positive by
+construction at any node count, so this cannot happen. `covDist()` warns when a
+normal margin would reach zero:
+
+```{r warn}
+tryCatch(covDist(WT = c(mean = 78, sd = 14)),
+         warning = function(w) cat(strwrap(conditionMessage(w), 76), sep = "\n"))
+```
+
+Ignore it for a genuinely centred covariate --- a log-ratio, a change from
+baseline, a z-score.
+
+## The rest of the grammar
+
+```{r grammar, eval = FALSE}
+covDist(WT  = c(mean = 78, sd = 14), dist = "lnorm")   # natural scale
+covDist(WT  = c(mu = 0, sd = 1))                       # normal, own scale
+covDist(WT  = c(meanlog = log(70), sdlog = 0.2))       # lognormal, own scale
+covDist(SEX = c(female = 0.55, male = 0.45))           # categorical
+covDist(WT  = list(quantile = function(u) qgamma(u, 9, 0.125)))   # anything
+covDist(baseline_table)                                # covariate/mean/sd cols
+```
+
+Dependence is `cor` (a scalar or a matrix), `rho`, `Sigma`, or `joint` for an
+arbitrary copula --- an R-vine included. A `joint` sampler receives the uniforms
+admixr2 supplies and must consume them deterministically; that is what keeps the
+objective a deterministic function of the parameters.
+`rvinecopulib::inverse_rosenblatt()` qualifies, `rvinecop()` does not.
+
+```{r cloud, fig.height = 3.0}
+X <- covDraw(pop, n = 5000L)
+ggplot(as.data.frame(X), aes(WT, CRCL)) +
+  geom_point(alpha = 0.12, size = 0.5, colour = NAVY) +
+  labs(x = "weight (kg)", y = "creatinine clearance (mL/min)")
+```
+
+# Asking each source only what it measured
+
+A study that never fitted renal function has no answer about renal function.
+Evaluate its model across a range of CrCl values and it returns the same
+prediction every time --- and if you feed that flat answer to the likelihood as
+evidence, it argues against the effect a study that *did* measure it found. In a
+noiseless simulation this pulled a true coefficient of 0.450 down to 0.211.
+
+The rule is per covariate, not per study:
+
+> **Stratify** on the covariates a source actually fitted.
+> **Marginalise** the ones it did not.
+
+`stratify = TRUE` reads which is which off the source's own model, so the split
+cannot disagree with the model that produced the data:
+
+```{r generate}
+mod_wt <- function() {                      # a source that fitted WEIGHT only
+  ini({lcl <- log(3.0); lv <- log(20); bwt <- 0.70
+       eta.cl ~ 0.0736; prop.err <- 0.12})
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^bwt; v <- exp(lv)
+         d/dt(centr) <- -cl / v * centr; cp <- centr / v
+         cp ~ prop(prop.err)})
+}
+tms <- c(0.5, 1, 2, 4, 8, 12)
+dat <- datagen(list(
+  S = list(model = mod_wt, n = 180L, times = tms, ev = et(amt = 100),
+           cov_dist = pop, stratify = TRUE)),
+  control = datagenControl(method = "mc", n_sim = 3000L))
+names(dat)
+```
+
+One study became five --- one per weight stratum, because weight is what this
+source's model conditions on. Renal function is left to be marginalised inside
+each.
+
+## What a stratum contains
+
+```{r strata-fig, fig.height = 3.2}
+st  <- covStrata(pop, stratify = "WT", n_nodes = 4L, n = 180)
+st  <- st[order(vapply(st, function(s) s$cov$WT, 0))]
+lab <- c("lightest", "light", "heavy", "heaviest")
+cloud <- do.call(rbind, lapply(seq_along(st), function(k)
+  data.frame(band = lab[k], covDraw(st[[k]]$cov_dist, n = 2500L))))
+cloud$band <- factor(cloud$band, levels = lab)
+
+p1 <- ggplot(cloud, aes(WT, CRCL, colour = band)) +
+  geom_point(alpha = 0.10, size = 0.5) +
+  labs(x = "weight (kg)", y = "creatinine clearance") +
+  theme(legend.position = "none")
+p2 <- ggplot(cloud, aes(CRCL, colour = band)) +
+  geom_density(linewidth = 0.8) +
+  geom_vline(xintercept = mean(covDraw(pop, n = 5e4L)[, "CRCL"]),
+             linetype = 2, colour = "grey40") +
+  labs(x = "creatinine clearance within each stratum", y = NULL, colour = NULL)
+if (requireNamespace("patchwork", quietly = TRUE)) p1 + p2 else {print(p1); p2}
+```
+
+**Left:** the strata cut the study's patients by weight. **Right:** within each
+stratum renal function has its *own* distribution, shifted away from the
+study-wide mean (dashed) because the two covariates are correlated.
+
+That right panel is the part that is easy to get wrong. When this source's
+prediction marginalises over renal function it must use **those** curves. Using
+the study-wide distribution instead is wrong by a *different amount in each
+stratum*, which is precisely the shape that biases the weight coefficient the
+stratification was meant to expose.
+
+```{r strata-tab}
+data.frame(stratum   = lab,
+           mean_WT   = round(vapply(st, function(s) s$cov$WT, 0), 1),
+           n_k       = round(vapply(st, function(s) s$n, 0), 1),
+           mean_CRCL = round(vapply(st, function(s)
+                         mean(covDraw(s$cov_dist, n = 4000L)[, "CRCL"]), 0), 1))
+```
+
+`n_k` sums to 180: the strata **partition** the study's patients rather than
+multiplying them. More strata resolve the covariate range more finely but do not
+buy accuracy --- on a matched fit the coefficient came back at 0.7000 / 0.7002 /
+0.7005 for 3 / 4 / 10 strata against a true 0.700 --- and each one costs a solve,
+which is why the default is 5.
+
+# A covariate nobody measured
+
+Here is the result that makes aggregate synthesis worth doing.
+
+Take two studies that **never fitted weight at all**. Each folded the weight
+effect into its intercept and its random effect, exactly as theory says a
+covariate-free fit must:
+
+$$	heta' = 	heta + eta\,\mathbb{E}[a], \qquad
+  \omega'^2 = \omega^2 + eta^2\mathrm{Var}(a)$$
+
+Neither study can tell you the weight coefficient on its own. Together they can,
+because their populations differ in **both mean and spread** --- which gives two
+equations for the two unknowns.
+
+```{r nobody}
+LCLt <- log(3.0); BWt <- 0.70; OM2t <- 0.060
+absorb <- function(m, s) {                    # what such a study would publish
+  sl <- sqrt(log(1 + s^2/m^2)); ml <- log(m) - sl^2/2
+  list(lcl = LCLt + BWt * (ml - log(70)), om2 = OM2t + BWt^2 * sl^2)
+}
+no_wt <- function(a) {
+  g <- function() {
+    ini({lcl <- .L; lv <- log(20); eta.cl ~ .O; prop.err <- 0.12})
+    model({cl <- exp(lcl + eta.cl); v <- exp(lv)
+           d/dt(centr) <- -cl / v * centr; cp <- centr / v
+           cp ~ prop(prop.err)})
+  }
+  body(g) <- do.call(substitute, list(body(g), list(.L = a$lcl, .O = a$om2)))
+  g
+}
+A <- absorb(95, 24); B <- absorb(65, 10)      # heavier/spread vs lighter/tight
+dat2 <- datagen(list(
+  A = list(model = no_wt(A), n = 200L, times = tms, ev = et(amt = 100),
+           cov_dist = covDist(WT = c(mean = 95, sd = 24), dist = "lnorm")),
+  B = list(model = no_wt(B), n = 200L, times = tms, ev = et(amt = 100),
+           cov_dist = covDist(WT = c(mean = 65, sd = 10), dist = "lnorm"))),
+  control = datagenControl(method = "mc", n_sim = 6000L))
+```
+
+Neither study is stratified --- neither has a weight contrast to give. Both are
+purely **marginal** over weight, which is exactly what their models support.
+
+```{r nobody-fit}
+joint_wt <- function() {
+  ini({lcl <- log(2.0); lv <- log(15); bwt <- 0.20
+       eta.cl ~ 0.03; prop.err <- 0.30})
+  model({cl <- exp(lcl + eta.cl) * (WT / 70)^bwt; v <- exp(lv)
+         d/dt(centr) <- -cl / v * centr; cp <- centr / v
+         cp ~ prop(prop.err)})
+}
+f2 <- nlmixr2(joint_wt, admData(), est = "adgh",
+              control = adghControl(studies = dat2, print = 0L,
+                                    covMethod = "none"))
+round(c(bwt = setNames(f2$parFixedDf$Estimate, rownames(f2$parFixedDf))[["bwt"]],
+        truth = BWt,
+        omega = sqrt(f2$omega[1, 1]), omega_truth = sqrt(OM2t)), 4)
+```
+
+**The coefficient comes back, from two studies neither of which measured it.**
+The random effect comes back to its true value too, because the variability each
+study had to absorb is now explained by the covariate.
+
+This is the $\omega'^2 = \omega^2 + eta^2\mathrm{Var}(a)$ channel doing real
+work --- not a curiosity. It is why a covariate-free publication is still
+evidence, and why marginalising over what a source did not measure is the right
+thing to do with it rather than a concession.
+
+# How the integral is done
+
+```{r integration, eval = FALSE}
+adghControl(studies = st, cov_integration = "quadrature", cov_nodes = 7L)
+adghControl(studies = st, cov_integration = "taylor",     cov_taylor_h = 0.5)
+```
+
+**`"quadrature"`** (the default) evaluates the model on a product Gauss--Hermite
+grid over the *sampler's uniforms* --- which stays exact whatever the dependence,
+because a copula maps independent uniforms to dependent values. At
+`cov_nodes = 7` the marginal moments are accurate to 2e-16; the default is set
+where accuracy saturates but the nodes have not yet run far into the tails.
+
+**`"taylor"`** expands the marginal moments to second order instead: $1+2p$ model
+evaluations rather than `cov_nodes`$^p$, at any correlation, by differencing
+along the eigenvectors of the covariate covariance. The expansion runs in the
+*latent normal*, so every design point maps back through the covariate's own
+quantile function and stays inside its support --- a lognormal covariate can
+never be handed a negative value. It is an approximation; check an important fit
+against `"quadrature"`.
+
+```{r support, echo = FALSE}
+knitr::kable(data.frame(
+  Estimator = c("`admc`", "`adgh`", "`adfo`", "`adirmc`"),
+  Covariates = c("yes", "yes", "refused", "refused"),
+  How = c("per-subject draws (Sobol)",
+          "product grid, or Taylor expansion", "---", "---"),
+  Dependence = c("yes", "yes", "---", "---"), check.names = FALSE),
+  caption = "Covariate marginalisation by estimator.")
+```
+
+`adfo` and `adirmc` **error** rather than run: solving at the covariate mean and
+inflating omega would look like a fit and be the ecological fallacy.
+
+# When a coefficient cannot be trusted
+
+Inside one study the model sees a covariate and a random effect only through
+their sum, $u = \beta a + \omega z$. For a log-linear effect on a normal
+covariate,
+
+$$\beta a + \omega z \;\sim\; N\!\left(\beta\mu_a,\; \beta^2 s_a^2 + \omega^2\right)$$
+
+so every marginal moment depends on $(\beta, \omega)$ **only** through
+$\beta^2 s_a^2 + \omega^2$. Halve the coefficient, inflate the random effect to
+compensate, and pooled aggregate data cannot tell the difference: the objective
+moves by $1.7\times10^{-5}$ across $\beta = 0.30$ to $1.20$, and a fit will still
+report a number.
+
+Three things break the ridge, and you need at least one:
+
+1. **Studies whose covariate distributions differ** --- differing spreads break
+   the variance equation, differing means the mean one.
+2. **A source reporting subgroups**, or held as a *model* that can be evaluated
+   at any covariate value --- which is what the section above does. The same
+   source, stratified, moves the objective by 155 with its minimum at the truth.
+3. **A covariate on a parameter with no random effect**, identified by shape
+   because there is no $\omega$ for its variance to hide in.
+
+admixr2 warns when it can see that none of them holds.
+
+## What a source that omitted a covariate still tells you
+
+A study that never fitted a covariate did not report a null result. It folded
+that effect into its random effect, exactly:
+
+$$\omega'^2 = \omega^2 + \beta^2\,\mathrm{Var}(a)$$
+
+for a log-linear effect on a normally distributed covariate. So it still carries
+information about that coefficient --- through its *variance* rather than its
+mean --- provided its prediction marginalises over the covariate rather than
+stratifying on one it never fitted.
+
+Two caveats. A covariate acting on more than one parameter also induces
+off-diagonal $\mathrm{Cov}(\eta_i,\eta_j) = \beta_i\beta_j\mathrm{Var}(a)$ that a
+published *diagonal* Omega cannot represent. And when the omitted covariate is
+correlated with one the source *did* fit, the inflation uses the residual
+variance $\mathrm{Var}(a)(1-\rho^2)$, and the published coefficient is itself
+confounded.
+
+**How much this actually buys is a separate question**, and
+[Reuniting a split study](covariates-split.html) measures it: two studies from
+one known truth, one of them omitting a covariate, reunited.
+
+# What is refused, and why
+
+```{r refusals, echo = FALSE}
+knitr::kable(data.frame(
+  `You will see` = c("does not support covariate marginalisation",
+                     "does not describe covariate(s)",
+                     "which the model never reads",
+                     "no contrast to stratify on",
+                     "is discrete (`values`)",
+                     "are (near-)perfectly collinear",
+                     "too few draws in the smallest stratum"),
+  Meaning = c("`adfo`/`adirmc` have no covariate path",
+              "a model covariate no study described",
+              "a covariate name typo",
+              "the source model reads none of these covariates",
+              "`taylor` has no second derivative of a step function",
+              "the expansion step collapses along a null direction",
+              "the strata are finer than the pool can describe"),
+  `What to do` = c("use `adgh` or `admc`",
+                   "add a `cov_dist` entry, or a fixed `cov`",
+                   "check the spelling against the model",
+                   "drop `stratify`; it is generated marginal instead",
+                   "use `cov_integration = \"quadrature\"`",
+                   "drop one covariate",
+                   "fewer strata, or raise `n_pool`"),
+  check.names = FALSE), caption = "Every refusal, and its cure.")
+```
+
+Each is an error rather than a silent approximation, because every one of them
+would otherwise produce a finite, plausible, wrong number.
+
+# See also
+
+- [Reuniting a split study](covariates-split.html) --- what covariate synthesis can and cannot recover
+- [From a published figure to E, V and n](aggregate-data.html) --- where `E` and `V` come from
+- [Joint fitting across studies](multiple-studies.html) --- the machinery strata reuse
+- [Comparing the estimators](estimator-comparison.html) --- `admc` vs `adgh`
+- [Getting started](admixr2.html)

@@ -552,11 +552,17 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
   ml <- log(72); sl <- 0.28; mc <- log(90); sc <- 0.30; rho <- 0.6
   # A Gaussian copula written the way a user would: consume the supplied
   # uniforms, return one column per declared covariate.
+  # NOTE the clamp AFTER pnorm as well as before qnorm. The quadrature grid's
+  # tail nodes reach |z| ~ 6.4, a copula's mixing step scales that by up to
+  # ~1.4, and pnorm() of the result rounds to exactly 1 -- after which
+  # qlnorm(1) is Inf. A per-subject sample never gets that far out, so this
+  # only bites the deterministic paths.
+  cl <- function(x) pmin(pmax(x, 1e-12), 1 - 1e-12)
   jf <- function(u) {
-    z  <- stats::qnorm(pmin(pmax(u, 1e-9), 1 - 1e-9))
+    z  <- stats::qnorm(cl(u))
     z2 <- rho * z[, 1] + sqrt(1 - rho^2) * z[, 2]
-    cbind(WT   = stats::qlnorm(stats::pnorm(z[, 1]), ml, sl),
-          CRCL = stats::qlnorm(stats::pnorm(z2),     mc, sc))
+    cbind(WT   = stats::qlnorm(cl(stats::pnorm(z[, 1])), ml, sl),
+          CRCL = stats::qlnorm(cl(stats::pnorm(z2)),     mc, sc))
   }
   cd <- list(WT   = list(quantile = function(u) stats::qlnorm(u, ml, sl)),
              CRCL = list(quantile = function(u) stats::qlnorm(u, mc, sc)),
@@ -600,13 +606,307 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
   expect_true(all(is.finite(ga)))
   expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-8)), 2e-2)
 
-  ## ---- adgh REFUSES a dependent joint, and says so ------------------------
-  # A product grid over per-covariate quadratures IS the independence
-  # assumption, so integrating one would be integrating the wrong distribution.
+  ## ---- adgh now INTEGRATES a dependent joint, on the u-space grid ---------
+  # It used to refuse one, on the grounds that a product grid assumes
+  # independence. That is true of a grid over covariate MARGINS and false of a
+  # grid over the sampler's UNIFORMS: a copula maps independent uniforms to
+  # dependent values, so the product rule is exact there whatever the
+  # dependence. The check that matters is that adgh's moments match the
+  # per-subject draws admc uses -- the two estimators must see one distribution.
+  fit <- suppressMessages(nlmixr2est::nlmixr2(
+    mod, admData(), est = "adgh",
+    control = adghControl(studies = st0, print = 0L, covMethod = "none",
+                          maxeval = 2L)))
+  expect_s3_class(fit, "admFit")
+  expect_true(is.finite(fit$objective))
+
+  ctlg  <- adghControl(studies = st0, grad = "analytical", print = 0L,
+                       covMethod = "none", n_nodes = 7L, cov_nodes = 15L)
+  ping  <- admixr2:::.admDriverPinfo(ui, ctlg)
+  stug  <- admixr2:::.admCheckCovariates(
+             ui, ping, admixr2:::.admDriverUnits(st0, ui, ovar)$studies,
+             "analytical", "adgh")
+  gridg <- admixr2:::.adghNodeGrid(7L, ping$n_eta)
+  parsg <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(ping)$p0, ping)
+  mg    <- admixr2:::.adghMoments(parsg, ping, stug[[1L]], rx, ovar, gridg, 1L)
+
+  # the same moments from the per-subject path admc drives
+  crow <- admixr2:::.admStudyCovRows(stu[[1L]], pinfo, 60000L)
+  zz   <- admixr2:::.admMakeZ(60000L, pinfo, 1L, "sobol")[[1L]]
+  etam <- zz %*% t(parsg$L); colnames(etam) <- pinfo$eta_col_names
+  pmm  <- admixr2:::.admMakeParamsList(60000L, pinfo, 1L)[[1L]]
+  cpm  <- admixr2:::.admSimulate(rx, parsg$struct, pinfo$sigma_names, etam,
+                                 crow, ovar, pmm, 1L,
+                                 .Machine$integer.max, NULL)
+  mum  <- colMeans(cpm); Vm <- crossprod(sweep(cpm, 2L, mum)) / nrow(cpm)
+  arrm <- admixr2:::.admUnitResidRows(ping, ovar, parsg$sigma_var, length(mum))
+  apm  <- admixr2:::.admResidApply(mum, diag(Vm), arrm, crow$times, Vm)
+  Em   <- apm$mu; Vmc <- admixr2:::.admApplyResidTail(Vm, apm)
+
+  expect_lt(max(abs(mg$E - Em) / abs(Em)), 5e-3)
+  expect_lt(max(abs(mg$V - Vmc)) / max(abs(Vmc)), 5e-3)
+
+  # ... and the dependence must actually MOVE the moments, or agreeing here
+  # would prove nothing (an arm that silently dropped `cor` would also pass).
+  st_ind <- st0                                   # NOTE: the study is `s1`
+  st_ind$s1$cov_dist <- st0$s1$cov_dist[
+    setdiff(names(st0$s1$cov_dist), c("cor", "rho", "Sigma", "joint"))]
+  expect_null(st_ind$s1$cov_dist$joint)           # or the contrast is vacuous
+  stui <- admixr2:::.admCheckCovariates(
+            ui, ping, admixr2:::.admDriverUnits(st_ind, ui, ovar)$studies,
+            "analytical", "adgh")
+  mi <- admixr2:::.adghMoments(parsg, ping, stui[[1L]], rx, ovar, gridg, 1L)
+  expect_gt(max(abs(mg$V - mi$V)) / max(abs(mi$V)), 1e-3)
+})
+
+# -- Second-order Taylor covariate integration (cov_integration = "taylor") ----
+#
+# The Tier-1 file checks the expansion itself against exact nested quadrature on
+# an analytic solution. What is only testable here is the PIPELINE: that the
+# design points reach rxSolve as per-row covariates, that the residual and the
+# NLL are formed from the expanded moments, that the analytic gradient
+# differentiates the function the objective evaluates, and that asking for
+# "quadrature" leaves every number exactly where it was.
+
+.tay_setup <- function(ci, grad = "analytical", n_nodes = 7L, ml, sl,
+                       hfrac = 0.5, E, V) {
+  st0 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
+                       ev = rxode2::et(amt = .cov_DOSE),
+                       cov_dist = list(WT = list(meanlog = ml, sdlog = sl))))
+  ui    <- suppressMessages(rxode2::rxode2(.cov_both))
+  ovar  <- admixr2:::.admOutputVar(ui)
+  ctl   <- adghControl(studies = st0, grad = grad, n_nodes = n_nodes, print = 0L,
+                       covMethod = "none", cov_integration = ci,
+                       cov_taylor_h = hfrac)
+  pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
+  u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
+  stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, grad, "adgh")
+  list(ui = ui, ovar = ovar, pinfo = pinfo, stu = stu,
+       ov = admixr2:::.admBuildOptVec(pinfo),
+       grid = admixr2:::.adghNodeGrid(n_nodes, pinfo$n_eta),
+       rxMod = admixr2:::.admLoadModel(ui))
+}
+
+test_that("cov_integration = 'taylor' expands the marginal moments, in 1 + 2p points", {
+  ml <- log(72); sl <- 0.28
+  cl_of <- function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75
+  v_of  <- function(wt)    exp(.cov_TV) * (wt / 70)^1.0
+  r  <- .cov_ref2(cl_of, v_of, ml, sl)
+  # the ecological plug-in: the same model solved AT the covariate mean, which
+  # is what a fit with a point `cov` and no marginalisation would report
+  pg <- .cov_ref2(cl_of, v_of, log(exp(ml + sl^2 / 2)), 1e-8)
+  Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
+
+  d  <- .tay_setup("taylor", ml = ml, sl = sl, E = r$E, V = Vo)
+  expect_identical(d$stu[[1L]]$.adm_cov_path, "rows")
+  prs <- admixr2:::.admUnpack(d$ov$p0, d$pinfo)
+  mm  <- admixr2:::.adghMoments(prs, d$pinfo, d$stu[[1L]], d$rxMod, d$ovar,
+                                d$grid, 1L)
+  Vs  <- mm$V - diag(.cov_ADD^2, length(.cov_TIMES))
+  eE  <- max(abs(mm$E / r$E - 1)); eV <- max(abs(Vs / r$V - 1))
+  # Measured 1.9e-03 / 1.0e-01. This is a demanding regime for the expansion:
+  # WT enters v with NO random effect at all, so on that channel the covariate
+  # is the only source of variability and the effective ratio is unbounded.
+  expect_lt(eE, 5e-3)
+  expect_lt(eV, 2e-1)
+  # It must still be a large improvement on the plug-in, which is the thing it
+  # is an alternative to -- getting that backwards is the whole risk.
+  expect_lt(eV, max(abs(pg$V / r$V - 1)) / 5)
+  expect_lt(eE, max(abs(pg$E / r$E - 1)) / 5)
+
+  # 1 + 2p design points, not cov_nodes^p: the params frame the solve sees has
+  # 3 * n_nodes rows where quadrature would have had 11 * n_nodes.
+  g <- admixr2:::.adghGrid(prs, d$pinfo, d$grid, d$stu[[1L]])
+  expect_identical(nrow(g$eta), 3L * nrow(d$grid$X))
+  expect_identical(nrow(unique(g$cov_rows)), 3L)
+  dq <- .tay_setup("quadrature", ml = ml, sl = sl, E = r$E, V = Vo)
+  gq <- admixr2:::.adghGrid(prs, dq$pinfo, dq$grid, dq$stu[[1L]])
+  # read the default rather than hard-coding it: cov_nodes is a tuning
+  # default and pinning its VALUE here made this assertion stale the moment
+  # it moved.  What matters is that quadrature costs cov_nodes^p and the
+  # expansion costs 1 + 2p.
+  expect_identical(nrow(gq$eta),
+                   as.integer(dq$pinfo$cov_nodes) * nrow(dq$grid$X))
+  expect_gt(nrow(gq$eta), nrow(g$eta))
+})
+
+test_that("the Taylor path carries an ANALYTIC gradient (vs central FD)", {
+  # The rank-p term sum_j v_j g'_j g'_j' is quadratic in the conditional means,
+  # so it contributes a derivative the weighted-crossproduct contraction does
+  # not. Evaluated AWAY from the optimum, where every component is large.
+  ml <- log(72); sl <- 0.28
+  r  <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
+                  function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
+  Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
+  d  <- .tay_setup("taylor", ml = ml, sl = sl, E = r$E, V = Vo)
+  sm <- tryCatch(admixr2:::.admLoadSensModel(d$ui), error = function(e) NULL)
+  f  <- function(pp)
+    admixr2:::.adghNLL(pp, d$pinfo, d$stu, d$rxMod, d$ovar, d$grid, 1L)
+  p1 <- d$ov$p0 + c(0.15, -0.10, 0.20, -0.18, 0.25, 0.30)[seq_along(d$ov$p0)]
+  ga <- admixr2:::.adghGrad(p1, d$pinfo, d$stu, sm, d$rxMod, d$ovar, d$grid,
+                            1L, 1e-4)
+  h  <- 1e-5
+  gf <- vapply(seq_along(p1), function(k) {
+    a <- b <- p1; a[k] <- a[k] + h; b[k] <- b[k] - h; (f(a) - f(b)) / (2 * h)
+  }, numeric(1))
+  expect_gt(max(abs(gf)), 100)                       # the test has real signal
+  expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-6)), 1e-3)
+})
+
+test_that("cov_integration = 'quadrature' is the default and changes nothing", {
+  ml <- log(72); sl <- 0.28
+  r  <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
+                  function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
+  Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
+  st0 <- list(s = list(E = r$E, V = Vo, n = 300L, times = .cov_TIMES,
+                       ev = rxode2::et(amt = .cov_DOSE),
+                       cov_dist = list(WT = list(meanlog = ml, sdlog = sl))))
+  ui   <- suppressMessages(rxode2::rxode2(.cov_both))
+  ovar <- admixr2:::.admOutputVar(ui)
+  rxM  <- admixr2:::.admLoadModel(ui)
+  sm   <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
+  one <- function(ctl) {
+    pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
+    u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
+    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, "analytical", "adgh")
+    ov    <- admixr2:::.admBuildOptVec(pinfo)
+    grid  <- admixr2:::.adghNodeGrid(7L, pinfo$n_eta)
+    p1    <- ov$p0 + c(0.15, -0.10, 0.20, -0.18, 0.25, 0.30)[seq_along(ov$p0)]
+    list(nll = admixr2:::.adghNLL(p1, pinfo, stu, rxM, ovar, grid, 1L),
+         grad = admixr2:::.adghGrad(p1, pinfo, stu, sm, rxM, ovar, grid, 1L, 1e-4))
+  }
+  base <- one(adghControl(studies = st0, grad = "analytical", n_nodes = 7L,
+                          print = 0L, covMethod = "none"))
+  same <- one(adghControl(studies = st0, grad = "analytical", n_nodes = 7L,
+                          print = 0L, covMethod = "none",
+                          cov_integration = "quadrature", cov_taylor_h = 0.9))
+  # BIT-identical, not merely close: the quadrature path must not move by an ulp
+  expect_identical(same$nll,  base$nll)
+  expect_identical(same$grad, base$grad)
+})
+
+test_that("the Taylor path ENUMERATES a discrete covariate, per study", {
+  # A discrete covariate is not expanded, it is enumerated: its levels and
+  # probabilities ARE the integration rule, exactly, so a study whose covariate
+  # is two-point costs 2 design points and reproduces the enumeration.  The
+  # continuous study alongside it is unaffected and still costs 1 + 2p.
+  .st <- function(cd) list(E = rep(1, length(.cov_TIMES)),
+                           V = diag(length(.cov_TIMES)), n = 100L,
+                           times = .cov_TIMES,
+                           ev = rxode2::et(amt = .cov_DOSE), cov_dist = cd)
+  st0 <- list(s1 = .st(list(WT = list(meanlog = log(72), sdlog = 0.28))),
+              s2 = .st(list(WT = list(values = c(60, 85), probs = c(0.4, 0.6)))))
+  ui   <- suppressMessages(rxode2::rxode2(.cov_both))
+  ovar <- admixr2:::.admOutputVar(ui)
+  u    <- admixr2:::.admDriverUnits(st0, ui, ovar)
+
+  ctl <- adghControl(studies = st0, grad = "analytical", print = 0L,
+                     covMethod = "none", cov_integration = "taylor")
+  stu <- admixr2:::.admCheckCovariates(ui, admixr2:::.admDriverPinfo(ui, ctl),
+                                       u$studies, "analytical", "adgh")
+  td2 <- stu$s2$.adm_cov_taylor
+  expect_identical(td2$n_pt, 2L)
+  expect_identical(td2$n_cell, 2L)
+  expect_identical(td2$n_cpt, 1L)              # no cubature points at all
+  expect_equal(td2$c, c(0.4, 0.6))             # the level probabilities exactly
+  expect_equal(as.numeric(td2$X[, "WT"]), c(60, 85))
+  expect_identical(stu$s1$.adm_cov_taylor$n_pt, 3L)
+
+  # and the very same studies go through on the quadrature route
+  ctlq <- adghControl(studies = st0, grad = "analytical", print = 0L,
+                      covMethod = "none")
+  expect_no_error(
+    admixr2:::.admCheckCovariates(ui, admixr2:::.admDriverPinfo(ui, ctlq),
+                                  u$studies, "analytical", "adgh"))
+
+  # What IS still refused: a discrete covariate DEPENDENT on a continuous one.
+  # A level is then a truncation of the latent normal rather than a point, so
+  # the continuous conditional differs cell by cell and expanding it about the
+  # marginal mean would be the wrong expansion in every cell.
+  Rz <- matrix(c(1, 0.3, 0.3, 1), 2L, 2L,
+               dimnames = list(c("WT", "SEX"), c("WT", "SEX")))
   expect_error(
-    suppressMessages(nlmixr2est::nlmixr2(
-      mod, admData(), est = "adgh",
-      control = adghControl(studies = st0, print = 0L, covMethod = "none",
-                            maxeval = 2L))),
-    "joint|cannot represent")
+    admixr2:::.admCovTaylorDesign(
+      list(WT = list(meanlog = log(72), sdlog = 0.28),
+           SEX = list(values = c(0, 1), probs = c(0.5, 0.5)), latentR = Rz)),
+    "DEPENDENT")
+})
+
+# =============================================================================
+# Shift path: the covariate leaves the solver
+# =============================================================================
+
+.shift_mod <- function() {
+  ini({tcl <- log(4); tv <- log(30); b1 <- 0.75
+       eta.cl ~ 0.09; eta.v ~ 0.04; a <- 0.1})
+  model({cl <- exp(tcl + eta.cl) * (WT/70)^b1; v <- exp(tv + eta.v)
+         d/dt(centr) <- -cl/v*centr; cp <- centr/v; cp ~ add(a)})
+}
+.shift_setup <- function(integ, grad = "none", cd = NULL, mod = .shift_mod) {
+  ui <- suppressMessages(rxode2::rxode2(mod))
+  ov <- admixr2:::.admOutputVar(ui)
+  rx <- admixr2:::.admLoadModel(ui)
+  sM <- if (identical(grad, "analytical"))
+    tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL) else NULL
+  if (is.null(cd)) cd <- covDist(WT = c(mean = 78, sd = 18), dist = "lnorm")
+  st <- list(s = list(E = c(9.9, 9.2, 8.1, 6.4, 5.2, 4.3, 2.9, 2.0, 0.9),
+                      V = diag(0.4, 9L) + 0.05, n = 200L,
+                      times = c(0.25,0.5,1,2,3,4,6,8,12),
+                      ev = rxode2::et(amt = 500), cov_dist = cd))
+  ctl <- adghControl(studies = st, grad = grad, print = 0L, covMethod = "none",
+                     n_nodes = 7L, cov_nodes = 7L, cov_integration = integ)
+  pin <- admixr2:::.admDriverPinfo(ui, ctl)
+  stu <- admixr2:::.admCheckCovariates(
+    ui, pin, admixr2:::.admDriverUnits(st, ui, ov)$studies, grad, "adgh")
+  list(pin = pin, stu = stu, rx = rx, sM = sM, ov = ov,
+       g = admixr2:::.adghNodeGrid(7L, pin$n_eta),
+       p0 = admixr2:::.admBuildOptVec(pin)$p0)
+}
+
+test_that("the shift path reproduces the product grid at a fraction of the rows", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  Sq <- .shift_setup("quadrature"); Ss <- .shift_setup("shift")
+  expect_identical(Ss$stu[[1L]]$.adm_cov_path, "shift")
+  pq <- admixr2:::.admUnpack(Sq$p0, Sq$pin)
+  ps <- admixr2:::.admUnpack(Ss$p0, Ss$pin)
+  mq <- admixr2:::.adghMoments(pq, Sq$pin, Sq$stu[[1L]], Sq$rx, Sq$ov, Sq$g, 1L)
+  ms <- admixr2:::.adghMoments(ps, Ss$pin, Ss$stu[[1L]], Ss$rx, Ss$ov, Ss$g, 1L)
+  expect_equal(ms$E, mq$E, tolerance = 1e-5)
+  expect_equal(ms$V, mq$V, tolerance = 1e-4)
+  # ... and it costs far fewer solve rows, a count that does NOT grow with the
+  # number of covariates (the product grid's does, as n_cov^p)
+  nq <- nrow(admixr2:::.adghGrid(pq, Sq$pin, Sq$g, Sq$stu[[1L]])$eta)
+  ns <- nrow(admixr2:::.adghGrid(ps, Ss$pin, Ss$g, Ss$stu[[1L]])$eta)
+  expect_lt(ns, nq / 3)
+})
+
+test_that("the shift path carries an ANALYTIC gradient (vs central FD)", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  S <- .shift_setup("shift", grad = "analytical")
+  skip_if(is.null(S$sM), "no sensitivity model")
+  f  <- function(p) admixr2:::.adghNLL(p, S$pin, S$stu, S$rx, S$ov, S$g, 1L)
+  ga <- admixr2:::.adghGrad(S$p0, S$pin, S$stu, S$sM, S$rx, S$ov, S$g, 1L, 1e-4)
+  h  <- 1e-5
+  gf <- vapply(seq_along(S$p0), function(j) {
+    a <- b <- S$p0; a[j] <- a[j] + h; b[j] <- b[j] - h
+    (f(a) - f(b)) / (2 * h) }, 0)
+  # the covariate coefficient moves the u nodes through Delta, which is the
+  # term the eta-column chain alone would miss entirely
+  expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-4)), 2e-3)
+})
+
+test_that("the shift path is REFUSED when its identity does not hold", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # an ADDITIVE covariate effect: no shift of eta reproduces it
+  expect_error(.shift_setup("shift", mod = function() {
+    ini({tcl <- log(4); tv <- log(30); b1 <- 0.02; eta.cl ~ 0.09; a <- 0.1})
+    model({cl <- exp(tcl + eta.cl) + b1*(WT - 70); v <- exp(tv)
+           d/dt(centr) <- -cl/v*centr; cp <- centr/v; cp ~ add(a)}) }),
+    "shift identity")
+  # a covariate on a parameter with NO random effect: nothing to shift
+  expect_error(.shift_setup("shift", mod = function() {
+    ini({tcl <- log(4); tv <- log(30); b2 <- 1.0; eta.cl ~ 0.09; a <- 0.1})
+    model({cl <- exp(tcl + eta.cl); v <- exp(tv)*(WT/70)^b2
+           d/dt(centr) <- -cl/v*centr; cp <- centr/v; cp ~ add(a)}) }),
+    "exactly one random effect")
 })

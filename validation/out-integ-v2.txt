@@ -1,0 +1,131 @@
+
+============================================================================
+1. The constructions, and their minimisers
+============================================================================
+Data generated at the TRUE marginal moments with theta_cov = 0.75.
+(One population, mu_a = 0: tcov and omega are only jointly identified through
+ tcov^2*sd_a^2 + omega^2, so each column below profiles the other at truth.)
+
+ theta_cov    [1] gh_marg    [2] stratif     [3] taylor   [4] MISMATCH        mixture
+      0.60       -524.883      -2066.254       1406.502      34763.188       8020.139
+      0.70       -680.336      -2171.543        998.638      46569.710       7962.569
+      0.75       -694.365      -2183.971        840.430      53454.240       7945.069
+      0.80       -683.703      -2171.075        708.719      61012.898       7935.191
+      0.90       -619.802      -2053.560        517.136      78218.690       7938.632
+
+Minimiser of each (this is the theta_cov you would report):
+   [1] gh_marginal   (construction 1)   -> theta_cov = 0.7500   (truth 0.7500, bias +0.0000, +0.0%)
+   [2] stratified    (construction 2)   -> theta_cov = 0.7500   (truth 0.7500, bias +0.0000, +0.0%)
+   [3] taylor_moments(construction 3)   -> theta_cov = 1.0864   (truth 0.7500, bias +0.3364, +44.9%)
+   [4] MISMATCHED    (construction 4)   -> theta_cov = 0.2000   (truth 0.7500, bias -0.5500, -73.3%)
+       mixture       (old target B)     -> theta_cov = 0.8390   (truth 0.7500, bias +0.0890, +11.9%)
+
+Omega recovery, profiling omega with theta_cov fixed at truth:
+   [1] gh_marginal  -> omega = 0.3000   (truth 0.3000, bias -0.0000)
+   [2] stratified   -> omega = 0.3000   (truth 0.3000, bias +0.0000)
+   [3] taylor       -> omega = 0.5970   (truth 0.3000, bias +0.2970)
+   [4] MISMATCHED   -> omega = 1.2000   (truth 0.3000, bias +0.9000)
+
+NOTE: [2]'s per-node observed blocks are regenerated at each candidate omega
+      only through the prediction; the obs blocks are fixed at truth, as for
+      every other arm.
+
+============================================================================
+2. How well does each cheap method hit CONSTRUCTION 1 (the right target)?
+============================================================================
+Reference = [1] gh_marginal at 80 nodes (exact, via the s-collapse).
+
+ theta_cov      [1] exact       gh_mom-5       gh_mom-9     [3] taylor   [4] MISMATCH
+      0.50        -56.846        -59.703        -56.871       1970.369      25479.373
+      0.75       -694.365       -690.623       -694.352        840.430      53454.240
+      1.00       -529.995       -504.606       -529.093        412.095      98327.803
+      1.50        -98.177         55.036        -39.419        954.158     246348.866
+
+absolute error against [1]:
+ theta_cov       gh_mom-5       gh_mom-9     [3] taylor   [4] MISMATCH
+      0.50      2.857e+00      2.490e-02      2.027e+03      2.554e+04
+      0.75      3.742e+00      1.246e-02      1.535e+03      5.415e+04
+      1.00      2.539e+01      9.022e-01      9.421e+02      9.886e+04
+      1.50      1.532e+02      5.876e+01      1.052e+03      2.464e+05
+
+============================================================================
+3. IS reweighting: ESS mechanics (UNCHANGED) + a corrected IS-moments arm
+============================================================================
+The ESS numbers below do not depend on what is combined afterwards, so they
+carry over from the original run untouched. What IS corrected is the arm that
+uses the reweighted pool: it now produces per-node MOMENTS which are combined
+into marginal moments (construction 1), instead of per-node -2LLs.
+
+ shift/omega  theta_cov      [1] exact     IS-moments      abs err    min ESS/N
+        0.33       0.05       8640.471       8650.174       9.7037     5.69e-01
+        0.67       0.10       7746.849       7767.370      20.5204     1.13e-01
+        1.33       0.20       5176.798       5297.598     120.8004     2.27e-03
+        2.33       0.35       1751.091       2397.202     646.1106     1.69e-04
+        3.33       0.50        -56.846       1045.176    1102.0217     8.13e-05
+        5.00       0.75       -694.365        285.301     979.6654     5.74e-05
+
+For one node at shift D the weight is exp(D'Omega^-1 b - D'Omega^-1 D/2),
+so ESS/N decays as exp(-(D/omega)^2)  [UNCHANGED from the original run]:
+     D/omega = 0.5 -> ESS/N = 7.79e-01  (of 20000 draws: 15576.0 effective)
+     D/omega = 1.0 -> ESS/N = 3.68e-01  (of 20000 draws: 7357.6 effective)
+     D/omega = 2.0 -> ESS/N = 1.83e-02  (of 20000 draws: 366.3 effective)
+     D/omega = 3.0 -> ESS/N = 1.23e-04  (of 20000 draws: 2.5 effective)
+     D/omega = 4.0 -> ESS/N = 1.13e-07  (of 20000 draws: 0.0 effective)
+
+============================================================================
+4. s-collapse: is the nested integral needed at all?  [UNCHANGED]
+============================================================================
+This section never used construction 4. It is an identity between the
+marginal moments and nested 2-D quadrature, and is reproduced verbatim.
+
+Under mu-referencing with a LINEAR covariate effect and a normal covariate,
+   s = theta_cov*a + b ~ N(theta_cov*mu_a, theta_cov^2*sd_a^2 + omega^2)
+EXACTLY.
+
+   max |rel diff| vs nested 2-D quadrature:   E 9.99e-16    V 5.28e-14
+
+============================================================================
+5. The differencing step h for the CORRECTED (moment) Taylor expansion
+============================================================================
+The original section 5 swept h for the expansion of construction 4 -- the
+step size of the wrong functional. Redone here for construction 3, with h
+expressed as a fraction of sd_a (the original's h was in ABSOLUTE covariate
+units, which is a separate defect and is why h = 2.0 landed arbitrarily).
+
+     hfrac      h (abs)        rel err E        rel err V   NLL err vs [1]
+      0.05         0.05        1.072e-01        3.821e-01        2142.3297
+      0.10         0.10        1.067e-01        3.805e-01        2119.8926
+      0.25         0.25        1.039e-01        3.696e-01        1970.8574
+      0.50         0.50        9.404e-02        3.316e-01        1534.7944
+      0.75         0.75        7.845e-02        2.721e-01        1043.1628
+      1.00         1.00        5.830e-02        1.961e-01         650.2011
+      2.00         2.00        4.056e-02        1.758e-01         812.9582
+
+For comparison, the OLD (construction 4) h-sweep, error in the MISMATCHED
+target -- retained only to identify what those registry numbers measured:
+         h    old taylor2    old taylor4
+      0.05   -18758.46618    12751.80107
+      0.20   -18364.34142    13219.20144
+      0.50   -16154.62690    13714.21495
+      1.00    -8687.41644     6672.02789
+      2.00     6672.02789    10702.30388
+      3.00    14248.98381    16363.73559
+
+============================================================================
+6. Regime sweep -- where is each CORRECT method adequate?
+============================================================================
+Ratio = theta_cov*sd_a / omega. Data regenerated at the true marginal for
+each ratio, then evaluated there. Relative errors are against [1].
+'mismatch size' is |[4] - [1]| / |[1]|: how large the category error is.
+
+  ratio theta_cov      gh_mom-9    [3] taylor    IS-moments   [2] stratif mismatch size
+   0.10     0.030      6.50e-16      2.72e-10      4.30e-08      2.56e-03      2.63e-03
+   0.25     0.075      3.73e-15      3.70e-07      1.40e-07      1.59e-02      1.87e-02
+   0.50     0.150      1.95e-15      6.73e-05      3.05e-06      6.27e-02      1.09e-01
+   1.00     0.300      2.81e-15      7.78e-03      8.99e-04      2.46e-01      1.12e+00
+   2.00     0.600      1.42e-07      5.93e-01      2.73e-01      1.14e+00      2.41e+01
+   3.00     0.900      6.26e-04      6.85e+00      5.70e+00      4.20e+00      2.35e+02
+
+([2] stratified is a DIFFERENT likelihood on DIFFERENT data -- it is not an
+ approximation to [1], so its column is a magnitude, not an error.)
+

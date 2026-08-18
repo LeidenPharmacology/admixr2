@@ -35,6 +35,9 @@ adghControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
+  cov_nodes = 11L,
+  cov_integration = c("quadrature", "taylor"),
+  cov_taylor_h = 0.5,
   ...
 )
 }
@@ -165,6 +168,48 @@ This is an ACCURACY dial, not a speed one. The quadrature is linear in
 negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
 evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.}
+
+\item{cov_nodes}{Gauss-Hermite nodes per covariate used to integrate the
+COVARIATE distribution when a study declares \code{cov_dist} (default 11). This is
+a separate dial from \code{n_nodes}, which refines the random-effect dimensions
+only: raising \code{n_nodes} alone leaves the covariate integration exactly where
+it was. Measured against an exact reference on a two-compartment model with an
+allometric weight effect and a lognormal weight distribution: 3 nodes give
+7.3e-04 / 8.2e-03 (mean / covariance), 5 give 2.8e-05 / 3.7e-04, 7 give
+2.2e-06 / 2.4e-05, and 9 onwards sit at ~1.2e-06 / ~1.0e-06, which is the ODE
+solver's accuracy rather than the quadrature's. The default is set past that
+knee. Ignored when \code{cov_integration = "taylor"}.}
+
+\item{cov_integration}{How a study's covariate distribution is integrated.
+\code{"quadrature"} (default) evaluates the model on a product Gauss-Hermite
+grid of \code{cov_nodes} points per covariate and forms the marginal moments
+from the whole grid; it is the accurate route and the one every existing fit
+uses. \code{"taylor"} instead expands the marginal MOMENTS to second order
+about the covariate mean,
+\eqn{E \approx g(m) + \frac{1}{2}\sum_j v_j g''_j(m)} and
+\eqn{V \approx V_c(m) + \frac{1}{2}\sum_j v_j V_{c,j}''(m) + \sum_j v_j
+g'_j(m) g'_j(m)^T} for \eqn{g(a) = E_\eta[f(a,\eta)]}, and evaluates the
+likelihood once at those approximate moments. That costs \code{1 + 2p}
+covariate points for \code{p} covariates instead of \code{cov_nodes^p}, so it
+is a speed lever for models with several covariates or a wide grid.
+
+It is an APPROXIMATION, and how good depends on how far the covariate pushes
+the model relative to the random effects. With
+\code{ratio = theta_cov * sd_a / omega}, the measured relative error of the
+moments against the exact marginal is 1e-07 / 1e-05 (mean / covariance) at
+\code{ratio = 0.1}, 5e-05 / 5e-03 at 0.5, 7e-04 / 5e-02 at 1, and 3e-02 /
+4e-01 at 3. Check an important fit against \code{"quadrature"}.
+
+Refused rather than approximated: a dependent covariate distribution
+(\code{cor} or a \code{joint} sampler --- the cross derivative and the
+covariate covariance enter at the same order and neither is computed), and a
+discrete \code{values} covariate (the differencing step would land between the
+levels).}
+
+\item{cov_taylor_h}{Differencing step for \code{cov_integration = "taylor"},
+as a multiple of each covariate's own standard deviation (default 0.5, i.e.
+\eqn{h_j = 0.5\,\mathrm{sd}(a_j)}). Measured flat over 0.05--1.0 on the
+reference model. Ignored when \code{cov_integration = "quadrature"}.}
 
 \item{...}{Unused arguments (trigger an error).}
 }

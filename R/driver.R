@@ -46,6 +46,12 @@
   # the accuracy sweep plateau: raising n_nodes refines only the random-effect
   # dimensions, so the covariate error never moved.
   pinfo$cov_nodes        <- .ctl$cov_nodes %||% 7L
+  # How the covariate distribution is integrated: "quadrature" (the product grid
+  # above) or "taylor" (a second-order expansion of the marginal MOMENTS at
+  # 1 + 2p design points). Only adghControl() exposes it, so every other
+  # estimator falls back to "quadrature" here and is unchanged.
+  pinfo$cov_integration  <- .ctl$cov_integration %||% "quadrature"
+  pinfo$cov_taylor_h     <- .ctl$cov_taylor_h %||% 0.5
   # Whether covariate reweighting was asked for. On pinfo because the estimators
   # read it inside the objective, where the control is not in scope.
   pinfo

@@ -84,10 +84,100 @@
   # than n_node. The eta block cycles fastest, so the weights are
   # rep(W_eta, times = n_cov) * rep(W_cov, each = n_eta), which is what
   # as.numeric(outer(W_eta, W_cov)) produces column-major.
+  # SHIFT: the covariate never reaches the solver. The affected eta column is
+  # replaced by quantiles of u = Delta(a) + eta and the covariates are held at
+  # their reference, so the solve costs n_u * (nodes for the OTHER etas) rows --
+  # CONSTANT in the number of covariates, against n_node^n_eta * n_cov^p.
+  sh <- if (!is.null(s)) s[[".adm_cov_shift"]] else NULL
+  if (!is.null(sh) && identical(s$.adm_cov_path, "shift") && pinfo$n_eta > 0L) {
+    j  <- sh$eta_idx
+    D  <- .admShiftDelta(sh$spec, .admShiftStruct(pinfo, pars$struct),
+                         sh$X, sh$aref)
+    if (!is.null(D)) {
+      D <- as.matrix(D)
+      om <- sqrt(pmax(diag(as.matrix(pars$omega))[j], .Machine$double.eps))
+      # HOW MANY NODES u DESERVES. u = Delta(a) + eta carries variance
+      # Var(Delta) + omega^2, which is WIDER than the omega^2 that the eta
+      # column carries in the product grid -- the covariate's spread has been
+      # folded into this one dimension. The integrand is explored over a
+      # correspondingly wider range, so resolving it as well as n_nodes resolves
+      # eta needs n_nodes scaled by the ratio of standard deviations. Fixing
+      # n_u at cov_nodes instead left the shift path ~10x LESS accurate than the
+      # grid it replaces, which defeats the point of it.
+      #
+      # Cost is linear in n_u and CONSTANT in the number of covariates, so this
+      # is cheap; the cap keeps a pathological covariate spread from blowing the
+      # node count up without bound.
+      nn0 <- as.integer(round(nrow(grid$X)^(1 / max(pinfo$n_eta, 1L))))
+      vD  <- pmax(colSums(sh$W * D^2) - colSums(sh$W * D)^2, 0)
+      n_u <- min(101L, max(nn0, as.integer(ceiling(
+               nn0 * sqrt(max((vD + om^2) / om^2))))))
+      un  <- .admShiftNodesMulti(D, sh$W, om, n_u)
+      # n_nodes per eta, recovered from the grid: nrow = n_nodes^n_eta. round(),
+      # not a bare fractional power -- 343^(1/3) is 6.999999999999999.
+      g1 <- .adghNodes1(nn0)
+      other <- setdiff(seq_len(pinfo$n_eta), j)
+      # the shifted columns move together (one index over the u node SET), the
+      # remaining etas keep their own product grid
+      lst <- c(list(seq_len(nrow(un$u))),
+               lapply(other, function(k) seq_along(g1$x)))
+      ix <- as.matrix(expand.grid(lst, KEEP.OUT.ATTRS = FALSE))
+      eta <- matrix(0, nrow(ix), pinfo$n_eta)
+      eta[, j] <- un$u[ix[, 1L], , drop = FALSE]
+      W <- un$w[ix[, 1L]]
+      for (kk in seq_along(other)) {
+        k <- other[kk]
+        eta[, k] <- sqrt(pars$omega[k, k]) * g1$x[ix[, kk + 1L]]
+        W <- W * g1$w[ix[, kk + 1L]] }
+      colnames(eta) <- pinfo$eta_col_names
+      cr <- matrix(rep(unlist(sh$aref[sh$cov_names]), each = nrow(eta)),
+                   nrow(eta), length(sh$cov_names),
+                   dimnames = list(NULL, sh$cov_names))
+      # THE OMEGA CHAIN NEEDS NO SPECIAL CASE. It forms d(f)/d(L_ab) as
+      # Jl[[a]] * X[, b], and for the affected column eta_j = u with
+      # du/dp = (du/domega)(domega/dp) = (du/domega) * L_jj/2 -- exactly the
+      # shape the existing loop applies. So putting du/domega into X[, j] makes
+      # that loop correct as written; the OTHER columns keep their standard
+      # normal nodes, which is what they are.
+      Xz <- matrix(0, nrow(eta), pinfo$n_eta)
+      for (kk in seq_along(other))
+        Xz[, other[kk]] <- g1$x[ix[, kk + 1L]]
+      shinfo <- NULL
+      if (length(j) == 1L) {
+        du <- .admShiftDu(sh$spec, .admShiftStruct(pinfo, pars$struct), sh$X,
+                          sh$aref, D, sh$W, om, un$u[, 1L])
+        Xz[, j] <- du$du_domega[ix[, 1L]]
+        shinfo <- list(eta_idx = j,
+                       du_dtheta = du$du_dtheta[ix[, 1L], , drop = FALSE])
+      }
+      return(list(eta = eta, W = W / sum(W), X = Xz, cov_rows = cr,
+                  shift = shinfo))
+    }
+  }
   if (!is.null(s) && !identical(s$.adm_cov_path, "collapse") &&
-      !is.null(s[["cov_dist"]])) {
-    cg <- .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
-    nq <- max(nrow(g$eta), 1L); nc <- nrow(cg$X)
+      !identical(s$.adm_cov_path, "shift") && !is.null(s[["cov_dist"]])) {
+    nq <- max(nrow(g$eta), 1L)
+    # cov_integration = "taylor": 1 + 2p design points in place of the product
+    # grid's n_nodes^p, with SIGNED combination weights. Every expansion below
+    # uses the same stride as the quadrature branch, so everything downstream --
+    # the omega chain's X, the per-row covariate columns, the params frame --
+    # is laid out identically and only the weights and the centring differ.
+    .taylor <- identical(pinfo$cov_integration %||% "quadrature", "taylor")
+    if (.taylor && isTRUE(s$is_joint))
+      stop("admixr2: covariate marginalisation is not supported for a JOINT ",
+           "(same-subject, multi-output) unit. The shared-eta joint solve has ",
+           "no per-row covariate path, so this would silently solve at the ",
+           "covariate mean.", call. = FALSE)
+    # The design is cached on the study by .admCheckCovariates -- it depends
+    # only on `cov_dist` and `cov_taylor_h`, both data, and rebuilding it here
+    # costs a Sobol pass through the joint sampler on EVERY objective call.
+    # The %||% keeps a hand-built study (Tier-1 mocks, direct .adghMoments
+    # calls) working, at the old cost.
+    cg <- if (.taylor) s[[".adm_cov_taylor"]] %||%
+                       .admCovTaylorDesign(s[["cov_dist"]],
+                                           pinfo$cov_taylor_h %||% 1)
+          else         .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
+    nc <- nrow(cg$X)
     g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
     colnames(g$eta) <- pinfo$eta_col_names
     # The node matrix has to be expanded with the SAME stride: the omega chain
@@ -95,9 +185,45 @@
     # unexpanded X against an expanded eta would be silently misaligned.
     g$X        <- g$X[rep(seq_len(nq), times = nc), , drop = FALSE]
     g$cov_rows <- cg$X[rep(seq_len(nc), each = nq), , drop = FALSE]
-    g$W        <- as.numeric(outer(g$W, cg$W))
+    if (.taylor) {
+      g$taylor <- .admCovTaylorRows(cg, g$W, nq)
+      g$W      <- as.numeric(outer(g$W, cg$c))
+    } else {
+      g$W      <- as.numeric(outer(g$W, cg$W))
+    }
   }
   g
+}
+
+# Structural moments (before any residual) from an already-solved node matrix.
+#
+# The quadrature path is one weighted mean and one weighted crossproduct about
+# it. The Taylor path is THE SAME TWO EXPRESSIONS -- with signed weights
+# c_k * w_q, and each design point's rows centred at their OWN conditional mean
+# rather than at the pooled one -- plus the rank-p term:
+#
+#   crossprod(W, cp)                 = sum_k c_k E_k               = E_marg
+#   crossprod(cpc, W * cpc)          = sum_k c_k Vc_k              (block-centred)
+#   crossprod(dE, var * dE)          = sum_j v_j g'_j g'_j'        = Cov_a(g(a))
+#
+# `dE` is returned because the gradient needs it: the rank-p term is quadratic
+# in the conditional means, so it is the one part of V whose derivative is not
+# already carried by the weighted-crossproduct contraction.
+.adghStructMoments <- function(cp, W, tay = NULL) {
+  mu <- as.numeric(crossprod(W, cp))
+  if (is.null(tay)) {
+    cpc <- sweep(cp, 2L, mu)
+    return(list(mu = mu, cpc = cpc, V = crossprod(cpc, W * cpc), dE = NULL))
+  }
+  cpc <- cp
+  for (idx in tay$rows) {
+    ek <- as.numeric(crossprod(tay$w, cp[idx, , drop = FALSE]))
+    cpc[idx, ] <- sweep(cp[idx, , drop = FALSE], 2L, ek)
+  }
+  dE <- crossprod(tay$Dw, cp)                    # d x n_t, g'_j(mu_a)
+  list(mu = mu, cpc = cpc,
+       V = crossprod(cpc, W * cpc) + crossprod(dE, tay$var * dE),
+       dE = dE)
 }
 
 # Attach the grid's per-row covariate values to a study, so .admSimulate writes
@@ -112,10 +238,11 @@
 # independently: the assembly depends on sigma, but the SOLVE does not (sigma is
 # zeroed into it and re-added analytically here), so a set of configurations
 # that share a solve can each be assembled cheaply.
-.adghMomentsFromCp <- function(cp, W, pars, pinfo, out_var, times = NULL) {
-  mu  <- as.numeric(crossprod(W, cp))
-  cpc <- sweep(cp, 2L, mu)
-  V   <- crossprod(cpc, W * cpc)
+.adghMomentsFromCp <- function(cp, W, pars, pinfo, out_var, times = NULL,
+                               tay = NULL) {
+  sm  <- .adghStructMoments(cp, W, tay)
+  mu  <- sm$mu
+  V   <- sm$V
 
   # Restrict residual error to this output's sigma(s) (no-op single-output).
   arr <- .admUnitResidRows(pinfo, out_var, pars$sigma_var, length(mu),
@@ -131,7 +258,7 @@
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
                      out_var, pm, cores, pinfo$nDisplayProgress,
                              pinfo$sigdig)
-  .adghMomentsFromCp(cp, g$W, pars, pinfo, out_var, study$times)
+  .adghMomentsFromCp(cp, g$W, pars, pinfo, out_var, study$times, g$taylor)
 }
 
 # Moments for a SET of structural-theta configurations in ONE rxSolve.
@@ -162,7 +289,10 @@
     do.call(rbind, lapply(seq_len(n_cfg), function(k) {
       pk <- pars
       pk$struct[colnames(struct_mat)] <- struct_mat[k, ]
-      grid$X %*% t(.admStudyL(pk, pinfo, study))
+      # g$X, NOT grid$X: on a covariate path .adghGrid() expands the node matrix
+      # to Q = n_node * n_cov rows, and grid$X here would have handed the solve
+      # n_node rows against a Q-row params frame.
+      g$X %*% t(.admStudyL(pk, pinfo, study))
     }))
   }
   colnames(eta_big) <- colnames(g$eta)
@@ -181,7 +311,7 @@
   lapply(seq_len(n_cfg), function(k) {
     .cp <- cp_all[(k - 1L) * Q + seq_len(Q), , drop = FALSE]
     if (!is.null(.phi_all)) attr(.cp, "phi") <- .phi_all[(k - 1L) * Q + 1L, ]
-    .adghMomentsFromCp(.cp, g$W, pars, pinfo, out_var, study$times)
+    .adghMomentsFromCp(.cp, g$W, pars, pinfo, out_var, study$times, g$taylor)
   })
 }
 
@@ -291,9 +421,19 @@
     # here from pars$L instead is what made adgh's analytical gradient blind to
     # the covariate product grid -- it differentiated a different function than
     # .adghNLL evaluated. X, W and eta must all come from one place.
+    # A VECTOR shift (a covariate on more than one mu-referenced parameter) moves
+    # the later coordinates' nodes through the Rosenblatt posterior weights as
+    # well, a second chain .admShiftDu does not carry. Finite-difference the
+    # objective instead of silently using the scalar chain -- still far cheaper
+    # than the product grid, because the objective is what got cheap.
+    if (identical(s$.adm_cov_path, "shift") &&
+        (s[[".adm_cov_shift"]]$m %||% 1L) > 1L)
+      return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                     cores, grad_h), nll = NULL))
     .gS <- .adghGrid(pars, pinfo, grid, s)
     X   <- .gS$X
     W   <- .gS$W
+    ty  <- .gS$taylor          # NULL unless cov_integration = "taylor"
     s   <- .adghStudyCov(s, .gS)
     eta <- .gS$eta
     colnames(eta) <- pinfo$eta_col_names
@@ -409,9 +549,10 @@
     f   <- res$cp_mat     # Q x n_t
     Jl  <- res$dpred_list # list n_eta of Q x n_t
 
-    mu  <- as.numeric(crossprod(W, f))
-    cpc <- sweep(f, 2L, mu)
-    V   <- crossprod(cpc, W * cpc)
+    sm  <- .adghStructMoments(f, W, ty)
+    mu  <- sm$mu
+    cpc <- sm$cpc
+    V   <- sm$V
     cov_f <- V                            # STRUCTURAL Cov_eta(f), before any residual
 
     # Residual error (and its lnorm scaling of the mean) -- this output only
@@ -456,6 +597,13 @@
         # graw: Q x n_t, RAW derivative of the structural f w.r.t. psi
         dmu     <- as.numeric(crossprod(W, graw))
         dV_diag <- 2 * colSums(W * cpc * graw)
+        # Taylor: V also carries sum_j v_j g'_j g'_j', which is QUADRATIC in the
+        # conditional means and so contributes a term the weighted crossproduct
+        # above does not. d(g'_j)/dpsi is the same central difference applied to
+        # the sensitivity columns.
+        if (!is.null(ty))
+          dV_diag <- dV_diag +
+            2 * colSums(ty$var * sm$dE * crossprod(ty$Dw, graw))
         sum(dNLL_dmu_sig * dmu * lnorm_scale) + sum(dNLL_dV_dg_s * dV_diag)
       }
 
@@ -477,11 +625,19 @@
         dNLL_dmu_sig * (attr(vchain, "dmu_dv0") %||% numeric(length(mu)))
       Bt        <- cpc %*% Bs             # Q x n_t; chained to V_struct
 
+      # Bs is symmetric (B and the vchain both are), so the rank-p term's
+      # contraction sum_st Bs_st d(v_j g'_j g'_j')_st collapses to
+      # 2 * v_j * g'_j' Bs d(g'_j)/dpsi. Precompute the left half once.
+      BsdE <- if (is.null(ty)) NULL else sm$dE %*% Bs
+
       contrib <- function(graw) {
         # graw: RAW derivative of the structural f w.r.t. psi
         dmu      <- as.numeric(crossprod(W, graw))
         term_mu  <- sum(dNLL_dmu_sig * dmu * lnorm_scale)
         term_cov <- 2 * sum(W * rowSums(graw * Bt))
+        if (!is.null(ty))
+          term_cov <- term_cov +
+            2 * sum(ty$var * rowSums(BsdE * crossprod(ty$Dw, graw)))
         term_mu + term_cov
       }
     }
@@ -522,6 +678,29 @@
         Dt      <- res$dtheta_list[[pinfo$struct_names[k]]]
         dmu_raw <- as.numeric(crossprod(W, Dt))
         g_theta[k] <- g_theta[k] + contrib(Dt) + .sigma_V_extra(dmu_raw)
+      }
+    }
+
+    # SHIFT path: every structural theta also moves the u nodes, because u's law
+    # is sum_j W_j N(Delta_j, omega^2) and Delta depends on the thetas. The
+    # chain factor is du/dtheta = E[dDelta/dtheta | u] (see .admShiftDu), and
+    # the derivative it multiplies is the affected eta's own sensitivity column,
+    # so the contribution is that column scaled ROW-WISE.
+    #
+    # A theta with no covariate in its Delta -- including every mu-referenced
+    # TYPICAL VALUE, which cancels out of a difference of the same expression at
+    # two covariate values -- gets a zero column here and is unaffected.
+    .sh <- .gS$shift
+    if (!is.null(.sh)) {
+      Jsh <- Jl[[.sh$eta_idx]]
+      for (k in seq_len(n_s)) {
+        nmk <- pinfo$struct_names[k]
+        if (!nmk %in% colnames(.sh$du_dtheta)) next
+        dk <- .sh$du_dtheta[, nmk]
+        if (all(dk == 0)) next
+        base    <- Jsh * dk
+        dmu_raw <- as.numeric(crossprod(W, base))
+        grad[k] <- grad[k] + contrib(base) + .sigma_V_extra(dmu_raw)
       }
     }
 
@@ -909,7 +1088,58 @@
 #'   weight distribution: 3 nodes give 7.3e-04 / 8.2e-03 (mean / covariance),
 #'   5 give 2.8e-05 / 3.7e-04, 7 give 2.2e-06 / 2.4e-05, and 9 onwards sit at
 #'   ~1.2e-06 / ~1.0e-06, which is the ODE solver's accuracy rather than the
-#'   quadrature's. The default is set past that knee.
+#'   quadrature's. The default is set past that knee, and raising it further
+#'   buys nothing: against a per-subject reference the accuracy is identical at
+#'   5, 9 and 15 nodes. Ignored when `cov_integration = "taylor"`.
+#' @param cov_integration How a study's covariate distribution is integrated.
+#'   `"quadrature"` (default) evaluates the model on a product Gauss-Hermite
+#'   grid of `cov_nodes` points per covariate and forms the marginal moments
+#'   from the whole grid; it is the accurate route and the one every existing
+#'   fit uses. `"taylor"` instead expands the marginal MOMENTS to second order
+#'   about the covariate mean,
+#'   \eqn{E \approx g(m) + \frac{1}{2}\sum_j v_j g''_j(m)} and
+#'   \eqn{V \approx V_c(m) + \frac{1}{2}\sum_j v_j V_{c,j}''(m) + \sum_j v_j
+#'   g'_j(m) g'_j(m)^T} for \eqn{g(a) = E_\eta[f(a,\eta)]}, and evaluates the
+#'   likelihood once at those approximate moments. That costs `1 + 2p` covariate
+#'   points for `p` covariates instead of `cov_nodes^p`, so it is a speed lever
+#'   for models with several covariates or a wide grid.
+#'
+#'   It is an APPROXIMATION, and how good depends on how far the covariate
+#'   pushes the model relative to the random effects. With
+#'   `ratio = theta_cov * sd_a / omega`, the measured relative error of the
+#'   moments against the exact marginal is 1e-07 / 1e-05 (mean / covariance) at
+#'   `ratio = 0.1`, 5e-05 / 5e-03 at 0.5, 7e-04 / 5e-02 at 1, and 3e-02 / 4e-01
+#'   at 3. Check an important fit against `"quadrature"`.
+#'
+#'   DEPENDENT covariates (`cor`, `rho`, `Sigma`, or a `joint` sampler) are
+#'   supported by both routes. The quadrature grid is a product rule over the
+#'   sampler's UNIFORMS rather than over the covariate margins, and a copula
+#'   maps independent uniforms to dependent values, so the product rule stays
+#'   exact whatever the dependence. The expansion differences along the
+#'   EIGENVECTORS of the covariate covariance, which keeps it at `1 + 2p` points
+#'   at any correlation --- a coordinate-basis version would need the mixed
+#'   partials explicitly, at `1 + 2p + p(p-1)` points for the same accuracy.
+#'   (This is the third-degree spherical-radial cubature rule, i.e. the
+#'   unscented transform's sigma points.)
+#'
+#'   Refused rather than approximated: a discrete `values` covariate (the
+#'   differencing step would land between the levels), and (near-)perfectly
+#'   collinear covariates (the step along the null direction collapses, so the
+#'   second difference is cancellation rather than a derivative).
+#' @param cov_taylor_h Radius of the design points for
+#'   `cov_integration = "taylor"`, as a multiple of the moment-matched radius
+#'   \eqn{\sqrt{3\lambda_k}} along each expansion direction (default 1). The
+#'   \eqn{1+2p} design is a cubature rule rather than a finite-difference
+#'   stencil, so the radius is chosen to integrate moments exactly, not to be
+#'   small: at the default the design coincides with 3-point Gauss--Hermite in
+#'   each direction and is exact through degree 5, where a smaller radius
+#'   matches only through degree 3. For independent covariates the directions
+#'   are the covariates themselves; when they are dependent they are the
+#'   eigenvectors of the covariate covariance. Values below 1 pull the points
+#'   back toward the covariate mean -- the scaled unscented transform -- which
+#'   costs the fourth-moment match but keeps the design inside the range a
+#'   strongly skewed margin actually spans. Ignored when
+#'   `cov_integration = "quadrature"`.
 #' @param resid_nodes Gauss-Hermite nodes used to integrate the RESIDUAL for a
 #'   transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
 #'   `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean and
@@ -1100,7 +1330,12 @@ adghControl <- function(
     resid_nodes   = 81L,
     # LAST on purpose: a new argument inserted mid-signature silently rebinds
     # every positional call. See the resid_nodes note in CLAUDE.md.
-    cov_nodes     = 11L,
+    cov_nodes     = 7L,
+    # LAST on purpose, as above. These two are the covariate-integration pair:
+    # cov_integration selects the method, cov_taylor_h the differencing step it
+    # uses. Appended together so the tail of this signature reads as one addition.
+    cov_integration = c("quadrature", "taylor", "shift"),
+    cov_taylor_h    = 1,
     ...) {
 
   .xtra <- list(...)
@@ -1111,6 +1346,7 @@ adghControl <- function(
   addProp   <- match.arg(addProp)
   grad      <- match.arg(grad)
   covMethod <- match.arg(covMethod)
+  cov_integration <- match.arg(cov_integration)
 
   checkmate::assertList(studies)
   checkmate::assertIntegerish(n_nodes,     lower = 1L, len = 1)
@@ -1120,6 +1356,15 @@ adghControl <- function(
   # message can name the argument, rather than silently scoring a wrong NLL.
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1)
   checkmate::assertIntegerish(cov_nodes, lower = 1L, len = 1)
+  # cov_taylor_h is a MULTIPLIER on the moment-matched radius sqrt(3*lambda),
+  # not a raw step: 1 puts the design points exactly where 3-point
+  # Gauss-Hermite does, which is what makes the rule exact through degree 5.
+  # Below 1 pulls them back toward the covariate mean (the scaled unscented
+  # transform), trading the fourth-moment match for design points that stay
+  # nearer the covariate range a skewed margin actually spans. Only positivity
+  # is enforced -- h = 0 is a division by zero in the second difference.
+  checkmate::assertNumeric(cov_taylor_h, lower = .Machine$double.eps, len = 1,
+                           finite = TRUE)
   # NOT assertString(algorithm) here: NULL is now the default and means "pick the
   # one that matches grad". .admResolveAlgorithm() asserts the string and checks
   # it against the installed nloptr, which is more than this line ever did.
@@ -1183,6 +1428,8 @@ adghControl <- function(
     studies       = studies,
     resid_nodes   = as.integer(resid_nodes),
     cov_nodes     = as.integer(cov_nodes),
+    cov_integration = cov_integration,
+    cov_taylor_h    = cov_taylor_h,
     n_nodes       = as.integer(n_nodes),
     n_sim         = 1L,       # interface compat with .admRunRestarts()
     sampling      = "sobol",  # idem
