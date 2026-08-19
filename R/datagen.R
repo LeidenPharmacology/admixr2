@@ -21,6 +21,11 @@
 #'   unless you deliberately change one of them. See [admControl()] for the
 #'   measured convergence.
 #' @param sampling Quasi-random sampling method: `"sobol"` (default),
+#' @param cov_nodes Gauss-Hermite nodes per covariate when `method = "gh"`
+#'   integrates a study's `cov_dist` (default 7). Total covariate points are
+#'   `cov_nodes^p` for `p` covariates. Ignored by `"mc"`, which draws a covariate
+#'   value per simulated subject instead, and by `"fo"`, which cannot integrate a
+#'   covariate at all.
 #'   `"halton"`, `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"`
 #'   or `"gh"`.
 #' @param seed Integer seed.  Applied before stochastic methods
@@ -52,18 +57,21 @@ datagenControl <- function(
   return_samples = FALSE,
   # LAST on purpose: inserting an argument mid-signature silently rebinds every
   # positional call (datagenControl("mc", 2000L, 7L) used to set n_nodes = 7).
-  resid_nodes    = 81L) {
+  resid_nodes    = 81L,
+  cov_nodes      = 7L) {
   method   <- match.arg(method)
   sampling <- match.arg(sampling)
   checkmate::assertIntegerish(n_sim,    lower = 1L, len = 1L)
   checkmate::assertIntegerish(n_nodes,  lower = 1L, len = 1L)
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1L)
+  checkmate::assertIntegerish(cov_nodes, lower = 1L, len = 1L)
   checkmate::assertIntegerish(seed,                 len = 1L)
   checkmate::assertIntegerish(cores,    lower = 1L, len = 1L)
   checkmate::assertFlag(return_samples)
   structure(
     list(
       method         = method,
+      cov_nodes      = as.integer(cov_nodes),
       n_sim          = as.integer(n_sim),
       n_nodes        = as.integer(n_nodes),
       resid_nodes    = as.integer(resid_nodes),
@@ -304,6 +312,9 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # same route the estimators use, so a study generated here and the fit that
     # consumes it integrate the residual identically.
     pinfo$resid_nodes <- control$resid_nodes %||% .ADM_TBS_NODES
+    # Reaches .admCovGrid through .adghGrid; without it the control argument is
+    # inert and the grid silently uses its own default.
+    pinfo$cov_nodes   <- control$cov_nodes %||% 7L
     out_var <- .admOutputVar(ui)
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
 
@@ -395,10 +406,16 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # its sampling times, its population) produces that study's aggregate data.
     cov_rows_of <- function(n) {
       if (is.null(s[["cov_dist"]])) return(NULL)
-      if (!identical(control$method, "mc"))
+      # `fo` linearises in the random effects around a single solve and has no
+      # covariate integral at all. `gh` does: .adghGrid crosses the covariate
+      # grid with the eta grid, which is the same construction the estimator
+      # uses, so it needs no samples and adds no Monte Carlo noise to data that
+      # is supposed to BE the reference.
+      if (identical(control$method, "fo"))
         stop(sprintf(paste("Study '%s': `cov_dist` needs datagenControl(method =",
-                           "\"mc\"); the gh/fo moment paths integrate over the",
-                           "random effects only."), nm), call. = FALSE)
+                           "\"mc\") or \"gh\"; the fo moment path integrates over",
+                           "the random effects only."), nm), call. = FALSE)
+      if (!identical(control$method, "mc")) return(NULL)
       .admCovRowsFor(s[["cov_dist"]], n, pinfo$n_eta)
     }
     # A study may fix a covariate VALUE (`cov`) instead of, or as well as, a
@@ -433,6 +450,13 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
                         out_pair = .admBetaPair(ui),
                         cov = cov_vals %||% cov_ref_of(),
                         cov_rows = if (is.null(cov_vals)) cov_rows_of(control$n_sim))
+      # `gh` integrates the covariate on its own grid, so it needs the
+      # DISTRIBUTION, not just the reference value. Passing only `cov` left it
+      # solving at the covariate mean -- the ecological plug-in, generating data
+      # for a population that does not exist. Measured against the mc path on a
+      # lognormal covariate: 2.1e-02 on the mean and 2.9e-01 on the covariance.
+      if (control$method == "gh" && is.null(cov_vals))
+        study_tmp$cov_dist <- s[["cov_dist"]]
 
       if (control$method == "gh") {
         m <- .adghMoments(pars, pinfo, study_tmp, rxMod, ov, grid, control$cores)

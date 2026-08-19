@@ -1215,3 +1215,49 @@ test_that("a NON-certified vector shift keeps the cheap path and stays analytic"
   expect_true(all(is.finite(r$grad)))
   expect_true(max(abs(r$grad - fd) / pmax(abs(fd), 1)) < 1e-6)
 })
+
+# -- datagen: a covariate distribution without Monte Carlo -------------------
+
+test_that("datagen(method = 'gh') integrates a covariate distribution exactly", {
+  # `cov_dist` used to require method = "mc", which puts Monte Carlo noise into
+  # data that is meant to BE the reference for a simulation study. The gh path
+  # can integrate the covariate on its own grid -- the same construction the
+  # estimator uses -- but it was only ever handed the covariate REFERENCE VALUE,
+  # so lifting the restriction alone would have generated data at the covariate
+  # mean: the ecological plug-in, for a population that does not exist. Measured
+  # before the distribution was passed through: 2.1e-02 on the mean and 2.9e-01
+  # on the covariance.
+  .m1 <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.75
+          eta.cl ~ 0.09; add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * log(WT / 70) + eta.cl); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  .m2 <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.75; tsex <- 0.2
+          eta.cl ~ 0.09; add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * log(WT / 70) + tsex * SEX + eta.cl)
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  .cmp <- function(mod, cd, tol_E = 5e-5, tol_V = 5e-4) {
+    st <- list(s = list(n = 300L, times = .cov_TIMES,
+                        ev = rxode2::et(amt = .cov_DOSE), cov_dist = cd))
+    a <- datagen(st, mod, datagenControl(method = "mc", n_sim = 200000L,
+                                         seed = 1L))[[1L]]
+    b <- datagen(st, mod, datagenControl(method = "gh", n_nodes = 9L,
+                                         cov_nodes = 7L))[[1L]]
+    expect_equal(max(abs(a$E - b$E)) / max(abs(a$E)), 0, tolerance = tol_E)
+    expect_equal(max(abs(a$V - b$V)) / max(abs(a$V)), 0, tolerance = tol_V)
+  }
+  # the specification grammar, end to end: lognormal, normal, correlated, discrete
+  .cmp(.m1, list(WT = list(meanlog = log(72), sdlog = 0.28)))
+  .cmp(.m1, list(WT = list(mu = 72, sd = 12)))
+  .cmp(.m2, list(WT = list(meanlog = log(72), sdlog = 0.28),
+                 SEX = list(values = c(0, 1))))
+
+  # `fo` genuinely cannot, and says so naming both alternatives
+  st <- list(s = list(n = 300L, times = .cov_TIMES,
+                      ev = rxode2::et(amt = .cov_DOSE),
+                      cov_dist = list(WT = list(meanlog = log(72), sdlog = 0.28))))
+  expect_error(datagen(st, .m1, datagenControl(method = "fo")), "mc")
+})
