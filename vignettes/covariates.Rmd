@@ -202,8 +202,9 @@ is a **band**, and its patients are spread across it.
 Scoring a band at a single representative value leaves the band's own spread out
 of the prediction. Writing `tau_k` for the covariate spread within band *k*, the
 predicted covariance is short by `tau_k^2 * D D'` with `D` the derivative of the
-profile in the covariate --- rank one, and first order in the *slope*, so it does
-not vanish where the model is locally linear and the mean is unaffected. It is
+profile in the covariate --- rank one, and depends on the *slope* rather than the
+curvature, so it does not vanish where the model is locally linear and the mean
+is unaffected. It is
 the same plug-in error that stratifying was meant to avoid, committed inside a
 stratum instead of across the study.
 
