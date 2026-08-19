@@ -112,7 +112,7 @@
       # -3169 to -256961. Fixed at admission instead (sh$n_u), from cov_dist,
       # which is data.
       n_u <- sh$n_u %||% min(101L, 4L * nn0)
-      un  <- .admShiftNodesMulti(D, sh$W, om, n_u)
+      un  <- .admShiftNodesMulti(D, sh$W, om, n_u, z = sh$z)
       # n_nodes per eta, recovered from the grid: nrow = n_nodes^n_eta. round(),
       # not a bare fractional power -- 343^(1/3) is 6.999999999999999.
       g1 <- .adghNodes1(nn0)

@@ -392,7 +392,7 @@
         studies[[nm]]$.adm_cov_shift <- list(
           spec = .sp, aref = .ar, cov_names = .cn,
           eta_idx = match(.sp$eta, pinfo$eta_col_names),
-          m = length(.sp$eta), X = .g$X, W = .g$W, n_u = .nu)
+          m = length(.sp$eta), X = .g$X, W = .g$W, z = .g$z, n_u = .nu)
         studies[[nm]]$.adm_cov_path <- "shift"
       }
     }
@@ -1568,7 +1568,9 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
     if (any(disc)) {
       npool <- max(as.integer(n_nodes)^d, 4096L)
       X <- .admCovRowsFor(cov_dist, npool, 0L)[, nms, drop = FALSE]
-      return(list(X = X, W = rep(1 / nrow(X), nrow(X))))
+      # no latent normal score exists for a discrete pool, and none is wanted:
+      # a discrete covariate can never make Delta normal.
+      return(list(X = X, W = rep(1 / nrow(X), nrow(X)), z = NULL))
     }
     g  <- .adghNodes1(n_nodes)
     ix <- as.matrix(expand.grid(rep(list(seq_len(n_nodes)), d),
@@ -1607,7 +1609,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
            "  or declare the dependence with `cor` and let admixr2 build the ",
            "sampler, or lower `cov_nodes`.", call. = FALSE)
     }
-    return(list(X = X, W = W / sum(W)))
+    return(list(X = X, W = W / sum(W), z = z))
   }
   one <- lapply(nms, function(n) .admCovNodesFor(cov_dist[[n]], n_nodes))
   X   <- as.matrix(expand.grid(lapply(one, `[[`, "x"), KEEP.OUT.ATTRS = FALSE))
@@ -1616,7 +1618,18 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
                  function(o) length(o$x), integer(1)))),
                length.out = nrow(X))))
   colnames(X) <- nms
-  list(X = X, W = W / sum(W))
+  # The latent normal scores behind X, assembled with the SAME stride. Each
+  # continuous margin is a standard-normal node pushed through Phi and then the
+  # margin's quantile function, so `z` is what X is an image of -- which is the
+  # only thing that certifies Delta's law (see .admShiftAffineResid). A margin
+  # given by `values` is discrete and has no score; one such margin makes the
+  # whole grid uncertifiable, which is correct.
+  zc <- lapply(seq_along(nms), function(k)
+    if (!is.null(cov_dist[[nms[k]]][["values"]])) NULL else
+      .adghNodes1(length(one[[k]]$x))$x)
+  z <- if (any(vapply(zc, is.null, logical(1)))) NULL else
+    as.matrix(expand.grid(zc, KEEP.OUT.ATTRS = FALSE))
+  list(X = X, W = W / sum(W), z = z)
 }
 
 
@@ -1780,7 +1793,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 }
 
 .admShiftNodes <- function(Delta, W, om, n_u, tol = 1e-12, maxit = 30L,
-                           ftol = 1e-14) {
+                           ftol = 1e-14, z = NULL) {
   # NON-FINITE INPUT is refused rather than iterated on, and BEFORE the Gaussian
   # test: .admShiftDelta screens its own output, but this is also called
   # directly and per-coordinate from the Rosenblatt recursion, and a NaN reaches
@@ -1801,7 +1814,12 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   # .admShiftDu applies the matching closed-form derivatives, keyed off the same
   # test, so the objective and the gradient cannot disagree about which node set
   # is in play.
-  if (.admShiftGaussResid(Delta, W) < .ADM_SHIFT_GAUSS_TOL)
+  # The certificate when the latent scores are available, the moment test when
+  # they are not. In ONE dimension the moment test is answering exactly the
+  # right question -- is this univariate law normal -- so it stays as the
+  # fallback for hand-built specs and direct calls. It is not sound above one
+  # dimension, which is why .admShiftNodesMulti requires `z` instead.
+  if (.admShiftGaussOK(Delta, W, z, 1L))
     return(list(u = u, w = g$w, gauss = TRUE, mD = mD, vD = vD))
   # CONVERGENCE IS TESTED ON THE RESIDUAL, NOT ON THE STEP. `max(abs(st)) < tol`
   # never fired: at the outermost node the CDF is saturated (target within
@@ -1930,15 +1948,100 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 # inversion serves every level. Cost is n_u^m nodes and n_u^(m-1) inversions,
 # against n_cov^p * n_node^m for the product grid -- still independent of the
 # number of covariates, which is the whole point.
-.admShiftNodesMulti <- function(D, W, om, n_u) {
+# Is Delta an AFFINE image of the latent normal scores?
+#
+# This is the certificate, and it replaces asking whether Delta's own moments
+# look normal. admixr2 builds every continuous covariate as X = F^-1(Phi(z))
+# from a jointly normal z, so an affine Delta = c + B z is exactly normal, and
+# jointly so across coordinates -- an affine image of a Gaussian is Gaussian in
+# any dimension. That covers both cases worth having by construction rather
+# than by inspection: a normal covariate entering linearly, and a LOGNORMAL one
+# entering through log(), where log(F^-1(Phi(z))) is affine in z.
+#
+# A moment test on Delta cannot do this job above one dimension. Normality of
+# every margin plus finitely many fixed projections does not certify joint
+# normality -- Cramer-Wold needs ALL projections -- so it can only ever fail to
+# find a counterexample. Affinity is checkable, and sufficient.
+#
+# It is one-sided: a jointly normal Delta that is not affine in z is refused and
+# takes the mixture route, which is correct but slower. That is the safe
+# direction, and the two forms this exists for are both affine.
+.admShiftAffineResid <- function(D, W, z) {
+  if (is.null(z)) return(Inf)
+  D <- as.matrix(D); z <- as.matrix(z)
+  if (nrow(z) != nrow(D) || !all(is.finite(z)) || !all(is.finite(D)))
+    return(Inf)
+  Wn <- W / sum(W); sw <- sqrt(Wn)
+  A  <- cbind(1, z) * sw
+  q  <- tryCatch(qr(A), error = function(e) NULL)
+  if (is.null(q) || q$rank < ncol(A)) return(Inf)
+  r <- 0
+  for (k in seq_len(ncol(D))) {
+    m   <- sum(Wn * D[, k])
+    sd0 <- sqrt(max(sum(Wn * (D[, k] - m)^2), 0))
+    if (sd0 <= 0) next                  # constant column is affine trivially
+    y   <- D[, k] * sw
+    r   <- max(r, sqrt(sum((y - qr.fitted(q, y))^2)) / sd0)
+  }
+  r
+}
+
+# One predicate, so the objective and the gradient cannot key off different
+# tests. `m` is the shift dimension: at m = 1 a moment test on Delta is a valid
+# fallback when no latent score is to hand; above that only the affine
+# certificate will do.
+.admShiftGaussOK <- function(D, W, z, m) {
+  if (!is.null(z) &&
+      .admShiftAffineResid(D, W, z) < .ADM_SHIFT_GAUSS_TOL) return(TRUE)
+  if (m > 1L) return(FALSE)
+  D <- as.matrix(D)
+  .admShiftGaussResid(D[, 1L], W) < .ADM_SHIFT_GAUSS_TOL
+}
+
+.admShiftNodesMulti <- function(D, W, om, n_u, z = NULL) {
   D <- as.matrix(D)
   m <- ncol(D)
   if (m == 1L) {                       # identical to the scalar path
-    un <- .admShiftNodes(D[, 1L], W, om[1L], n_u)
-    return(list(u = matrix(un$u, ncol = 1L), w = un$w))
+    un <- .admShiftNodes(D[, 1L], W, om[1L], n_u, z = z)
+    if (is.null(un)) return(NULL)
+    return(list(u = matrix(un$u, ncol = 1L), w = un$w, gauss = un$gauss))
+  }
+  # THE JOINTLY GAUSSIAN CASE SKIPS THE RECURSION ENTIRELY. u = Delta + eta is
+  # then multivariate normal with covariance Cov(Delta) + diag(om^2), and a
+  # product Gauss-Hermite grid rotated by its Cholesky factor is exact -- no
+  # inversion at any level, and no posterior reweighting, because there is no
+  # recursion left to reweight. Measured on a correlated 2-coordinate shift at
+  # 12 nodes per coordinate: 90 ms and 2.6e-08 relative on a smooth integrand,
+  # against effectively free and 7.4e-16 here.
+  #
+  # This is also what would make an ANALYTIC vector-shift gradient possible: the
+  # second chain through the Rosenblatt posterior weights, the one .admShiftDu
+  # does not carry and .adghGrad finite-differences the whole objective to
+  # avoid, does not exist on this branch. Not yet wired -- the Cholesky
+  # differential needs its own verification -- but it is the reason to prefer
+  # this construction over a faster recursion.
+  if (.admShiftGaussOK(D, W, z, m)) {
+    Wn <- W / sum(W)
+    mD <- as.numeric(crossprod(D, Wn))
+    Dc <- sweep(D, 2L, mD, "-")
+    Sc <- crossprod(Dc * sqrt(Wn)) + diag(as.numeric(om)^2, m)
+    Lc <- tryCatch(t(chol(Sc)), error = function(e) NULL)
+    if (!is.null(Lc)) {
+      g   <- .adghNodes1(n_u)
+      ixg <- as.matrix(expand.grid(rep(list(seq_len(n_u)), m),
+                                   KEEP.OUT.ATTRS = FALSE))
+      Xg  <- matrix(g$x[ixg], nrow(ixg), m)
+      wg  <- apply(matrix(g$w[ixg], nrow(ixg), m), 1L, prod)
+      return(list(u = sweep(Xg %*% t(Lc), 2L, mD, "+"),
+                  w = wg / sum(wg), gauss = TRUE))
+    }
   }
   rec <- function(k, Wc) {
-    un <- .admShiftNodes(D[, k], Wc, om[k], n_u)
+    un <- .admShiftNodes(D[, k], Wc, om[k], n_u, z = z)
+    # A refused inversion at ANY level has to propagate. Left to itself,
+    # matrix(NULL, ncol = 1) is a 0-row matrix and the caller receives a
+    # well-shaped node set with no nodes in it.
+    if (is.null(un)) return(NULL)
     if (k == m)
       return(list(u = matrix(un$u, ncol = 1L), w = un$w))
     out_u <- list(); out_w <- numeric(0)
@@ -1948,12 +2051,14 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
       sp <- sum(pw)
       pw <- if (sp > 0) pw / sp else Wc
       sub <- rec(k + 1L, pw)
+      if (is.null(sub)) return(NULL)
       out_u[[i]] <- cbind(un$u[i], sub$u)
       out_w <- c(out_w, un$w[i] * sub$w)
     }
     list(u = do.call(rbind, out_u), w = out_w)
   }
   r <- rec(1L, W)
+  if (is.null(r)) return(NULL)
   list(u = r$u, w = r$w / sum(r$w))
 }
 

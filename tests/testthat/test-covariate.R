@@ -1275,3 +1275,78 @@ test_that("shift nodes refuse non-finite input instead of erroring", {
   D2 <- 0.5 * g$x; D2[1] <- Inf
   expect_null(admixr2:::.admShiftNodes(D2, W, 0.3, 20L))
 })
+
+test_that("the affine certificate decides the Gaussian branch in 2-D", {
+  # Delta = c + B z is exactly (jointly) normal because admixr2 builds every
+  # continuous covariate as F^-1(Phi(z)) from a jointly normal z. A moment test
+  # on Delta cannot certify this above one dimension -- Cramer-Wold needs ALL
+  # projections, so finitely many can only fail to find a counterexample.
+  gh <- admixr2:::.adghNodes1; nc <- 21L; g <- gh(nc)
+  ix <- as.matrix(expand.grid(seq_len(nc), seq_len(nc)))
+  z  <- cbind(g$x[ix[, 1]], g$x[ix[, 2]])
+  W  <- g$w[ix[, 1]] * g$w[ix[, 2]]; W <- W / sum(W)
+  aff <- list(correlated  = z %*% t(matrix(c(0.40, 0.15, 0, 0.30), 2, 2)),
+              independent = cbind(0.4 * z[, 1], 0.3 * z[, 2]),
+              lognorm_log = cbind(0.4 * z[, 1], 0.5 * log(exp(0.2 * z[, 2]))))
+  non <- list(squared   = cbind(0.4 * z[, 1], 0.3 * z[, 2]^2),
+              lognormal = cbind(0.4 * z[, 1], 0.3 * exp(0.2 * z[, 2])))
+  for (nm in names(aff)) {
+    expect_lt(admixr2:::.admShiftAffineResid(aff[[nm]], W, z), 1e-8)
+    expect_true(admixr2:::.admShiftGaussOK(aff[[nm]], W, z, 2L))
+  }
+  for (nm in names(non)) {
+    expect_gt(admixr2:::.admShiftAffineResid(non[[nm]], W, z), 1e-3)
+    expect_false(admixr2:::.admShiftGaussOK(non[[nm]], W, z, 2L))
+  }
+  # WITHOUT the latent scores a vector shift must not take the branch, even
+  # though every margin here is normal: that is the case a moment test would
+  # wave through without being able to justify it.
+  expect_false(admixr2:::.admShiftGaussOK(aff$correlated, W, NULL, 2L))
+})
+
+test_that("the 2-D Gaussian branch is exact and skips the recursion", {
+  gh <- admixr2:::.adghNodes1; nc <- 21L; g <- gh(nc)
+  ix <- as.matrix(expand.grid(seq_len(nc), seq_len(nc)))
+  z  <- cbind(g$x[ix[, 1]], g$x[ix[, 2]])
+  W  <- g$w[ix[, 1]] * g$w[ix[, 2]]; W <- W / sum(W)
+  A  <- matrix(c(0.40, 0.15, 0, 0.30), 2, 2)
+  D  <- z %*% t(A); om <- c(0.30, 0.25)
+  r  <- admixr2:::.admShiftNodesMulti(D, W, om, 12L, z = z)
+  expect_true(isTRUE(r$gauss))
+  expect_equal(nrow(r$u), 144L)
+  expect_equal(sum(r$w), 1)
+  # u ~ N(0, A A' + diag(om^2)); score a smooth integrand against the truth
+  S <- A %*% t(A) + diag(om^2)
+  cf <- c(1, 0.5)
+  expect_equal(sum(r$w * exp(r$u %*% cf)),
+               as.numeric(exp(0.5 * t(cf) %*% S %*% cf)), tolerance = 1e-10)
+  # and the non-affine case still goes through the recursion and stays finite
+  D2 <- cbind(0.4 * z[, 1], 0.3 * exp(0.2 * z[, 2]))
+  r2 <- admixr2:::.admShiftNodesMulti(D2, W, om, 8L, z = z)
+  expect_null(r2$gauss)
+  expect_true(all(is.finite(r2$u)))
+})
+
+test_that("a refused inversion propagates out of the shift recursion", {
+  # matrix(NULL, ncol = 1) is a 0-row matrix, so without propagation the caller
+  # receives a well-shaped node set holding no nodes.
+  gh <- admixr2:::.adghNodes1; nc <- 11L; g <- gh(nc)
+  ix <- as.matrix(expand.grid(seq_len(nc), seq_len(nc)))
+  z  <- cbind(g$x[ix[, 1]], g$x[ix[, 2]])
+  W  <- g$w[ix[, 1]] * g$w[ix[, 2]]; W <- W / sum(W)
+  D  <- cbind(0.4 * z[, 1], 0.3 * exp(0.2 * z[, 2]))
+  D[5, 2] <- NaN                       # non-affine, so the recursion is used
+  expect_null(admixr2:::.admShiftNodesMulti(D, W, c(0.3, 0.25), 8L, z = z))
+})
+
+test_that(".admCovGrid returns the latent scores behind X", {
+  d <- list(WT = list(mu = 70, sd = 8), AGE = list(mu = 50, sd = 10))
+  g <- admixr2:::.admCovGrid(d, 5L)
+  expect_equal(nrow(g$z), nrow(g$X))
+  expect_equal(ncol(g$z), 2L)
+  # X is the image of z under F^-1(Phi(.)), so for a normal margin it is affine
+  expect_lt(admixr2:::.admShiftAffineResid(g$X, g$W, g$z), 1e-10)
+  # a discrete margin has no score, and one is enough to void the grid
+  d2 <- list(WT = list(mu = 70, sd = 8), SEX = list(values = c(0, 1)))
+  expect_null(admixr2:::.admCovGrid(d2, 5L)$z)
+})
