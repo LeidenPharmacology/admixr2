@@ -105,9 +105,13 @@
       # is cheap; the cap keeps a pathological covariate spread from blowing the
       # node count up without bound.
       nn0 <- as.integer(round(nrow(grid$X)^(1 / max(pinfo$n_eta, 1L))))
-      vD  <- pmax(colSums(sh$W * D^2) - colSums(sh$W * D)^2, 0)
-      n_u <- min(101L, max(nn0, as.integer(ceiling(
-               nn0 * sqrt(max((vD + om^2) / om^2))))))
+      # n_u MUST NOT depend on the current parameters. It used to scale with
+      # sqrt((Var(Delta) + omega^2)/omega^2), so the node count changed as the
+      # optimizer moved omega and the objective stepped discontinuously across
+      # each switch -- 0.078 -2LL units, enough to send an FD Hessian entry from
+      # -3169 to -256961. Fixed at admission instead (sh$n_u), from cov_dist,
+      # which is data.
+      n_u <- sh$n_u %||% min(101L, 4L * nn0)
       un  <- .admShiftNodesMulti(D, sh$W, om, n_u)
       # n_nodes per eta, recovered from the grid: nrow = n_nodes^n_eta. round(),
       # not a bare fractional power -- 343^(1/3) is 6.999999999999999.

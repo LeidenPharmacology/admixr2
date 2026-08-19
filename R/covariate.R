@@ -306,6 +306,21 @@
     if (identical(studies[[nm]]$.adm_cov_path, "rows") &&
         .ci %in% c("shift", "auto")) {
       .cn  <- .admCovSpecNames(cd)
+      # A DISCRETE covariate makes u = Delta(a) + eta a multi-modal mixture.
+      # The shift IDENTITY still holds -- Delta is well defined at each level --
+      # but Gauss-Hermite nodes on u cannot resolve separated modes: measured
+      # 13% on V and 21.4 -2LL units against the product grid at identical cost,
+      # and it does NOT converge away with more nodes (1891 rows still 1.2% out).
+      # `quadrature` and `taylor` enumerate the levels exactly, so refuse here
+      # rather than integrate a mixture this rule cannot represent.
+      .disc <- vapply(.cn, function(n) !is.null(cd[[n]][["values"]]), logical(1))
+      if (any(.disc))
+        bad("study '", nm, "': cov_integration = \"shift\" is not applicable -- ",
+            "covariate(s) ", paste(sQuote(.cn[.disc]), collapse = ", "),
+            " are discrete, which makes the shifted argument a multi-modal ",
+            "mixture that Gauss-Hermite nodes cannot resolve. Use ",
+            "cov_integration = \"quadrature\", which enumerates the levels ",
+            "exactly.")
       .sp  <- .admShiftSpec(.ui, .cn, pinfo$eta_col_names)
       .ar  <- if (is.null(.sp)) NULL else .admShiftRef(cd, .cn)
       .why <- NULL
@@ -318,14 +333,21 @@
         # another, its marginal is no longer sqrt(Omega_jj) and the column
         # cannot be substituted independently, so refuse rather than quietly
         # use the diagonal. Checked BEFORE the verification, which costs solves.
-        .j <- match(.sp$eta, pinfo$eta_col_names)
-        if (length(which(!pinfo$chol_diag &
-                         (pinfo$chol_i %in% .j | pinfo$chol_j %in% .j))))
+        # ANY estimated off-diagonal, not merely one touching the shifted eta.
+        # The shift branch rebuilds the UNAFFECTED eta columns as
+        # sqrt(Omega_kk) * z, which silently discards the Cholesky off-diagonal
+        # between two etas the covariate never touches. Measured on a 3-eta
+        # model with cov(eta.v, eta.ka) estimated: 2.5e-2 on E, 78x on V and
+        # 951 -2LL units; the same model with that covariance zeroed is
+        # 6.5e-10 / 3.2e-07. Carrying a correlated Omega through the shift
+        # needs the conditional Cholesky of the unaffected block, which this
+        # path does not build.
+        if (length(which(!pinfo$chol_diag)))
           .why <- paste0(
-            "the random effect(s) ", paste(sQuote(.sp$eta), collapse = ", "),
-            " that would carry the covariate are CORRELATED (an off-diagonal ",
-            "Omega element is estimated), so the marginal is not ",
-            "sqrt(Omega_jj) and the column cannot be substituted on its own")
+            "Omega has an estimated off-diagonal element. The shift replaces ",
+            "one eta column and rebuilds the others from the DIAGONAL, so any ",
+            "correlation between random effects -- including between two the ",
+            "covariate never touches -- would be silently dropped")
       }
       if (is.null(.why)) {
         .w <- .admShiftVerify(.sp, .ui, NULL, pinfo, studies[[nm]], NULL,
@@ -349,10 +371,28 @@
                 "using the covariate product grid -- ", .why, ".")
       } else {
         .g <- .admCovGrid(cd, pinfo$cov_nodes %||% 7L)
+        # n_u is fixed HERE, from DATA, so the objective cannot step when
+        # the optimizer moves omega. It used to scale with the current
+        # sqrt((Var(Delta) + omega^2)/omega^2), so the node count changed
+        # mid-fit and the objective jumped 0.078 -2LL units across each
+        # switch -- enough to send an FD Hessian entry from -3169 to
+        # -256961. Sized once at the initial omega, then held.
+        .nn0 <- as.integer(pinfo$n_nodes %||% 7L)
+        .D0  <- tryCatch(.admShiftDelta(.sp, .admShiftStruct(pinfo), .g$X,
+                                        .ar), error = function(e) NULL)
+        .od  <- tryCatch(diag(as.matrix(pinfo$omega_init))[[
+                  match(.sp$eta[1L], pinfo$eta_col_names)]],
+                  error = function(e) NA_real_)
+        .om0 <- sqrt(if (is.finite(.od) && .od > 0) .od else 0.09)
+        .vD0 <- if (is.null(.D0)) 0 else
+          max(colSums(.g$W * as.matrix(.D0)^2) -
+              colSums(.g$W * as.matrix(.D0))^2, 0)
+        .nu  <- min(101L, max(.nn0, as.integer(ceiling(
+                  .nn0 * sqrt((.vD0 + .om0^2) / .om0^2)))))
         studies[[nm]]$.adm_cov_shift <- list(
           spec = .sp, aref = .ar, cov_names = .cn,
           eta_idx = match(.sp$eta, pinfo$eta_col_names),
-          m = length(.sp$eta), X = .g$X, W = .g$W)
+          m = length(.sp$eta), X = .g$X, W = .g$W, n_u = .nu)
         studies[[nm]]$.adm_cov_path <- "shift"
       }
     }
@@ -1712,6 +1752,12 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
     u  <- u - sign(st) * pmin(abs(st), 2 * om)
     if (max(abs(st)) < tol) break
   }
+  # A clamped Newton on a multi-modal mixture can exhaust maxit while still far
+  # from the root, and returning those nodes silently is a wrong answer wearing
+  # a valid shape (measured |u - u_exact| = 3.7 on a well-separated mixture).
+  # Report the failure instead; the caller refuses the path.
+  Zc <- outer(u, Delta, "-") / om
+  if (max(abs(as.numeric(stats::pnorm(Zc) %*% W) - tg)) > 1e-6) return(NULL)
   list(u = u, w = g$w)
 }
 
@@ -1807,10 +1853,14 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   if (is.null(rxMod))   rxMod   <- tryCatch(.admLoadModel(ui), error = function(e) NULL)
   if (is.null(rxMod) || is.null(out_var)) return(NA_real_)
   cd <- s[["cov_dist"]]
+  # .admCovVarOf, not .admCovSdOf: the latter is deliberately the LOG-scale
+  # spread for a lognormal margin, so pairing it with a natural-scale mean
+  # moved the probe by 0.23 kg instead of 18 and a real violation registered
+  # ~80x smaller than it is.
   hi <- vapply(cov_names, function(n) {
-    m <- .admCovMeanOf(cd[[n]]); sd <- .admCovSdOf(cd[[n]])
+    m <- .admCovMeanOf(cd[[n]]); v <- .admCovVarOf(cd[[n]])
     if (is.null(m) || !is.finite(m)) return(NA_real_)
-    if (is.null(sd) || !is.finite(sd)) m else m + sd
+    if (is.null(v) || !is.finite(v) || v <= 0) m else m + sqrt(v)
   }, 0)
   if (anyNA(hi)) return(NA_real_)
   X <- matrix(hi, 1L, length(cov_names), dimnames = list(NULL, cov_names))
@@ -1822,6 +1872,26 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   sv <- pinfo$struct_init
   D <- .admShiftDelta(spec, struct, X, aref)
   if (is.null(D)) return(NA_real_)
+  # THE PROBE MUST MAKE Delta MATERIAL, or the identity holds VACUOUSLY. A
+  # covariate coefficient initialised at 0 gives Delta == 0, at which
+  # f(a, eta) == f(a_ref, eta) for ANY model -- including ones the shift does
+  # not describe. The optimizer then walks the coefficient off zero and the
+  # objective is wrong in the direction that looks better (measured on an
+  # ADDITIVE effect granted at b1 = 0: -211 units at 0.002, -70622 at 0.05).
+  # So if Delta is negligible at the initial values, re-probe at a nominal
+  # coefficient; the identity is a property of the model's STRUCTURE, not of
+  # the parameter value, so any material Delta tests the same thing.
+  if (max(abs(D)) < 1e-6) {
+    st2 <- struct
+    for (k in names(st2)) {
+      if (isTRUE(abs(st2[[k]]) < 1e-8)) st2[[k]] <- 0.5
+    }
+    D2 <- .admShiftDelta(spec, st2, X, aref)
+    if (is.null(D2) || max(abs(D2)) < 1e-6) return(NA_real_)
+    struct <- st2; D <- D2
+    sv <- utils::modifyList(as.list(sv), st2[intersect(names(st2), names(sv))])
+    sv <- unlist(sv[names(pinfo$struct_init)])
+  }
   j  <- match(spec$eta, pinfo$eta_col_names)
   if (anyNA(j)) return(NA_real_)
   es <- c(0, 0.4, -0.6)
