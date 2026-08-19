@@ -192,6 +192,37 @@ buy accuracy --- on a matched fit the coefficient came back at 0.7000 / 0.7002 /
 0.7005 for 3 / 4 / 10 strata against a true 0.700 --- and each one costs a solve,
 which is why the default is 5.
 
+### A published subgroup is an interval, not a value
+
+The strata above are pinned at a covariate *value*, which is the right
+representation for a source you can evaluate there --- a fitted model, or a
+simulation you are generating. A subgroup read off a publication is not that: it
+is a **band**, and its patients are spread across it.
+
+Scoring a band at a single representative value leaves the band's own spread out
+of the prediction. Writing `tau_k` for the covariate spread within band *k*, the
+predicted covariance is short by `tau_k^2 * D D'` with `D` the derivative of the
+profile in the covariate --- rank one, and first order in the *slope*, so it does
+not vanish where the model is locally linear and the mean is unaffected. It is
+the same plug-in error that stratifying was meant to avoid, committed inside a
+stratum instead of across the study.
+
+The fix needs no new machinery: give that study the band's **distribution**
+rather than its midpoint, and `admixr2` integrates over it exactly as it
+integrates a study-wide distribution.
+
+```{r band-spec, eval = FALSE}
+# a published subgroup "weight 60-75 kg", n = 84
+study_band <- list(E = E_band, V = V_band, n = 84,
+                   cov_dist = list(WT = list(dist = "unif", min = 60, max = 75)))
+```
+
+Two practical notes. Use the band's reported **mean**, not the midpoint of its
+limits --- they differ most for the open-ended outer bands (`>= 65 years`) that
+publications favour, and that is where the coefficient moves most. And a band
+narrow enough that `tau_k` is negligible can still be given as a value: the
+correction is then empty, and `cov = list(WT = 67)` is exact.
+
 # A covariate nobody measured
 
 Here is the result that makes aggregate synthesis worth doing.

@@ -1443,6 +1443,11 @@ nlmixr2Est.adfo <- function(env, ...) {
   .admRefuseNodeStudies(studies)
 
   pinfo      <- .admDriverPinfo(.ui, .ctl)
+  # Warn on a covariate coefficient the supplied sources cannot identify. Run
+  # here, on the RAW study list, for the same reason .admRefuseNodeStudies is:
+  # normalising strips `cov`/`cov_dist` into per-unit fields and the check
+  # would inspect a list they are no longer on.
+  .admWarnCovIdentifiability(.ui, pinfo, studies)
   output_var <- .admOutputVar(.ui)
   # A beta endpoint's precision phi is SOLVED, not fitted: .admSimulate() returns
   # it as an attribute on cp_mat and admc/adgh patch it into the residual rows.

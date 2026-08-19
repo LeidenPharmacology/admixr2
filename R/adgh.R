@@ -1555,6 +1555,11 @@ nlmixr2Est.adgh <- function(env, ...) {
   .admRefuseNodeStudies(studies)
 
   pinfo      <- .admDriverPinfo(.ui, .ctl)
+  # Warn on a covariate coefficient the supplied sources cannot identify. Run
+  # here, on the RAW study list, for the same reason .admRefuseNodeStudies is:
+  # normalising strips `cov`/`cov_dist` into per-unit fields and the check
+  # would inspect a list they are no longer on.
+  .admWarnCovIdentifiability(.ui, pinfo, studies)
   output_var <- .admOutputVar(.ui)
   n_nodes    <- .ctl$n_nodes
 

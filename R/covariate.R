@@ -1963,16 +1963,23 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 .admCovParamEta <- function(ui, cov, eta_names) {
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
   if (is.null(lst)) return(NULL)
-  for (e in lst) {
-    if (!is.call(e) || length(e) < 3L) next
-    if (!as.character(e[[1L]])[1L] %in% c("<-", "=")) next
-    v <- all.vars(e[[3L]])
-    if (!cov %in% v) next
-    et <- intersect(eta_names, v)
-    if (length(et) != 1L) next
-    return(list(param = as.character(e[[2L]])[1L], eta = et))
-  }
-  NULL
+  asg <- Filter(function(e)
+    is.call(e) && length(e) >= 3L &&
+      as.character(e[[1L]])[1L] %in% c("<-", "="), lst)
+  reads <- vapply(asg, function(e) cov %in% all.vars(e[[3L]]), logical(1))
+  # The ridge argument requires the model to see the covariate ONLY through the
+  # mu-referenced sum: it is what makes the prediction a function of
+  # `gamma*a + omega*b` rather than of `(a, b)` separately. A covariate read by
+  # a SECOND assignment -- a second parameter, or a scaling the design applies
+  # -- restores the separate dependence and is identified from one population,
+  # so there is no ridge and no warning to give. Reading only the first
+  # assignment that paired the covariate with an eta declared such a model
+  # unidentified when it is not.
+  if (sum(reads) != 1L) return(NULL)
+  e  <- asg[[which(reads)]]
+  et <- intersect(eta_names, all.vars(e[[3L]]))
+  if (length(et) != 1L) return(NULL)
+  list(param = as.character(e[[2L]])[1L], eta = et)
 }
 
 # The covariate value the model is SOLVED at when the study does not name one.
@@ -2050,16 +2057,31 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 # A covariate on a parameter with NO random effect is not affected: there is no
 # omega for its variance to be absorbed into, so it is identified by shape.
 .admWarnCovIdentifiability <- function(.ui, pinfo, studies) {
-  has <- vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))
-  if (!any(has)) return(invisible(NULL))
-  cds <- lapply(studies[has], `[[`, "cov_dist")
-  for (cv in unique(unlist(lapply(cds, names)))) {
+  # A study declares a covariate one of two ways: as the distribution it is
+  # marginalised over (`cov_dist`), or as the value it is conditioned at
+  # (`cov`). These are the same object at two resolutions -- a conditioned
+  # stratum is a degenerate distribution -- and BOTH break the ridge, because
+  # each supplies its own equation in (theta, gamma). Reading `cov_dist` alone
+  # warned that a source reporting by stratum was unidentified, which is the
+  # one case that identifies the coefficient WITHIN a single population.
+  .decl <- function(s, cv) {
+    d <- s[["cov_dist"]][[cv]]
+    if (!is.null(d))
+      return(c(.admCovMeanOf(d) %||% NA_real_, .admCovSdOf(d) %||% NA_real_))
+    v <- s[["cov"]][[cv]]
+    if (!is.null(v) && is.numeric(v) && length(v) == 1L && is.finite(v))
+      return(c(as.numeric(v), 0))
+    NULL
+  }
+  cvs <- unique(unlist(lapply(studies, function(s)
+    c(.admCovSpecNames(s[["cov_dist"]]), names(s[["cov"]])))))
+  for (cv in cvs) {
     # only covariates that share an argument with an eta sit on the ridge
     if (is.null(.admCovParamEta(.ui, cv, pinfo$eta_col_names))) next
-    sp <- Filter(Negate(is.null), lapply(cds, `[[`, cv))
+    sp <- Filter(Negate(is.null), lapply(studies, .decl, cv = cv))
     if (length(sp) == 0L) next
-    mu <- vapply(sp, function(x) .admCovMeanOf(x) %||% NA_real_, numeric(1))
-    sd <- vapply(sp, function(x) .admCovSdOf(x)  %||% NA_real_, numeric(1))
+    mu <- vapply(sp, `[`, numeric(1), 1L)
+    sd <- vapply(sp, `[`, numeric(1), 2L)
     varies <- (length(unique(signif(mu, 10))) > 1L) ||
               (length(unique(signif(sd, 10))) > 1L)
     if (!varies)
@@ -2068,8 +2090,9 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
               "random effect, and every study declaring it has the SAME ",
               "covariate distribution, so the likelihood is exactly flat along ",
               "a trade-off between that coefficient, the corresponding fixed ",
-              "effect and omega. Identification needs studies whose covariate ",
-              "MEANS or SPREADS differ.", call. = FALSE)
+              "effect and omega. Identification needs sources whose covariate ",
+              "MEANS or SPREADS differ, or one source reporting its summary ",
+              "metrics BY covariate stratum.", call. = FALSE)
   }
   invisible(NULL)
 }

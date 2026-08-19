@@ -1201,6 +1201,11 @@ nlmixr2Est.adirmc <- function(env, ...) {
   .admRefuseNodeStudies(studies)
 
   pinfo      <- .admDriverPinfo(.ui, .ctl)
+  # Warn on a covariate coefficient the supplied sources cannot identify. Run
+  # here, on the RAW study list, for the same reason .admRefuseNodeStudies is:
+  # normalising strips `cov`/`cov_dist` into per-unit fields and the check
+  # would inspect a list they are no longer on.
+  .admWarnCovIdentifiability(.ui, pinfo, studies)
   # IRMC draws its importance-sampling proposals FROM the random-effect
   # distribution, so a model with no random effect has nothing to propose: the
   # proposal draw is degenerate and the fit returned a silent objective = Inf

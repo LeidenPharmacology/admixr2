@@ -225,6 +225,40 @@ test_that("an unidentifiable covariate coefficient is warned about", {
   expect_silent(admixr2:::.admWarnCovIdentifiability(ui2, .cov_pinfo(), one))
 })
 
+test_that("conditioned strata identify the coefficient within one source", {
+  # A stratum is a covariate distribution at zero spread, and supplies its own
+  # equation in (theta, gamma) exactly as a second study's distribution does.
+  # Reading `cov_dist` alone called this unidentified -- a false alarm on the
+  # one design that identifies gamma without a between-source contrast.
+  ui <- .cov_ui()   # cl <- exp(tcl + tcov*WT + eta.cl)
+  d  <- list(WT = list(mu = 0, sd = 0.6))
+
+  two_strata <- list(a = list(cov = list(WT = -0.4)),
+                     b = list(cov = list(WT =  0.4)))
+  expect_silent(admixr2:::.admWarnCovIdentifiability(ui, .cov_pinfo(), two_strata))
+
+  # mixed: one marginalised source plus strata from another
+  mixed <- list(a = list(cov_dist = d),
+                b = list(cov = list(WT = -0.4)),
+                c = list(cov = list(WT =  0.4)))
+  expect_silent(admixr2:::.admWarnCovIdentifiability(ui, .cov_pinfo(), mixed))
+
+  # a SINGLE stratum is still one equation in two unknowns -> still warns
+  expect_warning(admixr2:::.admWarnCovIdentifiability(
+    ui, .cov_pinfo(), list(a = list(cov = list(WT = 0.4)))), "not identifiable")
+})
+
+test_that("a covariate entering a second parameter is off the ridge", {
+  # eq:ridge holds only while the model sees gamma*a + omega*b. A covariate
+  # read by a second assignment restores the separate dependence on (a, b), so
+  # it is identified from one population and must not be warned about.
+  ui <- .cov_ui(expr = list(quote(v <- exp(tv + vwt * WT))))
+  expect_null(admixr2:::.admCovParamEta(ui, "WT", "eta.cl"))
+  expect_silent(admixr2:::.admWarnCovIdentifiability(
+    ui, .cov_pinfo(),
+    list(a = list(cov_dist = list(WT = list(mu = 0, sd = 0.6))))))
+})
+
 test_that(".admCovSdOf reports the spread the ridge depends on", {
   expect_equal(admixr2:::.admCovSdOf(list(mu = 70, sd = 10)), 10)
   expect_equal(admixr2:::.admCovSdOf(list(meanlog = log(70), sdlog = 0.2)), 0.2)
