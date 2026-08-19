@@ -129,7 +129,7 @@
           dv <- .admShiftAbsorbDeriv(sh$spec, .admShiftStruct(pinfo, pars$struct),
                                      sh$X, sh$aref, ab, pinfo$n_eta)
           return(list(eta = ab$eta, W = ab$W, X = ab$X, cov_rows = cr,
-                      shift = if (is.null(dv)) NULL else
+                      shift = if (is.null(dv)) list(degraded = TRUE) else
                         list(absorb = TRUE, Lt = ab$Lt, dmu = dv$dmu,
                              dP = dv$dP)))
         }
@@ -196,7 +196,13 @@
       for (kk in seq_along(other))
         Xz[, other[kk]] <- g1$x[ix[, kk + 1L]]
       shinfo <- NULL
-      if (!is.null(.mdu) && !is.null(un$du)) {
+      if (ncol(D) > 1L && (is.null(.mdu) || is.null(un$du))) {
+        # The node derivatives could not be built. Say so, rather than return a
+        # grid with no `shift`: the gradient would then simply omit this study's
+        # shift chain -- finite, plausible and a direction the objective does
+        # not follow, which is the failure this file keeps meeting.
+        shinfo <- list(degraded = TRUE)
+      } else if (!is.null(.mdu) && !is.null(un$du)) {
         # Every shifted coordinate responds to every direction, so the omega
         # chain cannot be folded into an X column the way the scalar case can:
         # d(om_1) moves u_2 through the posterior weights. .adghGrad forms the
@@ -482,6 +488,12 @@
     # objective instead of silently using the scalar chain -- still far cheaper
     # than the product grid, because the objective is what got cheap.
     .gS <- .adghGrid(pars, pinfo, grid, s)
+    # A shift whose node derivatives could not be built degrades the WHOLE
+    # gradient to finite differences, the same way a failed sensitivity solve
+    # does. Continuing would drop this study's shift chain silently.
+    if (isTRUE(.gS$shift$degraded))
+      return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                     cores, grad_h), nll = NULL))
     X   <- .gS$X
     W   <- .gS$W
     ty  <- .gS$taylor          # NULL unless cov_integration = "taylor"
