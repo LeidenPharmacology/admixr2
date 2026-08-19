@@ -357,7 +357,21 @@
         # ... UNLESS the covariate absorbs into Omega. Then no column is
         # substituted and no correlation is dropped: the whole eta vector is
         # drawn from Omega + P, so Cov(u_S, eta_O) stays Omega_SO exactly.
-        if (length(which(!pinfo$chol_diag)) && !.abs)
+        # A VECTOR shift over a Delta that does not certify is the one
+        # construction whose gradient could only be finite-differenced: its
+        # later coordinates move through the Rosenblatt posterior weights, a
+        # second chain .admShiftDu does not carry. The product grid computes the
+        # same integral exactly and its gradient IS analytic, so take that
+        # instead -- a finite difference is for a failed sensitivity model, not
+        # for a routine path. It was not even a saving: measured on a
+        # 2-coordinate shift, 0.19 s per gradient against 0.27 s for the grid.
+        if (length(.sp$eta) > 1L && !.abs)
+          .why <- paste0(
+            "the covariate acts on ", length(.sp$eta), " mu-referenced ",
+            "parameters and its shift is not normally distributed, so the ",
+            "shifted argument would need a Rosenblatt recursion whose gradient ",
+            "admixr2 does not carry analytically")
+        if (is.null(.why) && length(which(!pinfo$chol_diag)) && !.abs)
           .why <- paste0(
             "Omega has an estimated off-diagonal element. The shift replaces ",
             "one eta column and rebuilds the others from the DIAGONAL, so any ",
@@ -2036,70 +2050,15 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   D <- as.matrix(D)
   .admShiftGaussResid(D[, 1L], W) < .ADM_SHIFT_GAUSS_TOL
 }
-
-.admShiftNodesMulti <- function(D, W, om, n_u, z = NULL) {
-  D <- as.matrix(D)
-  m <- ncol(D)
-  if (m == 1L) {                       # identical to the scalar path
-    un <- .admShiftNodes(D[, 1L], W, om[1L], n_u, z = z)
-    if (is.null(un)) return(NULL)
-    return(list(u = matrix(un$u, ncol = 1L), w = un$w, gauss = un$gauss))
-  }
-  # THE JOINTLY GAUSSIAN CASE SKIPS THE RECURSION ENTIRELY. u = Delta + eta is
-  # then multivariate normal with covariance Cov(Delta) + diag(om^2), and a
-  # product Gauss-Hermite grid rotated by its Cholesky factor is exact -- no
-  # inversion at any level, and no posterior reweighting, because there is no
-  # recursion left to reweight. Measured on a correlated 2-coordinate shift at
-  # 12 nodes per coordinate: 90 ms and 2.6e-08 relative on a smooth integrand,
-  # against effectively free and 7.4e-16 here.
-  #
-  # This is also what would make an ANALYTIC vector-shift gradient possible: the
-  # second chain through the Rosenblatt posterior weights, the one .admShiftDu
-  # does not carry and .adghGrad finite-differences the whole objective to
-  # avoid, does not exist on this branch. Not yet wired -- the Cholesky
-  # differential needs its own verification -- but it is the reason to prefer
-  # this construction over a faster recursion.
-  if (.admShiftGaussOK(D, W, z, m)) {
-    Wn <- W / sum(W)
-    mD <- as.numeric(crossprod(D, Wn))
-    Dc <- sweep(D, 2L, mD, "-")
-    Sc <- crossprod(Dc * sqrt(Wn)) + diag(as.numeric(om)^2, m)
-    Lc <- tryCatch(t(chol(Sc)), error = function(e) NULL)
-    if (!is.null(Lc)) {
-      g   <- .adghNodes1(n_u)
-      ixg <- as.matrix(expand.grid(rep(list(seq_len(n_u)), m),
-                                   KEEP.OUT.ATTRS = FALSE))
-      Xg  <- matrix(g$x[ixg], nrow(ixg), m)
-      wg  <- apply(matrix(g$w[ixg], nrow(ixg), m), 1L, prod)
-      return(list(u = sweep(Xg %*% t(Lc), 2L, mD, "+"),
-                  w = wg / sum(wg), gauss = TRUE))
-    }
-  }
-  rec <- function(k, Wc) {
-    un <- .admShiftNodes(D[, k], Wc, om[k], n_u, z = z)
-    # A refused inversion at ANY level has to propagate. Left to itself,
-    # matrix(NULL, ncol = 1) is a 0-row matrix and the caller receives a
-    # well-shaped node set with no nodes in it.
-    if (is.null(un)) return(NULL)
-    if (k == m)
-      return(list(u = matrix(un$u, ncol = 1L), w = un$w))
-    out_u <- list(); out_w <- numeric(0)
-    for (i in seq_along(un$u)) {
-      # reweight the components by how well each explains the value just drawn
-      pw <- Wc * stats::dnorm((un$u[i] - D[, k]) / om[k])
-      sp <- sum(pw)
-      pw <- if (sp > 0) pw / sp else Wc
-      sub <- rec(k + 1L, pw)
-      if (is.null(sub)) return(NULL)
-      out_u[[i]] <- cbind(un$u[i], sub$u)
-      out_w <- c(out_w, un$w[i] * sub$w)
-    }
-    list(u = do.call(rbind, out_u), w = out_w)
-  }
-  r <- rec(1L, W)
-  if (is.null(r)) return(NULL)
-  list(u = r$u, w = r$w / sum(r$w))
-}
+# A VECTOR shift no longer has a node path of its own.
+#
+# It either ABSORBS -- Delta = c + B z, so u is multivariate normal and
+# .admShiftAbsorb builds the whole eta grid from Omega + B B' -- or it is
+# refused at admission and the study takes the product grid. What sat here was
+# a Rosenblatt recursion: exact, but its later coordinates move through
+# posterior weights .admShiftDu does not differentiate, so it could only be
+# paired with a finite-differenced gradient. The product grid computes the same
+# integral analytically at comparable cost, so the recursion bought nothing.
 
 # The covariate absorbed into Omega.
 #

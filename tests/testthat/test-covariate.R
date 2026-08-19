@@ -189,10 +189,6 @@ test_that(".admShiftNodes solves F_u(u) = Phi(z) exactly, and smoothly", {
   expect_equal(sum(un$w * un$u), mD, tolerance = 1e-6)
   expect_equal(sum(un$w * (un$u - mD)^2), vD + om^2, tolerance = 1e-4)
 
-  # the vector driver must agree with the scalar one at m = 1
-  m1 <- admixr2:::.admShiftNodesMulti(matrix(D, ncol = 1L), g$w, om, n_u)
-  expect_equal(as.numeric(m1$u), un$u)
-  expect_equal(m1$w, un$w)
 })
 
 test_that("an unidentifiable covariate coefficient is warned about", {
@@ -1304,39 +1300,37 @@ test_that("the affine certificate decides the Gaussian branch in 2-D", {
   expect_false(admixr2:::.admShiftGaussOK(aff$correlated, W, NULL, 2L))
 })
 
-test_that("the 2-D Gaussian branch is exact and skips the recursion", {
+test_that("the 2-D absorption is exact and needs no recursion", {
+  # u = Delta + eta is multivariate normal here, so the whole eta grid comes
+  # from chol(Omega + B B') and there is no inversion at any level.
   gh <- admixr2:::.adghNodes1; nc <- 21L; g <- gh(nc)
   ix <- as.matrix(expand.grid(seq_len(nc), seq_len(nc)))
   z  <- cbind(g$x[ix[, 1]], g$x[ix[, 2]])
   W  <- g$w[ix[, 1]] * g$w[ix[, 2]]; W <- W / sum(W)
   A  <- matrix(c(0.40, 0.15, 0, 0.30), 2, 2)
   D  <- z %*% t(A); om <- c(0.30, 0.25)
-  r  <- admixr2:::.admShiftNodesMulti(D, W, om, 12L, z = z)
-  expect_true(isTRUE(r$gauss))
-  expect_equal(nrow(r$u), 144L)
-  expect_equal(sum(r$w), 1)
-  # u ~ N(0, A A' + diag(om^2)); score a smooth integrand against the truth
-  S <- A %*% t(A) + diag(om^2)
-  cf <- c(1, 0.5)
-  expect_equal(sum(r$w * exp(r$u %*% cf)),
-               as.numeric(exp(0.5 * t(cf) %*% S %*% cf)), tolerance = 1e-10)
-  # and the non-affine case still goes through the recursion and stays finite
+  Om <- diag(om^2)
+  ab <- admixr2:::.admShiftAbsorb(D, W, z, Om, 1:2, 9L, 5L)
+  expect_false(is.null(ab))
+  # Omega + B B' is what the nodes are drawn from
+  expect_equal(ab$Lt %*% t(ab$Lt), Om + A %*% t(A), tolerance = 1e-10)
+  # and a NON-affine Delta is refused, so no absorption is offered
   D2 <- cbind(0.4 * z[, 1], 0.3 * exp(0.2 * z[, 2]))
-  r2 <- admixr2:::.admShiftNodesMulti(D2, W, om, 8L, z = z)
-  expect_null(r2$gauss)
-  expect_true(all(is.finite(r2$u)))
+  expect_null(admixr2:::.admShiftAbsorb(D2, W, z, Om, 1:2, 9L, 5L))
 })
 
-test_that("a refused inversion propagates out of the shift recursion", {
-  # matrix(NULL, ncol = 1) is a 0-row matrix, so without propagation the caller
-  # receives a well-shaped node set holding no nodes.
+test_that("non-finite input is refused rather than absorbed", {
+  # .admShiftGaussResid scores a non-finite spread Inf rather than 0, so a NaN
+  # cannot be mistaken for a degenerate-normal Delta and routed through the
+  # closed form as a node set full of NaN wearing a valid shape.
   gh <- admixr2:::.adghNodes1; nc <- 11L; g <- gh(nc)
   ix <- as.matrix(expand.grid(seq_len(nc), seq_len(nc)))
   z  <- cbind(g$x[ix[, 1]], g$x[ix[, 2]])
   W  <- g$w[ix[, 1]] * g$w[ix[, 2]]; W <- W / sum(W)
-  D  <- cbind(0.4 * z[, 1], 0.3 * exp(0.2 * z[, 2]))
-  D[5, 2] <- NaN                       # non-affine, so the recursion is used
-  expect_null(admixr2:::.admShiftNodesMulti(D, W, c(0.3, 0.25), 8L, z = z))
+  D  <- cbind(0.4 * z[, 1], 0.3 * z[, 2]); D[5, 2] <- NaN
+  expect_equal(admixr2:::.admShiftGaussResid(D[, 2], W), Inf)
+  expect_false(admixr2:::.admShiftGaussOK(D, W, z, 2L))
+  expect_null(admixr2:::.admShiftAbsorb(D, W, z, diag(c(0.09, 0.0625)), 1:2, 9L, 5L))
 })
 
 test_that(".admCovGrid returns the latent scores behind X", {

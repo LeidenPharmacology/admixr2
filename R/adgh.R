@@ -134,7 +134,15 @@
                              dP = dv$dP)))
         }
       }
-      un  <- .admShiftNodesMulti(D, sh$W, om, n_u, z = sh$z)
+      # Scalar by construction: a vector shift either absorbs (returned above)
+      # or is refused at admission, because the Rosenblatt recursion it would
+      # otherwise need has no analytic gradient.
+      if (ncol(D) > 1L)
+        stop("admixr2: a vector shift reached the scalar node path; this ",
+             "should have absorbed or been refused at admission.", call. = FALSE)
+      un0 <- .admShiftNodes(D[, 1L], sh$W, om[1L], n_u, z = sh$z)
+      un  <- if (is.null(un0)) NULL else
+        list(u = matrix(un0$u, ncol = 1L), w = un0$w)
       # n_nodes per eta, recovered from the grid: nrow = n_nodes^n_eta. round(),
       # not a bare fractional power -- 343^(1/3) is 6.999999999999999.
       g1 <- .adghNodes1(nn0)
