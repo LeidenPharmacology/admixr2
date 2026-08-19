@@ -119,3 +119,90 @@ test_that("the true weight moves the sandwich away from 2H", {
   # and the cross block, zero under normality, is not zero here
   expect_gt(max(abs(Om[seq_len(m), -seq_len(m)])), 0)
 })
+
+test_that("a missing or unusable H is an error, not a silent NULL", {
+  # .admSandwich's tryCatch exists for a singular H and cannot distinguish that
+  # from an H the caller never passed. Before this guard, a study script calling
+  # .admSandwichCov() positionally with seven arguments got NULL for every
+  # replicate, skipped them all, and still printed a table -- of the replicates
+  # it had not skipped in an earlier, differently-shaped version of the call.
+  # Fail fast and say which argument, at the top, before anything is solved.
+  expect_error(
+    admixr2:::.admSandwichCov(1, NULL, list(), NULL, "cp", NULL, 1L),
+    "`H` must be a finite square Hessian")
+  expect_error(
+    admixr2:::.admSandwichCov(1, NULL, list(), NULL, "cp", NULL, 1L,
+                              H = matrix(c(1, NA, NA, 1), 2L)),
+    "`H` must be a finite square Hessian")
+  expect_error(
+    admixr2:::.admSandwichCov(1, NULL, list(), NULL, "cp", NULL, 1L,
+                              H = matrix(1, 2L, 3L)),
+    "`H` must be a finite square Hessian")
+})
+
+test_that("the expansion is exact for a SKEWED conditional residual", {
+  # The Wick expansion is often described as needing a conditionally NORMAL
+  # residual. It does not: it needs one that is conditionally INDEPENDENT across
+  # timepoints, plus its 3rd and 4th central moments. Supplying only the variance
+  # and letting the odd pairings collapse is what assumes symmetry, and for a
+  # skewed residual that wrecks the cross block Cov(ybar, vech V) -- the block
+  # probe 08 found load-bearing -- while leaving Cov(ybar) untouched and so
+  # looking healthy from the mean side.
+  #
+  # Measured against 40k simulated studies: lognormal residual, cross block
+  # 0.861 relative error with variance only, 0.027 with the moments; Poisson
+  # 0.686 -> 0.047. This is the cheap version of that check.
+  set.seed(77)
+  TIMES <- c(1, 3, 6); DOSE <- 100; V0 <- 10; OM <- 0.4
+  N <- 80L; R <- 6000L; sv <- 0.09
+  gh <- admixr2:::.adghNodes1(31L); x <- gh$x; w <- gh$w / sum(gh$w)
+  fmat <- function(eta) t(vapply(eta, function(e)
+    DOSE / V0 * exp(-exp(e) / V0 * TIMES), numeric(length(TIMES))))
+  F  <- fmat(x * OM); m <- ncol(F)
+  ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  ms <- exp(sv / 2); wl <- exp(sv); M1 <- ms * F
+  C  <- sweep(M1, 2L, colSums(w * M1))
+  Dv <- M1^2 * (wl - 1)
+  T3 <- M1^3 * (wl - 1)^2 * (wl + 2)
+  Q4 <- M1^4 * (wl - 1)^2 * (wl^4 + 2 * wl^3 + 3 * wl^2 - 3)
+
+  tv <- matrix(0, R, m + nrow(ij))
+  for (r in seq_len(R)) {
+    f <- fmat(stats::rnorm(N, 0, OM))
+    y <- matrix(stats::rlnorm(length(f), log(f), sqrt(sv)), nrow(f))
+    V <- stats::cov.wt(y, method = "ML")$cov
+    tv[r, ] <- c(colMeans(y), V[cbind(ij[, 1L], ij[, 2L])])
+  }
+  ref <- stats::cov(tv)
+  rel <- function(A, r, c)
+    sqrt(sum((A[r, c] - ref[r, c])^2)) / sqrt(sum(ref[r, c]^2))
+  gen <- admixr2:::.admAdfWeightFast(C, w, Dv, N, T3, Q4)
+  sym <- admixr2:::.admAdfWeightFast(C, w, Dv, N)
+  # with the moments: at the Monte Carlo floor, in every block
+  expect_lt(rel(gen, seq_len(m), seq_len(m)),   0.15)
+  expect_lt(rel(gen, seq_len(m), -seq_len(m)),  0.20)
+  expect_lt(rel(gen, -seq_len(m), -seq_len(m)), 0.20)
+  # without them: the mean block is still right and the cross block is not,
+  # which is exactly why this cannot be caught from the mean side
+  expect_lt(rel(sym, seq_len(m), seq_len(m)),   0.15)
+  expect_gt(rel(sym, seq_len(m), -seq_len(m)),  0.50)
+})
+
+test_that("a residual the expansion cannot reach is refused, not approximated", {
+  skip_if_not_installed("rxode2")
+  # ar() correlates the residual ACROSS timepoints, so conditional independence
+  # fails and every cross term the expansion drops is real. Returning a weight
+  # built as though it held would be a plausible wrong answer.
+  arr <- list(form = rep(0L, 3L), a2 = rep(0.1, 3L), b2 = rep(0, 3L),
+              cc = rep(1, 3L), vmul = rep(1, 3L), csz = rep(NA_real_, 3L),
+              phi = rep(NA_real_, 3L), rho = rep(0.4, 3L))
+  expect_null(admixr2:::.admAdfCondMom(matrix(1, 5L, 3L), arr))
+  arr$rho <- rep(NA_real_, 3L)
+  expect_false(is.null(admixr2:::.admAdfCondMom(matrix(1, 5L, 3L), arr)))
+  # a t residual with nu <= 4 has no finite kurtosis: the sampling law of the
+  # reported V does not have the variance the weight is made of.
+  arr$vmul <- rep(4 / 2, 3L)                      # nu/(nu-2) at nu = 4
+  expect_null(admixr2:::.admAdfCondMom(matrix(1, 5L, 3L), arr))
+  arr$vmul <- rep(8 / 6, 3L)                      # nu = 8, fine
+  expect_false(is.null(admixr2:::.admAdfCondMom(matrix(1, 5L, 3L), arr)))
+})
