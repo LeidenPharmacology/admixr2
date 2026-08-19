@@ -1737,14 +1737,84 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 # target probability carries no information and the quantile there is not
 # determined. Those nodes have Gauss-Hermite weight ~1e-23 and cannot move a
 # moment, so they are left as Newton leaves them rather than special-cased.
-.admShiftNodes <- function(Delta, W, om, n_u, tol = 1e-12, maxit = 30L) {
+# Is the weighted law of Delta itself NORMAL?
+#
+# When it is, u = Delta(a) + eta is normal too -- the convolution of two
+# normals -- with variance Var(Delta) + omega^2, and its quantiles are the
+# closed form that the Newton inversion below merely converges to. That is the
+# retired "collapse" path, recovered here as a special case of the shift rather
+# than as a separate route with its own preconditions.
+#
+# The test is on (Delta, W) ALONE: no model text, no muRefCovariateDataFrame.
+# That matters twice over. rxode2 splits covariate forms across THREE frames --
+# `tcov*WT` lands in muRefCovariateDataFrame, `tcov*WT/70` in muRefExtra and
+# `tcov*log(WT/70)` in mu2RefCovariateReplaceDataFrame (measured on 5.1.4) --
+# so any single frame sees a third of the cases and the union is still a
+# syntactic guess. And the property that actually matters is not "the covariate
+# is normal" but "Delta(a) is normal", which admits the allometric case a
+# distributional test catches for free: for lognormal WT, `tcov*log(WT/70)` is
+# affine in the latent normal score and so exactly qualifies.
+#
+# Standardised central moments 3..6 against N(0,1). Delta arrives on a
+# Gauss-Hermite rule, which reproduces a normal's moments to machine precision
+# up to degree 2n-1, so a qualifying Delta scores ~1e-13 and a non-qualifying
+# one ~1e0: measured separation over the probe set is 9.9e-14 (normal+linear),
+# 7.3e-14 (lognormal+log) against 2.6e+00 (normal+square), 2.8e+00
+# (normal+log), 5.9e+00 (lognormal+linear) -- thirteen orders, so the threshold
+# is not a tuned quantity.
+.ADM_SHIFT_GAUSS_TOL <- 1e-8
+
+.admShiftGaussResid <- function(D, W) {
+  W  <- W / sum(W)
+  m  <- sum(W * D)
+  s2 <- sum(W * (D - m)^2)
+  # A CONSTANT Delta (no covariate spread) is degenerate-normal: u is then just
+  # eta and the closed form is exact, so admit it rather than dividing by zero.
+  # A NON-FINITE one is not: scoring it 0 would route NaN through the closed
+  # form and return a node set full of NaN wearing a valid shape.
+  if (!is.finite(s2)) return(Inf)
+  if (s2 <= 0) return(0)
+  zz  <- (D - m) / sqrt(s2)
+  mom <- vapply(3:6, function(k) sum(W * zz^k), numeric(1))
+  max(abs(mom - c(0, 3, 0, 15)) / c(1, 3, 1, 15))
+}
+
+.admShiftNodes <- function(Delta, W, om, n_u, tol = 1e-12, maxit = 30L,
+                           ftol = 1e-14) {
+  # NON-FINITE INPUT is refused rather than iterated on, and BEFORE the Gaussian
+  # test: .admShiftDelta screens its own output, but this is also called
+  # directly and per-coordinate from the Rosenblatt recursion, and a NaN reaches
+  # `if (max(abs(st)) < tol)` as "missing value where TRUE/FALSE needed" rather
+  # than as the NULL every caller is written to handle.
+  if (!all(is.finite(Delta)) || !all(is.finite(W)) || !is.finite(om))
+    return(NULL)
   g  <- .adghNodes1(n_u)
   tg <- stats::pnorm(g$x)
   mD <- sum(W * Delta); vD <- max(sum(W * Delta^2) - mD^2, 0)
   u  <- mD + sqrt(vD + om^2) * g$x
+  # THE GAUSSIAN CASE IS EXACT AND COSTS NOTHING. `u` above is already the
+  # answer; the loop would spend up to `maxit` mixture evaluations rediscovering
+  # it. Measured on the default grid: 0.02 ms against 1.95 ms, and the Newton
+  # route is not merely slower but LESS accurate as sd(Delta)/omega grows --
+  # 8.5e-04 at ratio 4 and 8.8e-02 at ratio 16, against <= 1.3e-12 here at every
+  # ratio, because a widely-separated mixture is what n_u nodes resolve worst.
+  # .admShiftDu applies the matching closed-form derivatives, keyed off the same
+  # test, so the objective and the gradient cannot disagree about which node set
+  # is in play.
+  if (.admShiftGaussResid(Delta, W) < .ADM_SHIFT_GAUSS_TOL)
+    return(list(u = u, w = g$w, gauss = TRUE, mD = mD, vD = vD))
+  # CONVERGENCE IS TESTED ON THE RESIDUAL, NOT ON THE STEP. `max(abs(st)) < tol`
+  # never fired: at the outermost node the CDF is saturated (target within
+  # 1.3e-14 of 1), so its Newton step stays finite no matter how exactly the
+  # root is found, and one such node held the whole vector short of the test.
+  # The loop therefore ran its full `maxit` on EVERY call -- measured 30 of 30
+  # iterations while the residual it actually cares about had reached 1.1e-16
+  # within a few. That is what made node construction cost 1.95 ms at the
+  # default grid and 23 ms at cov_nodes = 127.
   for (it in seq_len(maxit)) {
     Z  <- outer(u, Delta, "-") / om
     Fu <- as.numeric(stats::pnorm(Z) %*% W)
+    if (max(abs(Fu - tg)) < ftol) break
     fu <- as.numeric(stats::dnorm(Z) %*% W) / om
     st <- (Fu - tg) / pmax(fu, 1e-300)
     # safeguarded: an unbounded Newton step on a mixture CDF can leap past the
@@ -1783,18 +1853,60 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   # the POSTERIOR weights of the Rosenblatt recursion, which is a second chain
   # this does not carry -- .adghGrad finite-differences that case instead.
   Delta <- as.numeric(as.matrix(Delta)[, 1L])
-  Z   <- outer(u, Delta, "-") / om
-  Ph  <- stats::dnorm(Z)
-  den <- pmax(as.numeric(Ph %*% W), 1e-300)
-  du_dom <- as.numeric((Ph * Z) %*% W) / den
   nm <- names(struct)
-  dth <- vapply(nm, function(k) {
+  # dDelta/dtheta by central difference, shared by both branches below.
+  dDs <- lapply(nm, function(k) {
     s1 <- struct; s1[[k]] <- s1[[k]] + h
     s2 <- struct; s2[[k]] <- s2[[k]] - h
     d1 <- .admShiftDelta(spec, s1, X, aref)
     d2 <- .admShiftDelta(spec, s2, X, aref)
-    if (is.null(d1) || is.null(d2)) return(rep(NA_real_, length(u)))
-    dD <- (as.matrix(d1)[, 1L] - as.matrix(d2)[, 1L]) / (2 * h)
+    if (is.null(d1) || is.null(d2)) return(NULL)
+    (as.matrix(d1)[, 1L] - as.matrix(d2)[, 1L]) / (2 * h)
+  })
+  names(dDs) <- nm
+
+  # THE GAUSSIAN BRANCH, matched to .admShiftNodes' closed form. Keyed off the
+  # SAME predicate, evaluated on the same (Delta, W): if the two ever disagreed
+  # the gradient would describe a node set the objective is not using, which is
+  # the silent class of failure this file exists to avoid. Here
+  # u_i = mD + s*x_i with s = sqrt(vD + om^2), so
+  #   du_i/dom    = (om/s) * x_i
+  #   du_i/dtheta = dmD + (x_i/(2s)) * dvD
+  # with dmD = sum(W dDelta) and dvD = 2*sum(W Delta dDelta) - 2*mD*dmD.
+  if (.admShiftGaussResid(Delta, W) < .ADM_SHIFT_GAUSS_TOL) {
+    Wn <- W / sum(W)
+    mD <- sum(Wn * Delta); vD <- max(sum(Wn * Delta^2) - mD^2, 0)
+    s  <- sqrt(vD + om^2)
+    x  <- (u - mD) / s
+    du_dom <- (om / s) * x
+    dth <- vapply(nm, function(k) {
+      dD <- dDs[[k]]
+      if (is.null(dD)) return(rep(NA_real_, length(u)))
+      dmD <- sum(Wn * dD)
+      dvD <- 2 * sum(Wn * Delta * dD) - 2 * mD * dmD
+      dmD + x * dvD / (2 * s)
+    }, numeric(length(u)))
+    if (!is.matrix(dth)) dth <- matrix(dth, length(u), length(nm))
+    dimnames(dth) <- list(NULL, nm)
+    return(list(du_dtheta = dth, du_domega = du_dom))
+  }
+
+  # Both derivatives are conditional expectations over the mixture components.
+  #
+  # A central difference of the NODES is not a valid check on them at the
+  # outermost node: its target probability sits 1.3e-14 from 1, where the
+  # mixture CDF is a numerical plateau -- moving u by 1e-5 there changes F by
+  # exactly 0 -- so u is undetermined across a wide interval and its difference
+  # quotient is noise. Nodes 3..20 match a central difference to 1.0000; node 1
+  # does not, and the analytic value is the trustworthy one. Do not "fix" that
+  # gap, and do not use a node FD as the reference for it.
+  Z   <- outer(u, Delta, "-") / om
+  Ph  <- stats::dnorm(Z)
+  den <- pmax(as.numeric(Ph %*% W), 1e-300)
+  du_dom <- as.numeric((Ph * Z) %*% W) / den
+  dth <- vapply(nm, function(k) {
+    dD <- dDs[[k]]
+    if (is.null(dD)) return(rep(NA_real_, length(u)))
     as.numeric((Ph %*% (W * dD)) / den)
   }, numeric(length(u)))
   if (!is.matrix(dth)) dth <- matrix(dth, length(u), length(nm))

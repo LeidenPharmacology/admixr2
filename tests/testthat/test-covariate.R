@@ -1207,3 +1207,71 @@ test_that(".admShiftDelta is the log-scale shift, vectorised over the nodes", {
   expect_equal(D2[, 1L], 0.75 * (log(X[, 1L]) - log(70)))
   expect_equal(D2[, 2L], 1.00 * (log(X[, 1L]) - log(70)))
 })
+
+test_that("the Gaussian shift branch fires on exactly the qualifying laws", {
+  # The condition is that Delta(a) is NORMAL, not that the covariate is. That
+  # admits the allometric case for free: for lognormal WT, tcov*log(WT/70) is
+  # affine in the latent normal score. Deliberately NOT read off the model text
+  # or off rxode2's covariate frames -- on 5.1.4 those split the three common
+  # spellings across muRefCovariateDataFrame, muRefExtra and
+  # mu2RefCovariateReplaceDataFrame, so no single one of them sees this.
+  gh <- admixr2:::.adghNodes1; g <- gh(31L)
+  z  <- g$x; W <- g$w / sum(g$w)
+  qual <- list(normal_linear = 0.8 * (70 + 6 * z),
+               normal_scaled = 0.8 * (70 + 6 * z) / 70,
+               lognormal_log = 0.8 * log(exp(log(70) + 0.17 * z) / 70),
+               degenerate    = rep(0.5, length(z)))
+  nope <- list(lognormal_linear = 0.8 * exp(log(70) + 0.17 * z),
+               normal_square    = 0.8 * (70 + 6 * z)^2 / 100,
+               normal_log       = 0.8 * log(70 + 6 * z))
+  for (nm in names(qual))
+    expect_lt(admixr2:::.admShiftGaussResid(qual[[nm]], W), 1e-8)
+  for (nm in names(nope))
+    expect_gt(admixr2:::.admShiftGaussResid(nope[[nm]], W), 1e-3)
+  # and the node builder flags it
+  expect_true(isTRUE(admixr2:::.admShiftNodes(qual$lognormal_log, W, 0.3, 20L)$gauss))
+  expect_null(admixr2:::.admShiftNodes(nope$normal_square, W, 0.3, 20L)$gauss)
+})
+
+test_that("the Gaussian branch is exact where the mixture route only converges", {
+  # u = Delta + eta is exactly normal here, so the closed form is the truth and
+  # the quadrature over it is exact. The mixture route degrades as the covariate
+  # outruns the random effect because n_u nodes resolve a widely separated
+  # mixture worst -- that is the regime the branch exists for.
+  gh <- admixr2:::.adghNodes1; g <- gh(31L); z <- g$x; W <- g$w / sum(g$w)
+  om <- 0.30
+  for (ratio in c(0.5, 2, 8)) {
+    D  <- ratio * om * z                       # exactly normal, mean 0
+    nd <- admixr2:::.admShiftNodes(D, W, om, 20L)
+    expect_true(isTRUE(nd$gauss))
+    gg  <- gh(20L); w <- gg$w / sum(gg$w)
+    # E[exp(u)] = exp(om^2/2) * E_a[exp(Delta)] exactly, eta independent of a
+    truth <- exp(om^2 / 2) * sum(W * exp(D))
+    expect_equal(sum(w * exp(nd$u)), truth, tolerance = 1e-10)
+  }
+})
+
+test_that("shift node derivatives match a difference where u is determined", {
+  # Only where the CDF is not saturated: the outermost node's target sits
+  # ~1e-14 from 1, u is undetermined across a plateau there, and its difference
+  # quotient is noise rather than a reference. Interior nodes are the check.
+  gh <- admixr2:::.adghNodes1; g <- gh(31L); z <- g$x; W <- g$w / sum(g$w)
+  om <- 0.30
+  D  <- 0.8 * (70 + 6 * z); D <- D - mean(D)   # Gaussian branch
+  nd <- admixr2:::.admShiftNodes(D, W, om, 20L)
+  mD <- sum(W * D); vD <- max(sum(W * D^2) - mD^2, 0); s <- sqrt(vD + om^2)
+  an <- (om / s) * ((nd$u - mD) / s)           # closed form used by .admShiftDu
+  h  <- 1e-6
+  fd <- (admixr2:::.admShiftNodes(D, W, om + h, 20L)$u -
+         admixr2:::.admShiftNodes(D, W, om - h, 20L)$u) / (2 * h)
+  expect_equal(an, fd, tolerance = 1e-6)
+})
+
+test_that("shift nodes refuse non-finite input instead of erroring", {
+  gh <- admixr2:::.adghNodes1; g <- gh(15L); W <- g$w / sum(g$w)
+  D <- 0.5 * g$x; D[3] <- NaN
+  # previously reached `if (max(abs(st)) < tol)` as a missing value
+  expect_null(admixr2:::.admShiftNodes(D, W, 0.3, 20L))
+  D2 <- 0.5 * g$x; D2[1] <- Inf
+  expect_null(admixr2:::.admShiftNodes(D2, W, 0.3, 20L))
+})
