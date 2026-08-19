@@ -412,6 +412,11 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       names(mu) <- t_lbl; dimnames(V) <- list(t_lbl, t_lbl)
       r <- list(E = mu, V = V, n = spec$n %||% NA_integer_,
                 times = spec$times, ev = spec$ev)
+      # Self-describing: datagen builds V with the ML denominator, so say so
+      # rather than leaving the consumer to rely on the default meaning the same
+      # thing. A generated study can then be mixed with a digitised one that
+      # declares "unbiased" and both are converted correctly.
+      r$v_denom <- "ml"
       if (!is.null(spec$output)) r$output <- spec$output
       if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
       r
