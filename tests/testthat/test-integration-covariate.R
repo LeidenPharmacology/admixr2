@@ -1261,3 +1261,51 @@ test_that("datagen(method = 'gh') integrates a covariate distribution exactly", 
                       cov_dist = list(WT = list(meanlog = log(72), sdlog = 0.28))))
   expect_error(datagen(st, .m1, datagenControl(method = "fo")), "mc")
 })
+
+test_that("a coarse covariate grid does not desync objective from gradient", {
+  # .admShiftNodes and .admShiftDu must decide the Gaussian branch with the SAME
+  # test. Gauss-Hermite on n nodes is exact to degree 2n-1 and the moment
+  # fallback checks degrees 3..6, so at cov_nodes = 3 an exactly affine Delta
+  # certifies and fails the moments. When the derivatives used the moment test
+  # the nodes were closed-form while their derivatives were the mixture's, and
+  # this gradient came back 4.7e-03 from a central difference -- against
+  # 2.1e-09 at four nodes or more. cov_nodes is user-settable, so 3 is reachable.
+  .mod <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.75
+          eta.cl ~ 0.09; add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * log(WT / 70) + eta.cl); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  .g <- function(cn) {
+    E <- .cov_DOSE / 10 * exp(-0.1 * .cov_TIMES)
+    st0 <- list(s = list(E = E, V = diag((0.25 * E)^2), n = 300L,
+                         times = .cov_TIMES, ev = rxode2::et(amt = .cov_DOSE),
+                         cov_dist = list(WT = list(meanlog = log(72),
+                                                   sdlog = 0.28))))
+    ui  <- suppressMessages(rxode2::rxode2(.mod))
+    ov  <- admixr2:::.admOutputVar(ui)
+    ctl <- adghControl(studies = st0, grad = "analytical", n_nodes = 5L,
+                       cov_nodes = cn, print = 0L, covMethod = "none",
+                       cov_integration = "auto")
+    pin <- admixr2:::.admDriverPinfo(ui, ctl)
+    u   <- admixr2:::.admDriverUnits(st0, ui, ov)
+    stu <- suppressMessages(
+      admixr2:::.admCheckCovariates(ui, pin, u$studies, "analytical", "adgh"))
+    sm  <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
+    rx  <- admixr2:::.admLoadModel(ui)
+    gr  <- admixr2:::.adghNodeGrid(5L, pin$n_eta)
+    p0  <- admixr2:::.admBuildOptVec(pin)$p0
+    p   <- p0 + c(0.20, -0.15, 0.25, 0.30, 0.18)[seq_along(p0)]
+    ga  <- admixr2:::.adghGrad(p, pin, stu, sm, rx, ov, gr, 1L, 1e-4)
+    f   <- function(pp) admixr2:::.adghNLL(pp, pin, stu, rx, ov, gr, 1L)
+    h   <- 1e-5
+    fd  <- vapply(seq_along(p), function(k) {
+      a <- p; a[k] <- a[k] + h; b <- p; b[k] <- b[k] - h
+      (f(a) - f(b)) / (2 * h)
+    }, numeric(1))
+    max(abs(ga - fd) / pmax(abs(fd), 1))
+  }
+  # the coarse grid is the one that used to break; the others are the control
+  expect_lt(.g(3L), 1e-6)
+  expect_lt(.g(7L), 1e-6)
+})

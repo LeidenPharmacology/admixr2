@@ -212,7 +212,7 @@
                        n_th = .mdu$n_th)
       } else if (length(j) == 1L) {
         du <- .admShiftDu(sh$spec, .admShiftStruct(pinfo, pars$struct), sh$X,
-                          sh$aref, D, sh$W, om, un$u[, 1L])
+                          sh$aref, D, sh$W, om, un$u[, 1L], z = sh$z)
         Xz[, j] <- du$du_domega[ix[, 1L]]
         shinfo <- list(eta_idx = j,
                        du_dtheta = du$du_dtheta[ix[, 1L], , drop = FALSE])

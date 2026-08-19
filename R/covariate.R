@@ -1922,7 +1922,8 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 # The typical value of a mu-referenced parameter CANCELS out of Delta (it is a
 # difference of the same expression at two covariate values), so its column
 # comes back zero and the chain correctly contributes nothing through u.
-.admShiftDu <- function(spec, struct, X, aref, Delta, W, om, u, h = 1e-6) {
+.admShiftDu <- function(spec, struct, X, aref, Delta, W, om, u, h = 1e-6,
+                        z = NULL) {
   # Scalar shift only. With m > 1 the later coordinates' nodes also move through
   # the POSTERIOR weights of the Rosenblatt recursion, which is a second chain
   # this does not carry -- .adghGrad finite-differences that case instead.
@@ -1947,7 +1948,15 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   #   du_i/dom    = (om/s) * x_i
   #   du_i/dtheta = dmD + (x_i/(2s)) * dvD
   # with dmD = sum(W dDelta) and dvD = 2*sum(W Delta dDelta) - 2*mD*dmD.
-  if (.admShiftGaussResid(Delta, W) < .ADM_SHIFT_GAUSS_TOL) {
+  # THE SAME PREDICATE .admShiftNodes USED, on the same inputs -- which requires
+  # the same `z`. Testing moments here while the nodes were chosen by the affine
+  # certificate is not equivalent: Gauss-Hermite on n nodes is exact to degree
+  # 2n-1 and this checks degrees 3..6, so at cov_nodes = 3 an exactly affine
+  # Delta certifies (9.5e-15) and FAILS the moment test (4.0e-01). The nodes were
+  # then the closed form while the derivatives differentiated the mixture
+  # identity at them, and the analytic gradient came back 4.7e-03 off a central
+  # difference against 2.1e-09 at 4 nodes or more.
+  if (.admShiftGaussOK(matrix(Delta, ncol = 1L), W, z, 1L)) {
     Wn <- W / sum(W)
     mD <- sum(Wn * Delta); vD <- max(sum(Wn * Delta^2) - mD^2, 0)
     s  <- sqrt(vD + om^2)

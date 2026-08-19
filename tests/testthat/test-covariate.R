@@ -1424,3 +1424,43 @@ test_that("a discrete covariate makes `auto` fall back, not fail", {
     admixr2:::.admCheckCovariates(ui, pin2, u$studies, "analytical", "adgh"),
     "discrete")
 })
+
+test_that("nodes and derivatives choose the Gaussian branch by the SAME test", {
+  # .admShiftNodes picks the closed form with .admShiftGaussOK (affine
+  # certificate, or moments when no latent score is to hand); .admShiftDu must
+  # decide with the same call on the same inputs, or it differentiates a
+  # construction the objective is not using.
+  #
+  # They part company exactly where Gauss-Hermite stops reproducing the moments
+  # the fallback checks: n nodes are exact to degree 2n-1 and the test uses
+  # degrees 3..6, so at 3 nodes an EXACTLY affine Delta certifies and fails the
+  # moment test. The nodes were then closed-form and the derivatives were the
+  # mixture's, which put the analytic gradient 4.7e-03 from a central difference
+  # against 2.1e-09 at four nodes or more.
+  gh <- admixr2:::.adghNodes1
+  for (nc in c(3L, 4L, 7L)) {
+    g <- gh(nc)
+    z <- matrix(g$x, ncol = 1L); W <- g$w / sum(g$w)
+    D <- 0.8 * (70 + 6 * g$x)                       # exactly affine in z
+    # the objective's actual choice, read off the node set it returns
+    expect_true(isTRUE(admixr2:::.admShiftNodes(D, W, 0.3, 12L, z = z)$gauss),
+                info = paste("cov_nodes", nc))
+    # the MOMENT fallback alone is what disagrees at three nodes. This is the
+    # test .admShiftDu used to apply, so it pins the divergence rather than the
+    # fix: if a future change routes the derivatives back onto it, the two
+    # branches part company here first.
+    if (nc == 3L) expect_gt(admixr2:::.admShiftGaussResid(D, W), 1e-8)
+    else          expect_lt(admixr2:::.admShiftGaussResid(D, W), 1e-8)
+  }
+  # and the closed-form derivative must match a difference of the nodes it is
+  # paired with, at the node count where the two tests disagree
+  g <- gh(3L); z <- matrix(g$x, ncol = 1L); W <- g$w / sum(g$w)
+  D <- 0.8 * (70 + 6 * g$x); om <- 0.30
+  u  <- admixr2:::.admShiftNodes(D, W, om, 12L, z = z)$u
+  mD <- sum(W * D); vD <- max(sum(W * D^2) - mD^2, 0); sd_u <- sqrt(vD + om^2)
+  an <- (om / sd_u) * ((u - mD) / sd_u)             # what .admShiftDu returns
+  h  <- 1e-6
+  fd <- (admixr2:::.admShiftNodes(D, W, om + h, 12L, z = z)$u -
+         admixr2:::.admShiftNodes(D, W, om - h, 12L, z = z)$u) / (2 * h)
+  expect_equal(an, fd, tolerance = 1e-6)
+})
