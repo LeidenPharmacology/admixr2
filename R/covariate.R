@@ -1015,7 +1015,7 @@
   list(X = X, c = cvec, ip = ip, im = im, ic = ic,
        var = dvar, var2 = dvar2, h = rep(h, times = L), mu = X[1L, ],
        n_pt = n_pt, names = nms, dir = dir, Sigma = Rc,
-       cont = cn, disc = dn, n_cell = L, p_cell = pcell, n_cpt = n_cpt,
+       cont = cn, n_cell = L, p_cell = pcell, n_cpt = n_cpt,
        c_cont = ccont,
        lam = lam)
 }
@@ -1738,6 +1738,15 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 # columns, not row by row.
 .admShiftDelta <- function(spec, struct, X, aref) {
   m  <- length(spec$eta)
+  # The rxode2 namespace is the EVAL PARENT here, not a source of named
+  # internals -- `spec$rhs` is the user's own model expression and rxode2 is the
+  # scope it was written against, so expit/logit/probit and anything else the
+  # assignment names resolve the way they do in the model. That is the reason
+  # CLAUDE.md's "grep asNamespace( as well as :::" rule does not bite: the rule
+  # is about REACHING INTO a namespace for a specific unexported function, which
+  # is what plot.R used to do. Narrowing this to an explicit list of exports
+  # would silently move any model naming something outside that list onto the
+  # product grid.
   ev <- new.env(parent = asNamespace("rxode2"))
   for (k in names(struct)) assign(k, struct[[k]], ev)
   for (e in spec$eta) assign(e, 0, ev)
@@ -1848,7 +1857,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   # derivatives from the other is the objective-and-gradient disagreement this
   # file exists to avoid.
   if (gauss_ok && .admShiftGaussOK(Delta, W, z, 1L))
-    return(list(u = u, w = g$w, gauss = TRUE, mD = mD, vD = vD))
+    return(list(u = u, w = g$w, gauss = TRUE))
   # CONVERGENCE IS TESTED ON THE RESIDUAL, NOT ON THE STEP. `max(abs(st)) < tol`
   # never fired: at the outermost node the CDF is saturated (target within
   # 1.3e-14 of 1), so its Newton step stays finite no matter how exactly the
