@@ -214,11 +214,28 @@ data. The full-covariance path is available when you have the subject-level
 matrix and can compute `cov.wt(dv_mat, method = "ML")$cov` — see
 [Getting started](admixr2.html).
 
-Note the denominator. admixr2's likelihood wants the ML (`n`) variance, while a
-published SD is the unbiased (`n - 1`) sample SD, so strictly
-`V = SD^2 * (n - 1) / n`. At `n = 60` that is a `r round(100 / n, 1)`% change and is usually
-ignored; below `n` of about 15 it is worth applying. The `method = "ML"` rule
-matters most when you compute `V` yourself from subject-level data.
+Note the denominator, and declare it. admixr2's likelihood is the exact one for
+`n` iid draws only under the ML (`n`) covariance, while a published SD is the
+unbiased (`n - 1`) sample SD -- so `V = SD^2` from a figure is on the `n - 1`
+scale and strictly wants `V = SD^2 * (n - 1) / n`.
+
+Rather than applying that by hand, say which convention the number is on:
+
+```{r vdenom, eval = FALSE}
+study <- list(E = E, V = SD^2, n = n, times = times, ev = ev,
+              v_denom = "unbiased")   # a published SD; admixr2 converts it
+```
+
+`v_denom` defaults to `"ml"`, which is what `cov.wt(method = "ML")` and
+[`datagen()`](datagen.html) produce, so nothing changes for data you computed
+yourself. It is declared **per study** because a meta-analysis routinely mixes a
+digitised figure with a model-derived source, and the two need not share a
+denominator.
+
+At `n = 60` the factor is `r round(100 / n, 1)`%, which is small; it grows as `n`
+falls, and it stops being cosmetic for any method that scores the reported
+covariance against its own sampling law rather than treating it as a sufficient
+statistic.
 
 ## Sample size
 

@@ -12,6 +12,16 @@
 #'   - `times` -- numeric vector of observation times
 #'   - `ev` -- `rxode2::et()` dosing event table
 #'   - `method` -- `"cov"` or `"var"` (optional; auto-detected from `V`)
+#'   - `v_denom` -- `"ml"` (default) or `"unbiased"`, declaring which denominator
+#'     the supplied `V` uses. The likelihood is the exact one for `n` iid draws
+#'     only under the ML (`n`) covariance, which is what `cov.wt(method = "ML")`
+#'     and [datagen()] produce. A **published** SD is the unbiased (`n - 1`) SD,
+#'     so a digitised figure gives `V = SD^2` on the `n - 1` scale: declare
+#'     `v_denom = "unbiased"` and admixr2 converts it. Declared per study, since
+#'     a meta-analysis routinely mixes a digitised source with a model-derived
+#'     one and the two need not share a denominator. At `n = 60` the factor is
+#'     1.7%; it matters more the smaller `n` is, and more again for any method
+#'     that scores the reported covariance against its own sampling law.
 #'
 #'   **Multi-compartment (multiple observed outputs).** To fit several observed
 #'   compartments simultaneously (e.g. plasma and brain/CSF), give the study an

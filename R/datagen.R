@@ -512,6 +512,11 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       # population the data were generated for, and making the caller restate it
       # is a way for the two to disagree.
       if (!is.null(s[["cov_dist"]])) { r$cov_dist <- s[["cov_dist"]] }
+      # Self-describing: datagen builds V with the ML denominator, so say so
+      # rather than leaving the consumer to rely on the default meaning the same
+      # thing. A generated study can then be mixed with a digitised one that
+      # declares "unbiased" and both are converted correctly.
+      r$v_denom <- "ml"
       if (!is.null(cov_ref_of()))     { r$cov      <- cov_ref_of() }
       if (!is.null(spec$output)) r$output <- spec$output
       if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
