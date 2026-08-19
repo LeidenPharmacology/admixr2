@@ -55,6 +55,31 @@
   pinfo
 }
 
+
+# The preamble every driver runs before it touches the studies: name them, refuse
+# the retired node grammar, build pinfo, and warn on an unidentifiable covariate
+# coefficient. Copy-pasted into all four before this, comments included.
+#
+# ORDER MATTERS TWICE, which is why it is one function rather than a convention.
+# .admRefuseNodeStudies reads user-supplied TOP-LEVEL fields (`weight`,
+# `cov_method`) and .admDriverUnits strips them into per-unit fields, so run
+# after normalising the guard inspects a list they are no longer on and never
+# fires -- measured: a node study list carrying weight = 0.5 on two nodes fitted
+# in all four estimators at exactly twice the correct objective (720.715 against
+# 360.358). .admWarnCovIdentifiability reads the raw `cov`/`cov_dist` for the
+# same reason.
+.admDriverStudies <- function(.ui, .ctl, est) {
+  studies <- .ctl$studies
+  if (length(studies) == 0L)
+    stop(est, "Control(studies=...) required", call. = FALSE)
+  if (is.null(names(studies)))
+    names(studies) <- paste0("study", seq_along(studies))
+  .admRefuseNodeStudies(studies)
+  pinfo <- .admDriverPinfo(.ui, .ctl)
+  .admWarnCovIdentifiability(.ui, pinfo, studies)
+  list(studies = studies, pinfo = pinfo)
+}
+
 # Normalise the studies, flatten them to observation units, and report the two
 # model-level flags every driver derives from the result.
 #

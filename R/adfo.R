@@ -1413,27 +1413,9 @@ nlmixr2Est.adfo <- function(env, ...) {
     stop("Could not recover adfoControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("adfoControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  # BEFORE .admDriverUnits(). The guard reads user-supplied TOP-LEVEL fields
-  # (`weight`, `cov_method`), and normalising/flattening strips them -- so run
-  # after it, the guard inspects a list the fields have already been removed
-  # from and never fires. That is not hypothetical: with the call downstream, a
-  # node study list carrying weight = 0.5 on two nodes FITTED in all four
-  # estimators at exactly twice the correct objective (720.715 against 360.358),
-  # which is the silent-wrong-answer this guard exists to prevent.
-  .admRefuseNodeStudies(studies)
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
-  # Warn on a covariate coefficient the supplied sources cannot identify. Run
-  # here, on the RAW study list, for the same reason .admRefuseNodeStudies is:
-  # normalising strips `cov`/`cov_dist` into per-unit fields and the check
-  # would inspect a list they are no longer on.
-  .admWarnCovIdentifiability(.ui, pinfo, studies)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adfo")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   output_var <- .admOutputVar(.ui)
   # A beta endpoint's precision phi is SOLVED, not fitted: .admSimulate() returns
   # it as an attribute on cp_mat and admc/adgh patch it into the residual rows.

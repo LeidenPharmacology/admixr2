@@ -1185,27 +1185,9 @@ nlmixr2Est.adirmc <- function(env, ...) {
     stop("Could not recover adirmcControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("adirmcControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  # BEFORE .admDriverUnits(). The guard reads user-supplied TOP-LEVEL fields
-  # (`weight`, `cov_method`), and normalising/flattening strips them -- so run
-  # after it, the guard inspects a list the fields have already been removed
-  # from and never fires. That is not hypothetical: with the call downstream, a
-  # node study list carrying weight = 0.5 on two nodes FITTED in all four
-  # estimators at exactly twice the correct objective (720.715 against 360.358),
-  # which is the silent-wrong-answer this guard exists to prevent.
-  .admRefuseNodeStudies(studies)
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
-  # Warn on a covariate coefficient the supplied sources cannot identify. Run
-  # here, on the RAW study list, for the same reason .admRefuseNodeStudies is:
-  # normalising strips `cov`/`cov_dist` into per-unit fields and the check
-  # would inspect a list they are no longer on.
-  .admWarnCovIdentifiability(.ui, pinfo, studies)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adirmc")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   # IRMC draws its importance-sampling proposals FROM the random-effect
   # distribution, so a model with no random effect has nothing to propose: the
   # proposal draw is degenerate and the fit returned a silent objective = Inf
