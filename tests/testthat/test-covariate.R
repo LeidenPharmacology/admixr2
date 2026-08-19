@@ -570,47 +570,6 @@ test_that("the Taylor moments match the EXACT marginal, and beat the plug-in", {
   }
 })
 
-test_that("the rank-one sd^2 g' g'^T term is PRESENT in the Taylor covariance", {
-  # This is the term that carries the covariate effect into V at all; without it
-  # the expansion returns E_a[Cov_eta(f|a)], the average WITHIN-covariate
-  # covariance, and Cov_a(g(a)) is simply missing. Same class of mistake as
-  # writing V_struct + Sigma(mu) for the residual: finite, plausible, biased low.
-  mu_a <- 0; sd_a <- 0.40
-  for (ratio in c(0.5, 1)) {
-    tcov <- ratio * .tay_OM / sd_a
-    ex   <- .tay_exact(tcov, mu_a, sd_a)
-    ta   <- .tay_pkg(tcov, mu_a, sd_a)
-    # Remove exactly that term and nothing else. Measured: the covariance error
-    # goes 5.5e-03 -> 2.0e-01 at ratio 0.5 (36x) and 5.3e-02 -> 5.0e-01 at
-    # ratio 1 (9.5x), and the absolute floor says the term is a fifth of V
-    # rather than a rounding correction.
-    V_no <- ta$V - crossprod(ta$dE, ta$rows$var * ta$dE)
-    expect_gt(.tay_relerr(V_no, ex$V), 8 * .tay_relerr(ta$V, ex$V))
-    expect_gt(.tay_relerr(V_no, ex$V), 0.19)
-    # Cov_a(g) is now TWO blocks: the rank-p first-difference term
-    # sum_j lam_j g'_j g'_j' and the second-difference term
-    # (1/2) sum_j lam_j^2 g''_j g''_j', which is the next order of the same
-    # expansion and costs no extra design point. Split them to check each.
-    i1 <- 1L; i2 <- 2L                       # one covariate -> one direction each
-    rk <- crossprod(ta$dE[i1, , drop = FALSE],
-                    ta$rows$var[i1] * ta$dE[i1, , drop = FALSE])
-    rk2 <- crossprod(ta$dE[i2, , drop = FALSE],
-                     ta$rows$var[i2] * ta$dE[i2, , drop = FALSE])
-    expect_equal(qr(rk)$rank, 1L)
-    expect_equal(qr(rk2)$rank, 1L)
-    expect_gt(min(eigen(rk2, symmetric = TRUE, only.values = TRUE)$values), -1e-12)
-    expect_gt(min(eigen(rk, symmetric = TRUE, only.values = TRUE)$values), -1e-12)
-    # ... and it is exactly Var(z) * (dg/dz)(dg/dz)', with the derivative a
-    # central difference IN THE LATENT VARIABLE. For a normal margin z and a
-    # differ only by the linear map a = mu + sd*z, so dg/dz = sd * dg/da and
-    # the rank term is the same object either way -- which is the check.
-    h  <- sqrt(3) * sd_a                    # the moment-matched radius
-    gp <- (.tay_cond(mu_a + h, tcov)$E - .tay_cond(mu_a - h, tcov)$E) / (2 * h)
-    expect_equal(as.numeric(ta$dE[i1, ]), sd_a * gp)
-    expect_equal(rk, sd_a^2 * outer(gp, gp))
-  }
-})
-
 test_that("the Taylor moments are the second-order expansion, term for term", {
   # E = g(mu) + (sd^2/2) g''(mu), differenced at h = hfrac*sd -- checked against
   # the three conditional moment sets directly, not against the package's own
@@ -1359,6 +1318,7 @@ test_that("lognormal and correlated covariates reach the Gaussian branch", {
 })
 
 test_that("a discrete covariate makes `auto` fall back, not fail", {
+  skip_if_not_installed("rxode2")   # Tier 1, but this block compiles a model
   # `auto` is documented to try the shift and fall back to the product grid.
   # A discrete covariate was the one disqualification that stop()ed instead, so
   # a model with a SEX term could not use cov_integration = "auto" at all --

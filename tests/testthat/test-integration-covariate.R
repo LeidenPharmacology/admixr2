@@ -98,6 +98,39 @@ skip_if_not_installed("rxode2")
   list(E = mu, V = crossprod(sweep(cp, 2L, mu)) / n_sim)
 }
 
+# Central difference of a scalar objective, for gradient checks. Written out at
+# eight sites before this; the step is the same at all of them.
+.cfd <- function(f, p, h = 1e-5)
+  vapply(seq_along(p), function(k) {
+    a <- p; a[k] <- a[k] + h
+    b <- p; b[k] <- b[k] - h
+    (f(a) - f(b)) / (2 * h)
+  }, numeric(1))
+
+# One adgh fixture for the shift/absorption tests. They differed only in the
+# model they closed over and, for two of them, in cov_integration / cov_nodes --
+# the rest of the closure was byte-identical four times over.
+.shift_fx <- function(mod, E, V, ci = "auto", n_nodes = 5L, cov_nodes = 7L,
+                      cd = list(WT = list(meanlog = log(72), sdlog = 0.28))) {
+  st0 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
+                       ev = rxode2::et(amt = .cov_DOSE), cov_dist = cd))
+  ui  <- suppressMessages(rxode2::rxode2(mod))
+  ov  <- admixr2:::.admOutputVar(ui)
+  ctl <- adghControl(studies = st0, grad = "analytical", n_nodes = n_nodes,
+                     cov_nodes = cov_nodes, print = 0L, covMethod = "none",
+                     cov_integration = ci)
+  pin <- admixr2:::.admDriverPinfo(ui, ctl)
+  u   <- admixr2:::.admDriverUnits(st0, ui, ov)
+  stu <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, u$studies))
+  sm  <- tryCatch(admixr2:::.admLoadSensModel(ui),   # sens BEFORE the sim model
+                  error = function(e) NULL)
+  list(pin = pin, stu = stu, ov = ov,
+       p = admixr2:::.admBuildOptVec(pin)$p0,
+       g = admixr2:::.adghNodeGrid(n_nodes, pin$n_eta),
+       sm = sm, rx = admixr2:::.admLoadModel(ui))
+}
+
+
 test_that(".admShiftDelta measures Delta(a) from the model, exactly", {
   # The replacement for the retired .admCovDelta, which measured the same shift
   # with an extra rxSolve per objective evaluation. .admShiftDelta evaluates the
@@ -298,10 +331,7 @@ test_that("the general path supports ANALYTIC gradients (vs central FD)", {
     ga <- admixr2:::.admGrad(ov$p0, pinfo, stu, zl, rx, ovar, pl, 1L, 1e-4,
                              sensModel = sm)
     h  <- 1e-5
-    gf <- vapply(seq_along(ov$p0), function(k) {
-      a <- b <- ov$p0; a[k] <- a[k] + h; b[k] <- b[k] - h
-      (f(a) - f(b)) / (2 * h)
-    }, numeric(1))
+    gf <- .cfd(f, ov$p0)
     expect_true(all(is.finite(ga)))
     # both covariate coefficients must be right, not just the ones with an eta
     expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-8)), 2e-2)
@@ -588,10 +618,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
   ga <- admixr2:::.admGrad(ov$p0, pinfo, stu, zl, rx, ovar, pl, 1L, 1e-4,
                            sensModel = sm)
   h  <- 1e-5
-  gf <- vapply(seq_along(ov$p0), function(k) {
-    a <- b <- ov$p0; a[k] <- a[k] + h; b[k] <- b[k] - h
-    (f(a) - f(b)) / (2 * h)
-  }, numeric(1))
+  gf <- .cfd(f, ov$p0)
   expect_true(all(is.finite(ga)))
   expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-8)), 2e-2)
 
@@ -673,6 +700,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
        grid = admixr2:::.adghNodeGrid(n_nodes, pinfo$n_eta),
        rxMod = admixr2:::.admLoadModel(ui))
 }
+
 
 test_that("cov_integration = 'taylor' expands the marginal moments, in 1 + 2p points", {
   ml <- log(72); sl <- 0.28
@@ -964,24 +992,7 @@ test_that("a correlated Omega takes the absorption and matches the product grid"
             v  <- exp(tv + eta.v)
             cp <- linCmt(); cp ~ add(add.err) })
   }
-  .setup <- function(ci, E, V) {
-    st0 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
-                         ev = rxode2::et(amt = .cov_DOSE),
-                         cov_dist = list(WT = list(meanlog = log(72),
-                                                   sdlog = 0.28))))
-    ui  <- suppressMessages(rxode2::rxode2(.mod))
-    ov  <- admixr2:::.admOutputVar(ui)
-    ctl <- adghControl(studies = st0, grad = "analytical", n_nodes = 5L,
-                       print = 0L, covMethod = "none", cov_integration = ci)
-    pin <- admixr2:::.admDriverPinfo(ui, ctl)
-    u   <- admixr2:::.admDriverUnits(st0, ui, ov)
-    stu <- suppressMessages(
-      admixr2:::.admCheckCovariates(ui, pin, u$studies))
-    list(pin = pin, stu = stu, ov = ov,
-         p = admixr2:::.admBuildOptVec(pin)$p0,
-         g = admixr2:::.adghNodeGrid(5L, pin$n_eta),
-         rx = admixr2:::.admLoadModel(ui))
-  }
+  .setup <- function(ci, E, V) .shift_fx(.mod, E, V, ci = ci)
   E0 <- .cov_DOSE / 10 * exp(-0.1 * .cov_TIMES)
   d0 <- .setup("quadrature", E0, diag((0.25 * E0)^2))
   mo <- admixr2:::.adghMoments(admixr2:::.admUnpack(d0$p, d0$pin),
@@ -1044,26 +1055,7 @@ test_that("the absorption's gradient is right, off the optimum", {
             v  <- exp(tv + eta.v)
             cp <- linCmt(); cp ~ add(add.err) })
   }
-  .setup <- function(E, V) {
-    st0 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
-                         ev = rxode2::et(amt = .cov_DOSE),
-                         cov_dist = list(WT = list(meanlog = log(72),
-                                                   sdlog = 0.28))))
-    ui  <- suppressMessages(rxode2::rxode2(.mod))
-    ov  <- admixr2:::.admOutputVar(ui)
-    ctl <- adghControl(studies = st0, grad = "analytical", n_nodes = 5L,
-                       print = 0L, covMethod = "none", cov_integration = "auto")
-    pin <- admixr2:::.admDriverPinfo(ui, ctl)
-    u   <- admixr2:::.admDriverUnits(st0, ui, ov)
-    stu <- suppressMessages(
-      admixr2:::.admCheckCovariates(ui, pin, u$studies))
-    # sens BEFORE the simulation model, always
-    sm <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
-    list(pin = pin, stu = stu, ov = ov,
-         p = admixr2:::.admBuildOptVec(pin)$p0,
-         g = admixr2:::.adghNodeGrid(5L, pin$n_eta),
-         sm = sm, rx = admixr2:::.admLoadModel(ui))
-  }
+  .setup <- function(E, V) .shift_fx(.mod, E, V)
   E0 <- .cov_DOSE / 10 * exp(-0.1 * .cov_TIMES)
   d0 <- .setup(E0, diag((0.25 * E0)^2))
   mo <- admixr2:::.adghMoments(admixr2:::.admUnpack(d0$p, d0$pin),
@@ -1075,10 +1067,7 @@ test_that("the absorption's gradient is right, off the optimum", {
   g <- admixr2:::.adghGrad(p, d$pin, d$stu, d$sm, d$rx, d$ov, d$g, 1L, 1e-4)
   f <- function(pp) admixr2:::.adghNLL(pp, d$pin, d$stu, d$rx, d$ov, d$g, 1L)
   h <- 1e-5
-  fd <- vapply(seq_along(p), function(k) {
-    a <- p; a[k] <- a[k] + h; b <- p; b[k] <- b[k] - h
-    (f(a) - f(b)) / (2 * h)
-  }, numeric(1))
+  fd <- .cfd(f, p)
   expect_true(all(is.finite(g)))
   # ANALYTIC now, not finite-differenced: the Cholesky differential of
   # chol(Omega + P) carries omega, and d(Delta)/d(theta) through the same
@@ -1101,25 +1090,7 @@ test_that("a VECTOR shift is analytic too, on a diagonal Omega", {
             v  <- exp(tv  + tcov2 * log(WT / 70) + eta.v)
             cp <- linCmt(); cp ~ add(add.err) })
   }
-  .setup <- function(E, V) {
-    st0 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
-                         ev = rxode2::et(amt = .cov_DOSE),
-                         cov_dist = list(WT = list(meanlog = log(72),
-                                                   sdlog = 0.28))))
-    ui  <- suppressMessages(rxode2::rxode2(.mod))
-    ov  <- admixr2:::.admOutputVar(ui)
-    ctl <- adghControl(studies = st0, grad = "analytical", n_nodes = 5L,
-                       print = 0L, covMethod = "none", cov_integration = "auto")
-    pin <- admixr2:::.admDriverPinfo(ui, ctl)
-    u   <- admixr2:::.admDriverUnits(st0, ui, ov)
-    stu <- suppressMessages(
-      admixr2:::.admCheckCovariates(ui, pin, u$studies))
-    sm  <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
-    list(pin = pin, stu = stu, ov = ov,
-         p = admixr2:::.admBuildOptVec(pin)$p0,
-         g = admixr2:::.adghNodeGrid(5L, pin$n_eta),
-         sm = sm, rx = admixr2:::.admLoadModel(ui))
-  }
+  .setup <- function(E, V) .shift_fx(.mod, E, V)
   E0 <- .cov_DOSE / 10 * exp(-0.1 * .cov_TIMES)
   d0 <- .setup(E0, diag((0.25 * E0)^2))
   mo <- admixr2:::.adghMoments(admixr2:::.admUnpack(d0$p, d0$pin),
@@ -1133,10 +1104,7 @@ test_that("a VECTOR shift is analytic too, on a diagonal Omega", {
   g <- admixr2:::.adghGrad(p, d$pin, d$stu, d$sm, d$rx, d$ov, d$g, 1L, 1e-4)
   f <- function(pp) admixr2:::.adghNLL(pp, d$pin, d$stu, d$rx, d$ov, d$g, 1L)
   h <- 1e-5
-  fd <- vapply(seq_along(p), function(k) {
-    a <- p; a[k] <- a[k] + h; b <- p; b[k] <- b[k] - h
-    (f(a) - f(b)) / (2 * h)
-  }, numeric(1))
+  fd <- .cfd(f, p)
   expect_true(all(is.finite(g)))
   expect_true(max(abs(g - fd) / pmax(abs(fd), 1)) < 1e-6)
 })
@@ -1157,25 +1125,7 @@ test_that("a NON-certified vector shift keeps the cheap path and stays analytic"
             v  <- exp(tv  + tcov2 * WT + eta.v)
             cp <- linCmt(); cp ~ add(add.err) })
   }
-  .setup <- function(E, V) {
-    st0 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
-                         ev = rxode2::et(amt = .cov_DOSE),
-                         cov_dist = list(WT = list(meanlog = log(72),
-                                                   sdlog = 0.28))))
-    ui  <- suppressMessages(rxode2::rxode2(.mod))
-    ov  <- admixr2:::.admOutputVar(ui)
-    ctl <- adghControl(studies = st0, grad = "analytical", n_nodes = 5L,
-                       print = 0L, covMethod = "none", cov_integration = "auto")
-    pin <- admixr2:::.admDriverPinfo(ui, ctl)
-    u   <- admixr2:::.admDriverUnits(st0, ui, ov)
-    stu <- suppressMessages(
-      admixr2:::.admCheckCovariates(ui, pin, u$studies))
-    sm  <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
-    list(pin = pin, stu = stu, ov = ov,
-         p = admixr2:::.admBuildOptVec(pin)$p0,
-         g = admixr2:::.adghNodeGrid(5L, pin$n_eta),
-         sm = sm, rx = admixr2:::.admLoadModel(ui))
-  }
+  .setup <- function(E, V) .shift_fx(.mod, E, V)
   E0 <- .cov_DOSE / 10 * exp(-0.1 * .cov_TIMES)
   d  <- .setup(E0, diag((0.25 * E0)^2))
   sh <- d$stu[[1L]][[".adm_cov_shift"]]
@@ -1188,10 +1138,7 @@ test_that("a NON-certified vector shift keeps the cheap path and stays analytic"
   expect_false(is.null(r$nll))       # nll = NULL would mean it degraded to FD
   f <- function(pp) admixr2:::.adghNLL(pp, d$pin, d$stu, d$rx, d$ov, d$g, 1L)
   h <- 1e-5
-  fd <- vapply(seq_along(p), function(k) {
-    a <- p; a[k] <- a[k] + h; b <- p; b[k] <- b[k] - h
-    (f(a) - f(b)) / (2 * h)
-  }, numeric(1))
+  fd <- .cfd(f, p)
   expect_true(all(is.finite(r$grad)))
   expect_true(max(abs(r$grad - fd) / pmax(abs(fd), 1)) < 1e-6)
 })
@@ -1257,32 +1204,13 @@ test_that("a coarse covariate grid does not desync objective from gradient", {
             cp <- linCmt(); cp ~ add(add.err) })
   }
   .g <- function(cn) {
-    E <- .cov_DOSE / 10 * exp(-0.1 * .cov_TIMES)
-    st0 <- list(s = list(E = E, V = diag((0.25 * E)^2), n = 300L,
-                         times = .cov_TIMES, ev = rxode2::et(amt = .cov_DOSE),
-                         cov_dist = list(WT = list(meanlog = log(72),
-                                                   sdlog = 0.28))))
-    ui  <- suppressMessages(rxode2::rxode2(.mod))
-    ov  <- admixr2:::.admOutputVar(ui)
-    ctl <- adghControl(studies = st0, grad = "analytical", n_nodes = 5L,
-                       cov_nodes = cn, print = 0L, covMethod = "none",
-                       cov_integration = "auto")
-    pin <- admixr2:::.admDriverPinfo(ui, ctl)
-    u   <- admixr2:::.admDriverUnits(st0, ui, ov)
-    stu <- suppressMessages(
-      admixr2:::.admCheckCovariates(ui, pin, u$studies))
-    sm  <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
-    rx  <- admixr2:::.admLoadModel(ui)
-    gr  <- admixr2:::.adghNodeGrid(5L, pin$n_eta)
-    p0  <- admixr2:::.admBuildOptVec(pin)$p0
-    p   <- p0 + c(0.20, -0.15, 0.25, 0.30, 0.18)[seq_along(p0)]
-    ga  <- admixr2:::.adghGrad(p, pin, stu, sm, rx, ov, gr, 1L, 1e-4)
-    f   <- function(pp) admixr2:::.adghNLL(pp, pin, stu, rx, ov, gr, 1L)
-    h   <- 1e-5
-    fd  <- vapply(seq_along(p), function(k) {
-      a <- p; a[k] <- a[k] + h; b <- p; b[k] <- b[k] - h
-      (f(a) - f(b)) / (2 * h)
-    }, numeric(1))
+    E  <- .cov_DOSE / 10 * exp(-0.1 * .cov_TIMES)
+    d  <- .shift_fx(.mod, E, diag((0.25 * E)^2), cov_nodes = cn)
+    p0 <- d$p
+    p  <- p0 + c(0.20, -0.15, 0.25, 0.30, 0.18)[seq_along(p0)]
+    ga <- admixr2:::.adghGrad(p, d$pin, d$stu, d$sm, d$rx, d$ov, d$g, 1L, 1e-4)
+    f  <- function(pp) admixr2:::.adghNLL(pp, d$pin, d$stu, d$rx, d$ov, d$g, 1L)
+    fd <- .cfd(f, p)
     max(abs(ga - fd) / pmax(abs(fd), 1))
   }
   # the coarse grid is the one that used to break; the others are the control
