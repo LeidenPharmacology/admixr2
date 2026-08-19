@@ -1187,7 +1187,7 @@
 #'   [admControl()]: `E`, `V`, `n`, `times`, `ev`, optional `method`; or an
 #'   `observations` list for multi-compartment fits -- see [admControl()]).
 #' @param cov_nodes Gauss-Hermite nodes per covariate used to integrate the
-#'   COVARIATE distribution when a study declares `cov_dist` (default 11). This is
+#'   COVARIATE distribution when a study declares `cov_dist` (default 7). This is
 #'   a separate dial from `n_nodes`, which refines the random-effect dimensions
 #'   only: raising `n_nodes` alone leaves the covariate integration exactly where
 #'   it was. Measured on a two-compartment model with an allometric weight effect

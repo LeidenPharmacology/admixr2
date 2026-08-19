@@ -1227,12 +1227,12 @@
   Rm <- cov_dist[["latentR"]]
   if (!is.null(Rm) && all(vapply(nms, function(n)
         is.null(cov_dist[[n]][["values"]]), logical(1)))) {
-    gq  <- .adghNodes1(n_nodes)
-    ixg <- as.matrix(expand.grid(rep(list(seq_len(n_nodes)), length(iS)),
-                                 KEEP.OUT.ATTRS = FALSE))
-    K   <- nrow(ixg)
-    wk  <- apply(matrix(gq$w[ixg], K, length(iS)), 1L, prod); wk <- wk / sum(wk)
-    zS  <- matrix(gq$x[ixg], K, length(iS))
+    # the ordinary product Gauss-Hermite grid -- bit-identical to building it
+    # from indices, checked across node counts and dimensions
+    .ng <- .adghNodeGrid(n_nodes, length(iS))
+    K   <- nrow(.ng$X)
+    wk  <- .ng$W / sum(.ng$W)
+    zS  <- .ng$X
     iM  <- setdiff(seq_len(d), iS)
     if (length(iM)) {
       A  <- Rm[iM, iS, drop = FALSE] %*% solve(Rm[iS, iS, drop = FALSE])
@@ -1582,11 +1582,9 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
       # a discrete covariate can never make Delta normal.
       return(list(X = X, W = rep(1 / nrow(X), nrow(X)), z = NULL))
     }
-    g  <- .adghNodes1(n_nodes)
-    ix <- as.matrix(expand.grid(rep(list(seq_len(n_nodes)), d),
-                                KEEP.OUT.ATTRS = FALSE))
-    z  <- matrix(g$x[ix], nrow(ix), d)
-    W  <- apply(matrix(g$w[ix], nrow(ix), d), 1L, prod)
+    .ng <- .adghNodeGrid(n_nodes, d)
+    z   <- .ng$X
+    W   <- .ng$W
     u  <- stats::pnorm(z)
     u  <- pmin(pmax(u, .Machine$double.eps), 1 - .Machine$double.eps)
     colnames(u) <- nms
@@ -1985,22 +1983,6 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   list(du_dtheta = dth, du_domega = du_dom)
 }
 
-# Quadrature over a VECTOR shift, u = Delta(a) + eta in R^m.
-#
-# u's law is the mixture sum_j W_j N(Delta_j, Omega_S). The affected etas are
-# required to be mutually uncorrelated (.admCheckCovariates refuses otherwise),
-# so Omega_S is diagonal and the components factor GIVEN the mixture index --
-# but not marginally, because the components share that index. The Rosenblatt
-# construction handles exactly that:
-#
-#   u_1        ~ sum_j W_j N(Delta_j1, s_1^2)                      invert its CDF
-#   u_2 | u_1  ~ sum_j W_j^(u_1) N(Delta_j2, s_2^2),
-#                W_j^(v) proportional to W_j phi((v - Delta_j1)/s_1)
-#
-# i.e. each conditional is again a ONE-dimensional mixture, so the same Newton
-# inversion serves every level. Cost is n_u^m nodes and n_u^(m-1) inversions,
-# against n_cov^p * n_node^m for the product grid -- still independent of the
-# number of covariates, which is the whole point.
 # Is Delta an AFFINE image of the latent normal scores?
 #
 # This is the certificate, and it replaces asking whether Delta's own moments
@@ -2776,7 +2758,7 @@ covDist <- function(..., cor = NULL, joint = NULL,
   # first objective evaluation of a fit.
   out <- .admCovDistCanon(out)
   # A NORMAL margin is unbounded below, and the quadrature reaches |z| = 5.19
-  # at the default 11 nodes -- so any covariate with a CV above about 0.19 gets
+  # at the default 7 nodes -- so any covariate with a CV above about 0.27 gets
   # a node at or below zero, and an allometric or log term evaluated there is
   # NaN. That covers most PK covariates (weight 72+/-16 is CV 0.22), so it is
   # worth saying out loud rather than leaving to a solver failure. It is only a

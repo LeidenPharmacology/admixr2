@@ -47,9 +47,11 @@
   # 1 + 2p design points). Only adghControl() exposes it, so every other
   # estimator falls back to "quadrature" here and is unchanged.
   pinfo$cov_integration  <- .ctl$cov_integration %||% "quadrature"
-  pinfo$cov_taylor_h     <- .ctl$cov_taylor_h %||% 0.5
-  # Whether covariate reweighting was asked for. On pinfo because the estimators
-  # read it inside the objective, where the control is not in scope.
+  # 1, matching adghControl's default and .adghGrid's own fallback. 0.5 was the
+  # retired radius this file argues against at length; adghControl always
+  # supplies the value so the fallback is unreachable today, but a control that
+  # did not would have silently expanded at the wrong one.
+  pinfo$cov_taylor_h     <- .ctl$cov_taylor_h %||% 1
   pinfo
 }
 

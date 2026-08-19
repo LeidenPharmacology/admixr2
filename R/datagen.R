@@ -432,7 +432,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       stats::setNames(lapply(.cd, .admCovMeanOf), names(.cd))
     }
 
-    compute_moments <- function(spec, cov_vals = NULL) {
+    compute_moments <- function(spec) {
       ov  <- spec$output
       n_t <- length(spec$times)
       arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
@@ -448,14 +448,14 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       # solve paths pick it up through the same channel.
       study_tmp <- list(ev_full = evf, times = spec$times,
                         out_pair = .admBetaPair(ui),
-                        cov = cov_vals %||% cov_ref_of(),
-                        cov_rows = if (is.null(cov_vals)) cov_rows_of(control$n_sim))
+                        cov = cov_ref_of(),
+                        cov_rows = cov_rows_of(control$n_sim))
       # `gh` integrates the covariate on its own grid, so it needs the
       # DISTRIBUTION, not just the reference value. Passing only `cov` left it
       # solving at the covariate mean -- the ecological plug-in, generating data
       # for a population that does not exist. Measured against the mc path on a
       # lognormal covariate: 2.1e-02 on the mean and 2.9e-01 on the covariance.
-      if (control$method == "gh" && is.null(cov_vals))
+      if (control$method == "gh")
         study_tmp$cov_dist <- s[["cov_dist"]]
 
       if (control$method == "gh") {
@@ -500,8 +500,8 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       }
     }
 
-    one_result <- function(spec, cov_vals = NULL) {
-      m     <- compute_moments(spec, cov_vals)
+    one_result <- function(spec) {
+      m     <- compute_moments(spec)
       t_lbl <- as.character(spec$times)
       mu <- m$mu; V <- m$V
       names(mu) <- t_lbl; dimnames(V) <- list(t_lbl, t_lbl)
