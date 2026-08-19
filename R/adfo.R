@@ -668,6 +668,51 @@
 # No analytical chain rule -- every parameter differentiated by perturbing the NLL.
 # The sens model is still used inside .adfoNLL() for efficient J computation.
 #' @noRd
+# Prime the (mu, J) memo for a set of parameter points with ONE batched solve
+# per study, instead of one solve per point.
+#
+# Shared by .adfoFDGrad and .adfoCalcCov, which had byte-identical copies of it
+# except that only one chunked -- so the other could hand rxSolve an unbounded
+# number of rows. `cache` is an environment, so the memo is filled in place.
+#
+# A transform-both-sides lambda reaches rx_pred_ and so joins the memo key
+# (.adfoMuJKey), but one batched solve can carry only ONE lambda. When one is
+# estimated, priming is skipped and the per-point path runs as before.
+.adfoPrimeMuJ <- function(p_pts, pinfo, studies, sensModel, rxMod, output_var,
+                          cores, cache, chunk = 250L) {
+  .tbn <- if (is.null(sensModel)) NULL else sensModel$pred_tbs$lam_name
+  if (!is.null(.tbn) && !is.na(.tbn)) return(invisible(NULL))
+  prs <- lapply(p_pts, function(pp)
+    tryCatch(.admUnpack(pp, pinfo), error = function(e) NULL))
+  ok  <- vapply(prs, function(pr) !is.null(pr) && .admParsFinite(pr, pinfo),
+                logical(1))
+  prs <- prs[ok]
+  if (length(prs) == 0L) return(invisible(NULL))
+  keys <- vapply(prs, function(pr)
+    paste(sprintf("%.17g", .adfoMuJKey(pr, sensModel)), collapse = ","),
+    character(1))
+  uq   <- !duplicated(keys)
+  keys <- keys[uq]; prs <- prs[uq]
+  for (s_idx in seq_along(studies)) {
+    s <- studies[[s_idx]]
+    if (isTRUE(s$is_joint)) next            # joint units have no batched path
+    need <- which(vapply(keys, function(kk)
+      is.null(cache[[paste0(s_idx, ":", kk)]]), logical(1)))
+    if (length(need) < 2L) next             # nothing to gain over the memo
+    for (ch in split(need, ceiling(seq_along(need) / chunk))) {
+      sm <- do.call(rbind, lapply(prs[ch], function(pr) pr$struct))
+      colnames(sm) <- names(prs[[ch[1L]]]$struct)
+      res <- .adfoGetMuJBatch(sm, pinfo, s, sensModel, rxMod,
+                              s$output %||% output_var, cores,
+                              prs[[ch[1L]]]$sigma_var)
+      if (is.null(res)) next
+      for (i in seq_along(ch))
+        cache[[paste0(s_idx, ":", keys[ch[i]])]] <- res[[i]]
+    }
+  }
+  invisible(NULL)
+}
+
 .adfoFDGrad <- function(p, pinfo, studies, sensModel, rxMod, output_var,
                          params_list, cores, grad_h = 1e-4, mj_memo = NULL) {
   g <- numeric(length(p)); names(g) <- names(p)
@@ -694,38 +739,9 @@
   # Inlined rather than factored into a helper: this function runs inside mirai
   # daemons, and .admPatchDevNamespace() uses assignInNamespace(), which can
   # REPLACE a binding but cannot ADD one -- a new helper would be missing there.
-  .adfo_prime <- function(p_pts) {
-    # A transform-both-sides lambda reaches rx_pred_ and so joins the memo key
-    # (see .adfoMuJKey), but one batched solve can carry only ONE lambda. When a
-    # lambda is estimated the priming is skipped and the per-point path runs
-    # exactly as before.
-    .tbn <- if (is.null(sensModel)) NULL else sensModel$pred_tbs$lam_name
-    if (!is.null(.tbn) && !is.na(.tbn)) return(invisible(NULL))
-    prs <- lapply(p_pts, function(pp) tryCatch(.admUnpack(pp, pinfo), error = function(e) NULL))
-    ok  <- vapply(prs, function(pr) !is.null(pr) && .admParsFinite(pr, pinfo), logical(1))
-    prs <- prs[ok]
-    if (length(prs) == 0L) return(invisible(NULL))
-    keys <- vapply(prs, function(pr)
-      paste(sprintf("%.17g", .adfoMuJKey(pr, sensModel)), collapse = ","), character(1))
-    uq   <- !duplicated(keys)
-    keys <- keys[uq]; prs <- prs[uq]
-    for (s_idx in seq_along(studies)) {
-      s <- studies[[s_idx]]
-      if (isTRUE(s$is_joint)) next            # joint units have no batched path
-      need <- which(vapply(keys, function(kk)
-        is.null(cache[[paste0(s_idx, ":", kk)]]), logical(1)))
-      if (length(need) < 2L) next             # nothing to gain over the memo
-      sm <- do.call(rbind, lapply(prs[need], function(pr) pr$struct))
-      colnames(sm) <- names(prs[[need[1L]]]$struct)
-      res <- .adfoGetMuJBatch(sm, pinfo, s, sensModel, rxMod,
-                              s$output %||% output_var, cores,
-                              prs[[need[1L]]]$sigma_var)
-      if (is.null(res)) next
-      for (i in seq_along(need))
-        cache[[paste0(s_idx, ":", keys[need[i]])]] <- res[[i]]
-    }
-    invisible(NULL)
-  }
+  .adfo_prime <- function(p_pts)
+    .adfoPrimeMuJ(p_pts, pinfo, studies, sensModel, rxMod, output_var, cores,
+                  cache)
 
   hs <- pmax(abs(p), 0.1) * .admGH(grad_h, seq_along(p))
   .adfo_prime(c(
@@ -797,39 +813,9 @@
   # and FD branch, in validation/adfo-batch-bitidentity.R. That is a different
   # operation from merging studies over a UNION of observation times, which does
   # change the output grid (CLAUDE.md: tried and reverted).
-  .prime <- function(p_pts) {
-    # A transform-both-sides lambda reaches rx_pred_ and so joins the memo key
-    # (.adfoMuJKey), but one batched solve can carry only ONE lambda. When one is
-    # estimated, priming is skipped and the per-point path runs as before.
-    .tbn <- if (is.null(sensModel)) NULL else sensModel$pred_tbs$lam_name
-    if (!is.null(.tbn) && !is.na(.tbn)) return(invisible(NULL))
-    prs <- lapply(p_pts, function(pp) tryCatch(.admUnpack(pp, pinfo), error = function(e) NULL))
-    ok  <- vapply(prs, function(pr) !is.null(pr) && .admParsFinite(pr, pinfo), logical(1))
-    prs <- prs[ok]
-    if (length(prs) == 0L) return(invisible(NULL))
-    keys <- vapply(prs, function(pr)
-      paste(sprintf("%.17g", .adfoMuJKey(pr, sensModel)), collapse = ","), character(1))
-    uq   <- !duplicated(keys)
-    keys <- keys[uq]; prs <- prs[uq]
-    for (s_idx in seq_along(studies)) {
-      s <- studies[[s_idx]]
-      if (isTRUE(s$is_joint)) next            # joint units have no batched path
-      need <- which(vapply(keys, function(kk)
-        is.null(cache[[paste0(s_idx, ":", kk)]]), logical(1)))
-      if (length(need) < 2L) next             # nothing to gain over the memo
-      for (ch in split(need, ceiling(seq_along(need) / 250L))) {
-        sm <- do.call(rbind, lapply(prs[ch], function(pr) pr$struct))
-        colnames(sm) <- names(prs[[ch[1L]]]$struct)
-        res <- .adfoGetMuJBatch(sm, pinfo, s, sensModel, rxMod,
-                                s$output %||% output_var, cores,
-                                prs[[ch[1L]]]$sigma_var)
-        if (is.null(res)) next
-        for (i in seq_along(ch))
-          cache[[paste0(s_idx, ":", keys[ch[i]])]] <- res[[i]]
-      }
-    }
-    invisible(NULL)
-  }
+  .prime <- function(p_pts)
+    .adfoPrimeMuJ(p_pts, pinfo, studies, sensModel, rxMod, output_var, cores,
+                  cache)
 
   nll0 <- nll_fn(p_hat)
   if (!is.finite(nll0)) {

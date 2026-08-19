@@ -143,16 +143,11 @@
       if (ncol(D) > 1L) {
         .stn <- pinfo$struct_names
         .st0 <- .admShiftStruct(pinfo, pars$struct)
+        .dD0 <- .admShiftDDelta(sh$spec, .st0, sh$X, sh$aref)
         .dirs <- c(
-          lapply(names(.st0), function(k) {
-            s1 <- .st0; s1[[k]] <- s1[[k]] + 1e-6
-            s2 <- .st0; s2[[k]] <- s2[[k]] - 1e-6
-            d1 <- .admShiftDelta(sh$spec, s1, sh$X, sh$aref)
-            d2 <- .admShiftDelta(sh$spec, s2, sh$X, sh$aref)
-            if (is.null(d1) || is.null(d2)) return(NULL)
-            list(dD = (as.matrix(d1) - as.matrix(d2)) / 2e-6,
-                 dom = numeric(ncol(D)))
-          }),
+          lapply(names(.st0), function(k)
+            if (is.null(.dD0[[k]])) NULL else
+              list(dD = .dD0[[k]], dom = numeric(ncol(D)))),
           lapply(seq_len(ncol(D)), function(a) {
             e <- numeric(ncol(D)); e[a] <- 1
             list(dD = matrix(0, nrow(D), ncol(D)), dom = e)

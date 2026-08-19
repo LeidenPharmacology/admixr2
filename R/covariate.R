@@ -1879,6 +1879,27 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   list(u = u, w = g$w)
 }
 
+# d(Delta)/d(theta) for every structural theta, by central difference.
+#
+# Delta costs no solve -- two vectorised evaluations of the parameter assignment
+# -- so a fixed step is right here and a measured one (.admShi21Steps) would be
+# pure overhead. The step lives in ONE place: it was written out at three sites,
+# and the objective and its gradient must not be able to drift apart on it.
+#
+# Returns a named list of (n_cov x m) matrices, or NULL if any evaluation fails,
+# which every caller treats as "no analytic derivative available".
+.admShiftDDelta <- function(spec, struct, X, aref, h = 1e-6) {
+  out <- lapply(names(struct), function(k) {
+    s1 <- struct; s1[[k]] <- s1[[k]] + h
+    s2 <- struct; s2[[k]] <- s2[[k]] - h
+    d1 <- .admShiftDelta(spec, s1, X, aref)
+    d2 <- .admShiftDelta(spec, s2, X, aref)
+    if (is.null(d1) || is.null(d2)) return(NULL)
+    (as.matrix(d1) - as.matrix(d2)) / (2 * h)
+  })
+  stats::setNames(out, names(struct))
+}
+
 # Derivatives of the u nodes with respect to the parameters they move with.
 #
 # u_i is defined implicitly by F_u(u_i) = Phi(z_i) with
@@ -1904,15 +1925,8 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   Delta <- as.numeric(as.matrix(Delta)[, 1L])
   nm <- names(struct)
   # dDelta/dtheta by central difference, shared by both branches below.
-  dDs <- lapply(nm, function(k) {
-    s1 <- struct; s1[[k]] <- s1[[k]] + h
-    s2 <- struct; s2[[k]] <- s2[[k]] - h
-    d1 <- .admShiftDelta(spec, s1, X, aref)
-    d2 <- .admShiftDelta(spec, s2, X, aref)
-    if (is.null(d1) || is.null(d2)) return(NULL)
-    (as.matrix(d1)[, 1L] - as.matrix(d2)[, 1L]) / (2 * h)
-  })
-  names(dDs) <- nm
+  dDs <- lapply(.admShiftDDelta(spec, struct, X, aref, h),
+                function(m) if (is.null(m)) NULL else m[, 1L])
 
   # THE GAUSSIAN BRANCH, matched to .admShiftNodes' closed form. Keyed off the
   # SAME predicate, evaluated on the same (Delta, W): if the two ever disagreed
@@ -2223,13 +2237,10 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   nm <- names(struct)
   dmu <- matrix(0, n_eta, length(nm), dimnames = list(NULL, nm))
   dP  <- stats::setNames(vector("list", length(nm)), nm)
+  dDs <- .admShiftDDelta(spec, struct, Xcov, aref, h)
   for (k in nm) {
-    s1 <- struct; s1[[k]] <- s1[[k]] + h
-    s2 <- struct; s2[[k]] <- s2[[k]] - h
-    d1 <- .admShiftDelta(spec, s1, Xcov, aref)
-    d2 <- .admShiftDelta(spec, s2, Xcov, aref)
-    if (is.null(d1) || is.null(d2)) return(NULL)
-    dD  <- (as.matrix(d1) - as.matrix(d2)) / (2 * h)
+    dD <- dDs[[k]]
+    if (is.null(dD)) return(NULL)
     dco <- qr.coef(ab$q, dD * ab$sw)
     if (!all(is.finite(dco))) return(NULL)
     dB  <- t(dco[-1L, , drop = FALSE])
