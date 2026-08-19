@@ -616,6 +616,11 @@ plot.admFit <- function(x, which = NULL, n_sim = NULL, seed = 1L, ...) {
 
   # -- Mean diagnostics: 2x2 grid (Obs | Pred / Residual | Standardised residual)
   # Obs/Pred: shared y scale; black mean line + point + \u00b11 SD ribbon (black, alpha 0.15).
+  # The ribbon is sqrt(diag(V_obs)) on the ML scale -- what the fit consumed --
+  # so a study declared `v_denom = "unbiased"` shows a ribbon slightly narrower
+  # than the SD read off its source figure. That is deliberate: it is compared
+  # against sqrt(diag(V_pred)), a population quantity, and pairing an (n-1)
+  # observed SD with it would build a 1/(2n) mismatch into the diagnostic.
   # Residual: raw (E_obs - mu_pred) lollipop with \u00b12 SE band (SE = sqrt(V_pred[t,t]/n)).
   # Standardised residual: z[t] = (E_obs[t] - mu[t]) / sqrt(V_pred[t,t]/n) ~ N(0,1).
   # Stars: |z| > 1.96 (*), > 2.58 (**), > 3.29 (***). Requires patchwork for 2x2.

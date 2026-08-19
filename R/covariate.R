@@ -2430,8 +2430,13 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
     m <- sum(as.numeric(spec$values) * pr)
     return(sqrt(sum(pr * (as.numeric(spec$values) - m)^2)))
   }
-  if (is.function(spec$quantile))
-    return(stats::sd(spec$quantile((seq_len(1024L) - 0.5) / 1024L)))
+  if (is.function(spec$quantile)) {
+    # POPULATION sd of the 1024 midpoints, not stats::sd() -- these are
+    # quadrature nodes for E_a[.], not a sample, and the `values` branch above
+    # already uses the population form. .admCovVarOf documents the same point.
+    q <- spec$quantile((seq_len(1024L) - 0.5) / 1024L)
+    return(sqrt(mean((q - mean(q))^2)))
+  }
   if (!is.null(spec$meanlog)) return(spec$sdlog)
   spec$sd
 }

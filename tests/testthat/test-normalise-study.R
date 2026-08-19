@@ -321,3 +321,35 @@ test_that("v_denom refuses what it cannot convert", {
   expect_error(admixr2:::.admNormaliseStudy(
     c(base, list(V = c(4, 2), n = 20L, v_denom = "n-1")), "s"), "unbiased")
 })
+
+test_that("the two denominators are two spellings of the same objective", {
+  # The end-to-end property: a study whose V is on the (n-1) scale and declares
+  # it must score IDENTICALLY to the same data supplied on the ML scale. If it
+  # does not, the declaration is decorative.
+  skip_if_not_installed("rxode2")
+  N <- 18L; TM <- c(0.5, 1, 2, 4)
+  set.seed(21)
+  V_ml <- diag(c(4, 3, 2, 1)) + 0.3
+  V_ub <- V_ml * N / (N - 1)                  # the same data, other convention
+  E <- c(10, 8, 6, 4)
+  ev <- rxode2::et(amt = 100)
+  mk <- function(V, vd) list(s = list(E = E, V = V, n = N, times = TM,
+                                      ev = ev, v_denom = vd))
+  m <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); eta.cl ~ 0.09; a <- 0.5 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ add(a) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(m))
+  ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+  nll <- function(st) {
+    ctl <- adghControl(studies = st, grad = "none", n_nodes = 5L, print = 0L,
+                       covMethod = "none")
+    pin <- admixr2:::.admDriverPinfo(ui, ctl)
+    u   <- admixr2:::.admDriverUnits(st, ui, ov)
+    admixr2:::.adghNLL(admixr2:::.admBuildOptVec(pin)$p0, pin, u$studies, rx, ov,
+                       admixr2:::.adghNodeGrid(5L, pin$n_eta), 1L)
+  }
+  expect_equal(nll(mk(V_ub, "unbiased")), nll(mk(V_ml, "ml")))
+  # and declaring the wrong one must NOT be a no-op, or the field is inert
+  expect_false(isTRUE(all.equal(nll(mk(V_ub, "ml")), nll(mk(V_ml, "ml")))))
+})
