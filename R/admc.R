@@ -452,14 +452,8 @@ nmObjGetControl.admc <- function(x, ...) {
     # is not a matrix"). adfo and adgh guard this; admc must too (.admNLLBatch
     # already does). A 0-column eta_mat flows correctly through .admSimulate and the
     # n_eta-indexed kernels (all seq_len(0) no-ops). For n_eta > 0 this is identical.
-    # .admStudyL is pars$L for every study. It used to return an INFLATED
-    # Cholesky, chol(Omega + J Sigma_a J'), for the retired `collapse` path; that
-    # path is gone (it was the Gaussian special case of the shift, and was
-    # reachable only with grad = "none"), so the guard against a NULL return went
-    # with it.
-    .sL <- .admStudyL(pars, pinfo, s)
     eta_mat <- if (pinfo$n_eta > 0L) {
-      .em <- z %*% t(.sL)
+      .em <- z %*% t(pars$L)
       colnames(.em) <- pinfo$eta_col_names; .em
     } else matrix(0, nrow(z), 0L)
     # Covariate marginalisation, by the path chosen in .admCheckCovariates().
@@ -1088,7 +1082,7 @@ nmObjGetControl.admc <- function(x, ...) {
         if (pinfo$n_eta > 0L) {
           # Same effective Cholesky the NLL uses, or the post-fit Hessian is of a
           # different objective than the one that was minimised.
-          eta_mat <- z %*% t(.admStudyL(pars, pinfo, s))
+          eta_mat <- z %*% t(pars$L)
           pdf_mat[rows, pinfo$eta_col_names] <- eta_mat
         }
       }
@@ -2746,7 +2740,7 @@ nlmixr2Est.admc <- function(env, ...) {
 
   # RETURNS the studies, annotated with which covariate path each takes.
   # Discarding the value silently disables covariate handling entirely.
-  studies <- .admCheckCovariates(.ui, pinfo, studies, .ctl$grad)
+  studies <- .admCheckCovariates(.ui, pinfo, studies)
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)

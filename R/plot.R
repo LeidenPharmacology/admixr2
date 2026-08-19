@@ -314,11 +314,9 @@ head.paged_df <- function(x, n = 6L, ...) {
                     sigma_output  = rep(NA_character_, length(sv)),
                     sigma_is_prop  = as.list(grepl("prop",  sig_nms, ignore.case = TRUE)),
                     sigma_is_lnorm = as.list(grepl("lnorm", sig_nms, ignore.case = TRUE)))
-  # No cov_map is rebuilt here any more. It existed only for the retired
-  # `collapse` path, whose covariate-inflated Cholesky .admStudyL() no longer
-  # builds -- every study now uses the plain Omega and carries its covariates as
-  # per-row data or as a shifted eta column, neither of which needs the map.
-  # .admStudyCovRows() still needs n_eta, so that stays.
+  # No cov_map is rebuilt here: every study uses the plain Omega and carries its
+  # covariates as per-row data or as a shifted eta column, neither of which
+  # needs one. .admStudyCovRows() still needs n_eta, so that stays.
   if (is.null(pinfo_r$n_eta)) pinfo_r$n_eta <- n_eta
   # .admParseIniDf() carries no resid_nodes -- only the DRIVERS set it, from the
   # control. Restore the count the fit actually used, or the diagnostics rebuild
@@ -341,13 +339,7 @@ head.paged_df <- function(x, n = 6L, ...) {
         rnorm  = matrix(rnorm(n_sim * n_eta), nrow = n_sim),
         qnorm(randtoolbox::sobol(n = n_sim, dim = n_eta))
       )
-      # The COVARIATE-effective Cholesky, not the plain one. A study whose
-      # subjects span a covariate distribution predicts with
-      # chol(Omega + J Sigma_a J') on the collapse path; using pars$L here draws
-      # the fit's IIV and drops the covariate spread entirely.
-      .Ls <- tryCatch(.admStudyL(list(L = L, struct = extra$struct), pinfo_r, s),
-                      error = function(e) NULL)
-      eta_mat <- z_s %*% t(.Ls %||% L)
+      eta_mat <- z_s %*% t(L)
       colnames(eta_mat) <- eta_nms
     } else {
       eta_mat <- matrix(0, nrow = n_sim, ncol = 0)

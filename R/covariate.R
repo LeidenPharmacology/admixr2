@@ -138,30 +138,6 @@
   else                    cbind(mat, add)
 }
 
-# =============================================================================
-# Study-level Cholesky
-# =============================================================================
-
-# The Cholesky a given study is simulated with. IDENTITY, and it should be
-# DELETED -- `R/admc.R` (.admNLL, .admGradBatch) calls it unguarded on every
-# objective evaluation, so removing it from here alone breaks every admc fit.
-#
-# It used to return chol(Omega + J Sigma_a J') for a study spanning a covariate
-# distribution: the "collapse" path, which solved at the covariate mean and
-# folded the covariate's variance into Omega. That is exactly the Gaussian
-# special case of the shift path -- for a linear Delta and a normal covariate
-# u = Delta(a) + eta is itself normal with variance Omega + beta^2 Var(a), so
-# the closed form and the shift's mixture inversion are the same object.
-# Verified with the solver taken out of the comparison (analytic 1-cmt f, both
-# node sets): relative agreement 6.7e-16 on the mean and 5.0e-13 on the
-# covariance once the covariate rule is resolved (31 nodes); 2.5e-10 / 2.7e-8 at
-# the default cov_nodes = 7, an order of magnitude under the ODE solver's own
-# ~1e-6 floor. So nothing was lost with the closed form -- only its four
-# preconditions (bare `theta * COV`, normal covariate, solved at the mean,
-# grad = "none") and the silent omega inflation that followed when they were
-# assumed rather than checked.
-.admStudyL <- function(pars, pinfo, s) pars$L
-
 # Covariate columns for a params frame that stacks `n_blk` blocks of `n_sim`
 # rows, each block a PERTURBATION OF THE SAME SUBJECTS (the finite-difference
 # frames in .admGrad). The covariate rows are tiled per block so every block sees
@@ -207,7 +183,7 @@
 # enters the routing any more (see the note on the default path below) -- and
 # they are kept only because all four drivers call this positionally. Drop them
 # when those call sites are next touched.
-.admCheckCovariates <- function(.ui, pinfo, studies, grad, est = NULL) {
+.admCheckCovariates <- function(.ui, pinfo, studies) {
   has <- vapply(studies, function(s) !is.null(s$cov_dist), logical(1))
   if (!any(has)) return(studies)
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
@@ -272,9 +248,7 @@
     # differentiate exactly the function the NLL scores.
     #
     # It is the fallback for every refusal below, so a refusal costs solve rows
-    # and never accuracy. `grad` no longer enters the choice at all: the two
-    # paths that had no derivative (collapse, uq) are gone, and both survivors
-    # ("rows" and "shift") are differentiable.
+    # and never accuracy: both paths are differentiable.
     studies[[nm]]$.adm_cov_path <- "rows"
 
     # SHIFT. If the covariates act only as a shift of a mu-referenced argument

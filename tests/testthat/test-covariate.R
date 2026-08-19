@@ -33,48 +33,20 @@ test_that(".admCovCols adds ONLY declared covariates, never a blanket fill", {
   expect_identical(admixr2:::.admCovCols(m, c("tcl", "wt"), NULL), m)
 })
 
-test_that(".admStudyL is the plain Cholesky for EVERY study", {
-  # The "collapse" path -- chol(Omega + J Sigma_a J'), which folded a normal
-  # covariate's variance into Omega -- was retired, so no study-specific Omega
-  # remains. Pinned because R/admc.R and R/plot.R call this on every objective
-  # evaluation: an inflated Omega reaching them again would be a plausible fit
-  # of a different model, which is exactly how the collapse used to fail.
-  pars <- list(L = t(chol(matrix(0.09, 1L, 1L))), struct = c(tcov = 0.75))
-  expect_identical(admixr2:::.admStudyL(pars, .cov_pinfo(), list()), pars$L)
-  expect_identical(
-    admixr2:::.admStudyL(pars, .cov_pinfo(),
-                         list(cov_dist = list(WT = list(mu = 0, sd = 0.6)))),
-    pars$L)
-})
-
 test_that(".admCheckCovariates accepts a supported mu-referenced covariate", {
   st <- list(a = list(cov_dist = list(WT = list(mu = 0, sd = 0.6))))
-  expect_silent(admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), st, "none"))
+  expect_silent(admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), st))
 })
 
 test_that(".admCheckCovariates is a no-op when no study declares cov_dist", {
   expect_silent(admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(),
-                                              list(a = list()), "sens"))
-})
-
-test_that("`grad` no longer enters the covariate path choice", {
-  # It used to: "collapse" and "uq" had no derivative, so a gradient mode forced
-  # "rows" and grad = "none" got the closed form. Both of those paths are gone
-  # and both survivors are differentiable, so every mode must land identically.
-  # This is what made "collapse" unreachable in a real fit -- every estimator
-  # defaults to a gradient -- and the reason it was retired rather than repaired.
-  ok_st <- list(a = list(cov = list(WT = 0),
-                         cov_dist = list(WT = list(mu = 0, sd = 0.6))))
-  for (g in c("none", "sens", "analytical", "fd", "cfd"))
-    expect_identical(
-      admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), ok_st, g)$a$.adm_cov_path,
-      "rows")
+                                              list(a = list())))
 })
 
 test_that(".admCheckCovariates routes to the general path by default", {
   ok_st <- list(a = list(cov = list(WT = 0), cov_dist = list(WT = list(mu = 0, sd = 0.6))))
   path <- function(ui = .cov_ui(), pi = .cov_pinfo(), st = ok_st)
-    admixr2:::.admCheckCovariates(ui, pi, st, "none")$a$.adm_cov_path
+    admixr2:::.admCheckCovariates(ui, pi, st)$a$.adm_cov_path
 
   # the bare theta*COV product the retired collapse needed -- now "rows" like
   # everything else. adgh reaches the same moments through the shift path when
@@ -103,14 +75,14 @@ test_that('cov_integration = "auto" falls back where "shift" errors', {
 
   expect_error(
     admixr2:::.admCheckCovariates(ui, .cov_pinfo(cov_integration = "shift"),
-                                  st, "none"),
+                                  st),
     "exactly one random effect")
 
   # "auto" is a SPEED lever, and the fallback is the more accurate path, so a
   # refusal must never be an error -- only a message and the reason recorded.
   expect_message(
     got <- admixr2:::.admCheckCovariates(
-      ui, .cov_pinfo(cov_integration = "auto"), st, "none"),
+      ui, .cov_pinfo(cov_integration = "auto"), st),
     "auto")
   expect_identical(got$a$.adm_cov_path, "rows")
   expect_match(got$a$.adm_cov_shift_why, "exactly one random effect")
@@ -128,7 +100,7 @@ test_that(".admCovMeanOf gives the solve value each path needs", {
 test_that("a study omitting `cov` has it filled in from `cov_dist`", {
   st <- admixr2:::.admCheckCovariates(
     .cov_ui(), .cov_pinfo(),
-    list(a = list(cov_dist = list(WT = list(mu = 70, sd = 10)))), "none")
+    list(a = list(cov_dist = list(WT = list(mu = 70, sd = 10)))))
   expect_equal(st$a$cov$WT, 70)
 })
 
@@ -137,7 +109,7 @@ test_that(".admCheckCovariates still errors on genuinely unsupportable input", {
 
   # covariate the model never reads -- almost always a typo
   expect_error(
-    admixr2:::.admCheckCovariates(.cov_ui(cov = "AGE"), .cov_pinfo(), ok_st, "none"),
+    admixr2:::.admCheckCovariates(.cov_ui(cov = "AGE"), .cov_pinfo(), ok_st),
     "which the model never reads")
 
   # distributions we cannot draw from
@@ -146,7 +118,7 @@ test_that(".admCheckCovariates still errors on genuinely unsupportable input", {
     expect_error(
       admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(),
                                     list(a = list(cov = list(WT = 0),
-                                                  cov_dist = list(WT = spec))), "none"),
+                                                  cov_dist = list(WT = spec)))),
       "not a supported distribution")
 })
 
@@ -809,7 +781,7 @@ test_that("the Taylor design is built ONCE and cached on the study", {
               lstExpr = list(quote(cl <- exp(tcl + bw*WT + bc*CRCL + eta.cl))))
   pin <- list(n_eta = 1L, eta_col_names = "eta.cl",
               cov_integration = "taylor", cov_taylor_h = 0.5)
-  out <- admixr2:::.admCheckCovariates(ui, pin, st, "sens")
+  out <- admixr2:::.admCheckCovariates(ui, pin, st)
   td  <- out$s$.adm_cov_taylor
   expect_false(is.null(td))
   expect_identical(td$n_pt, 5L)
@@ -820,7 +792,7 @@ test_that("the Taylor design is built ONCE and cached on the study", {
   expect_equal(td, admixr2:::.admCovTaylorDesign(out$s$cov_dist, 0.5))
   # quadrature must NOT pay for a design it does not use
   pin$cov_integration <- "quadrature"
-  expect_null(admixr2:::.admCheckCovariates(ui, pin, st, "sens")$s$.adm_cov_taylor)
+  expect_null(admixr2:::.admCheckCovariates(ui, pin, st)$s$.adm_cov_taylor)
 })
 
 # =============================================================================
@@ -1029,7 +1001,7 @@ test_that("every covariate the ANALYSIS model reads must be described", {
   # defaults it to -- the ecological plug-in wearing a fit's clothes.
   ui <- .cov_ui(cov = c("WT", "CRCL"), expr = list(
     quote(cl <- exp(tcl + tcov * WT + tcr * CRCL + eta.cl))))
-  chk <- function(st) admixr2:::.admCheckCovariates(ui, .cov_pinfo(), st, "none")
+  chk <- function(st) admixr2:::.admCheckCovariates(ui, .cov_pinfo(), st)
   expect_error(chk(list(a = list(cov_dist = list(WT = list(mu = 0, sd = 1))))),
                "does not describe covariate")
   # a fixed value is a legitimate description when it does not vary
@@ -1413,7 +1385,7 @@ test_that("a discrete covariate makes `auto` fall back, not fail", {
   pin <- admixr2:::.admDriverPinfo(ui, ctl)
   u   <- admixr2:::.admDriverUnits(st, ui, admixr2:::.admOutputVar(ui))
   out <- suppressMessages(
-    admixr2:::.admCheckCovariates(ui, pin, u$studies, "analytical", "adgh"))
+    admixr2:::.admCheckCovariates(ui, pin, u$studies))
   expect_identical(out[[1L]]$.adm_cov_path, "rows")
   expect_match(out[[1L]]$.adm_cov_shift_why, "discrete")
   # and an EXPLICIT cov_integration = "shift" still errors, naming the reason
@@ -1421,7 +1393,7 @@ test_that("a discrete covariate makes `auto` fall back, not fail", {
                       print = 0L, covMethod = "none", cov_integration = "shift")
   pin2 <- admixr2:::.admDriverPinfo(ui, ctl2)
   expect_error(
-    admixr2:::.admCheckCovariates(ui, pin2, u$studies, "analytical", "adgh"),
+    admixr2:::.admCheckCovariates(ui, pin2, u$studies),
     "discrete")
 })
 

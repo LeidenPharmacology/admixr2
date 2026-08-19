@@ -1014,12 +1014,21 @@
 
   H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
 
-  # Covariate studies: differentiate the NLL, not the gradient. The gradient
-  # supplied here is .adghGrad -> .adghGradNLL, which builds its quadrature from
-  # pars$L rather than through .adghGrid(), so it does not carry the covariate
-  # product grid. A Hessian from it would be of a mean-only objective while the
-  # estimates are from a marginalised one -- plausible standard errors for the
-  # wrong model. The NLL-FD form goes through .adghNLL, which IS aware.
+  # Covariate studies: differentiate the NLL, not the gradient.
+  #
+  # The original reason given here was that .adghGradNLL builds its quadrature
+  # from pars$L rather than through .adghGrid(), so it could not carry the
+  # covariate grid. That is NOT true and has not been for some time -- it calls
+  # .adghGrid() per study and then .adghStudyCov(), so it is covariate-aware.
+  # Measured on a 1-cmt lognormal-covariate model at its optimum, the two forms
+  # agree to 2.7e-05 on the covariance with identical standard errors, and the
+  # gradient form is ~1.5x faster.
+  #
+  # The guard is kept anyway, deliberately. It buys one Hessian per fit, that
+  # measurement covers a single model, and the failure it would expose --
+  # standard errors computed from a different objective than the estimates --
+  # is silent and severe. Removing it wants a broader comparison than one
+  # model, not a rewritten comment.
   if (isTRUE(use_grad) &&
       any(vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))))
     use_grad <- FALSE
@@ -1679,7 +1688,7 @@ nlmixr2Est.adgh <- function(env, ...) {
 
   # RETURNS the studies, annotated with which covariate path each takes.
   # Discarding the value silently disables covariate handling entirely.
-  studies <- .admCheckCovariates(.ui, pinfo, studies, .ctl$grad, "adgh")
+  studies <- .admCheckCovariates(.ui, pinfo, studies)
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)

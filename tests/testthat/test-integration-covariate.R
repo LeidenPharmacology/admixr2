@@ -69,7 +69,7 @@ skip_if_not_installed("rxode2")
   st <- admixr2:::.admFlattenStudies(
           list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
   st <- admixr2:::.admBuildEvFull(st)
-  st <- admixr2:::.admCheckCovariates(ui, pinfo, st, "none")
+  st <- admixr2:::.admCheckCovariates(ui, pinfo, st)
   ov <- admixr2:::.admBuildOptVec(pinfo)
   list(ui = ui, pinfo = pinfo, st = st, ov = ov,
        rxMod = admixr2:::.admLoadModel(ui),
@@ -80,7 +80,7 @@ skip_if_not_installed("rxode2")
 .cov_pred <- function(d, n_sim = 6000L) {
   z <- admixr2:::.admMakeZ(n_sim, d$pinfo, 1L, "sobol")[[1L]]
   if (!is.matrix(z)) z <- matrix(z, ncol = 1L)
-  eta <- z %*% t(admixr2:::.admStudyL(d$pars, d$pinfo, d$st[[1L]]))
+  eta <- z %*% t(d$pars$L)
   colnames(eta) <- d$pinfo$eta_col_names
   # Dispatch on the SAME field .admNLL dispatches on. An earlier version of this
   # helper handled only "uq" and silently held the covariate at its reference on
@@ -286,7 +286,7 @@ test_that("the general path supports ANALYTIC gradients (vs central FD)", {
     pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
     ov    <- admixr2:::.admBuildOptVec(pinfo)
     u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
-    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, g)
+    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies)
     expect_identical(stu[[1L]]$.adm_cov_path, "rows")   # gradients allowed here
 
     zl <- admixr2:::.admMakeZ(3000L, pinfo, 1L, "sobol")
@@ -308,23 +308,6 @@ test_that("the general path supports ANALYTIC gradients (vs central FD)", {
   }
 })
 
-test_that("`grad` does not change the covariate path, end to end", {
-  E0 <- rep(1, length(.cov_TIMES)); V0 <- diag(length(.cov_TIMES))
-  d_none <- .cov_setup(.cov_linear, list(WT = list(mu = 0.2, sd = 0.35)),
-                       list(WT = 0.2), E0, V0)                   # grad = "none"
-  expect_identical(d_none$st[[1L]]$.adm_cov_path, "rows")
-  ui <- d_none$ui; pinfo <- d_none$pinfo
-  st <- admixr2:::.admFlattenStudies(list(s1 = admixr2:::.admNormaliseStudy(
-    list(E = E0, V = V0, n = 300L, times = .cov_TIMES,
-         ev = rxode2::et(amt = .cov_DOSE), cov = list(WT = 0.2),
-         cov_dist = list(WT = list(mu = 0.2, sd = 0.35))), "s1", "cp")))
-  for (g in c("sens", "fd"))
-    expect_identical(
-      admixr2:::.admCheckCovariates(ui, pinfo, st, g)[[1L]]$.adm_cov_path, "rows")
-})
-
-# ---- adgh: deterministic product grid ---------------------------------------
-
 test_that("adgh marginalises a covariate by a PRODUCT GRID, not Monte Carlo", {
   # adgh's analogue of admc's per-row draws is a product grid over the covariate
   # quadrature and the eta grid -- still ONE rxSolve, but deterministic, so adgh
@@ -344,7 +327,7 @@ test_that("adgh marginalises a covariate by a PRODUCT GRID, not Monte Carlo", {
                          covMethod = "none")
     pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
     u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
-    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, g, "adgh")
+    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies)
     expect_identical(stu[[1L]]$.adm_cov_path, "rows")
     prs  <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pinfo)$p0, pinfo)
     grid <- admixr2:::.adghNodeGrid(9L, pinfo$n_eta)
@@ -390,7 +373,7 @@ test_that("adgh's ANALYTIC gradient carries the covariate product grid", {
                        print = 0L, covMethod = "none")
   pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
   u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
-  stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, "analytical", "adgh")
+  stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies)
   expect_identical(stu[[1L]]$.adm_cov_path, "rows")
 
   sm   <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
@@ -471,8 +454,7 @@ test_that("a covariate scaling the dose is marginalised correctly", {
                covMethod = "none")
     pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
     u  <- admixr2:::.admCheckCovariates(
-            ui, pinfo, admixr2:::.admDriverUnits(ctl$studies, ui, ovar)$studies,
-            "analytical", "adgh")
+            ui, pinfo, admixr2:::.admDriverUnits(ctl$studies, ui, ovar)$studies)
     pars <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pinfo)$p0, pinfo)
     list(m = admixr2:::.adghMoments(pars, pinfo, u[[1L]], ui |>
                                       admixr2:::.admLoadModel(), ovar,
@@ -596,7 +578,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
   pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
   ov    <- admixr2:::.admBuildOptVec(pinfo)
   u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
-  stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, "sens")
+  stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies)
   expect_identical(stu[[1L]]$.adm_cov_path, "rows")
   zl <- admixr2:::.admMakeZ(4000L, pinfo, 1L, "sobol")
   pl <- admixr2:::.admMakeParamsList(4000L, pinfo, 1L)
@@ -631,8 +613,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
                        covMethod = "none", n_nodes = 7L, cov_nodes = 15L)
   ping  <- admixr2:::.admDriverPinfo(ui, ctlg)
   stug  <- admixr2:::.admCheckCovariates(
-             ui, ping, admixr2:::.admDriverUnits(st0, ui, ovar)$studies,
-             "analytical", "adgh")
+             ui, ping, admixr2:::.admDriverUnits(st0, ui, ovar)$studies)
   gridg <- admixr2:::.adghNodeGrid(7L, ping$n_eta)
   parsg <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(ping)$p0, ping)
   mg    <- admixr2:::.adghMoments(parsg, ping, stug[[1L]], rx, ovar, gridg, 1L)
@@ -660,8 +641,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
     setdiff(names(st0$s1$cov_dist), c("cor", "rho", "Sigma", "joint"))]
   expect_null(st_ind$s1$cov_dist$joint)           # or the contrast is vacuous
   stui <- admixr2:::.admCheckCovariates(
-            ui, ping, admixr2:::.admDriverUnits(st_ind, ui, ovar)$studies,
-            "analytical", "adgh")
+            ui, ping, admixr2:::.admDriverUnits(st_ind, ui, ovar)$studies)
   mi <- admixr2:::.adghMoments(parsg, ping, stui[[1L]], rx, ovar, gridg, 1L)
   expect_gt(max(abs(mg$V - mi$V)) / max(abs(mi$V)), 1e-3)
 })
@@ -687,7 +667,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
                        cov_taylor_h = hfrac)
   pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
   u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
-  stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, grad, "adgh")
+  stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies)
   list(ui = ui, ovar = ovar, pinfo = pinfo, stu = stu,
        ov = admixr2:::.admBuildOptVec(pinfo),
        grid = admixr2:::.adghNodeGrid(n_nodes, pinfo$n_eta),
@@ -775,7 +755,7 @@ test_that("cov_integration = 'quadrature' is the default and changes nothing", {
   one <- function(ctl) {
     pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
     u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
-    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies, "analytical", "adgh")
+    stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies)
     ov    <- admixr2:::.admBuildOptVec(pinfo)
     grid  <- admixr2:::.adghNodeGrid(7L, pinfo$n_eta)
     p1    <- ov$p0 + c(0.15, -0.10, 0.20, -0.18, 0.25, 0.30)[seq_along(ov$p0)]
@@ -810,7 +790,7 @@ test_that("the Taylor path ENUMERATES a discrete covariate, per study", {
   ctl <- adghControl(studies = st0, grad = "analytical", print = 0L,
                      covMethod = "none", cov_integration = "taylor")
   stu <- admixr2:::.admCheckCovariates(ui, admixr2:::.admDriverPinfo(ui, ctl),
-                                       u$studies, "analytical", "adgh")
+                                       u$studies)
   td2 <- stu$s2$.adm_cov_taylor
   expect_identical(td2$n_pt, 2L)
   expect_identical(td2$n_cell, 2L)
@@ -824,7 +804,7 @@ test_that("the Taylor path ENUMERATES a discrete covariate, per study", {
                       covMethod = "none")
   expect_no_error(
     admixr2:::.admCheckCovariates(ui, admixr2:::.admDriverPinfo(ui, ctlq),
-                                  u$studies, "analytical", "adgh"))
+                                  u$studies))
 
   # What IS still refused: a discrete covariate DEPENDENT on a continuous one.
   # A level is then a truncation of the latent normal rather than a point, so
@@ -864,7 +844,7 @@ test_that("the Taylor path ENUMERATES a discrete covariate, per study", {
                      n_nodes = 7L, cov_nodes = 7L, cov_integration = integ)
   pin <- admixr2:::.admDriverPinfo(ui, ctl)
   stu <- admixr2:::.admCheckCovariates(
-    ui, pin, admixr2:::.admDriverUnits(st, ui, ov)$studies, grad, "adgh")
+    ui, pin, admixr2:::.admDriverUnits(st, ui, ov)$studies)
   list(pin = pin, stu = stu, rx = rx, sM = sM, ov = ov,
        g = admixr2:::.adghNodeGrid(7L, pin$n_eta),
        p0 = admixr2:::.admBuildOptVec(pin)$p0)
@@ -996,7 +976,7 @@ test_that("a correlated Omega takes the absorption and matches the product grid"
     pin <- admixr2:::.admDriverPinfo(ui, ctl)
     u   <- admixr2:::.admDriverUnits(st0, ui, ov)
     stu <- suppressMessages(
-      admixr2:::.admCheckCovariates(ui, pin, u$studies, "analytical", "adgh"))
+      admixr2:::.admCheckCovariates(ui, pin, u$studies))
     list(pin = pin, stu = stu, ov = ov,
          p = admixr2:::.admBuildOptVec(pin)$p0,
          g = admixr2:::.adghNodeGrid(5L, pin$n_eta),
@@ -1041,7 +1021,7 @@ test_that("a correlated Omega takes the absorption and matches the product grid"
   pi2 <- admixr2:::.admDriverPinfo(ui2, ct2)
   u2  <- admixr2:::.admDriverUnits(st2, ui2, ov2)
   s2  <- suppressMessages(
-    admixr2:::.admCheckCovariates(ui2, pi2, u2$studies, "analytical", "adgh"))
+    admixr2:::.admCheckCovariates(ui2, pi2, u2$studies))
   expect_identical(s2[[1L]]$.adm_cov_path, "rows")
   expect_match(s2[[1L]]$.adm_cov_shift_why, "off-diagonal")
 })
@@ -1076,7 +1056,7 @@ test_that("the absorption's gradient is right, off the optimum", {
     pin <- admixr2:::.admDriverPinfo(ui, ctl)
     u   <- admixr2:::.admDriverUnits(st0, ui, ov)
     stu <- suppressMessages(
-      admixr2:::.admCheckCovariates(ui, pin, u$studies, "analytical", "adgh"))
+      admixr2:::.admCheckCovariates(ui, pin, u$studies))
     # sens BEFORE the simulation model, always
     sm <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
     list(pin = pin, stu = stu, ov = ov,
@@ -1133,7 +1113,7 @@ test_that("a VECTOR shift is analytic too, on a diagonal Omega", {
     pin <- admixr2:::.admDriverPinfo(ui, ctl)
     u   <- admixr2:::.admDriverUnits(st0, ui, ov)
     stu <- suppressMessages(
-      admixr2:::.admCheckCovariates(ui, pin, u$studies, "analytical", "adgh"))
+      admixr2:::.admCheckCovariates(ui, pin, u$studies))
     sm  <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
     list(pin = pin, stu = stu, ov = ov,
          p = admixr2:::.admBuildOptVec(pin)$p0,
@@ -1189,7 +1169,7 @@ test_that("a NON-certified vector shift keeps the cheap path and stays analytic"
     pin <- admixr2:::.admDriverPinfo(ui, ctl)
     u   <- admixr2:::.admDriverUnits(st0, ui, ov)
     stu <- suppressMessages(
-      admixr2:::.admCheckCovariates(ui, pin, u$studies, "analytical", "adgh"))
+      admixr2:::.admCheckCovariates(ui, pin, u$studies))
     sm  <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
     list(pin = pin, stu = stu, ov = ov,
          p = admixr2:::.admBuildOptVec(pin)$p0,
@@ -1290,7 +1270,7 @@ test_that("a coarse covariate grid does not desync objective from gradient", {
     pin <- admixr2:::.admDriverPinfo(ui, ctl)
     u   <- admixr2:::.admDriverUnits(st0, ui, ov)
     stu <- suppressMessages(
-      admixr2:::.admCheckCovariates(ui, pin, u$studies, "analytical", "adgh"))
+      admixr2:::.admCheckCovariates(ui, pin, u$studies))
     sm  <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
     rx  <- admixr2:::.admLoadModel(ui)
     gr  <- admixr2:::.adghNodeGrid(5L, pin$n_eta)
@@ -1335,7 +1315,7 @@ test_that(".admNLLBatch tiles covariates per CHUNK, not per batch", {
   pin <- admixr2:::.admDriverPinfo(ui, ctl)
   u   <- admixr2:::.admDriverUnits(st0, ui, ov)
   stu <- suppressMessages(
-    admixr2:::.admCheckCovariates(ui, pin, u$studies, ctl$grad))
+    admixr2:::.admCheckCovariates(ui, pin, u$studies))
   rx  <- admixr2:::.admLoadModel(ui)
   zl  <- admixr2:::.admMakeZ(1000L, pin, length(stu), "sobol")
   pl  <- admixr2:::.admMakeParamsList(1000L, pin, length(stu))
