@@ -206,3 +206,38 @@ test_that("a residual the expansion cannot reach is refused, not approximated", 
   arr$vmul <- rep(8 / 6, 3L)                      # nu = 8, fine
   expect_false(is.null(admixr2:::.admAdfCondMom(matrix(1, 5L, 3L), arr)))
 })
+
+test_that("the weight's own S is the V_pred the objective scores against", {
+  # .admAdfWeightFast rebuilds S from (C, Dv) via the law of total variance. If
+  # that disagrees with V_pred, the weight and the objective describe different
+  # laws and every block downstream is scaled wrong -- silently, since both are
+  # finite and plausible. On lnorm the conditional mean is f exp(s/2), so an
+  # unscaled C broke this while add/prop looked fine.
+  skip_if_not_installed("rxode2")
+  TIMES <- c(2, 5, 9, 14); DOSE <- 100; NQ <- 11L; N <- 100L
+  mods <- list(
+    add   = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.5 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ add(e) }) },
+    prop  = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.15 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ prop(e) }) },
+    lnorm = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.15 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ lnorm(e) }) })
+  for (nm in names(mods)) {
+    ui <- suppressMessages(rxode2::rxode2(mods[[nm]]))
+    ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+    E0 <- DOSE / 10 * exp(-0.1 * TIMES)
+    st <- list(s = list(E = E0, V = diag((0.3 * E0)^2), n = N, times = TIMES,
+                        ev = rxode2::et(amt = DOSE)))
+    ctl <- adghControl(studies = st, grad = "none", n_nodes = NQ, print = 0L,
+                       covMethod = "none")
+    pin <- admixr2:::.admDriverPinfo(ui, ctl)
+    u   <- admixr2:::.admDriverUnits(st, ui, ov)
+    g   <- admixr2:::.adghNodeGrid(NQ, pin$n_eta)
+    pars <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin)
+    pt  <- admixr2:::.admAdfParts(pars, pin, u$studies[[1L]], rx, ov, g, 1L)
+    m   <- length(pt$E)
+    W   <- admixr2:::.admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4)
+    expect_equal(N * W[seq_len(m), seq_len(m)], pt$V, tolerance = 1e-10,
+                 ignore_attr = TRUE, info = nm)
+  }
+})
