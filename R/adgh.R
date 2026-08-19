@@ -134,15 +134,38 @@
                              dP = dv$dP)))
         }
       }
-      # Scalar by construction: a vector shift either absorbs (returned above)
-      # or is refused at admission, because the Rosenblatt recursion it would
-      # otherwise need has no analytic gradient.
-      if (ncol(D) > 1L)
-        stop("admixr2: a vector shift reached the scalar node path; this ",
-             "should have absorbed or been refused at admission.", call. = FALSE)
-      un0 <- .admShiftNodes(D[, 1L], sh$W, om[1L], n_u, z = sh$z)
-      un  <- if (is.null(un0)) NULL else
-        list(u = matrix(un0$u, ncol = 1L), w = un0$w)
+      # A VECTOR shift that did not absorb takes the Rosenblatt recursion, and
+      # carries its derivatives with it: every u_k moves both because Delta does
+      # and because the posterior weights conditioning level k do. Directions
+      # are the structural thetas (through d(Delta)/d(theta), two vectorised
+      # evaluations each and no solve) and the shifted etas' own scales.
+      .mdu <- NULL
+      if (ncol(D) > 1L) {
+        .stn <- pinfo$struct_names
+        .st0 <- .admShiftStruct(pinfo, pars$struct)
+        .dirs <- c(
+          lapply(names(.st0), function(k) {
+            s1 <- .st0; s1[[k]] <- s1[[k]] + 1e-6
+            s2 <- .st0; s2[[k]] <- s2[[k]] - 1e-6
+            d1 <- .admShiftDelta(sh$spec, s1, sh$X, sh$aref)
+            d2 <- .admShiftDelta(sh$spec, s2, sh$X, sh$aref)
+            if (is.null(d1) || is.null(d2)) return(NULL)
+            list(dD = (as.matrix(d1) - as.matrix(d2)) / 2e-6,
+                 dom = numeric(ncol(D)))
+          }),
+          lapply(seq_len(ncol(D)), function(a) {
+            e <- numeric(ncol(D)); e[a] <- 1
+            list(dD = matrix(0, nrow(D), ncol(D)), dom = e)
+          }))
+        if (any(vapply(.dirs, is.null, logical(1)))) .dirs <- NULL
+        un <- .admShiftNodesMultiD(D, sh$W, om, n_u, .dirs)
+        if (!is.null(un) && !is.null(.dirs))
+          .mdu <- list(n_th = length(.st0), th_names = names(.st0))
+      } else {
+        un0 <- .admShiftNodes(D[, 1L], sh$W, om[1L], n_u, z = sh$z)
+        un  <- if (is.null(un0)) NULL else
+          list(u = matrix(un0$u, ncol = 1L), w = un0$w)
+      }
       # n_nodes per eta, recovered from the grid: nrow = n_nodes^n_eta. round(),
       # not a bare fractional power -- 343^(1/3) is 6.999999999999999.
       g1 <- .adghNodes1(nn0)
@@ -173,7 +196,15 @@
       for (kk in seq_along(other))
         Xz[, other[kk]] <- g1$x[ix[, kk + 1L]]
       shinfo <- NULL
-      if (length(j) == 1L) {
+      if (!is.null(.mdu) && !is.null(un$du)) {
+        # Every shifted coordinate responds to every direction, so the omega
+        # chain cannot be folded into an X column the way the scalar case can:
+        # d(om_1) moves u_2 through the posterior weights. .adghGrad forms the
+        # full sum instead.
+        shinfo <- list(multi = TRUE, eta_idx = j, th_names = .mdu$th_names,
+                       du = un$du[ix[, 1L], , , drop = FALSE],
+                       n_th = .mdu$n_th)
+      } else if (length(j) == 1L) {
         du <- .admShiftDu(sh$spec, .admShiftStruct(pinfo, pars$struct), sh$X,
                           sh$aref, D, sh$W, om, un$u[, 1L])
         Xz[, j] <- du$du_domega[ix[, 1L]]
@@ -450,15 +481,6 @@
     # well, a second chain .admShiftDu does not carry. Finite-difference the
     # objective instead of silently using the scalar chain -- still far cheaper
     # than the product grid, because the objective is what got cheap.
-    # A vector shift still finite-differences: its later coordinates move
-    # through the Rosenblatt posterior weights, a second chain .admShiftDu does
-    # not carry. The ABSORPTION does not -- it has no recursion, and its
-    # Cholesky differential is applied below -- so it is no longer routed here.
-    if (identical(s$.adm_cov_path, "shift") &&
-        (s[[".adm_cov_shift"]]$m %||% 1L) > 1L &&
-        !isTRUE(s[[".adm_cov_shift"]]$absorb))
-      return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
-                                     cores, grad_h), nll = NULL))
     .gS <- .adghGrid(pars, pinfo, grid, s)
     X   <- .gS$X
     W   <- .gS$W
@@ -721,7 +743,19 @@
     # TYPICAL VALUE, which cancels out of a difference of the same expression at
     # two covariate values -- gets a zero column here and is unaffected.
     .sh <- .gS$shift
-    if (isTRUE(.sh$absorb)) {
+    if (isTRUE(.sh$multi)) {
+      # Every shifted coordinate moves with every theta, through Delta and
+      # through the posterior weights that condition the later levels.
+      for (k in seq_len(n_s)) {
+        nmk <- pinfo$struct_names[k]
+        kk  <- match(nmk, .sh$th_names)
+        if (is.na(kk)) next
+        base <- .admShiftBase(Jl, .sh$eta_idx, .sh$du[, , kk, drop = FALSE])
+        if (is.null(base)) next
+        dmu_raw <- as.numeric(crossprod(W, base))
+        grad[k] <- grad[k] + contrib(base) + .sigma_V_extra(dmu_raw)
+      }
+    } else if (isTRUE(.sh$absorb)) {
       # theta moves eta through BOTH mu and Omega + B B'; every eta dimension
       # responds, so the contribution is the full .admAbsorbBase sum.
       for (k in seq_len(n_s)) {
@@ -751,7 +785,15 @@
     # Chain: L_ii stored as log(Omega_ii) -> d(L_ii)/dp = L_ii/2.
     if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
       i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
-      base <- if (isTRUE(.sh$absorb)) {
+      base <- if (isTRUE(.sh$multi)) {
+        # A shifted eta's own scale moves EVERY shifted coordinate, so it cannot
+        # be folded into X[, j]; an unaffected eta keeps the standard column.
+        aa <- match(i, .sh$eta_idx)
+        if (i == j && !is.na(aa))
+          .admShiftBase(Jl, .sh$eta_idx,
+                        .sh$du[, , .sh$n_th + aa, drop = FALSE])
+        else Jl[[i]] * X[, j]
+      } else if (isTRUE(.sh$absorb)) {
         # Omega enters through chol(Omega + P). dOmega/d(L_ij) = E_ij L' + L
         # E_ij', and P does not depend on the omega parameters at all.
         E <- matrix(0, n_eta, n_eta); E[i, j] <- 1

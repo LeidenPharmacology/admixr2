@@ -367,20 +367,6 @@
         # ... UNLESS the covariate absorbs into Omega. Then no column is
         # substituted and no correlation is dropped: the whole eta vector is
         # drawn from Omega + P, so Cov(u_S, eta_O) stays Omega_SO exactly.
-        # A VECTOR shift over a Delta that does not certify is the one
-        # construction whose gradient could only be finite-differenced: its
-        # later coordinates move through the Rosenblatt posterior weights, a
-        # second chain .admShiftDu does not carry. The product grid computes the
-        # same integral exactly and its gradient IS analytic, so take that
-        # instead -- a finite difference is for a failed sensitivity model, not
-        # for a routine path. It was not even a saving: measured on a
-        # 2-coordinate shift, 0.19 s per gradient against 0.27 s for the grid.
-        if (length(.sp$eta) > 1L && !.abs)
-          .why <- paste0(
-            "the covariate acts on ", length(.sp$eta), " mu-referenced ",
-            "parameters and its shift is not normally distributed, so the ",
-            "shifted argument would need a Rosenblatt recursion whose gradient ",
-            "admixr2 does not carry analytically")
         if (is.null(.why) && length(which(!pinfo$chol_diag)) && !.abs)
           .why <- paste0(
             "Omega has an estimated off-diagonal element. The shift replaces ",
@@ -1856,7 +1842,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 }
 
 .admShiftNodes <- function(Delta, W, om, n_u, tol = 1e-12, maxit = 30L,
-                           ftol = 1e-14, z = NULL) {
+                           ftol = 1e-14, z = NULL, gauss_ok = TRUE) {
   # NON-FINITE INPUT is refused rather than iterated on, and BEFORE the Gaussian
   # test: .admShiftDelta screens its own output, but this is also called
   # directly and per-coordinate from the Rosenblatt recursion, and a NaN reaches
@@ -1882,7 +1868,14 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   # right question -- is this univariate law normal -- so it stays as the
   # fallback for hand-built specs and direct calls. It is not sound above one
   # dimension, which is why .admShiftNodesMulti requires `z` instead.
-  if (.admShiftGaussOK(Delta, W, z, 1L))
+  # `gauss_ok = FALSE` forces the mixture inversion even where the closed form
+  # would apply. The Rosenblatt recursion needs it: its derivatives come from
+  # the DISCRETE mixture identity F(u) = Phi(z), and a discretised affine Delta
+  # is a quadrature of a normal rather than a normal, so the closed-form u does
+  # not satisfy that identity exactly. Nodes from one construction and
+  # derivatives from the other is the objective-and-gradient disagreement this
+  # file exists to avoid.
+  if (gauss_ok && .admShiftGaussOK(Delta, W, z, 1L))
     return(list(u = u, w = g$w, gauss = TRUE, mD = mD, vD = vD))
   # CONVERGENCE IS TESTED ON THE RESIDUAL, NOT ON THE STEP. `max(abs(st)) < tol`
   # never fired: at the outermost node the CDF is saturated (target within
@@ -2060,15 +2053,117 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   D <- as.matrix(D)
   .admShiftGaussResid(D[, 1L], W) < .ADM_SHIFT_GAUSS_TOL
 }
-# A VECTOR shift no longer has a node path of its own.
+# Quadrature over a VECTOR shift, u = Delta(a) + eta in R^m, WITH derivatives.
 #
-# It either ABSORBS -- Delta = c + B z, so u is multivariate normal and
-# .admShiftAbsorb builds the whole eta grid from Omega + B B' -- or it is
-# refused at admission and the study takes the product grid. What sat here was
-# a Rosenblatt recursion: exact, but its later coordinates move through
-# posterior weights .admShiftDu does not differentiate, so it could only be
-# paired with a finite-differenced gradient. The product grid computes the same
-# integral analytically at comparable cost, so the recursion bought nothing.
+# u's law is the mixture sum_j W_j N(Delta_j, diag(om^2)). The affected etas are
+# mutually uncorrelated (a correlated Omega absorbs instead, or is refused), so
+# the components factor given the mixture index -- but not marginally, because
+# they share it. Rosenblatt handles exactly that:
+#
+#   u_1        ~ sum_j W_j N(Delta_j1, om_1^2)                    invert its CDF
+#   u_2 | u_1  ~ sum_j W_j^(u_1) N(Delta_j2, om_2^2),
+#                W_j^(v) proportional to W_j phi((v - Delta_j1)/om_1)
+#
+# so each conditional is again a ONE-dimensional mixture and the same Newton
+# inversion serves every level. Cost is n_u^m nodes and n_u^(m-1) inversions,
+# against n_cov^p * n_node^m for the product grid -- independent of the number
+# of covariates, which is the point of the shift.
+#
+# THE DERIVATIVES ARE CARRIED ALONGSIDE, which is what this used to lack. Every
+# u_k is defined implicitly by F_k(u_k; W^(k)) = Phi(z), so differentiating that
+# identity gives, for a direction moving Delta by dD and om by dom,
+#
+#   du_k = sum_j p_j (dDelta_jk + z_j dom_k)  -  om_k sum_j dW_j Phi(z_j) / SA
+#
+# with p_j the posterior W_j phi(z_j)/SA and SA its normaliser. The SECOND term
+# is the chain the old implementation did not have: the later coordinates move
+# because the posterior weights move, not only because Delta does. Propagating
+# it needs the weight derivative itself,
+#
+#   dA_j = phi_j (dW_j - W_j z_j dz_j),   dW'_j = (dA_j - W'_j sum_l dA_l) / SA
+#
+# formed on the UNNORMALISED A_j = W_j phi_j so that a zero weight never divides.
+#
+# Without this the whole objective had to be finite-differenced, which is a cost
+# reserved for a failed sensitivity model rather than a routine path.
+.admShiftNodesMultiD <- function(D, W, om, n_u, dirs = NULL) {
+  D <- as.matrix(D); m <- ncol(D)
+  nd <- length(dirs)
+  if (m == 1L) {
+    un <- .admShiftNodes(D[, 1L], W, om[1L], n_u, gauss_ok = FALSE)
+    if (is.null(un)) return(NULL)
+    out <- list(u = matrix(un$u, ncol = 1L), w = un$w, gauss = un$gauss)
+    if (nd) out$du <- .admShiftDuLevel(D, W, om, un$u, 1L, dirs,
+                                       matrix(0, nrow(D), nd))$du
+    return(out)
+  }
+  rec <- function(k, Wc, dWc) {
+    un <- .admShiftNodes(D[, k], Wc, om[k], n_u, gauss_ok = FALSE)
+    if (is.null(un)) return(NULL)
+    lv <- .admShiftDuLevel(D, Wc, om, un$u, k, dirs, dWc)
+    if (k == m)
+      return(list(u = matrix(un$u, ncol = 1L), w = un$w, du = lv$du))
+    ou <- list(); ow <- numeric(0); od <- list()
+    for (i in seq_along(un$u)) {
+      sub <- rec(k + 1L, lv$Wnext[[i]], lv$dWnext[[i]])
+      if (is.null(sub)) return(NULL)
+      nr <- nrow(sub$u)
+      ou[[i]] <- cbind(un$u[i], sub$u)
+      ow <- c(ow, un$w[i] * sub$w)
+      if (nd) {
+        a <- array(0, c(nr, m - k + 1L, nd))
+        a[, 1L, ] <- rep(lv$du[i, 1L, ], each = nr)
+        a[, -1L, ] <- sub$du
+        od[[i]] <- a
+      }
+    }
+    list(u = do.call(rbind, ou), w = ow,
+         du = if (nd) .admBindDu(od) else NULL)
+  }
+  r <- rec(1L, W, if (nd) matrix(0, nrow(D), nd) else NULL)
+  if (is.null(r)) return(NULL)
+  list(u = r$u, w = r$w / sum(r$w), du = r$du)
+}
+
+# One Rosenblatt level: the nodes' derivatives, and the posterior weights (with
+# THEIR derivatives) that the next level conditions on.
+.admShiftDuLevel <- function(D, Wc, om, u, k, dirs, dWc) {
+  nd <- length(dirs); nu <- length(u)
+  du <- if (nd) array(0, c(nu, 1L, nd)) else NULL
+  Wn <- vector("list", nu); dWn <- vector("list", nu)
+  Z  <- outer(u, D[, k], "-") / om[k]
+  Ph <- stats::dnorm(Z); CP <- stats::pnorm(Z)
+  for (i in seq_len(nu)) {
+    A  <- Wc * Ph[i, ]; SA <- sum(A)
+    if (!is.finite(SA) || SA <= 0) { SA <- .Machine$double.xmin; }
+    p  <- A / SA
+    Wn[[i]] <- p
+    if (!nd) next
+    z <- Z[i, ]
+    for (d in seq_len(nd)) {
+      dD <- dirs[[d]]$dD; dom <- dirs[[d]]$dom
+      duv <- sum(p * dD[, k]) + sum(p * z) * dom[k] -
+             om[k] * sum(dWc[, d] * CP[i, ]) / SA
+      du[i, 1L, d] <- duv
+      dz  <- (duv - dD[, k]) / om[k] - z * dom[k] / om[k]
+      dA  <- Ph[i, ] * (dWc[, d] - Wc * z * dz)
+      dWn[[i]] <- cbind(dWn[[i]], (dA - p * sum(dA)) / SA)
+    }
+  }
+  list(du = du, Wnext = Wn, dWnext = dWn)
+}
+
+# rbind a list of (rows x cols x dir) arrays along rows.
+.admBindDu <- function(lst) {
+  d <- dim(lst[[1L]]); nr <- sum(vapply(lst, function(a) dim(a)[1L], 0L))
+  out <- array(0, c(nr, d[2L], d[3L])); off <- 0L
+  for (a in lst) {
+    n <- dim(a)[1L]
+    out[off + seq_len(n), , ] <- a
+    off <- off + n
+  }
+  out
+}
 
 # The covariate absorbed into Omega.
 #
@@ -2166,6 +2261,18 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 # d(f)/d(param) for the absorption: eta = mu + X Lt', so every eta dimension
 # moves, not just one column. The existing chain is the special case
 # dLt = E_ij (and dmu = 0), which collapses this sum to Jl[[i]] * X[, j].
+# d(f)/d(param) for a vector shift: sum the per-coordinate node derivatives
+# against that coordinate's own sensitivity column.
+.admShiftBase <- function(Jl, idx, du) {
+  out <- NULL
+  for (a in seq_along(idx)) {
+    cl <- du[, a, 1L]
+    if (all(cl == 0)) next
+    out <- if (is.null(out)) Jl[[idx[a]]] * cl else out + Jl[[idx[a]]] * cl
+  }
+  out
+}
+
 .admAbsorbBase <- function(Jl, X, dLt, dmu) {
   Xd <- X %*% t(dLt)
   out <- NULL
