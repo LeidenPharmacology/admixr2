@@ -247,3 +247,173 @@
   }
   if (is.finite(tot)) tot else Inf
 }
+
+# =============================================================================
+# The sandwich: covMethod = "r,s"
+# =============================================================================
+#
+# Avar = H^-1 J H^-1,   H = d2F/dPsi dPsi' at the optimum,
+#                       J = sum_s G_s Omega_s G_s',  G_s = d2F_s/(dPsi dt_s')
+#
+# H is the Hessian of the objective ACTUALLY minimised -- the same one
+# covMethod = "r" reports -- and that is what guarantees the reduction: under
+# correct specification J = 2H, so Avar collapses to 2 H^-1 by construction
+# rather than by hope.
+#
+# AN EARLIER VERSION OF THIS USED THE GLS SURROGATE and was wrong. Eq. (1) is
+# GLS on t with the normal-theory weight only ASYMPTOTICALLY: F is LINEAR in V
+# and quadratic in ybar, while a GLS criterion is quadratic in both, so the two
+# share a score and an expected information at t = tau and nowhere else. Using
+# (G' Wn^-1 G)^-1 as the bread and dtau/dPsi as G therefore drifts by terms in
+# (t - tau) -- measured on a badly-fitting fixture as 1.0006 on a well-determined
+# structural theta rising to 1.46 on log(om^2), which is the
+# (t - tau) . d2tau/dPsi2 signature exactly.
+#
+# The cross-derivative, from F = N( log|Vt| + tr(Vt^-1 V) + r' Vt^-1 r ):
+#
+#   dF/dybar = 2N Vt^-1 r
+#     => d2F/(dPsi dybar') = 2N [ (dVt^-1/dPsi) r  -  Vt^-1 dyt/dPsi ]
+#
+#   dF/dV_ij = N (Vt^-1)_ij            (x2 for an off-diagonal vech entry)
+#     => d2F/(dPsi dV_ij) = N d(Vt^-1)_ij/dPsi      (x2 off-diagonal)
+#
+# Note what the V block does NOT contain: any dtau/dPsi. That half of F is
+# linear in V, so only d(Vt^-1)/dPsi = -Vt^-1 (dVt/dPsi) Vt^-1 survives.
+.admScoreCross <- function(E, V, dE, dV, s, N) {
+  m   <- length(E)
+  isv <- identical(s$method, "var")
+  # A `var` study is scored by nll_var_cpp, whose objective is the DIAGONAL one
+  #   sum_i N( log Vt_ii + V_ii/Vt_ii + r_i^2/Vt_ii )
+  # so dF/dV_ii = N / Vt_ii, NOT N (Vt^-1)_ii, and dF/dybar_i = 2N r_i / Vt_ii.
+  # Those coincide only when Vt is diagonal. Using the full inverse for both
+  # branches broke the information equality on exactly this branch: eigenvalues
+  # of J(Wn)/2H came out 0.06 / 0.41 / 3.29 / 1782 instead of all ones, while
+  # the cov branch was exact.
+  Vi <- if (isv) diag(1 / diag(V), m) else
+    tryCatch(chol2inv(chol(V)), error = function(e) NULL)
+  if (is.null(Vi) || !all(is.finite(Vi))) return(NULL)
+  r  <- as.numeric(s$E) - as.numeric(E)
+  p  <- length(dV)
+  ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  if (isv) ij <- ij[ij[, 1L] == ij[, 2L], , drop = FALSE]
+  G <- matrix(0, p, m + nrow(ij))
+  for (k in seq_len(p)) {
+    # on the var branch only the diagonal of dV reaches the objective
+    dVk <- if (isv) diag(diag(dV[[k]]), m) else dV[[k]]
+    dVi <- -Vi %*% dVk %*% Vi
+    G[k, seq_len(m)] <- 2 * N * (as.numeric(dVi %*% r) -
+                                 as.numeric(Vi %*% dE[, k]))
+    dup <- ifelse(ij[, 1L] == ij[, 2L], 1, 2)      # vech duplication
+    G[k, m + seq_len(nrow(ij))] <- N * dup * dVi[ij]
+  }
+  G
+}
+
+.admSandwich <- function(H, G, Om) {
+  Hi <- tryCatch(solve(H), error = function(e) NULL)
+  if (is.null(Hi)) return(NULL)
+  p <- nrow(H); J <- matrix(0, p, p)
+  for (i in seq_along(G)) J <- J + G[[i]] %*% Om[[i]] %*% t(G[[i]])
+  list(cov = Hi %*% J %*% Hi, bread = 2 * Hi, J = J, H = H)
+}
+
+# The summary a study actually reports, stacked: (ybar, vech V) for a full
+# covariance and (ybar, diag V) for a variance-only study.
+#
+# A `method = "var"` study is not a degenerate covariance study -- it reports
+# fewer numbers, and its weight is the corresponding MARGINAL of the full one
+# rather than a different derivation. Scoring covariances the fit never saw
+# would invent information.
+.admTauVec <- function(E, V, s) {
+  if (identical(s$method, "var")) c(as.numeric(E), diag(V))
+  else c(as.numeric(E), V[lower.tri(V, diag = TRUE)])
+}
+
+# The weight the OBJECTIVE implicitly uses -- the baseline the sandwich corrects
+# away from.
+#
+# For a `cov` study that is the normal-theory covariance of (ybar, vech V). For a
+# `var` study it is NOT the marginal of that: nll_var_cpp scores
+#   sum_i N( log v_i + V_ii/v_i + r_i^2/v_i )
+# which treats the m variances, and the m mean residuals, as INDEPENDENT. The
+# true normal-theory marginal still has Cov(V_ii, V_jj) = 2 V_ij^2 / N. So the
+# var branch's baseline is WORKING INDEPENDENCE, and that -- not kurtosis -- is
+# the bulk of what is wrong with it.
+#
+# Using the marginal here instead left eigen(J/2H) at 0.38 .. 3.26 rather than
+# all ones, i.e. it described a weight the objective does not use.
+.admWorkingWeight <- function(V, N, method) {
+  if (!identical(method, "var")) return(.admAdfWeightNormal(V, N))
+  v <- diag(V); m <- length(v)
+  W <- matrix(0, 2 * m, 2 * m)
+  W[seq_len(m), seq_len(m)] <- diag(v / N, m)
+  W[m + seq_len(m), m + seq_len(m)] <- diag(2 * v^2 / N, m)
+  W
+}
+
+# Restrict a full (m + q) weight to the rows a `var` study reports.
+.admWeightSel <- function(W, m, method) {
+  if (!identical(method, "var")) return(W)
+  ij  <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  keep <- c(seq_len(m), m + which(ij[, 1L] == ij[, 2L]))
+  W[keep, keep, drop = FALSE]
+}
+
+# d(yt)/dPsi and d(Vt)/dPsi per study, by central difference on the MOMENTS.
+#
+# These are analytic from what the gradient machinery already forms; this is the
+# reference until that extraction is written. Differencing the MOMENTS rather
+# than the objective keeps it well conditioned, and it runs once, post-fit.
+.admMomentDeriv <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
+                            h = 1e-5) {
+  mom <- function(pp) {
+    pars <- .admUnpack(pp, pinfo)
+    lapply(studies, function(s)
+      .admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores))
+  }
+  p  <- length(p_hat)
+  b  <- mom(p_hat)
+  dE <- lapply(b, function(x) matrix(0, length(x$E), p))
+  dV <- lapply(b, function(x) rep(list(matrix(0, nrow(x$V), ncol(x$V))), p))
+  for (k in seq_len(p)) {
+    a  <- p_hat; a[k]  <- a[k] + h
+    cc <- p_hat; cc[k] <- cc[k] - h
+    ma <- mom(a); mc <- mom(cc)
+    for (i in seq_along(b)) {
+      dE[[i]][, k] <- (ma[[i]]$E - mc[[i]]$E) / (2 * h)
+      dV[[i]][[k]] <- (ma[[i]]$V - mc[[i]]$V) / (2 * h)
+    }
+  }
+  list(E = lapply(b, `[[`, "E"), V = lapply(b, `[[`, "V"), dE = dE, dV = dV)
+}
+
+# Post-fit sandwich covariance for a fitted parameter vector.
+#
+# `H` is the Hessian of the objective at the optimum -- the SAME one
+# covMethod = "r" reports -- passed in rather than rebuilt here, so "r,s" and
+# "r" cannot disagree about the half they share.
+#
+# Returns NULL rather than guessing whenever an ingredient is unavailable: a
+# residual outside the conditionally-normal family, a singular weight, a failed
+# moment solve. The caller falls back to "r" and says so.
+.admSandwichCov <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
+                            H, md = NULL) {
+  pars <- tryCatch(.admUnpack(p_hat, pinfo), error = function(e) NULL)
+  if (is.null(pars)) return(NULL)
+  md <- md %||% tryCatch(
+    .admMomentDeriv(p_hat, pinfo, studies, rxMod, out_var, grid, cores),
+    error = function(e) NULL)
+  if (is.null(md)) return(NULL)
+  G <- Om <- vector("list", length(studies))
+  for (i in seq_along(studies)) {
+    s  <- studies[[i]]
+    pt <- tryCatch(.admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var,
+                                grid, cores), error = function(e) NULL)
+    if (is.null(pt) || is.null(pt$Dv)) return(NULL)
+    N <- as.numeric(s$n); m <- length(pt$E)
+    Om[[i]] <- .admWeightSel(.admAdfWeightFast(pt$C, pt$w, pt$Dv, N), m, s$method)
+    G[[i]]  <- .admScoreCross(md$E[[i]], md$V[[i]], md$dE[[i]], md$dV[[i]], s, N)
+    if (is.null(G[[i]])) return(NULL)
+  }
+  .admSandwich(H, G, Om)
+}
