@@ -1045,3 +1045,58 @@ test_that("a correlated Omega takes the absorption and matches the product grid"
   expect_identical(s2[[1L]]$.adm_cov_path, "rows")
   expect_match(s2[[1L]]$.adm_cov_shift_why, "off-diagonal")
 })
+
+test_that("the absorption's gradient is right, off the optimum", {
+  # The absorption gives up the analytic shift chain -- d(eta)/d(L_ab) becomes a
+  # Cholesky differential of chol(Omega + P), not the column that chain reads --
+  # so .adghGrad finite-differences these studies. This checks that guard
+  # actually produces the right numbers, against a central difference of the
+  # objective taken independently here.
+  #
+  # Evaluated AWAY from the minimum on purpose: at the optimum every component
+  # is ~1e-4 and the comparison is noise against noise, which would pass for any
+  # gradient at all.
+  .mod <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.75
+          eta.cl + eta.v ~ c(0.09, 0.02, 0.04)
+          add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * log(WT / 70) + eta.cl)
+            v  <- exp(tv + eta.v)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  .setup <- function(E, V) {
+    st0 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
+                         ev = rxode2::et(amt = .cov_DOSE),
+                         cov_dist = list(WT = list(meanlog = log(72),
+                                                   sdlog = 0.28))))
+    ui  <- suppressMessages(rxode2::rxode2(.mod))
+    ov  <- admixr2:::.admOutputVar(ui)
+    ctl <- adghControl(studies = st0, grad = "analytical", n_nodes = 5L,
+                       print = 0L, covMethod = "none", cov_integration = "auto")
+    pin <- admixr2:::.admDriverPinfo(ui, ctl)
+    u   <- admixr2:::.admDriverUnits(st0, ui, ov)
+    stu <- suppressMessages(
+      admixr2:::.admCheckCovariates(ui, pin, u$studies, "analytical", "adgh"))
+    list(pin = pin, stu = stu, ov = ov,
+         p = admixr2:::.admBuildOptVec(pin)$p0,
+         g = admixr2:::.adghNodeGrid(5L, pin$n_eta),
+         rx = admixr2:::.admLoadModel(ui))
+  }
+  E0 <- .cov_DOSE / 10 * exp(-0.1 * .cov_TIMES)
+  d0 <- .setup(E0, diag((0.25 * E0)^2))
+  mo <- admixr2:::.adghMoments(admixr2:::.admUnpack(d0$p, d0$pin),
+                               d0$pin, d0$stu[[1L]], d0$rx, d0$ov, d0$g, 1L)
+  d  <- .setup(as.numeric(mo$E), as.matrix(mo$V))
+  expect_true(isTRUE(d$stu[[1L]][[".adm_cov_shift"]]$absorb))
+
+  p <- d$p + c(0.20, -0.15, 0.25, 0.30, 0.18, -0.12, 0.22)[seq_along(d$p)]
+  g <- admixr2:::.adghGrad(p, d$pin, d$stu, NULL, d$rx, d$ov, d$g, 1L, 1e-4)
+  f <- function(pp) admixr2:::.adghNLL(pp, d$pin, d$stu, d$rx, d$ov, d$g, 1L)
+  h <- 1e-5
+  fd <- vapply(seq_along(p), function(k) {
+    a <- p; a[k] <- a[k] + h; b <- p; b[k] <- b[k] - h
+    (f(a) - f(b)) / (2 * h)
+  }, numeric(1))
+  expect_true(all(is.finite(g)))
+  expect_true(max(abs(g - fd) / pmax(abs(fd), 1)) < 1e-5)
+})
