@@ -409,7 +409,16 @@
           m = length(.sp$eta), X = .g$X, W = .g$W, z = .g$z, n_u = .nu,
           # Fixed at admission for the same reason n_u is: a path that could
           # flip mid-fit would step the objective.
-          absorb = .abs && length(which(!pinfo$chol_diag)) > 0L)
+          #
+          # Taken wherever the column substitution would cost a FINITE-DIFFERENCE
+          # gradient: a correlated Omega (which it cannot represent at all) and a
+          # VECTOR shift (whose later coordinates move through the Rosenblatt
+          # posterior weights, a chain .admShiftDu does not carry). The
+          # absorption has no recursion and its Cholesky differential is exact,
+          # so both become analytic. A scalar shift on a diagonal Omega keeps its
+          # own closed form, which is already analytic and already verified.
+          absorb = .abs && (length(which(!pinfo$chol_diag)) > 0L ||
+                            length(.sp$eta) > 1L))
         studies[[nm]]$.adm_cov_path <- "shift"
       }
     }
@@ -2129,7 +2138,68 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
                numeric(nrow(ix)))
   W2 <- Reduce(`*`, lapply(seq_along(nn), function(k) gs[[k]]$w[ix[, k]]))
   mu <- numeric(nrow(Om)); mu[j] <- co[1L, ]
-  list(eta = sweep(X %*% t(L), 2L, mu, "+"), W = W2 / sum(W2), X = X)
+  # `q`/`sw` travel with the result so the gradient can differentiate the SAME
+  # regression: co is linear in D, so d(co)/d(theta) is that regression applied
+  # to d(D)/d(theta) -- no refit, and no second definition of B to drift from
+  # the one the nodes were built with.
+  list(eta = sweep(X %*% t(L), 2L, mu, "+"), W = W2 / sum(W2), X = X,
+       Lt = L, q = q, sw = sw, B = t(co[-1L, , drop = FALSE]), j = j)
+}
+
+# d(chol(S))/d(param), for S = Lt Lt'.
+#
+#   dLt = Lt * Phi(Lt^-1 dS Lt^-T),   Phi(M) = lower triangle, diagonal halved
+#
+# Verified against a central difference of chol() at 5e-9 relative, both for a
+# general symmetric direction and for the dS = E_ij L' + L E_ij' that an omega
+# Cholesky entry produces.
+.admCholDiff <- function(Lt, dS) {
+  Li <- backsolve(Lt, diag(nrow(Lt)), upper.tri = FALSE)
+  M  <- Li %*% dS %*% t(Li)
+  M[upper.tri(M)] <- 0
+  diag(M) <- diag(M) / 2
+  Lt %*% M
+}
+
+# The absorption's eta-path derivatives wrt the structural thetas.
+#
+# theta moves eta twice over: through mu = c and through Omega + B B'. Both come
+# from d(Delta)/d(theta), which costs no solve -- two vectorised evaluations of
+# the parameter assignment, exactly as .admShiftDu pays for the scalar shift.
+.admShiftAbsorbDeriv <- function(spec, struct, Xcov, aref, ab, n_eta, h = 1e-6) {
+  nm <- names(struct)
+  dmu <- matrix(0, n_eta, length(nm), dimnames = list(NULL, nm))
+  dP  <- stats::setNames(vector("list", length(nm)), nm)
+  for (k in nm) {
+    s1 <- struct; s1[[k]] <- s1[[k]] + h
+    s2 <- struct; s2[[k]] <- s2[[k]] - h
+    d1 <- .admShiftDelta(spec, s1, Xcov, aref)
+    d2 <- .admShiftDelta(spec, s2, Xcov, aref)
+    if (is.null(d1) || is.null(d2)) return(NULL)
+    dD  <- (as.matrix(d1) - as.matrix(d2)) / (2 * h)
+    dco <- qr.coef(ab$q, dD * ab$sw)
+    if (!all(is.finite(dco))) return(NULL)
+    dB  <- t(dco[-1L, , drop = FALSE])
+    dmu[ab$j, k] <- dco[1L, ]
+    M <- matrix(0, n_eta, n_eta)
+    M[ab$j, ab$j] <- tcrossprod(dB, ab$B) + tcrossprod(ab$B, dB)
+    dP[[k]] <- M
+  }
+  list(dmu = dmu, dP = dP)
+}
+
+# d(f)/d(param) for the absorption: eta = mu + X Lt', so every eta dimension
+# moves, not just one column. The existing chain is the special case
+# dLt = E_ij (and dmu = 0), which collapses this sum to Jl[[i]] * X[, j].
+.admAbsorbBase <- function(Jl, X, dLt, dmu) {
+  Xd <- X %*% t(dLt)
+  out <- NULL
+  for (a in seq_along(Jl)) {
+    cl <- Xd[, a] + dmu[a]
+    if (all(cl == 0)) next
+    out <- if (is.null(out)) Jl[[a]] * cl else out + Jl[[a]] * cl
+  }
+  out
 }
 
 # Does the shift identity actually hold for THIS model? Compiled model, a few

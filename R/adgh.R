@@ -122,11 +122,16 @@
           cr <- matrix(rep(unlist(sh$aref[sh$cov_names]), each = nrow(ab$eta)),
                        nrow(ab$eta), length(sh$cov_names),
                        dimnames = list(NULL, sh$cov_names))
-          # X is the STANDARD normal node matrix, not d(eta)/d(L_ab): under the
-          # absorption eta = mu + X chol(Omega + P)', so the omega chain does
-          # not apply and .adghGrad finite-differences this study.
+          # X is the STANDARD normal node matrix. Under the absorption
+          # eta = mu + X chol(Omega + P)', so d(eta)/d(L_ab) is a Cholesky
+          # differential rather than a single column -- carried in `shift`,
+          # which .adghGrad applies through .admAbsorbBase.
+          dv <- .admShiftAbsorbDeriv(sh$spec, .admShiftStruct(pinfo, pars$struct),
+                                     sh$X, sh$aref, ab, pinfo$n_eta)
           return(list(eta = ab$eta, W = ab$W, X = ab$X, cov_rows = cr,
-                      shift = NULL))
+                      shift = if (is.null(dv)) NULL else
+                        list(absorb = TRUE, Lt = ab$Lt, dmu = dv$dmu,
+                             dP = dv$dP)))
         }
       }
       un  <- .admShiftNodesMulti(D, sh$W, om, n_u, z = sh$z)
@@ -437,13 +442,13 @@
     # well, a second chain .admShiftDu does not carry. Finite-difference the
     # objective instead of silently using the scalar chain -- still far cheaper
     # than the product grid, because the objective is what got cheap.
-    # The absorption joins the vector shift here: eta = mu + X chol(Omega + P)'
-    # makes d(eta)/d(L_ab) a Cholesky differential rather than the column the
-    # analytic chain reads, so the objective is what got cheap and the gradient
-    # is finite-differenced.
+    # A vector shift still finite-differences: its later coordinates move
+    # through the Rosenblatt posterior weights, a second chain .admShiftDu does
+    # not carry. The ABSORPTION does not -- it has no recursion, and its
+    # Cholesky differential is applied below -- so it is no longer routed here.
     if (identical(s$.adm_cov_path, "shift") &&
-        ((s[[".adm_cov_shift"]]$m %||% 1L) > 1L ||
-         isTRUE(s[[".adm_cov_shift"]]$absorb)))
+        (s[[".adm_cov_shift"]]$m %||% 1L) > 1L &&
+        !isTRUE(s[[".adm_cov_shift"]]$absorb))
       return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
                                      cores, grad_h), nll = NULL))
     .gS <- .adghGrid(pars, pinfo, grid, s)
@@ -708,7 +713,19 @@
     # TYPICAL VALUE, which cancels out of a difference of the same expression at
     # two covariate values -- gets a zero column here and is unaffected.
     .sh <- .gS$shift
-    if (!is.null(.sh)) {
+    if (isTRUE(.sh$absorb)) {
+      # theta moves eta through BOTH mu and Omega + B B'; every eta dimension
+      # responds, so the contribution is the full .admAbsorbBase sum.
+      for (k in seq_len(n_s)) {
+        nmk <- pinfo$struct_names[k]
+        if (!nmk %in% colnames(.sh$dmu)) next
+        dLt  <- .admCholDiff(.sh$Lt, .sh$dP[[nmk]])
+        base <- .admAbsorbBase(Jl, X, dLt, .sh$dmu[, nmk])
+        if (is.null(base)) next
+        dmu_raw <- as.numeric(crossprod(W, base))
+        grad[k] <- grad[k] + contrib(base) + .sigma_V_extra(dmu_raw)
+      }
+    } else if (!is.null(.sh)) {
       Jsh <- Jl[[.sh$eta_idx]]
       for (k in seq_len(n_s)) {
         nmk <- pinfo$struct_names[k]
@@ -726,7 +743,14 @@
     # Chain: L_ii stored as log(Omega_ii) -> d(L_ii)/dp = L_ii/2.
     if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
       i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
-      base    <- Jl[[i]] * X[, j]
+      base <- if (isTRUE(.sh$absorb)) {
+        # Omega enters through chol(Omega + P). dOmega/d(L_ij) = E_ij L' + L
+        # E_ij', and P does not depend on the omega parameters at all.
+        E <- matrix(0, n_eta, n_eta); E[i, j] <- 1
+        .admAbsorbBase(Jl, X, .admCholDiff(.sh$Lt, E %*% t(L) + L %*% t(E)),
+                       numeric(n_eta))
+      } else Jl[[i]] * X[, j]
+      if (is.null(base)) next
       dmu_raw <- as.numeric(crossprod(W, base))
       dL      <- contrib(base) + .sigma_V_extra(dmu_raw)
       pos <- n_s + n_e + rr
