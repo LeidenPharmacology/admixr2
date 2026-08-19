@@ -146,6 +146,17 @@
 #'   If the weakly-identified omega Cholesky makes the Hessian non-positive
 #'   definite, the structural + residual sub-block is reported with a warning.
 #'
+#'   `"r,s"` adds a sandwich correction, `H^-1 J H^-1`, on the same Hessian. The
+#'   aggregate objective scores the reported mean and covariance as though the
+#'   subjects behind them were multivariate normal; they are not, because the
+#'   model is nonlinear in the random effects. `"r,s"` scores that law from the
+#'   model instead, on a quadrature ensemble rather than on this fit's own MC
+#'   draws, so the reported uncertainty carries no sampling noise of its own.
+#'   Point estimates are untouched, and under correct specification it reduces to
+#'   `"r"` exactly. Available for the conditionally-normal residual family
+#'   (`add`, `prop`, `pow`, `combined1`, `combined2`, `lnorm`) and for non-joint
+#'   studies; anything else falls back to `"r"` with a warning.
+#'
 #'   All three blocks are reported on the scale the ESTIMATES are printed on, as
 #'   `nlmixr2est` does: structural thetas on the log/optimizer scale, residual
 #'   error as an SD, and omega as the variance/covariance entries (named
@@ -278,7 +289,7 @@ admControl <- function(
     cov_h       = 1e-3,
     cov_h_outer = .Machine$double.eps^(1/5),
     grad_bounds = 5,
-    covMethod   = c("r", "none"),
+    covMethod   = c("r", "r,s", "none"),
     cov_n_sim   = 10000L,
     n_restarts  = 1L,
     restart_sd  = 0.5,
@@ -1652,7 +1663,7 @@ nmObjGetControl.admc <- function(x, ...) {
                         use_grad = FALSE, grad_h = 1e-4, cov_h = 1e-3,
                         cov_h_outer = .Machine$double.eps^(1/5),
                         sensModel = NULL, use_central = FALSE,
-                        sampling = "sobol") {
+                        sampling = "sobol", sandwich = FALSE) {
   np    <- length(p_hat)
   nms   <- names(p_hat)
 
@@ -1857,10 +1868,36 @@ nmObjGetControl.admc <- function(x, ...) {
   }
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
+  # covMethod = "r,s". The weight is built on a QUADRATURE ensemble rather than
+  # on this fit's own MC draws: Omega is a property of the model, not of how the
+  # integral was approximated, and a sample-based weight would carry the MC noise
+  # of the fit into the reported uncertainty. G comes from the same ensemble for
+  # the same reason -- admc's moments are noisy estimates of exactly that
+  # integral, so the noise-free version describes the estimator's target
+  # faithfully and its variance better.
+  sw_used <- FALSE
+  if (isTRUE(sandwich)) {
+    sw <- tryCatch({
+      grid <- .admSandwichGrid(pinfo)
+      if (is.null(grid)) stop("no random effects: no ensemble to weight against")
+      .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
+                      H = H, keep = match(nms_cov, names(p_hat)))
+    }, error = function(e) NULL)
+    ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
+    if (ok) {
+      cov_full <- (sw$cov + t(sw$cov)) / 2
+      sw_used  <- TRUE
+    } else {
+      warning("admCalcCov: the sandwich correction could not be computed; ",
+              "reporting the covMethod = \"r\" covariance instead.", call. = FALSE)
+    }
+  }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
   # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
   # shared implementation for all three estimators -- see .admScaleReportedCov().
-  .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  attr(out, "sandwich") <- sw_used
+  out
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -3004,7 +3041,8 @@ nlmixr2Est.admc <- function(env, ...) {
 
   p_hat  <- setNames(opt$solution, names(ov$p0))
   t0_cov <- proc.time()
-  .cov <- if (.ctl$covMethod == "r") {
+  .want_cov <- .ctl$covMethod %in% c("r", "r,s")
+  .cov <- if (.want_cov) {
     # Multi-output / joint fits use the NLL-FD Hessian (via .admNLLBatch); the
     # grad-FD Hessian relies on the single-output analytical grad batch. A zero-eta
     # (no-IIV) model also takes the NLL-FD path: grad-FD exists only to BATCH the
@@ -3026,26 +3064,30 @@ nlmixr2Est.admc <- function(env, ...) {
     evals_label <- if (use_grad_cov) "gradient evaluations" else "NLL evaluations"
     hess_label  <- if (!use_grad_cov) "" else if (!is.null(sensModel))
       ", Sens-Hessian" else if (use_cent_cov) ", cFD-Hessian" else ", FD-Hessian"
-    message(sprintf("  Computing covariance (R method%s, %d %s)",
-                    hess_label, n_evals, evals_label))
+    message(sprintf("  Computing covariance (R method%s%s, %d %s)",
+                    hess_label, if (.ctl$covMethod == "r,s") ", sandwich" else "",
+                    n_evals, evals_label))
     tryCatch(
       .admCalcCov(p_hat, pinfo, studies, z_list, rxMod, output_var,
                   params_list, cores, cov_n_sim = .ctl$cov_n_sim,
                   use_grad = use_grad_cov, grad_h = .ctl$grad_h,
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
                   sensModel = sensModel, use_central = use_cent_cov,
-                  sampling = .ctl$sampling),
+                  sampling = .ctl$sampling,
+                  sandwich = .ctl$covMethod == "r,s"),
       error = function(e) { warning("admCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
   # A NULL covariance used to be completely silent: no warning reached the user,
   # `warnings()` was empty, covMethod came back "" and every SE was NA with no
   # indication why. Say so once, from the driver, where it cannot be swallowed.
-  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
+  if (.want_cov && is.null(.cov))
     warning("covariance could not be computed (the Hessian was singular or ",
             "non-finite); standard errors are unavailable for this fit.",
             call. = FALSE)
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
+  # what the covariance IS, not what was asked for -- a degraded sandwich is "r"
+  .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
@@ -3066,7 +3108,7 @@ nlmixr2Est.admc <- function(env, ...) {
   .ret$est        <- "admc"
   .ret$ofvType    <- "admc"
   .ret$adjObf     <- FALSE
-  .ret$covMethod  <- if (!is.null(.cov)) "r" else ""
+  .ret$covMethod  <- if (!is.null(.cov)) .cov_lbl else ""
   .ret$cov        <- .cov
   .ret$message    <- opt$message
   .ret$extra      <- ""

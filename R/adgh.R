@@ -971,7 +971,8 @@
 .adghCalcCov <- function(p_hat, pinfo, studies, sensModel, rxMod, out_var,
                            grid, cores,
                            use_grad = TRUE, grad_h = 1e-3,
-                           cov_h_outer = .Machine$double.eps^(1/4)
+                           cov_h_outer = .Machine$double.eps^(1/4),
+                           sandwich = FALSE
                            ) {
   n_s     <- length(pinfo$struct_names)
   n_e     <- length(pinfo$sigma_names)
@@ -1107,10 +1108,33 @@
   }
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
+  # covMethod = "r,s": replace the 2H^-1 filling with H^-1 J H^-1, built on the
+  # SAME H so the two cannot disagree about the half they share. Under correct
+  # specification J = 2H and this returns what "r" would have. Anything the
+  # sandwich cannot supply -- a residual outside the conditionally-normal family,
+  # a joint unit, a singular ingredient -- degrades to "r" and says so, rather
+  # than reporting a number of unknown provenance.
+  sw_used <- FALSE
+  if (isTRUE(sandwich)) {
+    sw <- tryCatch(
+      .admSandwichCov(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
+                      H = H, keep = match(nms_cov, names(p_hat))),
+      error = function(e) NULL)
+    ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
+    if (ok) {
+      cov_full <- (sw$cov + t(sw$cov)) / 2
+      sw_used  <- TRUE
+    } else {
+      warning("adghCalcCov: the sandwich correction could not be computed; ",
+              "reporting the covMethod = \"r\" covariance instead.", call. = FALSE)
+    }
+  }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
   # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
   # shared implementation for all three estimators -- see .admScaleReportedCov().
-  .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  attr(out, "sandwich") <- sw_used
+  out
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -1334,6 +1358,17 @@
 #'   If the weakly-identified omega Cholesky makes the Hessian non-positive
 #'   definite, the structural + residual sub-block is reported with a warning.
 #'
+#'   `"r,s"` adds a sandwich correction, `H^-1 J H^-1`, on the same Hessian.
+#'   The aggregate objective scores the reported mean and covariance as though
+#'   the subjects behind them were multivariate normal; they are not, because the
+#'   model is nonlinear in the random effects, so the sampling law of `(E, V)` is
+#'   not the one the objective assumes. `"r,s"` scores that law from the model
+#'   instead. Point estimates are untouched -- only the reported uncertainty
+#'   changes -- and under correct specification it reduces to `"r"` exactly.
+#'   Available for the conditionally-normal residual family (`add`, `prop`,
+#'   `pow`, `combined1`, `combined2`, `lnorm`) and for non-joint studies;
+#'   anything else falls back to `"r"` with a warning.
+#'
 #'   All three blocks are reported on the scale the ESTIMATES are printed on, as
 #'   `nlmixr2est` does: structural thetas on the log/optimizer scale, residual
 #'   error as an SD, and omega as the variance/covariance entries (named
@@ -1441,7 +1476,7 @@ adghControl <- function(
     grad_bounds = 5,
     cov_h       = 1e-3,
     cov_h_outer = .Machine$double.eps^(1/4),
-    covMethod   = c("r", "none"),
+    covMethod   = c("r", "r,s", "none"),
     n_restarts  = 1L,
     restart_sd  = 0.5,
     workers     = 1L,
@@ -1898,7 +1933,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   p_hat  <- setNames(opt$solution, names(ov$p0))
 
   t0_cov <- proc.time()
-  .cov <- if (.ctl$covMethod == "r") {
+  .want_cov <- .ctl$covMethod %in% c("r", "r,s")
+  .cov <- if (.want_cov) {
     # struct + sigma + OMEGA: the Hessian spans all three, so the evaluation
     # count must too.
     np_cov    <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
@@ -1908,21 +1944,27 @@ nlmixr2Est.adgh <- function(env, ...) {
                  else { n_off <- np_cov * (np_cov - 1L) / 2L; 1L + 2L * np_cov + 4L * n_off }
     evals_lbl <- if (use_grad_cov) "gradient evaluations" else "NLL evaluations"
     hess_lbl  <- if (!use_grad_cov) "" else if (!is.null(sensModel)) ", Analytical-Hessian" else ", FD-Hessian"
-    message(sprintf("  Computing covariance (R method%s, %d %s)", hess_lbl, n_evals, evals_lbl))
+    sw_lbl    <- if (.ctl$covMethod == "r,s") ", sandwich" else ""
+    message(sprintf("  Computing covariance (R method%s%s, %d %s)",
+                    hess_lbl, sw_lbl, n_evals, evals_lbl))
     tryCatch(
       .adghCalcCov(p_hat, pinfo, studies, sensModel, rxMod, output_var, grid, cores,
                    use_grad    = use_grad_cov,
                    grad_h      = .ctl$cov_h,
-                   cov_h_outer = .ctl$cov_h_outer),
+                   cov_h_outer = .ctl$cov_h_outer,
+                   sandwich    = .ctl$covMethod == "r,s"),
       error = function(e) { warning("adghCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
   # A NULL covariance used to be completely silent: no warning reached the user,
   # `warnings()` was empty, covMethod came back "" and every SE was NA with no
   # indication why. Say so once, from the driver, where it cannot be swallowed.
-  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
+  if (.want_cov && is.null(.cov))
     warning("covariance could not be computed (the Hessian was singular or ",
             "non-finite); standard errors are unavailable for this fit.",
             call. = FALSE)
+  # The attribute records what the covariance IS, not what was asked for: a
+  # requested sandwich that degraded must not be reported as one.
+  .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   .cov      <- .admCovThetaOrder(.cov, .ui)
@@ -1945,7 +1987,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   .ret$est        <- "adgh"
   .ret$ofvType    <- "adgh"
   .ret$adjObf     <- FALSE
-  .ret$covMethod  <- if (!is.null(.cov)) "r" else ""
+  .ret$covMethod  <- if (!is.null(.cov)) .cov_lbl else ""
   .ret$cov        <- .cov
   .ret$message    <- opt$message
   .ret$extra      <- ""

@@ -30,26 +30,99 @@
 # tau(Psi) is unchanged, so the covariate machinery, the shift/absorption paths
 # and the quadrature all carry over: this replaces the scoring, not the model.
 
-# Conditional residual variance Var(y | node) at every node, per timepoint.
+# Conditional central moments of the residual at every node, per timepoint.
 #
-# The node ensemble carries f; the residual is conditionally normal given the
-# node for the add/prop/combined family, so its variance is the same row-indexed
-# formula .admResidRows encodes, evaluated at each node's own f rather than at
-# the marginal mean. Returns Q x m to match `cp`.
-.admAdfCondVar <- function(cp, arr) {
-  a2 <- matrix(arr$a2, nrow(cp), ncol(cp), byrow = TRUE)
-  b2 <- matrix(arr$b2, nrow(cp), ncol(cp), byrow = TRUE)
-  cc <- matrix(arr$cc, nrow(cp), ncol(cp), byrow = TRUE)
-  fm <- abs(cp)
-  out <- switch(as.character(arr$form[[1L]]),
-    "0" = a2 + b2 * fm^(2 * cc),                       # combined2
-    "1" = (sqrt(a2) + sqrt(b2) * fm^cc)^2,             # combined1
-    "2" = {                                            # lnorm
-      sv <- a2
-      (cp * exp(sv / 2))^2 * (exp(sv) - 1)
-    },
-    NULL)
-  out
+# The node ensemble carries f; given the node the residual is a draw from the
+# endpoint's own distribution with that node's f as its mean parameter. What the
+# weight needs from it is the 2nd, 3rd and 4th CENTRAL moments -- the expansion
+# below is exact for any residual that is independent across timepoints given
+# the node, not only a normal one. Returns three Q x m matrices matching `cp`,
+# or NULL when the family cannot supply them.
+#
+# Under normality t3 = 0 and q4 = 3 d^2, and the two extra terms in the
+# expansion vanish identically, so add/prop/pow/combined stay bit-for-bit what
+# they were. lnorm does NOT: its conditional law is lognormal, and treating it
+# as normal understated the fourth moment by exactly the lognormal excess
+# kurtosis -- which is the very quantity the magnitude estimate for this whole
+# correction is written in terms of.
+#
+# Dispatch is PER ROW. A single unit has one form today (multi-output studies
+# are separate units and joint units are refused), but keying the whole matrix
+# off `form[[1]]` is a trap that costs nothing to avoid.
+.admAdfCondMom <- function(cp, arr) {
+  Q <- nrow(cp); m <- ncol(cp)
+  # ar() correlates the residual ACROSS timepoints, so the products below no
+  # longer factor and every cross term the expansion drops is real.
+  if (any(!is.na(arr$rho))) return(NULL)
+  d <- t3 <- q4 <- matrix(NA_real_, Q, m)
+  col <- function(x, j) if (length(x) == 1L) x else x[[j]]
+  for (j in seq_len(m)) {
+    f  <- cp[, j]
+    a2 <- col(arr$a2, j); b2 <- col(arr$b2, j); cc <- col(arr$cc, j)
+    vm <- col(arr$vmul, j); sz <- col(arr$csz, j); ph <- col(arr$phi, j)
+    fm <- abs(f)
+    v <- switch(as.character(arr$form[[j]]),
+      "0" = a2 + b2 * fm^(2 * cc),                     # combined2
+      "1" = (sqrt(a2) + sqrt(b2) * fm^cc)^2,           # combined1
+      NULL)
+    if (!is.null(v)) {
+      d[, j] <- v
+      if (isTRUE(all.equal(vm, 1))) {                  # normal
+        t3[, j] <- 0; q4[, j] <- 3 * v^2
+      } else {
+        # Student-t, folded in as vmul = nu/(nu-2). Symmetric, so t3 = 0; the
+        # fourth moment needs nu > 4 and there is nothing sensible to return
+        # below that -- a t_3 residual has no finite kurtosis, so the sampling
+        # law of the reported V does not have the variance the weight is made of.
+        nu <- 2 * vm / (vm - 1)
+        if (!is.finite(nu) || nu <= 4) return(NULL)
+        t3[, j] <- 0; q4[, j] <- 3 * v^2 * (nu - 2) / (nu - 4)
+      }
+      next
+    }
+    switch(as.character(arr$form[[j]]),
+      "2" = {                                          # lnorm, exact
+        # y | node ~ LogNormal(log f, sv): M1 = f exp(sv/2), w = exp(sv)
+        sv <- a2; w <- exp(sv); M1 <- f * exp(sv / 2)
+        d[, j]  <- M1^2 * (w - 1)
+        t3[, j] <- M1^3 * (w - 1)^2 * (w + 2)
+        q4[, j] <- M1^4 * (w - 1)^2 * (w^4 + 2 * w^3 + 3 * w^2 - 3)
+      },
+      "4" = {                                          # pois(f)
+        lam <- f
+        d[, j] <- lam; t3[, j] <- lam; q4[, j] <- lam + 3 * lam^2
+      },
+      "5" = {                                          # binom(N, f), N constant
+        if (!is.finite(sz)) return(NULL)
+        pp <- f; v <- sz * pp * (1 - pp)
+        d[, j]  <- v
+        t3[, j] <- v * (1 - 2 * pp)
+        q4[, j] <- v * (1 + (3 * sz - 6) * pp * (1 - pp))
+      },
+      "6" = {                                          # nbinomMu(size, f)
+        if (!is.finite(sz)) return(NULL)
+        mu <- f; k <- sz; v <- mu + mu^2 / k
+        d[, j]  <- v
+        t3[, j] <- mu * (1 + 3 * mu / k + 2 * mu^2 / k^2)
+        q4[, j] <- mu * (1 + 7 * mu / k + 12 * mu^2 / k^2 + 6 * mu^3 / k^3) +
+                   3 * v^2
+      },
+      "7" = {                                          # beta(mu, phi)
+        if (!is.finite(ph)) return(NULL)
+        al <- f * ph; be <- (1 - f) * ph; sm <- al + be
+        v  <- al * be / (sm^2 * (sm + 1))
+        sk <- 2 * (be - al) * sqrt(sm + 1) / ((sm + 2) * sqrt(al * be))
+        ku <- 3 + 6 * ((al - be)^2 * (sm + 1) - al * be * (sm + 2)) /
+                      (al * be * (sm + 2) * (sm + 3))
+        d[, j] <- v; t3[, j] <- sk * v^1.5; q4[, j] <- ku * v^2
+      },
+      # form 3 (TBS) needs the residual quadrature carried to third and fourth
+      # order and form 8 (ordinal) is a joint unit, refused upstream.
+      return(NULL))
+  }
+  if (!all(is.finite(d)) || !all(is.finite(t3)) || !all(is.finite(q4)))
+    return(NULL)
+  list(d = d, t3 = t3, q4 = q4)
 }
 
 # Omega / N: the asymptotic covariance of (ybar, vech V).
@@ -66,21 +139,32 @@
 # and the even ones are sums of products of C and Dv.
 #
 # One weight per source, frozen at a first stage -- see .admAdfFreeze.
-.admAdfWeight <- function(C, w, Dv, N) {
+.admAdfWeight <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL) {
   w  <- w / sum(w)
   m  <- ncol(C)
   ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
   q  <- nrow(ij)
+  if (is.null(T3)) T3 <- matrix(0, nrow(C), m)
+  if (is.null(Q4)) Q4 <- 3 * Dv^2
   dbar <- colSums(w * Dv)
   S    <- crossprod(C, w * C); diag(S) <- diag(S) + dbar
   dl   <- function(i, j) if (i == j) Dv[, i] else 0
+  # E[e_i e_j e_k] under conditional independence: non-zero only when all three
+  # indices coincide. Zero for a normal residual, which is why the terms guarded
+  # by tl() below have no effect on add/prop/combined.
+  tl   <- function(i, j, k) if (i == j && j == k) T3[, i] else 0
+  # E[e^4] - 3 Var^2: the excess-kurtosis correction to the one quartic case the
+  # three delta-delta products get wrong. Also identically zero under normality.
+  ke   <- function(i, j, k, l)
+    if (i == j && j == k && k == l) Q4[, i] - 3 * Dv[, i]^2 else 0
   W    <- matrix(0, m + q, m + q)
   W[seq_len(m), seq_len(m)] <- S / N
   for (b in seq_len(q)) {
     k <- ij[b, 1L]; l <- ij[b, 2L]
     for (i in seq_len(m)) {
       t <- C[, i] * C[, k] * C[, l] +
-           C[, i] * dl(k, l) + C[, k] * dl(i, l) + C[, l] * dl(i, k)
+           C[, i] * dl(k, l) + C[, k] * dl(i, l) + C[, l] * dl(i, k) +
+           tl(i, k, l)
       W[i, m + b] <- W[m + b, i] <- sum(w * t) / N
     }
   }
@@ -92,7 +176,10 @@
            C[, i] * C[, j] * dl(k, l) + C[, i] * C[, k] * dl(j, l) +
            C[, i] * C[, l] * dl(j, k) + C[, j] * C[, k] * dl(i, l) +
            C[, j] * C[, l] * dl(i, k) + C[, k] * C[, l] * dl(i, j) +
-           dl(i, j) * dl(k, l) + dl(i, k) * dl(j, l) + dl(i, l) * dl(j, k)
+           dl(i, j) * dl(k, l) + dl(i, k) * dl(j, l) + dl(i, l) * dl(j, k) +
+           C[, i] * tl(j, k, l) + C[, j] * tl(i, k, l) +
+           C[, k] * tl(i, j, l) + C[, l] * tl(i, j, k) +
+           ke(i, j, k, l)
       W[m + a, m + b] <- (sum(w * t) - S[i, j] * S[k, l]) / N
     }
   }
@@ -111,7 +198,7 @@
 #
 # Cost goes from O(q^2 Q) to O(m^3 Q + q^2), which is what makes the ceiling the
 # handoff quotes (m ~ 30, q = 465) reachable rather than theoretical.
-.admAdfWeightFast <- function(C, w, Dv, N) {
+.admAdfWeightFast <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL) {
   w  <- w / sum(w)
   m  <- ncol(C)
   ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
@@ -119,6 +206,13 @@
   I  <- ij[, 1L]; J <- ij[, 2L]
   dbar <- colSums(w * Dv)
   S    <- crossprod(C, w * C); diag(S) <- diag(S) + dbar
+  # Third/fourth conditional moments. NULL means "normal", where both extra
+  # contractions are zero and every line below that touches them is a no-op --
+  # which is what keeps add/prop/combined bit-identical to the version that had
+  # no concept of them.
+  TW <- if (is.null(T3)) NULL else colSums(w * T3)              # m
+  CT <- if (is.null(T3)) NULL else crossprod(C, w * T3)         # m x m
+  KE <- if (is.null(Q4)) NULL else colSums(w * (Q4 - 3 * Dv^2)) # m
 
   P  <- C[, I, drop = FALSE] * C[, J, drop = FALSE]     # Q x q
   wP <- w * P
@@ -142,6 +236,8 @@
     if (k == l) M3[, b] <- M3[, b] + CD[, k]
     M3[l, b] <- M3[l, b] + CD[k, l]
     M3[k, b] <- M3[k, b] + CD[l, k]
+    # E[e_i e_k e_l] survives only at i = k = l
+    if (!is.null(TW) && k == l) M3[k, b] <- M3[k, b] + TW[k]
   }
   W[seq_len(m), m + seq_len(q)] <- M3 / N
   W[m + seq_len(q), seq_len(m)] <- t(M3) / N
@@ -162,6 +258,15 @@
       if (i == j && k == l) v <- v + B[i, k]
       if (i == k && j == l) v <- v + B[i, j]
       if (i == l && j == k) v <- v + B[i, j]
+      # the four C x E[eee] terms, each alive only where its own three indices
+      # coincide, and the one quartic case the delta-delta products get wrong
+      if (!is.null(CT)) {
+        if (j == k && k == l) v <- v + CT[i, j]
+        if (i == k && k == l) v <- v + CT[j, i]
+        if (i == j && j == l) v <- v + CT[k, i]
+        if (i == j && j == k) v <- v + CT[l, i]
+      }
+      if (!is.null(KE) && i == j && j == k && k == l) v <- v + KE[i]
       M4[a, b] <- M4[a, b] + v
     }
   }
@@ -200,8 +305,14 @@
   arr <- .admUnitResidRows(pinfo, out_var, pars$sigma_var, length(sm$mu),
                            phi = attr(cp, "phi"))
   m   <- .admResidMoments(sm$mu, diag(sm$V), arr, sm$V, study$times)
-  list(E = m$mu, V = m$V, C = sm$cpc, w = g$W / sum(g$W),
-       Dv = .admAdfCondVar(cp, arr))
+  # C carries the residual's MEAN SCALING. On an lnorm endpoint the conditional
+  # mean is f exp(s/2), not f, so an unscaled C makes the weight's own S differ
+  # from the V the objective scores against -- the two would then describe
+  # different laws. ms is 1 on every other family, so this is a no-op there.
+  cm  <- .admAdfCondMom(cp, arr)
+  list(E = m$mu, V = m$V, w = g$W / sum(g$W),
+       C  = if (is.null(m$ms)) sm$cpc else sweep(sm$cpc, 2L, m$ms, "*"),
+       Dv = cm$d, T3 = cm$t3, Q4 = cm$q4)
 }
 
 # Freeze one weight per study at a first-stage estimate.
@@ -215,7 +326,7 @@
   lapply(studies, function(s) {
     pt <- .admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores)
     if (is.null(pt$Dv)) return(NULL)          # residual outside the free family
-    W  <- .admAdfWeightFast(pt$C, pt$w, pt$Dv, as.numeric(s$n))
+    W  <- .admAdfWeightFast(pt$C, pt$w, pt$Dv, as.numeric(s$n), pt$T3, pt$Q4)
     ch <- tryCatch(chol(W), error = function(e) NULL)
     if (is.null(ch)) return(NULL)
     list(Wi = chol2inv(ch), ldet = 2 * sum(log(diag(ch))))
@@ -365,8 +476,17 @@
 # reference until that extraction is written. Differencing the MOMENTS rather
 # than the objective keeps it well conditioned, and it runs once, post-fit.
 .admMomentDeriv <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
-                            h = 1e-5) {
-  mom <- function(pp) {
+                            h = 1e-5, mom_fn = NULL) {
+  # `mom_fn` is the ESTIMATOR's moment map, and it is separate from the ensemble
+  # the weight is built on for a reason: G describes the objective that was
+  # minimised, Omega describes the law the data actually came from. For adgh the
+  # two coincide and the default is used. For adfo they do NOT -- adfo predicts
+  # V = J Omega J' + Sigma, whose implied individual law is exactly normal, so
+  # scoring it against its own assumption would make the sandwich identically
+  # 2H^-1 and say nothing. Passing adfo's moment map here and keeping the
+  # quadrature ensemble for Omega is what makes the correction meaningful there:
+  # it scores an FO fit against the model's true nonlinear law.
+  mom <- mom_fn %||% function(pp) {
     pars <- .admUnpack(pp, pinfo)
     lapply(studies, function(s)
       .admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores))
@@ -397,11 +517,27 @@
 # residual outside the conditionally-normal family, a singular weight, a failed
 # moment solve. The caller falls back to "r" and says so.
 .admSandwichCov <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
-                            H, md = NULL) {
+                            H, md = NULL, keep = NULL, mom_fn = NULL) {
+  # H is checked FIRST, and here rather than being left to solve() inside .admSandwich,
+  # whose tryCatch is there for a singular matrix and cannot tell that apart from
+  # an H that was never supplied. A caller that forgot the argument then gets a
+  # silent NULL -- which reads as "the sandwich does not apply to this fit"
+  # rather than "you called it wrong", and a calibration study built on it
+  # reported numbers for replicates it had skipped entirely.
+  if (missing(H) || !is.matrix(H) || nrow(H) != ncol(H) || !all(is.finite(H)))
+    stop(".admSandwichCov: `H` must be a finite square Hessian of the objective ",
+         "at the optimum -- the same one covMethod = \"r\" inverts.", call. = FALSE)
   pars <- tryCatch(.admUnpack(p_hat, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(NULL)
+  # A joint (same-subject, multi-output) unit stacks several outputs into one
+  # covariance. .admAdfParts solves ONE output, so its node ensemble is not the
+  # one behind that block and the Wick expansion would be taken over the wrong
+  # conditional law. Refuse rather than return a plausible wrong weight.
+  if (any(vapply(studies, function(s) isTRUE(s$is_joint), logical(1))))
+    return(NULL)
   md <- md %||% tryCatch(
-    .admMomentDeriv(p_hat, pinfo, studies, rxMod, out_var, grid, cores),
+    .admMomentDeriv(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
+                    mom_fn = mom_fn),
     error = function(e) NULL)
   if (is.null(md)) return(NULL)
   G <- Om <- vector("list", length(studies))
@@ -411,9 +547,55 @@
                                 grid, cores), error = function(e) NULL)
     if (is.null(pt) || is.null(pt$Dv)) return(NULL)
     N <- as.numeric(s$n); m <- length(pt$E)
-    Om[[i]] <- .admWeightSel(.admAdfWeightFast(pt$C, pt$w, pt$Dv, N), m, s$method)
+    Om[[i]] <- .admWeightSel(
+      .admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4), m, s$method)
     G[[i]]  <- .admScoreCross(md$E[[i]], md$V[[i]], md$dE[[i]], md$dV[[i]], s, N)
     if (is.null(G[[i]])) return(NULL)
+    # H may have been reduced to the struct+sigma sub-block (.admReduceNpdOmega),
+    # so G must lose the same rows -- G is parameter-indexed by row.
+    if (!is.null(keep)) G[[i]] <- G[[i]][keep, , drop = FALSE]
   }
+  if (!is.null(keep) && nrow(H) != length(keep)) return(NULL)
   .admSandwich(H, G, Om)
+}
+
+# -- adfo ----------------------------------------------------------------------
+
+# A quadrature grid for the sandwich WEIGHT, sized to the number of etas.
+#
+# adfo carries no node ensemble -- that is the point of FO -- but the weight
+# needs one, because Omega is a property of the model's true nonlinear law and
+# not of the linearisation used to fit it. The grid is built once, post-fit, so
+# a node count that would be extravagant inside an optimisation loop is cheap
+# here; it is still capped, since the product grid is NQ^n_eta and a 5-eta model
+# at 9 nodes would be 59049 subjects in one solve for no accuracy that matters.
+.admSandwichGrid <- function(pinfo, max_nodes = 5000L) {
+  n_eta <- pinfo$n_eta
+  if (is.null(n_eta) || n_eta < 1L) return(NULL)
+  nq <- 9L
+  while (nq > 3L && nq^n_eta > max_nodes) nq <- nq - 2L
+  .adghNodeGrid(nq, n_eta)
+}
+
+# adfo's own (E, V) per study -- the moment map the FO objective minimises.
+#
+# Returned in the shape .admMomentDeriv expects, so the only thing that changes
+# between estimators is this function. `V` is the full predicted covariance even
+# for a `method = "var"` study: .admScoreCross takes the diagonal itself, which
+# keeps the branch logic in one place rather than two.
+.admAdfoMomFn <- function(pinfo, studies, sensModel, rxMod, out_var,
+                          params_list, cores) {
+  function(pp) {
+    pars <- .admUnpack(pp, pinfo)
+    lapply(seq_along(studies), function(i) {
+      s   <- studies[[i]]
+      ov  <- s$output %||% out_var
+      n_t <- length(s$times)
+      arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
+      mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
+                         params_list[[i]], cores)
+      vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta, s$times)
+      list(E = vp$mu_sigma, V = vp$V)
+    })
+  }
 }
