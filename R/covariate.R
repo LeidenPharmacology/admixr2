@@ -328,6 +328,18 @@
         "the covariates do not all enter one model assignment together with ",
         "exactly one random effect, so no single shifted column can carry them")
       else if (is.null(.ar)) .why <- "a covariate has no finite mean to shift against"
+      # The grid and Delta cost no solve and are needed by the off-diagonal
+      # test below as well as by the sizing further down, so build them once.
+      .g <- .D0 <- NULL
+      if (is.null(.why)) {
+        .g  <- .admCovGrid(cd, pinfo$cov_nodes %||% 7L)
+        .D0 <- tryCatch(.admShiftDelta(.sp, .admShiftStruct(pinfo), .g$X, .ar),
+                        error = function(e) NULL)
+      }
+      # Delta = c + B z is absorbed into Omega as Omega + P, P_SS = B B', which
+      # keeps every correlation a substituted column would have dropped.
+      .abs <- !is.null(.D0) && .admShiftGaussOK(as.matrix(.D0), .g$W, .g$z,
+                                                ncol(as.matrix(.D0)))
       if (is.null(.why)) {
         # The shift replaces ONE eta column. If that eta is correlated with
         # another, its marginal is no longer sqrt(Omega_jj) and the column
@@ -342,7 +354,10 @@
         # 6.5e-10 / 3.2e-07. Carrying a correlated Omega through the shift
         # needs the conditional Cholesky of the unaffected block, which this
         # path does not build.
-        if (length(which(!pinfo$chol_diag)))
+        # ... UNLESS the covariate absorbs into Omega. Then no column is
+        # substituted and no correlation is dropped: the whole eta vector is
+        # drawn from Omega + P, so Cov(u_S, eta_O) stays Omega_SO exactly.
+        if (length(which(!pinfo$chol_diag)) && !.abs)
           .why <- paste0(
             "Omega has an estimated off-diagonal element. The shift replaces ",
             "one eta column and rebuilds the others from the DIAGONAL, so any ",
@@ -370,7 +385,6 @@
         message("admixr2: study '", nm, "': cov_integration = \"auto\" is ",
                 "using the covariate product grid -- ", .why, ".")
       } else {
-        .g <- .admCovGrid(cd, pinfo$cov_nodes %||% 7L)
         # n_u is fixed HERE, from DATA, so the objective cannot step when
         # the optimizer moves omega. It used to scale with the current
         # sqrt((Var(Delta) + omega^2)/omega^2), so the node count changed
@@ -392,7 +406,10 @@
         studies[[nm]]$.adm_cov_shift <- list(
           spec = .sp, aref = .ar, cov_names = .cn,
           eta_idx = match(.sp$eta, pinfo$eta_col_names),
-          m = length(.sp$eta), X = .g$X, W = .g$W, z = .g$z, n_u = .nu)
+          m = length(.sp$eta), X = .g$X, W = .g$W, z = .g$z, n_u = .nu,
+          # Fixed at admission for the same reason n_u is: a path that could
+          # flip mid-fit would step the objective.
+          absorb = .abs && length(which(!pinfo$chol_diag)) > 0L)
         studies[[nm]]$.adm_cov_path <- "shift"
       }
     }
@@ -1620,15 +1637,28 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   colnames(X) <- nms
   # The latent normal scores behind X, assembled with the SAME stride. Each
   # continuous margin is a standard-normal node pushed through Phi and then the
-  # margin's quantile function, so `z` is what X is an image of -- which is the
-  # only thing that certifies Delta's law (see .admShiftAffineResid). A margin
-  # given by `values` is discrete and has no score; one such margin makes the
-  # whole grid uncertifiable, which is correct.
-  zc <- lapply(seq_along(nms), function(k)
-    if (!is.null(cov_dist[[nms[k]]][["values"]])) NULL else
-      .adghNodes1(length(one[[k]]$x))$x)
-  z <- if (any(vapply(zc, is.null, logical(1)))) NULL else
-    as.matrix(expand.grid(zc, KEEP.OUT.ATTRS = FALSE))
+  # margin's quantile function, so `z` is what X is an image of -- which is what
+  # certifies Delta's law (see .admShiftAffineResid).
+  #
+  # A margin given by `values` is discrete and has no score, but it does not
+  # void the others: the certificate regresses Delta on the columns that DO
+  # exist, so a Delta reaching a discrete covariate simply fails to be affine in
+  # them and is refused, while one that does not reach it still certifies. That
+  # matters for the ordinary case of a continuous covariate on the shifted
+  # parameter beside a discrete one somewhere else in the model -- returning
+  # NULL for the whole grid sent it down the mixture route for no reason.
+  # Expanded over EVERY margin, so the stride matches X row for row, then
+  # narrowed to the continuous columns. Expanding only the kept margins gives a
+  # z with fewer rows than X, and .admShiftAffineResid then declines on the
+  # length check -- which looks like a refusal to certify rather than a bug.
+  keep <- !vapply(nms, function(n) !is.null(cov_dist[[n]][["values"]]),
+                  logical(1))
+  z <- if (!any(keep)) NULL else {
+    ixz <- as.matrix(expand.grid(lapply(one, function(o) seq_along(o$x)),
+                                 KEEP.OUT.ATTRS = FALSE))
+    do.call(cbind, lapply(which(keep), function(k)
+      .adghNodes1(length(one[[k]]$x))$x[ixz[, k]]))
+  }
   list(X = X, W = W / sum(W), z = z)
 }
 
@@ -2060,6 +2090,46 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   r <- rec(1L, W)
   if (is.null(r)) return(NULL)
   list(u = r$u, w = r$w / sum(r$w))
+}
+
+# The covariate absorbed into Omega.
+#
+# When Delta = c + B z, the joint law of (u_S, eta_O) is normal with covariance
+# Omega + P -- P zero except P_SS = B B' -- and mean c on the affected block.
+# The covariate then needs no node set of its own: it is a rank-<= p additive
+# term on Omega, and the ORDINARY eta grid carries it, correlations with the
+# etas the covariate never touches included. That is what the retired collapse
+# path computed as Omega + J Sigma_a J', now with a certificate rather than a
+# muRefCovariateDataFrame lookup, and without its normality-of-the-covariate,
+# solve-at-the-mean or grad = "none" preconditions.
+#
+# Used only where the column substitution cannot go -- a correlated Omega --
+# because it gives up the analytic shift gradient (d(eta)/d(L_ab) is a Cholesky
+# differential of chol(Omega + P), not the column the existing chain reads), and
+# .adghGrad finite-differences instead.
+.admShiftAbsorb <- function(D, W, z, omega, j, n_u, nn0) {
+  D <- as.matrix(D)
+  if (!.admShiftGaussOK(D, W, z, ncol(D))) return(NULL)
+  Wn <- W / sum(W); sw <- sqrt(Wn)
+  q  <- tryCatch(qr(cbind(1, z) * sw), error = function(e) NULL)
+  if (is.null(q)) return(NULL)
+  co <- qr.coef(q, D * sw)
+  if (!all(is.finite(co))) return(NULL)
+  Om <- as.matrix(omega)
+  Om[j, j] <- Om[j, j] + tcrossprod(t(co[-1L, , drop = FALSE]))
+  L  <- tryCatch(t(chol(Om)), error = function(e) NULL)
+  if (is.null(L)) return(NULL)
+  # The affected axes carry the covariate's spread as well as the eta's, so
+  # they keep the wider node count the shift sized for them; the rest keep
+  # theirs. Node COUNTS, not the covariance, so this cannot move with omega.
+  nn <- rep(as.integer(nn0), nrow(Om)); nn[j] <- as.integer(n_u)
+  gs <- lapply(nn, .adghNodes1)
+  ix <- as.matrix(expand.grid(lapply(nn, seq_len), KEEP.OUT.ATTRS = FALSE))
+  X  <- vapply(seq_along(nn), function(k) gs[[k]]$x[ix[, k]],
+               numeric(nrow(ix)))
+  W2 <- Reduce(`*`, lapply(seq_along(nn), function(k) gs[[k]]$w[ix[, k]]))
+  mu <- numeric(nrow(Om)); mu[j] <- co[1L, ]
+  list(eta = sweep(X %*% t(L), 2L, mu, "+"), W = W2 / sum(W2), X = X)
 }
 
 # Does the shift identity actually hold for THIS model? Compiled model, a few

@@ -966,3 +966,82 @@ test_that("a shift study's FD gradient is not batched onto a stale node grid", {
   expect_true(all(is.finite(ga)))
   expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-4)), 1e-2)
 })
+
+# -- the covariate absorbed into Omega (correlated random effects) ------------
+
+test_that("a correlated Omega takes the absorption and matches the product grid", {
+  # Before this existed the shift was refused outright for ANY estimated
+  # off-diagonal, because it substitutes one eta column and rebuilds the rest
+  # from the diagonal. Under Delta = c + B z there is no substitution: the whole
+  # eta vector is drawn from Omega + P, so Cov(u_S, eta_O) stays Omega_SO and
+  # the objective has to agree with the product grid that never approximated
+  # anything.
+  .mod <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.75
+          eta.cl + eta.v ~ c(0.09, 0.02, 0.04)      # estimated off-diagonal
+          add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * log(WT / 70) + eta.cl)
+            v  <- exp(tv + eta.v)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  .setup <- function(ci, E, V) {
+    st0 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
+                         ev = rxode2::et(amt = .cov_DOSE),
+                         cov_dist = list(WT = list(meanlog = log(72),
+                                                   sdlog = 0.28))))
+    ui  <- suppressMessages(rxode2::rxode2(.mod))
+    ov  <- admixr2:::.admOutputVar(ui)
+    ctl <- adghControl(studies = st0, grad = "analytical", n_nodes = 5L,
+                       print = 0L, covMethod = "none", cov_integration = ci)
+    pin <- admixr2:::.admDriverPinfo(ui, ctl)
+    u   <- admixr2:::.admDriverUnits(st0, ui, ov)
+    stu <- suppressMessages(
+      admixr2:::.admCheckCovariates(ui, pin, u$studies, "analytical", "adgh"))
+    list(pin = pin, stu = stu, ov = ov,
+         p = admixr2:::.admBuildOptVec(pin)$p0,
+         g = admixr2:::.adghNodeGrid(5L, pin$n_eta),
+         rx = admixr2:::.admLoadModel(ui))
+  }
+  E0 <- .cov_DOSE / 10 * exp(-0.1 * .cov_TIMES)
+  d0 <- .setup("quadrature", E0, diag((0.25 * E0)^2))
+  mo <- admixr2:::.adghMoments(admixr2:::.admUnpack(d0$p, d0$pin),
+                               d0$pin, d0$stu[[1L]], d0$rx, d0$ov, d0$g, 1L)
+  E <- as.numeric(mo$E); V <- as.matrix(mo$V)
+
+  dq <- .setup("quadrature", E, V)
+  da <- .setup("auto", E, V)
+  # the product grid never takes a shift; auto now does, via the absorption
+  expect_identical(dq$stu[[1L]]$.adm_cov_path, "rows")
+  expect_identical(da$stu[[1L]]$.adm_cov_path, "shift")
+  expect_true(isTRUE(da$stu[[1L]][[".adm_cov_shift"]]$absorb))
+
+  nq <- admixr2:::.adghNLL(dq$p, dq$pin, dq$stu, dq$rx, dq$ov, dq$g, 1L)
+  na <- admixr2:::.adghNLL(da$p, da$pin, da$stu, da$rx, da$ov, da$g, 1L)
+  expect_true(is.finite(nq))
+  expect_equal(na, nq, tolerance = 1e-8)
+
+  # and it is refused again when the covariate does NOT absorb: a lognormal
+  # covariate entering RAW is not affine in the latent score
+  .raw <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.005
+          eta.cl + eta.v ~ c(0.09, 0.02, 0.04)
+          add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * WT + eta.cl)
+            v  <- exp(tv + eta.v)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui2 <- suppressMessages(rxode2::rxode2(.raw))
+  st2 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
+                       ev = rxode2::et(amt = .cov_DOSE),
+                       cov_dist = list(WT = list(meanlog = log(72),
+                                                 sdlog = 0.28))))
+  ov2 <- admixr2:::.admOutputVar(ui2)
+  ct2 <- adghControl(studies = st2, grad = "analytical", n_nodes = 5L,
+                     print = 0L, covMethod = "none", cov_integration = "auto")
+  pi2 <- admixr2:::.admDriverPinfo(ui2, ct2)
+  u2  <- admixr2:::.admDriverUnits(st2, ui2, ov2)
+  s2  <- suppressMessages(
+    admixr2:::.admCheckCovariates(ui2, pi2, u2$studies, "analytical", "adgh"))
+  expect_identical(s2[[1L]]$.adm_cov_path, "rows")
+  expect_match(s2[[1L]]$.adm_cov_shift_why, "off-diagonal")
+})

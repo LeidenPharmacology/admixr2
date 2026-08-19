@@ -112,6 +112,23 @@
       # -3169 to -256961. Fixed at admission instead (sh$n_u), from cov_dist,
       # which is data.
       n_u <- sh$n_u %||% min(101L, 4L * nn0)
+      # A correlated Omega takes the absorption instead: the covariate becomes
+      # Omega + P and the ORDINARY eta grid carries it, which is the only route
+      # that keeps the off-diagonals the column substitution would drop.
+      if (isTRUE(sh$absorb)) {
+        ab <- .admShiftAbsorb(D, sh$W, sh$z, pars$omega, j, n_u, nn0)
+        if (!is.null(ab)) {
+          colnames(ab$eta) <- pinfo$eta_col_names
+          cr <- matrix(rep(unlist(sh$aref[sh$cov_names]), each = nrow(ab$eta)),
+                       nrow(ab$eta), length(sh$cov_names),
+                       dimnames = list(NULL, sh$cov_names))
+          # X is the STANDARD normal node matrix, not d(eta)/d(L_ab): under the
+          # absorption eta = mu + X chol(Omega + P)', so the omega chain does
+          # not apply and .adghGrad finite-differences this study.
+          return(list(eta = ab$eta, W = ab$W, X = ab$X, cov_rows = cr,
+                      shift = NULL))
+        }
+      }
       un  <- .admShiftNodesMulti(D, sh$W, om, n_u, z = sh$z)
       # n_nodes per eta, recovered from the grid: nrow = n_nodes^n_eta. round(),
       # not a bare fractional power -- 343^(1/3) is 6.999999999999999.
@@ -420,8 +437,13 @@
     # well, a second chain .admShiftDu does not carry. Finite-difference the
     # objective instead of silently using the scalar chain -- still far cheaper
     # than the product grid, because the objective is what got cheap.
+    # The absorption joins the vector shift here: eta = mu + X chol(Omega + P)'
+    # makes d(eta)/d(L_ab) a Cholesky differential rather than the column the
+    # analytic chain reads, so the objective is what got cheap and the gradient
+    # is finite-differenced.
     if (identical(s$.adm_cov_path, "shift") &&
-        (s[[".adm_cov_shift"]]$m %||% 1L) > 1L)
+        ((s[[".adm_cov_shift"]]$m %||% 1L) > 1L ||
+         isTRUE(s[[".adm_cov_shift"]]$absorb)))
       return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
                                      cores, grad_h), nll = NULL))
     .gS <- .adghGrid(pars, pinfo, grid, s)

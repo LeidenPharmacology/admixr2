@@ -1346,7 +1346,48 @@ test_that(".admCovGrid returns the latent scores behind X", {
   expect_equal(ncol(g$z), 2L)
   # X is the image of z under F^-1(Phi(.)), so for a normal margin it is affine
   expect_lt(admixr2:::.admShiftAffineResid(g$X, g$W, g$z), 1e-10)
-  # a discrete margin has no score, and one is enough to void the grid
+  # a discrete margin has no score of its own but does NOT void the others: the
+  # scores come back for the continuous columns only, with X's stride, so a
+  # Delta that never reaches the discrete covariate still certifies
   d2 <- list(WT = list(mu = 70, sd = 8), SEX = list(values = c(0, 1)))
-  expect_null(admixr2:::.admCovGrid(d2, 5L)$z)
+  g2 <- admixr2:::.admCovGrid(d2, 7L)
+  expect_equal(nrow(g2$z), nrow(g2$X))     # stride, not just presence
+  expect_equal(ncol(g2$z), 1L)
+  D_no  <- matrix(0.8 * g2$X[, "WT"] / 70, ncol = 1)
+  D_yes <- matrix(0.8 * g2$X[, "WT"] / 70 + 0.3 * g2$X[, "SEX"], ncol = 1)
+  expect_lt(admixr2:::.admShiftAffineResid(D_no,  g2$W, g2$z), 1e-8)
+  expect_gt(admixr2:::.admShiftAffineResid(D_yes, g2$W, g2$z), 1e-3)
+  # a correlated grid holding a discrete margin goes through the pool instead,
+  # which has no latent structure at all
+  d3 <- list(WT = list(mu = 70, sd = 8), CRCL = list(mu = 90, sd = 22),
+             SEX = list(values = c(0, 1)),
+             cor = matrix(c(1, .5, 0, .5, 1, 0, 0, 0, 1), 3, 3))
+  expect_null(admixr2:::.admCovGrid(d3, 5L)$z)
+})
+
+test_that("lognormal and correlated covariates reach the Gaussian branch", {
+  # The two forms this exists for, on real grids rather than synthetic Delta.
+  # Correlated margins certify because the Gaussian copula maps
+  # X_k = F_k^-1(Phi((L z)_k)) and (L z)_k is linear in z.
+  cg <- admixr2:::.admCovGrid; ar <- admixr2:::.admShiftAffineResid
+  yes <- list(
+    list(list(WT = list(meanlog = log(70), sdlog = 0.17)),
+         function(X) 0.75 * log(X[, "WT"] / 70)),
+    list(list(WT = list(mu = 70, sd = 8), CRCL = list(mu = 90, sd = 22),
+              cor = 0.6),
+         function(X) cbind(0.8 * X[, "WT"] / 70, 0.3 * X[, "CRCL"] / 90)),
+    list(list(WT = list(meanlog = log(70), sdlog = 0.17),
+              CRCL = list(meanlog = log(90), sdlog = 0.25), cor = 0.6),
+         function(X) cbind(0.75 * log(X[, "WT"] / 70),
+                           0.4 * log(X[, "CRCL"] / 90))),
+    list(list(WT = list(meanlog = log(70), sdlog = 0.17),
+              AGE = list(mu = 50, sd = 12), cor = 0.4),
+         function(X) cbind(0.75 * log(X[, "WT"] / 70), 0.02 * X[, "AGE"])))
+  for (cs in yes) {
+    g <- cg(cs[[1]], 7L)
+    expect_lt(ar(as.matrix(cs[[2]](g$X)), g$W, g$z), 1e-8)
+  }
+  # a lognormal covariate entering RAW is not affine in the score, and is refused
+  g <- cg(list(WT = list(meanlog = log(70), sdlog = 0.17)), 7L)
+  expect_gt(ar(matrix(0.8 * g$X[, "WT"], ncol = 1), g$W, g$z), 1e-3)
 })
