@@ -1385,3 +1385,42 @@ test_that("lognormal and correlated covariates reach the Gaussian branch", {
   g <- cg(list(WT = list(meanlog = log(70), sdlog = 0.17)), 7L)
   expect_gt(ar(matrix(0.8 * g$X[, "WT"], ncol = 1), g$W, g$z), 1e-3)
 })
+
+test_that("a discrete covariate makes `auto` fall back, not fail", {
+  # `auto` is documented to try the shift and fall back to the product grid.
+  # A discrete covariate was the one disqualification that stop()ed instead, so
+  # a model with a SEX term could not use cov_integration = "auto" at all --
+  # even though the grid it would have fallen back to enumerates the levels
+  # exactly and is the right answer for it.
+  .mk <- function(expr) {
+    f <- function() {
+      ini({ tcl <- log(1); tv <- log(10); tcov <- 0.75; tsex <- 0.2
+            eta.cl ~ 0.09; add.err <- 0.3 })
+      model({ v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+    }
+    b <- body(f); mb <- b[[3]][[2]]
+    mb <- as.call(append(as.list(mb), expr, after = 1L))
+    b[[3]][[2]] <- mb; body(f) <- b
+    suppressMessages(rxode2::rxode2(f))
+  }
+  cd <- list(WT = list(meanlog = log(72), sdlog = 0.28),
+             SEX = list(values = c(0, 1)))
+  ui <- .mk(quote(cl <- exp(tcl + tcov * log(WT / 70) + tsex * SEX + eta.cl)))
+  st <- list(s = list(E = 1:3, V = diag(3), n = 10L, times = 1:3,
+                      ev = rxode2::et(amt = 100), cov_dist = cd))
+  ctl <- adghControl(studies = st, grad = "analytical", n_nodes = 5L,
+                     print = 0L, covMethod = "none", cov_integration = "auto")
+  pin <- admixr2:::.admDriverPinfo(ui, ctl)
+  u   <- admixr2:::.admDriverUnits(st, ui, admixr2:::.admOutputVar(ui))
+  out <- suppressMessages(
+    admixr2:::.admCheckCovariates(ui, pin, u$studies, "analytical", "adgh"))
+  expect_identical(out[[1L]]$.adm_cov_path, "rows")
+  expect_match(out[[1L]]$.adm_cov_shift_why, "discrete")
+  # and an EXPLICIT cov_integration = "shift" still errors, naming the reason
+  ctl2 <- adghControl(studies = st, grad = "analytical", n_nodes = 5L,
+                      print = 0L, covMethod = "none", cov_integration = "shift")
+  pin2 <- admixr2:::.admDriverPinfo(ui, ctl2)
+  expect_error(
+    admixr2:::.admCheckCovariates(ui, pin2, u$studies, "analytical", "adgh"),
+    "discrete")
+})

@@ -306,27 +306,37 @@
     if (identical(studies[[nm]]$.adm_cov_path, "rows") &&
         .ci %in% c("shift", "auto")) {
       .cn  <- .admCovSpecNames(cd)
+      .sp  <- .admShiftSpec(.ui, .cn, pinfo$eta_col_names)
+      .ar  <- if (is.null(.sp)) NULL else .admShiftRef(cd, .cn)
       # A DISCRETE covariate makes u = Delta(a) + eta a multi-modal mixture.
       # The shift IDENTITY still holds -- Delta is well defined at each level --
       # but Gauss-Hermite nodes on u cannot resolve separated modes: measured
       # 13% on V and 21.4 -2LL units against the product grid at identical cost,
       # and it does NOT converge away with more nodes (1891 rows still 1.2% out).
-      # `quadrature` and `taylor` enumerate the levels exactly, so refuse here
-      # rather than integrate a mixture this rule cannot represent.
-      .disc <- vapply(.cn, function(n) !is.null(cd[[n]][["values"]]), logical(1))
-      if (any(.disc))
-        bad("study '", nm, "': cov_integration = \"shift\" is not applicable -- ",
-            "covariate(s) ", paste(sQuote(.cn[.disc]), collapse = ", "),
-            " are discrete, which makes the shifted argument a multi-modal ",
-            "mixture that Gauss-Hermite nodes cannot resolve. Use ",
-            "cov_integration = \"quadrature\", which enumerates the levels ",
-            "exactly.")
-      .sp  <- .admShiftSpec(.ui, .cn, pinfo$eta_col_names)
-      .ar  <- if (is.null(.sp)) NULL else .admShiftRef(cd, .cn)
+      #
+      # Scoped to the covariates that actually REACH the shifted argument. One
+      # that is discrete but enters the model elsewhere -- a SEX term on a
+      # parameter the covariate never shifts -- makes no mode in u, and
+      # .admShiftVerify is what decides whether holding it at its reference is
+      # legitimate. Testing every declared covariate instead refused the shift
+      # for models where nothing about it was multi-modal.
+      .used <- if (is.null(.sp)) .cn else
+        intersect(.cn, unlist(lapply(.sp$rhs, all.vars)))
+      .disc <- vapply(.used, function(n) !is.null(cd[[n]][["values"]]),
+                      logical(1))
       .why <- NULL
       if (is.null(.sp)) .why <- paste0(
         "the covariates do not all enter one model assignment together with ",
         "exactly one random effect, so no single shifted column can carry them")
+      # ... and reported through `.why` rather than as an error, so that `auto`
+      # falls back to the product grid the way it does for every other
+      # disqualification. It used to stop() unconditionally, which made a
+      # discrete covariate the one property that could not be auto-detected
+      # around.
+      else if (length(.used) && any(.disc)) .why <- paste0(
+        "covariate(s) ", paste(sQuote(.used[.disc]), collapse = ", "),
+        " are discrete and reach the shifted argument, which makes it a ",
+        "multi-modal mixture that Gauss-Hermite nodes cannot resolve")
       else if (is.null(.ar)) .why <- "a covariate has no finite mean to shift against"
       # The grid and Delta cost no solve and are needed by the off-diagonal
       # test below as well as by the sizing further down, so build them once.
@@ -2075,7 +2085,9 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 # because it gives up the analytic shift gradient (d(eta)/d(L_ab) is a Cholesky
 # differential of chol(Omega + P), not the column the existing chain reads), and
 # .adghGrad finite-differences instead.
-.admShiftAbsorb <- function(D, W, z, omega, j, n_u, nn0) {
+# Omega + B B' and the mean shift c, with no node grid. This is the whole of the
+# absorption; .admShiftAbsorb adds a grid on top, and adfo/adirmc need only this.
+.admAbsorbFit <- function(D, W, z, omega, j) {
   D <- as.matrix(D)
   if (!.admShiftGaussOK(D, W, z, ncol(D))) return(NULL)
   Wn <- W / sum(W); sw <- sqrt(Wn)
@@ -2083,10 +2095,19 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   if (is.null(q)) return(NULL)
   co <- qr.coef(q, D * sw)
   if (!all(is.finite(co))) return(NULL)
+  B  <- t(co[-1L, , drop = FALSE])
   Om <- as.matrix(omega)
-  Om[j, j] <- Om[j, j] + tcrossprod(t(co[-1L, , drop = FALSE]))
-  L  <- tryCatch(t(chol(Om)), error = function(e) NULL)
-  if (is.null(L)) return(NULL)
+  Om[j, j] <- Om[j, j] + tcrossprod(B)
+  Lt <- tryCatch(t(chol(Om)), error = function(e) NULL)
+  if (is.null(Lt)) return(NULL)
+  list(Lt = Lt, omega = Om, cc = as.numeric(co[1L, ]), B = B,
+       q = q, sw = sw, j = j)
+}
+
+.admShiftAbsorb <- function(D, W, z, omega, j, n_u, nn0) {
+  ab <- .admAbsorbFit(D, W, z, omega, j)
+  if (is.null(ab)) return(NULL)
+  Om <- ab$omega; L <- ab$Lt
   # The affected axes carry the covariate's spread as well as the eta's, so
   # they keep the wider node count the shift sized for them; the rest keep
   # theirs. Node COUNTS, not the covariance, so this cannot move with omega.
@@ -2096,13 +2117,8 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
   X  <- vapply(seq_along(nn), function(k) gs[[k]]$x[ix[, k]],
                numeric(nrow(ix)))
   W2 <- Reduce(`*`, lapply(seq_along(nn), function(k) gs[[k]]$w[ix[, k]]))
-  mu <- numeric(nrow(Om)); mu[j] <- co[1L, ]
-  # `q`/`sw` travel with the result so the gradient can differentiate the SAME
-  # regression: co is linear in D, so d(co)/d(theta) is that regression applied
-  # to d(D)/d(theta) -- no refit, and no second definition of B to drift from
-  # the one the nodes were built with.
-  list(eta = sweep(X %*% t(L), 2L, mu, "+"), W = W2 / sum(W2), X = X,
-       Lt = L, q = q, sw = sw, B = t(co[-1L, , drop = FALSE]), j = j)
+  mu <- numeric(nrow(Om)); mu[j] <- ab$cc
+  c(ab, list(eta = sweep(X %*% t(L), 2L, mu, "+"), W = W2 / sum(W2), X = X))
 }
 
 # d(chol(S))/d(param), for S = Lt Lt'.
