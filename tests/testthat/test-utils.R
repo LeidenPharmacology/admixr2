@@ -461,7 +461,7 @@ test_that("a new control argument goes LAST in the formals", {
   # covariate dimension of adgh's product grid (n_nodes does not);
   # cov_integration/cov_taylor_h were appended after it, as a pair.
   last <- list(adfoControl = "resid_nodes", adirmcControl = "resid_nodes",
-               admControl = "ipd", adghControl = "cov_taylor_h")
+               admControl = "resid_nodes", adghControl = "cov_taylor_h")
   for (nm in names(last)) {
     nms <- names(formals(get(nm)))
     nms <- nms[nms != "..."]                    # every control ends with `...`

@@ -287,11 +287,6 @@ admControl <- function(
     # LAST on purpose: inserting an argument mid-signature silently rebinds every
     # positional call -- admControl(studies, 20000L) used to set n_sim = 20000.
     resid_nodes = 81L,
-    # LAST. EXPERIMENTAL (#60): a data frame of individual-level records fitted
-    # JOINTLY with the aggregate studies. The individual term is evaluated by
-    # nlmixr2est's FOCEI at the parameters admixr2 proposes, so a joint fit is
-    # derivative-free and much slower. See R/ipd.R.
-    ipd = NULL,
     ...) {
 
   .xtra <- list(...)
@@ -366,7 +361,6 @@ admControl <- function(
   .ret <- list(
     studies       = studies,
     resid_nodes   = as.integer(resid_nodes),
-    ipd           = ipd,
     n_sim         = as.integer(n_sim),
     sampling      = sampling,
     algorithm     = algorithm,
@@ -2863,20 +2857,6 @@ nlmixr2Est.admc <- function(env, ...) {
   cores  <- .ctl$cores
   grad_h <- .ctl$grad_h
 
-  # EXPERIMENTAL joint individual + aggregate term (#60). Reparsed once, not per
-  # evaluation. There is no gradient through FOCEI's inner problem, so a joint
-  # fit is derivative-free whatever `grad` asked for -- said out loud, because
-  # silently ignoring `grad` would look like the analytical path was being used.
-  .ui_ipd <- NULL
-  if (!is.null(.ctl$ipd)) {
-    .ui_ipd <- .admIpdSetup(.ui, .ctl$ipd)
-    message("admc: EXPERIMENTAL joint fit with ", length(unique(.ctl$ipd$ID)),
-            " individual subject(s). The individual term is evaluated by FOCEI ",
-            "and finite-differenced; the aggregate gradient stays analytic. Its ",
-            "objective is NOT comparable with an aggregate-only fit (differing ",
-            "likelihood constants).")
-  }
-
   .nll_trace <- numeric(0)
   .par_trace <- NULL
   .best_nll  <- Inf
@@ -2884,8 +2864,6 @@ nlmixr2Est.admc <- function(env, ...) {
   eval_f <- function(p) {
     .iter <<- .iter + 1L
     val <- .admNLL(p, pinfo, studies, z_list, rxMod, output_var, params_list, cores)
-    if (!is.null(.ui_ipd) && is.finite(val))
-      val <- val + .admIpdNLL(.admUnpack(p, pinfo), pinfo, .ui_ipd, .ctl$ipd)
     if (is.finite(val) && val < .best_nll) {
       .best_nll  <<- val
       .nll_trace <<- c(.nll_trace, val)
@@ -2947,22 +2925,13 @@ nlmixr2Est.admc <- function(env, ...) {
                               params_list, cores, grad_h, sensModel,
                               use_central = want_central)
 
-  # The joint objective is a sum, so its gradient is the sum of the two. Only the
-  # individual half is finite-differenced; the aggregate half stays analytic.
-  if (!is.null(.ui_ipd) && !is.null(eval_grad_f)) {
-    .agg_grad <- eval_grad_f
-    eval_grad_f <- function(p)
-      .agg_grad(p) + .admIpdGrad(p, pinfo, .ui_ipd, .ctl$ipd, grad_h)
-  }
-
   grad_label <- if (!want_grad) "none"
   else paste0(
     if (joint_fd) "central FD (joint)"
     else if (any_joint) "Sens (joint)"
     else if (!is.null(sensModel))
       if (pinfo$has_kappa) "Sens+FD" else "Sens"
-    else "central FD",
-    if (!is.null(.ui_ipd)) " + FD(ipd)" else "")
+    else "central FD")
   message("=== admixr2: Aggregate Data Modeling (MC) ===")
   message(sprintf("  Obs units: %d | MC samples: %d | Params: %d | Cores: %d | Grad: %s | Restarts: %d",
                   length(studies), .ctl$n_sim, length(ov$p0), cores,

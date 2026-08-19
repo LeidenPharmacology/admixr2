@@ -37,6 +37,7 @@ admControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
+  ipd = NULL,
   ...
 )
 }

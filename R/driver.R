@@ -159,8 +159,7 @@
   attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")
   class(.fit) <- .new_cls
 
-  .stats <- .admCalcObjStats(objective, length(ov$p0), studies,
-                             extra_nobs = .admIpdNobs(.ctl$ipd))
+  .stats <- .admCalcObjStats(objective, length(ov$p0), studies)
   row.names(.stats$objDf) <- est
   .fit$env$logLik    <- .stats$ll
   .fit$env$nobs      <- .stats$nobs

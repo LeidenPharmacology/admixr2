@@ -18,6 +18,30 @@ default is supplied via the \code{model} argument.}
 \item{\code{ev}}{A dosing event table created with \code{rxode2::et()}.}
 \item{\code{n}}{(Optional) integer sample size; stored as metadata and
 used when supplying the result to \code{admControl()}.}
+\item{\code{cov_dist}}{(Optional) the covariate distribution this study's
+subjects span --- see \code{\link[=covDraw]{covDraw()}} for the grammar. The generated
+\code{E}/\code{V} are MARGINAL over it, which is what a publication reports.
+Needs \code{datagenControl(method = "mc")}.}
+\item{\code{stratify}}{(Optional) \code{TRUE} to stratify on every covariate this
+study's OWN data-generating model conditions on, marginalising the
+rest --- the split is read from the model, so it cannot disagree with
+it. Two sources sharing one \code{cov_dist} therefore stratify differently,
+each according to what it fitted. A character vector names the
+covariates explicitly instead. The study is expanded into
+one ordinary study per covariate stratum, named \verb{<study>_s1},
+\verb{<study>_s2}, ..., each pinned at its own covariate value, carrying its
+own effective size \code{n_k} (the quadrature weight times \code{n}, summing to
+\code{n}), and marginalising the remaining covariates over their
+distribution CONDITIONAL on that stratum. Use it when the source
+reports --- or, being a published model, can report --- summaries by
+covariate subgroup. Stratify only on what the source actually fitted:
+a source with no term in a covariate has no contrast in it to give, and
+nodes that vary it manufacture a null one. See \code{\link[=covStrata]{covStrata()}}.}
+\item{\code{strata_nodes}}{(Optional) strata per stratified covariate
+(default 5); a discrete covariate is cut at its levels instead. Each
+stratum costs a solve and more of them do not buy accuracy: a matched
+one-covariate fit recovers 0.7000 / 0.7002 / 0.7005 at 3 / 4 / 10
+strata against a true 0.700. See \code{\link[=covStrata]{covStrata()}}.}
 \item{\code{observations}}{(Optional) a named list to generate data for several
 observed outputs (multi-compartment). Each entry gives one output's
 \code{output} (model prediction variable, e.g. \code{"cp"}), \code{times}, and

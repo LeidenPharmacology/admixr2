@@ -12,7 +12,8 @@ datagenControl(
   seed = 12345L,
   cores = 1L,
   return_samples = FALSE,
-  resid_nodes = 81L
+  resid_nodes = 81L,
+  cov_nodes = 7L
 )
 }
 \arguments{
@@ -32,9 +33,7 @@ moments. Ignored when \code{method = "fo"} or \code{"gh"}.}
 \code{method = "gh"} (default 5). Total nodes = \code{n_nodes^n_eta}. Ignored for
 \code{"mc"} and \code{"fo"}.}
 
-\item{sampling}{Quasi-random sampling method: \code{"sobol"} (default),
-\code{"halton"}, \code{"torus"}, \code{"lhs"}, or \code{"rnorm"}. Ignored when \code{method = "fo"}
-or \code{"gh"}.}
+\item{sampling}{Quasi-random sampling method: \code{"sobol"} (default),}
 
 \item{seed}{Integer seed.  Applied before stochastic methods
 (\code{"rnorm"}, \code{"lhs"}). Ignored when \code{method = "fo"} or \code{"gh"}.}
@@ -52,6 +51,14 @@ variance. Ignored by every other error model. Default 81 -- the same default
 the four estimator controls use, so \code{datagen()} and the fit it feeds agree
 unless you deliberately change one of them. See \code{\link[=admControl]{admControl()}} for the
 measured convergence.}
+
+\item{cov_nodes}{Gauss-Hermite nodes per covariate when \code{method = "gh"}
+integrates a study's \code{cov_dist} (default 7). Total covariate points are
+\code{cov_nodes^p} for \code{p} covariates. Ignored by \code{"mc"}, which draws a covariate
+value per simulated subject instead, and by \code{"fo"}, which cannot integrate a
+covariate at all.
+\code{"halton"}, \code{"torus"}, \code{"lhs"}, or \code{"rnorm"}. Ignored when \code{method = "fo"}
+or \code{"gh"}.}
 }
 \value{
 A list of class \code{"datagenControl"}.
