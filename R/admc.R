@@ -1104,7 +1104,14 @@ nmObjGetControl.admc <- function(x, ...) {
       # .admCovColsTiled() reads s$cov_rows, which only .admGrad set; the batch
       # paths never did, so it would have tiled NULL and stayed a no-op.
       s       <- .admStudyCovRows(s, pinfo, n_sim)
-      pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim, n_c)
+      # n_chunk, NOT n_c: pdf_mat holds this CHUNK's configurations, and the
+      # loop above chunks at `chunk_size` (30). Passing the total tiled the
+      # covariate rows to n_c * n_sim against a frame of n_chunk * n_sim, which
+      # .admCovCols refuses outright rather than recycle -- so any admc covariate
+      # fit whose Hessian needs more than 30 points died at its last step. The
+      # point count is 2*np_cov + 4*n_off, so four reported parameters was
+      # enough, and covMethod = "r" routes EVERY admc covariate fit here.
+      pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim, n_chunk)
 
       out <- tryCatch(
         rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),

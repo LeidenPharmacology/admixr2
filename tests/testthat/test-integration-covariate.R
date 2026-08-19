@@ -1309,3 +1309,42 @@ test_that("a coarse covariate grid does not desync objective from gradient", {
   expect_lt(.g(3L), 1e-6)
   expect_lt(.g(7L), 1e-6)
 })
+
+test_that(".admNLLBatch tiles covariates per CHUNK, not per batch", {
+  # The batch chunks at 30 configurations and builds pdf_mat with
+  # n_chunk * n_sim rows, but the covariate tiling was handed the batch total.
+  # .admCovCols refuses that mismatch rather than recycling covariates onto the
+  # wrong subjects, so the fit died -- and covMethod = "r" routes EVERY admc
+  # covariate fit here, needing 2*np_cov + 4*n_off points, so four reported
+  # parameters was enough to cross the boundary.
+  .mod <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.75
+          eta.cl ~ 0.09; add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * log(WT / 70) + eta.cl); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  E <- .cov_DOSE / 10 * exp(-0.1 * .cov_TIMES)
+  st0 <- list(s = list(E = E, V = diag((0.25 * E)^2), n = 300L,
+                       times = .cov_TIMES, ev = rxode2::et(amt = .cov_DOSE),
+                       cov_dist = list(WT = list(meanlog = log(72),
+                                                 sdlog = 0.28))))
+  ui  <- suppressMessages(rxode2::rxode2(.mod))
+  ov  <- admixr2:::.admOutputVar(ui)
+  ctl <- admControl(studies = st0, n_sim = 1000L, print = 0L,
+                    covMethod = "none")
+  pin <- admixr2:::.admDriverPinfo(ui, ctl)
+  u   <- admixr2:::.admDriverUnits(st0, ui, ov)
+  stu <- suppressMessages(
+    admixr2:::.admCheckCovariates(ui, pin, u$studies, ctl$grad))
+  rx  <- admixr2:::.admLoadModel(ui)
+  zl  <- admixr2:::.admMakeZ(1000L, pin, length(stu), "sobol")
+  pl  <- admixr2:::.admMakeParamsList(1000L, pin, length(stu))
+  p0  <- admixr2:::.admBuildOptVec(pin)$p0
+  # 32 crosses the 30-configuration chunk boundary; 30 is the control
+  for (n_c in c(30L, 32L)) {
+    pp <- lapply(seq_len(n_c), function(k) p0 + 1e-4 * k)
+    v  <- admixr2:::.admNLLBatch(pp, pin, stu, zl, rx, ov, pl, 1L)
+    expect_length(v, n_c)
+    expect_true(all(is.finite(v)), info = paste("n_c", n_c))
+  }
+})

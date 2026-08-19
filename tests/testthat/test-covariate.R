@@ -1464,3 +1464,20 @@ test_that("nodes and derivatives choose the Gaussian branch by the SAME test", {
          admixr2:::.admShiftNodes(D, W, om - h, 12L, z = z)$u) / (2 * h)
   expect_equal(an, fd, tolerance = 1e-6)
 })
+
+test_that("the identifiability warning canonicalises the user's shorthand", {
+  # It is the one entry point that reads the RAW study list -- every driver
+  # calls it before normalising -- so it is the one that meets `mean`/`sd`
+  # un-expanded. .admCovMeanOf has no `mean` branch, so the mean came back NA,
+  # between-study variation was invisible, and the warning fired on exactly the
+  # contrast that identifies the coefficient.
+  ui <- .cov_ui()                       # cl <- exp(tcl + tcov*WT + eta.cl)
+  pin <- .cov_pinfo()
+  diff_mu <- list(a = list(cov_dist = list(WT = list(mean = -0.4, sd = 0.6))),
+                  b = list(cov_dist = list(WT = list(mean =  0.4, sd = 0.6))))
+  same_mu <- list(a = list(cov_dist = list(WT = list(mean = 0, sd = 0.6))),
+                  b = list(cov_dist = list(WT = list(mean = 0, sd = 0.6))))
+  expect_silent(admixr2:::.admWarnCovIdentifiability(ui, pin, diff_mu))
+  expect_warning(admixr2:::.admWarnCovIdentifiability(ui, pin, same_mu),
+                 "not identifiable")
+})

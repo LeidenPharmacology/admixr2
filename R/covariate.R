@@ -2505,6 +2505,18 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 # A covariate on a parameter with NO random effect is not affected: there is no
 # omega for its variance to be absorbed into, so it is identified by shape.
 .admWarnCovIdentifiability <- function(.ui, pinfo, studies) {
+  # CANONICALISE FIRST. This is the one entry point that reads the RAW study
+  # list -- every driver calls it before normalising, deliberately -- so it is
+  # also the one that sees the user's shorthand un-expanded. `mean`/`sd` has no
+  # branch in .admCovMeanOf, which returned NULL and made the mean NA, so
+  # between-study variation was invisible and the "not identifiable" warning
+  # fired on exactly the contrast that identifies the coefficient.
+  studies <- lapply(studies, function(s) {
+    if (!is.null(s[["cov_dist"]]))
+      s[["cov_dist"]] <- tryCatch(.admCovDistCanon(s[["cov_dist"]]),
+                                  error = function(e) s[["cov_dist"]])
+    s
+  })
   # A study declares a covariate one of two ways: as the distribution it is
   # marginalised over (`cov_dist`), or as the value it is conditioned at
   # (`cov`). These are the same object at two resolutions -- a conditioned
