@@ -517,7 +517,8 @@
 # residual outside the conditionally-normal family, a singular weight, a failed
 # moment solve. The caller falls back to "r" and says so.
 .admSandwichCov <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
-                            H, md = NULL, keep = NULL, mom_fn = NULL) {
+                            H, md = NULL, keep = NULL, mom_fn = NULL,
+                            sensModel = NULL) {
   # H is checked FIRST, and here rather than being left to solve() inside .admSandwich,
   # whose tryCatch is there for a singular matrix and cannot tell that apart from
   # an H that was never supplied. A caller that forgot the argument then gets a
@@ -535,6 +536,19 @@
   # conditional law. Refuse rather than return a plausible wrong weight.
   if (any(vapply(studies, function(s) isTRUE(s$is_joint), logical(1))))
     return(NULL)
+  # Analytic first, finite differences as the fallback. .admMomentJac returns
+  # NULL rather than an approximation for any path it does not cover, so the
+  # switch is on availability, not on a tolerance.
+  #
+  # The two differ by ~7e-5 on an ODE model and NOT as a function of the FD step,
+  # so that gap is not truncation: the analytic route reads its predictions from
+  # the SENSITIVITY model and the FD route from the plain simulation model, and
+  # two separately compiled models take different adaptive steps. The sens model
+  # is the right one here -- covMethod = "r"'s Hessian is built from the
+  # analytic gradient, which reads the same model, so G and H stay consistent.
+  if (is.null(md) && is.null(mom_fn))
+    md <- tryCatch(.admMomentJac(p_hat, pinfo, studies, sensModel, rxMod,
+                                 out_var, grid, cores), error = function(e) NULL)
   md <- md %||% tryCatch(
     .admMomentDeriv(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
                     mom_fn = mom_fn),
@@ -598,4 +612,182 @@
       list(E = vp$mu_sigma, V = vp$V)
     })
   }
+}
+
+# -- Analytic moment Jacobian --------------------------------------------------
+
+# d(yt)/dPsi and d(Vt)/dPsi per study, analytically, from one sensitivity solve.
+#
+# G = d2F/(dPsi dt') is closed form in these two (see .admScoreCross), so this is
+# the only place a derivative is taken at all. Both moments are LINEAR in the raw
+# sensitivity column `graw = d(f)/dPsi`:
+#
+#   d(mu_struct)/dPsi = W' graw
+#   d(V_struct)/dPsi  = A + A',   A = cpc' diag(W) graw
+#
+# which means a parameter reached through SEVERAL paths -- a structural theta
+# that also moves the covariate shift nodes, an omega entry under absorption --
+# is handled by summing its columns before this is applied, exactly as
+# .adghGradNLL sums its `contrib()` calls. That linearity is why this does not
+# need to know which path a parameter took.
+#
+# The residual composition is then applied FORWARD, from the same
+# .admResidDeriv() partials the gradient chains BACKWARD:
+#
+#   dE      = dmu_df o dmu_s + dmu_dv0 o diag(dV_s) + dmu %*% dsig
+#   dV_ij   = ms_i ms_j dV_s_ij + (dms_i ms_j + ms_i dms_j) cov_f_ij   (i != j)
+#   dV_ii   = dv_dv0_i dV_s_ii + dv_df_i dmu_s_i + dvar_i . dsig
+#
+# Deriving this tail by hand is the seventh consumer of the residual row arrays,
+# and CLAUDE.md is explicit that the moment tail is where the misses happen --
+# so it is pinned against the finite-difference version (.admMomentDeriv) across
+# error models rather than trusted. FD stays as that oracle.
+#
+# Returns NULL, not an approximation, whenever a path is not covered: no sens
+# model, a joint unit, a degraded covariate shift, unpaired thetas without their
+# own columns, or an ar()/ordinal residual whose rmat carries an off-diagonal
+# this forward map does not model. The caller falls back to FD.
+.admMomentJac <- function(p_hat, pinfo, studies, sensModel, rxMod, out_var, grid,
+                          cores) {
+  if (is.null(sensModel)) return(NULL)
+  pars  <- tryCatch(.admUnpack(p_hat, pinfo), error = function(e) NULL)
+  if (is.null(pars) || !.admParsFinite(pars, pinfo)) return(NULL)
+  n_s   <- length(pinfo$struct_names)
+  n_e   <- length(pinfo$sigma_names)
+  n_eta <- pinfo$n_eta
+  L     <- pars$L
+  np    <- length(p_hat)
+  unpaired_k <- if (!is.null(pinfo$struct_has_eta))
+    which(!pinfo$struct_has_eta) else integer(0)
+
+  Eo <- Vo <- dEo <- dVo <- vector("list", length(studies))
+
+  for (si in seq_along(studies)) {
+    s <- studies[[si]]
+    if (isTRUE(s$is_joint)) return(NULL)
+    ov <- s$output %||% out_var
+    gS <- .adghGrid(pars, pinfo, grid, s)
+    if (isTRUE(gS$shift$degraded)) return(NULL)
+    s   <- .adghStudyCov(s, gS)
+    X   <- gS$X; W <- gS$W; ty <- gS$taylor
+    eta <- gS$eta; colnames(eta) <- pinfo$eta_col_names
+    .sh <- gS$shift
+
+    res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s,
+                            cores, pinfo$nDisplayProgress, pars$sigma_var,
+                            pinfo$sigdig)
+    if (is.null(res)) return(NULL)
+    if (length(unpaired_k) > 0L && is.null(res$dtheta_list)) return(NULL)
+    Jl <- res$dpred_list
+
+    sm    <- .adghStructMoments(res$cp_mat, W, ty)
+    mu    <- sm$mu; cpc <- sm$cpc; cov_f <- sm$V; var_f <- diag(cov_f)
+    m     <- length(mu)
+    arr   <- .admResidRows(pinfo, ov, pars$sigma_var, m)
+    pmres <- .admResidMoments(mu, var_f, arr, cov_f, s$times)
+    # ar()/ordinal put an off-diagonal residual term in rmat whose sigma and mu
+    # paths this forward map does not carry. .admAdfCondMom refuses those
+    # residuals anyway; refusing here too keeps the two boundaries identical.
+    if (!is.null(pmres$rmat) && any(pmres$rmat != 0, na.rm = TRUE)) return(NULL)
+    dres  <- .admResidDeriv(mu, var_f, arr, pinfo)
+
+    # structural moments from a raw sensitivity column
+    mom <- function(graw) {
+      dmu <- as.numeric(crossprod(W, graw))
+      A   <- crossprod(cpc, W * graw)
+      dVs <- A + t(A)
+      if (!is.null(ty)) {
+        dg <- crossprod(ty$Dw, graw)              # n_tay x m
+        for (j in seq_along(ty$var)) {
+          o <- tcrossprod(sm$dE[j, ], dg[j, ])
+          dVs <- dVs + ty$var[j] * (o + t(o))
+        }
+      }
+      list(dmu = dmu, dV = dVs)
+    }
+    # forward residual composition
+    ms  <- dres$ms
+    tailf <- function(dmu_s, dV_s, dsig = NULL) {
+      dms <- dres$dms_df * dmu_s
+      dE  <- dres$dmu_df * dmu_s + dres$dmu_dv0 * diag(dV_s)
+      dgd <- dres$dv_dv0 * diag(dV_s) + dres$dv_df * dmu_s
+      if (!is.null(dsig)) {
+        dms <- dms + as.numeric(dres$dms %*% dsig)
+        dE  <- dE  + as.numeric(dres$dmu %*% dsig)
+        dgd <- dgd + as.numeric(dres$dvar %*% dsig)
+      }
+      dV <- outer(ms, ms) * dV_s +
+            (outer(dms, ms) + outer(ms, dms)) * cov_f
+      diag(dV) <- dgd
+      list(dE = dE, dV = dV)
+    }
+
+    dEi <- matrix(0, m, np)
+    dVi <- rep(list(matrix(0, m, m)), np)
+    zero <- matrix(0, nrow(res$cp_mat), m)
+
+    # --- structural thetas: every path that reaches f, summed --------------
+    for (k in seq_len(n_s)) {
+      graw <- zero
+      if (is.null(pinfo$struct_has_eta) || pinfo$struct_has_eta[k]) {
+        ei <- which(pinfo$struct_eta_idx == k)[1L]
+        if (!is.na(ei)) graw <- graw + Jl[[ei]]
+      } else {
+        Dt <- res$dtheta_list[[pinfo$struct_names[k]]]
+        if (is.null(Dt)) return(NULL)
+        graw <- graw + Dt
+      }
+      nmk <- pinfo$struct_names[k]
+      if (isTRUE(.sh$multi)) {
+        kk <- match(nmk, .sh$th_names)
+        if (!is.na(kk)) {
+          b <- .admShiftBase(Jl, .sh$eta_idx, .sh$du[, , kk, drop = FALSE])
+          if (!is.null(b)) graw <- graw + b
+        }
+      } else if (isTRUE(.sh$absorb)) {
+        if (nmk %in% colnames(.sh$dmu)) {
+          dLt <- .admCholDiff(.sh$Lt, .sh$dP[[nmk]])
+          b   <- .admAbsorbBase(Jl, X, dLt, .sh$dmu[, nmk])
+          if (!is.null(b)) graw <- graw + b
+        }
+      } else if (!is.null(.sh) && !is.null(.sh$du_dtheta) &&
+                 nmk %in% colnames(.sh$du_dtheta)) {
+        dk <- .sh$du_dtheta[, nmk]
+        if (!all(dk == 0)) graw <- graw + Jl[[.sh$eta_idx]] * dk
+      }
+      mm <- mom(graw); tf <- tailf(mm$dmu, mm$dV)
+      dEi[, k] <- tf$dE; dVi[[k]] <- tf$dV
+    }
+
+    # --- sigma: no path through f, only the residual composition -----------
+    for (k in seq_len(n_e)) {
+      ds <- numeric(n_e); ds[k] <- 1
+      tf <- tailf(numeric(m), matrix(0, m, m), ds)
+      dEi[, n_s + k] <- tf$dE; dVi[[n_s + k]] <- tf$dV
+    }
+
+    # --- omega Cholesky ----------------------------------------------------
+    if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
+      i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
+      base <- if (isTRUE(.sh$multi)) {
+        aa <- match(i, .sh$eta_idx)
+        if (i == j && !is.na(aa))
+          .admShiftBase(Jl, .sh$eta_idx, .sh$du[, , .sh$n_th + aa, drop = FALSE])
+        else Jl[[i]] * X[, j]
+      } else if (isTRUE(.sh$absorb)) {
+        Eij <- matrix(0, n_eta, n_eta); Eij[i, j] <- 1
+        .admAbsorbBase(Jl, X, .admCholDiff(.sh$Lt, Eij %*% t(L) + L %*% t(Eij)),
+                       numeric(n_eta))
+      } else Jl[[i]] * X[, j]
+      if (is.null(base)) return(NULL)
+      mm  <- mom(base); tf <- tailf(mm$dmu, mm$dV)
+      sc  <- if (pinfo$chol_diag[rr]) L[i, i] / 2 else 1
+      pos <- n_s + n_e + rr
+      dEi[, pos] <- tf$dE * sc; dVi[[pos]] <- tf$dV * sc
+    }
+
+    Eo[[si]] <- pmres$mu; Vo[[si]] <- pmres$V
+    dEo[[si]] <- dEi;     dVo[[si]] <- dVi
+  }
+  list(E = Eo, V = Vo, dE = dEo, dV = dVo)
 }

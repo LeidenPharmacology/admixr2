@@ -1881,7 +1881,8 @@ nmObjGetControl.admc <- function(x, ...) {
       grid <- .admSandwichGrid(pinfo)
       if (is.null(grid)) stop("no random effects: no ensemble to weight against")
       .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
-                      H = H, keep = match(nms_cov, names(p_hat)))
+                      H = H, keep = match(nms_cov, names(p_hat)),
+                      sensModel = sensModel)
     }, error = function(e) NULL)
     ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
     if (ok) {

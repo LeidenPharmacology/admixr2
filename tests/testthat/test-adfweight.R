@@ -89,14 +89,24 @@ test_that("the information equality holds: J(working weight) == 2H", {
     s1  <- u2$studies[[1L]]
     f   <- function(q) admixr2:::.adghNLL(q, pin, u2$studies, rx, ov, g, 1L)
     H   <- numDeriv::hessian(f, p)
-    md  <- admixr2:::.admMomentDeriv(p, pin, u2$studies, rx, ov, g, 1L)
     p2  <- admixr2:::.admAdfParts(pars, pin, s1, rx, ov, g, 1L)
-    G   <- admixr2:::.admScoreCross(md$E[[1L]], md$V[[1L]], md$dE[[1L]],
-                                    md$dV[[1L]], s1, N)
     W   <- admixr2:::.admWorkingWeight(p2$V, N, s1$method)
-    J   <- G %*% W %*% t(G)
-    ev  <- sort(Re(eigen(solve(2 * H) %*% J)$values))
-    expect_equal(ev, rep(1, length(ev)), tolerance = 1e-4, info = meth)
+    # BOTH routes to the moment Jacobian must satisfy it -- the identity is what
+    # says the analytic one describes the same objective the FD one does.
+    sens <- admixr2:::.admLoadSensModel(ui)
+    mds <- list(
+      fd       = admixr2:::.admMomentDeriv(p, pin, u2$studies, rx, ov, g, 1L),
+      analytic = admixr2:::.admMomentJac(p, pin, u2$studies, sens, rx, ov, g, 1L))
+    for (route in names(mds)) {
+      md <- mds[[route]]
+      expect_false(is.null(md), info = paste(meth, route))
+      G  <- admixr2:::.admScoreCross(md$E[[1L]], md$V[[1L]], md$dE[[1L]],
+                                     md$dV[[1L]], s1, N)
+      J  <- G %*% W %*% t(G)
+      ev <- sort(Re(eigen(solve(2 * H) %*% J)$values))
+      expect_equal(ev, rep(1, length(ev)), tolerance = 1e-4,
+                   info = paste(meth, route))
+    }
   }
 })
 
@@ -240,4 +250,123 @@ test_that("the weight's own S is the V_pred the objective scores against", {
     expect_equal(N * W[seq_len(m), seq_len(m)], pt$V, tolerance = 1e-10,
                  ignore_attr = TRUE, info = nm)
   }
+})
+
+test_that("the analytic moment Jacobian matches the finite-difference oracle", {
+  # G = d2F/(dPsi dt') is closed form in (dE/dPsi, dV/dPsi), so these two are the
+  # only derivatives the sandwich takes. .admMomentJac forms them from one
+  # sensitivity solve; .admMomentDeriv central-differences the moments and is
+  # kept as the oracle precisely because the forward residual composition is a
+  # seventh consumer of the residual row arrays -- the place CLAUDE.md says the
+  # misses happen.
+  #
+  # linCmt() throughout on purpose: an ODE model puts the two routes on
+  # SEPARATELY COMPILED models (sensitivity vs plain simulation), which take
+  # different adaptive steps and disagree by ~7e-5 no matter the FD step. That
+  # is a model-consistency difference, not a derivative error, and it would make
+  # this test measure the solver instead of the algebra.
+  skip_if_not_installed("rxode2")
+  TT <- c(2, 5, 9, 14); DOSE <- 100; NQ <- 9L; N <- 100L
+  mods <- list(
+    add     = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.5 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ add(e) }) },
+    prop    = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.15 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ prop(e) }) },
+    lnorm   = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.15 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ lnorm(e) }) },
+    addprop = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                 a <- 0.2; b <- 0.1 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ add(a) + prop(b) }) },
+    eta2    = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                 eta.v ~ 0.04; e <- 0.15 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v); cp <- linCmt()
+              cp ~ prop(e) }) })
+  E0 <- DOSE / 10 * exp(-0.1 * TT); Vv <- diag((0.25 * E0)^2)
+  for (nm in names(mods)) {
+    ui   <- suppressMessages(rxode2::rxode2(mods[[nm]]))
+    ov   <- admixr2:::.admOutputVar(ui)
+    sens <- admixr2:::.admLoadSensModel(ui); rx <- admixr2:::.admLoadModel(ui)
+    for (meth in c("cov", "var")) {
+      st <- list(
+        s1 = list(E = E0, V = if (meth == "cov") Vv else diag(Vv), n = N,
+                  times = TT, ev = rxode2::et(amt = DOSE)),
+        s2 = list(E = 1.1 * E0, V = if (meth == "cov") 1.2 * Vv else diag(1.2 * Vv),
+                  n = 60L, times = TT, ev = rxode2::et(amt = DOSE)))
+      ctl <- adghControl(studies = st, grad = "none", n_nodes = NQ, print = 0L,
+                         covMethod = "none")
+      pin <- admixr2:::.admDriverPinfo(ui, ctl)
+      u   <- admixr2:::.admDriverUnits(st, ui, ov)
+      g   <- admixr2:::.adghNodeGrid(NQ, pin$n_eta)
+      p   <- admixr2:::.admBuildOptVec(pin)$p0 + 0.05      # off the initial point
+      fd  <- admixr2:::.admMomentDeriv(p, pin, u$studies, rx, ov, g, 1L)
+      an  <- admixr2:::.admMomentJac(p, pin, u$studies, sens, rx, ov, g, 1L)
+      expect_false(is.null(an), info = paste(nm, meth))
+      for (i in seq_along(fd$dE)) {
+        expect_equal(an$dE[[i]], fd$dE[[i]], tolerance = 1e-6,
+                     info = paste(nm, meth, "dE", i))
+        for (k in seq_along(fd$dV[[i]]))
+          expect_equal(an$dV[[i]][[k]], fd$dV[[i]][[k]], tolerance = 1e-6,
+                       info = paste(nm, meth, "dV", i, k))
+      }
+    }
+  }
+})
+
+test_that("the analytic Jacobian covers the covariate paths", {
+  # The quadrature and Taylor covariate grids change the node set the moments are
+  # taken over, and a structural theta then reaches f through the shift nodes as
+  # well as its own sensitivity column. Both moments are LINEAR in the raw
+  # sensitivity column, which is why summing the columns before applying the
+  # chain is sufficient -- and this is the test that says so.
+  skip_if_not_installed("rxode2")
+  TT <- c(2, 5, 9, 14); DOSE <- 100; NQ <- 7L; N <- 200L
+  fn <- function() { ini({ tcl <- log(1); tv <- log(10); tcov <- 0.4
+                           eta.cl ~ 0.09; add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * WT + eta.cl); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) }) }
+  ui   <- suppressMessages(rxode2::rxode2(fn))
+  ov   <- admixr2:::.admOutputVar(ui)
+  sens <- admixr2:::.admLoadSensModel(ui); rx <- admixr2:::.admLoadModel(ui)
+  E0 <- DOSE / 10 * exp(-0.1 * TT)
+  st <- list(s1 = list(E = E0, V = diag((0.25 * E0)^2), n = N, times = TT,
+                       ev = rxode2::et(amt = DOSE), cov = list(WT = 0),
+                       cov_dist = list(WT = list(mu = 0, sd = 0.3))))
+  for (ci in c("quadrature", "taylor")) {
+    ctl <- adghControl(studies = st, grad = "none", n_nodes = NQ, print = 0L,
+                       covMethod = "none", cov_integration = ci)
+    pin <- admixr2:::.admDriverPinfo(ui, ctl)
+    u   <- admixr2:::.admDriverUnits(st, ui, ov)
+    u$studies <- admixr2:::.admCheckCovariates(ui, pin, u$studies)
+    g   <- admixr2:::.adghNodeGrid(NQ, pin$n_eta)
+    p   <- admixr2:::.admBuildOptVec(pin)$p0 + 0.03
+    fd  <- admixr2:::.admMomentDeriv(p, pin, u$studies, rx, ov, g, 1L)
+    an  <- admixr2:::.admMomentJac(p, pin, u$studies, sens, rx, ov, g, 1L)
+    expect_false(is.null(an), info = ci)
+    expect_equal(an$dE[[1L]], fd$dE[[1L]], tolerance = 1e-6, info = ci)
+    for (k in seq_along(fd$dV[[1L]]))
+      expect_equal(an$dV[[1L]][[k]], fd$dV[[1L]][[k]], tolerance = 1e-6,
+                   info = paste(ci, k))
+  }
+})
+
+test_that(".admMomentJac refuses rather than approximates what it cannot reach", {
+  skip_if_not_installed("rxode2")
+  TT <- c(2, 5, 9); DOSE <- 100
+  fn <- function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.5 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ add(e) }) }
+  ui  <- suppressMessages(rxode2::rxode2(fn)); ov <- admixr2:::.admOutputVar(ui)
+  rx  <- admixr2:::.admLoadModel(ui)
+  E0  <- DOSE / 10 * exp(-0.1 * TT)
+  st  <- list(s1 = list(E = E0, V = diag((0.25 * E0)^2), n = 100L, times = TT,
+                        ev = rxode2::et(amt = DOSE)))
+  ctl <- adghControl(studies = st, grad = "none", n_nodes = 7L, print = 0L,
+                     covMethod = "none")
+  pin <- admixr2:::.admDriverPinfo(ui, ctl)
+  u   <- admixr2:::.admDriverUnits(st, ui, ov)
+  g   <- admixr2:::.adghNodeGrid(7L, pin$n_eta)
+  p   <- admixr2:::.admBuildOptVec(pin)$p0
+  # no sensitivity model -> no analytic route, and it must say so rather than
+  # silently reaching for the plain model's predictions
+  expect_null(admixr2:::.admMomentJac(p, pin, u$studies, NULL, rx, ov, g, 1L))
 })
