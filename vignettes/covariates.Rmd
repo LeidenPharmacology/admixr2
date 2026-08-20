@@ -258,20 +258,79 @@ p_near  <- marg_mean(published$moderate$CL, published$moderate$V, NA,
 p_truth <- marg_mean(CL70, V70, BCRCL, OM_CL)
 ```
 
-```{r payoff, fig.height = 3.8}
-pp <- rbind(
-  data.frame(t = TIMES, cp = p_adm,  err = 100*(p_adm/p_truth - 1),
-             what = "meta-analysis"),
-  data.frame(t = TIMES, cp = p_near, err = 100*(p_near/p_truth - 1),
-             what = "nearest published model"))
-ggplot(pp, aes(t, err, colour = what)) +
-  geom_hline(yintercept = 0, linewidth = .8, colour = "grey35") +
-  geom_line(linewidth = 1) + geom_point(size = 2.2) +
-  scale_y_continuous(breaks = seq(-35, 5, 5)) +
-  labs(x = "time (h)", y = "% error against the truth", colour = NULL,
-       subtitle = "severe renal impairment, median CRCL 21 mL/min") +
-  theme_bw() + theme(legend.position = "bottom")
+Predicting the *mean* is only half of it. Simulate a severe cohort under each
+model and compare the whole distribution — median and 90% interval — against
+what those patients would really do. The truth is repeated in grey behind every
+panel.
+
+```{r vpc, fig.height = 5.0}
+set.seed(7)
+n_pt <- 800L
+Zs   <- matrix(stats::rnorm(2 * n_pt), n_pt, 2) %*% chol(R)
+WTs  <- stats::qlnorm(stats::pnorm(Zs[, 1]), log(72), .198)
+CRs  <- stats::qlnorm(stats::pnorm(Zs[, 2]), log(21), .217)
+tt   <- seq(0.25, 24, length.out = 40)
+
+band <- function(cl_ref, v_ref, bcrcl, om, label) {
+  cl <- cl_ref * (WTs/70)^0.75 *
+        (if (is.na(bcrcl)) 1 else (CRs/90)^bcrcl) *
+        exp(stats::rnorm(n_pt, 0, sqrt(om)))
+  v  <- v_ref * (WTs/70)
+  M  <- vapply(tt, function(t) DOSE / v * exp(-cl / v * t), numeric(n_pt))
+  q  <- apply(M, 2L, stats::quantile, c(.05, .5, .95))
+  data.frame(t = tt, lo = q[1, ], med = q[2, ], hi = q[3, ], model = label)
+}
+lv  <- c("truth", "normal-trial model", "mild-trial model",
+         "moderate-trial model", "meta-analysis (admixr2)")
+sims <- rbind(
+  band(CL70, V70, BCRCL, OM_CL, lv[1]),
+  band(published$normal$CL,   published$normal$V,   NA, published$normal$OM,   lv[2]),
+  band(published$mild$CL,     published$mild$V,     NA, published$mild$OM,     lv[3]),
+  band(published$moderate$CL, published$moderate$V, NA, published$moderate$OM, lv[4]),
+  band(exp(e[["tcl"]]), exp(e[["tv"]]), e[["bcrcl"]],
+       as.numeric(fit$omega[1L, 1L]), lv[5]))
+sims$model <- factor(sims$model, levels = lv)
+tru <- subset(sims, model == lv[1], select = -model)   # drawn in every panel
+
+ggplot(sims, aes(t)) +
+  geom_ribbon(data = tru, aes(ymin = lo, ymax = hi), fill = "grey60",
+              alpha = .45) +
+  geom_line(data = tru, aes(y = med), colour = "grey25", linewidth = .7) +
+  geom_ribbon(aes(ymin = lo, ymax = hi, fill = model), alpha = .40) +
+  geom_line(aes(y = med, colour = model), linewidth = .9) +
+  facet_wrap(~model, nrow = 2) +
+  guides(fill = "none", colour = "none") +
+  labs(x = "time (h)", y = "concentration (mg/L)",
+       subtitle = paste("800 simulated severe-impairment patients per model;",
+                        "grey = the truth")) +
+  theme_bw()
 ```
+
+Each trial model reproduces the population it was fitted in, not this one, and
+the miss is ordered by how far that population sits from severe. At 24 h,
+against the truth:
+
+```{r vpcerr}
+at24 <- function(m) {
+  d <- sims[sims$model == m, ]; i <- which.min(abs(d$t - 24))
+  c(med = d$med[i], width = d$hi[i] - d$lo[i])
+}
+tr <- at24(lv[1])
+knitr::kable(data.frame(
+  model      = lv[-1],
+  median_err = vapply(lv[-1], function(m) 100*(at24(m)[["med"]]/tr[["med"]]-1), 0),
+  width_err  = vapply(lv[-1], function(m)
+                      100*(at24(m)[["width"]]/tr[["width"]]-1), 0)),
+  digits = 1, row.names = FALSE,
+  caption = "% error in the median and in the 90% interval width, at 24 h.")
+```
+
+They miss on **spread** as much as on level. A model with no renal term applied
+to this cohort has only weight and `omega` to generate between-patient
+variability, and the `omega` it carries was fitted where creatinine clearance
+hardly varied — so it cannot reproduce a population whose clearance varies a
+great deal. Only the meta-analysis, which knows what renal function does, lands
+on the grey.
 
 ```{r payofftab}
 knitr::kable(data.frame(
