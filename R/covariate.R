@@ -307,10 +307,37 @@
       # disqualification. It used to stop() unconditionally, which made a
       # discrete covariate the one property that could not be auto-detected
       # around.
-      else if (length(.used) && any(.disc)) .why <- paste0(
-        "covariate(s) ", paste(sQuote(.used[.disc]), collapse = ", "),
-        " are discrete and reach the shifted argument, which makes it a ",
-        "multi-modal mixture that Gauss-Hermite nodes cannot resolve")
+      # A DISCRETE covariate reaching the shifted argument is no longer a
+      # disqualification, it is a STRATIFICATION instruction: .admCovGrid
+      # enumerates its levels exactly, so conditioning on them leaves each cell
+      # with only the continuous covariates varying -- the mild sub-mixture the
+      # quadrature resolves well -- and the cells recombine with their own
+      # probabilities. See .admShiftNodesStrat(). What that buys is keeping the
+      # CONTINUOUS covariates off the product grid, which is where the n_cov^p
+      # cost lives; the discrete ones cost K cells either way.
+      #
+      # It is still refused where the cells cannot be formed: a JOINT sampler
+      # mixes the uniforms before mapping them to levels, so a grid row's
+      # discrete value is not a cell label and the weights are not the level
+      # probabilities (measured: a 0.55/0.45 covariate came off the grid at
+      # 0.477, and the error does not shrink with cov_nodes).
+      else if (length(.used) && any(.disc) && is.function(cd[["joint"]]))
+        .why <- paste0(
+          "covariate(s) ", paste(sQuote(.used[.disc]), collapse = ", "),
+          " are discrete, reach the shifted argument, and are drawn through a ",
+          "JOINT sampler, so the grid carries no exact level cells to ",
+          "condition on")
+      # ALL discrete: the shift buys nothing. Its saving is eliminating the
+      # CONTINUOUS covariate dimension; the discrete levels cost K cells on
+      # either route, and n_u is inflated above n_nodes to resolve the widened
+      # u, so the stratified shift comes out with MORE rows than the product
+      # grid (measured 26 vs 18 for one binary covariate, 48 vs 36 for a
+      # four-level one) -- and as an approximation where the grid enumerates
+      # exactly. With a continuous covariate alongside it is the other way
+      # round by a mile: 28 vs 162.
+      else if (length(.used) && all(.disc)) .why <- paste0(
+        "every covariate reaching the shifted argument is discrete, and the ",
+        "product grid enumerates those exactly at no greater cost")
       else if (is.null(.ar)) .why <- "a covariate has no finite mean to shift against"
       # The grid and Delta cost no solve and are needed by the off-diagonal
       # test below as well as by the sizing further down, so build them once.
@@ -388,6 +415,9 @@
                   .nn0 * sqrt((.vD0 + .om0^2) / .om0^2)))))
         studies[[nm]]$.adm_cov_shift <- list(
           spec = .sp, aref = .ar, cov_names = .cn, cond = .cond,
+          # which grid rows share a discrete cell; NULL when none is discrete,
+          # and then every node path below is exactly what it was
+          strata = .admShiftStrata(cd, .g$X),
           eta_idx = match(.sp$eta, pinfo$eta_col_names),
           m = length(.sp$eta), X = .g$X, W = .g$W, z = .g$z, n_u = .nu,
           # Fixed at admission for the same reason n_u is: a path that could
@@ -3012,4 +3042,67 @@ print.covDist <- function(x, ...) {
   if (!is.na(cert)) return(isTRUE(cert))
   # Delta unavailable: the margin is all there is to go on.
   !is.null(spec[["mu"]]) && !is.null(spec[["sd"]])
+}
+
+# -- Discrete covariates on the shift path -------------------------------------
+#
+# A discrete covariate reaching the shifted argument used to disqualify the
+# shift outright, on the grounds that u = Delta(a) + eta becomes a multi-modal
+# mixture that Gauss-Hermite nodes cannot resolve. The diagnosis is right and
+# the remedy was too broad: it dropped the WHOLE study onto the product grid,
+# including any continuous covariates riding along, which then cost n_cov^p
+# again -- the very thing the shift exists to avoid.
+#
+# .admShiftNodes places nodes by inverting the mixture CDF at Gauss-Hermite
+# probability points but KEEPS the Gaussian weights, so it is exact for a normal
+# target and degrades as the target departs -- 8.5e-04 at sd(Delta)/omega = 4,
+# 8.8e-02 at 16. A well-separated two-component mixture is the worst case.
+#
+# Stratifying fixes it at the source. Condition on the discrete levels, which
+# .admCovGrid already enumerates EXACTLY with their true probabilities: within a
+# stratum only the continuous covariates vary, so the sub-mixture is the mild
+# one the quadrature handles well, and the strata recombine with weights pi_l.
+# Cost is K * n_u nodes -- linear in the number of discrete CELLS and still
+# constant in the number of continuous covariates.
+#
+# Which grid rows share a discrete cell. NULL when no covariate is discrete, so
+# the caller keeps the single-mixture path unchanged.
+.admShiftStrata <- function(cov_dist, X) {
+  cd  <- .admCovDistCanon(cov_dist)
+  nms <- .admCovSpecNames(cd)
+  dsc <- nms[vapply(nms, function(n) !is.null(cd[[n]][["values"]]), logical(1))]
+  dsc <- intersect(dsc, colnames(X))
+  if (!length(dsc)) return(NULL)
+  key <- do.call(paste, c(lapply(dsc, function(n) X[, n]), sep = "\r"))
+  match(key, unique(key))
+}
+
+# The mixture inversion, run PER discrete cell and recombined.
+#
+# Each cell is its own quadrature problem with its own n_u nodes; the weights
+# carry pi_l so the whole set still integrates to one. Derivatives come back
+# stratum by stratum and stack the same way -- d(u)/d(psi) is local to the cell
+# a node came from, because the cell's own sub-mixture is what produced it.
+.admShiftNodesStrat <- function(D, W, om, n_u, strata, dirs = NULL) {
+  if (is.null(strata)) return(.admShiftNodesMultiD(D, W, om, n_u, dirs))
+  D  <- as.matrix(D)
+  ids <- unique(strata)
+  us <- ws <- vector("list", length(ids)); ds <- vector("list", length(ids))
+  for (i in seq_along(ids)) {
+    r  <- which(strata == ids[i])
+    pi <- sum(W[r])
+    if (!is.finite(pi) || pi <= 0) next
+    dl <- if (is.null(dirs)) NULL else lapply(dirs, function(d) list(
+      dD = as.matrix(d$dD)[r, , drop = FALSE], dom = d$dom))
+    un <- .admShiftNodesMultiD(D[r, , drop = FALSE], W[r] / pi, om, n_u, dl)
+    if (is.null(un)) return(NULL)
+    us[[i]] <- un$u; ws[[i]] <- un$w * pi; ds[[i]] <- un$du
+  }
+  keep <- !vapply(us, is.null, logical(1))
+  if (!any(keep)) return(NULL)
+  us <- us[keep]; ws <- ws[keep]; ds <- ds[keep]
+  du <- if (is.null(dirs) || any(vapply(ds, is.null, logical(1)))) NULL else
+    .admBindDu(ds)
+  w  <- unlist(ws)
+  list(u = do.call(rbind, us), w = w / sum(w), du = du)
 }

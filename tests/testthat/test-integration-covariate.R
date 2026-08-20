@@ -1483,3 +1483,101 @@ test_that("the ridge is flat only for a GAUSSIAN covariate, and only then warned
                   list(A = list(meanlog = ml, sdlog = sl))))
     expect_silent(admixr2:::.admWarnCovIdentifiability(ui, pin, one(cd)))
 })
+
+test_that("a discrete covariate STRATIFIES the shift instead of disqualifying it", {
+  # .admShiftNodes places nodes by inverting the mixture CDF at Gauss-Hermite
+  # probability points but KEEPS the Gaussian weights, so a well-separated
+  # mixture -- which is what a discrete covariate makes -- is what it resolves
+  # worst (8.8e-02 at sd(Delta)/omega = 16). That is why a discrete covariate
+  # reaching the shifted argument used to disqualify the shift outright.
+  #
+  # Conditioning on the levels, which .admCovGrid enumerates EXACTLY, leaves
+  # each cell with only the continuous covariates varying. The saving is
+  # eliminating the CONTINUOUS dimension, so the shift is taken only when there
+  # is one: all-discrete goes to the grid, which enumerates exactly and is no
+  # more expensive.
+  skip_if_not_installed("rxode2")
+  TT <- c(1, 3, 6, 10, 16); DD <- 100
+  .m1 <- function() {              # discrete only
+    ini({ tcl <- log(1); tv <- log(10); tcov <- 0.6; eta.cl ~ 0.09
+          add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * A + eta.cl); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  .m2 <- function() {              # discrete AND continuous
+    ini({ tcl <- log(1); tv <- log(10); tcov <- 0.6; tb <- 0.3
+          eta.cl ~ 0.09; add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * A + tb * B + eta.cl); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  build <- function(fn, cd, ci) {
+    ui  <- suppressMessages(rxode2::rxode2(fn))
+    pin <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+    pin$nDisplayProgress <- .Machine$integer.max
+    pin$cov_integration <- ci; pin$cov_nodes <- 9L; pin$n_nodes <- 9L
+    E0 <- DD / 10 * exp(-0.1 * TT); Vd <- 0.25 * E0
+    Vv <- outer(Vd, Vd) * (0.4^abs(outer(seq_along(TT), seq_along(TT), "-")))
+    s  <- list(E = E0, V = Vv, n = 400L, times = TT,
+               ev = rxode2::et(amt = DD), cov = list(A = 0.5, B = 0),
+               cov_dist = cd)
+    st <- admixr2:::.admFlattenStudies(
+            list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
+    st <- admixr2:::.admBuildEvFull(st)
+    st <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, st))
+    list(ui = ui, pin = pin, st = st,
+         ov = admixr2:::.admOutputVar(ui), rx = admixr2:::.admLoadModel(ui),
+         g = admixr2:::.adghNodeGrid(9L, pin$n_eta),
+         pars = admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin))
+  }
+  bin <- list(A = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  mix <- c(bin, list(B = list(mu = 0, sd = 0.4)))
+
+  # all covariates reaching Delta are discrete -> the grid, which is exact
+  d1 <- build(.m1, bin, "auto")
+  expect_identical(d1$st[[1L]]$.adm_cov_path, "rows")
+  expect_match(d1$st[[1L]]$.adm_cov_shift_why, "discrete")
+
+  # one of them is continuous -> stratified shift, and it must AGREE with the
+  # grid while using far fewer rows
+  a2 <- build(.m2, mix, "auto"); q2 <- build(.m2, mix, "quadrature")
+  expect_identical(a2$st[[1L]]$.adm_cov_path, "shift")
+  expect_false(is.null(a2$st[[1L]]$.adm_cov_shift$strata))
+  ma <- admixr2:::.adghMoments(a2$pars, a2$pin, a2$st[[1L]], a2$rx, a2$ov, a2$g, 1L)
+  mq <- admixr2:::.adghMoments(q2$pars, q2$pin, q2$st[[1L]], q2$rx, q2$ov, q2$g, 1L)
+  expect_equal(as.numeric(ma$E), as.numeric(mq$E), tolerance = 1e-6)
+  expect_equal(ma$V, mq$V, tolerance = 1e-5)
+  ra <- nrow(admixr2:::.adghGrid(a2$pars, a2$pin, a2$g, a2$st[[1L]])$eta)
+  rq <- nrow(admixr2:::.adghGrid(q2$pars, q2$pin, q2$g, q2$st[[1L]])$eta)
+  expect_lt(ra, rq / 3)
+
+  # and its gradient is analytic: the stratified node set takes its derivatives
+  # from the SAME construction, never from .admShiftDu, which answers for a
+  # single mixture
+  sens <- admixr2:::.admLoadSensModel(a2$ui)
+  p0 <- admixr2:::.admBuildOptVec(a2$pin)$p0
+  p  <- p0 + rep_len(c(0.06, -0.04, 0.08, 0.05, 0.03), length(p0))
+  f  <- function(q) admixr2:::.adghNLL(q, a2$pin, a2$st, a2$rx, a2$ov, a2$g, 1L)
+  an <- admixr2:::.adghGrad(p, a2$pin, a2$st, sens, a2$rx, a2$ov, a2$g, 1L)
+  for (k in seq_along(p)) {
+    h  <- max(abs(p[k]), 0.1) * 1e-5
+    fd <- (f(replace(p, k, p[k] + h)) - f(replace(p, k, p[k] - h))) / (2 * h)
+    expect_equal(unname(an[k]), fd, tolerance = 1e-5, info = names(p)[k])
+  }
+})
+
+test_that(".admShiftStrata groups rows by discrete CELL, and is NULL without one", {
+  X <- cbind(A = c(0, 0, 1, 1, 0, 1), B = c(-1, 0, -1, 0, 1, 1))
+  cd <- list(A = list(values = c(0, 1), probs = c(0.5, 0.5)),
+             B = list(mu = 0, sd = 1))
+  st <- admixr2:::.admShiftStrata(cd, X)
+  expect_equal(st, c(1L, 1L, 2L, 2L, 1L, 2L))
+  # continuous only -> no strata, and every node path stays what it was
+  expect_null(admixr2:::.admShiftStrata(list(B = list(mu = 0, sd = 1)),
+                                        X[, "B", drop = FALSE]))
+  # the weights a stratified set carries must still integrate to one
+  D <- matrix(c(0, 0, 1, 1, 0, 1), ncol = 1L)
+  W <- rep(1 / 6, 6L)
+  un <- admixr2:::.admShiftNodesStrat(D, W, 0.3, 7L, st)
+  expect_equal(sum(un$w), 1, tolerance = 1e-12)
+  expect_equal(nrow(un$u), 14L)          # two cells x 7 nodes
+})

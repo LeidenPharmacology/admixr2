@@ -168,7 +168,8 @@
                      dom = numeric(m_s))),
             lapply(.om_d, function(d) list(dD = d$dDw, dom = numeric(m_s))))
           if (any(vapply(dirs, is.null, logical(1)))) dirs <- NULL
-          unc <- .admShiftNodesMultiD(Dw, sh$W, rep(1, m_s), n_u, dirs)
+          unc <- .admShiftNodesStrat(Dw, sh$W, rep(1, m_s), n_u, sh$strata,
+                                     dirs)
           if (!is.null(unc)) {
             g1c  <- .adghNodes1(nn0)
             lstc <- c(list(seq_len(nrow(unc$u))),
@@ -249,9 +250,25 @@
             list(dD = matrix(0, nrow(D), ncol(D)), dom = e)
           }))
         if (any(vapply(.dirs, is.null, logical(1)))) .dirs <- NULL
-        un <- .admShiftNodesMultiD(D, sh$W, om, n_u, .dirs)
+        un <- .admShiftNodesStrat(D, sh$W, om, n_u, sh$strata, .dirs)
         if (!is.null(un) && !is.null(.dirs))
           .mdu <- list(n_th = length(.st0), th_names = names(.st0))
+      } else if (!is.null(sh$strata)) {
+        # A DISCRETE covariate: condition on its exactly-enumerated levels, so
+        # each cell is the mild sub-mixture the quadrature resolves well. The
+        # derivatives come from the SAME construction -- .admShiftDu answers for
+        # a single mixture and would disagree with a stratified node set, which
+        # is the objective-and-gradient split this file exists to avoid.
+        .st1 <- .admShiftStruct(pinfo, pars$struct)
+        .dD1 <- .admShiftDDelta(sh$spec, .st1, sh$X, sh$aref)
+        .d1  <- c(lapply(names(.st1), function(k)
+                    if (is.null(.dD1[[k]])) NULL else
+                      list(dD = as.matrix(.dD1[[k]]), dom = 0)),
+                  list(list(dD = matrix(0, nrow(D), 1L), dom = 1)))
+        if (any(vapply(.d1, is.null, logical(1)))) .d1 <- NULL
+        un <- .admShiftNodesStrat(D, sh$W, om, n_u, sh$strata, .d1)
+        if (!is.null(un) && !is.null(.d1) && !is.null(un$du))
+          .mdu <- list(n_th = length(.st1), th_names = names(.st1))
       } else {
         un0 <- .admShiftNodes(D[, 1L], sh$W, om[1L], n_u, z = sh$z)
         un  <- if (is.null(un0)) NULL else
@@ -287,7 +304,12 @@
       for (kk in seq_along(other))
         Xz[, other[kk]] <- g1$x[ix[, kk + 1L]]
       shinfo <- NULL
-      if (ncol(D) > 1L && (is.null(.mdu) || is.null(un$du))) {
+      # A STRATIFIED node set joins the vector shift in needing its derivatives
+      # from the same construction: .admShiftDu below answers for a SINGLE
+      # mixture, so letting the m == 1 case fall through to it would pair
+      # stratified nodes with unstratified derivatives.
+      if ((ncol(D) > 1L || !is.null(sh$strata)) &&
+          (is.null(.mdu) || is.null(un$du))) {
         # The node derivatives could not be built. Say so, rather than return a
         # grid with no `shift`: the gradient would then simply omit this study's
         # shift chain -- finite, plausible and a direction the objective does

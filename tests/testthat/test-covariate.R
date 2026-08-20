@@ -1317,13 +1317,17 @@ test_that("lognormal and correlated covariates reach the Gaussian branch", {
   expect_gt(ar(matrix(0.8 * g$X[, "WT"], ncol = 1), g$W, g$z), 1e-3)
 })
 
-test_that("a discrete covariate makes `auto` fall back, not fail", {
+test_that("a discrete covariate beside a continuous one STRATIFIES the shift", {
   skip_if_not_installed("rxode2")   # Tier 1, but this block compiles a model
-  # `auto` is documented to try the shift and fall back to the product grid.
-  # A discrete covariate was the one disqualification that stop()ed instead, so
-  # a model with a SEX term could not use cov_integration = "auto" at all --
-  # even though the grid it would have fallen back to enumerates the levels
-  # exactly and is the right answer for it.
+  # `auto` is documented to try the shift and fall back to the product grid, and
+  # a discrete covariate used to be the one disqualification that stop()ed
+  # instead. It no longer disqualifies at all when a CONTINUOUS covariate
+  # reaches the shifted argument too: the discrete levels are conditioned on
+  # (.admCovGrid enumerates them exactly) and the continuous one stays off the
+  # product grid, which is where the n_cov^p cost lives.
+  #
+  # All-discrete is the other way round and still takes the grid -- see the
+  # companion test below.
   .mk <- function(expr) {
     f <- function() {
       ini({ tcl <- log(1); tv <- log(10); tcov <- 0.75; tsex <- 0.2
@@ -1346,15 +1350,43 @@ test_that("a discrete covariate makes `auto` fall back, not fail", {
   u   <- admixr2:::.admDriverUnits(st, ui, admixr2:::.admOutputVar(ui))
   out <- suppressMessages(
     admixr2:::.admCheckCovariates(ui, pin, u$studies))
-  expect_identical(out[[1L]]$.adm_cov_path, "rows")
-  expect_match(out[[1L]]$.adm_cov_shift_why, "discrete")
-  # and an EXPLICIT cov_integration = "shift" still errors, naming the reason
+  # WT is continuous, SEX is not: the shift is taken and SEX becomes strata
+  expect_identical(out[[1L]]$.adm_cov_path, "shift")
+  expect_null(out[[1L]]$.adm_cov_shift_why)
+  expect_false(is.null(out[[1L]]$.adm_cov_shift$strata))
+  expect_equal(length(unique(out[[1L]]$.adm_cov_shift$strata)), 2L)
+  # an EXPLICIT cov_integration = "shift" is now satisfiable, so it must NOT
+  # error where it used to
   ctl2 <- adghControl(studies = st, grad = "analytical", n_nodes = 5L,
                       print = 0L, covMethod = "none", cov_integration = "shift")
   pin2 <- admixr2:::.admDriverPinfo(ui, ctl2)
-  expect_error(
-    admixr2:::.admCheckCovariates(ui, pin2, u$studies),
-    "discrete")
+  expect_silent(admixr2:::.admCheckCovariates(ui, pin2, u$studies))
+})
+
+test_that("an ALL-discrete covariate set still takes the product grid", {
+  skip_if_not_installed("rxode2")
+  # The shift's saving is eliminating the CONTINUOUS covariate dimension. The
+  # discrete levels cost K cells on either route, and n_u is inflated above
+  # n_nodes to resolve the widened u, so a stratified shift comes out with MORE
+  # rows than the grid (26 vs 18 for one binary covariate) -- and as an
+  # approximation where the grid enumerates exactly.
+  .f <- function() {
+    ini({ tcl <- log(1); tv <- log(10); tsex <- 0.2
+          eta.cl ~ 0.09; add.err <- 0.3 })
+    model({ cl <- exp(tcl + tsex * SEX + eta.cl); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(.f))
+  st <- list(s = list(E = 1:3, V = diag(3), n = 10L, times = 1:3,
+                      ev = rxode2::et(amt = 100),
+                      cov_dist = list(SEX = list(values = c(0, 1)))))
+  ctl <- adghControl(studies = st, grad = "analytical", n_nodes = 5L,
+                     print = 0L, covMethod = "none", cov_integration = "auto")
+  pin <- admixr2:::.admDriverPinfo(ui, ctl)
+  u   <- admixr2:::.admDriverUnits(st, ui, admixr2:::.admOutputVar(ui))
+  out <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, u$studies))
+  expect_identical(out[[1L]]$.adm_cov_path, "rows")
+  expect_match(out[[1L]]$.adm_cov_shift_why, "discrete")
 })
 
 test_that("nodes and derivatives choose the Gaussian branch by the SAME test", {
