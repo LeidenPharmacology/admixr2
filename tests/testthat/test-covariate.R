@@ -1891,3 +1891,89 @@ test_that("the joint collapse declines when it would cost MORE", {
   alt <- 5L^3L * (if (is.null(co)) 7L^2L else nrow(co$X))
   expect_gt(jd$m^jd$r, alt)
 })
+
+test_that("the joint collapse STACKS discrete strata onto the rotation", {
+  # A discrete covariate has no latent normal to rotate into, so it is a stratum
+  # rather than a direction -- enumerated exactly at its levels and crossed with
+  # the rotated continuous design, which is what .admCovCollapse already does.
+  # Before this the joint path refused a discrete covariate outright, so any
+  # model with sex, genotype or formulation lost the random-effect merge
+  # entirely and fell back to the covariate-only collapse.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.4^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- list(W1  = list(meanlog = ml, sdlog = sdl),
+              W2  = list(meanlog = ml, sdlog = sdl),
+              SEX = list(values = c(0, 1), probs = c(0.45, 0.55)))
+  pin <- list(eta_col_names = c("eta.cl", "eta.v"), struct_names = character(0),
+              n_eta = 2L, cov_nodes = 7L, n_nodes = 5L)
+  ui  <- list(lstExpr = list(
+                quote(cl <- exp(0.1 + eta.cl) * (W1/70)^0.6 * (W2/70)^0.4 *
+                              exp(0.25 * SEX)),
+                quote(v  <- exp(2.3 + eta.v))),
+              allCovs = c("W1", "W2", "SEX"))
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
+  expect_false(is.null(jc))
+  expect_equal(jc$n_cell, 2L)                    # SEX enumerated, not rotated
+  expect_equal(jc$pc, 2L)                        # only the continuous rotate
+  expect_equal(jc$nl, 4L)                        # 2 random effects + 2 covs
+  L  <- diag(sqrt(c(0.09, 0.04)))
+  jc <- admixr2:::.admJointAdmit(jc, list(), L)
+  expect_false(is.null(jc))                      # verified in EVERY cell
+  jd <- admixr2:::.admJointDesign(jc, list(), L)
+  expect_equal(nrow(jd$eta), jd$m^jd$r * jc$n_cell)
+  expect_equal(nrow(jd$cov_rows), nrow(jd$eta))
+  expect_equal(nrow(jd$X), nrow(jd$eta))         # the omega chain's node matrix
+  expect_equal(sum(jd$W), 1, tolerance = 1e-12)
+  # the discrete column carries its LEVELS, and each stratum its probability
+  expect_setequal(unique(jd$cov_rows[, "SEX"]), c(0, 1))
+  expect_equal(sum(jd$W[jd$cov_rows[, "SEX"] == 1]), 0.55, tolerance = 1e-10)
+  # ... and it is cheaper than the eta grid crossed with the covariate collapse,
+  # which is the design it takes over from
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  expect_false(is.null(co))
+  expect_lt(nrow(jd$eta), 5L^2L * nrow(co$X))
+})
+
+test_that("a covariate-by-STRATUM interaction is refused by the joint path", {
+  # (WT/70)^(b + c*SEX) has a loading that differs cell to cell, so one shared
+  # rotation would be right in one stratum and wrong in every other. Admission
+  # re-probes each cell and requires the same loadings.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.4^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- list(W1  = list(meanlog = ml, sdlog = sdl),
+              W2  = list(meanlog = ml, sdlog = sdl),
+              SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  pin <- list(eta_col_names = c("eta.cl", "eta.v"), struct_names = character(0),
+              n_eta = 2L, cov_nodes = 7L, n_nodes = 5L)
+  ui  <- list(lstExpr = list(
+                quote(cl <- exp(0.1 + eta.cl) * (W1/70)^(0.6 + 0.3 * SEX) *
+                              (W2/70)^0.4),
+                quote(v  <- exp(2.3 + eta.v))),
+              allCovs = c("W1", "W2", "SEX"))
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
+  expect_false(is.null(jc))                      # it BUILDS ...
+  expect_null(admixr2:::.admJointAdmit(              # ... and is then refused
+    jc, list(), diag(sqrt(c(0.09, 0.04)))))
+})
+
+test_that("a discrete covariate CORRELATED with a continuous one is refused", {
+  # Then a level is a TRUNCATION of the latent normal rather than a point, so
+  # the continuous conditional law differs cell to cell and no single rotation
+  # serves them. The same refusal .admCovCollapse carries.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.4^2)); ml <- log(70) - sdl^2 / 2
+  cdd <- covDist(W1 = list(meanlog = ml, sdlog = sdl),
+                 W2 = list(meanlog = ml, sdlog = sdl),
+                 SEX = list(values = c(0, 1), probs = c(0.5, 0.5)),
+                 cor = matrix(c(1, .5, .4, .5, 1, .3, .4, .3, 1), 3L, 3L,
+                              dimnames = list(c("W1", "W2", "SEX"),
+                                              c("W1", "W2", "SEX"))))
+  pin <- list(eta_col_names = c("eta.cl", "eta.v"), struct_names = character(0),
+              n_eta = 2L, cov_nodes = 7L, n_nodes = 5L)
+  ui  <- list(lstExpr = list(
+                quote(cl <- exp(0.1 + eta.cl) * (W1/70)^0.6 * (W2/70)^0.4 *
+                              exp(0.25 * SEX)),
+                quote(v  <- exp(2.3 + eta.v))),
+              allCovs = c("W1", "W2", "SEX"))
+  expect_null(admixr2:::.admJointCollapse(ui, pin, cdd, 7L, NULL, NULL))
+})

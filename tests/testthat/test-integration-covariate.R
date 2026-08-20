@@ -1570,7 +1570,14 @@ test_that("a discrete covariate STRATIFIES the shift instead of disqualifying it
   expect_equal(as.numeric(ma$E), as.numeric(mq$E), tolerance = 1e-6)
   expect_equal(ma$V, mq$V, tolerance = 1e-5)
   ra <- nrow(admixr2:::.adghGrid(a2$pars, a2$pin, a2$g, a2$st[[1L]])$eta)
-  rq <- nrow(admixr2:::.adghGrid(q2$pars, q2$pin, q2$g, q2$st[[1L]])$eta)
+  # against the genuine PRODUCT grid, with both collapses cleared. The
+  # quadrature arm now collapses too -- jointly, over the random effects and the
+  # continuous covariate, with the discrete one still enumerated as strata -- so
+  # scoring the shift against it measures the wrong baseline. The moments above
+  # are still compared to the collapsed arm, which is the check that matters.
+  sq <- q2$st[[1L]]
+  sq[[".adm_cov_joint"]] <- NULL; sq[[".adm_cov_collapse"]] <- NULL
+  rq <- nrow(admixr2:::.adghGrid(q2$pars, q2$pin, q2$g, sq)$eta)
   expect_lt(ra, rq / 3)
 
   # and its gradient is analytic: the stratified node set takes its derivatives

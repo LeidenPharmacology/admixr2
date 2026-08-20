@@ -602,8 +602,9 @@
       if (!is.null(.jc)) {
         .alt <- (pinfo$n_nodes %||% 5L)^pinfo$n_eta *
                 (if (!is.null(.co)) nrow(.co$X)
-                 else (pinfo$cov_nodes %||% 7L)^.jc$pc)
-        if (.jc$m^.jc$r >= .alt) .jc <- NULL
+                 else (pinfo$cov_nodes %||% 7L)^.jc$pc *
+                      max(.jc$n_cell %||% 1L, 1L))
+        if (.jc$m^.jc$r * max(.jc$n_cell %||% 1L, 1L) >= .alt) .jc <- NULL
       }
       if (!is.null(.jc)) {
         studies[[nm]]$.adm_cov_joint <- .jc
@@ -3819,18 +3820,44 @@ print.covDist <- function(x, ...) {
   cd  <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cd)
   dsc <- vapply(nms, function(n) !is.null(cd[[n]][["values"]]), logical(1))
-  cn  <- nms[!dsc]
+  cn  <- nms[!dsc]                    # CONTINUOUS: what rotates
+  dn  <- nms[dsc]                     # DISCRETE: enumerated, as strata
   pc  <- length(cn)
-  # a discrete covariate is a stratum, not a direction: it has no latent normal
-  # to rotate into, so the joint construction has nothing to do with it. The
-  # covariate collapse handles those; this one declines rather than pretending.
-  if (any(dsc) || pc < 1L) return(NULL)
+  # A discrete covariate is a stratum, not a direction -- it has no latent
+  # normal to rotate into. It is crossed with the continuous design exactly as
+  # .admCovCollapse crosses it, at its declared levels and probabilities, so
+  # the two constructions stack instead of one disqualifying the other. Sex,
+  # genotype and formulation are about as common as covariates get, and they
+  # used to turn the whole joint path off.
+  if (pc < 1L) return(NULL)
   R <- cd[["latentR"]]
   if (is.function(cd[["joint"]]) && is.null(R)) return(NULL)
-  Rc <- if (is.null(R)) diag(1, pc) else R[match(cn, nms), match(cn, nms),
-                                           drop = FALSE]
+  ic <- match(cn, nms); id <- match(dn, nms)
+  # A discrete covariate DEPENDENT on a continuous one makes each level a
+  # TRUNCATION of the latent normal rather than a point, so the continuous
+  # conditional law differs cell to cell and one shared rotation would be the
+  # wrong rotation in every cell but one. The same refusal .admCovCollapse and
+  # .admCovTaylorDesign carry.
+  if (length(dn) && !is.null(R) &&
+      any(abs(R[id, ic, drop = FALSE]) > 0)) return(NULL)
+  Rc <- if (is.null(R)) diag(1, pc) else R[ic, ic, drop = FALSE]
   Lc <- tryCatch(chol(Rc), error = function(e) NULL)
   if (is.null(Lc)) return(NULL)
+  # exact product enumeration of the discrete levels, with their probabilities
+  if (length(dn)) {
+    lev <- lapply(dn, function(n) as.numeric(cd[[n]][["values"]]))
+    prb <- lapply(dn, function(n) { sp <- cd[[n]]
+      pv <- sp[["probs"]] %||% rep(1 / length(sp[["values"]]),
+                                   length(sp[["values"]]))
+      pv / sum(pv) })
+    cells <- as.matrix(expand.grid(lev, KEEP.OUT.ATTRS = FALSE))
+    colnames(cells) <- dn
+    pcell <- apply(as.matrix(expand.grid(prb, KEEP.OUT.ATTRS = FALSE)), 1L, prod)
+  } else {
+    cells <- matrix(numeric(0), 1L, 0L); pcell <- 1
+  }
+  cell_list <- lapply(seq_len(nrow(cells)), function(i)
+    if (!length(dn)) list() else as.list(stats::setNames(cells[i, ], dn)))
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
   if (is.null(lst)) return(NULL)
   is_asgn <- vapply(lst, function(e) is.call(e) && length(e) == 3L &&
@@ -3839,13 +3866,13 @@ print.covDist <- function(x, ...) {
   # DIRECT readers of a covariate OR an eta -- the joint space spans both, so a
   # parameter carrying only an eta is as much a direction as one carrying only
   # covariates.
-  lat <- c(cn, pinfo$eta_col_names)
+  lat <- c(cn, dn, pinfo$eta_col_names)
   hit <- which(is_asgn & vapply(lst, function(e)
     is.call(e) && length(e) == 3L &&
       length(intersect(all.vars(e[[3L]]), lat)) > 0L, logical(1)))
   if (!length(hit)) return(NULL)
   pr <- list(lst = lst, is_asgn = is_asgn, hit = hit, cn = cn,
-             dn = character(0), eta_names = pinfo$eta_col_names,
+             dn = dn, eta_names = pinfo$eta_col_names,
              cov_fixed = cov_fixed)
   nl <- ne + pc
   mkXi <- function(n, seed) {
@@ -3872,6 +3899,8 @@ print.covDist <- function(x, ...) {
   list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc, ne = ne, pc = pc,
        nl = nl, Xi = Xi, Xv = Xv, out_var = out_var,
        n_nodes = as.integer(n_nodes), max_rows = max_rows, joint = TRUE,
+       dn = dn, nms = nms, cells = cells, pcell = pcell,
+       cell_list = cell_list, n_cell = max(nrow(cells), 1L),
        r = NULL, m = NULL, routes = NULL)
 }
 
@@ -3890,11 +3919,11 @@ print.covDist <- function(x, ...) {
 
 # The joint loading matrix at a given (struct, L). Etas enter scaled by L, so
 # this moves with Omega as well as with the structural thetas.
-.admJointB <- function(jc, st, L, Xi, routes = NULL) {
+.admJointB <- function(jc, st, L, Xi, routes = NULL, cell = NULL) {
   Zc <- Xi[, jc$ne + seq_len(jc$pc), drop = FALSE] %*% jc$Lc
   Et <- Xi[, seq_len(jc$ne), drop = FALSE] %*% t(L)
   AA <- .admJointCov(jc, Zc)
-  P  <- .admCovProbeAt(jc$pr, st, Et, list(), AA)
+  P  <- .admCovProbeAt(jc$pr, st, Et, cell %||% jc$cell_list[[1L]], AA)
   if (is.null(P)) return(NULL)
   .admCovLoadings(P, Xi, jc$nl, routes)
 }
@@ -3915,7 +3944,8 @@ print.covDist <- function(x, ...) {
   # the cap lesson from .admCovDirNodes, over the joint space: a direction
   # absorbs (n_eta + pc)/r axes, so it needs that much more resolution than one
   m <- jc[["m"]] %||% .admCovDirNodes(jc$n_nodes, jc$nl, r)
-  if (m^r > jc$max_rows) return(NULL)
+  nl_c <- jc$n_cell %||% 1L
+  if (m^r * nl_c > jc$max_rows) return(NULL)
   g  <- .adghNodeGrid(m, r)
   Xz <- g$X %*% t(U)                                   # preimage xi = U w
   Xe <- Xz[, seq_len(jc$ne), drop = FALSE]
@@ -3924,6 +3954,20 @@ print.covDist <- function(x, ...) {
   Zc <- Xz[, jc$ne + seq_len(jc$pc), drop = FALSE] %*% jc$Lc
   X  <- .admJointCov(jc, Zc)
   if (!all(is.finite(X)) || !all(is.finite(eta))) return(NULL)
+  Wg <- g$W / sum(g$W)
+  # CROSS the rotated continuous design with the exact discrete enumeration.
+  # Same stride .admCovCollapse uses -- the continuous block cycles fastest --
+  # so eta, X and cov_rows stay aligned row for row with the weights.
+  if (length(jc$dn)) {
+    nq <- nrow(X); ix <- rep(seq_len(nq), times = nl_c)
+    ic <- rep(seq_len(nl_c), each = nq)
+    X   <- cbind(X[ix, , drop = FALSE],
+                 jc$cells[ic, , drop = FALSE])[, jc$nms, drop = FALSE]
+    eta <- eta[ix, , drop = FALSE]; colnames(eta) <- jc$pr$eta_names
+    Xe  <- Xe[ix, , drop = FALSE]
+    Wg  <- Wg[ix] * jc$pcell[ic]
+    Wg  <- Wg / sum(Wg)
+  }
   # Xe is handed back as the node matrix the omega chain rule differentiates.
   # eta = Xe L' has exactly the form the ordinary grid has (eta = X L'), so
   # d(eta[q,])/d(L_ij) = Xe[q,j] * e_i and .adghGrad needs no new branch. What
@@ -3931,7 +3975,7 @@ print.covDist <- function(x, ...) {
   # L too. That term is the quadrature re-choosing itself: the integral is the
   # same for any U spanning B's column space, so it vanishes to the accuracy the
   # design is verified to. FD-checked rather than argued.
-  list(eta = eta, X = Xe, cov_rows = X, W = g$W / sum(g$W), r = r, m = m,
+  list(eta = eta, X = Xe, cov_rows = X, W = Wg, r = r, m = m,
        U = U, d = sv$d, routes = attr(B, "routes"))
 }
 
@@ -3951,23 +3995,49 @@ print.covDist <- function(x, ...) {
   jd <- .admJointDesign(jc, st, L)
   if (is.null(jd)) return(NULL)
   jc$r <- jd$r; jc$m <- jd$m; jc$routes <- jd$routes
+  cl_list <- jc$cell_list %||% list(list())
+  # THE ROTATION MUST NOT DIFFER BETWEEN STRATA. A covariate-by-stratum
+  # interaction -- (WT/70)^(b + c*SEX) -- has a direction that changes cell to
+  # cell, so a single shared design would be the right design in one cell and
+  # the wrong one in all the others. Re-probe in each and require the same
+  # loadings, as .admCovCollapse does.
+  if (length(cl_list) > 1L) {
+    B0 <- .admJointB(jc, st, L, jc$Xi, jc$routes, cl_list[[1L]])
+    if (is.null(B0)) return(NULL)
+    for (cc in cl_list[-1L]) {
+      Bk <- .admJointB(jc, st, L, jc$Xi, jc$routes, cc)
+      if (is.null(Bk) || !isTRUE(all.equal(B0, Bk, tolerance = 1e-6,
+                                           check.attributes = FALSE)))
+        return(NULL)
+    }
+  }
   # the truth to score against: a large probe in the SAME latent space
   Zv <- jc$Xv[, jc$ne + seq_len(jc$pc), drop = FALSE] %*% jc$Lc
   Ev <- jc$Xv[, seq_len(jc$ne), drop = FALSE] %*% t(L)
-  Pv <- .admCovProbeAt(jc$pr, st, Ev, list(), .admJointCov(jc, Zv))
-  if (is.null(Pv)) return(NULL)
-  Pd <- .admCovProbeAt(jc$pr, st, jd$eta, list(), jd$cov_rows)
-  if (is.null(Pd)) return(NULL)
-  if (ncol(Pd) != ncol(Pv)) return(NULL)
-  for (k in seq_len(ncol(Pv))) {
-    tgt <- Pv[, k]; got <- Pd[, k]
-    sc  <- max(stats::sd(tgt), abs(mean(tgt)), .Machine$double.xmin)
-    mm  <- list(function(x) x, function(x) x^2)
-    if (all(tgt > 0) && all(got > 0)) mm <- c(mm, list(function(x) 1 / x))
-    for (f in mm) {
-      a1 <- mean(f(tgt)); a2 <- sum(jd$W * f(got))
-      if (!is.finite(a1) || !is.finite(a2)) return(NULL)
-      if (abs(a2 - a1) / max(abs(a1), sc) > tol) return(NULL)
+  Av <- .admJointCov(jc, Zv)
+  nq <- nrow(jd$eta) %/% length(cl_list)
+  for (ci in seq_along(cl_list)) {
+    cell <- cl_list[[ci]]
+    Pv <- .admCovProbeAt(jc$pr, st, Ev, cell, Av)
+    if (is.null(Pv)) return(NULL)
+    # this cell's slice of the design, and its weights renormalised within it
+    ix <- (ci - 1L) * nq + seq_len(nq)
+    Wc <- jd$W[ix]; sw <- sum(Wc)
+    if (!is.finite(sw) || sw <= 0) return(NULL)
+    Wc <- Wc / sw
+    Pd <- .admCovProbeAt(jc$pr, st, jd$eta[ix, , drop = FALSE], cell,
+                         jd$cov_rows[ix, , drop = FALSE])
+    if (is.null(Pd) || ncol(Pd) != ncol(Pv)) return(NULL)
+    for (k in seq_len(ncol(Pv))) {
+      tgt <- Pv[, k]; got <- Pd[, k]
+      sc  <- max(stats::sd(tgt), abs(mean(tgt)), .Machine$double.xmin)
+      mm  <- list(function(x) x, function(x) x^2)
+      if (all(tgt > 0) && all(got > 0)) mm <- c(mm, list(function(x) 1 / x))
+      for (f in mm) {
+        a1 <- mean(f(tgt)); a2 <- sum(Wc * f(got))
+        if (!is.finite(a1) || !is.finite(a2)) return(NULL)
+        if (abs(a2 - a1) / max(abs(a1), sc) > tol) return(NULL)
+      }
     }
   }
   jc
