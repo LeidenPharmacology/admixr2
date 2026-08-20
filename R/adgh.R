@@ -1262,7 +1262,8 @@
       # from exactly this pair: the TIC penalty tr(H^-1 J), and the eigenvalue
       # weights admCompare() rescales dOFV by. Recomputing them later would mean
       # re-solving, and would let them drift from the SE actually reported.
-      sw_HJ    <- list(H = sw$H, J = sw$J, par_names = nms_cov)
+      sw_HJ    <- list(H = sw$H, J = sw$J, par_names = nms_cov,
+                       Om = sw$Om, study_names = names(studies))
     } else {
       warning("adghCalcCov: the sandwich correction could not be computed; ",
               "reporting the covMethod = \"r\" covariance instead.", call. = FALSE)

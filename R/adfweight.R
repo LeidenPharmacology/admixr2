@@ -116,8 +116,19 @@
                       (al * be * (sm + 2) * (sm + 3))
         d[, j] <- v; t3[, j] <- sk * v^1.5; q4[, j] <- ku * v^2
       },
-      # form 3 (TBS) needs the residual quadrature carried to third and fourth
-      # order and form 8 (ordinal) is a joint unit, refused upstream.
+      "3" = {                                          # TBS, by quadrature
+        # normal on the TRANSFORMED scale, so the conditional law is a
+        # pushforward of a normal through m^-1 -- integrated on the same node
+        # grid the NLL uses (arr$nodes, i.e. resid_nodes), carried to 3rd and
+        # 4th order. See .admTBSCondMom().
+        tb <- .admTBSCondMom(f, a2, b2, cc, col(arr$lam, j), col(arr$yj, j),
+                             col(arr$tlo, j), col(arr$thi, j),
+                             isTRUE(col(arr$tbs_ftr, j)),
+                             isTRUE(col(arr$tbs_c1, j)),
+                             arr$nodes %||% .ADM_TBS_NODES)
+        d[, j] <- tb$d; t3[, j] <- tb$t3; q4[, j] <- tb$q4
+      },
+      # form 8 (ordinal) is a joint unit, refused upstream.
       return(NULL))
   }
   if (!all(is.finite(d)) || !all(is.finite(t3)) || !all(is.finite(q4)))
@@ -445,7 +456,11 @@
   if (is.null(Hi)) return(NULL)
   p <- nrow(H); J <- matrix(0, p, p)
   for (i in seq_along(G)) J <- J + G[[i]] %*% Om[[i]] %*% t(G[[i]])
-  list(cov = Hi %*% J %*% Hi, bread = 2 * Hi, J = J, H = H)
+  # Omega travels too: plot.admFit's covariance heatmap standardises the
+  # observed-minus-predicted residual, and its normal-theory SE is exactly what
+  # this weight replaces. Without it the diagnostic and the reported SE would
+  # describe the same model under two different sampling laws.
+  list(cov = Hi %*% J %*% Hi, bread = 2 * Hi, J = J, H = H, Om = Om)
 }
 
 # The summary a study actually reports, stacked: (ybar, vech V) for a full

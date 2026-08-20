@@ -370,3 +370,67 @@ test_that(".admMomentJac refuses rather than approximates what it cannot reach",
   # silently reaching for the plain model's predictions
   expect_null(admixr2:::.admMomentJac(p, pin, u$studies, NULL, rx, ov, g, 1L))
 })
+
+test_that("TBS conditional moments match the pushforward they describe", {
+  # For a transform-both-sides endpoint the residual is normal on the
+  # TRANSFORMED scale, so the conditional law given a node is a pushforward of a
+  # normal through m^-1. Its moments are the same Gauss-Hermite quadrature the
+  # NLL already runs for the mean and variance, carried to third and fourth
+  # order -- which is what lets boxCox/yeoJohnson/logitNorm/probitNorm reach the
+  # sandwich instead of degrading to covMethod = "r".
+  skip_if_not_installed("rxode2")
+  YJ <- admixr2:::.ADM_TBS_YJ
+  set.seed(8); n <- 4e5L
+  cases <- list(
+    list("boxCox lam=0.4",  0.4, YJ[["boxCox"]],     0, 1, 3.0, 0.25),
+    list("boxCox lam=0",    0.0, YJ[["boxCox"]],     0, 1, 3.0, 0.25),
+    list("yeoJohnson",      0.6, YJ[["yeoJohnson"]], 0, 1, 1.5, 0.30),
+    list("logitNorm",       1.0, YJ[["logit"]],      0, 1, 0.4, 0.35),
+    list("probitNorm",      1.0, YJ[["probit"]],     0, 1, 0.4, 0.35))
+  for (cs in cases) {
+    lbl <- cs[[1L]]; lam <- cs[[2L]]; yj <- cs[[3L]]
+    lo <- cs[[4L]]; hi <- cs[[5L]]; f <- cs[[6L]]; sdv <- cs[[7L]]
+    z <- admixr2:::.admTBS(f, lam, yj, lo, hi) + sdv * stats::rnorm(n)
+    y <- admixr2:::.admTBSi(z, lam, yj, lo, hi)
+    y <- y[is.finite(y)]
+    yc <- y - mean(y)
+    q  <- admixr2:::.admTBSCondMom(f, sdv^2, 0, 1, lam, yj, lo, hi,
+                                   FALSE, FALSE, 81L)
+    # relative, because the four transforms span three orders of magnitude
+    expect_equal(q$d,  mean(yc^2), tolerance = 0.02, info = paste(lbl, "var"))
+    expect_equal(q$t3, mean(yc^3), tolerance = 0.05, info = paste(lbl, "m3"))
+    expect_equal(q$q4, mean(yc^4), tolerance = 0.05, info = paste(lbl, "m4"))
+  }
+})
+
+test_that(".admHeatSE reads Omega's vech block, and refuses a shape mismatch", {
+  # plot.admFit standardises the observed-minus-predicted covariance. Omega's
+  # vech block holds Var(V_ij) directly, so the SE is the square root of its
+  # diagonal -- no closed form, no normality assumption. Everything is guarded
+  # on shape: the plot re-derives its own moments, and a mismatch must fall back
+  # rather than index into the wrong matrix.
+  m <- 3L
+  ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  q  <- nrow(ij)                                   # 6
+  Om <- diag(c(rep(1, m), (seq_len(q) / 10)^2))    # known vech variances
+  sw <- list(Om = list(Om), study_names = "s1")
+  se <- admixr2:::.admHeatSE(sw, "s1", m, "cov")
+  expect_false(is.null(se))
+  for (b in seq_len(q)) {
+    expect_equal(se[ij[b, 1L], ij[b, 2L]], b / 10)
+    expect_equal(se[ij[b, 2L], ij[b, 1L]], b / 10)  # symmetric
+  }
+  # no Omega, unknown study, or the wrong shape -> NULL, so the caller keeps
+  # the closed form
+  expect_null(admixr2:::.admHeatSE(NULL, "s1", m, "cov"))
+  expect_null(admixr2:::.admHeatSE(list(study_names = "s1"), "s1", m, "cov"))
+  expect_null(admixr2:::.admHeatSE(sw, "other", m, "cov"))
+  expect_null(admixr2:::.admHeatSE(sw, "s1", m + 1L, "cov"))
+  # a `var` study reports only the diagonal, so .admWeightSel kept only those
+  # rows and the matrix is 2m -- the off-diagonals come back NA
+  Omv <- diag(c(rep(1, m), c(0.04, 0.09, 0.16)))
+  sev <- admixr2:::.admHeatSE(list(Om = list(Omv), study_names = "s1"),
+                              "s1", m, "var")
+  expect_equal(diag(sev), c(0.2, 0.3, 0.4))
+  expect_true(all(is.na(sev[upper.tri(sev)])))
+})

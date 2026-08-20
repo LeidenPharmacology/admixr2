@@ -773,15 +773,28 @@ plot.admFit <- function(x, which = NULL, n_sim = NULL, seed = 1L, ...) {
     times  <- s$times
 
     resid_mat <- s$V - V_pred
+    # SE OF THE OBSERVED-MINUS-PREDICTED COVARIANCE. The closed form below is
+    # the NORMAL-THEORY one, Var(V_ij) = (V_ii V_jj + V_ij^2)/N, which assumes
+    # the subjects behind the summary are multivariate normal -- exactly the
+    # assumption covMethod = "r,s" exists to correct. A fit carrying the
+    # model-implied sampling law uses it here too, so the diagnostic and the
+    # reported standard errors describe the same model rather than two
+    # different ones. Falls back to the closed form when the fit has no Omega
+    # (covMethod = "r"/"none", a residual outside the conditionally-normal
+    # family, a joint unit).
+    om_se <- .admHeatSE(extra$sandwich, nm, n_t, s$method)
     z_mat <- matrix(NA_real_, n_t, n_t)
     for (i in seq_len(n_t))
       for (j in seq_len(n_t)) {
-        se_ij <- if (i == j)
+        se_ij <- if (!is.null(om_se) && is.finite(om_se[i, j])) om_se[i, j]
+        else if (i == j)
           sqrt(2 * v_diag[i]^2 / (n_obs - 1L))
         else
           sqrt((v_diag[i] * v_diag[j] + V_pred[i, j]^2) / (n_obs - 1L))
         z_mat[i, j] <- resid_mat[i, j] / se_ij
       }
+    z_src <- if (!is.null(om_se) && any(is.finite(om_se)))
+      "model-implied sampling law" else "normal-theory"
 
     sig_mat <- ifelse(abs(z_mat) > 3.29, "***",
                ifelse(abs(z_mat) > 2.58, "**",
@@ -803,7 +816,8 @@ plot.admFit <- function(x, which = NULL, n_sim = NULL, seed = 1L, ...) {
       ggplot2::ggtitle("Residual", subtitle = "V_obs - V_pred")
     p_z    <- .heat_tile(df_z, z_lim, "  z", low = "#C101AC", high = "#D2D214") +
       ggplot2::ggtitle("Standardised residual",
-                       subtitle = "z = DeltaCov/SE  |  *p<.05 **p<.01 ***p<.001") +
+                       subtitle = paste0("z = DeltaCov/SE (", z_src,
+                                         ")  |  *p<.05 **p<.01 ***p<.001")) +
       ggplot2::geom_text(ggplot2::aes(label = z_label), size = 4, colour = "black", fontface = "bold")
 
     # Combined 2x2 grid first so positional extraction returns the whole panel
@@ -924,3 +938,33 @@ plot.admFit <- function(x, which = NULL, n_sim = NULL, seed = 1L, ...) {
   invisible(plots)
 }
 
+
+# Per-entry SE of the observed covariance, from the model-implied sampling law
+# a covMethod = "r,s" fit stored, or NULL when there is none to use.
+#
+# Omega's vech block holds Var(V_ij) directly, so the SE is the square root of
+# its diagonal -- no closed form and no normality assumption. A `var` study
+# reports only the diagonal, so .admWeightSel kept only those rows and the
+# off-diagonals come back NA for the caller to fill from the closed form.
+#
+# Everything is guarded on shape rather than assumed: the plot re-derives its
+# own moments and a mismatch (a study renamed, a different unit set) must fall
+# back rather than index into the wrong matrix.
+.admHeatSE <- function(sw, nm, n_t, method) {
+  if (is.null(sw) || is.null(sw$Om) || is.null(sw$study_names)) return(NULL)
+  k <- match(nm, sw$study_names)
+  if (is.na(k) || k > length(sw$Om)) return(NULL)
+  Om <- sw$Om[[k]]
+  if (is.null(Om) || !is.matrix(Om)) return(NULL)
+  ij <- which(lower.tri(diag(n_t), diag = TRUE), arr.ind = TRUE)
+  isv <- identical(method, "var")
+  if (isv) ij <- ij[ij[, 1L] == ij[, 2L], , drop = FALSE]
+  if (nrow(Om) != n_t + nrow(ij)) return(NULL)
+  out <- matrix(NA_real_, n_t, n_t)
+  d   <- diag(Om)[n_t + seq_len(nrow(ij))]
+  for (b in seq_len(nrow(ij))) {
+    if (!is.finite(d[b]) || d[b] <= 0) next
+    out[ij[b, 1L], ij[b, 2L]] <- out[ij[b, 2L], ij[b, 1L]] <- sqrt(d[b])
+  }
+  out
+}

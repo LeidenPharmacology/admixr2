@@ -2427,3 +2427,45 @@ without that parameter there is no residual to integrate"),
       .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dvar, dNLL_dmu_s, var_f,
                     dNLL_dV, times, cov_f, deriv = d))
 }
+
+# Conditional CENTRAL moments of a TBS residual, per node.
+#
+# For a transform-both-sides endpoint the residual is normal on the TRANSFORMED
+# scale: y = m^-1(m(f) + e), e ~ N(0, sd(f)^2). So the conditional law given a
+# node is a pushforward of a normal through m^-1, and its moments are the same
+# Gauss-Hermite quadrature .admTBSMomentsD already runs for the mean and
+# variance -- carried to third and fourth order.
+#
+# Written as its own function rather than by extending .admTBSMomentsD: that one
+# is on the NLL path, whose accumulation order is deliberately fixed for
+# bit-identity, and this runs once post-fit for the sandwich weight.
+#
+# `f` is a whole column of node predictions, integrated in one stacked call --
+# .admTBSi bottoms out in rxode2's C kernel whose R preamble dominates on short
+# vectors (measured 81 short calls 2.48 ms vs one stacked call 0.05 ms).
+.admTBSCondMom <- function(f, a2, b2, cc, lam, yj, lo, hi, ftr, c1,
+                           nodes = .ADM_TBS_NODES) {
+  a2 <- max(a2, 0); b2 <- max(b2, 0)
+  # residual SD on the TRANSFORMED scale, the same construction .admTBSRow uses
+  xb <- if (ftr) .admTBS(f, lam, yj, lo, hi) else f
+  pw <- if (cc == 1) xb else .admTBSp(xb, cc)
+  sdv <- if (b2 == 0) rep(sqrt(a2), length(f))
+         else if (c1) sqrt(a2) + sqrt(b2) * pw
+         else sqrt(a2 + b2 * pw * pw)
+  gq <- .adghNodes1(nodes)
+  z  <- .admTBS(f, lam, yj, lo, hi) + outer(sdv, gq$x)
+  y  <- .admTBSi(z, lam, yj, lo, hi)
+  # the +-12 SD tail nodes can overflow the inverse transform; their GH weight is
+  # ~1e-30, so zeroing them leaves the moments unchanged to machine precision
+  # while keeping them finite -- the same guard .admTBSMomentsD carries.
+  bad <- !is.finite(y)
+  if (any(bad)) y[bad] <- 0
+  w  <- gq$w / sum(gq$w)
+  m1 <- as.numeric(y %*% w)
+  m2 <- as.numeric(y^2 %*% w)
+  m3 <- as.numeric(y^3 %*% w)
+  m4 <- as.numeric(y^4 %*% w)
+  list(d  = pmax(m2 - m1^2, 0),
+       t3 = m3 - 3 * m1 * m2 + 2 * m1^3,
+       q4 = m4 - 4 * m1 * m3 + 6 * m1^2 * m2 - 3 * m1^4)
+}
