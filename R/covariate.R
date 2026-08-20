@@ -2524,6 +2524,28 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
     sd <- vapply(sp, `[`, numeric(1), 2L)
     varies <- (length(unique(signif(mu, 10))) > 1L) ||
               (length(unique(signif(sd, 10))) > 1L)
+    # THE RIDGE IS FLAT ONLY WHERE u = Delta(a) + eta IS NORMAL, which by
+    # Cramer is exactly where Delta is -- the same certificate the shift path
+    # routes on. Then u's law is pinned by (beta + gamma mu_a,
+    # gamma^2 sigma_a^2 + omega^2) and any (gamma, omega) holding that pair
+    # fixed predicts identically. For a covariate that does NOT certify, u is a
+    # MIXTURE, whose law is not determined by its first two moments, and f is
+    # nonlinear -- so the aggregate V separates the pair and the coefficient is
+    # identified from ONE pooled source. Measured along the ridge, -2LL moving
+    # from its centre:
+    #
+    #   normal              0.000000  exactly flat, machine precision
+    #   binary {0,1}        4.9  3.5  80.1
+    #   4-level discrete    2.0  1.4  19.8
+    #   lognormal, raw      167  63   115
+    #
+    # Warning on those told the user a design could not identify something it
+    # identifies strongly -- which sends them hunting for a second source they
+    # do not need, or to discard the analysis. Sex, formulation, food status
+    # and genotype are all in that group and all routinely reported as one
+    # pooled summary, so this was not a corner case.
+    if (!varies && !isTRUE(.admCovRidgeFlat(.ui, pinfo, studies, cv)))
+      varies <- TRUE
     if (!varies)
       warning("admixr2: the coefficient on covariate '", cv, "' is not ",
               "identifiable from these data. It enters the same argument as a ",
@@ -2938,4 +2960,56 @@ print.covDist <- function(x, ...) {
     out <- if (is.null(out)) Jl[[a]] * dEta[, a] else out + Jl[[a]] * dEta[, a]
   }
   out
+}
+
+# Is the (coefficient, fixed effect, omega) ridge EXACTLY flat for this
+# covariate? True only where Delta certifies as Gaussian -- see the note in
+# .admWarnCovIdentifiability().
+#
+# Two independent things can break flatness, and they are decidable at different
+# cost. The covariate's own LAW may make u non-normal whatever the model does
+# (a discrete margin has no latent normal score at all); or Delta may be a
+# non-affine function of a normal latent. Only the second needs Delta, so the
+# first is settled first and for free.
+#
+# When Delta cannot be evaluated -- a hand-built pinfo with no structural
+# values, an unusual model -- fall back to the MARGIN. A normal margin under an
+# identity link is the textbook flat case and the one worth warning about;
+# anything else is left unwarned, because a nearly-flat likelihood surfaces as
+# an enormous standard error that covMethod = "r,s" now reports honestly,
+# whereas a false "not identifiable" gets acted on and cannot be recovered from.
+.admCovRidgeFlat <- function(ui, pinfo, studies, cv) {
+  cd <- NULL
+  for (s in studies) if (!is.null(s[["cov_dist"]][[cv]])) {
+    cd <- s[["cov_dist"]]; break
+  }
+  # Declared only as a conditioning VALUE, and the caller has already
+  # established every study uses the SAME one. Then the covariate enters as a
+  # CONSTANT, so its coefficient is confounded with the fixed effect sharing its
+  # argument -- exactly flat along (theta + d*a, gamma - d), whatever the
+  # covariate's law would have been. A different flat direction from the
+  # (gamma, omega) ridge below, and it needs no certificate.
+  if (is.null(cd)) return(TRUE)
+  spec <- cd[[cv]]
+  # a discrete margin has no latent normal score and can never make Delta
+  # normal -- decided without building anything
+  if (!is.null(spec[["values"]])) return(FALSE)
+  cert <- tryCatch({
+    cn <- .admCovSpecNames(cd)
+    sp <- .admShiftSpec(ui, cn, pinfo$eta_col_names)
+    if (is.null(sp)) NA else {
+      ar <- .admShiftRef(cd, cn)
+      if (is.null(ar)) NA else {
+        g <- .admCovGrid(cd, pinfo$cov_nodes %||% 7L)
+        D <- .admShiftDelta(sp, .admShiftStruct(pinfo), g$X, ar)
+        if (is.null(D)) NA else {
+          D <- as.matrix(D)
+          .admShiftGaussOK(D, g$W, g$z, ncol(D))
+        }
+      }
+    }
+  }, error = function(e) NA)
+  if (!is.na(cert)) return(isTRUE(cert))
+  # Delta unavailable: the margin is all there is to go on.
+  !is.null(spec[["mu"]]) && !is.null(spec[["sd"]])
 }

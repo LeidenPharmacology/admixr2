@@ -1408,3 +1408,78 @@ test_that("the conditioned shift's gradient is analytic, off the optimum", {
     expect_equal(unname(an[k]), fd, tolerance = 1e-5, info = names(p)[k])
   }
 })
+
+test_that("the ridge is flat only for a GAUSSIAN covariate, and only then warned", {
+  # .admWarnCovIdentifiability() says the likelihood is "exactly flat" along the
+  # (coefficient, fixed effect, omega) trade-off when every study declares the
+  # same covariate distribution. That rests on u = Delta(a) + eta being NORMAL,
+  # which by Cramer holds exactly when Delta is. For anything else u is a
+  # MIXTURE, whose law is not determined by its first two moments, and f is
+  # nonlinear -- so the aggregate V separates the pair.
+  #
+  # Measured here, walking the ridge from its centre with mean and sd matched
+  # across covariates so all four walk the SAME one.
+  skip_if_not_installed("rxode2")
+  TT <- c(1, 3, 6, 10, 16); DD <- 100; MU <- 0.5; SD <- 0.5
+  TCL0 <- log(1.0); TCOV0 <- 0.6; OM0 <- 0.30
+  .m <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.6
+          eta.cl ~ 0.09; add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * A + eta.cl); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(.m))
+  ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+  spread <- function(cd) {
+    pin <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+    pin$nDisplayProgress <- .Machine$integer.max
+    pin$cov_integration <- "quadrature"; pin$cov_nodes <- 15L; pin$n_nodes <- 15L
+    s <- list(E = rep(1, length(TT)), V = diag(length(TT)), n = 500L,
+              times = TT, ev = rxode2::et(amt = DD), cov = list(A = MU),
+              cov_dist = cd)
+    st <- admixr2:::.admFlattenStudies(
+            list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
+    st <- admixr2:::.admBuildEvFull(st)
+    st <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, st))
+    g  <- admixr2:::.adghNodeGrid(15L, pin$n_eta)
+    rp <- function(tc) {
+      p <- admixr2:::.admBuildOptVec(pin)$p0; nm <- names(p)
+      om2 <- TCOV0^2 * SD^2 + OM0^2 - tc^2 * SD^2
+      p[match("tcl", nm)]  <- TCL0 + (TCOV0 - tc) * MU
+      p[match("tcov", nm)] <- tc
+      p[grep("^logchol", nm)[1L]] <- log(om2)
+      p
+    }
+    # data = the model's own prediction at the ridge centre, so we sit AT the
+    # optimum and any movement is the ridge, not misfit
+    pr <- admixr2:::.admUnpack(rp(TCOV0), pin)
+    m  <- admixr2:::.adghMoments(pr, pin, st[[1L]], rx, ov, g, 1L)
+    st[[1L]]$E <- as.numeric(m$E); st[[1L]]$V <- m$V
+    st[[1L]]$v_diag <- diag(m$V); st[[1L]]$method <- "cov"
+    b <- admixr2:::.adghNLL(rp(TCOV0), pin, st, rx, ov, g, 1L)
+    max(abs(vapply(c(0.2, 0.4, 0.8), function(tc)
+      admixr2:::.adghNLL(rp(tc), pin, st, rx, ov, g, 1L) - b, numeric(1))))
+  }
+  # a Gaussian covariate: flat to machine precision
+  expect_lt(spread(list(A = list(mu = MU, sd = SD))), 1e-6)
+  # a binary one is not, and not marginally either -- against a 3.84 threshold
+  expect_gt(spread(list(A = list(values = c(0, 1), probs = c(0.5, 0.5)))), 3)
+  # nor is a continuous covariate whose Delta is not affine in the latent score
+  sl <- sqrt(log(1 + (SD / MU)^2)); ml <- log(MU) - sl^2 / 2
+  expect_gt(spread(list(A = list(meanlog = ml, sdlog = sl))), 3)
+
+  # ... and the WARNING follows the same line, so a user is not told a design
+  # cannot identify something it identifies strongly
+  one <- function(cd) list(s1 = list(E = rep(1, length(TT)),
+                                     V = diag(length(TT)), n = 500L, times = TT,
+                                     ev = rxode2::et(amt = DD),
+                                     cov = list(A = MU), cov_dist = cd))
+  pin <- admixr2:::.admParseIniDf(ui$iniDf, ui); pin$cov_nodes <- 7L
+  expect_warning(
+    admixr2:::.admWarnCovIdentifiability(ui, pin, one(list(A = list(mu = MU, sd = SD)))),
+    "not identifiable")
+  for (cd in list(list(A = list(values = c(0, 1), probs = c(0.5, 0.5))),
+                  list(A = list(values = c(0, .3, .7, 1), probs = rep(.25, 4))),
+                  list(A = list(meanlog = ml, sdlog = sl))))
+    expect_silent(admixr2:::.admWarnCovIdentifiability(ui, pin, one(cd)))
+})
