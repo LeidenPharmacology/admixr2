@@ -157,7 +157,7 @@
 
 .admFinaliseFit <- function(.ret, .ui, .ctl, est, objective, ov, studies,
                             cov, cov_nms, multi_out, extra_field, handle_ctl,
-                            t_opt, t_cov, t_elapsed) {
+                            t_opt, t_cov, t_elapsed, pinfo = NULL) {
   nlmixr2est::.nlmixr2FitUpdateParams(.ret)
   handle_ctl(.ctl, .ret)
   if (exists("control", .ui)) rm(list = "control", envir = .ui)
@@ -186,7 +186,21 @@
   attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")
   class(.fit) <- .new_cls
 
-  .stats <- .admCalcObjStats(objective, length(ov$p0), studies)
+  # pinfo carries the theta_R / theta_F split BIC_h needs (pinfo$struct_has_eta
+  # plus the omega and sigma counts). Without it BIC_h is simply absent, which is
+  # the right outcome -- the split cannot be guessed.
+  .stats <- .admCalcObjStats(objective, length(ov$p0), studies, pinfo = pinfo)
+  # TIC alongside AIC, never instead of it: AIC's 2p is derived from H = J, and
+  # Takeuchi's tr(H^-1 J) is what replaces it when that fails -- but users
+  # compare AIC values across papers, so silently redefining AIC(fit) would make
+  # this package's numbers incomparable with everyone else's.
+  .tic <- .admTICStats(.extra$sandwich, objective)
+  if (!is.null(.tic)) {
+    .stats$objDf$TIC   <- .tic$TIC
+    .stats$objDf$p_eff <- .tic$p_eff
+    .fit$env$TIC       <- .tic$TIC
+    .fit$env$p_eff     <- .tic$p_eff
+  }
   row.names(.stats$objDf) <- est
   .fit$env$logLik    <- .stats$ll
   .fit$env$nobs      <- .stats$nobs

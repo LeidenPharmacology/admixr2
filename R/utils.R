@@ -39,12 +39,27 @@ utils::globalVariables(c(
 }
 
 # Compute objective function statistics for a completed fit.
-# nobs = sum(n_subjects * n_times) across studies, matching nlmixr2's individual-level convention.
+#
+# nobs = sum(n_subjects * n_times) -- observation RECORDS, which is nlmixr2's
+# convention (nlmixr2est R/ofv.R builds BIC as objf + log(nobs) * df, and rxode2
+# fills nobs by counting observation records). Keep it: users compare BIC across
+# papers and against other software, and silently redefining it breaks that.
+#
+# An earlier revision changed this to sum(n) on the argument that the aggregate
+# likelihood has SUBJECTS as its unit of independence. That argument is sound as
+# far as it goes, but the fix was wrong: the field is split (nlme and SPSS use
+# records; Monolix, saemix and SAS NLMIXED use subjects; NONMEM reports no BIC at
+# all), so neither extreme is "the" convention, and unilaterally moving admixr2
+# to one of them just makes its BIC incomparable in a different direction.
+#
+# The principled form is neither -- see .admBICh() below.
+#
 # extra_nobs: observations contributing to `objective` that are NOT in `studies`
 # -- individual-level records in a joint fit (#60). The objective already counts
 # them, so leaving them out of nobs made BIC penalise with the wrong sample size
 # and stamped logLik with an nobs that did not match the value it carried.
-.admCalcObjStats <- function(objective, npar, studies, extra_nobs = 0L) {
+.admCalcObjStats <- function(objective, npar, studies, extra_nobs = 0L,
+                             pinfo = NULL) {
   nobs <- sum(vapply(studies, function(s)
     as.integer(s$n) * (s$n_total %||% length(s$times)), integer(1))) +
     as.integer(extra_nobs)
@@ -67,7 +82,46 @@ utils::globalVariables(c(
     "Log-likelihood" = as.numeric(ll),
     check.names      = FALSE
   )
-  list(ll = ll, nobs = nobs, npar = npar, objDf = objDf)
+  bh <- .admBICh(objective, studies, pinfo, extra_nobs)
+  if (!is.null(bh)) objDf$BIC_h <- bh
+  list(ll = ll, nobs = nobs, npar = npar, objDf = objDf, BIC_h = bh)
+}
+
+# Delattre, Lavielle & Poursat (2014) EJS 8:456-475, eq. (2.6): the BIC whose
+# sample size is derived rather than chosen.
+#
+#   BIC_h = -2 log p(y|theta) + dim(theta_R) log N + dim(theta_F) log ntot
+#
+# theta_R -- parameters of the RANDOM-EFFECT distribution -> log N (subjects)
+# theta_F -- everything else                               -> log ntot (records)
+#
+# The two familiar criteria are its endpoints: all-random gives BIC_N, all-fixed
+# gives BIC_ntot. Their reasoning maps onto ADM directly -- an aggregate study is
+# n_s independent random m-vectors compressed into sufficient statistics, and the
+# objective is their exact density -- which is why the effective sample size for
+# anything describing the random-effect distribution is the subject count.
+#
+# Returns NULL rather than a guess when the split cannot be determined.
+# pinfo$struct_has_eta is NULL-vs-zero-row sensitive: NULL means "no mu-ref
+# information at all", where a zero-row frame means "the information exists and
+# says nothing is paired". Conflating them sends the split to an identity
+# fallback -- see the note in CLAUDE.md.
+.admBICh <- function(objective, studies, pinfo, extra_nobs = 0L) {
+  if (is.null(pinfo) || is.null(pinfo$struct_has_eta)) return(NULL)
+  n_subj <- sum(vapply(studies, function(s) as.integer(s$n), integer(1)))
+  n_tot  <- sum(vapply(studies, function(s)
+    as.integer(s$n) * (s$n_total %||% length(s$times)), integer(1))) +
+    as.integer(extra_nobs)
+  if (!is.finite(n_subj) || n_subj < 1L || !is.finite(n_tot) || n_tot < 1L)
+    return(NULL)
+  has_eta <- as.logical(pinfo$struct_has_eta)
+  # theta_R: every omega entry, plus the structural thetas that carry an eta.
+  dim_R <- length(pinfo$omega_par) + sum(has_eta, na.rm = TRUE)
+  # theta_F: the sigmas, plus structural thetas with no eta (covariate
+  # coefficients on a parameter without one land here, which is correct --
+  # they are estimated at the observation rate, not the subject rate).
+  dim_F <- length(pinfo$sigma_names) + sum(!has_eta, na.rm = TRUE)
+  objective + dim_R * log(n_subj) + dim_F * log(n_tot)
 }
 
 # Bridge admControl/adirmcControl fields into foceiControl for nlmixr2 table machinery.

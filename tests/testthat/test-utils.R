@@ -80,10 +80,66 @@ test_that(".admCalcObjStats: logLik class and attributes", {
 })
 
 test_that(".admCalcObjStats: nobs = sum(n * n_times)", {
+  # Observation RECORDS, which is nlmixr2's convention (nlmixr2est builds
+  # BIC = objf + log(nobs) * df and rxode2 fills nobs by counting observation
+  # records). An earlier revision changed this to sum(n) on the argument that the
+  # aggregate likelihood has subjects as its unit of independence -- sound as far
+  # as it goes, but the field is split (nlme/SPSS count records; Monolix, saemix
+  # and SAS NLMIXED count subjects; NONMEM reports no BIC), so moving unilaterally
+  # only makes admixr2's BIC incomparable in a different direction. The derived
+  # answer is BIC_h, which is reported ALONGSIDE rather than in place of it.
   s1 <- make_study_var(n_times = 3L, n = 100L)
   s2 <- make_study_var(n_times = 5L, n = 200L)
   res <- admixr2:::.admCalcObjStats(0, 1L, list(s1, s2))
   expect_equal(res$nobs, 100L * 3L + 200L * 5L)
+})
+
+test_that(".admBICh: the two familiar criteria are its endpoints", {
+  # BIC_h = objective + dim(theta_R) log N + dim(theta_F) log ntot
+  # (Delattre, Lavielle & Poursat 2014, EJS 8:456-475, eq. 2.6). All-random
+  # collapses to BIC over SUBJECTS, all-fixed to BIC over RECORDS -- so the two
+  # endpoints are the check that the split is wired the right way round.
+  st <- list(a = make_study_var(n_times = 4L, n = 100L),
+             b = make_study_var(n_times = 4L, n =  60L))
+  N   <- 160L; ntot <- 160L * 4L
+  obj <- 500
+
+  # every structural theta carries an eta, and there are no sigmas: pure theta_R
+  p_all <- list(struct_has_eta = c(TRUE, TRUE), omega_par = c("o1", "o2"),
+                sigma_names = character(0))
+  expect_equal(admixr2:::.admBICh(obj, st, p_all), obj + 4 * log(N))
+
+  # no eta anywhere, and the omega block is empty: pure theta_F
+  p_none <- list(struct_has_eta = c(FALSE, FALSE), omega_par = character(0),
+                 sigma_names = c("a", "b"))
+  expect_equal(admixr2:::.admBICh(obj, st, p_none), obj + 4 * log(ntot))
+
+  # the mixed case splits, and lands strictly between the endpoints
+  p_mix <- list(struct_has_eta = c(TRUE, FALSE), omega_par = "o1",
+                sigma_names = "a")
+  expect_equal(admixr2:::.admBICh(obj, st, p_mix),
+               obj + 2 * log(N) + 2 * log(ntot))
+  expect_gt(admixr2:::.admBICh(obj, st, p_mix), obj + 4 * log(N))
+  expect_lt(admixr2:::.admBICh(obj, st, p_mix), obj + 4 * log(ntot))
+
+  # NULL struct_has_eta means "no mu-ref information at all" -- distinct from a
+  # zero-row frame meaning "nothing is paired". It must refuse, not fall back to
+  # an identity split.
+  expect_null(admixr2:::.admBICh(obj, st, NULL))
+  expect_null(admixr2:::.admBICh(obj, st, list(omega_par = "o1")))
+})
+
+test_that(".admCalcObjStats: plain BIC is UNCHANGED by BIC_h", {
+  st <- list(a = make_study_var(n_times = 4L, n = 100L))
+  pin <- list(struct_has_eta = c(TRUE, FALSE), omega_par = "o1",
+              sigma_names = "a")
+  a <- admixr2:::.admCalcObjStats(500, 4L, st)
+  b <- admixr2:::.admCalcObjStats(500, 4L, st, pinfo = pin)
+  expect_equal(a$objDf$BIC, b$objDf$BIC)
+  expect_equal(a$nobs, b$nobs)
+  expect_null(a$objDf$BIC_h)                 # absent without pinfo, not NA
+  expect_true(is.finite(b$objDf$BIC_h))
+  expect_false(isTRUE(all.equal(b$objDf$BIC, b$objDf$BIC_h)))
 })
 
 test_that(".admMakeZ: sobol returns correct shape", {

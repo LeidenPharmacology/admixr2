@@ -403,7 +403,27 @@
   Vi <- if (isv) diag(1 / diag(V), m) else
     tryCatch(chol2inv(chol(V)), error = function(e) NULL)
   if (is.null(Vi) || !all(is.finite(Vi))) return(NULL)
-  r  <- as.numeric(s$E) - as.numeric(E)
+  # G IS EVALUATED AT tau, NOT AT THE OBSERVED SUMMARY, so the residual here is
+  # identically zero. This line looks like an obvious omission and is not --
+  # before "restoring" it, read algorithm/adf/HANDOFF-INFERENCE.md section 1.
+  #
+  # J is DEFINED as Var(S). Expanding the score about t = tau with
+  # delta = t - tau gives Var(S) = sum_s G_s Omega_s G_s' + O(N^-3/2) with G_s
+  # the derivative AT tau_s. Building G from the realised residual instead
+  # returns G_0 Omega G_0' + E[K delta Omega delta' K'], and that second term is
+  # a quadratic form -- non-negative -- so J comes out biased UPWARD by O(1/N),
+  # by an amount growing with the residual relative to the structural spread.
+  # Measured over 200,000 paired replicates: +0.33% at omega = 0.2 rising to
+  # +2.9% with a proportional residual, positive in every cell. Removing it also
+  # cuts sd(c_hat) by 31-35%, which is pure gain for a reported SE.
+  #
+  # Note this is NOT justified by test calibration -- both versions calibrate
+  # dOFV about equally well at these N, because the inflation is offset by
+  # variance and covariance terms of the same order. That cancellation is a
+  # coincidence of sample size. It is justified by the definition of J.
+  #
+  # `s` stays in the signature: s$method still selects the branch.
+  r  <- numeric(m)
   p  <- length(dV)
   ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
   if (isv) ij <- ij[ij[, 1L] == ij[, 2L], , drop = FALSE]

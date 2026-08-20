@@ -1452,6 +1452,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   # what the covariance IS, not what was asked for -- a degraded sandwich is "r"
   .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
+  .sw_HJ    <- attr(.cov, "sandwich_HJ")
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
@@ -1476,7 +1477,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
   .ret$message   <- if (.ctl$n_restarts > 1L) opt_restart$message else pl$last_opt_message
   .ret$extra     <- ""
   .ret$origData  <- studies
-  .ret$adirmcExtra <- list(struct         = final$struct,
+  .ret$adirmcExtra <- list(sandwich = .sw_HJ,
+                        struct         = final$struct,
                          sigma_var      = final$sigma_var,
                          sigma_is_prop  = pinfo$sigma_is_prop,
                          sigma_is_lnorm = pinfo$sigma_is_lnorm,
@@ -1510,5 +1512,6 @@ nlmixr2Est.adirmc <- function(env, ...) {
                   cov_nms = .cov_nms, multi_out = FALSE,
                   extra_field = "adirmcExtra",
                   handle_ctl = nmObjHandleControlObject.adirmcControl,
-                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed)
+                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed,
+                  pinfo = pinfo)
 }

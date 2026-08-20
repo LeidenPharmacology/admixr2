@@ -1114,7 +1114,7 @@
   # sandwich cannot supply -- a residual outside the conditionally-normal family,
   # a joint unit, a singular ingredient -- degrades to "r" and says so, rather
   # than reporting a number of unknown provenance.
-  sw_used <- FALSE
+  sw_used <- FALSE; sw_HJ <- NULL
   if (isTRUE(sandwich)) {
     sw <- tryCatch(
       .admSandwichCov(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
@@ -1125,6 +1125,11 @@
     if (ok) {
       cov_full <- (sw$cov + t(sw$cov)) / 2
       sw_used  <- TRUE
+      # H and J travel with the covariance because two more things are built
+      # from exactly this pair: the TIC penalty tr(H^-1 J), and the eigenvalue
+      # weights admCompare() rescales dOFV by. Recomputing them later would mean
+      # re-solving, and would let them drift from the SE actually reported.
+      sw_HJ    <- list(H = sw$H, J = sw$J, par_names = nms_cov)
     } else {
       warning("adghCalcCov: the sandwich correction could not be computed; ",
               "reporting the covMethod = \"r\" covariance instead.", call. = FALSE)
@@ -1135,6 +1140,7 @@
   # shared implementation for all three estimators -- see .admScaleReportedCov().
   out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
   attr(out, "sandwich") <- sw_used
+  attr(out, "sandwich_HJ") <- sw_HJ
   out
 }
 
@@ -1966,6 +1972,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   # The attribute records what the covariance IS, not what was asked for: a
   # requested sandwich that degraded must not be reported as one.
   .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
+  .sw_HJ    <- attr(.cov, "sandwich_HJ")
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   .cov      <- .admCovThetaOrder(.cov, .ui)
@@ -1994,7 +2001,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   .ret$extra      <- ""
   .ret$origData   <- studies
 
-  .ret$admExtra <- list(struct         = final$struct,
+  .ret$admExtra <- list(sandwich = .sw_HJ,
+                        struct         = final$struct,
                         sigma_var      = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
@@ -2031,5 +2039,6 @@ nlmixr2Est.adgh <- function(env, ...) {
                   cov_nms = .cov_nms, multi_out = multi_out,
                   extra_field = "admExtra",
                   handle_ctl = nmObjHandleControlObject.adghControl,
-                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed)
+                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed,
+                  pinfo = pinfo)
 }
