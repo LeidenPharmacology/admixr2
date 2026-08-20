@@ -215,24 +215,48 @@ pts <- data.frame(
   CRCL = vapply(cohorts, function(c) stats::median(c$CRCL), 0),
   CL   = vapply(published, `[[`, 0, "CL"),
   lab  = names(published))
+# each published model has NO renal term, so what it says about clearance is a
+# FLAT line -- drawn over the CRCL range that trial actually covered
+seg <- data.frame(
+  lab = names(published),
+  CL  = vapply(published, `[[`, 0, "CL"),
+  lo  = vapply(cohorts, function(c) unname(stats::quantile(c$CRCL, .10)), 0),
+  hi  = vapply(cohorts, function(c) unname(stats::quantile(c$CRCL, .90)), 0))
 
 ggplot(curve_df, aes(CRCL, CL)) +
   annotate("rect", xmin = 15, xmax = 30, ymin = -Inf, ymax = Inf,
            fill = "grey85", alpha = .6) +
   annotate("text", x = 22.5, y = max(curve_df$CL), label = "severe\n(no trial)",
            size = 3, vjust = 1.1) +
+  # what the nearest published model would claim down there
+  geom_segment(data = subset(seg, lab == "moderate"),
+               aes(x = 15, xend = lo, y = CL, yend = CL),
+               linetype = "dotted", linewidth = .7, colour = "grey45") +
+  geom_segment(data = seg, aes(x = lo, xend = hi, y = CL, yend = CL,
+                               colour = lab), linewidth = 1.6) +
   geom_line(linewidth = 1, colour = "steelblue4") +
   geom_point(data = pts, size = 3.2) +
-  geom_text(data = pts, aes(label = lab), vjust = -1.1, size = 3.2) +
+  geom_text(data = pts, aes(label = lab), vjust = -1.2, size = 3.2) +
+  guides(colour = "none") +
   labs(x = "median creatinine clearance (mL/min)",
        y = "clearance at 70 kg (L/h)",
-       subtitle = "points: each trial's published CL   line: the meta-analysis") +
+       subtitle = paste("bars: what each published model says, over the range",
+                        "it covered\nblue: the meta-analysis")) +
   theme_bw()
 ```
 
-Three published clearances, plotted against the populations they came from,
-fall on one curve. **That curve is the renal effect** — recovered from the
-contrast between trials, and extended into a region none of them sampled.
+Each trial's model is a **flat bar**: having no renal term, it says clearance
+is whatever it measured, at any renal function. Three flat bars at three
+different heights, each correct over its own range and mutually contradictory.
+
+The blue curve is the meta-analysis, and it passes through all three. (Just
+above, in fact, by 1-4%: a trial with no renal term fits roughly the *average*
+of `(CRCL/90)^0.6` over its cohort, and that average sits below the value at
+the cohort's median because the power function is concave.) **That curve is the
+renal effect** — recovered from the contrast between trials, and
+carried into a region none of them sampled. The dotted extension shows what the
+nearest published model would claim there, which is the comparison the next
+section quantifies.
 
 ## The cohort nobody ran
 
