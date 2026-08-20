@@ -1494,3 +1494,73 @@ test_that(".admCovCollapse sizes the design by RANK, not by covariate count", {
     quote(v  <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3),
     quote(cp <- linCmt()))), 1L)
 })
+
+test_that(".admCovCollapse handles CORRELATED covariates and DISCRETE strata", {
+  # Two shapes that used to be refused outright.
+  #
+  # CORRELATED: an opaque user `joint` publishes no latent structure, but the
+  # `cor` sampler admixr2 builds itself is a Gaussian copula and records
+  # latentR. Then w = t(U) z is N(0, t(U) Rc U) rather than N(0, I_r), which
+  # costs one Cholesky and not a single extra design point.
+  #
+  # DISCRETE: the levels are enumerated exactly, as strata, and the continuous
+  # block collapses within them -- the same split the shift path uses.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  lnm <- function() list(meanlog = ml, sdlog = sdl)
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  mk  <- function(expr, covs) list(lstExpr = expr, allCovs = covs)
+  got <- function(expr, covs, cd)
+    admixr2:::.admCovCollapse(mk(expr, covs), pin, cd, 7L)
+
+  # correlated, three covariates on one parameter
+  cdc <- covDist(W1 = lnm(), W2 = lnm(), W3 = lnm(),
+                 cor = matrix(c(1, .6, .3, .6, 1, .4, .3, .4, 1), 3L, 3L,
+                              dimnames = list(paste0("W", 1:3),
+                                              paste0("W", 1:3))))
+  co <- got(list(quote(v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)),
+            paste0("W", 1:3), cdc)
+  expect_false(is.null(co))
+  expect_equal(co$r, 1L)
+  expect_equal(nrow(co$X), 7L)          # 7, not 7^3
+  expect_equal(sum(co$W), 1, tolerance = 1e-12)
+
+  # discrete SEX beside two continuous: cells x collapsed continuous
+  cds <- list(W1 = lnm(), W2 = lnm(),
+              SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  co2 <- got(list(quote(v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * exp(0.2 * SEX))),
+             c("W1", "W2", "SEX"), cds)
+  expect_false(is.null(co2))
+  expect_equal(co2$r, 1L)
+  expect_equal(co2$n_cell, 2L)
+  expect_equal(nrow(co2$X), 14L)        # 7 nodes x 2 cells, not 7^2 x 2
+  expect_equal(sum(co2$W), 1, tolerance = 1e-12)
+  # the discrete column carries its LEVELS, and each cell its probability
+  expect_setequal(unique(co2$X[, "SEX"]), c(0, 1))
+  expect_equal(sum(co2$W[co2$X[, "SEX"] == 1]), 0.5, tolerance = 1e-10)
+
+  # a covariate-by-STRATUM interaction has a direction that differs cell to
+  # cell, so one shared design would be wrong in all but one of them
+  expect_null(got(list(
+    quote(v <- 10 * (W1/70)^(0.6 + 0.5 * SEX) * (W2/70)^0.4)),
+    c("W1", "W2", "SEX"), cds))
+
+  # a discrete covariate DEPENDENT on a continuous one: a level is then a
+  # TRUNCATION of the latent normal, not a point, so the continuous conditional
+  # law differs cell to cell
+  cdd <- covDist(W1 = lnm(), W2 = lnm(),
+                 SEX = list(values = c(0, 1), probs = c(0.5, 0.5)),
+                 cor = matrix(c(1, .5, .4, .5, 1, .3, .4, .3, 1), 3L, 3L,
+                              dimnames = list(c("W1", "W2", "SEX"),
+                                              c("W1", "W2", "SEX"))))
+  expect_null(got(list(
+    quote(v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * exp(0.2 * SEX))),
+    c("W1", "W2", "SEX"), cdd))
+
+  # only ONE continuous covariate is already a one-dimensional integral
+  expect_null(got(list(quote(v <- 10 * (W1/70)^0.6 * exp(0.2 * SEX))),
+                  c("W1", "SEX"),
+                  list(W1 = lnm(),
+                       SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))))
+})

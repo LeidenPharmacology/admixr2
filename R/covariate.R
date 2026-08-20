@@ -3184,11 +3184,45 @@ print.covDist <- function(x, ...) {
   cd  <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cd)
   p   <- length(nms)
-  # nothing to collapse at one covariate; a joint sampler or a discrete margin
-  # has no separable latent score to collapse ALONG
-  if (p < 2L || is.function(cd[["joint"]])) return(NULL)
-  if (any(vapply(nms, function(n) !is.null(cd[[n]][["values"]]), logical(1))))
-    return(NULL)
+  if (p < 2L) return(NULL)
+  dsc <- vapply(nms, function(n) !is.null(cd[[n]][["values"]]), logical(1))
+  cn  <- nms[!dsc]                     # CONTINUOUS: what collapses
+  dn  <- nms[dsc]                      # DISCRETE: enumerated, as strata
+  pc  <- length(cn)
+  # one continuous covariate is already a one-dimensional integral
+  if (pc < 2L) return(NULL)
+  R <- cd[["latentR"]]
+  # An opaque user `joint` publishes no latent structure to project along. The
+  # `cor` sampler admixr2 builds itself DOES -- it is a Gaussian copula and
+  # records latentR -- so a CORRELATED covariate set is workable, not refused.
+  if (is.function(cd[["joint"]]) && is.null(R)) return(NULL)
+  # latentR is indexed POSITIONALLY -- it carries no dimnames, and indexing it
+  # by covariate name fails outright rather than silently.
+  ic <- match(cn, nms); id <- match(dn, nms)
+  # A discrete covariate DEPENDENT on a continuous one makes each level a
+  # TRUNCATION of the latent normal rather than a point, so the continuous
+  # conditional law differs cell to cell and one shared design would be the
+  # wrong design in every cell. The same refusal .admCovTaylorDesign carries.
+  if (length(dn) && !is.null(R) &&
+      any(abs(R[id, ic, drop = FALSE]) > 0)) return(NULL)
+  Rc <- if (is.null(R)) diag(1, pc) else R[ic, ic, drop = FALSE]
+  Lc <- tryCatch(chol(Rc), error = function(e) NULL)
+  if (is.null(Lc)) return(NULL)
+  # discrete cells: exact product enumeration with their own probabilities
+  if (length(dn)) {
+    lev <- lapply(dn, function(n) as.numeric(cd[[n]][["values"]]))
+    prb <- lapply(dn, function(n) { sp <- cd[[n]]
+      pr <- sp[["probs"]] %||% rep(1 / length(sp[["values"]]),
+                                   length(sp[["values"]]))
+      pr / sum(pr) })
+    cells <- as.matrix(expand.grid(lev, KEEP.OUT.ATTRS = FALSE))
+    colnames(cells) <- dn
+    pcell <- apply(as.matrix(expand.grid(prb, KEEP.OUT.ATTRS = FALSE)), 1L, prod)
+  } else {
+    cells <- matrix(numeric(0), 1L, 0L); pcell <- 1
+  }
+  cell_list <- lapply(seq_len(nrow(cells)), function(i)
+    if (!length(dn)) list() else as.list(stats::setNames(cells[i, ], dn)))
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
   if (is.null(lst)) return(NULL)
   # DIRECT readers only. An assignment reading an INTERMEDIATE that reads a
@@ -3200,27 +3234,29 @@ print.covDist <- function(x, ...) {
                        identical(e[[1L]], quote(`=`))), logical(1))
   hit <- which(is_asgn & vapply(lst, function(e)
     is.call(e) && length(e) == 3L &&
-      length(intersect(all.vars(e[[3L]]), nms)) > 0L, logical(1)))
+      length(intersect(all.vars(e[[3L]]), cn)) > 0L, logical(1)))
   if (!length(hit)) return(NULL)
 
   # deterministic latent probe, and the covariate values it maps to
   Z <- tryCatch(suppressWarnings(
-         stats::qnorm(randtoolbox::sobol(n_probe, dim = p, seed = 7L))),
+         stats::qnorm(randtoolbox::sobol(n_probe, dim = pc, seed = 7L))),
        error = function(e) NULL)
   if (is.null(Z) || !is.matrix(Z) || !all(is.finite(Z))) return(NULL)
-  A <- vapply(seq_len(p), function(k)
-    .admCovQuantile(cd[[nms[k]]], stats::pnorm(Z[, k])), numeric(n_probe))
-  colnames(A) <- nms
+  Z <- Z %*% Lc
+  A <- vapply(seq_len(pc), function(k)
+    .admCovQuantile(cd[[cn[k]]], stats::pnorm(Z[, k])), numeric(n_probe))
+  colnames(A) <- cn
   if (!all(is.finite(A))) return(NULL)
 
   # Evaluate the assignments IN ORDER, so an intermediate is defined before the
   # assignment that reads it, and collect the direct readers' values.
   st <- .admShiftStruct(pinfo)
-  probe <- function(eta_at) {
+  probe <- function(eta_at, cell) {
     ev <- new.env(parent = asNamespace("rxode2"))
     for (k in names(st)) assign(k, st[[k]], ev)
     for (e in pinfo$eta_col_names) assign(e, eta_at, ev)
-    for (k in nms) assign(k, A[, k], ev)
+    for (k in cn) assign(k, A[, k], ev)
+    for (k in dn) assign(k, cell[[k]], ev)
     out <- vector("list", length(hit)); j <- 0L
     for (ii in seq_along(lst)) {
       e <- lst[[ii]]
@@ -3250,10 +3286,11 @@ print.covDist <- function(x, ...) {
   loadings <- function(P) {
     if (is.null(P)) return(NULL)
     W1 <- rep(1 / n_probe, n_probe)
-    B  <- matrix(0, p, ncol(P))
+    B  <- matrix(0, pc, ncol(P))
     for (k in seq_len(ncol(P))) {
       # the LOG first: the multiplicative and allometric forms are log-affine
       pk <- P[, k]
+      if (stats::sd(pk) <= 0) next            # constant: no direction at all
       lg <- all(pk > 0)
       ok <- FALSE
       if (lg) {
@@ -3273,15 +3310,21 @@ print.covDist <- function(x, ...) {
     }
     B
   }
-  B <- loadings(probe(0))
+  B <- loadings(probe(0, cell_list[[1L]]))
   if (is.null(B)) return(NULL)
   # THE LOADING MUST NOT DEPEND ON THE RANDOM EFFECT. A covariate-by-eta
   # interaction (cl <- exp(tcl + b * WT * eta.cl)) has a direction that moves
   # with eta, and the probe at eta = 0 would report b = 0 -- a collapse onto
   # the wrong subspace, silently. Re-probe away from zero and require the same
   # loadings.
-  if (length(pinfo$eta_col_names)) {
-    B2 <- loadings(probe(0.5))
+  # ... or with the STRATUM: a covariate-by-SEX interaction has a direction that
+  # differs cell to cell, and one shared design would be wrong in all but one.
+  chk <- list()
+  if (length(pinfo$eta_col_names)) chk <- c(chk, list(list(0.5, cell_list[[1L]])))
+  if (length(cell_list) > 1L)
+    chk <- c(chk, lapply(cell_list[-1L], function(cl) list(0, cl)))
+  for (cc in chk) {
+    B2 <- loadings(probe(cc[[1L]], cc[[2L]]))
     if (is.null(B2) || !isTRUE(all.equal(B, B2, tolerance = 1e-6)))
       return(NULL)
   }
@@ -3289,19 +3332,34 @@ print.covDist <- function(x, ...) {
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || !length(sv$d)) return(NULL)
   r <- sum(sv$d > max(sv$d) * 1e-8)
-  if (!is.finite(r) || r < 1L || r >= p) return(NULL)   # no reduction to make
-  U <- sv$u[, seq_len(r), drop = FALSE]                 # p x r, orthonormal
+  if (!is.finite(r) || r < 1L || r >= pc) return(NULL)  # no reduction to make
+  U  <- sv$u[, seq_len(r), drop = FALSE]                # pc x r, orthonormal
   nn <- as.integer(n_nodes)
-  if (nn^r > max_rows) return(NULL)
+  if (nn^r * max(nrow(cells), 1L) > max_rows) return(NULL)
 
-  # w ~ N(0, I_r): the ORDINARY r-dimensional grid, and z = U w the preimage
+  # w = t(U) z ~ N(0, t(U) Rc U). INDEPENDENT margins give the identity and the
+  # ordinary r-dimensional grid; a CORRELATED set factors it instead, which
+  # costs one Cholesky and not a single extra point.
+  Sr <- t(U) %*% Rc %*% U
+  Lr <- tryCatch(chol(Sr), error = function(e) NULL)
+  if (is.null(Lr)) return(NULL)
   gr <- .adghNodeGrid(nn, r)
-  Zc <- gr$X %*% t(U)
-  Xc <- vapply(seq_len(p), function(k)
-    .admCovQuantile(cd[[nms[k]]], stats::pnorm(Zc[, k])), numeric(nrow(Zc)))
-  if (!is.matrix(Xc)) Xc <- matrix(Xc, nrow(Zc), p)
-  colnames(Xc) <- nms
+  Zc <- gr$X %*% Lr %*% t(U)                            # preimage z = U w
+  Xc <- vapply(seq_len(pc), function(k)
+    .admCovQuantile(cd[[cn[k]]], stats::pnorm(Zc[, k])), numeric(nrow(Zc)))
+  if (!is.matrix(Xc)) Xc <- matrix(Xc, nrow(Zc), pc)
+  colnames(Xc) <- cn
   if (!all(is.finite(Xc))) return(NULL)
-  list(X = Xc, W = gr$W / sum(gr$W), z = Zc,
-       collapsed = TRUE, r = r, p = p, m = ncol(B))
+  Wc <- gr$W / sum(gr$W)
+
+  # cross the collapsed continuous design with the EXACT discrete enumeration
+  nq <- nrow(Xc); nl <- max(nrow(cells), 1L)
+  ix <- rep(seq_len(nq), times = nl)
+  Xf <- Xc[ix, , drop = FALSE]
+  Wf <- Wc[ix] * rep(pcell, each = nq)
+  if (length(dn))
+    Xf <- cbind(Xf, cells[rep(seq_len(nl), each = nq), , drop = FALSE])
+  Xf <- Xf[, nms, drop = FALSE]
+  list(X = Xf, W = Wf / sum(Wf), z = Zc[ix, , drop = FALSE],
+       collapsed = TRUE, r = r, p = p, pc = pc, m = ncol(B), n_cell = nl)
 }
