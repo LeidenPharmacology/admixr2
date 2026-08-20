@@ -134,6 +134,102 @@
                              dP = dv$dP)))
         }
       }
+      # A correlated Omega that did NOT absorb: condition instead of dropping.
+      # The column substitution below rebuilds the unaffected etas from the
+      # DIAGONAL, so it cannot carry an off-diagonal; conditioning can. See
+      # .admCondShiftParts() for the construction and why it costs nothing --
+      # w's law is free of eta_O, so the mixture inversion still runs once, and
+      # the node count is unchanged.
+      if (isTRUE(sh$cond)) {
+        cp <- .admCondShiftParts(pars$omega, j)
+        if (!is.null(cp)) {
+          m_s <- ncol(D); Oc <- cp$O
+          # rotate: w | node ~ N(Ls^-1 Delta, I), a UNIT-covariance mixture,
+          # which is what the existing inversion already handles. om is 1 in
+          # every direction after the rotation, so every direction below has
+          # dom = 0 and only dD varies.
+          Dw  <- t(solve(cp$Ls, t(D)))
+          .st0 <- .admShiftStruct(pinfo, pars$struct)
+          .dD0 <- .admShiftDDelta(sh$spec, .st0, sh$X, sh$aref)
+          # struct thetas move Delta, hence Dw, with Ls held; omega parameters
+          # move Ls, K and Lo, hence Dw through -Ls^-1 dLs Dw as well as eta
+          # directly. Both are node-only: no solve, no extra rxSolve row.
+          .om_d <- lapply(seq_along(pinfo$omega_par), function(rr) {
+            a <- pinfo$chol_i[rr]; b <- pinfo$chol_j[rr]
+            E <- matrix(0, pinfo$n_eta, pinfo$n_eta); E[a, b] <- 1
+            .admCondShiftDeriv(cp, pars$omega, j,
+                               E %*% t(pars$L) + pars$L %*% t(E), Dw)
+          })
+          .z0 <- matrix(0, nrow(Dw), m_s)
+          dirs <- c(
+            lapply(names(.st0), function(k)
+              if (is.null(.dD0[[k]])) NULL else
+                list(dD = t(solve(cp$Ls, t(as.matrix(.dD0[[k]])))),
+                     dom = numeric(m_s))),
+            lapply(.om_d, function(d) list(dD = d$dDw, dom = numeric(m_s))))
+          if (any(vapply(dirs, is.null, logical(1)))) dirs <- NULL
+          unc <- .admShiftNodesMultiD(Dw, sh$W, rep(1, m_s), n_u, dirs)
+          if (!is.null(unc)) {
+            g1c  <- .adghNodes1(nn0)
+            lstc <- c(list(seq_len(nrow(unc$u))),
+                      lapply(Oc, function(k) seq_along(g1c$x)))
+            ixc <- as.matrix(expand.grid(lstc, KEEP.OUT.ATTRS = FALSE))
+            # eta_O = X_O Lo', on the ORDINARY grid, so Cov(eta_O) = Omega_OO
+            # exactly -- including between two etas the covariate never touches.
+            XO <- matrix(0, nrow(ixc), length(Oc))
+            Wc <- unc$w[ixc[, 1L]]
+            for (kk in seq_along(Oc)) {
+              XO[, kk] <- g1c$x[ixc[, kk + 1L]]
+              Wc <- Wc * g1c$w[ixc[, kk + 1L]]
+            }
+            wN   <- unc$u[ixc[, 1L], , drop = FALSE]
+            eO   <- if (length(Oc)) XO %*% t(cp$Lo) else NULL
+            etac <- matrix(0, nrow(ixc), pinfo$n_eta)
+            if (length(Oc)) etac[, Oc] <- eO
+            etac[, j] <- wN %*% t(cp$Ls) +
+              (if (length(Oc)) eO %*% t(cp$K) else 0)
+            colnames(etac) <- pinfo$eta_col_names
+            crc <- matrix(rep(unlist(sh$aref[sh$cov_names]), each = nrow(etac)),
+                          nrow(etac), length(sh$cov_names),
+                          dimnames = list(NULL, sh$cov_names))
+            shc <- list(degraded = TRUE)
+            if (!is.null(dirs) && !is.null(unc$du)) {
+              duN <- unc$du[ixc[, 1L], , , drop = FALSE]
+              n_th <- length(.st0)
+              # d(eta) per direction, assembled once. Struct directions move
+              # only w; omega directions move Lo, K and Ls as well, so every
+              # column responds and the contraction is taken in full.
+              mkE <- function(d, om_i) {
+                dE <- matrix(0, nrow(etac), pinfo$n_eta)
+                dw <- duN[, , d, drop = FALSE]; dim(dw) <- dim(duN)[1:2]
+                dS <- dw %*% t(cp$Ls)
+                if (!is.null(om_i)) {
+                  o <- .om_d[[om_i]]
+                  dS <- dS + wN %*% t(o$dLs)
+                  if (length(Oc)) {
+                    dEO <- XO %*% t(o$dLo)
+                    dE[, Oc] <- dEO
+                    dS <- dS + dEO %*% t(cp$K) + eO %*% t(o$dK)
+                  }
+                }
+                dE[, j] <- dS
+                dE
+              }
+              shc <- list(cond = TRUE, th_names = names(.st0),
+                          dEta_th = lapply(seq_len(n_th), function(k)
+                            mkE(k, NULL)),
+                          dEta_om = lapply(seq_along(pinfo$omega_par),
+                            function(rr) mkE(n_th + rr, rr)))
+            }
+            # X is read ONLY by the omega chain, which assumes eta = X L'. That
+            # does not hold here, so it is zero and dEta_om carries the whole
+            # omega path instead.
+            return(list(eta = etac, W = Wc / sum(Wc),
+                        X = matrix(0, nrow(etac), pinfo$n_eta),
+                        cov_rows = crc, shift = shc))
+          }
+        }
+      }
       # A VECTOR shift that did not absorb takes the Rosenblatt recursion, and
       # carries its derivatives with it: every u_k moves both because Delta does
       # and because the posterior weights conditioning level k do. Directions
@@ -750,7 +846,18 @@
     # TYPICAL VALUE, which cancels out of a difference of the same expression at
     # two covariate values -- gets a zero column here and is unaffected.
     .sh <- .gS$shift
-    if (isTRUE(.sh$multi)) {
+    if (isTRUE(.sh$cond)) {
+      # Conditioned shift: eta is not X L', so every eta column responds to
+      # every direction and d(eta) is carried whole (see .admShiftCondBase).
+      for (k in seq_len(n_s)) {
+        kk <- match(pinfo$struct_names[k], .sh$th_names)
+        if (is.na(kk)) next
+        base <- .admShiftCondBase(Jl, .sh$dEta_th[[kk]])
+        if (is.null(base)) next
+        dmu_raw <- as.numeric(crossprod(W, base))
+        grad[k] <- grad[k] + contrib(base) + .sigma_V_extra(dmu_raw)
+      }
+    } else if (isTRUE(.sh$multi)) {
       # Every shifted coordinate moves with every theta, through Delta and
       # through the posterior weights that condition the later levels.
       for (k in seq_len(n_s)) {
@@ -792,7 +899,11 @@
     # Chain: L_ii stored as log(Omega_ii) -> d(L_ii)/dp = L_ii/2.
     if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
       i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
-      base <- if (isTRUE(.sh$multi)) {
+      base <- if (isTRUE(.sh$cond)) {
+        # X is zero under conditioning, so Jl[[i]] * X[, j] would contribute
+        # nothing at all: the whole omega path is in dEta_om.
+        .admShiftCondBase(Jl, .sh$dEta_om[[rr]])
+      } else if (isTRUE(.sh$multi)) {
         # A shifted eta's own scale moves EVERY shifted coordinate, so it cannot
         # be folded into X[, j]; an unaffected eta keeps the standard column.
         aa <- match(i, .sh$eta_idx)

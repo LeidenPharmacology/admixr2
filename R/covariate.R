@@ -324,30 +324,29 @@
       # keeps every correlation a substituted column would have dropped.
       .abs <- !is.null(.D0) && .admShiftGaussOK(as.matrix(.D0), .g$W, .g$z,
                                                 ncol(as.matrix(.D0)))
-      if (is.null(.why)) {
-        # The shift replaces ONE eta column. If that eta is correlated with
-        # another, its marginal is no longer sqrt(Omega_jj) and the column
-        # cannot be substituted independently, so refuse rather than quietly
-        # use the diagonal. Checked BEFORE the verification, which costs solves.
-        # ANY estimated off-diagonal, not merely one touching the shifted eta.
-        # The shift branch rebuilds the UNAFFECTED eta columns as
-        # sqrt(Omega_kk) * z, which silently discards the Cholesky off-diagonal
-        # between two etas the covariate never touches. Measured on a 3-eta
-        # model with cov(eta.v, eta.ka) estimated: 2.5e-2 on E, 78x on V and
-        # 951 -2LL units; the same model with that covariance zeroed is
-        # 6.5e-10 / 3.2e-07. Carrying a correlated Omega through the shift
-        # needs the conditional Cholesky of the unaffected block, which this
-        # path does not build.
-        # ... UNLESS the covariate absorbs into Omega. Then no column is
-        # substituted and no correlation is dropped: the whole eta vector is
-        # drawn from Omega + P, so Cov(u_S, eta_O) stays Omega_SO exactly.
-        if (is.null(.why) && length(which(!pinfo$chol_diag)) && !.abs)
-          .why <- paste0(
-            "Omega has an estimated off-diagonal element. The shift replaces ",
-            "one eta column and rebuilds the others from the DIAGONAL, so any ",
-            "correlation between random effects -- including between two the ",
-            "covariate never touches -- would be silently dropped")
-      }
+      # HOW A CORRELATED OMEGA IS CARRIED. The plain shift replaces ONE eta
+      # column and rebuilds the others as sqrt(Omega_kk) * z, which silently
+      # discards every Cholesky off-diagonal -- including between two etas the
+      # covariate never touches. Measured on a 3-eta model with
+      # cov(eta.v, eta.ka) estimated: 2.5e-2 on E, 78x on V and 951 -2LL units;
+      # the same model with that covariance zeroed is 6.5e-10 / 3.2e-07.
+      #
+      # There are two ways not to drop it, and which one applies is decided by
+      # the certificate, not by the correlation:
+      #
+      #   Delta certifies  -> ABSORPTION. No column is substituted at all: the
+      #                       whole eta vector is drawn from Omega + P, so
+      #                       Cov(u_S, eta_O) stays Omega_SO exactly.
+      #   Delta does not   -> CONDITIONING. eta_O comes off its own grid on
+      #                       chol(Omega_OO) and u_S from the conditional law
+      #                       given it. See .admCondShiftParts().
+      #
+      # A DIAGONAL Omega keeps the substitution, bit-identically -- conditioning
+      # reduces to it there (Omega_SO = 0 gives K = 0), but running the general
+      # code would move existing fits by rounding alone.
+      .cond <- FALSE
+      if (is.null(.why))
+        .cond <- !.abs && length(which(!pinfo$chol_diag)) > 0L
       if (is.null(.why)) {
         .w <- .admShiftVerify(.sp, .ui, NULL, pinfo, studies[[nm]], NULL,
                               .cn, .ar)
@@ -388,7 +387,7 @@
         .nu  <- min(101L, max(.nn0, as.integer(ceiling(
                   .nn0 * sqrt((.vD0 + .om0^2) / .om0^2)))))
         studies[[nm]]$.adm_cov_shift <- list(
-          spec = .sp, aref = .ar, cov_names = .cn,
+          spec = .sp, aref = .ar, cov_names = .cn, cond = .cond,
           eta_idx = match(.sp$eta, pinfo$eta_col_names),
           m = length(.sp$eta), X = .g$X, W = .g$W, z = .g$z, n_u = .nu,
           # Fixed at admission for the same reason n_u is: a path that could
@@ -2840,4 +2839,103 @@ print.covDist <- function(x, ...) {
                   stats::cor(X[, nms[1L]], X[, nms[2L]])))
   }
   invisible(x)
+}
+
+# -- Correlated Omega through a NON-certified shift ----------------------------
+#
+# The column substitution rebuilds the unaffected etas from the DIAGONAL, which
+# drops every Omega off-diagonal -- including between two etas the covariate
+# never touches. Absorption avoids that, but only when Delta certifies as
+# Gaussian. Everything else used to fall back to the product grid, at
+# n_cov^p * n_node^m: exponential in the number of covariates.
+#
+# It need not. Conditional on the covariate node j, shifting by a constant does
+# not change the covariance, so
+#
+#     (u_S, eta_O) | j  ~  N( (Delta_j, 0), Omega )
+#
+# -- a mixture of normals ALL SHARING ONE Omega, differing only in the S-block
+# mean. Condition the other way round and the mixture collapses into one block:
+#
+#     eta_O          ~ N(0, Omega_OO)                    ordinary grid
+#     u_S | eta_O, j ~ N(Delta_j + K eta_O, Sigma_c)     K = Omega_SO Omega_OO^-1
+#                                                        Sigma_c = Omega_SS - K Omega_OS
+#
+# Rotating w = Ls^-1 (u_S - K eta_O) with Ls = chol(Sigma_c) gives
+# w | j ~ N(Ls^-1 Delta_j, I): a UNIT-covariance mixture, which is exactly what
+# .admShiftNodes / .admShiftNodesMultiD already invert. Two consequences make
+# this cheap rather than a new path -- w's law does not involve eta_O, so the
+# inversion still runs ONCE, and the node count is unchanged.
+#
+# Reduces to the existing construction exactly when Omega is diagonal:
+# Omega_SO = 0 gives K = 0 and Sigma_c = diag(omega_S^2).
+#
+# Verified against 4e6 Monte Carlo draws on the hardest cell -- m = 2 shifted
+# etas, one untouched, Delta quadratic in a discrete covariate, correlated
+# Omega -- at the MC floor (1.2e-3 against a 1.0e-3 reference error), where the
+# diagonal shortcut is 0.217 off and zeroes Cov(u_S, eta_O) outright.
+.admCondShiftParts <- function(omega, j) {
+  omega <- as.matrix(omega)
+  n     <- nrow(omega)
+  O     <- setdiff(seq_len(n), j)
+  Oss   <- omega[j, j, drop = FALSE]
+  if (!length(O))
+    return(list(O = O, K = NULL, Ls = tryCatch(t(chol(Oss)),
+                                               error = function(e) NULL),
+                Lo = NULL, Sc = Oss))
+  Ooo <- omega[O, O, drop = FALSE]
+  Oso <- omega[j, O, drop = FALSE]
+  Lo  <- tryCatch(t(chol(Ooo)), error = function(e) NULL)
+  if (is.null(Lo)) return(NULL)
+  Ki  <- tryCatch(chol2inv(chol(Ooo)), error = function(e) NULL)
+  if (is.null(Ki)) return(NULL)
+  K   <- Oso %*% Ki
+  Sc  <- Oss - K %*% t(Oso)
+  Sc  <- (Sc + t(Sc)) / 2
+  Ls  <- tryCatch(t(chol(Sc)), error = function(e) NULL)
+  if (is.null(Ls)) return(NULL)
+  list(O = O, K = K, Ls = Ls, Lo = Lo, Sc = Sc, Ooo_inv = Ki)
+}
+
+# Derivatives of the conditional pieces wrt ONE perturbation dOmega of Omega.
+#
+#   dK   = (dOmega_SO - K dOmega_OO) Omega_OO^-1
+#   dSc  = dOmega_SS - dK Omega_OS - K dOmega_OS
+#   dLo  = cholDiff(Lo, dOmega_OO)      dLs = cholDiff(Ls, dSc)
+#
+# and the rotated means move because Ls does:  dDw = -Ls^-1 dLs Dw.
+.admCondShiftDeriv <- function(cp, omega, j, dOm, Dw) {
+  omega <- as.matrix(omega); dOm <- as.matrix(dOm)
+  dSS <- dOm[j, j, drop = FALSE]
+  if (!length(cp$O)) {
+    dLs <- .admCholDiff(cp$Ls, dSS)
+    return(list(dLo = NULL, dK = NULL, dLs = dLs,
+                dDw = -t(solve(cp$Ls, dLs %*% t(Dw)))))
+  }
+  O   <- cp$O
+  dOO <- dOm[O, O, drop = FALSE]
+  dSO <- dOm[j, O, drop = FALSE]
+  dLo <- .admCholDiff(cp$Lo, dOO)
+  dK  <- (dSO - cp$K %*% dOO) %*% cp$Ooo_inv
+  dSc <- dSS - dK %*% t(omega[j, O, drop = FALSE]) - cp$K %*% t(dSO)
+  dSc <- (dSc + t(dSc)) / 2
+  dLs <- .admCholDiff(cp$Ls, dSc)
+  list(dLo = dLo, dK = dK, dLs = dLs,
+       dDw = -t(solve(cp$Ls, dLs %*% t(Dw))))
+}
+
+# d(f)/d(direction) for a grid whose eta is NOT X L'.
+#
+# The omega chain in .adghGradNLL forms d(f)/d(L_ab) as Jl[[a]] * X[, b], which
+# assumes eta = X L'. Under conditioning it is
+#   eta_O = X_O Lo',  eta_S = w Ls' + eta_O K'
+# so every eta column responds to every direction and the contraction has to be
+# taken in full -- the same shape .admAbsorbBase uses for the absorption.
+.admShiftCondBase <- function(Jl, dEta) {
+  out <- NULL
+  for (a in seq_along(Jl)) {
+    if (all(dEta[, a] == 0)) next
+    out <- if (is.null(out)) Jl[[a]] * dEta[, a] else out + Jl[[a]] * dEta[, a]
+  }
+  out
 }

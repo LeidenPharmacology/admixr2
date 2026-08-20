@@ -1011,8 +1011,12 @@ test_that("a correlated Omega takes the absorption and matches the product grid"
   expect_true(is.finite(nq))
   expect_equal(na, nq, tolerance = 1e-8)
 
-  # and it is refused again when the covariate does NOT absorb: a lognormal
-  # covariate entering RAW is not affine in the latent score
+  # ... and when the covariate does NOT absorb -- a lognormal covariate entering
+  # RAW is not affine in the latent score -- it CONDITIONS rather than being
+  # refused. This used to drop to the product grid with an "off-diagonal"
+  # reason; eta_O now comes off its own grid on chol(Omega_OO) and u_S from the
+  # conditional law given it, so no correlation is dropped and the covariate
+  # dimension still leaves the solver. See .admCondShiftParts().
   .raw <- function() {
     ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.005
           eta.cl + eta.v ~ c(0.09, 0.02, 0.04)
@@ -1033,8 +1037,25 @@ test_that("a correlated Omega takes the absorption and matches the product grid"
   u2  <- admixr2:::.admDriverUnits(st2, ui2, ov2)
   s2  <- suppressMessages(
     admixr2:::.admCheckCovariates(ui2, pi2, u2$studies))
-  expect_identical(s2[[1L]]$.adm_cov_path, "rows")
-  expect_match(s2[[1L]]$.adm_cov_shift_why, "off-diagonal")
+  expect_identical(s2[[1L]]$.adm_cov_path, "shift")
+  expect_true(isTRUE(s2[[1L]]$.adm_cov_shift$cond))
+  expect_null(s2[[1L]]$.adm_cov_shift_why)
+  # the substance, not just the routing: it must agree with the product grid,
+  # which invokes no shift identity at all
+  ct2q <- adghControl(studies = st2, grad = "analytical", n_nodes = 5L,
+                      print = 0L, covMethod = "none",
+                      cov_integration = "quadrature")
+  pi2q <- admixr2:::.admDriverPinfo(ui2, ct2q)
+  s2q  <- suppressMessages(
+    admixr2:::.admCheckCovariates(ui2, pi2q, admixr2:::.admDriverUnits(
+      st2, ui2, ov2)$studies))
+  rx2  <- admixr2:::.admLoadModel(ui2)
+  pr2  <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pi2)$p0, pi2)
+  gg   <- admixr2:::.adghNodeGrid(5L, pi2$n_eta)
+  mc   <- admixr2:::.adghMoments(pr2, pi2,  s2[[1L]],  rx2, ov2, gg, 1L)
+  mq   <- admixr2:::.adghMoments(pr2, pi2q, s2q[[1L]], rx2, ov2, gg, 1L)
+  expect_equal(as.numeric(mc$E), as.numeric(mq$E), tolerance = 1e-6)
+  expect_equal(mc$V, mq$V, tolerance = 1e-5)
 })
 
 test_that("the absorption's gradient is right, off the optimum", {
@@ -1254,5 +1275,136 @@ test_that(".admNLLBatch tiles covariates per CHUNK, not per batch", {
     v  <- admixr2:::.admNLLBatch(pp, pin, stu, zl, rx, ov, pl, 1L)
     expect_length(v, n_c)
     expect_true(all(is.finite(v)), info = paste("n_c", n_c))
+  }
+})
+
+# -- correlated Omega through a NON-certified shift ----------------------------
+
+test_that("a correlated Omega CONDITIONS instead of falling to the product grid", {
+  # The plain shift replaces one eta column and rebuilds the others from the
+  # DIAGONAL, so it drops every off-diagonal -- including between two etas the
+  # covariate never touches. Absorption avoids that but needs a Gaussian Delta.
+  # Everything else used to be refused onto the product grid at n_cov^p *
+  # n_node^m. Conditioning carries it instead: eta_O from chol(Omega_OO) and
+  # u_S from the conditional law given it. See .admCondShiftParts().
+  skip_if_not_installed("rxode2")
+  TT <- c(1, 3, 6, 10, 16); D <- 100
+  ML <- log(70); SL <- 0.22
+  cd <- list(WT = list(meanlog = ML, sdlog = SL))
+  # WT enters LINEARLY on a LOGNORMAL margin, so Delta is not affine in the
+  # latent score and the Gaussian certificate fails -- the cell that used to be
+  # refused. Written out rather than built with bquote(): rxode2 parses the
+  # function's own body, and a constructed one fails in lotri.
+  .m0 <- function() {              # DIAGONAL Omega -> substitution, unchanged
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.5
+          eta.cl + eta.v ~ c(0.09, 0.00, 0.06)
+          add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * (WT - 70) / 70 + eta.cl)
+            v  <- exp(tv + eta.v); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  .m3 <- function() {              # rho ~ 0.3
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.5
+          eta.cl + eta.v ~ c(0.09, 0.022, 0.06)
+          add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * (WT - 70) / 70 + eta.cl)
+            v  <- exp(tv + eta.v); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  .m6 <- function() {              # rho ~ 0.6
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.5
+          eta.cl + eta.v ~ c(0.09, 0.044, 0.06)
+          add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * (WT - 70) / 70 + eta.cl)
+            v  <- exp(tv + eta.v); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  mk <- function(rho) switch(as.character(rho), "0" = .m0, "0.3" = .m3,
+                             "0.6" = .m6)
+  setup <- function(rho, ci) {
+    ui  <- suppressMessages(rxode2::rxode2(mk(rho)))
+    pin <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+    pin$nDisplayProgress <- .Machine$integer.max
+    pin$cov_integration <- ci; pin$cov_nodes <- 7L; pin$n_nodes <- 7L
+    s <- list(E = rep(1, length(TT)), V = diag(length(TT)), n = 400L,
+              times = TT, ev = rxode2::et(amt = D), cov = list(WT = 70),
+              cov_dist = cd)
+    st <- admixr2:::.admFlattenStudies(
+            list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
+    st <- admixr2:::.admBuildEvFull(st)
+    st <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, st))
+    list(ui = ui, pin = pin, st = st,
+         pars = admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin),
+         ov = admixr2:::.admOutputVar(ui),
+         rx = admixr2:::.admLoadModel(ui))
+  }
+  # a DIAGONAL Omega keeps the substitution, untouched
+  d0 <- setup(0, "auto")
+  expect_identical(d0$st[[1L]]$.adm_cov_path, "shift")
+  expect_false(isTRUE(d0$st[[1L]]$.adm_cov_shift$cond))
+  # a CORRELATED one conditions rather than being refused
+  d1 <- setup(0.6, "auto")
+  expect_identical(d1$st[[1L]]$.adm_cov_path, "shift")
+  expect_true(isTRUE(d1$st[[1L]]$.adm_cov_shift$cond))
+
+  # ... and agrees with the product grid, which invokes no identity at all
+  mom <- function(d, nn = 9L) {
+    g <- admixr2:::.adghNodeGrid(nn, d$pin$n_eta)
+    m <- admixr2:::.adghMoments(d$pars, d$pin, d$st[[1L]], d$rx, d$ov, g, 1L)
+    list(E = as.numeric(m$E), V = m$V,
+         rows = nrow(admixr2:::.adghGrid(d$pars, d$pin, g, d$st[[1L]])$eta))
+  }
+  for (rho in c(0.3, 0.6)) {
+    ref <- mom(setup(rho, "quadrature"))
+    got <- mom(setup(rho, "auto"))
+    expect_lt(max(abs(got$E - ref$E) / abs(ref$E)), 1e-6, label = paste("E", rho))
+    expect_lt(max(abs(got$V - ref$V) / abs(ref$V)), 1e-5, label = paste("V", rho))
+    # and it is CHEAPER, which is the whole point: the product grid pays
+    # n_cov^p on top of the eta grid
+    expect_lt(got$rows, ref$rows)
+  }
+})
+
+test_that("the conditioned shift's gradient is analytic, off the optimum", {
+  # Every eta column responds to every direction here, so the omega chain cannot
+  # be folded into an X column the way the substitution's can -- X is zero and
+  # dEta_om carries the whole path. The off-diagonal parameter is the one that
+  # only exists BECAUSE Omega is correlated, so it is the discriminating row.
+  skip_if_not_installed("rxode2")
+  TT <- c(1, 3, 6, 10, 16); D <- 100
+  cd <- list(WT = list(meanlog = log(70), sdlog = 0.22))
+  fn <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.5
+          eta.cl + eta.v ~ c(0.09, 0.037, 0.06)
+          add.err <- 0.3 })
+    model({ cl <- exp(tcl + tcov * (WT - 70) / 70 + eta.cl)
+            v  <- exp(tv + eta.v)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui   <- suppressMessages(rxode2::rxode2(fn))
+  ov   <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+  sens <- admixr2:::.admLoadSensModel(ui)
+  pin  <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  pin$nDisplayProgress <- .Machine$integer.max
+  pin$cov_integration <- "auto"; pin$cov_nodes <- 7L; pin$n_nodes <- 7L
+  E0 <- D / 10 * exp(-0.1 * TT); Vd <- 0.25 * E0
+  # non-diagonal, or .admNormaliseStudy auto-detects "var" and the cov branch
+  # is never exercised
+  Vv <- outer(Vd, Vd) * (0.45^abs(outer(seq_along(TT), seq_along(TT), "-")))
+  s  <- list(E = E0, V = Vv, n = 300L, times = TT, ev = rxode2::et(amt = D),
+             cov = list(WT = 70), cov_dist = cd)
+  st <- admixr2:::.admFlattenStudies(
+          list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
+  st <- admixr2:::.admBuildEvFull(st)
+  st <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, st))
+  expect_true(isTRUE(st[[1L]]$.adm_cov_shift$cond))
+  g  <- admixr2:::.adghNodeGrid(7L, pin$n_eta)
+  p0 <- admixr2:::.admBuildOptVec(pin)$p0
+  p  <- p0 + rep_len(c(0.07, -0.05, 0.09, 0.06, 0.04, -0.03), length(p0))
+  f  <- function(q) admixr2:::.adghNLL(q, pin, st, rx, ov, g, 1L)
+  an <- admixr2:::.adghGrad(p, pin, st, sens, rx, ov, g, 1L)
+  expect_true(all(is.finite(an)))
+  for (k in seq_along(p)) {
+    h  <- max(abs(p[k]), 0.1) * 1e-5
+    a  <- p; a[k] <- a[k] + h; b <- p; b[k] <- b[k] - h
+    fd <- (f(a) - f(b)) / (2 * h)
+    expect_equal(unname(an[k]), fd, tolerance = 1e-5, info = names(p)[k])
   }
 })
