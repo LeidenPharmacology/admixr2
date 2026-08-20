@@ -1397,6 +1397,18 @@
 #'   quadrature's. The default is set past that knee, and raising it further
 #'   buys nothing: against a per-subject reference the accuracy is identical at
 #'   5, 9 and 15 nodes. Ignored when `cov_integration = "taylor"`.
+#'
+#'   It is a nodes-per-DIRECTION budget rather than a literal node count.
+#'   Where the covariates reach the model through fewer scalars than there
+#'   are covariates, admixr2 integrates over those directions instead of
+#'   over a product grid, and each direction is given `cov_nodes * p / r`
+#'   nodes rounded up -- MORE than `cov_nodes`, because a direction that
+#'   absorbs several covariate axes carries their combined spread and needs
+#'   proportionally more resolution to resolve it. Three covariates reaching
+#'   the model as a single scalar therefore get 21 nodes on one direction at
+#'   the default, not 7, and still cost 21 design points against the product
+#'   grid's 343. The same budget sizes the directions of a joint
+#'   random-effect/covariate design where one is used.
 #' @param cov_integration How a study's covariate distribution is integrated.
 #'   `"quadrature"` (default) evaluates the model on a product Gauss-Hermite
 #'   grid of `cov_nodes` points per covariate and forms the marginal moments

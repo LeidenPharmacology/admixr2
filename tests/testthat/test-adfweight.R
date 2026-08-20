@@ -61,6 +61,7 @@ test_that("the information equality holds: J(working weight) == 2H", {
   #   * the marginal of the normal-theory weight as the var baseline, where the
   #     objective in fact assumes WORKING INDEPENDENCE across the m variances.
   skip_if_not_installed("rxode2")
+  skip_if_not_installed("numDeriv")   # used for the reference Hessian
   TIMES <- c(4, 8, 12, 16); DOSE <- 100; NQ <- 9L
   .mod <- function() {
     ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; prop.err <- 0.15 })
