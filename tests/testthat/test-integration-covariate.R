@@ -1629,9 +1629,9 @@ test_that("covariates on ONE parameter collapse to a 1-D integral", {
   # the design is found, and it is ONE-dimensional
   co <- build(7L)$st[[1L]]$.adm_cov_collapse
   expect_false(is.null(co))
-  expect_equal(co$m, 1L)
+  expect_equal(co$r, 1L)                    # RANK is what sets the dimension
   expect_equal(co$p, 3L)
-  expect_equal(nrow(co$X), 7L)
+  expect_equal(nrow(co$X), 7L)              # n^r, not n^p
   expect_equal(sum(co$W), 1, tolerance = 1e-12)
 
   # ... and it AGREES with a genuine 21^3 product grid, using far fewer rows

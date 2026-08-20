@@ -1445,3 +1445,52 @@ test_that("the identifiability warning canonicalises the user's shorthand", {
   expect_warning(admixr2:::.admWarnCovIdentifiability(ui, pin, same_mu),
                  "not identifiable")
 })
+
+test_that(".admCovCollapse sizes the design by RANK, not by covariate count", {
+  # The effective dimension is rank(B), with B the matrix of latent loadings --
+  # not p, and not the number of parameters the covariates touch. Two
+  # parameters reading the SAME covariate with different exponents have
+  # proportional loadings and collapse to ONE dimension; counting parameters
+  # would have said two.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  mk  <- function(expr) list(lstExpr = expr, allCovs = paste0("W", 1:3))
+  rank_of <- function(expr) {
+    co <- admixr2:::.admCovCollapse(mk(expr), pin, cd, 7L)
+    if (is.null(co)) NA_integer_ else co$r
+  }
+  # three covariates, one parameter
+  expect_equal(rank_of(list(
+    quote(v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3))), 1L)
+  # reached through an INTERMEDIATE, which several parameters then read: the
+  # direct reader is the intermediate, so the span is still one direction
+  expect_equal(rank_of(list(
+    quote(wtf <- (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3),
+    quote(v   <- 10 * wtf),
+    quote(cl  <- exp(0.1) * wtf))), 1L)
+  # two parameters, but on the SAME covariate: proportional loadings, rank 1
+  expect_equal(rank_of(list(quote(cl <- exp(0.1) * (W1/70)^0.6),
+                            quote(v  <- 10 * (W1/70)^1.2))), 1L)
+  # genuinely two directions
+  expect_equal(rank_of(list(quote(cl <- exp(0.1) * (W1/70)^0.6 * (W2/70)^0.4),
+                            quote(v  <- 10 * (W3/70)^0.3))), 2L)
+  # rank == p: nothing to gain, and it declines rather than paying for a
+  # rotation that buys nothing
+  expect_true(is.na(rank_of(list(quote(cl <- exp(0.1) * (W1/70)^0.6),
+                                 quote(v  <- 10 * (W2/70)^0.4),
+                                 quote(q  <- 2 * (W3/70)^0.3)))))
+  # a covariate-by-eta INTERACTION has a direction that moves with eta, and the
+  # probe at eta = 0 would report the wrong one -- a silent collapse onto the
+  # wrong subspace. Refused by the second probe away from zero.
+  expect_true(is.na(rank_of(list(
+    quote(cl <- exp(0.1 + 0.5 * log(W1/70) * eta.cl))))))
+  # an assignment that will not evaluate in R (linCmt, an ODE line) is SKIPPED,
+  # not fatal -- bailing on the first one refused every linCmt model
+  expect_equal(rank_of(list(
+    quote(v  <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3),
+    quote(cp <- linCmt()))), 1L)
+})

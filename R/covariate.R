@@ -483,9 +483,11 @@
     if (!is.null(.co)) {
       studies[[nm]]$.adm_cov_collapse <- .co
       message("admixr2: study '", nm, "': the ", .co$p, " covariates reach the ",
-              "model through one scalar, so the integral is ",
-              "1-dimensional -- using ", nrow(.co$X), " design points rather ",
-              "than a ", .co$p, "-way product grid.")
+              "model through ", .co$r,
+              if (.co$r == 1L) " scalar" else " independent scalars",
+              ", so the integral is ", .co$r, "-dimensional -- using ",
+              nrow(.co$X), " design points rather than a ", .co$p,
+              "-way product grid.")
     }
   }
 
@@ -3136,100 +3138,170 @@ print.covDist <- function(x, ...) {
   list(u = do.call(rbind, us), w = w / sum(w), du = du)
 }
 
-# -- Dimension collapse: cost scales with PARAMETERS touched, not covariates ----
+
+# -- Dimension collapse: cost scales with the RANK, not the covariate count ----
 #
-# p covariates entering the model through ONE parameter make a ONE-dimensional
-# integral, whatever p is: the model cannot tell two covariate vectors apart
-# when they give that parameter the same value. The product grid integrates it
-# in p dimensions anyway, at n^p points.
+# p covariates reaching the model through r < p independent scalars make an
+# r-DIMENSIONAL integral, whatever p is: the model cannot tell two covariate
+# vectors apart when they give every parameter the same value. The product grid
+# integrates it in p dimensions at n^p points.
 #
-# That is the shift's argument with the random effect removed. The shift
+# This is the shift's argument with the random effect removed. The shift
 # integrates u = Delta(a) + eta and needs an eta to substitute into; here there
-# is none, so it integrates Delta(a) alone -- still one dimension. A covariate
-# on a parameter with NO random effect was the largest remaining case the shift
-# refused, and it is exactly the allometric one (CL on WT and CRCL, V on WT).
+# is none, so it integrates Delta(a) alone. A covariate on a parameter with NO
+# random effect was the largest case the shift refused, and it is the allometric
+# one -- CL and V on weight and creatinine clearance.
 #
-# THE CERTIFICATE IS THE SAME ONE. Every continuous covariate is
-# X = F^-1(Phi(z)) from a standard normal latent z, so if the assignment is
-# affine in z -- log-affine for the multiplicative forms that dominate here --
-# the parameter depends on z only through the scalar b'z. Then a Gauss-Hermite
-# grid along b, mapped back through z = b w / |b|^2 and out through each
-# margin's quantile function, is the SAME integral in one dimension. Not an
-# approximation: the preimage is exact because f depends on a only through b'z.
+# THE CERTIFICATE IS THE SAME ONE THE SHIFT ROUTES ON. Every continuous
+# covariate is X = F^-1(Phi(z)) from a standard normal latent z, so if each
+# covariate-reading assignment is affine in z -- log-affine for the
+# multiplicative forms that dominate -- the model depends on z only through
+# B'z, with B the p x m matrix of loadings.
 #
-# Measured against a 21^3 = 64827-row reference, three covariates on one
+# THE BASIS IS WHAT MAKES IT GENERIC. Take the SVD of B and keep the
+# ORTHONORMAL basis U_r of its column space. Then
+#
+#     w = U_r' z  ~  N(0, I_r)      exactly, since z ~ N(0, I_p)
+#
+# so the design is the ORDINARY r-dimensional Gauss-Hermite grid -- no
+# covariance to factor, no rescaling -- and z = U_r w is an exact preimage,
+# minimum-norm and as good as any other because the model sees only U_r' z.
+#
+# rank(B) is the whole story: three covariates on one parameter give r = 1,
+# three on two parameters r = 2, and three on three separate parameters r = 3,
+# where there is nothing to gain and this correctly declines.
+#
+# Measured against a genuine 21^3 product grid, three covariates on ONE
 # parameter at CV = 0.5:
 #
-#     3-cov grid,  7 nodes   2401 rows   E 5.5e-10   V 1.3e-06
-#     COLLAPSED,  11 nodes     77 rows   E 1.2e-11   V 3.3e-08
+#     grid n=7        2401 rows   E 5.48e-10   V 1.26e-06
+#     COLLAPSED n=11    77 rows   E 1.18e-11   V 3.27e-08
 #
 # Returns a design in .admCovGrid's shape, so nothing downstream changes, or
-# NULL when the collapse does not apply and the product grid stands.
-.admCovCollapse <- function(ui, pinfo, cov_dist, n_nodes, n_probe = 128L) {
+# NULL when it does not apply and the product grid stands.
+.admCovCollapse <- function(ui, pinfo, cov_dist, n_nodes, n_probe = 128L,
+                            max_rows = 20000L) {
   cd  <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cd)
   p   <- length(nms)
-  # nothing to collapse at one covariate, and a joint sampler or a discrete
-  # margin has no separable latent score to collapse ALONG
+  # nothing to collapse at one covariate; a joint sampler or a discrete margin
+  # has no separable latent score to collapse ALONG
   if (p < 2L || is.function(cd[["joint"]])) return(NULL)
   if (any(vapply(nms, function(n) !is.null(cd[[n]][["values"]]), logical(1))))
     return(NULL)
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
   if (is.null(lst)) return(NULL)
-  hit <- Filter(function(e) is.call(e) && length(e) == 3L &&
-                  length(intersect(all.vars(e[[3L]]), nms)) > 0L, lst)
-  # ONE assignment only, for now: several would collapse to m dimensions by the
-  # same argument, which the Rosenblatt machinery could carry, but one is where
-  # the measured win is and the preimage is a single direction.
-  if (length(hit) != 1L) return(NULL)
-  ex <- hit[[1L]]
-  # an assignment carrying a random effect belongs to the SHIFT, which is
-  # cheaper still -- it removes the dimension rather than reducing it
-  if (length(intersect(all.vars(ex[[3L]]), pinfo$eta_col_names))) return(NULL)
+  # DIRECT readers only. An assignment reading an INTERMEDIATE that reads a
+  # covariate (cl <- exp(tcl + eta) * wtf) depends on the covariates only
+  # through that intermediate, so it adds no direction the span does not
+  # already carry -- and including it would double-count the same loading.
+  is_asgn <- vapply(lst, function(e) is.call(e) && length(e) == 3L &&
+                      (identical(e[[1L]], quote(`<-`)) ||
+                       identical(e[[1L]], quote(`=`))), logical(1))
+  hit <- which(is_asgn & vapply(lst, function(e)
+    is.call(e) && length(e) == 3L &&
+      length(intersect(all.vars(e[[3L]]), nms)) > 0L, logical(1)))
+  if (!length(hit)) return(NULL)
 
   # deterministic latent probe, and the covariate values it maps to
-  Z <- tryCatch(stats::qnorm(randtoolbox::sobol(n_probe, dim = p, scrambling = 1L,
-                                                seed = 7L)),
-                error = function(e) NULL)
+  Z <- tryCatch(suppressWarnings(
+         stats::qnorm(randtoolbox::sobol(n_probe, dim = p, seed = 7L))),
+       error = function(e) NULL)
   if (is.null(Z) || !is.matrix(Z) || !all(is.finite(Z))) return(NULL)
   A <- vapply(seq_len(p), function(k)
     .admCovQuantile(cd[[nms[k]]], stats::pnorm(Z[, k])), numeric(n_probe))
   colnames(A) <- nms
   if (!all(is.finite(A))) return(NULL)
 
-  ev <- new.env(parent = asNamespace("rxode2"))
+  # Evaluate the assignments IN ORDER, so an intermediate is defined before the
+  # assignment that reads it, and collect the direct readers' values.
   st <- .admShiftStruct(pinfo)
-  for (k in names(st)) assign(k, st[[k]], ev)
-  for (e in pinfo$eta_col_names) assign(e, 0, ev)
-  for (k in nms) assign(k, A[, k], ev)
-  P <- tryCatch(eval(ex[[3L]], ev), error = function(e) NULL)
-  if (is.null(P) || length(P) != n_probe || !all(is.finite(P))) return(NULL)
-
-  # Is the parameter a function of ONE latent direction? Test the LOG first --
-  # the multiplicative/allometric forms are log-affine -- then the raw value.
-  W1  <- rep(1 / n_probe, n_probe)
-  lg  <- all(P > 0)
-  res <- if (lg) .admShiftAffineResid(matrix(log(P), ncol = 1L), W1, Z) else Inf
-  use_log <- is.finite(res) && res < .ADM_SHIFT_GAUSS_TOL
-  if (!use_log) {
-    res <- .admShiftAffineResid(matrix(P, ncol = 1L), W1, Z)
-    if (!is.finite(res) || res >= .ADM_SHIFT_GAUSS_TOL) return(NULL)
+  probe <- function(eta_at) {
+    ev <- new.env(parent = asNamespace("rxode2"))
+    for (k in names(st)) assign(k, st[[k]], ev)
+    for (e in pinfo$eta_col_names) assign(e, eta_at, ev)
+    for (k in nms) assign(k, A[, k], ev)
+    out <- vector("list", length(hit)); j <- 0L
+    for (ii in seq_along(lst)) {
+      e <- lst[[ii]]
+      if (!isTRUE(is_asgn[ii])) next
+      # An assignment that will not evaluate in R -- cp <- linCmt(), an ODE
+      # line, anything reaching the solver -- is SKIPPED rather than fatal. It
+      # simply does not get defined, and if a covariate-reading assignment
+      # needed it, THAT one fails and is caught below. Bailing on the first
+      # unevaluable line refused every model with a linCmt(), which is most of
+      # them.
+      v <- tryCatch(eval(e[[3L]], ev), error = function(e) NULL)
+      if (is.null(v)) {
+        if (ii %in% hit) return(NULL)
+        next
+      }
+      assign(as.character(e[[2L]]), v, ev)
+      if (ii %in% hit) {
+        j <- j + 1L
+        if (length(v) != n_probe || !all(is.finite(v))) return(NULL)
+        out[[j]] <- as.numeric(v)
+      }
+    }
+    out <- Filter(Negate(is.null), out)
+    if (length(out) != length(hit)) return(NULL)
+    do.call(cbind, out)
   }
-  y  <- if (use_log) log(P) else P
-  cf <- tryCatch(stats::lm.fit(cbind(1, Z), y)$coefficients, error = function(e) NULL)
-  if (is.null(cf) || !all(is.finite(cf))) return(NULL)
-  b  <- cf[-1L]
-  nb <- sqrt(sum(b^2))
-  if (!is.finite(nb) || nb <= 0) return(NULL)
+  loadings <- function(P) {
+    if (is.null(P)) return(NULL)
+    W1 <- rep(1 / n_probe, n_probe)
+    B  <- matrix(0, p, ncol(P))
+    for (k in seq_len(ncol(P))) {
+      # the LOG first: the multiplicative and allometric forms are log-affine
+      pk <- P[, k]
+      lg <- all(pk > 0)
+      ok <- FALSE
+      if (lg) {
+        y  <- log(pk)
+        ok <- .admShiftAffineResid(matrix(y, ncol = 1L), W1, Z) <
+                .ADM_SHIFT_GAUSS_TOL
+      }
+      if (!ok) {
+        y  <- pk
+        if (.admShiftAffineResid(matrix(y, ncol = 1L), W1, Z) >=
+            .ADM_SHIFT_GAUSS_TOL) return(NULL)
+      }
+      cf <- tryCatch(stats::lm.fit(cbind(1, Z), y)$coefficients,
+                     error = function(e) NULL)
+      if (is.null(cf) || !all(is.finite(cf))) return(NULL)
+      B[, k] <- cf[-1L]
+    }
+    B
+  }
+  B <- loadings(probe(0))
+  if (is.null(B)) return(NULL)
+  # THE LOADING MUST NOT DEPEND ON THE RANDOM EFFECT. A covariate-by-eta
+  # interaction (cl <- exp(tcl + b * WT * eta.cl)) has a direction that moves
+  # with eta, and the probe at eta = 0 would report b = 0 -- a collapse onto
+  # the wrong subspace, silently. Re-probe away from zero and require the same
+  # loadings.
+  if (length(pinfo$eta_col_names)) {
+    B2 <- loadings(probe(0.5))
+    if (is.null(B2) || !isTRUE(all.equal(B, B2, tolerance = 1e-6)))
+      return(NULL)
+  }
 
-  # w = b'z ~ N(0, |b|^2). Nodes along w, preimage z = b w / |b|^2 -- the
-  # minimum-norm one, and any preimage serves because the model sees only b'z.
-  g  <- .adghNodes1(as.integer(n_nodes))
-  w  <- nb * g$x
-  Zc <- outer(w / nb^2, b)
+  sv <- tryCatch(svd(B), error = function(e) NULL)
+  if (is.null(sv) || !length(sv$d)) return(NULL)
+  r <- sum(sv$d > max(sv$d) * 1e-8)
+  if (!is.finite(r) || r < 1L || r >= p) return(NULL)   # no reduction to make
+  U <- sv$u[, seq_len(r), drop = FALSE]                 # p x r, orthonormal
+  nn <- as.integer(n_nodes)
+  if (nn^r > max_rows) return(NULL)
+
+  # w ~ N(0, I_r): the ORDINARY r-dimensional grid, and z = U w the preimage
+  gr <- .adghNodeGrid(nn, r)
+  Zc <- gr$X %*% t(U)
   Xc <- vapply(seq_len(p), function(k)
-    .admCovQuantile(cd[[nms[k]]], stats::pnorm(Zc[, k])), numeric(length(w)))
+    .admCovQuantile(cd[[nms[k]]], stats::pnorm(Zc[, k])), numeric(nrow(Zc)))
+  if (!is.matrix(Xc)) Xc <- matrix(Xc, nrow(Zc), p)
   colnames(Xc) <- nms
   if (!all(is.finite(Xc))) return(NULL)
-  list(X = Xc, W = g$w / sum(g$w), z = Zc, collapsed = TRUE, m = 1L, p = p)
+  list(X = Xc, W = gr$W / sum(gr$W), z = Zc,
+       collapsed = TRUE, r = r, p = p, m = ncol(B))
 }
