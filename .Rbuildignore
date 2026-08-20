@@ -20,6 +20,7 @@
 ^vignettes/advanced\.Rmd$
 ^vignettes/datagen\.Rmd$
 ^vignettes/error-models\.Rmd$
+^vignettes/covariates\.Rmd$
 ^validation$
 ^src/.*\.dll$
 ^src/.*\.o$

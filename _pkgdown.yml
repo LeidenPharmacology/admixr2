@@ -110,6 +110,7 @@ articles:
       outputs, and PD / PK-PD endpoints.
     contents:
       - multiple-studies
+      - covariates
       - multi-compartment
       - pkpd
 
