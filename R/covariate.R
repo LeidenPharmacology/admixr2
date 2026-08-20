@@ -3375,7 +3375,16 @@ print.covDist <- function(x, ...) {
       if (ii %in% pr$hit) return(NULL)
       next
     }
-    assign(as.character(e[[2L]]), v, ev)
+    # ONLY a symbol on the left. An ODE line is `d/dt(central) = ...`, whose
+    # LHS is a CALL, and as.character() on it returns a vector -- so assign()
+    # bound the value to "/" and warned "only the first element is used as
+    # variable name". Harmless, in that nothing ever read "/", but it put
+    # garbage in the probe environment and five warnings in every run.
+    #
+    # The line is still recorded as a reader below if it is one: what it
+    # computes is a real function of the covariates, and only the BINDING was
+    # meaningless. Skipping it entirely would drop a direction.
+    if (is.name(e[[2L]])) assign(as.character(e[[2L]]), v, ev)
     if (ii %in% pr$hit) {
       j <- j + 1L
       if (length(v) != nrw || !all(is.finite(v))) return(NULL)
