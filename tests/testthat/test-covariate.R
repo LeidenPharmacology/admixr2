@@ -1858,3 +1858,36 @@ test_that("the collapse paths do not rely on PARTIAL matching", {
   expect_null(jc$r)
   expect_null(jc$routes)
 })
+
+test_that("the joint collapse declines when it would cost MORE", {
+  # Subsuming the covariate collapse on RANK does not make it cheaper. Where the
+  # latents share no directions the joint rank is the whole latent dimension,
+  # and the per-direction cap then applies to every one of them: measured on
+  # 3 random effects with 2 covariates on a parameter carrying none (rank 4 of
+  # 5), the joint design is 6561 rows against 1750 -- 3.75x WORSE. The absolute
+  # max_rows cap is far too loose to catch that, so admission prices the joint
+  # design against the one it would replace.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:2, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:2))
+  pin <- list(eta_col_names = c("eta.cl", "eta.v", "eta.ka"),
+              struct_names = character(0), n_eta = 3L,
+              cov_nodes = 7L, n_nodes = 5L)
+  # nothing shares: each random effect on its own parameter, the covariates on
+  # a fourth that carries none
+  ui <- list(lstExpr = list(quote(cl <- exp(0.1 + eta.cl)),
+                            quote(v  <- exp(2.3 + eta.v)),
+                            quote(ka <- exp(0.2 + eta.ka)),
+                            quote(f  <- (W1/70)^0.6 * (W2/70)^0.4)),
+             allCovs = paste0("W", 1:2))
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
+  expect_false(is.null(jc))                       # it BUILDS -- and is admitted
+  jd <- admixr2:::.admJointDesign(jc, list(), diag(sqrt(c(.09, .04, .05))))
+  expect_false(is.null(jd))
+  # ... and costs more than the eta grid crossed with the covariate collapse,
+  # which is exactly what the admission guard compares
+  co  <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  alt <- 5L^3L * (if (is.null(co)) 7L^2L else nrow(co$X))
+  expect_gt(jd$m^jd$r, alt)
+})

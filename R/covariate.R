@@ -588,6 +588,23 @@
         .pr <- .admUnpack(.p0, pinfo)
         .admJointAdmit(.j0, .admShiftStruct(pinfo, .pr$struct), .pr$L)
       }, error = function(e) NULL)
+      # AND IT MUST BE CHEAPER THAN WHAT IT REPLACES. Subsuming the covariate
+      # collapse on RANK does not make it cheaper: where the latents share no
+      # directions the joint rank is the whole latent dimension, and the
+      # per-direction cap then applies to every one of them. Measured on 3 etas
+      # with 2 covariates on a parameter carrying none -- rank 4 of 5 -- the
+      # joint design is 6561 rows against 1750, 3.75x WORSE, and the absolute
+      # max_rows cap is far too loose to catch it.
+      #
+      # The alternative is the eta grid crossed with whatever covariate design
+      # would otherwise be used. No discrete covariates can be present here --
+      # .admJointCollapse refuses those -- so the fallback grid is cov_nodes^pc.
+      if (!is.null(.jc)) {
+        .alt <- (pinfo$n_nodes %||% 5L)^pinfo$n_eta *
+                (if (!is.null(.co)) nrow(.co$X)
+                 else (pinfo$cov_nodes %||% 7L)^.jc$pc)
+        if (.jc$m^.jc$r >= .alt) .jc <- NULL
+      }
       if (!is.null(.jc)) {
         studies[[nm]]$.adm_cov_joint <- .jc
         message("admixr2: study '", nm, "': the ", pinfo$n_eta,

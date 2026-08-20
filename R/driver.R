@@ -42,6 +42,9 @@
   # the accuracy sweep plateau: raising n_nodes refines only the random-effect
   # dimensions, so the covariate error never moved.
   pinfo$cov_nodes        <- .ctl$cov_nodes %||% 7L
+  # NULL for the three estimators that have no eta grid; the joint collapse
+  # needs it to price itself against the design it would replace
+  pinfo$n_nodes          <- .ctl$n_nodes
   # How the covariate distribution is integrated: "quadrature" (the product grid
   # above) or "taylor" (a second-order expansion of the marginal MOMENTS at
   # 1 + 2p design points). Only adghControl() exposes it, so every other
