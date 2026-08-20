@@ -110,6 +110,25 @@
   if (!length(gamma))
     stop("anova(): the two fits have the same parameters; nothing to test.",
          call. = FALSE)
+  # A BOUNDARY RESTRICTION IS REFUSED, NOT RESCALED. Fixing a variance to zero
+  # puts the null on the edge of the parameter space, where the limit is a
+  # chi-bar-squared MIXTURE -- the expansion behind the eigenvalue weights
+  # assumes an interior null and does not apply. Rescaling dOFV there produces a
+  # finite, plausible p-value from the wrong reference distribution, which is
+  # worse than refusing.
+  #
+  # Only the DIAGONAL is a boundary: Omega_ii >= 0, and .admBuildOptVec stores
+  # it as log(Omega_ii) under `logchol_<eta>`. An OFF-diagonal covariance
+  # (`chol_<eta_i>_<eta_j>`) may take either sign, so fixing one to zero is an
+  # interior restriction and is tested normally.
+  .bnd <- grep("^logchol_", gamma, value = TRUE)
+  if (length(.bnd))
+    stop("anova(): ", paste(.bnd, collapse = ", "), " is a variance, so ",
+         "restricting it to zero puts the null on the BOUNDARY of the ",
+         "parameter space. The limit is then a chi-bar-squared mixture rather ",
+         "than the weighted chi-squares this rescales to, and no rescaling of ",
+         "dOFV repairs that. Compare these models on TIC, or simulate under ",
+         "the null.", call. = FALSE)
   q <- length(gamma)
 
   dOFV <- as.numeric(reduced$objective) - as.numeric(full$objective)

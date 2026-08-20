@@ -159,3 +159,26 @@ test_that("TIC reduces to AIC exactly under correct specification", {
 })
 
 # BIC and BIC_h are pinned in test-utils.R, beside .admCalcObjStats itself.
+
+test_that("a boundary restriction is refused, not rescaled", {
+  # Fixing a VARIANCE to zero puts the null on the edge of the parameter space,
+  # where the limit is a chi-bar-squared mixture. The eigenvalue weights assume
+  # an interior null, so rescaling dOFV there returns a finite, plausible
+  # p-value from the wrong reference distribution. The roxygen claimed this was
+  # refused before the code did it.
+  set.seed(6)
+  p <- 4L
+  nms <- c("tcl", "tv", "logchol_eta.cl", "chol_eta.v_eta.cl")
+  A0 <- matrix(stats::rnorm(p * p), p, p); H <- crossprod(A0) + diag(p)
+  full <- .mock_fit(H, 2 * H, nms, 100)
+  # dropping the VARIANCE is a boundary restriction -> refuse
+  red_v <- .mock_fit(H[-3L, -3L], 2 * H[-3L, -3L], nms[-3L], 106)
+  expect_error(admixr2:::.admLRT(full, red_v), "BOUNDARY")
+  expect_error(anova(full, red_v), "BOUNDARY")
+  # dropping the COVARIANCE is interior -- it may take either sign -- and is
+  # tested normally
+  red_c <- .mock_fit(H[-4L, -4L], 2 * H[-4L, -4L], nms[-4L], 106)
+  got <- admixr2:::.admLRT(full, red_c)
+  expect_equal(got$df, 1L)
+  expect_true(is.finite(got$p))
+})
