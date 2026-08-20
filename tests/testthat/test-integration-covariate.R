@@ -890,7 +890,13 @@ test_that("the shift path reproduces the product grid at a fraction of the rows"
   expect_equal(ms$V, mq$V, tolerance = 1e-4)
   # ... and it costs far fewer solve rows, a count that does NOT grow with the
   # number of covariates (the product grid's does, as n_cov^p)
-  nq <- nrow(admixr2:::.adghGrid(pq, Sq$pin, Sq$g, Sq$stu[[1L]])$eta)
+  # against the genuine PRODUCT grid, with both collapses off. The quadrature
+  # arm now collapses as well -- jointly, over the etas and the covariates
+  # together -- and is itself cheaper than the shift on this model, so scoring
+  # the shift against it would measure the wrong thing.
+  sq <- Sq$stu[[1L]]
+  sq[[".adm_cov_joint"]] <- NULL; sq[[".adm_cov_collapse"]] <- NULL
+  nq <- nrow(admixr2:::.adghGrid(pq, Sq$pin, Sq$g, sq)$eta)
   ns <- nrow(admixr2:::.adghGrid(ps, Ss$pin, Ss$g, Ss$stu[[1L]])$eta)
   expect_lt(ns, nq / 3)
 })
@@ -1619,7 +1625,13 @@ test_that("covariates on ONE parameter collapse to a 1-D integral", {
             list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
     st <- admixr2:::.admBuildEvFull(st)
     st <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, st))
-    if (!collapse) st[[1L]]$.adm_cov_collapse <- NULL
+    # BOTH collapses: the joint one also fires here (etas and covariates span
+    # fewer directions than they occupy), so clearing only the covariate one
+    # leaves a reference that is not a product grid at all
+    if (!collapse) {
+      st[[1L]]$.adm_cov_collapse <- NULL
+      st[[1L]]$.adm_cov_joint    <- NULL
+    }
     g  <- admixr2:::.adghNodeGrid(7L, pin$n_eta)
     pr <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin)
     m  <- admixr2:::.adghMoments(pr, pin, st[[1L]], rx, ov, g, 1L)

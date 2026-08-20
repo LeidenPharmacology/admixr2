@@ -334,6 +334,22 @@
                   shift = shinfo))
     }
   }
+  # JOINT COLLAPSE: one design over the etas AND the covariates together, where
+  # they reach the model through the same directions. It replaces the eta grid
+  # as well as the covariate design, so it returns before either is built.
+  #
+  # X is the node matrix the omega chain rule differentiates. eta = X L' holds
+  # here exactly as it does for the ordinary grid -- the joint preimage's eta
+  # block IS that matrix -- so .adghGrad needs no branch of its own. What it
+  # does not carry is the rotation's own dependence on Omega; that term is the
+  # quadrature re-choosing itself within the same column space, and vanishes to
+  # the accuracy the design is verified to.
+  .jc <- if (!is.null(s)) s[[".adm_cov_joint"]] else NULL
+  if (!is.null(.jc) && !identical(s$.adm_cov_path, "shift")) {
+    jd <- .admJointDesign(.jc, .admShiftStruct(pinfo, pars$struct), pars$L)
+    if (!is.null(jd))
+      return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
+  }
   if (!is.null(s) && !identical(s$.adm_cov_path, "shift") &&
       !is.null(s[["cov_dist"]])) {
     nq <- max(nrow(g$eta), 1L)
