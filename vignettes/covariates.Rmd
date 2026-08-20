@@ -11,305 +11,406 @@ vignette: >
 knitr::opts_chunk$set(
   collapse = TRUE, comment = "#>",
   message = FALSE, warning = FALSE,
-  fig.width = 7, fig.height = 5
+  fig.width = 7, fig.height = 4.4
 )
 source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R"))[1])
 ```
 
+## The problem
+
+You need a dose for patients with **severe renal impairment**. Three trials of
+the drug have been published — one in normal renal function, one in mild
+impairment, one in moderate — and none enrolled a severe patient, because that
+population is routinely excluded.
+
+Worse, none of the three published a renal effect. Each analysed its own trial,
+each found a population where creatinine clearance barely varied, and each
+sensibly left it out of the model. So you have three population models that
+disagree about clearance and none of them says why.
+
+This vignette builds that situation from scratch, then shows that pooling the
+three published models recovers the renal effect none of them could estimate —
+and predicts the cohort nobody ran.
+
 ```{r libs}
 library(admixr2)
 library(rxode2)
-library(nlmixr2est)
+library(nlmixr2)
+library(ggplot2)
 ```
 
-## The problem covariates pose for aggregate data
+## Three populations
 
-With individual data, a covariate is a column: each subject has a weight, and
-the model reads it. With **aggregate** data there is no such column. A
-publication reports one pooled mean vector and one covariance matrix for a
-cohort whose weights varied — and it reports, at best, the *distribution* those
-weights came from ("median 71 kg, range 48–104").
+Start with the patients. Weight and creatinine clearance are correlated —
+larger patients clear more — so they are drawn jointly through a Gaussian
+copula: each keeps its own lognormal margin, and the dependence is imposed on
+the latent scale.
 
-So a covariate enters admixr2 one of two ways, and the distinction runs through
-everything below:
-
-* **Marginalised** — the study declares a `cov_dist`, and the estimator
-  integrates the prediction over that distribution. This is what a pooled
-  summary requires.
-* **Conditioned** — the study declares a `cov` value, and the model is solved
-  at that value. This is what a stratified summary allows ("results for
-  patients under 70 kg").
-
-A single study can do both: marginalise over weight while sitting in a reported
-age stratum.
-
-## Declaring a distribution
-
-`covDist()` takes one named argument per covariate, named as the model reads
-it.
-
-```{r covdist}
-cd <- covDist(WT = c(mean = 72, sd = 16), dist = "lnorm")
-cd$WT
+```{r populations}
+set.seed(11)
+R <- matrix(c(1, 0.45, 0.45, 1), 2, 2,
+            dimnames = list(c("WT", "CRCL"), c("WT", "CRCL")))
+draw_pop <- function(n, med_wt, sd_wt, med_crcl, sd_crcl) {
+  Z <- matrix(stats::rnorm(2 * n), n, 2) %*% chol(R)
+  data.frame(WT   = stats::qlnorm(stats::pnorm(Z[, 1]), log(med_wt),   sd_wt),
+             CRCL = stats::qlnorm(stats::pnorm(Z[, 2]), log(med_crcl), sd_crcl))
+}
+cohorts <- list(
+  normal   = draw_pop(120L, 78, 0.198, 95, 0.217),
+  mild     = draw_pop( 90L, 76, 0.198, 62, 0.198),
+  moderate = draw_pop( 70L, 74, 0.198, 38, 0.198)
+)
 ```
 
-The `mean`/`sd` shorthand is moment-matched onto the requested margin, so the
-lognormal above really does have mean 72 and SD 16. You can also name a margin
-directly (`meanlog`/`sdlog`, or a `quantile` function), which is what you want
-when the paper reports a geometric mean.
-
-`covDraw()` shows you what you declared, which is worth doing before fitting:
-
-```{r covdraw}
-set.seed(1)
-draws <- covDraw(cd, n = 4000L)
-round(c(mean = mean(draws[, "WT"]), sd = stats::sd(draws[, "WT"]),
-        min = min(draws[, "WT"]), max = max(draws[, "WT"])), 2)
+```{r popfig, fig.height = 3.2}
+dd <- do.call(rbind, Map(function(cv, nm)
+  data.frame(cohort = nm, CRCL = cv$CRCL), cohorts, names(cohorts)))
+dd$cohort <- factor(dd$cohort, levels = names(cohorts))
+ggplot(dd, aes(CRCL, fill = cohort)) +
+  geom_density(alpha = 0.45, colour = NA) +
+  geom_vline(xintercept = 21, linetype = "dashed") +
+  annotate("text", x = 21, y = Inf, label = " severe: the cohort we need",
+           hjust = 0, vjust = 1.6, size = 3.2) +
+  labs(x = "creatinine clearance (mL/min)", y = NULL, fill = NULL) +
+  theme_bw() + theme(legend.position = "bottom")
 ```
 
-A **normal** margin is unbounded below, and the quadrature reaches about 3.75
-standard deviations. Any covariate with a CV above roughly 0.27 therefore puts
-a node at or below zero, and an allometric term evaluated there is `NaN` —
-`covDist()` warns when it sees this. Weight at 72 ± 16 is CV
-`r round(16 / 72, 2)`, which is why `dist = "lnorm"` is the right default for
-most PK covariates.
+Each trial spans a narrow band, and the population we need a dose for sits
+below all of them. Note what that means for any single trial: within one
+cohort, creatinine clearance barely varies, so no one trial can estimate what
+it does.
 
-## Why several studies matter
+## What each trial measured
 
-Here is the part that has no individual-data analogue. Simulate three trials
-that differ in the weight distribution they recruited:
+A 200 mg intravenous dose, seven samples. The truth — never known to any of the
+three analysts — is CL = 5 L/h and V = 50 L at 70 kg, allometric scaling on
+weight, and a renal exponent of 0.6.
 
 ```{r simulate}
-set.seed(42)
-TIMES <- c(0.5, 1, 2, 4, 8, 16)
-DOSE  <- 100
-TRUE_CL <- 1; TRUE_V <- 10; OM_CL <- 0.09; SD_ADD <- 0.3
-B_WT <- 0.75                       # allometric exponent on volume
-CV_WT <- 0.35
-sdlog <- sqrt(log(1 + CV_WT^2))
+TIMES <- c(0.5, 1, 2, 4, 8, 12, 24); DOSE <- 200
+CL70 <- 5; V70 <- 50; BCRCL <- 0.6; OM_CL <- 0.06; SD_ADD <- 0.08
 
-make_study <- function(median_wt, n_sub) {
-  meanlog <- log(median_wt)
-  WT <- stats::rlnorm(n_sub, meanlog, sdlog)
-  cl <- TRUE_CL * exp(stats::rnorm(n_sub, 0, sqrt(OM_CL)))
-  v  <- TRUE_V * (WT / 70)^B_WT
-  cp <- t(vapply(seq_len(n_sub), function(i)
-    DOSE / v[i] * exp(-cl[i] / v[i] * TIMES), numeric(length(TIMES))))
-  cp <- cp + matrix(stats::rnorm(length(cp), 0, SD_ADD), nrow(cp), ncol(cp))
-  list(E = colMeans(cp),
-       V = stats::cov.wt(cp, method = "ML")$cov,
-       n = n_sub, times = TIMES, ev = rxode2::et(amt = DOSE),
-       cov_dist = covDist(WT = list(meanlog = meanlog, sdlog = sdlog)))
+sim_trial <- function(cv, id0) {
+  n  <- nrow(cv)
+  cl <- CL70 * (cv$WT / 70)^0.75 * (cv$CRCL / 90)^BCRCL *
+        exp(stats::rnorm(n, 0, sqrt(OM_CL)))
+  v  <- V70 * (cv$WT / 70)
+  do.call(rbind, lapply(seq_len(n), function(i) rbind(
+    data.frame(ID = id0 + i, TIME = 0, DV = NA_real_, AMT = DOSE, EVID = 1,
+               CMT = 1, WT = cv$WT[i], CRCL = cv$CRCL[i]),
+    data.frame(ID = id0 + i, TIME = TIMES,
+               DV = DOSE / v[i] * exp(-cl[i] / v[i] * TIMES) +
+                    stats::rnorm(length(TIMES), 0, SD_ADD),
+               AMT = 0, EVID = 0, CMT = 1,
+               WT = cv$WT[i], CRCL = cv$CRCL[i]))))
 }
-studies <- list(
-  light = make_study(58, 300L),
-  usual = make_study(71, 300L),
-  heavy = make_study(93, 300L)
-)
-knitr::kable(
-  data.frame(study = names(studies),
-             n     = vapply(studies, `[[`, numeric(1), "n"),
-             median_WT = c(58, 71, 93),
-             `E at 1h` = vapply(studies, function(s) s$E[2L], numeric(1)),
-             check.names = FALSE),
-  digits = 2,
-  caption = "Three cohorts differing only in the weight distribution recruited."
-)
+trial_data <- Map(function(cv, k) sim_trial(cv, k * 10000L),
+                  cohorts, seq_along(cohorts))
 ```
 
-**`V` must use the ML denominator `n`, not `n - 1`** — `cov.wt(x, method =
-"ML")$cov`, never `cov(x)`. That follows directly from the MVN likelihood for
-`n` iid subjects, and it is the single most common way to get an aggregate fit
-subtly wrong.
+Here is the normal-function trial as it happened, and as a paper would report
+it. Every patient has a creatinine clearance, and it fans the profiles out —
+but the published summary keeps only the mean and the spread.
 
-Now fit. The model reads `WT` exactly as an individual-data model would:
+```{r hidden, fig.height = 4.0}
+d1 <- trial_data$normal[trial_data$normal$EVID == 0, ]
+ind <- d1[d1$ID %in% head(unique(d1$ID), 150), ]
+ind$panel <- "Individual patients (never published)"
+agg <- do.call(rbind, lapply(split(d1$DV, d1$TIME), function(x)
+  data.frame(m = mean(x), s = stats::sd(x))))
+agg <- data.frame(t = as.numeric(names(split(d1$DV, d1$TIME))), agg,
+                  panel = "What the paper reports")
 
-```{r fit, comment = NA}
-mod <- function() {
-  ini({
-    tcl <- log(1.3)
-    tv  <- log(8)
-    bwt <- 0.4
-    eta.cl ~ 0.05
-    add.err <- 0.4
-  })
+ggplot() +
+  geom_line(data = ind, aes(TIME, DV, group = ID, colour = CRCL),
+            alpha = 0.35, linewidth = 0.3) +
+  geom_ribbon(data = agg, aes(t, ymin = m - s, ymax = m + s),
+              fill = "grey55", alpha = 0.35) +
+  geom_line(data = agg, aes(t, m), linewidth = 1) +
+  geom_point(data = agg, aes(t, m), size = 2) +
+  scale_colour_viridis_c(name = "CRCL (mL/min)", option = "C", end = 0.9) +
+  facet_wrap(~panel) +
+  labs(x = "time (h)", y = "concentration (mg/L)") +
+  theme_bw() + theme(legend.position = "bottom")
+```
+
+The covariate is *invisible* in what gets published. The only trace renal
+function leaves is in the **width** of that ribbon — poor clearers at the top,
+good clearers at the bottom.
+
+## What each trial published
+
+Each analyst fits their own trial. Weight is scaled allometrically, with the
+exponents fixed at 0.75 and 1 as convention requires. None of them includes
+creatinine clearance, because within their own cohort it hardly moves.
+
+```{r trialfits}
+trial_model <- function() {
+  ini({ tcl <- log(4.5); tv <- log(45); eta.cl ~ 0.1; add.err <- 0.2 })
   model({
-    cl <- exp(tcl + eta.cl)
-    v  <- exp(tv) * (WT / 70)^bwt
+    cl <- exp(tcl + eta.cl) * (WT / 70)^0.75
+    v  <- exp(tv) * (WT / 70)
     cp <- linCmt()
     cp ~ add(add.err)
   })
 }
-fit <- nlmixr2(mod, admData(), est = "adgh",
-               control = adghControl(studies = studies, print = 0L,
-                                     covMethod = "none"))
-print(fit)
-```
-
-```{r recovery}
-est <- stats::setNames(as.numeric(fit$parFixedDf$Estimate),
-                       rownames(fit$parFixedDf))
-knitr::kable(
-  data.frame(parameter = c("CL", "V", "allometric exponent", "additive SD"),
-             truth     = c(TRUE_CL, TRUE_V, B_WT, SD_ADD),
-             estimate  = c(exp(est[["tcl"]]), exp(est[["tv"]]),
-                           est[["bwt"]], est[["add.err"]])),
-  digits = 3, caption = "Recovery from three aggregate summaries."
-)
-```
-
-### The covariate coefficient needs between-study contrast
-
-The allometric exponent above is identified because the three cohorts have
-*different* weight distributions. Fit one of them alone and it is much weaker:
-
-```{r single}
-fit1 <- nlmixr2(mod, admData(), est = "adgh",
-                control = adghControl(studies = studies["usual"], print = 0L,
-                                      covMethod = "none"))
-e1 <- stats::setNames(as.numeric(fit1$parFixedDf$Estimate),
-                      rownames(fit1$parFixedDf))
+trial_fits <- lapply(trial_data, function(d)
+  suppressWarnings(nlmixr2(trial_model, d, est = "focei",
+                           control = foceiControl(print = 0L))))
+published <- lapply(trial_fits, function(f) list(
+  CL  = exp(f$parFixedDf["tcl", "Estimate"]),
+  V   = exp(f$parFixedDf["tv",  "Estimate"]),
+  OM  = as.numeric(f$omega[1L, 1L]),
+  ADD = f$parFixedDf["add.err", "Estimate"]))
 knitr::kable(
   data.frame(
-    parameter    = c("allometric exponent", "omega (eta.cl)"),
-    truth        = c(B_WT, OM_CL),
-    three_studies = c(est[["bwt"]], as.numeric(fit$omega[1L, 1L])),
-    one_study     = c(e1[["bwt"]], as.numeric(fit1$omega[1L, 1L]))),
-  digits = 3,
-  caption = "The covariate effect needs contrast across sources; omega absorbs what it cannot explain."
+    cohort      = names(published),
+    median_CRCL = round(vapply(cohorts, function(c) stats::median(c$CRCL),
+                               numeric(1))),
+    CL          = vapply(published, `[[`, numeric(1), "CL"),
+    V           = vapply(published, `[[`, numeric(1), "V"),
+    omega       = vapply(published, `[[`, numeric(1), "OM"),
+    add_SD      = vapply(published, `[[`, numeric(1), "ADD")),
+  digits = 3, row.names = FALSE,
+  caption = "Three independent analyses, each of its own trial."
 )
 ```
 
-A single pooled summary sees the covariate only through what it does to that
-one cohort's mean and spread — and weight enters `V` in the same place the
-between-subject variance does, so `bwt` and `om.eta.cl` trade off. Both drift
-upward together above, which is the signature: the exponent is doing work that
-`omega` should, and vice versa. One cohort is not *nothing* — a single
-covariate still bends the mean profile in a way `omega` cannot mimic exactly —
-but it is weak, and it gets rapidly weaker as covariates are added.
-**Covariate effects in aggregate data are identified by contrast across
-sources**, exactly as in any meta-regression.
+**This is the whole problem in one table.** Clearance differs by nearly a
+factor of two across the three publications; volume is the same in all three.
+Each analysis is perfectly sound on its own data, and none of them can say why
+the clearances differ — the explanation lies in a covariate that does not vary
+within any single trial.
 
-Two covariates that share a distribution have the same problem between
-*themselves*. With `W1`, `W2`, `W3` all lognormal and independent, the
-aggregate depends on the exponents only through `Σb` and `Σb²` — two
-functionals for three parameters — so they are not separately identified
-however many studies you add. Vary the covariates differently across studies,
-or fix all but one.
+A reader of these three papers is left with three incompatible models and no
+way to choose.
 
-## Variance or covariance
+## Their models as our input
 
-`V` may be a full covariance matrix or a plain vector of variances:
+Aggregate data modelling takes two kinds of input: a digitised summary read off
+a published figure, or a **previously published model, supplied directly**.
+This is the second kind. We are not simulating profiles from a model of our own
+invention — we are using three published analyses as evidence, exactly as their
+authors reported them.
 
-```{r vvar, comment = NA}
-s_var <- studies$usual
-s_var$V <- diag(s_var$V)             # keep only the diagonal
-fit_var <- nlmixr2(mod, admData(), est = "adgh",
-                   control = adghControl(studies = list(usual = s_var),
-                                         print = 0L, covMethod = "none"))
-c(cov_method = fit$objective, var_method = fit_var$objective)
-```
+`datagen()` turns a published model, plus the design and population it applies
+to, into the `(E, V, n)` a figure would have given us:
 
-A vector (or a diagonal matrix) is auto-detected and sets `method = "var"`,
-which skips the `O(n_t³)` Cholesky solve. Use it when the paper reports SDs per
-timepoint and no correlation structure — which is most of the time. Note the
-objectives are **not comparable** across the two: they score different
-likelihoods.
-
-One thing to be clear about: the covariate marginalisation moves `V`, not just
-`E`. Between-subject weight variation is a source of between-subject
-variability in the prediction, so a model that marginalises correctly needs
-*less* `omega` to explain the same observed spread. Solving at the mean weight
-instead pushes that variance into `omega`, which is why an unwired covariate
-inflates it.
-
-## Correlated covariates
-
-Real covariates are dependent — weight with height, creatinine with age.
-`covDist(cor = )` builds a **Gaussian copula**: each covariate keeps the margin
-you declared, and the correlation is imposed on the latent scale.
-
-```{r copula}
-R <- matrix(c(1,   0.6, 0.3,
-              0.6, 1,   0.4,
-              0.3, 0.4, 1  ), 3, 3,
-            dimnames = list(c("WT", "HT", "CRCL"), c("WT", "HT", "CRCL")))
-cdc <- covDist(WT   = c(mean = 72,  sd = 16),
-               HT   = c(mean = 170, sd = 10),
-               CRCL = c(mean = 90,  sd = 25),
-               cor  = R, dist = "lnorm")
-set.seed(2)
-d <- covDraw(cdc, n = 8000L)
-knitr::kable(round(stats::cor(d), 2),
-             caption = "Realised Spearman-like correlation of the drawn covariates.")
-```
-
-The realised correlations sit slightly below the requested ones — that is the
-copula, not an error: a Gaussian dependence of `r R["WT", "HT"]` on the latent
-scale maps to a slightly weaker correlation once each margin is pushed through
-a nonlinear quantile function.
-
-For dependence a Gaussian copula cannot express, pass your own sampler as
-`joint` — anything that takes an `n × d` matrix of uniforms and returns the
-`n × d` covariate values, which is exactly the shape a vine copula produces:
-
-```{r vine, eval = requireNamespace("rvinecopulib", quietly = TRUE)}
-vine <- rvinecopulib::vinecop_dist(
-  pair_copulas = list(list(rvinecopulib::bicop_dist("clayton", 0, 2),
-                           rvinecopulib::bicop_dist("gumbel",  0, 1.5)),
-                      list(rvinecopulib::bicop_dist("gaussian", 0, 0.2))),
-  structure = rvinecopulib::dvine_structure(1:3))
-cdv <- covDist(
-  WT = c(mean = 72, sd = 16), HT = c(mean = 170, sd = 10),
-  CRCL = c(mean = 90, sd = 25), dist = "lnorm",
-  joint = function(u) {
-    z <- rvinecopulib::inverse_rosenblatt(u, vine)
-    cbind(WT   = stats::qlnorm(z[, 1], log(72),  0.22),
-          HT   = stats::qlnorm(z[, 2], log(170), 0.06),
-          CRCL = stats::qlnorm(z[, 3], log(90),  0.27))
+```{r datagen}
+CLp <- Vp <- OMp <- ADDp <- NULL          # filled per trial, read by ini()
+published_model <- function() {
+  ini({ tcl <- log(CLp); tv <- log(Vp); eta.cl ~ OMp; add.err <- ADDp })
+  model({
+    cl <- exp(tcl + eta.cl) * (WT / 70)^0.75
+    v  <- exp(tv) * (WT / 70)
+    cp <- linCmt()
+    cp ~ add(add.err)
   })
-set.seed(3)
-round(stats::cor(covDraw(cdv, n = 4000L)), 2)
+}
+cov_dists <- lapply(cohorts, function(cv) covDist(
+  WT   = list(meanlog = mean(log(cv$WT)),   sdlog = stats::sd(log(cv$WT))),
+  CRCL = list(meanlog = mean(log(cv$CRCL)), sdlog = stats::sd(log(cv$CRCL))),
+  cor  = R))
+
+studies <- list()
+for (nm in names(published)) {
+  CLp <- published[[nm]]$CL;  Vp   <- published[[nm]]$V
+  OMp <- published[[nm]]$OM;  ADDp <- published[[nm]]$ADD
+  studies[[nm]] <- datagen(
+    list(s = list(times = TIMES, ev = rxode2::et(amt = DOSE),
+                  n = nrow(cohorts[[nm]]), cov_dist = cov_dists[[nm]])),
+    model   = published_model,
+    control = datagenControl(method = "gh", seed = 1L))$s
+}
+str(studies$normal[c("E", "n")])
 ```
 
-A user-supplied `joint` is treated as opaque: admixr2 samples from it but
-cannot see its latent structure, so the design shortcuts described below are
-not available and some studies will fall back to a product grid.
+Two things are being supplied per study. The **model** is the trial's published
+one. The **`cov_dist`** is the population it was fitted in — which the paper
+describes in its baseline table, and which we now declare so admixr2 can
+integrate over it. `method = "gh"` uses quadrature, so no Monte-Carlo noise
+enters the meta-analysis.
+
+The published models have no renal term. The `cov_dist` does. That asymmetry is
+the point: we are telling admixr2 *who was enrolled*, and letting it work out
+what that implies.
+
+### Specifying the marginal
+
+Those `cov_dist` values came from simulated patients, which a real analysis
+never has. What a paper gives you is a baseline table, and `covDist()` takes
+whichever summary that is:
+
+```{r forms}
+# mean and SD -- moment-matched onto the margin you name
+covDist(WT = c(mean = 78, sd = 16), dist = "lnorm")$WT
+
+# a categorical covariate as the proportions a baseline table prints
+covDist(SEX = c(male = 0.55, female = 0.45))$SEX
+```
+
+| the paper reports | use |
+|---|---|
+| mean and SD | `c(mean = , sd = )` with `dist = "lnorm"` |
+| geometric mean `G`, CV as a fraction | `meanlog = log(G)`, `sdlog = sqrt(log(1 + CV^2))` |
+| median `M` and IQR `Q1`–`Q3` | `meanlog = log(M)`, `sdlog = (log(Q3) - log(Q1)) / 1.349` |
+| median and full range only | `sdlog ≈ (log(max) - log(min)) / 4`, and say you approximated |
+
+```{r iqr}
+# "median weight 78 kg (IQR 68-89)"
+covDist(WT = c(meanlog = log(78), sdlog = (log(89) - log(68)) / 1.349))$WT
+```
+
+A whole baseline table goes in at once as a data frame with `covariate`,
+`mean`, `sd` and `dist` columns, which is usually the least error-prone route.
+For anything these do not cover, pass a `quantile` function.
+
+Prefer `"lnorm"` for anything positive: a **normal** margin is unbounded below
+and the quadrature reaches about 3.75 SD, so a covariate with a CV above
+roughly 0.27 puts a node at or below zero, where an allometric term is `NaN`.
+`covDist()` warns when it sees this.
+
+**The marginal is data, not a parameter.** admixr2 never estimates it. You are
+asserting what the enrolled population looked like, on the paper's authority —
+and if the paper is vague, that is a real limitation of your analysis rather
+than something to bury in an `sdlog`.
+
+## The meta-analysis
+
+Now fit all three together, with the renal term none of them could estimate.
+
+```{r admfit}
+adm_model <- function() {
+  ini({ tcl <- log(4); tv <- log(45); bcrcl <- 0.3
+        eta.cl ~ 0.1; add.err <- 0.1 })
+  model({
+    cl <- exp(tcl + eta.cl) * (WT / 70)^0.75 * (CRCL / 90)^bcrcl
+    v  <- exp(tv) * (WT / 70)
+    cp <- linCmt()
+    cp ~ add(add.err)
+  })
+}
+fit <- nlmixr2(adm_model, admData(), est = "adgh",
+               control = adghControl(studies = studies, print = 0L,
+                                     covMethod = "r"))
+```
+
+```{r admtable}
+e  <- stats::setNames(fit$parFixedDf$Estimate, rownames(fit$parFixedDf))
+se <- stats::setNames(fit$parFixedDf$SE,       rownames(fit$parFixedDf))
+knitr::kable(
+  data.frame(
+    quantity = c("CL at 70 kg, CRCL 90 (L/h)", "V at 70 kg (L)",
+                 "renal exponent", "omega (eta.cl)", "additive SD (mg/L)"),
+    truth    = c(CL70, V70, BCRCL, OM_CL, SD_ADD),
+    estimate = c(exp(e[["tcl"]]), exp(e[["tv"]]), e[["bcrcl"]],
+                 as.numeric(fit$omega[1L, 1L]), e[["add.err"]]),
+    SE       = c(NA, NA, se[["bcrcl"]], NA, se[["add.err"]])),
+  digits = 3,
+  caption = "The meta-analysis across three published models."
+)
+```
+
+The renal exponent is recovered, with a standard error small enough to be
+useful — **from three analyses none of which contained it**. It is identified
+by the *contrast* between the cohorts: three populations, three clearances, and
+a covariate that explains the difference.
+
+```{r diag, fig.height = 4.0}
+plot(fit, which = "mean")$mean_moderate
+```
+
+## Predicting the cohort nobody ran
+
+What would you do without this? You would take the published model closest to
+your patients — the moderate-impairment one — and use it. Compare that against
+the meta-analysis, for a severe population with median CRCL 21 mL/min and
+median weight 72 kg.
+
+```{r predict}
+set.seed(3)
+marg_mean <- function(cl_ref, v_ref, bcrcl, om, n = 40000L) {
+  Z    <- matrix(stats::rnorm(2 * n), n, 2) %*% chol(R)
+  WT   <- stats::qlnorm(stats::pnorm(Z[, 1]), log(72), 0.198)
+  CRCL <- stats::qlnorm(stats::pnorm(Z[, 2]), log(21), 0.217)
+  cl <- cl_ref * (WT / 70)^0.75 *
+        (if (is.na(bcrcl)) 1 else (CRCL / 90)^bcrcl) *
+        exp(stats::rnorm(n, 0, sqrt(om)))
+  v  <- v_ref * (WT / 70)
+  vapply(TIMES, function(t) mean(DOSE / v * exp(-cl / v * t)), numeric(1))
+}
+p_adm   <- marg_mean(exp(e[["tcl"]]), exp(e[["tv"]]), e[["bcrcl"]],
+                     as.numeric(fit$omega[1L, 1L]))
+p_near  <- marg_mean(published$moderate$CL, published$moderate$V, NA,
+                     published$moderate$OM)
+p_truth <- marg_mean(CL70, V70, BCRCL, OM_CL)
+```
+
+```{r payoff, fig.height = 4.0}
+pp <- rbind(
+  data.frame(t = TIMES, cp = p_adm,  what = "meta-analysis, with CRCL"),
+  data.frame(t = TIMES, cp = p_near, what = "nearest published model"))
+ggplot(pp, aes(t, cp, colour = what)) +
+  geom_line(linewidth = 1) +
+  geom_point(data = data.frame(t = TIMES, cp = p_truth),
+             aes(t, cp), inherit.aes = FALSE, size = 2.6, shape = 21,
+             fill = "white", stroke = 1) +
+  labs(x = "time (h)", y = "concentration (mg/L)", colour = NULL,
+       caption = "points: the truth for severe renal impairment") +
+  theme_bw() + theme(legend.position = "bottom")
+```
+
+```{r payofftab}
+knitr::kable(
+  data.frame(time = TIMES, truth = p_truth,
+             meta_analysis = p_adm, nearest_model = p_near,
+             err_meta = 100 * (p_adm  / p_truth - 1),
+             err_near = 100 * (p_near / p_truth - 1)),
+  digits = 2,
+  caption = "Severe renal impairment: predicted mean concentration and % error."
+)
+```
+
+The nearest published model is fine early and drifts badly late, because it is
+carrying a clearance fitted in patients who clear the drug faster than these
+ones do. Underpredicting exposure in renal impairment is the direction that
+matters clinically.
 
 ## Discrete covariates
 
-Levels and probabilities, rather than a margin:
+Not every covariate is continuous. Levels and probabilities rather than a
+margin:
 
 ```{r discrete}
-cdd <- covDist(WT  = c(mean = 72, sd = 16),
+cdd <- covDist(WT  = c(mean = 78, sd = 16),
                SEX = list(values = c(0, 1), probs = c(0.45, 0.55)),
                dist = "lnorm")
-set.seed(4)
-table(covDraw(cdd, n = 2000L)[, "SEX"])
+set.seed(5)
+table(covDraw(cdd, 2000L)[, "SEX"])
 ```
 
-A discrete covariate is a **stratum**, not a direction: it is enumerated
-exactly at its levels, weighted by its probabilities, and crossed with the
-continuous design. Nothing is approximated about it.
+A discrete covariate is a **stratum**, not a distribution to integrate: it is
+enumerated exactly at its levels, weighted by its probabilities, and crossed
+with the continuous design. Nothing about it is approximated.
 
-If a study reports results *separately* by sex, that is conditioning rather
-than marginalising — split it into one study per stratum with `cov = list(SEX =
-0)` and the stratum's own `n`. `covStrata()` does that split for you.
+If a paper reports results *separately* by sex, that is conditioning rather
+than marginalising — split it into one study per stratum, each with
+`cov = list(SEX = 0)` and its own `n`. `covStrata()` does that split for you.
 
 ## What it costs
 
-Every design point is a row in the ODE solve, so a naive product grid over
-`p` covariates and `n_eta` random effects costs `n^(n_eta + p)` — which grows
-badly. admixr2 avoids that where the model allows it.
+Every design point is a row in the ODE solve, so a product grid over `p`
+covariates and `n_eta` random effects costs `n^(n_eta + p)`. admixr2 avoids
+that where the model's structure allows.
 
-```{r cost, comment = NA}
+```{r cost}
+lg <- function() list(meanlog = log(78), sdlog = 0.198)
+st3 <- list(s = list(E = as.numeric(studies$normal$E), V = studies$normal$V,
+                     n = 120L, times = TIMES, ev = rxode2::et(amt = DOSE),
+                     cov_dist = covDist(W1 = lg(), W2 = lg(), W3 = lg())))
 mod3 <- function() {
-  ini({
-    tcl <- log(1); tv <- log(10)
-    b1 <- 0.6; b2 <- 0.4; b3 <- 0.3
-    eta.cl ~ 0.09
-    add.err <- 0.3
-  })
+  ini({ tcl <- log(5); tv <- log(50); b1 <- .6; b2 <- .4; b3 <- .3
+        eta.cl ~ 0.06; add.err <- 0.08 })
   model({
     cl <- exp(tcl + eta.cl)
     v  <- exp(tv) * (W1/70)^b1 * (W2/70)^b2 * (W3/70)^b3
@@ -317,68 +418,62 @@ mod3 <- function() {
     cp ~ add(add.err)
   })
 }
-lg <- function() list(meanlog = log(70), sdlog = sdlog)
-st3 <- list(s1 = list(E = studies$usual$E, V = studies$usual$V, n = 300L,
-                      times = TIMES, ev = rxode2::et(amt = DOSE),
-                      cov_dist = covDist(W1 = lg(), W2 = lg(), W3 = lg())))
-fit3 <- nlmixr2(mod3, admData(), est = "adgh",
-                control = adghControl(studies = st3, print = 0L,
-                                      covMethod = "none", maxeval = 5L))
-```
-
-admixr2 says what it did when it set that study up (the message is suppressed
-in this vignette's chunk options). You can see the same thing in the design it
-built:
-
-```{r collapse}
 ui3  <- suppressMessages(rxode2::rxode2(mod3))
-pin3 <- admixr2:::.admDriverPinfo(
-  ui3, adghControl(studies = st3, covMethod = "none"))
+pin3 <- admixr2:::.admDriverPinfo(ui3, adghControl(studies = st3))
 st3n <- suppressMessages(admixr2:::.admCheckCovariates(
   ui3, pin3, admixr2:::.admDriverUnits(
     st3, ui3, admixr2:::.admOutputVar(ui3))$studies))
-co3  <- st3n[[1L]][[".adm_cov_collapse"]]
-c(covariates      = co3$p,
-  directions      = co3$r,
-  design_points   = nrow(co3$X),
-  product_grid    = pin3$cov_nodes^co3$p)
+co3 <- st3n[[1L]][[".adm_cov_collapse"]]
+c(covariates = co3$p, directions = co3$r,
+  design_points = nrow(co3$X), product_grid = pin3$cov_nodes^co3$p)
 ```
 
-The three covariates reach the model through a single scalar — the product
+Those three covariates reach the model through a single scalar — the product
 `(W1/70)^b1 (W2/70)^b2 (W3/70)^b3` — so the integral is one-dimensional however
 many covariates feed it.
 
 **This is a change of variables, not an approximation.** The prediction depends
-on the covariates only through that scalar; integrating over the scalar and
-integrating over the product give the same answer, and admixr2 verifies that
-numerically before using the reduced design. Where the model does *not* have
-that structure — a covariate interacting with a random effect, for instance —
-it falls back to the full grid rather than guessing.
+on the covariates only through that scalar, so integrating over the scalar and
+integrating over the product give the same answer — and admixr2 verifies that
+numerically before using the reduced design. Where the model does not have that
+structure it falls back to the full grid rather than guessing.
 
-`cov_nodes` (default `r pin3$cov_nodes`) is the budget. It is a nodes-per-*direction*
-budget, not a literal node count: a direction that absorbs several covariate
-axes carries their combined spread and is given proportionally more resolution.
-Raise it if a covariate distribution is very wide or its effect strongly
-nonlinear.
+`cov_nodes` (default `r pin3$cov_nodes`) is the budget, per *direction* rather
+than per covariate: a direction absorbing several covariate axes carries their
+combined spread and is given proportionally more resolution.
 
-## Estimator support
+## Notes
 
-| Estimator | Covariates |
-|---|---|
-| `admc` | yes — per-subject draws |
-| `adgh` | yes — quadrature, and the design reductions above |
-| `adfo` | **refused** |
-| `adirmc` | **refused** |
-
-`adfo` and `adirmc` error rather than silently solving at the covariate mean.
-That is deliberate: every study carries a covariate *value* as well as a
-distribution, so an unwired estimator would not fail — it would quietly return
-a fit whose `omega` had absorbed the between-subject covariate spread. Measured
-on the test model, that is `omega` 0.30 → 0.44.
+* **A covariate effect is identified by contrast across sources.** That is the
+  whole of this vignette: three trials that individually could not estimate a
+  renal effect, pooled into one that can. Within a single cohort the covariate
+  barely varies, and what little it does is confounded with between-subject
+  variability — a covariate enters `V` in the same place `omega` does.
+* **Fix what convention fixes.** Allometric exponents are 0.75 and 1. Aggregate
+  data is not the place to re-estimate them, and trying mostly buys a trade-off
+  against `omega`. Estimate the covariate effects a popPK analysis would.
+* **Covariates that share a distribution are not separately identified.** With
+  `W1`, `W2`, `W3` independent and identically distributed, the aggregate
+  depends on their exponents only through `Σb` and `Σb²` — two functionals for
+  three parameters. Vary them differently across studies, or fix all but one.
+* **Extrapolation is only as good as the covariate model.** The severe
+  prediction works because the power model is the right functional form and the
+  three cohorts span enough of the CRCL range to identify its exponent. A model
+  fitted over 38–95 mL/min and applied at 21 is an extrapolation and should be
+  presented as one.
+* **Estimator support**: `admc` (per-subject draws) and `adgh` (quadrature)
+  marginalise covariates. `adfo` and `adirmc` **refuse** rather than silently
+  solving at the covariate mean — every study carries a covariate value as well
+  as a distribution, so an unwired estimator would not fail, it would quietly
+  return a fit whose `omega` had absorbed the covariate spread.
+* admixr2 also refuses a `cov_dist` naming a covariate the model never reads.
+  A declared-but-unread covariate is almost always a typo or a half-finished
+  edit, and ignoring it would give you a fit that merely looked like it
+  accounted for something.
 
 ## See also
 
-- [Multiple studies](multiple-studies.html) — the contrast that identifies a covariate effect
-- [From a published figure to E, V and n](aggregate-data.html) — preparing each study's summary
-- [datagen()](datagen.html) — simulating aggregate data, including covariate distributions
+- [datagen()](datagen.html) — published models as input, in depth
+- [Multiple studies](multiple-studies.html) — the contrast a covariate effect is identified by
+- [From a published figure to E, V and n](aggregate-data.html) — the other kind of input
 - [Estimator comparison](estimator-comparison.html)
