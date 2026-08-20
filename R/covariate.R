@@ -460,6 +460,35 @@
     }
   }
 
+  # DIMENSION COLLAPSE. Where the covariates reach the model through a single
+  # scalar -- p covariates on one parameter, the allometric case -- the integral
+  # is ONE-dimensional however many covariates there are, and the product grid
+  # was integrating it in p. This is the shift's argument with the random effect
+  # removed, so it applies exactly where the shift refuses for want of an eta.
+  #
+  # Cached for the same reason the Taylor design is: it is a pure function of
+  # `cov_dist` and the model, both fixed for the fit, and .adghGrid runs inside
+  # the objective. Numeric only, so it serialises to a restart worker by value.
+  #
+  # Only where the shift did NOT take the study: the shift removes the
+  # dimension rather than reducing it, so it is cheaper still.
+  for (nm in names(studies)) {
+    s_nm <- studies[[nm]]
+    if (is.null(s_nm[["cov_dist"]])) next
+    if (identical(s_nm$.adm_cov_path, "shift")) next
+    if (identical(pinfo$cov_integration %||% "quadrature", "taylor")) next
+    .co <- tryCatch(.admCovCollapse(.ui, pinfo, s_nm[["cov_dist"]],
+                                    pinfo$cov_nodes %||% 7L),
+                    error = function(e) NULL)
+    if (!is.null(.co)) {
+      studies[[nm]]$.adm_cov_collapse <- .co
+      message("admixr2: study '", nm, "': the ", .co$p, " covariates reach the ",
+              "model through one scalar, so the integral is ",
+              "1-dimensional -- using ", nrow(.co$X), " design points rather ",
+              "than a ", .co$p, "-way product grid.")
+    }
+  }
+
   # EVERY covariate the ANALYSIS model reads must be described by a study that
   # has opted into covariate handling -- either a distribution to integrate
   # over, or a `cov` value if it genuinely does not vary in that study.
@@ -3105,4 +3134,102 @@ print.covDist <- function(x, ...) {
     .admBindDu(ds)
   w  <- unlist(ws)
   list(u = do.call(rbind, us), w = w / sum(w), du = du)
+}
+
+# -- Dimension collapse: cost scales with PARAMETERS touched, not covariates ----
+#
+# p covariates entering the model through ONE parameter make a ONE-dimensional
+# integral, whatever p is: the model cannot tell two covariate vectors apart
+# when they give that parameter the same value. The product grid integrates it
+# in p dimensions anyway, at n^p points.
+#
+# That is the shift's argument with the random effect removed. The shift
+# integrates u = Delta(a) + eta and needs an eta to substitute into; here there
+# is none, so it integrates Delta(a) alone -- still one dimension. A covariate
+# on a parameter with NO random effect was the largest remaining case the shift
+# refused, and it is exactly the allometric one (CL on WT and CRCL, V on WT).
+#
+# THE CERTIFICATE IS THE SAME ONE. Every continuous covariate is
+# X = F^-1(Phi(z)) from a standard normal latent z, so if the assignment is
+# affine in z -- log-affine for the multiplicative forms that dominate here --
+# the parameter depends on z only through the scalar b'z. Then a Gauss-Hermite
+# grid along b, mapped back through z = b w / |b|^2 and out through each
+# margin's quantile function, is the SAME integral in one dimension. Not an
+# approximation: the preimage is exact because f depends on a only through b'z.
+#
+# Measured against a 21^3 = 64827-row reference, three covariates on one
+# parameter at CV = 0.5:
+#
+#     3-cov grid,  7 nodes   2401 rows   E 5.5e-10   V 1.3e-06
+#     COLLAPSED,  11 nodes     77 rows   E 1.2e-11   V 3.3e-08
+#
+# Returns a design in .admCovGrid's shape, so nothing downstream changes, or
+# NULL when the collapse does not apply and the product grid stands.
+.admCovCollapse <- function(ui, pinfo, cov_dist, n_nodes, n_probe = 128L) {
+  cd  <- .admCovDistCanon(cov_dist)
+  nms <- .admCovSpecNames(cd)
+  p   <- length(nms)
+  # nothing to collapse at one covariate, and a joint sampler or a discrete
+  # margin has no separable latent score to collapse ALONG
+  if (p < 2L || is.function(cd[["joint"]])) return(NULL)
+  if (any(vapply(nms, function(n) !is.null(cd[[n]][["values"]]), logical(1))))
+    return(NULL)
+  lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
+  if (is.null(lst)) return(NULL)
+  hit <- Filter(function(e) is.call(e) && length(e) == 3L &&
+                  length(intersect(all.vars(e[[3L]]), nms)) > 0L, lst)
+  # ONE assignment only, for now: several would collapse to m dimensions by the
+  # same argument, which the Rosenblatt machinery could carry, but one is where
+  # the measured win is and the preimage is a single direction.
+  if (length(hit) != 1L) return(NULL)
+  ex <- hit[[1L]]
+  # an assignment carrying a random effect belongs to the SHIFT, which is
+  # cheaper still -- it removes the dimension rather than reducing it
+  if (length(intersect(all.vars(ex[[3L]]), pinfo$eta_col_names))) return(NULL)
+
+  # deterministic latent probe, and the covariate values it maps to
+  Z <- tryCatch(stats::qnorm(randtoolbox::sobol(n_probe, dim = p, scrambling = 1L,
+                                                seed = 7L)),
+                error = function(e) NULL)
+  if (is.null(Z) || !is.matrix(Z) || !all(is.finite(Z))) return(NULL)
+  A <- vapply(seq_len(p), function(k)
+    .admCovQuantile(cd[[nms[k]]], stats::pnorm(Z[, k])), numeric(n_probe))
+  colnames(A) <- nms
+  if (!all(is.finite(A))) return(NULL)
+
+  ev <- new.env(parent = asNamespace("rxode2"))
+  st <- .admShiftStruct(pinfo)
+  for (k in names(st)) assign(k, st[[k]], ev)
+  for (e in pinfo$eta_col_names) assign(e, 0, ev)
+  for (k in nms) assign(k, A[, k], ev)
+  P <- tryCatch(eval(ex[[3L]], ev), error = function(e) NULL)
+  if (is.null(P) || length(P) != n_probe || !all(is.finite(P))) return(NULL)
+
+  # Is the parameter a function of ONE latent direction? Test the LOG first --
+  # the multiplicative/allometric forms are log-affine -- then the raw value.
+  W1  <- rep(1 / n_probe, n_probe)
+  lg  <- all(P > 0)
+  res <- if (lg) .admShiftAffineResid(matrix(log(P), ncol = 1L), W1, Z) else Inf
+  use_log <- is.finite(res) && res < .ADM_SHIFT_GAUSS_TOL
+  if (!use_log) {
+    res <- .admShiftAffineResid(matrix(P, ncol = 1L), W1, Z)
+    if (!is.finite(res) || res >= .ADM_SHIFT_GAUSS_TOL) return(NULL)
+  }
+  y  <- if (use_log) log(P) else P
+  cf <- tryCatch(stats::lm.fit(cbind(1, Z), y)$coefficients, error = function(e) NULL)
+  if (is.null(cf) || !all(is.finite(cf))) return(NULL)
+  b  <- cf[-1L]
+  nb <- sqrt(sum(b^2))
+  if (!is.finite(nb) || nb <= 0) return(NULL)
+
+  # w = b'z ~ N(0, |b|^2). Nodes along w, preimage z = b w / |b|^2 -- the
+  # minimum-norm one, and any preimage serves because the model sees only b'z.
+  g  <- .adghNodes1(as.integer(n_nodes))
+  w  <- nb * g$x
+  Zc <- outer(w / nb^2, b)
+  Xc <- vapply(seq_len(p), function(k)
+    .admCovQuantile(cd[[nms[k]]], stats::pnorm(Zc[, k])), numeric(length(w)))
+  colnames(Xc) <- nms
+  if (!all(is.finite(Xc))) return(NULL)
+  list(X = Xc, W = g$w / sum(g$w), z = Zc, collapsed = TRUE, m = 1L, p = p)
 }

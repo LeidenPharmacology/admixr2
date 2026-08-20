@@ -356,7 +356,13 @@
     cg <- if (.taylor) s[[".adm_cov_taylor"]] %||%
                        .admCovTaylorDesign(s[["cov_dist"]],
                                            pinfo$cov_taylor_h %||% 1)
-          else         .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
+          # The COLLAPSED design when the covariates reach the model through a
+          # single scalar: the same integral in the dimension it actually has,
+          # so this is not an approximation the grid would beat. Cached at
+          # admission (.admCovCollapse costs a probe, no solves); the %||% keeps
+          # a hand-built study working at the old cost.
+          else         s[[".adm_cov_collapse"]] %||%
+                       .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
     nc <- nrow(cg$X)
     g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
     colnames(g$eta) <- pinfo$eta_col_names

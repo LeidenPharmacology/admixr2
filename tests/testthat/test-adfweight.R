@@ -252,6 +252,53 @@ test_that("the weight's own S is the V_pred the objective scores against", {
   }
 })
 
+test_that("the weight's S tracks V_pred to the objective's own accuracy on TBS", {
+  # For add/prop/lnorm the identity above is exact to ~1e-15. TBS is the one
+  # family where it is not, and the gap is the OBJECTIVE's approximation rather
+  # than the weight's: .admTBSRow builds the predicted variance as a
+  # second-order Taylor expansion in var_f (ev = q$v + 0.5 d2v var_f), while the
+  # weight sums the conditional variance exactly over the node ensemble.
+  #
+  # Measured 2.4e-04 at omega^2 = 0.16 rising to 6.3e-04 at 0.49, on the
+  # DIAGONAL only -- the off-diagonal stays at 1e-16 because ms enters it
+  # multiplicatively and cancels. That propagates to ~0.06% on a standard
+  # error, two orders below anything that matters, but it must not grow
+  # silently: a larger gap would mean the weight had stopped describing the law
+  # the objective scores against.
+  skip_if_not_installed("rxode2")
+  TT <- c(2, 5, 9, 14); DOSE <- 100; NQ <- 11L; N <- 200L
+  .bc <- function() {
+    ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.5
+          lam <- fix(0.4) })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+            cp ~ add(e) + boxCox(lam) })
+  }
+  ui  <- suppressMessages(rxode2::rxode2(.bc))
+  ov  <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+  pin <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  pin$nDisplayProgress <- .Machine$integer.max; pin$resid_nodes <- 81L
+  E0 <- DOSE / 10 * exp(-0.1 * TT)
+  st <- list(E = E0, V = diag((0.3 * E0)^2), n = N, times = TT,
+             ev = rxode2::et(amt = DOSE))
+  u  <- admixr2:::.admFlattenStudies(
+          list(s1 = admixr2:::.admNormaliseStudy(st, "s1", "cp")))
+  u  <- admixr2:::.admBuildEvFull(u)
+  g  <- admixr2:::.adghNodeGrid(NQ, pin$n_eta)
+  for (om in c(0.16, 0.49)) {
+    p <- admixr2:::.admBuildOptVec(pin)$p0
+    p[grep("^logchol", names(p))[1L]] <- log(om)
+    pt <- admixr2:::.admAdfParts(admixr2:::.admUnpack(p, pin), pin, u[[1L]],
+                                 rx, ov, g, 1L)
+    m  <- length(pt$E)
+    W  <- admixr2:::.admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4)
+    S  <- N * W[seq_len(m), seq_len(m)]
+    expect_lt(max(abs(S - pt$V) / abs(pt$V)), 2e-3, label = paste("om", om))
+    # the off-diagonal is exact: ms enters it multiplicatively and cancels
+    expect_lt(max(abs((S - pt$V)[upper.tri(S)]) /
+                  abs(pt$V[upper.tri(S)])), 1e-12, label = paste("offdiag", om))
+  }
+})
+
 test_that("the analytic moment Jacobian matches the finite-difference oracle", {
   # G = d2F/(dPsi dt') is closed form in (dE/dPsi, dV/dPsi), so these two are the
   # only derivatives the sandwich takes. .admMomentJac forms them from one
