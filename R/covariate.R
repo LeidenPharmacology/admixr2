@@ -478,7 +478,8 @@
     if (identical(s_nm$.adm_cov_path, "shift")) next
     if (identical(pinfo$cov_integration %||% "quadrature", "taylor")) next
     .co <- tryCatch(.admCovCollapse(.ui, pinfo, s_nm[["cov_dist"]],
-                                    pinfo$cov_nodes %||% 7L),
+                                    pinfo$cov_nodes %||% 7L,
+                                    cov_fixed = s_nm[["cov"]]),
                     error = function(e) NULL)
     if (!is.null(.co)) {
       studies[[nm]]$.adm_cov_collapse <- .co
@@ -3139,6 +3140,35 @@ print.covDist <- function(x, ...) {
 }
 
 
+# The index DIRECTION for a parameter that is not affine in the latent scores.
+#
+# An ordinary least-squares fit of v on z estimates the AVERAGE DERIVATIVE,
+# which for a single-index model is proportional to the index direction whatever
+# the link does afterwards. It is only an estimate, and it is not verified here:
+# .admCovCollapse verifies the DESIGN instead, by checking that it reproduces
+# the parameter law -- which is the property actually needed, rather than a
+# proxy for it.
+#
+# Returns NULL for a link with no first-order signal. A SYMMETRIC one (v even in
+# u) has zero average derivative, so this declines it and the product grid
+# stands -- correct, if conservative.
+.admIndexDir <- function(v, Z) {
+  cf <- tryCatch(stats::lm.fit(cbind(1, Z), v)$coefficients,
+                 error = function(e) NULL)
+  if (is.null(cf) || !all(is.finite(cf))) return(NULL)
+  b <- cf[-1L]
+  nb <- sqrt(sum(b^2))
+  if (!is.finite(nb) || nb <= 0) return(NULL)
+  # A CONSTANT has no direction. Guarding on the ratio alone gets this
+  # backwards: sd(v) = 0 sends it to infinity and a floating-point 1e-16
+  # coefficient is returned as though it meant something.
+  sv <- stats::sd(v)
+  if (!is.finite(sv) || sv <= 0) return(NULL)
+  # and a direction whose signal is swamped is noise, not a direction
+  if (nb / sv < 1e-8) return(NULL)
+  b
+}
+
 # -- Dimension collapse: cost scales with the RANK, not the covariate count ----
 #
 # p covariates reaching the model through r < p independent scalars make an
@@ -3180,7 +3210,8 @@ print.covDist <- function(x, ...) {
 # Returns a design in .admCovGrid's shape, so nothing downstream changes, or
 # NULL when it does not apply and the product grid stands.
 .admCovCollapse <- function(ui, pinfo, cov_dist, n_nodes, n_probe = 128L,
-                            max_rows = 20000L) {
+                            max_rows = 20000L, n_ver = 8192L,
+                            cov_fixed = NULL) {
   cd  <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cd)
   p   <- length(nms)
@@ -3247,16 +3278,42 @@ print.covDist <- function(x, ...) {
     .admCovQuantile(cd[[cn[k]]], stats::pnorm(Z[, k])), numeric(n_probe))
   colnames(A) <- cn
   if (!all(is.finite(A))) return(NULL)
+  # A SEPARATE, much larger probe for the VERIFICATION reference. The loadings
+  # come off the small one -- an average derivative needs no precision -- but
+  # the reference the design is judged against must be more accurate than the
+  # design, and at 128 points its own moments are only good to ~1e-2, which is
+  # looser than the tolerance. Costs no solves: these are R evaluations of the
+  # parameter assignment.
+  Zv <- tryCatch(suppressWarnings(
+          stats::qnorm(randtoolbox::sobol(n_ver, dim = pc, seed = 11L))),
+        error = function(e) NULL)
+  if (is.null(Zv) || !is.matrix(Zv) || !all(is.finite(Zv))) return(NULL)
+  Zv <- Zv %*% Lc
+  Av <- vapply(seq_len(pc), function(k)
+    .admCovQuantile(cd[[cn[k]]], stats::pnorm(Zv[, k])), numeric(n_ver))
+  colnames(Av) <- cn
+  if (!all(is.finite(Av))) return(NULL)
 
   # Evaluate the assignments IN ORDER, so an intermediate is defined before the
   # assignment that reads it, and collect the direct readers' values.
   st <- .admShiftStruct(pinfo)
-  probe <- function(eta_at, cell) {
+  # evaluate the covariate-reading assignments at an ARBITRARY covariate matrix
+  # -- the probe uses A, the verification uses the design points Xc
+  probe_gen <- function(eta_at, cell, AA) {
+    nrw <- nrow(AA)
     ev <- new.env(parent = asNamespace("rxode2"))
     for (k in names(st)) assign(k, st[[k]], ev)
     for (e in pinfo$eta_col_names) assign(e, eta_at, ev)
-    for (k in cn) assign(k, A[, k], ev)
+    for (k in cn) assign(k, AA[, k], ev)
     for (k in dn) assign(k, cell[[k]], ev)
+    # A study declares a covariate one of two ways: as a DISTRIBUTION to
+    # marginalise over, or as the VALUE it is CONDITIONED at. Only the first is
+    # an integral, so only the first appears in the design -- but a conditioned
+    # covariate in the SAME assignment still has to be in scope, or the probe
+    # cannot evaluate it and the whole study is refused. That is a mixed study:
+    # marginalising over weight while sitting in a reported age stratum.
+    for (k in names(cov_fixed))
+      if (!(k %in% cn) && !(k %in% dn)) assign(k, cov_fixed[[k]], ev)
     out <- vector("list", length(hit)); j <- 0L
     for (ii in seq_along(lst)) {
       e <- lst[[ii]]
@@ -3275,7 +3332,7 @@ print.covDist <- function(x, ...) {
       assign(as.character(e[[2L]]), v, ev)
       if (ii %in% hit) {
         j <- j + 1L
-        if (length(v) != n_probe || !all(is.finite(v))) return(NULL)
+        if (length(v) != nrw || !all(is.finite(v))) return(NULL)
         out[[j]] <- as.numeric(v)
       }
     }
@@ -3283,30 +3340,38 @@ print.covDist <- function(x, ...) {
     if (length(out) != length(hit)) return(NULL)
     do.call(cbind, out)
   }
+  probe    <- function(eta_at, cell) probe_gen(eta_at, cell, A)
+  probe_at <- function(AA, cell)     probe_gen(0, cell, AA)
   loadings <- function(P) {
     if (is.null(P)) return(NULL)
     W1 <- rep(1 / n_probe, n_probe)
     B  <- matrix(0, pc, ncol(P))
     for (k in seq_len(ncol(P))) {
-      # the LOG first: the multiplicative and allometric forms are log-affine
       pk <- P[, k]
       if (stats::sd(pk) <= 0) next            # constant: no direction at all
-      lg <- all(pk > 0)
-      ok <- FALSE
-      if (lg) {
-        y  <- log(pk)
-        ok <- .admShiftAffineResid(matrix(y, ncol = 1L), W1, Z) <
-                .ADM_SHIFT_GAUSS_TOL
+      b <- NULL
+      # AFFINE first, on the LOG and then the raw scale. Exact where it holds,
+      # and it holds for the multiplicative and allometric forms that dominate.
+      for (y in list(if (all(pk > 0)) log(pk) else NULL, pk)) {
+        if (is.null(y)) next
+        if (.admShiftAffineResid(matrix(y, ncol = 1L), W1, Z) <
+            .ADM_SHIFT_GAUSS_TOL) {
+          cf <- tryCatch(stats::lm.fit(cbind(1, Z), y)$coefficients,
+                         error = function(e) NULL)
+          if (!is.null(cf) && all(is.finite(cf))) { b <- cf[-1L]; break }
+        }
       }
-      if (!ok) {
-        y  <- pk
-        if (.admShiftAffineResid(matrix(y, ncol = 1L), W1, Z) >=
-            .ADM_SHIFT_GAUSS_TOL) return(NULL)
-      }
-      cf <- tryCatch(stats::lm.fit(cbind(1, Z), y)$coefficients,
-                     error = function(e) NULL)
-      if (is.null(cf) || !all(is.finite(cf))) return(NULL)
-      B[, k] <- cf[-1L]
+      # SINGLE INDEX otherwise. Affine is far stronger than the construction
+      # needs: the design places Gauss-Hermite nodes in z, so it is enough that
+      # the parameter be SOME function of one linear combination u. Then u is
+      # normal, a GH rule integrates the composition exactly to degree 2n-1,
+      # and the preimage is unchanged. Affine is the special case of an
+      # identity link -- and requiring it refuses, for one, an Emax link on a
+      # product of lognormal covariates, whose INDEX is perfectly affine and
+      # whose LINK is not.
+      if (is.null(b)) b <- .admIndexDir(pk, Z)
+      if (is.null(b)) return(NULL)
+      B[, k] <- b
     }
     B
   }
@@ -3360,6 +3425,46 @@ print.covDist <- function(x, ...) {
   if (length(dn))
     Xf <- cbind(Xf, cells[rep(seq_len(nl), each = nq), , drop = FALSE])
   Xf <- Xf[, nms, drop = FALSE]
-  list(X = Xf, W = Wf / sum(Wf), z = Zc[ix, , drop = FALSE],
+  Wf <- Wf / sum(Wf)
+
+  # VERIFY THE DESIGN, NOT THE CERTIFICATE. What the collapse needs is that the
+  # reduced design reproduce the LAW of every covariate-reading assignment --
+  # that is the property, and every affinity or single-index test is only a
+  # proxy for it. Proxies were tried and are not sharp enough: a within-bin
+  # spread reports 0.18 for an exact identity link, and a spline residual
+  # separates a genuine index from a sum of separate nonlinearities by only a
+  # factor of five.
+  #
+  # So evaluate the assignments at the DESIGN points and compare their weighted
+  # moments against a large probe, which is the truth here. Costs no solves --
+  # these are R evaluations of the parameter assignment. This subsumes the
+  # affine test rather than replacing it: an affine case passes trivially.
+  ver <- function(cell, wcell) {
+    Pd <- probe_at(Xc, cell)
+    if (is.null(Pd)) return(FALSE)
+    Pr <- probe_at(Av, cell)
+    if (is.null(Pr)) return(FALSE)
+    for (k in seq_len(ncol(Pr))) {
+      tgt <- Pr[, k]; got <- Pd[, k]
+      sc  <- max(stats::sd(tgt), abs(mean(tgt)), .Machine$double.xmin)
+      # first two moments, and the reciprocal where it is defined: a PK
+      # parameter enters the prediction as both v and 1/v
+      mm <- list(function(x) x, function(x) x^2)
+      if (all(tgt > 0) && all(got > 0)) mm <- c(mm, list(function(x) 1 / x))
+      for (f in mm) {
+        a1 <- mean(f(tgt)); a2 <- sum(wcell * f(got))
+        if (!is.finite(a1) || !is.finite(a2)) return(FALSE)
+        # 5e-3 sits an order of magnitude above the reference own error
+        # (~3e-4 at 8192 points) and two orders below the discrepancy a
+        # genuine failure produces, which is of order 1.
+        if (abs(a2 - a1) / max(abs(a1), sc) > 5e-3) return(FALSE)
+      }
+    }
+    TRUE
+  }
+  for (i in seq_along(cell_list))
+    if (!ver(cell_list[[i]], Wc)) return(NULL)
+
+  list(X = Xf, W = Wf, z = Zc[ix, , drop = FALSE],
        collapsed = TRUE, r = r, p = p, pc = pc, m = ncol(B), n_cell = nl)
 }

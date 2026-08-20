@@ -1564,3 +1564,130 @@ test_that(".admCovCollapse handles CORRELATED covariates and DISCRETE strata", {
                   list(W1 = lnm(),
                        SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))))
 })
+
+test_that("the certificate separates the INDEX from the LINK", {
+  # Affine is far stronger than the construction needs. The design places
+  # Gauss-Hermite nodes in z, so it is enough that the parameter be SOME
+  # function of one linear combination u: then u is normal, a GH rule
+  # integrates the composition exactly to degree 2n-1, and the preimage is
+  # unchanged. Affine is the special case of an identity link.
+  #
+  # Requiring affinity refused an Emax link on a product of lognormal
+  # covariates, whose INDEX is perfectly affine and whose LINK is not -- a
+  # saturating covariate effect, which is an ordinary thing to write.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  lnm <- function() list(meanlog = ml, sdlog = sdl)
+  nrm <- function() list(mu = 70, sd = 12)
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  W3  <- paste0("W", 1:3)
+  rk  <- function(expr, cd) {
+    co <- admixr2:::.admCovCollapse(list(lstExpr = expr, allCovs = W3), pin,
+                                    cd, 7L)
+    if (is.null(co)) NA_integer_ else co$r
+  }
+  cdl <- stats::setNames(lapply(1:3, function(i) lnm()), W3)
+  cdn <- stats::setNames(lapply(1:3, function(i) nrm()), W3)
+  idx <- quote(s <- (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)
+
+  # an AFFINE index carries any smooth link
+  expect_equal(rk(list(quote(
+    v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)), cdl), 1L)
+  expect_equal(rk(list(idx, quote(v <- 10 * s / (s + 1.5))), cdl), 1L)
+  expect_equal(rk(list(idx, quote(v <- 10 * (1 - exp(-s)))), cdl), 1L)
+  expect_equal(rk(list(idx, quote(v <- 10 * s^2 / (1 + s^2))), cdl), 1L)
+  # on NORMAL margins a linear index does the same
+  lin <- quote(s <- 0.6*(W1-70)/70 + 0.4*(W2-70)/70 + 0.3*(W3-70)/70)
+  expect_equal(rk(list(lin, quote(v <- 10 * (1 + s) / (2 + s))), cdn), 1L)
+
+  # THE REFUSALS MUST SURVIVE. A power model on NORMAL margins is a SUM of
+  # separate nonlinear functions of separate latent scores -- the parameter is
+  # one number, but it is not a function of one linear combination, so the
+  # integral really is p-dimensional.
+  expect_true(is.na(rk(list(quote(
+    v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)), cdn)))
+  expect_true(is.na(rk(list(quote(
+    v <- 10 * (1 + exp(0.02*(W1-70)) + log(W2/70)^2))), cdn)))
+})
+
+test_that("the collapsed design is VERIFIED against the parameter law", {
+  # What the collapse needs is that the reduced design reproduce the LAW of
+  # every covariate-reading assignment. Affinity and single-index tests are only
+  # proxies for that, and neither is sharp: a within-bin spread reports 0.18 for
+  # an EXACT identity link, and a spline residual separates a genuine index from
+  # a sum of separate nonlinearities by only a factor of five.
+  #
+  # So the design is checked directly -- its weighted moments against a large
+  # probe -- which is the property itself rather than a stand-in for it, and
+  # costs no solves.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  idx <- quote(s <- (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)
+  co  <- admixr2:::.admCovCollapse(
+    list(lstExpr = list(idx, quote(v <- 10 * s / (s + 1.5))),
+         allCovs = paste0("W", 1:3)), pin, cd, 7L)
+  expect_false(is.null(co))
+  expect_equal(co$r, 1L)
+  # the design must reproduce the law it stands for. Recompute independently:
+  # E[v], E[v^2] and E[1/v] under the design against a large Sobol reference.
+  gfun <- function(W) 10 * ((W[, 1L]/70)^0.6 * (W[, 2L]/70)^0.4 *
+                            (W[, 3L]/70)^0.3) /
+                          ((W[, 1L]/70)^0.6 * (W[, 2L]/70)^0.4 *
+                           (W[, 3L]/70)^0.3 + 1.5)
+  Zr <- matrix(suppressWarnings(stats::qnorm(
+    randtoolbox::sobol(32768L, dim = 3L, seed = 3L))), ncol = 3L)
+  Ar <- vapply(1:3, function(k)
+    admixr2:::.admCovQuantile(cd[[k]], stats::pnorm(Zr[, k])), numeric(32768L))
+  vr <- gfun(Ar); vd <- gfun(co$X)
+  expect_equal(sum(co$W * vd),     mean(vr),     tolerance = 5e-3)
+  expect_equal(sum(co$W * vd^2),   mean(vr^2),   tolerance = 5e-3)
+  expect_equal(sum(co$W / vd),     mean(1 / vr), tolerance = 5e-3)
+})
+
+test_that(".admIndexDir returns a direction, or nothing", {
+  # It estimates the AVERAGE DERIVATIVE and does not verify -- verification
+  # belongs to the design. A SYMMETRIC link has zero average derivative, so it
+  # declines and the product grid stands: conservative, and correct.
+  set.seed(3)
+  n <- 512L
+  Z <- matrix(stats::rnorm(n * 3L), n, 3L)
+  b <- c(0.6, -0.4, 0.2)
+  u <- as.numeric(Z %*% b)
+  for (f in list(function(x) x, exp, function(x) x / (1 + abs(x)),
+                 function(x) x^3, function(x) (x + 5) / (x + 8))) {
+    got <- admixr2:::.admIndexDir(f(u), Z)
+    expect_false(is.null(got))
+    expect_gt(abs(sum(got * b)) / (sqrt(sum(got^2)) * sqrt(sum(b^2))), 0.99)
+  }
+  # a constant has no direction at all
+  expect_null(admixr2:::.admIndexDir(rep(1, n), Z))
+})
+
+test_that("the collapse composes with CONDITIONED covariates", {
+  # A study declares a covariate one of two ways: as a DISTRIBUTION to
+  # marginalise over (cov_dist) or as a VALUE it is conditioned at (cov). Only
+  # the first is an integral, so only the first can collapse -- and a covariate
+  # held at a value must simply pass through untouched.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  lnm <- function() list(meanlog = ml, sdlog = sdl)
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  ui  <- list(lstExpr = list(quote(
+                v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3 * (AGE/40)^0.2)),
+              allCovs = c("W1", "W2", "W3", "AGE"))
+  # AGE is CONDITIONED (no cov_dist entry): the design covers only the three
+  # marginalised covariates, and AGE never appears in it
+  cd <- stats::setNames(lapply(1:3, function(i) lnm()), paste0("W", 1:3))
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L, cov_fixed = list(AGE = 40))
+  expect_false(is.null(co))
+  expect_equal(co$r, 1L)
+  expect_equal(co$p, 3L)
+  expect_setequal(colnames(co$X), paste0("W", 1:3))
+  expect_false("AGE" %in% colnames(co$X))
+})
