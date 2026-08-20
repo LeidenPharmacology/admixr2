@@ -1822,3 +1822,39 @@ test_that("the rotation does not saturate the margin quantile", {
   expect_true(all(is.finite(co$X)))
   expect_true(all(co$X > 0))              # lognormal margins, never 0 or Inf
 })
+
+test_that("the collapse paths do not rely on PARTIAL matching", {
+  # `$` partial-matches on lists, and it bit: while `m` was absent from the
+  # joint design's descriptor, jc$m resolved to jc$max_rows (20000), the row cap
+  # compared m^r against itself, and every design was rejected -- at every
+  # parameter point, with no error. A field that is deliberately absent until
+  # admission is exactly the case partial matching turns into a wrong value
+  # rather than a NULL.
+  #
+  # warnPartialMatchDollar makes R report the fall-through, so this fails if a
+  # later field is read before it is declared, or if a new name shadows a
+  # shorter one by prefix.
+  skip_if_not_installed("randtoolbox")
+  op <- options(warnPartialMatchDollar = TRUE)
+  on.exit(options(op), add = TRUE)
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L, n_eta = 1L)
+  ui  <- list(lstExpr = list(quote(
+                v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)),
+              allCovs = paste0("W", 1:3))
+  expect_no_warning({
+    co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+    admixr2:::.admCovRefresh(co, admixr2:::.admShiftStruct(pin))
+    admixr2:::.admCovRowsCollapsed(co, 64L, 1L)
+  })
+  # and the joint descriptor declares its admission fields up front, so `$`
+  # cannot fall through to max_rows before .admJointAdmit() sets them
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
+  expect_true(all(c("r", "m", "routes") %in% names(jc)))
+  expect_null(jc$m)
+  expect_null(jc$r)
+  expect_null(jc$routes)
+})

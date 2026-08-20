@@ -159,10 +159,20 @@
 # same construction the quadrature design uses, sampled rather than gridded.
 #
 # The saving is in ACCURACY, not rows: admc pays the same number of solves
-# either way. Measured on a rank-1 collapse of three lognormal covariates,
-# Frobenius error against a large reference, the covariance improves ~2x at
-# every sample size from 500 to 128000 -- so the same accuracy from about half
-# the draws, and the ODE solve is 68% of admc runtime.
+# either way.
+#
+# AND IT IS SMALL. An earlier note here claimed ~2x on the covariance. That was
+# measured across randtoolbox `seed` values, and `seed` is INERT -- sobol(n, d,
+# seed = 1) and seed = 999 are bit-identical -- so it was a median over
+# identical numbers: one realisation with no error bar. (`scrambling` is
+# disabled outright in that package too; check before trusting either.)
+#
+# Re-measured with Cranley-Patterson shifts, 24 replicates, paired within
+# replicate, the covariance error ratio is 1.12x [0.89, 1.84] at n = 1000,
+# 1.24x [0.90, 1.53] at 4000 and 1.47x [0.78, 2.17] at 16000 -- interquartile
+# range spanning 1.0 in every cell. So: a change of variables that is exactly
+# right and costs nothing, with no benefit this measurement can distinguish
+# from zero. Kept because it is exact and free, NOT because it is faster.
 #
 # A DISCRETE covariate keeps a dimension of its own: its level is genuinely
 # random per subject and there is nothing to project. Still narrower than the
@@ -3830,9 +3840,22 @@ print.covDist <- function(x, ...) {
   }
   Xi <- mkXi(n_probe, 13L); Xv <- mkXi(n_ver, 17L)
   if (is.null(Xi) || is.null(Xv)) return(NULL)
+  # r, m and routes are settled by .admJointAdmit(), but they are declared HERE,
+  # holding NULL, and that is load-bearing rather than tidiness.
+  #
+  # `$` PARTIAL-MATCHES on lists. While `m` was absent, jc$m resolved to
+  # jc$max_rows -- 20000 -- so the row cap compared m^r against itself and
+  # rejected every design, silently and at every parameter point. Declaring the
+  # field means `$` always finds an exact match and can never fall through to a
+  # prefix. `list(m = NULL)` does create the element; it is not dropped.
+  #
+  # The [[ ]] reads downstream stay as a second line of defence, and
+  # test-covariate.R runs these paths under warnPartialMatchDollar so a field
+  # added later cannot quietly reintroduce it.
   list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc, ne = ne, pc = pc,
        nl = nl, Xi = Xi, Xv = Xv, out_var = out_var,
-       n_nodes = as.integer(n_nodes), max_rows = max_rows, joint = TRUE)
+       n_nodes = as.integer(n_nodes), max_rows = max_rows, joint = TRUE,
+       r = NULL, m = NULL, routes = NULL)
 }
 
 # The covariate values a latent block maps to, with the same clamp the collapse
