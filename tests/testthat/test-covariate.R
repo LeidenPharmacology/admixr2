@@ -1478,11 +1478,20 @@ test_that(".admCovCollapse sizes the design by RANK, not by covariate count", {
   # genuinely two directions
   expect_equal(rank_of(list(quote(cl <- exp(0.1) * (W1/70)^0.6 * (W2/70)^0.4),
                             quote(v  <- 10 * (W3/70)^0.3))), 2L)
-  # rank == p: nothing to gain, and it declines rather than paying for a
-  # rotation that buys nothing
-  expect_true(is.na(rank_of(list(quote(cl <- exp(0.1) * (W1/70)^0.6),
-                                 quote(v  <- 10 * (W2/70)^0.4),
-                                 quote(q  <- 2 * (W3/70)^0.3)))))
+  # rank == p: no RANK reduction to make. B is diagonal here -- each covariate
+  # read by its own parameter -- so U is a permutation and the rotation
+  # redistributes nothing. Admitted anyway, and NOT for the rotation: this is
+  # the only path carrying the node search, and the design it settles on is
+  # cheaper than the 7^3 product grid that would otherwise be built. Measured
+  # on the two-covariate version of the same shape, 49 points -> 15.
+  co3 <- admixr2:::.admCovCollapse(
+    mk(list(quote(cl <- exp(0.1) * (W1/70)^0.6),
+            quote(v  <- 10 * (W2/70)^0.4),
+            quote(q  <- 2 * (W3/70)^0.3))), pin, cd, 7L)
+  expect_false(is.null(co3))
+  expect_equal(co3$r, 3L)
+  expect_equal(co3$r, co3$pc)
+  expect_lt(nrow(co3$X), 7L^3L)
   # a covariate-by-eta INTERACTION has a direction that moves with eta, and the
   # probe at eta = 0 would report the wrong one -- a silent collapse onto the
   # wrong subspace. Refused by the second probe away from zero.
@@ -1534,7 +1543,10 @@ test_that(".admCovCollapse handles CORRELATED covariates and DISCRETE strata", {
   expect_false(is.null(co2))
   expect_equal(co2$r, 1L)
   expect_equal(co2$n_cell, 2L)
-  expect_equal(nrow(co2$X), 14L)        # 7 nodes x 2 cells, not 7^2 x 2
+  # the collapsed continuous block crossed with the cells -- at whatever node
+  # count the search settled on, which is at or below cov_nodes, never 7^2
+  expect_equal(nrow(co2$X), prod(co2$nv) * co2$n_cell)
+  expect_lt(nrow(co2$X), 7L^2L * 2L)
   expect_equal(sum(co2$W), 1, tolerance = 1e-12)
   # the discrete column carries its LEVELS, and each cell its probability
   expect_setequal(unique(co2$X[, "SEX"]), c(0, 1))
@@ -1762,4 +1774,79 @@ test_that(".admStudyCovRows falls back when there is no collapse", {
   # and a study NOT on the rows path is returned untouched
   s2 <- list(.adm_cov_path = "shift", cov_dist = s$cov_dist)
   expect_null(admixr2:::.admStudyCovRows(s2, pin, 500L)$cov_rows)
+})
+
+test_that("the node search stops where the moments stop moving", {
+  # cov_nodes is a CAP, not a target. Each collapsed direction is walked up from
+  # one node and stopped at the first count whose moments agree with the next
+  # count's -- the point where an extra node buys nothing, measured rather than
+  # assumed, so a smooth link settles early and a hard one keeps its nodes.
+  #
+  # What makes the reduction safe is that the design still reproduces the LAW,
+  # so that is what this pins -- not a row count, which would only re-encode
+  # whatever the search happens to do today.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  # W1 and W2 drive cl; W3 reaches v through an exponent of 0.05, which is very
+  # nearly a constant -- that direction should settle at far fewer nodes than
+  # the other one
+  ui <- list(lstExpr = list(
+               quote(cl <- exp(0.1) * (W1/70)^0.75 * (W2/70)^0.10),
+               quote(v  <- 10 * (W3/70)^0.05)),
+             allCovs = paste0("W", 1:3))
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  expect_false(is.null(co))
+  expect_equal(co$r, 2L)
+  expect_equal(length(co$nv), 2L)
+  expect_true(all(co$nv <= 7L))           # a cap: never MORE than cov_nodes
+  expect_lt(prod(co$nv), 7L * 7L)         # and here, strictly fewer
+  expect_lt(min(co$nv), max(co$nv))       # the flat direction gets fewer
+  expect_equal(nrow(co$X), prod(co$nv))
+  expect_equal(sum(co$W), 1, tolerance = 1e-12)
+
+  # the design's weighted moments against a large independent draw -- both the
+  # parameter and its reciprocal, since a PK parameter enters the prediction as
+  # both f and 1/f
+  n  <- 2L^16L
+  Z  <- matrix(suppressWarnings(stats::qnorm(
+          randtoolbox::sobol(n, dim = 3L, seed = 5L))), ncol = 3L)
+  A  <- vapply(1:3, function(k)
+    admixr2:::.admCovQuantile(cd[[k]], stats::pnorm(Z[, k])), numeric(n))
+  colnames(A) <- paste0("W", 1:3)
+  for (f in list(function(X) (X[, "W1"]/70)^0.75 * (X[, "W2"]/70)^0.10,
+                 function(X) (X[, "W3"]/70)^0.05)) {
+    expect_equal(c(sum(co$W * f(co$X)), sum(co$W * f(co$X)^2),
+                   sum(co$W / f(co$X))),
+                 c(mean(f(A)), mean(f(A)^2), mean(1 / f(A))),
+                 tolerance = 5e-3)
+  }
+})
+
+test_that("the rotation does not saturate the margin quantile", {
+  # pnorm() returns exactly 1 from |z| >= 8.3, and the ROTATION reaches further
+  # than the one-dimensional node range does -- an r-direction corner sits at
+  # sqrt(r) times it. At cov_nodes = 15 and r = 2 that saturates, an unbounded
+  # margin quantile comes back infinite, and the finite check refused the
+  # collapse outright: a silent loss of the feature at raised cov_nodes rather
+  # than a wrong answer, but silent either way. .admCovNodesFor has carried the
+  # same clamp for the same reason.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 15L)
+  ui  <- list(lstExpr = list(
+                quote(cl <- exp(0.1) * (W1/70)^0.75 * (W2/70)^0.10),
+                quote(v  <- 10 * (W3/70)^0.30)),
+              allCovs = paste0("W", 1:3))
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 15L)
+  expect_false(is.null(co))
+  expect_equal(co$r, 2L)
+  expect_true(all(is.finite(co$X)))
+  expect_true(all(co$X > 0))              # lognormal margins, never 0 or Inf
 })

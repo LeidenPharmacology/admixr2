@@ -175,8 +175,14 @@
   u  <- pmin(pmax(u, .Machine$double.eps), 1 - .Machine$double.eps)
   w  <- matrix(stats::qnorm(u[, seq_len(r), drop = FALSE]), nrow = n)
   Z  <- w %*% co$Lr %*% t(co$U)                       # z = U Lr w
+  # the same clamp .admCovCollapse applies, for the same reason: the uniforms
+  # are clamped above but qnorm() of the clamp is already +-8.1, and the
+  # rotation carries that further still, so pnorm() saturates at exactly 1 and
+  # an unbounded margin quantile comes back infinite
   X  <- vapply(seq_len(pc), function(k)
-    .admCovQuantile(co$cd[[co$cn[k]]], stats::pnorm(Z[, k])), numeric(n))
+    .admCovQuantile(co$cd[[co$cn[k]]],
+                    pmin(pmax(stats::pnorm(Z[, k]), .Machine$double.eps),
+                         1 - .Machine$double.eps)), numeric(n))
   if (!is.matrix(X)) X <- matrix(X, n, pc)
   colnames(X) <- co$cn
   if (nd) {
@@ -201,8 +207,14 @@
 .admStudyCovRows <- function(s, pinfo, n_row) {
   if (!identical(s$.adm_cov_path, "rows")) return(s)
   co <- s[[".adm_cov_collapse"]]
-  # the collapsed subspace when one was certified, the full product otherwise
-  cr <- if (!is.null(co))
+  # The collapsed subspace when one was certified, the full product otherwise.
+  # r == pc is admitted by the collapse for the sake of adgh's node search, but
+  # it is no reduction in DIMENSION, and dimension is the whole of admc's
+  # interest here -- taking it would rotate every draw for no gain. Measured:
+  # a sampler that drops a direction outright is worse at every n and FLOORS
+  # (8.3e-3 on V, against 3.0e-4 still falling), so admc keeps every direction
+  # a nonzero singular value earns.
+  cr <- if (!is.null(co) && isTRUE(co$r < co$pc))
     tryCatch(.admCovRowsCollapsed(co, n_row, pinfo$n_eta),
              error = function(e) NULL) else NULL
   s$cov_rows <- cr %||% .admCovRowsFor(s$cov_dist, n_row, pinfo$n_eta)
@@ -3258,6 +3270,34 @@ print.covDist <- function(x, ...) {
 #
 # Returns a design in .admCovGrid's shape, so nothing downstream changes, or
 # NULL when it does not apply and the product grid stands.
+# How closely two successive node counts must agree before the smaller one is
+# taken as converged. Relative, on the design's own weighted moments of the
+# PARAMETER.
+#
+# It cannot be argued from the parameter side, because that is not what the fit
+# scores: the objective sees the PREDICTION, reached through the ODE solve, and
+# the solve AMPLIFIES. Measured on a rank-1 collapse of three covariates, a
+# tolerance of 1e-6 on the parameter moments came out as 4.5e-04 on the
+# predicted covariance -- roughly 500x, and model-dependent, since it is really
+# d(prediction)/d(parameter). At that setting the collapsed design was 445x
+# WORSE than the plain product grid it replaces, which is the one thing it must
+# never be.
+#
+# So it is calibrated against that end-to-end invariant instead, and pinned by
+# test-integration-covariate: the collapsed design must still beat the product
+# grid on accuracy as well as on rows. 1e-12 is the loosest setting that holds
+# it with margin. The cost of that tightness is small, because the savings that
+# matter are structural -- the rank reduction, and directions that are flat --
+# and those sit many orders below any tolerance in this range. What tightening
+# gives up is shaving a single node off a STRONGLY loaded direction, which was
+# never a good trade: measured at 14% fewer rows for 6x the error.
+#
+# The proxy is the real limitation here, not the constant. Moving the criterion
+# onto PREDICTED moments -- solving at each candidate design, as
+# .admShiftVerify already does at admission -- would remove the amplification
+# from the argument entirely and is the right eventual fix.
+.ADM_COV_ALLOC_TOL <- 1e-12
+
 .admCovCollapse <- function(ui, pinfo, cov_dist, n_nodes, n_probe = 128L,
                             max_rows = 20000L, n_ver = 8192L,
                             cov_fixed = NULL) {
@@ -3446,7 +3486,14 @@ print.covDist <- function(x, ...) {
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || !length(sv$d)) return(NULL)
   r <- sum(sv$d > max(sv$d) * 1e-8)
-  if (!is.finite(r) || r < 1L || r >= pc) return(NULL)  # no reduction to make
+  # r == pc is ADMITTED, though there is no rank reduction to make there. What
+  # it buys is not the rotation -- with B diagonal (each covariate read by its
+  # own parameter) U is a permutation and redistributes nothing -- but the node
+  # search below, which lives on this path and has no counterpart on the grid
+  # path. Measured on the ordinary two-covariate model: 49 points -> 15 at the
+  # same accuracy. Guarded at the end on cost, so it takes over only when it
+  # actually beats the product grid it replaces.
+  if (!is.finite(r) || r < 1L || r > pc) return(NULL)
   U  <- sv$u[, seq_len(r), drop = FALSE]                # pc x r, orthonormal
   nn <- as.integer(n_nodes)
   if (nn^r * max(nrow(cells), 1L) > max_rows) return(NULL)
@@ -3457,14 +3504,109 @@ print.covDist <- function(x, ...) {
   Sr <- t(U) %*% Rc %*% U
   Lr <- tryCatch(chol(Sr), error = function(e) NULL)
   if (is.null(Lr)) return(NULL)
-  gr <- .adghNodeGrid(nn, r)
-  Zc <- gr$X %*% Lr %*% t(U)                            # preimage z = U w
-  Xc <- vapply(seq_len(pc), function(k)
-    .admCovQuantile(cd[[cn[k]]], stats::pnorm(Zc[, k])), numeric(nrow(Zc)))
-  if (!is.matrix(Xc)) Xc <- matrix(Xc, nrow(Zc), pc)
-  colnames(Xc) <- cn
-  if (!all(is.finite(Xc))) return(NULL)
-  Wc <- gr$W / sum(gr$W)
+
+  # The design for one PER-DIRECTION node count.
+  build <- function(nv) {
+    gl <- lapply(nv, function(m) .adghNodes1(m))
+    Xg <- as.matrix(expand.grid(lapply(gl, function(g) g$x)))
+    Wg <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
+    dimnames(Xg) <- NULL
+    Zg <- Xg %*% Lr %*% t(U)                            # preimage z = U w
+    # CLAMP before a margin quantile function sees a probability. pnorm()
+    # returns exactly 1 from |z| >= 8.3, and the ROTATION reaches further than
+    # the one-dimensional node range does -- an r-direction corner sits at
+    # sqrt(r) times it, so cov_nodes = 15 already saturates at r = 2 and an
+    # unbounded quantile comes back infinite. .admCovNodesFor carries the same
+    # guard for the same reason. Here the finite check below caught it, so it
+    # was a silent loss of the collapse at raised cov_nodes rather than a wrong
+    # answer -- but losing a feature silently is still the wrong outcome.
+    Xg2 <- vapply(seq_len(pc), function(k)
+      .admCovQuantile(cd[[cn[k]]],
+                      pmin(pmax(stats::pnorm(Zg[, k]), .Machine$double.eps),
+                           1 - .Machine$double.eps)), numeric(nrow(Zg)))
+    if (!is.matrix(Xg2)) Xg2 <- matrix(Xg2, nrow(Zg), pc)
+    colnames(Xg2) <- cn
+    if (!all(is.finite(Xg2))) return(NULL)
+    list(X = Xg2, W = Wg / sum(Wg), z = Zg)
+  }
+
+  # WHERE THE MOMENTS STOP MOVING.
+  #
+  # svd(B) says how hard each collapsed direction drives the parameter, and the
+  # design used to spend n_nodes in every one regardless. Walk each direction up
+  # from one node and stop at the first count whose moments agree with the next
+  # count's: the point where an extra node buys nothing, measured rather than
+  # assumed. A smooth link settles early; a hard one keeps its nodes, with no
+  # rule to tune. n_nodes becomes a CAP, never a target, so this can never
+  # return a design more expensive than the isotropic one it replaces.
+  #
+  # Measured on a rank-2 collapse with a 15x spread in the spectrum, against a
+  # 41 x 41 reference in the same space: 7 x 7 = 49 design points, 7 x 4 = 28 at
+  # the shipped tolerance. That sweep's columns are FLAT -- once a direction is
+  # pinned at m nodes its own residual sets the error and no spending elsewhere
+  # touches it, which is why each direction is reduced to its own knee rather
+  # than traded against the others. Two floors check out in closed form: one
+  # node in a direction loading `a` mis-states E[f^2] by exp(2 a^2) - 1, and the
+  # two-node floor is the 4th-order Gauss-Hermite term.
+  #
+  # This does NOT subsume the rank reduction; the two multiply. The same search
+  # run on the RAW covariate axes leaves 100 points where the rotated one leaves
+  # 6, for three covariates feeding one allometric index: every raw axis moves
+  # the index, so no axis is flat and there is nothing for a per-axis search to
+  # cheapen. Only the rotation sees that the three are one number.
+  #
+  # Costs no solves -- these are R evaluations of the parameter assignments.
+  d0 <- build(rep(nn, r))
+  if (is.null(d0)) return(NULL)
+  P0 <- probe_at(d0$X, cell_list[[1L]])
+  if (is.null(P0)) return(NULL)
+  # a PK parameter enters the prediction as both f and 1/f, so the reciprocal is
+  # scored too -- where it is defined. Fixed from the isotropic design, so every
+  # candidate is compared on the same functionals.
+  rcp <- apply(P0, 2L, function(v) all(v > 0))
+  moms <- function(nv) {
+    d <- build(nv)
+    if (is.null(d)) return(NULL)
+    out <- vector("list", length(cell_list))
+    for (i in seq_along(cell_list)) {
+      P <- probe_at(d$X, cell_list[[i]])
+      if (is.null(P)) return(NULL)
+      v1 <- vector("list", ncol(P))
+      for (k in seq_len(ncol(P))) {
+        v <- P[, k]
+        if (rcp[k] && !all(v > 0)) return(NULL)
+        v1[[k]] <- c(sum(d$W * v), sum(d$W * v^2),
+                     if (rcp[k]) sum(d$W / v) else NULL)
+      }
+      out[[i]] <- unlist(v1)
+    }
+    o <- unlist(out)
+    if (!all(is.finite(o))) NULL else o
+  }
+  stable <- function(a, b)
+    length(a) == length(b) &&
+      all(abs(a - b) <= .ADM_COV_ALLOC_TOL *
+                        pmax(abs(a), abs(b), .Machine$double.eps))
+  nv <- rep(nn, r)
+  for (k in order(sv$d[seq_len(r)])) {          # weakest direction first
+    prev <- NULL
+    for (m in seq_len(nn)) {
+      tv <- nv; tv[k] <- m
+      cur <- moms(tv)
+      # a count that will not evaluate is not evidence of convergence: drop the
+      # comparison rather than declaring the previous count converged against it
+      if (is.null(cur)) { prev <- NULL; next }
+      if (!is.null(prev) && stable(prev, cur)) { nv[k] <- m - 1L; break }
+      prev <- cur
+    }
+  }
+  if (prod(nv) * max(nrow(cells), 1L) > max_rows) return(NULL)
+  # A rotation with no rank reduction asserts nothing about which directions
+  # matter, so it has to earn its keep on cost alone against the plain grid.
+  if (r >= pc && prod(nv) >= nn^pc) return(NULL)
+  dd <- build(nv)
+  if (is.null(dd)) return(NULL)
+  Xc <- dd$X; Wc <- dd$W; Zc <- dd$z
 
   # cross the collapsed continuous design with the EXACT discrete enumeration
   nq <- nrow(Xc); nl <- max(nrow(cells), 1L)
@@ -3523,6 +3665,7 @@ print.covDist <- function(x, ...) {
   # log|V| + tr(V^-1 V_obs) leans on.
   list(X = Xf, W = Wf, z = Zc[ix, , drop = FALSE],
        collapsed = TRUE, r = r, p = p, pc = pc, m = ncol(B), n_cell = nl,
+       nv = nv,
        U = U, Lr = Lr, cn = cn, dn = dn, cd = cd, nms = nms,
        cells = cells, pcell = pcell)
 }
