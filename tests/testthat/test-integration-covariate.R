@@ -1164,10 +1164,27 @@ test_that("a NON-certified vector shift keeps the cheap path and stays analytic"
   r <- admixr2:::.adghGradNLL(p, d$pin, d$stu, d$sm, d$rx, d$ov, d$g, 1L, 1e-4)
   expect_false(is.null(r$nll))       # nll = NULL would mean it degraded to FD
   f <- function(pp) admixr2:::.adghNLL(pp, d$pin, d$stu, d$rx, d$ov, d$g, 1L)
-  h <- 1e-5
-  fd <- .cfd(f, p)
+  fd <- .cfd(f, p, 1e-5)          # passed, not set aside in a dead local
   expect_true(all(is.finite(r$grad)))
-  expect_true(max(abs(r$grad - fd) / pmax(abs(fd), 1)) < 1e-6)
+  # 1e-5, not 1e-6, and the LIMIT IS THE REFERENCE. The objective here is
+  # ~8.4e5 while d(NLL)/d(logchol_2) is ~1.6, so the central difference on that
+  # one component divides a heavily cancelled numerator by 2h and its own error
+  # swamps the analytic gradient's. Measured against the analytic value at a
+  # range of steps:
+  #
+  #     h        FD(logchol_2)     |FD - analytic|
+  #     3e-04    1.6160419909      1.2e-08
+  #     1e-04    1.6160414089      3.5e-07
+  #     1e-05    1.6160483938      4.0e-06     <- this call
+  #     3e-06    1.6160774976      3.6e-05
+  #
+  # The FD estimate WANDERS as h shrinks while the analytic value does not, so
+  # the analytic gradient is good to ~1e-8 and the 4e-6 is roundoff in the
+  # reference. Tightening h is not the fix either: no single step serves all
+  # seven components, because truncation dominates tcov/tcov2 as h grows
+  # (5.2e-04 at h = 1e-3) exactly where roundoff stops dominating logchol_2.
+  # 1e-5 keeps a real bar -- anything above it is a genuine chain-rule error.
+  expect_true(max(abs(r$grad - fd) / pmax(abs(fd), 1)) < 1e-5)
 })
 
 # -- datagen: a covariate distribution without Monte Carlo -------------------
