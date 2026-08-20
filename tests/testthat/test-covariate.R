@@ -1697,75 +1697,41 @@ test_that("the collapse composes with CONDITIONED covariates", {
   expect_false("AGE" %in% colnames(co$X))
 })
 
-test_that("admc samples from the COLLAPSED subspace, at the right law", {
-  # admc draws sobol(n, dim = n_eta + p) and keeps the covariate columns. QMC
-  # error grows with dimension, so when the covariates reach the model through
-  # r scalars the sequence should be n_eta + r wide. Drawing w in r dimensions
-  # and mapping z = U Lr w reproduces the parameter law exactly -- the same
-  # subspace the quadrature design uses, sampled rather than gridded.
+test_that("admc's covariate draws depend on the DATA and nothing else", {
+  # .admCovRowsFor is deterministic in `cov_dist` alone, so the same rows come
+  # back on every objective evaluation and common random numbers hold with no
+  # seed plumbing. The CRN-FD gradient directions depend on that property.
   #
-  # The saving is in ACCURACY, not rows: admc pays the same solves either way.
-  # Measured Frobenius error against a large reference, the aggregate
-  # covariance improves ~2x at every sample size.
+  # Sampling from the collapsed subspace was tried and removed. It is an exact
+  # change of variables, but the rotation depends on the covariate
+  # coefficients, which are ESTIMATED -- so re-aiming it, which correctness
+  # requires, makes the draws move with the parameters: measured, a step of
+  # 1e-6 in one coefficient shifted the sampled covariate values by 1.1e-4.
+  # And it bought nothing measurable -- 1.12x to 1.47x on the covariance with
+  # randomised QMC, interquartile range spanning 1.0 in every cell.
   skip_if_not_installed("randtoolbox")
   sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
   cd  <- stats::setNames(lapply(1:3, function(i)
     list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
-  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
-              cov_nodes = 7L, n_eta = 1L)
-  ui  <- list(lstExpr = list(quote(
-                v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)),
-              allCovs = paste0("W", 1:3))
-  co  <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
-  expect_false(is.null(co))
-  expect_false(is.null(co$U))          # the subspace a sampler needs
-  expect_false(is.null(co$Lr))
-
-  vof <- function(W) (W[, 1L]/70)^0.6 * (W[, 2L]/70)^0.4 * (W[, 3L]/70)^0.3
-  # the law it stands for, from a large full-dimensional reference
-  Zr <- matrix(suppressWarnings(stats::qnorm(
-    randtoolbox::sobol(2^18, dim = 3L, seed = 5L))), ncol = 3L)
-  Ar <- vapply(1:3, function(k)
-    admixr2:::.admCovQuantile(cd[[k]], stats::pnorm(Zr[, k])), numeric(2^18))
-  vr <- vof(Ar)
-
-  X <- admixr2:::.admCovRowsCollapsed(co, 20000L, 1L)
-  expect_equal(nrow(X), 20000L)
-  expect_setequal(colnames(X), paste0("W", 1:3))
-  v <- vof(X)
-  expect_equal(mean(v),     mean(vr),     tolerance = 5e-3)
-  expect_equal(mean(v^2),   mean(vr^2),   tolerance = 5e-3)
-  expect_equal(mean(1 / v), mean(1 / vr), tolerance = 5e-3)
-
-  # a DISCRETE covariate keeps a dimension of its own -- its level is genuinely
-  # random per subject and there is nothing to project -- and comes back at its
-  # declared levels and probabilities
-  cds <- list(W1 = list(meanlog = ml, sdlog = sdl),
-              W2 = list(meanlog = ml, sdlog = sdl),
-              SEX = list(values = c(0, 1), probs = c(0.25, 0.75)))
-  ui2 <- list(lstExpr = list(quote(
-                v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * exp(0.2 * SEX))),
-              allCovs = c("W1", "W2", "SEX"))
-  co2 <- admixr2:::.admCovCollapse(ui2, pin, cds, 7L)
-  expect_false(is.null(co2))
-  X2 <- admixr2:::.admCovRowsCollapsed(co2, 40000L, 1L)
-  expect_setequal(unique(X2[, "SEX"]), c(0, 1))
-  expect_equal(mean(X2[, "SEX"] == 1), 0.75, tolerance = 0.01)
-})
-
-test_that(".admStudyCovRows falls back when there is no collapse", {
-  # The collapsed sampler is used only where a collapse was certified; every
-  # other study keeps the full product draw, unchanged.
-  skip_if_not_installed("randtoolbox")
   pin <- list(eta_col_names = "eta.cl", n_eta = 1L, cov_nodes = 7L)
-  s <- list(.adm_cov_path = "rows",
-            cov_dist = list(W1 = list(mu = 0, sd = 1),
-                            W2 = list(mu = 0, sd = 1)))
-  got <- admixr2:::.admStudyCovRows(s, pin, 500L)
-  expect_equal(nrow(got$cov_rows), 500L)
-  expect_setequal(colnames(got$cov_rows), c("W1", "W2"))
+  s0  <- list(.adm_cov_path = "rows", cov_dist = cd)
+  a <- admixr2:::.admStudyCovRows(s0, pin, 500L)$cov_rows
+  b <- admixr2:::.admStudyCovRows(s0, pin, 500L)$cov_rows
+  expect_identical(a, b)                       # same rows, every call
+  expect_equal(nrow(a), 500L)
+  expect_setequal(colnames(a), paste0("W", 1:3))
+  # a certified collapse on the study must NOT change them -- the quadrature
+  # estimators use it, the sampler does not
+  s1 <- s0
+  s1[[".adm_cov_collapse"]] <- admixr2:::.admCovCollapse(
+    list(lstExpr = list(quote(
+           v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)),
+         allCovs = paste0("W", 1:3)),
+    c(pin, list(struct_names = character(0))), cd, 7L)
+  expect_false(is.null(s1[[".adm_cov_collapse"]]))
+  expect_identical(admixr2:::.admStudyCovRows(s1, pin, 500L)$cov_rows, a)
   # and a study NOT on the rows path is returned untouched
-  s2 <- list(.adm_cov_path = "shift", cov_dist = s$cov_dist)
+  s2 <- list(.adm_cov_path = "shift", cov_dist = cd)
   expect_null(admixr2:::.admStudyCovRows(s2, pin, 500L)$cov_rows)
 })
 
@@ -1848,7 +1814,6 @@ test_that("the collapse paths do not rely on PARTIAL matching", {
   expect_no_warning({
     co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
     admixr2:::.admCovRefresh(co, admixr2:::.admShiftStruct(pin))
-    admixr2:::.admCovRowsCollapsed(co, 64L, 1L)
   })
   # and the joint descriptor declares its admission fields up front, so `$`
   # cannot fall through to max_rows before .admJointAdmit() sets them

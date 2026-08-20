@@ -116,10 +116,10 @@ assignments) — 0.8 ms per study per evaluation, 6% of the total.
   rotate into and are enumerated exactly instead.
 - A covariate-by-random-effect interaction makes the loading depend on `η`,
   which the construction detects and refuses.
-- **Quadrature construction, and the gain does not transfer to the Monte-Carlo
-  estimator.** The same change of variables lets it sample in the reduced
-  subspace, and that is exactly right — but the accuracy benefit is not
-  measurable. With randomised QMC (Cranley–Patterson, 24 replicates, paired):
+- **Quadrature construction, and it does not transfer to the Monte-Carlo
+  estimator at all.** The same change of variables lets it sample in the
+  reduced subspace, and that is exactly right, but it was tried and removed for
+  two reasons. The accuracy benefit is not measurable. With randomised QMC (Cranley–Patterson, 24 replicates, paired):
   the covariate collapse buys 1.12×–1.47× on the covariance and the joint one
   adds 1.01×–1.17×, with the interquartile range spanning 1.0 in every cell.
   Do not claim a speed or accuracy figure for the sampler.
@@ -130,15 +130,27 @@ assignments) — 0.8 ms per study per evaluation, 6% of the total.
   the same package is disabled outright. Both are worth knowing before quoting
   any QMC comparison.*
 
+  And it breaks **common random numbers**. The rotation depends on the
+  covariate coefficients, which are estimated, so re-aiming it — which
+  correctness requires — makes the *draws* move with the parameters: a step of
+  1e-6 in one coefficient shifted the sampled covariate values by 1.1e-4, so a
+  CRN finite difference in that direction carries a design change on top of the
+  parameter change. The sampler is deterministic in the covariate distribution
+  alone, which is data, and the gradient depends on that. Worth a sentence in
+  the paper: the reduction is a property of *quadrature*, not of the change of
+  variables, because a design can be re-aimed between evaluations and a common
+  random number cannot.
+
   Dropping a weak direction from the sampler is separately **not** viable: it
   biases and floors (8.3e-03 where keeping it converges to 3.0e-04).
 
 ## Open
 
-- The Monte-Carlo estimator's batched Hessian paths hold many parameter vectors
-  at once, so no single rotation serves them; they currently take the full
-  product draw. Correct, and slower. The deterministic estimator's Hessian goes
-  through the ordinary objective and is already re-aimed.
+- *(closed)* The Monte-Carlo estimator's batched Hessian paths were listed here
+  as needing per-block rotations. They do not: the sampler no longer collapses
+  at all, so every path takes the same deterministic product draw and there is
+  nothing to serve per block. The deterministic estimator's Hessian goes through
+  the ordinary objective and is re-aimed there.
 
 
 ## For Appendix B: differentiating through a parameter-dependent design

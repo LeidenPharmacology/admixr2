@@ -482,7 +482,7 @@ nmObjGetControl.admc <- function(x, ...) {
     # evaluates the whole model whatever the covariate touches. (adgh
     # additionally offers a shift path, which needs a deterministic node grid.)
     if (identical(s$.adm_cov_path, "rows")) {
-      s <- .admStudyCovRows(s, pinfo, nrow(eta_mat), pars$struct)
+      s <- .admStudyCovRows(s, pinfo, nrow(eta_mat))
     }
 
     # Joint (same-subject) unit: one shared-eta solve produces every output;
@@ -624,7 +624,7 @@ nmObjGetControl.admc <- function(x, ...) {
     # (cov_dist, n, n_eta), so these are the SAME rows the NLL used -- which is
     # what keeps the common-random-numbers gradient valid.
     if (identical(s$.adm_cov_path, "rows"))
-      s <- .admStudyCovRows(s, pinfo, nrow(eta_mat), pars$struct)
+      s <- .admStudyCovRows(s, pinfo, nrow(eta_mat))
 
     unpaired_k <- which(vapply(pinfo$struct_names, function(nm)
       is.null(pinfo$struct_has_eta) || !isTRUE(pinfo$struct_has_eta[nm]), logical(1)))

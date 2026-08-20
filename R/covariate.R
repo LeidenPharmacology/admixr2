@@ -150,93 +150,35 @@
   .admCovCols(mat, mod_params, s[["cov"]], cr)
 }
 
-# Per-subject covariate draws from the COLLAPSED subspace.
-#
-# admc draws sobol(n, dim = n_eta + p) and keeps the covariate columns. QMC
-# error grows with dimension, so when the covariates reach the model through r
-# scalars the sequence should be n_eta + r wide, not n_eta + p. Drawing w in r
-# dimensions and mapping z = U Lr w reproduces the parameter law exactly -- the
-# same construction the quadrature design uses, sampled rather than gridded.
-#
-# The saving is in ACCURACY, not rows: admc pays the same number of solves
-# either way.
-#
-# AND IT IS SMALL. An earlier note here claimed ~2x on the covariance. That was
-# measured across randtoolbox `seed` values, and `seed` is INERT -- sobol(n, d,
-# seed = 1) and seed = 999 are bit-identical -- so it was a median over
-# identical numbers: one realisation with no error bar. (`scrambling` is
-# disabled outright in that package too; check before trusting either.)
-#
-# Re-measured with Cranley-Patterson shifts, 24 replicates, paired within
-# replicate, the covariance error ratio is 1.12x [0.89, 1.84] at n = 1000,
-# 1.24x [0.90, 1.53] at 4000 and 1.47x [0.78, 2.17] at 16000 -- interquartile
-# range spanning 1.0 in every cell. So: a change of variables that is exactly
-# right and costs nothing, with no benefit this measurement can distinguish
-# from zero. Kept because it is exact and free, NOT because it is faster.
-#
-# A DISCRETE covariate keeps a dimension of its own: its level is genuinely
-# random per subject and there is nothing to project. Still narrower than the
-# full product whenever r < pc.
-.admCovRowsCollapsed <- function(co, n, n_eta) {
-  pc <- length(co$cn); nd <- length(co$dn); r <- co$r
-  u  <- randtoolbox::sobol(n, dim = n_eta + r + nd)
-  if (!is.matrix(u)) u <- matrix(u, nrow = n)
-  u  <- u[, n_eta + seq_len(r + nd), drop = FALSE]
-  u  <- pmin(pmax(u, .Machine$double.eps), 1 - .Machine$double.eps)
-  w  <- matrix(stats::qnorm(u[, seq_len(r), drop = FALSE]), nrow = n)
-  Z  <- w %*% co$Lr %*% t(co$U)                       # z = U Lr w
-  # the same clamp .admCovCollapse applies, for the same reason: the uniforms
-  # are clamped above but qnorm() of the clamp is already +-8.1, and the
-  # rotation carries that further still, so pnorm() saturates at exactly 1 and
-  # an unbounded margin quantile comes back infinite
-  X  <- vapply(seq_len(pc), function(k)
-    .admCovQuantile(co$cd[[co$cn[k]]],
-                    pmin(pmax(stats::pnorm(Z[, k]), .Machine$double.eps),
-                         1 - .Machine$double.eps)), numeric(n))
-  if (!is.matrix(X)) X <- matrix(X, n, pc)
-  colnames(X) <- co$cn
-  if (nd) {
-    D <- vapply(seq_len(nd), function(j) {
-      sp <- co$cd[[co$dn[j]]]
-      lv <- as.numeric(sp[["values"]])
-      pr <- sp[["probs"]] %||% rep(1 / length(lv), length(lv))
-      lv[findInterval(u[, r + j], cumsum(pr / sum(pr))) + 1L]
-    }, numeric(n))
-    if (!is.matrix(D)) D <- matrix(D, n, nd)
-    colnames(D) <- co$dn
-    X <- cbind(X, D)
-  }
-  if (!all(is.finite(X))) return(NULL)
-  X[, co$nms, drop = FALSE]
-}
-
 # Attach per-row covariate values to a study for the GENERAL path. Returns the
 # study unchanged on the shift path (where the covariate is held at its
 # reference and its whole effect rides in the shifted eta column) and when no
 # distribution is declared.
-.admStudyCovRows <- function(s, pinfo, n_row, struct = NULL) {
+.admStudyCovRows <- function(s, pinfo, n_row) {
   if (!identical(s$.adm_cov_path, "rows")) return(s)
-  co <- s[[".adm_cov_collapse"]]
-  # The collapsed subspace is aimed by the CURRENT structural thetas, so a
-  # caller that cannot supply them gets the full product draw instead. That is
-  # not a fallback for convenience: without them the rotation is the one the
-  # STARTING values implied, and using it would be silently wrong rather than
-  # merely slower. The batched Hessian paths are the case -- they hold many
-  # parameter vectors at once, so no single rotation serves them.
-  if (!is.null(co) && !is.null(struct))
-    co <- .admCovRefresh(co, .admShiftStruct(pinfo, struct))
-  else if (!is.null(co)) co <- NULL
-  # The collapsed subspace when one was certified, the full product otherwise.
-  # r == pc is admitted by the collapse for the sake of adgh's node search, but
-  # it is no reduction in DIMENSION, and dimension is the whole of admc's
-  # interest here -- taking it would rotate every draw for no gain. Measured:
-  # a sampler that drops a direction outright is worse at every n and FLOORS
-  # (8.3e-3 on V, against 3.0e-4 still falling), so admc keeps every direction
-  # a nonzero singular value earns.
-  cr <- if (!is.null(co) && isTRUE(co$r < co$pc))
-    tryCatch(.admCovRowsCollapsed(co, n_row, pinfo$n_eta),
-             error = function(e) NULL) else NULL
-  s$cov_rows <- cr %||% .admCovRowsFor(s$cov_dist, n_row, pinfo$n_eta)
+  # THE FULL PRODUCT DRAW, ALWAYS -- deliberately, and not for want of a
+  # cheaper one.
+  #
+  # Sampling in the collapsed subspace is an exact change of variables and was
+  # tried. Two things killed it. It buys nothing measurable: with randomised
+  # QMC (Cranley-Patterson, 24 replicates, paired within replicate) the
+  # covariance error ratio is 1.12x [0.89,1.84] at n = 1000, 1.24x [0.90,1.53]
+  # at 4000 and 1.47x [0.78,2.17] at 16000 -- interquartile range spanning 1.0
+  # in every cell. (An earlier "~2x" came from medians across randtoolbox
+  # `seed` values, and `seed` is inert -- the sequences are bit-identical.)
+  #
+  # And it breaks COMMON RANDOM NUMBERS. The rotation depends on the covariate
+  # coefficients, which are estimated, so re-aiming it -- which correctness
+  # requires -- makes the DRAWS move with the parameters. Measured, a step of
+  # 1e-6 in one coefficient shifted the sampled covariate values by 1.1e-4, so
+  # a CRN-FD difference in that direction carries a design change on top of the
+  # parameter change. .admCovRowsFor is deterministic in `cov_dist` alone, which
+  # is data, and that is the property the gradient depends on.
+  #
+  # The quadrature estimators are unaffected: their gain is in DESIGN POINTS,
+  # they re-aim per objective call, and they have no random numbers to hold
+  # common.
+  s$cov_rows <- .admCovRowsFor(s$cov_dist, n_row, pinfo$n_eta)
   s
 }
 
