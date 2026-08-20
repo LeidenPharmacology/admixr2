@@ -361,7 +361,14 @@
           # so this is not an approximation the grid would beat. Cached at
           # admission (.admCovCollapse costs a probe, no solves); the %||% keeps
           # a hand-built study working at the old cost.
-          else         s[[".adm_cov_collapse"]] %||%
+          # RE-AIMED at the current thetas, not read from admission. The
+          # rotation depends on the covariate coefficients, which are estimated,
+          # so a design cached at the starting values integrates over the wrong
+          # line in latent space as soon as the optimizer moves them -- measured
+          # at 53 to 163 -2LL units for a 0.1 move in one coefficient. This is
+          # the same thing the shift branch above does with .admShiftDelta.
+          else         .admCovRefresh(s[[".adm_cov_collapse"]],
+                                      .admShiftStruct(pinfo, pars$struct)) %||%
                        .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
     nc <- nrow(cg$X)
     g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]

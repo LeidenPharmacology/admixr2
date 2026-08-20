@@ -1631,7 +1631,10 @@ test_that("covariates on ONE parameter collapse to a 1-D integral", {
   expect_false(is.null(co))
   expect_equal(co$r, 1L)                    # RANK is what sets the dimension
   expect_equal(co$p, 3L)
-  expect_equal(nrow(co$X), 7L)              # n^r, not n^p
+  # ceiling(cov_nodes * pc / r) = 21, not cov_nodes: one direction carrying
+  # three covariates' combined spread needs more resolution than one axis, not
+  # the same. Still 21 points against the grid's 343.
+  expect_equal(nrow(co$X), 21L)
   expect_equal(sum(co$W), 1, tolerance = 1e-12)
 
   # ... and it AGREES with a genuine 21^3 product grid, using far fewer rows

@@ -204,9 +204,18 @@
 # study unchanged on the shift path (where the covariate is held at its
 # reference and its whole effect rides in the shifted eta column) and when no
 # distribution is declared.
-.admStudyCovRows <- function(s, pinfo, n_row) {
+.admStudyCovRows <- function(s, pinfo, n_row, struct = NULL) {
   if (!identical(s$.adm_cov_path, "rows")) return(s)
   co <- s[[".adm_cov_collapse"]]
+  # The collapsed subspace is aimed by the CURRENT structural thetas, so a
+  # caller that cannot supply them gets the full product draw instead. That is
+  # not a fallback for convenience: without them the rotation is the one the
+  # STARTING values implied, and using it would be silently wrong rather than
+  # merely slower. The batched Hessian paths are the case -- they hold many
+  # parameter vectors at once, so no single rotation serves them.
+  if (!is.null(co) && !is.null(struct))
+    co <- .admCovRefresh(co, .admShiftStruct(pinfo, struct))
+  else if (!is.null(co)) co <- NULL
   # The collapsed subspace when one was certified, the full product otherwise.
   # r == pc is admitted by the collapse for the sake of adgh's node search, but
   # it is no reduction in DIMENSION, and dimension is the whole of admc's
@@ -3270,33 +3279,206 @@ print.covDist <- function(x, ...) {
 #
 # Returns a design in .admCovGrid's shape, so nothing downstream changes, or
 # NULL when it does not apply and the product grid stands.
-# How closely two successive node counts must agree before the smaller one is
-# taken as converged. Relative, on the design's own weighted moments of the
-# PARAMETER.
+# Evaluate the covariate-reading assignments at a given set of structural
+# thetas, covariate values, eta value and discrete cell.
 #
-# It cannot be argued from the parameter side, because that is not what the fit
-# scores: the objective sees the PREDICTION, reached through the ODE solve, and
-# the solve AMPLIFIES. Measured on a rank-1 collapse of three covariates, a
-# tolerance of 1e-6 on the parameter moments came out as 4.5e-04 on the
-# predicted covariance -- roughly 500x, and model-dependent, since it is really
-# d(prediction)/d(parameter). At that setting the collapsed design was 445x
-# WORSE than the plain product grid it replaces, which is the one thing it must
-# never be.
+# Standalone rather than a closure inside .admCovCollapse, because the SAME
+# evaluation has to be redone on every objective call at the CURRENT thetas --
+# see .admCovRefresh() for why.
+.admCovProbeAt <- function(pr, st, eta_at, cell, AA) {
+  nrw <- nrow(AA)
+  ev  <- new.env(parent = asNamespace("rxode2"))
+  for (k in names(st)) assign(k, st[[k]], ev)
+  for (e in pr$eta_names) assign(e, eta_at, ev)
+  for (k in pr$cn) assign(k, AA[, k], ev)
+  for (k in pr$dn) assign(k, cell[[k]], ev)
+  # A study declares a covariate one of two ways: as a DISTRIBUTION to
+  # marginalise over, or as the VALUE it is CONDITIONED at. Only the first is an
+  # integral, so only the first appears in the design -- but a conditioned
+  # covariate in the SAME assignment still has to be in scope, or the probe
+  # cannot evaluate it and the whole study is refused. That is a mixed study:
+  # marginalising over weight while sitting in a reported age stratum.
+  for (k in names(pr$cov_fixed))
+    if (!(k %in% pr$cn) && !(k %in% pr$dn)) assign(k, pr$cov_fixed[[k]], ev)
+  out <- vector("list", length(pr$hit)); j <- 0L
+  for (ii in seq_along(pr$lst)) {
+    e <- pr$lst[[ii]]
+    if (!isTRUE(pr$is_asgn[ii])) next
+    # An assignment that will not evaluate in R -- cp <- linCmt(), an ODE line,
+    # anything reaching the solver -- is SKIPPED rather than fatal. It simply
+    # does not get defined, and if a covariate-reading assignment needed it,
+    # THAT one fails and is caught. Bailing on the first unevaluable line
+    # refused every model with a linCmt(), which is most of them.
+    v <- tryCatch(eval(e[[3L]], ev), error = function(e) NULL)
+    if (is.null(v)) {
+      if (ii %in% pr$hit) return(NULL)
+      next
+    }
+    assign(as.character(e[[2L]]), v, ev)
+    if (ii %in% pr$hit) {
+      j <- j + 1L
+      if (length(v) != nrw || !all(is.finite(v))) return(NULL)
+      out[[j]] <- as.numeric(v)
+    }
+  }
+  out <- Filter(Negate(is.null), out)
+  if (length(out) != length(pr$hit)) return(NULL)
+  do.call(cbind, out)
+}
+
+# The direction each covariate-reading assignment depends on the latent normal
+# through: affine where that holds, single index otherwise.
 #
-# So it is calibrated against that end-to-end invariant instead, and pinned by
-# test-integration-covariate: the collapsed design must still beat the product
-# grid on accuracy as well as on rows. 1e-12 is the loosest setting that holds
-# it with margin. The cost of that tightness is small, because the savings that
-# matter are structural -- the rank reduction, and directions that are flat --
-# and those sit many orders below any tolerance in this range. What tightening
-# gives up is shaving a single node off a STRONGLY loaded direction, which was
-# never a good trade: measured at 14% fewer rows for 6x the error.
+# `routes` replays a decision already made instead of re-deciding it. Two
+# reasons, and the second is the important one:
 #
-# The proxy is the real limitation here, not the constant. Moving the criterion
-# onto PREDICTED moments -- solving at each candidate design, as
-# .admShiftVerify already does at admission -- would remove the amplification
-# from the argument entirely and is the right eventual fix.
-.ADM_COV_ALLOC_TOL <- 1e-12
+#   - COST. This runs on every objective call now, and the affinity test is an
+#     lm.fit plus a residual norm per column. Replaying the chosen route is one
+#     lm.fit and no test.
+#   - CONTINUITY. The test is a threshold. A column sitting near it could be
+#     read as affine on one call and as a single index on the next, and the two
+#     do not agree to machine precision -- so the objective would step, for no
+#     reason the optimizer can see. Which route a column takes is a property of
+#     the MODEL, so it is settled once, at admission.
+.admCovLoadings <- function(P, Z, pc, routes = NULL) {
+  if (is.null(P)) return(NULL)
+  np <- nrow(Z)
+  W1 <- rep(1 / np, np)
+  B  <- matrix(0, pc, ncol(P))
+  rt <- vector("list", ncol(P))
+  for (k in seq_len(ncol(P))) {
+    pk <- P[, k]
+    if (stats::sd(pk) <= 0) { rt[[k]] <- "const"; next }
+    if (!is.null(routes)) {
+      r <- routes[[k]]
+      if (identical(r, "const")) next
+      b <- if (identical(r, "index")) .admIndexDir(pk, Z) else {
+        y  <- if (identical(r, "affine_log")) log(pk) else pk
+        cf <- tryCatch(stats::lm.fit(cbind(1, Z), y)$coefficients,
+                       error = function(e) NULL)
+        if (is.null(cf) || !all(is.finite(cf))) NULL else cf[-1L]
+      }
+      if (is.null(b)) return(NULL)
+      B[, k] <- b
+      next
+    }
+    b <- NULL
+    # AFFINE first, on the LOG and then the raw scale. Exact where it holds,
+    # and it holds for the multiplicative and allometric forms that dominate.
+    for (yi in seq_len(2L)) {
+      y <- if (yi == 1L) { if (all(pk > 0)) log(pk) else NULL } else pk
+      if (is.null(y)) next
+      if (.admShiftAffineResid(matrix(y, ncol = 1L), W1, Z) <
+          .ADM_SHIFT_GAUSS_TOL) {
+        cf <- tryCatch(stats::lm.fit(cbind(1, Z), y)$coefficients,
+                       error = function(e) NULL)
+        if (!is.null(cf) && all(is.finite(cf))) {
+          b <- cf[-1L]
+          rt[[k]] <- if (yi == 1L) "affine_log" else "affine_raw"
+          break
+        }
+      }
+    }
+    # SINGLE INDEX otherwise. Affine is far stronger than the construction
+    # needs: the design places Gauss-Hermite nodes in z, so it is enough that
+    # the parameter be SOME function of one linear combination u. Then u is
+    # normal, a GH rule integrates the composition exactly to degree 2n-1, and
+    # the preimage is unchanged. Affine is the special case of an identity link
+    # -- and requiring it refuses, for one, an Emax link on a product of
+    # lognormal covariates, whose INDEX is affine and whose LINK is not.
+    if (is.null(b)) { b <- .admIndexDir(pk, Z); rt[[k]] <- "index" }
+    if (is.null(b)) return(NULL)
+    B[, k] <- b
+  }
+  attr(B, "routes") <- rt
+  B
+}
+
+# Re-aim the collapsed design at the CURRENT structural thetas.
+#
+# The rotation depends on them. A covariate coefficient is an ESTIMATED
+# parameter, and moving it turns the direction the covariates reach the model
+# through -- so a design built once at admission pins the covariates to the line
+# the STARTING values implied, and the variation orthogonal to that line is
+# missed entirely. Measured against a 15^3 product-grid reference: exact to
+# 1e-5 for every non-covariate parameter, and 53 to 163 -2LL units out for a 0.1
+# move in ONE coefficient. Every unit and moment test passed throughout, because
+# they all evaluate at the initial point, where the cached design is correct by
+# construction. It took a real fit to see it.
+#
+# .adghGrid already recomputes the shift path's Delta from pars$struct on every
+# objective call for exactly this reason; this is the collapse's version of it.
+# What stays fixed at admission is everything STRUCTURAL -- the rank, the node
+# counts, the certificate -- none of which a coefficient's VALUE can change.
+# The rank is set by how many assignments read covariates, not by how strongly.
+#
+# Costs no solves: a 128-point probe, an SVD of a pc x m matrix, and the design
+# build. Against an rxSolve at ~11 ms this does not register.
+.admCovRefresh <- function(co, st) {
+  if (is.null(co) || is.null(co$pr) || is.null(st)) return(co)
+  P <- .admCovProbeAt(co$pr, st, 0, co$cell_list[[1L]], co$Ap)
+  B <- .admCovLoadings(P, co$Zp, co$pc, co$pr$routes)
+  if (is.null(B)) return(co)
+  sv <- tryCatch(svd(B), error = function(e) NULL)
+  if (is.null(sv) || length(sv$d) < co$r) return(co)
+  U  <- sv$u[, seq_len(co$r), drop = FALSE]
+  Sr <- t(U) %*% co$Rc %*% U
+  Lr <- tryCatch(chol(Sr), error = function(e) NULL)
+  if (is.null(Lr)) return(co)
+  gl <- lapply(co$nv, function(m) .adghNodes1(m))
+  Xg <- as.matrix(expand.grid(lapply(gl, function(g) g$x)))
+  Wg <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
+  dimnames(Xg) <- NULL
+  Zc <- Xg %*% Lr %*% t(U)
+  Xc <- vapply(seq_len(co$pc), function(k)
+    .admCovQuantile(co$cd[[co$cn[k]]],
+                    pmin(pmax(stats::pnorm(Zc[, k]), .Machine$double.eps),
+                         1 - .Machine$double.eps)), numeric(nrow(Zc)))
+  if (!is.matrix(Xc)) Xc <- matrix(Xc, nrow(Zc), co$pc)
+  colnames(Xc) <- co$cn
+  # A refresh that cannot evaluate leaves the previous design in place. It can
+  # only happen where the parameter assignments themselves fail -- a log of a
+  # negative, an overflow -- and the solve rejects that region anyway.
+  if (!all(is.finite(Xc))) return(co)
+  Wc <- Wg / sum(Wg)
+  nq <- nrow(Xc); nl <- max(nrow(co$cells), 1L)
+  ix <- rep(seq_len(nq), times = nl)
+  Xf <- Xc[ix, , drop = FALSE]
+  Wf <- Wc[ix] * rep(co$pcell, each = nq)
+  if (length(co$dn))
+    Xf <- cbind(Xf, co$cells[rep(seq_len(nl), each = nq), , drop = FALSE])
+  Xf <- Xf[, co$nms, drop = FALSE]
+  co$X <- Xf; co$W <- Wf / sum(Wf); co$z <- Zc[ix, , drop = FALSE]
+  co$U <- U; co$Lr <- Lr
+  co
+}
+
+# How many nodes ONE COLLAPSED DIRECTION deserves.
+#
+# It is not cov_nodes. A collapsed direction carries the COMBINED spread of the
+# pc covariate axes it replaced, so it is wider than any one of them and needs
+# proportionally more resolution -- the same reasoning .adghGrid records for the
+# shift path's n_u, which is min(101, 4 * nn0) rather than cov_nodes for exactly
+# this reason ("fixing n_u at cov_nodes left the shift path ~10x LESS accurate
+# than the grid it replaces").
+#
+# Measured, three lognormal covariates collapsing to one direction, against a
+# 21^3 product-grid reference, at cov_nodes = 7:
+#
+#            design pts   at start   b +0.3    b +0.6    b +1.0
+#   grid 7^3        343    3.1e-08   4.5e-05   1.2e-03   8.1e-02
+#   collapse 7        7    1.6e-06   2.3e-02   3.6e-01   1.8e+01
+#   collapse 21      21    2.4e-10   9.4e-10   5.0e-06   2.6e-02
+#
+# At the cap it is BETTER than the grid at every point, on 16x fewer design
+# points. At cov_nodes it is worse everywhere except the starting values -- and
+# the starting values are where every moment test evaluates, which is why this
+# survived until a real fit walked away from them.
+#
+# pc/r is how many axes each direction absorbs on average, so r == pc recovers
+# cov_nodes exactly and no collapse claims more than it merged.
+.admCovDirNodes <- function(n_nodes, pc, r)
+  min(101L, as.integer(ceiling(as.numeric(n_nodes) * pc / max(r, 1L))))
 
 .admCovCollapse <- function(ui, pinfo, cov_dist, n_nodes, n_probe = 128L,
                             max_rows = 20000L, n_ver = 8192L,
@@ -3386,86 +3568,19 @@ print.covDist <- function(x, ...) {
   # Evaluate the assignments IN ORDER, so an intermediate is defined before the
   # assignment that reads it, and collect the direct readers' values.
   st <- .admShiftStruct(pinfo)
+  pr <- list(lst = lst, is_asgn = is_asgn, hit = hit, cn = cn, dn = dn,
+             eta_names = pinfo$eta_col_names, cov_fixed = cov_fixed)
   # evaluate the covariate-reading assignments at an ARBITRARY covariate matrix
   # -- the probe uses A, the verification uses the design points Xc
-  probe_gen <- function(eta_at, cell, AA) {
-    nrw <- nrow(AA)
-    ev <- new.env(parent = asNamespace("rxode2"))
-    for (k in names(st)) assign(k, st[[k]], ev)
-    for (e in pinfo$eta_col_names) assign(e, eta_at, ev)
-    for (k in cn) assign(k, AA[, k], ev)
-    for (k in dn) assign(k, cell[[k]], ev)
-    # A study declares a covariate one of two ways: as a DISTRIBUTION to
-    # marginalise over, or as the VALUE it is CONDITIONED at. Only the first is
-    # an integral, so only the first appears in the design -- but a conditioned
-    # covariate in the SAME assignment still has to be in scope, or the probe
-    # cannot evaluate it and the whole study is refused. That is a mixed study:
-    # marginalising over weight while sitting in a reported age stratum.
-    for (k in names(cov_fixed))
-      if (!(k %in% cn) && !(k %in% dn)) assign(k, cov_fixed[[k]], ev)
-    out <- vector("list", length(hit)); j <- 0L
-    for (ii in seq_along(lst)) {
-      e <- lst[[ii]]
-      if (!isTRUE(is_asgn[ii])) next
-      # An assignment that will not evaluate in R -- cp <- linCmt(), an ODE
-      # line, anything reaching the solver -- is SKIPPED rather than fatal. It
-      # simply does not get defined, and if a covariate-reading assignment
-      # needed it, THAT one fails and is caught below. Bailing on the first
-      # unevaluable line refused every model with a linCmt(), which is most of
-      # them.
-      v <- tryCatch(eval(e[[3L]], ev), error = function(e) NULL)
-      if (is.null(v)) {
-        if (ii %in% hit) return(NULL)
-        next
-      }
-      assign(as.character(e[[2L]]), v, ev)
-      if (ii %in% hit) {
-        j <- j + 1L
-        if (length(v) != nrw || !all(is.finite(v))) return(NULL)
-        out[[j]] <- as.numeric(v)
-      }
-    }
-    out <- Filter(Negate(is.null), out)
-    if (length(out) != length(hit)) return(NULL)
-    do.call(cbind, out)
+  probe_gen <- function(eta_at, cell, AA, st_use = st) {
+    .admCovProbeAt(pr, st_use, eta_at, cell, AA)
   }
   probe    <- function(eta_at, cell) probe_gen(eta_at, cell, A)
   probe_at <- function(AA, cell)     probe_gen(0, cell, AA)
-  loadings <- function(P) {
-    if (is.null(P)) return(NULL)
-    W1 <- rep(1 / n_probe, n_probe)
-    B  <- matrix(0, pc, ncol(P))
-    for (k in seq_len(ncol(P))) {
-      pk <- P[, k]
-      if (stats::sd(pk) <= 0) next            # constant: no direction at all
-      b <- NULL
-      # AFFINE first, on the LOG and then the raw scale. Exact where it holds,
-      # and it holds for the multiplicative and allometric forms that dominate.
-      for (y in list(if (all(pk > 0)) log(pk) else NULL, pk)) {
-        if (is.null(y)) next
-        if (.admShiftAffineResid(matrix(y, ncol = 1L), W1, Z) <
-            .ADM_SHIFT_GAUSS_TOL) {
-          cf <- tryCatch(stats::lm.fit(cbind(1, Z), y)$coefficients,
-                         error = function(e) NULL)
-          if (!is.null(cf) && all(is.finite(cf))) { b <- cf[-1L]; break }
-        }
-      }
-      # SINGLE INDEX otherwise. Affine is far stronger than the construction
-      # needs: the design places Gauss-Hermite nodes in z, so it is enough that
-      # the parameter be SOME function of one linear combination u. Then u is
-      # normal, a GH rule integrates the composition exactly to degree 2n-1,
-      # and the preimage is unchanged. Affine is the special case of an
-      # identity link -- and requiring it refuses, for one, an Emax link on a
-      # product of lognormal covariates, whose INDEX is perfectly affine and
-      # whose LINK is not.
-      if (is.null(b)) b <- .admIndexDir(pk, Z)
-      if (is.null(b)) return(NULL)
-      B[, k] <- b
-    }
-    B
-  }
+  loadings <- function(P) .admCovLoadings(P, Z, pc)
   B <- loadings(probe(0, cell_list[[1L]]))
   if (is.null(B)) return(NULL)
+  pr$routes <- attr(B, "routes")   # settled here, replayed on every refresh
   # THE LOADING MUST NOT DEPEND ON THE RANDOM EFFECT. A covariate-by-eta
   # interaction (cl <- exp(tcl + b * WT * eta.cl)) has a direction that moves
   # with eta, and the probe at eta = 0 would report b = 0 -- a collapse onto
@@ -3486,14 +3601,10 @@ print.covDist <- function(x, ...) {
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || !length(sv$d)) return(NULL)
   r <- sum(sv$d > max(sv$d) * 1e-8)
-  # r == pc is ADMITTED, though there is no rank reduction to make there. What
-  # it buys is not the rotation -- with B diagonal (each covariate read by its
-  # own parameter) U is a permutation and redistributes nothing -- but the node
-  # search below, which lives on this path and has no counterpart on the grid
-  # path. Measured on the ordinary two-covariate model: 49 points -> 15 at the
-  # same accuracy. Guarded at the end on cost, so it takes over only when it
-  # actually beats the product grid it replaces.
-  if (!is.finite(r) || r < 1L || r > pc) return(NULL)
+  # r == pc is refused: no rank reduction to make, and with the node search gone
+  # there is nothing else on this path to gain. The rotation alone buys nothing
+  # there -- with B diagonal, U is a permutation and redistributes nothing.
+  if (!is.finite(r) || r < 1L || r >= pc) return(NULL)   # no reduction to make
   U  <- sv$u[, seq_len(r), drop = FALSE]                # pc x r, orthonormal
   nn <- as.integer(n_nodes)
   if (nn^r * max(nrow(cells), 1L) > max_rows) return(NULL)
@@ -3530,80 +3641,15 @@ print.covDist <- function(x, ...) {
     list(X = Xg2, W = Wg / sum(Wg), z = Zg)
   }
 
-  # WHERE THE MOMENTS STOP MOVING.
-  #
-  # svd(B) says how hard each collapsed direction drives the parameter, and the
-  # design used to spend n_nodes in every one regardless. Walk each direction up
-  # from one node and stop at the first count whose moments agree with the next
-  # count's: the point where an extra node buys nothing, measured rather than
-  # assumed. A smooth link settles early; a hard one keeps its nodes, with no
-  # rule to tune. n_nodes becomes a CAP, never a target, so this can never
-  # return a design more expensive than the isotropic one it replaces.
-  #
-  # Measured on a rank-2 collapse with a 15x spread in the spectrum, against a
-  # 41 x 41 reference in the same space: 7 x 7 = 49 design points, 7 x 4 = 28 at
-  # the shipped tolerance. That sweep's columns are FLAT -- once a direction is
-  # pinned at m nodes its own residual sets the error and no spending elsewhere
-  # touches it, which is why each direction is reduced to its own knee rather
-  # than traded against the others. Two floors check out in closed form: one
-  # node in a direction loading `a` mis-states E[f^2] by exp(2 a^2) - 1, and the
-  # two-node floor is the 4th-order Gauss-Hermite term.
-  #
-  # This does NOT subsume the rank reduction; the two multiply. The same search
-  # run on the RAW covariate axes leaves 100 points where the rotated one leaves
-  # 6, for three covariates feeding one allometric index: every raw axis moves
-  # the index, so no axis is flat and there is nothing for a per-axis search to
-  # cheapen. Only the rotation sees that the three are one number.
-  #
-  # Costs no solves -- these are R evaluations of the parameter assignments.
-  d0 <- build(rep(nn, r))
-  if (is.null(d0)) return(NULL)
-  P0 <- probe_at(d0$X, cell_list[[1L]])
-  if (is.null(P0)) return(NULL)
-  # a PK parameter enters the prediction as both f and 1/f, so the reciprocal is
-  # scored too -- where it is defined. Fixed from the isotropic design, so every
-  # candidate is compared on the same functionals.
-  rcp <- apply(P0, 2L, function(v) all(v > 0))
-  moms <- function(nv) {
-    d <- build(nv)
-    if (is.null(d)) return(NULL)
-    out <- vector("list", length(cell_list))
-    for (i in seq_along(cell_list)) {
-      P <- probe_at(d$X, cell_list[[i]])
-      if (is.null(P)) return(NULL)
-      v1 <- vector("list", ncol(P))
-      for (k in seq_len(ncol(P))) {
-        v <- P[, k]
-        if (rcp[k] && !all(v > 0)) return(NULL)
-        v1[[k]] <- c(sum(d$W * v), sum(d$W * v^2),
-                     if (rcp[k]) sum(d$W / v) else NULL)
-      }
-      out[[i]] <- unlist(v1)
-    }
-    o <- unlist(out)
-    if (!all(is.finite(o))) NULL else o
-  }
-  stable <- function(a, b)
-    length(a) == length(b) &&
-      all(abs(a - b) <= .ADM_COV_ALLOC_TOL *
-                        pmax(abs(a), abs(b), .Machine$double.eps))
-  nv <- rep(nn, r)
-  for (k in order(sv$d[seq_len(r)])) {          # weakest direction first
-    prev <- NULL
-    for (m in seq_len(nn)) {
-      tv <- nv; tv[k] <- m
-      cur <- moms(tv)
-      # a count that will not evaluate is not evidence of convergence: drop the
-      # comparison rather than declaring the previous count converged against it
-      if (is.null(cur)) { prev <- NULL; next }
-      if (!is.null(prev) && stable(prev, cur)) { nv[k] <- m - 1L; break }
-      prev <- cur
-    }
-  }
+  # Nodes per direction: the CAP, uniform. A search that reduced each direction
+  # to where its own moments stopped moving was tried and reverted -- it is a
+  # measurement made at the ADMISSION thetas, and a covariate coefficient is
+  # estimated, so a direction that looks converged at the starting values is not
+  # converged where the optimizer goes. Measured, it shaved one node off a
+  # strongly loaded direction for 14% fewer rows and 5-10x the error once b
+  # moved. The saving that survives is the rank reduction, which is structural.
+  nv <- rep(.admCovDirNodes(nn, pc, r), r)
   if (prod(nv) * max(nrow(cells), 1L) > max_rows) return(NULL)
-  # A rotation with no rank reduction asserts nothing about which directions
-  # matter, so it has to earn its keep on cost alone against the plain grid.
-  if (r >= pc && prod(nv) >= nn^pc) return(NULL)
   dd <- build(nv)
   if (is.null(dd)) return(NULL)
   Xc <- dd$X; Wc <- dd$W; Zc <- dd$z
@@ -3667,5 +3713,10 @@ print.covDist <- function(x, ...) {
        collapsed = TRUE, r = r, p = p, pc = pc, m = ncol(B), n_cell = nl,
        nv = nv,
        U = U, Lr = Lr, cn = cn, dn = dn, cd = cd, nms = nms,
-       cells = cells, pcell = pcell)
+       cells = cells, pcell = pcell,
+       # everything .admCovRefresh() needs to redo the rotation at the CURRENT
+       # structural thetas. The probe ingredients, not a closure: a closure
+       # captures its whole defining environment and has to survive being
+       # stored on the study and shipped to a daemon.
+       pr = pr, st0 = st, Zp = Z, Ap = A, Rc = Rc, cell_list = cell_list)
 }
