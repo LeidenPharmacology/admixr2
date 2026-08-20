@@ -37,36 +37,39 @@ Weight and creatinine clearance are correlated, so the virtual patients are
 drawn jointly through a Gaussian copula — each covariate keeps its own
 lognormal margin, the dependence goes on the latent scale. The truth, unknown
 to all three analysts, is CL = 5 L/h and V = 50 L at 70 kg, allometric weight
-scaling, and a renal exponent of 0.6.
+scaling, a renal exponent of 0.6, and men clearing about 20% faster.
 
 ```{r sim}
 set.seed(11)
 TIMES <- c(0.5, 1, 2, 4, 8, 12, 24); DOSE <- 200
-CL70 <- 5; V70 <- 50; BCRCL <- 0.6; OM_CL <- 0.06; SD_ADD <- 0.08
+CL70 <- 5; V70 <- 50; BCRCL <- 0.6; BSEX <- 0.18
+OM_CL <- 0.05; SD_ADD <- 0.08
 R <- matrix(c(1, .45, .45, 1), 2, 2,
             dimnames = list(c("WT", "CRCL"), c("WT", "CRCL")))
 
-draw_pop <- function(n, mw, sw, mc, sc) {
+draw_pop <- function(n, mw, sw, mc, sc, p_male = .55) {
   Z <- matrix(stats::rnorm(2 * n), n, 2) %*% chol(R)
   data.frame(WT   = stats::qlnorm(stats::pnorm(Z[, 1]), log(mw), sw),
-             CRCL = stats::qlnorm(stats::pnorm(Z[, 2]), log(mc), sc))
+             CRCL = stats::qlnorm(stats::pnorm(Z[, 2]), log(mc), sc),
+             SEX  = stats::rbinom(n, 1L, p_male))
 }
 sim_trial <- function(cv, id0) {
   n  <- nrow(cv)
-  cl <- CL70 * (cv$WT/70)^0.75 * (cv$CRCL/90)^BCRCL *
+  cl <- CL70 * (cv$WT/70)^0.75 * (cv$CRCL/90)^BCRCL * exp(BSEX * cv$SEX) *
         exp(stats::rnorm(n, 0, sqrt(OM_CL)))
   v  <- V70 * (cv$WT/70)
   do.call(rbind, lapply(seq_len(n), function(i) rbind(
     data.frame(ID = id0+i, TIME = 0, DV = NA_real_, AMT = DOSE, EVID = 1,
-               CMT = 1, WT = cv$WT[i], CRCL = cv$CRCL[i]),
+               CMT = 1, WT = cv$WT[i], CRCL = cv$CRCL[i], SEX = cv$SEX[i]),
     data.frame(ID = id0+i, TIME = TIMES,
                DV = DOSE/v[i] * exp(-cl[i]/v[i]*TIMES) +
                     stats::rnorm(length(TIMES), 0, SD_ADD),
-               AMT = 0, EVID = 0, CMT = 1, WT = cv$WT[i], CRCL = cv$CRCL[i]))))
+               AMT = 0, EVID = 0, CMT = 1, WT = cv$WT[i], CRCL = cv$CRCL[i],
+               SEX = cv$SEX[i]))))
 }
-cohorts <- list(normal   = draw_pop(120L, 78, .198, 95, .217),
-                mild     = draw_pop( 90L, 76, .198, 62, .198),
-                moderate = draw_pop( 70L, 74, .198, 38, .198))
+cohorts <- list(normal   = draw_pop(260L, 78, .198, 95, .217),
+                mild     = draw_pop(210L, 76, .198, 62, .198),
+                moderate = draw_pop(180L, 74, .198, 38, .198))
 trial_data <- Map(function(cv, k) sim_trial(cv, k * 10000L),
                   cohorts, seq_along(cohorts))
 ```
@@ -95,13 +98,16 @@ ggplot() +
   theme_bw() + theme(legend.position = "bottom")
 ```
 
-Each analyst now fits their own trial: weight scaled allometrically with the
-exponents fixed at 0.75 and 1, and no renal term.
+Each analyst now fits their own trial. Weight is scaled allometrically with
+the exponents fixed at 0.75 and 1. **Sex they can estimate** — both sexes are
+enrolled, so it varies where they can see it. **Renal function they cannot** —
+within one cohort it barely moves.
 
 ```{r trialfits}
 trial_model <- function() {
-  ini({ tcl <- log(4.5); tv <- log(45); eta.cl ~ 0.1; add.err <- 0.2 })
-  model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75
+  ini({ tcl <- log(4.5); tv <- log(45); bsex <- 0.05
+        eta.cl ~ 0.1; add.err <- 0.2 })
+  model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * exp(bsex * SEX)
           v  <- exp(tv) * (WT/70)
           cp <- linCmt(); cp ~ add(add.err) })
 }
@@ -109,22 +115,29 @@ trial_fits <- lapply(trial_data, function(d)
   suppressWarnings(nlmixr2(trial_model, d, est = "focei",
                            control = foceiControl(print = 0L))))
 published <- lapply(trial_fits, function(f) list(
-  CL = exp(f$parFixedDf["tcl", "Estimate"]),
-  V  = exp(f$parFixedDf["tv",  "Estimate"]),
-  OM = as.numeric(f$omega[1L, 1L]),
-  ADD = f$parFixedDf["add.err", "Estimate"]))
+  CL   = exp(f$parFixedDf["tcl", "Estimate"]),
+  V    = exp(f$parFixedDf["tv",  "Estimate"]),
+  BSEX = f$parFixedDf["bsex", "Estimate"],
+  OM   = as.numeric(f$omega[1L, 1L]),
+  ADD  = f$parFixedDf["add.err", "Estimate"]))
 knitr::kable(data.frame(
   cohort      = names(published),
   median_CRCL = round(vapply(cohorts, function(c) stats::median(c$CRCL), 0)),
   CL_at_70kg  = vapply(published, `[[`, 0, "CL"),
-  V_at_70kg   = vapply(published, `[[`, 0, "V")),
-  digits = 2, row.names = FALSE,
+  V_at_70kg   = vapply(published, `[[`, 0, "V"),
+  sex_effect  = vapply(published, `[[`, 0, "BSEX")),
+  digits = 3, row.names = FALSE,
   caption = "Three independent analyses, each sound on its own data.")
 ```
 
-Clearance differs by nearly a factor of two; volume does not move. That
-difference *is* the renal effect — unattributed, because no single trial could
-attribute it.
+All three agree on volume and on the sex effect — a covariate that varies
+*inside* each trial, so each could estimate it. They disagree wildly on
+clearance, by nearly a factor of two, and none of them can say why: the
+explanation is a covariate that barely varies within any one of them.
+
+That is the asymmetry to hold onto. **A covariate that varies within a study is
+estimable there. One that varies only between studies is not — and needs a
+meta-analysis.**
 
 ## Their models as input
 
@@ -133,42 +146,81 @@ supplied directly**. This is the second. `datagen()` turns each published model,
 plus the population it was fitted in, into the `(E, V, n)` a figure would have
 given us.
 
+A covariate reaches admixr2 one of two ways, and both appear here:
+
+* **Marginalised** — the study declares a `cov_dist` and the estimator
+  integrates over it. That is what a pooled summary requires.
+* **Conditioned** — the study declares a `cov` value and the model is solved
+  there. That is what a summary reported *by subgroup* allows.
+
+The normal and moderate trials reported pooled results, so everything is
+marginalised. The mild trial reported **separately for men and women**, so it
+becomes two studies with sex *conditioned* and weight and renal function still
+marginalised.
+
 ```{r datagen}
-CLp <- Vp <- OMp <- ADDp <- NULL             # read by ini() below
+CLp <- Vp <- BSEXp <- OMp <- ADDp <- NULL      # read by ini() below
 published_model <- function() {
-  ini({ tcl <- log(CLp); tv <- log(Vp); eta.cl ~ OMp; add.err <- ADDp })
-  model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75
+  ini({ tcl <- log(CLp); tv <- log(Vp); bsex <- BSEXp
+        eta.cl ~ OMp; add.err <- ADDp })
+  model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * exp(bsex * SEX)
           v  <- exp(tv) * (WT/70)
           cp <- linCmt(); cp ~ add(add.err) })
 }
-cov_dists <- lapply(cohorts, function(cv) covDist(
-  WT   = list(meanlog = mean(log(cv$WT)),   sdlog = stats::sd(log(cv$WT))),
-  CRCL = list(meanlog = mean(log(cv$CRCL)), sdlog = stats::sd(log(cv$CRCL))),
-  cor  = R))
-studies <- list()
-for (nm in names(published)) {
-  CLp <- published[[nm]]$CL; Vp   <- published[[nm]]$V
-  OMp <- published[[nm]]$OM; ADDp <- published[[nm]]$ADD
-  studies[[nm]] <- datagen(
-    list(s = list(times = TIMES, ev = rxode2::et(amt = DOSE),
-                  n = nrow(cohorts[[nm]]), cov_dist = cov_dists[[nm]])),
-    model = published_model,
-    control = datagenControl(method = "gh", seed = 1L))$s
+use_published <- function(nm) {
+  p <- published[[nm]]
+  CLp <<- p$CL; Vp <<- p$V; BSEXp <<- p$BSEX; OMp <<- p$OM; ADDp <<- p$ADD
 }
+# `cor` must span EVERY declared covariate, so sex joins it as independent --
+# a discrete covariate correlated with a continuous one would make each level a
+# truncation of the latent normal rather than a point, which admixr2 refuses.
+R3 <- rbind(cbind(R, SEX = c(0, 0)), SEX = c(0, 0, 1))
+dimnames(R3) <- list(c("WT", "CRCL", "SEX"), c("WT", "CRCL", "SEX"))
+pop_dist <- function(cv, with_sex) {
+  a <- list(WT   = list(meanlog = mean(log(cv$WT)),   sdlog = stats::sd(log(cv$WT))),
+            CRCL = list(meanlog = mean(log(cv$CRCL)), sdlog = stats::sd(log(cv$CRCL))),
+            cor  = R)
+  if (with_sex) {
+    a$SEX <- list(values = c(0, 1), probs = c(1 - mean(cv$SEX), mean(cv$SEX)))
+    a$cor <- R3
+  }
+  do.call(covDist, a)
+}
+gen1 <- function(n, cov_dist, cov = NULL) {
+  sp <- list(times = TIMES, ev = rxode2::et(amt = DOSE), n = n,
+             cov_dist = cov_dist)
+  if (!is.null(cov)) sp$cov <- cov
+  datagen(list(s = sp), model = published_model,
+          control = datagenControl(method = "gh", seed = 1L))$s
+}
+studies <- list()
+for (nm in c("normal", "moderate")) {             # POOLED -> all marginalised
+  use_published(nm)
+  studies[[nm]] <- gen1(nrow(cohorts[[nm]]), pop_dist(cohorts[[nm]], TRUE))
+}
+use_published("mild")                             # REPORTED BY SEX
+for (sx in c(0, 1))                               # -> sex conditioned
+  studies[[paste0("mild_sex", sx)]] <-
+    gen1(sum(cohorts$mild$SEX == sx), pop_dist(cohorts$mild, FALSE),
+         cov = list(SEX = sx))
+names(studies)
 ```
 
-Two things go in per study: the trial's **model**, and the **`cov_dist`** it was
-fitted in — which the paper describes in its baseline table. The models have no
-renal term; the `cov_dist` does. We are telling admixr2 who was enrolled and
-letting it work out what that implies.
+Each study carries the trial's **model** and the **population** it was fitted
+in, which the paper describes in its baseline table. The `mild_sex*` studies
+carry a `cov` as well: sex is pinned, weight and renal function are still
+integrated over. None of the published models has a renal term — the
+`cov_dist` does. We are telling admixr2 who was enrolled and letting it work
+out what that implies.
 
 ## The meta-analysis
 
 ```{r admfit}
 adm_model <- function() {
-  ini({ tcl <- log(4); tv <- log(45); bcrcl <- 0.3
+  ini({ tcl <- log(4); tv <- log(45); bcrcl <- 0.3; bsex <- 0.05
         eta.cl ~ 0.1; add.err <- 0.1 })
-  model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl
+  model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl *
+                exp(bsex * SEX)
           v  <- exp(tv) * (WT/70)
           cp <- linCmt(); cp ~ add(add.err) })
 }
@@ -179,23 +231,35 @@ pf     <- fit$parFixedDf
 om     <- as.numeric(fit$omega[1L, 1L])
 om_se  <- sqrt(diag(fit$cov))[["om.eta.cl"]]   # omega's SE is in $cov, not pf
 knitr::kable(data.frame(
-  parameter = c("CL at 70 kg, CRCL 90 (L/h)", "V at 70 kg (L)",
-                "renal exponent", "additive SD (mg/L)", "omega (eta.cl)"),
-  truth     = c(CL70, V70, BCRCL, SD_ADD, OM_CL),
+  parameter = c("CL at 70 kg, CRCL 90, women (L/h)", "V at 70 kg (L)",
+                "renal exponent", "sex effect (log)", "additive SD (mg/L)",
+                "omega (eta.cl)"),
+  truth     = c(CL70, V70, BCRCL, BSEX, SD_ADD, OM_CL),
   estimate  = c(pf["tcl", "Back-transformed"], pf["tv", "Back-transformed"],
-                pf["bcrcl", "Back-transformed"], pf["add.err", "Back-transformed"],
+                pf["bcrcl", "Back-transformed"], pf["bsex", "Back-transformed"],
+                pf["add.err", "Back-transformed"],
                 as.numeric(fit$omega[1L, 1L])),
   # CIs, not SEs: a structural theta's SE is on the LOG scale, so printing it
   # beside a back-transformed estimate invites reading 0.022 as 0.022 L/h
   lower     = c(pf["tcl", "CI Lower"], pf["tv", "CI Lower"],
-                pf["bcrcl", "CI Lower"], pf["add.err", "CI Lower"],
-                om - 1.96 * om_se),
+                pf["bcrcl", "CI Lower"], pf["bsex", "CI Lower"],
+                pf["add.err", "CI Lower"], om - 1.96 * om_se),
   upper     = c(pf["tcl", "CI Upper"], pf["tv", "CI Upper"],
-                pf["bcrcl", "CI Upper"], pf["add.err", "CI Upper"],
-                om + 1.96 * om_se)),
+                pf["bcrcl", "CI Upper"], pf["bsex", "CI Upper"],
+                pf["add.err", "CI Upper"], om + 1.96 * om_se)),
   digits = 3, row.names = FALSE,
   caption = "Recovered from three analyses, none of which contained a renal term.")
 ```
+
+Both covariate effects come back, from three analyses that between them
+contained only one of them. But look at the sex effect: the three trials
+reported 0.17, 0.14 and 0.14 for a quantity that is genuinely the same in all
+of them, and the meta-analysis has to settle on one number. **Published models
+disagree, and reconciling them is not free** — some of that disagreement lands
+in the other parameters, which is why the renal exponent sits a little below
+its truth and the prediction below is a few per cent off rather than exact.
+That is what a meta-analysis is: evidence that does not perfectly agree, pooled
+anyway, and honest about the residual.
 
 Two things about standard errors, both easy to get wrong. A structural theta's
 SE is on the **log** scale — printing it beside a back-transformed estimate
@@ -208,6 +272,8 @@ Here is what the meta-analysis actually did:
 ```{r mechanism, fig.height = 3.8}
 e  <- stats::setNames(pf$Estimate, rownames(pf))
 crcl_grid <- seq(15, 110, length.out = 120)
+# at a common reference: 70 kg, women -- the trials' published CL is the same
+# reference, since bsex multiplies out of it
 curve_df <- data.frame(
   CRCL = crcl_grid,
   CL   = exp(e[["tcl"]]) * (crcl_grid / 90)^e[["bcrcl"]])
@@ -239,7 +305,7 @@ ggplot(curve_df, aes(CRCL, CL)) +
   geom_text(data = pts, aes(label = lab), vjust = -1.2, size = 3.2) +
   guides(colour = "none") +
   labs(x = "median creatinine clearance (mL/min)",
-       y = "clearance at 70 kg (L/h)",
+       y = "clearance at 70 kg, women (L/h)",
        subtitle = paste("bars: what each published model says, over the range",
                         "it covered\nblue: the meta-analysis")) +
   theme_bw()
@@ -265,21 +331,22 @@ the moderate-impairment one — and use it.
 
 ```{r predict}
 set.seed(3)
-marg_mean <- function(cl_ref, v_ref, bcrcl, om, n = 40000L) {
+marg_mean <- function(cl_ref, v_ref, bcrcl, bsex, om, n = 40000L) {
   Z    <- matrix(stats::rnorm(2 * n), n, 2) %*% chol(R)
   WT   <- stats::qlnorm(stats::pnorm(Z[, 1]), log(72), .198)
   CRCL <- stats::qlnorm(stats::pnorm(Z[, 2]), log(21), .217)
+  SX   <- stats::rbinom(n, 1L, .55)
   cl <- cl_ref * (WT/70)^0.75 *
-        (if (is.na(bcrcl)) 1 else (CRCL/90)^bcrcl) *
+        (if (is.na(bcrcl)) 1 else (CRCL/90)^bcrcl) * exp(bsex * SX) *
         exp(stats::rnorm(n, 0, sqrt(om)))
   vapply(TIMES, function(t)
     mean(DOSE / (v_ref * WT/70) * exp(-cl / (v_ref * WT/70) * t)), numeric(1))
 }
-p_adm   <- marg_mean(exp(e[["tcl"]]), exp(e[["tv"]]), e[["bcrcl"]],
+p_adm   <- marg_mean(exp(e[["tcl"]]), exp(e[["tv"]]), e[["bcrcl"]], e[["bsex"]],
                      as.numeric(fit$omega[1L, 1L]))
 p_near  <- marg_mean(published$moderate$CL, published$moderate$V, NA,
-                     published$moderate$OM)
-p_truth <- marg_mean(CL70, V70, BCRCL, OM_CL)
+                     published$moderate$BSEX, published$moderate$OM)
+p_truth <- marg_mean(CL70, V70, BCRCL, BSEX, OM_CL)
 ```
 
 Predicting the *mean* is only half of it. Simulate a severe cohort under each
@@ -293,11 +360,12 @@ n_pt <- 800L
 Zs   <- matrix(stats::rnorm(2 * n_pt), n_pt, 2) %*% chol(R)
 WTs  <- stats::qlnorm(stats::pnorm(Zs[, 1]), log(72), .198)
 CRs  <- stats::qlnorm(stats::pnorm(Zs[, 2]), log(21), .217)
+SXs  <- stats::rbinom(n_pt, 1L, .55)
 tt   <- seq(0.25, 24, length.out = 40)
 
-band <- function(cl_ref, v_ref, bcrcl, om, label) {
+band <- function(cl_ref, v_ref, bcrcl, bsex, om, label) {
   cl <- cl_ref * (WTs/70)^0.75 *
-        (if (is.na(bcrcl)) 1 else (CRs/90)^bcrcl) *
+        (if (is.na(bcrcl)) 1 else (CRs/90)^bcrcl) * exp(bsex * SXs) *
         exp(stats::rnorm(n_pt, 0, sqrt(om)))
   v  <- v_ref * (WTs/70)
   M  <- vapply(tt, function(t) DOSE / v * exp(-cl / v * t), numeric(n_pt))
@@ -306,12 +374,12 @@ band <- function(cl_ref, v_ref, bcrcl, om, label) {
 }
 lv  <- c("truth", "normal-trial model", "mild-trial model",
          "moderate-trial model", "meta-analysis (admixr2)")
+pb   <- function(nm, lab) with(published[[nm]],
+  band(CL, V, NA, BSEX, OM, lab))     # published models: sex yes, renal no
 sims <- rbind(
-  band(CL70, V70, BCRCL, OM_CL, lv[1]),
-  band(published$normal$CL,   published$normal$V,   NA, published$normal$OM,   lv[2]),
-  band(published$mild$CL,     published$mild$V,     NA, published$mild$OM,     lv[3]),
-  band(published$moderate$CL, published$moderate$V, NA, published$moderate$OM, lv[4]),
-  band(exp(e[["tcl"]]), exp(e[["tv"]]), e[["bcrcl"]],
+  band(CL70, V70, BCRCL, BSEX, OM_CL, lv[1]),
+  pb("normal", lv[2]), pb("mild", lv[3]), pb("moderate", lv[4]),
+  band(exp(e[["tcl"]]), exp(e[["tv"]]), e[["bcrcl"]], e[["bsex"]],
        as.numeric(fit$omega[1L, 1L]), lv[5]))
 sims$model <- factor(sims$model, levels = lv)
 tru <- subset(sims, model == lv[1], select = -model)   # drawn in every panel
@@ -390,9 +458,10 @@ normal margin is unbounded below and the quadrature reaches about 3.75 SD, so a
 CV above roughly 0.27 puts a node at or below zero where an allometric term is
 `NaN`. `covDist()` warns when it sees this.
 
-**Marginalised or conditioned.** A `cov_dist` is integrated over; a `cov` value
-is solved at. A pooled summary needs the first, a stratified one the second,
-and a study can do both. `covStrata()` splits a study reported by subgroup.
+**Marginalised or conditioned.** A `cov_dist` is integrated over; a `cov`
+value is solved at. Both appear above: the pooled trials marginalise all three
+covariates, the sex-stratified one pins `SEX` and marginalises the rest.
+`covStrata()` will do that split for you when a study reports subgroups.
 
 **Discrete covariates are strata**, enumerated exactly at their levels and
 weighted by their probabilities — nothing about them is approximated.
