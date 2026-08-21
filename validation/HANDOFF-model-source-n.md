@@ -13,8 +13,14 @@ deciding before it can be.
   fell to the slow rule. Independence is a known latent structure, so it now
   takes the fast branch: **749 units of J-dependence → 0.2**, flat from J = 9.
   Both routes head to the same limit.
-- **Point estimates are J-invariant** at every resolution and both branches
-  (0.750 exactly, J = 3 to 25), confirming the original finding.
+- **On the Gauss–Hermite branch the OBJECTIVE is J-invariant too** — 0.03 units
+  across J = 5 to 100 — so OFV, AIC, BIC and likelihood ratios are comparable
+  across resolutions there. The J-dependence is a property of the banding RULE,
+  not of the estimator or of ADM.
+- **Point estimates are J-invariant on that branch** (0.681000 at every J).
+  They are *not* on the pooled branch: 0.6810 at J = 5, 9, 15, 100 and 0.6968 at
+  J = 50 — the basin-jumping the original handoff cited, reproduced and
+  localised.
 - Banding preserves total weight: `n_k = w_k·n`, `Σ n_k = n`. So the Hessian
   does not grow with J and `covMethod = "r"` should not shrink with J. **The
   J-inflation fix 4 describes appears to be prevented by the weighting already**

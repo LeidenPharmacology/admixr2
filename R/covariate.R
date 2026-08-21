@@ -1334,11 +1334,17 @@
 # J^p studies for p stratified covariates, so raising it is affordable in one
 # covariate and expensive in three.
 #
-# AND THE OBJECTIVE IS J-DEPENDENT -- measured at 441 units across J = 1 to 500
-# with the model correct. OFV, AIC, BIC and any likelihood ratio are therefore
-# comparable only at FIXED J. Two fits at different `strata_nodes` cannot be
-# compared at all, which is why the value is stamped onto every generated study
-# and carried onto the fit for anova() to refuse on.
+# HOW J-DEPENDENT THE OBJECTIVE IS DEPENDS ON THE RULE, and on the default rule
+# it is barely at all. Measured across J = 5 to 100 on one banded source:
+#
+#   Gauss-Hermite (the default wherever the latent structure is known)  0.03
+#   pooled bins (an opaque `joint` only)     51 units, and still moving
+#
+# So on the default path OFV, AIC, BIC and a likelihood ratio ARE comparable
+# across resolutions. On the pooled path they are not, and the estimate is not
+# stable either -- 0.6810 at J = 5, 9, 15 and 100 but 0.6968 at J = 50. The
+# value is stamped onto every generated study and carried onto the fit so
+# anova() can refuse the comparison, which matters for that path.
 .ADM_STRATA_NODES <- 9L
 
 # Truncate one covariate's margin to the range a source actually enrolled.
@@ -1670,10 +1676,17 @@
 #'   stratified covariates, so this is cheap in one covariate and expensive in
 #'   three.
 #'
-#'   **The objective depends on it**, by 441 units across counts of 1 to 500 on
-#'   a correctly specified model. Objective, AIC, BIC and any likelihood ratio
-#'   are therefore comparable only at a FIXED count; `anova()` refuses to
-#'   compare two fits built at different ones.
+#'   How much the objective depends on it turns on which rule applies. Where the
+#'   latent structure is known — an explicit `cor`, or no declared dependence,
+#'   which is independence — banding conditions on a Gauss-Hermite grid and the
+#'   objective is stable: 0.03 units across counts of 5 to 100, so objective,
+#'   AIC, BIC and likelihood ratios are comparable across resolutions.
+#'
+#'   An opaque `joint` sampler cannot be conditioned and falls back to
+#'   equiprobable bins, where it is not stable: 51 units at a count of 100 and
+#'   still moving, with the estimate itself wandering (0.681 at 5, 9, 15 and
+#'   100; 0.697 at 50). There, raise the count until the estimates settle, and
+#'   note that `anova()` refuses to compare two fits built at different ones.
 #' @param cov_range Optional named list giving the range each stratified
 #'   covariate was actually ENROLLED over, e.g. `list(WT = c(52, 118))` —
 #'   publications routinely report a min-max or a median with an IQR.
