@@ -1490,10 +1490,20 @@
   # declared levels, the strata came out with the right level probabilities in
   # every band, and the J-dependence fell from 515 units to 0.0 -- but the
   # recovered coefficient for the discrete covariate moved from 0.150 (its
-  # truth) to -0.052, stably, at every J. Stable and wrong is not
-  # non-identifiability, so something about the exactly-conditioned design
-  # genuinely implies that value and it is not yet understood. Reverted until
-  # it is.
+  # truth) to -0.052 at every J. That is NON-IDENTIFIABILITY, not a bug:
+  # profiling the objective in it gives 0.07 units across its whole range under
+  # exact conditioning, against 18.3 units of curvature under banding. Exact
+  # conditioning removes the within-band spread of the BANDED covariate, and
+  # that spread is what separates the discrete coefficient's contribution to V
+  # from omega -- with the level proportions identical in every stratum there is
+  # no between-stratum contrast either. So routing discrete covariates through
+  # this branch would silently destroy their identifiability.
+  #
+  # The fix is a different construction: band as now, keeping the spread, but
+  # represent each band by a TRUNCATED QUADRATURE rather than the sampled pool
+  # it uses today -- which is where the O(1/J) rate comes from. Not attempted
+  # here. (The collapse is not involved: disabling it moves the estimate by
+  # 1e-4.)
   #
   # The cost of leaving it: one declared sex, genotype or formulation puts the
   # whole study on equiprobable bins, which is 515 units of J-dependence across

@@ -154,9 +154,46 @@ not understood rather than one that is wrong in an obvious way:
   (its truth, which the pooled rule returns exactly at every J) to **−0.052**,
   stably, at every J.
 
-Stable and wrong is not non-identifiability — that would wander. So the exactly
-conditioned design genuinely implies −0.052 for that coefficient, and the
-question is why.
+**That reading was wrong, and the follow-up settles it.** Profiling the
+objective in that coefficient, everything else refitted at each value:
+
+```
+bsex fixed at:   -0.10  -0.06     0    0.05   0.10   0.15   0.20
+exact (GH):      0.004  0.065  0.003  0.003  0.002  0.000  0.010   spread  0.07
+banded (pooled):18.264 12.911  6.677  3.033  0.797  0.000  0.866   spread 18.26
+```
+
+Under exact conditioning the surface is **flat** — it *is* non-identifiability.
+A deterministic optimiser on a flat ridge stops in the same place every time,
+which is why it looked stable. Under banding the same coefficient has 18 units
+of curvature and is cleanly identified, with its minimum at the truth.
+
+Two consequences:
+
+- **The collapse is not involved.** Disabling both `.admCovCollapse` and
+  `.admJointCollapse` moves the estimate by 1e-4 (−0.0595 → −0.0594). Worth
+  recording because it was the natural suspicion after the recent collapse work.
+- **Routing discrete covariates through exact conditioning would silently
+  destroy their identifiability.** Exact conditioning removes the within-band
+  spread of the *banded* covariate, and that spread is what separates the
+  discrete coefficient's contribution to `V` from `omega`; with the level
+  proportions identical in every stratum there is no between-stratum contrast to
+  fall back on either.
+
+### What a working discrete version has to do
+
+Not exact conditioning. The two requirements pull apart:
+
+- **identifiability** needs within-band spread in the banded covariate, which is
+  what banding provides and conditioning removes;
+- **convergence** needs the band's conditional law represented by a quadrature
+  rather than by the empirical Monte-Carlo pool it uses now, which is where the
+  515 units come from.
+
+Those are compatible: **band as now, but represent each band by a truncated
+quadrature instead of a sampled pool.** That keeps the spread that identifies
+the discrete effect and replaces the `O(1/J)` rate with a spectral one. It is a
+different construction from the one attempted and reverted above.
 
 A hypothesis worth testing first: under exact conditioning the banded covariate
 contributes no within-stratum spread, so a discrete covariate's effect has to be
