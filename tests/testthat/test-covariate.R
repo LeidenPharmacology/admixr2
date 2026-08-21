@@ -1942,3 +1942,131 @@ test_that("a discrete covariate CORRELATED with a continuous one is refused", {
               allCovs = c("W1", "W2", "SEX"))
   expect_null(admixr2:::.admJointCollapse(ui, pin, cdd, 7L, NULL, NULL))
 })
+
+test_that("bands are bounded by the range the source REPORTED", {
+  # Strata cut over the analyst's full `cov_dist` evaluate a published model in
+  # covariate bands that study never enrolled, and credit its coefficient as
+  # evidence there. The overstatement is exactly var(declared)/var(enrolled) --
+  # 3.43x for a source spanning +/-1 SD, 12.38x at +/-0.5 SD. Not bias: false
+  # confidence, and it only bites once a second source disagrees.
+  cd <- covDist(WT = c(mean = 78, sd = 16), dist = "lnorm")
+  full <- suppressWarnings(covStrata(cd, "WT", n_nodes = 5L, n = 300))
+  rng  <- covStrata(cd, "WT", n_nodes = 5L, n = 300,
+                    cov_range = list(WT = c(60, 100)))
+  spanof <- function(st) range(vapply(st, function(s) s$cov$WT, numeric(1)))
+  expect_gt(spanof(full)[2L] - spanof(full)[1L],
+            spanof(rng)[2L]  - spanof(rng)[1L])
+  expect_gte(spanof(rng)[1L], 60)
+  expect_lte(spanof(rng)[2L], 100)
+  # the weights still partition the study: sum to 1, and n is preserved
+  expect_equal(sum(vapply(rng, `[[`, 0, "weight")), 1, tolerance = 1e-10)
+  expect_equal(sum(vapply(rng, `[[`, 0, "n")), 300, tolerance = 1e-8)
+  # and the credited spread -- which IS the information claimed -- falls
+  cvar <- function(st) {
+    x <- vapply(st, function(s) s$cov$WT, numeric(1))
+    w <- vapply(st, `[[`, 0, "weight")
+    sum(w * (x - sum(w * x))^2)
+  }
+  expect_gt(cvar(full) / cvar(rng), 1.5)
+  # absent, it WARNS -- the silent case is the leaky one
+  expect_warning(covStrata(cd, "WT", n_nodes = 5L, n = 300), "cov_range")
+  # a range that excludes the distribution is an error, not an empty result
+  expect_error(covStrata(cd, "WT", cov_range = list(WT = c(1e5, 2e5))),
+               "covers essentially none")
+  expect_error(covStrata(cd, "WT", cov_range = list(ZZ = c(1, 2))),
+               "does not declare")
+})
+
+test_that("a source that ASSERTED a covariate's coefficient is not banded", {
+  # `allCovs` reports what a model READS, not what it ESTIMATED. A model
+  # carrying (WT/70)^0.75 -- the allometric convention -- reads WT while
+  # asserting its coefficient, so it holds no evidence about WT at all and the
+  # claimed-to-earned information ratio is unbounded at every stratum count.
+  skip_if_not_installed("rxode2")
+  cd <- covDist(WT = c(mean = 78, sd = 16), dist = "lnorm")
+  st <- list(a = list(times = c(1, 4, 12), ev = rxode2::et(amt = 100),
+                      n = 100L, cov_dist = cd, stratify = TRUE,
+                      cov_range = list(WT = c(60, 100))))
+  asserted <- function() {
+    ini({ tcl <- log(5); tv <- log(50); eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  expect_error(admixr2:::.admExpandStrata(st, names(st), asserted),
+               "ASSERTS the coefficient")
+  estimated <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75; eta.cl ~ .09
+          add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ex <- admixr2:::.admExpandStrata(st, names(st), estimated)
+  expect_gt(length(ex$studies), 1L)
+})
+
+test_that(".admCovCoefThetas separates an estimated coefficient from an asserted one", {
+  # Answered numerically, and on the LOG scale, because these models are
+  # multiplicative: raising a SCALE parameter changes the covariate's absolute
+  # effect, so differencing the raw prediction flags `tcl` as WT's coefficient,
+  # which it is not. What a scale parameter leaves alone is the PROPORTIONAL
+  # effect -- d(log f)/d(log WT) is 0.75 whatever tcl is.
+  skip_if_not_installed("rxode2")
+  cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
+                dist = "lnorm")
+  co <- function(m, cov) admixr2:::.admCovCoefThetas(
+    suppressMessages(rxode2::rxode2(m)), cov, cd)
+  lit <- function() {
+    ini({ tcl <- log(5); tv <- log(50); eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  est <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75; eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  fx <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- fix(0.75); eta.cl ~ .09
+          add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  part <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bcr <- 0.6; eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcr
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  expect_length(co(lit, "WT"), 0L)          # literal exponent: asserted
+  expect_identical(co(est, "WT"), "bwt")    # estimated
+  expect_length(co(fx,  "WT"), 0L)          # fix()ed theta: asserted
+  expect_length(co(part, "WT"), 0L)         # partial set: WT asserted ...
+  expect_identical(co(part, "CRCL"), "bcr") # ... CRCL estimated
+})
+
+test_that("strata_nodes is a convergence parameter, and fits carry it", {
+  # The J -> infinity limit is the well-defined object; finite J approximates
+  # it, and under misspecification the answer can jump basins rather than drift
+  # (1.57 at J=4 -> 1.6e-05 at J=5). The objective is J-dependent -- 441 units
+  # across J = 1 to 500 with the model correct -- so two fits at different
+  # resolutions are on different scales.
+  skip_if_not_installed("rxode2")
+  expect_gt(admixr2:::.ADM_STRATA_NODES, 5L)
+  cd <- covDist(WT = c(mean = 78, sd = 16), dist = "lnorm")
+  st <- list(a = list(times = c(1, 4, 12), ev = rxode2::et(amt = 100),
+                      n = 100L, cov_dist = cd, stratify = TRUE,
+                      cov_range = list(WT = c(60, 100))))
+  m <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75; eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ex <- admixr2:::.admExpandStrata(st, names(st), m)
+  expect_equal(length(ex$studies), admixr2:::.ADM_STRATA_NODES)
+  # every generated study is stamped, so a fit can refuse a cross-J comparison
+  expect_true(all(vapply(ex$studies, function(s)
+    identical(s[[".adm_strata_nodes"]], admixr2:::.ADM_STRATA_NODES),
+    logical(1))))
+  st2 <- st; st2$a$strata_nodes <- 4L
+  ex2 <- admixr2:::.admExpandStrata(st2, names(st2), m)
+  expect_equal(ex2$studies[[1L]][[".adm_strata_nodes"]], 4L)
+})

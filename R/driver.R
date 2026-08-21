@@ -161,6 +161,12 @@
 .admFinaliseFit <- function(.ret, .ui, .ctl, est, objective, ov, studies,
                             cov, cov_nms, multi_out, extra_field, handle_ctl,
                             t_opt, t_cov, t_elapsed, pinfo = NULL) {
+  # The stratum resolution the studies were generated at, if any. Recorded
+  # HERE because all four drivers pass through this function -- a field set in
+  # three of four is a silent divergence, not an error. The objective is
+  # J-dependent, so anova() refuses to compare fits that disagree on it.
+  .Jn <- unique(unlist(lapply(studies, function(s) s[[".adm_strata_nodes"]])))
+  if (length(.Jn) == 1L) .ret$env$strataNodes <- .Jn
   nlmixr2est::.nlmixr2FitUpdateParams(.ret)
   handle_ctl(.ctl, .ret)
   if (exists("control", .ui)) rm(list = "control", envir = .ui)

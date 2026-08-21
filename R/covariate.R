@@ -1321,8 +1321,89 @@
 # them. inverse_rosenblatt() satisfies this when the vine is ordered with those
 # covariates leading; admixr2's own `cor` sampler satisfies it by construction
 # (it multiplies by a Cholesky factor in declared order).
+# Strata per stratified covariate.
+#
+# THIS IS A CONVERGENCE PARAMETER, NOT A MODELLING CHOICE, and the old default
+# of 5 read like a preference. The well-defined object is the J -> infinity
+# limit (N * E_a[l]); any finite J is an approximation to it, and under
+# misspecification the answer can jump between basins rather than drift -- a
+# verified counterexample flips from beta = 1.57 at J = 4 to 1.6e-05 at J = 5.
+# So it should be driven up until the answer stops moving, not picked.
+#
+# Raised to 9, which is a starting point rather than an answer. The cost is
+# J^p studies for p stratified covariates, so raising it is affordable in one
+# covariate and expensive in three.
+#
+# AND THE OBJECTIVE IS J-DEPENDENT -- measured at 441 units across J = 1 to 500
+# with the model correct. OFV, AIC, BIC and any likelihood ratio are therefore
+# comparable only at FIXED J. Two fits at different `strata_nodes` cannot be
+# compared at all, which is why the value is stamped onto every generated study
+# and carried onto the fit for anova() to refuse on.
+.ADM_STRATA_NODES <- 9L
+
+# Truncate one covariate's margin to the range a source actually enrolled.
+#
+# Strata are cut from the analyst's `cov_dist` over its FULL support, so a
+# published model gets evaluated -- and credited as evidence -- in covariate
+# bands where that study enrolled nobody. The inflation is exact:
+#
+#     information_claimed / information_earned  =  var_assumed / var_enrolled
+#
+# measured at 3.43x for a source that enrolled +/- 1 SD, and 12.38x at +/- 0.5
+# SD. It is not bias, estimates stay correct; it is FALSE CONFIDENCE, and it
+# only bites once a second source disagrees -- which is exactly when it matters.
+#
+# Truncating the SPEC rather than either branch of .admCovStrata means both
+# inherit it: the exact-conditioning route and the pooled route both reach the
+# margin through .admCovQuantile.
+.admCovTruncSpec <- function(spec, rng, nm) {
+  bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
+  if (is.null(rng)) return(spec)
+  rng <- sort(as.numeric(rng))
+  if (length(rng) != 2L || !all(is.finite(rng)) || rng[1L] >= rng[2L])
+    bad("`cov_range` for ", sQuote(nm), " must be two finite increasing ",
+        "values, e.g. c(52, 118).")
+  # DISCRETE: a range keeps the levels inside it and renormalises
+  if (!is.null(spec[["values"]])) {
+    v  <- as.numeric(spec[["values"]])
+    pr <- spec[["probs"]] %||% rep(1 / length(v), length(v))
+    k  <- v >= rng[1L] & v <= rng[2L]
+    if (!any(k)) bad("`cov_range` for ", sQuote(nm), " excludes every level.")
+    return(list(values = v[k], probs = pr[k] / sum(pr[k])))
+  }
+  # CONTINUOUS: re-map u onto [F(a), F(b)], which is the truncated quantile
+  # function. Weights renormalise automatically over the truncated support, so
+  # sum(n_k) = n still holds.
+  cdf <- if (!is.null(spec[["meanlog"]]))
+    function(x) stats::plnorm(x, spec[["meanlog"]], spec[["sdlog"]])
+  else if (!is.null(spec[["mu"]]))
+    function(x) stats::pnorm(x, spec[["mu"]], spec[["sd"]])
+  else NULL
+  qf <- if (!is.null(spec[["meanlog"]]))
+    function(u) stats::qlnorm(u, spec[["meanlog"]], spec[["sdlog"]])
+  else if (!is.null(spec[["mu"]]))
+    function(u) stats::qnorm(u, spec[["mu"]], spec[["sd"]])
+  else if (is.function(spec[["quantile"]])) spec[["quantile"]]
+  else bad("`cov_range` was given for ", sQuote(nm), " but its margin is not ",
+           "one admixr2 can invert (declare it as normal, lognormal, or with ",
+           "a `quantile` function).")
+  if (is.null(cdf)) {
+    # a user quantile function: invert on a fine grid, which is enough since
+    # this only sets the two endpoints of the truncation
+    gu <- seq(1e-6, 1 - 1e-6, length.out = 20001L)
+    gx <- as.numeric(qf(gu))
+    cdf <- function(x) stats::approx(gx, gu, xout = x, rule = 2L)$y
+  }
+  pa <- as.numeric(cdf(rng[1L])); pb <- as.numeric(cdf(rng[2L]))
+  if (!is.finite(pa) || !is.finite(pb) || pb - pa < 1e-8)
+    bad("`cov_range` for ", sQuote(nm), " covers essentially none of its ",
+        "declared distribution -- check the range and the margin agree on ",
+        "units.")
+  list(quantile = function(u) qf(pa + u * (pb - pa)))
+}
+
 .admCovStrata <- function(cov_dist, stratify, n_nodes = 5L,
-                          n_pool = 32768L) {
+                          n_pool = 32768L, cov_range = NULL) {
   cov_dist <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cov_dist)
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
@@ -1335,6 +1416,31 @@
         " that this study's `cov_dist` does not declare. Declared: ",
         paste(sQuote(nms), collapse = ", "), ".")
   checkmate::assertCount(n_nodes, positive = TRUE)
+  # BAND ONLY WHERE THE SOURCE ENROLLED. Without a reported range the strata are
+  # cut over the whole declared distribution, and the source is credited with
+  # evidence from bands it never sampled -- see .admCovTruncSpec(). Warn rather
+  # than do it silently, because the silent case is the leaky one.
+  if (!is.null(cov_range)) {
+    if (!is.list(cov_range) || is.null(names(cov_range)))
+      bad("`cov_range` must be a NAMED list, e.g. list(WT = c(52, 118)).")
+    if (!all(names(cov_range) %in% nms))
+      bad("`cov_range` names covariate(s) ",
+          paste(sQuote(setdiff(names(cov_range), nms)), collapse = ", "),
+          " that this study's `cov_dist` does not declare.")
+    for (nm in names(cov_range))
+      cov_dist[[nm]] <- .admCovTruncSpec(cov_dist[[nm]], cov_range[[nm]], nm)
+    cov_dist <- .admCovDistCanon(cov_dist)
+  }
+  .no_rng <- setdiff(stratify, names(cov_range))
+  if (length(.no_rng))
+    warning("admixr2: stratifying on ", paste(sQuote(.no_rng), collapse = ", "),
+            " over the FULL declared distribution, because no `cov_range` was ",
+            "given for ", if (length(.no_rng) == 1L) "it" else "them",
+            ". The source is then credited with evidence in covariate bands it ",
+            "may never have enrolled -- the overstatement is ",
+            "var(declared)/var(enrolled), which is 3.4x for a source spanning ",
+            "+/-1 SD. Supply the reported range, e.g. `cov_range = list(",
+            .no_rng[1L], " = c(min, max))`.", call. = FALSE)
 
   d  <- length(nms)
   iS <- match(stratify, nms)
@@ -1533,10 +1639,33 @@
 #' @param stratify Character vector naming the covariates to stratify on. The
 #'   rest are left in each stratum's own `cov_dist`, to be marginalised over
 #'   their distribution **conditional** on that stratum.
-#' @param n_nodes Strata per stratified covariate (default 5). The covariate
-#'   is cut into that many EQUIPROBABLE bins, so every stratum carries the same
+#' @param n_nodes Strata per stratified covariate (default 9). The covariate is
+#'   cut into that many EQUIPROBABLE bins, so every stratum carries the same
 #'   number of subjects; a discrete covariate ignores this and is cut at its
 #'   levels.
+#'
+#'   **This is a convergence parameter, not a modelling choice.** The
+#'   well-defined object is the limit as the count grows; any finite value
+#'   approximates it, and under misspecification the answer can jump between
+#'   basins rather than drift. Raise it until the estimates stop moving rather
+#'   than picking a value you like. Cost is `n_nodes^p` studies for `p`
+#'   stratified covariates, so this is cheap in one covariate and expensive in
+#'   three.
+#'
+#'   **The objective depends on it**, by 441 units across counts of 1 to 500 on
+#'   a correctly specified model. Objective, AIC, BIC and any likelihood ratio
+#'   are therefore comparable only at a FIXED count; `anova()` refuses to
+#'   compare two fits built at different ones.
+#' @param cov_range Optional named list giving the range each stratified
+#'   covariate was actually ENROLLED over, e.g. `list(WT = c(52, 118))` —
+#'   publications routinely report a min-max or a median with an IQR.
+#'
+#'   Without it the strata are cut over the whole declared distribution, and a
+#'   source is credited with evidence in covariate bands it never sampled. The
+#'   overstatement is exactly `var(declared) / var(enrolled)`: 3.4x for a source
+#'   spanning ±1 SD, 12.4x at ±0.5 SD. Estimates stay correct — what inflates is
+#'   confidence, and it only shows once a second source disagrees. Omitting it
+#'   warns for that reason.
 #'
 #'   More strata resolve the covariate range more finely but do not buy
 #'   accuracy, and each one costs a solve: on a matched one-covariate fit the
@@ -1578,12 +1707,104 @@
 #'   generate the strata as studies.
 #' @export
 covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
-                      n_pool = 32768L) {
+                      n_pool = 32768L, cov_range = NULL) {
   checkmate::assertNumber(n, lower = 0, finite = TRUE)
-  st <- .admCovStrata(cov_dist, stratify, n_nodes, n_pool)
+  st <- .admCovStrata(cov_dist, stratify, n_nodes, n_pool, cov_range)
   lapply(st, function(s)
     list(cov = s$cov, cov_dist = s$cov_dist, n = n * s$weight,
          weight = s$weight, n_pool_cell = s$n_pool_cell))
+}
+
+# Which ESTIMATED thetas parameterise a covariate's effect?
+#
+# `allCovs` reports which covariates a model READS, not which coefficients it
+# ESTIMATED, and the difference decides whether that source carries any evidence
+# about the covariate at all. A model containing `(WT/70)^0.75`, or
+# `clwt <- fix(0.75)`, reads WT while ASSERTING its coefficient -- the
+# allometric convention, so this is the common case, not a corner one. Banding
+# such a source credits it with evidence it never earned: the information it
+# actually contributes about the covariate is ZERO, so the ratio of claimed to
+# earned information is unbounded at every stratum count.
+#
+# Structural parsing cannot answer this reliably -- the coefficient may be an
+# exponent, a multiplier, a slope inside a link, a spline knot -- and the
+# tempting shortcut of "which thetas appear in the same assignment" is wrong for
+# the commonest form of all: in `cl <- exp(tcl + eta.cl) * (WT/70)^0.75` the
+# theta `tcl` shares the expression with WT and has nothing to do with it.
+#
+# So it is answered NUMERICALLY, which is exact for any expression: theta
+# parameterises the covariate's effect iff the MIXED second difference
+#
+#     [f(cov+h, th+d) - f(cov, th+d)] - [f(cov+h, th) - f(cov, th)]
+#
+# is non-zero -- that is, iff changing theta changes what the covariate DOES.
+# A literal exponent gives exactly zero; an estimated one does not.
+.admCovCoefThetas <- function(ui, cov, cov_dist = NULL, tol = 1e-8) {
+  lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
+  ini <- tryCatch(ui$iniDf,   error = function(e) NULL)
+  if (is.null(lst) || is.null(ini)) return(NULL)
+  th <- ini[is.na(ini$neta1) & is.na(ini$err) & !ini$fix, , drop = FALSE]
+  if (!nrow(th)) return(character(0))
+  etas <- unique(stats::na.omit(ini$name[!is.na(ini$neta1)]))
+  is_asgn <- vapply(lst, function(e) is.call(e) && length(e) == 3L &&
+                      (identical(e[[1L]], quote(`<-`)) ||
+                       identical(e[[1L]], quote(`=`))), logical(1))
+  hit <- which(is_asgn & vapply(lst, function(e)
+    is.call(e) && length(e) == 3L && cov %in% all.vars(e[[3L]]), logical(1)))
+  if (!length(hit)) return(character(0))
+  # a nominal value for every covariate: the declared median where there is one
+  covs <- tryCatch(ui$allCovs, error = function(e) character(0))
+  base_cov <- stats::setNames(lapply(covs, function(nm) {
+    sp <- if (!is.null(cov_dist)) cov_dist[[nm]] else NULL
+    v  <- if (!is.null(sp)) tryCatch(.admCovQuantile(sp, 0.5),
+                                     error = function(e) NULL) else NULL
+    if (is.null(v) || !is.finite(v) || v == 0) 1 else as.numeric(v)
+  }), covs)
+  ev_at <- function(cov_val, th_over) {
+    ev <- new.env(parent = asNamespace("rxode2"))
+    for (i in seq_len(nrow(ini)))
+      if (is.na(ini$neta1[i])) assign(ini$name[i], ini$est[i], ev)
+    for (nm in names(th_over)) assign(nm, th_over[[nm]], ev)
+    for (e in etas) assign(e, 0, ev)
+    for (nm in covs) assign(nm, base_cov[[nm]], ev)
+    assign(cov, cov_val, ev)
+    out <- numeric(0)
+    for (ii in seq_along(lst)) {
+      if (!isTRUE(is_asgn[ii])) next
+      v <- tryCatch(eval(lst[[ii]][[3L]], ev), error = function(e) NULL)
+      if (is.null(v)) next
+      assign(as.character(lst[[ii]][[2L]]), v, ev)
+      if (ii %in% hit && length(v) == 1L && is.finite(v)) out <- c(out, v)
+    }
+    out
+  }
+  x0 <- base_cov[[cov]] %||% 1
+  x1 <- x0 * 1.05
+  f00 <- ev_at(x0, list()); f10 <- ev_at(x1, list())
+  if (!length(f00) || length(f00) != length(f10)) return(character(0))
+  # ON THE LOG SCALE, and that is the whole test rather than a detail. These
+  # models are multiplicative, so a SCALE parameter does change the covariate's
+  # ABSOLUTE effect -- in cl = exp(tcl + eta) * (WT/70)^0.75, raising tcl
+  # raises the number of L/h a 10% weight change buys. Differencing f would
+  # therefore flag tcl as WT's coefficient, which it is not. What tcl leaves
+  # alone is the RELATIVE effect: d(log f)/d(log WT) is 0.75 whatever tcl is,
+  # and 1 * bwt when the exponent is estimated. So the mixed difference is
+  # taken on log f, and only a theta that moves the covariate's PROPORTIONAL
+  # effect counts as parameterising it.
+  lg <- function(a, b, c_, d_) {           # log where every arm is positive
+    if (all(c(a, b, c_, d_) > 0)) list(log(a), log(b), log(c_), log(d_))
+    else list(a, b, c_, d_)
+  }
+  keep <- vapply(seq_len(nrow(th)), function(i) {
+    nm <- th$name[i]
+    ov <- stats::setNames(list(th$est[i] + 1e-3 * max(abs(th$est[i]), 1)), nm)
+    f01 <- ev_at(x0, ov); f11 <- ev_at(x1, ov)
+    if (length(f01) != length(f00) || length(f11) != length(f00)) return(FALSE)
+    z <- lg(f00, f10, f01, f11)
+    d0 <- z[[2L]] - z[[1L]]; d1 <- z[[4L]] - z[[3L]]
+    any(abs(d1 - d0) > tol * pmax(abs(d0), 1e-12))
+  }, logical(1))
+  th$name[keep]
 }
 
 # Expand every study carrying `stratify` into one ordinary study per stratum.
@@ -1635,6 +1856,35 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
              ". There is no contrast to stratify on; drop `stratify`, and the ",
              "study is generated marginal over the distribution instead.",
              call. = FALSE)
+      # READING a covariate is not the same as having ESTIMATED its
+      # coefficient. A source that asserted it -- `(WT/70)^0.75`, or a fix()ed
+      # theta -- carries no evidence about that covariate, and banding on it
+      # credits information that was never earned. Band only where a free theta
+      # actually modulates the covariate; a partially-fixed set keeps the
+      # estimated members and drops the rest.
+      .ui_s <- tryCatch(suppressMessages(rxode2::rxode2(m)),
+                        error = function(e) NULL)
+      if (!is.null(.ui_s)) {
+        .est <- vapply(keep, function(cv) length(.admCovCoefThetas(
+          .ui_s, cv, s[["cov_dist"]])) > 0L, logical(1))
+        if (!any(.est))
+          stop("admixr2: study '", nm, "' asks for `stratify = TRUE`, but its ",
+               "model ASSERTS the coefficient of ",
+               paste(sQuote(keep), collapse = ", "),
+               " rather than estimating it (a fixed exponent or a fix()ed ",
+               "theta). A source that fixed a covariate's coefficient carries ",
+               "no evidence about that covariate, so there is no contrast to ",
+               "extract; drop `stratify` and the study is generated marginal ",
+               "over the distribution instead.", call. = FALSE)
+        if (!all(.est))
+          message("admixr2: study '", nm, "': not stratifying on ",
+                  paste(sQuote(keep[!.est]), collapse = ", "),
+                  " -- the model asserts ",
+                  if (sum(!.est) == 1L) "its coefficient" else "their coefficients",
+                  " rather than estimating ",
+                  if (sum(!.est) == 1L) "it." else "them.")
+        keep <- keep[.est]
+      }
       s[["stratify"]] <- keep
     }
     if (is.null(s[["cov_dist"]]))
@@ -1651,10 +1901,16 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
       stop("admixr2: study '", nm, "' declares `stratify` but has no positive ",
            "`n` to divide among the strata.", call. = FALSE)
     stl <- .admCovStrata(s[["cov_dist"]], s[["stratify"]],
-                         s[["strata_nodes"]] %||% 5L)
+                         s[["strata_nodes"]] %||% .ADM_STRATA_NODES,
+                         cov_range = s[["cov_range"]])
+    .Jk <- s[["strata_nodes"]] %||% .ADM_STRATA_NODES
     for (k in seq_along(stl)) {
       sk <- s
       sk[["stratify"]] <- NULL; sk[["strata_nodes"]] <- NULL
+      sk[["cov_range"]] <- NULL
+      # carried so the fit can refuse to be compared against one built at a
+      # different resolution -- the objective is J-dependent
+      sk[[".adm_strata_nodes"]] <- .Jk
       # a stratum's own point value for the stratified covariates, merged over
       # any `cov` the study already set for covariates it does not stratify on
       sk[["cov"]] <- utils::modifyList(as.list(s[["cov"]] %||% list()),
