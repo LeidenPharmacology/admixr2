@@ -180,28 +180,76 @@ Two consequences:
   proportions identical in every stratum there is no between-stratum contrast to
   fall back on either.
 
-### What a working discrete version has to do
+### RESOLVED. The pool was the bug, in two separate ways
 
-Not exact conditioning. The two requirements pull apart:
+Both halves are now implemented and measured.
 
-- **identifiability** needs within-band spread in the banded covariate, which is
-  what banding provides and conditioning removes;
-- **convergence** needs the band's conditional law represented by a quadrature
-  rather than by the empirical Monte-Carlo pool it uses now, which is where the
-  515 units come from.
+**1. Discreteness never was the obstacle — the SAMPLER was.** A discrete margin
+cannot ride a quadrature grid when the sampler mixes the uniforms before mapping
+them to levels, because fixing the input uniform does not fix the output level.
+But a margin latently INDEPENDENT of the others has `chol(R)[, j] = e_j`, so the
+copula leaves `z_j = qnorm(u_j)` and the level is monotone in its own uniform
+after all. `.admCovDiscExact()` records those margins; `.admCovGrid()` crosses
+them with the Gauss-Hermite grid over the rest, and `.admCovStrata()` enumerates
+them as strata when stratified and as exact level nodes when not.
 
-Those are compatible: **band as now, but represent each band by a truncated
-quadrature instead of a sampled pool.** That keeps the spread that identifies
-the discrete effect and replaces the `O(1/J)` rate with a spectral one. It is a
-different construction from the one attempted and reverted above.
+That is the case the handoff called "most real covariate models" — one declared
+sex, genotype or formulation:
 
-A hypothesis worth testing first: under exact conditioning the banded covariate
-contributes no within-stratum spread, so a discrete covariate's effect has to be
-recovered from the mixture it induces in `V` alone — which is confounded with
-`omega`, and the sex proportion being identical in every stratum means it
-contributes nothing to the between-stratum contrast either. Under the pooled
-rule the band carries covariate spread as well, which may be what breaks the
-confounding. If that is the mechanism, the fix is not in the branch at all: it
-is that a discrete covariate marginalised identically across every stratum is
-not identifiable from banding, and should be refused or conditioned rather than
-silently marginalised.
+| | J-dependence, J = 5 to 50 |
+|---|---|
+| before | **515 units, still rising** |
+| after | **0.009 units** |
+
+`sum(n_k) = 400.0` at every J, and the weight-carrying estimate (`bwt`) is
+J-invariant to four decimals.
+
+**2. The pool was not just slower — it was SHARED, and that manufactured
+evidence.** An equal-weight pool is a deterministic function of `cov_dist`, which
+is the property common random numbers need. It also means `datagen()` and the
+fit draw the SAME rows, so whatever that one finite ensemble happens to contain
+is generated into `(E, V)` and read straight back out as if it were population
+structure.
+
+That is where the −0.052 came from, and the reading in the previous section was
+still not right. Replacing SEX by its *exact declared marginal* while leaving
+the band's weight spread untouched — same `(E, V)`, different design — collapses
+the profile:
+
+```
+bsex fixed at:        -0.10      0    0.05    0.10   0.15   0.20   spread
+pooled, as shipped:  18.264  6.677   3.033   0.797  0.000  0.866   18.264
+pooled + exact SEX:   0.001  0.002   0.001   0.019  0.000  0.008    0.019
+```
+
+So the pooled route's 18.3 units of curvature were **the fit reading its own
+sampling noise**. It was not carrying information the exact route lost; it was
+hiding the absence of information. Two candidate mechanisms were measured and
+ruled out first: the per-band level proportion is flat to 4e-4 and does not move
+with pool size, and the pool has no within-band covariate association (±2e-4,
+against ±4e-2 for an ordinary pseudo-random pool of the same size).
+
+**3. So a marginalised discrete covariate is genuinely not identified**, and the
+remedy is a design change, not an integration one. Its effect shows only through
+the mixture it induces — level probabilities shift `E`, between-level spread adds
+to `V` — which is what a random effect on the same parameter does, and with the
+same level distribution in every band there is no between-band contrast either.
+
+Stratifying on it fixes it completely, and costs one study per level with no
+quadrature nodes:
+
+| design | `bsex` (truth 0.150) | across J = 5 to 50 |
+|---|---|---|
+| sex marginalised | −0.0595 | invariant to 1e-4 |
+| sex **stratified** | **0.1516** | invariant to 1e-4 |
+
+`stratify = TRUE` already produces the second, since it bands every covariate
+whose coefficient the source's own model estimated. For an explicit `stratify`,
+`.admCovDiscContrast()` warns and names the remedy — the point being that the
+failure is silent otherwise: a deterministic optimizer on a flat ridge stops in
+the same place every run, so −0.059 reads as a converged answer.
+
+**Refuted, do not resurrect:** that exact point conditioning is what loses the
+coefficient. It is not — the clean product design *with* full within-band weight
+spread is equally flat (0.019). Conditioning point-vs-interval is a question
+about which estimand a banded source reports; it has nothing to do with this.

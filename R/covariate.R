@@ -205,6 +205,123 @@
 # enters the routing any more (see the note on the default path below) -- and
 # they are kept only because all four drivers call this positionally. Drop them
 # when those call sites are next touched.
+# A MARGINALISED DISCRETE COVARIATE WITH NO CONTRAST IS NOT IDENTIFIED, and it
+# fails silently -- an ordinary-looking coefficient, finite SE and all.
+#
+# Marginalising a discrete covariate leaves its effect visible only through the
+# MIXTURE it induces: the level probabilities shift E, and the spread between
+# levels adds to V. Both are exactly what a random effect on the same parameter
+# does, so where the level distribution is the SAME in every study there is no
+# between-study contrast to break the confounding either, and the two are
+# separated only by the shape difference between a two-point mixture and a
+# lognormal -- fourth order, and worth almost nothing.
+#
+# Measured on a 400-subject source, one weight-banded study, sex declared
+# 0.45/0.55 in every band and its coefficient estimated: profiling the
+# objective in that coefficient moves it 0.019 units across its whole plausible
+# range, against 18.3 units of curvature for the same coefficient once sex is
+# STRATIFIED. The optimizer settled at -0.059 against a truth of +0.150, at
+# every resolution, because a deterministic optimizer on a flat ridge stops in
+# the same place every time -- which reads as a stable, converged answer.
+#
+# The remedy is cheap and is what a source that FITTED a sex effect actually
+# supports: stratify on it. A discrete covariate needs no quadrature nodes, so
+# stratifying multiplies the study count by its number of levels and nothing
+# else, and the coefficient then comes back at 0.1500 at every resolution.
+# `stratify = TRUE` already does this, since it bands every covariate whose
+# coefficient the source's own model estimated.
+# Does a random effect reach the same parameter this covariate modulates?
+#
+# Followed TRANSITIVELY, because a model routinely splits the two apart:
+#   cl0 <- exp(tcl + eta.cl)
+#   cl  <- cl0 * exp(bsex * SEX)
+# is the same confounding as writing them on one line. Anything that cannot be
+# parsed answers TRUE -- the caller only warns, and the failure this guards is
+# silent.
+.admCovMeetsEta <- function(ui, cov) {
+  lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
+  ini <- tryCatch(ui$iniDf,   error = function(e) NULL)
+  if (is.null(lst) || is.null(ini)) return(TRUE)
+  etas <- unique(stats::na.omit(ini$name[!is.na(ini$neta1)]))
+  if (!length(etas)) return(FALSE)
+  asg <- Filter(function(e) is.call(e) && length(e) == 3L &&
+                  as.character(e[[1L]]) %in% c("<-", "=") && is.name(e[[2L]]),
+                lst)
+  carry <- etas
+  repeat {
+    add <- character(0)
+    for (e in asg) {
+      v <- all.vars(e[[3L]])
+      if (any(v %in% carry) && !as.character(e[[2L]]) %in% carry)
+        add <- c(add, as.character(e[[2L]]))
+    }
+    if (!length(add)) break
+    carry <- c(carry, add)
+  }
+  for (e in asg) {
+    v <- all.vars(e[[3L]])
+    if (cov %in% v && (any(v %in% carry) ||
+                       as.character(e[[2L]]) %in% carry)) return(TRUE)
+  }
+  FALSE
+}
+
+.admCovDiscContrast <- function(.ui, studies, nms_has) {
+  lvl <- function(sp) {
+    p <- sp[["probs"]]
+    if (is.null(p)) p <- rep(1, length(sp[["values"]]))
+    paste(sprintf("%.10g", c(as.numeric(sp[["values"]]),
+                             as.numeric(p) / sum(p))), collapse = "|")
+  }
+  seen <- list()
+  for (nm in nms_has) {
+    cd <- studies[[nm]]$cov_dist
+    for (cv in .admCovSpecNames(cd)) {
+      if (is.null(cd[[cv]][["values"]])) next
+      seen[[cv]] <- c(seen[[cv]], lvl(cd[[cv]]))
+    }
+  }
+  if (!length(seen)) return(invisible(NULL))
+  # A study that PINS the covariate at a value carries a contrast in it, and so
+  # does one that never declares it -- both are a different design point.
+  for (cv in names(seen)) {
+    pinned <- unique(unlist(lapply(studies, function(s) {
+      v <- s[["cov"]][[cv]]
+      if (is.null(v) || is.null(s$cov_dist) ||
+          !is.null(s$cov_dist[[cv]][["values"]])) NULL else
+        sprintf("%.10g", as.numeric(v)) })))
+    if (length(unique(seen[[cv]])) > 1L || length(pinned) ||
+        length(seen[[cv]]) < length(studies)) next
+    est <- tryCatch(length(.admCovCoefThetas(.ui, cv, NULL)) > 0L,
+                    error = function(e) TRUE)
+    if (!isTRUE(est)) next
+    # The confounding needs a PARTNER. Where no random effect reaches the
+    # parameter the covariate modulates, the mixture is the only thing putting
+    # spread on it and the coefficient is identified from V after all -- so
+    # warning there would be a false positive, and a warning users learn to
+    # ignore is worse than none.
+    if (!isTRUE(.admCovMeetsEta(.ui, cv))) next
+    warning("admixr2: '", cv, "' is a DISCRETE covariate whose coefficient ",
+            "this model estimates, but every study marginalises over it with ",
+            "the same level distribution, so nothing in the data separates ",
+            "its effect from a random effect on the same parameter. The ",
+            "coefficient will still be reported, and it will look converged: ",
+            "measured on one source, the objective moves 0.019 units across ",
+            "its whole range and the optimizer settled at -0.059 against a ",
+            "truth of +0.150.\n",
+            "  STRATIFY on it instead -- `stratify = ",
+            if (length(names(seen)) > 1L)
+              paste0("c(", paste(sQuote(names(seen)), collapse = ", "), ")") else
+              sQuote(cv),
+            "` in the study, or `stratify = TRUE` to derive it from the ",
+            "source's own model. A discrete covariate needs no quadrature ",
+            "nodes, so that costs one study per level and nothing else.\n",
+            "  Or fix() the coefficient, if the source asserted it rather than ",
+            "estimating it.", call. = FALSE)
+  }
+  invisible(NULL)
+}
+
 .admCheckCovariates <- function(.ui, pinfo, studies) {
   has <- vapply(studies, function(s) !is.null(s$cov_dist), logical(1))
   if (!any(has)) return(studies)
@@ -219,6 +336,7 @@
     studies[[nm]]$cov_dist <- .admCovDistCanon(studies[[nm]]$cov_dist)
 
   covs <- tryCatch(.ui$allCovs, error = function(e) character(0))
+  .admCovDiscContrast(.ui, studies, names(studies)[has])
 
   for (nm in names(studies)[has]) {
     cd <- studies[[nm]]$cov_dist
@@ -343,9 +461,16 @@
       # discrete value is not a cell label and the weights are not the level
       # probabilities (measured: a 0.55/0.45 covariate came off the grid at
       # 0.477, and the error does not shrink with cov_nodes).
-      else if (length(.used) && any(.disc) && is.function(cd[["joint"]]))
+      # ... unless the sampler maps that margin straight from its own uniform,
+      # which admixr2 records as `discExact` when it builds the copula: the
+      # level IS a cell label there, and the weights ARE the level
+      # probabilities. See .admCovDiscExact().
+      else if (length(.used) && is.function(cd[["joint"]]) &&
+               any(.disc & !(.used %in% (cd[["discExact"]] %||% character(0)))))
         .why <- paste0(
-          "covariate(s) ", paste(sQuote(.used[.disc]), collapse = ", "),
+          "covariate(s) ", paste(sQuote(.used[.disc &
+            !(.used %in% (cd[["discExact"]] %||% character(0)))]),
+            collapse = ", "),
           " are discrete, reach the shifted argument, and are drawn through a ",
           "JOINT sampler, so the grid carries no exact level cells to ",
           "condition on")
@@ -748,6 +873,7 @@
   # NOT named `cor_matrix`: `$` PARTIAL-MATCHES, so `cov_dist$cor` would have
   # silently returned this matrix everywhere `cor` was read.
   cov_dist[["latentR"]] <- R
+  cov_dist[["discExact"]] <- .admCovDiscExact(cov_dist, nms, R)
   margins <- lapply(nms, function(nm) cov_dist[[nm]])
   cov_dist[["joint"]] <- local({
     nms <- nms; margins <- margins; Lc <- Lc; d <- d
@@ -1213,7 +1339,34 @@
 # CLOSURE ("object of type 'closure' is not subsettable"), and
 # .admCheckCovariates reported "declares cov_dist for 'rho', which the model
 # never reads".
-.ADM_COV_META <- c("rho", "Sigma", "cor", "joint", "latentR")
+.ADM_COV_META <- c("rho", "Sigma", "cor", "joint", "latentR", "discExact")
+
+# Discrete margins a `joint` sampler maps STRAIGHT FROM THEIR OWN UNIFORM.
+#
+# A discrete margin normally cannot ride a quadrature grid once the covariates
+# are dependent: the sampler mixes the uniforms before mapping them to levels,
+# so fixing the INPUT uniform does not fix the OUTPUT level and the cell
+# weights are not the level probabilities (measured: a covariate declared
+# 0.55/0.45 came off the grid at 0.477, and the error does not shrink with
+# `cov_nodes`, because it is a property of the mixing rather than of the
+# resolution).
+#
+# That is a property of THE SAMPLER, not of discreteness. Whenever column j is
+# latently independent of the rest, chol(R)[, j] is e_j, so the copula's
+# `z <- qnorm(u) %*% Lc` leaves `z[, j] = qnorm(u[, j])` and the level is a
+# monotone function of that margin's own uniform after all. Such a margin
+# enumerates EXACTLY at its levels, and it is common: one declared sex,
+# genotype or formulation alongside a correlated (WT, CRCL) pair.
+#
+# Recorded by whoever BUILDS the sampler, because only they can know it. A user
+# `joint` is opaque and never gets the flag.
+.admCovDiscExact <- function(cov_dist, nms, R, tol = 1e-12) {
+  keep <- vapply(seq_along(nms), function(j) {
+    if (is.null(cov_dist[[nms[j]]][["values"]])) return(FALSE)
+    all(abs(R[j, -j, drop = TRUE]) < tol)
+  }, logical(1))
+  nms[keep]
+}
 
 .admCovSpecNames <- function(cov_dist) setdiff(names(cov_dist), .ADM_COV_META)
 
@@ -1484,76 +1637,138 @@
   # conditioned there.
   Rm <- cov_dist[["latentR"]]
   if (is.null(Rm) && is.null(cov_dist[["joint"]])) Rm <- diag(length(nms))
-  # A DISCRETE COVARIATE STILL FORCES THE POOLED RULE, and that is a known
-  # limitation rather than a decision. Relaxing it was tried: the branch admits
-  # discrete margins cleanly -- .admCovQuantile maps a latent normal onto
-  # declared levels, the strata came out with the right level probabilities in
-  # every band, and the J-dependence fell from 515 units to 0.0 -- but the
-  # recovered coefficient for the discrete covariate moved from 0.150 (its
-  # truth) to -0.052 at every J. That is NON-IDENTIFIABILITY, not a bug:
-  # profiling the objective in it gives 0.07 units across its whole range under
-  # exact conditioning, against 18.3 units of curvature under banding. Exact
-  # conditioning removes the within-band spread of the BANDED covariate, and
-  # that spread is what separates the discrete coefficient's contribution to V
-  # from omega -- with the level proportions identical in every stratum there is
-  # no between-stratum contrast either. So routing discrete covariates through
-  # this branch would silently destroy their identifiability.
+  disc <- vapply(nms, function(n) !is.null(cov_dist[[n]][["values"]]),
+                 logical(1))
+  # A DISCRETE COVARIATE RIDES THIS BRANCH ONLY IF IT IS LATENTLY INDEPENDENT
+  # of the rest. Then chol(R)[, j] is e_j, its level is a monotone function of
+  # its own uniform, and it enumerates EXACTLY -- as a stratum when it is
+  # stratified, and as exact level nodes inside every stratum when it is not.
+  # Correlated with a continuous covariate it is not a point but a TRUNCATION
+  # of the latent, and conditioning on it is a different construction; that
+  # case keeps the pooled route below.
   #
-  # The fix is a different construction: band as now, keeping the spread, but
-  # represent each band by a TRUNCATED QUADRATURE rather than the sampled pool
-  # it uses today -- which is where the O(1/J) rate comes from. Not attempted
-  # here. (The collapse is not involved: disabling it moves the estimate by
-  # 1e-4.)
+  # Getting here matters more than it looks. Discreteness used to send the
+  # whole study to the pooled route, and that is most real covariate models --
+  # one declared sex, genotype or formulation. It cost 515 units of
+  # J-dependence across J = 5 to 50, still moving, against 0.03 without it.
   #
-  # The cost of leaving it: one declared sex, genotype or formulation puts the
-  # whole study on equiprobable bins, which is 515 units of J-dependence across
-  # J = 5 to 50 and still moving. That is most real covariate models, so this is
-  # the largest remaining gap in the banding path.
-  if (!is.null(Rm) && all(vapply(nms, function(n)
-        is.null(cov_dist[[n]][["values"]]), logical(1)))) {
-    # the ordinary product Gauss-Hermite grid -- bit-identical to building it
-    # from indices, checked across node counts and dimensions
-    .ng <- .adghNodeGrid(n_nodes, length(iS))
-    K   <- nrow(.ng$X)
-    wk  <- .ng$W / sum(.ng$W)
-    zS  <- .ng$X
+  # It is not only a rate. The pooled route represents a band by an equal-weight
+  # SAMPLE, and that sample is a deterministic function of cov_dist, so
+  # datagen() and the fit draw the same rows. Whatever that one finite ensemble
+  # happens to contain is generated into (E, V) and then read back out as if it
+  # were population structure. Measured: it manufactured 18.3 units of
+  # curvature in a MARGINALISED sex coefficient and returned it at its truth,
+  # where the same study scored against SEX's exact declared marginal is flat
+  # to 0.019 -- i.e. that coefficient is not identified at all and the pool was
+  # hiding it behind its own sampling noise.
+  disc_sep <- !any(disc) || (!is.null(Rm) && all(vapply(which(disc), function(j)
+    all(abs(Rm[j, -j, drop = TRUE]) < 1e-12), logical(1))))
+  if (!is.null(Rm) && disc_sep) {
+    iSc <- iS[!disc[iS]]; iSd <- iS[disc[iS]]
     iM  <- setdiff(seq_len(d), iS)
-    if (length(iM)) {
-      A  <- Rm[iM, iS, drop = FALSE] %*% solve(Rm[iS, iS, drop = FALSE])
-      Sc <- Rm[iM, iM, drop = FALSE] - A %*% Rm[iS, iM, drop = FALSE]
+    iMc <- iM[!disc[iM]]
+    # --- the stratified block ------------------------------------------------
+    # Gauss-Hermite over the continuous stratified covariates, CROSSED with the
+    # levels of the discrete ones. Weights multiply: the discrete block is
+    # latently independent, so the cell probability factorises exactly.
+    if (length(iSc)) {
+      .ng <- .adghNodeGrid(n_nodes, length(iSc))
+      zC  <- .ng$X; wC <- as.numeric(.ng$W / sum(.ng$W))
+    } else { zC <- matrix(0, 1L, 0L); wC <- 1 }
+    nC <- nrow(zC)
+    xC <- matrix(if (length(iSc)) vapply(seq_along(iSc), function(k)
+      .admCovQuantile(cov_dist[[nms[iSc[k]]]],
+        pmin(pmax(stats::pnorm(zC[, k]), .Machine$double.eps),
+             1 - .Machine$double.eps)), numeric(nC)) else 0, nC, length(iSc))
+    if (length(iSd)) {
+      lvD <- lapply(iSd, function(j) as.numeric(cov_dist[[nms[j]]][["values"]]))
+      prD <- lapply(seq_along(iSd), function(k) {
+        p <- cov_dist[[nms[iSd[k]]]][["probs"]]
+        if (is.null(p)) p <- rep(1, length(lvD[[k]]))
+        as.numeric(p) / sum(p) })
+      lgD <- as.matrix(expand.grid(lapply(lvD, seq_along), KEEP.OUT.ATTRS = FALSE))
+      wD  <- Reduce(`*`, lapply(seq_along(iSd), function(k) prD[[k]][lgD[, k]]))
+    } else { lvD <- list(); lgD <- matrix(0L, 1L, 0L); wD <- 1 }
+    nD <- nrow(lgD)
+    # --- the marginalised block ----------------------------------------------
+    # Conditioning is a NO-OP wherever the latent blocks do not couple, and the
+    # stratum's remaining covariates then keep their DECLARED specs -- exact,
+    # with no sample standing in for them. That is the common case, and it is
+    # what lets .admCovGrid enumerate a discrete margin at its levels and put
+    # Gauss-Hermite nodes on a continuous one.
+    A <- if (length(iMc) && length(iSc))
+      Rm[iMc, iSc, drop = FALSE] %*% solve(Rm[iSc, iSc, drop = FALSE]) else
+      matrix(0, length(iMc), length(iSc))
+    exact_marg <- !length(A) || all(abs(A) < 1e-12)
+    Rmm <- Rm[iM, iM, drop = FALSE]
+    dep_marg <- length(iM) > 1L &&
+      !isTRUE(all.equal(unname(Rmm), diag(length(iM)), tolerance = 1e-12))
+    # a stratified covariate is held at a POINT, carried as a degenerate spec so
+    # covStrata() still shows it and every consumer sees the same name set
+    pt_spec <- function(v) list(quantile = local({ v <- as.numeric(v)
+      function(u) rep(v, length.out = length(u)) }))
+    if (!exact_marg) {
+      Sc <- Rm[iMc, iMc, drop = FALSE] - A %*% Rm[iSc, iMc, drop = FALSE]
       Lc <- t(chol(Sc + diag(1e-12, nrow(Sc))))
+      nd <- max(as.integer(n_pool), 8192L)
+      q  <- randtoolbox::sobol(nd, dim = length(iMc))
+      if (!is.matrix(q)) q <- matrix(q, ncol = length(iMc))
+      Z0 <- stats::qnorm(pmin(pmax(q, 1e-12), 1 - 1e-12))
     }
-    nd <- max(as.integer(n_pool), 8192L)
-    Z0 <- if (length(iM)) {
-      q <- randtoolbox::sobol(nd, dim = length(iM))
-      if (!is.matrix(q)) q <- matrix(q, ncol = length(iM))
-      stats::qnorm(pmin(pmax(q, 1e-12), 1 - 1e-12))
-    } else NULL
-    return(lapply(seq_len(K), function(k) {
-      Z <- matrix(0, nd, d)
-      Z[, iS] <- rep(zS[k, ], each = nd)
-      if (length(iM))
-        Z[, iM] <- sweep(Z0 %*% t(Lc), 2L, as.numeric(A %*% zS[k, ]), "+")
-      U  <- pmin(pmax(stats::pnorm(Z), 1e-12), 1 - 1e-12)
-      Xk <- matrix(vapply(seq_len(d), function(j)
-        .admCovQuantile(cov_dist[[nms[j]]], U[, j]), numeric(nd)),
-        nd, d, dimnames = list(NULL, nms))
-      # sorted before it is handed out: the rows arrive in Sobol order and the
-      # sampler that draws from them runs another Sobol stream, so indexing
-      # rows by that stream correlates the two and returns a structured
-      # subsample (measured: sd 13.094 against a true 14.283)
-      srt <- if (length(iM)) order(Xk[, iM[1L]]) else seq_len(nd)
-      Xk  <- Xk[srt, , drop = FALSE]
-      cd_k <- stats::setNames(lapply(nms, function(n)
-        list(quantile = local({ v <- sort(Xk[, n])
-          function(u) v[1L + pmin(floor(u * length(v)), length(v) - 1L)] }))),
-        nms)
-      cd_k[["joint"]] <- local({ sub <- Xk; nms <- nms
-        function(u) { i <- 1L + pmin(floor(u[, 1L] * nrow(sub)), nrow(sub) - 1L)
-          out <- sub[i, , drop = FALSE]; colnames(out) <- nms; out } })
-      list(cov = stats::setNames(as.list(Xk[1L, iS]), nms[iS]),
-           cov_dist = cd_k, weight = wk[k], n_pool_cell = nd)
-    }))
+    return(unlist(lapply(seq_len(nD), function(kd) lapply(seq_len(nC), function(kc) {
+      cd_k <- list()
+      for (k in seq_along(iSc)) cd_k[[nms[iSc[k]]]] <- pt_spec(xC[kc, k])
+      for (k in seq_along(iSd)) cd_k[[nms[iSd[k]]]] <- pt_spec(lvD[[k]][lgD[kd, k]])
+      if (exact_marg) {
+        for (j in iM) cd_k[[nms[j]]] <- cov_dist[[nms[j]]]
+        if (dep_marg) {
+          Rk <- diag(length(nms)); Rk[iM, iM] <- Rmm
+          dimnames(Rk) <- list(nms, nms)
+          cd_k[["cor"]] <- Rk[names(cd_k), names(cd_k), drop = FALSE]
+        }
+      } else {
+        # The closed-form Gaussian conditional of the CONTINUOUS block, drawn
+        # once as a low-discrepancy sample. Discrete margins do not go through
+        # it: they are independent of the conditioning, so they keep their
+        # exact specs and are mapped from their own uniform, which is what
+        # `discExact` tells .admCovGrid it may enumerate.
+        mu <- as.numeric(A %*% zC[kc, ])
+        Xc <- sweep(Z0 %*% t(Lc), 2L, mu, "+")
+        Xc <- matrix(vapply(seq_along(iMc), function(k)
+          .admCovQuantile(cov_dist[[nms[iMc[k]]]],
+            pmin(pmax(stats::pnorm(Xc[, k]), .Machine$double.eps),
+                 1 - .Machine$double.eps)), numeric(nd)), nd, length(iMc),
+          dimnames = list(NULL, nms[iMc]))
+        # sorted before it is handed out: the rows arrive in Sobol order and the
+        # sampler that draws from them runs another Sobol stream, so indexing
+        # rows by that stream correlates the two and returns a structured
+        # subsample (measured: sd 13.094 against a true 14.283)
+        Xc <- Xc[order(Xc[, 1L]), , drop = FALSE]
+        for (k in seq_along(iMc)) cd_k[[nms[iMc[k]]]] <-
+          list(quantile = local({ v <- sort(Xc[, k])
+            function(u) v[1L + pmin(floor(u * length(v)), length(v) - 1L)] }))
+        for (j in setdiff(iM, iMc)) cd_k[[nms[j]]] <- cov_dist[[nms[j]]]
+        nk  <- names(cd_k)
+        cn  <- nms[iMc]
+        jc  <- match(cn[1L], nk)
+        cd_k[["joint"]] <- local({ Xc <- Xc; nk <- nk; jc <- jc; cn <- cn
+          cds <- cd_k[nk]; other <- setdiff(seq_along(nk), match(cn, nk))
+          function(u) {
+            i <- 1L + pmin(floor(u[, jc] * nrow(Xc)), nrow(Xc) - 1L)
+            out <- matrix(0, nrow(u), length(nk), dimnames = list(NULL, nk))
+            out[, cn] <- Xc[i, , drop = FALSE]
+            for (k in other) out[, k] <- .admCovQuantile(cds[[k]], u[, k])
+            out
+          }})
+        cd_k[["discExact"]] <- setdiff(nk, cn)
+      }
+      cv <- c(stats::setNames(as.list(xC[kc, ]), nms[iSc]),
+              stats::setNames(lapply(seq_along(iSd), function(k)
+                lvD[[k]][lgD[kd, k]]), nms[iSd]))
+      list(cov = cv[nms[iS]], cov_dist = cd_k,
+           weight = wC[kc] * wD[kd],
+           n_pool_cell = if (exact_marg) NA_integer_ else nd)
+    })), recursive = FALSE))
   }
 
   # --- the pool -------------------------------------------------------------
@@ -1688,10 +1903,18 @@
 #' @param stratify Character vector naming the covariates to stratify on. The
 #'   rest are left in each stratum's own `cov_dist`, to be marginalised over
 #'   their distribution **conditional** on that stratum.
-#' @param n_nodes Strata per stratified covariate (default 9). The covariate is
-#'   cut into that many EQUIPROBABLE bins, so every stratum carries the same
-#'   number of subjects; a discrete covariate ignores this and is cut at its
-#'   levels.
+#' @param n_nodes Strata per stratified covariate (default 9). A discrete
+#'   covariate ignores it and is cut at its levels, exactly, with the level
+#'   probabilities as weights.
+#'
+#'   For a continuous one it sets how finely the covariate is resolved, and the
+#'   rule depends on what is known about the joint distribution. Where the
+#'   latent structure is known --- an explicit `cor`, or no declared dependence,
+#'   which IS independence --- each stratum is a Gauss-Hermite node, held at a
+#'   POINT, and the remaining covariates follow their exact conditional law
+#'   within it. An opaque `joint` sampler cannot be conditioned, and there the
+#'   covariate is cut into that many equiprobable BINS instead, each described
+#'   by the pool members that landed in it.
 #'
 #'   **This is a convergence parameter, not a modelling choice.** The
 #'   well-defined object is the limit as the count grows; any finite value
@@ -1706,6 +1929,11 @@
 #'   which is independence — banding conditions on a Gauss-Hermite grid and the
 #'   objective is stable: 0.03 units across counts of 5 to 100, so objective,
 #'   AIC, BIC and likelihood ratios are comparable across resolutions.
+#'
+#'   A declared discrete covariate no longer forces the slow rule: as long as it
+#'   is latently independent of the others it enumerates exactly at its levels,
+#'   which took a study declaring one sex covariate from 515 units of movement,
+#'   still rising at a count of 50, to 0.009.
 #'
 #'   An opaque `joint` sampler cannot be conditioned and falls back to
 #'   equiprobable bins, where it is not stable: 51 units at a count of 100 and
@@ -1741,10 +1969,15 @@
 #'   draws is an error rather than a silently coarse answer; `n_pool_cell` in
 #'   the result reports what each one got.
 #'
+#'   It applies only where a pool is used at all: an opaque `joint` sampler, or
+#'   a stratified covariate latently correlated with a marginalised one. Where
+#'   the conditional law is closed form the stratum carries the DECLARED specs
+#'   themselves, no sample stands in for them, and `n_pool_cell` is `NA`.
+#'
 #' @return A list with one element per stratum, each containing `cov` (the
-#'   stratum's mean for every stratified covariate), `cov_dist` (the
-#'   distribution of ALL covariates *within* that stratum --- the empirical
-#'   conditional, carrying the full joint dependence), `n` and `weight`.
+#'   value each stratified covariate is held at --- a quadrature node, a level,
+#'   or a bin mean), `cov_dist` (the distribution of ALL covariates *within*
+#'   that stratum, carrying the full joint dependence), `n` and `weight`.
 #'
 #' @examples
 #' # a source that fitted weight but not renal function, the two correlated
@@ -2016,12 +2249,82 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
     # is why it is used only where GH is inapplicable.
     disc <- vapply(nms, function(n) !is.null(cov_dist[[n]][["values"]]),
                    logical(1))
-    if (any(disc)) {
+    # ... unless the sampler maps that margin straight from its own uniform,
+    # which admixr2 records when it builds the copula. See .admCovDiscExact().
+    # intersected with `disc` deliberately: a stratum carries its stratified
+    # covariates as DEGENERATE specs and lists them in `discExact` too, and
+    # those have no `values` to enumerate.
+    ex   <- disc & nms %in% (cov_dist[["discExact"]] %||% character(0))
+    if (any(disc & !ex)) {
+      # THE POOL IS A LAST RESORT, AND IT IS NOT JUST SLOWER -- IT IS SHARED.
+      # An equal-weight pool is a deterministic function of `cov_dist`, so
+      # datagen() and the fit draw the SAME rows: any idiosyncrasy of that one
+      # finite ensemble is generated into (E, V) and then read back out as if
+      # it were population structure. Measured on a study banded on WT with an
+      # independent SEX declared, that manufactured 18.3 units of curvature in
+      # the sex coefficient and "recovered" it at its truth, while the same
+      # study fitted against SEX's exact declared marginal is flat to 0.019 --
+      # i.e. the coefficient is not identified at all and the pool was hiding
+      # it. Every margin that can be enumerated must be.
       npool <- max(as.integer(n_nodes)^d, 4096L)
       X <- .admCovRowsFor(cov_dist, npool, 0L)[, nms, drop = FALSE]
       # no latent normal score exists for a discrete pool, and none is wanted:
       # a discrete covariate can never make Delta normal.
       return(list(X = X, W = rep(1 / nrow(X), nrow(X)), z = NULL))
+    }
+    if (any(ex)) {
+      # Cross the joint grid over the remaining margins with an EXACT
+      # enumeration of the separable discrete ones. A pass-through column is
+      # monotone in its own uniform, so feeding the MIDPOINT of a level's
+      # probability interval selects exactly that level -- verified below
+      # rather than assumed, since `discExact` is a claim about a closure.
+      iE <- which(ex); iJ <- which(!ex)
+      lv <- lapply(iE, function(j) as.numeric(cov_dist[[nms[j]]][["values"]]))
+      pr <- lapply(iE, function(j) {
+        p <- cov_dist[[nms[j]]][["probs"]]
+        if (is.null(p)) p <- rep(1, length(cov_dist[[nms[j]]][["values"]]))
+        as.numeric(p) / sum(p) })
+      lg <- as.matrix(expand.grid(lapply(lv, seq_along), KEEP.OUT.ATTRS = FALSE))
+      wE <- Reduce(`*`, lapply(seq_along(iE), function(k) pr[[k]][lg[, k]]))
+      uE <- vapply(seq_along(iE), function(k) {
+        cp <- cumsum(pr[[k]]); (cp - pr[[k]] / 2)[lg[, k]] }, numeric(nrow(lg)))
+      uE <- matrix(uE, nrow(lg), length(iE))
+      if (length(iJ)) {
+        .ng <- .adghNodeGrid(n_nodes, length(iJ))
+        zJ  <- .ng$X; wJ <- .ng$W / sum(.ng$W)
+      } else { zJ <- matrix(0, 1L, 0L); wJ <- 1 }
+      nJ <- nrow(zJ); nE <- nrow(lg)
+      u  <- matrix(0, nJ * nE, d, dimnames = list(NULL, nms))
+      rj <- rep(seq_len(nJ), times = nE)      # joint block fastest
+      re <- rep(seq_len(nE), each  = nJ)
+      if (length(iJ))
+        u[, iJ] <- pmin(pmax(stats::pnorm(zJ[rj, , drop = FALSE]),
+                             .Machine$double.eps), 1 - .Machine$double.eps)
+      u[, iE] <- uE[re, , drop = FALSE]
+      X <- tryCatch(as.matrix(jf(u)), error = function(e)
+        stop("admixr2: cov_dist$joint failed on the ", nrow(u), " x ", d,
+             " grid of uniforms: ", conditionMessage(e), call. = FALSE))
+      if (!is.matrix(X) || nrow(X) != nrow(u) || is.null(colnames(X)) ||
+          !setequal(colnames(X), nms))
+        stop("admixr2: cov_dist$joint must return one ROW per supplied uniform ",
+             "row, with columns ", paste(sQuote(nms), collapse = ", "), ".",
+             call. = FALSE)
+      X <- X[, nms, drop = FALSE]
+      want <- vapply(seq_along(iE), function(k) lv[[k]][lg[re, k]],
+                     numeric(nrow(u)))
+      if (!isTRUE(all.equal(unname(X[, iE, drop = FALSE]),
+                            unname(matrix(want, nrow(u), length(iE))))))
+        stop("admixr2: cov_dist$discExact names ",
+             paste(sQuote(nms[iE]), collapse = ", "), ", but the sampler does ",
+             "not map ", if (length(iE) == 1L) "it" else "them",
+             " from the matching input uniform, so the enumerated levels are ",
+             "not the ones it returns. Drop `discExact`.", call. = FALSE)
+      if (!all(is.finite(X)))
+        stop("admixr2: cov_dist$joint returned non-finite covariate values on ",
+             "the quadrature grid.", call. = FALSE)
+      # z is the latent score behind the CONTINUOUS block only; a discrete
+      # covariate has none, and can never make Delta normal.
+      return(list(X = X, W = as.numeric(wJ[rj] * wE[re]), z = NULL))
     }
     .ng <- .adghNodeGrid(n_nodes, d)
     z   <- .ng$X

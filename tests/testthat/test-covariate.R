@@ -1360,7 +1360,11 @@ test_that("a discrete covariate beside a continuous one STRATIFIES the shift", {
   ctl2 <- adghControl(studies = st, grad = "analytical", n_nodes = 5L,
                       print = 0L, covMethod = "none", cov_integration = "shift")
   pin2 <- admixr2:::.admDriverPinfo(ui, ctl2)
-  expect_silent(admixr2:::.admCheckCovariates(ui, pin2, u$studies))
+  # SEX rides an eta-carrying parameter and is only marginalised, so the
+  # identifiability guard speaks up -- correctly. The assertion here is that it
+  # RUNS, where an explicit `cov_integration = "shift"` used to error.
+  expect_warning(admixr2:::.admCheckCovariates(ui, pin2, u$studies),
+                 "DISCRETE covariate")
 })
 
 test_that("an ALL-discrete covariate set still takes the product grid", {
@@ -2108,4 +2112,176 @@ test_that("banding uses the quadrature rule that CONVERGES", {
                  joint = function(u) cbind(WT = stats::qlnorm(u[, 1], log(78), .2),
                                            CRCL = stats::qlnorm(u[, 2], log(90), .2)))
   expect_length(suppressWarnings(covStrata(cdj, "WT", n_nodes = 4L, n = 100)), 4L)
+})
+
+test_that("a declared DISCRETE covariate no longer forces the pooled rule", {
+  # Discreteness was never the obstacle -- the SAMPLER was. A margin latently
+  # independent of the rest has chol(R)[, j] = e_j, so its level is monotone in
+  # its own uniform and enumerates exactly. Before this, one declared sex or
+  # genotype put the whole study on equiprobable bins: 515 units of
+  # J-dependence across J = 5 to 50, still rising, against 0.009 after.
+  cd <- covDist(WT = c(mean = 78, sd = 16), dist = "lnorm",
+                SEX = list(values = c(0, 1), probs = c(0.45, 0.55)))
+  st <- covStrata(cd, "WT", n_nodes = 5L, n = 400,
+                  cov_range = list(WT = c(50, 115)))
+  expect_length(st, 5L)
+  expect_equal(sum(vapply(st, `[[`, 0, "weight")), 1)
+  for (s in st) {
+    # the quadrature route hands out the DECLARED spec, not a sample standing
+    # in for it: no manufactured `joint`, and nothing pooled to report
+    expect_null(s$cov_dist[["joint"]])
+    expect_identical(s$cov_dist$SEX$probs, c(0.45, 0.55))
+    expect_true(is.na(s$n_pool_cell))
+    # WT is held at a POINT
+    X <- covDraw(s$cov_dist, n = 4000L)
+    expect_lt(stats::sd(X[, "WT"]), 1e-8)
+    expect_equal(mean(X[, "SEX"] == 1), 0.55, tolerance = 5e-3)
+  }
+})
+
+test_that("stratifying on a discrete covariate crosses levels with the GH grid", {
+  cd <- covDist(WT = c(mean = 78, sd = 16), dist = "lnorm",
+                SEX = list(values = c(0, 1), probs = c(0.45, 0.55)))
+  st <- covStrata(cd, c("WT", "SEX"), n_nodes = 5L, n = 400,
+                  cov_range = list(WT = c(50, 115)))
+  expect_length(st, 10L)                       # 5 nodes x 2 levels
+  expect_equal(sum(vapply(st, `[[`, 0, "weight")), 1)
+  # the level probability factorises out exactly -- the discrete block is
+  # latently independent, so the cell weight is w_k * p_level
+  w1 <- sum(vapply(st, function(s) if (s$cov$SEX == 1) s$weight else 0, 0))
+  expect_equal(w1, 0.55, tolerance = 1e-12)
+  # every stratum is a point in BOTH covariates
+  for (s in st) {
+    X <- covDraw(s$cov_dist, n = 2000L)
+    expect_lt(stats::sd(X[, "WT"]), 1e-8)
+    expect_equal(unique(X[, "SEX"]), s$cov$SEX)
+  }
+  # and the quadrature nodes are the SAME ones the unstratified-sex design used
+  st0 <- covStrata(cd, "WT", n_nodes = 5L, n = 400,
+                   cov_range = list(WT = c(50, 115)))
+  expect_equal(sort(unique(vapply(st, function(s) s$cov$WT, 0))),
+               sort(vapply(st0, function(s) s$cov$WT, 0)), tolerance = 1e-10)
+})
+
+test_that(".admCovGrid enumerates a separable discrete margin under `cor`", {
+  # A discrete margin correlated with a continuous one is a TRUNCATION of the
+  # latent, not a point, and still falls to the pool. One that is latently
+  # independent does not, even though the OTHER two covariates are dependent.
+  R <- diag(3); R[1, 2] <- R[2, 1] <- 0.7
+  dimnames(R) <- list(c("WT", "CRCL", "SEX"), c("WT", "CRCL", "SEX"))
+  cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
+                SEX = list(values = c(0, 1), probs = c(0.45, 0.55)),
+                dist = "lnorm", cor = R)
+  expect_identical(cd[["discExact"]], "SEX")
+  g <- admixr2:::.admCovGrid(cd, 7L)
+  expect_equal(sum(g$W), 1)
+  expect_equal(nrow(g$X), 7L * 7L * 2L)        # GH^2 crossed with 2 levels
+  # EXACT level probabilities -- the pooled route reported 0.477 for a declared
+  # 0.55, and that error does not shrink with cov_nodes
+  expect_equal(sum(g$W[g$X[, "SEX"] == 1]), 0.55, tolerance = 1e-12)
+  # the dependence between the correlated pair survives the crossing
+  mw <- sum(g$W * g$X[, "WT"]); mc <- sum(g$W * g$X[, "CRCL"])
+  cv <- sum(g$W * (g$X[, "WT"] - mw) * (g$X[, "CRCL"] - mc)) /
+    sqrt(sum(g$W * (g$X[, "WT"] - mw)^2) * sum(g$W * (g$X[, "CRCL"] - mc)^2))
+  expect_gt(cv, 0.5)
+  # ... and a discrete margin that IS correlated keeps the pool
+  R2 <- R; R2[2, 3] <- R2[3, 2] <- 0.4
+  cd2 <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
+                 SEX = list(values = c(0, 1), probs = c(0.45, 0.55)),
+                 dist = "lnorm", cor = R2)
+  expect_length(cd2[["discExact"]], 0L)
+  g2 <- admixr2:::.admCovGrid(cd2, 7L)
+  expect_true(all(abs(g2$W - g2$W[1L]) < 1e-12))     # equal-weight pool
+})
+
+test_that("a marginalised discrete covariate with no contrast is FLAGGED", {
+  # It is not identified -- its effect enters only through the mixture it
+  # induces, which is what an eta on the same parameter does, and with the same
+  # level distribution in every study there is no between-study contrast
+  # either. Measured: the profile moves 0.019 units across the coefficient's
+  # whole range and the optimizer settled at -0.059 against a truth of +0.150,
+  # at every resolution. A deterministic optimizer on a flat ridge stops in the
+  # same place every run, so it reads as converged. Silence is the hazard.
+  m <- function() {
+    ini({ tcl <- log(4); tv <- log(45); bsex <- 0.05
+          eta.cl ~ 0.1; add.err <- 0.1 })
+    model({ cl <- exp(tcl + eta.cl) * exp(bsex * SEX)
+            v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(m))
+  sp <- list(values = c(0, 1), probs = c(0.45, 0.55))
+  st <- list(a = list(cov_dist = list(SEX = sp)),
+             b = list(cov_dist = list(SEX = sp)))
+  expect_warning(admixr2:::.admCovDiscContrast(ui, st, names(st)),
+                 "DISCRETE covariate")
+  # a DIFFERENT level distribution in the second study is a contrast
+  st2 <- st; st2$b$cov_dist$SEX$probs <- c(0.8, 0.2)
+  expect_silent(admixr2:::.admCovDiscContrast(ui, st2, names(st2)))
+  # so is a study that pins it at a value
+  st3 <- st; st3$b$cov_dist <- NULL; st3$b$cov <- list(SEX = 1)
+  expect_silent(admixr2:::.admCovDiscContrast(ui, st3, "a"))
+  # NO random effect on the parameter the covariate modulates -- the mixture is
+  # then the only thing putting spread on it, so it IS identified from V and a
+  # warning would be a false positive
+  m0 <- function() {
+    ini({ tcl <- log(4); tv <- log(45); bsex <- 0.05
+          eta.v ~ 0.1; add.err <- 0.1 })
+    model({ cl <- exp(tcl) * exp(bsex * SEX)
+            v  <- exp(tv + eta.v); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  expect_false(admixr2:::.admCovMeetsEta(
+    suppressMessages(rxode2::rxode2(m0)), "SEX"))
+  expect_silent(admixr2:::.admCovDiscContrast(
+    suppressMessages(rxode2::rxode2(m0)), st, names(st)))
+  # ... and it is followed TRANSITIVELY through an intermediate assignment
+  m1 <- function() {
+    ini({ tcl <- log(4); tv <- log(45); bsex <- 0.05
+          eta.cl ~ 0.1; add.err <- 0.1 })
+    model({ cl0 <- exp(tcl + eta.cl); cl <- cl0 * exp(bsex * SEX)
+            v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  expect_true(admixr2:::.admCovMeetsEta(
+    suppressMessages(rxode2::rxode2(m1)), "SEX"))
+  # and an ASSERTED coefficient carries no claim to identify, so it is silent
+  m2 <- function() {
+    ini({ tcl <- log(4); tv <- log(45); bsex <- fix(0.05)
+          eta.cl ~ 0.1; add.err <- 0.1 })
+    model({ cl <- exp(tcl + eta.cl) * exp(bsex * SEX)
+            v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  expect_silent(admixr2:::.admCovDiscContrast(
+    suppressMessages(rxode2::rxode2(m2)), st, names(st)))
+})
+
+test_that("a correlated conditional still enumerates an independent discrete margin", {
+  # The stratified covariate is correlated with a marginalised one, so that PAIR
+  # needs a conditional pool -- there is no closed-form spec for a latent shifted
+  # off the origin. A third covariate, discrete and latently independent, must
+  # not be swept into it: it keeps its exact spec and rides the grid at its
+  # levels. This is the path where `discExact` and the degenerate stratified
+  # specs coexist, so it is also what pins the `disc & discExact` mask.
+  R <- diag(3); R[1L, 2L] <- R[2L, 1L] <- 0.7
+  dimnames(R) <- list(c("WT", "CRCL", "SEX"), c("WT", "CRCL", "SEX"))
+  cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
+                SEX = list(values = c(0, 1), probs = c(0.45, 0.55)),
+                dist = "lnorm", cor = R)
+  st <- covStrata(cd, "WT", n_nodes = 4L, n = 400,
+                  cov_range = list(WT = c(50, 115)))
+  expect_length(st, 4L)
+  for (s in st) {
+    expect_true(is.function(s$cov_dist[["joint"]]))
+    expect_true("SEX" %in% s$cov_dist[["discExact"]])
+    X <- covDraw(s$cov_dist, n = 8000L)
+    expect_lt(stats::sd(X[, "WT"]), 1e-8)            # stratified: a point
+    expect_equal(mean(X[, "SEX"] == 1), 0.55, tolerance = 0.02)
+    g <- admixr2:::.admCovGrid(s$cov_dist, 5L)
+    expect_equal(sum(g$W), 1)
+    expect_gt(nrow(g$X), 1L)
+    # exact level weights off the grid, not an equal-weight pool
+    expect_equal(sum(g$W[g$X[, "SEX"] == 1]), 0.55, tolerance = 1e-12)
+    expect_false(all(abs(g$W - g$W[1L]) < 1e-12))
+  }
+  # ... and the conditional mean of the correlated covariate still MOVES
+  em <- vapply(st, function(s) mean(covDraw(s$cov_dist, n = 20000L)[, "CRCL"]), 0)
+  expect_gt(diff(range(em)), 10)
 })
