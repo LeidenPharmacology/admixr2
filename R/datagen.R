@@ -222,6 +222,31 @@ datagenControl <- function(
 #'     \item{`ev`}{A dosing event table created with `rxode2::et()`.}
 #'     \item{`n`}{(Optional) integer sample size; stored as metadata and
 #'       used when supplying the result to `admControl()`.}
+#'     \item{`model_cov`}{(Optional) the **source model's own parameter
+#'       covariance**, as that model's analysis reported it. Supplying it is
+#'       what makes a standard error meaningful for a study generated from a
+#'       published model: such a study is not a sample, its `E`/`V` are exact
+#'       functions of the source's parameters, so the only uncertainty in the
+#'       chain is the source's own and the fit propagates it by the delta
+#'       method. Without it `n` is read as a sample size instead, and the
+#'       reported SE then falls as `1/sqrt(n)` --- a factor you choose by
+#'       typing a number, not a property of the evidence.
+#'
+#'       A **named** matrix, whose dimnames are the source model's `ini()`
+#'       parameter names. The names are load-bearing twice over: they say which
+#'       parameter each row is, and they fix the SCALE, which is the scale that
+#'       model's `ini()` uses --- log for a theta written `tcl <- log(5)`,
+#'       an SD for a residual, a variance for an omega. That is also the scale
+#'       nlmixr2 prints estimates on.
+#'
+#'       Must cover every parameter the source ESTIMATES. A parameter left out
+#'       contributes no uncertainty at all, which asserts the source knew it
+#'       exactly and reports an SE that is too small, so an incomplete matrix
+#'       warns and no standard error is reported. A `fix()`ed parameter is an
+#'       assertion and must NOT appear. A diagonal --- SEs from a paper's %RSE,
+#'       with no correlations --- is a valid fallback: it is exact at the
+#'       source's own covariate reference and degrades only as you extrapolate
+#'       away from it.}
 #'     \item{`cov_dist`}{(Optional) the covariate distribution this study's
 #'       subjects span --- see [covDraw()] for the grammar. The generated
 #'       `E`/`V` are MARGINAL over it, which is what a publication reports.
