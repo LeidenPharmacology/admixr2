@@ -702,9 +702,11 @@
   # otherwise drop it silently, which is exactly how the field went missing the
   # first time.
   src <- s[[".adm_src"]]
+  jn  <- s[[".adm_strata_nodes"]]
   s$observations <- lapply(s$observations, function(u) {
     if (is.null(u$study)) u$study <- nm
     if (is.null(u[[".adm_src"]])) u[[".adm_src"]] <- src
+    if (is.null(u[[".adm_strata_nodes"]])) u[[".adm_strata_nodes"]] <- jn
     u
   })
   s

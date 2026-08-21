@@ -4,6 +4,77 @@ Written 2026-08-21, from `HANDOFF-model-source-n-REPLY.md` plus the measurements
 in `HANDOFF-model-source-n.md`. Estimator-independent: adfo, admc, adgh and
 adirmc differ in how they compute `H`, not in any of the logic below.
 
+## COVERAGE is the metric, not the SE/SD ratio
+
+Established by 2,000-replicate simulation (`HANDOFF-SE-HOWTO.md`), and it
+retires several earlier conclusions in this file's ancestors that scored SEs
+against the empirical SD. On a weakly identified fit the estimator is non-normal
+and sometimes degenerate -- where it lands depends on the start value -- so its
+spread is not a meaningful target. An SE/SD ratio of 12 turned out to be
+coverage 1.000: far too wide, never invalid. **Conservative is not broken.**
+Only coverage BELOW nominal invalidates inference.
+
+Coverage at nominal 0.950, MC SE 0.0049:
+
+| sources | naive (`"r"`) | sandwich (`"r,s"`) |
+|---|---|---|
+| data only, stratified | 0.944 | **0.952** |
+| model only, stratified | 1.000 | 0.963 |
+| **model + data, both stratified** | 0.986 | **0.952** |
+| data marginal + model stratified | 0.998 | 0.924 |
+| data stratified + model marginal | 0.928 | 0.988 |
+| model only, marginal | 1.000 | 1.000 |
+| data only, marginal | 0.951 | 1.000 |
+| **both marginal** | **0.857 <- INVALID** | 1.000 |
+
+The sandwich is valid in every cell, exact where the fit is well identified and
+conservative where it is not; its worst is 0.924. The naive has exactly ONE
+dangerous cell -- every source marginal -- and it arrives with a bias of +0.375
+against an SD of 0.988. A biased estimate inside an interval that is too narrow
+is the one combination that invalidates inference. `.admReportCovWarnings()`
+refuses to let that configuration pass silently.
+
+**One stratified source is enough.** With at least one, the coefficient is
+recoverable and the sandwich covers at 0.92-0.99.
+
+### The model meat really is QUADRATIC in n_M
+
+The test a lone source structurally cannot perform. Sweeping `n_M`, the SE runs
+0.722 -> 0.522 -> 0.338 -> 0.111 -> 0.0799 against 0.0797 for that source alone:
+it SATURATES at the source's own uncertainty. A linear meat would have driven it
+to zero.
+
+### Efficiency: correct, and wider than it needs to be
+
+For the mixed stratified case the sources are independent, so inverse-variance
+pooling bounds the achievable precision: `1/0.15086^2 + 1/0.05977^2 = 323.9`,
+optimal SD 0.0556, against an observed 0.0814 -- **2.14x the optimal variance**,
+a 46% wider interval than the information supports. The SE honestly reports the
+variance of the estimator that was RUN; that estimator is simply not the most
+efficient one, because ADM weights by `n_m h_m` where the source's real
+precision is `C_m^-1`. Closing it means weighting by `C_m^-1` in the OBJECTIVE,
+not only using it in the covariance -- and no single `n` achieves that, since
+the `n` matching one parameter differs 8.36x from the one matching another.
+
+Worth stating in the paper: a reader comparing against an IPD meta-analysis will
+otherwise wonder why the intervals are wide.
+
+### Centre each source's covariate on its own median
+
+| | cond(H) | naive ratio |
+|---|---|---|
+| marginal data, uncentred | 2.05e+04 | 1.778 |
+| marginal data, **centred** | **7.46e+01** | **0.987** |
+| marginal model, uncentred | 3.64e+04 | 27.823 |
+| marginal model, **centred** | 1.36e+02 | 0.574 |
+
+For a lognormal covariate `E[log WT] = log(median)` exactly, so the median is
+not an approximation to the orthogonalising reference, it IS it. What centring
+does NOT do is create information: it rotates the ill-conditioning off the
+intercept and ONTO the covariate coefficient, which is where it belongs. The
+residual 0.574 is the `C_src` defect, cleanly separated -- centring cannot fix
+"n is not a sample size", only `C_src` can.
+
 ## The one principle
 
     Var(theta_hat) = H^-1 . MEAT . H^-1

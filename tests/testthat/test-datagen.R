@@ -434,3 +434,36 @@ test_that(".admSrcGroups counts a banded source as ONE contribution", {
   expect_length(admixr2:::.admSrcGroups(
     list(x = mk("a", NULL), y = list(n = 5))), 0L)
 })
+
+test_that("the stratum resolution survives datagen, so anova can refuse", {
+  skip_if_not_installed("rxode2")
+  # .admExpandStrata() stamps `.adm_strata_nodes` on the study, but datagen's
+  # one_result() builds its output from an explicit field list -- so it used to
+  # be DROPPED, and everything downstream that reads it was silently inert:
+  # .admFinaliseFit() never recorded `strataNodes`, so anova()'s refusal to
+  # compare two fits built at different resolutions could not fire on a
+  # generated study, which is the normal path.
+  pub <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75
+          eta.cl ~ 0.05; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt; v <- exp(tv) * (WT/70)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  g <- suppressWarnings(suppressMessages(datagen(
+    list(t1 = list(times = c(1, 4, 12), ev = rxode2::et(amt = 200), n = 400,
+                   cov_dist = covDist(WT = c(mean = 78, sd = 16), dist = "lnorm"),
+                   stratify = "WT", strata_nodes = 5L,
+                   cov_range = list(WT = c(50, 115)))),
+    model = pub, control = datagenControl(method = "gh", seed = 1L))))
+  expect_length(g, 5L)
+  expect_true(all(vapply(g, function(s) identical(s[[".adm_strata_nodes"]], 5L),
+                         logical(1))))
+  # ... and an UNstratified study carries none, which is what tells the fit that
+  # every source is marginal -- the one configuration measured as invalid under
+  # covMethod = "r" (coverage 0.857 against a nominal 0.950)
+  g2 <- suppressWarnings(suppressMessages(datagen(
+    list(t1 = list(times = c(1, 4, 12), ev = rxode2::et(amt = 200), n = 400,
+                   cov_dist = covDist(WT = c(mean = 78, sd = 16), dist = "lnorm"))),
+    model = pub, control = datagenControl(method = "gh", seed = 1L))))
+  expect_null(g2$t1[[".adm_strata_nodes"]])
+})

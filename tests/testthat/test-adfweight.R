@@ -531,6 +531,7 @@ test_that(".admCondCheck names the parameters a flat direction is carried by", {
   H <- V %*% diag(c(1e-18, 2, 3)) %*% t(V)
   chk <- admixr2:::.admCondCheck(H, nms)
   expect_false(is.null(chk))
+  expect_identical(chk$level, "undetermined")
   expect_setequal(chk$pars, c("a", "b"))
   expect_equal(chk$ndir, 1L)
   # ... and those rows come back NA rather than as a large finite number
@@ -557,4 +558,24 @@ test_that("the yardstick fires only when OUR SE beats the source's own", {
   # with SEVERAL sources ADM legitimately beats any one of them
   st2 <- c(st, list(s2 = list(.adm_src = list(id = "t2", cov = C))))
   expect_null(admixr2:::.admSrcYardstick(mkcov(c(0.05, 0.04)), st2))
+})
+
+test_that("a WEAKLY determined Hessian is flagged but NOT blanked", {
+  # Two different failures with two different remedies. Below sqrt(eps) the
+  # inverse is set by rounding error, so NA is the honest report. Between that
+  # and 1e-4 the inverse is still meaningful and the sandwich stays VALID --
+  # measured coverage at or above nominal, because conservative is not broken --
+  # so the numbers are kept and the fit says the interval is uninformative.
+  nms <- c("a", "b", "c")
+  V <- cbind(c(1, -1, 0) / sqrt(2), c(1, 1, 0) / sqrt(2), c(0, 0, 1))
+  weak <- V %*% diag(c(1e-6, 2, 3)) %*% t(V)
+  chk <- admixr2:::.admCondCheck(weak, nms)
+  expect_identical(chk$level, "weak")
+  expect_setequal(chk$pars, c("a", "b"))
+  cv <- diag(3); dimnames(cv) <- list(nms, nms)
+  # kept, not blanked -- a wide valid interval beats no interval
+  expect_equal(admixr2:::.admCondBlank(cv, chk), cv)
+  # ... and a well-conditioned Hessian is neither
+  expect_null(admixr2:::.admCondCheck(
+    V %*% diag(c(0.5, 2, 3)) %*% t(V), nms))
 })

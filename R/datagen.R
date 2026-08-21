@@ -562,6 +562,15 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       # of one banded source, which must count as ONE contribution however fine
       # the banding.
       r$.adm_src <- .src_prov
+      # The stratum resolution, carried for the same reason and by the same
+      # route. .admExpandStrata() stamps it on the study, but one_result() builds
+      # its output from an explicit field list, so it was being DROPPED here --
+      # which silently disabled everything downstream that reads it:
+      # .admFinaliseFit() never recorded `strataNodes`, so anova()'s refusal to
+      # compare two fits built at different resolutions could not fire on any
+      # generated study, which is the normal path.
+      if (!is.null(s[[".adm_strata_nodes"]]))
+        r$.adm_strata_nodes <- s[[".adm_strata_nodes"]]
       if (!is.null(spec$output)) r$output <- spec$output
       if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
       r

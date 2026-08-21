@@ -147,6 +147,24 @@
 # does not reach the user -- the nlmixr2est stack swallows it, which is why the
 # drivers already report a missing covariance from their own frame -- so the
 # reason travels on the covariance and .admFinaliseFit() says it.
+# TWO TIERS, because they are different failures with different remedies.
+#
+# `undetermined` (reciprocal condition below sqrt(eps)): the direction is
+# numerically indistinguishable from exactly flat, so H^-1 in it is set by
+# rounding error rather than by data. The magnitude is arbitrary, not merely
+# large, and NA is the honest report.
+#
+# `weak` (reciprocal condition below 1e-4): the inverse is still numerically
+# meaningful and the sandwich stays VALID there -- coverage measured at or above
+# nominal in every such cell, because conservative is not broken. What goes
+# wrong is that the interval becomes too wide to be informative. So the number
+# is kept and the fit says so, with the remedy: CENTRING each source's covariate
+# on its own median, which moved cond(H) from 2.05e+04 to 7.46e+01 and from
+# 3.64e+04 to 1.36e+02 on the two measured designs -- a factor of 170 to 274 --
+# because for a lognormal covariate `E[log WT] = log(median)` exactly, so the
+# median is not an approximation to the orthogonalising reference, it IS it.
+.ADM_WEAK_RCOND <- 1e-4
+
 .admCondCheck <- function(H, nms, tol = .ADM_NPD_RCOND) {
   if (is.null(H) || !is.matrix(H) || nrow(H) != ncol(H) || !all(is.finite(H)))
     return(NULL)
@@ -154,8 +172,18 @@
   if (is.null(e)) return(NULL)
   mx <- max(abs(e$values))
   if (!is.finite(mx) || mx <= 0) return(NULL)
+  rc  <- min(abs(e$values)) / mx
   bad <- which(abs(e$values) < tol * mx)
-  if (!length(bad)) return(NULL)
+  if (!length(bad)) {
+    if (rc >= .ADM_WEAK_RCOND) return(NULL)
+    # weakly determined: keep the numbers, say the interval is uninformative
+    wk <- which(abs(e$values) < .ADM_WEAK_RCOND * mx)
+    ld <- rowSums(e$vectors[, wk, drop = FALSE]^2)
+    od <- order(ld, decreasing = TRUE)
+    cm <- cumsum(ld[od]) / sum(ld)
+    return(list(level = "weak", pars = nms[sort(od[seq_len(
+      which(cm >= 0.95 - 1e-12)[1L])])], rcond = rc, ndir = length(wk)))
+  }
   # A direction is a COMBINATION, so name the parameters that carry it rather
   # than pretending the flatness belongs to one of them. A loading is squared
   # because it is a variance share, and the cut keeps whatever accounts for most
@@ -168,15 +196,17 @@
   # parameters (loadings 0.5 and 0.5) named only the first -- and an evenly
   # split direction is the ordinary case, not a corner one.
   keep <- ord[seq_len(which(cum >= 0.95 - 1e-12)[1L])]
-  list(pars = nms[sort(keep)],
-       rcond = min(abs(e$values)) / mx,
+  list(level = "undetermined", pars = nms[sort(keep)], rcond = rc,
        ndir = length(bad))
 }
 
 # Blank the affected rows and columns. NA is the honest report for a direction
 # the data do not determine; a finite number there is the failure mode above.
 .admCondBlank <- function(cov, chk) {
-  if (is.null(chk) || !length(chk$pars)) return(cov)
+  # only the undetermined tier is blanked -- a weakly determined interval is
+  # wide but valid, and throwing it away would lose usable information
+  if (is.null(chk) || !identical(chk$level, "undetermined") ||
+      !length(chk$pars)) return(cov)
   i <- match(chk$pars, rownames(cov))
   i <- i[!is.na(i)]
   if (!length(i)) return(cov)

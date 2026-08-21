@@ -167,9 +167,9 @@
 # a few lines earlier comes through. The logic therefore lives in shared
 # helpers and only the emission is per-driver, so the four cannot drift on
 # WHAT is checked, only on whether they call this.
-.admReportCovWarnings <- function(cov, studies) {
+.admReportCovWarnings <- function(cov, studies, cov_method = NULL) {
   ic <- attr(cov, "ill_cond")
-  if (!is.null(ic))
+  if (identical(ic$level, "undetermined"))
     warning("admixr2: the Hessian is singular to working precision in ",
             ic$ndir, if (ic$ndir == 1L) " direction" else " directions",
             " (reciprocal condition ", sprintf("%.2e", ic$rcond),
@@ -182,6 +182,45 @@
             "number instead of an infinite one. Check that every parameter is ",
             "identified by the studies supplied -- a covariate marginalised ",
             "identically in every study is the common cause.", call. = FALSE)
+  if (identical(ic$level, "weak"))
+    warning("admixr2: the Hessian is weakly determined (reciprocal condition ",
+            sprintf("%.2e", ic$rcond), ") in ", ic$ndir,
+            if (ic$ndir == 1L) " direction" else " directions",
+            ", carried by ", paste(sQuote(ic$pars), collapse = ", "), ".
+",
+            "  The standard errors are still VALID -- measured coverage is at ",
+            "or above nominal there, since being conservative is not being ",
+            "wrong -- but the intervals are wider than the data need them to ",
+            "be.
+",
+            "  The usual cause is an uncentred covariate, and the remedy is to ",
+            "re-express each source's covariate about ITS OWN median, e.g. ",
+            "`(WT/median)^beta`. For a lognormal covariate the median IS the ",
+            "orthogonalising reference rather than an approximation to it; ",
+            "measured, that moved the condition number by a factor of 170 to ",
+            "274 and rescued the identified parameter completely.",
+            call. = FALSE)
+  # THE ONE CONFIGURATION MEASURED AS INVALID. With every source marginal --
+  # no stratification anywhere -- the naive covariance covers at 0.857 against
+  # a nominal 0.950, and arrives with a bias of +0.375 against an SD of 0.988.
+  # A biased estimate inside an interval that is too narrow is the single
+  # combination that invalidates inference. The sandwich covers at 1.000 on the
+  # same design, so the remedy is a control argument away.
+  if (identical(cov_method, "r")) {
+    .cd <- vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))
+    .st <- vapply(studies, function(s) !is.null(s[[".adm_strata_nodes"]]),
+                  logical(1))
+    if (any(.cd) && !any(.st))
+      warning("admixr2: every study marginalises over its covariates and none ",
+              "is stratified, and `covMethod = \"r\"` is not valid there. ",
+              "Measured coverage 0.857 against a nominal 0.950, with the ",
+              "estimate biased -- a biased point inside an interval that is too ",
+              "narrow is the one combination that invalidates inference.
+",
+              "  Use `covMethod = \"r,s\"`, which covers at 0.950 or above on ",
+              "every design tested. Stratifying ONE source on the covariate ",
+              "its own model fitted also fixes it.", call. = FALSE)
+  }
   # `n` IS INERT ON A LONE MODEL SOURCE AND IS NOT IN A MIXTURE. It divides
   # straight out of a single source's estimating equation, which is why it is
   # not required -- but across sources it sets the RELATIVE WEIGHT, and the

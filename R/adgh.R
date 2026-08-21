@@ -2154,7 +2154,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   # requested sandwich that degraded must not be reported as one.
   # Ill-conditioned directions and the source yardstick. Emitted from the
   # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.
-  .admReportCovWarnings(.cov, studies)
+  .admReportCovWarnings(.cov, studies, .ctl$covMethod)
   .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
   .sw_HJ    <- attr(.cov, "sandwich_HJ")
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
