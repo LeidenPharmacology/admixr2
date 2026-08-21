@@ -81,5 +81,43 @@ Compare, for one source and one parameter:
   `covMethod`, and for `admc` as well as `adgh`.
 
 A ratio near 1 says `n` is doing the job; well below says it is not.
-`scratchpad/band_probe.R` sets this up; it had not finished when this was
-written, so **no number here is claimed for it**.
+
+### Result
+
+Source: 400 patients, individual data, fitted with FOCEI. Its own SE for the
+covariate exponent is **0.0558**. That model was then banded and re-fitted
+through ADM at `n` = 400.
+
+| method | SE | vs the source's own |
+|---|---|---|
+| `adgh`, `covMethod = "r"` | 0.0509 | **0.91×** |
+| `adgh`, `covMethod = "r,s"` | 0.0746 | **1.34×** |
+| `admc`, `covMethod = "r"` | 0.0509–0.0511 | 0.91× |
+
+**Invariant in J** — identical to three decimals at J = 5, 9, 25 and 50 — which
+confirms that `Σ n_k = n` prevents the J-inflation fix 4 describes. The rank
+concern does not materialise through the weighting.
+
+**So `n` is doing the job**, to within 9%. With `n` set to the source's actual
+sample size, `covMethod = "r"` lands just inside the source's own SE — slightly
+over-confident, as expected from ignoring the source's parameter uncertainty
+entirely, but not by an order of magnitude. The sandwich is 34% *conservative*
+by the same yardstick.
+
+That points at option 1: **`n` owns the precision, and fix 4 is not needed to
+rescue it for a single source.** What remains genuinely unaddressed is the
+per-parameter shape, the correlation between a source's parameters, and the
+unanchored-`n` hazard above.
+
+**admc needs no special setting.** n_sim = 2000 and 8000 give 0.0511 and 0.0509,
+so the banded studies are not sampling-limited; the cost is J × n_sim solves,
+which makes `adgh` the better fit for heavily banded sources.
+
+### One more reason the branch mattered
+
+On the pooled branch the *estimate* is not J-invariant either: 0.6810 at J = 5,
+9, 15 and 100, 0.6803 at 25, and **0.6968 at J = 50**. That is the basin-jumping
+the original handoff warned about, reproduced. On the Gauss–Hermite branch the
+estimate is 0.681000 at every J tested. The pooled branch also had not converged
+at J = 100 — still 51 units from the GH value, having come down from 452 — and
+approaches it non-monotonically.
