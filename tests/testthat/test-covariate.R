@@ -2070,3 +2070,42 @@ test_that("strata_nodes is a convergence parameter, and fits carry it", {
   ex2 <- admixr2:::.admExpandStrata(st2, names(st2), m)
   expect_equal(ex2$studies[[1L]][[".adm_strata_nodes"]], 4L)
 })
+
+test_that("banding uses the quadrature rule that CONVERGES", {
+  # The objective has to converge in the stratum count or it is not a
+  # likelihood -- AIC, BIC and any ratio are otherwise on an arbitrary scale.
+  #
+  # The pooled branch cuts equiprobable bins and evaluates at a representative
+  # point, which is a midpoint rule: measured on an independent pair, it moved
+  # the objective 749 units between J = 3 and J = 25 and was still moving. The
+  # Gauss-Hermite branch moved 0.2 units in total. Independence is a KNOWN
+  # latent structure, so it takes the fast branch too -- it used to fall to the
+  # pooled one purely because no `cor` had been supplied.
+  skip_if_not_installed("randtoolbox")
+  cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
+                dist = "lnorm")
+  expect_null(cd[["latentR"]])            # no dependence declared ...
+  st <- covStrata(cd, "WT", n_nodes = 5L, n = 400,
+                  cov_range = list(WT = c(55, 108)))
+  # ... and the GH branch still ran: it hands back a per-stratum n_pool_cell,
+  # which the pooled branch does not produce the same way
+  expect_length(st, 5L)
+  expect_true(all(vapply(st, function(s) !is.null(s$cov$WT), logical(1))))
+  # an explicit identity `cor` must give the SAME strata -- same distribution,
+  # so the branch must not change the answer
+  I2 <- diag(2); dimnames(I2) <- list(c("WT", "CRCL"), c("WT", "CRCL"))
+  cdI <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
+                 dist = "lnorm", cor = I2)
+  stI <- covStrata(cdI, "WT", n_nodes = 5L, n = 400,
+                   cov_range = list(WT = c(55, 108)))
+  expect_equal(vapply(st,  function(s) s$cov$WT, numeric(1)),
+               vapply(stI, function(s) s$cov$WT, numeric(1)), tolerance = 1e-10)
+  expect_equal(vapply(st,  `[[`, 0, "weight"),
+               vapply(stI, `[[`, 0, "weight"), tolerance = 1e-10)
+  # an OPAQUE joint cannot be conditioned, so it keeps the pooled route
+  cdj <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
+                 dist = "lnorm",
+                 joint = function(u) cbind(WT = stats::qlnorm(u[, 1], log(78), .2),
+                                           CRCL = stats::qlnorm(u[, 2], log(90), .2)))
+  expect_length(suppressWarnings(covStrata(cdj, "WT", n_nodes = 4L, n = 100)), 4L)
+})

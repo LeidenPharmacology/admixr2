@@ -1459,7 +1459,25 @@
   # weights to collapse -- and the stratified covariate is a genuine POINT.
   # Verified against the closed-form conditional to 8e-4 on the mean and
   # 14.278 vs 14.283 on the SD.
+  # INDEPENDENCE IS A KNOWN LATENT STRUCTURE, not a missing one. `latentR` is
+  # recorded only when `cor` was supplied, so a study that declared no
+  # dependence fell to the pooled branch below -- and that branch cuts
+  # EQUIPROBABLE BINS evaluated at a representative point, which is a midpoint
+  # rule. The objective then converges in J at O(1/J), which is not good enough
+  # to be a likelihood: measured on an independent pair, the pooled route moves
+  # the objective 749 units between J = 3 and J = 25 and is still moving, while
+  # the Gauss-Hermite route moves 0.2 units in total and is flat to three
+  # decimals from J = 9. Same distribution, same estimates (both give the
+  # exponent as 0.750); only the rule differs.
+  #
+  # OFV, AIC, BIC and any likelihood ratio are comparable only once this has
+  # converged, so the fast rule has to be the default wherever it applies. It
+  # applies whenever the latent structure is KNOWN -- an explicit `cor`, or no
+  # declared dependence at all, which IS independence. An opaque user `joint`
+  # is the one case that stays on the pooled branch, since nothing can be
+  # conditioned there.
   Rm <- cov_dist[["latentR"]]
+  if (is.null(Rm) && is.null(cov_dist[["joint"]])) Rm <- diag(length(nms))
   if (!is.null(Rm) && all(vapply(nms, function(n)
         is.null(cov_dist[[n]][["values"]]), logical(1)))) {
     # the ordinary product Gauss-Hermite grid -- bit-identical to building it
