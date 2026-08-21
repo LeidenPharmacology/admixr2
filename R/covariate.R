@@ -2200,6 +2200,12 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
       # carried so the fit can refuse to be compared against one built at a
       # different resolution -- the objective is J-dependent
       sk[[".adm_strata_nodes"]] <- .Jk
+      # THE J STRATA ARE ONE SOURCE. Everything downstream that asks "how many
+      # independent contributions is this?" must answer 1, not J -- the
+      # model-source covariance applies C_src ONCE across the stacked strata, or
+      # raising the resolution silently buys confidence. Stamped here because
+      # this is the only place that knows they came from one study.
+      sk[[".adm_src_id"]] <- nm
       # a stratum's own point value for the stratified covariates, merged over
       # any `cov` the study already set for covariates it does not stratify on
       sk[["cov"]] <- utils::modifyList(as.list(s[["cov"]] %||% list()),

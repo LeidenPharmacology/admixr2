@@ -47,6 +47,99 @@
 #' # GH quadrature moments (unbiased, noise-free):
 #' datagenControl(method = "gh", n_nodes = 5L)$n_nodes
 #' @export
+# =============================================================================
+# Model sources: the provenance the standard error needs
+# =============================================================================
+#
+# A study generated from a published MODEL is not a sample. Its (E, V) are exact
+# functions of that model's parameters, so the only random thing in the whole
+# chain is `theta_src_hat` -- the estimate the source published -- and the
+# covariance of our fit is the delta method through it:
+#
+#     Var(theta_hat) = G C_src G' ,      G = d theta_hat / d theta_src
+#
+# `n` is NOT a precision statement for such a study. It divides straight out of
+# a lone source's estimating equation (measured: the estimate is 0.75000 at
+# n = 100, 400, 1600 and 6400, unchanged), and sets only the RELATIVE WEIGHT
+# against other sources. Reading `n` as precision is what makes the reported SE
+# fall as exactly 1/sqrt(n) -- a factor the analyst chooses by typing a number.
+#
+# So the covariance is declared HERE, in the datagen block, beside the model it
+# belongs to. Nothing has to be restated at fit time, and a generated study
+# carries everything its own standard error needs.
+#
+#   datagen(list(trial1 = list(times = ..., ev = ..., n = 240,
+#                              model     = published_mod,
+#                              model_cov = C)),      # <- the source's own
+#           control = datagenControl(method = "gh"))
+#
+# SCALE. `C_src` is on the scale of the SOURCE MODEL'S OWN `ini()` block, which
+# is the scale that gets perturbed to form the Jacobian: log for a theta written
+# `tcl <- log(5)`, natural for one written `bwt <- 0.75`. This is checked rather
+# than documented -- the dimnames must be `iniDf` parameter names, so a matrix
+# built against the wrong parameterisation is refused instead of silently
+# rescaling every reported interval.
+.admSrcCov <- function(cov, ui, nm) {
+  if (is.null(cov)) return(NULL)
+  bad <- function(...) stop("admixr2: study '", nm, "': `model_cov` ", ...,
+                            call. = FALSE)
+  cov <- as.matrix(cov)
+  if (nrow(cov) != ncol(cov)) bad("must be square; got ", nrow(cov), " x ",
+                                  ncol(cov), ".")
+  rn <- rownames(cov) %||% colnames(cov)
+  if (is.null(rn))
+    bad("must carry the parameter NAMES as dimnames -- they are what says which ",
+        "parameter each row is, and on which scale. Use the names from the ",
+        "source model's `ini()` block, e.g. dimnames(C) <- list(c(\"tcl\", ",
+        "\"bwt\"), c(\"tcl\", \"bwt\")).")
+  if (!is.null(colnames(cov)) && !identical(rownames(cov), colnames(cov)))
+    bad("has different row and column names, so it does not describe one ",
+        "parameter set.")
+  dimnames(cov) <- list(rn, rn)
+  ini <- tryCatch(ui$iniDf, error = function(e) NULL)
+  if (is.null(ini)) bad("cannot be checked: the source model would not parse.")
+  # Only ESTIMATED parameters carry uncertainty. A fix()ed one is an assertion
+  # -- the source claims to know it -- so it contributes no variance, and naming
+  # it is a sign the matrix came from somewhere other than that model's fit.
+  est <- ini$name[!ini$fix]
+  unknown <- setdiff(rn, ini$name)
+  if (length(unknown))
+    bad("names ", paste(sQuote(unknown), collapse = ", "),
+        ", which the source model's `ini()` does not declare. Declared: ",
+        paste(sQuote(ini$name), collapse = ", "), ".")
+  fixed <- intersect(rn, ini$name[ini$fix])
+  if (length(fixed))
+    bad("names ", paste(sQuote(fixed), collapse = ", "),
+        ", which the source model fix()es. A fixed parameter is an ASSERTION, ",
+        "so it carries no uncertainty to propagate -- drop ",
+        if (length(fixed) == 1L) "it" else "them", " from `model_cov`.")
+  if (!isTRUE(all.equal(unname(cov), unname(t(cov)), tolerance = 1e-8)))
+    bad("is not symmetric, so it is not a covariance matrix.")
+  ev <- tryCatch(eigen(cov, symmetric = TRUE, only.values = TRUE)$values,
+                 error = function(e) NULL)
+  if (is.null(ev) || min(ev) < -1e-10 * max(1, max(ev)))
+    bad("is not positive semi-definite (smallest eigenvalue ",
+        sprintf("%.3g", if (is.null(ev)) NA_real_ else min(ev)),
+        "), so it describes no distribution. A matrix rebuilt from published ",
+        "SEs and correlations can fail this if the correlations were rounded; ",
+        "supplying SEs only, as a DIAGONAL, is a valid fallback.")
+  miss <- setdiff(est, rn)
+  list(cov = cov, par = rn, missing = miss)
+}
+
+# Which parameters does a source model actually ESTIMATE, and at what values?
+#
+# Read at generation time rather than from the function text, because a model
+# routinely reads its values from variables -- `ini({ tcl <- log(CLp) })` is the
+# idiom for supplying a published model's numbers -- so the function alone does
+# not say what was generated.
+.admSrcTheta <- function(ui) {
+  ini <- tryCatch(ui$iniDf, error = function(e) NULL)
+  if (is.null(ini)) return(NULL)
+  keep <- !ini$fix
+  stats::setNames(ini$est[keep], ini$name[keep])
+}
+
 datagenControl <- function(
   method         = c("mc", "fo", "gh"),
   n_sim          = 5000L,
@@ -252,13 +345,20 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   for (i in seq_along(studies)) {
     nm <- study_names[[i]]
     s  <- studies[[i]]
-    m  <- s$model %||% model
+    # `[[ ]]`, NOT `$`: a study also carries `model_cov`, and `$` PARTIAL-MATCHES
+    # on lists -- `s$model` silently returned the covariance MATRIX the moment
+    # that field was added, and every study then failed as "must be a function".
+    m  <- s[["model"]] %||% model
     if (is.null(m))
       stop(sprintf(
         "Study '%s' has no `model` and no top-level default was supplied.", nm),
         call. = FALSE)
-    if (!is.function(m))
-      stop(sprintf("Study '%s': `model` must be a function.", nm), call. = FALSE)
+    # An rxUi is accepted alongside a function because rxode2::rxode2() is
+    # idempotent on one, and the model-source Jacobian re-generates the blocks
+    # at PERTURBED parameter values -- which is a modified ui, not a function.
+    if (!is.function(m) && !inherits(m, "rxUi"))
+      stop(sprintf("Study '%s': `model` must be a function or an rxUi.", nm),
+           call. = FALSE)
     if (!is.null(s$covariate))
       stop("datagen(): `covariate` (node-quadrature generation) was removed. ",
            "Give the study a `cov_dist` instead -- ONE aggregate (E, V), ",
@@ -316,6 +416,14 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # inert and the grid silently uses its own default.
     pinfo$cov_nodes   <- control$cov_nodes %||% 7L
     out_var <- .admOutputVar(ui)
+    .src_cov  <- .admSrcCov(s[["model_cov"]] %||% attr(model, "model_cov"), ui, nm)
+    .src_prov <- list(id    = s[[".adm_src_id"]] %||% nm,
+                      model = mdl,
+                      theta = .admSrcTheta(ui),
+                      cov   = .src_cov$cov,
+                      par   = .src_cov$par,
+                      missing = .src_cov$missing,
+                      control = control)
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
 
     # A model mixing a continuous endpoint with a COUNT one is refused here for
@@ -518,6 +626,12 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       # declares "unbiased" and both are converted correctly.
       r$v_denom <- "ml"
       if (!is.null(cov_ref_of()))     { r$cov      <- cov_ref_of() }
+      # Provenance for the standard error. See .admSrcCov(): a generated block
+      # is not a sample, so its contribution to the covariance runs through the
+      # SOURCE's own uncertainty rather than through `n`. `id` groups the strata
+      # of one banded source, which must count as ONE contribution however fine
+      # the banding.
+      r$.adm_src <- .src_prov
       if (!is.null(spec$output)) r$output <- spec$output
       if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
       r
