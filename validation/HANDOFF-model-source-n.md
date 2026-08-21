@@ -185,6 +185,48 @@ at J = 100 — still 51 units from the GH value, having come down from 452 — a
 approaches it non-monotonically.
 
 
+## What it COSTS to use less than the full `C_src`
+
+The reply says a diagonal `C_src` is "usable but flagged as an approximation".
+Here is the price, which turns out to depend entirely on WHERE you evaluate.
+
+For a lone model source our model can reproduce, `G = I` and
+`Var(theta_hat) = C_src` exactly, so this needs no package code: it is the delta
+method on the source's own covariance. The decision-relevant quantity is not a
+parameter SE but the uncertainty of a PREDICTION at a covariate value the source
+never enrolled -- `a' C a` for a combination `a`, and a combination is exactly
+where a dropped correlation bites. For `log CL(x) = lcl + b log(x/xref)`,
+`a = (1, log(x/xref))`, with SEs 0.080 and 0.060 referenced at CRCL 90:
+
+| rho | CRCL 90 | CRCL 60 | CRCL 40 | CRCL 22 |
+|---|---|---|---|---|
+| -0.9 | 1.00 | 0.82 | 0.75 | **0.73** |
+| -0.5 | 1.00 | 0.88 | 0.83 | 0.82 |
+| 0.0 | 1.00 | 1.00 | 1.00 | 1.00 |
+| +0.5 | 1.00 | 1.18 | 1.34 | 1.41 |
+| +0.9 | 1.00 | 1.42 | 2.23 | **3.14** |
+
+(diagonal / full; below 1 means the DIAGONAL IS OVER-CONFIDENT)
+
+**The cost is exactly zero at the reference and grows with extrapolation
+distance.** At the reference `log(x/xref) = 0`, so the cross term is multiplied
+by zero and the correlation cannot matter whatever it is. That is the whole
+shape of the problem: diagonal is exact where you interpolate and degrades where
+you extrapolate, which is unfortunately what ADM is for.
+
+**A mitigation worth knowing.** The intercept-slope correlation is largely an
+artefact of WHERE the model is referenced -- reference at the source's own
+covariate median and the two are near-orthogonal, which makes a diagonal
+`C_src` nearly exact. Papers usually do reference at a round number near their
+median (70 kg, 90 mL/min), so |rho| is often modest in practice. Where a source
+references somewhere odd, RE-CENTRE its model before generating blocks and most
+of what the missing correlation would have supplied comes back.
+
+**Against the third option there is no contest.** Estimating it returns
+1.69 / 0.84 / 0.42 / 0.21 times the source's own SE at `n` = 100 / 400 / 1600 /
+6400. Diagonal-vs-full is a bounded approximation error with a known structure;
+estimating-it is not an estimate of the quantity at all.
+
 ## Open, and the largest remaining gap in the banding path
 
 **When does the slow rule actually run?** Two triggers, and the second is the
