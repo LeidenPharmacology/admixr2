@@ -104,16 +104,46 @@ through ADM at `n` = 400.
 confirms that `Σ n_k = n` prevents the J-inflation fix 4 describes. The rank
 concern does not materialise through the weighting.
 
-**So `n` is doing the job**, to within 9%. With `n` set to the source's actual
-sample size, `covMethod = "r"` lands just inside the source's own SE — slightly
-over-confident, as expected from ignoring the source's parameter uncertainty
-entirely, but not by an order of magnitude. The sandwich is 34% *conservative*
-by the same yardstick.
-
-That points at option 1: **`n` owns the precision, and fix 4 is not needed to
-rescue it for a single source.** What remains genuinely unaddressed is the
-per-parameter shape, the correlation between a source's parameters, and the
-unanchored-`n` hazard above.
+> **RETRACTED — that reading was wrong, and the error is instructive.** It was
+> ONE measurement at ONE `n`, and the quantity it measured moves with `n`.
+> `HANDOFF-model-source-n-REPLY.md` derives why: for a lone model source `n`
+> divides straight out of the estimating equation `n·s(θ) = 0`, so neither the
+> estimate nor its sampling distribution depends on `n` at all — while the
+> NAIVE covariance `2(n h)⁻¹` falls as `1/√n`. Confirmed here against admixr2
+> itself, same source banded at J = 9, sweeping only `n`:
+>
+> | `n` | `bwt` | `covMethod = "r"` SE | ratio vs n=100 | `1/√n` predicts |
+> |---|---|---|---|---|
+> | 100 | 0.75000 | 0.101259 | 1.000 | 1.000 |
+> | 400 | 0.75000 | 0.050630 | 2.000 | 2.000 |
+> | 1600 | 0.75000 | 0.025315 | 4.000 | 4.000 |
+> | 6400 | 0.75000 | 0.012657 | 8.000 | 8.000 |
+>
+> Exact to four significant figures at every point, and the estimate does not
+> move — `θ̂ = θ̂_src` exactly, since the discrepancy is zero there. So the
+> 0.91× above is an artefact of having picked `n` = 400: the same fit reads
+> 1.81× the source's own SE at `n` = 100 and 0.45× at `n` = 1600. **"`n` is
+> doing the job" was a coincidence of the yardstick, not a finding.**
+>
+> The general form is the reply's `n*` result — solving for the `n` at which
+> the naive covariance reproduces the source's own uncertainty gives **3743 for
+> one parameter and 448 for another, within the same source**. No scalar can be
+> right for both, so `n` provably cannot own precision.
+>
+> **The existing sandwich does NOT rescue this**, which is worth stating because
+> it is the obvious thing to reach for. `covMethod = "r,s"` scales identically —
+> 0.145278 / 0.072639 / 0.036319 / 0.018160 over the same sweep, ratios
+> 1.000 / 2.000 / 4.000 / 8.000 — sitting at a constant 1.4346x the naive value at every `n`. It shifts
+> the level and inherits the arbitrariness, because its meat is
+> `G_s Omega_s(n_s) G_s'` and `Omega_s` is the ADF/Browne sampling covariance of
+> `(ybar, vech V)` from `n_s` SUBJECTS. That is the right object for a digitised
+> study and the wrong one for a model source, whose `(E, V)` are not sample
+> statistics at all. Fixing the meat per source type is the whole change.
+>
+> The dichotomy this handoff posed is therefore false. `n` and `Var(θ̂_src)` do
+> not compete and cannot double-count, because `n` never enters the correct
+> variance: **`n` owns RELATIVE WEIGHT between sources, `C_src` owns
+> PRECISION.** Option 1 and option 2 were never alternatives.
 
 **admc needs no special setting.** n_sim = 2000 and 8000 give 0.0511 and 0.0509,
 so the banded studies are not sampling-limited; the cost is J × n_sim solves,
