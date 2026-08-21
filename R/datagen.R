@@ -643,9 +643,28 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   if (!is.null(colnames(cov)) && !identical(rownames(cov), colnames(cov)))
     bad("has different row and column names, so it does not describe one ",
         "parameter set.")
-  dimnames(cov) <- list(rn, rn)
   ini <- tryCatch(ui$iniDf, error = function(e) NULL)
   if (is.null(ini)) bad("cannot be checked: the source model would not parse.")
+  # ACCEPT A FIT'S COVARIANCE AS IT COMES. The obvious thing to pass is the
+  # source fit's own `$cov`, and nlmixr2 names its omega rows on the REPORTING
+  # convention -- `om.eta.cl` for the variance of `eta.cl`, `cov.a.b` for an
+  # off-diagonal -- while an `ini()` block calls that row `eta.cl`. Refusing
+  # `om.` would mean every user renaming a matrix by hand, so translate it.
+  # The scale already agrees: both are the variance.
+  .om <- grepl("^om[.]", rn)
+  if (any(.om)) {
+    cand <- sub("^om[.]", "", rn[.om])
+    okm  <- cand %in% ini$name[!is.na(ini$neta1) & ini$neta1 == ini$neta2]
+    if (any(okm)) rn[which(.om)[okm]] <- cand[okm]
+  }
+  .cv <- grepl("^cov[.]", rn)
+  if (any(.cv))
+    bad("names ", paste(sQuote(rn[.cv]), collapse = ", "),
+        ", which are OFF-DIAGONAL omega entries. Those are not yet mapped from ",
+        "the reporting names onto `ini()` rows; drop them and their rows, ",
+        "keeping the `om.` diagonal, or rename them to the names the source ",
+        "model's `ini()` uses.")
+  dimnames(cov) <- list(rn, rn)
   # Only ESTIMATED parameters carry uncertainty. A fix()ed one is an assertion
   # -- the source claims to know it -- so it contributes no variance, and naming
   # it is a sign the matrix came from somewhere other than that model's fit.

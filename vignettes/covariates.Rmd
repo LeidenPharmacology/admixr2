@@ -113,13 +113,17 @@ trial_model <- function() {
 }
 trial_fits <- lapply(trial_data, function(d)
   suppressWarnings(nlmixr2(trial_model, d, est = "focei",
-                           control = foceiControl(print = 0L))))
+                           control = foceiControl(print = 0L, covMethod = "r"))))
 published <- lapply(trial_fits, function(f) list(
   CL   = exp(f$parFixedDf["tcl", "Estimate"]),
   V    = exp(f$parFixedDf["tv",  "Estimate"]),
   BSEX = f$parFixedDf["bsex", "Estimate"],
   OM   = as.numeric(f$omega[1L, 1L]),
-  ADD  = f$parFixedDf["add.err", "Estimate"]))
+  ADD  = f$parFixedDf["add.err", "Estimate"],
+  # What each analyst published ALONGSIDE the estimates: the parameter
+  # covariance from their own fit. This is what makes a standard error
+  # meaningful downstream -- see "Where the uncertainty comes from".
+  COV  = f$cov))
 knitr::kable(data.frame(
   cohort      = names(published),
   median_CRCL = round(vapply(cohorts, function(c) stats::median(c$CRCL), 0)),
@@ -186,9 +190,12 @@ pop_dist <- function(cv, with_sex) {
   }
   do.call(covDist, a)
 }
+CSRC <- NULL                                   # this source's own covariance
+use_published <- local({ f <- use_published
+  function(nm) { f(nm); CSRC <<- published[[nm]]$COV } })
 gen1 <- function(n, cov_dist, cov = NULL) {
   sp <- list(times = TIMES, ev = rxode2::et(amt = DOSE), n = n,
-             cov_dist = cov_dist)
+             cov_dist = cov_dist, model_cov = CSRC)
   if (!is.null(cov)) sp$cov <- cov
   datagen(list(s = sp), model = published_model,
           control = datagenControl(method = "gh", seed = 1L))$s
@@ -226,7 +233,7 @@ adm_model <- function() {
 }
 fit <- nlmixr2(adm_model, admData(), est = "adgh",
                control = adghControl(studies = studies, print = 0L,
-                                     covMethod = "r"))
+                                     covMethod = "r,s"))
 pf     <- fit$parFixedDf
 om     <- as.numeric(fit$omega[1L, 1L])
 om_se  <- sqrt(diag(fit$cov))[["om.eta.cl"]]   # omega's SE is in $cov, not pf
@@ -262,11 +269,45 @@ its truth and the prediction below is a few per cent off rather than exact.
 That is what a meta-analysis is: evidence that does not perfectly agree, pooled
 anyway, and honest about the residual.
 
-Two things about standard errors, both easy to get wrong. A structural theta's
-SE is on the **log** scale — printing it beside a back-transformed estimate
-would read as L/h and be off by an order of magnitude — so `parFixedDf` gives
-back-transformed CIs, used above. And the **omega** SE is not in `parFixedDf`
-at all: by nlmixr2 convention it lives in `fit$cov`, as `om.eta.cl`.
+## Where the uncertainty comes from
+
+A study generated from a published **model** is not a sample. Its `E` and `V`
+are exact functions of that model's parameters, so the only uncertain thing in
+the whole chain is the estimate the original analyst published --- and the
+interval on our answer has to come from theirs.
+
+That is why each study above carries `model_cov`, the source fit's own
+covariance. Hand it the fit's `$cov` as it comes; the `om.eta.cl` naming is
+understood.
+
+Without it, `n` gets read as a sample size instead, and the reported SE then
+falls as `1/sqrt(n)` --- exactly proportional, measured to four significant
+figures. It is a factor you choose by typing a number, not a property of the
+evidence: the `n` that would reproduce one parameter's true uncertainty differs
+by more than eightfold from the `n` that reproduces another's, in the same
+model. No single value can be right for both.
+
+`n` still matters, but only for **relative weight** between sources. Set it to
+the sample size each source was developed on.
+
+Two conventions worth knowing, both easy to get wrong. A structural theta's SE
+is on the **log** scale --- printing it beside a back-transformed estimate would
+read as L/h and be off by an order of magnitude --- so `parFixedDf` gives
+back-transformed CIs, used above. And the **omega** SE is not in `parFixedDf` at
+all: by nlmixr2 convention it lives in `fit$cov`, as `om.eta.cl`.
+
+### Why `covMethod = "r,s"` here
+
+Every source in this vignette marginalises over the covariates it did not
+condition on. That is the honest description of what these publications report
+--- and it is also the one configuration where the default covariance is not
+valid: measured coverage 0.857 against a nominal 0.950, with the estimate
+biased. A biased point inside an interval that is too narrow is the combination
+that invalidates inference, so admixr2 warns rather than letting it pass.
+
+The sandwich covers at 0.950 or above on every design tested, so it is the right
+default whenever a source is marginal. Stratifying one source on the covariate
+its own model fitted fixes it too --- and one is enough.
 
 Here is what the meta-analysis actually did:
 

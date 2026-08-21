@@ -467,3 +467,29 @@ test_that("the stratum resolution survives datagen, so anova can refuse", {
     model = pub, control = datagenControl(method = "gh", seed = 1L))))
   expect_null(g2$t1[[".adm_strata_nodes"]])
 })
+
+test_that("model_cov accepts a fit's own \$cov, omega naming included", {
+  skip_if_not_installed("rxode2")
+  # The obvious thing to pass is the source fit's `$cov`, and nlmixr2 names the
+  # omega row on the REPORTING convention -- `om.eta.cl` for the variance of
+  # `eta.cl` -- while an ini() block calls that row `eta.cl`. Refusing `om.`
+  # would mean every user renaming a matrix by hand, so it is translated. The
+  # scale already agrees: both are the variance.
+  m <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bsex <- 0.05
+          eta.cl ~ 0.05; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * exp(bsex * SEX); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(m))
+  nm <- c("tcl", "tv", "bsex", "add.err", "om.eta.cl")   # exactly focei's names
+  C  <- diag(c(0.0035, 4e-6, 0.005, 1e-5, 1e-4)); dimnames(C) <- list(nm, nm)
+  got <- admixr2:::.admSrcCov(C, ui, "s")
+  expect_setequal(got$par, c("tcl", "tv", "bsex", "add.err", "eta.cl"))
+  expect_length(got$missing, 0L)                          # nothing left over
+  # an OFF-diagonal omega entry is refused rather than silently dropped --
+  # dropping it would understate, which is the dangerous direction
+  nm2 <- c(nm, "cov.eta.cl.eta.v")
+  C2  <- diag(c(diag(C), 1e-5)); dimnames(C2) <- list(nm2, nm2)
+  expect_error(admixr2:::.admSrcCov(C2, ui, "s"), "OFF-DIAGONAL")
+})
