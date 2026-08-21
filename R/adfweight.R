@@ -574,6 +574,51 @@
   (M + t(M)) / 2
 }
 
+# A summary of a model cannot make us more certain than the analyst who had
+# every patient.
+#
+# With a single model source the ADM standard error should not come out SMALLER
+# than that source's own reported one. Where our model reproduces the source's
+# the two are equal by construction, which makes the check look vacuous -- but
+# it is not, and adfo is the case that shows why. adfo LINEARISES, so its map
+# from theta_src is not the identity: it returned 0.06800 where the source
+# reported 0.08000, with its point estimate departing by 3.58e-03 while adgh's
+# departed by 1.6e-07. The calculation is right -- `G C_src G'` is the honest
+# variance of that estimator's own map -- but it is the variance of a BIASED
+# estimator, so it understates TOTAL error even though nothing is wrong with it.
+#
+# Hence a warning rather than a refusal: the number is legitimate and the reason
+# it is small is not.
+#
+# Compared BY NAME, which is the only defensible mapping. Our parameters and the
+# source's are different vectors in general; where a name appears in both, it is
+# the same quantity on the same scale, because `model_cov` is keyed to the source
+# model's `ini()` names and that is the scale nlmixr2 reports on.
+.admSrcYardstick <- function(cov, studies) {
+  if (is.null(cov) || !is.matrix(cov) || is.null(rownames(cov))) return(NULL)
+  grp <- .admSrcGroups(studies)
+  if (length(grp) != 1L) return(NULL)          # several sources: ADM may beat any one
+  prov <- studies[[grp[[1L]][1L]]][[".adm_src"]]
+  C <- prov$cov
+  if (is.null(C)) return(NULL)
+  shared <- intersect(rownames(cov), rownames(C))
+  if (!length(shared)) return(NULL)
+  # setNames, because diag() on a matrix DROPS dimnames -- indexing the result by
+  # name then gives NA for every entry and the check silently never fires
+  ours   <- sqrt(stats::setNames(diag(cov), rownames(cov))[shared])
+  theirs <- sqrt(stats::setNames(diag(C), rownames(C))[shared])
+  ok <- is.finite(ours) & is.finite(theirs) & theirs > 0
+  if (!any(ok)) return(NULL)
+  # 1% slack: the two are equal by construction in the exact case, and a
+  # quadrature or Monte-Carlo estimator lands a few tenths of a percent either
+  # side of that (measured: admc 1.005, adirmc 1.002, adgh 1.000). Firing on
+  # those would make the check noise.
+  r <- ours[ok] / theirs[ok]
+  low <- names(r)[r < 0.99]
+  if (!length(low)) return(NULL)
+  list(pars = low, ratio = r[low], src = names(grp)[1L])
+}
+
 .admSandwich <- function(H, G, Om, extra = NULL, skip = integer(0)) {
   Hi <- tryCatch(solve(H), error = function(e) NULL)
   if (is.null(Hi)) return(NULL)

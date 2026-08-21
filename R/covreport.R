@@ -128,6 +128,62 @@
 # number of 5.6e11) -- so a tighter 1e-12 threshold, tried first, did NOT fire.
 .ADM_NPD_RCOND <- sqrt(.Machine$double.eps)
 
+# Directions the Hessian does not determine, reported as UNDEFINED.
+#
+# `Var = H^-1 (meat) H^-1`, so a near-singular `H` poisons the answer however
+# cleanly the meat was formed -- a correct model-source covariance does nothing
+# to prevent it. The failure is not an error: the inverse of an almost-singular
+# matrix is finite, large and plausible, and a flat ridge therefore reports a
+# confident number rather than an infinite one. That is exactly how a
+# marginalised discrete covariate returned -0.059 against a truth of +0.150 with
+# every diagnostic looking healthy (.admCovDiscContrast, R/covariate.R).
+#
+# `.admReduceNpdOmega()` already handles the specific case of a weakly
+# identified omega Cholesky by dropping that block. This is the general one:
+# whatever survives that, if a direction still carries essentially no curvature
+# the parameters loading on it get NA rather than a number.
+#
+# Returned as a REASON rather than warned here. A warning raised inside CalcCov
+# does not reach the user -- the nlmixr2est stack swallows it, which is why the
+# drivers already report a missing covariance from their own frame -- so the
+# reason travels on the covariance and .admFinaliseFit() says it.
+.admCondCheck <- function(H, nms, tol = .ADM_NPD_RCOND) {
+  if (is.null(H) || !is.matrix(H) || nrow(H) != ncol(H) || !all(is.finite(H)))
+    return(NULL)
+  e <- tryCatch(eigen((H + t(H)) / 2, symmetric = TRUE), error = function(e) NULL)
+  if (is.null(e)) return(NULL)
+  mx <- max(abs(e$values))
+  if (!is.finite(mx) || mx <= 0) return(NULL)
+  bad <- which(abs(e$values) < tol * mx)
+  if (!length(bad)) return(NULL)
+  # A direction is a COMBINATION, so name the parameters that carry it rather
+  # than pretending the flatness belongs to one of them. A loading is squared
+  # because it is a variance share, and the cut keeps whatever accounts for most
+  # of the direction rather than a fixed count.
+  load <- rowSums(e$vectors[, bad, drop = FALSE]^2)
+  ord  <- order(load, decreasing = TRUE)
+  cum  <- cumsum(load[ord]) / sum(load)
+  # UP TO 95%, inclusive of the entry that crosses it. Cutting at `cum <= 0.95`
+  # instead drops that entry, so a direction split evenly between two
+  # parameters (loadings 0.5 and 0.5) named only the first -- and an evenly
+  # split direction is the ordinary case, not a corner one.
+  keep <- ord[seq_len(which(cum >= 0.95 - 1e-12)[1L])]
+  list(pars = nms[sort(keep)],
+       rcond = min(abs(e$values)) / mx,
+       ndir = length(bad))
+}
+
+# Blank the affected rows and columns. NA is the honest report for a direction
+# the data do not determine; a finite number there is the failure mode above.
+.admCondBlank <- function(cov, chk) {
+  if (is.null(chk) || !length(chk$pars)) return(cov)
+  i <- match(chk$pars, rownames(cov))
+  i <- i[!is.na(i)]
+  if (!length(i)) return(cov)
+  cov[i, ] <- NA_real_; cov[, i] <- NA_real_
+  cov
+}
+
 .admReduceNpdOmega <- function(H, H_eigs, eig_dec, nms_cov, n_o, n_sub) {
   .singular <- function(e) {
     if (is.null(e) || !length(e) || any(!is.finite(e))) return(TRUE)

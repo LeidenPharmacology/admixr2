@@ -1451,6 +1451,9 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   # what the covariance IS, not what was asked for -- a degraded sandwich is "r"
+  # Ill-conditioned directions and the source yardstick. Emitted from the
+  # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.
+  .admReportCovWarnings(.cov, studies)
   .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
   .sw_HJ    <- attr(.cov, "sandwich_HJ")
   .cov      <- .admCovThetaOrder(.cov, .ui)

@@ -158,6 +158,74 @@
   d
 }
 
+# Covariance warnings the user must actually SEE.
+#
+# Emitted from the DRIVER BODY, never from .admFinaliseFit() and never from a
+# CalcCov: a warning raised in either of those does not reach the user at all.
+# Measured -- a plain unconditional warning() at the top of .admFinaliseFit()
+# produces nothing, while the driver's own "covariance could not be computed"
+# a few lines earlier comes through. The logic therefore lives in shared
+# helpers and only the emission is per-driver, so the four cannot drift on
+# WHAT is checked, only on whether they call this.
+.admReportCovWarnings <- function(cov, studies) {
+  ic <- attr(cov, "ill_cond")
+  if (!is.null(ic))
+    warning("admixr2: the Hessian is singular to working precision in ",
+            ic$ndir, if (ic$ndir == 1L) " direction" else " directions",
+            " (reciprocal condition ", sprintf("%.2e", ic$rcond),
+            "), so the data do not determine ",
+            paste(sQuote(ic$pars), collapse = ", "),
+            " separately. Their standard errors are reported as NA.
+",
+            "  A near-singular Hessian does not fail loudly: its inverse is ",
+            "finite, large and plausible, so a flat ridge reports a confident ",
+            "number instead of an infinite one. Check that every parameter is ",
+            "identified by the studies supplied -- a covariate marginalised ",
+            "identically in every study is the common cause.", call. = FALSE)
+  # `n` IS INERT ON A LONE MODEL SOURCE AND IS NOT IN A MIXTURE. It divides
+  # straight out of a single source's estimating equation, which is why it is
+  # not required -- but across sources it sets the RELATIVE WEIGHT, and the
+  # pooling is only optimal when that weight matches the precision the source
+  # actually has (n_m h_m proportional to C_m^-1). So a model source with no
+  # usable `n` is harmless alone and silently mis-weights a mixture. Said where
+  # the consequence is, which is the same reasoning that put the `model_cov`
+  # check in datagen().
+  .src <- tryCatch(.admSrcGroups(studies), error = function(e) list())
+  if (length(studies) > 1L && length(.src)) {
+    bad_n <- names(.src)[vapply(.src, function(ix) {
+      nn <- vapply(ix, function(i) as.numeric(studies[[i]]$n %||% NA_real_), 0)
+      !all(is.finite(nn)) || any(nn <= 0) }, logical(1))]
+    if (length(bad_n))
+      warning("admixr2: model source", if (length(bad_n) > 1L) "s " else " ",
+              paste(sQuote(bad_n), collapse = ", "), " ",
+              if (length(bad_n) > 1L) "have" else "has",
+              " no usable `n`, and this fit combines several sources. On a lone ",
+              "model source `n` divides out of the estimating equation and does ",
+              "not matter; across sources it is the RELATIVE WEIGHT, and the ",
+              "pooling is only efficient when that weight matches the precision ",
+              "the source actually has. Set `n` to the sample size the source ",
+              "model was developed on.", call. = FALSE)
+  }
+  yd <- tryCatch(.admSrcYardstick(cov, studies), error = function(e) NULL)
+  if (!is.null(yd))
+    warning("admixr2: the standard error for ",
+            paste(sQuote(yd$pars), collapse = ", "), " is BELOW the one source '",
+            yd$src, "' reported for the same parameter",
+            if (length(yd$pars) > 1L) "s" else "", " (ratio ",
+            paste(sprintf("%.3f", yd$ratio), collapse = ", "), ").
+",
+            "  A summary of a published model cannot carry more information ",
+            "than the analyst who had every patient, so this says this ",
+            "estimator's map from the source's parameters is not the identity ",
+            "-- it approximates the source rather than reproducing it. The ",
+            "covariance is the honest VARIANCE of that approximating estimator, ",
+            "but of a BIASED one, so it understates TOTAL error. `adfo` ",
+            "linearises and does this by construction; the quadrature and ",
+            "Monte-Carlo estimators reproduce the source and do not.",
+            call. = FALSE)
+  invisible(NULL)
+}
+
 .admFinaliseFit <- function(.ret, .ui, .ctl, est, objective, ov, studies,
                             cov, cov_nms, multi_out, extra_field, handle_ctl,
                             t_opt, t_cov, t_elapsed, pinfo = NULL) {

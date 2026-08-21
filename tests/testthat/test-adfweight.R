@@ -482,3 +482,79 @@ test_that(".admHeatSE reads Omega's vech block, and refuses a shape mismatch", {
   expect_equal(diag(sev), c(0.2, 0.3, 0.4))
   expect_true(all(is.na(sev[upper.tri(sev)])))
 })
+
+# ---- the model-source split in the meat -------------------------------------
+
+test_that("skip and extra PARTITION the meat exactly", {
+  # The failure mode the split invites: a block that is skipped but not covered
+  # by an `extra` term -- or covered twice -- is silent, finite and plausible.
+  # Asked for by review of HANDOFF-model-source-n-IMPLEMENTED.md.
+  set.seed(4)
+  p <- 3L
+  mk <- function(m) matrix(stats::rnorm(p * m), p, m)
+  psd <- function(m) { A <- matrix(stats::rnorm(m * m), m, m); crossprod(A) + diag(m) }
+  H  <- psd(p)
+  G  <- list(mk(4L), mk(5L))
+  Om <- list(psd(4L), psd(5L))
+  M  <- psd(p)                                   # one model source's whole term
+
+  # every block is data: the classic sum, unchanged
+  a <- admixr2:::.admSandwich(H, G, Om)
+  expect_equal(a$J, G[[1L]] %*% Om[[1L]] %*% t(G[[1L]]) +
+                    G[[2L]] %*% Om[[2L]] %*% t(G[[2L]]), tolerance = 1e-12)
+
+  # block 1 is a MODEL source: it leaves the data sum and rejoins as `extra`
+  b <- admixr2:::.admSandwich(H, G, Om, extra = list(M), skip = 1L)
+  expect_equal(b$J, M + G[[2L]] %*% Om[[2L]] %*% t(G[[2L]]), tolerance = 1e-12)
+
+  # ... so adding the data source increases the meat by EXACTLY its own term
+  c1 <- admixr2:::.admSandwich(H, G[1L], Om[1L], extra = list(M), skip = 1L)
+  expect_equal(c1$J, M, tolerance = 1e-12)
+  expect_equal(b$J - c1$J, G[[2L]] %*% Om[[2L]] %*% t(G[[2L]]), tolerance = 1e-12)
+
+  # a skipped block must not also be counted: skipping BOTH leaves only `extra`
+  d <- admixr2:::.admSandwich(H, G, Om, extra = list(M), skip = c(1L, 2L))
+  expect_equal(d$J, M, tolerance = 1e-12)
+  # and the sandwich itself is H^-1 J H^-1 throughout
+  Hi <- solve(H)
+  expect_equal(b$cov, Hi %*% b$J %*% Hi, tolerance = 1e-12)
+})
+
+test_that(".admCondCheck names the parameters a flat direction is carried by", {
+  # Var = H^-1 (meat) H^-1, so a near-singular H poisons the answer however
+  # cleanly the meat was formed -- and it does not fail loudly: the inverse is
+  # finite, large and plausible.
+  nms <- c("a", "b", "c")
+  expect_null(admixr2:::.admCondCheck(diag(3), nms))
+  # a exactly-flat direction in (a, b): H is rank 2
+  V <- cbind(c(1, -1, 0) / sqrt(2), c(1, 1, 0) / sqrt(2), c(0, 0, 1))
+  H <- V %*% diag(c(1e-18, 2, 3)) %*% t(V)
+  chk <- admixr2:::.admCondCheck(H, nms)
+  expect_false(is.null(chk))
+  expect_setequal(chk$pars, c("a", "b"))
+  expect_equal(chk$ndir, 1L)
+  # ... and those rows come back NA rather than as a large finite number
+  cv <- diag(3); dimnames(cv) <- list(nms, nms)
+  bl <- admixr2:::.admCondBlank(cv, chk)
+  expect_true(all(is.na(diag(bl)[c("a", "b")])))
+  expect_false(is.na(bl["c", "c"]))
+})
+
+test_that("the yardstick fires only when OUR SE beats the source's own", {
+  # A summary of a published model cannot carry more information than the
+  # analyst who had every patient.
+  C <- diag(c(0.08, 0.06)^2); dimnames(C) <- list(c("tcl", "tv"), c("tcl", "tv"))
+  st <- list(s1 = list(.adm_src = list(id = "t1", cov = C)))
+  mkcov <- function(se) { m <- diag(se^2)
+    dimnames(m) <- list(c("tcl", "tv"), c("tcl", "tv")); m }
+  expect_null(admixr2:::.admSrcYardstick(mkcov(c(0.08, 0.06)), st))   # equal
+  expect_null(admixr2:::.admSrcYardstick(mkcov(c(0.09, 0.06)), st))   # wider
+  y <- admixr2:::.admSrcYardstick(mkcov(c(0.068, 0.06)), st)          # adfo's case
+  expect_equal(y$pars, "tcl")
+  expect_equal(unname(y$ratio), 0.85, tolerance = 1e-6)
+  # a few tenths of a percent is quadrature/MC noise, not a finding
+  expect_null(admixr2:::.admSrcYardstick(mkcov(c(0.0797, 0.06)), st))
+  # with SEVERAL sources ADM legitimately beats any one of them
+  st2 <- c(st, list(s2 = list(.adm_src = list(id = "t2", cov = C))))
+  expect_null(admixr2:::.admSrcYardstick(mkcov(c(0.05, 0.04)), st2))
+})
