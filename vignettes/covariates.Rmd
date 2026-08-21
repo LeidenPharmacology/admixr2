@@ -253,8 +253,8 @@ knitr::kable(data.frame(
 
 Both covariate effects come back, from three analyses that between them
 contained only one of them. But look at the sex effect: the three trials
-reported 0.17, 0.14 and 0.14 for a quantity that is genuinely the same in all
-of them, and the meta-analysis has to settle on one number. **Published models
+reported `r paste(sprintf("%.2f", vapply(published, `[[`, 0, "BSEX")), collapse = ", ")`
+for a quantity that is genuinely the same in all of them, and the meta-analysis has to settle on one number. **Published models
 disagree, and reconciling them is not free** — some of that disagreement lands
 in the other parameters, which is why the renal exponent sits a little below
 its truth and the prediction below is a few per cent off rather than exact.
@@ -269,60 +269,63 @@ at all: by nlmixr2 convention it lives in `fit$cov`, as `om.eta.cl`.
 
 Here is what the meta-analysis actually did:
 
-```{r mechanism, fig.height = 3.8}
+```{r mechanism, fig.height = 4.2}
 e  <- stats::setNames(pf$Estimate, rownames(pf))
-crcl_grid <- seq(15, 110, length.out = 120)
-# at a common reference: 70 kg, women -- the trials' published CL is the same
-# reference, since bsex multiplies out of it
-curve_df <- data.frame(
-  CRCL = crcl_grid,
-  CL   = exp(e[["tcl"]]) * (crcl_grid / 90)^e[["bcrcl"]])
-pts <- data.frame(
-  CRCL = vapply(cohorts, function(c) stats::median(c$CRCL), 0),
-  CL   = vapply(published, `[[`, 0, "CL"),
-  lab  = names(published))
-# each published model has NO renal term, so what it says about clearance is a
-# FLAT line -- drawn over the CRCL range that trial actually covered
-seg <- data.frame(
-  lab = names(published),
-  CL  = vapply(published, `[[`, 0, "CL"),
-  lo  = vapply(cohorts, function(c) unname(stats::quantile(c$CRCL, .10)), 0),
-  hi  = vapply(cohorts, function(c) unname(stats::quantile(c$CRCL, .90)), 0))
+crcl_grid <- seq(15, 115, length.out = 120)
+sexlab <- c("women", "men")
 
-ggplot(curve_df, aes(CRCL, CL)) +
+# the meta-analysis: one curve per sex. The renal effect is the SLOPE, the sex
+# effect is the vertical GAP between the two.
+curve_df <- do.call(rbind, lapply(0:1, function(sx) data.frame(
+  CRCL = crcl_grid, sex = sexlab[sx + 1L],
+  CL = exp(e[["tcl"]]) * (crcl_grid/90)^e[["bcrcl"]] * exp(e[["bsex"]] * sx))))
+
+# each published model: no renal term, so a FLAT bar per sex, drawn over the
+# CRCL range that trial actually covered
+seg <- do.call(rbind, lapply(names(published), function(nm) do.call(rbind,
+  lapply(0:1, function(sx) data.frame(
+    lab = nm, sex = sexlab[sx + 1L],
+    CL  = published[[nm]]$CL * exp(published[[nm]]$BSEX * sx),
+    lo  = unname(stats::quantile(cohorts[[nm]]$CRCL, .10)),
+    hi  = unname(stats::quantile(cohorts[[nm]]$CRCL, .90)))))))
+pts <- do.call(rbind, lapply(names(published), function(nm) do.call(rbind,
+  lapply(0:1, function(sx) data.frame(
+    lab = nm, sex = sexlab[sx + 1L],
+    CRCL = stats::median(cohorts[[nm]]$CRCL),
+    CL   = published[[nm]]$CL * exp(published[[nm]]$BSEX * sx))))))
+
+ggplot(curve_df, aes(CRCL, CL, colour = sex)) +
   annotate("rect", xmin = 15, xmax = 30, ymin = -Inf, ymax = Inf,
            fill = "grey85", alpha = .6) +
   annotate("text", x = 22.5, y = max(curve_df$CL), label = "severe\n(no trial)",
            size = 3, vjust = 1.1) +
-  # what the nearest published model would claim down there
-  geom_segment(data = subset(seg, lab == "moderate"),
-               aes(x = 15, xend = lo, y = CL, yend = CL),
-               linetype = "dotted", linewidth = .7, colour = "grey45") +
-  geom_segment(data = seg, aes(x = lo, xend = hi, y = CL, yend = CL,
-                               colour = lab), linewidth = 1.6) +
-  geom_line(linewidth = 1, colour = "steelblue4") +
-  geom_point(data = pts, size = 3.2) +
-  geom_text(data = pts, aes(label = lab), vjust = -1.2, size = 3.2) +
-  guides(colour = "none") +
+  geom_segment(data = seg, aes(x = lo, xend = hi, y = CL, yend = CL),
+               linewidth = 1.5, alpha = .55) +
+  geom_line(linewidth = 1) +
+  geom_point(data = pts, size = 2.6) +
+  geom_text(data = subset(pts, sex == "men"), aes(label = lab),
+            vjust = -1.2, size = 3.1, show.legend = FALSE) +
+  scale_colour_manual(values = c(women = "steelblue4", men = "darkorange3"),
+                      name = NULL) +
   labs(x = "median creatinine clearance (mL/min)",
-       y = "clearance at 70 kg, women (L/h)",
-       subtitle = paste("bars: what each published model says, over the range",
-                        "it covered\nblue: the meta-analysis")) +
-  theme_bw()
+       y = "clearance at 70 kg (L/h)",
+       subtitle = paste("bars: what each published model claims, over the range",
+                        "it covered\nlines: the meta-analysis")) +
+  theme_bw() + theme(legend.position = "bottom")
 ```
 
-Each trial's model is a **flat bar**: having no renal term, it says clearance
-is whatever it measured, at any renal function. Three flat bars at three
-different heights, each correct over its own range and mutually contradictory.
+Both effects are in that picture, and they look completely different.
 
-The blue curve is the meta-analysis, and it passes through all three. (Just
-above, in fact, by 1-4%: a trial with no renal term fits roughly the *average*
-of `(CRCL/90)^0.6` over its cohort, and that average sits below the value at
-the cohort's median because the power function is concave.) **That curve is the
-renal effect** — recovered from the contrast between trials, and
-carried into a region none of them sampled. The dotted extension shows what the
-nearest published model would claim there, which is the comparison the next
-section quantifies.
+The **sex effect** is the vertical gap between the two lines. Every trial found
+it, so every flat bar comes in a matching pair with the same gap — a covariate
+that varies *within* a study is visible to that study.
+
+The **renal effect** is the slope. No trial has one: each is a pair of flat
+bars, claiming clearance is whatever it measured at any renal function. Three
+pairs at three different heights, each right over its own range and mutually
+contradictory everywhere else. The meta-analysis draws the line through them,
+and that line is the renal effect — recovered from between trials, and carried
+into the shaded region none of them sampled.
 
 ## The cohort nobody ran
 
