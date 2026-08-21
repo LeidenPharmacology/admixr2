@@ -356,3 +356,81 @@ test_that("datagen() refuses the removed `covariate` node generation", {
             control = datagenControl(n_sim = 50L)),
     "was removed")
 })
+
+# ---- model sources: the provenance the standard error needs -----------------
+
+test_that(".admSrcCov checks the contract rather than documenting it", {
+  skip_if_not_installed("rxode2")
+  m <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- fix(0.75)
+          eta.cl ~ 0.05; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt; v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(m))
+  nmd <- function(x, n) { dimnames(x) <- list(n, n); x }
+  ok  <- nmd(matrix(c(0.0064, -0.0012, -0.0012, 0.0036), 2, 2), c("tcl", "tv"))
+
+  got <- suppressWarnings(admixr2:::.admSrcCov(ok, ui, "s"))
+  expect_identical(got$par, c("tcl", "tv"))
+  # the source ESTIMATES add.err and eta.cl too, and no covariance was given for
+  # them -- reported, because a parameter with no covariance contributes none,
+  # which asserts the source knew it exactly and understates the SE
+  expect_setequal(got$missing, c("add.err", "eta.cl"))
+
+  # dimnames ARE the contract: they say which parameter, and on which scale
+  expect_error(admixr2:::.admSrcCov(unname(ok), ui, "s"), "dimnames")
+  expect_error(admixr2:::.admSrcCov(nmd(ok, c("tcl", "zz")), ui, "s"),
+               "does not declare")
+  # a fix()ed parameter is an ASSERTION and carries no uncertainty
+  expect_error(admixr2:::.admSrcCov(nmd(ok, c("tcl", "bwt")), ui, "s"),
+               "ASSERTION")
+  expect_error(admixr2:::.admSrcCov(
+    nmd(matrix(c(0.0064, 0.001, -0.001, 0.0036), 2, 2), c("tcl", "tv")), ui, "s"),
+    "not symmetric")
+  expect_error(admixr2:::.admSrcCov(
+    nmd(matrix(c(0.0064, 0.01, 0.01, 0.0036), 2, 2), c("tcl", "tv")), ui, "s"),
+    "positive semi-definite")
+  # an INCOMPLETE matrix warns at generation time, because a parameter with no
+  # covariance contributes none -- which asserts the source knew it exactly
+  expect_warning(admixr2:::.admSrcCov(ok, ui, "s"), "ESTIMATES")
+  # a DIAGONAL over EVERY estimated parameter is the documented fallback for a
+  # paper that reports %RSE but no correlations, and is silent
+  full <- nmd(diag(c(0.0064, 0.0036, 1.6e-5, 1e-4)),
+              c("tcl", "tv", "add.err", "eta.cl"))
+  expect_silent(admixr2:::.admSrcCov(full, ui, "s"))
+  expect_length(admixr2:::.admSrcCov(full, ui, "s")$missing, 0L)
+  expect_null(admixr2:::.admSrcCov(NULL, ui, "s"))
+})
+
+test_that(".admSrcTheta reads the values GENERATED, not the function text", {
+  skip_if_not_installed("rxode2")
+  # the published-model idiom: ini() reads a variable, so the function text does
+  # not say what was generated. It must be visible where the model is PARSED,
+  # which is why the real one (vignettes/covariates.Rmd) assigns globally.
+  CLp <<- 7.5
+  on.exit(rm("CLp", envir = globalenv()), add = TRUE)
+  m <- function() {
+    ini({ tcl <- log(CLp); tv <- log(50); bwt <- fix(0.75)
+          eta.cl ~ 0.05; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt; v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  th <- admixr2:::.admSrcTheta(suppressMessages(rxode2::rxode2(m)))
+  expect_equal(th[["tcl"]], log(7.5), tolerance = 1e-12)
+  expect_false("bwt" %in% names(th))      # fix()ed: not estimated
+})
+
+test_that(".admSrcGroups counts a banded source as ONE contribution", {
+  mk <- function(id, cov) list(.adm_src = list(id = id, cov = cov))
+  st <- list(a1 = mk("a", diag(2)), a2 = mk("a", diag(2)),
+             a3 = mk("a", diag(2)), b1 = mk("b", diag(2)),
+             d1 = list(n = 10))                       # a data source
+  g <- admixr2:::.admSrcGroups(st)
+  expect_named(g, c("a", "b"))
+  expect_equal(g[["a"]], 1:3)      # three strata, ONE source
+  expect_equal(g[["b"]], 4L)
+  # no cov -> not a model-source contribution, it falls to the data weight
+  expect_length(admixr2:::.admSrcGroups(
+    list(x = mk("a", NULL), y = list(n = 5))), 0L)
+})

@@ -451,11 +451,140 @@
   G
 }
 
-.admSandwich <- function(H, G, Om) {
+# =============================================================================
+# Model sources in the sandwich meat
+# =============================================================================
+#
+# The bread is unchanged and shared. Only the MEAT differs, because the meat is
+# the variance of the score and that depends on what is RANDOM in each block:
+#
+#   digitised data   the sufficient statistics, from n_s real patients
+#                      -> G_s Omega_s(n_s) G_s'      (.admAdfWeightFast)
+#   a published model  theta_src_hat only
+#                      -> (sum_j G_j D_j) C_src (sum_j G_j D_j)'
+#   an assertion       nothing -> zero
+#
+# The two source types scale DIFFERENTLY in their own `n` -- a data source's
+# score is an average over n_s patients so its term is linear in n_s, while a
+# model source's does not involve n_m at all -- which is why one formula cannot
+# cover both, and why applying the data weight to a generated block is the
+# defect this fixes. Measured: doing so makes the reported SE fall as exactly
+# 1/sqrt(n), 1.000/2.000/4.000/8.000 over n = 100/400/1600/6400 to four
+# significant figures, in BOTH covMethod = "r" and "r,s".
+
+# Group unit indices by source. A banded source is ONE contribution however
+# fine the banding: C_src is applied once across the stacked strata, so the
+# term has rank at most dim(theta_src) at every J. Applying it per stratum
+# would give J independent copies and let raising the resolution silently buy
+# confidence -- the covariance analogue of the sum(n_k) = n rule the objective
+# already keeps.
+.admSrcGroups <- function(studies) {
+  id <- vapply(studies, function(s) {
+    p <- s[[".adm_src"]]
+    if (is.null(p) || is.null(p$cov)) NA_character_ else as.character(p$id)
+  }, character(1))
+  ok <- !is.na(id)
+  if (!any(ok)) return(list())
+  # unname: these are INDICES into `studies`, and vapply over a named list makes
+  # which() carry the study names, which then ride into every downstream subset
+  split(unname(which(ok)), factor(id[ok], levels = unique(id[ok])))
+}
+
+# d(E_j, vech V_j) / d theta_src, by central differences on the SOURCE model.
+#
+# Differentiating the GENERATED MOMENTS, not the fit. The reply's recipe
+# differentiates theta_hat itself, which costs dim(theta_src) refits and
+# numerically differentiates an argmin -- the difference then carries the
+# optimizer's convergence tolerance. The moments are a smooth deterministic
+# function of theta_src, so this route is both cheaper (no refit at all) and
+# better conditioned, and it composes with the G the sandwich already builds:
+# d s/d theta_src = G . dt/d theta_src by the chain rule.
+#
+# The step is the central-difference optimum eps^(1/3), scaled -- see
+# R/optim-steps.R for why an exponent is not interchangeable. The generated
+# moments are deterministic (a fixed Sobol/quadrature rule), so there is no
+# noise floor to measure here, unlike the objective.
+.admSrcJac <- function(studies, idx, h_rel = .Machine$double.eps^(1 / 3)) {
+  prov <- studies[[idx[1L]]][[".adm_src"]]
+  par  <- prov$par
+  if (!length(par)) return(NULL)
+  ui0 <- tryCatch(suppressMessages(rxode2::rxode2(prov$model)),
+                  error = function(e) NULL)
+  if (is.null(ui0)) return(NULL)
+  # Rebuild this source's datagen input from the units themselves -- they carry
+  # times, ev, n and the covariate distribution, which IS the spec. Copying it
+  # at generation time would duplicate the event table, and an rxEt runs to
+  # ~130 MB.
+  spec <- lapply(idx, function(i) {
+    s <- studies[[i]]
+    Filter(Negate(is.null),
+           list(times = s$times, ev = s$ev, n = s$n,
+                cov_dist = s[["cov_dist"]], cov = s[["cov"]],
+                output = s[["output"]]))
+  })
+  names(spec) <- paste0("j", seq_along(idx))
+  gen_at <- function(nm, val) {
+    u <- ui0
+    d <- u$iniDf
+    d$est[d$name == nm] <- val
+    u$iniDf <- d
+    if (!isTRUE(all.equal(u$iniDf$est[u$iniDf$name == nm], val)))
+      stop("admixr2: the source model would not accept a perturbed value for '",
+           nm, "'.", call. = FALSE)
+    suppressWarnings(suppressMessages(
+      datagen(spec, model = u, control = prov$control)))
+  }
+  tau_of <- function(g) lapply(seq_along(idx), function(a)
+    .admTauVec(g[[a]]$E, g[[a]]$V, studies[[idx[a]]]))
+  out <- lapply(seq_along(idx), function(a)
+    matrix(0, length(.admTauVec(studies[[idx[a]]]$E, studies[[idx[a]]]$V,
+                                studies[[idx[a]]])), length(par),
+           dimnames = list(NULL, par)))
+  for (k in seq_along(par)) {
+    th <- prov$theta[[par[k]]]
+    dl <- max(abs(th), 0.1) * h_rel
+    hi <- tryCatch(tau_of(gen_at(par[k], th + dl)), error = function(e) NULL)
+    lo <- tryCatch(tau_of(gen_at(par[k], th - dl)), error = function(e) NULL)
+    if (is.null(hi) || is.null(lo)) return(NULL)
+    for (a in seq_along(idx)) {
+      d <- (hi[[a]] - lo[[a]]) / (2 * dl)
+      if (length(d) != nrow(out[[a]]) || !all(is.finite(d))) return(NULL)
+      out[[a]][, k] <- d
+    }
+  }
+  out
+}
+
+# One model source's contribution to the meat.
+#
+# `G` must already be row-subset by `keep` when H was reduced, so that this and
+# the data terms are indexed by the same parameters.
+.admSrcMeat <- function(studies, idx, G, prov) {
+  D <- .admSrcJac(studies, idx)
+  if (is.null(D)) return(NULL)
+  S <- NULL
+  for (a in seq_along(idx)) {
+    Ga <- G[[idx[a]]]
+    if (is.null(Ga) || ncol(Ga) != nrow(D[[a]])) return(NULL)
+    S <- if (is.null(S)) Ga %*% D[[a]] else S + Ga %*% D[[a]]
+  }
+  if (is.null(S)) return(NULL)
+  M <- S %*% prov$cov[colnames(D[[1L]]), colnames(D[[1L]]), drop = FALSE] %*% t(S)
+  if (!all(is.finite(M))) return(NULL)
+  (M + t(M)) / 2
+}
+
+.admSandwich <- function(H, G, Om, extra = NULL, skip = integer(0)) {
   Hi <- tryCatch(solve(H), error = function(e) NULL)
   if (is.null(Hi)) return(NULL)
   p <- nrow(H); J <- matrix(0, p, p)
-  for (i in seq_along(G)) J <- J + G[[i]] %*% Om[[i]] %*% t(G[[i]])
+  # `skip` drops the blocks whose meat is NOT the data weight -- a generated
+  # block's (E, V) are exact functions of theta_src, not statistics from n_s
+  # patients, so Omega_s(n_s) is the wrong object for it. `extra` carries what
+  # replaces them, one term per SOURCE rather than per block.
+  for (i in setdiff(seq_along(G), skip))
+    J <- J + G[[i]] %*% Om[[i]] %*% t(G[[i]])
+  for (M in extra) J <- J + M
   # Omega travels too: plot.admFit's covariance heatmap standardises the
   # observed-minus-predicted residual, and its normal-theory SE is exactly what
   # this weight replaces. Without it the diagnostic and the reported SE would
@@ -605,7 +734,44 @@
     if (!is.null(keep)) G[[i]] <- G[[i]][keep, , drop = FALSE]
   }
   if (!is.null(keep) && nrow(H) != length(keep)) return(NULL)
-  .admSandwich(H, G, Om)
+  # MODEL SOURCES. Their blocks leave the data sum and rejoin as one term per
+  # source, through the source's own published covariance. Done AFTER the `keep`
+  # subsetting above so both halves of the meat are indexed by the same
+  # parameters.
+  grp   <- .admSrcGroups(studies)
+  extra <- list(); skip <- integer(0); failed <- character(0)
+  for (nm in names(grp)) {
+    idx  <- grp[[nm]]
+    prov <- studies[[idx[1L]]][[".adm_src"]]
+    # AN INCOMPLETE C_src IS NOT A PARTIAL ANSWER. A parameter the source
+    # ESTIMATED but did not report a covariance for contributes zero to
+    # `G C_src G'`, which asserts the source knew it exactly -- so the reported
+    # SE comes out too SMALL, the dangerous direction, and nothing about the
+    # matrix looks wrong. Refuse, and name what is missing.
+    # Refused SILENTLY here on purpose. A warning raised inside CalcCov does not
+    # reach the user -- the nlmixr2est stack swallows it, which is why the
+    # drivers say "a NULL covariance used to be completely silent" and report
+    # from their own frame instead. The condition is a property of the INPUT,
+    # so .admSrcCov() warns at datagen time, where the user is standing when
+    # they supply the matrix and nothing can eat it.
+    if (length(prov$missing)) { failed <- c(failed, nm); next }
+    M <- tryCatch(.admSrcMeat(studies, idx, G, prov), error = function(e) NULL)
+    if (is.null(M)) { failed <- c(failed, nm); next }
+    extra[[nm]] <- M; skip <- c(skip, idx)
+  }
+  # A source whose Jacobian could not be formed must not silently fall back to
+  # the data weight: that number is not an approximation of the right one, it is
+  # unrelated to it. Refuse the sandwich and let the caller say so.
+  if (length(failed)) {
+    if (length(extra) && !is.null(rxMod)) try(rxode2::rxLoad(rxMod), silent = TRUE)
+    return(NULL)
+  }
+  # datagen() unloads every rxode2 model on exit, so anything the caller still
+  # holds is stale. Restore before returning -- the same rule .admLoadSensModel
+  # already follows.
+  if (length(extra) && !is.null(rxMod))
+    try(rxode2::rxLoad(rxMod), silent = TRUE)
+  .admSandwich(H, G, Om, extra = extra, skip = skip)
 }
 
 # -- adfo ----------------------------------------------------------------------

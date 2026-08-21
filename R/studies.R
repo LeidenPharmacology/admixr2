@@ -692,8 +692,19 @@
 # study is the right reading of a unit that never declared otherwise.
 .admStampStudy <- function(s, nm) {
   if (is.null(s$observations)) return(s)
+  # `.adm_src` rides along for the same reason and by the same route. It says
+  # this block was generated from a published MODEL rather than observed, which
+  # is what decides whether its contribution to the covariance runs through
+  # `n` (a real sample) or through the source's own C_src (not a sample at
+  # all). Stamped HERE so all three branches -- legacy single-output, several
+  # observations, and the joint constructor -- inherit it identically; the
+  # legacy branch builds its unit from an explicit whitelist and would
+  # otherwise drop it silently, which is exactly how the field went missing the
+  # first time.
+  src <- s[[".adm_src"]]
   s$observations <- lapply(s$observations, function(u) {
     if (is.null(u$study)) u$study <- nm
+    if (is.null(u[[".adm_src"]])) u[[".adm_src"]] <- src
     u
   })
   s

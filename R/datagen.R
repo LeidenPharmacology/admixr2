@@ -124,6 +124,28 @@
         "SEs and correlations can fail this if the correlations were rounded; ",
         "supplying SEs only, as a DIAGONAL, is a valid fallback.")
   miss <- setdiff(est, rn)
+  # AN INCOMPLETE C_src IS NOT A PARTIAL ANSWER. A parameter the source
+  # ESTIMATED but reported no covariance for contributes zero to G C_src G',
+  # which asserts the source knew it exactly and makes the reported standard
+  # error too SMALL -- the dangerous direction, and nothing about the matrix
+  # looks wrong. Said HERE, at generation, because a warning raised later from
+  # inside CalcCov does not reach the user: the nlmixr2est stack swallows it,
+  # which is why the drivers report a missing covariance from their own frame.
+  if (length(miss))
+    warning("admixr2: study '", nm, "': `model_cov` covers ",
+            paste(sQuote(rn), collapse = ", "), " but the source model also ",
+            "ESTIMATES ", paste(sQuote(miss), collapse = ", "),
+            ". A parameter with no covariance contributes none, which asserts ",
+            "the source knew it exactly and reports a standard error that is ",
+            "too small, so no standard error will be reported at all.
+",
+            "  Supply the missing ", if (length(miss) == 1L) "row" else "rows",
+            " -- a DIAGONAL entry from the paper's %RSE is a valid fallback -- ",
+            "or fix() ", if (length(miss) == 1L) "it" else "them",
+            " in the source model if it asserted ",
+            if (length(miss) == 1L) "it" else "them", " rather than ",
+            "estimating ", if (length(miss) == 1L) "it." else "them.",
+            call. = FALSE)
   list(cov = cov, par = rn, missing = miss)
 }
 
