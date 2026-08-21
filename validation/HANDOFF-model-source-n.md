@@ -140,6 +140,32 @@ concern does not materialise through the weighting.
 > study and the wrong one for a model source, whose `(E, V)` are not sample
 > statistics at all. Fixing the meat per source type is the whole change.
 >
+> **A THIRD knob, in neither document: the generated DESIGN.** For a model
+> source every timepoint is an exact function of the same `theta_src` -- the
+> model already implies the whole curve -- so adding timepoints carries no
+> information about it. `h` is nevertheless the curvature of a discrepancy over
+> however many rows the analyst chose to generate. With `n` = 400 and J = 9 both
+> held fixed:
+>
+> | times | `bwt` | SE | vs 3 times |
+> |---|---|---|---|
+> | 3 | 0.75000 | 0.058427 | 1.000 |
+> | 7 | 0.75000 | 0.050630 | 1.154 |
+> | 14 | 0.74999 | 0.046996 | 1.243 |
+> | 28 | 0.75000 | 0.042870 | 1.363 |
+>
+> So it is real but SECOND ORDER, and the honest reading matters: 1.36x over a
+> 9x change in sampling density, nothing like the `sqrt(k/3)` = 3.06 that
+> counting rows as independent data would give. The naive covariance is not
+> simply counting rows -- neighbouring times on a smooth curve are strongly
+> correlated and contribute sub-linearly, which is the ADF weight doing its job.
+>
+> Rank the three hazards by size, because they are not comparable: **`n` is
+> unbounded and exact** (`1/sqrt(n)`, four sig figs); the **per-parameter
+> mismatch is 8.36x** within one source; the **design contributes ~1.4x** over a
+> realistic range. Anchoring `n` to the development sample size removes the
+> largest one and neither of the others, so it is necessary and not sufficient.
+>
 > The dichotomy this handoff posed is therefore false. `n` and `Var(θ̂_src)` do
 > not compete and cannot double-count, because `n` never enters the correct
 > variance: **`n` owns RELATIVE WEIGHT between sources, `C_src` owns
