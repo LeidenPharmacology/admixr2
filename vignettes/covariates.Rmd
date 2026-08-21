@@ -253,9 +253,10 @@ knitr::kable(data.frame(
 
 Both covariate effects come back, from three analyses that between them
 contained only one of them. But look at the sex effect: the three trials
-reported `r paste(sprintf("%.2f", vapply(published, `[[`, 0, "BSEX")), collapse = ", ")`
-for a quantity that is genuinely the same in all of them, and the meta-analysis has to settle on one number. **Published models
-disagree, and reconciling them is not free** — some of that disagreement lands
+reported `r paste(sprintf("%.2f", vapply(published, function(p) p$BSEX, 0)), collapse = ", ")`
+for a quantity that is genuinely the same in all of them, and the
+meta-analysis has to settle on one number. **Published models disagree, and
+reconciling them is not free** — some of that disagreement lands
 in the other parameters, which is why the renal exponent sits a little below
 its truth and the prediction below is a few per cent off rather than exact.
 That is what a meta-analysis is: evidence that does not perfectly agree, pooled
