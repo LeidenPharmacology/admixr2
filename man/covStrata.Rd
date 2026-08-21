@@ -4,7 +4,14 @@
 \alias{covStrata}
 \title{Cut a covariate distribution into strata}
 \usage{
-covStrata(cov_dist, stratify, n_nodes = 5L, n = 1, n_pool = 32768L)
+covStrata(
+  cov_dist,
+  stratify,
+  n_nodes = 5L,
+  n = 1,
+  n_pool = 32768L,
+  cov_range = NULL
+)
 }
 \arguments{
 \item{cov_dist}{A covariate specification, as given to a study --- see
@@ -14,18 +21,43 @@ covStrata(cov_dist, stratify, n_nodes = 5L, n = 1, n_pool = 32768L)
 rest are left in each stratum's own \code{cov_dist}, to be marginalised over
 their distribution \strong{conditional} on that stratum.}
 
-\item{n_nodes}{Strata per stratified covariate (default 5). The covariate
-is cut into that many EQUIPROBABLE bins, so every stratum carries the same
-number of subjects; a discrete covariate ignores this and is cut at its
-levels.
+\item{n_nodes}{Strata per stratified covariate (default 9). A discrete
+covariate ignores it and is cut at its levels, exactly, with the level
+probabilities as weights.
 
-More strata resolve the covariate range more finely but do not buy
-accuracy, and each one costs a solve: on a matched one-covariate fit the
-coefficient came back at 0.7000 / 0.7002 / 0.7005 / 0.7005 for 3 / 4 / 10 /
-16 strata against a true 0.700, while the fit took 7.2 / 4.1 / 8.0 / 11.5
-seconds. Raise it when the covariate effect is strongly nonlinear over the
-range; the only hard limit is that a stratum must keep enough pooled draws
-to describe itself, which admixr2 checks.}
+For a continuous one it sets how finely the covariate is resolved, and the
+rule depends on what is known about the joint distribution. Where the
+latent structure is known --- an explicit \code{cor}, or no declared dependence,
+which IS independence --- each stratum is a Gauss-Hermite node, held at a
+POINT, and the remaining covariates follow their exact conditional law
+within it. An opaque \code{joint} sampler cannot be conditioned, and there the
+covariate is cut into that many equiprobable BINS instead, each described
+by the pool members that landed in it.
+
+\strong{This is a convergence parameter, not a modelling choice.} The
+well-defined object is the limit as the count grows; any finite value
+approximates it, and under misspecification the answer can jump between
+basins rather than drift. Raise it until the estimates stop moving rather
+than picking a value you like. Cost is \code{n_nodes^p} studies for \code{p}
+stratified covariates, so this is cheap in one covariate and expensive in
+three.
+
+How much the objective depends on it turns on which rule applies. Where the
+latent structure is known — an explicit \code{cor}, or no declared dependence,
+which is independence — banding conditions on a Gauss-Hermite grid and the
+objective is stable: 0.03 units across counts of 5 to 100, so objective,
+AIC, BIC and likelihood ratios are comparable across resolutions.
+
+A declared discrete covariate no longer forces the slow rule: as long as it
+is latently independent of the others it enumerates exactly at its levels,
+which took a study declaring one sex covariate from 515 units of movement,
+still rising at a count of 50, to 0.009.
+
+An opaque \code{joint} sampler cannot be conditioned and falls back to
+equiprobable bins, where it is not stable: 51 units at a count of 100 and
+still moving, with the estimate itself wandering (0.681 at 5, 9, 15 and
+100; 0.697 at 50). There, raise the count until the estimates settle, and
+note that \code{anova()} refuses to compare two fits built at different ones.}
 
 \item{n}{Total sample size to divide among the strata. The default of \code{1}
 returns the raw stratum weights.}
@@ -37,13 +69,37 @@ resolved --- and, because no stratum can produce a covariate value beyond
 the pool's extremes, how far into the tails it reaches. The pool is grown
 automatically with the number of strata, and a stratum left with too few
 draws is an error rather than a silently coarse answer; \code{n_pool_cell} in
-the result reports what each one got.}
+the result reports what each one got.
+
+It applies only where a pool is used at all: an opaque \code{joint} sampler, or
+a stratified covariate latently correlated with a marginalised one. Where
+the conditional law is closed form the stratum carries the DECLARED specs
+themselves, no sample stands in for them, and \code{n_pool_cell} is \code{NA}.}
+
+\item{cov_range}{Optional named list giving the range each stratified
+covariate was actually ENROLLED over, e.g. \code{list(WT = c(52, 118))} —
+publications routinely report a min-max or a median with an IQR.
+
+Without it the strata are cut over the whole declared distribution, and a
+source is credited with evidence in covariate bands it never sampled. The
+overstatement is exactly \code{var(declared) / var(enrolled)}: 3.4x for a source
+spanning ±1 SD, 12.4x at ±0.5 SD. Estimates stay correct — what inflates is
+confidence, and it only shows once a second source disagrees. Omitting it
+warns for that reason.
+
+More strata resolve the covariate range more finely but do not buy
+accuracy, and each one costs a solve: on a matched one-covariate fit the
+coefficient came back at 0.7000 / 0.7002 / 0.7005 / 0.7005 for 3 / 4 / 10 /
+16 strata against a true 0.700, while the fit took 7.2 / 4.1 / 8.0 / 11.5
+seconds. Raise it when the covariate effect is strongly nonlinear over the
+range; the only hard limit is that a stratum must keep enough pooled draws
+to describe itself, which admixr2 checks.}
 }
 \value{
 A list with one element per stratum, each containing \code{cov} (the
-stratum's mean for every stratified covariate), \code{cov_dist} (the
-distribution of ALL covariates \emph{within} that stratum --- the empirical
-conditional, carrying the full joint dependence), \code{n} and \code{weight}.
+value each stratified covariate is held at --- a quadrature node, a level,
+or a bin mean), \code{cov_dist} (the distribution of ALL covariates \emph{within}
+that stratum, carrying the full joint dependence), \code{n} and \code{weight}.
 }
 \description{
 Shows the strata \code{datagen()} builds for a study declaring \code{stratify} --- the
