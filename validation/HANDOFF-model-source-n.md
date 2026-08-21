@@ -1,5 +1,12 @@
 # What is `n` for a source that contributed a MODEL?
 
+> **IMPLEMENTED, and sent back for review.** The reply
+> (`HANDOFF-model-source-n-REPLY.md`) settled this: `n` owns RELATIVE WEIGHT,
+> `C_src` owns PRECISION, and the two never competed. Shipped in `838c7c5` and
+> `8042847`; the design is `validation/SPEC-se-paths.md`; the review request,
+> with the deviations from the recipe called out and the open questions, is
+> `HANDOFF-model-source-n-IMPLEMENTED.md` alongside the reply.
+
 Handoff back, for theory. Concerns fix 4 of `HANDOFF-model-source-bands.md`.
 Fixes 1–3 are implemented (`b67eb8d`, `e3e582d`); this is the part that needs
 deciding before it can be.
