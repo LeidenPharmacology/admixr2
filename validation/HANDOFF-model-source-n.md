@@ -127,3 +127,44 @@ the original handoff warned about, reproduced. On the Gauss–Hermite branch the
 estimate is 0.681000 at every J tested. The pooled branch also had not converged
 at J = 100 — still 51 units from the GH value, having come down from 452 — and
 approaches it non-monotonically.
+
+
+## Open, and the largest remaining gap in the banding path
+
+**When does the slow rule actually run?** Two triggers, and the second is the
+common one:
+
+1. an opaque user `joint` sampler — nothing there can be conditioned;
+2. **any declared discrete covariate**, even when the covariate being banded is
+   continuous and independent of it.
+
+Trigger 2 is most real covariate models — sex, genotype, formulation — and it
+costs **515 units of J-dependence across J = 5 to 50, still moving**, against
+0.03 for the same study without the discrete covariate.
+
+Relaxing it was attempted and **reverted**, because it produced a result that is
+not understood rather than one that is wrong in an obvious way:
+
+- the machinery admits discrete margins cleanly — `.admCovQuantile` maps a
+  latent normal onto declared levels, and the generated strata carried the right
+  level probability (0.550 against a declared 0.55) in *every* band, with the
+  banded covariate an exact point per stratum as that branch intends;
+- J-dependence fell from 515 units to **0.0**;
+- but the recovered coefficient for the discrete covariate moved from **0.150**
+  (its truth, which the pooled rule returns exactly at every J) to **−0.052**,
+  stably, at every J.
+
+Stable and wrong is not non-identifiability — that would wander. So the exactly
+conditioned design genuinely implies −0.052 for that coefficient, and the
+question is why.
+
+A hypothesis worth testing first: under exact conditioning the banded covariate
+contributes no within-stratum spread, so a discrete covariate's effect has to be
+recovered from the mixture it induces in `V` alone — which is confounded with
+`omega`, and the sex proportion being identical in every stratum means it
+contributes nothing to the between-stratum contrast either. Under the pooled
+rule the band carries covariate spread as well, which may be what breaks the
+confounding. If that is the mechanism, the fix is not in the branch at all: it
+is that a discrete covariate marginalised identically across every stratum is
+not identifiable from banding, and should be refused or conditioned rather than
+silently marginalised.

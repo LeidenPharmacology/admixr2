@@ -1484,6 +1484,21 @@
   # conditioned there.
   Rm <- cov_dist[["latentR"]]
   if (is.null(Rm) && is.null(cov_dist[["joint"]])) Rm <- diag(length(nms))
+  # A DISCRETE COVARIATE STILL FORCES THE POOLED RULE, and that is a known
+  # limitation rather than a decision. Relaxing it was tried: the branch admits
+  # discrete margins cleanly -- .admCovQuantile maps a latent normal onto
+  # declared levels, the strata came out with the right level probabilities in
+  # every band, and the J-dependence fell from 515 units to 0.0 -- but the
+  # recovered coefficient for the discrete covariate moved from 0.150 (its
+  # truth) to -0.052, stably, at every J. Stable and wrong is not
+  # non-identifiability, so something about the exactly-conditioned design
+  # genuinely implies that value and it is not yet understood. Reverted until
+  # it is.
+  #
+  # The cost of leaving it: one declared sex, genotype or formulation puts the
+  # whole study on equiprobable bins, which is 515 units of J-dependence across
+  # J = 5 to 50 and still moving. That is most real covariate models, so this is
+  # the largest remaining gap in the banding path.
   if (!is.null(Rm) && all(vapply(nms, function(n)
         is.null(cov_dist[[n]][["values"]]), logical(1)))) {
     # the ordinary product Gauss-Hermite grid -- bit-identical to building it
