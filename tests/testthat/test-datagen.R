@@ -468,7 +468,7 @@ test_that("the stratum resolution survives datagen, so anova can refuse", {
   expect_null(g2$t1[[".adm_strata_nodes"]])
 })
 
-test_that("model_cov accepts a fit's own \$cov, omega naming included", {
+test_that("model_cov accepts a fit's own cov matrix, omega naming included", {
   skip_if_not_installed("rxode2")
   # The obvious thing to pass is the source fit's `$cov`, and nlmixr2 names the
   # omega row on the REPORTING convention -- `om.eta.cl` for the variance of

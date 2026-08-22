@@ -77,6 +77,15 @@
     stop(est, "Control(studies=...) required", call. = FALSE)
   if (is.null(names(studies)))
     names(studies) <- paste0("study", seq_along(studies))
+  # MATERIALISE FIRST, BEFORE ANYTHING INSPECTS A STUDY. admStudy() specs are
+  # lazy, and everything below this line reads study FIELDS -- so a spec has to
+  # become an ordinary study here, at the earliest shared point, not later in
+  # .admDriverUnits(). Doing it there left .admRefuseNodeStudies() and
+  # .admWarnCovIdentifiability() looking at an unmaterialised spec, which failed
+  # with a bare "subscript out of bounds" and only when a spec was MIXED with an
+  # already-generated study -- a pure-spec list happened to survive the same
+  # path, which is exactly the kind of partial coverage that hides a bug.
+  studies <- .admMaterialise(studies)
   .admRefuseNodeStudies(studies)
   pinfo <- .admDriverPinfo(.ui, .ctl)
   .admWarnCovIdentifiability(.ui, pinfo, studies)
@@ -97,6 +106,9 @@
 # and builds ev_full itself. Keeping that as a flag rather than moving the refusal
 # is deliberate: an error must fire where it fires now.
 .admDriverUnits <- function(studies, .ui, output_var, ev_full = TRUE) {
+  # admStudy() specs are LAZY: building one solves nothing, so it is generated
+  # here, once, on the one path all four estimators share.
+  studies <- .admMaterialise(studies)
   for (nm in names(studies))
     studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
   studies   <- .admFlattenStudies(studies)
