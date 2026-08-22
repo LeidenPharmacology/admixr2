@@ -89,3 +89,46 @@ Not chosen here; it is a scope decision.
 `scratchpad/{pool_exact,exact_suite,absorb,djac,optnoise,cov_exactSE}.R`.
 `absorb.R` takes `MODE` in {mean, resid, all}, `NT` (timepoint count) and
 `NREP`; it is the one that isolates the cause.
+
+---
+
+# The corrected chi-square and TIC are BOTH essential under MBMA
+
+Measured 2026-08-22, 150 replicates under the null (beta = 0), three model
+sources with `C_src`, MC SE 0.018 on a rate.
+
+| statistic | measured | target |
+|---|---|---|
+| `dOFV` mean | 12.215 | 1.000 (chi2_1) |
+| `dOFV` median | 3.632 | 0.455 |
+| KS of `dOFV` vs chi2_1 | D = 0.512, p = 0.0000 | -- |
+| **naive LRT at 0.05** | **0.493** | 0.050 |
+| **corrected LRT at 0.05** | **0.068** | 0.050 |
+| **AIC selects the full model** | **0.667** | 0.157 |
+| **TIC selects the full model** | **0.180** | 0.157 |
+| `bcrcl` estimate | -0.0020 | 0 |
+
+Under MBMA the uncorrected statistics are not slightly off, they are unusable: a
+49% false-positive rate on the likelihood ratio test, and AIC choosing a
+covariate that is not there two times in three. Both corrections land within
+about one Monte Carlo standard error of nominal.
+
+**Why TIC works, exactly.** `Delta p_eff = 155.79 - 143.57 = 12.22`, against a
+mean `dOFV` of 12.215. The penalty matches the inflation to three significant
+figures, which is what Takeuchi's correction is for. TIC selects the full model
+when `dOFV > 2 * Delta p_eff = 24.4`; with `dOFV ~ 12.2 * chi2_1` that is
+`P(chi2_1 > 2.0) = 0.157` -- the same threshold AIC would use if the objective
+were a proper likelihood.
+
+**So `p_eff` needs no repair.** It is not a parameter count under MBMA -- it
+scales with `n`, measured at exactly 2.000x for a doubling -- and it does not
+need to be one. It is the optimism correction, and it carries the right
+magnitude. An earlier draft of this work concluded that "not a parameter count"
+implied "not usable" and suppressed TIC; that was wrong on the evidence here,
+and the suppression was reverted. The only thing misleading is the NAME:
+"effective parameters" invites comparison with `p`, and under MBMA the two are
+unrelated.
+
+The `n`-scaling is likewise not a defect. The objective scales with `n` and so
+does the penalty, so `Delta TIC` between two models is scale-consistent and
+selection is unaffected.
