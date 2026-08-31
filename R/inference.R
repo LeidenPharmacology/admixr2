@@ -288,6 +288,7 @@ anova.admFit <- function(object, ...) {
     as.numeric(z$env[[nm]] %||% NA_real_), numeric(1))
   out <- data.frame(
     Npar    = npar,
+    p_eff   = num("p_eff"),
     OBJF    = vapply(fits, function(z) as.numeric(z$objective), numeric(1)),
     AIC     = num("AIC"),
     BIC     = num("BIC"),
@@ -313,11 +314,31 @@ anova.admFit <- function(object, ...) {
   }
   # TIC is dropped rather than printed as a column of NA when no fit carries it.
   if (all(is.na(out$TIC))) out$TIC <- NULL
+  if (all(is.na(out$p_eff))) out$p_eff <- NULL
   attr(out, "lambda")  <- lams
-  attr(out, "heading") <- c(
-    "Likelihood-ratio test, corrected for misspecification",
-    paste("dOFV rescaled by the eigenvalues of A^-1 B;",
-          "Weight = 1 is the ordinary chi-squared test"))
+  head <- c("Likelihood-ratio test, corrected for misspecification",
+            paste("dOFV rescaled by the eigenvalues of A^-1 B;",
+                  "Weight = 1 is the ordinary chi-squared test"))
+  # AIC IS NOT READABLE WHERE p_eff DEPARTS FROM Npar, and the departure is not
+  # subtle where a model source carries its own covariance: the optimism of the
+  # objective is tr(H^-1 J)/2, which equals the parameter count only under the
+  # information equality. Measured on a 6-parameter meta-analysis of three model
+  # sources (200 replicates, null covariate): p_eff 125 against Npar 6, AIC
+  # charging 2 per parameter where the honest charge is 92, and AIC selecting the
+  # null covariate 84.0% of the time. TIC charges the right amount and selects it
+  # 14.5% against its own nominal 15.7%; the corrected p rejects at 7.5%. So the
+  # note points at TIC and p, and does not suppress AIC -- users compare AIC
+  # values across papers, and silently dropping the column would be its own
+  # surprise. p_eff/Npar > 1.5 is a wide gate: the ratio was ~21 where it fired.
+  if (!is.null(out$p_eff)) {
+    .r <- suppressWarnings(max(out$p_eff / out$Npar, na.rm = TRUE))
+    if (is.finite(.r) && .r > 1.5)
+      head <- c(head, sprintf(paste0(
+        "NOTE: p_eff is %.1fx Npar, so the information equality H = J fails ",
+        "here and AIC's 2p penalty is too small. Compare on TIC or on the ",
+        "corrected p, not on AIC or on raw dOFV."), .r))
+  }
+  attr(out, "heading") <- head
   class(out) <- c("anova.admFit", "anova", "data.frame")
   out
 }
