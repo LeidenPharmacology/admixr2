@@ -9,8 +9,10 @@ covDraw(cov_dist, n = 1000L, n_eta = 0L)
 \arguments{
 \item{cov_dist}{A covariate specification, as given to a study. Each element
 names a covariate and describes its distribution, either as \code{mean} and \code{sd}
-on the covariate's own scale (lognormal by default, \code{dist = "normal"} for a
-normal margin), or as a \code{quantile} function, or as \code{values} (with optional
+on the covariate's own scale --- NORMAL by default, so pass
+\code{dist = "lnorm"} for the positive margin an allometric term needs (only
+\code{\link[=admPopulation]{admPopulation()}} defaults to lognormal) --- or as a \code{quantile} function,
+or as \code{values} (with optional
 \code{probs}) for a discrete covariate. A \code{cor} entry --- a scalar for two
 covariates, or a correlation matrix --- links them through a Gaussian
 copula. A \code{joint} function takes the matrix of uniforms and returns one

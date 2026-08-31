@@ -41,8 +41,8 @@ produces. Overrides \code{cor}.}
 Choose \code{"lnorm"} when the model needs the covariate to stay positive. A
 normal margin is unbounded below and the quadrature reaches 3.75 standard
 deviations, so any covariate with a coefficient of variation above about
-0.19 --- which includes most of them, weight at 72 +/- 16 being 0.22 ---
-gets a node at or below zero, where an allometric or log term is \code{NaN}.
+0.27 (the guard is \code{mu - 3.75 * sd <= 0}) gets a node at or below zero,
+where an allometric or log term is \code{NaN}.
 \code{covDist()} warns when that would happen.}
 }
 \value{

@@ -3,93 +3,69 @@
 # =============================================================================
 #
 # A study's subjects span a distribution of covariate values (`cov_dist`), and
-# the aggregate (E, V) it reports is MARGINAL over that distribution. So the
-# prediction has to be marginal too:
+# the aggregate (E, V) it reports is MARGINAL over it, so the prediction must be
+# too:
 #
 #   mu = E_{a,eta}[f]        V = Cov_{a,eta}(f) + residual
 #
 # Covariate-induced between-subject variability belongs INSIDE V_pred, because
 # that is where the observed V carries it. Two paths compute those moments --
 # the general per-row/product-grid path ("rows") and the shift path ("shift") --
-# chosen per study by .admCheckCovariates(); see each section below. adgh's
-# `cov_integration` selects between the product grid, its second-order Taylor
-# surrogate and the shift.
-#
-# TWO EARLIER PATHS WERE REMOVED, and the reasons generalise:
-#
-#  * "collapse" folded a normal covariate's variance into Omega in closed form
-#    (Omega + J Sigma_a J'). Exact, but it needed a bare `theta * COV` product,
-#    a NORMAL covariate, the study solved at the covariate mean, AND grad =
-#    "none" -- and every estimator defaults to a gradient, so it was unreachable
-#    in a real fit. It was gated on rxode2's muRefCovariateDataFrame, which
-#    recognises 1 of 8 realistic covariate parameterisations (the table that
-#    used to sit here).
-#
-#    It is the GAUSSIAN SPECIAL CASE OF THE SHIFT, not a separate method: for a
-#    linear Delta and a normal covariate, u = Delta(a) + eta is itself normal
-#    with variance Omega + beta^2 Var(a), which is precisely the inflation.
-#    Verified with the ODE solver taken out of the comparison (analytic 1-cmt f
-#    over both node sets): 6.7e-16 on the mean and 5.0e-13 on the covariance at
-#    31 covariate nodes, 2.5e-10 / 2.7e-8 at the default 7 -- an order of
-#    magnitude under the solver's own ~1e-6 floor, which is why the same
-#    comparison run THROUGH the solver bottoms out at 1.5e-06 / 1.7e-05 and
-#    says nothing. "shift" covers the case with no distributional restriction
-#    and with a gradient.
-#  * "uq" replaced the affected eta column with quantiles of u = Delta(a) + eta.
-#    That is the right idea, and it is what "shift" does -- but it INFERRED the
-#    shift property from the model TEXT, which has four measured silent-wrong-
-#    answer modes (discrete/multi-modal covariate 13-20% on the mean and 3-5x on
-#    the covariance; a non-log link or additive effect 16-21% on the covariance;
-#    two covariates on one eta leaving the result bit-for-bit the second
-#    covariate alone; a user `quantile` integrated by 32 equal-weight midpoints
-#    biasing the coefficient ~7% high). It had been disabled (`ok_uq <- FALSE`,
-#    unconditional) rather than deleted, pending exactly the positive numerical
-#    check that .admShiftVerify() now performs.
+# chosen per study by .admCheckCovariates(). adgh's `cov_integration` selects
+# between the product grid, its second-order Taylor surrogate and the shift.
 #
 # THE RULE, of which everything below is a consequence: a block's PREDICTION
 # must integrate over the same covariate distribution its DATA were aggregated
-# over. Pooled data need a pooled (marginal) prediction; per-stratum data need
-# the prediction marginalised within that stratum. Both mismatches cost, in
-# opposite directions, and neither announces itself.
+# over. Pooled data need a pooled prediction; per-stratum data need the
+# prediction marginalised within that stratum. Both mismatches cost, in opposite
+# directions, and neither announces itself.
 #
-# NODE METHODS (gl / gh / taylor) WERE REMOVED, deliberately -- but NOT because
-# they estimate wrongly. They score the study at fixed covariate values and
-# combine the per-node -2LL linearly. Given per-node DATA that is a genuine
-# likelihood and is EXACT: sum_k c_k n NLL_k is just sum_k n_k NLL_k with
-# n_k = c_k n, i.e. ordinary multi-study fitting with quadrature weights standing
-# in for stratum sizes, and it recovers a true coefficient of 0.75 as 0.7500.
+# THREE EARLIER PATHS WERE REMOVED. Do not resurrect them:
 #
-# What it cannot take is the ONE pooled (E, V) a publication reports. There the
-# same sum is sum_k w_k * NLL(same obs) = E_a[-2LL] -- an average of
-# log-densities, so -2 log of an unnormalised geometric mean of densities, which
-# is not a likelihood of anything. Its mean term decomposes exactly as
+#  * "collapse" folded a normal covariate's variance into Omega in closed form.
+#    It is the GAUSSIAN SPECIAL CASE OF THE SHIFT -- for a linear Delta and a
+#    normal covariate, u = Delta(a) + eta is normal with variance
+#    Omega + beta^2 Var(a) -- verified at 6.7e-16 on the mean and 5.0e-13 on the
+#    covariance with the ODE solver taken out of the comparison. It also needed
+#    grad = "none", and every estimator defaults to a gradient, so it was
+#    unreachable in a real fit.
+#  * "uq" replaced the affected eta column with quantiles of u = Delta(a) + eta.
+#    Right idea, and it is what "shift" does -- but it INFERRED the property
+#    from the model TEXT, with four measured silent-wrong-answer modes: a
+#    discrete or multi-modal covariate (13-20% on the mean, 3-5x on the
+#    covariance), a non-log link or additive effect (16-21% on the covariance),
+#    two covariates on one eta (result bit-identical to the second alone), and a
+#    user `quantile` integrated by 32 equal-weight midpoints (coefficient ~7%
+#    high). .admShiftVerify() now checks numerically instead.
+#  * NODE METHODS (gl / gh / taylor) scored the study at fixed covariate values
+#    and combined the per-node -2LL linearly. Given per-node DATA that is exact
+#    -- ordinary multi-study fitting with quadrature weights standing in for
+#    stratum sizes, recovering a true 0.75 as 0.7500. Given the ONE pooled
+#    (E, V) a publication reports it is not a likelihood of anything: the sum is
+#    -2 log of an unnormalised geometric mean of densities, and its mean term
+#    decomposes as
 #
-#   sum_k w_k r_k' Vi r_k  =  rbar' Vi rbar  +  tr(Vi %*% Cov_a(mu))
+#      sum_k w_k r_k' Vi r_k  =  rbar' Vi rbar + tr(Vi %*% Cov_a(mu))
 #
-# and the second term is a covariate-spread penalty carrying no data at all: at
-# the true parameters the first term is 0 and the second is the whole objective.
-# It pulls the coefficient to 0.3045 (-59%), or 0.4567 (-39%) even when V_pred is
-# supplied marginally, so it is the log-density pooling and not the variance
-# handling that does it. That is a displaced TARGET, not estimator bias -- the
-# same construction is exact the moment it is given the data it describes.
-# Measured on a three-way covariate design and separated case by case against
-# a node-count retest.
+#    whose second term is a covariate-spread penalty carrying no data -- at the
+#    true parameters the first is 0 and the second is the whole objective. It
+#    pulls 0.75 to 0.3045 (-59%), or 0.4567 (-39%) even with V_pred supplied
+#    marginally, so it is the log-density pooling and not the variance handling.
+#    A displaced TARGET, not estimator bias: the construction is exact the
+#    moment it is given the data it describes.
 #
-# So the machinery was redundant where it was valid -- a publication reporting
-# strata also reports their real n_k, which beats quadrature weights -- and
-# inapplicable where it was not. Fit stratum summaries as ordinary studies, each
-# with its own `n` and its own `cov_dist` -- NOT `cov`.
+# So fit stratum summaries as ordinary studies, each with its own `n` and its
+# own `cov_dist` -- NOT `cov`. A publication reporting strata also reports their
+# real n_k, which beats quadrature weights.
 #
-# `cov` is a POINT value, and plugging the stratum's mean covariate in is the
-# ecological plug-in, which reintroduces the same bias at stratum scale: the
-# aggregate relation equals the individual one only if the model is affine over
-# that stratum's covariate support, or the stratum is degenerate. Measured
-# against a true coefficient of 0.75, marginalising within the stratum recovers
-# 0.7500 at every K, while plugging in the stratum mean gives 0.875 at K = 2
-# (+17%), 0.782 at K = 4 (+4.3%) and 0.757 at K = 8 -- dying only as K grows.
-# Note the sign: the plug-in biases UPWARD, the mirror of the node route's
-# downward pull. A subgroup table reports the stratum's own mean and SD, which is
-# exactly the truncated `cov_dist` this needs.
+# `cov` is a POINT value, and plugging in the stratum mean is the ecological
+# plug-in: the aggregate relation equals the individual one only if the model is
+# affine over that stratum's support, or the stratum is degenerate. Against a
+# true 0.75, marginalising within the stratum recovers 0.7500 at every K, while
+# plugging in the mean gives 0.875 at K = 2 (+17%), 0.782 at K = 4 and 0.757 at
+# K = 8 -- dying only as K grows, and biasing UPWARD, the mirror of the node
+# route's downward pull. A subgroup table reports the stratum's own mean and SD,
+# which is exactly the truncated `cov_dist` this needs.
 #
 # (`%||%` is defined in utils.R.)
 
@@ -1423,81 +1399,66 @@
 # Covariate STRATA -- the per-covariate stratify/marginalise split
 # =============================================================================
 #
-# A published source conditions its model on SOME covariates and not others.
-# The matching rule is per covariate, not per study:
+# A published source conditions its model on SOME covariates and not others,
+# and the matching rule is per covariate, not per study:
 #
 #   STRATIFY   on the covariates the source's own model fitted
 #   MARGINALISE over the ones it did not, using the source's covariate
 #              distribution -- on BOTH the observed and the predicted side
 #
-# Building the grid as a full product over ALL covariates for EVERY source is
-# the failure this exists to prevent: a model with no term in x is evaluated at
-# nodes that vary x, answers "no change" at every one, and that FABRICATED null
-# contrast is then scored as evidence against sources that have a real one.
-# Measured, with no sampling noise at all, against a true coefficient of 0.450:
-# 0.2107 (-53.2%) fabricated versus 0.4500 (-0.0%) matched.
+# A full product grid over ALL covariates for EVERY source is the failure this
+# exists to prevent: a model with no term in x is evaluated at nodes that vary
+# x, answers "no change" at every one, and that FABRICATED null contrast is
+# scored as evidence against sources that have a real one. Measured with no
+# sampling noise, against a true 0.450: 0.2107 (-53.2%) fabricated versus
+# 0.4500 matched.
 #
-# WHY THIS IS A GENERATION-SIDE FUNCTION, NOT AN ESTIMATOR SETTING. Stratifying
-# needs per-stratum OBSERVATIONS. Scoring ONE pooled (E, V) against K
-# conditional predictions is a different object entirely -- a weighted average
-# of log-densities of the same data under different models, i.e. -2 log of an
-# unnormalised geometric mean, which is not the likelihood of anything. So
-# there is deliberately no "stratify this study" flag on the estimator side:
-# strata arrive as ordinary studies, each with its own n and its own data, and
-# the estimator needs no knowledge of where they came from (verified
-# bit-identical to fitting them as unrelated studies).
+# GENERATION-SIDE, NOT AN ESTIMATOR SETTING, because stratifying needs
+# per-stratum OBSERVATIONS. Scoring one pooled (E, V) against K conditional
+# predictions is -2 log of an unnormalised geometric mean, which is not the
+# likelihood of anything. So strata arrive as ordinary studies, each with its
+# own n and data, and the estimator needs no knowledge of where they came from
+# (verified bit-identical to fitting them as unrelated studies).
 #
-# CONDITIONING. Within stratum k the covariates the source did NOT fit must be
-# marginalised over their distribution CONDITIONAL on that stratum, not their
-# marginal one. With correlated covariates the unconditional shortcut predicts
-# the average-x2 response at every x1 node while the source's high-x1 subjects
-# actually had high x2 -- a mean error that VARIES ACROSS NODES, which is
-# precisely the shape that biases the stratified covariate's own coefficient.
-# Measured relative error of the block mean: 1e-3 conditional against 0.20 at
-# rho = 0.3 and 0.96 at rho = 0.85 unconditional. At rho = 0 they coincide
-# exactly, which is why this never showed up in an independent-covariate test.
+# CONDITIONING. Within stratum k the covariates the source did NOT fit are
+# marginalised over their distribution CONDITIONAL on that stratum. The
+# unconditional shortcut predicts the average-x2 response at every x1 node while
+# the source's high-x1 subjects had high x2 -- a mean error that VARIES ACROSS
+# NODES, the shape that biases the stratified covariate's own coefficient.
+# Relative error of the block mean: 1e-3 conditional against 0.20 at rho = 0.3
+# and 0.96 at rho = 0.85. They coincide exactly at rho = 0, which is why an
+# independent-covariate test never showed it.
 #
-# The conditioning is done in U-SPACE, and that is what makes it work for an
-# arbitrary sampler. A copula maps INDEPENDENT uniforms to dependent values, so
-# holding the leading uniforms fixed and varying the rest samples the
-# conditional distribution -- for a vine those uniforms are its Rosenblatt
-# coordinates. Those are the INDEPENDENT uniforms the sampler's
-# inverse-Rosenblatt step consumes, not the copula's own margins -- a copula's
-# margins are uniform but DEPENDENT, since the copula is the dependence.
-# Nothing here has to invert the sampler, and no forward Rosenblatt transform
-# is needed, because a stratum is defined BY ITS NODE IN U-SPACE and the
-# covariate value at that node is read off the sampler rather than solved for.
+# Done in U-SPACE, which is what makes it work for an arbitrary sampler: a
+# copula maps INDEPENDENT uniforms to dependent values, so holding the leading
+# uniforms fixed and varying the rest samples the conditional distribution --
+# for a vine, its Rosenblatt coordinates. Nothing inverts the sampler and no
+# forward Rosenblatt is needed, because a stratum is defined BY ITS NODE in
+# u-space and the covariate value there is read off the sampler.
 #
 # The contract on a user `joint`, stated because it cannot be checked: its
 # uniform columns must act as a conditioning cascade in DECLARED COVARIATE
-# ORDER, so that fixing the columns of the stratified covariates conditions on
-# them. inverse_rosenblatt() satisfies this when the vine is ordered with those
-# covariates leading; admixr2's own `cor` sampler satisfies it by construction
-# (it multiplies by a Cholesky factor in declared order).
+# ORDER. inverse_rosenblatt() satisfies it when the vine is ordered with the
+# stratified covariates leading; admixr2's own `cor` sampler satisfies it by
+# construction, multiplying by a Cholesky factor in declared order.
 # Strata per stratified covariate.
 #
-# THIS IS A CONVERGENCE PARAMETER, NOT A MODELLING CHOICE, and the old default
-# of 5 read like a preference. The well-defined object is the J -> infinity
-# limit (N * E_a[l]); any finite J is an approximation to it, and under
-# misspecification the answer can jump between basins rather than drift -- a
-# verified counterexample flips from beta = 1.57 at J = 4 to 1.6e-05 at J = 5.
-# So it should be driven up until the answer stops moving, not picked.
+# A CONVERGENCE PARAMETER, NOT A MODELLING CHOICE -- the old default of 5 read
+# like a preference. The well-defined object is the J -> infinity limit
+# (N * E_a[l]); any finite J approximates it, and under misspecification the
+# answer can jump between basins rather than drift: a verified counterexample
+# flips from beta = 1.57 at J = 4 to 1.6e-05 at J = 5. Drive it up until the
+# answer stops moving. 9 is a starting point; cost is J^p studies for p
+# stratified covariates, so affordable in one and expensive in three.
 #
-# Raised to 9, which is a starting point rather than an answer. The cost is
-# J^p studies for p stratified covariates, so raising it is affordable in one
-# covariate and expensive in three.
-#
-# HOW J-DEPENDENT THE OBJECTIVE IS DEPENDS ON THE RULE, and on the default rule
-# it is barely at all. Measured across J = 5 to 100 on one banded source:
-#
-#   Gauss-Hermite (the default wherever the latent structure is known)  0.03
-#   pooled bins (an opaque `joint` only)     51 units, and still moving
-#
-# So on the default path OFV, AIC, BIC and a likelihood ratio ARE comparable
-# across resolutions. On the pooled path they are not, and the estimate is not
-# stable either -- 0.6810 at J = 5, 9, 15 and 100 but 0.6968 at J = 50. The
-# value is stamped onto every generated study and carried onto the fit so
-# anova() can refuse the comparison, which matters for that path.
+# How J-dependent the objective is depends on the rule, and on the default it
+# is barely at all -- measured across J = 5 to 100 on one banded source:
+# Gauss-Hermite 0.03 units, pooled bins (an opaque `joint` only) 51 and still
+# moving. So OFV, AIC, BIC and a likelihood ratio ARE comparable across
+# resolutions on the default path and are not on the pooled one, where the
+# estimate also wanders (0.6810 at J = 5, 9, 15 and 100 but 0.6968 at J = 50).
+# The value is stamped onto every generated study and carried onto the fit so
+# anova() can refuse the comparison.
 .ADM_STRATA_NODES <- 9L
 
 # Truncate one covariate's margin to the range a source actually enrolled.

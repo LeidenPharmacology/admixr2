@@ -44,7 +44,9 @@ away from it.}
 \item{\code{cov_dist}}{(Optional) the covariate distribution this study's
 subjects span --- see \code{\link[=covDraw]{covDraw()}} for the grammar. The generated
 \code{E}/\code{V} are MARGINAL over it, which is what a publication reports.
-Needs \code{datagenControl(method = "mc")}.}
+Needs \code{datagenControl(method = "mc")} or \code{"gh"}; \code{"fo"} integrates
+over the random effects only and is refused. Prefer \code{"gh"}, which
+adds no Monte Carlo noise to data that is meant to BE the reference.}
 \item{\code{stratify}}{(Optional) \code{TRUE} to stratify on every covariate this
 study's OWN data-generating model conditions on, marginalising the
 rest --- the split is read from the model, so it cannot disagree with

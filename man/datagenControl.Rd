@@ -33,7 +33,9 @@ moments. Ignored when \code{method = "fo"} or \code{"gh"}.}
 \code{method = "gh"} (default 5). Total nodes = \code{n_nodes^n_eta}. Ignored for
 \code{"mc"} and \code{"fo"}.}
 
-\item{sampling}{Quasi-random sampling method: \code{"sobol"} (default),}
+\item{sampling}{Quasi-random sampling method: \code{"sobol"} (default),
+\code{"halton"}, \code{"torus"}, \code{"lhs"}, or \code{"rnorm"}. Ignored when \code{method = "fo"}
+or \code{"gh"}.}
 
 \item{seed}{Integer seed.  Applied before stochastic methods
 (\code{"rnorm"}, \code{"lhs"}). Ignored when \code{method = "fo"} or \code{"gh"}.}
@@ -56,9 +58,7 @@ measured convergence.}
 integrates a study's \code{cov_dist} (default 7). Total covariate points are
 \code{cov_nodes^p} for \code{p} covariates. Ignored by \code{"mc"}, which draws a covariate
 value per simulated subject instead, and by \code{"fo"}, which cannot integrate a
-covariate at all.
-\code{"halton"}, \code{"torus"}, \code{"lhs"}, or \code{"rnorm"}. Ignored when \code{method = "fo"}
-or \code{"gh"}.}
+covariate at all.}
 }
 \value{
 A list of class \code{"datagenControl"}.
