@@ -29,3 +29,5 @@
 ^CRAN-SUBMISSION$
 ^\.git$
 ^\.covrignore$
+^protoE$
+^vignettes/figure$

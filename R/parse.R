@@ -1,4 +1,4 @@
-﻿# Emit a warning at most once per R session, keyed by `key`.
+# Emit a warning at most once per R session, keyed by `key`.
 # Used to avoid repeated identical warnings when the same model is parsed
 # once per study in multi-study fits.
 .adm_warn_once <- function(key, msg) {

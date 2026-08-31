@@ -1,4 +1,4 @@
-﻿#' @importFrom stats cov dnorm pnorm qnorm rnorm runif setNames
+#' @importFrom stats cov dnorm pnorm qnorm rnorm runif setNames
 #' @importFrom utils assignInNamespace head
 #' @importFrom Rcpp sourceCpp
 #' @useDynLib admixr2, .registration = TRUE
