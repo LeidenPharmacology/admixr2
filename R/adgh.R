@@ -1,4 +1,4 @@
-﻿# -- adgh: aggregate Gauss-Hermite quadrature estimator -------------------------
+# -- adgh: aggregate Gauss-Hermite quadrature estimator -------------------------
 # Computes population moments E[f] and Cov[f] for eta ~ N(0, Omega) by
 # deterministic Gauss-Hermite quadrature over the random-effects distribution,
 # then plugs them into the same aggregate MVN -2LL as adfo/admc.
@@ -1699,7 +1699,10 @@ adghControl <- function(
 
   addProp   <- match.arg(addProp)
   grad      <- match.arg(grad)
-  covMethod <- match.arg(covMethod)
+  # A model source needs the sandwich to see its own C_src -- see
+  # .admResolveCovMethod(). An explicit covMethod is honoured untouched.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
   cov_integration <- match.arg(cov_integration)
 
   checkmate::assertList(studies)

@@ -1323,7 +1323,10 @@ adfoControl <- function(
   # options(warn = 2) here.
   .grad_explicit <- !missing(grad)
   grad     <- match.arg(grad)
-  covMethod <- match.arg(covMethod)
+  # A model source needs the sandwich to see its own C_src -- see
+  # .admResolveCovMethod(). An explicit covMethod is honoured untouched.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
 
   checkmate::assertList(studies)
   # A residual quadrature needs a real grid. .adghNodes1() refuses m < 1, but it
