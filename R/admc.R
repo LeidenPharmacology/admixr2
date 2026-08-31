@@ -1700,7 +1700,11 @@ nmObjGetControl.admc <- function(x, ...) {
   # than tile five more frames correctly. Costs the gradient path's speed on
   # covariate fits only.
   if (isTRUE(use_grad) &&
-      any(vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))))
+      # a fully stratified study's cov_dist is all point specs, so it
+      # marginalises nothing and need not cost the gradient-based Hessian
+      any(vapply(studies, function(s)
+        !is.null(s[["cov_dist"]]) && !.admCovDistDegenerate(s[["cov_dist"]]),
+        logical(1))))
     use_grad <- FALSE
 
   # Hessian over struct + sigma + omega (falls back to struct+sigma if not PD).

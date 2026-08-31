@@ -1002,6 +1002,16 @@
           b   <- .admAbsorbBase(Jl, X, dLt, .sh$dmu[, nmk])
           if (!is.null(b)) graw <- graw + b
         }
+      } else if (isTRUE(.sh$cond)) {
+        # Conditioned shift: eta is not X L', so d(eta) is carried whole in
+        # dEta_th -- the same branch .adghGrad takes, through the same helper.
+        # Without it the struct chain fell through (du_dtheta is NULL here) and
+        # the sandwich scored a Jacobian missing the shift path entirely.
+        kk <- match(nmk, .sh$th_names)
+        if (!is.na(kk)) {
+          b <- .admShiftCondBase(Jl, .sh$dEta_th[[kk]])
+          if (!is.null(b)) graw <- graw + b
+        }
       } else if (!is.null(.sh) && !is.null(.sh$du_dtheta) &&
                  nmk %in% colnames(.sh$du_dtheta)) {
         dk <- .sh$du_dtheta[, nmk]
@@ -1021,7 +1031,14 @@
     # --- omega Cholesky ----------------------------------------------------
     if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
       i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
-      base <- if (isTRUE(.sh$multi)) {
+      base <- if (isTRUE(.sh$cond)) {
+        # X is identically zero under conditioning, so `Jl[[i]] * X[, j]` gave
+        # an exactly zero derivative for EVERY omega parameter -- G came back
+        # finite with zero omega rows, H^-1 J H^-1 still had positive
+        # diagonals, so the `all(diag(sw$cov) > 0)` gate passed and sandwich
+        # standard errors were reported with no omega path in them.
+        .admShiftCondBase(Jl, .sh$dEta_om[[rr]])
+      } else if (isTRUE(.sh$multi)) {
         aa <- match(i, .sh$eta_idx)
         if (i == j && !is.na(aa))
           .admShiftBase(Jl, .sh$eta_idx, .sh$du[, , .sh$n_th + aa, drop = FALSE])

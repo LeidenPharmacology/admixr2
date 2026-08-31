@@ -1188,7 +1188,11 @@
   # is silent and severe. Removing it wants a broader comparison than one
   # model, not a rewritten comment.
   if (isTRUE(use_grad) &&
-      any(vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))))
+      # a fully stratified study's cov_dist is all point specs, so it
+      # marginalises nothing and need not cost the gradient-based Hessian
+      any(vapply(studies, function(s)
+        !is.null(s[["cov_dist"]]) && !.admCovDistDegenerate(s[["cov_dist"]]),
+        logical(1))))
     use_grad <- FALSE
 
   if (use_grad) {

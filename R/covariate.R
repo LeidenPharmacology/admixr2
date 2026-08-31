@@ -166,7 +166,11 @@
 # a fit whose omega has quietly absorbed the between-subject covariate spread.
 # Measured on the general path's own test model, that is omega 0.30 -> 0.44.
 .admRefuseCovariates <- function(studies, est) {
-  has <- vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))
+  # A fully stratified study still carries a cov_dist, but only of point specs
+  # -- there is nothing to marginalise, so nothing for adfo or adirmc to refuse.
+  has <- vapply(studies, function(s)
+    !is.null(s[["cov_dist"]]) && !.admCovDistDegenerate(s[["cov_dist"]]),
+    logical(1))
   if (!any(has)) return(invisible(NULL))
   stop("admixr2: `", est, "` does not support covariate marginalisation. ",
        "Stud", if (sum(has) > 1L) "ies " else "y ",
@@ -296,6 +300,20 @@
             "estimating it.", call. = FALSE)
   }
   invisible(NULL)
+}
+
+# Is there anything left to MARGINALISE, or is every margin a point?
+#
+# .admExpandStrata() gives each stratum a cov_dist carrying the stratified
+# covariates as degenerate point specs (deliberately -- see pt_spec). Asking
+# `!is.null(cov_dist)` therefore reports "this study marginalises" for a study
+# that marginalises nothing, which made adfo and adirmc refuse a fully
+# stratified source outright and made adgh and admc drop the gradient-based
+# Hessian for one.
+.admCovDistDegenerate <- function(cd) {
+  nm <- .admCovSpecNames(cd)
+  length(nm) > 0L &&
+    all(vapply(nm, function(k) isTRUE(cd[[k]][[".point"]]), logical(1)))
 }
 
 .admCheckCovariates <- function(.ui, pinfo, studies) {
@@ -1666,7 +1684,11 @@
       !isTRUE(all.equal(unname(Rmm), diag(length(iM)), tolerance = 1e-12))
     # a stratified covariate is held at a POINT, carried as a degenerate spec so
     # covStrata() still shows it and every consumer sees the same name set
-    pt_spec <- function(v) list(quantile = local({ v <- as.numeric(v)
+    # `.point` is what .admCovDistDegenerate() reads. A stratum keeps the
+    # stratified covariate in its own cov_dist ON PURPOSE -- a stratum is a
+    # range, and downstream code needs every covariate in scope -- so presence
+    # of cov_dist cannot mean "there is something to marginalise".
+    pt_spec <- function(v) list(.point = TRUE, quantile = local({ v <- as.numeric(v)
       function(u) rep(v, length.out = length(u)) }))
     if (!exact_marg) {
       Sc <- Rm[iMc, iMc, drop = FALSE] - A %*% Rm[iSc, iMc, drop = FALSE]
