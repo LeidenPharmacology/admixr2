@@ -1,8 +1,38 @@
 # The SE path, for every kind of ADM / MBMA setup
 
 Written 2026-08-21, from `HANDOFF-model-source-n-REPLY.md` plus the measurements
-in `HANDOFF-model-source-n.md`. Estimator-independent: adfo, admc, adgh and
-adirmc differ in how they compute `H`, not in any of the logic below.
+in `HANDOFF-model-source-n.md`. The logic below is estimator-independent -- adfo,
+admc, adgh and adirmc differ in how they compute `H`, not in any of it -- with
+ONE measured exception, recorded in full at the end of this file: adfo fits the
+FO-LINEARISED moments, so for a model source it returns `G C_src G'` with
+`G != I` rather than `C_src`.
+
+## A MODEL SOURCE'S SE IS EXACT ONLY WHERE THE FITTED MOMENTS ARE
+
+`Var(theta_hat) = C_src` holds because, when our model can reproduce the
+source's, the discrepancy is zero at `theta_src`, hence `theta_hat = theta_src`
+and `G = dtheta_hat/dtheta_src = I`. That premise is a statement about the
+MOMENTS the estimator actually scores. adgh (quadrature) and admc (MC) score the
+exact aggregate moments and return `C_src`; adfo scores the first-order
+linearised ones, does not reproduce the source at `theta_src`, and returns
+`G C_src G'`.
+
+Measured on a lone source, `SE(tcl)` relative to its declared 0.080, n = 800:
+
+| Omega on eta.cl | adgh | adfo | adfo \|theta_hat - theta_src\| |
+|---|---|---|---|
+| 0.05   | 0.9995 | **0.8596** | 4.6e-03 |
+| 0.02   | 0.9997 | 0.9624 | 2.6e-04 |
+| 0.005  | 0.9992 | 0.9961 | 2.5e-04 |
+| 0.0005 | 0.9980 | **0.9997** | 2.5e-05 |
+
+Both the SE gap and the point-estimate displacement vanish with Omega, which is
+the signature of the linearisation; a mis-wired correction term would sit still
+at every Omega. So this is adfo being adfo, not a defect in `.admSrcMeanCorr` --
+but it does mean **adfo understates a model source's SE at appreciable IIV**,
+the dangerous direction. Prefer adgh or admc when a source declares `model_cov`.
+Pinned by `test-integration-model-source.R` at small Omega, where the premise
+holds and a wiring regression would still be caught.
 
 ## COVERAGE is the metric, not the SE/SD ratio
 
@@ -26,6 +56,31 @@ Coverage at nominal 0.950, MC SE 0.0049:
 | model only, marginal | 1.000 | 1.000 |
 | data only, marginal | 0.951 | 1.000 |
 | **both marginal** | **0.857 <- INVALID** | 1.000 |
+
+> **THAT TABLE HOLDS OMEGA FIXED, and freeing it reverses one conclusion.**
+> With omega free, a MARGINAL source alone is anti-conservative even WITH the
+> sandwich: coverage 0.947 / 0.826 / 0.675 on the intercept, the coefficient and
+> omega, with real bias (-0.052 on omega, +0.034 on the coefficient). It is the
+> only anti-conservative sandwich cell found anywhere in the series.
+>
+> The mechanism is the ridge: every `(beta, omega)` holding
+> `omega^2 + beta^2 Var(log WT)` constant fits the marginal moments equally
+> well, so the estimator is degenerate along it, `theta_hat` is not
+> approximately normal, and the quadratic expansion the sandwich rests on does
+> not hold. `H^-1` is doing the damage.
+>
+> So the `cond(H)` guard is what REFUSES a fit, not what annotates it. The
+> failure is STATISTICAL rather than numerical, and the distinction sets the
+> threshold: at `cond(H) = 2e4` inverting `H` in double precision is perfectly
+> accurate -- a finite-difference Hessian carries ~8 good digits, so `H^-1` is
+> not noise until `cond ~ 1e8` -- but the justification has already gone.
+> Coverage collapses long before arithmetic does.
+>
+> **The marginal/stratified LABEL is only a proxy for this, and a poor one.**
+> The covariates vignette marginalises in every source and is fine, at
+> `cond(H) = 2.19e+02`, because its three cohorts sit at different renal centres
+> and that between-study contrast does what stratification would. Warning on the
+> label would fire there wrongly. The guard has to read the conditioning.
 
 The sandwich is valid in every cell, exact where the fit is well identified and
 conservative where it is not; its worst is 0.924. The naive has exactly ONE
