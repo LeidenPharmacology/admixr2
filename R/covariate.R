@@ -1903,7 +1903,7 @@
 #' @param stratify Character vector naming the covariates to stratify on. The
 #'   rest are left in each stratum's own `cov_dist`, to be marginalised over
 #'   their distribution **conditional** on that stratum.
-#' @param n_nodes Strata per stratified covariate (default 9). A discrete
+#' @param n_nodes Strata per stratified covariate. A discrete
 #'   covariate ignores it and is cut at its levels, exactly, with the level
 #'   probabilities as weights.
 #'

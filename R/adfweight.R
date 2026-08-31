@@ -784,7 +784,7 @@
   # subsetting above so both halves of the meat are indexed by the same
   # parameters.
   grp   <- .admSrcGroups(studies)
-  extra <- list(); skip <- integer(0); failed <- character(0)
+  extra <- list(); skip <- integer(0); failed <- character(0); generated <- FALSE
   for (nm in names(grp)) {
     idx  <- grp[[nm]]
     prov <- studies[[idx[1L]]][[".adm_src"]]
@@ -800,6 +800,10 @@
     # so .admSrcCov() warns at datagen time, where the user is standing when
     # they supply the matrix and nothing can eat it.
     if (length(prov$missing)) { failed <- c(failed, nm); next }
+    # .admSrcMeat() calls datagen(), which unloads every rxode2 model on exit.
+    # Record that it RAN, because the reload below cannot be conditioned on it
+    # having succeeded.
+    generated <- TRUE
     M <- tryCatch(.admSrcMeat(studies, idx, G, prov), error = function(e) NULL)
     if (is.null(M)) { failed <- c(failed, nm); next }
     extra[[nm]] <- M; skip <- c(skip, idx)
@@ -807,15 +811,17 @@
   # A source whose Jacobian could not be formed must not silently fall back to
   # the data weight: that number is not an approximation of the right one, it is
   # unrelated to it. Refuse the sandwich and let the caller say so.
-  if (length(failed)) {
-    if (length(extra) && !is.null(rxMod)) try(rxode2::rxLoad(rxMod), silent = TRUE)
-    return(NULL)
-  }
   # datagen() unloads every rxode2 model on exit, so anything the caller still
   # holds is stale. Restore before returning -- the same rule .admLoadSensModel
   # already follows.
-  if (length(extra) && !is.null(rxMod))
-    try(rxode2::rxLoad(rxMod), silent = TRUE)
+  #
+  # KEYED ON datagen() HAVING RUN, not on a source having succeeded. The old
+  # guard was `length(extra)`, which is empty when the FIRST source fails
+  # inside .admSrcMeat() -- after datagen() has already unloaded everything --
+  # so the caller got back a dead pointer on exactly the path that most needs
+  # the restore.
+  if (generated && !is.null(rxMod)) try(rxode2::rxLoad(rxMod), silent = TRUE)
+  if (length(failed)) return(NULL)
   .admSandwich(H, G, Om, extra = extra, skip = skip)
 }
 

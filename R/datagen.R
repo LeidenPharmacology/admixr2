@@ -21,13 +21,13 @@
 #'   unless you deliberately change one of them. See [admControl()] for the
 #'   measured convergence.
 #' @param sampling Quasi-random sampling method: `"sobol"` (default),
+#'   `"halton"`, `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"`
+#'   or `"gh"`.
 #' @param cov_nodes Gauss-Hermite nodes per covariate when `method = "gh"`
 #'   integrates a study's `cov_dist` (default 7). Total covariate points are
 #'   `cov_nodes^p` for `p` covariates. Ignored by `"mc"`, which draws a covariate
 #'   value per simulated subject instead, and by `"fo"`, which cannot integrate a
 #'   covariate at all.
-#'   `"halton"`, `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"`
-#'   or `"gh"`.
 #' @param seed Integer seed.  Applied before stochastic methods
 #'   (`"rnorm"`, `"lhs"`). Ignored when `method = "fo"` or `"gh"`.
 #' @param cores Number of `rxSolve` threads.
@@ -346,7 +346,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # inert and the grid silently uses its own default.
     pinfo$cov_nodes   <- control$cov_nodes %||% 7L
     out_var <- .admOutputVar(ui)
-    .src_cov  <- .admSrcCov(s[["model_cov"]] %||% attr(model, "model_cov"), ui, nm)
+    .src_cov  <- .admSrcCov(s[["model_cov"]] %||% attr(mdl, "model_cov"), ui, nm)
     # SOURCE IDENTITY IS A PROPERTY OF THE SOURCE, NOT OF THE CALL.
     # It used to default to the study NAME within this datagen() call, which
     # collides the moment a caller generates each source separately under the
