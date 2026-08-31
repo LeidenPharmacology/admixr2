@@ -347,7 +347,26 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     pinfo$cov_nodes   <- control$cov_nodes %||% 7L
     out_var <- .admOutputVar(ui)
     .src_cov  <- .admSrcCov(s[["model_cov"]] %||% attr(model, "model_cov"), ui, nm)
-    .src_prov <- list(id    = s[[".adm_src_id"]] %||% nm,
+    # SOURCE IDENTITY IS A PROPERTY OF THE SOURCE, NOT OF THE CALL.
+    # It used to default to the study NAME within this datagen() call, which
+    # collides the moment a caller generates each source separately under the
+    # same name -- `datagen(list(s = ...))` once per paper is the obvious way to
+    # write it, and every study then lands in ONE group. Three different
+    # published models were merged into a single source: one paper's C_src
+    # applied to all of them, the other two silently discarded, and the whole
+    # set counted as one contribution. Numerically fine and completely wrong.
+    #
+    # The digest is over what actually makes a source distinct -- its model
+    # text, the parameter values it published, and its own covariance -- so
+    # studies that genuinely share a source still share an id. Both cases that
+    # matters for keep working: a BANDED source (same model and theta, several
+    # strata) and a source reported by subgroup (same model, different `cov`)
+    # digest identically and stay one group, which is what C_src being applied
+    # once across them requires.
+    .src_key <- tryCatch(
+      digest::digest(list(ui$lstExpr, .admSrcTheta(ui), .src_cov$cov)),
+      error = function(e) nm)
+    .src_prov <- list(id    = s[[".adm_src_id"]] %||% .src_key,
                       model = mdl,
                       theta = .admSrcTheta(ui),
                       cov   = .src_cov$cov,
@@ -627,9 +646,15 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 # than documented -- the dimnames must be `iniDf` parameter names, so a matrix
 # built against the wrong parameterisation is refused instead of silently
 # rescaling every reported interval.
-.admSrcCov <- function(cov, ui, nm) {
+# `arg` is the name the CALLER's user typed, and it goes last because
+# .admRestartWorker's rule applies to every helper a driver reaches: a new
+# formal in the middle re-binds every positional call site. admStudy() calls
+# this at construction so a malformed or incomplete matrix is refused where
+# the user is standing -- datagen() runs inside the nlmixr2est stack, which
+# swallows both warnings and the reason the sandwich then declined.
+.admSrcCov <- function(cov, ui, nm, arg = "model_cov") {
   if (is.null(cov)) return(NULL)
-  bad <- function(...) stop("admixr2: study '", nm, "': `model_cov` ", ...,
+  bad <- function(...) stop("admixr2: study '", nm, "': `", arg, "` ", ...,
                             call. = FALSE)
   cov <- as.matrix(cov)
   if (nrow(cov) != ncol(cov)) bad("must be square; got ", nrow(cov), " x ",
@@ -657,13 +682,38 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     okm  <- cand %in% ini$name[!is.na(ini$neta1) & ini$neta1 == ini$neta2]
     if (any(okm)) rn[which(.om)[okm]] <- cand[okm]
   }
+  # ...and the same for an OFF-DIAGONAL, `cov.<eta_i>.<eta_j>`. It cannot be
+  # split on dots -- an eta name contains them (`cov.eta.cl.eta.v`) -- so match
+  # the two halves against the eta names the model actually declares, longest
+  # first so `eta.cl` cannot shadow `eta.cl.2`. The `ini()` row for that
+  # covariance is named for the LATER eta pair, which is how .admCovNames()
+  # writes it and how rxode2 stores it.
   .cv <- grepl("^cov[.]", rn)
-  if (any(.cv))
-    bad("names ", paste(sQuote(rn[.cv]), collapse = ", "),
-        ", which are OFF-DIAGONAL omega entries. Those are not yet mapped from ",
-        "the reporting names onto `ini()` rows; drop them and their rows, ",
-        "keeping the `om.` diagonal, or rename them to the names the source ",
-        "model's `ini()` uses.")
+  if (any(.cv)) {
+    etas <- ini$name[!is.na(ini$neta1)]
+    etas <- etas[order(nchar(etas), decreasing = TRUE)]
+    for (k in which(.cv)) {
+      body <- sub("^cov[.]", "", rn[k])
+      hit  <- NA_character_
+      for (e1 in etas) {
+        if (startsWith(body, paste0(e1, "."))) {
+          e2 <- substring(body, nchar(e1) + 2L)
+          if (e2 %in% etas) {
+            row <- ini$name[!is.na(ini$neta1) & !is.na(ini$neta2) &
+                            ini$neta1 != ini$neta2]
+            pair <- intersect(row, c(paste0("(", e1, ",", e2, ")"),
+                                     paste0("(", e2, ",", e1, ")")))
+            if (length(pair)) { hit <- pair[1L]; break }
+          }
+        }
+      }
+      if (is.na(hit))
+        bad("names ", sQuote(rn[k]), ", an OFF-DIAGONAL omega entry that does ",
+            "not correspond to any covariance this model's `ini()` declares. ",
+            "Drop it and its row, or rename it to the `ini()` row name.")
+      rn[k] <- hit
+    }
+  }
   dimnames(cov) <- list(rn, rn)
   # Only ESTIMATED parameters carry uncertainty. A fix()ed one is an assertion
   # -- the source claims to know it -- so it contributes no variance, and naming
@@ -679,7 +729,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     bad("names ", paste(sQuote(fixed), collapse = ", "),
         ", which the source model fix()es. A fixed parameter is an ASSERTION, ",
         "so it carries no uncertainty to propagate -- drop ",
-        if (length(fixed) == 1L) "it" else "them", " from `model_cov`.")
+        if (length(fixed) == 1L) "it" else "them", " from `", arg, "`.")
   if (!isTRUE(all.equal(unname(cov), unname(t(cov)), tolerance = 1e-8)))
     bad("is not symmetric, so it is not a covariance matrix.")
   ev <- tryCatch(eigen(cov, symmetric = TRUE, only.values = TRUE)$values,
@@ -699,7 +749,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   # inside CalcCov does not reach the user: the nlmixr2est stack swallows it,
   # which is why the drivers report a missing covariance from their own frame.
   if (length(miss))
-    warning("admixr2: study '", nm, "': `model_cov` covers ",
+    warning("admixr2: study '", nm, "': `", arg, "` covers ",
             paste(sQuote(rn), collapse = ", "), " but the source model also ",
             "ESTIMATES ", paste(sQuote(miss), collapse = ", "),
             ". A parameter with no covariance contributes none, which asserts ",
