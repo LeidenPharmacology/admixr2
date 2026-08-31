@@ -730,8 +730,8 @@
   # (1 + 2 * n_struct) to 1.
   #
   # Row-stacking is BIT-IDENTICAL to solving each configuration alone -- measured
-  # over 40 configurations, sens branch and FD branch, in
-  # validation/adfo-batch-bitidentity.R. That is a different operation from
+  # over 40 configurations, on both the sens and the FD branch. That is a
+  # different operation from
   # merging studies over a UNION of observation times, which changes the output
   # grid and moves predictions ~1e-7 (CLAUDE.md records that one as tried and
   # reverted).
@@ -811,7 +811,7 @@
   #
   # Row-stacking is BIT-IDENTICAL to solving each configuration alone, and the
   # batch size does not change any row -- measured over 40 configurations, sens
-  # and FD branch, in validation/adfo-batch-bitidentity.R. That is a different
+  # and FD branch. That is a different
   # operation from merging studies over a UNION of observation times, which does
   # change the output grid (CLAUDE.md: tried and reverted).
   .prime <- function(p_pts)

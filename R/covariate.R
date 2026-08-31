@@ -72,8 +72,8 @@
 # supplied marginally, so it is the log-density pooling and not the variance
 # handling that does it. That is a displaced TARGET, not estimator bias -- the
 # same construction is exact the moment it is given the data it describes.
-# Measured in validation/covariate-threeway.R (configuration A) and separated
-# case by case in validation/covariate-node-retest.R.
+# Measured on a three-way covariate design and separated case by case against
+# a node-count retest.
 #
 # So the machinery was redundant where it was valid -- a publication reporting
 # strata also reports their real n_k, which beats quadrature weights -- and
