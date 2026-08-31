@@ -1995,7 +1995,7 @@
 #' @seealso [covDraw()] to inspect a covariate specification, [datagen()] to
 #'   generate the strata as studies.
 #' @export
-covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
+covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
                       n_pool = 32768L, cov_range = NULL) {
   checkmate::assertNumber(n, lower = 0, finite = TRUE)
   st <- .admCovStrata(cov_dist, stratify, n_nodes, n_pool, cov_range)
@@ -3365,8 +3365,10 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
 #'
 #' @param cov_dist A covariate specification, as given to a study. Each element
 #'   names a covariate and describes its distribution, either as `mean` and `sd`
-#'   on the covariate's own scale (lognormal by default, `dist = "normal"` for a
-#'   normal margin), or as a `quantile` function, or as `values` (with optional
+#'   on the covariate's own scale --- NORMAL by default, so pass
+#'   `dist = "lnorm"` for the positive margin an allometric term needs (only
+#'   [admPopulation()] defaults to lognormal) --- or as a `quantile` function,
+#'   or as `values` (with optional
 #'   `probs`) for a discrete covariate. A `cor` entry --- a scalar for two
 #'   covariates, or a correlation matrix --- links them through a Gaussian
 #'   copula. A `joint` function takes the matrix of uniforms and returns one
@@ -3497,8 +3499,8 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
 #'   Choose `"lnorm"` when the model needs the covariate to stay positive. A
 #'   normal margin is unbounded below and the quadrature reaches 3.75 standard
 #'   deviations, so any covariate with a coefficient of variation above about
-#'   0.19 --- which includes most of them, weight at 72 +/- 16 being 0.22 ---
-#'   gets a node at or below zero, where an allometric or log term is `NaN`.
+#'   0.27 (the guard is `mu - 3.75 * sd <= 0`) gets a node at or below zero,
+#'   where an allometric or log term is `NaN`.
 #'   `covDist()` warns when that would happen.
 #'
 #' @return A validated `cov_dist`, ready to pass to a study. Printing it shows
@@ -4219,6 +4221,37 @@ print.covDist <- function(x, ...) {
   B <- loadings(probe(0, cell_list[[1L]]))
   if (is.null(B)) return(NULL)
   pr$routes <- attr(B, "routes")   # settled here, replayed on every refresh
+  # A "const" ROUTE IS A STRUCTURAL CLAIM, NOT A THRESHOLD, AND IT MUST HOLD
+  # AWAY FROM THIS POINT TOO.
+  #
+  # Every other route is a judgement about WHICH linear combination a column
+  # reaches the model through, and freezing it is right -- a borderline column
+  # would otherwise flip mid-fit and change the design. "const" is different:
+  # it says the column does not depend on the latents AT ALL, so B[, k] stays
+  # zero and the refresh replays that forever. It is false the moment a
+  # coefficient leaves zero, which is where `bcr <- 0` starts.
+  #
+  # Left unchecked: `v <- exp(tv) * (CRCL/90)^bcr` with bcr = 0 probes constant,
+  # the collapse is admitted at rank 1, U never turns toward CRCL, every design
+  # point sits at CRCL's median, and bcr has an identically zero gradient for
+  # the life of the fit. Nothing errors -- it is "solving at the covariate
+  # mean", reached from the other side.
+  #
+  # Re-probing cannot be deferred to the refresh, because turning a zero column
+  # on there would RAISE rank(B) and change the number of design points
+  # mid-optimisation. So it is settled here: nudge the structural thetas and
+  # refuse the collapse if a constant column starts varying. A genuinely
+  # constant assignment (`v <- exp(tv)`) is unaffected -- shifting tv scales it
+  # without making it vary across design points.
+  .cst <- which(vapply(pr$routes, function(r) identical(r, "const"), logical(1)))
+  if (length(.cst)) {
+    Pp <- tryCatch(probe_gen(0, cell_list[[1L]], A,
+                             st_use = lapply(st, function(v) v + 0.1)),
+                   error = function(e) NULL)
+    if (is.null(Pp) ||
+        any(vapply(.cst, function(k) stats::sd(Pp[, k]) > 0, logical(1))))
+      return(NULL)
+  }
   # THE LOADING MUST NOT DEPEND ON THE RANDOM EFFECT. A covariate-by-eta
   # interaction (cl <- exp(tcl + b * WT * eta.cl)) has a direction that moves
   # with eta, and the probe at eta = 0 would report b = 0 -- a collapse onto

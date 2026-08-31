@@ -132,6 +132,16 @@ reference:
       - nlmixr2Est.adgh
       - nlmixr2Est.adirmc
 
+  - title: Writing down the studies
+    desc: Transcribe a published paper, and describe who it enrolled.
+    contents:
+      - admStudy
+      - admStudies
+      - admPopulation
+      - covDist
+      - covDraw
+      - covStrata
+
   - title: Simulation
     desc: Generate aggregate data from models for simulation studies.
     contents:
@@ -152,6 +162,7 @@ reference:
     contents:
       - print.admFit
       - plot.admFit
+      - anova.admFit
 
   - title: Data
     desc: Example datasets.
