@@ -175,6 +175,15 @@
     if (!is.na(.mapped) && .mapped %in% names(inner_df)) inner_df[[.mapped]][] <- .lam
   }
 
+  # THE COVARIATE COLUMNS, like every other solve path in this file. Without
+  # them rxSolve stops with "the following parameter(s) are required for
+  # solving" -- and the tryCatch below swallows it, returns NULL, and adfo's
+  # .adfoGetMuJBatch falls through to finite differences. So a covariate model
+  # under `grad = "analytical"` (the adfo default) silently lost its order-2
+  # analytic struct-theta gradient on every objective and gradient evaluation:
+  # nothing errored, the fit just ran on the slower and far less accurate path.
+  inner_df <- .admCovCols(inner_df, sensModel$mod$params, study[["cov"]],
+                          study[["cov_rows"]])
   # do.call + sensModel$solve_args: a DDE model's sensitivity solve is forced onto
   # pure dop853 (see .admLoadSensModel). solve_args is NULL for every ordinary
   # model, and c(list(...), NULL) is the original list, so nothing else changes.

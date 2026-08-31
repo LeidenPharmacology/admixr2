@@ -680,14 +680,26 @@ admStudies <- function(...) {
          if (sum(!ok) > 1L) "are" else "is", " not one.", call. = FALSE)
   nms <- names(a)
   # the argument EXPRESSION is the natural label -- admStudies(smith2019, ...)
-  # should not need the name typed twice
-  sub <- as.list(substitute(list(...)))[-1L]
-  auto <- vapply(sub, function(e) if (is.name(e)) as.character(e) else "",
-                 character(1))
+  # should not need the name typed twice.
+  #
+  # ONLY when `...` IS the studies. The single-list branch above replaced `a`
+  # with the list's contents, so the expressions in `...` describe the list,
+  # not its elements -- `auto` then has length 1 against k studies and every
+  # element after the first indexes out of bounds to NA_character_.
+  #
+  # And NA is not caught by the `!nzchar()` fallbacks, because
+  # nzchar(NA_character_) is TRUE. So the name stayed NA, and
+  # .admMaterialise() dropped that study silently -- studies[[NA_character_]]
+  # is NULL, not an error, so a two-study fit quietly became a one-study fit.
+  auto <- if (length(a) == length(unwrapped <- as.list(substitute(list(...)))[-1L]))
+    vapply(unwrapped, function(e) if (is.name(e)) as.character(e) else "",
+           character(1))
+  else rep("", length(a))
   if (is.null(nms)) nms <- rep("", length(a))
+  nms[is.na(nms)] <- ""
   for (i in seq_along(a)) {
     if (!nzchar(nms[i])) nms[i] <- a[[i]]$label %||% auto[i]
-    if (!nzchar(nms[i])) nms[i] <- paste0("study", i)
+    if (is.na(nms[i]) || !nzchar(nms[i])) nms[i] <- paste0("study", i)
     a[[i]]$label <- nms[i]
   }
   if (anyDuplicated(nms))

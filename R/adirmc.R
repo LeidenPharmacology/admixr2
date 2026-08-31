@@ -658,6 +658,14 @@ nmObjGetControl.adirmc <- function(x, ...) {
     params_df_ext <- params_df
   }
 
+  # EVERY solve path injects the study's fixed covariates -- see .admCovCols().
+  # adirmc builds its params frame by hand from .admMakeParamsList() (struct,
+  # eta, sigma, rxerr) and so was the one path that did not, which meant any
+  # model reading a covariate died here on rxode2's raw "the following
+  # parameter(s) are required for solving". There is no tryCatch on this call,
+  # so the whole fit was lost after the setup work.
+  params_df_ext <- .admCovCols(params_df_ext, rxMod$params, study[["cov"]],
+                               study[["cov_rows"]])
   out      <- rxode2::rxSolve(rxMod, params = as.data.frame(params_df_ext),
                               events = study$ev_full,
                               cores = cores,
@@ -763,6 +771,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
           params_cand <- .params_base[1L, , drop = FALSE]
           for (nm in .single_nms)
             params_cand[1L, nm] <- struct_cand[[nm]]
+          params_cand <- .admCovCols(params_cand, rxMod$params,
+                                     study[["cov"]], study[["cov_rows"]])
           out_c  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_cand),
                                     events = study$ev_full, cores = cores,
                                     nDisplayProgress = ndp,
@@ -789,6 +799,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
               for (nm in .single_nms)
                 params_bat[ci, nm] <- sc[[nm]]
             }
+            params_bat <- .admCovCols(params_bat, rxMod$params,
+                                       study[["cov"]], study[["cov_rows"]])
             out_b  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_bat),
                                       events = study$ev_full, cores = cores,
                                       nDisplayProgress = ndp,
