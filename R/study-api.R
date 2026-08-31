@@ -12,6 +12,11 @@
 # covariates vignette used to do. It has no autocomplete, no validation until a
 # fit fails, and it makes the reader hold five moving parts at once.
 
+# Column names rxode2/nlmixr2 reserve for the data itself, so they can never
+# be covariates. Everything else in a supplied data frame is one.
+.ADM_DATA_COLS <- c("ID", "TIME", "DV", "AMT", "EVID", "CMT", "DVID", "MDV",
+                    "RATE", "DUR", "SS", "II", "ADDL", "CENS", "LIMIT")
+
 # Convert a baseline-table entry into a covDist margin.
 #
 # Papers report a covariate in whichever way suited the journal, so accept the
@@ -92,6 +97,103 @@
   } else list(mu = ctr, sd = sd)
 }
 
+# A cohort, or a digitised baseline listing, read into margins and correlations.
+#
+# WHAT IS DELIBERATELY NOT DONE HERE: no distribution is fitted and no shape is
+# tested. A margin matches the column's MEAN and SD (or its proportion), which
+# is the same contract as the typed-out form -- `data` is a way of not
+# transcribing numbers, not a different model of the covariate. A column whose
+# shape argues against `dist` is the user's call to make, and they make it with
+# `dist =` or by stating that margin in `...`.
+.admPopFromData <- function(data, dist, given) {
+  if (!is.data.frame(data)) data <- as.data.frame(data)
+  nms <- setdiff(names(data), given)     # anything stated in `...` wins outright
+  if (!length(nms))
+    stop("admixr2: `data` adds no covariate that is not already given by name.",
+         call. = FALSE)
+  bad <- function(nm, ...) stop("admixr2: covariate '", nm, "' ", ...,
+                                call. = FALSE)
+  binary <- function(p) list(values = c(0, 1), probs = c(1 - p, p))
+
+  specs <- list(); cont <- character(0)
+  for (nm in nms) {
+    v <- data[[nm]]
+    if (is.factor(v) || is.character(v)) {
+      lv <- sort(unique(as.character(v)))
+      if (length(lv) != 2L)
+        bad(nm, "has ", length(lv), " levels. A data frame supplies BINARY ",
+            "covariates; give a multi-level one yourself as `", nm,
+            " = list(values = ..., probs = ...)`.")
+      # probability goes on the SECOND level in sort order, matching the
+      # `SEX = c(male = 0.55)` convention: levels 0/1, the name on 1
+      specs[[nm]] <- binary(mean(as.character(v) == lv[2L]))
+      next
+    }
+    v <- as.numeric(v)
+    if (!all(is.finite(v)))
+      bad(nm, "has missing or non-finite values. A margin has to describe ",
+          "every subject the study reports on -- drop the column, or state ",
+          "it yourself.")
+    if (all(unique(v) %in% c(0, 1))) { specs[[nm]] <- binary(mean(v)); next }
+    # A CONSTANT COLUMN IS NOT A DISTRIBUTION, it is a pinned value. Left to
+    # run, mean/sd gives sd = 0 -> sdlog = 0, which no margin accepts, and the
+    # refusal surfaces much later inside datagen() as "not a supported
+    # distribution" -- far from the column that caused it.
+    if (stats::sd(v) < .Machine$double.eps^0.5 * max(1, abs(mean(v))))
+      bad(nm, "is CONSTANT at ", signif(v[1L], 6), " in this data frame, so ",
+          "it has no distribution to describe. A covariate every subject ",
+          "shares is a value the study was reported AT, not a population it ",
+          "was reported OVER -- pin it with `at = list(", nm, " = ",
+          signif(v[1L], 6), ")` and leave it out of `population`.")
+    if (identical(dist, "lnorm") && any(v <= 0))
+      bad(nm, "has values at or below zero, which a lognormal margin cannot ",
+          "describe. Use `dist = \"normal\"`, or state that margin yourself.")
+    specs[[nm]] <- c(mean = mean(v), sd = stats::sd(v))
+    cont <- c(cont, nm)
+  }
+
+  # THE CORRELATION IS ON THE LATENT SCALE. For a lognormal margin the copula
+  # runs over log(x), so the number wanted is cor(log(WT), log(CRCL)) and NOT
+  # cor(WT, CRCL) -- close enough to look right, wrong enough to matter, and
+  # the reason this helper earns its place.
+  tf  <- if (identical(dist, "lnorm")) log else identity
+  rho <- numeric(0)
+  if (length(cont) > 1L)
+    for (p in asplit(utils::combn(cont, 2L), 2L)) {
+      r <- stats::cor(tf(data[[p[1L]]]), tf(data[[p[2L]]]))
+      if (is.finite(r) && abs(r) > 1e-8) rho[paste(p, collapse = ".")] <- r
+    }
+
+  # A discrete margin correlated with a continuous one makes each level a
+  # truncation of the latent normal rather than a point, which admPopulation()
+  # refuses -- so those pairs are dropped, and said out loud where the data
+  # actually show one.
+  #
+  # THE BAR IS SAMPLING NOISE, not a fixed number: under independence a sample
+  # correlation has SE ~ 1/sqrt(n), so a flat 0.1 fires on a perfectly
+  # independent cohort of 60 more often than not. Three SE, because this
+  # message proposes changing the design; 0.1 stays as the floor so a huge
+  # cohort does not report an association too small to matter.
+  disc <- setdiff(names(specs), cont)
+  if (length(disc) && length(cont)) {
+    lim  <- max(0.1, 3 / sqrt(nrow(data)))
+    hit  <- function(d, c) {
+      r <- suppressWarnings(stats::cor(as.numeric(data[[d]]), data[[c]]))
+      is.finite(r) && abs(r) > lim
+    }
+    drop <- outer(disc, cont, Vectorize(hit))
+    if (any(drop))
+      message("admixr2: `data` shows ",
+              paste(paste0(disc[row(drop)[drop]], "/", cont[col(drop)[drop]]),
+                    collapse = ", "),
+              " correlated, and that correlation is being DROPPED -- the ",
+              "levels are enumerated exactly and taken as independent of the ",
+              "rest. Band on the discrete one (`stratify`) if the association ",
+              "carries information you need.")
+  }
+  list(specs = specs, cor = rho)
+}
+
 #' Describe the population a study enrolled
 #'
 #' Written the way a baseline demographics table reads. Each covariate takes
@@ -112,15 +214,43 @@
 #'   wide enough to matter puts mass at or below zero, which is `NaN` inside any
 #'   power or log term.
 #'
+#' @param data A data frame of individual covariates to derive the table
+#'   FROM, instead of typing it out --- a digitised baseline listing, or the
+#'   cohort itself in a simulation study. Each numeric column becomes a margin
+#'   (a 0/1 column becomes a proportion, everything else a continuous margin
+#'   matching that column's mean and SD), and every continuous PAIR gets its
+#'   correlation --- taken on the LATENT scale, so on the logs for a lognormal
+#'   margin, which is the conversion easiest to get wrong by hand. Anything
+#'   named in `...` or `cor` overrides what the data would have given, so a
+#'   column you would rather state yourself simply gets stated.
 #' @return A covariate specification, as [covDist()] returns.
 #' @seealso [admStudy()], which takes one; [covDraw()] to inspect it.
 #' @export
-admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal")) {
+admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
+                          data = NULL) {
   dist <- match.arg(dist)
   a <- list(...)
+  # A BASELINE TABLE READ OFF A COHORT, rather than transcribed. The three
+  # things this absorbs are the three that were written out by hand at every
+  # source: the lognormal mean/sd, the sex proportion, and -- the one with a
+  # wrong answer rather than a tedious one -- the correlation, which is on the
+  # LATENT scale and so runs over log(WT) and log(CRCL), not WT and CRCL.
+  if (!is.null(data)) {
+    d <- .admPopFromData(data, dist, names(a))
+    a <- c(a, d$specs)
+    # `cor` the user gave WINS, pair by pair, so a stated correlation is never
+    # silently replaced by the sample one.
+    # A single continuous margin leaves NO pair, and a zero-length `cor` is
+    # not an empty correlation table -- it has no names, so the pair check
+    # below rejects it. Absent means NULL.
+    if (is.null(cor)) { if (length(d$cor)) cor <- d$cor }
+    else if (!is.matrix(cor))
+      cor <- c(cor, d$cor[setdiff(names(d$cor), names(cor))])
+  }
   if (!length(a) || is.null(names(a)) || any(!nzchar(names(a))))
     stop("admixr2: `admPopulation()` needs NAMED covariates, e.g. ",
-         "admPopulation(WT = c(mean = 75, sd = 16)).", call. = FALSE)
+         "admPopulation(WT = c(mean = 75, sd = 16)), or a `data` frame to ",
+         "derive them from.", call. = FALSE)
   nms <- names(a)
   specs <- stats::setNames(
     lapply(seq_along(a), function(i) .admPopSpec(a[[i]], nms[i], dist)), nms)
@@ -269,20 +399,31 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal")) {
 #' @param E,V,sd,sem Digitised aggregate data: the reported mean profile `E`,
 #'   with its spread as `sd` (per timepoint), `sem` (converted using `n`), or a
 #'   full covariance `V`.
-#' @param n Number of subjects the study reports on.
+#' @param n Number of subjects the study reports on. Taken from `population`
+#'   when that is the cohort's data frame.
 #' @param times Observation times.
 #' @param dose Dose amount, as shorthand for a single-dose `ev`.
 #' @param ev A dosing event table from [rxode2::et()], for anything `dose`
 #'   cannot express.
 #' @param population The population the study enrolled --- see
 #'   [admPopulation()]. Covariates the model reads are integrated over it.
+#'   A **data frame** of enrolled subjects is accepted directly and read into
+#'   a table, using the columns this model actually reads and taking `n` from
+#'   its row count.
 #' @param at Named list pinning a covariate at a value, for a study reported in
 #'   one subgroup, e.g. `at = list(SEX = 1)`.
 #' @param by Covariate the paper reports results SEPARATELY by, e.g.
 #'   `by = "SEX"`. Expands into one study per level.
-#' @param stratify Covariate to band the source over, when it fitted that
-#'   covariate and you want its contrast rather than one pooled summary. See
-#'   [covStrata()].
+#' @param stratify Band the source into strata, so a covariate it fitted
+#'   contributes a CONTRAST rather than one pooled number. `TRUE` bands over
+#'   every covariate the source's own model ESTIMATED a coefficient for, and
+#'   leaves the rest marginalised --- derived from the model, so nothing has to
+#'   be restated. A covariate the model merely READS is not banded: weight at a
+#'   fixed allometric exponent carries no fitted effect to recover, and banding
+#'   on it would buy strata and no evidence. Name a covariate explicitly to
+#'   override that judgement. Measured over 720 replicates: coverage 0.933
+#'   with one source banded and 0.925 with all of them, against 0.817 with
+#'   none --- one banded source is as good as three. See [covStrata()].
 #' @param strata_nodes,range Resolution and the enrolled range for `stratify`.
 #' @param label Optional display name; otherwise taken from the argument name in
 #'   [admStudies()].
@@ -297,7 +438,15 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
                      population = NULL, at = NULL, by = NULL,
                      stratify = NULL, strata_nodes = NULL, range = NULL,
                      label = NULL) {
-  nm  <- label %||% "study"
+  # A study has no name until admStudies() gives it one, so an unlabelled
+  # study used to report itself as `study 'study'`. The symbol the model was
+  # passed as is the one thing on hand that the user will recognise -- used for
+  # MESSAGES ONLY, never stored, so it cannot leak into the study names
+  # admStudies() derives from its own argument expressions.
+  nm  <- label %||% tryCatch({
+    .e <- substitute(model)
+    if (is.name(.e)) as.character(.e) else "study"
+  }, error = function(e) "study")
   bad <- function(...) stop("admixr2: study '", nm, "': ", ..., call. = FALSE)
   has_model <- !is.null(model)
   has_data  <- !is.null(E)
@@ -307,6 +456,12 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
   if (!has_model && !has_data)
     bad("needs either a `model` (with `est`/`rse`) or digitised `E` (with ",
         "`sd`, `sem` or `V`).")
+  # A COHORT KNOWS ITS OWN SIZE. When the population is handed over as the
+  # data frame of enrolled subjects, `n` is its row count and asking for it
+  # again is asking the user to restate what they just supplied. print() shows
+  # the number that was taken, so a subset handed over by mistake is visible
+  # before anything is fitted.
+  if (is.data.frame(population) && is.null(n)) n <- nrow(population)
   if (is.null(n) || !is.finite(n) || n <= 0)
     bad("needs a positive `n` -- the number of subjects it reports on.")
   if (is.null(times) || !length(times)) bad("needs `times`.")
@@ -351,7 +506,44 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
     if (!is.null(se) && is.null(cov)) {
       cov <- diag(unname(se)^2, nrow = length(se))
       dimnames(cov) <- list(names(se), names(se))
+      # SAY THAT THE CORRELATIONS WERE ASSERTED, NOT SUPPLIED. `se`/`rse` fill
+      # only a diagonal, so every parameter correlation is taken to be zero --
+      # a claim about the source, not a neutral default. Exact at the model's
+      # OWN reference, where the cross term is multiplied by log(x/xref) = 0,
+      # and worse the further you extrapolate: measured on real fits, a source
+      # referenced at a round 90 while its cohort sat at 60 carried
+      # corr(intercept, slope) = +0.735 and a diagonal 1.85x over-confident;
+      # re-centring the same model on the cohort median gave -0.036 and within
+      # 2%. Warned only where there is a correlation to lose.
+      if (length(se) > 1L)
+        warning("admixr2: study ", sQuote(nm), ": `",
+                if (!is.null(rse)) "rse" else "se",
+                "` fills only the DIAGONAL of this source's covariance, so all ",
+                "correlations between ", paste(sQuote(names(se)), collapse = ", "),
+                " are taken to be zero. That is exact at the model's own ",
+                "reference point and degrades as you extrapolate away from it ",
+                "-- measured up to 1.9x over-confident.
+",
+                "  Give the source's full `cov` where the paper reports one. ",
+                "Failing that, RE-CENTRE the source's model on its own ",
+                "covariate median: that makes intercept and slope ",
+                "near-orthogonal, and the diagonal nearly exact.",
+                call. = FALSE)
     }
+    # CHECK THE MATRIX HERE, NOT AT THE FIT. .admSrcCov() is the one validator
+    # for a source covariance and datagen() runs it -- but datagen() runs
+    # INSIDE the nlmixr2est stack, which swallows warnings. An INCOMPLETE
+    # matrix therefore cost the whole fit its sandwich in silence:
+    # .admSandwichCov() refuses that source rather than weight it wrong,
+    # refusing one source refuses the sandwich for EVERY study, and covMethod
+    # came back "r" with the naive standard errors printed and nothing said.
+    # Running it here also turns every malformed-matrix error into one raised
+    # while the user is still writing the study down. `$cov` carries the mapped
+    # names back (`om.eta.cl` -> `eta.cl`) so print() and the fit agree.
+    if (!is.null(cov))
+      cov <- .admSrcCov(cov, ui, nm,
+                        if (!is.null(rse)) "rse" else
+                        if (!is.null(se))  "se"  else "cov")$cov
   } else {
     if (!is.null(sem)) {
       if (!is.null(sd)) bad("has both `sd` and `sem`; give one.")
@@ -366,6 +558,30 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
     if (is.null(V)) V <- as.numeric(sd)^2
     if (length(E) != length(times))
       bad("`E` has ", length(E), " values but `times` has ", length(times), ".")
+  }
+  # A DATA FRAME IS A POPULATION, so accept one directly.
+  #
+  # EVERY column is a covariate except the ones that structurally cannot be.
+  # Restricting to what the SOURCE model reads was tried and is WRONG: a
+  # covariate the source never fitted is exactly the case this package exists
+  # for -- three trials declaring CRCL that no published model conditions on is
+  # what identifies a renal effect at all -- so dropping it would delete the
+  # evidence silently and leave a fit that converges. The filter is therefore a
+  # denylist of names rxode2/nlmixr2 reserve for the data itself.
+  if (is.data.frame(population)) {
+    drop <- names(population)[toupper(names(population)) %in% .ADM_DATA_COLS]
+    keep <- setdiff(names(population), drop)
+    if (!length(keep))
+      bad("`population` is a data frame with no covariate columns -- it has ",
+          "only ", paste(sQuote(names(population)), collapse = ", "),
+          ", which are data columns rather than covariates.")
+    if (length(drop))
+      message("admixr2: study ", sQuote(nm), ": reading ",
+              paste(sQuote(keep), collapse = ", "), " from `population`; ",
+              paste(sQuote(drop), collapse = ", "),
+              if (length(drop) == 1L) " is a data column, not a covariate."
+              else " are data columns, not covariates.")
+    population <- admPopulation(data = population[, keep, drop = FALSE])
   }
   structure(list(
     ui = ui, model = model, cov = cov, se = se, rse = rse,
@@ -483,17 +699,111 @@ admStudies <- function(...) {
 
 #' @export
 print.admStudies <- function(x, ...) {
-  cat("admixr2 studies: ", length(x), "\n", sep = "")
+  n_src <- sum(vapply(x, function(s) !is.null(s$ui), logical(1)))
+  plural <- function(n, one, many) paste0(n, if (n == 1L) one else many)
+  cat("admixr2 studies: ", length(x), "  (",
+      plural(n_src, " published model, ", " published models, "),
+      length(x) - n_src, " digitised)
+", sep = "")
   for (nm in names(x)) {
     s <- x[[nm]]
-    kind <- if (is.null(s$ui)) "data " else "model"
-    unc <- if (!is.null(s$ui)) {
-      if (is.null(s$cov)) "  NO uncertainty" else "  uncertainty supplied"
-    } else ""
-    cat(sprintf("  %-14s %s  n = %-6s %d times%s\n",
-                nm, kind, format(s$n), length(s$times), unc))
+    cat(sprintf("  %-14s %s  n = %-6s %d times%s
+", nm,
+                if (is.null(s$ui)) "data " else "model", format(s$n),
+                length(s$times),
+                if (is.null(s$ui)) "" else
+                if (is.null(s$cov)) "  NO uncertainty" else
+                                    "  uncertainty supplied"))
   }
-  cat("\nprint() a single study to check its transcription.\n")
+
+  # THE PRE-FLIGHT. Whether a covariate is IDENTIFIED is a property of the
+  # study SET, not of any one study, so this is the only place it can be said
+  # -- and it has to be said BEFORE the fit, because the failure does not look
+  # like one afterwards. A covariate marginalised identically everywhere enters
+  # only through the mixture it induces, which is what a random effect on the
+  # same parameter does; the profile is flat (0.019 units across its whole
+  # range, measured) and a deterministic optimiser stops in the same place
+  # every run, reading as converged at a wrong number.
+  role <- function(s, cv) {
+    st <- s[["stratify"]]
+    # `TRUE` bands what the source ESTIMATED, not what it reads -- the same
+    # judgement .admExpandStrata() makes, through the same helper, so the
+    # pre-flight cannot promise a banding the fit will not perform.
+    band <- if (isTRUE(st))
+              Filter(function(cv)
+                       length(.admCovCoefThetas(s$ui, cv, s[["population"]])) > 0L,
+                     intersect(.admCovSpecNames(s[["population"]]),
+                               tryCatch(s$ui$allCovs,
+                                        error = function(e) character(0))))
+            else as.character(st)
+    if (cv %in% c(names(s[["at"]]), as.character(s[["by"]]))) "conditioned"
+    else if (cv %in% band)                                    "banded"
+    else if (cv %in% .admCovSpecNames(s[["population"]]))     "marginal"
+    else                                                      "-"
+  }
+  allcov <- unique(unlist(lapply(x, function(s)
+    .admCovSpecNames(s[["population"]]))))
+  if (length(allcov)) {
+    cat("
+covariate      ",
+        paste(sprintf("%-10s", substr(names(x), 1L, 10L)), collapse = ""),
+        "
+", sep = "")
+    flat <- character(0); fit_by <- character(0)
+    for (cv in allcov) {
+      r <- vapply(x, role, character(1), cv = cv)
+      if (all(r %in% c("marginal", "-"))) {
+        flat <- c(flat, cv)
+        if (any(vapply(x, function(s)
+              length(.admCovCoefThetas(s$ui, cv, s[["population"]])) > 0L,
+              logical(1))))
+          fit_by <- c(fit_by, cv)
+      }
+      cat(sprintf("  %-13s", cv), paste(sprintf("%-10s", r), collapse = ""),
+          "
+", sep = "")
+    }
+    if (length(flat))
+      cat("
+NOTE: ", paste(sQuote(flat), collapse = ", "),
+          if (length(flat) == 1L)
+            " is marginal in every source, so its effect is identified ONLY"
+          else
+            " are marginal in every source, so their effects are identified ONLY",
+          " by the contrast BETWEEN sources -- no source",
+          " carries a within-source contrast to separate it from a random",
+          " effect on the same parameter. Legitimate when the sources really",
+          " do differ; a flat ridge when they do not, and a flat ridge",
+          " converges to a confident wrong number rather than failing.",
+          # only suggest banding where some source could actually be banded --
+          # .admExpandStrata() refuses a covariate whose coefficient every
+          # source asserted, so naming one here would send the reader into an
+          # error rather than a fix
+          if (length(fit_by))
+            paste0(" Band the source that fitted it (`stratify = \"",
+                   fit_by[1L], "\"`).")
+          else
+            paste0(" No source fitted ",
+                   if (length(flat) == 1L) "it" else "any of them",
+                   ", so banding is not available and this is the",
+                   " between-source contrast and nothing more."),
+          "
+", sep = "")
+  }
+  miss <- names(x)[vapply(x, function(s) !is.null(s$ui) && is.null(s[["cov"]]),
+                          logical(1))]
+  if (length(miss))
+    cat("
+NOTE: ", paste(sQuote(miss), collapse = ", "),
+        if (length(miss) == 1L) " reports a model but no uncertainty, so it"
+        else " report a model but no uncertainty, so they",
+        " will be weighted as if `n` patients had been sampled. A published",
+        " model is not a sample: give the paper's `cov`, or its `rse` column.
+",
+        sep = "")
+  cat("
+print() a single study to check its transcription.
+")
   invisible(x)
 }
 
@@ -575,4 +885,47 @@ print.admStudies <- function(x, ...) {
     for (k in names(g)) out[[k]] <- g[[k]]
   }
   out
+}
+
+# =============================================================================
+# The default that would otherwise be a silent wrong answer
+# =============================================================================
+#
+# A model source's uncertainty is its OWN published covariance: the only random
+# object in that study is the estimate its analyst got, so Var(t_s) = D C_src D'
+# and nothing about `n` enters. Only the sandwich carries that term -- under
+# covMethod = "r" the source is read as if `n` patients had been sampled, and
+# the reported standard error then FALLS as 1/sqrt(n) toward zero (measured
+# 0.08000 at every n under "r,s"; "r" tracked 1/sqrt(n) from n = 100 to 6400).
+#
+# Both numbers are finite and plausible, so nothing downstream can tell them
+# apart -- which is why this upgrades the default rather than warning about it.
+# An explicit covMethod is always honoured, including an explicit "r".
+
+# Does any study contribute as a published MODEL carrying uncertainty?
+#
+# Three shapes reach here: an admStudy() spec, a raw datagen spec written by
+# hand, and an already-generated study. `[[ ]]` throughout -- `$cov` partial-
+# matches `cov_dist` on a datagen spec, which is the trap .admMaterialise()
+# records.
+.admHasModelSource <- function(studies) {
+  if (inherits(studies, "admStudies")) studies <- unclass(studies)
+  if (!is.list(studies) || !length(studies)) return(FALSE)
+  any(vapply(studies, function(s) {
+    if (!is.list(s)) return(FALSE)
+    if (inherits(s, "admStudy")) return(!is.null(s$ui) && !is.null(s[["cov"]]))
+    !is.null(s[["model_cov"]]) || !is.null(s[[".adm_src"]][["cov"]])
+  }, logical(1)))
+}
+
+.admResolveCovMethod <- function(covMethod, studies, explicit) {
+  if (isTRUE(explicit) || !identical(covMethod, "r")) return(covMethod)
+  if (!.admHasModelSource(studies)) return(covMethod)
+  message("admixr2: a study contributes as a published MODEL with its own ",
+          "reported uncertainty, so covMethod has been set to \"r,s\". The ",
+          "sandwich is what carries that source's covariance into the ",
+          "standard errors; under \"r\" they would instead shrink with `n`, ",
+          "which a model source does not have. Pass covMethod = \"r\" ",
+          "explicitly to keep the naive form.")
+  "r,s"
 }

@@ -2126,7 +2126,12 @@ covStrata <- function(cov_dist, stratify, n_nodes = 5L, n = 1,
     # fabricated null contrast, measured at 0.450 -> 0.211.
     if (isTRUE(s[["stratify"]])) {
       m <- s[["model"]] %||% model
-      if (!is.function(m))
+      # AN rxUi COUNTS, and admStudy() only ever supplies one: it parses the
+      # model at construction so the transcription can be checked, and hands
+      # the ui down. rxode2::rxode2() is idempotent on a ui -- the next line
+      # calls it either way -- and datagen() accepts both for the same reason,
+      # so demanding a function here rejected the whole admStudy() route.
+      if (!is.function(m) && !inherits(m, "rxUi"))
         stop("admixr2: study '", nm, "' asks for `stratify = TRUE`, which is ",
              "derived from that study's own data-generating model, but no ",
              "`model` was supplied for it.", call. = FALSE)
