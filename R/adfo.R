@@ -981,7 +981,7 @@
   # Directions H does not determine are reported as NA rather than as a large
   # finite number. The reason travels on the covariance because a warning raised
   # here does not reach the user -- .admFinaliseFit() says it.
-  .cchk <- .admCondCheck(H, nms_cov)
+  .cchk <- .admCondCheck(H, .admCondReportNames(nms_cov, pinfo))
   if (!is.null(.cchk)) out <- .admCondBlank(out, .cchk)
   attr(out, "ill_cond") <- .cchk
   attr(out, "sandwich") <- sw_used
@@ -1833,14 +1833,18 @@ nlmixr2Est.adfo <- function(env, ...) {
     warning("covariance could not be computed (the Hessian was singular or ",
             "non-finite); standard errors are unavailable for this fit.",
             call. = FALSE)
-  # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
-  # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
-  # what the covariance IS, not what was asked for -- a degraded sandwich is "r"
-  # Ill-conditioned directions and the source yardstick. Emitted from the
-  # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.
-  .admReportCovWarnings(.cov, studies, .ctl$covMethod)
+  # The label records what the covariance IS, not what was asked for: a
+  # requested sandwich that degraded to the naive form must not be reported as
+  # one, and .admReportCovWarnings() must judge the covariance in hand -- a
+  # covariate fit that asked for "r,s" and did not get it is exactly the
+  # configuration measured as invalid.
   .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
   .sw_HJ    <- attr(.cov, "sandwich_HJ")
+  # Ill-conditioned directions and the source yardstick. Emitted from the
+  # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.
+  .admReportCovWarnings(.cov, studies, .cov_lbl)
+  # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
+  # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]

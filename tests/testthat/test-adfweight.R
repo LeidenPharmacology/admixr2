@@ -48,6 +48,8 @@ test_that("the mean block is Vt/N under either weight", {
 })
 
 test_that("the information equality holds: J(working weight) == 2H", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   # THE test for the sandwich. J = sum_s G_s W_s G_s' with W the weight the
   # objective actually uses must equal 2H exactly at a well-specified fixture.
   # It fails loudly if either half is wrong, and it caught three real bugs:
@@ -69,7 +71,13 @@ test_that("the information equality holds: J(working weight) == 2H", {
             cp ~ prop(prop.err) })
   }
   ui <- suppressMessages(rxode2::rxode2(.mod))
-  ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+  ov <- admixr2:::.admOutputVar(ui)
+  # SENS BEFORE SIM, always: .admLoadModel's cache-miss path caches
+  # foceiModel$inner = NULL for a linCmt() model, after which the sensitivity
+  # equations can never be retrieved -- and the cache is user-wide, so this
+  # poisons other sessions too. CLAUDE.md records that there is no recovery.
+  sens <- admixr2:::.admLoadSensModel(ui)
+  rx <- admixr2:::.admLoadModel(ui)
   E0 <- DOSE / 10 * exp(-0.1 * TIMES)
   mk <- function(E, V, N, meth)
     list(s = list(E = E, V = if (meth == "var") diag(V) else V, n = N,
@@ -94,7 +102,6 @@ test_that("the information equality holds: J(working weight) == 2H", {
     W   <- admixr2:::.admWorkingWeight(p2$V, N, s1$method)
     # BOTH routes to the moment Jacobian must satisfy it -- the identity is what
     # says the analytic one describes the same objective the FD one does.
-    sens <- admixr2:::.admLoadSensModel(ui)
     mds <- list(
       fd       = admixr2:::.admMomentDeriv(p, pin, u2$studies, rx, ov, g, 1L),
       analytic = admixr2:::.admMomentJac(p, pin, u2$studies, sens, rx, ov, g, 1L))
@@ -219,6 +226,8 @@ test_that("a residual the expansion cannot reach is refused, not approximated", 
 })
 
 test_that("the weight's own S is the V_pred the objective scores against", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   # .admAdfWeightFast rebuilds S from (C, Dv) via the law of total variance. If
   # that disagrees with V_pred, the weight and the objective describe different
   # laws and every block downstream is scaled wrong -- silently, since both are
@@ -235,7 +244,9 @@ test_that("the weight's own S is the V_pred the objective scores against", {
       model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ lnorm(e) }) })
   for (nm in names(mods)) {
     ui <- suppressMessages(rxode2::rxode2(mods[[nm]]))
-    ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+    ov <- admixr2:::.admOutputVar(ui)
+    invisible(admixr2:::.admLoadSensModel(ui))  # sens BEFORE sim; see above
+    rx <- admixr2:::.admLoadModel(ui)
     E0 <- DOSE / 10 * exp(-0.1 * TIMES)
     st <- list(s = list(E = E0, V = diag((0.3 * E0)^2), n = N, times = TIMES,
                         ev = rxode2::et(amt = DOSE)))
@@ -254,6 +265,8 @@ test_that("the weight's own S is the V_pred the objective scores against", {
 })
 
 test_that("the weight's S tracks V_pred to the objective's own accuracy on TBS", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   # For add/prop/lnorm the identity above is exact to ~1e-15. TBS is the one
   # family where it is not, and the gap is the OBJECTIVE's approximation rather
   # than the weight's: .admTBSRow builds the predicted variance as a
@@ -275,7 +288,9 @@ test_that("the weight's S tracks V_pred to the objective's own accuracy on TBS",
             cp ~ add(e) + boxCox(lam) })
   }
   ui  <- suppressMessages(rxode2::rxode2(.bc))
-  ov  <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+  ov  <- admixr2:::.admOutputVar(ui)
+  invisible(admixr2:::.admLoadSensModel(ui))   # sens BEFORE sim; see above
+  rx  <- admixr2:::.admLoadModel(ui)
   pin <- admixr2:::.admParseIniDf(ui$iniDf, ui)
   pin$nDisplayProgress <- .Machine$integer.max; pin$resid_nodes <- 81L
   E0 <- DOSE / 10 * exp(-0.1 * TT)
@@ -301,6 +316,8 @@ test_that("the weight's S tracks V_pred to the objective's own accuracy on TBS",
 })
 
 test_that("the analytic moment Jacobian matches the finite-difference oracle", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   # G = d2F/(dPsi dt') is closed form in (dE/dPsi, dV/dPsi), so these two are the
   # only derivatives the sandwich takes. .admMomentJac forms them from one
   # sensitivity solve; .admMomentDeriv central-differences the moments and is
@@ -362,6 +379,8 @@ test_that("the analytic moment Jacobian matches the finite-difference oracle", {
 })
 
 test_that("the analytic Jacobian covers the covariate paths", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   # The quadrature and Taylor covariate grids change the node set the moments are
   # taken over, and a structural theta then reaches f through the shift nodes as
   # well as its own sensitivity column. Both moments are LINEAR in the raw
@@ -399,11 +418,14 @@ test_that("the analytic Jacobian covers the covariate paths", {
 })
 
 test_that(".admMomentJac refuses rather than approximates what it cannot reach", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   skip_if_not_installed("rxode2")
   TT <- c(2, 5, 9); DOSE <- 100
   fn <- function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.5 })
     model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ add(e) }) }
   ui  <- suppressMessages(rxode2::rxode2(fn)); ov <- admixr2:::.admOutputVar(ui)
+  invisible(admixr2:::.admLoadSensModel(ui))   # sens BEFORE sim; see above
   rx  <- admixr2:::.admLoadModel(ui)
   E0  <- DOSE / 10 * exp(-0.1 * TT)
   st  <- list(s1 = list(E = E0, V = diag((0.25 * E0)^2), n = 100L, times = TT,

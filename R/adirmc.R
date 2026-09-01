@@ -190,6 +190,20 @@ adirmcControl <- function(
   checkmate::assertIntegerish(max_worse,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(kappa_n_nodes, lower = 1L, len = 1)
   covMethod <- match.arg(covMethod)
+  # A MODEL SOURCE CARRYING ITS OWN COVARIANCE IS REFUSED HERE, not silently
+  # scored without the correction. The D C_src D' term needs each study's mean
+  # in R, and adirmc's mu is the importance-weighted mean computed INSIDE
+  # irmc_inner_nll_cpp -- it never exists at R level, so there is nothing to
+  # correct. Left unsaid, the fit would run and report the too-tight weight the
+  # correction exists to remove. The other three estimators upgrade covMethod
+  # instead (see .admResolveCovMethod); adirmc has no such route.
+  if (.admHasModelSource(studies))
+    stop("admixr2: est = \"adirmc\" cannot fit a study that contributes as a ",
+         "published MODEL with its own reported uncertainty. Its predicted ",
+         "mean is the importance-weighted mean formed inside the C++ kernel, ",
+         "so the source-covariance correction has nothing to attach to.
+",
+         "  Use est = \"adgh\" or \"admc\", which carry it.", call. = FALSE)
   checkmate::assertIntegerish(cov_n_sim,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(n_restarts,   lower = 1L,  len = 1)
   checkmate::assertNumeric(restart_sd,      lower = 0,   len = 1)
@@ -1460,14 +1474,18 @@ nlmixr2Est.adirmc <- function(env, ...) {
     warning("covariance could not be computed (the Hessian was singular or ",
             "non-finite); standard errors are unavailable for this fit.",
             call. = FALSE)
-  # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
-  # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
-  # what the covariance IS, not what was asked for -- a degraded sandwich is "r"
-  # Ill-conditioned directions and the source yardstick. Emitted from the
-  # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.
-  .admReportCovWarnings(.cov, studies, .ctl$covMethod)
+  # The label records what the covariance IS, not what was asked for: a
+  # requested sandwich that degraded to the naive form must not be reported as
+  # one, and .admReportCovWarnings() must judge the covariance in hand -- a
+  # covariate fit that asked for "r,s" and did not get it is exactly the
+  # configuration measured as invalid.
   .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
   .sw_HJ    <- attr(.cov, "sandwich_HJ")
+  # Ill-conditioned directions and the source yardstick. Emitted from the
+  # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.
+  .admReportCovWarnings(.cov, studies, .cov_lbl)
+  # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
+  # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]

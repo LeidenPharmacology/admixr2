@@ -618,11 +618,14 @@
     }
     return(.admStampStudy(s, nm))
   }
-  # BEFORE any branch reads V: the joint constructor assembles its own matrix
-  # from the raw per-observation blocks and never passes through
-  # .admNormaliseObs, so converting there would miss it.
-  s <- .admVDenom(s, nm)
+  # AFTER the long-format expansion and BEFORE any branch reads V. Both halves
+  # matter. A `data =` study's spread is in a V/SD COLUMN, so at this point
+  # s$V is NULL and converting first was a silent no-op that then stamped
+  # v_denom = "ml" -- the declaration accepted, honoured nowhere. And the joint
+  # constructor assembles its own matrix from the raw per-observation blocks
+  # without passing through .admNormaliseObs, so converting later would miss it.
   if (!is.null(s$data)) s <- .admExpandLongStudy(s, nm)
+  s <- .admVDenom(s, nm)
   if (!is.null(s$observations) &&
       (isTRUE(s$joint) || !is.null(s$cross) || !is.null(s$V))) {
     if (!is.list(s$observations) || length(s$observations) == 0L)

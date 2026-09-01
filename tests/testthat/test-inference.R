@@ -182,3 +182,35 @@ test_that("a boundary restriction is refused, not rescaled", {
   expect_equal(got$df, 1L)
   expect_true(is.finite(got$p))
 })
+
+test_that("Ruben's series reports non-convergence instead of a truncated sum", {
+  # A truncated partial sum is a sum of POSITIVE terms stopped early, so it is
+  # too SMALL and reads as a perfectly ordinary probability -- 0.177 where the
+  # answer is 0.665, i.e. p = 0.823 reported for a true 0.335. Iterations scale
+  # with max(lambda)/min(lambda), and the caller's gate is on kappa(A), which
+  # does not bound that spread at all.
+  expect_true(is.na(admixr2:::.admRubenP(25001, c(1, 5000, 20000))))
+  # ... and a well-scaled case still converges to the self-check: with every
+  # lambda equal the series is exactly pchisq(x/lambda, q).
+  expect_equal(admixr2:::.admRubenP(7, rep(2, 3)),
+               stats::pchisq(7 / 2, 3), tolerance = 1e-8)
+  expect_true(is.finite(admixr2:::.admRubenP(6, c(1, 1.5, 2))))
+})
+
+test_that("anova's Weight and Test columns print as written", {
+  # stats::print.anova routes through printCoefmat -> data.matrix(), which
+  # turns a CHARACTER column into its FACTOR CODES: a row whose weights are
+  # "0.310, 1.900" printed as `1`, reading as the ordinary chi-squared test --
+  # the opposite of what that column exists to say.
+  df <- data.frame(Npar = c(2L, 3L), OBJF = c(10, 8),
+                   Test = c(NA_character_, "1 vs 2"),
+                   Weight = c(NA_character_, "0.310, 1.900"),
+                   p = c(NA_real_, 0.04),
+                   row.names = c("m0", "m1"), stringsAsFactors = FALSE)
+  attr(df, "heading") <- "Likelihood-ratio test"
+  class(df) <- c("anova.admFit", "anova", "data.frame")
+  out <- paste(utils::capture.output(print(df)), collapse = " ")
+  expect_match(out, "0.310, 1.900", fixed = TRUE)
+  expect_match(out, "1 vs 2", fixed = TRUE)
+  expect_match(out, "Likelihood-ratio test", fixed = TRUE)
+})

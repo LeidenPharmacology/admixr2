@@ -165,6 +165,23 @@
 # median is not an approximation to the orthogonalising reference, it IS it.
 .ADM_WEAK_RCOND <- 1e-4
 
+# Optimizer-scale names translated to the names the covariance is REPORTED
+# under. `.admScaleReportedCov` relabels the omega rows to om.<eta>/cov.<i>.<j>,
+# so an ill-conditioned direction described in parse.R's `logchol_<eta>` /
+# `chol_<i>_<j>` vocabulary matched NOTHING: .admCondBlank's match() went all-NA
+# and returned the covariance untouched, so the warning said the standard errors
+# were NA while a large finite one from rounding error was printed -- and it
+# named a parameter absent from parFixedDf. Anything unrecognised is left as it
+# is; a reduced H (see .admReduceNpdOmega) simply carries no omega rows.
+.admCondReportNames <- function(nms, pinfo) {
+  op <- pinfo$omega_par_names
+  if (is.null(op) || !length(op)) return(nms)
+  rp <- tryCatch(.admOmegaReportNames(pinfo), error = function(e) NULL)
+  if (is.null(rp) || length(rp) != length(op)) return(nms)
+  i <- match(nms, op)
+  ifelse(is.na(i), nms, rp[i])
+}
+
 .admCondCheck <- function(H, nms, tol = .ADM_NPD_RCOND) {
   if (is.null(H) || !is.matrix(H) || nrow(H) != ncol(H) || !all(is.finite(H)))
     return(NULL)

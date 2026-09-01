@@ -131,9 +131,17 @@ test_that("an INCOMPLETE model_cov is refused rather than understating the SE", 
   # and the fit then refuses the sandwich rather than reporting a too-small SE
   f <- suppressWarnings(.ms_run(g))
   expect_s3_class(f, "admFit")
-  expect_false(isTRUE(all.equal(
-    stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))[["tcl"]],
-    sqrt(C["tcl", "tcl"]), tolerance = 1e-3)))
+  # NOT expect_false(all.equal(SE, declared)): that passes for ANY other value,
+  # including 0.008, NA and Inf -- i.e. for exactly the too-small-but-plausible
+  # outcome this test exists to rule out. Pin the covariance actually reported.
+  expect_identical(f$covMethod, "r")
+  .se <- stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))[["tcl"]]
+  # the naive value the refusal falls back to, reproduced independently
+  .naive <- suppressWarnings(suppressMessages(.ms_run(g, cm = "r")))
+  .se_r  <- stats::setNames(.naive$parFixedDf[["SE"]],
+                            rownames(.naive$parFixedDf))[["tcl"]]
+  expect_true(is.finite(.se) && .se > 0)
+  expect_equal(.se, .se_r, tolerance = 1e-6)
 })
 
 test_that("the covariance route does not disturb a DATA source", {

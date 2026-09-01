@@ -1322,6 +1322,11 @@ nmObjGetControl.admc <- function(x, ...) {
       # dev-mode daemon, which cannot ADD bindings to the installed namespace)
       for (nm in names(sensModel$fixed_theta))
         inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
+      # Covariates, tiled per configuration block (see .admNLLBatch). Covariate
+      # names are model parameters, so they are NOT in the sens model's rename
+      # map -- match against sensModel$mod$params, not rxMod$params.
+      s        <- .admStudyCovRows(s, pinfo, n_sim)
+      inner_df <- .admCovColsTiled(inner_df, sensModel$mod$params, s, n_sim, n_c)
       # do.call + sensModel$solve_args: DDE sensitivity solves are forced onto pure
       # dop853 (see .admLoadSensModel); NULL, hence a no-op, for every other model.
       out <- tryCatch(
@@ -1507,6 +1512,8 @@ nmObjGetControl.admc <- function(x, ...) {
         nm_u <- pinfo$struct_names[unpaired_k[bi]]
         pdf_hi[rows, nm_u] <- pars$struct[nm_u] + .admGH(h, unpaired_k[bi])
       }
+      s      <- .admStudyCovRows(s, pinfo, n_sim)
+      pdf_hi <- .admCovColsTiled(pdf_hi, rxMod$params, s, n_sim, n_cu)
       out_hi <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                           events = s$ev_full, cores = cores,
                                           nDisplayProgress = pinfo$nDisplayProgress,
@@ -1689,16 +1696,14 @@ nmObjGetControl.admc <- function(x, ...) {
     use_grad <- FALSE
 
   # Same shape of problem for a covariate study, and the same remedy.
-  # .admGradBatch() builds FIVE params frames by hand -- the sens inner_df and
-  # four pdf_mat/pdf_hi/pdf_lo blocks, each with its own stride -- and none of
-  # them carries the per-row covariate. The Hessian would then be of a DIFFERENT
-  # objective than the one that was minimised: covariate held at its mean, so the
-  # reported standard errors would be those of a mean-only fit while the
-  # estimates are those of a marginalised one. Finite, plausible, and wrong.
-  #
-  # .admNLLBatch() IS covariate-aware, so route the Hessian through it rather
-  # than tile five more frames correctly. Costs the gradient path's speed on
-  # covariate fits only.
+  # .admGradBatch() builds five params frames by hand, each with its own stride.
+  # All five now carry the per-row covariate (two of them did not, so an
+  # unpaired struct theta -- typically the covariate coefficient itself -- had a
+  # rxSolve that failed on the missing parameter, swallowed into a skipped
+  # accumulation and a constant-ZERO Hessian row, with `valid` still TRUE). Even
+  # so a MARGINALISING study keeps the .admNLLBatch route: its design moves with
+  # the parameters, so the Hessian would otherwise be of a different objective
+  # than the one minimised. Costs the gradient path's speed on covariate fits.
   if (isTRUE(use_grad) &&
       # a fully stratified study's cov_dist is all point specs, so it
       # marginalises nothing and need not cost the gradient-based Hessian
@@ -1913,7 +1918,7 @@ nmObjGetControl.admc <- function(x, ...) {
   # Directions H does not determine are reported as NA rather than as a large
   # finite number. The reason travels on the covariance because a warning raised
   # here does not reach the user -- .admFinaliseFit() says it.
-  .cchk <- .admCondCheck(H, nms_cov)
+  .cchk <- .admCondCheck(H, .admCondReportNames(nms_cov, pinfo))
   if (!is.null(.cchk)) out <- .admCondBlank(out, .cchk)
   attr(out, "ill_cond") <- .cchk
   attr(out, "sandwich") <- sw_used
@@ -3105,14 +3110,18 @@ nlmixr2Est.admc <- function(env, ...) {
     warning("covariance could not be computed (the Hessian was singular or ",
             "non-finite); standard errors are unavailable for this fit.",
             call. = FALSE)
-  # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
-  # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
-  # what the covariance IS, not what was asked for -- a degraded sandwich is "r"
-  # Ill-conditioned directions and the source yardstick. Emitted from the
-  # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.
-  .admReportCovWarnings(.cov, studies, .ctl$covMethod)
+  # The label records what the covariance IS, not what was asked for: a
+  # requested sandwich that degraded to the naive form must not be reported as
+  # one, and .admReportCovWarnings() must judge the covariance in hand -- a
+  # covariate fit that asked for "r,s" and did not get it is exactly the
+  # configuration measured as invalid.
   .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
   .sw_HJ    <- attr(.cov, "sandwich_HJ")
+  # Ill-conditioned directions and the source yardstick. Emitted from the
+  # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.
+  .admReportCovWarnings(.cov, studies, .cov_lbl)
+  # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
+  # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]

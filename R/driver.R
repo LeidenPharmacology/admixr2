@@ -163,7 +163,13 @@
   d  <- if (multi_out) admData(.admEndpointNames(.ui)) else admData()
   cv <- tryCatch(.ui$allCovs, error = function(e) NULL)
   for (nm in cv) {
-    vals <- unlist(lapply(studies, function(s) s[["cov"]][[nm]]), use.names = FALSE)
+    # [[ ]] on an ATOMIC s$cov is "subscript out of bounds", raised after the
+    # whole fit has run. A study may carry its covariates as a named numeric
+    # vector as easily as a list, so read both.
+    vals <- unlist(lapply(studies, function(s) {
+      cs <- s[["cov"]]
+      if (is.null(cs) || !nm %in% names(cs)) NULL else cs[[nm]]
+    }), use.names = FALSE)
     vals <- vals[is.finite(vals)]
     d[[nm]] <- if (length(vals)) mean(vals) else 1
   }
@@ -284,8 +290,13 @@
   # HERE because all four drivers pass through this function -- a field set in
   # three of four is a silent divergence, not an error. The objective is
   # J-dependent, so anova() refuses to compare fits that disagree on it.
-  .Jn <- unique(unlist(lapply(studies, function(s) s[[".adm_strata_nodes"]])))
-  if (length(.Jn) == 1L) .ret$env$strataNodes <- .Jn
+  # Stamped on .fit below, NOT on .ret: `.ret$env` does not exist, so assigning
+  # into it creates a plain LIST named `env` and the field is unreachable --
+  # `fit$env` dispatches to nlmixr2est's nmObjGet.env, which returns the fit
+  # environment. anova()'s refusal was dead code for exactly that reason.
+  # The whole set is recorded, not just a length-1 one, so a mixed-resolution
+  # fit is comparable only with another built the same way.
+  .Jn <- sort(unique(unlist(lapply(studies, function(s) s[[".adm_strata_nodes"]]))))
   nlmixr2est::.nlmixr2FitUpdateParams(.ret)
   handle_ctl(.ctl, .ret)
   if (exists("control", .ui)) rm(list = "control", envir = .ui)
@@ -301,6 +312,7 @@
     table = .ret$table, env = .ret, est = est)
 
   .fit$env$method <- est
+  if (length(.Jn)) .fit$env$strataNodes <- .Jn
   .admRestoreCovNames(.fit, cov_nms)
   .fit$env$studies <- studies
   .extra <- .ret[[extra_field]]

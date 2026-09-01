@@ -479,9 +479,8 @@ exact functions of that model's parameters, so the only uncertain thing in the
 whole chain is the estimate the original analyst published --- and the interval
 on our answer has to come from theirs.
 
-That is why each study above carries `model_cov`, the source fit's own
-covariance. Hand it the fit's `$cov` as it comes; the `om.eta.cl` naming is
-understood.
+That is why each study above carries `cov`, the source fit's own covariance.
+Hand it the fit's `$cov` as it comes; the `om.eta.cl` naming is understood.
 
 Without it, `n` gets read as a sample size instead, and the reported SE then
 falls as `1/sqrt(n)` --- exactly proportional, measured to four significant
@@ -578,7 +577,7 @@ gap is large enough to matter.
 The `Weight` column is the factor `dOFV` was divided by, and it is worth
 reading. It is *exactly* proportional to the uncertainty the sources declared
 and to the weight they carry (`n`), and it does not touch the estimates at all
---- scaling every `model_cov` by 64 leaves the fitted `bcrcl` bit-identical
+--- scaling every source's `cov` by 64 leaves the fitted `bcrcl` bit-identical
 while moving `Weight` by exactly 64. So it is the share of this fit's apparent
 information that is really the source analysts' uncertainty rather than
 evidence. A `Weight` near 1 means the sources are precise enough to behave like
@@ -885,8 +884,9 @@ also refuses a population naming a covariate the model never reads.
   popPK analysis would.
 * **Extrapolation is extrapolation.** The severe prediction works because the
   power model is the right functional form and the three cohorts span enough
-  CRCL to pin its exponent. Fitted over 38–95 mL/min and applied at 21, it
-  should be presented as such.
+  CRCL to pin its exponent. Fitted over
+  `r sprintf("%.0f", min(sapply(cohorts, function(c) quantile(c$CRCL, .05))))`--`r sprintf("%.0f", max(sapply(cohorts, function(c) quantile(c$CRCL, .95))))`
+  mL/min and applied at 21, it should be presented as such.
 
 ## See also
 

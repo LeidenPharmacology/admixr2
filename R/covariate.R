@@ -330,6 +330,20 @@
     studies[[nm]]$cov_dist <- .admCovDistCanon(studies[[nm]]$cov_dist)
 
   covs <- tryCatch(.ui$allCovs, error = function(e) character(0))
+  # A JOINT unit has no per-row covariate path -- the shared-eta solve produces
+  # one prediction set for every output at once -- so marginalising over a
+  # covariate would silently solve at its mean. Refused HERE, at admission,
+  # rather than only inside .adghMomentsJoint: that refusal sits on the NLL
+  # path, so a fit could converge and then fail at the covariance, or take a
+  # different route (batched moments, the plot's aggregate data) that never
+  # asks. One admission gate covers all of them.
+  .jt <- vapply(studies[has], function(s) isTRUE(s$is_joint), logical(1))
+  if (any(.jt))
+    stop("admixr2: covariate marginalisation is not supported for a JOINT ",
+         "(same-subject, multi-output) unit -- study ",
+         paste(sQuote(names(studies)[has][.jt]), collapse = ", "),
+         ". The shared-eta joint solve has no per-row covariate path, so this ",
+         "would silently solve at the covariate mean.", call. = FALSE)
   .admCovDiscContrast(.ui, studies, names(studies)[has])
 
   for (nm in names(studies)[has]) {
@@ -359,6 +373,23 @@
                 is.finite(sp$meanlog) && is.finite(sp$sdlog) && sp$sdlog > 0
       disc   <- !is.null(sp$values) && length(sp$values) > 0L &&
                 all(is.finite(sp$values))
+      # A DROPPED LEVEL IS A TYPO THAT TWO ESTIMATORS READ DIFFERENTLY.
+      # values = c(0, 1, 2) with probs = c(0.5, 0.5): admc's .admCovQuantile
+      # renormalises over 2 entries, so cumsum is (0.5, 1) and level 2 is
+      # UNREACHABLE; adgh's .admCovNodesFor returns 3 nodes against 2 weights,
+      # which .admCovGrid recycles to (0.5, 0.5, 0.5) and normalises to a
+      # UNIFORM 3-level covariate. Both finite, both plausible, neither the
+      # declared distribution -- and the raw `values`(+`probs`) form is what
+      # the error message just below invites.
+      if (disc && !is.null(sp$probs)) {
+        if (length(sp$probs) != length(sp$values))
+          bad("`cov_dist` for '", cv, "' in study '", nm, "' gives ",
+              length(sp$values), " `values` but ", length(sp$probs),
+              " `probs`. Give one probability per level.")
+        if (!all(is.finite(sp$probs)) || any(sp$probs < 0) || !sum(sp$probs) > 0)
+          bad("`cov_dist` for '", cv, "' in study '", nm, "' has `probs` that ",
+              "are not non-negative and summing to something positive.")
+      }
       userq  <- is.function(sp$quantile)
       if (!(normal || lnorm || disc || userq))
         bad("`cov_dist` for '", cv, "' in study '", nm, "' is not a supported ",
@@ -869,6 +900,14 @@
   cov_dist[["latentR"]] <- R
   cov_dist[["discExact"]] <- .admCovDiscExact(cov_dist, nms, R)
   margins <- lapply(nms, function(nm) cov_dist[[nm]])
+  # Marked as OURS. covStrata() truncates the margins and re-canonicalises, and
+  # the early return at "an explicit sampler is the more specific statement"
+  # would otherwise hand back a closure still holding the UNTRUNCATED margins --
+  # so bands were cut over the full declared support with no warning (the
+  # cov_range gate had been satisfied), which is the var(declared)/var(enrolled)
+  # overstatement that gate exists to prevent. A user's own `joint` is still
+  # never rebuilt: only a closure carrying this flag is discarded.
+  cov_dist[["jointOwn"]] <- TRUE
   cov_dist[["joint"]] <- local({
     nms <- nms; margins <- margins; Lc <- Lc; d <- d
     function(u) {
@@ -1333,7 +1372,37 @@
 # CLOSURE ("object of type 'closure' is not subsettable"), and
 # .admCheckCovariates reported "declares cov_dist for 'rho', which the model
 # never reads".
-.ADM_COV_META <- c("rho", "Sigma", "cor", "joint", "latentR", "discExact")
+.ADM_COV_META <- c("rho", "Sigma", "cor", "joint", "jointOwn", "latentR",
+                   "discExact")
+
+# Drop ONE margin from a canonical spec, and rebuild everything derived from it.
+#
+# `cdk[[by]] <- NULL` alone is a silent wrong answer: `latentR` is indexed
+# POSITIONALLY and carries no dimnames, and `joint` is a closure over the
+# original margin list. After dropping SEX from (SEX, WT, CRCL), .admCovCollapse
+# read R[1:2, 1:2] -- the SEX/WT block, i.e. the identity -- so a declared
+# WT-CRCL correlation of 0.5 became independence in every `by`-level study,
+# while the quadrature route instead hard-errored inside a sampler the user
+# never wrote ("cov_dist$joint failed ... non-conformable arguments").
+# Re-express the surviving correlations as a NAMED `cor` and re-canonicalise.
+.admCovDropMargin <- function(cd, drop) {
+  nms  <- .admCovSpecNames(cd)
+  keep <- setdiff(nms, drop)
+  R    <- cd[["latentR"]]
+  out  <- cd
+  out[[drop]] <- NULL
+  out[c("joint", "jointOwn", "discExact", "latentR", "cor", "rho",
+        "Sigma")] <- NULL
+  if (!is.null(R) && length(keep) > 1L &&
+      identical(dim(R), c(length(nms), length(nms)))) {
+    i  <- match(keep, nms)
+    Rk <- R[i, i, drop = FALSE]
+    dimnames(Rk) <- list(keep, keep)
+    out[["cor"]] <- Rk
+  }
+  if (!length(.admCovSpecNames(out))) return(NULL)
+  .admCovDistCanon(out)
+}
 
 # Discrete margins a `joint` sampler maps STRAIGHT FROM THEIR OWN UNIFORM.
 #
@@ -1567,6 +1636,21 @@
           " that this study's `cov_dist` does not declare.")
     for (nm in names(cov_range))
       cov_dist[[nm]] <- .admCovTruncSpec(cov_dist[[nm]], cov_range[[nm]], nm)
+    # Discard the derived fields FIRST: the canon short-circuits on an existing
+    # `joint`, so re-running it over truncated margins was a no-op and the
+    # sampler kept the full declared support. The correlation has to be handed
+    # BACK as `cor` -- the first canon consumed it (cov_dist[["cor"]] <- NULL)
+    # and left only `latentR` -- or dropping the derived fields would drop the
+    # dependence with them.
+    if (isTRUE(cov_dist[["jointOwn"]])) {
+      .R <- cov_dist[["latentR"]]
+      cov_dist[c("joint", "jointOwn", "latentR", "discExact")] <- NULL
+      if (!is.null(.R) && length(nms) > 1L &&
+          identical(dim(.R), c(length(nms), length(nms)))) {
+        dimnames(.R) <- list(nms, nms)
+        cov_dist[["cor"]] <- .R
+      }
+    }
     cov_dist <- .admCovDistCanon(cov_dist)
   }
   .no_rng <- setdiff(stratify, names(cov_range))
@@ -2910,6 +2994,16 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # absorption; .admShiftAbsorb adds a grid on top, and adfo/adirmc need only this.
 .admAbsorbFit <- function(D, W, z, omega, j) {
   D <- as.matrix(D)
+  # NULL z HAS NOTHING TO ABSORB, and cbind() will not say so. `cbind(1, NULL)`
+  # is a plain vector, so qr() succeeds at rank 1, B comes back with ZERO
+  # columns and tcrossprod(B) is 0 -- the covariate's mean shift is kept and its
+  # whole variance contribution is dropped, with every guard satisfied
+  # (all(is.finite(co)) on a 1-row matrix) and .admShiftAbsorbDeriv producing
+  # the matching zero derivative, so the gradient agrees with the wrong
+  # objective. Reached from .admCovGrid's discExact branch, which returns
+  # z = NULL whenever a `cor` was declared with a latently independent discrete
+  # margin. Refusing sends the study to the ordinary grid, which is correct.
+  if (is.null(z) || !NCOL(z)) return(NULL)
   if (!.admShiftGaussOK(D, W, z, ncol(D))) return(NULL)
   Wn <- W / sum(W); sw <- sqrt(Wn)
   q  <- tryCatch(qr(cbind(1, z) * sw), error = function(e) NULL)
@@ -3414,6 +3508,19 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
   if (has("mu", "sd"))         return(list(mu = g("mu"), sd = g("sd")))
   if (has("meanlog", "sdlog")) return(list(meanlog = g("meanlog"),
                                            sdlog = g("sdlog")))
+  # CONTINUOUS-SUMMARY VOCABULARY IS NOT A SET OF LEVELS. `c(median = 92,
+  # iqr = c(62, 118))` and `c(mean = 72, cv = 22)` are the forms admPopulation()
+  # documents beside this function, and both fell through to the categorical
+  # branch below: the first became a 3-level covariate with probabilities
+  # 92/272, 62/272, 118/272, the second a 2-level one. The whole quadrature then
+  # integrates over a covariate that does not exist, with no error. Delegate to
+  # the same parser admPopulation() uses rather than teach two vocabularies.
+  if (any(k %in% c("mean", "median", "sd", "cv", "meanlog", "sdlog")) ||
+      any(grepl("^(iqr|range)[0-9]*$", k))) {
+    sp <- .admPopSpec(stats::setNames(as.numeric(v), k), nm, "norm")
+    if (!is.null(sp$mean)) sp <- list(mu = sp$mean, sd = sp$sd)
+    return(sp)
+  }
   # anything else named is read as a CATEGORICAL covariate: the names are the
   # levels' labels and the values their proportions, which is how a baseline
   # table reports sex, a genotype or a dosing band
@@ -4589,6 +4696,25 @@ print.covDist <- function(x, ...) {
   if (is.null(jd)) return(NULL)
   jc$r <- jd$r; jc$m <- jd$m; jc$routes <- jd$routes
   cl_list <- jc$cell_list %||% list(list())
+  # THE SAME "const" RE-PROBE .admCovCollapse CARRIES, for the same reason.
+  # `v <- exp(tv + eta.v) * (CRCL/90)^bcr` started at `bcr <- 0` -- the normal
+  # way to start a covariate effect -- probes constant in CRCL, so that row of
+  # B is ~1e-17, every left singular vector has U[CRCL, ] = 0, and every design
+  # point sits at CRCL's median forever. d(pred)/d(bcr) is then exactly zero
+  # and the optimizer reports convergence at the starting value. Admission's
+  # own verification cannot see it: at bcr = 0 the design reproduces the
+  # moments perfectly. Rank is frozen here, so this must be settled here too.
+  .cst <- which(vapply(jc$routes %||% list(), function(r) identical(r, "const"),
+                       logical(1)))
+  if (length(.cst)) {
+    .Ap <- .admJointCov(jc, jc$Xi[, jc$ne + seq_len(jc$pc), drop = FALSE] %*% jc$Lc)
+    Pp  <- tryCatch(.admCovProbeAt(jc$pr, lapply(st, function(v) v + 0.1), 0,
+                                   cl_list[[1L]], .Ap),
+                    error = function(e) NULL)
+    if (is.null(Pp) ||
+        any(vapply(.cst, function(k) stats::sd(Pp[, k]) > 0, logical(1))))
+      return(NULL)
+  }
   # THE ROTATION MUST NOT DIFFER BETWEEN STRATA. A covariate-by-stratum
   # interaction -- (WT/70)^(b + c*SEX) -- has a direction that changes cell to
   # cell, so a single shared design would be the right design in one cell and

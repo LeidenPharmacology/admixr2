@@ -36,12 +36,22 @@
   a[1L] <- prod(sqrt(b / lambda))
   gr <- vapply(seq_len(maxit), function(r) sum(rl^r), numeric(1))
   p  <- a[1L] * stats::pchisq(x / b, q)
+  ok <- FALSE
   for (k in seq_len(maxit)) {
     a[k + 1L] <- sum(gr[seq_len(k)] * a[k:1L]) / (2 * k)
     trm <- a[k + 1L] * stats::pchisq(x / b, q + 2 * k)
     p   <- p + trm
-    if (is.finite(trm) && abs(trm) < tol * max(p, 1e-300)) break
+    if (is.finite(trm) && abs(trm) < tol * max(p, 1e-300)) { ok <- TRUE; break }
   }
+  # NA, NOT the truncated partial sum. The series is a sum of POSITIVE terms,
+  # so stopping early returns a number that is too small and looks like a
+  # perfectly ordinary probability: at lambda = (1, 5000, 20000) and x = 25001
+  # the 2000-term truncation gives 0.177 where Monte Carlo gives 0.665, i.e.
+  # p = 0.823 reported for a true 0.335. Iterations scale with
+  # max(lambda)/min(lambda), so maxit is exhausted from a spread of ~1200 up --
+  # and the caller's kappa gate bounds the conditioning of A, not that spread.
+  # The caller falls back to the trace approximation on NA.
+  if (!ok) return(NA_real_)
   min(max(p, 0), 1)
 }
 
@@ -193,18 +203,24 @@
   if (q == 1L) {
     method <- "scaled chi-squared"
     p <- stats::pchisq(dOFV / lambda, 1, lower.tail = FALSE)
-  } else if (is.finite(kap) && kap < 1000) {
+  } else if (is.finite(kap) && kap < 1000 &&
+             !is.na(.rb <- .admRubenP(dOFV, lambda))) {
     method <- "weighted chi-squares"
-    p <- 1 - .admRubenP(dOFV, lambda)
+    p <- 1 - .rb
   } else {
     # Estimated eigenvalues repel when the block is ill-conditioned. The trace
     # is a smooth function of the same matrices and degrades gracefully -- at
     # kappa = 5387 it was the only form still near nominal. The limit here is
     # identifiability of the tested block, not its dimension.
     method <- "trace approximation"
-    warn <- sprintf(paste0("the tested block is ill-conditioned (kappa = %.3g); ",
-                           "using the trace approximation instead of the ",
-                           "eigenvalue weights."), kap)
+    warn <- if (is.finite(kap) && kap < 1000)
+      sprintf(paste0("Ruben's series did not converge for the eigenvalue ",
+                     "weights (spread %.3g); using the trace approximation ",
+                     "instead."), max(lambda) / min(lambda))
+    else
+      sprintf(paste0("the tested block is ill-conditioned (kappa = %.3g); ",
+                     "using the trace approximation instead of the ",
+                     "eigenvalue weights."), kap)
     warning("anova(): ", warn, call. = FALSE)
     p <- stats::pchisq(dOFV / (sum(lambda) / q), q, lower.tail = FALSE)
   }
@@ -341,4 +357,23 @@ anova.admFit <- function(object, ...) {
   attr(out, "heading") <- head
   class(out) <- c("anova.admFit", "anova", "data.frame")
   out
+}
+
+#' @export
+print.anova.admFit <- function(x, ...) {
+  # NOT stats::print.anova. It routes through printCoefmat, which calls
+  # data.matrix() on the frame -- and data.matrix() turns a CHARACTER column
+  # into its factor CODES. `Weight` and `Test` are both character here, so a
+  # row whose weights are "0.310, 1.900" printed as `1`, reading as the
+  # ordinary chi-squared test, i.e. exactly the opposite of what that column
+  # exists to say. Printing the frame directly keeps them as written.
+  h <- attr(x, "heading")
+  if (!is.null(h)) cat(paste(h, collapse = "
+"), "
+", sep = "")
+  y <- x
+  attr(y, "heading") <- NULL
+  class(y) <- "data.frame"
+  print(format(y, digits = max(3L, getOption("digits") - 3L)), ...)
+  invisible(x)
 }

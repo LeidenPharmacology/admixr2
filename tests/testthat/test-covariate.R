@@ -1318,6 +1318,8 @@ test_that("lognormal and correlated covariates reach the Gaussian branch", {
 })
 
 test_that("a discrete covariate beside a continuous one STRATIFIES the shift", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   skip_if_not_installed("rxode2")   # Tier 1, but this block compiles a model
   # `auto` is documented to try the shift and fall back to the product grid, and
   # a discrete covariate used to be the one disqualification that stop()ed
@@ -1368,6 +1370,8 @@ test_that("a discrete covariate beside a continuous one STRATIFIES the shift", {
 })
 
 test_that("an ALL-discrete covariate set still takes the product grid", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   skip_if_not_installed("rxode2")
   # The shift's saving is eliminating the CONTINUOUS covariate dimension. The
   # discrete levels cost K cells on either route, and n_u is inflated above
@@ -1982,6 +1986,8 @@ test_that("bands are bounded by the range the source REPORTED", {
 })
 
 test_that("a source that ASSERTED a covariate's coefficient is not banded", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   # `allCovs` reports what a model READS, not what it ESTIMATED. A model
   # carrying (WT/70)^0.75 -- the allometric convention -- reads WT while
   # asserting its coefficient, so it holds no evidence about WT at all and the
@@ -2009,6 +2015,8 @@ test_that("a source that ASSERTED a covariate's coefficient is not banded", {
 })
 
 test_that(".admCovCoefThetas separates an estimated coefficient from an asserted one", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   # Answered numerically, and on the LOG scale, because these models are
   # multiplicative: raising a SCALE parameter changes the covariate's absolute
   # effect, so differencing the raw prediction flags `tcl` as WT's coefficient,
@@ -2048,6 +2056,8 @@ test_that(".admCovCoefThetas separates an estimated coefficient from an asserted
 })
 
 test_that("strata_nodes is a convergence parameter, and fits carry it", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   # The J -> infinity limit is the well-defined object; finite J approximates
   # it, and under misspecification the answer can jump basins rather than drift
   # (1.57 at J=4 -> 1.6e-05 at J=5). The objective is J-dependent -- 441 units
@@ -2195,6 +2205,8 @@ test_that(".admCovGrid enumerates a separable discrete margin under `cor`", {
 })
 
 test_that("a marginalised discrete covariate with no contrast is FLAGGED", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
   # It is not identified -- its effect enters only through the mixture it
   # induces, which is what an eta on the same parameter does, and with the same
   # level distribution in every study there is no between-study contrast
@@ -2284,4 +2296,75 @@ test_that("a correlated conditional still enumerates an independent discrete mar
   # ... and the conditional mean of the correlated covariate still MOVES
   em <- vapply(st, function(s) mean(covDraw(s$cov_dist, n = 20000L)[, "CRCL"]), 0)
   expect_gt(diff(range(em)), 10)
+})
+
+test_that("covStrata's cov_range truncation survives the second canon", {
+  # The first canon builds `joint` as a closure over the UNTRUNCATED margins and
+  # consumes `cor` into `latentR`; the second early-returns on an existing
+  # `joint`. So the truncation was applied to the specs and then read straight
+  # past, and the pool sampled the full declared support -- bands cut over a
+  # range the source never enrolled, which is the var(declared)/var(enrolled)
+  # overstatement the cov_range gate exists to prevent (3.4x at +/-1 SD).
+  cd <- covDist(WT = c(mean = 75, sd = 25), CRCL = c(mean = 90, sd = 30),
+                cor = c(WT.CRCL = 0.5))
+  st <- suppressWarnings(admixr2:::.admCovStrata(cd, "WT", n_nodes = 3L,
+                                                 n_pool = 4096L,
+                                                 cov_range = list(WT = c(60, 100))))
+  expect_false(is.null(st))
+  # every banded value sits inside the enrolled range
+  wt <- unlist(lapply(st, function(b) b[["cov"]][["WT"]]), use.names = FALSE)
+  expect_true(all(wt >= 60 - 1e-8 & wt <= 100 + 1e-8))
+  # ... and the correlation was NOT lost when the derived fields were rebuilt
+  cd2 <- st[[1L]][["cov_dist"]]
+  expect_true(is.function(cd2[["joint"]]) || !is.null(cd2[["latentR"]]))
+})
+
+test_that("a `by` level keeps the correlations among the margins it retains", {
+  # `cdk[[by]] <- NULL` alone leaves latentR -- indexed POSITIONALLY, no
+  # dimnames -- describing the ORIGINAL set, so .admCovCollapse read the
+  # (SEX, WT) block, i.e. the identity, and a declared WT-CRCL correlation of
+  # 0.5 became independence in every by-level study.
+  cd <- covDist(SEX = list(values = c(0, 1), probs = c(.45, .55)),
+                WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25),
+                cor = matrix(c(1, 0, 0, 0, 1, .5, 0, .5, 1), 3L, 3L,
+                             dimnames = list(c("SEX", "WT", "CRCL"),
+                                             c("SEX", "WT", "CRCL"))))
+  out <- admixr2:::.admCovDropMargin(cd, "SEX")
+  expect_identical(admixr2:::.admCovSpecNames(out), c("WT", "CRCL"))
+  R <- out[["latentR"]]
+  expect_identical(dim(R), c(2L, 2L))
+  expect_equal(R[1L, 2L], 0.5)
+  # a single surviving margin needs no correlation and must not error
+  expect_identical(admixr2:::.admCovSpecNames(
+    admixr2:::.admCovDropMargin(cd, "CRCL")), c("SEX", "WT"))
+})
+
+test_that("a continuous summary is not read as a set of levels", {
+  # c(median = 92, iqr = c(62, 118)) and c(mean = 72, cv = 22) are the forms
+  # admPopulation() documents; both fell through to the categorical branch and
+  # became a 3- and a 2-level covariate, so the quadrature integrated over a
+  # covariate that does not exist, with no error.
+  s1 <- admixr2:::.admCovSpecFromVec(c(median = 92, iqr = c(62, 118)), "CRCL")
+  expect_null(s1$values)
+  expect_equal(s1$mu, 92)
+  expect_equal(s1$sd, (118 - 62) / 1.34898, tolerance = 1e-8)
+  s2 <- admixr2:::.admCovSpecFromVec(c(mean = 72, cv = 22), "WT")
+  expect_null(s2$values)
+  expect_equal(s2$mu, 72); expect_equal(s2$sd, 72 * 0.22)
+  # a genuine proportion table is still categorical
+  s3 <- admixr2:::.admCovSpecFromVec(c(female = 0.45, male = 0.55), "SEX")
+  expect_identical(s3$values, c(0, 1))
+})
+
+test_that("a discrete spec with mismatched probs/values is refused", {
+  # admc's .admCovQuantile renormalises over 2 entries so level 2 is
+  # UNREACHABLE; adgh's .admCovNodesFor returns 3 nodes against 2 weights,
+  # which .admCovGrid recycles to a UNIFORM 3-level covariate. Two estimators,
+  # two different distributions, both finite and plausible.
+  ui <- list(allCovs = "GRP")
+  pin <- list(cov_integration = "quadrature")
+  st  <- list(s = list(times = 1, cov_dist = list(
+    GRP = list(values = c(0, 1, 2), probs = c(0.5, 0.5)))))
+  expect_error(admixr2:::.admCheckCovariates(ui, pin, st),
+               "3 `values` but 2 `probs`|one probability per level")
 })

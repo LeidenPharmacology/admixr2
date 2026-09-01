@@ -122,8 +122,11 @@ skip_if_not_installed("rxode2")
   pin <- admixr2:::.admDriverPinfo(ui, ctl)
   u   <- admixr2:::.admDriverUnits(st0, ui, ov)
   stu <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, u$studies))
-  sm  <- tryCatch(admixr2:::.admLoadSensModel(ui),   # sens BEFORE the sim model
-                  error = function(e) NULL)
+  # NOT wrapped in tryCatch(..., NULL): a failed sens model makes every "sens"
+  # assertion below silently re-test the FD path, so the arm passes by testing
+  # nothing. Let it error. (sens BEFORE the sim model -- see CLAUDE.md.)
+  sm  <- admixr2:::.admLoadSensModel(ui)
+  testthat::expect_false(is.null(sm))
   list(pin = pin, stu = stu, ov = ov,
        p = admixr2:::.admBuildOptVec(pin)$p0,
        g = admixr2:::.adghNodeGrid(n_nodes, pin$n_eta),

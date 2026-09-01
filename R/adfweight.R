@@ -237,8 +237,11 @@
   W[seq_len(m), seq_len(m)] <- S / N
 
   # mu3: E[C_i C_k C_l] + C_i D_kl + C_k D_il + C_l D_ik
-  CC <- vapply(seq_len(q), function(b)
-    as.numeric(crossprod(C, wP[, b])), numeric(m))      # m x q
+  # matrix(): vapply DROPS to a plain vector when m == 1 (a single observation
+  # time), and M3[, b] then indexes a vector. Every other object here comes from
+  # crossprod, which keeps its dimensions.
+  CC <- matrix(vapply(seq_len(q), function(b)
+    as.numeric(crossprod(C, wP[, b])), numeric(m)), m, q)
   M3 <- CC
   for (b in seq_len(q)) {
     k <- I[b]; l <- J[b]
@@ -857,7 +860,7 @@
       s   <- studies[[i]]
       ov  <- s$output %||% out_var
       n_t <- length(s$times)
-      arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
+      arr <- .admUnitResidRows(pinfo, ov, pars$sigma_var, n_t)
       mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
                          params_list[[i]], cores)
       vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta, s$times)
@@ -935,8 +938,16 @@
     sm    <- .adghStructMoments(res$cp_mat, W, ty)
     mu    <- sm$mu; cpc <- sm$cpc; cov_f <- sm$V; var_f <- diag(cov_f)
     m     <- length(mu)
-    arr   <- .admResidRows(pinfo, ov, pars$sigma_var, m)
+    # .admUnitResidRows, not the raw builder: a beta endpoint's phi comes off
+    # the solved shapes and is NA without it, so the whole Jacobian returned
+    # NaN -- which is not NULL, so the caller's FD fallback never fired and the
+    # sandwich took the NaN. .admResidRows(phi = NA) is the same trap
+    # CLAUDE.md records for the other five consumers.
+    arr   <- .admUnitResidRows(pinfo, ov, pars$sigma_var, m,
+                               phi = attr(res$cp_mat, "phi"))
     pmres <- .admResidMoments(mu, var_f, arr, cov_f, s$times)
+    if (any(!is.finite(unlist(arr[c("a2", "b2", "cc")], use.names = FALSE))))
+      return(NULL)
     # ar()/ordinal put an off-diagonal residual term in rmat whose sigma and mu
     # paths this forward map does not carry. .admAdfCondMom refuses those
     # residuals anyway; refusing here too keeps the two boundaries identical.

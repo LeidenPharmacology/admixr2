@@ -74,19 +74,15 @@ test_that("a mu-referenced theta back-transforms correctly, or upstream is why n
   expect_identical(ce(ui1), "exp")
   expect_equal(admixr2:::.admBackTransform(log(4), tr(ui1)), 4)
 
-  if (!nzchar(ce(ui2))) {
-    # upstream still drops the transform. Record the consequence so the cost is
-    # explicit rather than folklore, then skip.
-    expect_equal(admixr2:::.admBackTransform(log(4), tr(ui2)), log(4))
-    skip(paste0(
-      "rxode2 ", utils::packageVersion("rxode2"), " reports curEval = '' for a ",
-      "mu-referenced theta whose expression uses a precomputed variable ",
-      "(mu 3.0 style), so admixr2 back-transforms it as identity and reports ",
-      "1.386 where the truth is 4. Reprex: ",
-      "validation/rxode2-muref-curEval-reprex.R. When this skip disappears, ",
-      "upstream has fixed it and the assertion below takes over."))
-  }
-  # upstream reports the transform: the back-transform must now be right
-  expect_identical(ce(ui2), "exp")
+  # THE REPORTED VALUE MUST BE RIGHT EITHER WAY, and that is what is asserted --
+  # the suite used to pin log(4) = 1.386 as the answer for a parameter whose
+  # value is 4, on the ordinary mu-3.0 spelling, with the corrective branch
+  # unreachable. A green light over a live, user-visible reporting bug.
+  # .admParseIniDf() now reads the transform off ui$lstExpr whenever upstream
+  # reports "" (.admCurEvalFromModel), so this holds on every rxode2 in play.
+  expect_identical(admixr2:::.admCurEvalFromModel(ui2, "tcl"), "exp")
   expect_equal(admixr2:::.admBackTransform(log(4), tr(ui2)), 4)
+  # Upstream's own answer is still recorded, so the day it starts reporting the
+  # transform the fallback is visibly no longer load-bearing.
+  expect_true(ce(ui2) %in% c("", "exp"))
 })

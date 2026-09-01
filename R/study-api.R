@@ -737,17 +737,7 @@ print.admStudies <- function(x, ...) {
   # range, measured) and a deterministic optimiser stops in the same place
   # every run, reading as converged at a wrong number.
   role <- function(s, cv) {
-    st <- s[["stratify"]]
-    # `TRUE` bands what the source ESTIMATED, not what it reads -- the same
-    # judgement .admExpandStrata() makes, through the same helper, so the
-    # pre-flight cannot promise a banding the fit will not perform.
-    band <- if (isTRUE(st))
-              Filter(function(cv)
-                       length(.admCovCoefThetas(s$ui, cv, s[["population"]])) > 0L,
-                     intersect(.admCovSpecNames(s[["population"]]),
-                               tryCatch(s$ui$allCovs,
-                                        error = function(e) character(0))))
-            else as.character(st)
+    band <- .admStudyBandNames(s)
     if (cv %in% c(names(s[["at"]]), as.character(s[["by"]]))) "conditioned"
     else if (cv %in% band)                                    "banded"
     else if (cv %in% .admCovSpecNames(s[["population"]]))     "marginal"
@@ -859,8 +849,25 @@ print() a single study to check its transcription.
     if (!is.null(s$stratify)) {
       sp$stratify <- s$stratify
       if (!is.null(s$strata_nodes)) sp$strata_nodes <- s$strata_nodes
-      if (!is.null(s$range))
-        sp$cov_range <- stats::setNames(list(s$range), s$stratify)
+      # `range` names the covariate it belongs to. With `stratify = TRUE` the
+      # banded set is derived, not typed, so setNames(list(range), TRUE) built
+      # a cov_range for a covariate called "TRUE" -- unusable with the very
+      # spelling the documentation recommends. Resolve the band the same way
+      # the pre-flight does, and ask for a named list when it is ambiguous.
+      if (!is.null(s$range)) {
+        sp$cov_range <- if (is.list(s$range) && !is.null(names(s$range)))
+          s$range
+        else {
+          .bn <- .admStudyBandNames(s)
+          if (length(.bn) != 1L)
+            stop("admixr2: study '", nm, "': `range` does not say which ",
+                 "covariate it is the enrolled range of, and this source ",
+                 "bands ", if (!length(.bn)) "none" else length(.bn),
+                 ". Give a named list, e.g. range = list(WT = c(52, 118)).",
+                 call. = FALSE)
+          stats::setNames(list(s$range), .bn)
+        }
+      }
     }
     # `by`: the paper reported results separately per level, which is one
     # ordinary study per level with that covariate PINNED -- not a stratified
@@ -877,8 +884,7 @@ print() a single study to check its transcription.
         spk <- sp
         spk$n   <- s$n * pr[k]
         spk[["cov"]] <- c(sp[["cov"]], stats::setNames(list(lv[k]), s$by))
-        cdk <- s$population; cdk[[s$by]] <- NULL
-        spk$cov_dist <- if (length(.admCovSpecNames(cdk))) cdk else NULL
+        spk$cov_dist <- .admCovDropMargin(s$population, s$by)
         # ONE PAPER IS ONE SOURCE, however many subgroups it reported. The
         # levels share a published model and a single C_src, so they must share
         # a source id -- otherwise .admSrcGroups() sees k independent sources
@@ -888,7 +894,9 @@ print() a single study to check its transcription.
         spk[[".adm_src_id"]] <- nm
         g <- datagen(stats::setNames(list(spk), paste0(nm, "_", s$by, lv[k])),
                      model = s$ui, control = datagenControl(method = "gh"))
-        out[[names(g)[1L]]] <- g[[1L]]
+        # every element: `by` combined with `stratify` expands each level into
+        # J bands, and taking only the first silently dropped J-1 of them
+        for (kk in names(g)) out[[kk]] <- g[[kk]]
       }
       next
     }
@@ -920,6 +928,22 @@ print() a single study to check its transcription.
 # hand, and an already-generated study. `[[ ]]` throughout -- `$cov` partial-
 # matches `cov_dist` on a datagen spec, which is the trap .admMaterialise()
 # records.
+# The covariates `stratify` actually bands, for one study.
+#
+# `TRUE` bands what the source ESTIMATED, not what it merely reads: weight at a
+# fixed allometric exponent carries no fitted effect to recover. Shared by the
+# pre-flight print and the expansion below, so the table cannot promise a
+# banding the fit will not perform.
+.admStudyBandNames <- function(s) {
+  st <- s[["stratify"]]
+  if (is.null(st) || identical(st, FALSE)) return(character(0))
+  if (!isTRUE(st)) return(as.character(st))
+  Filter(function(cv)
+           length(.admCovCoefThetas(s$ui, cv, s[["population"]])) > 0L,
+         intersect(.admCovSpecNames(s[["population"]]),
+                   tryCatch(s$ui$allCovs, error = function(e) character(0))))
+}
+
 .admHasModelSource <- function(studies) {
   if (inherits(studies, "admStudies")) studies <- unclass(studies)
   if (!is.list(studies) || !length(studies)) return(FALSE)

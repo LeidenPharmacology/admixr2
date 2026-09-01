@@ -53,6 +53,38 @@
 # is the opposite of nlmixr2est's conservative 2L default: there an unknown case
 # costs one extra direction, here it would silently change struct_has_eta for
 # every mock-based unit test.)
+# The transform wrapping a mu-referenced theta, read off the MODEL TEXT.
+#
+# `ui$muRefCurEval` is authoritative when it says anything, but on every rxode2
+# in play it returns "" for the mu-3.0 spelling -- a precomputed variable in the
+# expression:
+#
+#   wt70 <- log(WT/70); cl <- exp(tcl + tcov*wt70 + eta.cl)
+#
+# and "" is read as IDENTITY, so admixr2 reported log(4) = 1.386 for a parameter
+# whose value is 4. Note that a MISSING row already defaults to "exp", so the
+# empty string was strictly worse than no information at all.
+#
+# Answer it from the same place the covariate and shift machinery already reads:
+# find the assignment whose right-hand side mentions this theta, and take the
+# call wrapping it. Only the transforms .admBackTransform() understands are
+# recognised; anything else stays "" and keeps the old behaviour.
+.ADM_CUREVAL_FNS <- c("exp", "expit", "probitInv")
+
+.admCurEvalFromModel <- function(ui, nm) {
+  lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
+  if (is.null(lst)) return("")
+  for (e in lst) {
+    if (!is.call(e) || !length(e) || length(e) < 3L) next
+    if (!as.character(e[[1L]]) %in% c("<-", "=", "~")) next
+    rhs <- e[[3L]]
+    if (!is.call(rhs) || !nm %in% all.vars(rhs)) next
+    fn <- as.character(rhs[[1L]])[1L]
+    if (fn %in% .ADM_CUREVAL_FNS) return(fn)
+  }
+  ""
+}
+
 .admNameOccurrence <- function(ui, nms) {
   if (length(nms) == 0L) return(setNames(integer(0), character(0)))
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
@@ -170,7 +202,15 @@
     .w <- if (!is.null(.ce)) which(.ce$parameter == nm) else integer(0)
     if (length(.w) != 1L)
       return(list(curEval = "exp", low = NA_real_, hi = NA_real_))
-    list(curEval = .ce$curEval[.w],
+    .cv <- .ce$curEval[.w]
+    # "" is upstream saying it does not know, not saying "identity" -- see
+    # .admCurEvalFromModel(). Only consulted when upstream is silent, so a
+    # version that reports the transform is never second-guessed.
+    if (is.na(.cv) || !nzchar(.cv)) {
+      .fromMod <- if (!is.null(ui)) .admCurEvalFromModel(ui, nm) else ""
+      if (nzchar(.fromMod)) .cv <- .fromMod
+    }
+    list(curEval = .cv,
          low     = if ("low" %in% names(.ce)) .ce$low[.w] else NA_real_,
          hi      = if ("hi"  %in% names(.ce)) .ce$hi[.w]  else NA_real_)
   }), struct_rows$name)

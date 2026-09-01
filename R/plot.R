@@ -350,6 +350,15 @@ head.paged_df <- function(x, n = 6L, ...) {
     # while the OBSERVED V in the same panel still carries it: predicted
     # covariances measured 29-35% low and off-diagonals 61% low on an audited
     # model, i.e. structured standardised residuals for a fit that is fine.
+    # A SHIFT study has .adm_cov_path == "shift", and .admStudyCovRows returns
+    # it untouched -- correct in the estimator, where the covariate's whole
+    # effect rides in the shifted eta column, and wrong here, where the etas are
+    # ordinary draws from Omega. Left as it was, every panel for such a study
+    # described a model with no covariate effect at all. The general per-row
+    # representation is always valid, just slower, and cost does not matter for
+    # one diagnostic draw.
+    if (identical(s$.adm_cov_path, "shift") && !is.null(s[["cov_dist"]]))
+      s$.adm_cov_path <- "rows"
     s <- tryCatch(.admStudyCovRows(s, pinfo_r, nrow(eta_mat)),
                   error = function(e) s)
     # One residual placeholder per observed output (rxerr.<output>); a

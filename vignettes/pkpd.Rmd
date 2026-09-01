@@ -303,4 +303,5 @@ if (is.null(cv)) {
 
 - [Several observed compartments](multi-compartment.html) — multiple outputs and joint fits
 - [Multiple studies](multiple-studies.html) — meta-analysis across studies
+- [Covariates across sources](covariates.html) — covariate effects without patient-level data
 - [From a published figure to E, V and n](aggregate-data.html)

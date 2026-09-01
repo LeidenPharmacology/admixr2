@@ -66,6 +66,8 @@ navbar:
         - text: Meta-analysis across studies
         - text: Multiple studies
           href: articles/multiple-studies.html
+        - text: Covariates across sources
+          href: articles/covariates.html
         - text: Several outputs (plasma + brain)
           href: articles/multi-compartment.html
         - text: PD and PK/PD data

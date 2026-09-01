@@ -2,11 +2,13 @@
 
 ## Breaking changes
 
-* **Node-quadrature covariate marginalisation (`"gl"` / `"gh"` / `"taylor"`) has
-  been removed**, along with the exported `admBuildQuadrature()` and
-  `admBuildCovStudies()`, `datagen()`'s `covariate` argument (and its
-  `quad_method` / `n_nodes` / `truncation_sd` / `h` / `order` formals), and the
-  `plot(which = "covariate")` panel.
+* **Old study lists carrying `weight` or `cov_method` are refused** rather than
+  silently fitted as an unweighted sum.
+
+  Node-quadrature covariate marginalisation (`"gl"` / `"gh"` / `"taylor"`) was
+  developed and then dropped before release, so nothing shipped in 0.4.0 is
+  withdrawn here; the reasoning is kept because it is the reason the marginal
+  path is the only one.
 
   Those methods score a study at fixed covariate values and combine the per-node
   -2LL linearly. Given the ONE pooled `(E, V)` a publication reports, that sum is
@@ -20,10 +22,43 @@
 
   Give each study its `cov_dist` and admixr2 marginalises over it. For summaries
   by covariate stratum, pass the strata as ordinary studies, each with its own
-  `cov` and its own `n`. Old study lists carrying `weight` or `cov_method` are
-  refused rather than silently fitted as an unweighted sum.
+  `cov` and its own `n`.
 
 ## New features
+
+* **A paper-shaped study API.** `admStudy()` / `admStudies()` describe a source
+  the way a publication does --- the model it published, the covariance or
+  `%RSE` it reported, the cohort it enrolled --- and `print()` on the collection
+  is a pre-flight that says, per covariate, which sources condition on it, band
+  it, or marginalise over it. `admPopulation()` reads a baseline-characteristics
+  table in whichever currency the paper used (`mean`/`sd`, `median`/`iqr`, a
+  `cv` as a percent, a proportion) into the margins and correlations the
+  quadrature needs.
+
+* **Covariate marginalisation over a declared distribution**, for `admc` and
+  `adgh`. A study declares `cov_dist` (see `covDist()`) and the estimator
+  integrates the prediction over the covariate distribution as well as over the
+  random effects, collapsing the integral onto the directions the covariates
+  actually reach the model through rather than running a product grid.
+  `covStrata()` bands a source so a covariate its own model fitted contributes a
+  contrast rather than one pooled number, and `covDraw()` returns the rows a
+  design would use. `adfo` and `adirmc` refuse `cov_dist` rather than solve at
+  the covariate mean.
+
+* **A model source's own uncertainty reaches the standard errors.** A study
+  generated from a published model carries that fit's covariance, and the
+  objective is corrected for it (Woodbury form, so a fit with no model source is
+  bit-for-bit unchanged). `covMethod` defaults to `"r,s"` when any study is such
+  a source, since under `"r"` its standard error would shrink with `n`.
+
+* **`anova()` on `admFit` objects**, with a misspecification-corrected
+  likelihood-ratio test (Satorra-Bentler scaling, Ruben's series for the
+  weighted-chi-square case), plus `TIC` and `p_eff` columns where the
+  information equality fails.
+
+* **`covMethod = "r,s"`** on all four estimators: the ADF sandwich
+  `H^-1 J H^-1`, which is what makes the reported interval valid where the
+  aggregate likelihood is a quasi-likelihood rather than the truth.
 
 * **`sigdig` now controls the fit, not just the output tables -- and it is
   opt-in.** The `sigdig` and `rxControl` arguments were documented as solver
