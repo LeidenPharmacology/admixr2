@@ -377,8 +377,20 @@
   .jc <- if (!is.null(s)) s[[".adm_cov_joint"]] else NULL
   if (!is.null(.jc) && (.sh_fallback || !identical(s$.adm_cov_path, "shift"))) {
     jd <- .admJointDesign(.jc, .admShiftStruct(pinfo, pars$struct), pars$L)
-    if (!is.null(jd))
-      return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
+    # NOT a silent fall-through to the branch below. Both designs are correct
+    # integrals, but they have DIFFERENT NUMBERS OF POINTS, so swapping between
+    # them mid-optimisation steps the objective -- the optimizer then chases a
+    # discontinuity, which is the same failure the fixed n_u and the frozen rank
+    # exist to prevent, arriving from a third direction. The design was priced
+    # and admitted at admission; a NULL here means the re-aim failed at this
+    # parameter point, and that is worth saying.
+    if (is.null(jd))
+      stop("admixr2: the joint covariate design could not be re-aimed at the ",
+           "current parameters. Continuing on a different design would change ",
+           "the number of quadrature points mid-fit and step the objective. ",
+           "Start from values closer to the expected ones, or narrow the ",
+           "covariate distribution's declared spread.", call. = FALSE)
+    return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
   }
   if (!is.null(s) && (.sh_fallback || !identical(s$.adm_cov_path, "shift")) &&
       !is.null(s[["cov_dist"]])) {
@@ -413,9 +425,20 @@
           # line in latent space as soon as the optimizer moves them -- measured
           # at 53 to 163 -2LL units for a 0.1 move in one coefficient. This is
           # the same thing the shift branch above does with .admShiftDelta.
+          # %||% ONLY when no collapse was admitted (a hand-built study), never
+          # as a rescue for one that was: the two designs have different point
+          # counts, so swapping mid-fit steps the objective.
+          else if (is.null(s[[".adm_cov_collapse"]]))
+                       .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
           else         .admCovRefresh(s[[".adm_cov_collapse"]],
                                       .admShiftStruct(pinfo, pars$struct)) %||%
-                       .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
+                       stop("admixr2: the collapsed covariate design could ",
+                            "not be re-aimed at the current parameters. ",
+                            "Continuing on the product grid would change the ",
+                            "number of quadrature points mid-fit and step the ",
+                            "objective. Start from values closer to the ",
+                            "expected ones, or narrow the covariate ",
+                            "distribution's declared spread.", call. = FALSE)
     nc <- nrow(cg$X)
     g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
     colnames(g$eta) <- pinfo$eta_col_names
@@ -1937,7 +1960,7 @@ nlmixr2Est.adgh <- function(env, ...) {
 
   # RETURNS the studies, annotated with which covariate path each takes.
   # Discarding the value silently disables covariate handling entirely.
-  studies <- .admCheckCovariates(.ui, pinfo, studies)
+  studies <- .admCheckCovariates(.ui, pinfo, studies, "adgh")
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)

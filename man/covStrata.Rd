@@ -21,7 +21,7 @@ covStrata(
 rest are left in each stratum's own \code{cov_dist}, to be marginalised over
 their distribution \strong{conditional} on that stratum.}
 
-\item{n_nodes}{Strata per stratified covariate. A discrete
+\item{n_nodes}{Strata per stratified covariate (default 9). A discrete
 covariate ignores it and is cut at its levels, exactly, with the level
 probabilities as weights.
 

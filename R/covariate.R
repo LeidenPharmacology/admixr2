@@ -316,7 +316,9 @@
     all(vapply(nm, function(k) isTRUE(cd[[k]][[".point"]]), logical(1)))
 }
 
-.admCheckCovariates <- function(.ui, pinfo, studies) {
+# `est` goes LAST, and defaults to NULL meaning "build everything" -- the
+# historical behaviour, which every Tier-1 mock and direct call relies on.
+.admCheckCovariates <- function(.ui, pinfo, studies, est = NULL) {
   has <- vapply(studies, function(s) !is.null(s$cov_dist), logical(1))
   if (!any(has)) return(studies)
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
@@ -344,6 +346,14 @@
          paste(sQuote(names(studies)[has][.jt]), collapse = ", "),
          ". The shared-eta joint solve has no per-row covariate path, so this ",
          "would silently solve at the covariate mean.", call. = FALSE)
+  # A DESIGN IS A PROPERTY OF QUADRATURE, and admc has none: it samples through
+  # .admCovRowsFor, which is deterministic in `cov_dist` alone -- the property
+  # common random numbers depend on -- and re-aiming a design between
+  # evaluations would make the DRAWS move with the parameters. So admc reads
+  # none of .adm_cov_taylor / .adm_cov_collapse / .adm_cov_joint. Building them
+  # anyway cost a probe and an SVD per study and, worse, printed "using 196
+  # design points rather than ..." at a user whose fit uses neither number.
+  .no_design <- identical(est, "admc")
   .admCovDiscContrast(.ui, studies, names(studies)[has])
 
   for (nm in names(studies)[has]) {
@@ -614,7 +624,7 @@
     # design once HERE, where the message can name the study, rather than
     # letting the first objective evaluation error out of the middle of a fit.
     if (identical(studies[[nm]]$.adm_cov_path, "rows") &&
-        identical(.ci, "taylor")) {
+        identical(.ci, "taylor") && !.no_design) {
       .td <- tryCatch(.admCovTaylorDesign(cd, pinfo$cov_taylor_h %||% 1),
                       error = function(e) conditionMessage(e))
       if (is.character(.td))
@@ -649,6 +659,7 @@
     if (is.null(s_nm[["cov_dist"]])) next
     if (identical(s_nm$.adm_cov_path, "shift")) next
     if (identical(pinfo$cov_integration %||% "quadrature", "taylor")) next
+    if (.no_design) next
     .co <- tryCatch(.admCovCollapse(.ui, pinfo, s_nm[["cov_dist"]],
                                     pinfo$cov_nodes %||% 7L,
                                     cov_fixed = s_nm[["cov"]]),
@@ -1970,7 +1981,7 @@
 #' @param stratify Character vector naming the covariates to stratify on. The
 #'   rest are left in each stratum's own `cov_dist`, to be marginalised over
 #'   their distribution **conditional** on that stratum.
-#' @param n_nodes Strata per stratified covariate. A discrete
+#' @param n_nodes Strata per stratified covariate (default 9). A discrete
 #'   covariate ignores it and is cut at its levels, exactly, with the level
 #'   probabilities as weights.
 #'

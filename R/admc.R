@@ -2795,7 +2795,7 @@ nlmixr2Est.admc <- function(env, ...) {
 
   # RETURNS the studies, annotated with which covariate path each takes.
   # Discarding the value silently disables covariate handling entirely.
-  studies <- .admCheckCovariates(.ui, pinfo, studies)
+  studies <- .admCheckCovariates(.ui, pinfo, studies, "admc")
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)
