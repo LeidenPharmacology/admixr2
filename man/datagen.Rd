@@ -37,11 +37,10 @@ It must cover every parameter the source ESTIMATES. A parameter left
 out contributes no uncertainty at all, which asserts the source knew it
 exactly and reports an SE that is too small, so an incomplete matrix
 warns and no standard error is reported. A \code{fix()}ed parameter is an
-assertion and must NOT appear. A diagonal --- SEs from a paper's
-\relative standard errors, with no correlations --- is a valid fallback:
-it is exact at the
-source's own covariate reference and degrades only as you extrapolate
-away from it.}
+assertion and must NOT appear. A diagonal --- a paper's relative
+standard errors, with no correlations --- is a valid fallback: it is
+exact at the source's own covariate reference and degrades only as you
+extrapolate away from it.}
 \item{\code{cov_dist}}{(Optional) the covariate distribution this study's
 subjects span --- see \code{\link[=covDraw]{covDraw()}} for the grammar. The generated
 \code{E}/\code{V} are MARGINAL over it, which is what a publication reports.
