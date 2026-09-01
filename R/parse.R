@@ -69,20 +69,70 @@
 # find the assignment whose right-hand side mentions this theta, and take the
 # call wrapping it. Only the transforms .admBackTransform() understands are
 # recognised; anything else stays "" and keeps the old behaviour.
+#
+# THREE CONDITIONS, and the first two versions of this had none of them.
+#
+# (1) The theta must be MU-REFERENCED. rxode2 blanks curEval for EVERY theta in
+#     the expression, coefficients included, and a coefficient is not wrapped by
+#     the transform -- `tcov` in `exp(tcl + tcov*wt70 + eta.cl)` is 0.75, not
+#     exp(0.75). Reading it as "exp" put 2.117 in every progress-table row and
+#     in plot(which = "par").
+# (2) It must appear as a BARE ADDITIVE TERM of the transform's argument. That
+#     is what "mu-referenced" means structurally, and it is what separates
+#     `tcl` from `tcov*wt70` when muRefDataFrame is unavailable or generous.
+# (3) A BOUNDED transform must bring its bounds. rxode2 reports low/hi NA
+#     alongside the blank curEval, so returning "expit" with NA bounds made
+#     .admComputeScaleC() call expit(p, NA, NA) -- "Assertion on 'low' failed"
+#     -- straight out of .admBuildOptVec(), which no driver wraps. That model
+#     FITTED before this fallback existed. The bounds are in the call itself
+#     (`expit(x)` is (0,1), `expit(x, a, b)` is (a,b)), so they are read from
+#     there rather than manufactured.
 .ADM_CUREVAL_FNS <- c("exp", "expit", "probitInv")
 
+# The bare additive terms of an expression: a + b*c - d  ->  a, d (b*c is not
+# bare, and a subtracted term is not a mu-reference either, but it is returned
+# and rejected by the caller's identity requirement rather than silently kept).
+.admAddTerms <- function(e) {
+  if (is.name(e)) return(as.character(e))
+  if (is.call(e) && length(e) == 3L &&
+      as.character(e[[1L]])[1L] %in% c("+", "-"))
+    return(c(.admAddTerms(e[[2L]]), .admAddTerms(e[[3L]])))
+  character(0)
+}
+
 .admCurEvalFromModel <- function(ui, nm) {
+  .none <- list(curEval = "", low = NA_real_, hi = NA_real_)
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
-  if (is.null(lst)) return("")
+  if (is.null(lst)) return(.none)
+  # (1) mu-referenced only. No muRefDataFrame means no information, and the
+  # conservative answer is to leave upstream's "" alone.
+  mrd <- tryCatch(ui$muRefDataFrame, error = function(e) NULL)
+  if (is.null(mrd) || !"theta" %in% names(mrd) ||
+      !nm %in% as.character(mrd$theta)) return(.none)
   for (e in lst) {
-    if (!is.call(e) || !length(e) || length(e) < 3L) next
-    if (!as.character(e[[1L]]) %in% c("<-", "=", "~")) next
+    if (!is.call(e) || length(e) < 3L) next
+    if (!as.character(e[[1L]])[1L] %in% c("<-", "=", "~")) next
     rhs <- e[[3L]]
-    if (!is.call(rhs) || !nm %in% all.vars(rhs)) next
+    if (!is.call(rhs)) next
     fn <- as.character(rhs[[1L]])[1L]
-    if (fn %in% .ADM_CUREVAL_FNS) return(fn)
+    if (!fn %in% .ADM_CUREVAL_FNS || length(rhs) < 2L) next
+    # (2) bare additive term of the transform's ARGUMENT
+    if (!nm %in% .admAddTerms(rhs[[2L]])) next
+    # (3) bounds off the call
+    if (identical(fn, "exp")) return(list(curEval = fn, low = NA_real_,
+                                          hi = NA_real_))
+    .num <- function(k) {
+      if (length(rhs) < k) return(NA_real_)
+      v <- tryCatch(eval(rhs[[k]], envir = baseenv()), error = function(e) NA_real_)
+      if (is.numeric(v) && length(v) == 1L && is.finite(v)) as.numeric(v)
+      else NA_real_
+    }
+    lo <- if (length(rhs) >= 3L) .num(3L) else 0
+    hi <- if (length(rhs) >= 4L) .num(4L) else 1
+    if (!is.finite(lo) || !is.finite(hi)) return(.none)
+    return(list(curEval = fn, low = lo, hi = hi))
   }
-  ""
+  .none
 }
 
 .admNameOccurrence <- function(ui, nms) {
@@ -203,16 +253,19 @@
     if (length(.w) != 1L)
       return(list(curEval = "exp", low = NA_real_, hi = NA_real_))
     .cv <- .ce$curEval[.w]
+    .lo <- if ("low" %in% names(.ce)) .ce$low[.w] else NA_real_
+    .hi <- if ("hi"  %in% names(.ce)) .ce$hi[.w]  else NA_real_
     # "" is upstream saying it does not know, not saying "identity" -- see
     # .admCurEvalFromModel(). Only consulted when upstream is silent, so a
-    # version that reports the transform is never second-guessed.
+    # version that reports the transform is never second-guessed, and it brings
+    # its own bounds so a bounded transform never arrives with NA ones.
     if (is.na(.cv) || !nzchar(.cv)) {
-      .fromMod <- if (!is.null(ui)) .admCurEvalFromModel(ui, nm) else ""
-      if (nzchar(.fromMod)) .cv <- .fromMod
+      .fm <- if (!is.null(ui)) .admCurEvalFromModel(ui, nm) else NULL
+      if (!is.null(.fm) && nzchar(.fm$curEval)) {
+        .cv <- .fm$curEval; .lo <- .fm$low; .hi <- .fm$hi
+      }
     }
-    list(curEval = .cv,
-         low     = if ("low" %in% names(.ce)) .ce$low[.w] else NA_real_,
-         hi      = if ("hi"  %in% names(.ce)) .ce$hi[.w]  else NA_real_)
+    list(curEval = .cv, low = .lo, hi = .hi)
   }), struct_rows$name)
 
   # Endpoint distribution gate. Runs FIRST and independently of the sigma rows,

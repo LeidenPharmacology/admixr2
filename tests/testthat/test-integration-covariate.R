@@ -328,8 +328,8 @@ test_that("the general path supports ANALYTIC gradients (vs central FD)", {
     zl <- admixr2:::.admMakeZ(3000L, pinfo, 1L, "sobol")
     pl <- admixr2:::.admMakeParamsList(3000L, pinfo, 1L)
     rx <- admixr2:::.admLoadModel(ui)
-    sm <- if (g == "sens") tryCatch(admixr2:::.admLoadSensModel(ui),
-                                    error = function(e) NULL) else NULL
+    sm <- if (g == "sens") admixr2:::.admLoadSensModel(ui) else NULL
+    if (g == "sens") expect_false(is.null(sm))
     f  <- function(pp) admixr2:::.admNLL(pp, pinfo, stu, zl, rx, ovar, pl, 1L)
     ga <- admixr2:::.admGrad(ov$p0, pinfo, stu, zl, rx, ovar, pl, 1L, 1e-4,
                              sensModel = sm)
@@ -409,7 +409,13 @@ test_that("adgh's ANALYTIC gradient carries the covariate product grid", {
   stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies)
   expect_identical(stu[[1L]]$.adm_cov_path, "rows")
 
-  sm   <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
+  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return()
+  # on three paths, so a NULL here makes the "sens" arm silently re-test the
+  # FD path against its OWN central difference and pass for any state of the
+  # analytic one. The file states this rule at the top; four sites already
+  # implement it.
+  sm   <- admixr2:::.admLoadSensModel(ui)
+  expect_false(is.null(sm))
   rx   <- admixr2:::.admLoadModel(ui)
   ov   <- admixr2:::.admBuildOptVec(pinfo)
   grid <- admixr2:::.adghNodeGrid(7L, pinfo$n_eta)
@@ -616,7 +622,13 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
   zl <- admixr2:::.admMakeZ(4000L, pinfo, 1L, "sobol")
   pl <- admixr2:::.admMakeParamsList(4000L, pinfo, 1L)
   rx <- admixr2:::.admLoadModel(ui)
-  sm <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
+  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return()
+  # on three paths, so a NULL here makes the "sens" arm silently re-test the
+  # FD path against its OWN central difference and pass for any state of the
+  # analytic one. The file states this rule at the top; four sites already
+  # implement it.
+  sm <- admixr2:::.admLoadSensModel(ui)
+  expect_false(is.null(sm))
   f  <- function(pp) admixr2:::.admNLL(pp, pinfo, stu, zl, rx, ovar, pl, 1L)
   ga <- admixr2:::.admGrad(ov$p0, pinfo, stu, zl, rx, ovar, pl, 1L, 1e-4,
                            sensModel = sm)
@@ -757,7 +769,13 @@ test_that("the Taylor path carries an ANALYTIC gradient (vs central FD)", {
                   function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
   Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
   d  <- .tay_setup("taylor", ml = ml, sl = sl, E = r$E, V = Vo)
-  sm <- tryCatch(admixr2:::.admLoadSensModel(d$ui), error = function(e) NULL)
+  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return()
+  # on three paths, so a NULL here makes the "sens" arm silently re-test the
+  # FD path against its OWN central difference and pass for any state of the
+  # analytic one. The file states this rule at the top; four sites already
+  # implement it.
+  sm <- admixr2:::.admLoadSensModel(d$ui)
+  expect_false(is.null(sm))
   f  <- function(pp)
     admixr2:::.adghNLL(pp, d$pinfo, d$stu, d$rxMod, d$ovar, d$grid, 1L)
   p1 <- d$ov$p0 + c(0.15, -0.10, 0.20, -0.18, 0.25, 0.30)[seq_along(d$ov$p0)]
@@ -782,7 +800,13 @@ test_that("cov_integration = 'quadrature' is the default and changes nothing", {
   ui   <- suppressMessages(rxode2::rxode2(.cov_both))
   ovar <- admixr2:::.admOutputVar(ui)
   rxM  <- admixr2:::.admLoadModel(ui)
-  sm   <- tryCatch(admixr2:::.admLoadSensModel(ui), error = function(e) NULL)
+  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return()
+  # on three paths, so a NULL here makes the "sens" arm silently re-test the
+  # FD path against its OWN central difference and pass for any state of the
+  # analytic one. The file states this rule at the top; four sites already
+  # implement it.
+  sm   <- admixr2:::.admLoadSensModel(ui)
+  expect_false(is.null(sm))
   one <- function(ctl) {
     pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
     u     <- admixr2:::.admDriverUnits(st0, ui, ovar)

@@ -316,21 +316,31 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 # `muRefCurEval`, and print.admStudy() shows the conversion so it can be
 # checked against the paper rather than trusted.
 .admRseToCov <- function(ui, est, rse, nm_study) {
-  ini <- ui$iniDf
-  mr  <- tryCatch(ui$muRefCurEval, error = function(e) NULL)
-  role <- function(p) {
-    r <- ini[ini$name == p, , drop = FALSE]
-    if (!nrow(r)) return(NA_character_)
-    if (!is.na(r$neta1[1L])) return("omega")
-    if (!is.na(r$err[1L]))   return("sigma")
-    ce <- if (is.null(mr)) NULL else mr$curEval[mr$parameter == p]
-    if (length(ce) && identical(ce[1L], "exp")) "log" else "identity"
-  }
   se <- vapply(names(rse), function(p) {
     r <- unname(rse[[p]]) / 100
-    if (identical(role(p), "log")) {
+    .rl <- .admRseRole(ui, p)
+    if (identical(.rl, "log")) {
       # the reported quantity is exp(theta), so the RSE on it IS the SE here
       r
+    } else if (.rl %in% c("expit", "probitInv")) {
+      # A BOUNDED transform is neither of the two easy cases. The %RSE is
+      # relative to the REPORTED value b = back(theta), so SE(b) = |b| * rse,
+      # and the optimizer-scale SE divides by |db/dtheta| -- which for a
+      # bounded transform is NOT b (as for exp) and NOT 1 (as for identity).
+      # Lumping it into "identity" gave logit(0.4) at 10 %RSE an SE of
+      # |logit(0.4)| * 0.10 = 0.0405 against the correct
+      # 0.04 / (0.4 * 0.6) = 0.1667 -- 4.1x too small, the over-confident
+      # direction, and it reaches the reported SEs through C_src.
+      .tr <- .admRseTransform(ui, p)
+      .th <- unname(est[[p]])
+      .b  <- .admBackTransform(.th, .tr)
+      .d  <- .admRseDeriv(.th, .tr)
+      if (!is.finite(.b) || !is.finite(.d) || .d <= 0)
+        stop("admixr2: study '", nm_study, "': `rse` was given for '", p,
+             "' but its bounded transform has no usable derivative at ",
+             format(.th), ". Give `se` for that parameter instead.",
+             call. = FALSE)
+      abs(.b) * r / .d
     } else {
       # everything else -- a plain coefficient, an omega variance, a residual
       # SD -- is reported on the scale ini() holds, so the RSE is relative
@@ -346,16 +356,53 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
   stats::setNames(se, names(rse))
 }
 
+# The transform metadata one theta is reported under, repaired the same way
+# parse.R repairs it.
+#
+# SINGLE-SOURCED, and it used to be two byte-identical copies that BOTH read
+# `mr$curEval == "exp"` raw. parse.R states the fact that ignores: rxode2
+# returns "" for the mu-3.0 spelling, and "" was read as identity -- so
+# `cl <- exp(tcl + bwt*wt70 + eta.cl)` with rse = c(tcl = 4.1) gave
+# |log(5.2)| * 0.041 = 0.0676 instead of 0.041, i.e. 1.65x on the SE and 2.72x
+# on the variance, reaching the reported standard errors through C_src under
+# the covMethod = "r,s" that a model source selects by default. They also
+# disagreed with parse.R on the OTHER branch: a missing row is "exp" there and
+# was "identity" here.
+.admRseTransform <- function(ui, p) {
+  mr <- tryCatch(ui$muRefCurEval, error = function(e) NULL)
+  .w <- if (is.null(mr)) integer(0) else which(mr$parameter == p)
+  if (length(.w) != 1L)
+    return(list(curEval = "exp", low = NA_real_, hi = NA_real_))
+  .cv <- mr$curEval[.w]
+  .lo <- if ("low" %in% names(mr)) mr$low[.w] else NA_real_
+  .hi <- if ("hi"  %in% names(mr)) mr$hi[.w]  else NA_real_
+  if (is.na(.cv) || !nzchar(.cv)) {
+    .fm <- .admCurEvalFromModel(ui, p)
+    if (!is.null(.fm) && nzchar(.fm$curEval)) {
+      .cv <- .fm$curEval; .lo <- .fm$low; .hi <- .fm$hi
+    }
+  }
+  list(curEval = .cv, low = .lo, hi = .hi)
+}
+
+# d(back-transform)/d(theta), for the %RSE conversion.
+.admRseDeriv <- function(th, tr, h = 1e-6) {
+  if (identical(tr$curEval, "exp")) return(abs(exp(th)))
+  s <- max(abs(th), 1) * h
+  abs((.admBackTransform(th + s, tr) - .admBackTransform(th - s, tr)) / (2 * s))
+}
+
 # What each parameter's reported scale IS, for print() to show.
 .admRseRole <- function(ui, p) {
   ini <- ui$iniDf
-  mr  <- tryCatch(ui$muRefCurEval, error = function(e) NULL)
   r <- ini[ini$name == p, , drop = FALSE]
   if (!nrow(r)) return(NA_character_)
   if (!is.na(r$neta1[1L])) return("omega")
   if (!is.na(r$err[1L]))   return("sigma")
-  ce <- if (is.null(mr)) NULL else mr$curEval[mr$parameter == p]
-  if (length(ce) && identical(ce[1L], "exp")) "log" else "identity"
+  ce <- .admRseTransform(ui, p)$curEval
+  if (identical(ce, "exp")) "log"
+  else if (ce %in% c("expit", "probitInv")) ce
+  else "identity"
 }
 
 #' Write down a published study
@@ -612,11 +659,18 @@ print.admStudy <- function(x, ...) {
       for (p in names(x$rse)) {
         e <- ini$est[ini$name == p]
         rl <- .admRseRole(x$ui, p)
-        shown <- if (identical(rl, "log"))
-          sprintf("%.4g (reported %.4g)", e, exp(e)) else sprintf("%.4g", e)
-        cat(sprintf("              %-9s %-22s %5.1f%%  ->  SE %.5g%s\n",
+        # The marker names the scale the %RSE was CONVERTED FROM, so a bounded
+        # transform has to say so too -- it is a third case, not "identity".
+        shown <- if (rl %in% c("log", "expit", "probitInv"))
+          sprintf("%.4g (reported %.4g)", e,
+                  .admBackTransform(e, .admRseTransform(x$ui, p)))
+        else sprintf("%.4g", e)
+        cat(sprintf("              %-9s %-22s %5.1f%%  ->  SE %.5g%s
+",
                     p, shown, x$rse[[p]], x$se[[p]],
-                    if (identical(rl, "log")) "  [log scale]" else ""))
+                    switch(rl, log = "  [log scale]",
+                           expit = "  [logit scale]",
+                           probitInv = "  [probit scale]", "")))
       }
     } else if (!is.null(x$cov)) {
       cat(sprintf("  reported  full covariance over %s\n",

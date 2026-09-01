@@ -316,6 +316,56 @@
     all(vapply(nm, function(k) isTRUE(cd[[k]][[".point"]]), logical(1)))
 }
 
+# `cov` as a LIST, on every study.
+#
+# `cov` is documented as name -> value, and a named NUMERIC VECTOR is the
+# natural way to write that -- but for an atomic vector `x[["absent"]]` is an
+# ERROR ("subscript out of bounds") where a list returns NULL. Every consumer
+# that asks "does this study pin covariate cv?" does so with `[[ ]]`, so the
+# coercion has to happen before ANY of them run, not part-way down one function.
+# It used to sit ten lines below .admCovDiscContrast() and was absent from
+# .admWarnCovIdentifiability() entirely -- which every driver runs -- so a study
+# written the documented way (`cov = c(WT = 70)` beside a cov_dist for SEX)
+# aborted the fit with a message naming nothing.
+# Does this covariate reach the model anywhere the probes cannot see?
+#
+# .admCovCollapse, .admJointCollapse and .admShiftSpec all decide which lines
+# read a covariate by scanning TOP-LEVEL ASSIGNMENTS. `quote(if (a) b else c)`
+# has length 4 and `quote(if (a) b)` has `if` as its head, so an if() is not an
+# assignment either way and its covariate is invisible to all three.
+#
+# The consequence is not a refusal, it is a wrong design: with
+# `if (CRCL < 30) fr <- 0.5 else fr <- 1` beside an allometric CL, the collapse
+# is ADMITTED at r = 1 and CRCL takes exactly one value across the whole
+# design -- its median -- so P(CRCL < 30) is 0 under the design against 0.0228
+# declared and the renal branch is never exercised. Neither ver() nor the const
+# re-probe can see it: both score only the `hit` columns, which the design
+# reproduces exactly. On the shift path it is worse, since .admShiftVerify
+# probes a single covariate row and never crosses a threshold at all.
+#
+# A branch is not affine in the covariate, so there is nothing to rotate onto
+# even in principle. Refuse, and the study takes the ordinary product grid,
+# which solves the whole model per row and handles if() correctly.
+.admCovInBranch <- function(lst, covs) {
+  if (is.null(lst) || !length(covs)) return(FALSE)
+  for (e in lst) {
+    if (!length(e)) next
+    .asgn <- is.call(e) && length(e) == 3L &&
+      as.character(e[[1L]])[1L] %in% c("<-", "=")
+    if (.asgn) next
+    if (any(covs %in% all.vars(e))) return(TRUE)
+  }
+  FALSE
+}
+
+.admCovAsList <- function(studies) {
+  lapply(studies, function(s) {
+    if (is.list(s) && !is.null(s[["cov"]]) && !is.list(s[["cov"]]))
+      s[["cov"]] <- as.list(s[["cov"]])
+    s
+  })
+}
+
 # `est` goes LAST, and defaults to NULL meaning "build everything" -- the
 # historical behaviour, which every Tier-1 mock and direct call relies on.
 .admCheckCovariates <- function(.ui, pinfo, studies, est = NULL) {
@@ -354,18 +404,11 @@
   # anyway cost a probe and an SVD per study and, worse, printed "using 196
   # design points rather than ..." at a user whose fit uses neither number.
   .no_design <- identical(est, "admc")
+  studies <- .admCovAsList(studies)      # BEFORE anything reads cov[[...]]
   .admCovDiscContrast(.ui, studies, names(studies)[has])
 
   for (nm in names(studies)[has]) {
     cd <- studies[[nm]]$cov_dist
-    # `cov` is documented as name -> value, and a named NUMERIC VECTOR is the
-    # natural way to write that. It must be a LIST here: for an atomic vector
-    # `x[["absent"]]` is an error ("subscript out of bounds") where a list
-    # returns NULL, so the fill-from-distribution test below died on any study
-    # that pinned one covariate with `cov` and described another with
-    # `cov_dist`. Coerced once, at the only place that writes into it.
-    if (!is.null(studies[[nm]][["cov"]]) && !is.list(studies[[nm]][["cov"]]))
-      studies[[nm]][["cov"]] <- as.list(studies[[nm]][["cov"]])
     # `rho` and `Sigma` are metadata siblings of the covariate specs, not
     # covariates. Looping over them made a correlated spec fail with
     # "declares cov_dist for 'rho', which the model never reads" -- a message
@@ -586,9 +629,20 @@
         .nn0 <- as.integer(pinfo$n_nodes %||% 7L)
         .D0  <- tryCatch(.admShiftDelta(.sp, .admShiftStruct(pinfo), .g$X,
                                         .ar), error = function(e) NULL)
-        .od  <- tryCatch(diag(as.matrix(pinfo$omega_init))[[
-                  match(.sp$eta[1L], pinfo$eta_col_names)]],
-                  error = function(e) NA_real_)
+        # `pinfo$omega_init` DOES NOT EXIST -- .admParseIniDf builds it as a
+        # local and returns `omega_par` instead -- so this read always threw,
+        # .od was always NA, and .om0 was always the hard-coded sqrt(0.09).
+        # The node count the comment above sizes "from DATA" was therefore
+        # sized against a fictitious Omega: at Omega_ii = 0.0025, an entirely
+        # ordinary 5% CV, it gave 9 nodes where the rule asks for 33, in the
+        # one direction the shift path exists to resolve. It happened to be
+        # exactly right at 0.09, which is the integration fixture's eta.cl.
+        # omega_par holds 2*log(L_ii) on the diagonal, so Omega_ii = exp(.).
+        .ei  <- match(.sp$eta[1L], pinfo$eta_col_names)
+        .dr  <- which(pinfo$chol_i == .ei & pinfo$chol_j == .ei)
+        .od  <- if (length(.dr) == 1L)
+          tryCatch(exp(unname(pinfo$omega_par[[.dr]])), error = function(e) NA_real_)
+        else NA_real_
         .om0 <- sqrt(if (is.finite(.od) && .od > 0) .od else 0.09)
         .vD0 <- if (is.null(.D0)) 0 else
           max(colSums(.g$W * as.matrix(.D0)^2) -
@@ -805,9 +859,13 @@
 # places, so the two estimator families see the SAME distribution. Supply a
 # `joint` sampler directly if a specific Pearson correlation must be matched.
 .admCovMomentMatch <- function(m, sd, nm, dist) {
-  if (is.null(sd) || !is.finite(sd) || sd < 0)
+  # sd == 0 IS refused, not just a negative one: a constant covariate has no
+  # spread to integrate, every design point coincides, and the failure surfaces
+  # much later and much less legibly. The guard was added to .admPopFromData
+  # only, so both typed-out routes still reached it.
+  if (is.null(sd) || !is.finite(sd) || sd <= 0)
     stop("admixr2: covariate ", sQuote(nm), " gives `mean` without a finite ",
-         "non-negative `sd`.", call. = FALSE)
+         "POSITIVE `sd`.", call. = FALSE)
   if (identical(dist, "normal")) return(list(mu = m, sd = sd))
   if (!is.finite(m) || m <= 0)
     stop("admixr2: covariate ", sQuote(nm), " has mean ", m, ", which a ",
@@ -936,12 +994,18 @@
 }
 
 .admCovQuantile <- function(spec, u) {
-  if (is.function(spec$quantile)) return(as.numeric(spec$quantile(u)))
+  # `values` FIRST, matching .admCovNodesFor, .admCovMeanOf, .admCovVarOf,
+  # .admCovTruncSpec and .admCovDiscExact. Testing `quantile` first made a spec
+  # carrying both integrate as a CONTINUOUS margin under admc while adgh
+  # enumerated its discrete levels -- two estimators, two distributions, both
+  # finite and plausible. (A degenerate point spec carries only `quantile`, so
+  # it is unaffected.)
   if (!is.null(spec$values)) {
     pr <- spec$probs %||% rep(1 / length(spec$values), length(spec$values))
     pr <- pr / sum(pr)
     return(as.numeric(spec$values)[findInterval(u, cumsum(pr), rightmost.closed = TRUE) + 1L])
   }
+  if (is.function(spec$quantile)) return(as.numeric(spec$quantile(u)))
   if (!is.null(spec$meanlog)) return(stats::qlnorm(u, spec$meanlog, spec$sdlog))
   stats::qnorm(u, spec$mu, spec$sd)
 }
@@ -1133,6 +1197,35 @@
   dc   <- length(cn)
 
   Rz <- cov_dist[["latentR"]]
+  # AN OPAQUE `joint` SAMPLER IS DEPENDENCE THIS DESIGN CANNOT SEE. The
+  # canoniser early-returns on a user closure BEFORE it records `latentR`
+  # (see "an explicit sampler is the more specific statement"), so `Rz` is
+  # NULL and every branch below reads the distribution as INDEPENDENT: Rc
+  # becomes the identity, the eigen-rotation is skipped, and V_marg's rank-p
+  # term is computed as J J' instead of J R J'. The same distribution written
+  # as `cor` versus as a closure gave lam = (1.8, 0.2) against (1.0, 1.0) and
+  # four different design points. This file's own header says dependence is
+  # "REFUSED rather than integrated as if it were independent ... never a
+  # silent approximation", and the dependent-discrete refusal just below is
+  # dead on this path for the same reason. So measure it and refuse.
+  if (is.null(Rz) && is.function(cov_dist[["joint"]]) && dc > 1L) {
+    .mmj <- tryCatch(.admCovDistMoments(cov_dist), error = function(e) NULL)
+    .dep <- if (is.null(.mmj)) TRUE else {
+      .S <- .mmj$Sigma[cn, cn, drop = FALSE]
+      .sd <- sqrt(diag(.S))
+      .R <- if (all(is.finite(.sd)) && all(.sd > 0))
+        .S / tcrossprod(.sd) else NULL
+      is.null(.R) || any(abs(.R[lower.tri(.R)]) > 1e-6)
+    }
+    if (.dep)
+      bad("`cov_integration = \"taylor\"` cannot integrate a covariate ",
+          "distribution supplied as a `joint` sampler, because the expansion ",
+          "needs the correlation and an opaque closure does not report one -- ",
+          "reading it as independent would drop the cross terms silently. ",
+          "Declare the dependence with `cor` (or `rho`/`Sigma`), which admixr2 ",
+          "builds its own sampler from, or use the default ",
+          "`cov_integration = \"quadrature\"`.")
+  }
   if (length(dn) && !is.null(Rz) && any(abs(Rz[lower.tri(Rz)]) > 0)) {
     Rd <- Rz[disc, !disc, drop = FALSE]
     if (length(Rd) && any(abs(Rd) > 0))
@@ -1745,9 +1838,35 @@
     # Gauss-Hermite over the continuous stratified covariates, CROSSED with the
     # levels of the discrete ones. Weights multiply: the discrete block is
     # latently independent, so the cell probability factorises exactly.
+    # ROTATED BY chol(R_SS), or the bands are laid out as if the stratified
+    # covariates were INDEPENDENT. .adghNodeGrid returns a product grid over
+    # standard normals, and the declared correlation was read only for the
+    # marginalised block's conditional mean just below -- so the code held the
+    # block and did not use it here. Measured on WT/AGE at rho = 0.9 with
+    # strata_nodes = 5: the weight-weighted correlation across the 25 strata was
+    # 0.0000, and the (max WT, min AGE) corner -- essentially impossible under
+    # N(0, R_SS) at that rho -- carried weight 1.27e-04, which .admExpandStrata
+    # turns into a real study with a real n at a covariate combination the
+    # declared distribution says does not occur.
+    #
+    # chol(R) is upper triangular with U'U = R, so Z %*% U has covariance R and
+    # every COLUMN is still standard normal -- which is what keeps pnorm() the
+    # right uniform for each margin's own quantile, and what makes A %*% zC the
+    # conditional mean it already claims to be. The GH weights are unchanged;
+    # this is the same construction the eta block uses with L.
     if (length(iSc)) {
       .ng <- .adghNodeGrid(n_nodes, length(iSc))
       zC  <- .ng$X; wC <- as.numeric(.ng$W / sum(.ng$W))
+      .Rss <- Rm[iSc, iSc, drop = FALSE]
+      if (length(iSc) > 1L &&
+          !isTRUE(all.equal(unname(.Rss), diag(length(iSc)), tolerance = 1e-12))) {
+        .U <- tryCatch(chol(.Rss), error = function(e) NULL)
+        if (is.null(.U))
+          stop("admixr2: the declared correlation among the stratified ",
+               "covariates is not positive definite, so it describes no ",
+               "distribution to band.", call. = FALSE)
+        zC <- zC %*% .U
+      }
     } else { zC <- matrix(0, 1L, 0L); wC <- 1 }
     nC <- nrow(zC)
     xC <- matrix(if (length(iSc)) vapply(seq_along(iSc), function(k)
@@ -2275,6 +2394,14 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     stl <- .admCovStrata(s[["cov_dist"]], s[["stratify"]],
                          s[["strata_nodes"]] %||% .ADM_STRATA_NODES,
                          cov_range = s[["cov_range"]])
+    # `stratify = character(0)` reached .admCovStrata's `if (!length(stratify))
+    # return(NULL)` and the loop below then ran zero times, DROPPING the study
+    # -- the one malformed `stratify` that did not error. Every other spelling
+    # is refused loudly, so this was refused silently.
+    if (!length(stl))
+      stop("admixr2: study '", nm, "' declares `stratify` but it names no ",
+           "covariate, so the study would be dropped rather than banded. Give ",
+           "a covariate name, or remove `stratify`.", call. = FALSE)
     .Jk <- s[["strata_nodes"]] %||% .ADM_STRATA_NODES
     for (k in seq_along(stl)) {
       sk <- s
@@ -2288,7 +2415,13 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
       # model-source covariance applies C_src ONCE across the stacked strata, or
       # raising the resolution silently buys confidence. Stamped here because
       # this is the only place that knows they came from one study.
-      sk[[".adm_src_id"]] <- nm
+      #
+      # %||%, NOT an unconditional write: `by =` has already stamped each level
+      # with the PAPER's name for exactly the same reason, and clobbering it
+      # here made `by` together with `stratify` re-create the defect both
+      # stamps exist to prevent -- C_src applied once per level, shrinking the
+      # standard error by about sqrt(k).
+      sk[[".adm_src_id"]] <- sk[[".adm_src_id"]] %||% s[[".adm_src_id"]] %||% nm
       # a stratum's own point value for the stratified covariates, merged over
       # any `cov` the study already set for covariates it does not stratify on
       sk[["cov"]] <- utils::modifyList(as.list(s[["cov"]] %||% list()),
@@ -2528,6 +2661,9 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 .admShiftSpec <- function(ui, cov_names, eta_names) {
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
   if (is.null(lst) || !length(cov_names)) return(NULL)
+  # a covariate inside an if() is invisible to the scan below -- see
+  # .admCovInBranch()
+  if (.admCovInBranch(lst, cov_names)) return(NULL)
   hit <- list()
   for (e in lst) {
     if (!is.call(e) || length(e) < 3L) next
@@ -3335,12 +3471,12 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   # branch in .admCovMeanOf, which returned NULL and made the mean NA, so
   # between-study variation was invisible and the "not identifiable" warning
   # fired on exactly the contrast that identifies the coefficient.
-  studies <- lapply(studies, function(s) {
-    if (!is.null(s[["cov_dist"]]))
+  studies <- .admCovAsList(lapply(studies, function(s) {
+    if (is.list(s) && !is.null(s[["cov_dist"]]))
       s[["cov_dist"]] <- tryCatch(.admCovDistCanon(s[["cov_dist"]]),
                                   error = function(e) s[["cov_dist"]])
     s
-  })
+  }))
   # A study declares a covariate one of two ways: as the distribution it is
   # marginalised over (`cov_dist`), or as the value it is conditioned at
   # (`cov`). These are the same object at two resolutions -- a conditioned
@@ -3502,7 +3638,12 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
 # factor no fit can detect. Names make the intent explicit and cost four
 # characters.
 
-.admCovSpecFromVec <- function(v, nm) {
+# `dist` goes LAST, and it is the covDist() argument -- NOT hard-coded "norm".
+# The delegation below converts median/iqr, mean/cv and mean/range straight to
+# mu/sd, which removes the `mean` field the caller's dist default keys on, so
+# covDist(dist = "lnorm") was silently discarded for every vocabulary except
+# c(mean=, sd=) and an allometric model got an unbounded-below margin.
+.admCovSpecFromVec <- function(v, nm, dist = "normal") {
   bad <- function(...) stop("admixr2: covariate ", sQuote(nm), " ", ...,
                             call. = FALSE)
   if (is.list(v) || is.function(v)) return(v)
@@ -3528,7 +3669,8 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
   # the same parser admPopulation() uses rather than teach two vocabularies.
   if (any(k %in% c("mean", "median", "sd", "cv", "meanlog", "sdlog")) ||
       any(grepl("^(iqr|range)[0-9]*$", k))) {
-    sp <- .admPopSpec(stats::setNames(as.numeric(v), k), nm, "norm")
+    sp <- .admPopSpec(stats::setNames(as.numeric(v), k), nm,
+                      if (identical(dist, "lnorm")) "lnorm" else "norm")
     if (!is.null(sp$mean)) sp <- list(mu = sp$mean, sd = sp$sd)
     return(sp)
   }
@@ -3635,7 +3777,8 @@ covDist <- function(..., cor = NULL, joint = NULL,
            "as the model reads it -- e.g. covDist(WT = c(mean = 72, sd = 16)).",
            call. = FALSE)
     out <- stats::setNames(
-      lapply(seq_along(a), function(i) .admCovSpecFromVec(a[[i]], names(a)[i])),
+      lapply(seq_along(a), function(i)
+        .admCovSpecFromVec(a[[i]], names(a)[i], dist)),
       names(a))
   }
   # the default margin applies only where the covariate did not choose one, and
@@ -4156,16 +4299,24 @@ print.covDist <- function(x, ...) {
 # Costs no solves: a 128-point probe, an SVD of a pc x m matrix, and the design
 # build. Against an rxSolve at ~11 ms this does not register.
 .admCovRefresh <- function(co, st) {
-  if (is.null(co) || is.null(co$pr) || is.null(st)) return(co)
+  # A FAILED REFRESH IS MARKED, not silently absorbed. Every exit below used to
+  # `return(co)` -- the ADMISSION design, aimed at the starting values -- so a
+  # re-aim that failed once the optimizer had moved scored the objective on the
+  # wrong line in latent space, which is the 53 to 163 -2LL error the re-aiming
+  # exists to prevent, arriving through the one path nothing could see. The
+  # object is still returned (callers read its shape) but carries `stale`, and
+  # .adghGrid turns that into an unsolvable point.
+  .stale <- function(x) { if (!is.null(x)) x$stale <- TRUE; x }
+  if (is.null(co) || is.null(co$pr) || is.null(st)) return(.stale(co))
   P <- .admCovProbeAt(co$pr, st, 0, co$cell_list[[1L]], co$Ap)
   B <- .admCovLoadings(P, co$Zp, co$pc, co$pr$routes)
-  if (is.null(B)) return(co)
+  if (is.null(B)) return(.stale(co))
   sv <- tryCatch(svd(B), error = function(e) NULL)
-  if (is.null(sv) || length(sv$d) < co$r) return(co)
+  if (is.null(sv) || length(sv$d) < co$r) return(.stale(co))
   U  <- sv$u[, seq_len(co$r), drop = FALSE]
   Sr <- t(U) %*% co$Rc %*% U
   Lr <- tryCatch(chol(Sr), error = function(e) NULL)
-  if (is.null(Lr)) return(co)
+  if (is.null(Lr)) return(.stale(co))
   gl <- lapply(co$nv, function(m) .adghNodes1(m))
   Xg <- as.matrix(expand.grid(lapply(gl, function(g) g$x)))
   Wg <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
@@ -4177,10 +4328,10 @@ print.covDist <- function(x, ...) {
                          1 - .Machine$double.eps)), numeric(nrow(Zc)))
   if (!is.matrix(Xc)) Xc <- matrix(Xc, nrow(Zc), co$pc)
   colnames(Xc) <- co$cn
-  # A refresh that cannot evaluate leaves the previous design in place. It can
-  # only happen where the parameter assignments themselves fail -- a log of a
-  # negative, an overflow -- and the solve rejects that region anyway.
-  if (!all(is.finite(Xc))) return(co)
+  # A refresh that cannot evaluate can only happen where the parameter
+  # assignments themselves fail -- a log of a negative, an overflow -- and the
+  # solve rejects that region anyway, so the caller reports Inf there.
+  if (!all(is.finite(Xc))) return(.stale(co))
   Wc <- Wg / sum(Wg)
   nq <- nrow(Xc); nl <- max(nrow(co$cells), 1L)
   ix <- rep(seq_len(nq), times = nl)
@@ -4191,6 +4342,7 @@ print.covDist <- function(x, ...) {
   Xf <- Xf[, co$nms, drop = FALSE]
   co$X <- Xf; co$W <- Wf / sum(Wf); co$z <- Zc[ix, , drop = FALSE]
   co$U <- U; co$Lr <- Lr
+  co$stale <- NULL
   co
 }
 
@@ -4278,6 +4430,10 @@ print.covDist <- function(x, ...) {
   hit <- which(is_asgn & vapply(lst, function(e)
     is.call(e) && length(e) == 3L &&
       length(intersect(all.vars(e[[3L]]), cn)) > 0L, logical(1)))
+  # a covariate inside an if() never appears in `hit`, and the design would
+  # then pin it at its median without any probe noticing -- see
+  # .admCovInBranch().
+  if (.admCovInBranch(lst, c(cn, dn))) return(NULL)
   if (!length(hit)) return(NULL)
 
   # deterministic latent probe, and the covariate values it maps to
@@ -4581,6 +4737,10 @@ print.covDist <- function(x, ...) {
   hit <- which(is_asgn & vapply(lst, function(e)
     is.call(e) && length(e) == 3L &&
       length(intersect(all.vars(e[[3L]]), lat)) > 0L, logical(1)))
+  # a covariate inside an if() never appears in `hit`, and the design would
+  # then pin it at its median without any probe noticing -- see
+  # .admCovInBranch().
+  if (.admCovInBranch(lst, c(cn, dn))) return(NULL)
   if (!length(hit)) return(NULL)
   pr <- list(lst = lst, is_asgn = is_asgn, hit = hit, cn = cn,
              dn = dn, eta_names = pinfo$eta_col_names,

@@ -85,11 +85,15 @@
   # their reference, so the solve costs n_u * (nodes for the OTHER etas) rows --
   # CONSTANT in the number of covariates, against n_node^n_eta * n_cov^p.
   # Set when the shift path admitted a study but could not build its design at
-  # the current parameters. The study must then take the ordinary covariate
-  # route, NOT the bare eta grid: with cov_rows NULL, .admSimulate falls back to
-  # study$cov, which .admCheckCovariates filled with each covariate's MEAN, so
-  # the covariate integral is silently replaced by the ecological plug-in and
-  # the NLL stays finite and plausible.
+  # the current parameters -- a NULL Delta, or an absorption/conditioning that
+  # failed as the optimizer drove an eta correlation toward +/-1.
+  #
+  # It must NOT continue on the bare eta grid: with cov_rows NULL, .admSimulate
+  # falls back to study$cov, which .admCheckCovariates filled with each
+  # covariate's MEAN, so the integral becomes the ecological plug-in at a finite
+  # and plausible NLL. It must not continue on the product grid either -- a
+  # different number of quadrature points mid-fit steps the objective. It is an
+  # UNSOLVABLE POINT, and every other unsolvable point here reports Inf.
   .sh_fallback <- FALSE
   sh <- if (!is.null(s)) s[[".adm_cov_shift"]] else NULL
   if (!is.null(sh) && identical(s$.adm_cov_path, "shift") && pinfo$n_eta > 0L) {
@@ -375,24 +379,21 @@
   # quadrature re-choosing itself within the same column space, and vanishes to
   # the accuracy the design is verified to.
   .jc <- if (!is.null(s)) s[[".adm_cov_joint"]] else NULL
-  if (!is.null(.jc) && (.sh_fallback || !identical(s$.adm_cov_path, "shift"))) {
+  if (.sh_fallback) return(list(failed = TRUE))
+  if (!is.null(.jc) && !identical(s$.adm_cov_path, "shift")) {
     jd <- .admJointDesign(.jc, .admShiftStruct(pinfo, pars$struct), pars$L)
-    # NOT a silent fall-through to the branch below. Both designs are correct
-    # integrals, but they have DIFFERENT NUMBERS OF POINTS, so swapping between
-    # them mid-optimisation steps the objective -- the optimizer then chases a
-    # discontinuity, which is the same failure the fixed n_u and the frozen rank
-    # exist to prevent, arriving from a third direction. The design was priced
-    # and admitted at admission; a NULL here means the re-aim failed at this
-    # parameter point, and that is worth saying.
-    if (is.null(jd))
-      stop("admixr2: the joint covariate design could not be re-aimed at the ",
-           "current parameters. Continuing on a different design would change ",
-           "the number of quadrature points mid-fit and step the objective. ",
-           "Start from values closer to the expected ones, or narrow the ",
-           "covariate distribution's declared spread.", call. = FALSE)
+    # A FAILED RE-AIM IS AN UNSOLVABLE POINT, not a licence to change design and
+    # not a reason to abort. Falling through to the branch below would swap in a
+    # design with a DIFFERENT NUMBER OF POINTS mid-optimisation and step the
+    # objective; stop()ing kills a converging fit at a point the line search was
+    # merely trying (nothing between eval_f and here catches). Both are wrong.
+    # The failure mode is an affine_log probe going non-positive, which is
+    # exactly the region every other unsolvable point reports as Inf -- so mark
+    # the grid and let the moment functions do that.
+    if (is.null(jd)) return(list(failed = TRUE))
     return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
   }
-  if (!is.null(s) && (.sh_fallback || !identical(s$.adm_cov_path, "shift")) &&
+  if (!is.null(s) && !identical(s$.adm_cov_path, "shift") &&
       !is.null(s[["cov_dist"]])) {
     nq <- max(nrow(g$eta), 1L)
     # cov_integration = "taylor": 1 + 2p design points in place of the product
@@ -425,20 +426,18 @@
           # line in latent space as soon as the optimizer moves them -- measured
           # at 53 to 163 -2LL units for a 0.1 move in one coefficient. This is
           # the same thing the shift branch above does with .admShiftDelta.
-          # %||% ONLY when no collapse was admitted (a hand-built study), never
-          # as a rescue for one that was: the two designs have different point
-          # counts, so swapping mid-fit steps the objective.
+          # The product grid ONLY when no collapse was admitted (a hand-built
+          # study): the two have different point counts, so swapping mid-fit
+          # steps the objective.
           else if (is.null(s[[".adm_cov_collapse"]]))
                        .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
           else         .admCovRefresh(s[[".adm_cov_collapse"]],
-                                      .admShiftStruct(pinfo, pars$struct)) %||%
-                       stop("admixr2: the collapsed covariate design could ",
-                            "not be re-aimed at the current parameters. ",
-                            "Continuing on the product grid would change the ",
-                            "number of quadrature points mid-fit and step the ",
-                            "objective. Start from values closer to the ",
-                            "expected ones, or narrow the covariate ",
-                            "distribution's declared spread.", call. = FALSE)
+                                      .admShiftStruct(pinfo, pars$struct))
+    # .admCovRefresh RETURNS THE ADMISSION DESIGN ON FAILURE -- all five of its
+    # exits are `return(co)`, so a %||% here was dead code and a failed re-aim
+    # scored silently on the STARTING-VALUE rotation, which is the 53-163 -2LL
+    # error the re-aiming exists to prevent. It marks itself instead.
+    if (isTRUE(cg$stale)) return(list(failed = TRUE))
     nc <- nrow(cg$X)
     g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
     colnames(g$eta) <- pinfo$eta_col_names
@@ -513,8 +512,19 @@
   list(E = m$mu, V = m$V)
 }
 
+# Moments that say "this parameter point has no design". .adghGrid marks a
+# failed re-aim rather than swapping designs or aborting, and NaN moments make
+# every NLL non-finite, which the drivers already turn into Inf -- the same
+# answer every other unsolvable point gives.
+.adghFailedMoments <- function(study) {
+  m <- max(length(study$times), 1L)
+  if (!is.null(study$E)) m <- length(study$E)
+  list(E = rep(NaN, m), V = matrix(NaN, m, m))
+}
+
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
   g  <- .adghGrid(pars, pinfo, grid, study)
+  if (isTRUE(g$failed)) return(.adghFailedMoments(study))
   study <- .adghStudyCov(study, g)
   pm <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
@@ -529,6 +539,9 @@
 # of n_cfg * n_node subjects instead of n_cfg calls of n_node.
 .adghMomentsBatch <- function(struct_mat, pars, pinfo, study, rxMod, out_var, grid, cores) {
   g     <- .adghGrid(pars, pinfo, grid, study)
+  if (isTRUE(g$failed))
+    return(replicate(nrow(struct_mat), .adghFailedMoments(study),
+                     simplify = FALSE))
   study <- .adghStudyCov(study, g)
   Q     <- nrow(g$eta)
   n_cfg <- nrow(struct_mat)
@@ -686,6 +699,10 @@
     # A shift whose node derivatives could not be built degrades the WHOLE
     # gradient to finite differences, the same way a failed sensitivity solve
     # does. Continuing would drop this study's shift chain silently.
+    # A failed re-aim has no gradient either. FD of an Inf objective is NaN, so
+    # say so directly and let the optimizer reject the step.
+    if (isTRUE(.gS$failed))
+      return(list(grad = rep(NaN, length(p)), nll = Inf))
     if (isTRUE(.gS$shift$degraded))
       return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
                                      cores, grad_h), nll = NULL))
@@ -2227,7 +2244,11 @@ nlmixr2Est.adgh <- function(env, ...) {
   # one, and .admReportCovWarnings() must judge the covariance in hand -- a
   # covariate fit that asked for "r,s" and did not get it is exactly the
   # configuration measured as invalid.
-  .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
+  # THREE STATES, not two. A NULL covariance is "" -- labelling it "r" told a
+  # covMethod = "none" fit, which deliberately computed no standard errors,
+  # that its inference was invalid and it should use "r,s".
+  .cov_lbl  <- if (is.null(.cov)) "" else
+    if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
   .sw_HJ    <- attr(.cov, "sandwich_HJ")
   # Ill-conditioned directions and the source yardstick. Emitted from the
   # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.

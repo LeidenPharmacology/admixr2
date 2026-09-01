@@ -1479,7 +1479,11 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # one, and .admReportCovWarnings() must judge the covariance in hand -- a
   # covariate fit that asked for "r,s" and did not get it is exactly the
   # configuration measured as invalid.
-  .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
+  # THREE STATES, not two. A NULL covariance is "" -- labelling it "r" told a
+  # covMethod = "none" fit, which deliberately computed no standard errors,
+  # that its inference was invalid and it should use "r,s".
+  .cov_lbl  <- if (is.null(.cov)) "" else
+    if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
   .sw_HJ    <- attr(.cov, "sandwich_HJ")
   # Ill-conditioned directions and the source yardstick. Emitted from the
   # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.

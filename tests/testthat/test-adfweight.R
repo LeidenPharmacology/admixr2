@@ -601,3 +601,46 @@ test_that("a WEAKLY determined Hessian is flagged but NOT blanked", {
   expect_null(admixr2:::.admCondCheck(
     V %*% diag(c(0.5, 2, 3)) %*% t(V), nms))
 })
+
+test_that("an independent between-value block enters the weight exactly", {
+  # cov_integration = "taylor" splits V into the WITHIN-covariate-value spread
+  # the node ensemble carries and a derivative term no node carries. The weight
+  # used to get only the first, so Om described a narrower law than the
+  # objective scored and every sandwich SE came out too small -- while
+  # .admMomentJac already carried the term, so G and Om described different
+  # models. Verified against a brute-force simulation of the SAME law rather
+  # than against a second derivation.
+  set.seed(11)
+  m <- 3L; nq <- 6L; N <- 400
+  C  <- matrix(stats::rnorm(nq * m, 0, 0.6), nq, m)
+  w  <- stats::runif(nq, 0.5, 1.5); w <- w / sum(w)
+  C  <- sweep(C, 2L, colSums(w * C))
+  Dv <- matrix(stats::runif(nq * m, 0.05, 0.25), nq, m)
+  A  <- matrix(stats::rnorm(m * m, 0, 0.3), m, m)
+  Vx <- crossprod(A) + diag(0.05, m)
+
+  W  <- admixr2:::.admAdfWeightFast(C, w, Dv, N, Vx = Vx)
+  # NULL is bit-identical, which is what keeps every non-taylor fit unchanged
+  expect_identical(admixr2:::.admAdfWeightFast(C, w, Dv, N),
+                   admixr2:::.admAdfWeightFast(C, w, Dv, N, NULL, NULL, NULL))
+
+  R  <- 8000L
+  ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  Lx <- t(chol(Vx))
+  tau <- matrix(0, R, m + nrow(ij))
+  for (r in seq_len(R)) {
+    q  <- sample.int(nq, N, replace = TRUE, prob = w)
+    y  <- C[q, , drop = FALSE] +
+      matrix(stats::rnorm(N * m), N, m) * sqrt(Dv[q, , drop = FALSE]) +
+      matrix(stats::rnorm(N * m), N, m) %*% t(Lx)
+    yb <- colMeans(y); V <- crossprod(sweep(y, 2L, yb)) / N
+    tau[r, ] <- c(yb, V[cbind(ij[, 1L], ij[, 2L])])
+  }
+  Ob <- stats::cov(tau)
+  expect_equal(max(abs(W - Ob)) / max(abs(Ob)), 0, tolerance = 0.06)
+  # and it is strictly LARGER than the version that omitted it -- the omission
+  # was in the over-confident direction
+  Wn <- admixr2:::.admAdfWeightFast(C, w, Dv, N)
+  expect_true(all(diag(W) >= diag(Wn) - 1e-12))
+  expect_lt(min(sqrt(diag(Wn)) / sqrt(diag(W))), 0.9)
+})

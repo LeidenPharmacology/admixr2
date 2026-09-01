@@ -80,7 +80,14 @@ test_that("a mu-referenced theta back-transforms correctly, or upstream is why n
   # unreachable. A green light over a live, user-visible reporting bug.
   # .admParseIniDf() now reads the transform off ui$lstExpr whenever upstream
   # reports "" (.admCurEvalFromModel), so this holds on every rxode2 in play.
-  expect_identical(admixr2:::.admCurEvalFromModel(ui2, "tcl"), "exp")
+  expect_identical(admixr2:::.admCurEvalFromModel(ui2, "tcl")$curEval, "exp")
+  # A COVARIATE COEFFICIENT IS NOT WRAPPED BY THE TRANSFORM. rxode2 blanks
+  # curEval for every theta in the expression, coefficients included, and
+  # `tcov` in exp(tcl + tcov*wt70 + eta.cl) is 0.75, not exp(0.75). The
+  # fallback requires a mu-reference AND a bare additive term, so it declines.
+  expect_identical(admixr2:::.admCurEvalFromModel(ui2, "tcov")$curEval, "")
+  .tr2 <- admixr2:::.admParseIniDf(ui2$iniDf, ui2)$struct_transforms[["tcov"]]
+  expect_equal(admixr2:::.admBackTransform(0.75, .tr2), 0.75)
   expect_equal(admixr2:::.admBackTransform(log(4), tr(ui2)), 4)
   # Upstream's own answer is still recorded, so the day it starts reporting the
   # transform the fallback is visibly no longer load-bearing.

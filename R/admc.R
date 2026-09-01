@@ -1695,22 +1695,23 @@ nmObjGetControl.admc <- function(x, ...) {
                  function(x) identical(x$form, .ADM_RESID_BETA), logical(1))))
     use_grad <- FALSE
 
-  # Same shape of problem for a covariate study, and the same remedy.
-  # .admGradBatch() builds five params frames by hand, each with its own stride.
-  # All five now carry the per-row covariate (two of them did not, so an
-  # unpaired struct theta -- typically the covariate coefficient itself -- had a
-  # rxSolve that failed on the missing parameter, swallowed into a skipped
-  # accumulation and a constant-ZERO Hessian row, with `valid` still TRUE). Even
-  # so a MARGINALISING study keeps the .admNLLBatch route: its design moves with
-  # the parameters, so the Hessian would otherwise be of a different objective
-  # than the one minimised. Costs the gradient path's speed on covariate fits.
-  if (isTRUE(use_grad) &&
-      # a fully stratified study's cov_dist is all point specs, so it
-      # marginalises nothing and need not cost the gradient-based Hessian
-      any(vapply(studies, function(s)
-        !is.null(s[["cov_dist"]]) && !.admCovDistDegenerate(s[["cov_dist"]]),
-        logical(1))))
-    use_grad <- FALSE
+  # A COVARIATE STUDY KEEPS THE GRADIENT PATH HERE, and the guard that used to
+  # take it away was justified on a property admc does not have.
+  #
+  # .admGradBatch() builds five params frames by hand, each with its own stride,
+  # and two of them carried no covariate columns -- so an unpaired struct theta
+  # (typically the covariate coefficient itself) had an rxSolve that failed on
+  # the missing parameter, swallowed into a skipped accumulation and a
+  # constant-ZERO Hessian row with `valid` still TRUE. All five carry them now,
+  # which is the actual fix.
+  #
+  # The other half of the old justification -- "its design moves with the
+  # parameters" -- is true of the QUADRATURE designs and false of admc: its
+  # only covariate path is "rows", whose design is .admCovRowsFor, deterministic
+  # in `cov_dist` alone, which is data. That determinism is exactly what common
+  # random numbers depend on and why the collapse was never given to the
+  # sampler. Forcing .admNLLBatch cost 129 NLL evaluations against 9 gradient
+  # evaluations on an 8-parameter model, each a full cov_n_sim solve.
 
   # Hessian over struct + sigma + omega (falls back to struct+sigma if not PD).
   # Matches nlmixr2 FOCEI: omega entries are in the optimizer but skipped for cov.
@@ -3115,7 +3116,11 @@ nlmixr2Est.admc <- function(env, ...) {
   # one, and .admReportCovWarnings() must judge the covariance in hand -- a
   # covariate fit that asked for "r,s" and did not get it is exactly the
   # configuration measured as invalid.
-  .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
+  # THREE STATES, not two. A NULL covariance is "" -- labelling it "r" told a
+  # covMethod = "none" fit, which deliberately computed no standard errors,
+  # that its inference was invalid and it should use "r,s".
+  .cov_lbl  <- if (is.null(.cov)) "" else
+    if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
   .sw_HJ    <- attr(.cov, "sandwich_HJ")
   # Ill-conditioned directions and the source yardstick. Emitted from the
   # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.

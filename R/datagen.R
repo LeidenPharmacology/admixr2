@@ -368,7 +368,17 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     .src_key <- tryCatch(
       digest::digest(list(ui$lstExpr, .admSrcTheta(ui), .src_cov$cov)),
       error = function(e) nm)
-    .src_prov <- list(id    = s[[".adm_src_id"]] %||% .src_key,
+    # THE NAME QUALIFIES THE DIGEST, it does not replace it. A bare name
+    # over-MERGES: two different published models generated under the same
+    # study name landed in one .admSrcGroups() group, and .admSrcJac() then
+    # regenerated paper B's blocks from paper A's model and published thetas
+    # while paper B's C_src was discarded -- its only guard is a dimension
+    # check, which the per-unit `times` satisfy. Pasting the digest on keeps
+    # `by`/`stratify`'s "one paper is one source" grouping (every level shares
+    # ui, theta and cov, so the digest is identical) while two genuinely
+    # different models can never merge.
+    .src_prov <- list(id    = if (is.null(s[[".adm_src_id"]])) .src_key
+                              else paste0(s[[".adm_src_id"]], "|", .src_key),
                       model = mdl,
                       theta = .admSrcTheta(ui),
                       cov   = .src_cov$cov,
@@ -606,9 +616,19 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     }
   }
 
-  out <- list()
-  for (i in seq_along(results)) out[[study_names[[i]]]] <- results[[i]]
-  out
+  # setNames, NOT an out[[nm]] <- loop. The loop DROPS a study on a name
+  # collision -- `out[["a"]] <- x` twice keeps one -- and collisions are
+  # reachable: a duplicated name, or a user study called `x_s1` beside an `x`
+  # that .admExpandStrata bands into `x_s1`, `x_s2`. setNames keeps both and
+  # the refusal below names the clash instead of losing a study to it.
+  if (anyDuplicated(unlist(study_names)))
+    stop("admixr2: datagen() produced duplicate study name(s) ",
+         paste(sQuote(unique(unlist(study_names)[
+           duplicated(unlist(study_names))])), collapse = ", "),
+         ". Studies are matched by name downstream, so a duplicate would ",
+         "silently drop all but one. Rename the study, or the banded source ",
+         "whose strata collide with it.", call. = FALSE)
+  stats::setNames(results, unlist(study_names))
 }
 
 # NOTE: these live at the END of the file deliberately. Inserting them above

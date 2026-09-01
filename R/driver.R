@@ -75,8 +75,26 @@
   studies <- .ctl$studies
   if (length(studies) == 0L)
     stop(est, "Control(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
+  # PARTIAL NAMES ARE THE DANGEROUS CASE, and `is.null(names(studies))` is
+  # FALSE for them. `list(pub = admStudy(...), list(E = ..., n = 200))` has
+  # names c("pub", ""), so it passed straight through -- and .admMaterialise()
+  # rebuilds by name, where `studies[[""]]` is NULL rather than an error and
+  # `out[[""]] <- NULL` adds nothing. A two-study fit quietly became a
+  # one-study fit, printed "Obs units: 1" and reported estimates from half the
+  # data. Duplicates collapse to the first the same way. admStudies() already
+  # guards blanks, NAs and duplicates; the plain list() route did not.
+  .nm <- names(studies)
+  if (is.null(.nm)) .nm <- rep("", length(studies))
+  .nm[is.na(.nm)] <- ""
+  .blank <- !nzchar(.nm)
+  if (any(.blank)) .nm[.blank] <- paste0("study", which(.blank))
+  if (anyDuplicated(.nm))
+    stop(est, "Control(studies=): duplicate study name(s) ",
+         paste(sQuote(unique(.nm[duplicated(.nm)])), collapse = ", "),
+         ". Studies are matched by name throughout, so a duplicate silently ",
+         "drops all but the first. Give each study its own name.",
+         call. = FALSE)
+  names(studies) <- .nm
   # MATERIALISE FIRST, BEFORE ANYTHING INSPECTS A STUDY. admStudy() specs are
   # lazy, and everything below this line reads study FIELDS -- so a spec has to
   # become an ordinary study here, at the earliest shared point, not later in
@@ -224,10 +242,22 @@
   # A biased estimate inside an interval that is too narrow is the single
   # combination that invalidates inference. The sandwich covers at 1.000 on the
   # same design, so the remedy is a control argument away.
+  # "MARGINALISES" IS .admCovDistDegenerate's QUESTION, not `is.null(cov_dist)`.
+  # A fully stratified study keeps every covariate in its own cov_dist as a
+  # degenerate point spec -- a stratum is a range -- so presence of cov_dist
+  # cannot mean there is something to marginalise. The other two consumers ask
+  # it that way. And "is anything stratified?" was asked through the
+  # .adm_strata_nodes stamp that only .admExpandStrata sets, so a HAND-WRITTEN
+  # stratum list -- the workflow covariate.R recommends -- was told its
+  # inference is invalid.
   if (identical(cov_method, "r")) {
-    .cd <- vapply(studies, function(s) !is.null(s[["cov_dist"]]), logical(1))
-    .st <- vapply(studies, function(s) !is.null(s[[".adm_strata_nodes"]]),
-                  logical(1))
+    .cd <- vapply(studies, function(s)
+      !is.null(s[["cov_dist"]]) && !.admCovDistDegenerate(s[["cov_dist"]]),
+      logical(1))
+    .st <- vapply(studies, function(s)
+      !is.null(s[[".adm_strata_nodes"]]) ||
+        (!is.null(s[["cov_dist"]]) && .admCovDistDegenerate(s[["cov_dist"]])),
+      logical(1))
     if (any(.cd) && !any(.st))
       warning("admixr2: every study marginalises over its covariates and none ",
               "is stratified, and `covMethod = \"r\"` is not valid there. ",

@@ -209,7 +209,30 @@
 #
 # Cost goes from O(q^2 Q) to O(m^3 Q + q^2), which is what makes the ceiling the
 # handoff quotes (m ~ 30, q = 465) reachable rather than theoretical.
-.admAdfWeightFast <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL) {
+# `Vx` goes LAST: an extra zero-mean contribution, INDEPENDENT of the node index
+# and of the residual, whose covariance is added to every subject.
+#
+# It exists because cov_integration = "taylor" splits the covariate integral in
+# two: .adghStructMoments returns V = C'WC + dE' var dE, where the first term is
+# the WITHIN-covariate-value spread the node ensemble carries and the second is
+# the BETWEEN one. .admAdfParts handed the weight only the first, so Om
+# understated Cov(t), J = G Om G' was too small and H^-1 J H^-1 reported
+# intervals that were too narrow -- finite, plausible, and in the dangerous
+# direction. The asymmetry was provable in this file: .admMomentJac already
+# carries the Taylor term, so G was taylor-aware and Om was not.
+#
+# The algebra is short because an independent block contributes exactly its own
+# NORMAL-THEORY terms. With y = x + u + e (u independent of the node index),
+# every Wick split gives a block either 0 or >= 2 indices, so:
+#   * third moments are UNCHANGED (u is symmetric; a block holding one index
+#     contributes its mean, which is zero) -- the mean x vech block is untouched;
+#   * the marginal covariance is Sf = S0 + Vx, which is the mean block and the
+#     term subtracted from M4;
+#   * on the vech block the ij|kl pairings cancel against that subtraction
+#     exactly, leaving Sf_ik Sf_jl + Sf_il Sf_jk - S0_ik S0_jl - S0_il S0_jk.
+# NULL leaves every line below bit-identical, which is what keeps every
+# non-taylor fit unchanged.
+.admAdfWeightFast <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL, Vx = NULL) {
   w  <- w / sum(w)
   m  <- ncol(C)
   ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
@@ -285,6 +308,19 @@
     }
   }
   W[m + seq_len(q), m + seq_len(q)] <- (M4 - tcrossprod(S[cbind(I, J)])) / N
+  if (!is.null(Vx)) {
+    Sf <- S + Vx
+    W[seq_len(m), seq_len(m)] <- Sf / N
+    for (a in seq_len(q)) {
+      i <- I[a]; j <- J[a]
+      for (b in seq_len(q)) {
+        k <- I[b]; l <- J[b]
+        W[m + a, m + b] <- W[m + a, m + b] +
+          (Sf[i, k] * Sf[j, l] + Sf[i, l] * Sf[j, k] -
+             S[i, k] * S[j, l] - S[i, l] * S[j, k]) / N
+      }
+    }
+  }
   W
 }
 
@@ -311,6 +347,7 @@
 # Same path .adghMoments takes, so the two cannot describe different node sets.
 .admAdfParts <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
   g     <- .adghGrid(pars, pinfo, grid, study)
+  if (isTRUE(g$failed)) return(NULL)   # no design here; the caller falls back
   study <- .adghStudyCov(study, g)
   pm    <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp    <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
@@ -324,9 +361,22 @@
   # from the V the objective scores against -- the two would then describe
   # different laws. ms is 1 on every other family, so this is a no-op there.
   cm  <- .admAdfCondMom(cp, arr)
+  # THE BETWEEN-COVARIATE-VALUE TERM. Under cov_integration = "taylor",
+  # .adghStructMoments splits V into the within-value spread the node ensemble
+  # carries (C) and a derivative term that no node carries. Handing the weight
+  # only C left Om describing a narrower law than the objective scores, so every
+  # sandwich SE came out too small -- and .admMomentJac already carries the same
+  # term, so G and Om described different models. It is scaled by ms for the
+  # same reason C is: on an lnorm endpoint the conditional mean is f exp(s/2).
+  .Vx <- NULL
+  if (!is.null(g$taylor) && !is.null(sm$dE)) {
+    .Vx <- crossprod(sm$dE, g$taylor$var * sm$dE)
+    if (!is.null(m$ms)) .Vx <- .Vx * tcrossprod(m$ms)
+    if (!all(is.finite(.Vx))) .Vx <- NULL
+  }
   list(E = m$mu, V = m$V, w = g$W / sum(g$W),
        C  = if (is.null(m$ms)) sm$cpc else sweep(sm$cpc, 2L, m$ms, "*"),
-       Dv = cm$d, T3 = cm$t3, Q4 = cm$q4)
+       Dv = cm$d, T3 = cm$t3, Q4 = cm$q4, Vx = .Vx)
 }
 
 # Freeze one weight per study at a first-stage estimate.
@@ -637,7 +687,18 @@
   # observed-minus-predicted residual, and its normal-theory SE is exactly what
   # this weight replaces. Without it the diagnostic and the reported SE would
   # describe the same model under two different sampling laws.
-  list(cov = Hi %*% J %*% Hi, bread = 2 * Hi, J = J, H = H, Om = Om)
+  #
+  # SUBSET BY `skip`, or that sentence is false for exactly the studies it
+  # matters most for. A skipped block's Om is the data weight Omega_s(n_s),
+  # which the sandwich did NOT use -- `extra` replaced it -- so the heat map
+  # read a model source's band falling as 1/sqrt(n) beside a reported SE that
+  # is n-invariant, two laws disagreeing by a factor that grows with the
+  # declared n. That is the very discrepancy covMethod = "r,s" exists to
+  # remove. NULL for a skipped block rather than dropped, so the list stays
+  # indexed by study.
+  .Omk <- Om
+  if (length(skip)) .Omk[skip] <- list(NULL)
+  list(cov = Hi %*% J %*% Hi, bread = 2 * Hi, J = J, H = H, Om = .Omk)
 }
 
 # The summary a study actually reports, stacked: (ybar, vech V) for a full
@@ -774,7 +835,23 @@
     if (is.null(pt) || is.null(pt$Dv)) return(NULL)
     N <- as.numeric(s$n); m <- length(pt$E)
     Om[[i]] <- .admWeightSel(
-      .admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4), m, s$method)
+      .admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4, pt$Vx), m, s$method)
+    # A SIGNED CUBATURE RULE IS NOT A PROBABILITY DISTRIBUTION. Under
+    # cov_integration = "taylor" the node weights come from .admCovTaylorRows
+    # and the centre weight goes NEGATIVE for cov_taylor_h = 0.5 (a documented,
+    # user-settable value) or for more than three continuous covariates at the
+    # default. `sum(w * f)` is then not an expectation and `C' diag(w) C` is not
+    # a Gram matrix, so Om can come back indefinite -- finite, symmetric and
+    # plausible, with the reported SEs whatever H^-1 J H^-1 makes of it. The
+    # only gate downstream is all(diag(sw$cov) > 0), which this file already
+    # records as too weak. Refuse instead: the fit falls back to the naive
+    # covariance and says so.
+    .ev <- tryCatch(eigen((Om[[i]] + t(Om[[i]])) / 2, symmetric = TRUE,
+                          only.values = TRUE)$values,
+                    error = function(e) NULL)
+    if (is.null(.ev) || !all(is.finite(.ev)) ||
+        min(.ev) < -1e-8 * max(abs(.ev), 1))
+      return(NULL)
     G[[i]]  <- .admScoreCross(md$E[[i]], md$V[[i]], md$dE[[i]], md$dV[[i]], s, N)
     if (is.null(G[[i]])) return(NULL)
     # H may have been reduced to the struct+sigma sub-block (.admReduceNpdOmega),
@@ -922,6 +999,7 @@
     if (isTRUE(s$is_joint)) return(NULL)
     ov <- s$output %||% out_var
     gS <- .adghGrid(pars, pinfo, grid, s)
+    if (isTRUE(gS$failed)) return(NULL)
     if (isTRUE(gS$shift$degraded)) return(NULL)
     s   <- .adghStudyCov(s, gS)
     X   <- gS$X; W <- gS$W; ty <- gS$taylor
