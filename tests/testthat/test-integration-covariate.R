@@ -688,7 +688,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
   expect_gt(max(abs(mg$V - mi$V)) / max(abs(mi$V)), 1e-3)
 })
 
-# -- Second-order Taylor covariate integration (cov_integration = "taylor") ----
+# -- Sparse-grid covariate integration (cov_integration = "sparse") -----------
 #
 # The Tier-1 file checks the expansion itself against exact nested quadrature on
 # an analytic solution. What is only testable here is the PIPELINE: that the
@@ -698,7 +698,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
 # "quadrature" leaves every number exactly where it was.
 
 .tay_setup <- function(ci, grad = "analytical", n_nodes = 7L, ml, sl,
-                       hfrac = 0.5, E, V) {
+                       level = 3L, E, V) {
   st0 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
                        ev = rxode2::et(amt = .cov_DOSE),
                        cov_dist = list(WT = list(meanlog = ml, sdlog = sl))))
@@ -706,7 +706,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
   ovar  <- admixr2:::.admOutputVar(ui)
   ctl   <- adghControl(studies = st0, grad = grad, n_nodes = n_nodes, print = 0L,
                        covMethod = "none", cov_integration = ci,
-                       cov_taylor_h = hfrac)
+                       cov_sparse_level = level)
   pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
   u     <- admixr2:::.admDriverUnits(st0, ui, ovar)
   stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies)
@@ -717,7 +717,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
 }
 
 
-test_that("cov_integration = 'taylor' expands the marginal moments, in 1 + 2p points", {
+test_that("cov_integration = 'sparse' reproduces the marginal moments", {
   ml <- log(72); sl <- 0.28
   cl_of <- function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75
   v_of  <- function(wt)    exp(.cov_TV) * (wt / 70)^1.0
@@ -727,16 +727,16 @@ test_that("cov_integration = 'taylor' expands the marginal moments, in 1 + 2p po
   pg <- .cov_ref2(cl_of, v_of, log(exp(ml + sl^2 / 2)), 1e-8)
   Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
 
-  d  <- .tay_setup("taylor", ml = ml, sl = sl, E = r$E, V = Vo)
+  d  <- .tay_setup("sparse", ml = ml, sl = sl, E = r$E, V = Vo)
   expect_identical(d$stu[[1L]]$.adm_cov_path, "rows")
   prs <- admixr2:::.admUnpack(d$ov$p0, d$pinfo)
   mm  <- admixr2:::.adghMoments(prs, d$pinfo, d$stu[[1L]], d$rxMod, d$ovar,
                                 d$grid, 1L)
   Vs  <- mm$V - diag(.cov_ADD^2, length(.cov_TIMES))
   eE  <- max(abs(mm$E / r$E - 1)); eV <- max(abs(Vs / r$V - 1))
-  # Measured 1.9e-03 / 1.0e-01. This is a demanding regime for the expansion:
-  # WT enters v with NO random effect at all, so on that channel the covariate
-  # is the only source of variability and the effective ratio is unbounded.
+  # A demanding regime: WT enters v with NO random effect at all, so on that
+  # channel the covariate is the only source of variability. Level 3 has room
+  # to spare here -- the bounds are the ones the retired level-2 rule needed.
   expect_lt(eE, 5e-3)
   expect_lt(eV, 2e-1)
   # It must still be a large improvement on the plug-in, which is the thing it
@@ -744,23 +744,26 @@ test_that("cov_integration = 'taylor' expands the marginal moments, in 1 + 2p po
   expect_lt(eV, max(abs(pg$V / r$V - 1)) / 5)
   expect_lt(eE, max(abs(pg$E / r$E - 1)) / 5)
 
-  # 1 + 2p design points, not cov_nodes^p: the params frame the solve sees has
-  # 3 * n_nodes rows where quadrature would have had 11 * n_nodes.
-  g <- admixr2:::.adghGrid(prs, d$pinfo, d$grid, d$stu[[1L]])
-  expect_identical(nrow(g$eta), 3L * nrow(d$grid$X))
-  expect_identical(nrow(unique(g$cov_rows)), 3L)
+  # FEWER design points than the product grid, and the count read from the rule
+  # rather than hard-coded: at one covariate level 3 is the 5-point rule, and
+  # pinning "5" here would go stale the moment the default level moved.
+  g   <- admixr2:::.adghGrid(prs, d$pinfo, d$grid, d$stu[[1L]])
+  n_s <- nrow(d$stu[[1L]][[".adm_cov_sparse"]]$X)
+  expect_identical(nrow(g$eta), as.integer(n_s) * nrow(d$grid$X))
+  expect_identical(nrow(unique(g$cov_rows)), as.integer(n_s))
+  expect_lt(n_s, d$pinfo$cov_nodes)
   dq <- .tay_setup("quadrature", ml = ml, sl = sl, E = r$E, V = Vo)
   gq <- admixr2:::.adghGrid(prs, dq$pinfo, dq$grid, dq$stu[[1L]])
   # read the default rather than hard-coding it: cov_nodes is a tuning
   # default and pinning its VALUE here made this assertion stale the moment
-  # it moved.  What matters is that quadrature costs cov_nodes^p and the
-  # expansion costs 1 + 2p.
+  # it moved. What matters is that quadrature costs cov_nodes^p and the
+  # sparse rule costs less.
   expect_identical(nrow(gq$eta),
                    as.integer(dq$pinfo$cov_nodes) * nrow(dq$grid$X))
   expect_gt(nrow(gq$eta), nrow(g$eta))
 })
 
-test_that("the Taylor path carries an ANALYTIC gradient (vs central FD)", {
+test_that("the sparse path carries an ANALYTIC gradient (vs central FD)", {
   # The rank-p term sum_j v_j g'_j g'_j' is quadratic in the conditional means,
   # so it contributes a derivative the weighted-crossproduct contraction does
   # not. Evaluated AWAY from the optimum, where every component is large.
@@ -768,7 +771,7 @@ test_that("the Taylor path carries an ANALYTIC gradient (vs central FD)", {
   r  <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
                   function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
   Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
-  d  <- .tay_setup("taylor", ml = ml, sl = sl, E = r$E, V = Vo)
+  d  <- .tay_setup("sparse", ml = ml, sl = sl, E = r$E, V = Vo)
   # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return()
   # on three paths, so a NULL here makes the "sens" arm silently re-test the
   # FD path against its OWN central difference and pass for any state of the
@@ -821,17 +824,18 @@ test_that("cov_integration = 'quadrature' is the default and changes nothing", {
                           print = 0L, covMethod = "none"))
   same <- one(adghControl(studies = st0, grad = "analytical", n_nodes = 7L,
                           print = 0L, covMethod = "none",
-                          cov_integration = "quadrature", cov_taylor_h = 0.9))
+                          cov_integration = "quadrature", cov_sparse_level = 2L))
   # BIT-identical, not merely close: the quadrature path must not move by an ulp
   expect_identical(same$nll,  base$nll)
   expect_identical(same$grad, base$grad)
 })
 
-test_that("the Taylor path ENUMERATES a discrete covariate, per study", {
-  # A discrete covariate is not expanded, it is enumerated: its levels and
-  # probabilities ARE the integration rule, exactly, so a study whose covariate
-  # is two-point costs 2 design points and reproduces the enumeration.  The
-  # continuous study alongside it is unaffected and still costs 1 + 2p.
+test_that("the sparse path ENUMERATES a discrete covariate, per study", {
+  # A discrete covariate is not put on a cubature rule, it is enumerated: its
+  # levels and probabilities ARE the integration, exactly. A sparse rule is a
+  # statement about the CONTINUOUS dimensions only, so a two-point covariate
+  # costs two design points whatever the level, and the continuous study
+  # alongside it is unaffected.
   .st <- function(cd) list(E = rep(1, length(.cov_TIMES)),
                            V = diag(length(.cov_TIMES)), n = 100L,
                            times = .cov_TIMES,
@@ -843,16 +847,17 @@ test_that("the Taylor path ENUMERATES a discrete covariate, per study", {
   u    <- admixr2:::.admDriverUnits(st0, ui, ovar)
 
   ctl <- adghControl(studies = st0, grad = "analytical", print = 0L,
-                     covMethod = "none", cov_integration = "taylor")
+                     covMethod = "none", cov_integration = "sparse")
   stu <- admixr2:::.admCheckCovariates(ui, admixr2:::.admDriverPinfo(ui, ctl),
                                        u$studies)
-  td2 <- stu$s2$.adm_cov_taylor
-  expect_identical(td2$n_pt, 2L)
-  expect_identical(td2$n_cell, 2L)
-  expect_identical(td2$n_cpt, 1L)              # no cubature points at all
-  expect_equal(td2$c, c(0.4, 0.6))             # the level probabilities exactly
-  expect_equal(as.numeric(td2$X[, "WT"]), c(60, 85))
-  expect_identical(stu$s1$.adm_cov_taylor$n_pt, 3L)
+  sg2 <- stu$s2$.adm_cov_sparse
+  expect_identical(nrow(sg2$X), 2L)                  # the two levels, nothing else
+  expect_equal(as.numeric(sg2$W), c(0.4, 0.6))       # their probabilities exactly
+  expect_equal(as.numeric(sg2$X[, "WT"]), c(60, 85))
+  # the continuous study alongside gets a real sparse rule and is unaffected
+  sg1 <- stu$s1$.adm_cov_sparse
+  expect_gt(nrow(sg1$X), 2L)
+  expect_equal(sum(sg1$W), 1, tolerance = 1e-12)
 
   # and the very same studies go through on the quadrature route
   ctlq <- adghControl(studies = st0, grad = "analytical", print = 0L,
@@ -863,15 +868,16 @@ test_that("the Taylor path ENUMERATES a discrete covariate, per study", {
 
   # What IS still refused: a discrete covariate DEPENDENT on a continuous one.
   # A level is then a truncation of the latent normal rather than a point, so
-  # the continuous conditional differs cell by cell and expanding it about the
-  # marginal mean would be the wrong expansion in every cell.
+  # the continuous conditional differs cell by cell and one shared rule would
+  # be the wrong rule in every cell.
   Rz <- matrix(c(1, 0.3, 0.3, 1), 2L, 2L,
                dimnames = list(c("WT", "SEX"), c("WT", "SEX")))
   expect_error(
-    admixr2:::.admCovTaylorDesign(
+    admixr2:::.admCovSparseGrid(
       list(WT = list(meanlog = log(72), sdlog = 0.28),
-           SEX = list(values = c(0, 1), probs = c(0.5, 0.5)), latentR = Rz)),
-    "DEPENDENT")
+           SEX = list(values = c(0, 1), probs = c(0.5, 0.5)), latentR = Rz),
+      3L),
+    "DEPENDENT|discrete")
 })
 
 # =============================================================================

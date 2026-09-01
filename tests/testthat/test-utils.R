@@ -515,9 +515,9 @@ test_that("a new control argument goes LAST in the formals", {
   # tail of each control as the record of what was appended last.
   # The tail records what was appended last, in order. cov_nodes sets the
   # covariate dimension of adgh's product grid (n_nodes does not);
-  # cov_integration/cov_taylor_h were appended after it, as a pair.
+  # cov_integration/cov_sparse_level were appended after it, as a pair.
   last <- list(adfoControl = "resid_nodes", adirmcControl = "resid_nodes",
-               admControl = "resid_nodes", adghControl = "cov_taylor_h")
+               admControl = "resid_nodes", adghControl = "cov_sparse_level")
   for (nm in names(last)) {
     nms <- names(formals(get(nm)))
     nms <- nms[nms != "..."]                    # every control ends with `...`
@@ -530,6 +530,6 @@ test_that("a new control argument goes LAST in the formals", {
     nms <- names(formals(adghControl))
     expect_identical(tail(nms[nms != "..."], 4L),
                      c("resid_nodes", "cov_nodes", "cov_integration",
-                       "cov_taylor_h"))
+                       "cov_sparse_level"))
   }
 })

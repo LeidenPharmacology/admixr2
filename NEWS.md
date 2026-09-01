@@ -35,6 +35,19 @@
   `cv` as a percent, a proportion) into the margins and correlations the
   quadrature needs.
 
+* **A sparse-grid route for several covariates.**
+  `adghControl(cov_integration = "sparse", cov_sparse_level = )` integrates the
+  covariate distribution on a Smolyak grid instead of the product one. At four
+  covariates and a correlation of 0.85 it is 49 design points against the
+  3-node product grid's 81, and roughly 40x more accurate on both the mean and
+  the covariance --- cheaper and better, with the advantage growing in the
+  number of covariates. Correlation does not cost it: its error at rho = 0.85
+  is lower than at rho = 0.
+
+  The weights are signed (they sum to 1, but the sum of their magnitudes grows
+  with the level), so a sandwich covariance whose weight matrix comes out
+  indefinite as a result is refused rather than reported.
+
 * **Covariate marginalisation over a declared distribution**, for `admc` and
   `adgh`. A study declares `cov_dist` (see `covDist()`) and the estimator
   integrates the prediction over the covariate distribution as well as over the

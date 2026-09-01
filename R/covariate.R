@@ -400,7 +400,7 @@
   # .admCovRowsFor, which is deterministic in `cov_dist` alone -- the property
   # common random numbers depend on -- and re-aiming a design between
   # evaluations would make the DRAWS move with the parameters. So admc reads
-  # none of .adm_cov_taylor / .adm_cov_collapse / .adm_cov_joint. Building them
+  # none of .adm_cov_sparse / .adm_cov_collapse / .adm_cov_joint. Building them
   # anyway cost a probe and an SVD per study and, worse, printed "using 196
   # design points rather than ..." at a user whose fit uses neither number.
   .no_design <- identical(est, "admc")
@@ -672,27 +672,25 @@
       }
     }
 
-    # cov_integration = "taylor" replaces the product grid on the "rows" path
+    # cov_integration = "sparse" replaces the product grid on the "rows" path
     # (and only there -- a study that took the shift has no product grid left to
     # expand). Its refusals are properties of `cov_dist` alone, so build the
-    # design once HERE, where the message can name the study, rather than
-    # letting the first objective evaluation error out of the middle of a fit.
+    # grid once HERE, where the message can name the study, rather than letting
+    # the first objective evaluation error out of the middle of a fit.
     if (identical(studies[[nm]]$.adm_cov_path, "rows") &&
-        identical(.ci, "taylor") && !.no_design) {
-      .td <- tryCatch(.admCovTaylorDesign(cd, pinfo$cov_taylor_h %||% 1),
+        identical(.ci, "sparse") && !.no_design) {
+      .sg <- tryCatch(.admCovSparseGrid(cd, pinfo$cov_sparse_level %||% 3L,
+                                        pinfo$cov_nodes %||% 7L),
                       error = function(e) conditionMessage(e))
-      if (is.character(.td))
-        bad("study '", nm, "': ", sub("^admixr2: ", "", .td))
-      # KEEP it. The design is a pure function of `cov_dist` and `cov_taylor_h`,
-      # both of which are DATA, but .adghGrid runs inside the objective -- so
-      # rebuilding it there re-ran .admCovDistMoments' 8192-row Sobol pass
-      # through the joint sampler on every evaluation: 8.6 ms a call, ~21 s of
-      # pure overhead across a fit, for a number that cannot change. The
-      # independent path was 0.6 ms and never noticed.
-      #
-      # Numeric only (no closures), so it serialises to a parallel-restart
-      # worker by value like the rest of the study.
-      studies[[nm]]$.adm_cov_taylor <- .td
+      if (is.character(.sg))
+        bad("study '", nm, "': ", sub("^admixr2: ", "", .sg))
+      # KEEP it. The grid is a pure function of `cov_dist` and the level, both
+      # DATA, but .adghGrid runs inside the objective -- so rebuilding it there
+      # would repeat the combination technique's point merge on every
+      # evaluation for a design that cannot change. Numeric only (no closures),
+      # so it serialises to a parallel-restart worker by value like the rest of
+      # the study.
+      studies[[nm]]$.adm_cov_sparse <- .sg
     }
   }
 
@@ -712,7 +710,7 @@
     s_nm <- studies[[nm]]
     if (is.null(s_nm[["cov_dist"]])) next
     if (identical(s_nm$.adm_cov_path, "shift")) next
-    if (identical(pinfo$cov_integration %||% "quadrature", "taylor")) next
+    if (identical(pinfo$cov_integration %||% "quadrature", "sparse")) next
     if (.no_design) next
     .co <- tryCatch(.admCovCollapse(.ui, pinfo, s_nm[["cov_dist"]],
                                     pinfo$cov_nodes %||% 7L,
@@ -1126,348 +1124,6 @@
   else                        list(x = spec$mu + spec$sd * g$x,              w = g$w)
 }
 
-# =============================================================================
-# Second-order Taylor expansion of the MARGINAL MOMENTS
-# =============================================================================
-#
-# The product grid above costs n_nodes^p solves-worth of rows. The alternative
-# is to stop integrating the covariate and expand the two things the aggregate
-# likelihood actually consumes -- the marginal mean and covariance -- about the
-# covariate mean. With g(a) = E_eta[f(a, eta)] and Vc(a) = Cov_eta(f | a),
-#
-#   E_marg = E_a[g(a)]                ~= g(m) + (1/2) sum_j v_j g''_j(m)
-#   V_marg = E_a[Vc(a)] + Cov_a(g(a)) ~= Vc(m) + (1/2) sum_j v_j Vc''_j(m)
-#                                          + sum_j v_j g'_j(m) g'_j(m)'
-#
-# for v_j = Var(a_j), differences taken per covariate at h_j = hfrac * sd_j.
-# That is 1 + 2p covariate points instead of n_nodes^p, and the likelihood is
-# evaluated ONCE at the approximate marginal moments rather than per node.
-#
-# THE THIRD TERM IS THE POINT. `sum_j v_j g' g''` is Cov_a(g(a)) -- the
-# between-subject covariance the covariate itself induces, and to second order
-# it IS the omega'^2 = omega^2 + beta^2 Var(a) inflation a linear covariate
-# effect produces in closed form, appearing here as a rank-p addition to V.
-# Dropping it leaves
-# E_a[Vc(a)], i.e. the average WITHIN-covariate covariance, which is the same
-# class of mistake as writing V_struct + Sigma(mu) for the residual: a number
-# that is finite, plausible and biased low, with the covariate's whole
-# contribution to V missing. `test-covariate.R` fails without it.
-#
-# Everything here is a moment expansion, so it needs only that `a` has a finite
-# mean and variance and that g is smooth over the covariate -- not that `a` is
-# normal. What it does NOT have is cross terms: d^2 g/(da_j da_k) and
-# Cov(a_j, a_k) both enter at the same order, so a dependent covariate
-# distribution is REFUSED rather than integrated as if it were independent.
-# Refusals are listed in .admCovTaylorDesign() and every one of them is an
-# error, never a silent approximation.
-#
-# The design points, the combination coefficients and the row map, for one
-# study's covariate distribution. Depends only on `cov_dist` -- which is DATA --
-# so it is a pure function of the study and can be built up front (that is what
-# .admCheckCovariates() does with it) as well as inside the objective.
-.admCovTaylorDesign <- function(cov_dist, hfrac = 1) {
-  cov_dist <- .admCovDistCanon(cov_dist)
-  bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
-  if (!is.numeric(hfrac) || length(hfrac) != 1L || !is.finite(hfrac) || hfrac <= 0)
-    bad("`cov_taylor_h` must be one positive finite number; got ",
-        paste(format(hfrac), collapse = ", "), ".")
-  nms <- .admCovSpecNames(cov_dist)
-  d   <- length(nms)
-  if (d == 0L) return(NULL)
-
-  # A DISCRETE covariate is not expanded, it is ENUMERATED. A step function has
-  # no curvature -- design points would land ON levels and the differences would
-  # measure the gap between two levels rather than a derivative -- but it does
-  # not need one: its levels and their probabilities ARE the integration rule,
-  # exactly. So the design is a product of an exact discrete enumeration with
-  # the continuous cubature, and the two are combined by the law of total
-  # variance across the cells:
-  #
-  #   E   = sum_l p_l E_l
-  #   V   = sum_l p_l [ within-cell expansion ]          (within)
-  #       + sum_l p_l (E_l - E)(E_l - E)'                (between, EXACT)
-  #
-  # The between-cell term is a quadratic form in a LINEAR functional of the
-  # solved rows, exactly like the rank-p derivative term, so it rides the same
-  # (Dw, var) machinery and neither the moment assembly nor the analytical
-  # gradient needs to know it exists. Cost is L * (1 + 2 p_continuous) points.
-  disc <- vapply(nms, function(n) !is.null(cov_dist[[n]][["values"]]), logical(1))
-  cn   <- nms[!disc]                     # continuous
-  dn   <- nms[disc]                      # discrete
-  dc   <- length(cn)
-
-  Rz <- cov_dist[["latentR"]]
-  # AN OPAQUE `joint` SAMPLER IS DEPENDENCE THIS DESIGN CANNOT SEE. The
-  # canoniser early-returns on a user closure BEFORE it records `latentR`
-  # (see "an explicit sampler is the more specific statement"), so `Rz` is
-  # NULL and every branch below reads the distribution as INDEPENDENT: Rc
-  # becomes the identity, the eigen-rotation is skipped, and V_marg's rank-p
-  # term is computed as J J' instead of J R J'. The same distribution written
-  # as `cor` versus as a closure gave lam = (1.8, 0.2) against (1.0, 1.0) and
-  # four different design points. This file's own header says dependence is
-  # "REFUSED rather than integrated as if it were independent ... never a
-  # silent approximation", and the dependent-discrete refusal just below is
-  # dead on this path for the same reason. So measure it and refuse.
-  if (is.null(Rz) && is.function(cov_dist[["joint"]]) && dc > 1L) {
-    .mmj <- tryCatch(.admCovDistMoments(cov_dist), error = function(e) NULL)
-    .dep <- if (is.null(.mmj)) TRUE else {
-      .S <- .mmj$Sigma[cn, cn, drop = FALSE]
-      .sd <- sqrt(diag(.S))
-      .R <- if (all(is.finite(.sd)) && all(.sd > 0))
-        .S / tcrossprod(.sd) else NULL
-      is.null(.R) || any(abs(.R[lower.tri(.R)]) > 1e-6)
-    }
-    if (.dep)
-      bad("`cov_integration = \"taylor\"` cannot integrate a covariate ",
-          "distribution supplied as a `joint` sampler, because the expansion ",
-          "needs the correlation and an opaque closure does not report one -- ",
-          "reading it as independent would drop the cross terms silently. ",
-          "Declare the dependence with `cor` (or `rho`/`Sigma`), which admixr2 ",
-          "builds its own sampler from, or use the default ",
-          "`cov_integration = \"quadrature\"`.")
-  }
-  if (length(dn) && !is.null(Rz) && any(abs(Rz[lower.tri(Rz)]) > 0)) {
-    Rd <- Rz[disc, !disc, drop = FALSE]
-    if (length(Rd) && any(abs(Rd) > 0))
-      bad("covariate(s) ", paste(sQuote(dn), collapse = ", "), " are discrete ",
-          "and DEPENDENT on continuous covariate(s) ",
-          paste(sQuote(cn[apply(abs(Rd) > 0, 2L, any)]), collapse = ", "),
-          '. cov_integration = "taylor" enumerates a discrete covariate at its ',
-          "levels, but under dependence a level is a TRUNCATION of the latent ",
-          "normal rather than a point, so the continuous covariates' ",
-          "conditional mean and spread differ from cell to cell and expanding ",
-          "them about the marginal mean would be the wrong expansion in every ",
-          'cell. Use cov_integration = "quadrature", which resolves this with ',
-          "a pooled sampler.")
-    if (length(dn) > 1L) {
-      Rdd <- Rz[disc, disc, drop = FALSE]
-      if (any(abs(Rdd[lower.tri(Rdd)]) > 0))
-        bad("discrete covariates ", paste(sQuote(dn), collapse = ", "),
-            " are declared DEPENDENT on each other, so their joint cell ",
-            "probabilities are not the product of their level probabilities ",
-            'and the enumeration would be wrong. Use cov_integration = ',
-            '"quadrature".')
-    }
-  }
-
-  # ---- discrete cells: exact product enumeration -----------------------------
-  if (length(dn)) {
-    lev <- lapply(dn, function(n) as.numeric(cov_dist[[n]][["values"]]))
-    prb <- lapply(dn, function(n) { s <- cov_dist[[n]]
-      p <- s[["probs"]] %||% rep(1 / length(s[["values"]]), length(s[["values"]]))
-      p / sum(p) })
-    cells <- as.matrix(expand.grid(lev, KEEP.OUT.ATTRS = FALSE))
-    colnames(cells) <- dn
-    pcell <- apply(as.matrix(expand.grid(prb, KEEP.OUT.ATTRS = FALSE)), 1L, prod)
-  } else {
-    cells <- matrix(numeric(0), 1L, 0L)
-    pcell <- 1
-  }
-  L <- length(pcell)
-
-  # ---- continuous cubature ---------------------------------------------------
-  # DEPENDENCE IS FREE, in the eigenbasis of the latent correlation. Both
-  # covariance-weighted terms of the expansion are DIRECTIONAL: with
-  # Sigma = sum_k lam_k v_k v_k',
-  #
-  #   tr(Sigma Hess g) = sum_k lam_k * d2g/dv_k^2
-  #   J Sigma J'       = sum_k lam_k * (J v_k)(J v_k)'
-  #
-  # so differencing along the EIGENVECTORS gives both from 1 + 2p points -- the
-  # same count as the independent case, at ANY correlation. This is the
-  # third-degree spherical-radial cubature rule, i.e. the unscented transform's
-  # sigma points, and the step h_k propto sqrt(lam_k) is its scaling.
-  #
-  # THE EXPANSION RUNS IN THE LATENT NORMAL, NOT ON THE COVARIATE SCALE. Every
-  # margin is x = F^-1(Phi(z)), so differencing in z and mapping each design
-  # point back through F^-1 keeps it inside the covariate's own support by
-  # construction; differencing on the covariate scale does not (a lognormal
-  # weight with mean 2 and sd 8 put a design point at -2, and the model returned
-  # NaN from (WT/70)^theta). For a NORMAL margin the two are the same expansion,
-  # which is why this changed no existing number.
-  #
-  # INDEPENDENT margins keep the AXIAL design bit-for-bit: eigen() of a diagonal
-  # matrix would reorder the directions by eigenvalue, which changes nothing
-  # mathematically but would move every stored number in the tests.
-  lam <- numeric(0); dir <- matrix(0, 0L, 0L); h <- numeric(0)
-  Xc  <- matrix(numeric(0), 1L, 0L)
-  n_cpt <- 1L
-  Rc  <- diag(1, nrow = max(dc, 1L))[seq_len(dc), seq_len(dc), drop = FALSE]
-  if (dc > 0L) {
-    mm <- .admCovDistMoments(cov_dist)
-    muc <- mm$mu[cn]
-    if (anyNA(muc) || !all(is.finite(muc)))
-      bad("covariate(s) ", paste(sQuote(cn[!is.finite(muc)]), collapse = ", "),
-          " have no finite mean, which the Taylor expansion expands about.")
-    ic <- match(cn, nms)
-    vr <- mm$Sigma[cbind(ic, ic)]
-    if (anyNA(vr) || !all(is.finite(vr)) || any(vr <= 0))
-      bad("covariate(s) ", paste(sQuote(cn[!(is.finite(vr) & vr > 0)]),
-                                 collapse = ", "),
-          " have no spread, so every design point would coincide. A covariate ",
-          "that does not vary should be supplied as a fixed `cov` value instead.")
-    Rc  <- if (is.null(Rz)) diag(1, dc) else Rz[!disc, !disc, drop = FALSE]
-    lam <- stats::setNames(rep(1, dc), cn)
-    dir <- diag(1, nrow = dc)
-    if (dc > 1L && max(abs(Rc[lower.tri(Rc)])) > 0) {
-      ez <- eigen(Rc, symmetric = TRUE)
-      if (min(ez$values) <= -1e-8)
-        bad("the covariate correlation implied by `cov_dist` is not positive ",
-            "semi-definite (smallest eigenvalue ", format(min(ez$values)),
-            "), so it describes no distribution.")
-      if (min(ez$values) <= 1e-8)
-        bad("covariate(s) ", paste(sQuote(cn), collapse = ", "), " are ",
-            "(near-)perfectly collinear: the smallest eigenvalue of their ",
-            "correlation matrix is ", format(min(ez$values)), ". The expansion ",
-            "would difference along that direction with a step near zero, which ",
-            "is catastrophic cancellation, not a derivative. Drop one of the ",
-            "covariates, or express the pair as one covariate plus its ",
-            "(independent) residual.")
-      lam <- pmax(ez$values, 0)
-      dir <- ez$vectors
-    }
-    # THE RADIUS IS A CUBATURE NODE, NOT A FINITE-DIFFERENCE STEP, so it is
-    # chosen to match moments rather than to be small. With weights
-    # c(+-) = lam/(2h^2) and c(0) = 1 - sum(lam/h^2) the design reproduces
-    # E[1], E[z], E[z^2] and E[z^3] at ANY h -- but E[z^4] comes out as h^2/lam
-    # against a true 3, so only h = sqrt(3 lam) matches it. There the design
-    # coincides with 3-point Gauss-Hermite (nodes 0, +-sqrt(3), weights 2/3,
-    # 1/6, 1/6) and is exact through degree 5 instead of degree 3, at the same
-    # three points. It is also the classical unscented transform's scaling,
-    # kappa = 3 - d.
-    #
-    # Measured against the exact marginal, at rho = beta*sd_a/omega = 1:
-    # relE 9.6e-04 -> 1.4e-05, relV 2.6e-02 -> 5.4e-03.
-    #
-    # It fixes the conditioning too. The centre weight is 1 - d/h^2, which at
-    # the old hfrac = 0.5 was 1 - 4d: -3, -7, -11, -15 for d = 1..4, so the
-    # answer was a difference of terms carrying coefficients up to 11x its own
-    # size and any solver noise in a design point was amplified by that factor.
-    # At the matched radius it is 1 - d/3.
-    #
-    # `hfrac` (cov_taylor_h) is a MULTIPLIER on that radius, defaulting to 1.
-    # Below 1 the points are pulled back toward the covariate mean -- the scaled
-    # unscented transform -- which costs the fourth-moment match but keeps the
-    # first three, and matters for a strongly skewed margin, where the matched
-    # radius sits 1.73 latent SDs out and maps a long way into the tail.
-    h     <- hfrac * sqrt(3 * lam)
-    n_cpt <- 1L + 2L * dc
-    Z     <- matrix(0, n_cpt, dc)
-    for (k in seq_len(dc)) {
-      Z[2L * k,        ] <-  h[k] * dir[, k]
-      Z[2L * k + 1L,   ] <- -h[k] * dir[, k]
-    }
-    U  <- pmin(pmax(stats::pnorm(Z), 1e-12), 1 - 1e-12)
-    Xc <- matrix(vapply(seq_len(dc), function(j)
-      .admCovQuantile(cov_dist[[cn[j]]], U[, j]), numeric(n_cpt)),
-      n_cpt, dc, dimnames = list(NULL, cn))
-  }
-
-  # E_marg = sum_k c_k E_k with sum(c) = 1: the second difference written as a
-  # SIGNED weighted sum over the design points. At the default hfrac = 1 and one
-  # continuous covariate that is c = (2/3, 1/6, 1/6) -- 3-point Gauss-Hermite.
-  ccont       <- numeric(n_cpt)
-  ccont[1L]   <- 1 - sum(lam / h^2)
-  if (dc > 0L) { ccont[2L * seq_len(dc)] <- lam / (2 * h^2)
-                 ccont[2L * seq_len(dc) + 1L] <- lam / (2 * h^2) }
-
-  # ---- assemble: cell SLOWEST, cubature point FASTEST ------------------------
-  n_pt <- L * n_cpt
-  X <- matrix(0, n_pt, d, dimnames = list(NULL, nms))
-  if (dc > 0L) X[, cn] <- Xc[rep(seq_len(n_cpt), times = L), , drop = FALSE]
-  if (length(dn)) X[, dn] <- cells[rep(seq_len(L), each = n_cpt), , drop = FALSE]
-  cvec <- rep(pcell, each = n_cpt) * rep(ccont, times = L)
-  ip   <- if (dc > 0L) as.integer(outer(2L * seq_len(dc), (seq_len(L) - 1L) * n_cpt, "+")) else integer(0)
-  im   <- ip + 1L
-  ic   <- (seq_len(L) - 1L) * n_cpt + 1L      # the centre row of each cell
-  # var carried by each FIRST-difference direction, cell by cell: p_l * lam_j.
-  dvar <- if (dc > 0L) rep(pcell, each = dc) * rep(lam, times = L) else numeric(0)
-  # ... and by each SECOND difference: p_l * lam_j^2 / 2.
-  #
-  # Cov_a[y~(a)] was the rank-p term sum_j lam_j g'_j g'_j', i.e. y~(a)
-  # LINEARISED about the covariate mean. Keeping the quadratic term of the same
-  # expansion, y~ = y~(mu) + g'(a-mu) + (1/2) g''(a-mu)^2, gives for Gaussian
-  # latent a
-  #
-  #   Var(y~) = lam g'^2 + (1/4) g''^2 Var[(a-mu)^2] = lam g'^2 + (1/2) lam^2 g''^2
-  #
-  # and g'' is ALREADY computed -- it is what produces the mean correction
-  # (1/2) lam g''. So the term costs no extra model evaluation, and it has the
-  # same shape as everything else here: var times a quadratic form in a linear
-  # functional of the solved rows. Measured relV at rho = 1: 5.4e-03 -> 8.3e-04.
-  #
-  # In more than one direction this is the PURE-direction part of the quadratic
-  # contribution. The mixed term sum_{j<k} lam_j lam_k g''_jk g''_jk' needs the
-  # cross partials, which an axial design does not carry (that is the
-  # 1 + 2p + p(p-1) coordinate-basis rule). Omitting it is the same
-  # approximation the design already makes, not a new one.
-  dvar2 <- if (dc > 0L) 0.5 * rep(pcell, each = dc) * rep(lam^2, times = L)
-           else numeric(0)
-
-  list(X = X, c = cvec, ip = ip, im = im, ic = ic,
-       var = dvar, var2 = dvar2, h = rep(h, times = L), mu = X[1L, ],
-       n_pt = n_pt, names = nms, dir = dir, Sigma = Rc,
-       cont = cn, n_cell = L, p_cell = pcell, n_cpt = n_cpt,
-       c_cont = ccont,
-       lam = lam)
-}
-
-# Expand a design into the row map the moment assembly works from, for a params
-# frame that stacks `n_pt` blocks of `nq` eta-quadrature rows (block index
-# slowest, eta fastest -- the same stride .admCovGrid's branch uses).
-#
-#   W    signed combined weights c_k * w_q, so crossprod(W, cp) IS E_marg
-#   rows the row indices of each design point, for BLOCK-WISE centring: Vc_k is
-#        centred at its own E_k, not at the pooled mean
-#   Dw   n_row x m, column m a LINEAR functional of the solved rows, paired with
-#        var[m] so that sum_m var_m (Dw_m' cp)(Dw_m' cp)' is the whole rank
-#        correction to V. Three kinds of column:
-#          - one per (discrete cell, continuous direction): the central
-#            difference for g'_j inside that cell, carrying var = p_l * lam_j
-#          - one per (discrete cell, continuous direction): the SECOND
-#            difference for g''_j, carrying var = p_l * lam_j^2 / 2, which is
-#            the quadratic term of Cov_a[y~(a)] and costs no extra solve
-#          - one per discrete cell, present only when there IS more than one:
-#            E_l - E, carrying var = p_l, which is the BETWEEN-cell term of the
-#            law of total variance and is exact
-#        Both are quadratic forms in a linear functional of cp, which is why the
-#        moment assembly and the analytical gradient handle them with the same
-#        two lines and neither needs to know a discrete covariate exists.
-.admCovTaylorRows <- function(td, w_eta, nq) {
-  n_pt <- td$n_pt
-  L    <- td$n_cell %||% 1L
-  ncpt <- td$n_cpt  %||% n_pt
-  nd   <- length(td$ip)                       # L * (continuous directions)
-  dc   <- if (L > 0L) nd %/% L else 0L
-  rows <- lapply(seq_len(n_pt), function(k) (k - 1L) * nq + seq_len(nq))
-  nb   <- if (L > 1L) L else 0L
-  Dw   <- matrix(0, n_pt * nq, 2L * nd + nb)
-  for (m in seq_len(nd)) {
-    # first difference -> g'_j, paired with var = p_l lam_j
-    Dw[rows[[td$ip[m]]], m] <-  w_eta / (2 * td$h[m])
-    Dw[rows[[td$im[m]]], m] <- -w_eta / (2 * td$h[m])
-    # second difference -> g''_j, paired with var = p_l lam_j^2 / 2. Uses the
-    # centre row of THIS cell, not the global centre.
-    l <- ((m - 1L) %/% dc) + 1L
-    Dw[rows[[td$ip[m]]],   nd + m] <-      w_eta / td$h[m]^2
-    Dw[rows[[td$im[m]]],   nd + m] <-      w_eta / td$h[m]^2
-    Dw[rows[[td$ic[l]]],   nd + m] <- -2 * w_eta / td$h[m]^2
-  }
-  if (nb) {
-    cc <- td$c_cont
-    for (l in seq_len(L)) for (k in seq_len(ncpt)) {
-      pt <- (l - 1L) * ncpt + k
-      Dw[rows[[pt]], 2L * nd + l] <- w_eta * cc[k]
-    }
-    # subtract the global weights once, so column l is exactly E_l - E
-    for (pt in seq_len(n_pt))
-      Dw[rows[[pt]], 2L * nd + seq_len(L)] <-
-        Dw[rows[[pt]], 2L * nd + seq_len(L)] - w_eta * td$c[pt]
-  }
-  list(n_pt = n_pt, nq = nq, rows = rows, w = w_eta, c = td$c,
-       var = c(td$var, td$var2, if (nb) td$p_cell else numeric(0)),
-       h = td$h, Dw = Dw, names = td$names)
-}
 
 # Metadata siblings of the per-covariate specs. Named once, because every
 # consumer that enumerated `names(cov_dist)` and forgot them produced a
@@ -2449,6 +2105,185 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # pushes pnorm(z) through each margin's own quantile function -- with the per
 # margin quantiles replaced by the joint map. Nothing about the grid, the
 # weights or the row stride changes, so every consumer downstream is unaffected.
+# A SMOLYAK SPARSE GRID over the continuous margins, crossed with the discrete
+# ones enumerated exactly.
+#
+# WHY THIS REPLACED THE "taylor" DESIGN. That design was derived as a
+# second-order moment expansion, but it is a cubature rule and its own comment
+# recorded which one: at the moment-matched radius h = sqrt(3 lambda) it
+# "coincides with 3-point Gauss-Hermite". Measured, at p = 1 it was
+# BIT-IDENTICAL to .admCovGrid at n_nodes = 3, and above that it was the axial
+# subset of the 3^p product grid. In cubature terms it was exactly Smolyak
+# LEVEL 2 -- so the way to make it more accurate is the next LEVEL, not a
+# bigger radius and not more nodes along each axis.
+#
+# Three measurements settle that (lognormal margins, allometric + saturable
+# integrand, reference = product-15/21):
+#
+#   * MORE NODES PER AXIS SATURATES. axial-3 -> 5 -> 7 -> 9 is unchanged from 5
+#     onward, and from 3 onward once the covariates are correlated: what is
+#     left is the mixed terms an axial rule structurally cannot see.
+#   * LEVEL 3 IS A LARGE AND CHEAP GAIN. At p = 4, rho = 0.85 it is 49 points
+#     against the product grid's 81 and is 44x more accurate on the mean and
+#     33x on the covariance -- cheaper AND better. At p = 3 it matches
+#     product-3's cost at ~30x the accuracy.
+#   * CORRELATION FLIPS SIGN BETWEEN THE LEVELS. Level 2 gets WORSE with it
+#     (relE 9.3e-05 at rho = 0 against 1.9e-03 at 0.5); level 3 gets BETTER
+#     (6.6e-07 against 4.8e-08). The cheap rule that handles correlation well
+#     is real -- it is level 3, and it was never level 2.
+#
+# The price is SIGNED weights. sum(W) is exactly 1 at every level, but sum|W|
+# is 1.0 at level 2, 2.5 at level 3 for p = 3 and 4.1 for p = 4, so the answer
+# is a difference of terms several times its own size and any solver noise in a
+# design point is amplified by that factor. .admSandwichCov checks Om for
+# indefiniteness because of it. Level 2 is not innocent either: its centre
+# weight is already negative at p = 4 (min -1/3).
+#
+# Returns list(X, W, z) exactly as .admCovGrid does, so every consumer -- the
+# moments, the omega chain, the ADF weight, the shift certificate -- takes it
+# unchanged. That is the whole reason this is a GRID rather than a design
+# carrying its own derivative machinery, which is what the Taylor path was and
+# where two of its defects lived.
+.ADM_SPARSE_GROWTH <- c(1L, 3L, 5L, 7L, 9L)
+
+.admCovSparseGrid <- function(cov_dist, level = 3L, n_nodes = NULL) {
+  cov_dist <- .admCovDistCanon(cov_dist)
+  nms <- .admCovSpecNames(cov_dist)
+  d   <- length(nms)
+  if (!d) return(NULL)
+  level <- as.integer(level)
+  if (!is.finite(level) || level < 2L || level > length(.ADM_SPARSE_GROWTH))
+    stop("admixr2: `cov_sparse_level` must be an integer between 2 and ",
+         length(.ADM_SPARSE_GROWTH), "; got ", format(level), ".",
+         call. = FALSE)
+  # Discrete margins are enumerated at their levels and crossed in, exactly as
+  # the product grid does. A sparse rule is a statement about the CONTINUOUS
+  # dimensions; a level probability is not an approximation of anything.
+  disc <- vapply(nms, function(n) !is.null(cov_dist[[n]][["values"]]),
+                 logical(1))
+  cn <- nms[!disc]; dn <- nms[disc]
+  dc <- length(cn)
+  if (!dc) return(.admCovGrid(cov_dist, n_nodes %||% 7L))
+  # An opaque `joint` sampler is refused for the reason the Taylor design was:
+  # the canoniser early-returns before recording `latentR`, so the rotation
+  # below would read a dependent distribution as independent.
+  Rz <- cov_dist[["latentR"]]
+  if (is.null(Rz) && is.function(cov_dist[["joint"]]) && dc > 1L)
+    stop("admixr2: cov_integration = \"sparse\" cannot integrate a covariate ",
+         "distribution supplied as a `joint` sampler -- the sparse rule needs ",
+         "the latent correlation and an opaque closure does not report one. ",
+         "Declare it with `cor` (or `rho`/`Sigma`), which admixr2 builds its ",
+         "own sampler from, or use cov_integration = \"quadrature\".",
+         call. = FALSE)
+  # A DISCRETE MARGIN CORRELATED WITH A CONTINUOUS ONE IS REFUSED, not quietly
+  # crossed in as if independent. Under dependence a level is a TRUNCATION of
+  # the latent normal rather than a point, so the continuous conditional
+  # differs cell by cell and one shared rule is the wrong rule in every cell.
+  # Subsetting Rz to the continuous block silently assumes that away, which is
+  # the class of approximation this file refuses everywhere else -- and the
+  # retired Taylor design carried exactly this refusal.
+  if (length(dn) && !is.null(Rz) && any(abs(Rz[disc, !disc, drop = FALSE]) > 0))
+    stop("admixr2: covariate(s) ", paste(sQuote(dn), collapse = ", "),
+         " are DISCRETE and latently correlated with a continuous covariate, ",
+         "so a level is a truncation of the latent normal rather than a point ",
+         "and the continuous conditional differs from cell to cell. The sparse ",
+         "rule integrates one shared design, which would be the wrong one in ",
+         "every cell. Use cov_integration = \"quadrature\", or declare the ",
+         "discrete covariate independent of the continuous ones.",
+         call. = FALSE)
+  Rc <- if (is.null(Rz)) diag(1, dc) else Rz[!disc, !disc, drop = FALSE]
+  # Rotate onto the eigenvectors of the latent correlation, so the rule runs
+  # along the directions the distribution actually varies in. At Rc = I this is
+  # the identity and the grid is the ordinary axis-aligned one.
+  Arot <- diag(1, dc)
+  if (dc > 1L && max(abs(Rc[lower.tri(Rc)])) > 0) {
+    ez <- eigen(Rc, symmetric = TRUE)
+    if (min(ez$values) <= -1e-8)
+      stop("admixr2: the covariate correlation implied by `cov_dist` is not ",
+           "positive semi-definite (smallest eigenvalue ",
+           format(min(ez$values)), "), so it describes no distribution.",
+           call. = FALSE)
+    Arot <- ez$vectors %*% diag(sqrt(pmax(ez$values, 0)), dc)
+  }
+  sm <- .admSparseNodes(dc, level)
+  Z  <- sm$X %*% t(Arot)
+  U  <- pmin(pmax(stats::pnorm(Z), .Machine$double.eps),
+             1 - .Machine$double.eps)
+  Xc <- matrix(vapply(seq_len(dc), function(j)
+    .admCovQuantile(cov_dist[[cn[j]]], U[, j]), numeric(nrow(Z))),
+    nrow(Z), dc, dimnames = list(NULL, cn))
+  if (!all(is.finite(Xc)))
+    stop("admixr2: the sparse grid produced non-finite covariate values -- a ",
+         "margin's quantile function saturated at a tail node. Lower ",
+         "`cov_sparse_level`, or give a margin that is finite there.",
+         call. = FALSE)
+  Wc <- sm$W
+  if (length(dn)) {
+    lv <- lapply(dn, function(n) as.numeric(cov_dist[[n]][["values"]]))
+    pr <- lapply(dn, function(n) {
+      q <- cov_dist[[n]][["probs"]]
+      q <- if (is.null(q)) rep(1, length(cov_dist[[n]][["values"]])) else q
+      as.numeric(q) / sum(q) })
+    ig <- as.matrix(expand.grid(lapply(lv, seq_along), KEEP.OUT.ATTRS = FALSE))
+    wd <- Reduce(`*`, lapply(seq_along(dn), function(k) pr[[k]][ig[, k]]))
+    nq <- nrow(Xc); nl <- nrow(ig)
+    ix <- rep(seq_len(nq), times = nl); il <- rep(seq_len(nl), each = nq)
+    Xd <- matrix(0, nq * nl, length(dn), dimnames = list(NULL, dn))
+    for (k in seq_along(dn)) Xd[, k] <- lv[[k]][ig[il, k]]
+    X  <- cbind(Xc[ix, , drop = FALSE], Xd)[, nms, drop = FALSE]
+    W  <- Wc[ix] * wd[il]
+    Zo <- Z[ix, , drop = FALSE]
+  } else {
+    X <- Xc[, nms, drop = FALSE]; W <- Wc; Zo <- Z
+  }
+  list(X = X, W = W / sum(W), z = Zo)
+}
+
+# The Smolyak combination rule over `d` standard-normal dimensions.
+#
+#   A(d, L) = sum over multi-indices i with L-d+1 <= |i| <= L of
+#             (-1)^(L-|i|) * choose(d-1, L-|i|) * (U^{i_1} x ... x U^{i_d})
+#
+# with L = d + level - 1 and U^k the .ADM_SPARSE_GROWTH[k]-point Gauss-Hermite
+# rule. Level 2 reproduces the axial rule exactly, which is what makes the
+# retired Taylor design a special case rather than a separate method.
+#
+# Points are merged BY VALUE, and that is why the centre node has to be snapped
+# to exactly zero: .adghNodes1 returns it as ~1e-16 out of the eigen
+# decomposition, so without the snap the same point arrives under several keys
+# and the grid comes back with spurious rows carrying split weights (measured:
+# 7 rows where the rule has 5, at p = 2 level 2).
+.admSparseNodes <- function(d, level) {
+  L   <- d + level - 1L
+  idx <- as.matrix(expand.grid(rep(list(seq_len(level)), d),
+                               KEEP.OUT.ATTRS = FALSE))
+  idx <- idx[rowSums(idx) >= L - d + 1L & rowSums(idx) <= L, , drop = FALSE]
+  gs  <- lapply(.ADM_SPARSE_GROWTH[seq_len(level)], function(n) {
+    g <- .adghNodes1(n); g$x[abs(g$x) < 1e-12] <- 0; g })
+  env <- new.env(hash = TRUE, parent = emptyenv())
+  for (r in seq_len(nrow(idx))) {
+    i  <- idx[r, ]
+    cf <- (-1)^(L - sum(i)) * choose(d - 1L, L - sum(i))
+    if (cf == 0) next
+    gk <- gs[i]
+    gg <- as.matrix(expand.grid(lapply(gk, function(g) seq_along(g$x)),
+                                KEEP.OUT.ATTRS = FALSE))
+    for (t in seq_len(nrow(gg))) {
+      x  <- vapply(seq_len(d), function(j) gk[[j]]$x[gg[t, j]], numeric(1))
+      w  <- prod(vapply(seq_len(d), function(j) gk[[j]]$w[gg[t, j]],
+                        numeric(1)))
+      ky <- paste(sprintf("%.12g", x), collapse = "|")
+      env[[ky]] <- (env[[ky]] %||% 0) + cf * w
+    }
+  }
+  ks <- ls(env)
+  W  <- vapply(ks, function(k) env[[k]], numeric(1))
+  ok <- abs(W) > 1e-14
+  X  <- do.call(rbind, lapply(ks[ok], function(k)
+    as.numeric(strsplit(k, "|", fixed = TRUE)[[1L]])))
+  list(X = matrix(X, sum(ok), d), W = unname(W[ok]))
+}
+
 .admCovGrid <- function(cov_dist, n_nodes) {
   cov_dist <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cov_dist)
@@ -4397,7 +4232,7 @@ print.covDist <- function(x, ...) {
   # A discrete covariate DEPENDENT on a continuous one makes each level a
   # TRUNCATION of the latent normal rather than a point, so the continuous
   # conditional law differs cell to cell and one shared design would be the
-  # wrong design in every cell. The same refusal .admCovTaylorDesign carries.
+  # wrong design in every cell. The same refusal .admCovSparseGrid carries.
   if (length(dn) && !is.null(R) &&
       any(abs(R[id, ic, drop = FALSE]) > 0)) return(NULL)
   Rc <- if (is.null(R)) diag(1, pc) else R[ic, ic, drop = FALSE]
@@ -4704,7 +4539,7 @@ print.covDist <- function(x, ...) {
   # TRUNCATION of the latent normal rather than a point, so the continuous
   # conditional law differs cell to cell and one shared rotation would be the
   # wrong rotation in every cell but one. The same refusal .admCovCollapse and
-  # .admCovTaylorDesign carry.
+  # .admCovSparseGrid carry.
   if (length(dn) && !is.null(R) &&
       any(abs(R[id, ic, drop = FALSE]) > 0)) return(NULL)
   Rc <- if (is.null(R)) diag(1, pc) else R[ic, ic, drop = FALSE]

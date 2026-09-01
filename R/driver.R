@@ -46,15 +46,15 @@
   # needs it to price itself against the design it would replace
   pinfo$n_nodes          <- .ctl$n_nodes
   # How the covariate distribution is integrated: "quadrature" (the product grid
-  # above) or "taylor" (a second-order expansion of the marginal MOMENTS at
-  # 1 + 2p design points). Only adghControl() exposes it, so every other
-  # estimator falls back to "quadrature" here and is unchanged.
+  # above) or "sparse" (a Smolyak grid over the same margins). Only
+  # adghControl() exposes it, so every other estimator falls back to
+  # "quadrature" here and is unchanged.
   pinfo$cov_integration  <- .ctl$cov_integration %||% "quadrature"
-  # 1, matching adghControl's default and .adghGrid's own fallback. 0.5 was the
-  # retired radius this file argues against at length; adghControl always
-  # supplies the value so the fallback is unreachable today, but a control that
-  # did not would have silently expanded at the wrong one.
-  pinfo$cov_taylor_h     <- .ctl$cov_taylor_h %||% 1
+  # 3, matching adghControl's default and .adghGrid's own fallback. Level 2 is
+  # the axial rule the retired Taylor design was; adghControl always supplies
+  # the value so this fallback is unreachable today, but a control that did not
+  # would otherwise have built a rule an order of magnitude coarser in silence.
+  pinfo$cov_sparse_level <- .ctl$cov_sparse_level %||% 3L
   pinfo
 }
 

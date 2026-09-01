@@ -345,7 +345,7 @@ test_that("the friendly grammar refuses what it cannot represent", {
 })
 
 # =============================================================================
-# Second-order Taylor covariate integration (cov_integration = "taylor")
+# Sparse-grid covariate integration (cov_integration = "sparse")
 # =============================================================================
 #
 # The reference is EXACT nested Gauss-Hermite over (covariate, eta) on an
@@ -389,19 +389,6 @@ test_that("the friendly grammar refuses what it cannot represent", {
   list(E = mu, V = t(Yc) %*% (Yc * .tay_QE$w))
 }
 
-# The PACKAGE's own path: build the design, lay the solved matrix out exactly as
-# .adghGrid() does (design point slowest, eta node fastest), assemble.
-.tay_pkg <- function(tcov, mu_a, sd_a, hfrac = 1) {   # package default radius
-  td  <- admixr2:::.admCovTaylorDesign(list(A = list(mu = mu_a, sd = sd_a)), hfrac)
-  nq  <- length(.tay_QE$x)
-  tay <- admixr2:::.admCovTaylorRows(td, .tay_QE$w, nq)
-  W   <- as.numeric(outer(.tay_QE$w, td$c))
-  a   <- rep(td$X[, 1L], each = nq)
-  eta <- rep(.tay_OM * .tay_QE$x, times = td$n_pt)
-  cp  <- .tay_conc(exp(.tay_TCL + tcov * a + eta))
-  c(admixr2:::.adghStructMoments(cp, W, tay), list(design = td, rows = tay))
-}
-
 .tay_relerr <- function(a, b) max(abs(a - b) / pmax(abs(b), 1e-12))
 
 test_that(".admCovVarOf reports Var(a) on the covariate's OWN scale", {
@@ -424,178 +411,19 @@ test_that(".admCovVarOf reports Var(a) on the covariate's OWN scale", {
     list(quantile = function(u) stats::qnorm(u, 5, 2))), 4, tolerance = 5e-3)
 })
 
-test_that(".admCovTaylorDesign lays out 1 + 2p points with weights summing to 1", {
-  # hfrac is a MULTIPLIER on the moment-matched radius sqrt(3*lambda), so the
-  # default 1 puts the design points where 3-point Gauss-Hermite does: at
-  # +/- sqrt(3) latent SDs, weights 1/6 and centre 1 - d/3.
-  h  <- sqrt(3)
-  td <- admixr2:::.admCovTaylorDesign(
-    list(A = list(mu = 2, sd = 0.4), B = list(mu = -1, sd = 3)), hfrac = 1)
-  expect_identical(td$n_pt, 5L)                       # 1 + 2*2
-  expect_identical(td$names, c("A", "B"))
-  # centre, then (+h, -h) per covariate with every OTHER covariate at its mean
-  expect_equal(td$X[1L, ], c(A = 2, B = -1))
-  expect_equal(unname(td$X[td$ip, ]),
-               rbind(c(2 + 0.4*h, -1), c(2, -1 + 3*h)))
-  expect_equal(unname(td$X[td$im, ]),
-               rbind(c(2 - 0.4*h, -1), c(2, -1 - 3*h)))
-  # E_marg = sum_k c_k E_k is an average, so the coefficients sum to one
-  expect_equal(sum(td$c), 1)
-  # 1 - 2/h^2 = 1 - 2/3, then 1/(2h^2) = 1/6 each
-  expect_equal(td$c, c(1 - 2/3, rep(1/6, 4L)))
-  # a smaller radius is still a valid degree-3 rule, just not moment-matched
-  td5 <- admixr2:::.admCovTaylorDesign(
-    list(A = list(mu = 2, sd = 0.4), B = list(mu = -1, sd = 3)), hfrac = 0.5)
-  expect_equal(sum(td5$c), 1)
-  # `var` is on the LATENT scale the expansion runs in, so it is 1 per
-  # direction for independent covariates -- the covariate-scale spread enters
-  # through the design POINTS instead (mu +/- hfrac*sd, above)
-  expect_equal(unname(td$var), c(1, 1))
-})
 
-test_that("the Taylor design handles DEPENDENT covariates in the eigenbasis", {
-  # 1 + 2p points at ANY correlation: the two Sigma-weighted terms of the
-  # expansion are directional, so differencing along the eigenvectors of Sigma
-  # carries the off-diagonal at no extra cost. (This used to be refused.)
-  cd <- list(A = list(mu = 0, sd = 2, dist = "normal"),
-             B = list(mu = 0, sd = 3, dist = "normal"), cor = 0.5)
-  td <- admixr2:::.admCovTaylorDesign(cd, hfrac = 0.5)
-  expect_identical(td$n_pt, 5L)                       # unchanged by rho
-  expect_equal(sum(td$c), 1)
-  expect_equal(crossprod(td$dir), diag(1, 2), tolerance = 1e-12)
-  # the design must REPRODUCE Sigma: sum_k lam_k v_k v_k' == Sigma
-  rec <- Reduce(`+`, lapply(seq_along(td$var),
-    function(k) td$var[k] * tcrossprod(td$dir[, k])))
-  expect_equal(rec, unname(td$Sigma), tolerance = 1e-10)
-  # off the coordinate axes -- both covariates move together along direction 1
-  expect_true(all(abs(td$X[td$ip[1L], ] - td$mu) > 1e-8))
-  # and the three spellings of dependence must agree exactly
-  eig <- function(x) admixr2:::.admCovTaylorDesign(x, 0.5)$var
-  base <- list(A = list(mu = 0, sd = 2, dist = "normal"),
-               B = list(mu = 0, sd = 3, dist = "normal"))
-  expect_equal(eig(c(base, list(rho = 0.5))), td$var, tolerance = 0)
-  expect_equal(eig(c(base, list(Sigma = matrix(c(4, 3, 3, 9), 2, 2)))), td$var,
-               tolerance = 0)
-})
 
-test_that("the Taylor design REFUSES what it cannot expand, rather than approximating", {
-  # (near-)collinear covariates: h = hfrac*sqrt(lambda) collapses, so the
-  # second difference along that direction is cancellation, not a derivative.
-  # Checked on the CORRELATION matrix, so covariates that merely differ in
-  # UNITS are not caught by it.
-  expect_error(admixr2:::.admCovTaylorDesign(
-    list(A = list(mu = 0, sd = 1, dist = "normal"),
-         B = list(mu = 0, sd = 1, dist = "normal"), cor = 1 - 1e-14)),
-    "collinear")
-  expect_silent(admixr2:::.admCovTaylorDesign(
-    list(A = list(mu = 0, sd = 1e4, dist = "normal"),
-         B = list(mu = 0, sd = 1e-4, dist = "normal"), cor = 0.3)))
-  # a discrete covariate is ENUMERATED, not expanded -- what is refused is a
-  # discrete covariate DEPENDENT on a continuous one, where a level is a
-  # truncation of the latent normal rather than a point, so the continuous
-  # conditional differs cell by cell.
-  Rz <- matrix(c(1, 0.3, 0.3, 1), 2L, 2L,
-               dimnames = list(c("WT", "SEX"), c("WT", "SEX")))
-  expect_error(admixr2:::.admCovTaylorDesign(
-    list(WT = list(mu = 70, sd = 15), SEX = list(values = c(0, 1)),
-         latentR = Rz)), "DEPENDENT")
-  # a degenerate covariate makes the differencing step zero
-  expect_error(admixr2:::.admCovTaylorDesign(
-    list(A = list(quantile = function(u) rep(5, length(u))))), "no spread")
-  # and the step itself has to be a usable number
-  expect_error(admixr2:::.admCovTaylorDesign(list(A = list(mu = 0, sd = 1)), 0),
-               "positive finite")
-  # a diagonal Sigma is fine -- it is only the off-diagonal that is refused
-  Sd <- diag(c(1, 4)); dimnames(Sd) <- list(c("A", "B"), c("A", "B"))
-  expect_silent(admixr2:::.admCovTaylorDesign(
-    list(A = list(mu = 0, sd = 1), B = list(mu = 0, sd = 2), Sigma = Sd)))
-})
 
-test_that("the Taylor design ENUMERATES a discrete covariate exactly", {
-  # A step function has no curvature, but it does not need one: its levels and
-  # probabilities ARE the rule.  All-discrete therefore reduces to the exact
-  # enumeration -- no expansion, no design points off the levels.
-  td <- admixr2:::.admCovTaylorDesign(
-    list(SEX = list(values = c(0, 1), probs = c(0.55, 0.45))))
-  expect_equal(td$n_pt, 2L)
-  expect_equal(as.numeric(td$X[, "SEX"]), c(0, 1))
-  expect_equal(td$c, c(0.55, 0.45))            # the level probabilities exactly
-  expect_equal(td$n_cell, 2L)
-  expect_equal(td$n_cpt, 1L)                   # no cubature points at all
 
-  # mixed: L cells x (1 + 2 p_continuous), weights the product, and the signed
-  # combination still sums to one.
-  tm <- admixr2:::.admCovTaylorDesign(
-    list(WT = list(mu = 70, sd = 15), SEX = list(values = c(0, 1),
-                                                 probs = c(0.55, 0.45))))
-  expect_equal(tm$n_pt, 6L)
-  expect_equal(tm$n_cell, 2L)
-  expect_equal(tm$n_cpt, 3L)
-  expect_equal(sum(tm$c), 1)
-  expect_equal(sort(unique(tm$X[, "SEX"])), c(0, 1))
-  # the derivative directions are per CELL, so the rank term is p_l-weighted
-  expect_equal(length(tm$ip), 2L)              # 2 cells x 1 continuous direction
-  expect_equal(unname(tm$var), c(0.55, 0.45))  # p_l * lambda_j, lambda = 1
 
-  # and the row map carries one extra column per cell: E_l - E, the exact
-  # between-cell term of the law of total variance.  Each such column must have
-  # zero total weight, or it would not be a centred contrast.
-  tr <- admixr2:::.admCovTaylorRows(tm, c(0.25, 0.5, 0.25), 3L)
-  # 2 first-difference + 2 second-difference + 2 between-cell columns
-  expect_equal(ncol(tr$Dw), 6L)
-  expect_equal(length(tr$var), 6L)
-  # every column is a CENTRED contrast: a first difference (+1,-1), a second
-  # difference (+1,-2,+1) and a cell mean minus the global mean all sum to zero
-  expect_equal(unname(colSums(tr$Dw)), rep(0, 6L))
-  # the second-difference block carries p_l * lambda^2 / 2
-  expect_equal(unname(tr$var[3:4]), c(0.55, 0.45) / 2)
-})
-
-test_that("the Taylor moments match the EXACT marginal, and beat the plug-in", {
-  # ratio = tcov * sd_a / omega -- the covariate-induced spread relative to the
-  # IIV. Reproduces validation/taylor-corrected.R's accuracy table.
-  mu_a <- 0; sd_a <- 0.40
-  want <- list("0.1" = c(1e-6, 1e-4), "0.5" = c(1e-4, 1e-2), "1" = c(2e-3, 1e-1))
-  for (ratio in c(0.1, 0.5, 1)) {
-    tcov <- ratio * .tay_OM / sd_a
-    ex   <- .tay_exact(tcov, mu_a, sd_a)
-    ta   <- .tay_pkg(tcov, mu_a, sd_a)
-    cd   <- .tay_cond(mu_a, tcov)                  # the ecological plug-in
-    lim  <- want[[as.character(ratio)]]
-    expect_lt(.tay_relerr(ta$mu, ex$E), lim[[1L]])
-    expect_lt(.tay_relerr(ta$V,  ex$V), lim[[2L]])
-    # ... and it is an IMPROVEMENT on solving at the covariate mean, which is
-    # what "we already have a covariate value" would silently give you
-    expect_lt(.tay_relerr(ta$V, ex$V), .tay_relerr(cd$V, ex$V) / 10)
-  }
-})
-
-test_that("the Taylor moments are the second-order expansion, term for term", {
-  # E = g(mu) + (sd^2/2) g''(mu), differenced at h = hfrac*sd -- checked against
-  # the three conditional moment sets directly, not against the package's own
-  # assembly, so a wrong stride or a mis-signed weight cannot pass.
-  mu_a <- 0.2; sd_a <- 0.35; tcov <- 0.9; h <- sqrt(3) * sd_a
-  m0 <- .tay_cond(mu_a, tcov); mp <- .tay_cond(mu_a + h, tcov)
-  mm <- .tay_cond(mu_a - h, tcov)
-  dE  <- (mp$E - mm$E) / (2 * h)                       # g'
-  d2E <- (mp$E - 2 * m0$E + mm$E) / h^2                # g''
-  want_E <- m0$E + 0.5 * sd_a^2 * d2E
-  # Cov_a(g) to second order: the rank-p first-derivative term PLUS
-  # (1/2) lam^2 g'' g'', which uses the same three design points.
-  want_V <- m0$V + 0.5 * sd_a^2 * (mp$V - 2 * m0$V + mm$V) / h^2 +
-    sd_a^2 * outer(dE, dE) + 0.5 * sd_a^4 * outer(d2E, d2E)
-  ta <- .tay_pkg(tcov, mu_a, sd_a)
-  expect_equal(ta$mu, want_E)
-  expect_equal(ta$V,  want_V)
-})
 
 test_that(".adghStructMoments is BIT-IDENTICAL to the pooled formulas without a design", {
-  # cov_integration = "quadrature" must not move by one ulp, and tay = NULL is
-  # the only thing that path passes -- this is the whole of what it computes.
+  # Every route passes through this one two-line form now that the Taylor
+  # design's second branch is gone -- this is the whole of what it computes.
   set.seed(11)
   cp <- matrix(stats::rnorm(40L * 6L, 5, 2), 40L, 6L)
   W  <- stats::runif(40L); W <- W / sum(W)
-  got <- admixr2:::.adghStructMoments(cp, W, NULL)
+  got <- admixr2:::.adghStructMoments(cp, W)
   mu  <- as.numeric(crossprod(W, cp))
   cpc <- sweep(cp, 2L, mu)
   expect_identical(got$mu,  mu)
@@ -604,24 +432,9 @@ test_that(".adghStructMoments is BIT-IDENTICAL to the pooled formulas without a 
   expect_null(got$dE)
 })
 
-test_that("adghControl defaults to quadrature and validates the Taylor step", {
-  expect_identical(adghControl()$cov_integration, "quadrature")
-  # cov_taylor_h is now a multiplier on the moment-matched radius, default 1
-  expect_identical(adghControl()$cov_taylor_h, 1)
-  expect_identical(adghControl(cov_integration = "shift")$cov_integration,
-                   "shift")
-  expect_identical(adghControl(cov_integration = "taylor")$cov_integration,
-                   "taylor")
-  expect_error(adghControl(cov_integration = "gh"))
-  expect_error(adghControl(cov_taylor_h = 0))
-  expect_error(adghControl(cov_taylor_h = c(0.2, 0.4)))
-  # the option is adgh's alone, so a stray argument elsewhere must be an error
-  # rather than a silently ignored request for a different integration
-  expect_error(admControl(cov_integration = "taylor"), "unused argument")
-})
 
 # =============================================================================
-# Dependent covariates on the DETERMINISTIC (quadrature / Taylor) paths
+# Dependent covariates on the DETERMINISTIC (quadrature / sparse) paths
 # =============================================================================
 
 test_that(".admCovGrid integrates a DEPENDENT distribution on the u-space grid", {
@@ -681,7 +494,7 @@ test_that("`cor`, `rho` and `Sigma` are ONE statement, honoured by every path", 
   expect_equal(unname(s_cor), matrix(c(4, 3, 3, 9), 2, 2), tolerance = 1e-2)
   # ... and all three canonicalise to the same latent correlation matrix, which
   # is the single object every consumer (the joint sampler, the product grid,
-  # the Taylor design, the shift grid) reads.
+  # the sparse grid, the shift grid) reads.
   lr <- function(x) admixr2:::.admCovDistCanon(x)[["latentR"]]
   expect_equal(lr(c(base, list(rho = 0.5))), lr(c(base, list(cor = 0.5))))
   expect_equal(lr(c(base, list(Sigma = matrix(c(4, 3, 3, 9), 2, 2)))),
@@ -728,31 +541,6 @@ test_that("a NAMED correlation matrix is ordered to the declared covariates", {
   expect_equal(unname(S[1, 2] / sqrt(S[1, 1] * S[2, 2])), 0.8, tolerance = 5e-3)
 })
 
-test_that("the Taylor design is built ONCE and cached on the study", {
-  # .adghGrid runs inside the objective. Rebuilding the design there re-ran an
-  # 8192-row Sobol pass through the joint sampler on every evaluation (8.6 ms a
-  # call, ~21 s across a fit) for a quantity that is DATA and cannot change.
-  st <- list(s = list(cov = list(WT = 72, CRCL = 90),
-                      cov_dist = admixr2:::.admCovDistCanon(
-                        list(WT = list(mean = 72, sd = 16),
-                             CRCL = list(mean = 90, sd = 25), cor = 0.6))))
-  ui  <- list(allCovs = c("WT", "CRCL"),
-              lstExpr = list(quote(cl <- exp(tcl + bw*WT + bc*CRCL + eta.cl))))
-  pin <- list(n_eta = 1L, eta_col_names = "eta.cl",
-              cov_integration = "taylor", cov_taylor_h = 0.5)
-  out <- admixr2:::.admCheckCovariates(ui, pin, st)
-  td  <- out$s$.adm_cov_taylor
-  expect_false(is.null(td))
-  expect_identical(td$n_pt, 5L)
-  # it travels to a parallel-restart worker by value, so it must hold no
-  # closures and no external pointers
-  expect_true(all(!vapply(td, is.function, logical(1))))
-  # and it must equal what the objective would have built for itself
-  expect_equal(td, admixr2:::.admCovTaylorDesign(out$s$cov_dist, 0.5))
-  # quadrature must NOT pay for a design it does not use
-  pin$cov_integration <- "quadrature"
-  expect_null(admixr2:::.admCheckCovariates(ui, pin, st)$s$.adm_cov_taylor)
-})
 
 # =============================================================================
 # Covariate STRATA -- the per-covariate stratify/marginalise split
@@ -2367,4 +2155,152 @@ test_that("a discrete spec with mismatched probs/values is refused", {
     GRP = list(values = c(0, 1, 2), probs = c(0.5, 0.5)))))
   expect_error(admixr2:::.admCheckCovariates(ui, pin, st),
                "3 `values` but 2 `probs`|one probability per level")
+})
+
+# =============================================================================
+# Sparse-grid covariate integration (cov_integration = "sparse")
+# =============================================================================
+
+test_that("level 2 IS the retired Taylor design, exactly", {
+  # The whole reason the Taylor path could be retired rather than kept beside
+  # this one: its rule was Smolyak level 2. At one covariate that is also
+  # bit-identical to the ordinary product grid at n_nodes = 3, which is what
+  # made "taylor" a re-labelling of Gauss-Hermite rather than a method.
+  cd <- covDist(WT = c(mean = 75, sd = 16))
+  g2 <- admixr2:::.admCovSparseGrid(cd, 2L)
+  gh <- admixr2:::.admCovGrid(cd, 3L)
+  expect_identical(nrow(g2$X), 3L)
+  expect_equal(sort(as.numeric(g2$X)), sort(as.numeric(gh$X)))
+  expect_equal(sort(g2$W), sort(as.numeric(gh$W)))
+})
+
+test_that("the sparse grid weights sum to one at every level and dimension", {
+  # sum(W) == 1 is the one property the combination technique must never lose;
+  # sum|W| is allowed to grow, and IS the price the level buys accuracy with.
+  for (p in 1:3) {
+    sp <- stats::setNames(
+      lapply(seq_len(p), function(k) list(mu = 70 + k, sd = 10 + k)),
+      paste0("C", seq_len(p)))
+    cd <- do.call(covDist, sp)
+    for (lv in 2:4) {
+      g <- admixr2:::.admCovSparseGrid(cd, lv)
+      expect_equal(sum(g$W), 1, tolerance = 1e-12,
+                   info = sprintf("p=%d level=%d", p, lv))
+      expect_identical(colnames(g$X), names(sp))
+      expect_true(all(is.finite(g$X)))
+      # signed weights are expected from level 3 up, and only there
+      if (lv == 2L && p < 4L)
+        expect_true(all(g$W > 0), info = sprintf("p=%d", p))
+    }
+    # ... and |W| grows with the level once there is more than one dimension
+    # for the combination technique to cancel across (at p = 1 a Smolyak rule
+    # IS the 1-D rule, all weights positive, so it stays at exactly 1).
+    a <- sum(abs(admixr2:::.admCovSparseGrid(cd, 2L)$W))
+    b <- sum(abs(admixr2:::.admCovSparseGrid(cd, 3L)$W))
+    if (p == 1L) expect_equal(c(a, b), c(1, 1), tolerance = 1e-12)
+    else         expect_gt(b, a)
+  }
+})
+
+test_that("level 3 is much more accurate than level 2, and correlation does not cost it", {
+  # The measurement the default rests on. Reference is a 21-node product grid;
+  # the integrand is allometric plus a saturable term so the mixed derivatives
+  # a level-2 rule cannot see are genuinely present.
+  gq <- function(n) admixr2:::.adghNodes1(n)
+  ff <- function(A) exp(0.75 * log(A[, 1L]) + 0.4 * log(A[, 2L])) +
+                    0.6 * A[, 1L]^2 / (1 + 0.5 * A[, 2L])
+  err <- function(rho) {
+    # LOGNORMAL margins: the integrand takes log(A), and a normal margin's
+    # tail nodes go negative, which is NaN rather than an accuracy question.
+    cd <- covDist(A = c(mean = 1, sd = 0.3), B = c(mean = 1, sd = 0.3),
+                  cor = c(A.B = rho), dist = "lnorm")
+    ref <- admixr2:::.admCovGrid(cd, 21L)
+    tru <- sum(ref$W * ff(ref$X))
+    vapply(2:3, function(lv) {
+      g <- admixr2:::.admCovSparseGrid(cd, lv)
+      abs(sum(g$W * ff(g$X)) - tru) / abs(tru)
+    }, numeric(1))
+  }
+  e0 <- err(0); e5 <- err(0.5); e8 <- err(0.85)
+  # Level 3 beats level 2 everywhere -- and by FAR more once the covariates are
+  # correlated, which is the whole reason 3 is the default. Measured ratios:
+  # 43x at rho = 0, 4551x at 0.5, 12397x at 0.85.
+  expect_lt(e0[2L], e0[1L] / 20)
+  expect_lt(e5[2L], e5[1L] / 500)
+  expect_lt(e8[2L], e8[1L] / 500)
+  # The two levels respond to correlation in OPPOSITE directions: level 2 loses
+  # an order of magnitude to it, level 3 does not. That asymmetry is the reason
+  # the retired Taylor design could not be sold as "good with correlation".
+  expect_gt(e5[1L], 10 * e0[1L])
+  expect_lt(e8[2L], 1e-5)
+})
+
+test_that("the sparse grid enumerates a discrete covariate exactly", {
+  # A sparse rule is a statement about the CONTINUOUS dimensions. A level
+  # probability is not an approximation of anything, so it is crossed in whole.
+  cd <- covDist(WT = c(mean = 75, sd = 16),
+                SEX = list(values = c(0, 1), probs = c(0.45, 0.55)))
+  g <- admixr2:::.admCovSparseGrid(cd, 3L)
+  expect_setequal(colnames(g$X), c("WT", "SEX"))
+  expect_setequal(unique(g$X[, "SEX"]), c(0, 1))
+  expect_equal(as.numeric(tapply(g$W, g$X[, "SEX"], sum)), c(0.45, 0.55),
+               tolerance = 1e-12)
+  expect_equal(sum(g$W), 1, tolerance = 1e-12)
+})
+
+test_that("the sparse grid refuses an opaque joint sampler and a bad level", {
+  # The rotation needs the latent correlation, and the canoniser early-returns
+  # on a user closure BEFORE recording it -- so reading it as independent is
+  # exactly the silent approximation this file refuses everywhere else.
+  cd <- covDist(A = c(mean = 1, sd = 0.2), B = c(mean = 1, sd = 0.2),
+                joint = function(u) {
+                  z <- stats::qnorm(pmin(pmax(u, 1e-12), 1 - 1e-12))
+                  out <- cbind(A = exp(0.2 * z[, 1L]),
+                               B = exp(0.2 * (0.8 * z[, 1L] +
+                                              sqrt(1 - 0.64) * z[, 2L])))
+                  out
+                })
+  expect_error(admixr2:::.admCovSparseGrid(cd, 3L), "joint. sampler")
+  cd2 <- covDist(WT = c(mean = 75, sd = 16))
+  expect_error(admixr2:::.admCovSparseGrid(cd2, 1L), "between 2 and")
+  expect_error(admixr2:::.admCovSparseGrid(cd2, 99L), "between 2 and")
+})
+
+test_that("adghControl carries the sparse settings and validates the level", {
+  st <- list(s = list(E = 1, V = 1, n = 10, times = 1,
+                      ev = rxode2::et(amt = 1)))
+  d <- adghControl(studies = st)
+  expect_identical(d$cov_integration, "quadrature")   # unchanged default
+  expect_identical(d$cov_sparse_level, 3L)
+  s <- adghControl(studies = st, cov_integration = "sparse",
+                   cov_sparse_level = 2L)
+  expect_identical(s$cov_integration, "sparse")
+  expect_identical(s$cov_sparse_level, 2L)
+  expect_error(adghControl(studies = st, cov_sparse_level = 1L))
+  expect_error(adghControl(studies = st, cov_integration = "taylor"))
+})
+
+test_that("the sparse grid is built ONCE and cached on the study", {
+  # It is a pure function of cov_dist and the level, both DATA, and .adghGrid
+  # runs inside the objective -- so it must not be rebuilt per evaluation.
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  f <- function() {
+    ini({tcl <- log(5); tv <- log(30); bwt <- 0.75; eta.cl ~ 0.09; a <- 0.1})
+    model({cl <- exp(tcl + eta.cl) * (WT / 70)^bwt; v <- exp(tv)
+           cp <- linCmt(); cp ~ add(a)})
+  }
+  ui  <- suppressMessages(rxode2::rxode2(f))
+  st  <- list(s = list(E = c(9, 7, 5), V = diag(c(1, 1, 1)), n = 50L,
+                       times = c(1, 4, 12), ev = rxode2::et(amt = 100),
+                       cov_dist = list(WT = list(mu = 75, sd = 16))))
+  ctl <- adghControl(studies = st, cov_integration = "sparse", print = 0L,
+                     covMethod = "none")
+  pin <- admixr2:::.admDriverPinfo(ui, ctl)
+  out <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, st, "adgh"))
+  sg  <- out$s[[".adm_cov_sparse"]]
+  expect_false(is.null(sg))
+  expect_equal(sum(sg$W), 1, tolerance = 1e-12)
+  # numeric only, so it survives serialisation to a restart worker by value
+  expect_false(any(vapply(sg, is.function, logical(1))))
 })

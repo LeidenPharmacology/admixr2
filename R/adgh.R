@@ -396,25 +396,21 @@
   if (!is.null(s) && !identical(s$.adm_cov_path, "shift") &&
       !is.null(s[["cov_dist"]])) {
     nq <- max(nrow(g$eta), 1L)
-    # cov_integration = "taylor": 1 + 2p design points in place of the product
-    # grid's n_nodes^p, with SIGNED combination weights. Every expansion below
-    # uses the same stride as the quadrature branch, so everything downstream --
-    # the omega chain's X, the per-row covariate columns, the params frame --
-    # is laid out identically and only the weights and the centring differ.
-    .taylor <- identical(pinfo$cov_integration %||% "quadrature", "taylor")
-    if (.taylor && isTRUE(s$is_joint))
-      stop("admixr2: covariate marginalisation is not supported for a JOINT ",
-           "(same-subject, multi-output) unit. The shared-eta joint solve has ",
-           "no per-row covariate path, so this would silently solve at the ",
-           "covariate mean.", call. = FALSE)
-    # The design is cached on the study by .admCheckCovariates -- it depends
-    # only on `cov_dist` and `cov_taylor_h`, both data, and rebuilding it here
-    # costs a Sobol pass through the joint sampler on EVERY objective call.
-    # The %||% keeps a hand-built study (Tier-1 mocks, direct .adghMoments
-    # calls) working, at the old cost.
-    cg <- if (.taylor) s[[".adm_cov_taylor"]] %||%
-                       .admCovTaylorDesign(s[["cov_dist"]],
-                                           pinfo$cov_taylor_h %||% 1)
+    # cov_integration = "sparse": a Smolyak grid in place of the product one.
+    # It is an ORDINARY GRID -- (X, W) with signed W -- so the expansion below
+    # is the same one the product grid takes, and nothing downstream needs to
+    # know which rule produced the rows. That is what the retired "taylor"
+    # design was not: it carried its own derivative-pair machinery, and two of
+    # its three defects lived there.
+    .sparse <- identical(pinfo$cov_integration %||% "quadrature", "sparse")
+    # Cached on the study by .admCheckCovariates -- a pure function of
+    # `cov_dist` and the level, both data -- so it is not rebuilt per objective
+    # call. The %||% keeps a hand-built study (Tier-1 mocks, direct
+    # .adghMoments calls) working, at the old cost.
+    cg <- if (.sparse) s[[".adm_cov_sparse"]] %||%
+                       .admCovSparseGrid(s[["cov_dist"]],
+                                         pinfo$cov_sparse_level %||% 3L,
+                                         pinfo$cov_nodes %||% 7L)
           # The COLLAPSED design when the covariates reach the model through a
           # single scalar: the same integral in the dimension it actually has,
           # so this is not an approximation the grid would beat. Cached at
@@ -446,12 +442,7 @@
     # unexpanded X against an expanded eta would be silently misaligned.
     g$X        <- g$X[rep(seq_len(nq), times = nc), , drop = FALSE]
     g$cov_rows <- cg$X[rep(seq_len(nc), each = nq), , drop = FALSE]
-    if (.taylor) {
-      g$taylor <- .admCovTaylorRows(cg, g$W, nq)
-      g$W      <- as.numeric(outer(g$W, cg$c))
-    } else {
-      g$W      <- as.numeric(outer(g$W, cg$W))
-    }
+    g$W        <- as.numeric(outer(g$W, cg$W))
   }
   g
 }
@@ -470,21 +461,15 @@
 # `dE` is returned because the gradient needs it: the rank-p term is quadratic
 # in the conditional means, so it is the one part of V whose derivative is not
 # already carried by the weighted-crossproduct contraction.
-.adghStructMoments <- function(cp, W, tay = NULL) {
-  mu <- as.numeric(crossprod(W, cp))
-  if (is.null(tay)) {
-    cpc <- sweep(cp, 2L, mu)
-    return(list(mu = mu, cpc = cpc, V = crossprod(cpc, W * cpc), dE = NULL))
-  }
-  cpc <- cp
-  for (idx in tay$rows) {
-    ek <- as.numeric(crossprod(tay$w, cp[idx, , drop = FALSE]))
-    cpc[idx, ] <- sweep(cp[idx, , drop = FALSE], 2L, ek)
-  }
-  dE <- crossprod(tay$Dw, cp)                    # d x n_t, g'_j(mu_a)
-  list(mu = mu, cpc = cpc,
-       V = crossprod(cpc, W * cpc) + crossprod(dE, tay$var * dE),
-       dE = dE)
+# ONE weighted mean and one weighted crossproduct about it, whatever rule
+# produced (X, W). The retired "taylor" design needed a second branch here --
+# block-centring plus a rank-p derivative term -- because it was not a grid;
+# the sparse grid is, so the two-line form covers every route. W may be SIGNED
+# under a sparse rule, which the expressions handle unchanged.
+.adghStructMoments <- function(cp, W) {
+  mu  <- as.numeric(crossprod(W, cp))
+  cpc <- sweep(cp, 2L, mu)
+  list(mu = mu, cpc = cpc, V = crossprod(cpc, W * cpc), dE = NULL)
 }
 
 # Attach the grid's per-row covariate values to a study, so .admSimulate writes
@@ -499,9 +484,8 @@
 # independently: the assembly depends on sigma, but the SOLVE does not (sigma is
 # zeroed into it and re-added analytically here), so a set of configurations
 # that share a solve can each be assembled cheaply.
-.adghMomentsFromCp <- function(cp, W, pars, pinfo, out_var, times = NULL,
-                               tay = NULL) {
-  sm  <- .adghStructMoments(cp, W, tay)
+.adghMomentsFromCp <- function(cp, W, pars, pinfo, out_var, times = NULL) {
+  sm  <- .adghStructMoments(cp, W)
   mu  <- sm$mu
   V   <- sm$V
 
@@ -530,7 +514,7 @@
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
                      out_var, pm, cores, pinfo$nDisplayProgress,
                              pinfo$sigdig)
-  .adghMomentsFromCp(cp, g$W, pars, pinfo, out_var, study$times, g$taylor)
+  .adghMomentsFromCp(cp, g$W, pars, pinfo, out_var, study$times)
 }
 
 # Moments for a SET of structural-theta configurations in ONE rxSolve.
@@ -581,7 +565,7 @@
   lapply(seq_len(n_cfg), function(k) {
     .cp <- cp_all[(k - 1L) * Q + seq_len(Q), , drop = FALSE]
     if (!is.null(.phi_all)) attr(.cp, "phi") <- .phi_all[(k - 1L) * Q + 1L, ]
-    .adghMomentsFromCp(.cp, g$W, pars, pinfo, out_var, study$times, g$taylor)
+    .adghMomentsFromCp(.cp, g$W, pars, pinfo, out_var, study$times)
   })
 }
 
@@ -708,7 +692,6 @@
                                      cores, grad_h), nll = NULL))
     X   <- .gS$X
     W   <- .gS$W
-    ty  <- .gS$taylor          # NULL unless cov_integration = "taylor"
     s   <- .adghStudyCov(s, .gS)
     eta <- .gS$eta
     colnames(eta) <- pinfo$eta_col_names
@@ -822,7 +805,7 @@
     f   <- res$cp_mat     # Q x n_t
     Jl  <- res$dpred_list # list n_eta of Q x n_t
 
-    sm  <- .adghStructMoments(f, W, ty)
+    sm  <- .adghStructMoments(f, W)
     mu  <- sm$mu
     cpc <- sm$cpc
     V   <- sm$V
@@ -873,13 +856,6 @@
         # graw: Q x n_t, RAW derivative of the structural f w.r.t. psi
         dmu     <- as.numeric(crossprod(W, graw))
         dV_diag <- 2 * colSums(W * cpc * graw)
-        # Taylor: V also carries sum_j v_j g'_j g'_j', which is QUADRATIC in the
-        # conditional means and so contributes a term the weighted crossproduct
-        # above does not. d(g'_j)/dpsi is the same central difference applied to
-        # the sensitivity columns.
-        if (!is.null(ty))
-          dV_diag <- dV_diag +
-            2 * colSums(ty$var * sm$dE * crossprod(ty$Dw, graw))
         sum(dNLL_dmu_sig * dmu * lnorm_scale) + sum(dNLL_dV_dg_s * dV_diag)
       }
 
@@ -901,19 +877,11 @@
       Bs        <- ch$dV                  # mean-from-covariance fold included
       Bt        <- cpc %*% Bs             # Q x n_t; chained to V_struct
 
-      # Bs is symmetric (B and the vchain both are), so the rank-p term's
-      # contraction sum_st Bs_st d(v_j g'_j g'_j')_st collapses to
-      # 2 * v_j * g'_j' Bs d(g'_j)/dpsi. Precompute the left half once.
-      BsdE <- if (is.null(ty)) NULL else sm$dE %*% Bs
-
       contrib <- function(graw) {
         # graw: RAW derivative of the structural f w.r.t. psi
         dmu      <- as.numeric(crossprod(W, graw))
         term_mu  <- sum(dNLL_dmu_sig * dmu * lnorm_scale)
         term_cov <- 2 * sum(W * rowSums(graw * Bt))
-        if (!is.null(ty))
-          term_cov <- term_cov +
-            2 * sum(ty$var * rowSums(BsdE * crossprod(ty$Dw, graw)))
         term_mu + term_cov
       }
     }
@@ -1488,7 +1456,8 @@
 #'   ~1.2e-06 / ~1.0e-06, which is the ODE solver's accuracy rather than the
 #'   quadrature's. The default is set past that knee, and raising it further
 #'   buys nothing: against a per-subject reference the accuracy is identical at
-#'   5, 9 and 15 nodes. Ignored when `cov_integration = "taylor"`.
+#'   5, 9 and 15 nodes. Ignored when `cov_integration = "sparse"`, which sets
+#'   its own resolution through `cov_sparse_level`.
 #'
 #'   It is a nodes-per-DIRECTION budget rather than a literal node count.
 #'   Where the covariates reach the model through fewer scalars than there
@@ -1502,73 +1471,48 @@
 #'   grid's 343. The same budget sizes the directions of a joint
 #'   random-effect/covariate design where one is used.
 #' @param cov_integration How a study's covariate distribution is integrated.
-#'   `"quadrature"` (default) evaluates the model on a product Gauss-Hermite
+#'   `"quadrature"` (default) evaluates the model on a product Gauss--Hermite
 #'   grid of `cov_nodes` points per covariate and forms the marginal moments
 #'   from the whole grid; it is the accurate route and the one every existing
-#'   fit uses. `"taylor"` instead expands the marginal MOMENTS to second order
-#'   about the covariate mean,
-#'   \eqn{E \approx g(m) + \frac{1}{2}\sum_j v_j g''_j(m)} and
-#'   \eqn{V \approx V_c(m) + \frac{1}{2}\sum_j v_j V_{c,j}''(m) + \sum_j v_j
-#'   g'_j(m) g'_j(m)^T} for \eqn{g(a) = E_\eta[f(a,\eta)]}, and evaluates the
-#'   likelihood once at those approximate moments. That costs `1 + 2p` covariate
-#'   points for `p` covariates instead of `cov_nodes^p`, so it is a speed lever
-#'   for models with several covariates or a wide grid.
+#'   fit uses. `"sparse"` uses a Smolyak sparse grid of `cov_sparse_level`
+#'   instead, which for `p` covariates costs far fewer than `cov_nodes^p`
+#'   points and is the speed lever for models with several covariates.
 #'
-#'   It is an APPROXIMATION, and how good depends on how far the covariate
-#'   pushes the model relative to the random effects. With
-#'   `ratio = theta_cov * sd_a / omega`, the measured relative error of the
-#'   moments against the exact marginal is 1e-07 / 1e-05 (mean / covariance) at
-#'   `ratio = 0.1`, 5e-05 / 5e-03 at 0.5, 7e-04 / 5e-02 at 1, and 3e-02 / 4e-01
-#'   at 3. Check an important fit against `"quadrature"`.
+#'   Both are Gauss--Hermite rules; they differ in which product terms are
+#'   kept. Measured against an exact reference (lognormal margins, allometric
+#'   plus a saturable term), relative error on the mean and the covariance:
 #'
-#'   DEPENDENT covariates (`cor`, `rho`, `Sigma`, or a `joint` sampler) are
-#'   supported by both routes. The quadrature grid is a product rule over the
-#'   sampler's UNIFORMS rather than over the covariate margins, and a copula
-#'   maps independent uniforms to dependent values, so the product rule stays
-#'   exact whatever the dependence. The expansion differences along the
-#'   EIGENVECTORS of the covariate covariance, which keeps it at `1 + 2p` points
-#'   at any correlation --- a coordinate-basis version would need the mixed
-#'   partials explicitly, at `1 + 2p + p(p-1)` points for the same accuracy.
-#'   (This is the third-degree spherical-radial cubature rule, i.e. the
-#'   unscented transform's sigma points.)
+#'   | rule | p = 3, rho = 0.85 | p = 4, rho = 0.85 |
+#'   | --- | --- | --- |
+#'   | sparse, level 2 | 6 pts, 7.8e-04 / 4.7e-02 | 9 pts, 9.7e-04 / 6.1e-02 |
+#'   | product, 3 nodes | 27 pts, 4.0e-05 / 1.5e-02 | 81 pts, 1.5e-04 / 3.2e-02 |
+#'   | sparse, level 3 | 31 pts, 1.6e-06 / 5.0e-04 | 49 pts, 3.5e-06 / 9.5e-04 |
 #'
-#'   Refused rather than approximated: a discrete `values` covariate (the
-#'   differencing step would land between the levels), and (near-)perfectly
-#'   collinear covariates (the step along the null direction collapses, so the
-#'   second difference is cancellation rather than a derivative).
+#'   At four covariates level 3 is both cheaper than the 3-node product grid
+#'   and roughly 40x more accurate, and the advantage grows with `p`. Level 2
+#'   is the axial rule --- at one covariate it is exactly `cov_nodes = 3` ---
+#'   and it is offered for continuity rather than recommended.
 #'
-#'   `"shift"` removes the covariate from the solve entirely. When the
-#'   covariates act on the model only through a mu-referenced argument they are
-#'   a pure shift of that argument's random effect,
-#'   \eqn{f(a,\eta) = f(a_{ref}, \eta + \Delta(a))}, so the two-dimensional
-#'   \eqn{(a, \eta)} integral collapses onto one over \eqn{u = \Delta(a) +
-#'   \eta}. The solve cost is then CONSTANT in the number of covariates, against
-#'   `cov_nodes^p` for the grid, and it holds for any covariate distribution ---
-#'   discrete, skewed, dependent alike. The precondition is checked NUMERICALLY
-#'   against the compiled model, never read off the model text (measured
-#'   separation on the probe set: valid forms 1e-12--1e-14, invalid forms
-#'   3e-02--7e-01), and a model that fails it is an ERROR naming the reason.
+#'   DEPENDENT covariates (`cor`, `rho`, `Sigma`) are handled by rotating onto
+#'   the eigenvectors of the latent correlation, and correlation does not cost
+#'   the sparse rule accuracy: at `p = 2` its mean error is 6.6e-07 at
+#'   `rho = 0` and 4.8e-08 at `rho = 0.85`. (Level 2 behaves the other way,
+#'   losing an order of magnitude to correlation, which is one reason the
+#'   default is 3.) An opaque `joint` sampler is refused, because the rotation
+#'   needs a correlation the closure does not report --- declare the dependence
+#'   with `cor` and admixr2 builds the sampler itself.
 #'
-#'   `"auto"` tries `"shift"` and falls back to `"quadrature"` with a message
-#'   when the identity does not hold, so it is the fast route wherever the fast
-#'   route is valid and the accurate route everywhere else. It is not the
-#'   default only because switching it on moves an existing covariate fit's
-#'   numbers at the ~1e-5 level (the tolerance at which shift and grid agree);
-#'   for a new fit it is the recommended setting.
-#' @param cov_taylor_h Radius of the design points for
-#'   `cov_integration = "taylor"`, as a multiple of the moment-matched radius
-#'   \eqn{\sqrt{3\lambda_k}} along each expansion direction (default 1). The
-#'   \eqn{1+2p} design is a cubature rule rather than a finite-difference
-#'   stencil, so the radius is chosen to integrate moments exactly, not to be
-#'   small: at the default the design coincides with 3-point Gauss--Hermite in
-#'   each direction and is exact through degree 5, where a smaller radius
-#'   matches only through degree 3. For independent covariates the directions
-#'   are the covariates themselves; when they are dependent they are the
-#'   eigenvectors of the covariate covariance. Values below 1 pull the points
-#'   back toward the covariate mean -- the scaled unscented transform -- which
-#'   costs the fourth-moment match but keeps the design inside the range a
-#'   strongly skewed margin actually spans. Ignored when
-#'   `cov_integration = "quadrature"`.
+#'   The cost of a sparse rule is SIGNED weights: they sum to 1 exactly, but
+#'   the sum of their absolute values is 2.5 at level 3 for three covariates
+#'   and 4.1 for four, so the answer is a difference of terms several times its
+#'   own size and solver noise is amplified accordingly. A sandwich covariance
+#'   whose weight matrix comes out indefinite as a result is refused rather
+#'   than reported.
+#' @param cov_sparse_level Smolyak level for `cov_integration = "sparse"`
+#'   (default 3, minimum 2). Level 2 is the axial rule, level 3 adds the
+#'   five-point axes and the pairwise crosses, and each further level refines
+#'   again at a growing weight-magnitude cost. See `cov_integration` for the
+#'   measured accuracy and point counts.
 #' @param resid_nodes Gauss-Hermite nodes used to integrate the RESIDUAL for a
 #'   transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
 #'   `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean and
@@ -1772,10 +1716,11 @@ adghControl <- function(
     # every positional call. See the resid_nodes note in CLAUDE.md.
     cov_nodes     = 7L,
     # LAST on purpose, as above. These two are the covariate-integration pair:
-    # cov_integration selects the method, cov_taylor_h the differencing step it
-    # uses. Appended together so the tail of this signature reads as one addition.
-    cov_integration = c("quadrature", "auto", "taylor", "shift"),
-    cov_taylor_h    = 1,
+    # cov_integration selects the method, cov_sparse_level the resolution of the
+    # sparse one. cov_sparse_level occupies the slot the retired cov_taylor_h
+    # had, so every positional call keeps its meaning.
+    cov_integration  = c("quadrature", "auto", "sparse", "shift"),
+    cov_sparse_level = 3L,
     ...) {
 
   .xtra <- list(...)
@@ -1799,15 +1744,12 @@ adghControl <- function(
   # message can name the argument, rather than silently scoring a wrong NLL.
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1)
   checkmate::assertIntegerish(cov_nodes, lower = 1L, len = 1)
-  # cov_taylor_h is a MULTIPLIER on the moment-matched radius sqrt(3*lambda),
-  # not a raw step: 1 puts the design points exactly where 3-point
-  # Gauss-Hermite does, which is what makes the rule exact through degree 5.
-  # Below 1 pulls them back toward the covariate mean (the scaled unscented
-  # transform), trading the fourth-moment match for design points that stay
-  # nearer the covariate range a skewed margin actually spans. Only positivity
-  # is enforced -- h = 0 is a division by zero in the second difference.
-  checkmate::assertNumeric(cov_taylor_h, lower = .Machine$double.eps, len = 1,
-                           finite = TRUE)
+  # cov_sparse_level is the Smolyak level. 2 is the axial rule the retired
+  # "taylor" design was; 3 is the default because it is where the accuracy
+  # actually arrives (~30x on both moments) and where correlation stops being a
+  # liability. Higher levels keep improving but sum|W| grows with them, so the
+  # answer becomes a difference of larger terms -- see .admCovSparseGrid.
+  checkmate::assertIntegerish(cov_sparse_level, lower = 2L, upper = 5L, len = 1)
   # NOT assertString(algorithm) here: NULL is now the default and means "pick the
   # one that matches grad". .admResolveAlgorithm() asserts the string and checks
   # it against the installed nloptr, which is more than this line ever did.
@@ -1872,7 +1814,7 @@ adghControl <- function(
     resid_nodes   = as.integer(resid_nodes),
     cov_nodes     = as.integer(cov_nodes),
     cov_integration = cov_integration,
-    cov_taylor_h    = cov_taylor_h,
+    cov_sparse_level = cov_sparse_level,
     n_nodes       = as.integer(n_nodes),
     n_sim         = 1L,       # interface compat with .admRunRestarts()
     sampling      = "sobol",  # idem
