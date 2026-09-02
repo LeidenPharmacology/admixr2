@@ -478,6 +478,32 @@ test_that("the grid and the per-subject sampler see the SAME distribution", {
                Sr[1, 2] / sqrt(Sr[1, 1] * Sr[2, 2]), tolerance = 1e-3)
 })
 
+# The joint covariance a cov_dist actually induces, measured rather than read.
+#
+# This used to be .admCovDistMoments in R/, but the sparse grid works from the
+# margins and latentR directly and nothing in the package needed joint moments
+# any more -- so it lives here, where its only two users are. Measuring is the
+# point: these tests check that the three spellings of a correlation produce the
+# SAME distribution, which reading the declaration back would not test at all.
+.cd_sigma <- function(cov_dist, n = 8192L) {
+  cd  <- admixr2:::.admCovDistCanon(cov_dist)
+  nms <- admixr2:::.admCovSpecNames(cd)
+  jf  <- cd[["joint"]]
+  if (!is.function(jf)) {
+    v <- vapply(nms, function(k) admixr2:::.admCovVarOf(cd[[k]]), numeric(1))
+    S <- diag(v, nrow = length(nms)); dimnames(S) <- list(nms, nms)
+    return(S)
+  }
+  u <- randtoolbox::sobol(n, dim = length(nms))
+  if (!is.matrix(u)) u <- matrix(u, nrow = n)
+  u <- pmin(pmax(u, .Machine$double.eps), 1 - .Machine$double.eps)
+  colnames(u) <- nms
+  X <- admixr2:::.admCovJointEval(jf, u, nms)
+  S <- stats::cov(X) * (n - 1) / n
+  dimnames(S) <- list(nms, nms)
+  S
+}
+
 test_that("`cor`, `rho` and `Sigma` are ONE statement, honoured by every path", {
   # They used to diverge: `rho` built a copula for the retired collapse and a
   # DIAGONAL grid for everything else, so the correlation was present in one
@@ -486,7 +512,7 @@ test_that("`cor`, `rho` and `Sigma` are ONE statement, honoured by every path", 
   # still land on the same latent correlation.
   base <- list(A = list(mu = 0, sd = 2, dist = "normal"),
                B = list(mu = 0, sd = 3, dist = "normal"))
-  sig <- function(x) admixr2:::.admCovDistMoments(x)$Sigma
+  sig <- function(x) .cd_sigma(x)
   s_cor <- sig(c(base, list(cor   = 0.5)))
   expect_equal(sig(c(base, list(rho   = 0.5))), s_cor, tolerance = 0)
   expect_equal(sig(c(base, list(Sigma = matrix(c(4, 3, 3, 9), 2, 2)))), s_cor,
@@ -501,16 +527,6 @@ test_that("`cor`, `rho` and `Sigma` are ONE statement, honoured by every path", 
                lr(c(base, list(cor = 0.5))))
 })
 
-test_that(".admCovDistMoments is diagonal exactly when the covariates are independent", {
-  ind <- list(A = list(mu = 1, sd = 2), B = list(meanlog = 0, sdlog = 0.3))
-  mi  <- admixr2:::.admCovDistMoments(ind)
-  expect_true(mi$diagonal)
-  expect_equal(mi$Sigma[1, 2], 0, tolerance = 0)
-  # the lognormal entry must be the NATURAL-scale variance, not sdlog^2
-  expect_equal(mi$Sigma[2, 2], (exp(0.3^2) - 1) * exp(0.3^2), tolerance = 1e-12)
-  dep <- admixr2:::.admCovDistCanon(c(ind, list(cor = 0.4)))
-  expect_false(admixr2:::.admCovDistMoments(dep)$diagonal)
-})
 
 test_that("metadata keys are never mistaken for covariates", {
   # each of these used to be a different internal error: `$ operator is invalid
@@ -534,7 +550,7 @@ test_that("a NAMED correlation matrix is ordered to the declared covariates", {
   cd <- admixr2:::.admCovDistCanon(
     list(A = list(mu = 0, sd = 1, dist = "normal"),
          B = list(mu = 0, sd = 5, dist = "normal"), cor = R))
-  S <- admixr2:::.admCovDistMoments(cd)$Sigma
+  S <- .cd_sigma(cd)
   # variances must land on the covariate they were DECLARED for
   expect_equal(unname(S[1, 1]), 1, tolerance = 5e-3)
   expect_equal(unname(S[2, 2]), 25, tolerance = 5e-3)
@@ -2161,11 +2177,12 @@ test_that("a discrete spec with mismatched probs/values is refused", {
 # Sparse-grid covariate integration (cov_integration = "sparse")
 # =============================================================================
 
-test_that("level 2 IS the retired Taylor design, exactly", {
-  # The whole reason the Taylor path could be retired rather than kept beside
-  # this one: its rule was Smolyak level 2. At one covariate that is also
-  # bit-identical to the ordinary product grid at n_nodes = 3, which is what
-  # made "taylor" a re-labelling of Gauss-Hermite rather than a method.
+test_that("level 2 at one covariate IS the 3-node product grid, exactly", {
+  # A live property of the sparse rule, not a historical note: at one covariate
+  # Smolyak level 2 is bit-identical to .admCovGrid at n_nodes = 3, same points
+  # and same weights. (It is also what showed the retired "taylor" design to be
+  # a re-labelling of Gauss-Hermite rather than a method of its own, which is
+  # why that path could be removed rather than kept beside this one.)
   cd <- covDist(WT = c(mean = 75, sd = 16))
   g2 <- admixr2:::.admCovSparseGrid(cd, 2L)
   gh <- admixr2:::.admCovGrid(cd, 3L)

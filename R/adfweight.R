@@ -149,7 +149,26 @@
 # residual is normal with diagonal covariance Dv, so every odd pairing collapses
 # and the even ones are sums of products of C and Dv.
 #
-# One weight per source, frozen at a first stage -- see .admAdfFreeze.
+# WHY THIS WEIGHT IS NEVER PUT INSIDE THE OBJECTIVE, which is the thing to know
+# before anyone tries.
+#
+# A two-stage form is what a Psi-dependent weight would REQUIRE: W inside
+# log|W| contributes score terms whose expectation is not zero, so the weight
+# has to be frozen at a first-stage estimate for the estimator to stay
+# consistent. Scoring the summary vector against it also needs tau's covariance
+# block aligned as (N-1)/N * Vt rather than Vt -- under the ML denominator
+# E[V] = (N-1)/N Vt, and an unaligned tau makes the estimator MORE biased than
+# the one it replaces, so that O(1/N) term is required rather than cosmetic.
+#
+# Both were implemented and neither is used, because the measurement said not
+# to: a POST-FIT SANDWICH corrects the reported uncertainty with BIT-IDENTICAL
+# point estimates, which a rewritten objective cannot promise. That is what
+# covMethod = "r,s" is, and it is why this weight is only ever the meat of
+# H^-1 J H^-1. The two functions that built the two-stage objective were
+# removed rather than left sitting unreachable; this note is what they were
+# for. (Note the separate case the sandwich CANNOT fix -- a model source's
+# C_src is a WEIGHT error, and no post-fit covariance moves a biased point
+# estimate. See .admSrcMeanCorr.)
 .admAdfWeight <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL) {
   w  <- w / sum(w)
   m  <- ncol(C)
@@ -334,50 +353,6 @@
   list(E = m$mu, V = m$V, w = g$W / sum(g$W),
        C  = if (is.null(m$ms)) sm$cpc else sweep(sm$cpc, 2L, m$ms, "*"),
        Dv = cm$d, T3 = cm$t3, Q4 = cm$q4)
-}
-
-# Freeze one weight per study at a first-stage estimate.
-#
-# FROZEN is not an approximation, it is a condition of the estimator. A
-# Psi-dependent W inside log|W| contributes score terms whose expectation is not
-# zero, so the two-stage form is the one that stays consistent -- and the current
-# objective is a fine first stage, being consistent for any weight.
-.admAdfFreeze <- function(p, pinfo, studies, rxMod, out_var, grid, cores) {
-  pars <- .admUnpack(p, pinfo)
-  lapply(studies, function(s) {
-    pt <- .admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores)
-    if (is.null(pt$Dv)) return(NULL)          # residual outside the free family
-    W  <- .admAdfWeightFast(pt$C, pt$w, pt$Dv, as.numeric(s$n), pt$T3, pt$Q4)
-    ch <- tryCatch(chol(W), error = function(e) NULL)
-    if (is.null(ch)) return(NULL)
-    list(Wi = chol2inv(ch), ldet = 2 * sum(log(diag(ch))))
-  })
-}
-
-# -2 log L for the summary vector scored against its own sampling law.
-#
-# tau's covariance block is (N-1)/N * Vt, not Vt: under the ML denominator
-# E[V] = (N-1)/N Vt, and scoring an unaligned tau makes the estimator MORE
-# biased than the one it replaces rather than less -- the O(1/N) term is required,
-# not cosmetic. log|W| is constant once W is frozen and is carried only so the
-# objective stays on a comparable scale.
-.admAdfNLL <- function(p, pinfo, studies, rxMod, out_var, grid, cores, Wl) {
-  pars <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
-  if (is.null(pars) || !.admParsFinite(pars, pinfo)) return(Inf)
-  tot <- 0
-  for (i in seq_along(studies)) {
-    s <- studies[[i]]; wi <- Wl[[i]]
-    if (is.null(wi)) return(Inf)
-    pt <- tryCatch(.admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var,
-                                grid, cores), error = function(e) NULL)
-    if (is.null(pt) || !all(is.finite(pt$E)) || !all(is.finite(pt$V))) return(Inf)
-    N  <- as.numeric(s$n)
-    lo <- lower.tri(pt$V, diag = TRUE)
-    d  <- c(as.numeric(s$E) - pt$E,
-            as.numeric(s$V[lo]) - as.numeric(((N - 1) / N * pt$V)[lo]))
-    tot <- tot + as.numeric(crossprod(d, wi$Wi %*% d)) + wi$ldet
-  }
-  if (is.finite(tot)) tot else Inf
 }
 
 # =============================================================================

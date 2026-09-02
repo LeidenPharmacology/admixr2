@@ -1122,6 +1122,20 @@
 # .Machine$double.eps and one at 1e-12, which put the extreme node at qnorm
 # -8.13 against -7.03, i.e. the same design point in a different place
 # depending on which function built it.
+# The RANK of a loading matrix, from its singular values.
+#
+# One tolerance, because rank is the most consequential number either collapse
+# computes: it IS the dimension of the integral and therefore the NUMBER of
+# design points, which CLAUDE.md records must be frozen at admission -- a rank
+# that moved mid-fit would change the point count and step the objective.
+# .admCovCollapse and .admJointDesign each carried their own copy of
+# `sum(sv$d > max(sv$d) * 1e-8)`, so loosening one would have made the two
+# disagree about the dimension of the same latent space.
+.ADM_RANK_TOL <- 1e-8
+
+.admSvdRank <- function(sv, tol = .ADM_RANK_TOL)
+  sum(sv$d > max(sv$d) * tol)
+
 .admCovU <- function(z)
   pmin(pmax(stats::pnorm(z), .Machine$double.eps), 1 - .Machine$double.eps)
 
@@ -1284,55 +1298,6 @@
 }
 
 .admCovSpecNames <- function(cov_dist) setdiff(names(cov_dist), .ADM_COV_META)
-
-# Mean vector and covariance MATRIX of a covariate distribution, on the scale
-# the model reads the covariates on.
-#
-# Independent margins have a diagonal Sigma and closed-form entries. A `joint`
-# sampler has neither, so its moments are measured by pushing a deterministic
-# Sobol block through the sampler itself -- the same map the fit will use, so
-# the moments cannot disagree with the draws.
-#
-# This is DATA, not a parameter: `cov_dist` does not move during a fit, so the
-# whole thing is computed once, up front, and never inside an objective call.
-.admCovDistMoments <- function(cov_dist, n_sobol = 8192L) {
-  cov_dist <- .admCovDistCanon(cov_dist)
-  nms <- .admCovSpecNames(cov_dist)
-  d   <- length(nms)
-  if (!d) return(NULL)
-  mu <- vapply(nms, function(n)
-    as.numeric(.admCovMeanOf(cov_dist[[n]]) %||% NA_real_), numeric(1))
-  jf <- cov_dist[["joint"]]
-  if (!is.function(jf)) {
-    vr <- vapply(nms, function(n) .admCovVarOf(cov_dist[[n]]), numeric(1))
-    S  <- diag(vr, nrow = d)                 # nrow= : diag(scalar) is an IDENTITY
-    dimnames(S) <- list(nms, nms)
-    return(list(mu = mu, Sigma = S, names = nms, diagonal = TRUE))
-  }
-  u <- randtoolbox::sobol(n_sobol, dim = d)
-  if (!is.matrix(u)) u <- matrix(u, nrow = n_sobol)
-  u <- pmin(pmax(u, .Machine$double.eps), 1 - .Machine$double.eps)
-  colnames(u) <- nms
-  X <- tryCatch(as.matrix(jf(u)), error = function(e)
-    stop("admixr2: cov_dist$joint failed while measuring the covariate ",
-         "moments: ", conditionMessage(e), call. = FALSE))
-  if (!is.matrix(X) || nrow(X) != n_sobol || is.null(colnames(X)) ||
-      !setequal(colnames(X), nms))
-    stop("admixr2: cov_dist$joint must return a ", n_sobol, " x ", d,
-         " matrix with columns ", paste(sQuote(nms), collapse = ", "), ".",
-         call. = FALSE)
-  X <- X[, nms, drop = FALSE]
-  if (!all(is.finite(X)))
-    stop("admixr2: cov_dist$joint returned non-finite covariate values.",
-         call. = FALSE)
-  m <- colMeans(X)
-  Xc <- sweep(X, 2L, m)
-  S  <- crossprod(Xc) / nrow(X)              # ML denominator: these are nodes
-  dimnames(S) <- list(nms, nms)
-  list(mu = m, Sigma = S, names = nms,
-       diagonal = max(abs(S[lower.tri(S)])) <=
-                  1e-10 * max(diag(S), .Machine$double.eps))
-}
 
 # =============================================================================
 # Covariate STRATA -- the per-covariate stratify/marginalise split
@@ -4425,7 +4390,7 @@ print.covDist <- function(x, ...) {
 
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || !length(sv$d)) return(NULL)
-  r <- sum(sv$d > max(sv$d) * 1e-8)
+  r <- .admSvdRank(sv)
   # r == pc is refused: no rank reduction to make, and with the node search gone
   # there is nothing else on this path to gain. The rotation alone buys nothing
   # there -- with B diagonal, U is a permutation and redistributes nothing.
@@ -4674,7 +4639,7 @@ print.covDist <- function(x, ...) {
   # jc$max_rows (20000) and the row cap then rejected every design. Both of
   # these are deliberately absent until admission fixes them, which is exactly
   # the case partial matching turns into a wrong answer instead of a NULL.
-  r <- jc[["r"]] %||% sum(sv$d > max(sv$d) * 1e-8)
+  r <- jc[["r"]] %||% .admSvdRank(sv)
   if (!is.finite(r) || r < 1L || r > jc$nl) return(NULL)
   U <- sv$u[, seq_len(r), drop = FALSE]
   # the cap lesson from .admCovDirNodes, over the joint space: a direction
