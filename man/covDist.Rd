@@ -30,10 +30,20 @@ transcribed as-is.}
 a correlation matrix (named, in any order). Realised through a Gaussian
 copula on the declared margins.}
 
-\item{joint}{An arbitrary sampler, for dependence a correlation cannot
-express. It receives the matrix of uniforms admixr2 supplies and returns
-one named column per covariate --- the shape a copula or an R-vine
-produces. Overrides \code{cor}.}
+\item{joint}{Dependence a single correlation cannot express. Either an
+\strong{R-vine object} from \code{rvinecopulib} (a \code{vinecop} or \code{vinecop_dist}), or
+an arbitrary sampler: a function receiving the matrix of uniforms admixr2
+supplies and returning one named column per covariate. Overrides \code{cor}.
+
+\strong{Pass the vine object rather than wrapping it yourself.} A vine supplies
+dependence on the copula scale only, so its uniforms still have to be
+pushed through each covariate's own margin --- and
+\code{rvinecopulib::inverse_rosenblatt()} orders its cascade \emph{backwards}
+relative to the declared covariates, so the obvious hand-wrapping bands
+the wrong variable under \code{stratify} with no error anywhere. Given the
+object, \code{covDist()} applies both conventions and then verifies the
+cascade numerically, refusing a vine whose order does not match the one
+the covariates were declared in.}
 
 \item{dist}{Default margin for the \code{c(mean = , sd = )} form: \code{"normal"}
 (default) or \code{"lnorm"}. A per-covariate \code{dist} wins over it.
