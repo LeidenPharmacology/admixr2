@@ -882,24 +882,9 @@
     }
     .prime(.pts)
 
-    for (k in seq_len(np_cov)) {
-      ki  <- cov_idx[k]; hk  <- h_fd[k]
-      p_p <- p_hat; p_p[ki] <- p_p[ki] + hk
-      p_m <- p_hat; p_m[ki] <- p_m[ki] - hk
-      H[k, k] <- (nll_fn(p_p) - 2 * nll0 + nll_fn(p_m)) / hk^2
-    }
-    for (i in seq_len(np_cov - 1L)) {
-      for (j in seq(i + 1L, np_cov)) {
-        ii <- cov_idx[i]; ji <- cov_idx[j]
-        hi <- h_fd[i];  hj <- h_fd[j]
-        p_pp <- p_hat; p_pp[ii] <- p_pp[ii] + hi; p_pp[ji] <- p_pp[ji] + hj
-        p_pm <- p_hat; p_pm[ii] <- p_pm[ii] + hi; p_pm[ji] <- p_pm[ji] - hj
-        p_mp <- p_hat; p_mp[ii] <- p_mp[ii] - hi; p_mp[ji] <- p_mp[ji] + hj
-        p_mm <- p_hat; p_mm[ii] <- p_mm[ii] - hi; p_mm[ji] <- p_mm[ji] - hj
-        H[i, j] <- H[j, i] <-
-          (nll_fn(p_pp) - nll_fn(p_pm) - nll_fn(p_mp) + nll_fn(p_mm)) / (4 * hi * hj)
-      }
-    }
+    # Shared stencil -- see .admFDHessian(); .admCalcCov builds the same points
+    # but batches their evaluation.
+    H <- .admFDHessian(p_hat, cov_idx, h_fd, nll0, nll_fn)
   }
 
   if (!all(is.finite(H))) {

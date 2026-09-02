@@ -2358,6 +2358,26 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   list(X = matrix(X, sum(ok), d), W = unname(W[ok]))
 }
 
+# Call a user-supplied `joint` sampler and hold it to its contract.
+#
+# Two sites in .admCovGrid did this identically: the discExact branch, which
+# crosses an enumerated discrete margin with the sampler, and the plain joint
+# branch. The contract is a DECISION -- one row per supplied uniform, named
+# columns, exactly the declared name set -- so a copy that validated less would
+# let a malformed sampler through on one path and not the other.
+.admCovJointEval <- function(jf, u, nms) {
+  d <- length(nms)
+  X <- tryCatch(as.matrix(jf(u)), error = function(e)
+    stop("admixr2: cov_dist$joint failed on the ", nrow(u), " x ", d,
+         " grid of uniforms: ", conditionMessage(e), call. = FALSE))
+  if (!is.matrix(X) || nrow(X) != nrow(u) || is.null(colnames(X)) ||
+      !setequal(colnames(X), nms))
+    stop("admixr2: cov_dist$joint must return one ROW per supplied uniform ",
+         "row, with columns ", paste(sQuote(nms), collapse = ", "), ".",
+         call. = FALSE)
+  X[, nms, drop = FALSE]
+}
+
 .admCovGrid <- function(cov_dist, n_nodes) {
   cov_dist <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cov_dist)
@@ -2428,15 +2448,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
       if (length(iJ))
         u[, iJ] <- .admCovU(zJ[rj, , drop = FALSE])
       u[, iE] <- uE[re, , drop = FALSE]
-      X <- tryCatch(as.matrix(jf(u)), error = function(e)
-        stop("admixr2: cov_dist$joint failed on the ", nrow(u), " x ", d,
-             " grid of uniforms: ", conditionMessage(e), call. = FALSE))
-      if (!is.matrix(X) || nrow(X) != nrow(u) || is.null(colnames(X)) ||
-          !setequal(colnames(X), nms))
-        stop("admixr2: cov_dist$joint must return one ROW per supplied uniform ",
-             "row, with columns ", paste(sQuote(nms), collapse = ", "), ".",
-             call. = FALSE)
-      X <- X[, nms, drop = FALSE]
+      X <- .admCovJointEval(jf, u, nms)
       want <- vapply(seq_along(iE), function(k) lv[[k]][lg[re, k]],
                      numeric(nrow(u)))
       if (!isTRUE(all.equal(unname(X[, iE, drop = FALSE]),
@@ -2459,15 +2471,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     u  <- stats::pnorm(z)
     u  <- pmin(pmax(u, .Machine$double.eps), 1 - .Machine$double.eps)
     colnames(u) <- nms
-    X <- tryCatch(as.matrix(jf(u)), error = function(e)
-      stop("admixr2: cov_dist$joint failed on the ", nrow(u), " x ", d,
-           " grid of uniforms: ", conditionMessage(e), call. = FALSE))
-    if (!is.matrix(X) || nrow(X) != nrow(u) || is.null(colnames(X)) ||
-        !setequal(colnames(X), nms))
-      stop("admixr2: cov_dist$joint must return one ROW per supplied uniform ",
-           "row, with columns ", paste(sQuote(nms), collapse = ", "), ".",
-           call. = FALSE)
-    X <- X[, nms, drop = FALSE]
+    X <- .admCovJointEval(jf, u, nms)
     if (!all(is.finite(X))) {
       # Almost always saturation, not a broken sampler. The grid's extreme
       # nodes reach |z| ~ 6.4 at 15 nodes, a copula's mixing step scales that

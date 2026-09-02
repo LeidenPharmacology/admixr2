@@ -561,6 +561,42 @@ nmObjGetControl.admc <- function(x, ...) {
     }
   }, double(1))
 }
+# The eta + omega-Cholesky gradient contribution, from the C++ kernel.
+#
+# THIS EXISTS BECAUSE THE CALL CARRIES TWO TRAPS AND WAS SPELLED OUT AT THREE
+# SITES -- .admGrad's sens branch, its CRN-FD branch, and .admGradBatch. Both
+# traps are in CLAUDE.md because both have already been paid for:
+#
+#   * The `eta_mat` argument must be `sweep(z, 2L, diag(L) / 2, "*")`, NOT
+#     `eta_mat`. The diagonal Cholesky entries are optimised as log(Omega_ii),
+#     so d(L_ii)/dp is L_ii/2 and the correct scale is z[, i] * L_ii / 2;
+#     passing the eta matrix gives L_ii * z[, i], which is exactly 2x too
+#     large. One copy left un-swept is a gradient that is 2x wrong on one path
+#     and right on the others.
+#   * `neta1`/`neta2` must be FULL INTEGER VECTORS. A scalar silently
+#     truncates `omega_grad` to length 1, so every omega parameter after the
+#     first contributes nothing.
+#
+# The var/cov dispatch rides along because it selects which kernel reads
+# dNLL_dV as a diagonal and which reads it as a matrix -- a third thing that
+# has to agree across the three sites. Only the ACCUMULATION differs between
+# them (grad[] against grad_acc[ci, ]), so that stays at the call site.
+.admEtaOmegaGrad <- function(cp_c, D_mat, z, L, dNLL_dV, dNLL_dmu,
+                             sigma_mu_scale, eta_rows_df, n_t, n_eta,
+                             is_var = FALSE) {
+  z_diag_scale <- sweep(z, 2L, diag(L) / 2, "*")
+  neta1 <- as.integer(eta_rows_df$neta1)
+  neta2 <- as.integer(eta_rows_df$neta2)
+  if (is_var)
+    adm_grad_eta_omega_var_cpp(cp_c, D_mat, z_diag_scale, z,
+                               dNLL_dV, dNLL_dmu, sigma_mu_scale,
+                               neta1, neta2, n_t, n_eta)
+  else
+    adm_grad_eta_omega_cpp(cp_c, D_mat, z_diag_scale, z,
+                           dNLL_dV, dNLL_dmu, sigma_mu_scale,
+                           neta1, neta2, n_t, n_eta)
+}
+
 
 # -- Gradient (forward / central FD + sensitivity) -----------------------------
 
@@ -674,11 +710,8 @@ nmObjGetControl.admc <- function(x, ...) {
       if (n_eta > 0L) {
         eta_rows_df  <- pinfo$eta_rows_df
         D_mat        <- do.call(cbind, dpred_list)
-        z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
-        go <- adm_grad_eta_omega_cpp(
-          cp_c, D_mat, z_diag_scale, z, dNLL_dV_s, dNLL_dmu, sigma_mu_scale,
-          as.integer(eta_rows_df$neta1), as.integer(eta_rows_df$neta2),
-          n_t, n_eta)
+        go <- .admEtaOmegaGrad(cp_c, D_mat, z, pars$L, dNLL_dV_s, dNLL_dmu,
+                               sigma_mu_scale, eta_rows_df, n_t, n_eta)
         for (j in seq_len(n_eta))
           if (!is.null(pinfo$struct_eta_idx) && !is.na(pinfo$struct_eta_idx[j]))
             grad[pinfo$struct_eta_idx[j]] <- grad[pinfo$struct_eta_idx[j]] + go$eta_grad[j]
@@ -923,21 +956,10 @@ nmObjGetControl.admc <- function(x, ...) {
     if (n_eta > 0L) {
       eta_rows_df  <- pinfo$eta_rows_df
       D_mat        <- do.call(cbind, dpred_list)
-      z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
-      neta1 <- as.integer(eta_rows_df$neta1)
-      neta2 <- as.integer(eta_rows_df$neta2)
-      go <- if (is_var)
-        adm_grad_eta_omega_var_cpp(
-          cp_c, D_mat, z_diag_scale, z,
-          dNLL_dV_diag_s, dNLL_dmu, sigma_mu_scale,
-          neta1, neta2,
-          n_t, n_eta)
-      else
-        adm_grad_eta_omega_cpp(
-          cp_c, D_mat, z_diag_scale, z,
-          dNLL_dV_s, dNLL_dmu, sigma_mu_scale,
-          neta1, neta2,
-          n_t, n_eta)
+      go <- .admEtaOmegaGrad(cp_c, D_mat, z, pars$L,
+                             if (is_var) dNLL_dV_diag_s else dNLL_dV_s,
+                             dNLL_dmu, sigma_mu_scale, eta_rows_df,
+                             n_t, n_eta, is_var)
       for (j in seq_len(n_eta)) {
         if (!is.null(pinfo$struct_eta_idx) && !is.na(pinfo$struct_eta_idx[j]))
           grad[pinfo$struct_eta_idx[j]] <- grad[pinfo$struct_eta_idx[j]] + go$eta_grad[j]
@@ -1607,21 +1629,10 @@ nmObjGetControl.admc <- function(x, ...) {
       if (n_eta > 0L) {
         D_mat        <- do.call(cbind, dpred_list)
         eta_rows_df  <- pinfo$eta_rows_df
-        z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
-        neta1 <- as.integer(eta_rows_df$neta1)
-        neta2 <- as.integer(eta_rows_df$neta2)
-        go <- if (is_var)
-          adm_grad_eta_omega_var_cpp(
-            cp_c, D_mat, z_diag_scale, z,
-            dNLL_dV_diag_s, dNLL_dmu, sigma_mu_scale,
-            neta1, neta2,
-            n_t, n_eta)
-        else
-          adm_grad_eta_omega_cpp(
-            cp_c, D_mat, z_diag_scale, z,
-            dNLL_dV_s, dNLL_dmu, sigma_mu_scale,
-            neta1, neta2,
-            n_t, n_eta)
+        go <- .admEtaOmegaGrad(cp_c, D_mat, z, pars$L,
+                               if (is_var) dNLL_dV_diag_s else dNLL_dV_s,
+                               dNLL_dmu, sigma_mu_scale, eta_rows_df,
+                               n_t, n_eta, is_var)
         for (j in seq_len(n_eta)) {
           if (!is.null(pinfo$struct_eta_idx) && !is.na(pinfo$struct_eta_idx[j]))
             grad_acc[ci, pinfo$struct_eta_idx[j]] <- grad_acc[ci, pinfo$struct_eta_idx[j]] + go$eta_grad[j]

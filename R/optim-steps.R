@@ -444,3 +444,50 @@
   ok <- is.finite(est) & est > 0
   if (!any(ok)) NA_real_ else min(est[ok])
 }
+
+# The central-difference Hessian, given steps and a scalar objective.
+#
+# Diagonal by the second difference and off-diagonal by the four-point cross:
+#
+#   H_kk = [ f(p + h_k) - 2 f(p) + f(p - h_k) ] / h_k^2
+#   H_ij = [ f(++) - f(+-) - f(-+) + f(--) ] / (4 h_i h_j)
+#
+# Extracted because .adfoCalcCov and .adghCalcCov carried it BYTE-IDENTICALLY
+# over nineteen lines. The stencil and its normalisation are a decision -- the
+# `-2 f(p)` on the diagonal, the 4 in the cross denominator, and the fact that
+# both use the SAME per-parameter step vector .admHessSteps measured -- so two
+# copies are two chances for one estimator's reported covariance to be computed
+# differently from another's.
+#
+# .admCalcCov does NOT call this: it builds the same point set but hands it to
+# .admNLLBatch, because an MC objective is far cheaper evaluated in one batched
+# solve than point by point. Same stencil, different evaluation strategy; if
+# the stencil changes here it has to change there too.
+#
+# `nll_fn` must already be memoised or cheap -- .adfoCalcCov primes a memo over
+# these exact points first, which is why it is passed in rather than built.
+.admFDHessian <- function(p_hat, cov_idx, h_fd, nll0, nll_fn) {
+  np <- length(cov_idx)
+  H  <- matrix(0, np, np)
+  for (k in seq_len(np)) {
+    ki  <- cov_idx[k]; hk <- h_fd[k]
+    p_p <- p_hat; p_p[ki] <- p_p[ki] + hk
+    p_m <- p_hat; p_m[ki] <- p_m[ki] - hk
+    H[k, k] <- (nll_fn(p_p) - 2 * nll0 + nll_fn(p_m)) / hk^2
+  }
+  if (np > 1L)
+    for (i in seq_len(np - 1L)) {
+      for (j in seq(i + 1L, np)) {
+        ii <- cov_idx[i]; ji <- cov_idx[j]
+        hi <- h_fd[i];    hj <- h_fd[j]
+        p_pp <- p_hat; p_pp[ii] <- p_pp[ii] + hi; p_pp[ji] <- p_pp[ji] + hj
+        p_pm <- p_hat; p_pm[ii] <- p_pm[ii] + hi; p_pm[ji] <- p_pm[ji] - hj
+        p_mp <- p_hat; p_mp[ii] <- p_mp[ii] - hi; p_mp[ji] <- p_mp[ji] + hj
+        p_mm <- p_hat; p_mm[ii] <- p_mm[ii] - hi; p_mm[ji] <- p_mm[ji] - hj
+        H[i, j] <- H[j, i] <-
+          (nll_fn(p_pp) - nll_fn(p_pm) - nll_fn(p_mp) + nll_fn(p_mm)) /
+          (4 * hi * hj)
+      }
+    }
+  H
+}
