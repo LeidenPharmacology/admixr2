@@ -1078,6 +1078,17 @@
     # the FD gradient of an unpaired theta -- typically the covariate
     # coefficient itself -- differenced a different function than the optimizer
     # descends.
+    # FIT-WIDE ON PURPOSE, though it does not have to be. `.adghNLL` is a plain
+    # sum over studies with no cross-study term, so the set could be split --
+    # per-configuration for the studies that re-aim, batched for the rest --
+    # and the two contributions added. It is not, for two reasons. The gain is
+    # confined to MIXED fits: when every study declares a `cov_dist` the split
+    # buys nothing, and when none does this gate is already FALSE, so it pays
+    # only where some studies collapse and others do not. And the price is
+    # restructuring a gradient path to sum two routes, in a package whose
+    # gradient history is a list of factor-of-two bugs found late. If a mixed
+    # fit ever measures as the bottleneck, split it THEN, against a golden
+    # gradient.
     if (any(vapply(studies, function(u) isTRUE(u$is_joint) ||
                      identical(u$.adm_cov_path, "shift") ||
                      !is.null(u[[".adm_cov_collapse"]]) ||

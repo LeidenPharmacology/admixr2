@@ -443,6 +443,19 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #' @param cov A full parameter covariance matrix, if the source published one
 #'   (or if you have its fit: pass `fit$cov`). Beats `rse`/`se`, because it
 #'   carries the correlations those cannot.
+#' @param v_denom Which denominator the supplied spread uses: `"unbiased"`
+#'   (`n - 1`) or `"ml"` (`n`). Usually leave it unset --- the currency you
+#'   wrote the study in already says which it is, and `admStudy()` resolves it
+#'   and shows the answer when the study is printed.
+#'
+#'   `sd`/`sem` default to `"unbiased"`, because a **published** spread is the
+#'   `n - 1` one; `V` defaults to `"ml"`, because handing over a covariance
+#'   matrix is the deliberate act of someone who computed it, and the
+#'   likelihood wants the ML denominator. Set it explicitly when your source
+#'   breaks that pattern --- a `sd` you computed yourself with the ML
+#'   denominator, say. A published `model` is always `"ml"`: its moments are
+#'   generated at that denominator, so `"unbiased"` is refused rather than
+#'   applied to a `V` that is already right.
 #' @param E,V,sd,sem Digitised aggregate data: the reported mean profile `E`,
 #'   with its spread as `sd` (per timepoint), `sem` (converted using `n`), or a
 #'   full covariance `V`.
@@ -484,7 +497,12 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
                      n = NULL, times = NULL, dose = NULL, ev = NULL,
                      population = NULL, at = NULL, by = NULL,
                      stratify = NULL, strata_nodes = NULL, range = NULL,
-                     label = NULL) {
+                     label = NULL, v_denom = NULL) {
+  # Recorded BEFORE `sd` is overwritten from `sem` and before `V` is derived
+  # from either, because the default below turns on which currency the study
+  # was actually written in -- and a study given both `V` and `sd` is using the
+  # `V`.
+  .from_spread <- is.null(V) && (!is.null(sd) || !is.null(sem))
   # A study has no name until admStudies() gives it one, so an unlabelled
   # study used to report itself as `study 'study'`. The symbol the model was
   # passed as is the one thing on hand that the user will recognise -- used for
@@ -606,6 +624,34 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
     if (length(E) != length(times))
       bad("`E` has ", length(E), " values but `times` has ", length(times), ".")
   }
+  # WHICH DENOMINATOR THE SUPPLIED V USES -- and the currency already says.
+  #
+  # The likelihood scores V as the sample covariance of n iid subjects, which
+  # is the ML (divide by n) one. A PUBLISHED spread is the unbiased (n - 1)
+  # one: that is what every paper and every stats package reports. So a study
+  # written as `sd =` or `sem =` is in the n - 1 currency by construction, and
+  # defaulting it to "ml" silently scores a V that is n/(n-1) too large --
+  # 1.7% at n = 60, more as n falls, and it inflates the variance parameters
+  # rather than the estimates, which is the half of the fit nobody eyeballs.
+  #
+  # `V =` is left at "ml": handing over a covariance MATRIX is the deliberate
+  # act of someone who computed it, and the documentation tells them to use the
+  # ML denominator. Guessing "unbiased" there would corrupt a correct V.
+  #
+  # A MODEL SOURCE HAS NO CHOICE. Its moments come from datagen(), which is ML
+  # by construction, so "unbiased" is not a convention to declare but a claim
+  # that would shrink a V that is already right -- refused rather than honoured.
+  if (!is.null(v_denom)) {
+    if (!is.character(v_denom) || length(v_denom) != 1L ||
+        !v_denom %in% c("ml", "unbiased"))
+      bad("`v_denom` must be \"ml\" or \"unbiased\".")
+    if (has_model && identical(v_denom, "unbiased"))
+      bad("`v_denom = \"unbiased\"` does not apply to a published `model`: ",
+          "its moments are generated at the ML denominator, so there is ",
+          "nothing to convert.")
+  } else {
+    v_denom <- if (.from_spread) "unbiased" else "ml"
+  }
   # A DATA FRAME IS A POPULATION, so accept one directly.
   #
   # EVERY column is a covariate except the ones that structurally cannot be.
@@ -635,7 +681,7 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
     E = E, V = V, n = as.numeric(n), times = as.numeric(times),
     ev = ev, dose = dose, population = population, at = at, by = by,
     stratify = stratify, strata_nodes = strata_nodes, range = range,
-    label = label), class = "admStudy")
+    label = label, v_denom = v_denom), class = "admStudy")
 }
 
 #' @export
@@ -646,6 +692,13 @@ print.admStudy <- function(x, ...) {
   dz <- if (!is.null(x$dose)) paste0("dose ", x$dose) else "ev supplied"
   cat(sprintf("  design    n = %s, %s, %d times (%g - %g)\n",
               format(x$n), dz, length(x$times), min(x$times), max(x$times)))
+  # PRINTED, not messaged. A resolved default the user never sees is the thing
+  # this package keeps getting bitten by -- but one message per study is noise
+  # in a ten-study meta-analysis, so it goes where they are already looking.
+  if (is.null(x$ui))
+    cat(sprintf("  V scale   %s denominator%s\n", x$v_denom %||% "ml",
+                if (identical(x$v_denom, "unbiased"))
+                  "  (published spread; converted to ML for the fit)" else ""))
   if (!is.null(x$ui)) {
     ini <- x$ui$iniDf
     cvs <- tryCatch(x$ui$allCovs, error = function(e) character(0))

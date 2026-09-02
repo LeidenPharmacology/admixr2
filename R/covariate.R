@@ -154,9 +154,43 @@
   # The quadrature estimators are unaffected: their gain is in DESIGN POINTS,
   # they re-aim per objective call, and they have no random numbers to hold
   # common.
-  s$cov_rows <- .admCovRowsFor(s$cov_dist, n_row, pinfo$n_eta)
+  # ...AND THE SAME DRAW EVERY TIME, WHICH IS WORTH CACHING. `.admCovRowsFor`
+  # is deterministic in `cov_dist` alone -- that is the CRN property above --
+  # so every objective evaluation was re-running an identical Sobol draw.
+  # Measured on 3 correlated covariates and 2 etas: 9.5 ms at n_row = 1000 and
+  # 5000, 79 ms at 50000, PER STUDY PER EVALUATION. An rxSolve costs ~11 ms
+  # before it integrates anything, so at cov_n_sim this was another whole solve
+  # per study spent redrawing numbers that cannot change. Caching also cannot
+  # weaken CRN: it hands back the identical rows by construction.
+  #
+  # Keyed on the covariate distribution, the row count and the eta count --
+  # every input the draw has. An opaque user `joint` is NOT cached: digesting a
+  # closure means digesting its environment, which can hold an arbitrarily
+  # large object (a fitted vine, say), and paying that per call could cost more
+  # than the draw it saves. That case behaves exactly as it did before.
+  if (is.function(s$cov_dist[["joint"]])) {
+    s$cov_rows <- .admCovRowsFor(s$cov_dist, n_row, pinfo$n_eta)
+    return(s)
+  }
+  key <- digest::digest(list(s$cov_dist, n_row, pinfo$n_eta))
+  hit <- .adm_covrows_env[[key]]
+  if (is.null(hit)) {
+    # a plain bound, so a long session fitting many models cannot grow it
+    # without limit; the entries are per (study x n_row), so a handful per fit
+    if (length(ls(.adm_covrows_env, all.names = TRUE)) > 64L)
+      rm(list = ls(.adm_covrows_env, all.names = TRUE), envir = .adm_covrows_env)
+    hit <- .admCovRowsFor(s$cov_dist, n_row, pinfo$n_eta)
+    .adm_covrows_env[[key]] <- hit
+  }
+  s$cov_rows <- hit
   s
 }
+
+# Memo for the covariate row draws. An ENVIRONMENT, so it is caught by the
+# generic is.environment() filter that keeps the daemon payload from shipping
+# the parent's caches -- each worker keeps its own, which is what you want
+# since the draw is cheap to rebuild and heavy to send.
+.adm_covrows_env <- new.env(parent = emptyenv())
 
 # Refuse `cov_dist` for an estimator that has no covariate path.
 #
@@ -759,16 +793,25 @@
                 (if (!is.null(.co)) nrow(.co$X)
                  else (pinfo$cov_nodes %||% 7L)^.jc$pc *
                       max(.jc$n_cell %||% 1L, 1L))
-        if (.jc$m^.jc$r * max(.jc$n_cell %||% 1L, 1L) >= .alt) .jc <- NULL
+        # ONE expression for the cost, used by the decision AND by the message.
+        # They were written out separately and had already drifted: the gate
+        # priced m^r * n_cell while the message announced m^r, so a design with
+        # any discrete cells told the user it was using fewer points than it
+        # was -- by the whole cell factor, which is where the discrete levels
+        # live. Announcing a number the code did not act on is worse than
+        # announcing none.
+        .jc_cost <- .jc$m^.jc$r * max(.jc$n_cell %||% 1L, 1L)
+        if (.jc_cost >= .alt) .jc <- NULL
       }
       if (!is.null(.jc)) {
         studies[[nm]]$.adm_cov_joint <- .jc
         message("admixr2: study '", nm, "': the ", pinfo$n_eta,
                 " random effects and ", .jc$pc, " covariates span ", .jc$r,
                 if (.jc$r == 1L) " direction" else " directions",
-                " jointly -- using ", .jc$m^.jc$r,
-                " design points rather than crossing an ", pinfo$n_eta,
-                "-way eta grid with the covariate design.")
+                " jointly -- using ", .jc_cost,
+                " design points rather than ", .alt,
+                " for an ", pinfo$n_eta,
+                "-way eta grid crossed with the covariate design.")
       }
     }
   }
@@ -1204,6 +1247,16 @@
     pr <- spec$probs %||% rep(1 / length(spec$values), length(spec$values))
     return(list(x = as.numeric(spec$values), w = pr / sum(pr)))
   }
+  # A DEGENERATE POINT NEEDS ONE NODE, NOT n_nodes COPIES OF ITSELF. A
+  # stratified covariate is held at a point inside its stratum (pt_spec), and a
+  # point spec carries only `quantile`, so it fell through to the branch below
+  # and was handed the whole standard-normal axis -- n_nodes rows with
+  # IDENTICAL covariate values and Gauss-Hermite weights summing to one. The
+  # answer was right and the grid was n_nodes times too big PER STRATIFIED
+  # COVARIATE: 49x on a band cut in two of them, every extra row an exact
+  # duplicate solve.
+  if (isTRUE(spec[[".point"]]))
+    return(list(x = as.numeric(spec$quantile(0.5)), w = 1))
   g <- .adghNodes1(n_nodes)                       # standard-normal nodes/weights
   # A user-supplied quantile function. E_a[h(a)] = E_z[h(F^-1(Phi(z)))] for
   # z ~ N(0,1), so pushing the standard-normal nodes through Phi and then F^-1

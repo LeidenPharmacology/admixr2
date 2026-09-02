@@ -707,13 +707,22 @@
   b  <- mom(p_hat)
   dE <- lapply(b, function(x) matrix(0, length(x$E), p))
   dV <- lapply(b, function(x) rep(list(matrix(0, nrow(x$V), ncol(x$V))), p))
+  # `h` IS RELATIVE, and has to be. An absolute 1e-5 is a different question
+  # asked of every parameter: the optimizer scale carries log-thetas at O(1)
+  # beside log(Omega_ii) that reaches -5 for a small variance and raw
+  # off-diagonal L_ij near zero, so one fixed step is a 1% perturbation of one
+  # coordinate and 1e-7 relative -- pure cancellation -- of another. The rest of
+  # the package already scales its differences this way (cov_h_outer's actual
+  # step is max(|p|, 0.1) * cov_h_outer); this was the one place that did not.
+  # The 0.1 floor keeps a parameter sitting at zero from getting a zero step.
   for (k in seq_len(p)) {
-    a  <- p_hat; a[k]  <- a[k] + h
-    cc <- p_hat; cc[k] <- cc[k] - h
+    hk <- h * max(abs(p_hat[k]), 0.1)
+    a  <- p_hat; a[k]  <- a[k] + hk
+    cc <- p_hat; cc[k] <- cc[k] - hk
     ma <- mom(a); mc <- mom(cc)
     for (i in seq_along(b)) {
-      dE[[i]][, k] <- (ma[[i]]$E - mc[[i]]$E) / (2 * h)
-      dV[[i]][[k]] <- (ma[[i]]$V - mc[[i]]$V) / (2 * h)
+      dE[[i]][, k] <- (ma[[i]]$E - mc[[i]]$E) / (2 * hk)
+      dV[[i]][[k]] <- (ma[[i]]$V - mc[[i]]$V) / (2 * hk)
     }
   }
   list(E = lapply(b, `[[`, "E"), V = lapply(b, `[[`, "V"), dE = dE, dV = dV)

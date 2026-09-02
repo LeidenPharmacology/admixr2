@@ -427,3 +427,56 @@ test_that("a source covariance may use nlmixr2's off-diagonal omega names", {
   C2 <- diag(rep(.01, 6)); dimnames(C2) <- list(nm2, nm2)
   expect_error(admixr2:::.admSrcCov(C2, u, "src", "cov"), "OFF-DIAGONAL")
 })
+
+test_that("admStudy resolves v_denom from the currency the study is written in", {
+  ev <- rxode2::et(amt = 100)
+  tt <- c(1, 2, 4); EE <- c(2, 1.5, 1)
+
+  # A PUBLISHED SPREAD IS THE n-1 ONE. admStudy() had no `v_denom` at all, so
+  # every study it built defaulted to "ml" -- and `sd =` is precisely the
+  # digitised-figure path the constructor exists for, so the one convention a
+  # paper never uses was the one silently assumed.
+  s_sd <- admStudy(E = EE, sd = c(.4, .3, .2), n = 60L, times = tt, ev = ev)
+  expect_identical(s_sd$v_denom, "unbiased")
+  s_sem <- admStudy(E = EE, sem = c(.4, .3, .2) / sqrt(60), n = 60L,
+                    times = tt, ev = ev)
+  expect_identical(s_sem$v_denom, "unbiased")
+
+  # a covariance MATRIX is computed, not transcribed -- the docs tell you to
+  # use the ML denominator, so guessing "unbiased" there would corrupt it
+  s_V <- admStudy(E = EE, V = diag(c(.16, .09, .04)), n = 60L, times = tt, ev = ev)
+  expect_identical(s_V$v_denom, "ml")
+
+  # given both, the V is what is used, so the V's convention is what applies
+  s_both <- admStudy(E = EE, V = diag(c(.16, .09, .04)), sd = c(.4, .3, .2),
+                     n = 60L, times = tt, ev = ev)
+  expect_identical(s_both$v_denom, "ml")
+
+  # explicit always wins
+  expect_identical(admStudy(E = EE, sd = c(.4, .3, .2), n = 60L, times = tt,
+                            ev = ev, v_denom = "ml")$v_denom, "ml")
+  expect_error(admStudy(E = EE, sd = c(.4, .3, .2), n = 60L, times = tt,
+                        ev = ev, v_denom = "n-1"), "must be")
+})
+
+test_that("the resolved denominator reaches the conversion, and is shown", {
+  ev <- rxode2::et(amt = 100)
+  tt <- c(1, 2, 4)
+  n  <- 60L
+  sdv <- c(.4, .3, .2)
+  s <- admStudy(E = c(2, 1.5, 1), sd = sdv, n = n, times = tt, ev = ev)
+
+  # .admVDenom is what applies it: unbiased V scaled by (n-1)/n
+  vv <- function(V) if (is.matrix(V)) diag(V) else as.numeric(V)
+  got <- admixr2:::.admVDenom(unclass(s), "s")
+  expect_equal(vv(got$V), sdv^2 * (n - 1) / n, tolerance = 1e-12)
+  # ...and it is idempotent, so normalising twice cannot convert twice
+  expect_identical(got$v_denom, "ml")
+  expect_equal(vv(admixr2:::.admVDenom(got, "s")$V),
+               sdv^2 * (n - 1) / n, tolerance = 1e-12)
+
+  # the resolved convention is visible rather than silent
+  expect_output(print(s), "unbiased denominator")
+  expect_output(print(admStudy(E = c(2, 1.5, 1), V = diag(sdv^2), n = n,
+                               times = tt, ev = ev)), "ml denominator")
+})

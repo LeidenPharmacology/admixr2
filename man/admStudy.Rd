@@ -24,7 +24,8 @@ admStudy(
   stratify = NULL,
   strata_nodes = NULL,
   range = NULL,
-  label = NULL
+  label = NULL,
+  v_denom = NULL
 )
 }
 \arguments{
@@ -89,6 +90,20 @@ none --- one banded source is as good as three. See \code{\link[=covStrata]{covS
 
 \item{label}{Optional display name; otherwise taken from the argument name in
 \code{\link[=admStudies]{admStudies()}}.}
+
+\item{v_denom}{Which denominator the supplied spread uses: \code{"unbiased"}
+(\code{n - 1}) or \code{"ml"} (\code{n}). Usually leave it unset --- the currency you
+wrote the study in already says which it is, and \code{admStudy()} resolves it
+and shows the answer when the study is printed.
+
+\code{sd}/\code{sem} default to \code{"unbiased"}, because a \strong{published} spread is the
+\code{n - 1} one; \code{V} defaults to \code{"ml"}, because handing over a covariance
+matrix is the deliberate act of someone who computed it, and the
+likelihood wants the ML denominator. Set it explicitly when your source
+breaks that pattern --- a \code{sd} you computed yourself with the ML
+denominator, say. A published \code{model} is always \code{"ml"}: its moments are
+generated at that denominator, so \code{"unbiased"} is refused rather than
+applied to a \code{V} that is already right.}
 }
 \value{
 An \code{admStudy} object.
