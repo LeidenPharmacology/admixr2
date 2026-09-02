@@ -36,8 +36,8 @@ adghControl(
   returnAdmr = FALSE,
   resid_nodes = 81L,
   cov_nodes = 7L,
-  cov_integration = c("quadrature", "auto", "taylor", "shift"),
-  cov_taylor_h = 1,
+  cov_integration = c("quadrature", "auto", "sparse", "shift"),
+  cov_sparse_level = 3L,
   ...
 )
 }
@@ -196,7 +196,8 @@ weight distribution: 3 nodes give 7.3e-04 / 8.2e-03 (mean / covariance),
 ~1.2e-06 / ~1.0e-06, which is the ODE solver's accuracy rather than the
 quadrature's. The default is set past that knee, and raising it further
 buys nothing: against a per-subject reference the accuracy is identical at
-5, 9 and 15 nodes. Ignored when \code{cov_integration = "taylor"}.
+5, 9 and 15 nodes. Ignored when \code{cov_integration = "sparse"}, which sets
+its own resolution through \code{cov_sparse_level}.
 
 It is a nodes-per-DIRECTION budget rather than a literal node count.
 Where the covariates reach the model through fewer scalars than there
@@ -211,74 +212,49 @@ grid's 343. The same budget sizes the directions of a joint
 random-effect/covariate design where one is used.}
 
 \item{cov_integration}{How a study's covariate distribution is integrated.
-\code{"quadrature"} (default) evaluates the model on a product Gauss-Hermite
+\code{"quadrature"} (default) evaluates the model on a product Gauss--Hermite
 grid of \code{cov_nodes} points per covariate and forms the marginal moments
 from the whole grid; it is the accurate route and the one every existing
-fit uses. \code{"taylor"} instead expands the marginal MOMENTS to second order
-about the covariate mean,
-\eqn{E \approx g(m) + \frac{1}{2}\sum_j v_j g''_j(m)} and
-\eqn{V \approx V_c(m) + \frac{1}{2}\sum_j v_j V_{c,j}''(m) + \sum_j v_j
-  g'_j(m) g'_j(m)^T} for \eqn{g(a) = E_\eta[f(a,\eta)]}, and evaluates the
-likelihood once at those approximate moments. That costs \verb{1 + 2p} covariate
-points for \code{p} covariates instead of \code{cov_nodes^p}, so it is a speed lever
-for models with several covariates or a wide grid.
+fit uses. \code{"sparse"} uses a Smolyak sparse grid of \code{cov_sparse_level}
+instead, which for \code{p} covariates costs far fewer than \code{cov_nodes^p}
+points and is the speed lever for models with several covariates.
 
-It is an APPROXIMATION, and how good depends on how far the covariate
-pushes the model relative to the random effects. With
-\code{ratio = theta_cov * sd_a / omega}, the measured relative error of the
-moments against the exact marginal is 1e-07 / 1e-05 (mean / covariance) at
-\code{ratio = 0.1}, 5e-05 / 5e-03 at 0.5, 7e-04 / 5e-02 at 1, and 3e-02 / 4e-01
-at 3. Check an important fit against \code{"quadrature"}.
+Both are Gauss--Hermite rules; they differ in which product terms are
+kept. Measured against an exact reference (lognormal margins, allometric
+plus a saturable term), relative error on the mean and the covariance:\tabular{lll}{
+   rule \tab p = 3, rho = 0.85 \tab p = 4, rho = 0.85 \cr
+   sparse, level 2 \tab 6 pts, 7.8e-04 / 4.7e-02 \tab 9 pts, 9.7e-04 / 6.1e-02 \cr
+   product, 3 nodes \tab 27 pts, 4.0e-05 / 1.5e-02 \tab 81 pts, 1.5e-04 / 3.2e-02 \cr
+   sparse, level 3 \tab 31 pts, 1.6e-06 / 5.0e-04 \tab 49 pts, 3.5e-06 / 9.5e-04 \cr
+}
 
-DEPENDENT covariates (\code{cor}, \code{rho}, \code{Sigma}, or a \code{joint} sampler) are
-supported by both routes. The quadrature grid is a product rule over the
-sampler's UNIFORMS rather than over the covariate margins, and a copula
-maps independent uniforms to dependent values, so the product rule stays
-exact whatever the dependence. The expansion differences along the
-EIGENVECTORS of the covariate covariance, which keeps it at \verb{1 + 2p} points
-at any correlation --- a coordinate-basis version would need the mixed
-partials explicitly, at \verb{1 + 2p + p(p-1)} points for the same accuracy.
-(This is the third-degree spherical-radial cubature rule, i.e. the
-unscented transform's sigma points.)
 
-Refused rather than approximated: a discrete \code{values} covariate (the
-differencing step would land between the levels), and (near-)perfectly
-collinear covariates (the step along the null direction collapses, so the
-second difference is cancellation rather than a derivative).
+At four covariates level 3 is both cheaper than the 3-node product grid
+and roughly 40x more accurate, and the advantage grows with \code{p}. Level 2
+is the axial rule --- at one covariate it is exactly \code{cov_nodes = 3} ---
+and it is offered for continuity rather than recommended.
 
-\code{"shift"} removes the covariate from the solve entirely. When the
-covariates act on the model only through a mu-referenced argument they are
-a pure shift of that argument's random effect,
-\eqn{f(a,\eta) = f(a_{ref}, \eta + \Delta(a))}, so the two-dimensional
-\eqn{(a, \eta)} integral collapses onto one over \eqn{u = \Delta(a) +
-  \eta}. The solve cost is then CONSTANT in the number of covariates, against
-\code{cov_nodes^p} for the grid, and it holds for any covariate distribution ---
-discrete, skewed, dependent alike. The precondition is checked NUMERICALLY
-against the compiled model, never read off the model text (measured
-separation on the probe set: valid forms 1e-12--1e-14, invalid forms
-3e-02--7e-01), and a model that fails it is an ERROR naming the reason.
+DEPENDENT covariates (\code{cor}, \code{rho}, \code{Sigma}) are handled by rotating onto
+the eigenvectors of the latent correlation, and correlation does not cost
+the sparse rule accuracy: at \code{p = 2} its mean error is 6.6e-07 at
+\code{rho = 0} and 4.8e-08 at \code{rho = 0.85}. (Level 2 behaves the other way,
+losing an order of magnitude to correlation, which is one reason the
+default is 3.) An opaque \code{joint} sampler is refused, because the rotation
+needs a correlation the closure does not report --- declare the dependence
+with \code{cor} and admixr2 builds the sampler itself.
 
-\code{"auto"} tries \code{"shift"} and falls back to \code{"quadrature"} with a message
-when the identity does not hold, so it is the fast route wherever the fast
-route is valid and the accurate route everywhere else. It is not the
-default only because switching it on moves an existing covariate fit's
-numbers at the ~1e-5 level (the tolerance at which shift and grid agree);
-for a new fit it is the recommended setting.}
+The cost of a sparse rule is SIGNED weights: they sum to 1 exactly, but
+the sum of their absolute values is 2.5 at level 3 for three covariates
+and 4.1 for four, so the answer is a difference of terms several times its
+own size and solver noise is amplified accordingly. A sandwich covariance
+whose weight matrix comes out indefinite as a result is refused rather
+than reported.}
 
-\item{cov_taylor_h}{Radius of the design points for
-\code{cov_integration = "taylor"}, as a multiple of the moment-matched radius
-\eqn{\sqrt{3\lambda_k}} along each expansion direction (default 1). The
-\eqn{1+2p} design is a cubature rule rather than a finite-difference
-stencil, so the radius is chosen to integrate moments exactly, not to be
-small: at the default the design coincides with 3-point Gauss--Hermite in
-each direction and is exact through degree 5, where a smaller radius
-matches only through degree 3. For independent covariates the directions
-are the covariates themselves; when they are dependent they are the
-eigenvectors of the covariate covariance. Values below 1 pull the points
-back toward the covariate mean -- the scaled unscented transform -- which
-costs the fourth-moment match but keeps the design inside the range a
-strongly skewed margin actually spans. Ignored when
-\code{cov_integration = "quadrature"}.}
+\item{cov_sparse_level}{Smolyak level for \code{cov_integration = "sparse"}
+(default 3, minimum 2). Level 2 is the axial rule, level 3 adds the
+five-point axes and the pairwise crosses, and each further level refines
+again at a growing weight-magnitude cost. See \code{cov_integration} for the
+measured accuracy and point counts.}
 
 \item{...}{Unused arguments (trigger an error).}
 }
