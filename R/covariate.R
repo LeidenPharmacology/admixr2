@@ -978,10 +978,16 @@
   cov_dist[["joint"]] <- local({
     nms <- nms; margins <- margins; Lc <- Lc; d <- d
     function(u) {
-      cl  <- function(x) pmin(pmax(x, 1e-12), 1 - 1e-12)
+      # ONE tolerance, shared with every other site -- .admCovU(). This closure
+      # used to clamp at 1e-12, and .admCovGrid hands it uniforms it has ALREADY
+      # clamped at .Machine$double.eps, so the looser bound silently won on the
+      # dependent path: the same design point sat at qnorm -7.03 through a
+      # correlated spec and -8.13 through an independent one.
+      cl  <- function(x) pmin(pmax(x, .Machine$double.eps),
+                              1 - .Machine$double.eps)
       z   <- stats::qnorm(cl(u)) %*% Lc
       out <- vapply(seq_len(d), function(j)
-        .admCovQuantile(margins[[j]], cl(stats::pnorm(z[, j]))),
+        .admCovQuantile(margins[[j]], .admCovU(z[, j])),
         numeric(nrow(u)))
       out <- matrix(out, nrow = nrow(u), ncol = d)
       colnames(out) <- nms
@@ -1090,6 +1096,93 @@
   out
 }
 
+# =============================================================================
+# Shared covariate-design primitives
+# =============================================================================
+#
+# Five designs -- the product grid, the sparse grid, the strata, the covariate
+# collapse and the joint collapse -- do the same four things to a `cov_dist`:
+# enumerate its discrete margins, refuse a discrete margin that is latently
+# correlated with a continuous one, factorise the continuous correlation, and
+# push latent normal nodes through each margin's quantile function. Each used to
+# spell all four out.
+#
+# That is the shape CLAUDE.md names as the source of the covariate bugs: "the
+# residual row arrays are rebuilt by SIX consumers, and that is where the bugs
+# are". It has already cost one here -- .admCovSparseGrid was written with the
+# enumeration and the factorisation copied in but the REFUSAL left out, so a
+# discrete covariate correlated with a continuous one was integrated as if it
+# were independent until a converted test caught it.
+
+# The uniform a latent normal node maps to.
+#
+# ONE tolerance. pnorm() saturates to exactly 0 or 1 in the tails -- the grid
+# reaches |z| ~ 8 at 21 nodes and a copula's mixing step pushes that further --
+# after which a margin's quantile function returns +/-Inf. Nine sites clamped at
+# .Machine$double.eps and one at 1e-12, which put the extreme node at qnorm
+# -8.13 against -7.03, i.e. the same design point in a different place
+# depending on which function built it.
+.admCovU <- function(z)
+  pmin(pmax(stats::pnorm(z), .Machine$double.eps), 1 - .Machine$double.eps)
+
+# Latent normal nodes -> covariate values, one column per margin.
+#
+# Z is n x length(cn) on the LATENT scale (already rotated and scaled by the
+# caller); the result is n x length(cn) on each covariate's own scale, named.
+# The matrix() is not decoration: vapply drops to a vector at n == 1 or at one
+# covariate, and four of the six callers carried their own `if (!is.matrix(x))`
+# repair for exactly that.
+.admCovXFromZ <- function(cd, cn, Z) {
+  Z <- as.matrix(Z)
+  U <- .admCovU(Z)
+  X <- matrix(vapply(seq_along(cn), function(k)
+    .admCovQuantile(cd[[cn[k]]], U[, k]), numeric(nrow(Z))),
+    nrow(Z), length(cn), dimnames = list(NULL, cn))
+  X
+}
+
+# Exact enumeration of the discrete margins: their levels and probabilities ARE
+# the integration rule, so they are crossed whole rather than put on any rule.
+#
+# Returns the pieces every caller wanted between them -- the per-margin levels
+# and normalised probabilities, the crossed cells with their probabilities, and
+# the cells as named lists for the probe. Reads each margin through
+# .admCovNodesFor, which is where "probs, defaulting to uniform, normalised"
+# already lived; five sites re-implemented that line in three spellings.
+.admCovDiscCells <- function(cd, dn) {
+  if (!length(dn))
+    return(list(lv = list(), pr = list(), cells = matrix(numeric(0), 1L, 0L),
+                pcell = 1, cell_list = list(list())))
+  nodes <- lapply(dn, function(n) .admCovNodesFor(cd[[n]], 1L))
+  lv <- lapply(nodes, `[[`, "x")
+  pr <- lapply(nodes, `[[`, "w")
+  cells <- as.matrix(expand.grid(lv, KEEP.OUT.ATTRS = FALSE))
+  colnames(cells) <- dn
+  pcell <- apply(as.matrix(expand.grid(pr, KEEP.OUT.ATTRS = FALSE)), 1L, prod)
+  list(lv = lv, pr = pr, cells = cells, pcell = as.numeric(pcell),
+       cell_list = lapply(seq_len(nrow(cells)), function(i)
+         as.list(stats::setNames(cells[i, ], dn))))
+}
+
+# The latent structure a design may use, or NULL if it may not.
+#
+# Refuses a DISCRETE margin latently correlated with a CONTINUOUS one: a level
+# is then a truncation of the latent normal rather than a point, so the
+# continuous conditional differs cell to cell and one shared design is the wrong
+# design in every cell. Then subsets the correlation to the continuous block and
+# factorises it. `R` is indexed POSITIONALLY -- latentR carries no dimnames --
+# so `nms` must be the full declared order.
+.admCovLatentBlock <- function(cd, nms, cn, dn, R) {
+  pc <- length(cn)
+  ic <- match(cn, nms); id <- match(dn, nms)
+  if (length(dn) && !is.null(R) && any(abs(R[id, ic, drop = FALSE]) > 0))
+    return(NULL)
+  Rc <- if (is.null(R)) diag(1, pc) else R[ic, ic, drop = FALSE]
+  Lc <- tryCatch(chol(Rc), error = function(e) NULL)
+  if (is.null(Lc)) return(NULL)
+  c(list(ic = ic, id = id, Rc = Rc, Lc = Lc), .admCovDiscCells(cd, dn))
+}
+
 # Deterministic quadrature nodes + weights for one covariate (adgh path).
 # Discrete specs enumerate exactly; normal/lognormal use Gauss-Hermite.
 .admCovNodesFor <- function(spec, n_nodes) {
@@ -1116,8 +1209,7 @@
   # .admCovGrid has the same guard for the same reason.)
   if (is.function(spec$quantile))
     return(list(x = as.numeric(spec$quantile(
-                     pmin(pmax(stats::pnorm(g$x), .Machine$double.eps),
-                          1 - .Machine$double.eps))), w = g$w))
+                     .admCovU(g$x))), w = g$w))
   # the closed forms are safe: they are built from g$x directly, never from a
   # probability, so no saturation can occur
   if (!is.null(spec$meanlog)) list(x = exp(spec$meanlog + spec$sdlog * g$x), w = g$w)
@@ -1527,14 +1619,10 @@
     nC <- nrow(zC)
     xC <- matrix(if (length(iSc)) vapply(seq_along(iSc), function(k)
       .admCovQuantile(cov_dist[[nms[iSc[k]]]],
-        pmin(pmax(stats::pnorm(zC[, k]), .Machine$double.eps),
-             1 - .Machine$double.eps)), numeric(nC)) else 0, nC, length(iSc))
+        .admCovU(zC[, k])), numeric(nC)) else 0, nC, length(iSc))
     if (length(iSd)) {
-      lvD <- lapply(iSd, function(j) as.numeric(cov_dist[[nms[j]]][["values"]]))
-      prD <- lapply(seq_along(iSd), function(k) {
-        p <- cov_dist[[nms[iSd[k]]]][["probs"]]
-        if (is.null(p)) p <- rep(1, length(lvD[[k]]))
-        as.numeric(p) / sum(p) })
+      .dz <- .admCovDiscCells(cov_dist, nms[iSd])   # levels + probs, shared
+      lvD <- .dz$lv; prD <- .dz$pr
       lgD <- as.matrix(expand.grid(lapply(lvD, seq_along), KEEP.OUT.ATTRS = FALSE))
       wD  <- Reduce(`*`, lapply(seq_along(iSd), function(k) prD[[k]][lgD[, k]]))
     } else { lvD <- list(); lgD <- matrix(0L, 1L, 0L); wD <- 1 }
@@ -1589,8 +1677,7 @@
         Xc <- sweep(Z0 %*% t(Lc), 2L, mu, "+")
         Xc <- matrix(vapply(seq_along(iMc), function(k)
           .admCovQuantile(cov_dist[[nms[iMc[k]]]],
-            pmin(pmax(stats::pnorm(Xc[, k]), .Machine$double.eps),
-                 1 - .Machine$double.eps)), numeric(nd)), nd, length(iMc),
+            .admCovU(Xc[, k])), numeric(nd)), nd, length(iMc),
           dimnames = list(NULL, nms[iMc]))
         # sorted before it is handed out: the rows arrive in Sobol order and the
         # sampler that draws from them runs another Sobol stream, so indexing
@@ -2175,23 +2262,22 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
          "Declare it with `cor` (or `rho`/`Sigma`), which admixr2 builds its ",
          "own sampler from, or use cov_integration = \"quadrature\".",
          call. = FALSE)
-  # A DISCRETE MARGIN CORRELATED WITH A CONTINUOUS ONE IS REFUSED, not quietly
-  # crossed in as if independent. Under dependence a level is a TRUNCATION of
-  # the latent normal rather than a point, so the continuous conditional
-  # differs cell by cell and one shared rule is the wrong rule in every cell.
-  # Subsetting Rz to the continuous block silently assumes that away, which is
-  # the class of approximation this file refuses everywhere else -- and the
-  # retired Taylor design carried exactly this refusal.
-  if (length(dn) && !is.null(Rz) && any(abs(Rz[disc, !disc, drop = FALSE]) > 0))
-    stop("admixr2: covariate(s) ", paste(sQuote(dn), collapse = ", "),
-         " are DISCRETE and latently correlated with a continuous covariate, ",
-         "so a level is a truncation of the latent normal rather than a point ",
-         "and the continuous conditional differs from cell to cell. The sparse ",
-         "rule integrates one shared design, which would be the wrong one in ",
-         "every cell. Use cov_integration = \"quadrature\", or declare the ",
-         "discrete covariate independent of the continuous ones.",
-         call. = FALSE)
-  Rc <- if (is.null(Rz)) diag(1, dc) else Rz[!disc, !disc, drop = FALSE]
+  # The refusal, the correlation block and the discrete enumeration all come
+  # from .admCovLatentBlock, which the two collapses use. Writing them out here
+  # is what let the REFUSAL be omitted from the first version of this function:
+  # a discrete margin latently correlated with a continuous one was integrated
+  # as if independent until a test caught it.
+  .lb <- .admCovLatentBlock(cov_dist, nms, cn, dn, Rz)
+  if (is.null(.lb))
+    stop("admixr2: this covariate distribution cannot be integrated on a ",
+         "sparse grid -- either a DISCRETE covariate is latently correlated ",
+         "with a continuous one (a level is then a truncation of the latent ",
+         "normal rather than a point, so the continuous conditional differs ",
+         "from cell to cell and one shared design is the wrong design in ",
+         "every cell), or the declared correlation is not positive definite. ",
+         "Use cov_integration = \"quadrature\", or declare the discrete ",
+         "covariate independent of the continuous ones.", call. = FALSE)
+  Rc <- .lb$Rc
   # Rotate onto the eigenvectors of the latent correlation, so the rule runs
   # along the directions the distribution actually varies in. At Rc = I this is
   # the identity and the grid is the ordinary axis-aligned one.
@@ -2207,11 +2293,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   }
   sm <- .admSparseNodes(dc, level)
   Z  <- sm$X %*% t(Arot)
-  U  <- pmin(pmax(stats::pnorm(Z), .Machine$double.eps),
-             1 - .Machine$double.eps)
-  Xc <- matrix(vapply(seq_len(dc), function(j)
-    .admCovQuantile(cov_dist[[cn[j]]], U[, j]), numeric(nrow(Z))),
-    nrow(Z), dc, dimnames = list(NULL, cn))
+  Xc <- .admCovXFromZ(cov_dist, cn, Z)
   if (!all(is.finite(Xc)))
     stop("admixr2: the sparse grid produced non-finite covariate values -- a ",
          "margin's quantile function saturated at a tail node. Lower ",
@@ -2219,19 +2301,11 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
          call. = FALSE)
   Wc <- sm$W
   if (length(dn)) {
-    lv <- lapply(dn, function(n) as.numeric(cov_dist[[n]][["values"]]))
-    pr <- lapply(dn, function(n) {
-      q <- cov_dist[[n]][["probs"]]
-      q <- if (is.null(q)) rep(1, length(cov_dist[[n]][["values"]])) else q
-      as.numeric(q) / sum(q) })
-    ig <- as.matrix(expand.grid(lapply(lv, seq_along), KEEP.OUT.ATTRS = FALSE))
-    wd <- Reduce(`*`, lapply(seq_along(dn), function(k) pr[[k]][ig[, k]]))
-    nq <- nrow(Xc); nl <- nrow(ig)
+    nq <- nrow(Xc); nl <- nrow(.lb$cells)
     ix <- rep(seq_len(nq), times = nl); il <- rep(seq_len(nl), each = nq)
-    Xd <- matrix(0, nq * nl, length(dn), dimnames = list(NULL, dn))
-    for (k in seq_along(dn)) Xd[, k] <- lv[[k]][ig[il, k]]
-    X  <- cbind(Xc[ix, , drop = FALSE], Xd)[, nms, drop = FALSE]
-    W  <- Wc[ix] * wd[il]
+    X  <- cbind(Xc[ix, , drop = FALSE],
+                .lb$cells[il, , drop = FALSE])[, nms, drop = FALSE]
+    W  <- Wc[ix] * .lb$pcell[il]
     Zo <- Z[ix, , drop = FALSE]
   } else {
     X <- Xc[, nms, drop = FALSE]; W <- Wc; Zo <- Z
@@ -2336,11 +2410,8 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
       # probability interval selects exactly that level -- verified below
       # rather than assumed, since `discExact` is a claim about a closure.
       iE <- which(ex); iJ <- which(!ex)
-      lv <- lapply(iE, function(j) as.numeric(cov_dist[[nms[j]]][["values"]]))
-      pr <- lapply(iE, function(j) {
-        p <- cov_dist[[nms[j]]][["probs"]]
-        if (is.null(p)) p <- rep(1, length(cov_dist[[nms[j]]][["values"]]))
-        as.numeric(p) / sum(p) })
+      .dz <- .admCovDiscCells(cov_dist, nms[iE])    # levels + probs, shared
+      lv <- .dz$lv; pr <- .dz$pr
       lg <- as.matrix(expand.grid(lapply(lv, seq_along), KEEP.OUT.ATTRS = FALSE))
       wE <- Reduce(`*`, lapply(seq_along(iE), function(k) pr[[k]][lg[, k]]))
       uE <- vapply(seq_along(iE), function(k) {
@@ -2355,8 +2426,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
       rj <- rep(seq_len(nJ), times = nE)      # joint block fastest
       re <- rep(seq_len(nE), each  = nJ)
       if (length(iJ))
-        u[, iJ] <- pmin(pmax(stats::pnorm(zJ[rj, , drop = FALSE]),
-                             .Machine$double.eps), 1 - .Machine$double.eps)
+        u[, iJ] <- .admCovU(zJ[rj, , drop = FALSE])
       u[, iE] <- uE[re, , drop = FALSE]
       X <- tryCatch(as.matrix(jf(u)), error = function(e)
         stop("admixr2: cov_dist$joint failed on the ", nrow(u), " x ", d,
@@ -3506,7 +3576,14 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
       any(grepl("^(iqr|range)[0-9]*$", k))) {
     sp <- .admPopSpec(stats::setNames(as.numeric(v), k), nm,
                       if (identical(dist, "lnorm")) "lnorm" else "norm")
-    if (!is.null(sp$mean)) sp <- list(mu = sp$mean, sd = sp$sd)
+    # [[ ]], NOT $. .admPopSpec returns meanlog/sdlog on the lnorm branch, and
+    # BOTH `$mean` and `$sd` PARTIAL-MATCH those -- so this line silently
+    # reinterpreted a lognormal's log-scale parameters as a normal's natural
+    # ones: covDist(WT = c(mean = 72, cv = 22), dist = "lnorm") came back as
+    # list(mu = 4.25, sd = 0.217), a normal margin centred at 4.25 kg, and every
+    # quadrature node sat there instead of near 72. .admPopSpec never returns
+    # `mean`, so with [[ ]] this is the no-op it was always meant to be.
+    if (!is.null(sp[["mean"]])) sp <- list(mu = sp[["mean"]], sd = sp[["sd"]])
     return(sp)
   }
   # anything else named is read as a CATEGORICAL covariate: the names are the
@@ -4157,12 +4234,7 @@ print.covDist <- function(x, ...) {
   Wg <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
   dimnames(Xg) <- NULL
   Zc <- Xg %*% Lr %*% t(U)
-  Xc <- vapply(seq_len(co$pc), function(k)
-    .admCovQuantile(co$cd[[co$cn[k]]],
-                    pmin(pmax(stats::pnorm(Zc[, k]), .Machine$double.eps),
-                         1 - .Machine$double.eps)), numeric(nrow(Zc)))
-  if (!is.matrix(Xc)) Xc <- matrix(Xc, nrow(Zc), co$pc)
-  colnames(Xc) <- co$cn
+  Xc <- .admCovXFromZ(co$cd, co$cn, Zc)
   # A refresh that cannot evaluate can only happen where the parameter
   # assignments themselves fail -- a log of a negative, an overflow -- and the
   # solve rejects that region anyway, so the caller reports Inf there.
@@ -4228,31 +4300,12 @@ print.covDist <- function(x, ...) {
   if (is.function(cd[["joint"]]) && is.null(R)) return(NULL)
   # latentR is indexed POSITIONALLY -- it carries no dimnames, and indexing it
   # by covariate name fails outright rather than silently.
-  ic <- match(cn, nms); id <- match(dn, nms)
-  # A discrete covariate DEPENDENT on a continuous one makes each level a
-  # TRUNCATION of the latent normal rather than a point, so the continuous
-  # conditional law differs cell to cell and one shared design would be the
-  # wrong design in every cell. The same refusal .admCovSparseGrid carries.
-  if (length(dn) && !is.null(R) &&
-      any(abs(R[id, ic, drop = FALSE]) > 0)) return(NULL)
-  Rc <- if (is.null(R)) diag(1, pc) else R[ic, ic, drop = FALSE]
-  Lc <- tryCatch(chol(Rc), error = function(e) NULL)
-  if (is.null(Lc)) return(NULL)
-  # discrete cells: exact product enumeration with their own probabilities
-  if (length(dn)) {
-    lev <- lapply(dn, function(n) as.numeric(cd[[n]][["values"]]))
-    prb <- lapply(dn, function(n) { sp <- cd[[n]]
-      pr <- sp[["probs"]] %||% rep(1 / length(sp[["values"]]),
-                                   length(sp[["values"]]))
-      pr / sum(pr) })
-    cells <- as.matrix(expand.grid(lev, KEEP.OUT.ATTRS = FALSE))
-    colnames(cells) <- dn
-    pcell <- apply(as.matrix(expand.grid(prb, KEEP.OUT.ATTRS = FALSE)), 1L, prod)
-  } else {
-    cells <- matrix(numeric(0), 1L, 0L); pcell <- 1
-  }
-  cell_list <- lapply(seq_len(nrow(cells)), function(i)
-    if (!length(dn)) list() else as.list(stats::setNames(cells[i, ], dn)))
+  # Refusal, correlation block and discrete enumeration in one place -- see
+  # .admCovLatentBlock(). .admJointCollapse takes the identical four steps.
+  .lb <- .admCovLatentBlock(cd, nms, cn, dn, R)
+  if (is.null(.lb)) return(NULL)
+  ic <- .lb$ic; id <- .lb$id; Rc <- .lb$Rc; Lc <- .lb$Lc
+  cells <- .lb$cells; pcell <- .lb$pcell; cell_list <- .lb$cell_list
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
   if (is.null(lst)) return(NULL)
   # DIRECT readers only. An assignment reading an INTERMEDIATE that reads a
@@ -4394,12 +4447,7 @@ print.covDist <- function(x, ...) {
     # guard for the same reason. Here the finite check below caught it, so it
     # was a silent loss of the collapse at raised cov_nodes rather than a wrong
     # answer -- but losing a feature silently is still the wrong outcome.
-    Xg2 <- vapply(seq_len(pc), function(k)
-      .admCovQuantile(cd[[cn[k]]],
-                      pmin(pmax(stats::pnorm(Zg[, k]), .Machine$double.eps),
-                           1 - .Machine$double.eps)), numeric(nrow(Zg)))
-    if (!is.matrix(Xg2)) Xg2 <- matrix(Xg2, nrow(Zg), pc)
-    colnames(Xg2) <- cn
+    Xg2 <- .admCovXFromZ(cd, cn, Zg)
     if (!all(is.finite(Xg2))) return(NULL)
     list(X = Xg2, W = Wg / sum(Wg), z = Zg)
   }
@@ -4534,32 +4582,11 @@ print.covDist <- function(x, ...) {
   if (pc < 1L) return(NULL)
   R <- cd[["latentR"]]
   if (is.function(cd[["joint"]]) && is.null(R)) return(NULL)
-  ic <- match(cn, nms); id <- match(dn, nms)
-  # A discrete covariate DEPENDENT on a continuous one makes each level a
-  # TRUNCATION of the latent normal rather than a point, so the continuous
-  # conditional law differs cell to cell and one shared rotation would be the
-  # wrong rotation in every cell but one. The same refusal .admCovCollapse and
-  # .admCovSparseGrid carry.
-  if (length(dn) && !is.null(R) &&
-      any(abs(R[id, ic, drop = FALSE]) > 0)) return(NULL)
-  Rc <- if (is.null(R)) diag(1, pc) else R[ic, ic, drop = FALSE]
-  Lc <- tryCatch(chol(Rc), error = function(e) NULL)
-  if (is.null(Lc)) return(NULL)
-  # exact product enumeration of the discrete levels, with their probabilities
-  if (length(dn)) {
-    lev <- lapply(dn, function(n) as.numeric(cd[[n]][["values"]]))
-    prb <- lapply(dn, function(n) { sp <- cd[[n]]
-      pv <- sp[["probs"]] %||% rep(1 / length(sp[["values"]]),
-                                   length(sp[["values"]]))
-      pv / sum(pv) })
-    cells <- as.matrix(expand.grid(lev, KEEP.OUT.ATTRS = FALSE))
-    colnames(cells) <- dn
-    pcell <- apply(as.matrix(expand.grid(prb, KEEP.OUT.ATTRS = FALSE)), 1L, prod)
-  } else {
-    cells <- matrix(numeric(0), 1L, 0L); pcell <- 1
-  }
-  cell_list <- lapply(seq_len(nrow(cells)), function(i)
-    if (!length(dn)) list() else as.list(stats::setNames(cells[i, ], dn)))
+  # The identical four steps .admCovCollapse takes -- see .admCovLatentBlock().
+  .lb <- .admCovLatentBlock(cd, nms, cn, dn, R)
+  if (is.null(.lb)) return(NULL)
+  ic <- .lb$ic; id <- .lb$id; Rc <- .lb$Rc; Lc <- .lb$Lc
+  cells <- .lb$cells; pcell <- .lb$pcell; cell_list <- .lb$cell_list
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
   if (is.null(lst)) return(NULL)
   is_asgn <- vapply(lst, function(e) is.call(e) && length(e) == 3L &&
@@ -4614,13 +4641,7 @@ print.covDist <- function(x, ...) {
 # and the sampler use: pnorm() saturates at exactly 1 from |z| >= 8.3, and a
 # rotation reaches further than the one-dimensional node range.
 .admJointCov <- function(jc, Zc) {
-  X <- vapply(seq_len(jc$pc), function(k)
-    .admCovQuantile(jc$cd[[jc$cn[k]]],
-                    pmin(pmax(stats::pnorm(Zc[, k]), .Machine$double.eps),
-                         1 - .Machine$double.eps)), numeric(nrow(Zc)))
-  if (!is.matrix(X)) X <- matrix(X, nrow(Zc), jc$pc)
-  colnames(X) <- jc$cn
-  X
+  .admCovXFromZ(jc$cd, jc$cn, Zc)
 }
 
 # The joint loading matrix at a given (struct, L). Etas enter scaled by L, so

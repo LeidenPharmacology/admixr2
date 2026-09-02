@@ -2304,3 +2304,23 @@ test_that("the sparse grid is built ONCE and cached on the study", {
   # numeric only, so it survives serialisation to a restart worker by value
   expect_false(any(vapply(sg, is.function, logical(1))))
 })
+
+test_that("covDist honours `dist` for every vocabulary, without partial matching", {
+  # `$` PARTIAL-MATCHES on lists, and .admPopSpec returns meanlog/sdlog on the
+  # lnorm branch -- where BOTH `$mean` and `$sd` match. A defensive
+  # `if (!is.null(sp$mean))` therefore fired on a LOGNORMAL spec and rewrote it
+  # as list(mu = meanlog, sd = sdlog): covDist(WT = c(mean = 72, cv = 22),
+  # dist = "lnorm") came back as a NORMAL margin centred at 4.25 kg, so every
+  # quadrature node sat near 4 instead of near 72 and (WT/70)^0.75 was evaluated
+  # at 0.06. Finite, plausible, and nowhere near the declared cohort.
+  for (v in list(c(mean = 72, cv = 22), c(mean = 72, sd = 16),
+                 c(median = 70, iqr = c(60, 84)))) {
+    n <- covDist(WT = v, dist = "normal")$WT
+    l <- covDist(WT = v, dist = "lnorm")$WT
+    expect_named(n, c("mu", "sd"), ignore.order = TRUE)
+    expect_named(l, c("meanlog", "sdlog"), ignore.order = TRUE)
+    # the lognormal is on the LOG scale, so its centre is log(natural centre)
+    expect_lt(l$meanlog, 6)
+    expect_gt(n$mu, 50)
+  }
+})
