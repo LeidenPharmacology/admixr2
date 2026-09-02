@@ -2369,3 +2369,74 @@ test_that("a single named proportion is a BINARY covariate, not a constant", {
   expect_error(covDist(WT = c(kg = 70)), "[[]0, 1[]]")
   expect_error(covDist(SEX = c(male = -0.2)), "negative")
 })
+
+test_that("an R-vine is accepted as `joint`, on the declared margins", {
+  skip_if_not_installed("rvinecopulib")
+  vc <- rvinecopulib::vinecop_dist(
+    list(list(rvinecopulib::bicop_dist("gaussian", 0, 0.85),
+              rvinecopulib::bicop_dist("gaussian", 0, 0.75)),
+         list(rvinecopulib::bicop_dist("gaussian", 0, 0.60))),
+    rvinecopulib::dvine_structure(1:3))
+  cd <- covDist(WT   = c(mean = 75, sd = 16),
+                CRCL = c(mean = 92, sd = 30),
+                AGE  = c(mean = 50, sd = 12),
+                joint = vc, dist = "lnorm")
+  expect_true(is.function(cd$joint))
+
+  # A VINE IS DEPENDENCE ONLY -- inverse_rosenblatt() returns the COPULA scale,
+  # so the margins still have to be applied. Skipping that handed the fit
+  # uniforms on (0, 1) as covariate values: every covariate mean 0.50, sd 0.29,
+  # whatever was declared. Finite, plausible, and unrelated to the data.
+  set.seed(3)
+  dr <- covDraw(cd, n = 4000)
+  expect_equal(mean(dr[, "WT"]),  75, tolerance = 0.03)
+  expect_equal(stats::sd(dr[, "WT"]), 16, tolerance = 0.06)
+  expect_equal(mean(dr[, "AGE"]), 50, tolerance = 0.03)
+  # and the vine's dependence survived the margin transform
+  expect_gt(cor(dr[, "WT"], dr[, "CRCL"]), 0.5)
+})
+
+test_that("the vine cascade convention is applied, and the naive one refused", {
+  skip_if_not_installed("rvinecopulib")
+  nms <- c("WT", "CRCL", "AGE")
+  vc <- rvinecopulib::vinecop_dist(
+    list(list(rvinecopulib::bicop_dist("gaussian", 0, 0.85),
+              rvinecopulib::bicop_dist("gaussian", 0, 0.75)),
+         list(rvinecopulib::bicop_dist("gaussian", 0, 0.60))),
+    rvinecopulib::dvine_structure(1:3))
+  cd <- covDist(WT = c(mean = 75, sd = 16), CRCL = c(mean = 92, sd = 30),
+                AGE = c(mean = 50, sd = 12), joint = vc, dist = "lnorm")
+
+  # A stratum is defined by its NODE IN U-SPACE: hold the leading uniforms and
+  # vary the rest. That needs uniform column k to control covariate k -- and
+  # rvinecopulib's inverse_rosenblatt() satisfies it BACKWARDS, so the obvious
+  # hand-wrapping bands the wrong variable with no error anywhere. Measured on
+  # this vine: fixing u[, 1] left output 1 moving over its full range.
+  set.seed(11)
+  expect_true(admixr2:::.admCascadeOK(cd$joint, nms))
+  naive <- function(u) {
+    x <- rvinecopulib::inverse_rosenblatt(as.matrix(u), vc)
+    colnames(x) <- nms; x
+  }
+  expect_false(admixr2:::.admCascadeOK(naive, nms))
+
+  # the verifier is the property itself, not a proxy: an independent sampler
+  # trivially satisfies it, a column-reversing one cannot
+  indep <- function(u) { x <- qnorm(as.matrix(u)); colnames(x) <- nms; x }
+  expect_true(admixr2:::.admCascadeOK(indep, nms))
+  flip <- function(u) { x <- qnorm(as.matrix(u)[, 3:1, drop = FALSE])
+                        colnames(x) <- nms; x }
+  expect_false(admixr2:::.admCascadeOK(flip, nms))
+})
+
+test_that("a vine of the wrong dimension is refused at construction", {
+  skip_if_not_installed("rvinecopulib")
+  vc <- rvinecopulib::vinecop_dist(
+    list(list(rvinecopulib::bicop_dist("gaussian", 0, 0.85),
+              rvinecopulib::bicop_dist("gaussian", 0, 0.75)),
+         list(rvinecopulib::bicop_dist("gaussian", 0, 0.60))),
+    rvinecopulib::dvine_structure(1:3))
+  expect_error(covDist(WT = c(mean = 75, sd = 16), CRCL = c(mean = 92, sd = 30),
+                       joint = vc),
+               "3-dimensional but 2 covariates")
+})
