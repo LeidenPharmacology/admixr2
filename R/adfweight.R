@@ -601,7 +601,14 @@
   r <- ours[ok] / theirs[ok]
   low <- names(r)[r < 0.99]
   if (!length(low)) return(NULL)
-  list(pars = low, ratio = r[low], src = names(grp)[1L])
+  # The STUDY NAME, not names(grp)[1L]. A group is keyed by .adm_src provenance
+  # -- a content digest, optionally prefixed by the paper name -- so the
+  # warning that quoted it named the source with a 32-character hex string.
+  # Every member of this group came from one source, so its first study names
+  # it as well as anything can.
+  .nm <- names(studies)[grp[[1L]][1L]]
+  list(pars = low, ratio = r[low],
+       src = if (!is.null(.nm) && nzchar(.nm)) .nm else names(grp)[1L])
 }
 
 .admSandwich <- function(H, G, Om, extra = NULL, skip = integer(0)) {
@@ -851,6 +858,14 @@
   if (is.null(n_eta) || n_eta < 1L) return(NULL)
   nq <- 9L
   while (nq > 3L && nq^n_eta > max_nodes) nq <- nq - 2L
+  # max_nodes WAS NOT A CAP. The loop floors at nq = 3 and then built the grid
+  # anyway, so a 10-eta model produced 3^10 = 59049 nodes against a cap of
+  # 5000 -- the guard named the number it was meant to enforce and did not
+  # enforce it. There is no coarser rule than 3 nodes per dimension, so the
+  # honest answer at that point is that this model has no affordable ensemble:
+  # return NULL, which every caller already reads as "refuse the sandwich" and
+  # reports as a fall back to the naive covariance.
+  if (nq^n_eta > max_nodes) return(NULL)
   .adghNodeGrid(nq, n_eta)
 }
 

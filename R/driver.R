@@ -343,6 +343,12 @@
 
   .fit$env$method <- est
   if (length(.Jn)) .fit$env$strataNodes <- .Jn
+  # The quadrature resolution, stamped for the same reason .Jn is: the adgh
+  # objective moves with it, so anova() must be able to refuse a difference of
+  # two objectives computed on different grids. NULL for the three estimators
+  # that have no node grid, which makes the check a no-op there.
+  if (!is.null(pinfo) && !is.null(pinfo$n_nodes))
+    .fit$env$nNodes <- pinfo$n_nodes
   .admRestoreCovNames(.fit, cov_nms)
   .fit$env$studies <- studies
   .extra <- .ret[[extra_field]]
@@ -364,7 +370,12 @@
   # Takeuchi's tr(H^-1 J) is what replaces it when that fails -- but users
   # compare AIC values across papers, so silently redefining AIC(fit) would make
   # this package's numbers incomparable with everyone else's.
-  .tic <- .admTICStats(.extra$sandwich, objective)
+  # The FULL optimizer-scale parameter count, so .admTICStats can tell a
+  # complete (H, J) from the struct+sigma sub-block .admReduceNpdOmega leaves
+  # behind -- a TIC computed on the sub-block is not comparable with the AIC
+  # printed beside it.
+  .tic <- .admTICStats(.extra$sandwich, objective,
+                       n_par = length(.extra$par_names))
   if (!is.null(.tic)) {
     .stats$objDf$TIC   <- .tic$TIC
     .stats$objDf$p_eff <- .tic$p_eff

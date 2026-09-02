@@ -2341,3 +2341,31 @@ test_that("covDist honours `dist` for every vocabulary, without partial matching
     expect_gt(n$mu, 50)
   }
 })
+
+test_that("a single named proportion is a BINARY covariate, not a constant", {
+  # `SEX = c(male = 0.55)` is how a baseline table prints it and what
+  # admPopulation() documents -- but covDist() normalised it like a level
+  # vector, dividing 0.55 by itself: ONE level at probability 1, i.e. a
+  # constant. The covariate then contributed no variation, its coefficient was
+  # not identified, and covDraw() returned the same value for every subject.
+  # Found by a worked example, not by a test, which is why this one exists.
+  s <- covDist(SEX = c(male = 0.55))$SEX
+  expect_equal(s$values, c(0, 1))
+  expect_equal(s$probs,  c(0.45, 0.55))
+  # the two parsers must agree on the form the docs teach most
+  expect_equal(s[c("values", "probs")],
+               admixr2:::.admPopSpec(c(male = 0.55), "SEX", "norm")[c("values", "probs")])
+  # and the draws actually vary
+  expect_setequal(unique(covDraw(covDist(SEX = c(male = 0.55)), n = 60)[, "SEX"]),
+                  c(0, 1))
+  # multi-level specs are untouched
+  expect_equal(covDist(SEX = c(female = 0.45, male = 0.55))$SEX$probs, c(0.45, 0.55))
+  expect_equal(covDist(G = c(a = 1, b = 2, c = 1))$G$probs, c(0.25, 0.5, 0.25))
+  # ... and a LONE value that is not a proportion has no second number to be
+  # normalised against, so reading it as one gave P(absent) = -69. The
+  # multi-level branch is normalised by its sum and so absorbed any scale
+  # silently; this one cannot, and a negative quadrature weight is a wrong
+  # answer rather than an error.
+  expect_error(covDist(WT = c(kg = 70)), "[[]0, 1[]]")
+  expect_error(covDist(SEX = c(male = -0.2)), "negative")
+})

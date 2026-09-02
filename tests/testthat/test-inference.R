@@ -214,3 +214,57 @@ test_that("anova's Weight and Test columns print as written", {
   expect_match(out, "1 vs 2", fixed = TRUE)
   expect_match(out, "Likelihood-ratio test", fixed = TRUE)
 })
+
+test_that("anova refuses fits that are not comparable", {
+  # A -2LL is a likelihood ratio only against another -2LL computed the SAME
+  # way. These three refusals all say that, on three different axes, and each
+  # returned a perfectly finite p before it existed.
+  set.seed(3)
+  p <- 3L
+  A0 <- matrix(stats::rnorm(p * p), p, p); H <- crossprod(A0) + diag(p)
+  nms <- c("tcl", "tv", "add.err")
+  mk <- function(extra = list()) {
+    f <- .mock_fit(H, 2 * H, nms, 100)
+    for (k in names(extra)) f$env[[k]] <- extra[[k]]
+    f
+  }
+  red <- function(extra = list()) {
+    f <- .mock_fit(H[-3L, -3L], 2 * H[-3L, -3L], nms[-3L], 106)
+    for (k in names(extra)) f$env[[k]] <- extra[[k]]
+    f
+  }
+  # different ESTIMATOR: adfo scores FO-linearised moments, adgh a quadrature
+  expect_error(admixr2:::.admLRT(mk(list(method = "adfo")),
+                                 red(list(method = "adgh"))),
+               "different estimators")
+  # different quadrature GRID: the objective moves with n_nodes
+  expect_error(admixr2:::.admLRT(mk(list(method = "adgh", nNodes = 9L)),
+                                 red(list(method = "adgh", nNodes = 5L))),
+               "different quadrature grids")
+  # different stratum RESOLUTION: the objective is J-dependent
+  expect_error(admixr2:::.admLRT(mk(list(strataNodes = 21L)),
+                                 red(list(strataNodes = 9L))),
+               "different stratum resolutions")
+  # ... and the same estimator on the same grid still compares
+  got <- admixr2:::.admLRT(mk(list(method = "adgh", nNodes = 7L)),
+                           red(list(method = "adgh", nNodes = 7L)))
+  expect_equal(got$df, 1L)
+  expect_true(is.finite(got$p))
+})
+
+test_that(".admSandwichGrid refuses a model whose minimum grid blows the cap", {
+  # max_nodes named the number it was meant to enforce and did not enforce it:
+  # the loop floors at 3 nodes per dimension and then built the grid anyway, so
+  # 10 etas gave 3^10 = 59049 nodes against a cap of 5000. There is no coarser
+  # rule than 3, so the honest answer is that this model has no affordable
+  # ensemble -- NULL, which every caller reads as "refuse the sandwich".
+  expect_null(admixr2:::.admSandwichGrid(list(n_eta = 10L)))
+  expect_null(admixr2:::.admSandwichGrid(list(n_eta = 0L)))
+  # and a model it CAN afford still gets a grid, at or under the cap
+  for (ne in 1:4) {
+    g <- admixr2:::.admSandwichGrid(list(n_eta = ne))
+    expect_false(is.null(g), info = paste("n_eta", ne))
+    expect_lte(nrow(g$X), 5000L)
+    expect_identical(ncol(g$X), ne)
+  }
+})

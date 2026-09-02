@@ -83,8 +83,18 @@
 # The penalty is LARGER than AIC's wherever the model is misspecified (measured
 # p_eff = 10.73 against p = 7, a 7.5-unit shift), so AIC systematically
 # OVER-SELECTS here -- squarely inside the range where covariate decisions turn.
-.admTICStats <- function(sw, objective) {
+.admTICStats <- function(sw, objective, n_par = NULL) {
   if (is.null(sw)) return(NULL)
+  # NOT REPORTED WHEN THE PAIR IS A SUB-BLOCK. .admReduceNpdOmega drops the
+  # omega block whenever the full Hessian is not PD, and (H, J) are stored
+  # AFTER that -- so tr(H^-1 J) then counts fewer parameters than AIC and BIC
+  # charge for. TIC came out about 2*n_omega BELOW AIC on the same fit and
+  # p_eff/Npar was under 1 by construction, which reads as "this model is
+  # simpler than its parameter count" rather than as "two of these numbers are
+  # not comparable". anova()'s own footer invites exactly that comparison, so
+  # the honest output is no TIC at all.
+  if (!is.null(n_par) && !is.null(sw$par_names) &&
+      length(sw$par_names) < n_par) return(NULL)
   Hi <- tryCatch(solve(sw$H), error = function(e) NULL)
   if (is.null(Hi)) return(NULL)
   tr <- sum(diag(Hi %*% sw$J))
@@ -144,6 +154,29 @@
          .j1, " and ", .j2, "). The objective is J-dependent, so their ",
          "difference is not a likelihood ratio -- refit both at the same ",
          "`strata_nodes` before comparing.", call. = FALSE)
+  # THE SAME ARGUMENT, FOR THE ESTIMATOR AND THE GRID. A -2LL is only a
+  # likelihood ratio against another -2LL computed the same way, and these
+  # estimators do not compute it the same way: adfo scores FO-LINEARISED
+  # moments, adgh a quadrature, admc a Monte Carlo sample. anova(adfo_fit,
+  # adgh_fit) differenced two numbers on different scales and returned a
+  # perfectly finite p. Likewise two adgh fits at different : the
+  # objective moves with the grid, which is why .adghGrid refuses to change the
+  # point count mid-fit in the first place.
+  .m1 <- tryCatch(full$env$method,    error = function(e) NULL)
+  .m2 <- tryCatch(reduced$env$method, error = function(e) NULL)
+  if (!is.null(.m1) && !is.null(.m2) && !identical(.m1, .m2))
+    stop("anova(): these fits were made by different estimators (", .m1,
+         " and ", .m2, "). Each scores its own approximation to the same ",
+         "likelihood -- FO-linearised, quadrature or Monte Carlo -- so the ",
+         "difference of their objectives is not a likelihood ratio. Refit ",
+         "both with the same `est` before comparing.", call. = FALSE)
+  .n1 <- tryCatch(full$env$nNodes,    error = function(e) NULL)
+  .n2 <- tryCatch(reduced$env$nNodes, error = function(e) NULL)
+  if (!is.null(.n1) && !is.null(.n2) && !identical(.n1, .n2))
+    stop("anova(): these fits were built on different quadrature grids (",
+         "n_nodes ", .n1, " and ", .n2, "). The objective moves with the ",
+         "grid, so their difference is not a likelihood ratio -- refit both ",
+         "at the same `n_nodes` before comparing.", call. = FALSE)
   .bnd <- grep("^logchol_", gamma, value = TRUE)
   if (length(.bnd))
     stop("anova(): ", paste(.bnd, collapse = ", "), " is a variance, so ",

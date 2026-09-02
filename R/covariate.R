@@ -3560,6 +3560,32 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
   # table reports sex, a genotype or a dosing band
   if (any(v < 0)) bad("has negative probabilities, reading it as categorical.")
   if (!sum(v) > 0) bad("has probabilities summing to zero.")
+  # A SINGLE named proportion is a BINARY covariate, not a one-level one.
+  # `SEX = c(male = 0.55)` is exactly how a baseline table prints it, and it is
+  # what admPopulation() documents -- but normalising it like a level vector
+  # divides 0.55 by itself, giving one level at probability 1, i.e. a CONSTANT.
+  # The covariate then contributes no variation, its coefficient is not
+  # identified, and covDraw() returns the same value for every subject. That is
+  # a silent wrong answer on the documented spelling, and .admPopSpec (which
+  # admPopulation routes through) already handled it correctly -- so the two
+  # parsers disagreed on the one form the docs teach most.
+  # A SINGLE value is only a proportion if it IS one. `c(kg = 70)` is not a
+  # probability, and reading it as one gives P(absent) = -69: the multi-level
+  # branch below is normalised by its sum, so it absorbed any scale silently,
+  # but a lone value has no second number to be normalised against. Refuse it
+  # and name both spellings -- the alternative is a negative probability
+  # reaching the quadrature weights, where it is a wrong answer rather than an
+  # error.
+  if (length(v) == 1L) {
+    p1 <- as.numeric(v)
+    if (!is.finite(p1) || p1 < 0 || p1 > 1)
+      bad("is a single value ", format(p1), ", which is read as the ",
+          "proportion in level ", sQuote(names(v)), " and so must lie in ",
+          "[0, 1]. For a continuous covariate give two numbers, e.g. ",
+          "c(mean = ", format(p1), ", sd = ...); for a fixed value use the ",
+          "study's `cov`, not `cov_dist`.")
+    return(list(values = c(0, 1), probs = c(1 - p1, p1), labels = names(v)))
+  }
   list(values = seq_along(v) - 1, probs = as.numeric(v) / sum(v),
        labels = names(v))
 }
