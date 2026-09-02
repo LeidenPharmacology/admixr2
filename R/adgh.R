@@ -976,7 +976,12 @@
         nmk <- pinfo$struct_names[k]
         if (!nmk %in% colnames(.sh$du_dtheta)) next
         dk <- .sh$du_dtheta[, nmk]
-        if (all(dk == 0)) next
+        # NON-FINITE, not just zero. .admShiftDu returns an all-NA column where
+        # the multi and stratified branches return NULL, so `all(dk == 0)` was
+        # NA and `if` raised "missing value where TRUE/FALSE needed" from
+        # inside the objective. A column that cannot be differentiated
+        # contributes nothing, which is what `next` already means here.
+        if (!all(is.finite(dk)) || all(dk == 0)) next
         base    <- Jsh * dk
         dmu_raw <- as.numeric(crossprod(W, base))
         grad[k] <- grad[k] + contrib(base) + .sigma_V_extra(dmu_raw)
@@ -1077,11 +1082,16 @@
                      identical(u$.adm_cov_path, "shift") ||
                      !is.null(u[[".adm_cov_collapse"]]) ||
                      !is.null(u[[".adm_cov_joint"]]), logical(1)))) {
-      for (i in seq_len(n_u))
-        grad[unpaired_k[i]] <-
-          (.adghNLL(p_pert[[i]], pinfo, studies, rxMod, out_var, grid, cores) -
-             .adghNLL(p_pert[[n_u + i]], pinfo, studies, rxMod, out_var, grid, cores)) /
-          (2 * hs[i])
+      for (i in seq_len(n_u)) {
+        .gk <- (.adghNLL(p_pert[[i]], pinfo, studies, rxMod, out_var, grid, cores) -
+                  .adghNLL(p_pert[[n_u + i]], pinfo, studies, rxMod, out_var,
+                           grid, cores)) / (2 * hs[i])
+        # Inf - Inf is NaN, and both .adghNLL calls return Inf at an unsolvable
+        # point. The batched sibling ten lines below has carried this guard all
+        # along; this branch did not, and it is the one every shift, collapse
+        # and joint study now takes.
+        grad[unpaired_k[i]] <- if (is.nan(.gk)) Inf else .gk
+      }
     } else {
       struct_mat <- do.call(rbind,
         lapply(p_pert, function(pp) .admUnpack(pp, pinfo)$struct))

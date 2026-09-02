@@ -3815,10 +3815,15 @@ print.covDist <- function(x, ...) {
   n     <- nrow(omega)
   O     <- setdiff(seq_len(n), j)
   Oss   <- omega[j, j, drop = FALSE]
-  if (!length(O))
-    return(list(O = O, K = NULL, Ls = tryCatch(t(chol(Oss)),
-                                               error = function(e) NULL),
-                Lo = NULL, Sc = Oss))
+  if (!length(O)) {
+    # NULL on failure, exactly as the general branch below does. Returning a
+    # LIST carrying Ls = NULL passed .adghGrid's `is.null(cp)` check and then
+    # died inside solve(cp$Ls, t(D)) mid-objective, with a message about a
+    # missing argument rather than about a non-PD omega.
+    .Ls <- tryCatch(t(chol(Oss)), error = function(e) NULL)
+    if (is.null(.Ls)) return(NULL)
+    return(list(O = O, K = NULL, Ls = .Ls, Lo = NULL, Sc = Oss))
+  }
   Ooo <- omega[O, O, drop = FALSE]
   Oso <- omega[j, O, drop = FALSE]
   Lo  <- tryCatch(t(chol(Ooo)), error = function(e) NULL)
