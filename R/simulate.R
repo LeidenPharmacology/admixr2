@@ -18,6 +18,10 @@
   for (nm in sigma_names)         params_mat[, nm] <- 0
   # Only the parameters we vary are supplied; rxSolve fills the rest (rxerr.*,
   # CMT, hard-coded model constants) from the model's own defaults.
+  # Covariates are the one exception: a model reading `wt` has no default for
+  # it, so each study's own value is written in -- and ONLY that, never a
+  # blanket setdiff() fill. See .admCovCols().
+  params_mat <- .admCovCols(params_mat, rxMod$params, study[["cov"]], study[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = study$ev_full, cores = cores,
                           nDisplayProgress = ndp,
@@ -72,6 +76,15 @@
   for (nm in colnames(struct_mat)) params_mat[, nm] <- struct_mat[, nm]
   if (length(eta_cols) > 0L)       params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)          params_mat[, nm] <- 0
+  # Covariates, exactly as .admSimulate() and .admSimulateSens() do. Omitting
+  # this made .adghMomentsBatch() -- which sets study$cov_rows itself, with a
+  # comment explaining the tiling stride -- fail outright with "The following
+  # parameter(s) are required for solving: WT". Reachable in a real fit through
+  # .adghGradNLL's unpaired-struct-theta FD fallback, i.e. any model with an
+  # unpaired theta plus a cov_dist study whose theta sensitivities are
+  # unavailable. Not wrapped in tryCatch there, so it aborted the whole fit.
+  params_mat <- .admCovCols(params_mat, rxMod$params, study[["cov"]],
+                            study[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = study$ev_full, cores = cores,
                           nDisplayProgress = ndp,
@@ -162,6 +175,15 @@
     if (!is.na(.mapped) && .mapped %in% names(inner_df)) inner_df[[.mapped]][] <- .lam
   }
 
+  # THE COVARIATE COLUMNS, like every other solve path in this file. Without
+  # them rxSolve stops with "the following parameter(s) are required for
+  # solving" -- and the tryCatch below swallows it, returns NULL, and adfo's
+  # .adfoGetMuJBatch falls through to finite differences. So a covariate model
+  # under `grad = "analytical"` (the adfo default) silently lost its order-2
+  # analytic struct-theta gradient on every objective and gradient evaluation:
+  # nothing errored, the fit just ran on the slower and far less accurate path.
+  inner_df <- .admCovCols(inner_df, sensModel$mod$params, study[["cov"]],
+                          study[["cov_rows"]])
   # do.call + sensModel$solve_args: a DDE model's sensitivity solve is forced onto
   # pure dop853 (see .admLoadSensModel). solve_args is NULL for every ordinary
   # model, and c(list(...), NULL) is the original list, so nothing else changes.
@@ -233,6 +255,16 @@
   for (nm in names(struct_theta)) params_mat[, nm] <- struct_theta[nm]
   if (length(eta_cols) > 0L)      params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)         params_mat[, nm] <- 0
+  # Covariates, as .admSimulate() and .admSimulateRows() do. Without this a JOINT
+  # (same-subject) unit never sees them: .admCheckCovariates routes the study to
+  # "rows" and .admStudyCovRows attaches cov_rows, and the joint solve read
+  # neither. It does not even need a distribution -- a plain cov = list(WT = 72)
+  # on a same-subject multi-compartment study was enough, and ordinal endpoints
+  # are ALWAYS joint, so covariate + ordinal was affected too. admc's joint
+  # branch wraps this solve in tryCatch(error = NULL), so the symptom was an Inf
+  # objective at every parameter vector with no diagnosis at all.
+  params_mat <- .admCovCols(params_mat, rxMod$params, unit[["cov"]],
+                            unit[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = unit$ev_full, cores = cores,
                           nDisplayProgress = ndp,
@@ -270,7 +302,10 @@
     stats::setNames(lapply(th_nms, function(nm) matrix(0, n_sim, unit$n_total)), th_nms)
   else NULL
   for (blk in unit$blocks) {
-    bs  <- list(ev_full = blk$ev_full, times = blk$times)
+    # carry the covariate onto the per-block study: .admSimulateSens WOULD inject
+    # it, but only from the study it is handed, and this list dropped both fields
+    bs  <- list(ev_full = blk$ev_full, times = blk$times,
+                cov = unit[["cov"]], cov_rows = unit[["cov_rows"]])
     res <- .admSimulateSens(sensModel, struct, sigma_names, eta_mat, bs, cores, ndp,
                             sigma_var, sigdig)
     if (is.null(res)) return(NULL)
@@ -351,6 +386,9 @@
 
   # do.call + sensModel$solve_args: DDE sensitivity solves are forced onto pure
   # dop853 (see .admLoadSensModel); NULL, hence a no-op, for every other model.
+
+  # Model covariates for this study (only names in study$cov -- see .admCovCols).
+  inner_df <- .admCovCols(inner_df, sensModel$mod$params, study[["cov"]], study[["cov_rows"]])
   out <- tryCatch(
     suppressWarnings(
       do.call(rxode2::rxSolve,

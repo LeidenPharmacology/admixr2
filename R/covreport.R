@@ -128,6 +128,109 @@
 # number of 5.6e11) -- so a tighter 1e-12 threshold, tried first, did NOT fire.
 .ADM_NPD_RCOND <- sqrt(.Machine$double.eps)
 
+# Directions the Hessian does not determine, reported as UNDEFINED.
+#
+# `Var = H^-1 (meat) H^-1`, so a near-singular `H` poisons the answer however
+# cleanly the meat was formed -- a correct model-source covariance does nothing
+# to prevent it. The failure is not an error: the inverse of an almost-singular
+# matrix is finite, large and plausible, and a flat ridge therefore reports a
+# confident number rather than an infinite one. That is exactly how a
+# marginalised discrete covariate returned -0.059 against a truth of +0.150 with
+# every diagnostic looking healthy (.admCovDiscContrast, R/covariate.R).
+#
+# `.admReduceNpdOmega()` already handles the specific case of a weakly
+# identified omega Cholesky by dropping that block. This is the general one:
+# whatever survives that, if a direction still carries essentially no curvature
+# the parameters loading on it get NA rather than a number.
+#
+# Returned as a REASON rather than warned here. A warning raised inside CalcCov
+# does not reach the user -- the nlmixr2est stack swallows it, which is why the
+# drivers already report a missing covariance from their own frame -- so the
+# reason travels on the covariance and .admFinaliseFit() says it.
+# TWO TIERS, because they are different failures with different remedies.
+#
+# `undetermined` (reciprocal condition below sqrt(eps)): the direction is
+# numerically indistinguishable from exactly flat, so H^-1 in it is set by
+# rounding error rather than by data. The magnitude is arbitrary, not merely
+# large, and NA is the honest report.
+#
+# `weak` (reciprocal condition below 1e-4): the inverse is still numerically
+# meaningful and the sandwich stays VALID there -- coverage measured at or above
+# nominal in every such cell, because conservative is not broken. What goes
+# wrong is that the interval becomes too wide to be informative. So the number
+# is kept and the fit says so, with the remedy: CENTRING each source's covariate
+# on its own median, which moved cond(H) from 2.05e+04 to 7.46e+01 and from
+# 3.64e+04 to 1.36e+02 on the two measured designs -- a factor of 170 to 274 --
+# because for a lognormal covariate `E[log WT] = log(median)` exactly, so the
+# median is not an approximation to the orthogonalising reference, it IS it.
+.ADM_WEAK_RCOND <- 1e-4
+
+# Optimizer-scale names translated to the names the covariance is REPORTED
+# under. `.admScaleReportedCov` relabels the omega rows to om.<eta>/cov.<i>.<j>,
+# so an ill-conditioned direction described in parse.R's `logchol_<eta>` /
+# `chol_<i>_<j>` vocabulary matched NOTHING: .admCondBlank's match() went all-NA
+# and returned the covariance untouched, so the warning said the standard errors
+# were NA while a large finite one from rounding error was printed -- and it
+# named a parameter absent from parFixedDf. Anything unrecognised is left as it
+# is; a reduced H (see .admReduceNpdOmega) simply carries no omega rows.
+.admCondReportNames <- function(nms, pinfo) {
+  op <- pinfo$omega_par_names
+  if (is.null(op) || !length(op)) return(nms)
+  rp <- tryCatch(.admOmegaReportNames(pinfo), error = function(e) NULL)
+  if (is.null(rp) || length(rp) != length(op)) return(nms)
+  i <- match(nms, op)
+  ifelse(is.na(i), nms, rp[i])
+}
+
+.admCondCheck <- function(H, nms, tol = .ADM_NPD_RCOND) {
+  if (is.null(H) || !is.matrix(H) || nrow(H) != ncol(H) || !all(is.finite(H)))
+    return(NULL)
+  e <- tryCatch(eigen((H + t(H)) / 2, symmetric = TRUE), error = function(e) NULL)
+  if (is.null(e)) return(NULL)
+  mx <- max(abs(e$values))
+  if (!is.finite(mx) || mx <= 0) return(NULL)
+  rc  <- min(abs(e$values)) / mx
+  bad <- which(abs(e$values) < tol * mx)
+  if (!length(bad)) {
+    if (rc >= .ADM_WEAK_RCOND) return(NULL)
+    # weakly determined: keep the numbers, say the interval is uninformative
+    wk <- which(abs(e$values) < .ADM_WEAK_RCOND * mx)
+    ld <- rowSums(e$vectors[, wk, drop = FALSE]^2)
+    od <- order(ld, decreasing = TRUE)
+    cm <- cumsum(ld[od]) / sum(ld)
+    return(list(level = "weak", pars = nms[sort(od[seq_len(
+      which(cm >= 0.95 - 1e-12)[1L])])], rcond = rc, ndir = length(wk)))
+  }
+  # A direction is a COMBINATION, so name the parameters that carry it rather
+  # than pretending the flatness belongs to one of them. A loading is squared
+  # because it is a variance share, and the cut keeps whatever accounts for most
+  # of the direction rather than a fixed count.
+  load <- rowSums(e$vectors[, bad, drop = FALSE]^2)
+  ord  <- order(load, decreasing = TRUE)
+  cum  <- cumsum(load[ord]) / sum(load)
+  # UP TO 95%, inclusive of the entry that crosses it. Cutting at `cum <= 0.95`
+  # instead drops that entry, so a direction split evenly between two
+  # parameters (loadings 0.5 and 0.5) named only the first -- and an evenly
+  # split direction is the ordinary case, not a corner one.
+  keep <- ord[seq_len(which(cum >= 0.95 - 1e-12)[1L])]
+  list(level = "undetermined", pars = nms[sort(keep)], rcond = rc,
+       ndir = length(bad))
+}
+
+# Blank the affected rows and columns. NA is the honest report for a direction
+# the data do not determine; a finite number there is the failure mode above.
+.admCondBlank <- function(cov, chk) {
+  # only the undetermined tier is blanked -- a weakly determined interval is
+  # wide but valid, and throwing it away would lose usable information
+  if (is.null(chk) || !identical(chk$level, "undetermined") ||
+      !length(chk$pars)) return(cov)
+  i <- match(chk$pars, rownames(cov))
+  i <- i[!is.na(i)]
+  if (!length(i)) return(cov)
+  cov[i, ] <- NA_real_; cov[, i] <- NA_real_
+  cov
+}
+
 .admReduceNpdOmega <- function(H, H_eigs, eig_dec, nms_cov, n_o, n_sub) {
   .singular <- function(e) {
     if (is.null(e) || !length(e) || any(!is.finite(e))) return(TRUE)

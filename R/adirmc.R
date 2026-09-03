@@ -1,4 +1,4 @@
-﻿# -- Control object -------------------------------------------------------------
+# -- Control object -------------------------------------------------------------
 
 #' Control settings for the IRMC estimator
 #'
@@ -133,7 +133,7 @@ adirmcControl <- function(
     phases          = c(2, 1, 0.5, 0.01),
     convcrit        = 1e-5,
     max_worse       = 5L,
-    covMethod       = c("r", "none"),
+    covMethod       = c("r", "r,s", "none"),
     cov_n_sim       = 10000L,
     n_restarts      = 1L,
     restart_sd      = 0.2,
@@ -190,6 +190,20 @@ adirmcControl <- function(
   checkmate::assertIntegerish(max_worse,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(kappa_n_nodes, lower = 1L, len = 1)
   covMethod <- match.arg(covMethod)
+  # A MODEL SOURCE CARRYING ITS OWN COVARIANCE IS REFUSED HERE, not silently
+  # scored without the correction. The D C_src D' term needs each study's mean
+  # in R, and adirmc's mu is the importance-weighted mean computed INSIDE
+  # irmc_inner_nll_cpp -- it never exists at R level, so there is nothing to
+  # correct. Left unsaid, the fit would run and report the too-tight weight the
+  # correction exists to remove. The other three estimators upgrade covMethod
+  # instead (see .admResolveCovMethod); adirmc has no such route.
+  if (.admHasModelSource(studies))
+    stop("admixr2: est = \"adirmc\" cannot fit a study that contributes as a ",
+         "published MODEL with its own reported uncertainty. Its predicted ",
+         "mean is the importance-weighted mean formed inside the C++ kernel, ",
+         "so the source-covariance correction has nothing to attach to.
+",
+         "  Use est = \"adgh\" or \"admc\", which carry it.", call. = FALSE)
   checkmate::assertIntegerish(cov_n_sim,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(n_restarts,   lower = 1L,  len = 1)
   checkmate::assertNumeric(restart_sd,      lower = 0,   len = 1)
@@ -381,7 +395,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
     mu_struct <- mu
     arr   <- .admResidRows(pinfo, s$output, pars$sigma_var, length(mu))
     var_f <- diag(V)                       # Var_eta(f), pre-residual
-    ap    <- .admResidApply(mu_struct, var_f, arr, s$times, cov_f)
+    ap    <- .admResidMoments(mu_struct, var_f, arr, cov_f, s$times)$ap
     mu    <- ap$mu
     V     <- .admApplyResidTail(V, ap)
 
@@ -446,26 +460,25 @@ nmObjGetControl.adirmc <- function(x, ...) {
     # eff_dNLL_dmu folds in the residual's sensitivity to mu_struct: the lnorm
     # mean scaling, plus the dependence of the residual variance on mu.
     .is_var_s <- identical(s$method, "var")
-    .dres        <- .admResidDeriv(mu_struct, var_f, arr, pinfo)   # once, reused below
-    eff_dNLL_dmu <- dNLL_dmu +
-      .admResidMuCoupling(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                          if (.is_var_s) NULL else dNLL_dV,
-                          if (.is_var_s) NULL else cov_f, s$times, deriv = .dres)
+    # ONE moment tail for this study: .admResidDeriv, the V_pred -> V_struct
+    # chain, the TBS mean-from-covariance fold and both contractions.
+    ch <- .admResidChain(mu_struct, var_f, arr, pinfo, dNLL_dmu, dNLL_dV_diag,
+                         if (.is_var_s) NULL else dNLL_dV,
+                         if (.is_var_s) NULL else cov_f, s$times)
+    .dres        <- ch$deriv
+    eff_dNLL_dmu <- dNLL_dmu + ch$mu_coupling()
 
     d_mat <- sweep(bi, 2L, mean_new)
 
     # The kernels differentiate the STRUCTURAL weighted covariance, so dNLL_dV
     # must be chained from V_pred (identity for additive error).
-    vchain         <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times, deriv = .dres)
-    .dmv           <- attr(vchain, "dmu_dv0") %||% numeric(length(mu_struct))
-    dNLL_dV_diag_s <- dNLL_dV_diag * diag(vchain) + dNLL_dmu * .dmv
+    dNLL_dV_diag_s <- ch$dV_diag
 
     gk <- if (identical(s$method, "var"))
       irmc_grad_kernel_var_cpp(F, w, mu, d_mat, invO, eff_dNLL_dmu, dNLL_dV_diag_s)
     else
       irmc_grad_kernel_cpp(F, w, mu, d_mat, invO, eff_dNLL_dmu,
-                           { .b <- dNLL_dV * vchain
-                             diag(.b) <- diag(.b) + dNLL_dmu * .dmv; .b })
+                           ch$dV)
     dNLL_dmean_new <- as.numeric(gk$dNLL_dmean_new)
 
     for (k in seq_along(paired_nms)) {
@@ -510,9 +523,7 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
     n_e <- length(pars$sigma_var)
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-      .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                    if (.is_var_s) NULL else dNLL_dV, s$times,
-                    if (.is_var_s) NULL else cov_f, deriv = .dres)
+      ch$sigma_grad()
   }
 
   list(nll = nll2, grad = grad)
@@ -661,6 +672,14 @@ nmObjGetControl.adirmc <- function(x, ...) {
     params_df_ext <- params_df
   }
 
+  # EVERY solve path injects the study's fixed covariates -- see .admCovCols().
+  # adirmc builds its params frame by hand from .admMakeParamsList() (struct,
+  # eta, sigma, rxerr) and so was the one path that did not, which meant any
+  # model reading a covariate died here on rxode2's raw "the following
+  # parameter(s) are required for solving". There is no tryCatch on this call,
+  # so the whole fit was lost after the setup work.
+  params_df_ext <- .admCovCols(params_df_ext, rxMod$params, study[["cov"]],
+                               study[["cov_rows"]])
   out      <- rxode2::rxSolve(rxMod, params = as.data.frame(params_df_ext),
                               events = study$ev_full,
                               cores = cores,
@@ -766,6 +785,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
           params_cand <- .params_base[1L, , drop = FALSE]
           for (nm in .single_nms)
             params_cand[1L, nm] <- struct_cand[[nm]]
+          params_cand <- .admCovCols(params_cand, rxMod$params,
+                                     study[["cov"]], study[["cov_rows"]])
           out_c  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_cand),
                                     events = study$ev_full, cores = cores,
                                     nDisplayProgress = ndp,
@@ -792,6 +813,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
               for (nm in .single_nms)
                 params_bat[ci, nm] <- sc[[nm]]
             }
+            params_bat <- .admCovCols(params_bat, rxMod$params,
+                                       study[["cov"]], study[["cov_rows"]])
             out_b  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_bat),
                                       events = study$ev_full, cores = cores,
                                       nDisplayProgress = ndp,
@@ -1188,13 +1211,9 @@ nlmixr2Est.adirmc <- function(env, ...) {
     stop("Could not recover adirmcControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("adirmcControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adirmc")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   # IRMC draws its importance-sampling proposals FROM the random-effect
   # distribution, so a model with no random effect has nothing to propose: the
   # proposal draw is degenerate and the fit returned a silent objective = Inf
@@ -1255,6 +1274,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   studies        <- .u$studies
   .adm_multi_out <- .u$multi_out
   .adm_joint     <- .u$any_joint
+  .admRefuseCovariates(.u$studies, "adirmc")
   if (.adm_multi_out || .adm_joint)
     stop("adirmc does not yet support multiple observed outputs (multi-compartment observations). ",
          "Use est = 'admc', 'adfo', or 'adgh' for multi-output fits.", call. = FALSE)
@@ -1300,7 +1320,10 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # and therefore cannot poison anything. Cold cache keeps the old ordering.
   .sim_warm <- isTRUE(tryCatch(file.exists(.admModelCacheFile(.ui)),
                                error = function(e) FALSE))
-  sensModel <- if ((.ctl$covMethod == "r" && .ctl$grad == "analytical") || !.sim_warm)
+  # `%in% c("r", "r,s")`, NOT `== "r"`: both ask for a Hessian, so both need the
+  # sens model. An equality test here is the same shape of bug the note above
+  # describes -- it would silently take the FD-Hessian path for a "r,s" fit.
+  sensModel <- if ((.ctl$covMethod %in% c("r", "r,s") && .ctl$grad == "analytical") || !.sim_warm)
     tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
   else NULL
 
@@ -1324,7 +1347,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
   irmc_grad_label <- if (.ctl$grad == "none") "none" else {
     cov_label <- if (!is.null(sensModel)) "+Sens-Hessian" else "+FD-Hessian"
     grad_inner_label <- if (.ctl$grad == "fd") "central FD" else "analytic"
-    paste0(grad_inner_label, if (.ctl$covMethod == "r") cov_label else "")
+    paste0(grad_inner_label,
+           if (.ctl$covMethod %in% c("r", "r,s")) cov_label else "")
   }
   message("=== admixr2: Aggregate Data Modeling (IR-MC) ===")
   message(sprintf("  Studies: %d | MC samples: %d | Phases: %d | Iters/phase: %d | Expansion: %.2f | Grad: %s | Restarts: %d",
@@ -1412,7 +1436,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   p_hat_irmc <- setNames(best_p, names(ov$p0))
   t0_cov <- proc.time()
-  .cov <- if (.ctl$covMethod == "r") {
+  .want_cov <- .ctl$covMethod %in% c("r", "r,s")
+  .cov <- if (.want_cov) {
     # struct + sigma + OMEGA: .admCalcCov()'s Hessian spans all three, so the
     # advertised evaluation count must too (it understated it otherwise).
     np_cov       <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
@@ -1427,14 +1452,16 @@ nlmixr2Est.adirmc <- function(env, ...) {
     evals_label <- if (use_grad_cov) "gradient evaluations" else "NLL evaluations"
     hess_label  <- if (!use_grad_cov) "" else if (!is.null(sensModel))
       ", Sens-Hessian" else ", FD-Hessian"
-    message(sprintf("  Computing covariance (R method, MC NLL%s, %d %s)",
-                    hess_label, n_evals, evals_label))
+    message(sprintf("  Computing covariance (R method, MC NLL%s%s, %d %s)",
+                    hess_label, if (.ctl$covMethod == "r,s") ", sandwich" else "",
+                    n_evals, evals_label))
     tryCatch(
       .admCalcCov(p_hat_irmc, pinfo, studies_snap, z_list, rxMod, output_var,
                   params_list, cores, cov_n_sim = .ctl$cov_n_sim,
                   use_grad = use_grad_cov, grad_h = .ctl$grad_h,
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
-                  sensModel = sensModel, sampling = .ctl$sampling),
+                  sensModel = sensModel, sampling = .ctl$sampling,
+                  sandwich = .ctl$covMethod == "r,s"),
       error = function(e) {
         warning("admCalcCov (adirmc) failed: ", conditionMessage(e))
         NULL
@@ -1443,10 +1470,24 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # A NULL covariance used to be completely silent: no warning reached the user,
   # `warnings()` was empty, covMethod came back "" and every SE was NA with no
   # indication why. Say so once, from the driver, where it cannot be swallowed.
-  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
+  if (.want_cov && is.null(.cov))
     warning("covariance could not be computed (the Hessian was singular or ",
             "non-finite); standard errors are unavailable for this fit.",
             call. = FALSE)
+  # The label records what the covariance IS, not what was asked for: a
+  # requested sandwich that degraded to the naive form must not be reported as
+  # one, and .admReportCovWarnings() must judge the covariance in hand -- a
+  # covariate fit that asked for "r,s" and did not get it is exactly the
+  # configuration measured as invalid.
+  # THREE STATES, not two. A NULL covariance is "" -- labelling it "r" told a
+  # covMethod = "none" fit, which deliberately computed no standard errors,
+  # that its inference was invalid and it should use "r,s".
+  .cov_lbl  <- if (is.null(.cov)) "" else
+    if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
+  .sw_HJ    <- attr(.cov, "sandwich_HJ")
+  # Ill-conditioned directions and the source yardstick. Emitted from the
+  # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.
+  .admReportCovWarnings(.cov, studies, .cov_lbl)
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   .cov      <- .admCovThetaOrder(.cov, .ui)
@@ -1468,12 +1509,13 @@ nlmixr2Est.adirmc <- function(env, ...) {
   .ret$est       <- "adirmc"
   .ret$ofvType   <- "adirmc"
   .ret$adjObf    <- FALSE
-  .ret$covMethod <- if (!is.null(.cov)) "r" else ""
+  .ret$covMethod <- if (!is.null(.cov)) .cov_lbl else ""
   .ret$cov       <- .cov
   .ret$message   <- if (.ctl$n_restarts > 1L) opt_restart$message else pl$last_opt_message
   .ret$extra     <- ""
   .ret$origData  <- studies
-  .ret$adirmcExtra <- list(struct         = final$struct,
+  .ret$adirmcExtra <- list(sandwich = .sw_HJ,
+                        struct         = final$struct,
                          sigma_var      = final$sigma_var,
                          sigma_is_prop  = pinfo$sigma_is_prop,
                          sigma_is_lnorm = pinfo$sigma_is_lnorm,
@@ -1507,5 +1549,6 @@ nlmixr2Est.adirmc <- function(env, ...) {
                   cov_nms = .cov_nms, multi_out = FALSE,
                   extra_field = "adirmcExtra",
                   handle_ctl = nmObjHandleControlObject.adirmcControl,
-                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed)
+                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed,
+                  pinfo = pinfo)
 }

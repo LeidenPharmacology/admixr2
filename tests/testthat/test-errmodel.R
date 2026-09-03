@@ -316,3 +316,131 @@ test_that("a pinfo with only the legacy flags still parses (no $resid spec)", {
   old <- old + exp(pb) * f_test^2       # proportional -- the old per-sigma loop
   expect_identical(v, old)
 })
+
+# ---- the shared moment tail --------------------------------------------------
+#
+# .admResidMoments() / .admResidSampleMoments() / .admResidChain() collapse the
+# four-step tail (.admResidApply -> .admApplyResidTail -> .admResidDeriv ->
+# .admResidVChain) every estimator used to write out by hand. Each test below
+# pins one of the traps that made the hand-assembly worth removing.
+
+.mt_pinfo <- function(ar_fixed = NA_real_) {
+  sp <- list(output = "cp", form = admixr2:::.ADM_RESID_COMBINED2,
+             k_add = 1L, k_prop = 2L, k_pow = NA_integer_, ar_fixed = ar_fixed)
+  list(sigma_names = c("add.sd", "prop.sd"), sigma_role = c("var", "var"),
+       resid = list(cp = sp))
+}
+
+.mt_setup <- function(ar_fixed = NA_real_) {
+  pinfo <- .mt_pinfo(ar_fixed)
+  p     <- c(2 * log(0.4), 2 * log(0.15))
+  nat   <- admixr2:::.admSigmaNat(p, pinfo)
+  mu    <- c(4, 12, 30)
+  times <- c(1, 2, 4)
+  arr   <- admixr2:::.admResidRows(pinfo, "cp", nat, length(mu))
+  cov_f <- matrix(c(1.5, 0.4, 0.2, 0.4, 6.0, 0.9, 0.2, 0.9, 20.0), 3, 3)
+  list(pinfo = pinfo, arr = arr, mu = mu, times = times, cov_f = cov_f,
+       var_f = diag(cov_f))
+}
+
+test_that(".admResidMoments reproduces the hand-written objective tail", {
+  st <- .mt_setup()
+  # cov branch: apply with times + structural covariance, then compose
+  ap  <- admixr2:::.admResidApply(st$mu, st$var_f, st$arr, st$times, st$cov_f)
+  ref <- admixr2:::.admApplyResidTail(st$cov_f, ap)
+  got <- admixr2:::.admResidMoments(st$mu, st$var_f, st$arr, st$cov_f, st$times)
+  expect_identical(got$mu, ap$mu)
+  expect_identical(got$dv, ap$dv)
+  expect_identical(got$V,  ref)
+
+  # var branch: no structural covariance -> no times, no composed V
+  apv <- admixr2:::.admResidApply(st$mu, st$var_f, st$arr)
+  gv  <- admixr2:::.admResidMoments(st$mu, st$var_f, st$arr)
+  expect_identical(gv$mu, apv$mu)
+  expect_identical(gv$dv, apv$dv)
+  expect_null(gv$V)
+})
+
+# THE trap CLAUDE.md records: arr$rho (and the ordinal cross term) key off
+# `times`, so a diagonal-path caller that forwards `times` changes its own NLL.
+# .admResidMoments() only forwards `times` alongside `cov_f`, so the diagonal
+# path cannot turn the off-diagonal terms on even if a caller passes times.
+test_that(".admResidMoments cannot leak `times` into the diagonal path", {
+  st <- .mt_setup(ar_fixed = 0.5)
+  expect_false(is.na(st$arr$rho[[1L]]))          # premise: ar() really is active
+
+  # with a structural covariance, ar() DOES reach the off-diagonal
+  cv <- admixr2:::.admResidMoments(st$mu, st$var_f, st$arr, st$cov_f, st$times)
+  expect_false(isTRUE(all.equal(cv$V[1L, 2L], st$cov_f[1L, 2L])))
+
+  # without one, passing times must change nothing at all
+  a <- admixr2:::.admResidMoments(st$mu, st$var_f, st$arr)
+  b <- admixr2:::.admResidMoments(st$mu, st$var_f, st$arr, NULL, st$times)
+  expect_identical(a$mu, b$mu)
+  expect_identical(a$dv, b$dv)
+  expect_null(b$V)
+  expect_null(b$rmat)
+})
+
+test_that(".admResidSampleMoments reproduces the MC sample-moment block", {
+  st <- .mt_setup()
+  set.seed(7L)
+  cp <- matrix(stats::rnorm(200L * 3L, rep(st$mu, each = 200L), 1.2), 200L, 3L)
+  mu_s <- colMeans(cp)
+  cpc  <- sweep(cp, 2L, mu_s)
+  Vs   <- crossprod(cpc) / nrow(cp)
+  ap   <- admixr2:::.admResidApply(mu_s, diag(Vs), st$arr, st$times, Vs)
+  got  <- admixr2:::.admResidSampleMoments(cp, st$arr, st$times)
+  expect_identical(got$mu, ap$mu)
+  expect_identical(got$dv, ap$dv)
+  expect_identical(got$V,  admixr2:::.admApplyResidTail(Vs, ap))
+  expect_identical(got$cov_f, Vs)
+})
+
+test_that(".admResidChain reproduces the hand-written gradient tail", {
+  st <- .mt_setup()
+  n_t     <- length(st$mu)
+  dNLL_dV <- matrix(0.15, n_t, n_t) + diag(0.6, n_t)
+  dmu     <- c(0.3, -0.2, 0.11)
+  dvdiag  <- diag(dNLL_dV)
+
+  d   <- admixr2:::.admResidDeriv(st$mu, st$var_f, st$arr, st$pinfo)
+  M   <- admixr2:::.admResidVChain(st$mu, st$var_f, st$arr, st$pinfo, st$times,
+                                   deriv = d)
+  dmv <- attr(M, "dmu_dv0") %||% numeric(n_t)
+  ref_dV <- dNLL_dV * M
+  diag(ref_dV) <- diag(ref_dV) + dmu * dmv
+
+  ch <- admixr2:::.admResidChain(st$mu, st$var_f, st$arr, st$pinfo, dmu, dvdiag,
+                                 dNLL_dV, st$cov_f, st$times)
+  expect_identical(ch$vchain,  M)
+  expect_identical(ch$dmu_dv0, dmv)
+  expect_identical(ch$dmu_df,  d$dmu_df)
+  expect_identical(ch$dV_diag, dvdiag * diag(M) + dmu * dmv)
+  expect_identical(ch$dV,      ref_dV)
+
+  # the two contractions, which take cov_f/times in OPPOSITE orders
+  expect_identical(
+    ch$sigma_grad(),
+    admixr2:::.admSigmaGrad(st$mu, st$arr, st$pinfo, dvdiag, dmu, st$var_f,
+                            dNLL_dV, st$times, st$cov_f, deriv = d))
+  expect_identical(
+    ch$mu_coupling(),
+    admixr2:::.admResidMuCoupling(st$mu, st$arr, st$pinfo, dvdiag, dmu,
+                                  st$var_f, dNLL_dV, st$cov_f, st$times,
+                                  deriv = d))
+})
+
+test_that(".admResidChain var branch drops dV and the off-diagonal terms", {
+  st <- .mt_setup()
+  dmu    <- c(0.3, -0.2, 0.11)
+  dvdiag <- c(0.6, 0.5, 0.4)
+  ch <- admixr2:::.admResidChain(st$mu, st$var_f, st$arr, st$pinfo, dmu, dvdiag,
+                                 NULL, NULL, st$times)
+  expect_null(ch$dV)
+  d <- admixr2:::.admResidDeriv(st$mu, st$var_f, st$arr, st$pinfo)
+  expect_identical(
+    ch$sigma_grad(),
+    admixr2:::.admSigmaGrad(st$mu, st$arr, st$pinfo, dvdiag, dmu, st$var_f,
+                            NULL, st$times, NULL, deriv = d))
+})

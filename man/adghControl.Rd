@@ -19,7 +19,7 @@ adghControl(
   grad_bounds = 5,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/4),
-  covMethod = c("r", "none"),
+  covMethod = c("r", "r,s", "none"),
   n_restarts = 1L,
   restart_sd = 0.5,
   workers = 1L,
@@ -35,6 +35,9 @@ adghControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
+  cov_nodes = 7L,
+  cov_integration = c("quadrature", "auto", "sparse", "shift"),
+  cov_sparse_level = 3L,
   ...
 )
 }
@@ -105,6 +108,17 @@ downward -- a theta carrying an eta is correlated with that eta's variance.
 If the weakly-identified omega Cholesky makes the Hessian non-positive
 definite, the structural + residual sub-block is reported with a warning.
 
+\code{"r,s"} adds a sandwich correction, \verb{H^-1 J H^-1}, on the same Hessian.
+The aggregate objective scores the reported mean and covariance as though
+the subjects behind them were multivariate normal; they are not, because the
+model is nonlinear in the random effects, so the sampling law of \verb{(E, V)} is
+not the one the objective assumes. \code{"r,s"} scores that law from the model
+instead. Point estimates are untouched -- only the reported uncertainty
+changes -- and under correct specification it reduces to \code{"r"} exactly.
+Available for the conditionally-normal residual family (\code{add}, \code{prop},
+\code{pow}, \code{combined1}, \code{combined2}, \code{lnorm}) and for non-joint studies;
+anything else falls back to \code{"r"} with a warning.
+
 All three blocks are reported on the scale the ESTIMATES are printed on, as
 \code{nlmixr2est} does: structural thetas on the log/optimizer scale, residual
 error as an SD, and omega as the variance/covariance entries (named
@@ -165,6 +179,82 @@ This is an ACCURACY dial, not a speed one. The quadrature is linear in
 negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
 evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.}
+
+\item{cov_nodes}{Gauss-Hermite nodes per covariate used to integrate the
+COVARIATE distribution when a study declares \code{cov_dist} (default 7). This is
+a separate dial from \code{n_nodes}, which refines the random-effect dimensions
+only: raising \code{n_nodes} alone leaves the covariate integration exactly where
+it was. Measured on a two-compartment model with an allometric weight effect
+and a lognormal weight distribution, 7 nodes place the marginal moments
+within 2e-06 (mean) and 2e-05 (covariance) of an exact reference, and the
+remaining error is the ODE solver's rather than the quadrature's. A wider or
+more skewed covariate distribution, or a more strongly non-linear covariate
+effect, warrants more. Measured against an exact reference on a
+two-compartment model with an allometric weight effect and a lognormal
+weight distribution: 3 nodes give 7.3e-04 / 8.2e-03 (mean / covariance),
+5 give 2.8e-05 / 3.7e-04, 7 give 2.2e-06 / 2.4e-05, and 9 onwards sit at
+~1.2e-06 / ~1.0e-06, which is the ODE solver's accuracy rather than the
+quadrature's. The default is set past that knee, and raising it further
+buys nothing: against a per-subject reference the accuracy is identical at
+5, 9 and 15 nodes. Ignored when \code{cov_integration = "sparse"}, which sets
+its own resolution through \code{cov_sparse_level}.
+
+It is a nodes-per-DIRECTION budget rather than a literal node count.
+Where the covariates reach the model through fewer scalars than there
+are covariates, admixr2 integrates over those directions instead of
+over a product grid, and each direction is given \code{cov_nodes * p / r}
+nodes rounded up -- MORE than \code{cov_nodes}, because a direction that
+absorbs several covariate axes carries their combined spread and needs
+proportionally more resolution to resolve it. Three covariates reaching
+the model as a single scalar therefore get 21 nodes on one direction at
+the default, not 7, and still cost 21 design points against the product
+grid's 343. The same budget sizes the directions of a joint
+random-effect/covariate design where one is used.}
+
+\item{cov_integration}{How a study's covariate distribution is integrated.
+\code{"quadrature"} (default) evaluates the model on a product Gauss--Hermite
+grid of \code{cov_nodes} points per covariate and forms the marginal moments
+from the whole grid; it is the accurate route and the one every existing
+fit uses. \code{"sparse"} uses a Smolyak sparse grid of \code{cov_sparse_level}
+instead, which for \code{p} covariates costs far fewer than \code{cov_nodes^p}
+points and is the speed lever for models with several covariates.
+
+Both are Gauss--Hermite rules; they differ in which product terms are
+kept. Measured against an exact reference (lognormal margins, allometric
+plus a saturable term), relative error on the mean and the covariance:\tabular{lll}{
+   rule \tab p = 3, rho = 0.85 \tab p = 4, rho = 0.85 \cr
+   sparse, level 2 \tab 6 pts, 7.8e-04 / 4.7e-02 \tab 9 pts, 9.7e-04 / 6.1e-02 \cr
+   product, 3 nodes \tab 27 pts, 4.0e-05 / 1.5e-02 \tab 81 pts, 1.5e-04 / 3.2e-02 \cr
+   sparse, level 3 \tab 31 pts, 1.6e-06 / 5.0e-04 \tab 49 pts, 3.5e-06 / 9.5e-04 \cr
+}
+
+
+At four covariates level 3 is both cheaper than the 3-node product grid
+and roughly 40x more accurate, and the advantage grows with \code{p}. Level 2
+is the axial rule --- at one covariate it is exactly \code{cov_nodes = 3} ---
+and it is offered for continuity rather than recommended.
+
+DEPENDENT covariates (\code{cor}, \code{rho}, \code{Sigma}) are handled by rotating onto
+the eigenvectors of the latent correlation, and correlation does not cost
+the sparse rule accuracy: at \code{p = 2} its mean error is 6.6e-07 at
+\code{rho = 0} and 4.8e-08 at \code{rho = 0.85}. (Level 2 behaves the other way,
+losing an order of magnitude to correlation, which is one reason the
+default is 3.) An opaque \code{joint} sampler is refused, because the rotation
+needs a correlation the closure does not report --- declare the dependence
+with \code{cor} and admixr2 builds the sampler itself.
+
+The cost of a sparse rule is SIGNED weights: they sum to 1 exactly, but
+the sum of their absolute values is 2.5 at level 3 for three covariates
+and 4.1 for four, so the answer is a difference of terms several times its
+own size and solver noise is amplified accordingly. A sandwich covariance
+whose weight matrix comes out indefinite as a result is refused rather
+than reported.}
+
+\item{cov_sparse_level}{Smolyak level for \code{cov_integration = "sparse"}
+(default 3, minimum 2). Level 2 is the axial rule, level 3 adds the
+five-point axes and the pairwise crosses, and each further level refines
+again at a growing weight-magnitude cost. See \code{cov_integration} for the
+measured accuracy and point counts.}
 
 \item{...}{Unused arguments (trigger an error).}
 }

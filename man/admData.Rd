@@ -16,7 +16,14 @@ rows carry a non-\code{NA} placeholder \code{DV} (\code{1}) because nlmixr2's
 multi-endpoint translator rejects an all-\code{NA}-DV dataset; the placeholder is
 purely for dispatch and never enters the reported objective (each estimator
 overwrites it with its own aggregate -2LL). When \code{NULL} (default) the
-single-endpoint dummy frame is returned unchanged.}
+single-endpoint dummy frame is returned unchanged.
+
+Covariate columns are added by the driver, not by the caller. A model that
+READS a covariate needs it present in the frame the post-fit output stage
+solves over, or rxode2 stops with "the following parameter(s) are required
+for solving" -- after the whole optimisation has run. The driver builds that
+frame itself (\code{.admDummyData()}), so adding the column to the data passed to
+\code{nlmixr2()} has no effect; it is handled for you.}
 }
 \value{
 A data frame with columns \code{ID}, \code{TIME}, \code{DV}, \code{AMT}, \code{EVID}, \code{CMT}

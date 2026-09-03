@@ -20,7 +20,7 @@ admControl(
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
   grad_bounds = 5,
-  covMethod = c("r", "none"),
+  covMethod = c("r", "r,s", "none"),
   cov_n_sim = 10000L,
   n_restarts = 1L,
   restart_sd = 0.5,
@@ -49,6 +49,16 @@ admControl(
 \item \code{times} -- numeric vector of observation times
 \item \code{ev} -- \code{rxode2::et()} dosing event table
 \item \code{method} -- \code{"cov"} or \code{"var"} (optional; auto-detected from \code{V})
+\item \code{v_denom} -- \code{"ml"} (default) or \code{"unbiased"}, declaring which denominator
+the supplied \code{V} uses. The likelihood is the exact one for \code{n} iid draws
+only under the ML (\code{n}) covariance, which is what \code{cov.wt(method = "ML")}
+and \code{\link[=datagen]{datagen()}} produce. A \strong{published} SD is the unbiased (\code{n - 1}) SD,
+so a digitised figure gives \code{V = SD^2} on the \code{n - 1} scale: declare
+\code{v_denom = "unbiased"} and admixr2 converts it. Declared per study, since
+a meta-analysis routinely mixes a digitised source with a model-derived
+one and the two need not share a denominator. At \code{n = 60} the factor is
+1.7\%; it matters more the smaller \code{n} is, and more again for any method
+that scores the reported covariance against its own sampling law.
 }
 
 \strong{Multi-compartment (multiple observed outputs).} To fit several observed
@@ -174,6 +184,17 @@ included because excluding it also biases the STRUCTURAL standard errors
 downward -- a theta carrying an eta is correlated with that eta's variance.
 If the weakly-identified omega Cholesky makes the Hessian non-positive
 definite, the structural + residual sub-block is reported with a warning.
+
+\code{"r,s"} adds a sandwich correction, \verb{H^-1 J H^-1}, on the same Hessian. The
+aggregate objective scores the reported mean and covariance as though the
+subjects behind them were multivariate normal; they are not, because the
+model is nonlinear in the random effects. \code{"r,s"} scores that law from the
+model instead, on a quadrature ensemble rather than on this fit's own MC
+draws, so the reported uncertainty carries no sampling noise of its own.
+Point estimates are untouched, and under correct specification it reduces to
+\code{"r"} exactly. Available for the conditionally-normal residual family
+(\code{add}, \code{prop}, \code{pow}, \code{combined1}, \code{combined2}, \code{lnorm}) and for non-joint
+studies; anything else falls back to \code{"r"} with a warning.
 
 All three blocks are reported on the scale the ESTIMATES are printed on, as
 \code{nlmixr2est} does: structural thetas on the log/optimizer scale, residual

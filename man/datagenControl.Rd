@@ -12,7 +12,8 @@ datagenControl(
   seed = 12345L,
   cores = 1L,
   return_samples = FALSE,
-  resid_nodes = 81L
+  resid_nodes = 81L,
+  cov_nodes = 7L
 )
 }
 \arguments{
@@ -52,6 +53,12 @@ variance. Ignored by every other error model. Default 81 -- the same default
 the four estimator controls use, so \code{datagen()} and the fit it feeds agree
 unless you deliberately change one of them. See \code{\link[=admControl]{admControl()}} for the
 measured convergence.}
+
+\item{cov_nodes}{Gauss-Hermite nodes per covariate when \code{method = "gh"}
+integrates a study's \code{cov_dist} (default 7). Total covariate points are
+\code{cov_nodes^p} for \code{p} covariates. Ignored by \code{"mc"}, which draws a covariate
+value per simulated subject instead, and by \code{"fo"}, which cannot integrate a
+covariate at all.}
 }
 \value{
 A list of class \code{"datagenControl"}.

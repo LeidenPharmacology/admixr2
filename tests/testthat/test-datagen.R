@@ -341,3 +341,155 @@ test_that("datagen() refuses the endpoints it cannot generate, rather than emitt
             model = bet, control = datagenControl(method = "fo", seed = 1L)),
     "beta")
 })
+
+test_that("datagen() refuses the removed `covariate` node generation", {
+  skip_if_not_installed("rxode2")
+  m <- function() {
+    ini({tcl <- log(1); tv <- log(10); add.err <- 0.3; eta.cl ~ 0.09})
+    model({cl <- exp(tcl + eta.cl); v <- exp(tv)
+           d/dt(centr) <- -cl / v * centr; cp <- centr / v
+           cp ~ add(add.err)})
+  }
+  expect_error(
+    datagen(list(p = list(model = m, times = c(1, 2), n = 10L,
+                          covariate = list(WT = list(mu = 70, sd = 10)))),
+            control = datagenControl(n_sim = 50L)),
+    "was removed")
+})
+
+# ---- model sources: the provenance the standard error needs -----------------
+
+test_that(".admSrcCov checks the contract rather than documenting it", {
+  skip_if_not_installed("rxode2")
+  m <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- fix(0.75)
+          eta.cl ~ 0.05; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt; v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(m))
+  nmd <- function(x, n) { dimnames(x) <- list(n, n); x }
+  ok  <- nmd(matrix(c(0.0064, -0.0012, -0.0012, 0.0036), 2, 2), c("tcl", "tv"))
+
+  got <- suppressWarnings(admixr2:::.admSrcCov(ok, ui, "s"))
+  expect_identical(got$par, c("tcl", "tv"))
+  # the source ESTIMATES add.err and eta.cl too, and no covariance was given for
+  # them -- reported, because a parameter with no covariance contributes none,
+  # which asserts the source knew it exactly and understates the SE
+  expect_setequal(got$missing, c("add.err", "eta.cl"))
+
+  # dimnames ARE the contract: they say which parameter, and on which scale
+  expect_error(admixr2:::.admSrcCov(unname(ok), ui, "s"), "dimnames")
+  expect_error(admixr2:::.admSrcCov(nmd(ok, c("tcl", "zz")), ui, "s"),
+               "does not declare")
+  # a fix()ed parameter is an ASSERTION and carries no uncertainty
+  expect_error(admixr2:::.admSrcCov(nmd(ok, c("tcl", "bwt")), ui, "s"),
+               "ASSERTION")
+  expect_error(admixr2:::.admSrcCov(
+    nmd(matrix(c(0.0064, 0.001, -0.001, 0.0036), 2, 2), c("tcl", "tv")), ui, "s"),
+    "not symmetric")
+  expect_error(admixr2:::.admSrcCov(
+    nmd(matrix(c(0.0064, 0.01, 0.01, 0.0036), 2, 2), c("tcl", "tv")), ui, "s"),
+    "positive semi-definite")
+  # an INCOMPLETE matrix warns at generation time, because a parameter with no
+  # covariance contributes none -- which asserts the source knew it exactly
+  expect_warning(admixr2:::.admSrcCov(ok, ui, "s"), "ESTIMATES")
+  # a DIAGONAL over EVERY estimated parameter is the documented fallback for a
+  # paper that reports %RSE but no correlations, and is silent
+  full <- nmd(diag(c(0.0064, 0.0036, 1.6e-5, 1e-4)),
+              c("tcl", "tv", "add.err", "eta.cl"))
+  expect_silent(admixr2:::.admSrcCov(full, ui, "s"))
+  expect_length(admixr2:::.admSrcCov(full, ui, "s")$missing, 0L)
+  expect_null(admixr2:::.admSrcCov(NULL, ui, "s"))
+})
+
+test_that(".admSrcTheta reads the values GENERATED, not the function text", {
+  skip_if_not_installed("rxode2")
+  # the published-model idiom: ini() reads a variable, so the function text does
+  # not say what was generated. It must be visible where the model is PARSED,
+  # which is why the real one (vignettes/covariates.Rmd) assigns globally.
+  CLp <<- 7.5
+  on.exit(rm("CLp", envir = globalenv()), add = TRUE)
+  m <- function() {
+    ini({ tcl <- log(CLp); tv <- log(50); bwt <- fix(0.75)
+          eta.cl ~ 0.05; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt; v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  th <- admixr2:::.admSrcTheta(suppressMessages(rxode2::rxode2(m)))
+  expect_equal(th[["tcl"]], log(7.5), tolerance = 1e-12)
+  expect_false("bwt" %in% names(th))      # fix()ed: not estimated
+})
+
+test_that(".admSrcGroups counts a banded source as ONE contribution", {
+  mk <- function(id, cov) list(.adm_src = list(id = id, cov = cov))
+  st <- list(a1 = mk("a", diag(2)), a2 = mk("a", diag(2)),
+             a3 = mk("a", diag(2)), b1 = mk("b", diag(2)),
+             d1 = list(n = 10))                       # a data source
+  g <- admixr2:::.admSrcGroups(st)
+  expect_named(g, c("a", "b"))
+  expect_equal(g[["a"]], 1:3)      # three strata, ONE source
+  expect_equal(g[["b"]], 4L)
+  # no cov -> not a model-source contribution, it falls to the data weight
+  expect_length(admixr2:::.admSrcGroups(
+    list(x = mk("a", NULL), y = list(n = 5))), 0L)
+})
+
+test_that("the stratum resolution survives datagen, so anova can refuse", {
+  skip_if_not_installed("rxode2")
+  # .admExpandStrata() stamps `.adm_strata_nodes` on the study, but datagen's
+  # one_result() builds its output from an explicit field list -- so it used to
+  # be DROPPED, and everything downstream that reads it was silently inert:
+  # .admFinaliseFit() never recorded `strataNodes`, so anova()'s refusal to
+  # compare two fits built at different resolutions could not fire on a
+  # generated study, which is the normal path.
+  pub <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75
+          eta.cl ~ 0.05; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt; v <- exp(tv) * (WT/70)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  g <- suppressWarnings(suppressMessages(datagen(
+    list(t1 = list(times = c(1, 4, 12), ev = rxode2::et(amt = 200), n = 400,
+                   cov_dist = covDist(WT = c(mean = 78, sd = 16), dist = "lnorm"),
+                   stratify = "WT", strata_nodes = 5L,
+                   cov_range = list(WT = c(50, 115)))),
+    model = pub, control = datagenControl(method = "gh", seed = 1L))))
+  expect_length(g, 5L)
+  expect_true(all(vapply(g, function(s) identical(s[[".adm_strata_nodes"]], 5L),
+                         logical(1))))
+  # ... and an UNstratified study carries none, which is what tells the fit that
+  # every source is marginal -- the one configuration measured as invalid under
+  # covMethod = "r" (coverage 0.857 against a nominal 0.950)
+  g2 <- suppressWarnings(suppressMessages(datagen(
+    list(t1 = list(times = c(1, 4, 12), ev = rxode2::et(amt = 200), n = 400,
+                   cov_dist = covDist(WT = c(mean = 78, sd = 16), dist = "lnorm"))),
+    model = pub, control = datagenControl(method = "gh", seed = 1L))))
+  expect_null(g2$t1[[".adm_strata_nodes"]])
+})
+
+test_that("model_cov accepts a fit's own cov matrix, omega naming included", {
+  skip_if_not_installed("rxode2")
+  # The obvious thing to pass is the source fit's `$cov`, and nlmixr2 names the
+  # omega row on the REPORTING convention -- `om.eta.cl` for the variance of
+  # `eta.cl` -- while an ini() block calls that row `eta.cl`. Refusing `om.`
+  # would mean every user renaming a matrix by hand, so it is translated. The
+  # scale already agrees: both are the variance.
+  m <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bsex <- 0.05
+          eta.cl ~ 0.05; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * exp(bsex * SEX); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(m))
+  nm <- c("tcl", "tv", "bsex", "add.err", "om.eta.cl")   # exactly focei's names
+  C  <- diag(c(0.0035, 4e-6, 0.005, 1e-5, 1e-4)); dimnames(C) <- list(nm, nm)
+  got <- admixr2:::.admSrcCov(C, ui, "s")
+  expect_setequal(got$par, c("tcl", "tv", "bsex", "add.err", "eta.cl"))
+  expect_length(got$missing, 0L)                          # nothing left over
+  # an OFF-diagonal omega entry is refused rather than silently dropped --
+  # dropping it would understate, which is the dangerous direction
+  nm2 <- c(nm, "cov.eta.cl.eta.v")
+  C2  <- diag(c(diag(C), 1e-5)); dimnames(C2) <- list(nm2, nm2)
+  expect_error(admixr2:::.admSrcCov(C2, ui, "s"), "OFF-DIAGONAL")
+})

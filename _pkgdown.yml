@@ -66,6 +66,8 @@ navbar:
         - text: Meta-analysis across studies
         - text: Multiple studies
           href: articles/multiple-studies.html
+        - text: Covariates across sources
+          href: articles/covariates.html
         - text: Several outputs (plasma + brain)
           href: articles/multi-compartment.html
         - text: PD and PK/PD data
@@ -110,6 +112,7 @@ articles:
       outputs, and PD / PK-PD endpoints.
     contents:
       - multiple-studies
+      - covariates
       - multi-compartment
       - pkpd
 
@@ -131,6 +134,16 @@ reference:
       - nlmixr2Est.adgh
       - nlmixr2Est.adirmc
 
+  - title: Writing down the studies
+    desc: Transcribe a published paper, and describe who it enrolled.
+    contents:
+      - admStudy
+      - admStudies
+      - admPopulation
+      - covDist
+      - covDraw
+      - covStrata
+
   - title: Simulation
     desc: Generate aggregate data from models for simulation studies.
     contents:
@@ -151,6 +164,7 @@ reference:
     contents:
       - print.admFit
       - plot.admFit
+      - anova.admFit
 
   - title: Data
     desc: Example datasets.

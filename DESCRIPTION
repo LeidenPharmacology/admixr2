@@ -31,7 +31,9 @@ Imports:
     randtoolbox,
     Rcpp,
     rxode2 (>= 5.1.2),
-    symengine
+    stats,
+    symengine,
+    utils
 LinkingTo:
     Rcpp,
     RcppEigen
@@ -46,8 +48,10 @@ Suggests:
     mnormt,
     nlmixr2 (>= 5.0.0),
     nlmixr2data,
+    numDeriv,
     patchwork,
     rmarkdown,
+    rvinecopulib,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr
 Config/testthat/edition: 3

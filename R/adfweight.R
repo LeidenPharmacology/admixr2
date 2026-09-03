@@ -1,0 +1,1103 @@
+# =============================================================================
+# ADF weight matrix -- the sampling law of the reported summary
+# =============================================================================
+#
+# The aggregate objective scores (ybar, V) as if it were the log-likelihood of N
+# iid draws from N(yt, Vt). That is exact only when each subject's OBSERVATION
+# VECTOR is multivariate normal, and it is not: y_i = f(theta, a_i, b_i) + eps_i
+# with f nonlinear in b_i, so the marginal is a mixture over (a_i, b_i) and is
+# normal only where f is linear in both. The covariate is not what breaks it --
+# nonlinearity in the random effect alone is enough.
+#
+# What that costs is NOT the point estimates. The score is
+# -2 (dtau/dPsi)' W^-1 (t - tau) and E[t] = tau at the true Psi for ANY W
+# (Gourieroux-Monfort-Trognon), so every fit is consistent whatever the weight.
+# It costs the reported UNCERTAINTY, in two ways that differ in kind:
+#
+#   Cov(V_ij, V_kl)   assumed (V_ik V_jl + V_il V_jk)/N   true (mu4 - V V)/N
+#   Cov(ybar, vech V) assumed 0                           true mu3/N
+#
+# The first is mis-sized by the excess kurtosis. The second is a zero where a
+# real correlation of 0.3-0.6 sits: for a multivariate normal the sample mean and
+# sample covariance are exactly independent, and for anything else they are not.
+# A sample that comes out high also comes out more spread, and the current
+# objective counts the two channels as independent evidence.
+#
+# So score t = (ybar, vech V) against its own asymptotic law instead. That is
+# Browne's ADF estimator, with Omega computed FROM THE MODEL rather than
+# estimated from the sample -- which is what removes ADF's small-sample failure,
+# since the sample estimate of a fourth moment is what needs enormous N.
+# tau(Psi) is unchanged, so the covariate machinery, the shift/absorption paths
+# and the quadrature all carry over: this replaces the scoring, not the model.
+
+# Conditional central moments of the residual at every node, per timepoint.
+#
+# The node ensemble carries f; given the node the residual is a draw from the
+# endpoint's own distribution with that node's f as its mean parameter. What the
+# weight needs from it is the 2nd, 3rd and 4th CENTRAL moments -- the expansion
+# below is exact for any residual that is independent across timepoints given
+# the node, not only a normal one. Returns three Q x m matrices matching `cp`,
+# or NULL when the family cannot supply them.
+#
+# Under normality t3 = 0 and q4 = 3 d^2, and the two extra terms in the
+# expansion vanish identically, so add/prop/pow/combined stay bit-for-bit what
+# they were. lnorm does NOT: its conditional law is lognormal, and treating it
+# as normal understated the fourth moment by exactly the lognormal excess
+# kurtosis -- which is the very quantity the magnitude estimate for this whole
+# correction is written in terms of.
+#
+# Dispatch is PER ROW. A single unit has one form today (multi-output studies
+# are separate units and joint units are refused), but keying the whole matrix
+# off `form[[1]]` is a trap that costs nothing to avoid.
+.admAdfCondMom <- function(cp, arr) {
+  Q <- nrow(cp); m <- ncol(cp)
+  # ar() correlates the residual ACROSS timepoints, so the products below no
+  # longer factor and every cross term the expansion drops is real.
+  if (any(!is.na(arr$rho))) return(NULL)
+  d <- t3 <- q4 <- matrix(NA_real_, Q, m)
+  col <- function(x, j) if (length(x) == 1L) x else x[[j]]
+  for (j in seq_len(m)) {
+    f  <- cp[, j]
+    a2 <- col(arr$a2, j); b2 <- col(arr$b2, j); cc <- col(arr$cc, j)
+    vm <- col(arr$vmul, j); sz <- col(arr$csz, j); ph <- col(arr$phi, j)
+    fm <- abs(f)
+    v <- switch(as.character(arr$form[[j]]),
+      "0" = a2 + b2 * fm^(2 * cc),                     # combined2
+      "1" = (sqrt(a2) + sqrt(b2) * fm^cc)^2,           # combined1
+      NULL)
+    if (!is.null(v)) {
+      d[, j] <- v
+      if (isTRUE(all.equal(vm, 1))) {                  # normal
+        t3[, j] <- 0; q4[, j] <- 3 * v^2
+      } else {
+        # Student-t, folded in as vmul = nu/(nu-2). Symmetric, so t3 = 0; the
+        # fourth moment needs nu > 4 and there is nothing sensible to return
+        # below that -- a t_3 residual has no finite kurtosis, so the sampling
+        # law of the reported V does not have the variance the weight is made of.
+        nu <- 2 * vm / (vm - 1)
+        if (!is.finite(nu) || nu <= 4) return(NULL)
+        t3[, j] <- 0; q4[, j] <- 3 * v^2 * (nu - 2) / (nu - 4)
+      }
+      next
+    }
+    switch(as.character(arr$form[[j]]),
+      "2" = {                                          # lnorm, exact
+        # y | node ~ LogNormal(log f, sv): M1 = f exp(sv/2), w = exp(sv)
+        sv <- a2; w <- exp(sv); M1 <- f * exp(sv / 2)
+        d[, j]  <- M1^2 * (w - 1)
+        t3[, j] <- M1^3 * (w - 1)^2 * (w + 2)
+        q4[, j] <- M1^4 * (w - 1)^2 * (w^4 + 2 * w^3 + 3 * w^2 - 3)
+      },
+      "4" = {                                          # pois(f)
+        lam <- f
+        d[, j] <- lam; t3[, j] <- lam; q4[, j] <- lam + 3 * lam^2
+      },
+      "5" = {                                          # binom(N, f), N constant
+        if (!is.finite(sz)) return(NULL)
+        pp <- f; v <- sz * pp * (1 - pp)
+        d[, j]  <- v
+        t3[, j] <- v * (1 - 2 * pp)
+        q4[, j] <- v * (1 + (3 * sz - 6) * pp * (1 - pp))
+      },
+      "6" = {                                          # nbinomMu(size, f)
+        if (!is.finite(sz)) return(NULL)
+        mu <- f; k <- sz; v <- mu + mu^2 / k
+        d[, j]  <- v
+        t3[, j] <- mu * (1 + 3 * mu / k + 2 * mu^2 / k^2)
+        q4[, j] <- mu * (1 + 7 * mu / k + 12 * mu^2 / k^2 + 6 * mu^3 / k^3) +
+                   3 * v^2
+      },
+      "7" = {                                          # beta(mu, phi)
+        if (!is.finite(ph)) return(NULL)
+        al <- f * ph; be <- (1 - f) * ph; sm <- al + be
+        v  <- al * be / (sm^2 * (sm + 1))
+        sk <- 2 * (be - al) * sqrt(sm + 1) / ((sm + 2) * sqrt(al * be))
+        ku <- 3 + 6 * ((al - be)^2 * (sm + 1) - al * be * (sm + 2)) /
+                      (al * be * (sm + 2) * (sm + 3))
+        d[, j] <- v; t3[, j] <- sk * v^1.5; q4[, j] <- ku * v^2
+      },
+      "3" = {                                          # TBS, by quadrature
+        # normal on the TRANSFORMED scale, so the conditional law is a
+        # pushforward of a normal through m^-1 -- integrated on the same node
+        # grid the NLL uses (arr$nodes, i.e. resid_nodes), carried to 3rd and
+        # 4th order. See .admTBSCondMom().
+        tb <- .admTBSCondMom(f, a2, b2, cc, col(arr$lam, j), col(arr$yj, j),
+                             col(arr$tlo, j), col(arr$thi, j),
+                             isTRUE(col(arr$tbs_ftr, j)),
+                             isTRUE(col(arr$tbs_c1, j)),
+                             arr$nodes %||% .ADM_TBS_NODES)
+        d[, j] <- tb$d; t3[, j] <- tb$t3; q4[, j] <- tb$q4
+      },
+      # form 8 (ordinal) is a joint unit, refused upstream.
+      return(NULL))
+  }
+  if (!all(is.finite(d)) || !all(is.finite(t3)) || !all(is.finite(q4)))
+    return(NULL)
+  list(d = d, t3 = t3, q4 = q4)
+}
+
+# Omega / N: the asymptotic covariance of (ybar, vech V).
+#
+# REFERENCE IMPLEMENTATION. .admAdfWeightFast computes the same matrix with the
+# node contraction hoisted out of the q x q loop and is what runs; this one is
+# the readable statement of the expansion and the oracle the fast path is pinned
+# against. Keep them in step.
+#
+# `C` is the CENTRED conditional means (Q x m), `w` the node weights summing to
+# one, `Dv` the conditional residual variances (Q x m), `N` the subjects. The
+# mu3 and mu4 blocks are Isserlis/Wick expansions at the node: given the node the
+# residual is normal with diagonal covariance Dv, so every odd pairing collapses
+# and the even ones are sums of products of C and Dv.
+#
+# WHY THIS WEIGHT IS NEVER PUT INSIDE THE OBJECTIVE, which is the thing to know
+# before anyone tries.
+#
+# A two-stage form is what a Psi-dependent weight would REQUIRE: W inside
+# log|W| contributes score terms whose expectation is not zero, so the weight
+# has to be frozen at a first-stage estimate for the estimator to stay
+# consistent. Scoring the summary vector against it also needs tau's covariance
+# block aligned as (N-1)/N * Vt rather than Vt -- under the ML denominator
+# E[V] = (N-1)/N Vt, and an unaligned tau makes the estimator MORE biased than
+# the one it replaces, so that O(1/N) term is required rather than cosmetic.
+#
+# Both were implemented and neither is used, because the measurement said not
+# to: a POST-FIT SANDWICH corrects the reported uncertainty with BIT-IDENTICAL
+# point estimates, which a rewritten objective cannot promise. That is what
+# covMethod = "r,s" is, and it is why this weight is only ever the meat of
+# H^-1 J H^-1. The two functions that built the two-stage objective were
+# removed rather than left sitting unreachable; this note is what they were
+# for. (Note the separate case the sandwich CANNOT fix -- a model source's
+# C_src is a WEIGHT error, and no post-fit covariance moves a biased point
+# estimate. See .admSrcMeanCorr.)
+.admAdfWeight <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL) {
+  w  <- w / sum(w)
+  m  <- ncol(C)
+  ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  q  <- nrow(ij)
+  if (is.null(T3)) T3 <- matrix(0, nrow(C), m)
+  if (is.null(Q4)) Q4 <- 3 * Dv^2
+  dbar <- colSums(w * Dv)
+  S    <- crossprod(C, w * C); diag(S) <- diag(S) + dbar
+  dl   <- function(i, j) if (i == j) Dv[, i] else 0
+  # E[e_i e_j e_k] under conditional independence: non-zero only when all three
+  # indices coincide. Zero for a normal residual, which is why the terms guarded
+  # by tl() below have no effect on add/prop/combined.
+  tl   <- function(i, j, k) if (i == j && j == k) T3[, i] else 0
+  # E[e^4] - 3 Var^2: the excess-kurtosis correction to the one quartic case the
+  # three delta-delta products get wrong. Also identically zero under normality.
+  ke   <- function(i, j, k, l)
+    if (i == j && j == k && k == l) Q4[, i] - 3 * Dv[, i]^2 else 0
+  W    <- matrix(0, m + q, m + q)
+  W[seq_len(m), seq_len(m)] <- S / N
+  for (b in seq_len(q)) {
+    k <- ij[b, 1L]; l <- ij[b, 2L]
+    for (i in seq_len(m)) {
+      t <- C[, i] * C[, k] * C[, l] +
+           C[, i] * dl(k, l) + C[, k] * dl(i, l) + C[, l] * dl(i, k) +
+           tl(i, k, l)
+      W[i, m + b] <- W[m + b, i] <- sum(w * t) / N
+    }
+  }
+  for (a in seq_len(q)) {
+    i <- ij[a, 1L]; j <- ij[a, 2L]
+    for (b in seq_len(q)) {
+      k <- ij[b, 1L]; l <- ij[b, 2L]
+      t <- C[, i] * C[, j] * C[, k] * C[, l] +
+           C[, i] * C[, j] * dl(k, l) + C[, i] * C[, k] * dl(j, l) +
+           C[, i] * C[, l] * dl(j, k) + C[, j] * C[, k] * dl(i, l) +
+           C[, j] * C[, l] * dl(i, k) + C[, k] * C[, l] * dl(i, j) +
+           dl(i, j) * dl(k, l) + dl(i, k) * dl(j, l) + dl(i, l) * dl(j, k) +
+           C[, i] * tl(j, k, l) + C[, j] * tl(i, k, l) +
+           C[, k] * tl(i, j, l) + C[, l] * tl(i, j, k) +
+           ke(i, j, k, l)
+      W[m + a, m + b] <- (sum(w * t) - S[i, j] * S[k, l]) / N
+    }
+  }
+  W
+}
+
+# The same weight, with the node contraction done once instead of q^2 times.
+#
+# Every term in the Wick expansion is a weighted sum over nodes of a product of
+# at most four C columns and Dv columns, so each DISTINCT contraction can be
+# formed as one crossprod and the q x q assembly reduces to indexing:
+#
+#   P[, a] = C_i C_j            T1 = P' w P          the four-C term
+#   PD     = P' w Dv            A_j = C' (w Dv_j) C  one C-pair with one Dv
+#   B      = Dv' w Dv           the two-Dv terms
+#
+# Cost goes from O(q^2 Q) to O(m^3 Q + q^2), which is what makes the ceiling the
+# handoff quotes (m ~ 30, q = 465) reachable rather than theoretical.
+.admAdfWeightFast <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL) {
+  w  <- w / sum(w)
+  m  <- ncol(C)
+  ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  q  <- nrow(ij)
+  I  <- ij[, 1L]; J <- ij[, 2L]
+  dbar <- colSums(w * Dv)
+  S    <- crossprod(C, w * C); diag(S) <- diag(S) + dbar
+  # Third/fourth conditional moments. NULL means "normal", where both extra
+  # contractions are zero and every line below that touches them is a no-op --
+  # which is what keeps add/prop/combined bit-identical to the version that had
+  # no concept of them.
+  TW <- if (is.null(T3)) NULL else colSums(w * T3)              # m
+  CT <- if (is.null(T3)) NULL else crossprod(C, w * T3)         # m x m
+  KE <- if (is.null(Q4)) NULL else colSums(w * (Q4 - 3 * Dv^2)) # m
+
+  P  <- C[, I, drop = FALSE] * C[, J, drop = FALSE]     # Q x q
+  wP <- w * P
+  T1 <- crossprod(P, wP)                                # q x q
+  PD <- crossprod(P, w * Dv)                            # q x m
+  B  <- crossprod(Dv, w * Dv)                           # m x m
+  A  <- lapply(seq_len(m), function(jj) crossprod(C, (w * Dv[, jj]) * C))
+  CD <- crossprod(C, w * Dv)                            # m x m, mu3 helper
+
+  W <- matrix(0, m + q, m + q)
+  W[seq_len(m), seq_len(m)] <- S / N
+
+  # mu3: E[C_i C_k C_l] + C_i D_kl + C_k D_il + C_l D_ik
+  # matrix(): vapply DROPS to a plain vector when m == 1 (a single observation
+  # time), and M3[, b] then indexes a vector. Every other object here comes from
+  # crossprod, which keeps its dimensions.
+  CC <- matrix(vapply(seq_len(q), function(b)
+    as.numeric(crossprod(C, wP[, b])), numeric(m)), m, q)
+  M3 <- CC
+  for (b in seq_len(q)) {
+    k <- I[b]; l <- J[b]
+    # C_i D_kl  (needs k == l), then C_k D_il and C_l D_ik, whose delta fixes
+    # the ROW: the i they select is l and k respectively.
+    if (k == l) M3[, b] <- M3[, b] + CD[, k]
+    M3[l, b] <- M3[l, b] + CD[k, l]
+    M3[k, b] <- M3[k, b] + CD[l, k]
+    # E[e_i e_k e_l] survives only at i = k = l
+    if (!is.null(TW) && k == l) M3[k, b] <- M3[k, b] + TW[k]
+  }
+  W[seq_len(m), m + seq_len(q)] <- M3 / N
+  W[m + seq_len(q), seq_len(m)] <- t(M3) / N
+
+  M4 <- T1
+  eqA <- I == J
+  for (b in seq_len(q)) {
+    k <- I[b]; l <- J[b]
+    if (k == l) M4[, b] <- M4[, b] + PD[, k]
+    M4[eqA, b] <- M4[eqA, b] + PD[b, I[eqA]]
+    for (a in seq_len(q)) {
+      i <- I[a]; j <- J[a]
+      v <- 0
+      if (j == l) v <- v + A[[j]][i, k]
+      if (j == k) v <- v + A[[j]][i, l]
+      if (i == l) v <- v + A[[i]][j, k]
+      if (i == k) v <- v + A[[i]][j, l]
+      if (i == j && k == l) v <- v + B[i, k]
+      if (i == k && j == l) v <- v + B[i, j]
+      if (i == l && j == k) v <- v + B[i, j]
+      # the four C x E[eee] terms, each alive only where its own three indices
+      # coincide, and the one quartic case the delta-delta products get wrong
+      if (!is.null(CT)) {
+        if (j == k && k == l) v <- v + CT[i, j]
+        if (i == k && k == l) v <- v + CT[j, i]
+        if (i == j && j == l) v <- v + CT[k, i]
+        if (i == j && j == k) v <- v + CT[l, i]
+      }
+      if (!is.null(KE) && i == j && j == k && k == l) v <- v + KE[i]
+      M4[a, b] <- M4[a, b] + v
+    }
+  }
+  W[m + seq_len(q), m + seq_len(q)] <- (M4 - tcrossprod(S[cbind(I, J)])) / N
+  W
+}
+
+# The normal-theory weight from the same S -- what the current objective implies.
+# Kept because the difference between the two IS the correction, and a control
+# arm that reproduces the current fit is the cheapest proof the rest is wired up.
+.admAdfWeightNormal <- function(S, N) {
+  m  <- ncol(S)
+  ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  q  <- nrow(ij)
+  W  <- matrix(0, m + q, m + q)
+  W[seq_len(m), seq_len(m)] <- S / N
+  for (a in seq_len(q)) {
+    i <- ij[a, 1L]; j <- ij[a, 2L]
+    for (b in seq_len(q)) {
+      k <- ij[b, 1L]; l <- ij[b, 2L]
+      W[m + a, m + b] <- (S[i, k] * S[j, l] + S[i, l] * S[j, k]) / N
+    }
+  }
+  W
+}
+
+# The node-level quantities the weight needs, alongside the predicted moments.
+# Same path .adghMoments takes, so the two cannot describe different node sets.
+.admAdfParts <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
+  g     <- .adghGrid(pars, pinfo, grid, study)
+  if (isTRUE(g$failed)) return(NULL)   # no design here; the caller falls back
+  study <- .adghStudyCov(study, g)
+  pm    <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
+  cp    <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
+                        out_var, pm, cores, pinfo$nDisplayProgress, pinfo$sigdig)
+  sm  <- .adghStructMoments(cp, g$W)
+  arr <- .admUnitResidRows(pinfo, out_var, pars$sigma_var, length(sm$mu),
+                           phi = attr(cp, "phi"))
+  m   <- .admResidMoments(sm$mu, diag(sm$V), arr, sm$V, study$times)
+  # C carries the residual's MEAN SCALING. On an lnorm endpoint the conditional
+  # mean is f exp(s/2), not f, so an unscaled C makes the weight's own S differ
+  # from the V the objective scores against -- the two would then describe
+  # different laws. ms is 1 on every other family, so this is a no-op there.
+  cm  <- .admAdfCondMom(cp, arr)
+  # NO between-value term any more. The retired "taylor" design split V into a
+  # within-value part the node ensemble carried and a derivative part no node
+  # carried, and handing the weight only the first made every sandwich SE too
+  # small. The sparse grid is an ORDINARY grid: its own nodes carry the whole
+  # covariate spread, so C is complete by construction and the split -- with
+  # the Vx correction that had to be derived for it -- is gone.
+  list(E = m$mu, V = m$V, w = g$W / sum(g$W),
+       C  = if (is.null(m$ms)) sm$cpc else sweep(sm$cpc, 2L, m$ms, "*"),
+       Dv = cm$d, T3 = cm$t3, Q4 = cm$q4)
+}
+
+# =============================================================================
+# The sandwich: covMethod = "r,s"
+# =============================================================================
+#
+# Avar = H^-1 J H^-1,   H = d2F/dPsi dPsi' at the optimum,
+#                       J = sum_s G_s Omega_s G_s',  G_s = d2F_s/(dPsi dt_s')
+#
+# H is the Hessian of the objective ACTUALLY minimised -- the same one
+# covMethod = "r" reports -- and that is what guarantees the reduction: under
+# correct specification J = 2H, so Avar collapses to 2 H^-1 by construction
+# rather than by hope.
+#
+# AN EARLIER VERSION OF THIS USED THE GLS SURROGATE and was wrong. Eq. (1) is
+# GLS on t with the normal-theory weight only ASYMPTOTICALLY: F is LINEAR in V
+# and quadratic in ybar, while a GLS criterion is quadratic in both, so the two
+# share a score and an expected information at t = tau and nowhere else. Using
+# (G' Wn^-1 G)^-1 as the bread and dtau/dPsi as G therefore drifts by terms in
+# (t - tau) -- measured on a badly-fitting fixture as 1.0006 on a well-determined
+# structural theta rising to 1.46 on log(om^2), which is the
+# (t - tau) . d2tau/dPsi2 signature exactly.
+#
+# The cross-derivative, from F = N( log|Vt| + tr(Vt^-1 V) + r' Vt^-1 r ):
+#
+#   dF/dybar = 2N Vt^-1 r
+#     => d2F/(dPsi dybar') = 2N [ (dVt^-1/dPsi) r  -  Vt^-1 dyt/dPsi ]
+#
+#   dF/dV_ij = N (Vt^-1)_ij            (x2 for an off-diagonal vech entry)
+#     => d2F/(dPsi dV_ij) = N d(Vt^-1)_ij/dPsi      (x2 off-diagonal)
+#
+# Note what the V block does NOT contain: any dtau/dPsi. That half of F is
+# linear in V, so only d(Vt^-1)/dPsi = -Vt^-1 (dVt/dPsi) Vt^-1 survives.
+.admScoreCross <- function(E, V, dE, dV, s, N) {
+  m   <- length(E)
+  isv <- identical(s$method, "var")
+  # A `var` study is scored by nll_var_cpp, whose objective is the DIAGONAL one
+  #   sum_i N( log Vt_ii + V_ii/Vt_ii + r_i^2/Vt_ii )
+  # so dF/dV_ii = N / Vt_ii, NOT N (Vt^-1)_ii, and dF/dybar_i = 2N r_i / Vt_ii.
+  # Those coincide only when Vt is diagonal. Using the full inverse for both
+  # branches broke the information equality on exactly this branch: eigenvalues
+  # of J(Wn)/2H came out 0.06 / 0.41 / 3.29 / 1782 instead of all ones, while
+  # the cov branch was exact.
+  Vi <- if (isv) diag(1 / diag(V), m) else
+    tryCatch(chol2inv(chol(V)), error = function(e) NULL)
+  if (is.null(Vi) || !all(is.finite(Vi))) return(NULL)
+  # G IS EVALUATED AT tau, NOT AT THE OBSERVED SUMMARY, so the residual here is
+  # identically zero. This line looks like an obvious omission and is not --
+  # before "restoring" it, read algorithm/adf/HANDOFF-INFERENCE.md section 1.
+  #
+  # J is DEFINED as Var(S). Expanding the score about t = tau with
+  # delta = t - tau gives Var(S) = sum_s G_s Omega_s G_s' + O(N^-3/2) with G_s
+  # the derivative AT tau_s. Building G from the realised residual instead
+  # returns G_0 Omega G_0' + E[K delta Omega delta' K'], and that second term is
+  # a quadratic form -- non-negative -- so J comes out biased UPWARD by O(1/N),
+  # by an amount growing with the residual relative to the structural spread.
+  # Measured over 200,000 paired replicates: +0.33% at omega = 0.2 rising to
+  # +2.9% with a proportional residual, positive in every cell. Removing it also
+  # cuts sd(c_hat) by 31-35%, which is pure gain for a reported SE.
+  #
+  # Note this is NOT justified by test calibration -- both versions calibrate
+  # dOFV about equally well at these N, because the inflation is offset by
+  # variance and covariance terms of the same order. That cancellation is a
+  # coincidence of sample size. It is justified by the definition of J.
+  #
+  # `s` stays in the signature: s$method still selects the branch.
+  r  <- numeric(m)
+  p  <- length(dV)
+  ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  if (isv) ij <- ij[ij[, 1L] == ij[, 2L], , drop = FALSE]
+  G <- matrix(0, p, m + nrow(ij))
+  for (k in seq_len(p)) {
+    # on the var branch only the diagonal of dV reaches the objective
+    dVk <- if (isv) diag(diag(dV[[k]]), m) else dV[[k]]
+    dVi <- -Vi %*% dVk %*% Vi
+    G[k, seq_len(m)] <- 2 * N * (as.numeric(dVi %*% r) -
+                                 as.numeric(Vi %*% dE[, k]))
+    dup <- ifelse(ij[, 1L] == ij[, 2L], 1, 2)      # vech duplication
+    G[k, m + seq_len(nrow(ij))] <- N * dup * dVi[ij]
+  }
+  G
+}
+
+# =============================================================================
+# Model sources in the sandwich meat
+# =============================================================================
+#
+# The bread is unchanged and shared. Only the MEAT differs, because the meat is
+# the variance of the score and that depends on what is RANDOM in each block:
+#
+#   digitised data   the sufficient statistics, from n_s real patients
+#                      -> G_s Omega_s(n_s) G_s'      (.admAdfWeightFast)
+#   a published model  theta_src_hat only
+#                      -> (sum_j G_j D_j) C_src (sum_j G_j D_j)'
+#   an assertion       nothing -> zero
+#
+# The two source types scale DIFFERENTLY in their own `n` -- a data source's
+# score is an average over n_s patients so its term is linear in n_s, while a
+# model source's does not involve n_m at all -- which is why one formula cannot
+# cover both, and why applying the data weight to a generated block is the
+# defect this fixes. Measured: doing so makes the reported SE fall as exactly
+# 1/sqrt(n), 1.000/2.000/4.000/8.000 over n = 100/400/1600/6400 to four
+# significant figures, in BOTH covMethod = "r" and "r,s".
+
+# Group unit indices by source. A banded source is ONE contribution however
+# fine the banding: C_src is applied once across the stacked strata, so the
+# term has rank at most dim(theta_src) at every J. Applying it per stratum
+# would give J independent copies and let raising the resolution silently buy
+# confidence -- the covariance analogue of the sum(n_k) = n rule the objective
+# already keeps.
+.admSrcGroups <- function(studies) {
+  id <- vapply(studies, function(s) {
+    p <- s[[".adm_src"]]
+    if (is.null(p) || is.null(p$cov)) NA_character_ else as.character(p$id)
+  }, character(1))
+  ok <- !is.na(id)
+  if (!any(ok)) return(list())
+  # unname: these are INDICES into `studies`, and vapply over a named list makes
+  # which() carry the study names, which then ride into every downstream subset
+  split(unname(which(ok)), factor(id[ok], levels = unique(id[ok])))
+}
+
+# d(E_j, vech V_j) / d theta_src, by central differences on the SOURCE model.
+#
+# Differentiating the GENERATED MOMENTS, not the fit. The reply's recipe
+# differentiates theta_hat itself, which costs dim(theta_src) refits and
+# numerically differentiates an argmin -- the difference then carries the
+# optimizer's convergence tolerance. The moments are a smooth deterministic
+# function of theta_src, so this route is both cheaper (no refit at all) and
+# better conditioned, and it composes with the G the sandwich already builds:
+# d s/d theta_src = G . dt/d theta_src by the chain rule.
+#
+# The step is the central-difference optimum eps^(1/3), scaled -- see
+# R/optim-steps.R for why an exponent is not interchangeable. The generated
+# moments are deterministic (a fixed Sobol/quadrature rule), so there is no
+# noise floor to measure here, unlike the objective.
+.admSrcJac <- function(studies, idx, h_rel = .Machine$double.eps^(1 / 3)) {
+  prov <- studies[[idx[1L]]][[".adm_src"]]
+  par  <- prov$par
+  if (!length(par)) return(NULL)
+  ui0 <- tryCatch(suppressMessages(rxode2::rxode2(prov$model)),
+                  error = function(e) NULL)
+  if (is.null(ui0)) return(NULL)
+  # Rebuild this source's datagen input from the units themselves -- they carry
+  # times, ev, n and the covariate distribution, which IS the spec. Copying it
+  # at generation time would duplicate the event table, and an rxEt runs to
+  # ~130 MB.
+  spec <- lapply(idx, function(i) {
+    s <- studies[[i]]
+    Filter(Negate(is.null),
+           list(times = s$times, ev = s$ev, n = s$n,
+                cov_dist = s[["cov_dist"]], cov = s[["cov"]],
+                output = s[["output"]]))
+  })
+  names(spec) <- paste0("j", seq_along(idx))
+  gen_at <- function(nm, val) {
+    u <- ui0
+    d <- u$iniDf
+    d$est[d$name == nm] <- val
+    u$iniDf <- d
+    if (!isTRUE(all.equal(u$iniDf$est[u$iniDf$name == nm], val)))
+      stop("admixr2: the source model would not accept a perturbed value for '",
+           nm, "'.", call. = FALSE)
+    suppressWarnings(suppressMessages(
+      datagen(spec, model = u, control = prov$control)))
+  }
+  tau_of <- function(g) lapply(seq_along(idx), function(a)
+    .admTauVec(g[[a]]$E, g[[a]]$V, studies[[idx[a]]]))
+  out <- lapply(seq_along(idx), function(a)
+    matrix(0, length(.admTauVec(studies[[idx[a]]]$E, studies[[idx[a]]]$V,
+                                studies[[idx[a]]])), length(par),
+           dimnames = list(NULL, par)))
+  for (k in seq_along(par)) {
+    th <- prov$theta[[par[k]]]
+    dl <- max(abs(th), 0.1) * h_rel
+    hi <- tryCatch(tau_of(gen_at(par[k], th + dl)), error = function(e) NULL)
+    lo <- tryCatch(tau_of(gen_at(par[k], th - dl)), error = function(e) NULL)
+    if (is.null(hi) || is.null(lo)) return(NULL)
+    for (a in seq_along(idx)) {
+      d <- (hi[[a]] - lo[[a]]) / (2 * dl)
+      if (length(d) != nrow(out[[a]]) || !all(is.finite(d))) return(NULL)
+      out[[a]][, k] <- d
+    }
+  }
+  out
+}
+
+# One model source's contribution to the meat.
+#
+# `G` must already be row-subset by `keep` when H was reduced, so that this and
+# the data terms are indexed by the same parameters.
+.admSrcMeat <- function(studies, idx, G, prov) {
+  D <- .admSrcJac(studies, idx)
+  if (is.null(D)) return(NULL)
+  S <- NULL
+  for (a in seq_along(idx)) {
+    Ga <- G[[idx[a]]]
+    if (is.null(Ga) || ncol(Ga) != nrow(D[[a]])) return(NULL)
+    S <- if (is.null(S)) Ga %*% D[[a]] else S + Ga %*% D[[a]]
+  }
+  if (is.null(S)) return(NULL)
+  M <- S %*% prov$cov[colnames(D[[1L]]), colnames(D[[1L]]), drop = FALSE] %*% t(S)
+  if (!all(is.finite(M))) return(NULL)
+  (M + t(M)) / 2
+}
+
+# A summary of a model cannot make us more certain than the analyst who had
+# every patient.
+#
+# With a single model source the ADM standard error should not come out SMALLER
+# than that source's own reported one. Where our model reproduces the source's
+# the two are equal by construction, which makes the check look vacuous -- but
+# it is not, and adfo is the case that shows why. adfo LINEARISES, so its map
+# from theta_src is not the identity: it returned 0.06800 where the source
+# reported 0.08000, with its point estimate departing by 3.58e-03 while adgh's
+# departed by 1.6e-07. The calculation is right -- `G C_src G'` is the honest
+# variance of that estimator's own map -- but it is the variance of a BIASED
+# estimator, so it understates TOTAL error even though nothing is wrong with it.
+#
+# Hence a warning rather than a refusal: the number is legitimate and the reason
+# it is small is not.
+#
+# Compared BY NAME, which is the only defensible mapping. Our parameters and the
+# source's are different vectors in general; where a name appears in both, it is
+# the same quantity on the same scale, because `model_cov` is keyed to the source
+# model's `ini()` names and that is the scale nlmixr2 reports on.
+.admSrcYardstick <- function(cov, studies) {
+  if (is.null(cov) || !is.matrix(cov) || is.null(rownames(cov))) return(NULL)
+  grp <- .admSrcGroups(studies)
+  if (length(grp) != 1L) return(NULL)          # several sources: ADM may beat any one
+  prov <- studies[[grp[[1L]][1L]]][[".adm_src"]]
+  C <- prov$cov
+  if (is.null(C)) return(NULL)
+  shared <- intersect(rownames(cov), rownames(C))
+  if (!length(shared)) return(NULL)
+  # setNames, because diag() on a matrix DROPS dimnames -- indexing the result by
+  # name then gives NA for every entry and the check silently never fires
+  ours   <- sqrt(stats::setNames(diag(cov), rownames(cov))[shared])
+  theirs <- sqrt(stats::setNames(diag(C), rownames(C))[shared])
+  ok <- is.finite(ours) & is.finite(theirs) & theirs > 0
+  if (!any(ok)) return(NULL)
+  # 1% slack: the two are equal by construction in the exact case, and a
+  # quadrature or Monte-Carlo estimator lands a few tenths of a percent either
+  # side of that (measured: admc 1.005, adirmc 1.002, adgh 1.000). Firing on
+  # those would make the check noise.
+  r <- ours[ok] / theirs[ok]
+  low <- names(r)[r < 0.99]
+  if (!length(low)) return(NULL)
+  # The STUDY NAME, not names(grp)[1L]. A group is keyed by .adm_src provenance
+  # -- a content digest, optionally prefixed by the paper name -- so the
+  # warning that quoted it named the source with a 32-character hex string.
+  # Every member of this group came from one source, so its first study names
+  # it as well as anything can.
+  .nm <- names(studies)[grp[[1L]][1L]]
+  list(pars = low, ratio = r[low],
+       src = if (!is.null(.nm) && nzchar(.nm)) .nm else names(grp)[1L])
+}
+
+.admSandwich <- function(H, G, Om, extra = NULL, skip = integer(0)) {
+  Hi <- tryCatch(solve(H), error = function(e) NULL)
+  if (is.null(Hi)) return(NULL)
+  p <- nrow(H); J <- matrix(0, p, p)
+  # `skip` drops the blocks whose meat is NOT the data weight -- a generated
+  # block's (E, V) are exact functions of theta_src, not statistics from n_s
+  # patients, so Omega_s(n_s) is the wrong object for it. `extra` carries what
+  # replaces them, one term per SOURCE rather than per block.
+  for (i in setdiff(seq_along(G), skip))
+    J <- J + G[[i]] %*% Om[[i]] %*% t(G[[i]])
+  for (M in extra) J <- J + M
+  # Omega travels too: plot.admFit's covariance heatmap standardises the
+  # observed-minus-predicted residual, and its normal-theory SE is exactly what
+  # this weight replaces. Without it the diagnostic and the reported SE would
+  # describe the same model under two different sampling laws.
+  #
+  # SUBSET BY `skip`, or that sentence is false for exactly the studies it
+  # matters most for. A skipped block's Om is the data weight Omega_s(n_s),
+  # which the sandwich did NOT use -- `extra` replaced it -- so the heat map
+  # read a model source's band falling as 1/sqrt(n) beside a reported SE that
+  # is n-invariant, two laws disagreeing by a factor that grows with the
+  # declared n. That is the very discrepancy covMethod = "r,s" exists to
+  # remove. NULL for a skipped block rather than dropped, so the list stays
+  # indexed by study.
+  .Omk <- Om
+  if (length(skip)) .Omk[skip] <- list(NULL)
+  list(cov = Hi %*% J %*% Hi, bread = 2 * Hi, J = J, H = H, Om = .Omk)
+}
+
+# The summary a study actually reports, stacked: (ybar, vech V) for a full
+# covariance and (ybar, diag V) for a variance-only study.
+#
+# A `method = "var"` study is not a degenerate covariance study -- it reports
+# fewer numbers, and its weight is the corresponding MARGINAL of the full one
+# rather than a different derivation. Scoring covariances the fit never saw
+# would invent information.
+.admTauVec <- function(E, V, s) {
+  if (identical(s$method, "var")) c(as.numeric(E), diag(V))
+  else c(as.numeric(E), V[lower.tri(V, diag = TRUE)])
+}
+
+# The weight the OBJECTIVE implicitly uses -- the baseline the sandwich corrects
+# away from.
+#
+# For a `cov` study that is the normal-theory covariance of (ybar, vech V). For a
+# `var` study it is NOT the marginal of that: nll_var_cpp scores
+#   sum_i N( log v_i + V_ii/v_i + r_i^2/v_i )
+# which treats the m variances, and the m mean residuals, as INDEPENDENT. The
+# true normal-theory marginal still has Cov(V_ii, V_jj) = 2 V_ij^2 / N. So the
+# var branch's baseline is WORKING INDEPENDENCE, and that -- not kurtosis -- is
+# the bulk of what is wrong with it.
+#
+# Using the marginal here instead left eigen(J/2H) at 0.38 .. 3.26 rather than
+# all ones, i.e. it described a weight the objective does not use.
+.admWorkingWeight <- function(V, N, method) {
+  if (!identical(method, "var")) return(.admAdfWeightNormal(V, N))
+  v <- diag(V); m <- length(v)
+  W <- matrix(0, 2 * m, 2 * m)
+  W[seq_len(m), seq_len(m)] <- diag(v / N, m)
+  W[m + seq_len(m), m + seq_len(m)] <- diag(2 * v^2 / N, m)
+  W
+}
+
+# Restrict a full (m + q) weight to the rows a `var` study reports.
+.admWeightSel <- function(W, m, method) {
+  if (!identical(method, "var")) return(W)
+  ij  <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  keep <- c(seq_len(m), m + which(ij[, 1L] == ij[, 2L]))
+  W[keep, keep, drop = FALSE]
+}
+
+# d(yt)/dPsi and d(Vt)/dPsi per study, by central difference on the MOMENTS.
+#
+# These are analytic from what the gradient machinery already forms; this is the
+# reference until that extraction is written. Differencing the MOMENTS rather
+# than the objective keeps it well conditioned, and it runs once, post-fit.
+.admMomentDeriv <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
+                            h = 1e-5, mom_fn = NULL) {
+  # `mom_fn` is the ESTIMATOR's moment map, and it is separate from the ensemble
+  # the weight is built on for a reason: G describes the objective that was
+  # minimised, Omega describes the law the data actually came from. For adgh the
+  # two coincide and the default is used. For adfo they do NOT -- adfo predicts
+  # V = J Omega J' + Sigma, whose implied individual law is exactly normal, so
+  # scoring it against its own assumption would make the sandwich identically
+  # 2H^-1 and say nothing. Passing adfo's moment map here and keeping the
+  # quadrature ensemble for Omega is what makes the correction meaningful there:
+  # it scores an FO fit against the model's true nonlinear law.
+  mom <- mom_fn %||% function(pp) {
+    pars <- .admUnpack(pp, pinfo)
+    lapply(studies, function(s)
+      .admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores))
+  }
+  p  <- length(p_hat)
+  b  <- mom(p_hat)
+  dE <- lapply(b, function(x) matrix(0, length(x$E), p))
+  dV <- lapply(b, function(x) rep(list(matrix(0, nrow(x$V), ncol(x$V))), p))
+  # `h` IS RELATIVE, and has to be. An absolute 1e-5 is a different question
+  # asked of every parameter: the optimizer scale carries log-thetas at O(1)
+  # beside log(Omega_ii) that reaches -5 for a small variance and raw
+  # off-diagonal L_ij near zero, so one fixed step is a 1% perturbation of one
+  # coordinate and 1e-7 relative -- pure cancellation -- of another. The rest of
+  # the package already scales its differences this way (cov_h_outer's actual
+  # step is max(|p|, 0.1) * cov_h_outer); this was the one place that did not.
+  # The 0.1 floor keeps a parameter sitting at zero from getting a zero step.
+  for (k in seq_len(p)) {
+    hk <- h * max(abs(p_hat[k]), 0.1)
+    a  <- p_hat; a[k]  <- a[k] + hk
+    cc <- p_hat; cc[k] <- cc[k] - hk
+    ma <- mom(a); mc <- mom(cc)
+    for (i in seq_along(b)) {
+      dE[[i]][, k] <- (ma[[i]]$E - mc[[i]]$E) / (2 * hk)
+      dV[[i]][[k]] <- (ma[[i]]$V - mc[[i]]$V) / (2 * hk)
+    }
+  }
+  list(E = lapply(b, `[[`, "E"), V = lapply(b, `[[`, "V"), dE = dE, dV = dV)
+}
+
+# Post-fit sandwich covariance for a fitted parameter vector.
+#
+# `H` is the Hessian of the objective at the optimum -- the SAME one
+# covMethod = "r" reports -- passed in rather than rebuilt here, so "r,s" and
+# "r" cannot disagree about the half they share.
+#
+# Returns NULL rather than guessing whenever an ingredient is unavailable: a
+# residual outside the conditionally-normal family, a singular weight, a failed
+# moment solve. The caller falls back to "r" and says so.
+.admSandwichCov <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
+                            H, md = NULL, keep = NULL, mom_fn = NULL,
+                            sensModel = NULL) {
+  # H is checked FIRST, and here rather than being left to solve() inside .admSandwich,
+  # whose tryCatch is there for a singular matrix and cannot tell that apart from
+  # an H that was never supplied. A caller that forgot the argument then gets a
+  # silent NULL -- which reads as "the sandwich does not apply to this fit"
+  # rather than "you called it wrong", and a calibration study built on it
+  # reported numbers for replicates it had skipped entirely.
+  if (missing(H) || !is.matrix(H) || nrow(H) != ncol(H) || !all(is.finite(H)))
+    stop(".admSandwichCov: `H` must be a finite square Hessian of the objective ",
+         "at the optimum -- the same one covMethod = \"r\" inverts.", call. = FALSE)
+  pars <- tryCatch(.admUnpack(p_hat, pinfo), error = function(e) NULL)
+  if (is.null(pars)) return(NULL)
+  # A joint (same-subject, multi-output) unit stacks several outputs into one
+  # covariance. .admAdfParts solves ONE output, so its node ensemble is not the
+  # one behind that block and the Wick expansion would be taken over the wrong
+  # conditional law. Refuse rather than return a plausible wrong weight.
+  if (any(vapply(studies, function(s) isTRUE(s$is_joint), logical(1))))
+    return(NULL)
+  # Analytic first, finite differences as the fallback. .admMomentJac returns
+  # NULL rather than an approximation for any path it does not cover, so the
+  # switch is on availability, not on a tolerance.
+  #
+  # The two differ by ~7e-5 on an ODE model and NOT as a function of the FD step,
+  # so that gap is not truncation: the analytic route reads its predictions from
+  # the SENSITIVITY model and the FD route from the plain simulation model, and
+  # two separately compiled models take different adaptive steps. The sens model
+  # is the right one here -- covMethod = "r"'s Hessian is built from the
+  # analytic gradient, which reads the same model, so G and H stay consistent.
+  if (is.null(md) && is.null(mom_fn))
+    md <- tryCatch(.admMomentJac(p_hat, pinfo, studies, sensModel, rxMod,
+                                 out_var, grid, cores), error = function(e) NULL)
+  md <- md %||% tryCatch(
+    .admMomentDeriv(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
+                    mom_fn = mom_fn),
+    error = function(e) NULL)
+  if (is.null(md)) return(NULL)
+  G <- Om <- vector("list", length(studies))
+  for (i in seq_along(studies)) {
+    s  <- studies[[i]]
+    pt <- tryCatch(.admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var,
+                                grid, cores), error = function(e) NULL)
+    if (is.null(pt) || is.null(pt$Dv)) return(NULL)
+    N <- as.numeric(s$n); m <- length(pt$E)
+    Om[[i]] <- .admWeightSel(
+      .admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4), m, s$method)
+    # A SIGNED CUBATURE RULE IS NOT A PROBABILITY DISTRIBUTION. Under
+    # cov_integration = "sparse" the Smolyak combination technique gives some
+    # nodes NEGATIVE weight -- sum(W) is exactly 1 but sum|W| is 2.5 at level 3
+    # for three covariates and 4.1 for four. `sum(w * f)` is then not an
+    # expectation and `C' diag(w) C` is not a Gram matrix, so Om can come back
+    # indefinite: finite, symmetric and plausible, with the reported SEs
+    # whatever H^-1 J H^-1 makes of it. The only gate downstream is
+    # all(diag(sw$cov) > 0), which this file already records as too weak.
+    # Refuse instead: the fit falls back to the naive covariance and says so.
+    .ev <- tryCatch(eigen((Om[[i]] + t(Om[[i]])) / 2, symmetric = TRUE,
+                          only.values = TRUE)$values,
+                    error = function(e) NULL)
+    if (is.null(.ev) || !all(is.finite(.ev)) ||
+        min(.ev) < -1e-8 * max(abs(.ev), 1))
+      return(NULL)
+    G[[i]]  <- .admScoreCross(md$E[[i]], md$V[[i]], md$dE[[i]], md$dV[[i]], s, N)
+    if (is.null(G[[i]])) return(NULL)
+    # H may have been reduced to the struct+sigma sub-block (.admReduceNpdOmega),
+    # so G must lose the same rows -- G is parameter-indexed by row.
+    if (!is.null(keep)) G[[i]] <- G[[i]][keep, , drop = FALSE]
+  }
+  if (!is.null(keep) && nrow(H) != length(keep)) return(NULL)
+  # MODEL SOURCES. Their blocks leave the data sum and rejoin as one term per
+  # source, through the source's own published covariance. Done AFTER the `keep`
+  # subsetting above so both halves of the meat are indexed by the same
+  # parameters.
+  grp   <- .admSrcGroups(studies)
+  extra <- list(); skip <- integer(0); failed <- character(0); generated <- FALSE
+  for (nm in names(grp)) {
+    idx  <- grp[[nm]]
+    prov <- studies[[idx[1L]]][[".adm_src"]]
+    # AN INCOMPLETE C_src IS NOT A PARTIAL ANSWER. A parameter the source
+    # ESTIMATED but did not report a covariance for contributes zero to
+    # `G C_src G'`, which asserts the source knew it exactly -- so the reported
+    # SE comes out too SMALL, the dangerous direction, and nothing about the
+    # matrix looks wrong. Refuse, and name what is missing.
+    # Refused SILENTLY here on purpose. A warning raised inside CalcCov does not
+    # reach the user -- the nlmixr2est stack swallows it, which is why the
+    # drivers say "a NULL covariance used to be completely silent" and report
+    # from their own frame instead. The condition is a property of the INPUT,
+    # so .admSrcCov() warns at datagen time, where the user is standing when
+    # they supply the matrix and nothing can eat it.
+    if (length(prov$missing)) { failed <- c(failed, nm); next }
+    # .admSrcMeat() calls datagen(), which unloads every rxode2 model on exit.
+    # Record that it RAN, because the reload below cannot be conditioned on it
+    # having succeeded.
+    generated <- TRUE
+    M <- tryCatch(.admSrcMeat(studies, idx, G, prov), error = function(e) NULL)
+    if (is.null(M)) { failed <- c(failed, nm); next }
+    extra[[nm]] <- M; skip <- c(skip, idx)
+  }
+  # A source whose Jacobian could not be formed must not silently fall back to
+  # the data weight: that number is not an approximation of the right one, it is
+  # unrelated to it. Refuse the sandwich and let the caller say so.
+  # datagen() unloads every rxode2 model on exit, so anything the caller still
+  # holds is stale. Restore before returning -- the same rule .admLoadSensModel
+  # already follows.
+  #
+  # KEYED ON datagen() HAVING RUN, not on a source having succeeded. The old
+  # guard was `length(extra)`, which is empty when the FIRST source fails
+  # inside .admSrcMeat() -- after datagen() has already unloaded everything --
+  # so the caller got back a dead pointer on exactly the path that most needs
+  # the restore.
+  if (generated && !is.null(rxMod)) try(rxode2::rxLoad(rxMod), silent = TRUE)
+  if (length(failed)) return(NULL)
+  .admSandwich(H, G, Om, extra = extra, skip = skip)
+}
+
+# -- adfo ----------------------------------------------------------------------
+
+# A quadrature grid for the sandwich WEIGHT, sized to the number of etas.
+#
+# adfo carries no node ensemble -- that is the point of FO -- but the weight
+# needs one, because Omega is a property of the model's true nonlinear law and
+# not of the linearisation used to fit it. The grid is built once, post-fit, so
+# a node count that would be extravagant inside an optimisation loop is cheap
+# here; it is still capped, since the product grid is NQ^n_eta and a 5-eta model
+# at 9 nodes would be 59049 subjects in one solve for no accuracy that matters.
+.admSandwichGrid <- function(pinfo, max_nodes = 5000L) {
+  n_eta <- pinfo$n_eta
+  if (is.null(n_eta) || n_eta < 1L) return(NULL)
+  nq <- 9L
+  while (nq > 3L && nq^n_eta > max_nodes) nq <- nq - 2L
+  # max_nodes WAS NOT A CAP. The loop floors at nq = 3 and then built the grid
+  # anyway, so a 10-eta model produced 3^10 = 59049 nodes against a cap of
+  # 5000 -- the guard named the number it was meant to enforce and did not
+  # enforce it. There is no coarser rule than 3 nodes per dimension, so the
+  # honest answer at that point is that this model has no affordable ensemble:
+  # return NULL, which every caller already reads as "refuse the sandwich" and
+  # reports as a fall back to the naive covariance.
+  if (nq^n_eta > max_nodes) return(NULL)
+  .adghNodeGrid(nq, n_eta)
+}
+
+# adfo's own (E, V) per study -- the moment map the FO objective minimises.
+#
+# Returned in the shape .admMomentDeriv expects, so the only thing that changes
+# between estimators is this function. `V` is the full predicted covariance even
+# for a `method = "var"` study: .admScoreCross takes the diagonal itself, which
+# keeps the branch logic in one place rather than two.
+.admAdfoMomFn <- function(pinfo, studies, sensModel, rxMod, out_var,
+                          params_list, cores) {
+  function(pp) {
+    pars <- .admUnpack(pp, pinfo)
+    lapply(seq_along(studies), function(i) {
+      s   <- studies[[i]]
+      ov  <- s$output %||% out_var
+      n_t <- length(s$times)
+      arr <- .admUnitResidRows(pinfo, ov, pars$sigma_var, n_t)
+      mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
+                         params_list[[i]], cores)
+      vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta, s$times)
+      list(E = vp$mu_sigma, V = vp$V)
+    })
+  }
+}
+
+# -- Analytic moment Jacobian --------------------------------------------------
+
+# d(yt)/dPsi and d(Vt)/dPsi per study, analytically, from one sensitivity solve.
+#
+# G = d2F/(dPsi dt') is closed form in these two (see .admScoreCross), so this is
+# the only place a derivative is taken at all. Both moments are LINEAR in the raw
+# sensitivity column `graw = d(f)/dPsi`:
+#
+#   d(mu_struct)/dPsi = W' graw
+#   d(V_struct)/dPsi  = A + A',   A = cpc' diag(W) graw
+#
+# which means a parameter reached through SEVERAL paths -- a structural theta
+# that also moves the covariate shift nodes, an omega entry under absorption --
+# is handled by summing its columns before this is applied, exactly as
+# .adghGradNLL sums its `contrib()` calls. That linearity is why this does not
+# need to know which path a parameter took.
+#
+# The residual composition is then applied FORWARD, from the same
+# .admResidDeriv() partials the gradient chains BACKWARD:
+#
+#   dE      = dmu_df o dmu_s + dmu_dv0 o diag(dV_s) + dmu %*% dsig
+#   dV_ij   = ms_i ms_j dV_s_ij + (dms_i ms_j + ms_i dms_j) cov_f_ij   (i != j)
+#   dV_ii   = dv_dv0_i dV_s_ii + dv_df_i dmu_s_i + dvar_i . dsig
+#
+# Deriving this tail by hand is the seventh consumer of the residual row arrays,
+# and CLAUDE.md is explicit that the moment tail is where the misses happen --
+# so it is pinned against the finite-difference version (.admMomentDeriv) across
+# error models rather than trusted. FD stays as that oracle.
+#
+# Returns NULL, not an approximation, whenever a path is not covered: no sens
+# model, a joint unit, a degraded covariate shift, unpaired thetas without their
+# own columns, or an ar()/ordinal residual whose rmat carries an off-diagonal
+# this forward map does not model. The caller falls back to FD.
+.admMomentJac <- function(p_hat, pinfo, studies, sensModel, rxMod, out_var, grid,
+                          cores) {
+  if (is.null(sensModel)) return(NULL)
+  pars  <- tryCatch(.admUnpack(p_hat, pinfo), error = function(e) NULL)
+  if (is.null(pars) || !.admParsFinite(pars, pinfo)) return(NULL)
+  n_s   <- length(pinfo$struct_names)
+  n_e   <- length(pinfo$sigma_names)
+  n_eta <- pinfo$n_eta
+  L     <- pars$L
+  np    <- length(p_hat)
+  unpaired_k <- if (!is.null(pinfo$struct_has_eta))
+    which(!pinfo$struct_has_eta) else integer(0)
+
+  Eo <- Vo <- dEo <- dVo <- vector("list", length(studies))
+
+  for (si in seq_along(studies)) {
+    s <- studies[[si]]
+    if (isTRUE(s$is_joint)) return(NULL)
+    ov <- s$output %||% out_var
+    gS <- .adghGrid(pars, pinfo, grid, s)
+    if (isTRUE(gS$failed)) return(NULL)
+    if (isTRUE(gS$shift$degraded)) return(NULL)
+    s   <- .adghStudyCov(s, gS)
+    X   <- gS$X; W <- gS$W
+    eta <- gS$eta; colnames(eta) <- pinfo$eta_col_names
+    .sh <- gS$shift
+
+    res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s,
+                            cores, pinfo$nDisplayProgress, pars$sigma_var,
+                            pinfo$sigdig)
+    if (is.null(res)) return(NULL)
+    if (length(unpaired_k) > 0L && is.null(res$dtheta_list)) return(NULL)
+    Jl <- res$dpred_list
+
+    sm    <- .adghStructMoments(res$cp_mat, W)
+    mu    <- sm$mu; cpc <- sm$cpc; cov_f <- sm$V; var_f <- diag(cov_f)
+    m     <- length(mu)
+    # .admUnitResidRows, not the raw builder: a beta endpoint's phi comes off
+    # the solved shapes and is NA without it, so the whole Jacobian returned
+    # NaN -- which is not NULL, so the caller's FD fallback never fired and the
+    # sandwich took the NaN. .admResidRows(phi = NA) is the same trap
+    # CLAUDE.md records for the other five consumers.
+    arr   <- .admUnitResidRows(pinfo, ov, pars$sigma_var, m,
+                               phi = attr(res$cp_mat, "phi"))
+    pmres <- .admResidMoments(mu, var_f, arr, cov_f, s$times)
+    if (any(!is.finite(unlist(arr[c("a2", "b2", "cc")], use.names = FALSE))))
+      return(NULL)
+    # ar()/ordinal put an off-diagonal residual term in rmat whose sigma and mu
+    # paths this forward map does not carry. .admAdfCondMom refuses those
+    # residuals anyway; refusing here too keeps the two boundaries identical.
+    if (!is.null(pmres$rmat) && any(pmres$rmat != 0, na.rm = TRUE)) return(NULL)
+    dres  <- .admResidDeriv(mu, var_f, arr, pinfo)
+
+    # structural moments from a raw sensitivity column
+    mom <- function(graw) {
+      dmu <- as.numeric(crossprod(W, graw))
+      A   <- crossprod(cpc, W * graw)
+      # The retired Taylor design added a rank-p term here, because its V
+      # carried a derivative contribution no node did. A sparse grid is an
+      # ordinary grid, so the weighted crossproduct IS the whole covariance and
+      # this is complete -- which also removes the G/Om asymmetry that let the
+      # sandwich understate every SE under "taylor".
+      list(dmu = dmu, dV = A + t(A))
+    }
+    # forward residual composition
+    ms  <- dres$ms
+    tailf <- function(dmu_s, dV_s, dsig = NULL) {
+      dms <- dres$dms_df * dmu_s
+      dE  <- dres$dmu_df * dmu_s + dres$dmu_dv0 * diag(dV_s)
+      dgd <- dres$dv_dv0 * diag(dV_s) + dres$dv_df * dmu_s
+      if (!is.null(dsig)) {
+        dms <- dms + as.numeric(dres$dms %*% dsig)
+        dE  <- dE  + as.numeric(dres$dmu %*% dsig)
+        dgd <- dgd + as.numeric(dres$dvar %*% dsig)
+      }
+      dV <- outer(ms, ms) * dV_s +
+            (outer(dms, ms) + outer(ms, dms)) * cov_f
+      diag(dV) <- dgd
+      list(dE = dE, dV = dV)
+    }
+
+    dEi <- matrix(0, m, np)
+    dVi <- rep(list(matrix(0, m, m)), np)
+    zero <- matrix(0, nrow(res$cp_mat), m)
+
+    # --- structural thetas: every path that reaches f, summed --------------
+    for (k in seq_len(n_s)) {
+      graw <- zero
+      if (is.null(pinfo$struct_has_eta) || pinfo$struct_has_eta[k]) {
+        ei <- which(pinfo$struct_eta_idx == k)[1L]
+        if (!is.na(ei)) graw <- graw + Jl[[ei]]
+      } else {
+        Dt <- res$dtheta_list[[pinfo$struct_names[k]]]
+        if (is.null(Dt)) return(NULL)
+        graw <- graw + Dt
+      }
+      nmk <- pinfo$struct_names[k]
+      if (isTRUE(.sh$multi)) {
+        kk <- match(nmk, .sh$th_names)
+        if (!is.na(kk)) {
+          b <- .admShiftBase(Jl, .sh$eta_idx, .sh$du[, , kk, drop = FALSE])
+          if (!is.null(b)) graw <- graw + b
+        }
+      } else if (isTRUE(.sh$absorb)) {
+        if (nmk %in% colnames(.sh$dmu)) {
+          dLt <- .admCholDiff(.sh$Lt, .sh$dP[[nmk]])
+          b   <- .admAbsorbBase(Jl, X, dLt, .sh$dmu[, nmk])
+          if (!is.null(b)) graw <- graw + b
+        }
+      } else if (isTRUE(.sh$cond)) {
+        # Conditioned shift: eta is not X L', so d(eta) is carried whole in
+        # dEta_th -- the same branch .adghGrad takes, through the same helper.
+        # Without it the struct chain fell through (du_dtheta is NULL here) and
+        # the sandwich scored a Jacobian missing the shift path entirely.
+        kk <- match(nmk, .sh$th_names)
+        if (!is.na(kk)) {
+          b <- .admShiftCondBase(Jl, .sh$dEta_th[[kk]])
+          if (!is.null(b)) graw <- graw + b
+        }
+      } else if (!is.null(.sh) && !is.null(.sh$du_dtheta) &&
+                 nmk %in% colnames(.sh$du_dtheta)) {
+        dk <- .sh$du_dtheta[, nmk]
+        if (!all(dk == 0)) graw <- graw + Jl[[.sh$eta_idx]] * dk
+      }
+      mm <- mom(graw); tf <- tailf(mm$dmu, mm$dV)
+      dEi[, k] <- tf$dE; dVi[[k]] <- tf$dV
+    }
+
+    # --- sigma: no path through f, only the residual composition -----------
+    for (k in seq_len(n_e)) {
+      ds <- numeric(n_e); ds[k] <- 1
+      tf <- tailf(numeric(m), matrix(0, m, m), ds)
+      dEi[, n_s + k] <- tf$dE; dVi[[n_s + k]] <- tf$dV
+    }
+
+    # --- omega Cholesky ----------------------------------------------------
+    if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
+      i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
+      base <- if (isTRUE(.sh$cond)) {
+        # X is identically zero under conditioning, so `Jl[[i]] * X[, j]` gave
+        # an exactly zero derivative for EVERY omega parameter -- G came back
+        # finite with zero omega rows, H^-1 J H^-1 still had positive
+        # diagonals, so the `all(diag(sw$cov) > 0)` gate passed and sandwich
+        # standard errors were reported with no omega path in them.
+        .admShiftCondBase(Jl, .sh$dEta_om[[rr]])
+      } else if (isTRUE(.sh$multi)) {
+        aa <- match(i, .sh$eta_idx)
+        if (i == j && !is.na(aa))
+          .admShiftBase(Jl, .sh$eta_idx, .sh$du[, , .sh$n_th + aa, drop = FALSE])
+        else Jl[[i]] * X[, j]
+      } else if (isTRUE(.sh$absorb)) {
+        Eij <- matrix(0, n_eta, n_eta); Eij[i, j] <- 1
+        .admAbsorbBase(Jl, X, .admCholDiff(.sh$Lt, Eij %*% t(L) + L %*% t(Eij)),
+                       numeric(n_eta))
+      } else Jl[[i]] * X[, j]
+      if (is.null(base)) return(NULL)
+      mm  <- mom(base); tf <- tailf(mm$dmu, mm$dV)
+      sc  <- if (pinfo$chol_diag[rr]) L[i, i] / 2 else 1
+      pos <- n_s + n_e + rr
+      dEi[, pos] <- tf$dE * sc; dVi[[pos]] <- tf$dV * sc
+    }
+
+    Eo[[si]] <- pmres$mu; Vo[[si]] <- pmres$V
+    dEo[[si]] <- dEi;     dVo[[si]] <- dVi
+  }
+  list(E = Eo, V = Vo, dE = dEo, dV = dVo)
+}

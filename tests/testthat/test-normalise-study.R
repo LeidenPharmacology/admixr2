@@ -220,3 +220,136 @@ test_that("a second normalisation fills a JOINT unit's per-block output", {
   # row_output holds block INDICES, so it must be untouched by any of this.
   expect_identical(u2$row_output, once$observations[[1L]]$row_output)
 })
+
+test_that("every unit records the STUDY it came from", {
+  # `label` identifies a unit, `study` identifies the trial, and they are not
+  # the same thing as soon as a study has several outputs. Study-level effects
+  # -- a per-study baseline, a random study effect, within- vs between-study
+  # covariate coefficients -- all group by trial, and once units are flattened
+  # the trial is unrecoverable unless it was recorded here.
+  E <- c(1, 2); V <- diag(2); tm <- c(1, 2)
+  one <- admixr2:::.admNormaliseStudy(
+    list(E = E, V = V, n = 10L, times = tm), "trialA")
+  expect_identical(one$observations[[1L]]$study, "trialA")
+
+  multi <- admixr2:::.admNormaliseStudy(
+    list(n = 10L, ev = rxode2::et(amt = 1), observations = list(
+      plasma = list(output = "cp", times = tm, E = E, V = V),
+      csf    = list(output = "cc", times = tm, E = E, V = V))), "trialB")
+  us <- multi$observations
+  expect_true(all(vapply(us, function(u) u$study, character(1)) == "trialB"))
+  # ... while the labels stay distinct, which is the point
+  expect_equal(length(unique(vapply(us, function(u) u$label, character(1)))), 2L)
+
+  # grouping survives flattening, which is where `label` alone would lose it
+  flat <- admixr2:::.admFlattenStudies(list(trialA = one, trialB = multi))
+  g <- admixr2:::.admStudyGroups(flat)
+  expect_identical(names(g), c("trialA", "trialB"))
+  expect_identical(lengths(g), c(trialA = 1L, trialB = 2L))
+
+  # a hand-built unit that never declared a study reads as its own study,
+  # which is the right default for one unit per study
+  expect_identical(admixr2:::.admUnitStudy(list(label = "solo")), "solo")
+
+  # idempotent: normalising twice must not disturb it
+  expect_identical(
+    admixr2:::.admNormaliseStudy(one, "trialA")$observations[[1L]]$study,
+    "trialA")
+})
+
+test_that("v_denom converts a published (n-1) covariance to the ML one", {
+  # The two input types disagree about what V is: a digitised figure gives
+  # V = SD^2 with SD the UNBIASED sample SD, while cov.wt(method = "ML") and
+  # datagen() give the n covariance the likelihood is exact for. Declaring it
+  # per study is what lets one meta-analysis mix both.
+  N <- 20L; f <- (N - 1) / N
+  base <- list(E = c(10, 8, 6), n = N, times = c(1, 2, 4),
+               ev = rxode2::et(amt = 100))
+  a <- admixr2:::.admNormaliseStudy(c(base, list(V = c(4, 2.25, 1))), "s")
+  b <- admixr2:::.admNormaliseStudy(
+    c(base, list(V = c(4, 2.25, 1), v_denom = "unbiased")), "s")
+  expect_equal(diag(b$V), diag(a$V) * f)
+  expect_equal(b$v_diag, diag(b$V))          # the cached diagonal tracks it
+  expect_identical(b$v_denom, "ml")          # records that it has been applied
+
+  # idempotent: normalising twice must not convert twice
+  expect_equal(admixr2:::.admNormaliseStudy(b, "s")$V, b$V)
+
+  # a full covariance converts off-diagonals too
+  Vf <- diag(c(4, 2.25, 1)); Vf[1, 2] <- Vf[2, 1] <- 0.5
+  cf <- admixr2:::.admNormaliseStudy(c(base, list(V = Vf, v_denom = "unbiased")), "s")
+  expect_equal(cf$V, Vf * f)
+
+  # the default is unchanged behaviour
+  expect_equal(a$V, diag(c(4, 2.25, 1)))
+})
+
+test_that("v_denom reaches the paths that bypass .admNormaliseObs", {
+  # A joint study assembles its covariance in .admBuildJointUnit from the RAW
+  # blocks, so converting inside the per-observation normaliser would miss it.
+  N <- 25L; f <- (N - 1) / N; ev <- rxode2::et(amt = 100)
+  Vj <- diag(c(4, 2, 1, 0.5)); Vj[1, 3] <- Vj[3, 1] <- 0.4
+  jt <- function(vd) admixr2:::.admNormaliseStudy(list(
+    n = N, ev = ev, V = Vj, joint = TRUE, v_denom = vd,
+    observations = list(
+      plasma = list(output = "cp", times = c(1, 2), E = c(9, 7)),
+      csf    = list(output = "cc", times = c(2, 8), E = c(3, 1)))), "s")
+  ja <- jt("ml")$observations[[1L]]; jb <- jt("unbiased")$observations[[1L]]
+  expect_true(isTRUE(jb$is_joint))
+  expect_equal(jb$V, ja$V * f)               # diagonal AND cross blocks
+
+  # multi-output uses each observation's OWN n, not the study's
+  mo <- function(vd) admixr2:::.admNormaliseStudy(list(
+    n = N, ev = ev, v_denom = vd,
+    observations = list(
+      plasma = list(output = "cp", times = c(1, 2), E = c(9, 7),
+                    V = c(4, 2), n = N),
+      csf    = list(output = "cc", times = c(2, 8), E = c(3, 1),
+                    V = c(1, 0.5), n = 10L))), "s")
+  ma <- mo("ml"); mb <- mo("unbiased")
+  expect_equal(diag(mb$observations$plasma$V), diag(ma$observations$plasma$V) * f)
+  expect_equal(diag(mb$observations$csf$V),
+               diag(ma$observations$csf$V) * (10 - 1) / 10)
+})
+
+test_that("v_denom refuses what it cannot convert", {
+  base <- list(E = c(10, 8), times = c(1, 2), ev = rxode2::et(amt = 100))
+  expect_error(admixr2:::.admNormaliseStudy(
+    c(base, list(V = c(4, 2), v_denom = "unbiased")), "s"), "n")
+  expect_error(admixr2:::.admNormaliseStudy(
+    c(base, list(V = c(4, 2), n = 1L, v_denom = "unbiased")), "s"), "n > 1")
+  expect_error(admixr2:::.admNormaliseStudy(
+    c(base, list(V = c(4, 2), n = 20L, v_denom = "n-1")), "s"), "unbiased")
+})
+
+test_that("the two denominators are two spellings of the same objective", {
+  # The end-to-end property: a study whose V is on the (n-1) scale and declares
+  # it must score IDENTICALLY to the same data supplied on the ML scale. If it
+  # does not, the declaration is decorative.
+  skip_if_not_installed("rxode2")
+  N <- 18L; TM <- c(0.5, 1, 2, 4)
+  set.seed(21)
+  V_ml <- diag(c(4, 3, 2, 1)) + 0.3
+  V_ub <- V_ml * N / (N - 1)                  # the same data, other convention
+  E <- c(10, 8, 6, 4)
+  ev <- rxode2::et(amt = 100)
+  mk <- function(V, vd) list(s = list(E = E, V = V, n = N, times = TM,
+                                      ev = ev, v_denom = vd))
+  m <- function() {
+    ini({ tcl <- log(1.0); tv <- log(10); eta.cl ~ 0.09; a <- 0.5 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ add(a) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(m))
+  ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+  nll <- function(st) {
+    ctl <- adghControl(studies = st, grad = "none", n_nodes = 5L, print = 0L,
+                       covMethod = "none")
+    pin <- admixr2:::.admDriverPinfo(ui, ctl)
+    u   <- admixr2:::.admDriverUnits(st, ui, ov)
+    admixr2:::.adghNLL(admixr2:::.admBuildOptVec(pin)$p0, pin, u$studies, rx, ov,
+                       admixr2:::.adghNodeGrid(5L, pin$n_eta), 1L)
+  }
+  expect_equal(nll(mk(V_ub, "unbiased")), nll(mk(V_ml, "ml")))
+  # and declaring the wrong one must NOT be a no-op, or the field is inert
+  expect_false(isTRUE(all.equal(nll(mk(V_ub, "ml")), nll(mk(V_ml, "ml")))))
+})

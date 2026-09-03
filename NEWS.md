@@ -1,6 +1,77 @@
 # admixr2 0.4.1
 
+## Breaking changes
+
+* **Old study lists carrying `weight` or `cov_method` are refused** rather than
+  silently fitted as an unweighted sum.
+
+  Node-quadrature covariate marginalisation (`"gl"` / `"gh"` / `"taylor"`) was
+  developed and then dropped before release, so nothing shipped in 0.4.0 is
+  withdrawn here; the reasoning is kept because it is the reason the marginal
+  path is the only one.
+
+  Those methods score a study at fixed covariate values and combine the per-node
+  -2LL linearly. Given the ONE pooled `(E, V)` a publication reports, that sum is
+  `E_a[-2LL]` -- an average of log-densities, so `-2 log` of an unnormalised
+  geometric mean of densities, which is not a likelihood. Given per-node data it
+  *is* one, but only because `sum_k c_k n NLL_k` is identically
+  `sum_k n_k NLL_k` with `n_k = c_k n`: ordinary multi-study fitting with
+  quadrature weights standing in for stratum sizes. A publication reporting
+  strata reports their real sizes, which are strictly better. So the machinery
+  was redundant where it was valid and invalid where it was not.
+
+  Give each study its `cov_dist` and admixr2 marginalises over it. For summaries
+  by covariate stratum, pass the strata as ordinary studies, each with its own
+  `cov` and its own `n`.
+
 ## New features
+
+* **A paper-shaped study API.** `admStudy()` / `admStudies()` describe a source
+  the way a publication does --- the model it published, the covariance or
+  `%RSE` it reported, the cohort it enrolled --- and `print()` on the collection
+  is a pre-flight that says, per covariate, which sources condition on it, band
+  it, or marginalise over it. `admPopulation()` reads a baseline-characteristics
+  table in whichever currency the paper used (`mean`/`sd`, `median`/`iqr`, a
+  `cv` as a percent, a proportion) into the margins and correlations the
+  quadrature needs.
+
+* **A sparse-grid route for several covariates.**
+  `adghControl(cov_integration = "sparse", cov_sparse_level = )` integrates the
+  covariate distribution on a Smolyak grid instead of the product one. At four
+  covariates and a correlation of 0.85 it is 49 design points against the
+  3-node product grid's 81, and roughly 40x more accurate on both the mean and
+  the covariance --- cheaper and better, with the advantage growing in the
+  number of covariates. Correlation does not cost it: its error at rho = 0.85
+  is lower than at rho = 0.
+
+  The weights are signed (they sum to 1, but the sum of their magnitudes grows
+  with the level), so a sandwich covariance whose weight matrix comes out
+  indefinite as a result is refused rather than reported.
+
+* **Covariate marginalisation over a declared distribution**, for `admc` and
+  `adgh`. A study declares `cov_dist` (see `covDist()`) and the estimator
+  integrates the prediction over the covariate distribution as well as over the
+  random effects, collapsing the integral onto the directions the covariates
+  actually reach the model through rather than running a product grid.
+  `covStrata()` bands a source so a covariate its own model fitted contributes a
+  contrast rather than one pooled number, and `covDraw()` returns the rows a
+  design would use. `adfo` and `adirmc` refuse `cov_dist` rather than solve at
+  the covariate mean.
+
+* **A model source's own uncertainty reaches the standard errors.** A study
+  generated from a published model carries that fit's covariance, and the
+  objective is corrected for it (Woodbury form, so a fit with no model source is
+  bit-for-bit unchanged). `covMethod` defaults to `"r,s"` when any study is such
+  a source, since under `"r"` its standard error would shrink with `n`.
+
+* **`anova()` on `admFit` objects**, with a misspecification-corrected
+  likelihood-ratio test (Satorra-Bentler scaling, Ruben's series for the
+  weighted-chi-square case), plus `TIC` and `p_eff` columns where the
+  information equality fails.
+
+* **`covMethod = "r,s"`** on all four estimators: the ADF sandwich
+  `H^-1 J H^-1`, which is what makes the reported interval valid where the
+  aggregate likelihood is a quasi-likelihood rather than the truth.
 
 * **`sigdig` now controls the fit, not just the output tables -- and it is
   opt-in.** The `sigdig` and `rxControl` arguments were documented as solver

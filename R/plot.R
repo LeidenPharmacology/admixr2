@@ -314,6 +314,10 @@ head.paged_df <- function(x, n = 6L, ...) {
                     sigma_output  = rep(NA_character_, length(sv)),
                     sigma_is_prop  = as.list(grepl("prop",  sig_nms, ignore.case = TRUE)),
                     sigma_is_lnorm = as.list(grepl("lnorm", sig_nms, ignore.case = TRUE)))
+  # No cov_map is rebuilt here: every study uses the plain Omega and carries its
+  # covariates as per-row data or as a shifted eta column, neither of which
+  # needs one. .admStudyCovRows() still needs n_eta, so that stays.
+  if (is.null(pinfo_r$n_eta)) pinfo_r$n_eta <- n_eta
   # .admParseIniDf() carries no resid_nodes -- only the DRIVERS set it, from the
   # control. Restore the count the fit actually used, or the diagnostics rebuild
   # V_pred on the 81-node default and a fit run with resid_nodes = 31L (or 201L)
@@ -340,6 +344,23 @@ head.paged_df <- function(x, n = 6L, ...) {
     } else {
       eta_mat <- matrix(0, nrow = n_sim, ncol = 0)
     }
+    # ... and on the general path every simulated subject carries its own
+    # covariate value. Without this the solve succeeds AT THE COVARIATE MEAN and
+    # the residual is composed onto a var_f with the covariate spread removed,
+    # while the OBSERVED V in the same panel still carries it: predicted
+    # covariances measured 29-35% low and off-diagonals 61% low on an audited
+    # model, i.e. structured standardised residuals for a fit that is fine.
+    # A SHIFT study has .adm_cov_path == "shift", and .admStudyCovRows returns
+    # it untouched -- correct in the estimator, where the covariate's whole
+    # effect rides in the shifted eta column, and wrong here, where the etas are
+    # ordinary draws from Omega. Left as it was, every panel for such a study
+    # described a model with no covariate effect at all. The general per-row
+    # representation is always valid, just slower, and cost does not matter for
+    # one diagnostic draw.
+    if (identical(s$.adm_cov_path, "shift") && !is.null(s[["cov_dist"]]))
+      s$.adm_cov_path <- "rows"
+    s <- tryCatch(.admStudyCovRows(s, pinfo_r, nrow(eta_mat)),
+                  error = function(e) s)
     # One residual placeholder per observed output (rxerr.<output>); a
     # multi-endpoint solve needs every endpoint's rxerr present. rxSolve
     # defaults everything else (CMT, hard-coded constants).
@@ -385,8 +406,8 @@ head.paged_df <- function(x, n = 6L, ...) {
     # ordinal) were dropped, so the predicted-covariance diagnostic panel showed
     # an independent-residual V for exactly the models whose off-diagonal is the
     # point of fitting them.
-    ap  <- .admResidApply(mu, diag(V), arr, times, V)
-    list(V = .admApplyResidTail(V, ap), mu = ap$mu)
+    m <- .admResidMoments(mu, diag(V), arr, V, times)
+    list(V = m$V, mu = m$mu)
   }
 
   setNames(lapply(names(studies), function(nm) {
@@ -456,13 +477,14 @@ head.paged_df <- function(x, n = 6L, ...) {
 #'    back-transformed, sigma as SD, omega diagonal as variance labelled
 #'    `V(eta.x)`). Facets ordered as in the model `ini()` block. Restarts
 #'    coloured with the Okabe-Ito palette.
-#'
 #' @param x An `admFit` object returned by `nlmixr2()` with
 #'   `est = "adfo"`, `est = "admc"`, `est = "adgh"`, or `est = "adirmc"`.
 #' @param which Character vector selecting which panel types to produce.
-#'   Any subset of `c("mean", "cov", "nll", "par")`. Defaults to all four.
+#'   Any subset of `c("mean", "cov", "nll", "par")`. When `NULL` (default), all
+#'   four are produced.
 #' @param n_sim Number of MC samples for the final prediction. Defaults to the
-#'   value used during fitting. Only used when `"mean"` or `"cov"` is in `which`.
+#'   value used during fitting. Only used when `"mean"` or `"cov"` is in
+#'   `which`.
 #' @param seed Random seed for reproducibility.
 #' @param ... Unused.
 #'
@@ -550,9 +572,8 @@ head.paged_df <- function(x, n = 6L, ...) {
 #' }
 #'
 #' @export
-plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
-                        n_sim = NULL, seed = 1L, ...) {
-  which <- match.arg(which, c("mean", "cov", "nll", "par"), several.ok = TRUE)
+plot.admFit <- function(x, which = NULL, n_sim = NULL, seed = 1L, ...) {
+  .all_panels <- c("mean", "cov", "nll", "par")
   fit <- x
   if (!requireNamespace("ggplot2", quietly = TRUE))
     stop("ggplot2 required for plot.admFit", call. = FALSE)
@@ -561,6 +582,9 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
     stop("No admExtra/adirmcExtra on fit object", call. = FALSE)
 
   studies  <- extra$studies
+  if (is.null(which)) which <- .all_panels
+  which <- match.arg(which, .all_panels, several.ok = TRUE)
+
   n_sim    <- n_sim %||% extra$n_sim %||% 5000L
 
   need_sim_local <- any(c("mean", "cov") %in% which)
@@ -601,6 +625,11 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
 
   # -- Mean diagnostics: 2x2 grid (Obs | Pred / Residual | Standardised residual)
   # Obs/Pred: shared y scale; black mean line + point + \u00b11 SD ribbon (black, alpha 0.15).
+  # The ribbon is sqrt(diag(V_obs)) on the ML scale -- what the fit consumed --
+  # so a study declared `v_denom = "unbiased"` shows a ribbon slightly narrower
+  # than the SD read off its source figure. That is deliberate: it is compared
+  # against sqrt(diag(V_pred)), a population quantity, and pairing an (n-1)
+  # observed SD with it would build a 1/(2n) mismatch into the diagnostic.
   # Residual: raw (E_obs - mu_pred) lollipop with \u00b12 SE band (SE = sqrt(V_pred[t,t]/n)).
   # Standardised residual: z[t] = (E_obs[t] - mu[t]) / sqrt(V_pred[t,t]/n) ~ N(0,1).
   # Stars: |z| > 1.96 (*), > 2.58 (**), > 3.29 (***). Requires patchwork for 2x2.
@@ -753,15 +782,28 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
     times  <- s$times
 
     resid_mat <- s$V - V_pred
+    # SE OF THE OBSERVED-MINUS-PREDICTED COVARIANCE. The closed form below is
+    # the NORMAL-THEORY one, Var(V_ij) = (V_ii V_jj + V_ij^2)/N, which assumes
+    # the subjects behind the summary are multivariate normal -- exactly the
+    # assumption covMethod = "r,s" exists to correct. A fit carrying the
+    # model-implied sampling law uses it here too, so the diagnostic and the
+    # reported standard errors describe the same model rather than two
+    # different ones. Falls back to the closed form when the fit has no Omega
+    # (covMethod = "r"/"none", a residual outside the conditionally-normal
+    # family, a joint unit).
+    om_se <- .admHeatSE(extra$sandwich, nm, n_t, s$method)
     z_mat <- matrix(NA_real_, n_t, n_t)
     for (i in seq_len(n_t))
       for (j in seq_len(n_t)) {
-        se_ij <- if (i == j)
+        se_ij <- if (!is.null(om_se) && is.finite(om_se[i, j])) om_se[i, j]
+        else if (i == j)
           sqrt(2 * v_diag[i]^2 / (n_obs - 1L))
         else
           sqrt((v_diag[i] * v_diag[j] + V_pred[i, j]^2) / (n_obs - 1L))
         z_mat[i, j] <- resid_mat[i, j] / se_ij
       }
+    z_src <- if (!is.null(om_se) && any(is.finite(om_se)))
+      "model-implied sampling law" else "normal-theory"
 
     sig_mat <- ifelse(abs(z_mat) > 3.29, "***",
                ifelse(abs(z_mat) > 2.58, "**",
@@ -783,7 +825,8 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
       ggplot2::ggtitle("Residual", subtitle = "V_obs - V_pred")
     p_z    <- .heat_tile(df_z, z_lim, "  z", low = "#C101AC", high = "#D2D214") +
       ggplot2::ggtitle("Standardised residual",
-                       subtitle = "z = DeltaCov/SE  |  *p<.05 **p<.01 ***p<.001") +
+                       subtitle = paste0("z = DeltaCov/SE (", z_src,
+                                         ")  |  *p<.05 **p<.01 ***p<.001")) +
       ggplot2::geom_text(ggplot2::aes(label = z_label), size = 4, colour = "black", fontface = "bold")
 
     # Combined 2x2 grid first so positional extraction returns the whole panel
@@ -904,3 +947,33 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
   invisible(plots)
 }
 
+
+# Per-entry SE of the observed covariance, from the model-implied sampling law
+# a covMethod = "r,s" fit stored, or NULL when there is none to use.
+#
+# Omega's vech block holds Var(V_ij) directly, so the SE is the square root of
+# its diagonal -- no closed form and no normality assumption. A `var` study
+# reports only the diagonal, so .admWeightSel kept only those rows and the
+# off-diagonals come back NA for the caller to fill from the closed form.
+#
+# Everything is guarded on shape rather than assumed: the plot re-derives its
+# own moments and a mismatch (a study renamed, a different unit set) must fall
+# back rather than index into the wrong matrix.
+.admHeatSE <- function(sw, nm, n_t, method) {
+  if (is.null(sw) || is.null(sw$Om) || is.null(sw$study_names)) return(NULL)
+  k <- match(nm, sw$study_names)
+  if (is.na(k) || k > length(sw$Om)) return(NULL)
+  Om <- sw$Om[[k]]
+  if (is.null(Om) || !is.matrix(Om)) return(NULL)
+  ij <- which(lower.tri(diag(n_t), diag = TRUE), arr.ind = TRUE)
+  isv <- identical(method, "var")
+  if (isv) ij <- ij[ij[, 1L] == ij[, 2L], , drop = FALSE]
+  if (nrow(Om) != n_t + nrow(ij)) return(NULL)
+  out <- matrix(NA_real_, n_t, n_t)
+  d   <- diag(Om)[n_t + seq_len(nrow(ij))]
+  for (b in seq_len(nrow(ij))) {
+    if (!is.finite(d[b]) || d[b] <= 0) next
+    out[ij[b, 1L], ij[b, 2L]] <- out[ij[b, 2L], ij[b, 1L]] <- sqrt(d[b])
+  }
+  out
+}

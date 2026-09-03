@@ -1,4 +1,4 @@
-﻿# -- Control object -------------------------------------------------------------
+# -- Control object -------------------------------------------------------------
 
 #' Control settings for the ADM estimator
 #'
@@ -12,6 +12,16 @@
 #'   - `times` -- numeric vector of observation times
 #'   - `ev` -- `rxode2::et()` dosing event table
 #'   - `method` -- `"cov"` or `"var"` (optional; auto-detected from `V`)
+#'   - `v_denom` -- `"ml"` (default) or `"unbiased"`, declaring which denominator
+#'     the supplied `V` uses. The likelihood is the exact one for `n` iid draws
+#'     only under the ML (`n`) covariance, which is what `cov.wt(method = "ML")`
+#'     and [datagen()] produce. A **published** SD is the unbiased (`n - 1`) SD,
+#'     so a digitised figure gives `V = SD^2` on the `n - 1` scale: declare
+#'     `v_denom = "unbiased"` and admixr2 converts it. Declared per study, since
+#'     a meta-analysis routinely mixes a digitised source with a model-derived
+#'     one and the two need not share a denominator. At `n = 60` the factor is
+#'     1.7%; it matters more the smaller `n` is, and more again for any method
+#'     that scores the reported covariance against its own sampling law.
 #'
 #'   **Multi-compartment (multiple observed outputs).** To fit several observed
 #'   compartments simultaneously (e.g. plasma and brain/CSF), give the study an
@@ -135,6 +145,17 @@
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
 #'   If the weakly-identified omega Cholesky makes the Hessian non-positive
 #'   definite, the structural + residual sub-block is reported with a warning.
+#'
+#'   `"r,s"` adds a sandwich correction, `H^-1 J H^-1`, on the same Hessian. The
+#'   aggregate objective scores the reported mean and covariance as though the
+#'   subjects behind them were multivariate normal; they are not, because the
+#'   model is nonlinear in the random effects. `"r,s"` scores that law from the
+#'   model instead, on a quadrature ensemble rather than on this fit's own MC
+#'   draws, so the reported uncertainty carries no sampling noise of its own.
+#'   Point estimates are untouched, and under correct specification it reduces to
+#'   `"r"` exactly. Available for the conditionally-normal residual family
+#'   (`add`, `prop`, `pow`, `combined1`, `combined2`, `lnorm`) and for non-joint
+#'   studies; anything else falls back to `"r"` with a warning.
 #'
 #'   All three blocks are reported on the scale the ESTIMATES are printed on, as
 #'   `nlmixr2est` does: structural thetas on the log/optimizer scale, residual
@@ -268,7 +289,7 @@ admControl <- function(
     cov_h       = 1e-3,
     cov_h_outer = .Machine$double.eps^(1/5),
     grad_bounds = 5,
-    covMethod   = c("r", "none"),
+    covMethod   = c("r", "r,s", "none"),
     cov_n_sim   = 10000L,
     n_restarts  = 1L,
     restart_sd  = 0.5,
@@ -287,7 +308,6 @@ admControl <- function(
     # LAST on purpose: inserting an argument mid-signature silently rebinds every
     # positional call -- admControl(studies, 20000L) used to set n_sim = 20000.
     resid_nodes = 81L,
-    # ... and this one after it, for the same reason.
     ...) {
 
   .xtra <- list(...)
@@ -318,7 +338,10 @@ admControl <- function(
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
   checkmate::assertNumeric(grad_bounds, lower = 0,  len = 1, .var.name = "grad_bounds")
-  covMethod <- match.arg(covMethod)
+  # A model source needs the sandwich to see its own C_src -- see
+  # .admResolveCovMethod(). An explicit covMethod is honoured untouched.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
   checkmate::assertIntegerish(cov_n_sim,   lower = 1L, len = 1, .var.name = "cov_n_sim")
   checkmate::assertIntegerish(n_restarts,  lower = 1L, len = 1, .var.name = "n_restarts")
   checkmate::assertNumeric(restart_sd,     lower = 0,  len = 1, .var.name = "restart_sd")
@@ -454,8 +477,16 @@ nmObjGetControl.admc <- function(x, ...) {
     # already does). A 0-column eta_mat flows correctly through .admSimulate and the
     # n_eta-indexed kernels (all seq_len(0) no-ops). For n_eta > 0 this is identical.
     eta_mat <- if (pinfo$n_eta > 0L) {
-      .em <- z %*% t(pars$L); colnames(.em) <- pinfo$eta_col_names; .em
+      .em <- z %*% t(pars$L)
+      colnames(.em) <- pinfo$eta_col_names; .em
     } else matrix(0, nrow(z), 0L)
+    # Covariate marginalisation, by the path chosen in .admCheckCovariates().
+    # admc has ONE path: every subject carries its own covariate value, so rxode2
+    # evaluates the whole model whatever the covariate touches. (adgh
+    # additionally offers a shift path, which needs a deterministic node grid.)
+    if (identical(s$.adm_cov_path, "rows")) {
+      s <- .admStudyCovRows(s, pinfo, nrow(eta_mat))
+    }
 
     # Joint (same-subject) unit: one shared-eta solve produces every output;
     # score the stacked vector with a single MVN over the joint covariance.
@@ -497,15 +528,11 @@ nmObjGetControl.admc <- function(x, ...) {
     } else {
       # everything else: assemble the moments in R (form-agnostic), then score
       # with the plain kernels. See .admResidCppOK() for why.
-      mu_s <- colMeans(cp_mat)
-      cpc  <- sweep(cp_mat, 2L, mu_s)
-      Vs   <- crossprod(cpc) / nrow(cp_mat)
-      ap   <- .admResidApply(mu_s, diag(Vs), ar, s$times, Vs)
+      m <- .admResidSampleMoments(cp_mat, ar, s$times)
       if (identical(s$method, "var")) {
-        nll2 <- nll2 + nll_var_cpp(as.numeric(s$E), s$v_diag, ap$mu, ap$dv, s$n)
+        nll2 <- nll2 + nll_var_cpp(as.numeric(s$E), s$v_diag, m$mu, m$dv, s$n)
       } else {
-        Vp <- .admApplyResidTail(Vs, ap)
-        nll2 <- nll2 + nll_cov_cpp(as.numeric(s$E), s$V, ap$mu, Vp, s$n)
+        nll2 <- nll2 + nll_cov_cpp(as.numeric(s$E), s$V, m$mu, m$V, s$n)
       }
     }
     if (!is.finite(nll2)) return(Inf)
@@ -534,6 +561,42 @@ nmObjGetControl.admc <- function(x, ...) {
     }
   }, double(1))
 }
+# The eta + omega-Cholesky gradient contribution, from the C++ kernel.
+#
+# THIS EXISTS BECAUSE THE CALL CARRIES TWO TRAPS AND WAS SPELLED OUT AT THREE
+# SITES -- .admGrad's sens branch, its CRN-FD branch, and .admGradBatch. Both
+# traps are in CLAUDE.md because both have already been paid for:
+#
+#   * The `eta_mat` argument must be `sweep(z, 2L, diag(L) / 2, "*")`, NOT
+#     `eta_mat`. The diagonal Cholesky entries are optimised as log(Omega_ii),
+#     so d(L_ii)/dp is L_ii/2 and the correct scale is z[, i] * L_ii / 2;
+#     passing the eta matrix gives L_ii * z[, i], which is exactly 2x too
+#     large. One copy left un-swept is a gradient that is 2x wrong on one path
+#     and right on the others.
+#   * `neta1`/`neta2` must be FULL INTEGER VECTORS. A scalar silently
+#     truncates `omega_grad` to length 1, so every omega parameter after the
+#     first contributes nothing.
+#
+# The var/cov dispatch rides along because it selects which kernel reads
+# dNLL_dV as a diagonal and which reads it as a matrix -- a third thing that
+# has to agree across the three sites. Only the ACCUMULATION differs between
+# them (grad[] against grad_acc[ci, ]), so that stays at the call site.
+.admEtaOmegaGrad <- function(cp_c, D_mat, z, L, dNLL_dV, dNLL_dmu,
+                             sigma_mu_scale, eta_rows_df, n_t, n_eta,
+                             is_var = FALSE) {
+  z_diag_scale <- sweep(z, 2L, diag(L) / 2, "*")
+  neta1 <- as.integer(eta_rows_df$neta1)
+  neta2 <- as.integer(eta_rows_df$neta2)
+  if (is_var)
+    adm_grad_eta_omega_var_cpp(cp_c, D_mat, z_diag_scale, z,
+                               dNLL_dV, dNLL_dmu, sigma_mu_scale,
+                               neta1, neta2, n_t, n_eta)
+  else
+    adm_grad_eta_omega_cpp(cp_c, D_mat, z_diag_scale, z,
+                           dNLL_dV, dNLL_dmu, sigma_mu_scale,
+                           neta1, neta2, n_t, n_eta)
+}
+
 
 # -- Gradient (forward / central FD + sensitivity) -----------------------------
 
@@ -588,6 +651,19 @@ nmObjGetControl.admc <- function(x, ...) {
     eta_mat <- if (pinfo$n_eta > 0L) {          # zero-eta guard -- see .admNLL
       .em <- z %*% t(pars$L); colnames(.em) <- eta_col_names; .em
     } else matrix(0, nrow(z), 0L)
+    # Covariate marginalisation, "rows" path only (the collapse and u-quantile
+    # move Omega / the eta column themselves, which the chain rules below do not
+    # yet carry -- .admCheckCovariates refuses a gradient for those).
+    #
+    # Nothing else has to change here: on this path the covariate is DATA, a
+    # per-row column of the params frame like a time-varying covariate. The sens
+    # model's d(pred)/d(theta) columns are evaluated at each row's own covariate
+    # value, and a covariate coefficient is an unpaired struct theta that already
+    # gets its own THETA_j direction. .admCovRowsFor is deterministic given
+    # (cov_dist, n, n_eta), so these are the SAME rows the NLL used -- which is
+    # what keeps the common-random-numbers gradient valid.
+    if (identical(s$.adm_cov_path, "rows"))
+      s <- .admStudyCovRows(s, pinfo, nrow(eta_mat))
 
     unpaired_k <- which(vapply(pinfo$struct_names, function(nm)
       is.null(pinfo$struct_has_eta) || !isTRUE(pinfo$struct_has_eta[nm]), logical(1)))
@@ -623,25 +699,19 @@ nmObjGetControl.admc <- function(x, ...) {
       # sigma mu-path coupling and sigma gradient, each on its output's rows.
       arr <- .admResidRows(pinfo, .admRowOutput(s, n_t), pars$sigma_var, n_t)
       .rt_j <- .admRowTimes(s, n_t)
-      .dres <- .admResidDeriv(mu_struct, var_f, arr, pinfo)   # once, reused below
-      sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
-                                            dNLL_dV_diag, dNLL_dmu, var_f,
-                                            dNLL_dV, V_struct, .rt_j, deriv = .dres)
-      # V_pred -> V_struct chain (see the single-output branch below)
-      vchain     <- .admResidVChain(mu_struct, var_f, arr, pinfo,
-                                    .admRowTimes(s, length(mu_struct)), deriv = .dres)
-      dNLL_dV_s  <- dNLL_dV * vchain
-      diag(dNLL_dV_s) <- diag(dNLL_dV_s) +
-        dNLL_dmu * (attr(vchain, "dmu_dv0") %||% numeric(n_t))
+      # ONE moment tail for this unit: .admResidDeriv once, the V_pred ->
+      # V_struct chain, the TBS mean-from-covariance diagonal fold, and both
+      # parameter contractions -- see .admResidChain().
+      ch <- .admResidChain(mu_struct, var_f, arr, pinfo, dNLL_dmu, dNLL_dV_diag,
+                           dNLL_dV, V_struct, .rt_j)
+      sigma_mu_scale <- ch$mu_coupling()
+      dNLL_dV_s      <- ch$dV
 
       if (n_eta > 0L) {
         eta_rows_df  <- pinfo$eta_rows_df
         D_mat        <- do.call(cbind, dpred_list)
-        z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
-        go <- adm_grad_eta_omega_cpp(
-          cp_c, D_mat, z_diag_scale, z, dNLL_dV_s, dNLL_dmu, sigma_mu_scale,
-          as.integer(eta_rows_df$neta1), as.integer(eta_rows_df$neta2),
-          n_t, n_eta)
+        go <- .admEtaOmegaGrad(cp_c, D_mat, z, pars$L, dNLL_dV_s, dNLL_dmu,
+                               sigma_mu_scale, eta_rows_df, n_t, n_eta)
         for (j in seq_len(n_eta))
           if (!is.null(pinfo$struct_eta_idx) && !is.na(pinfo$struct_eta_idx[j]))
             grad[pinfo$struct_eta_idx[j]] <- grad[pinfo$struct_eta_idx[j]] + go$eta_grad[j]
@@ -652,9 +722,7 @@ nmObjGetControl.admc <- function(x, ...) {
         }
       }
 
-      grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-        .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                    dNLL_dV, .rt_j, V_struct, deriv = .dres)
+      grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] + ch$sigma_grad()
 
       # Unpaired struct thetas. The augmented sens model carries d(pred)/d(theta)
       # directly (js$dtheta_list): it enters exactly like an eta direction, so the
@@ -723,6 +791,7 @@ nmObjGetControl.admc <- function(x, ...) {
       for (nm in names(pars$struct)) pdf_big[, nm] <- pars$struct[nm]
       for (nm in pinfo$sigma_names)  pdf_big[, nm] <- 0
       if (n_eta > 0L) pdf_big[seq_len(n_sim), eta_col_names] <- eta_mat
+      pdf_big <- .admCovColsTiled(pdf_big, rxMod$params, s, n_sim, n_runs)
 
       # eta perturbation rows
       if (n_eta > 0L) {
@@ -839,18 +908,18 @@ nmObjGetControl.admc <- function(x, ...) {
     cov_f  <- NULL                                   # only the cov branch has one
     if (is_var) {
       var_f <- adm_col_sq_sum_cpp(cp_c) / n_sim      # Var_eta(f), pre-residual
-      ap <- .admResidApply(mu_struct, var_f, arr)
-      mu <- ap$mu; pv <- ap$dv
+      # No times/cov_f on the diagonal path -- .admResidMoments() enforces it.
+      pm <- .admResidMoments(mu_struct, var_f, arr)
+      mu <- pm$mu; pv <- pm$dv
       r  <- as.numeric(s$E) - mu
       dNLL_dmu     <- s$n * as.numeric(-2 * r / pv)
       dNLL_dV_diag <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
     } else {
       cov_f <- crossprod(cp_c) / n_sim               # STRUCTURAL Cov_eta(f); keep it,
-      V  <- cov_f                                    # the ms/sigma chain needs it
-      var_f <- diag(V)                               # Var_eta(f), pre-residual
-      ap <- .admResidApply(mu_struct, var_f, arr, s$times, cov_f)
-      mu <- ap$mu
-      V  <- .admApplyResidTail(V, ap)
+      var_f <- diag(cov_f)                           # the ms/sigma chain needs it
+      pm <- .admResidMoments(mu_struct, var_f, arr, cov_f, s$times)
+      mu <- pm$mu
+      V  <- pm$V
       r  <- as.numeric(s$E) - mu
       cholV <- tryCatch(chol(V), error = function(e) NULL)
       if (is.null(cholV)) return(rep(NA_real_, length(p)))
@@ -863,11 +932,9 @@ nmObjGetControl.admc <- function(x, ...) {
     # sigma_mu_scale: how the residual couples a change in mu_struct into the
     # objective (lnorm mean scaling + the residual variance's dependence on mu).
     # Computed once per study and reused across every gradient term.
-    .dres <- .admResidDeriv(mu_struct, var_f, arr, pinfo)   # once, reused across terms
-    sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
-                                          dNLL_dV_diag, dNLL_dmu, var_f,
-                                          if (is_var) NULL else dNLL_dV, cov_f,
-                                          s$times, deriv = .dres)
+    ch <- .admResidChain(mu_struct, var_f, arr, pinfo, dNLL_dmu, dNLL_dV_diag,
+                         if (is_var) NULL else dNLL_dV, cov_f, s$times)
+    sigma_mu_scale <- ch$mu_coupling()
     eff_dmu <- dNLL_dmu + sigma_mu_scale
     inv_n <- 1 / n_sim
 
@@ -879,35 +946,20 @@ nmObjGetControl.admc <- function(x, ...) {
     # the eta/omega/theta gradients silently assume d(V_pred)/d(V_struct) = I,
     # which is true only for purely additive error (chain == identity there, so
     # add() models are bit-identical).
-    vchain <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times, deriv = .dres)
-    # TBS only: mu depends on Var_eta(f), so the mean contributes to the same
-    # d(var_f)/d(param) the kernels already chain. Zero for every other form.
-    .dmv <- attr(vchain, "dmu_dv0") %||% numeric(n_t)
-    dNLL_dV_diag_s <- dNLL_dV_diag * diag(vchain) + dNLL_dmu * .dmv
-    if (!is_var) {
-      dNLL_dV_s <- dNLL_dV * vchain
-      diag(dNLL_dV_s) <- diag(dNLL_dV_s) + dNLL_dmu * .dmv
-    }
+    # ch$dV_diag / ch$dV already carry the TBS mean-from-covariance term: mu
+    # depends on Var_eta(f), which folds onto the diagonal. Zero for every other
+    # form, so add() stays bit-identical.
+    dNLL_dV_diag_s <- ch$dV_diag
+    if (!is_var) dNLL_dV_s <- ch$dV
 
     # Eta + omega gradient: one C++ call; var variant avoids n_txn_t intermediates.
     if (n_eta > 0L) {
       eta_rows_df  <- pinfo$eta_rows_df
       D_mat        <- do.call(cbind, dpred_list)
-      z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
-      neta1 <- as.integer(eta_rows_df$neta1)
-      neta2 <- as.integer(eta_rows_df$neta2)
-      go <- if (is_var)
-        adm_grad_eta_omega_var_cpp(
-          cp_c, D_mat, z_diag_scale, z,
-          dNLL_dV_diag_s, dNLL_dmu, sigma_mu_scale,
-          neta1, neta2,
-          n_t, n_eta)
-      else
-        adm_grad_eta_omega_cpp(
-          cp_c, D_mat, z_diag_scale, z,
-          dNLL_dV_s, dNLL_dmu, sigma_mu_scale,
-          neta1, neta2,
-          n_t, n_eta)
+      go <- .admEtaOmegaGrad(cp_c, D_mat, z, pars$L,
+                             if (is_var) dNLL_dV_diag_s else dNLL_dV_s,
+                             dNLL_dmu, sigma_mu_scale, eta_rows_df,
+                             n_t, n_eta, is_var)
       for (j in seq_len(n_eta)) {
         if (!is.null(pinfo$struct_eta_idx) && !is.na(pinfo$struct_eta_idx[j]))
           grad[pinfo$struct_eta_idx[j]] <- grad[pinfo$struct_eta_idx[j]] + go$eta_grad[j]
@@ -967,6 +1019,7 @@ nmObjGetControl.admc <- function(x, ...) {
           nm   <- pinfo$struct_names[unpaired_k[bi]]
           pdf_hi[rows, nm] <- pars$struct[nm] + .admGH(h, unpaired_k[bi])
         }
+        pdf_hi <- .admCovColsTiled(pdf_hi, rxMod$params, s, n_sim, n_unp)
         out_hi  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                     events = s$ev_full, cores = cores,
                                     nDisplayProgress = pinfo$nDisplayProgress,
@@ -1011,9 +1064,7 @@ nmObjGetControl.admc <- function(x, ...) {
       }
     }
 
-    grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
-      .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                    if (is_var) NULL else dNLL_dV, s$times, cov_f, deriv = .dres)
+    grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] + ch$sigma_grad()
   }
 
   grad
@@ -1075,10 +1126,32 @@ nmObjGetControl.admc <- function(x, ...) {
         rows <- (cii - 1L) * n_sim + seq_len(n_sim)
         for (nm in pinfo$struct_names) pdf_mat[rows, nm] <- pars$struct[nm]
         if (pinfo$n_eta > 0L) {
+          # Same effective Cholesky the NLL uses, or the post-fit Hessian is of a
+          # different objective than the one that was minimised.
           eta_mat <- z %*% t(pars$L)
           pdf_mat[rows, pinfo$eta_col_names] <- eta_mat
         }
       }
+      # Covariates. This USED to sit inside the loop above as
+      #   for (.cn in intersect(colnames(.cr), colnames(pdf_mat))) ...
+      # which is a silent no-op: .admMakeParamsList() builds struct + eta +
+      # sigma + rxerr columns only, so the intersect was always empty and the
+      # covariate column was never created. rxSolve then failed on the missing
+      # parameter, the failure was swallowed by the tryCatch below into
+      # finite[ci] <- FALSE, and .admCalcCov reported a non-finite HESSIAN --
+      # naming the symptom, not the cause. Net effect: covMethod = "r" returned
+      # no covariance at all for any admc covariate fit.
+      # .admCovColsTiled() reads s$cov_rows, which only .admGrad set; the batch
+      # paths never did, so it would have tiled NULL and stayed a no-op.
+      s       <- .admStudyCovRows(s, pinfo, n_sim)
+      # n_chunk, NOT n_c: pdf_mat holds this CHUNK's configurations, and the
+      # loop above chunks at `chunk_size` (30). Passing the total tiled the
+      # covariate rows to n_c * n_sim against a frame of n_chunk * n_sim, which
+      # .admCovCols refuses outright rather than recycle -- so any admc covariate
+      # fit whose Hessian needs more than 30 points died at its last step. The
+      # point count is 2*np_cov + 4*n_off, so four reported parameters was
+      # enough, and covMethod = "r" routes EVERY admc covariate fit here.
+      pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim, n_chunk)
 
       out <- tryCatch(
         rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
@@ -1134,15 +1207,11 @@ nmObjGetControl.admc <- function(x, ...) {
             nll_cov_from_samples_cpp(cp, as.numeric(s$E), s$V,
                                      s$n, ar$form, ar$a2, ar$b2, ar$cc)
         } else {
-          mu_s <- colMeans(cp)
-          cpc  <- sweep(cp, 2L, mu_s)
-          Vs   <- crossprod(cpc) / nrow(cp)
-          ap   <- .admResidApply(mu_s, diag(Vs), ar, s$times, Vs)
+          m <- .admResidSampleMoments(cp, ar, s$times)
           if (identical(s$method, "var")) {
-            nll_var_cpp(as.numeric(s$E), s$v_diag, ap$mu, ap$dv, s$n)
+            nll_var_cpp(as.numeric(s$E), s$v_diag, m$mu, m$dv, s$n)
           } else {
-            Vp <- .admApplyResidTail(Vs, ap)
-            nll_cov_cpp(as.numeric(s$E), s$V, ap$mu, Vp, s$n)
+            nll_cov_cpp(as.numeric(s$E), s$V, m$mu, m$V, s$n)
           }
         }
         if (is.finite(nll_ci)) nlls[ci] <- nlls[ci] + nll_ci
@@ -1275,6 +1344,11 @@ nmObjGetControl.admc <- function(x, ...) {
       # dev-mode daemon, which cannot ADD bindings to the installed namespace)
       for (nm in names(sensModel$fixed_theta))
         inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
+      # Covariates, tiled per configuration block (see .admNLLBatch). Covariate
+      # names are model parameters, so they are NOT in the sens model's rename
+      # map -- match against sensModel$mod$params, not rxMod$params.
+      s        <- .admStudyCovRows(s, pinfo, n_sim)
+      inner_df <- .admCovColsTiled(inner_df, sensModel$mod$params, s, n_sim, n_c)
       # do.call + sensModel$solve_args: DDE sensitivity solves are forced onto pure
       # dop853 (see .admLoadSensModel); NULL, hence a no-op, for every other model.
       out <- tryCatch(
@@ -1336,6 +1410,10 @@ nmObjGetControl.admc <- function(x, ...) {
           pars <- pars_list[[ci]]
           for (nm in names(pars$struct)) pdf_mat[rows, nm] <- pars$struct[nm]
         }
+        # covariates, tiled across the configuration blocks (see .admNLLBatch)
+        s       <- .admStudyCovRows(s, pinfo, n_sim)
+        pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim,
+                                    nrow(pdf_mat) %/% n_sim)
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
                                          nDisplayProgress = pinfo$nDisplayProgress,
@@ -1388,6 +1466,10 @@ nmObjGetControl.admc <- function(x, ...) {
             }
           }
         }
+        # covariates, tiled across the configuration blocks (see .admNLLBatch)
+        s       <- .admStudyCovRows(s, pinfo, n_sim)
+        pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim,
+                                    nrow(pdf_mat) %/% n_sim)
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
                                          nDisplayProgress = pinfo$nDisplayProgress,
@@ -1452,6 +1534,8 @@ nmObjGetControl.admc <- function(x, ...) {
         nm_u <- pinfo$struct_names[unpaired_k[bi]]
         pdf_hi[rows, nm_u] <- pars$struct[nm_u] + .admGH(h, unpaired_k[bi])
       }
+      s      <- .admStudyCovRows(s, pinfo, n_sim)
+      pdf_hi <- .admCovColsTiled(pdf_hi, rxMod$params, s, n_sim, n_cu)
       out_hi <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                           events = s$ev_full, cores = cores,
                                           nDisplayProgress = pinfo$nDisplayProgress,
@@ -1513,18 +1597,17 @@ nmObjGetControl.admc <- function(x, ...) {
       cov_f  <- NULL
       if (is_var) {
         var_f <- adm_col_sq_sum_cpp(cp_c) / n_sim
-        ap <- .admResidApply(mu_struct, var_f, arr)
-        mu <- ap$mu; pv <- ap$dv
+        pm <- .admResidMoments(mu_struct, var_f, arr)   # no times/cov_f: var path
+        mu <- pm$mu; pv <- pm$dv
         r  <- as.numeric(s$E) - mu
         dNLL_dmu     <- s$n * as.numeric(-2 * r / pv)
         dNLL_dV_diag <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
       } else {
         cov_f <- crossprod(cp_c) / n_sim               # keep the STRUCTURAL cov
-        V  <- cov_f
-        var_f <- diag(V)
-        ap <- .admResidApply(mu_struct, var_f, arr, s$times, cov_f)
-        mu <- ap$mu
-        V  <- .admApplyResidTail(V, ap)
+        var_f <- diag(cov_f)
+        pm <- .admResidMoments(mu_struct, var_f, arr, cov_f, s$times)
+        mu <- pm$mu
+        V  <- pm$V
         r  <- as.numeric(s$E) - mu
         cholV <- tryCatch(chol(V), error = function(e) NULL)
         if (is.null(cholV)) { valid[ci] <- FALSE; next }
@@ -1534,40 +1617,22 @@ nmObjGetControl.admc <- function(x, ...) {
         dNLL_dV_diag <- diag(dNLL_dV)
       }
 
-      .dres <- .admResidDeriv(mu_struct, var_f, arr, pinfo)   # once, reused across terms
-      sigma_mu_scale <- .admResidMuCoupling(mu_struct, arr, pinfo,
-                                            dNLL_dV_diag, dNLL_dmu, var_f,
-                                            if (is_var) NULL else dNLL_dV, cov_f,
-                                            s$times, deriv = .dres)
+      # The same moment tail .admGrad() builds -- one object, not a second copy.
+      ch <- .admResidChain(mu_struct, var_f, arr, pinfo, dNLL_dmu, dNLL_dV_diag,
+                           if (is_var) NULL else dNLL_dV, cov_f, s$times)
+      sigma_mu_scale <- ch$mu_coupling()
       eff_dmu <- dNLL_dmu + sigma_mu_scale
       inv_n <- 1 / n_sim
-      # V_pred -> V_struct chain (see .admGrad)
-      vchain <- .admResidVChain(mu_struct, var_f, arr, pinfo, s$times, deriv = .dres)
-      .dmv <- attr(vchain, "dmu_dv0") %||% numeric(n_t)
-      dNLL_dV_diag_s <- dNLL_dV_diag * diag(vchain) + dNLL_dmu * .dmv
-      if (!is_var) {
-        dNLL_dV_s <- dNLL_dV * vchain
-        diag(dNLL_dV_s) <- diag(dNLL_dV_s) + dNLL_dmu * .dmv
-      }
+      dNLL_dV_diag_s <- ch$dV_diag
+      if (!is_var) dNLL_dV_s <- ch$dV
 
       if (n_eta > 0L) {
         D_mat        <- do.call(cbind, dpred_list)
         eta_rows_df  <- pinfo$eta_rows_df
-        z_diag_scale <- sweep(z, 2L, diag(pars$L) / 2, "*")
-        neta1 <- as.integer(eta_rows_df$neta1)
-        neta2 <- as.integer(eta_rows_df$neta2)
-        go <- if (is_var)
-          adm_grad_eta_omega_var_cpp(
-            cp_c, D_mat, z_diag_scale, z,
-            dNLL_dV_diag_s, dNLL_dmu, sigma_mu_scale,
-            neta1, neta2,
-            n_t, n_eta)
-        else
-          adm_grad_eta_omega_cpp(
-            cp_c, D_mat, z_diag_scale, z,
-            dNLL_dV_s, dNLL_dmu, sigma_mu_scale,
-            neta1, neta2,
-            n_t, n_eta)
+        go <- .admEtaOmegaGrad(cp_c, D_mat, z, pars$L,
+                               if (is_var) dNLL_dV_diag_s else dNLL_dV_s,
+                               dNLL_dmu, sigma_mu_scale, eta_rows_df,
+                               n_t, n_eta, is_var)
         for (j in seq_len(n_eta)) {
           if (!is.null(pinfo$struct_eta_idx) && !is.na(pinfo$struct_eta_idx[j]))
             grad_acc[ci, pinfo$struct_eta_idx[j]] <- grad_acc[ci, pinfo$struct_eta_idx[j]] + go$eta_grad[j]
@@ -1604,8 +1669,7 @@ nmObjGetControl.admc <- function(x, ...) {
       # position, zero for sigmas belonging to other endpoints. That is what keeps
       # a second endpoint's sigma gradient out of the first endpoint's slot.
       grad_acc[ci, n_s + seq_len(n_e)] <- grad_acc[ci, n_s + seq_len(n_e)] +
-        .admSigmaGrad(mu_struct, arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
-                    if (is_var) NULL else dNLL_dV, s$times, cov_f, deriv = .dres)
+        ch$sigma_grad()
     }
   }
 
@@ -1620,7 +1684,7 @@ nmObjGetControl.admc <- function(x, ...) {
                         use_grad = FALSE, grad_h = 1e-4, cov_h = 1e-3,
                         cov_h_outer = .Machine$double.eps^(1/5),
                         sensModel = NULL, use_central = FALSE,
-                        sampling = "sobol") {
+                        sampling = "sobol", sandwich = FALSE) {
   np    <- length(p_hat)
   nms   <- names(p_hat)
 
@@ -1641,6 +1705,24 @@ nmObjGetControl.admc <- function(x, ...) {
       any(vapply(.admResidSpecs(pinfo),
                  function(x) identical(x$form, .ADM_RESID_BETA), logical(1))))
     use_grad <- FALSE
+
+  # A COVARIATE STUDY KEEPS THE GRADIENT PATH HERE, and the guard that used to
+  # take it away was justified on a property admc does not have.
+  #
+  # .admGradBatch() builds five params frames by hand, each with its own stride,
+  # and two of them carried no covariate columns -- so an unpaired struct theta
+  # (typically the covariate coefficient itself) had an rxSolve that failed on
+  # the missing parameter, swallowed into a skipped accumulation and a
+  # constant-ZERO Hessian row with `valid` still TRUE. All five carry them now,
+  # which is the actual fix.
+  #
+  # The other half of the old justification -- "its design moves with the
+  # parameters" -- is true of the QUADRATURE designs and false of admc: its
+  # only covariate path is "rows", whose design is .admCovRowsFor, deterministic
+  # in `cov_dist` alone, which is data. That determinism is exactly what common
+  # random numbers depend on and why the collapse was never given to the
+  # sampler. Forcing .admNLLBatch cost 129 NLL evaluations against 9 gradient
+  # evaluations on an 8-parameter model, each a full cov_n_sim solve.
 
   # Hessian over struct + sigma + omega (falls back to struct+sigma if not PD).
   # Matches nlmixr2 FOCEI: omega entries are in the optimizer but skipped for cov.
@@ -1810,10 +1892,50 @@ nmObjGetControl.admc <- function(x, ...) {
   }
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
+  # covMethod = "r,s". The weight is built on a QUADRATURE ensemble rather than
+  # on this fit's own MC draws: Omega is a property of the model, not of how the
+  # integral was approximated, and a sample-based weight would carry the MC noise
+  # of the fit into the reported uncertainty. G comes from the same ensemble for
+  # the same reason -- admc's moments are noisy estimates of exactly that
+  # integral, so the noise-free version describes the estimator's target
+  # faithfully and its variance better.
+  sw_used <- FALSE; sw_HJ <- NULL
+  if (isTRUE(sandwich)) {
+    sw <- tryCatch({
+      grid <- .admSandwichGrid(pinfo)
+      if (is.null(grid)) stop("no random effects: no ensemble to weight against")
+      .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
+                      H = H, keep = match(nms_cov, names(p_hat)),
+                      sensModel = sensModel)
+    }, error = function(e) NULL)
+    ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
+    if (ok) {
+      cov_full <- (sw$cov + t(sw$cov)) / 2
+      sw_used  <- TRUE
+      # H and J travel with the covariance because two more things are built
+      # from exactly this pair: the TIC penalty tr(H^-1 J), and the eigenvalue
+      # weights admCompare() rescales dOFV by. Recomputing them later would mean
+      # re-solving, and would let them drift from the SE actually reported.
+      sw_HJ    <- list(H = sw$H, J = sw$J, par_names = nms_cov,
+                       Om = sw$Om, study_names = names(studies))
+    } else {
+      warning("admCalcCov: the sandwich correction could not be computed; ",
+              "reporting the covMethod = \"r\" covariance instead.", call. = FALSE)
+    }
+  }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
   # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
   # shared implementation for all three estimators -- see .admScaleReportedCov().
-  .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  # Directions H does not determine are reported as NA rather than as a large
+  # finite number. The reason travels on the covariance because a warning raised
+  # here does not reach the user -- .admFinaliseFit() says it.
+  .cchk <- .admCondCheck(H, .admCondReportNames(nms_cov, pinfo))
+  if (!is.null(.cchk)) out <- .admCondBlank(out, .cchk)
+  attr(out, "ill_cond") <- .cchk
+  attr(out, "sandwich") <- sw_used
+  attr(out, "sandwich_HJ") <- sw_HJ
+  out
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -2672,13 +2794,9 @@ nlmixr2Est.admc <- function(env, ...) {
     stop("Could not recover admControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("admControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adm")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   output_var <- .admOutputVar(.ui)
 
   .u         <- .admDriverUnits(studies, .ui, output_var)
@@ -2686,6 +2804,10 @@ nlmixr2Est.admc <- function(env, ...) {
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
 
+
+  # RETURNS the studies, annotated with which covariate path each takes.
+  # Discarding the value silently disables covariate handling entirely.
+  studies <- .admCheckCovariates(.ui, pinfo, studies, "admc")
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)
@@ -2782,6 +2904,7 @@ nlmixr2Est.admc <- function(env, ...) {
   }
 
   rxMod <- .admLoadModel(.ui)
+
   rxode2::rxLock(rxMod)
   # Reclaim compiled models with rxode2's own idiom -- the gc(); rxUnloadAll()
   # nlmixr2est runs per fit -- so a session of many fits does not accumulate models
@@ -2871,11 +2994,12 @@ nlmixr2Est.admc <- function(env, ...) {
                               use_central = want_central)
 
   grad_label <- if (!want_grad) "none"
-  else if (joint_fd) "central FD (joint)"
-  else if (any_joint) "Sens (joint)"
-  else if (!is.null(sensModel))
-    if (pinfo$has_kappa) "Sens+FD" else "Sens"
-  else "central FD"
+  else paste0(
+    if (joint_fd) "central FD (joint)"
+    else if (any_joint) "Sens (joint)"
+    else if (!is.null(sensModel))
+      if (pinfo$has_kappa) "Sens+FD" else "Sens"
+    else "central FD")
   message("=== admixr2: Aggregate Data Modeling (MC) ===")
   message(sprintf("  Obs units: %d | MC samples: %d | Params: %d | Cores: %d | Grad: %s | Restarts: %d",
                   length(studies), .ctl$n_sim, length(ov$p0), cores,
@@ -2955,7 +3079,8 @@ nlmixr2Est.admc <- function(env, ...) {
 
   p_hat  <- setNames(opt$solution, names(ov$p0))
   t0_cov <- proc.time()
-  .cov <- if (.ctl$covMethod == "r") {
+  .want_cov <- .ctl$covMethod %in% c("r", "r,s")
+  .cov <- if (.want_cov) {
     # Multi-output / joint fits use the NLL-FD Hessian (via .admNLLBatch); the
     # grad-FD Hessian relies on the single-output analytical grad batch. A zero-eta
     # (no-IIV) model also takes the NLL-FD path: grad-FD exists only to BATCH the
@@ -2977,24 +3102,40 @@ nlmixr2Est.admc <- function(env, ...) {
     evals_label <- if (use_grad_cov) "gradient evaluations" else "NLL evaluations"
     hess_label  <- if (!use_grad_cov) "" else if (!is.null(sensModel))
       ", Sens-Hessian" else if (use_cent_cov) ", cFD-Hessian" else ", FD-Hessian"
-    message(sprintf("  Computing covariance (R method%s, %d %s)",
-                    hess_label, n_evals, evals_label))
+    message(sprintf("  Computing covariance (R method%s%s, %d %s)",
+                    hess_label, if (.ctl$covMethod == "r,s") ", sandwich" else "",
+                    n_evals, evals_label))
     tryCatch(
       .admCalcCov(p_hat, pinfo, studies, z_list, rxMod, output_var,
                   params_list, cores, cov_n_sim = .ctl$cov_n_sim,
                   use_grad = use_grad_cov, grad_h = .ctl$grad_h,
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
                   sensModel = sensModel, use_central = use_cent_cov,
-                  sampling = .ctl$sampling),
+                  sampling = .ctl$sampling,
+                  sandwich = .ctl$covMethod == "r,s"),
       error = function(e) { warning("admCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
   # A NULL covariance used to be completely silent: no warning reached the user,
   # `warnings()` was empty, covMethod came back "" and every SE was NA with no
   # indication why. Say so once, from the driver, where it cannot be swallowed.
-  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
+  if (.want_cov && is.null(.cov))
     warning("covariance could not be computed (the Hessian was singular or ",
             "non-finite); standard errors are unavailable for this fit.",
             call. = FALSE)
+  # The label records what the covariance IS, not what was asked for: a
+  # requested sandwich that degraded to the naive form must not be reported as
+  # one, and .admReportCovWarnings() must judge the covariance in hand -- a
+  # covariate fit that asked for "r,s" and did not get it is exactly the
+  # configuration measured as invalid.
+  # THREE STATES, not two. A NULL covariance is "" -- labelling it "r" told a
+  # covMethod = "none" fit, which deliberately computed no standard errors,
+  # that its inference was invalid and it should use "r,s".
+  .cov_lbl  <- if (is.null(.cov)) "" else
+    if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
+  .sw_HJ    <- attr(.cov, "sandwich_HJ")
+  # Ill-conditioned directions and the source yardstick. Emitted from the
+  # DRIVER BODY -- a warning from .admFinaliseFit() or a CalcCov is swallowed.
+  .admReportCovWarnings(.cov, studies, .cov_lbl)
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   .cov      <- .admCovThetaOrder(.cov, .ui)
@@ -3017,13 +3158,14 @@ nlmixr2Est.admc <- function(env, ...) {
   .ret$est        <- "admc"
   .ret$ofvType    <- "admc"
   .ret$adjObf     <- FALSE
-  .ret$covMethod  <- if (!is.null(.cov)) "r" else ""
+  .ret$covMethod  <- if (!is.null(.cov)) .cov_lbl else ""
   .ret$cov        <- .cov
   .ret$message    <- opt$message
   .ret$extra      <- ""
   .ret$origData   <- studies
 
-  .ret$admExtra <- list(struct        = final$struct,
+  .ret$admExtra <- list(sandwich = .sw_HJ,
+                        struct        = final$struct,
                         sigma_var     = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
@@ -3058,5 +3200,6 @@ nlmixr2Est.admc <- function(env, ...) {
                   cov_nms = .cov_nms, multi_out = multi_out,
                   extra_field = "admExtra",
                   handle_ctl = nmObjHandleControlObject.admControl,
-                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed)
+                  t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed,
+                  pinfo = pinfo)
 }

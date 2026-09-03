@@ -1,4 +1,4 @@
-﻿# Cache-key material shared by the simulation and sensitivity models.
+# Cache-key material shared by the simulation and sensitivity models.
 #
 # Names, fix flags and error types all change what gets emitted or what the
 # solve is handed. The fixed thetas' VALUES are in here for a sharper reason:
@@ -1198,15 +1198,34 @@
   #    transformed DIFFERENTLY: rx_pred_ carries different scales per row with no
   #    per-row map to undo it.
   .tr <- tryCatch(as.character(ui$predDf$transform), error = function(e) character(0))
-  .ln <- .tr %in% c("lnorm", "logit", "probit", "boxCox", "tbs",
-                    "yeoJohnson", "tbsYj")
+  # "is this endpoint on a modelling scale?" asked with rxode2's OWN sentinel
+  # rather than a hand-listed set of transform names -- see the same test in
+  # .admLoadSensModel() for why the list was wrong.
+  .ln <- !is.na(.tr) & .tr != "untransformed"
   if (length(.ln) > 0L && any(.ln) && !all(.ln)) return(TRUE)
   if (length(.ln) > 0L && all(.ln) && length(.tr) > 1L) {
     .bnd <- tryCatch(
       paste(suppressWarnings(as.numeric(ui$predDf$trLow)),
             suppressWarnings(as.numeric(ui$predDf$trHi))),
       error = function(e) rep("", length(.tr)))
-    if (length(unique(.tr)) > 1L || length(unique(.bnd)) > 1L) return(TRUE)
+    # SEPARATE LAMBDAS COUNT AS DIFFERENT TRANSFORMS. Two boxCox endpoints can
+    # agree on transform AND bounds and still be refused by .admLoadSensModel(),
+    # because each carries its own estimated lambda and rx_pred_ then mixes two
+    # scales with no per-row map. Without this disjunct the two predicates
+    # disagree on exactly that model, and the caller warns "unexplained NULL"
+    # where the NULL is by design -- the inversion this function exists to
+    # prevent. If the guard in .admLoadSensModel() moves, move this with it.
+    # sum() on a clean logical, not nrow() of a row-subset: this predicate is
+    # also called on hand-built iniDf mocks, where a logical index whose length
+    # does not match nrow() yields NA ROWS and nrow() comes back NA -- which
+    # then errors in the `||` below rather than answering the question.
+    .n_lam <- tryCatch({
+      .e <- ui$iniDf$err
+      if (is.null(.e)) 0L else sum(!is.na(.e) & .e %in% .ADM_ERR_TBS_LAM)
+    }, error = function(e) 0L)
+    if (length(unique(.tr)) > 1L || length(unique(.bnd)) > 1L ||
+        isTRUE(.n_lam > 1L))
+      return(TRUE)
   }
   FALSE
 }
@@ -1241,8 +1260,7 @@
   # the order-1 key rather than duplicated under an "order2" one.
   if (order >= 2L) {
     .tr0 <- tryCatch(as.character(ui$predDf$transform), error = function(e) character(0))
-    if (any(.tr0 %in% c("lnorm", "logit", "probit", "boxCox", "tbs",
-                        "yeoJohnson", "tbsYj"))) order <- 1L
+    if (any(!is.na(.tr0) & .tr0 != "untransformed")) order <- 1L
   }
   .maps <- .admSensNameMaps(ini_df)
   if (is.null(.maps)) return(NULL)
@@ -1320,8 +1338,26 @@
   # optimizer simply stalled near its starting values. Pure metadata off `ui`, so
   # re-deriving costs nothing; same reason rename_map/fixed_theta are re-derived.
   .tr <- tryCatch(as.character(ui$predDf$transform), error = function(e) character(0))
-  .ln <- .tr %in% c("lnorm", "logit", "probit", "boxCox", "tbs",
-                    "yeoJohnson", "tbsYj")
+  # "not untransformed" -- rxode2's own sentinel level -- rather than a hand-kept
+  # list of the transformed ones. That list (lnorm/logit/probit/boxCox/tbs/
+  # yeoJohnson/tbsYj) was a duplicate of levels(ui$predDf$transform) that had
+  # DRIFTED from it in both directions on rxode2 5.1.4:
+  #   * it missed all four COMPOSITE levels -- "logit + yeoJohnson",
+  #     "probit + yeoJohnson", "logit + boxCox", "probit + boxCox" (verified by
+  #     parsing `cp ~ logitNorm(add.sd, 0, 10) + yeoJohnson(lam)`, whose
+  #     predDf$transform is "logit + yeoJohnson"), so a composite endpoint scored
+  #     as UNtransformed here: it escaped the mixed-scale refusal below and left
+  #     .pred_tbs NULL, i.e. rx_pred_ handed to the solve paths on the modelling
+  #     scale with no back-transform;
+  #   * and it carried "tbs"/"tbsYj", which are iniDf$err values (.ADM_TBS_YJ),
+  #     not predDf$transform levels at all.
+  # Over the five levels a fit can actually REACH -- errmodel.R refuses every
+  # composite at parse, since it is not in names(.ADM_TBS_YJ) -- the old test and
+  # this one agree on every level, checked one by one against
+  # levels(ui$predDf$transform). Where they differ this one answers TRUE, and TRUE
+  # means "refuse / demote / back-transform", i.e. any future divergence errs
+  # toward the finite-difference fallback rather than toward a silent wrong scale.
+  .ln <- !is.na(.tr) & .tr != "untransformed"
   if (length(.ln) > 0L && any(.ln) && !all(.ln)) {
     # Mixed transformed/untransformed endpoints: rx_pred_ then carries DIFFERENT
     # scales in different rows and the solve paths have no per-row map to undo it.
@@ -1348,10 +1384,14 @@
       paste(suppressWarnings(as.numeric(ui$predDf$trLow)),
             suppressWarnings(as.numeric(ui$predDf$trHi))),
       error = function(e) rep("", length(.tr)))
-    .n_lam <- tryCatch(nrow(ui$iniDf[!is.na(ui$iniDf$err) &
-                                       ui$iniDf$err %in% .ADM_ERR_TBS_LAM, ,
-                                     drop = FALSE]), error = function(e) 0L)
-    if (length(unique(.tr)) > 1L || length(unique(.bnd)) > 1L || .n_lam > 1L)
+    # sum() on a clean logical rather than nrow() of a row-subset -- see the
+    # matching guard in .admSensNullByDesign() for why nrow() can return NA.
+    .n_lam <- tryCatch({
+      .e <- ui$iniDf$err
+      if (is.null(.e)) 0L else sum(!is.na(.e) & .e %in% .ADM_ERR_TBS_LAM)
+    }, error = function(e) 0L)
+    if (length(unique(.tr)) > 1L || length(unique(.bnd)) > 1L ||
+        isTRUE(.n_lam > 1L))
       return(NULL)
   }
 

@@ -376,5 +376,6 @@ plot(fit_cns, which = "mean")
 
 - [PD and PK/PD data](pkpd.html) — add a pharmacodynamic endpoint
 - [Multiple studies](multiple-studies.html) — meta-analysis across studies
+- [Covariates across sources](covariates.html) — covariate effects without patient-level data
 - [Diagnostic plots](diagnostic-plots.html)
 ```

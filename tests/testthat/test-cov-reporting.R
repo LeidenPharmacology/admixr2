@@ -298,3 +298,28 @@ test_that("a residual parameter's trace is on the scale print(fit) reports", {
   expect_equal(admixr2:::.admSigmaReportFn(list(sigma_names = "s"), "nope")(2 * log(0.5)),
                0.5, tolerance = 1e-12)
 })
+
+test_that(".admCondReportNames maps omega rows onto the REPORTED names", {
+  # .admScaleReportedCov relabels the omega block to om.<eta>/cov.<i>.<j>, so an
+  # ill-conditioned direction described in parse.R's logchol_/chol_ vocabulary
+  # matched nothing: .admCondBlank's match() went all-NA and returned the
+  # covariance untouched, while the warning promised NA standard errors and
+  # named a parameter absent from parFixedDf.
+  ini <- make_inidf_2eta()
+  pin <- admixr2:::.admParseIniDf(ini)
+  nms <- c(pin$struct_names, pin$sigma_names, pin$omega_par_names)
+  got <- admixr2:::.admCondReportNames(nms, pin)
+  # struct and sigma rows are untouched ...
+  expect_identical(got[seq_along(c(pin$struct_names, pin$sigma_names))],
+                   c(pin$struct_names, pin$sigma_names))
+  # ... and every omega row now carries a name the reported covariance has
+  expect_identical(tail(got, length(pin$omega_par_names)),
+                   admixr2:::.admOmegaReportNames(pin))
+  expect_false(any(grepl("^logchol_|^chol_", got)))
+  # and the blanking now actually blanks
+  cov <- diag(length(got)); dimnames(cov) <- list(got, got)
+  chk <- list(level = "undetermined", pars = utils::tail(got, 1L),
+              rcond = 1e-20, ndir = 1L)
+  out <- admixr2:::.admCondBlank(cov, chk)
+  expect_true(all(is.na(out[nrow(out), ])))
+})

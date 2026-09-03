@@ -1,4 +1,4 @@
-﻿# Emit a warning at most once per R session, keyed by `key`.
+# Emit a warning at most once per R session, keyed by `key`.
 # Used to avoid repeated identical warnings when the same model is parsed
 # once per study in multi-study fits.
 .adm_warn_once <- function(key, msg) {
@@ -53,6 +53,88 @@
 # is the opposite of nlmixr2est's conservative 2L default: there an unknown case
 # costs one extra direction, here it would silently change struct_has_eta for
 # every mock-based unit test.)
+# The transform wrapping a mu-referenced theta, read off the MODEL TEXT.
+#
+# `ui$muRefCurEval` is authoritative when it says anything, but on every rxode2
+# in play it returns "" for the mu-3.0 spelling -- a precomputed variable in the
+# expression:
+#
+#   wt70 <- log(WT/70); cl <- exp(tcl + tcov*wt70 + eta.cl)
+#
+# and "" is read as IDENTITY, so admixr2 reported log(4) = 1.386 for a parameter
+# whose value is 4. Note that a MISSING row already defaults to "exp", so the
+# empty string was strictly worse than no information at all.
+#
+# Answer it from the same place the covariate and shift machinery already reads:
+# find the assignment whose right-hand side mentions this theta, and take the
+# call wrapping it. Only the transforms .admBackTransform() understands are
+# recognised; anything else stays "" and keeps the old behaviour.
+#
+# THREE CONDITIONS, and the first two versions of this had none of them.
+#
+# (1) The theta must be MU-REFERENCED. rxode2 blanks curEval for EVERY theta in
+#     the expression, coefficients included, and a coefficient is not wrapped by
+#     the transform -- `tcov` in `exp(tcl + tcov*wt70 + eta.cl)` is 0.75, not
+#     exp(0.75). Reading it as "exp" put 2.117 in every progress-table row and
+#     in plot(which = "par").
+# (2) It must appear as a BARE ADDITIVE TERM of the transform's argument. That
+#     is what "mu-referenced" means structurally, and it is what separates
+#     `tcl` from `tcov*wt70` when muRefDataFrame is unavailable or generous.
+# (3) A BOUNDED transform must bring its bounds. rxode2 reports low/hi NA
+#     alongside the blank curEval, so returning "expit" with NA bounds made
+#     .admComputeScaleC() call expit(p, NA, NA) -- "Assertion on 'low' failed"
+#     -- straight out of .admBuildOptVec(), which no driver wraps. That model
+#     FITTED before this fallback existed. The bounds are in the call itself
+#     (`expit(x)` is (0,1), `expit(x, a, b)` is (a,b)), so they are read from
+#     there rather than manufactured.
+.ADM_CUREVAL_FNS <- c("exp", "expit", "probitInv")
+
+# The bare additive terms of an expression: a + b*c - d  ->  a, d (b*c is not
+# bare, and a subtracted term is not a mu-reference either, but it is returned
+# and rejected by the caller's identity requirement rather than silently kept).
+.admAddTerms <- function(e) {
+  if (is.name(e)) return(as.character(e))
+  if (is.call(e) && length(e) == 3L &&
+      as.character(e[[1L]])[1L] %in% c("+", "-"))
+    return(c(.admAddTerms(e[[2L]]), .admAddTerms(e[[3L]])))
+  character(0)
+}
+
+.admCurEvalFromModel <- function(ui, nm) {
+  .none <- list(curEval = "", low = NA_real_, hi = NA_real_)
+  lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
+  if (is.null(lst)) return(.none)
+  # (1) mu-referenced only. No muRefDataFrame means no information, and the
+  # conservative answer is to leave upstream's "" alone.
+  mrd <- tryCatch(ui$muRefDataFrame, error = function(e) NULL)
+  if (is.null(mrd) || !"theta" %in% names(mrd) ||
+      !nm %in% as.character(mrd$theta)) return(.none)
+  for (e in lst) {
+    if (!is.call(e) || length(e) < 3L) next
+    if (!as.character(e[[1L]])[1L] %in% c("<-", "=", "~")) next
+    rhs <- e[[3L]]
+    if (!is.call(rhs)) next
+    fn <- as.character(rhs[[1L]])[1L]
+    if (!fn %in% .ADM_CUREVAL_FNS || length(rhs) < 2L) next
+    # (2) bare additive term of the transform's ARGUMENT
+    if (!nm %in% .admAddTerms(rhs[[2L]])) next
+    # (3) bounds off the call
+    if (identical(fn, "exp")) return(list(curEval = fn, low = NA_real_,
+                                          hi = NA_real_))
+    .num <- function(k) {
+      if (length(rhs) < k) return(NA_real_)
+      v <- tryCatch(eval(rhs[[k]], envir = baseenv()), error = function(e) NA_real_)
+      if (is.numeric(v) && length(v) == 1L && is.finite(v)) as.numeric(v)
+      else NA_real_
+    }
+    lo <- if (length(rhs) >= 3L) .num(3L) else 0
+    hi <- if (length(rhs) >= 4L) .num(4L) else 1
+    if (!is.finite(lo) || !is.finite(hi)) return(.none)
+    return(list(curEval = fn, low = lo, hi = hi))
+  }
+  .none
+}
+
 .admNameOccurrence <- function(ui, nms) {
   if (length(nms) == 0L) return(setNames(integer(0), character(0)))
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
@@ -170,9 +252,20 @@
     .w <- if (!is.null(.ce)) which(.ce$parameter == nm) else integer(0)
     if (length(.w) != 1L)
       return(list(curEval = "exp", low = NA_real_, hi = NA_real_))
-    list(curEval = .ce$curEval[.w],
-         low     = if ("low" %in% names(.ce)) .ce$low[.w] else NA_real_,
-         hi      = if ("hi"  %in% names(.ce)) .ce$hi[.w]  else NA_real_)
+    .cv <- .ce$curEval[.w]
+    .lo <- if ("low" %in% names(.ce)) .ce$low[.w] else NA_real_
+    .hi <- if ("hi"  %in% names(.ce)) .ce$hi[.w]  else NA_real_
+    # "" is upstream saying it does not know, not saying "identity" -- see
+    # .admCurEvalFromModel(). Only consulted when upstream is silent, so a
+    # version that reports the transform is never second-guessed, and it brings
+    # its own bounds so a bounded transform never arrives with NA ones.
+    if (is.na(.cv) || !nzchar(.cv)) {
+      .fm <- if (!is.null(ui)) .admCurEvalFromModel(ui, nm) else NULL
+      if (!is.null(.fm) && nzchar(.fm$curEval)) {
+        .cv <- .fm$curEval; .lo <- .fm$low; .hi <- .fm$hi
+      }
+    }
+    list(curEval = .cv, low = .lo, hi = .hi)
   }), struct_rows$name)
 
   # Endpoint distribution gate. Runs FIRST and independently of the sigma rows,
@@ -440,16 +533,47 @@ covariance for admixr2 to match"),
     switch(tr$curEval,
       exp = ,
       log = 1.0,
+      # Both bounded branches are the same quantity -- the transform's VALUE
+      # divided by its DERIVATIVE at the starting point -- and both used to spell
+      # each half out by hand. They are now written as `transform / derivative`
+      # using the transform .admBackTransform() actually applies (rxode2::expit /
+      # rxode2::probitInv) over its derivative from stats (dlogis / dnorm), so the
+      # scale and the back-transform cannot drift apart, and neither half is
+      # re-derived here.
+      #
+      # One deliberate behaviour change: rxode2's transforms assert on their
+      # bounds, so a `curEval` of "expit"/"probit" carrying an NA low/hi now
+      # errors here where the hand-written arithmetic returned NA (an NA scale_c
+      # poisons every optimizer step that follows). That model was already fatal
+      # one step later -- .admBackTransform() calls the same rxode2::expit() with
+      # the same `tr` on the first progress row -- so this only moves the error to
+      # the point the metadata is first used.
       expit = ,
       logit = {
         a <- tr$low; b <- tr$hi
-        pmax(exp(p) * (1 + exp(-p))^2 * (a + (b - a) / (1 + exp(-p))) / (b - a), 0.01)
+        # rxode2::expit(p, a, b) == a + (b - a) * plogis(p) (bit-identical to
+        # plogis at a = 0, b = 1), so d/dp == (b - a) * dlogis(p).
+        # Verified against the old
+        #   exp(p) * (1 + exp(-p))^2 * (a + (b-a)/(1 + exp(-p))) / (b - a)
+        # over p in [-50, 50] x four bound pairs: max relative difference 8.9e-16
+        # (1 ulp). The old form also OVERFLOWED in the left tail -- (1+exp(-p))^2
+        # is Inf from p <= -355 -- and returned Inf, which as a scale_c divides
+        # the parameter out of the optimizer entirely; this returns the correct
+        # finite ratio (1.0 at p = -360, a = 0, b = 1).
+        pmax(rxode2::expit(p, a, b) / ((b - a) * stats::dlogis(p)), 0.01)
       },
       probitInv = ,
       probit = {
         a <- tr$low; b <- tr$hi
-        pmax(sqrt(2) * exp(0.5 * p^2) * sqrt(pi) *
-               (a + 0.5 * (b - a) * (1 + rxode2::erf(p / sqrt(2)))) / (b - a), 0.01)
+        # rxode2::probitInv(p, a, b) == a + (b - a) * pnorm(p) (bit-identical to
+        # pnorm at a = 0, b = 1 across the tails), so d/dp == (b - a) * dnorm(p),
+        # and 1/dnorm(p) is exactly the sqrt(2)*sqrt(pi)*exp(p^2/2) the old line
+        # spelled out. Max relative difference vs the erf form 5.7e-14 over
+        # p in [-50, 50] wherever a != 0. At a = 0 the erf form CANCELS:
+        # 0.5*(1 + erf(p/sqrt(2))) loses its last correct digit by p = -6.5 and is
+        # exactly 0 from p = -8.5, so it returned the 0.01 floor where the true
+        # ratio is ~1/|p|. pnorm has no such cancellation.
+        pmax(rxode2::probitInv(p, a, b) / ((b - a) * stats::dnorm(p)), 0.01)
       },
       1.0)
   }, double(1))

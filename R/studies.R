@@ -153,8 +153,8 @@
   # cross-category entry replaces V_struct outright (see .admResidApply). This used
   # to pass neither, so ap$rmat was silently discarded for joint units.
   rt  <- .admRowTimes(unit, n_t)
-  ap  <- .admResidApply(mu_struct, diag(V_pred), arr, rt, V_pred)
-  list(mu = ap$mu, V = .admApplyResidTail(V_pred, ap))
+  m <- .admResidMoments(mu_struct, diag(V_pred), arr, V_pred, rt)
+  list(mu = m$mu, V = m$V)
 }
 
 # Observation time governing each row of a unit's stacked mean vector -- the
@@ -196,6 +196,11 @@
   ob$n      <- ob$n      %||% defaults$n
   ob$ev     <- ob$ev     %||% defaults$ev
   ob$output <- ob$output %||% defaults$output
+  # Covariates describe the study's SUBJECTS, so every observed output of that
+  # study inherits them: `cov` is the value written into the solve, `cov_dist`
+  # the distribution those subjects span (which drives the Omega collapse).
+  ob[["cov"]]      <- ob[["cov"]]      %||% defaults[["cov"]]
+  ob[["cov_dist"]] <- ob[["cov_dist"]] %||% defaults[["cov_dist"]]
   for (f in c("n", "E", "V", "times"))
     if (is.null(ob[[f]])) stop(sprintf("Study '%s' missing '%s'", label, f), call. = FALSE)
   ob$E <- as.numeric(ob$E)
@@ -323,6 +328,7 @@
                  nm), call. = FALSE)
 
   list(is_joint = TRUE, label = nm, n = s$n, ev = s$ev,
+       cov = s[["cov"]], cov_dist = s[["cov_dist"]],
        output = blocks[[1L]]$output,   # any valid endpoint, for cmt-tagging
        times  = sort(unique(unlist(lapply(blocks, `[[`, "times")))),
        method = "cov", E = E_stacked, V = V, blocks = blocks,
@@ -495,6 +501,57 @@
 # Legacy single-output form: the study's E/V/n/times fields describe one implicit
 # observation. Top-level normalised fields (V, method, v_diag) are preserved for
 # backward compatibility; `$observations` holds the single unit either way.
+# Convert a study's reported covariance to the ML (denominator n) convention the
+# likelihood requires.
+#
+# The two input types admixr2 serves disagree about what `V` IS, and until now
+# the difference was a footnote the user had to act on:
+#
+#   a digitised figure  ->  SD is the UNBIASED (n-1) sample SD, so V = SD^2 is
+#                           an (n-1) covariance
+#   datagen / own data  ->  cov.wt(method = "ML"), an n covariance
+#
+# Eq. (1) is the exact log-likelihood of n iid draws only for the ML form, so a
+# published SD is strictly V = SD^2 * (n-1)/n. At n = 60 that is 1.7% and was
+# reasonably ignored. It stops being ignorable the moment the summary is scored
+# against its own sampling law: the same factor reappears there as the alignment
+# of tau with E[t], where getting it wrong is measurably WORSE than not
+# correcting at all.
+#
+# So it becomes a declaration rather than a convention, PER STUDY -- a
+# meta-analysis routinely mixes a digitised figure with a model-derived source,
+# and the two do not share a denominator.
+#
+# Idempotent: `v_denom` is set to "ml" once applied, so normalising twice cannot
+# apply it twice.
+.admVDenom <- function(s, nm) {
+  vd <- s[["v_denom"]] %||% "ml"
+  if (!is.character(vd) || length(vd) != 1L || !vd %in% c("ml", "unbiased"))
+    stop(sprintf("Study '%s': `v_denom` must be \"ml\" or \"unbiased\"", nm),
+         call. = FALSE)
+  if (identical(vd, "ml")) return(s)
+  conv <- function(V, n, what) {
+    if (is.null(V)) return(NULL)
+    if (is.null(n)) stop(sprintf(
+      "Study '%s': `v_denom = \"unbiased\"` needs `n` to convert %s to the ML denominator",
+      nm, what), call. = FALSE)
+    n <- as.numeric(n)[[1L]]
+    if (!is.finite(n) || n <= 1)
+      stop(sprintf("Study '%s': `v_denom = \"unbiased\"` needs n > 1 (got %s)",
+                   nm, format(n)), call. = FALSE)
+    V * (n - 1) / n
+  }
+  s$V <- conv(s$V, s$n, "V")
+  if (!is.null(s$observations))
+    s$observations <- lapply(s$observations, function(ob) {
+      ob$V <- conv(ob$V, ob$n %||% s$n, "an observation's V"); ob
+    })
+  if (!is.null(s$cross))
+    s$cross <- lapply(s$cross, function(x) conv(x, s$n, "a cross block"))
+  s$v_denom <- "ml"
+  s
+}
+
 .admNormaliseStudy <- function(s, nm, default_output = NULL) {
   # IDEMPOTENT, and it has to be stated rather than assumed.
   #
@@ -559,9 +616,16 @@
         u
       })
     }
-    return(s)
+    return(.admStampStudy(s, nm))
   }
+  # AFTER the long-format expansion and BEFORE any branch reads V. Both halves
+  # matter. A `data =` study's spread is in a V/SD COLUMN, so at this point
+  # s$V is NULL and converting first was a silent no-op that then stamped
+  # v_denom = "ml" -- the declaration accepted, honoured nowhere. And the joint
+  # constructor assembles its own matrix from the raw per-observation blocks
+  # without passing through .admNormaliseObs, so converting later would miss it.
   if (!is.null(s$data)) s <- .admExpandLongStudy(s, nm)
+  s <- .admVDenom(s, nm)
   if (!is.null(s$observations) &&
       (isTRUE(s$joint) || !is.null(s$cross) || !is.null(s$V))) {
     if (!is.list(s$observations) || length(s$observations) == 0L)
@@ -580,7 +644,8 @@
     onames   <- names(s$observations)
     if (is.null(onames) || any(!nzchar(onames)))
       onames <- paste0("obs", seq_along(s$observations))
-    defaults <- list(n = s$n, ev = s$ev, output = s$output %||% default_output)
+    defaults <- list(n = s$n, ev = s$ev, output = s$output %||% default_output,
+                     cov = s[["cov"]], cov_dist = s[["cov_dist"]])
     s$observations <- setNames(lapply(seq_along(s$observations), function(k)
       .admNormaliseObs(s$observations[[k]], paste0(nm, ".", onames[k]), defaults)),
       onames)
@@ -588,15 +653,76 @@
   } else {
     unit <- .admNormaliseObs(
       list(E = s$E, V = s$V, n = s$n, times = s$times, ev = s$ev,
-           method = s$method, output = s$output %||% default_output), nm)
+           method = s$method, output = s$output %||% default_output,
+           cov = s[["cov"]], cov_dist = s[["cov_dist"]]), nm)
     # Preserve top-level normalised fields (legacy callers / tests read these).
     s$E <- unit$E; s$V <- unit$V; s$method <- unit$method
     s$v_diag <- unit$v_diag; s$output <- unit$output
     s$observations <- setNames(list(unit), nm)
     s$multi <- FALSE
   }
+  s <- .admStampStudy(s, nm)
   s$.adm_normalised <- TRUE
   s
+}
+
+# Stamp every observation unit with the STUDY it came from.
+#
+# `label` identifies a unit; `study` identifies the trial. For a single-output
+# study they coincide, and for a multi-output or joint study several units share
+# one `study`. Nothing today reads it, and it is here because the things that
+# will read it need it to have been recorded from the start:
+#
+#   * WITHIN- vs BETWEEN-study covariate effects. A covariate coefficient
+#     estimated across studies is confounded with everything else that differs
+#     between them -- measured on a confounded three-trial design, a true 0.75
+#     comes back at 1.14. Separating a within-study from a between-study
+#     coefficient, or giving each study its own baseline so the between-study
+#     differences stop being billed to the covariate, both need to know which
+#     units belong to the same trial. Units alone cannot say: covariate STRATA of
+#     one trial are separate units that must share a baseline, and reporting them
+#     as separate studies is exactly the mistake (measured: strata alone recover
+#     almost nothing, 1.11 against the same 0.75, because the model has no
+#     parameter for "trial" and the slope absorbs it regardless).
+#   * A random study effect (tau^2) on the baseline, which is the same grouping.
+#   * Joint individual + aggregate fits, where an aggregate study and an
+#     individual dataset from the same trial share study-level parameters.
+#
+# Recording it costs nothing and cannot be reconstructed later: once units are
+# flattened, `label` is all that survives, and a label is deliberately allowed to
+# be anything. Callers that build units by hand (fixtures) may not set it, so
+# .admUnitStudy() falls back to the label rather than failing -- one unit per
+# study is the right reading of a unit that never declared otherwise.
+.admStampStudy <- function(s, nm) {
+  if (is.null(s$observations)) return(s)
+  # `.adm_src` rides along for the same reason and by the same route. It says
+  # this block was generated from a published MODEL rather than observed, which
+  # is what decides whether its contribution to the covariance runs through
+  # `n` (a real sample) or through the source's own C_src (not a sample at
+  # all). Stamped HERE so all three branches -- legacy single-output, several
+  # observations, and the joint constructor -- inherit it identically; the
+  # legacy branch builds its unit from an explicit whitelist and would
+  # otherwise drop it silently, which is exactly how the field went missing the
+  # first time.
+  src <- s[[".adm_src"]]
+  jn  <- s[[".adm_strata_nodes"]]
+  s$observations <- lapply(s$observations, function(u) {
+    if (is.null(u$study)) u$study <- nm
+    if (is.null(u[[".adm_src"]])) u[[".adm_src"]] <- src
+    if (is.null(u[[".adm_strata_nodes"]])) u[[".adm_strata_nodes"]] <- jn
+    u
+  })
+  s
+}
+
+# The study a unit belongs to. See .admStampStudy() for why this is not `label`.
+.admUnitStudy <- function(u) u$study %||% u$label
+
+# Units grouped by study, in first-appearance order. The grouping every
+# study-level parameter will index off.
+.admStudyGroups <- function(units) {
+  k <- vapply(units, .admUnitStudy, character(1))
+  split(seq_along(units), factor(k, levels = unique(k)))
 }
 
 # Flatten normalised studies into a single list of independent observation units.
