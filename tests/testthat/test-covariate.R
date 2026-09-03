@@ -2396,9 +2396,13 @@ test_that("an R-vine is accepted as `joint`, on the declared margins", {
   expect_gt(cor(dr[, "WT"], dr[, "CRCL"]), 0.5)
 })
 
-test_that("the vine cascade convention is applied, and the naive one refused", {
+test_that("a vine's variable k is the covariate declared k-th", {
   skip_if_not_installed("rvinecopulib")
-  nms <- c("WT", "CRCL", "AGE")
+  # ASYMMETRIC pair correlations, so a permutation of the columns cannot hide.
+  # An earlier version reversed them, to satisfy a conditioning-cascade
+  # contract that the opaque-`joint` path does not have -- it bins the
+  # sampler's OUTPUT -- and so bound covariate k to the vine's variable
+  # d - k + 1: cor(WT, CRCL) came back 0.735 where the vine says 0.85.
   vc <- rvinecopulib::vinecop_dist(
     list(list(rvinecopulib::bicop_dist("gaussian", 0, 0.85),
               rvinecopulib::bicop_dist("gaussian", 0, 0.75)),
@@ -2406,27 +2410,14 @@ test_that("the vine cascade convention is applied, and the naive one refused", {
     rvinecopulib::dvine_structure(1:3))
   cd <- covDist(WT = c(mean = 75, sd = 16), CRCL = c(mean = 92, sd = 30),
                 AGE = c(mean = 50, sd = 12), joint = vc, dist = "lnorm")
-
-  # A stratum is defined by its NODE IN U-SPACE: hold the leading uniforms and
-  # vary the rest. That needs uniform column k to control covariate k -- and
-  # rvinecopulib's inverse_rosenblatt() satisfies it BACKWARDS, so the obvious
-  # hand-wrapping bands the wrong variable with no error anywhere. Measured on
-  # this vine: fixing u[, 1] left output 1 moving over its full range.
-  set.seed(11)
-  expect_true(admixr2:::.admCascadeOK(cd$joint, nms))
-  naive <- function(u) {
-    x <- rvinecopulib::inverse_rosenblatt(as.matrix(u), vc)
-    colnames(x) <- nms; x
-  }
-  expect_false(admixr2:::.admCascadeOK(naive, nms))
-
-  # the verifier is the property itself, not a proxy: an independent sampler
-  # trivially satisfies it, a column-reversing one cannot
-  indep <- function(u) { x <- qnorm(as.matrix(u)); colnames(x) <- nms; x }
-  expect_true(admixr2:::.admCascadeOK(indep, nms))
-  flip <- function(u) { x <- qnorm(as.matrix(u)[, 3:1, drop = FALSE])
-                        colnames(x) <- nms; x }
-  expect_false(admixr2:::.admCascadeOK(flip, nms))
+  set.seed(5)
+  dr <- covDraw(cd, n = 8000)
+  r  <- cor(dr[, c("WT", "CRCL", "AGE")], method = "spearman")
+  # the vine ties variable 1 to 2 at 0.85 and 2 to 3 at 0.75, so the
+  # FIRST-declared pair must be the more strongly tied one
+  expect_gt(r["WT", "CRCL"], r["CRCL", "AGE"])
+  expect_equal(unname(r["WT", "CRCL"]), 0.85, tolerance = 0.06)
+  expect_equal(unname(r["CRCL", "AGE"]), 0.75, tolerance = 0.06)
 })
 
 test_that("a vine of the wrong dimension is refused at construction", {

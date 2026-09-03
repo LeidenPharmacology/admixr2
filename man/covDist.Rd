@@ -36,14 +36,18 @@ an arbitrary sampler: a function receiving the matrix of uniforms admixr2
 supplies and returning one named column per covariate. Overrides \code{cor}.
 
 \strong{Pass the vine object rather than wrapping it yourself.} A vine supplies
-dependence on the copula scale only, so its uniforms still have to be
-pushed through each covariate's own margin --- and
-\code{rvinecopulib::inverse_rosenblatt()} orders its cascade \emph{backwards}
-relative to the declared covariates, so the obvious hand-wrapping bands
-the wrong variable under \code{stratify} with no error anywhere. Given the
-object, \code{covDist()} applies both conventions and then verifies the
-cascade numerically, refusing a vine whose order does not match the one
-the covariates were declared in.}
+dependence on the \emph{copula scale} only, so its uniforms still have to be
+pushed through each covariate's own margin; wrapping
+\code{rvinecopulib::inverse_rosenblatt()} by hand and returning it directly
+hands the fit uniforms on \verb{(0, 1)} as covariate values --- every covariate
+mean 0.50 and SD 0.29, whatever margins you declared, with no error
+anywhere. Given the object, \code{covDist()} applies the margins itself.
+
+The vine's variable \code{k} is the covariate you declare \code{k}-th, so fit the
+vine on its columns in the order you name them here. \code{stratify} needs
+nothing further: an opaque sampler is banded by binning its output, not by
+fixing its input uniforms, so the vine's internal ordering does not
+matter.}
 
 \item{dist}{Default margin for the \code{c(mean = , sd = )} form: \code{"normal"}
 (default) or \code{"lnorm"}. A per-covariate \code{dist} wins over it.

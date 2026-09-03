@@ -1393,11 +1393,17 @@
 # forward Rosenblatt is needed, because a stratum is defined BY ITS NODE in
 # u-space and the covariate value there is read off the sampler.
 #
-# The contract on a user `joint`, stated because it cannot be checked: its
-# uniform columns must act as a conditioning cascade in DECLARED COVARIATE
-# ORDER. inverse_rosenblatt() satisfies it when the vine is ordered with the
-# stratified covariates leading; admixr2's own `cor` sampler satisfies it by
-# construction, multiplying by a Cholesky factor in declared order.
+# THAT ROUTE IS GONE FOR AN OPAQUE SAMPLER, and this paragraph describes what
+# replaced it only for admixr2's own `cor` copula, which is unwrapped to
+# margins plus `latentR` before it gets here. Fixing the stratified
+# covariates' INPUT uniforms requires them to lead the sampler's own
+# conditioning cascade, and fails silently when they do not -- so a user
+# `joint` bins the sampler's OUTPUT instead, which has no such requirement.
+# See the binning branch below for the measurement that forced it.
+#
+# Do not reintroduce a cascade contract on the strength of the paragraph
+# above: it was read that way once and cost a column reversal that bound
+# covariate k to the sampler's variable d-k+1.
 # Strata per stratified covariate.
 #
 # A CONVERGENCE PARAMETER, NOT A MODELLING CHOICE -- the old default of 5 read
@@ -2382,35 +2388,31 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 #
 # An arbitrary copula reaches admixr2 through `cov_dist$joint`, a closure taking
 # the n x d matrix of uniforms and returning one column per covariate. That is
-# enough to SAMPLE, and admc needs nothing more. Stratification needs one thing
-# more, and it cannot be read off a closure:
+# enough for everything: admc samples it directly, .admCovGrid runs a node grid
+# through it, and .admCovStrata bands it by binning its output.
 #
-#   THE CASCADE CONTRACT. Uniform column k must control covariate k, and
-#   nothing earlier. A stratum is defined by its NODE IN U-SPACE -- hold the
-#   leading uniforms, vary the rest, and you have sampled the conditional
-#   distribution -- so if column k does not act on covariate k the band is cut
-#   through the wrong variable and every number downstream is finite, plausible
-#   and wrong.
+# The reason to accept the vine OBJECT rather than let the user wrap it is
+# narrower than it looks, and it is not about conditioning:
 #
-# rvinecopulib's inverse_rosenblatt() satisfies the contract BACKWARDS, and this
-# is the trap. Measured on a 3-d D-vine with pair correlations 0.85/0.75/0.60,
-# 4000 draws, holding uniform columns fixed and varying the rest:
+#   A VINE IS DEPENDENCE ONLY. inverse_rosenblatt() returns the COPULA scale,
+#   so the obvious spelling --
 #
-#   fix u[, 1:k]        -> outputs 1..k still move by up to 9.7e-01 (full range)
-#   fix u[, (d-k+1):d]  -> outputs (d-k+1)..d frozen at 0.00e+00
+#       joint = function(u) rvinecopulib::inverse_rosenblatt(u, vc)
 #
-# i.e. the LAST uniform column is the one that passes straight through
-# (cor(u[, d], x[, d]) = 1.000, against 0.390 for the first). So the obvious
-# spelling --
+#   -- hands the fit uniforms on (0, 1) as covariate values. Every covariate
+#   mean 0.50 and SD 0.29, whatever margins were declared, with no error
+#   anywhere. Given the object, admixr2 applies the margins itself.
 #
-#     joint = function(u) rvinecopulib::inverse_rosenblatt(u, vc)
+# TWO THINGS WERE TRIED HERE AND BOTH WERE MEASURED AWAY. Do not rebuild them:
 #
-# -- reads as a cascade in declared order and is one in the opposite order.
-# Reversing the columns on the way in and on the way out restores it, verified
-# by the same probe: fix u[, 1:k] and outputs 1..k are frozen at 0.00e+00.
+#  * REORDERING the columns, so the sampler is a conditioning cascade in
+#    declared order. Costs variable identity (covariate k bound to the vine's
+#    variable d-k+1) and buys nothing, because no live path needs the cascade.
+#  * BANDING by pinning the stratified covariates' input uniforms. 10x to
+#    1000x worse than binning the output -- only the cascade head passes
+#    through, so pinning a second covariate's uniform does not band it.
 #
-# Hence: pass the vine OBJECT, not a closure around it, and admixr2 applies the
-# convention itself. `.admVineJoint()` is what covDist() builds from it.
+# See .admCovStrata for the binning branch and the measurements behind both.
 .admVineJoint <- function(vc, cov_dist, nms) {
   if (!requireNamespace("rvinecopulib", quietly = TRUE))
     stop("admixr2: a vine copula needs the 'rvinecopulib' package.",
@@ -2425,10 +2427,20 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   # so each column still goes through its own margin's quantile function --
   # skipping that hands the fit uniforms on (0, 1) as covariate values, which
   # is finite, plausible and has nothing to do with the declared margins.
+  # COLUMN k IS VINE VARIABLE k, and nothing is reordered. An earlier version
+  # of this reversed the columns in and out, to make the sampler a conditioning
+  # cascade in declared order -- a contract the u-space stratification route
+  # needed. That route is GONE: the opaque-`joint` path bins the sampler's
+  # OUTPUT (see .admCovStrata), which has no cascade requirement at all. So the
+  # reversal bought nothing and cost the one property that does matter, binding
+  # covariate k to the vine's variable d-k+1. Measured on a D-vine with pair
+  # correlations (1,2) = 0.85 and (2,3) = 0.75 and covariates declared
+  # WT, CRCL, AGE: it returned cor(WT, CRCL) = 0.735 and cor(CRCL, AGE) = 0.838,
+  # i.e. WT had been bound to the vine's AGE. Fit the vine on the columns in
+  # the order you declare them and they correspond one to one.
   f <- function(u) {
     u <- as.matrix(u)
-    v <- rvinecopulib::inverse_rosenblatt(u[, rev(seq_len(d)), drop = FALSE], vc)
-    v <- as.matrix(v)[, rev(seq_len(d)), drop = FALSE]   # the convention
+    v <- as.matrix(rvinecopulib::inverse_rosenblatt(u, vc))
     v <- pmin(pmax(v, .Machine$double.eps), 1 - .Machine$double.eps)
     x <- vapply(seq_len(d), function(k) .admCovQuantile(specs[[k]], v[, k]),
                 numeric(nrow(v)))
@@ -2437,35 +2449,6 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     x
   }
   f
-}
-
-# Does this closure act as a conditioning cascade in DECLARED order?
-#
-# The contract used to be stated in a comment "because it cannot be checked".
-# It can: hold the leading k uniform columns and randomise the rest, and the
-# first k covariate columns must not move. That is the property itself, not a
-# proxy for it, and it costs two calls to the sampler per k.
-#
-# Deliberately a HARD zero rather than a tolerance. A cascade holds the leading
-# outputs fixed exactly -- they are a deterministic function of the uniforms
-# being held -- so anything above floating-point noise means the columns are
-# wired the wrong way round, and a small violation is not a small error in the
-# fit: the band is cut through a different variable either way.
-.admCascadeOK <- function(jf, nms, n = 256L, tol = 1e-9) {
-  d <- length(nms)
-  if (d < 2L) return(TRUE)
-  ua <- matrix(stats::runif(n * d), n, d); colnames(ua) <- nms
-  ub <- matrix(stats::runif(n * d), n, d); colnames(ub) <- nms
-  xa <- tryCatch(.admCovJointEval(jf, ua, nms), error = function(e) NULL)
-  if (is.null(xa)) return(NA)
-  for (k in seq_len(d - 1L)) {
-    ub2 <- ub; ub2[, seq_len(k)] <- ua[, seq_len(k)]
-    xb  <- tryCatch(.admCovJointEval(jf, ub2, nms), error = function(e) NULL)
-    if (is.null(xb)) return(NA)
-    mv <- max(abs(xa[, seq_len(k), drop = FALSE] - xb[, seq_len(k), drop = FALSE]))
-    if (!is.finite(mv) || mv > tol) return(FALSE)
-  }
-  TRUE
 }
 
 # Call a user-supplied `joint` sampler and hold it to its contract.
@@ -3790,14 +3773,18 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
 #'   supplies and returning one named column per covariate. Overrides `cor`.
 #'
 #'   **Pass the vine object rather than wrapping it yourself.** A vine supplies
-#'   dependence on the copula scale only, so its uniforms still have to be
-#'   pushed through each covariate's own margin --- and
-#'   `rvinecopulib::inverse_rosenblatt()` orders its cascade *backwards*
-#'   relative to the declared covariates, so the obvious hand-wrapping bands
-#'   the wrong variable under `stratify` with no error anywhere. Given the
-#'   object, `covDist()` applies both conventions and then verifies the
-#'   cascade numerically, refusing a vine whose order does not match the one
-#'   the covariates were declared in.
+#'   dependence on the *copula scale* only, so its uniforms still have to be
+#'   pushed through each covariate's own margin; wrapping
+#'   `rvinecopulib::inverse_rosenblatt()` by hand and returning it directly
+#'   hands the fit uniforms on `(0, 1)` as covariate values --- every covariate
+#'   mean 0.50 and SD 0.29, whatever margins you declared, with no error
+#'   anywhere. Given the object, `covDist()` applies the margins itself.
+#'
+#'   The vine's variable `k` is the covariate you declare `k`-th, so fit the
+#'   vine on its columns in the order you name them here. `stratify` needs
+#'   nothing further: an opaque sampler is banded by binning its output, not by
+#'   fixing its input uniforms, so the vine's internal ordering does not
+#'   matter.
 #' @param dist Default margin for the `c(mean = , sd = )` form: `"normal"`
 #'   (default) or `"lnorm"`. A per-covariate `dist` wins over it.
 #'
@@ -3851,10 +3838,9 @@ covDist <- function(..., cor = NULL, joint = NULL,
       out[[nm]][["dist"]] <- dist
   }
   if (!is.null(cor))   out[["cor"]]   <- cor
-  # A VINE OBJECT IS ACCEPTED DIRECTLY, and that is the point: wrapping one in
-  # a closure by hand is where the cascade convention gets inverted (see
-  # .admVineJoint). Given the object, admixr2 applies the convention itself and
-  # then VERIFIES it, so the ordering cannot be silently wrong.
+  # A VINE OBJECT IS ACCEPTED DIRECTLY, so that admixr2 applies the MARGINS to
+  # it: a vine is dependence on the copula scale only, and a hand-wrapped one
+  # returns those uniforms as covariate values. See .admVineJoint.
   .vine <- if (inherits(joint, c("vinecop", "vinecop_dist"))) joint
   if (!is.null(.vine)) joint <- NULL
   if (!is.null(joint)) out[["joint"]] <- joint
@@ -3868,18 +3854,24 @@ covDist <- function(..., cor = NULL, joint = NULL,
   # covariate's own quantile function. Building it before canon returned the
   # copula scale itself -- every covariate uniform on (0, 1), mean 0.50 and
   # sd 0.29, whatever the declared margins said.
-  if (!is.null(.vine)) {
-    .nm  <- .admCovSpecNames(out)
-    out[["joint"]] <- .admVineJoint(.vine, out, .nm)
-    .ok  <- .admCascadeOK(out[["joint"]], .nm)
-    if (identical(.ok, FALSE))
-      stop("admixr2: this vine does not act as a conditioning cascade in the ",
-           "order the covariates were declared (",
-           paste(sQuote(.nm), collapse = ", "), "), so `stratify` would band ",
-           "the wrong variable. Re-fit the vine with the covariates in that ",
-           "order.", call. = FALSE)
-    attr(out[["joint"]], "cascade") <- isTRUE(.ok)
-  }
+  # ONLY THE SAMPLER IS KEPT. Carrying the vine OBJECT too was tried, on the
+  # theory that being able to INVERT it would buy a better rule than the one an
+  # opaque closure gets. Both candidates were measured and neither survived:
+  #
+  #  * a Gauss-Hermite grid in the vine's Rosenblatt coordinates matched the
+  #    existing joint branch to three significant figures at rho = 0.4, 0.8 and
+  #    0.95 -- because that branch already feeds a node grid through the
+  #    sampler, which for a vine closure IS that rule;
+  #  * banding the stratified covariates by pinning their input uniforms was
+  #    10x to 1000x WORSE than binning the sampler's output (2.3e-02 against
+  #    2.8e-05 on a corner cell), because only the cascade HEAD passes through
+  #    -- a second stratified covariate's value depends on the head's uniform
+  #    too, so pinning its own does not band it. That is the silent failure the
+  #    binning branch in .admCovStrata was written to replace.
+  #
+  # So the object bought nothing and is not stored.
+  if (!is.null(.vine))
+    out[["joint"]] <- .admVineJoint(.vine, out, .admCovSpecNames(out))
   # A NORMAL margin is unbounded below, and the quadrature reaches |z| = 5.19
   # at the default 7 nodes -- so any covariate with a CV above about 0.27 gets
   # a node at or below zero, and an allometric or log term evaluated there is
