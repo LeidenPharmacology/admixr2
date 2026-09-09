@@ -1434,7 +1434,7 @@ one_cmt_transit_fn <- function() {
 
   ests <- c("adgh", "admc", "adfo", "adirmc")
   fits <- stats::setNames(lapply(ests, function(e)
-    list(r = run(e, "r"), rs = run(e, "r,s"))), ests)
+    list(r = run(e, ctl(e, "r")), rs = run(e, ctl(e, "r,s")))), ests)
 
   .int_sandwich_cache <<- list(ests = ests, fits = fits, study = study1)
   .int_sandwich_cache

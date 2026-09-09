@@ -60,8 +60,14 @@ test_that("a residual the weight cannot reach degrades to r rather than guessing
   }
   times  <- c(0.5, 1, 2, 4)
   E_true <- .one_cmt_mean(5, 20, 100, times)
-  st <- list(s1 = list(E = E_true, V = diag((0.3 * E_true)^2), n = 200L,
-                       times = times, ev = rxode2::et(amt = 100)))
+  # A FULL covariance, not a diagonal one: ar() refuses a `method = "var"` study
+  # outright (a diagonal V carries no information about a residual correlation),
+  # and that refusal would pre-empt the one being tested here.
+  sd  <- 0.3 * E_true
+  rho <- 0.25^abs(outer(seq_along(times), seq_along(times), "-"))
+  V   <- outer(sd, sd) * rho
+  st  <- list(s1 = list(E = E_true, V = V, n = 200L,
+                        times = times, ev = rxode2::et(amt = 100)))
   fit <- tryCatch(suppressMessages(suppressWarnings(nlmixr2est::nlmixr2(
     ar_fn, admData(), est = "adgh",
     control = adghControl(studies = st, n_nodes = 5L, maxeval = 10L, seed = 1L,
