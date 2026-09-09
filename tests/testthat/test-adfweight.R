@@ -313,43 +313,6 @@ test_that("the analytic moment Jacobian matches the finite-difference oracle", {
   }
 })
 
-test_that("the analytic Jacobian covers the covariate paths", {
-  # The quadrature and Taylor covariate grids change the node set the moments are
-  # taken over, and a structural theta then reaches f through the shift nodes as
-  # well as its own sensitivity column. Both moments are LINEAR in the raw
-  # sensitivity column, which is why summing the columns before applying the
-  # chain is sufficient -- and this is the test that says so.
-  skip_if_not_installed("rxode2")
-  TT <- c(2, 5, 9, 14); DOSE <- 100; NQ <- 7L; N <- 200L
-  fn <- function() { ini({ tcl <- log(1); tv <- log(10); tcov <- 0.4
-                           eta.cl ~ 0.09; add.err <- 0.3 })
-    model({ cl <- exp(tcl + tcov * WT + eta.cl); v <- exp(tv)
-            cp <- linCmt(); cp ~ add(add.err) }) }
-  ui   <- suppressMessages(rxode2::rxode2(fn))
-  ov   <- admixr2:::.admOutputVar(ui)
-  sens <- admixr2:::.admLoadSensModel(ui); rx <- admixr2:::.admLoadModel(ui)
-  E0 <- DOSE / 10 * exp(-0.1 * TT)
-  st <- list(s1 = list(E = E0, V = diag((0.25 * E0)^2), n = N, times = TT,
-                       ev = rxode2::et(amt = DOSE), cov = list(WT = 0),
-                       cov_dist = list(WT = list(mu = 0, sd = 0.3))))
-  for (ci in c("quadrature", "taylor")) {
-    ctl <- adghControl(studies = st, grad = "none", n_nodes = NQ, print = 0L,
-                       covMethod = "none", cov_integration = ci)
-    pin <- admixr2:::.admDriverPinfo(ui, ctl)
-    u   <- admixr2:::.admDriverUnits(st, ui, ov)
-    u$studies <- admixr2:::.admCheckCovariates(ui, pin, u$studies)
-    g   <- admixr2:::.adghNodeGrid(NQ, pin$n_eta)
-    p   <- admixr2:::.admBuildOptVec(pin)$p0 + 0.03
-    fd  <- admixr2:::.admMomentDeriv(p, pin, u$studies, rx, ov, g, 1L)
-    an  <- admixr2:::.admMomentJac(p, pin, u$studies, sens, rx, ov, g, 1L)
-    expect_false(is.null(an), info = ci)
-    expect_equal(an$dE[[1L]], fd$dE[[1L]], tolerance = 1e-6, info = ci)
-    for (k in seq_along(fd$dV[[1L]]))
-      expect_equal(an$dV[[1L]][[k]], fd$dV[[1L]][[k]], tolerance = 1e-6,
-                   info = paste(ci, k))
-  }
-})
-
 test_that(".admMomentJac refuses rather than approximates what it cannot reach", {
   skip_if_not_installed("rxode2")
   TT <- c(2, 5, 9); DOSE <- 100

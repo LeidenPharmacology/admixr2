@@ -2,6 +2,64 @@
 
 ## New features
 
+* **`covMethod = "r,s"`: standard errors that answer to the model's own
+  sampling law, on all four estimators.** The aggregate objective is the exact
+  log-likelihood of `n` iid draws from `N(yt, Vt)`, which assumes each subject's
+  observation vector is multivariate normal. It is not:
+  `y_i = f(theta, b_i) + eps_i` with `f` nonlinear in `b_i`, so the marginal is a
+  mixture. That costs nothing in the point estimates -- the score has expectation
+  zero at the true parameters under any weight, so every fit stays consistent --
+  but it does cost the reported uncertainty, in two ways that differ in kind:
+  `Cov(V_ij, V_kl)` is mis-sized by the excess kurtosis, and `Cov(ybar, vech V)`
+  is assumed ZERO where a real correlation of 0.3-0.6 sits. The sample mean and
+  sample covariance are exactly independent for a multivariate normal and for
+  nothing else.
+
+  `covMethod = "r,s"` scores the summary `(ybar, vech V)` against its own
+  asymptotic law -- Browne's ADF estimator, with the fourth-moment matrix
+  computed from the MODEL rather than estimated from the sample, which is what
+  removes ADF's small-sample failure. The result is the sandwich
+  `H^-1 J H^-1`, where `H` is the Hessian `covMethod = "r"` already inverts,
+  passed in rather than rebuilt so the two cannot disagree about the half they
+  share. Under correct specification `J = 2H` and `"r,s"` returns exactly what
+  `"r"` would have; the reduction holds by construction, and is pinned as a test
+  (`eigen(J(W_normal) / 2H) = 1.0000` on both the `cov` and the `var` branch).
+
+  Point estimates and the objective are untouched -- `"r,s"` changes only the
+  reported standard errors. On `adgh`, `admc` and `adirmc` the weight is built
+  on the quadrature ensemble, so it carries none of a fit's own MC noise. On
+  `adfo` it does more than correct kurtosis: `V = J Omega J' + Sigma` is the
+  covariance of an exactly normal individual law, so scoring FO against its own
+  assumption would return `2H^-1` and say nothing. There, `G` comes from adfo's
+  moment map and the weight from a post-fit quadrature ensemble of the same
+  model, so the correction absorbs part of the linearisation error as well.
+
+  Available for the conditionally-normal residual family (`add`, `prop`, `pow`,
+  `combined1`, `combined2`, `lnorm`) plus closed-form conditional moments for
+  `lnorm`, `pois`, `binom`, `nbinomMu`, `beta` and `t(nu > 4)`; `ar()` is refused
+  outright, since it correlates across timepoints and the dropped cross terms are
+  real, as is `t(nu <= 4)`, whose kurtosis does not exist. A requested sandwich
+  that cannot be built degrades to `"r"` and **reports `"r"`**: `fit$covMethod`
+  records what the covariance IS, not what was asked for.
+
+* **`v_denom`: declare which denominator a study's `V` uses, rather than
+  convert it by hand.** admixr2's two input types disagree about what `V` is. A
+  digitised figure gives `V = SD^2` with `SD` the unbiased (`n - 1`) sample SD,
+  while `cov.wt(method = "ML")` and `datagen()` give the `n` covariance the
+  likelihood is exact for. The vignette documented the `(n - 1)/n` correction as
+  a manual step and said it was usually ignored -- a defensible O(1/n) wobble
+  while the reported covariance is treated as a sufficient statistic.
+
+  It stops being one under `covMethod = "r,s"`, where the same factor reappears
+  as the alignment of `tau` with `E[t]`, and getting it wrong is measurably worse
+  than not correcting at all. So `v_denom = c("ml", "unbiased")` becomes part of
+  the study spec, declared **per study** because a meta-analysis routinely mixes
+  a digitised source with a model-derived one and the two need not share a
+  denominator. The default is `"ml"`, so nothing changes for anyone; `datagen()`
+  now stamps `"ml"` on what it produces, so a generated study is self-describing
+  rather than relying on the default meaning the same thing. It is idempotent,
+  and it refuses rather than guesses when `n` is absent or `<= 1`.
+
 * **`sigdig` now controls the fit, not just the output tables -- and it is
   opt-in.** The `sigdig` and `rxControl` arguments were documented as solver
   controls, but the object they built only ever reached nlmixr2's *post-fit*

@@ -1646,6 +1646,37 @@ without that parameter there is no residual to integrate"),
   list(mu = mu, dv = dvo, ms = ms, ev = ev, rmat = rmat)
 }
 
+# Structural (mu, var) -> predicted (mu, diag, full V), in one call.
+#
+# .admResidApply -> .admApplyResidTail is a fixed two-step sequence, and every
+# consumer that needs the composed V writes both out. The ADF weight is another
+# such consumer, and it needs `ms` (the residual's mean scaling) alongside the
+# composed matrix -- so rather than adding a seventh hand-assembled copy, the
+# pair gets a name.
+#
+#   mu_struct  structural mean E_eta[f]
+#   var_f      diag(Cov_eta(f)) -- the STRUCTURAL variance
+#   arr        row array from .admUnitResidRows() / .admResidRows()
+#   cov_f      full Cov_eta(f), or NULL on the diagonal ("var" method) path
+#   times      observation times; forwarded ONLY alongside cov_f
+#   compose    build the full V_pred matrix; defaults to "whenever a structural
+#              covariance was supplied"
+#
+# THE VAR BRANCH MUST NOT SEE `times`/`cov_f`. arr$rho and the ordinal same-time
+# cross term both key off `times`, so forwarding it unconditionally CHANGES the
+# var-branch NLL. `times` is forwarded only alongside `cov_f` here, so a
+# diagonal-path caller physically cannot turn those terms on.
+#
+# Returns mu/dv (always) and V (when composed), plus the raw .admResidApply
+# result as `ap` for callers that want ms/ev/rmat.
+.admResidMoments <- function(mu_struct, var_f, arr, cov_f = NULL, times = NULL,
+                             compose = !is.null(cov_f)) {
+  ap <- if (is.null(cov_f)) .admResidApply(mu_struct, var_f, arr)
+        else                .admResidApply(mu_struct, var_f, arr, times, cov_f)
+  list(mu = ap$mu, dv = ap$dv, ms = ap$ms, ev = ap$ev, rmat = ap$rmat, ap = ap,
+       V = if (compose && !is.null(cov_f)) .admApplyResidTail(cov_f, ap) else NULL)
+}
+
 # Derivatives of the residual w.r.t. the residual parameters (optimizer scale)
 # and w.r.t. the structural prediction f.
 #

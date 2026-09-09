@@ -46,6 +46,7 @@ one_cmt_fn <- function() {
 .int_adfo_cov_cache    <- NULL
 .int_adgh_cache        <- NULL
 .int_pipeline_cache    <- NULL
+.int_sandwich_cache    <- NULL
 
 # ---- linCmt model (1-cmt, 2 etas) -------------------------------------------
 
@@ -1388,4 +1389,53 @@ one_cmt_transit_fn <- function() {
     worst <- max(worst, max(abs(ana - cfd)) / max(1e-12, max(abs(cfd))))
   }
   worst
+}
+
+# ---- covMethod = "r,s": the same fit under both covariance methods ------------
+#
+# Eight fits, one per (estimator, covMethod) pair, on one small study. The point
+# of pairing them is that "r,s" must change the reported uncertainty and NOTHING
+# else: it replaces the filling of the sandwich, not the objective, so the
+# optimizer never sees it. Anything that moves an estimate between the two
+# members of a pair is a wiring defect, not a statistical one.
+#
+# `covMethod` is read off the FIT rather than off the control, because a
+# requested sandwich that could not be built degrades to "r" silently by design
+# -- so "was it applied" is a property of the result.
+.int_sandwich_setup <- function() {
+  if (!is.null(.int_sandwich_cache)) return(.int_sandwich_cache)
+
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  skip_if_not_installed("nlmixr2est")
+
+  nlmixr2 <- nlmixr2est::nlmixr2
+
+  times  <- c(0.5, 1, 2, 4)
+  E_true <- .one_cmt_mean(5, 20, 100, times)
+  study1 <- list(E = E_true, V = diag((0.3 * E_true)^2), n = 200L, times = times,
+                 ev = rxode2::et(amt = 100))
+
+  run <- function(est, control)
+    suppressMessages(suppressWarnings(
+      nlmixr2(one_cmt_lincmt_fn, admData(), est = est, control = control)))
+
+  ctl <- function(est, cm) switch(est,
+    adgh   = adghControl(studies = list(s1 = study1), n_nodes = 5L, maxeval = 15L,
+                         seed = 1L, grad = "analytical", covMethod = cm),
+    admc   = admControl(studies = list(s1 = study1), n_sim = 300L, maxeval = 15L,
+                        seed = 1L, grad = "sens", covMethod = cm,
+                        cov_n_sim = 2000L),
+    adfo   = adfoControl(studies = list(s1 = study1), maxeval = 15L,
+                         grad = "none", covMethod = cm),
+    adirmc = adirmcControl(studies = list(s1 = study1), n_sim = 300L,
+                           phases = c(1, 0.5), outer_iter = 10L, seed = 1L,
+                           covMethod = cm))
+
+  ests <- c("adgh", "admc", "adfo", "adirmc")
+  fits <- stats::setNames(lapply(ests, function(e)
+    list(r = run(e, "r"), rs = run(e, "r,s"))), ests)
+
+  .int_sandwich_cache <<- list(ests = ests, fits = fits, study = study1)
+  .int_sandwich_cache
 }

@@ -76,21 +76,35 @@
   }
 }
 
+# Structural moments (before any residual) from an already-solved node matrix:
+# one weighted mean and one weighted crossproduct about it.
+#
+# `cpc` -- the node matrix centred at the weighted mean -- is returned because
+# more than one consumer needs it: the gradient contracts against it, and the
+# ADF weight (covMethod = "r,s") IS a function of the centred nodes. Splitting
+# it out is what makes .admAdfParts() and .adghMoments() provably describe the
+# same node set rather than two copies of one expression.
+.adghStructMoments <- function(cp, W) {
+  mu  <- as.numeric(crossprod(W, cp))
+  cpc <- sweep(cp, 2L, mu)
+  list(mu = mu, cpc = cpc, V = crossprod(cpc, W * cpc))
+}
+
 # Weighted moments + residual error from an already-solved quadrature matrix.
 # Split out of .adghMoments so the solve and the assembly can be driven
 # independently: the assembly depends on sigma, but the SOLVE does not (sigma is
 # zeroed into it and re-added analytically here), so a set of configurations
 # that share a solve can each be assembled cheaply.
 .adghMomentsFromCp <- function(cp, W, pars, pinfo, out_var, times = NULL) {
-  mu  <- as.numeric(crossprod(W, cp))
-  cpc <- sweep(cp, 2L, mu)
-  V   <- crossprod(cpc, W * cpc)
+  sm <- .adghStructMoments(cp, W)
+  mu <- sm$mu
+  V  <- sm$V
 
   # Restrict residual error to this output's sigma(s) (no-op single-output).
   arr <- .admUnitResidRows(pinfo, out_var, pars$sigma_var, length(mu),
                            phi = attr(cp, "phi"))   # beta precision (SOLVED)
-  ap  <- .admResidApply(mu, diag(V), arr, times)
-  list(E = ap$mu, V = .admApplyResidTail(V, ap))
+  m <- .admResidMoments(mu, diag(V), arr, V, times)
+  list(E = m$mu, V = m$V)
 }
 
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {

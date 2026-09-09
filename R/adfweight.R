@@ -296,12 +296,11 @@
 # The node-level quantities the weight needs, alongside the predicted moments.
 # Same path .adghMoments takes, so the two cannot describe different node sets.
 .admAdfParts <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
-  g     <- .adghGrid(pars, pinfo, grid, study)
-  study <- .adghStudyCov(study, g)
+  g     <- .adghGrid(pars, pinfo, grid)
   pm    <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp    <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
                         out_var, pm, cores, pinfo$nDisplayProgress, pinfo$sigdig)
-  sm  <- .adghStructMoments(cp, g$W, g$taylor)
+  sm  <- .adghStructMoments(cp, g$W)
   arr <- .admUnitResidRows(pinfo, out_var, pars$sigma_var, length(sm$mu),
                            phi = attr(cp, "phi"))
   m   <- .admResidMoments(sm$mu, diag(sm$V), arr, sm$V, study$times)
@@ -625,11 +624,10 @@
 #   d(mu_struct)/dPsi = W' graw
 #   d(V_struct)/dPsi  = A + A',   A = cpc' diag(W) graw
 #
-# which means a parameter reached through SEVERAL paths -- a structural theta
-# that also moves the covariate shift nodes, an omega entry under absorption --
-# is handled by summing its columns before this is applied, exactly as
-# .adghGradNLL sums its `contrib()` calls. That linearity is why this does not
-# need to know which path a parameter took.
+# which means a parameter reached through SEVERAL paths is handled by summing
+# its columns before this is applied, exactly as .adghGradNLL sums its
+# `contrib()` calls. That linearity is why this does not need to know which path
+# a parameter took.
 #
 # The residual composition is then applied FORWARD, from the same
 # .admResidDeriv() partials the gradient chains BACKWARD:
@@ -644,9 +642,9 @@
 # error models rather than trusted. FD stays as that oracle.
 #
 # Returns NULL, not an approximation, whenever a path is not covered: no sens
-# model, a joint unit, a degraded covariate shift, unpaired thetas without their
-# own columns, or an ar()/ordinal residual whose rmat carries an off-diagonal
-# this forward map does not model. The caller falls back to FD.
+# model, a joint unit, unpaired thetas without their own columns, or an
+# ar()/ordinal residual whose rmat carries an off-diagonal this forward map does
+# not model. The caller falls back to FD.
 .admMomentJac <- function(p_hat, pinfo, studies, sensModel, rxMod, out_var, grid,
                           cores) {
   if (is.null(sensModel)) return(NULL)
@@ -662,16 +660,17 @@
 
   Eo <- Vo <- dEo <- dVo <- vector("list", length(studies))
 
+  # The node grid depends on Omega alone, so it is the same for every study --
+  # the same grid .adghNLL()/.adghGradNLL() build once per evaluation.
+  gS  <- .adghGrid(pars, pinfo, grid)
+  X   <- grid$X
+  W   <- gS$W
+  eta <- gS$eta; colnames(eta) <- pinfo$eta_col_names
+
   for (si in seq_along(studies)) {
     s <- studies[[si]]
     if (isTRUE(s$is_joint)) return(NULL)
     ov <- s$output %||% out_var
-    gS <- .adghGrid(pars, pinfo, grid, s)
-    if (isTRUE(gS$shift$degraded)) return(NULL)
-    s   <- .adghStudyCov(s, gS)
-    X   <- gS$X; W <- gS$W; ty <- gS$taylor
-    eta <- gS$eta; colnames(eta) <- pinfo$eta_col_names
-    .sh <- gS$shift
 
     res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s,
                             cores, pinfo$nDisplayProgress, pars$sigma_var,
@@ -680,7 +679,7 @@
     if (length(unpaired_k) > 0L && is.null(res$dtheta_list)) return(NULL)
     Jl <- res$dpred_list
 
-    sm    <- .adghStructMoments(res$cp_mat, W, ty)
+    sm    <- .adghStructMoments(res$cp_mat, W)
     mu    <- sm$mu; cpc <- sm$cpc; cov_f <- sm$V; var_f <- diag(cov_f)
     m     <- length(mu)
     arr   <- .admResidRows(pinfo, ov, pars$sigma_var, m)
@@ -695,15 +694,7 @@
     mom <- function(graw) {
       dmu <- as.numeric(crossprod(W, graw))
       A   <- crossprod(cpc, W * graw)
-      dVs <- A + t(A)
-      if (!is.null(ty)) {
-        dg <- crossprod(ty$Dw, graw)              # n_tay x m
-        for (j in seq_along(ty$var)) {
-          o <- tcrossprod(sm$dE[j, ], dg[j, ])
-          dVs <- dVs + ty$var[j] * (o + t(o))
-        }
-      }
-      list(dmu = dmu, dV = dVs)
+      list(dmu = dmu, dV = A + t(A))
     }
     # forward residual composition
     ms  <- dres$ms
@@ -737,24 +728,6 @@
         if (is.null(Dt)) return(NULL)
         graw <- graw + Dt
       }
-      nmk <- pinfo$struct_names[k]
-      if (isTRUE(.sh$multi)) {
-        kk <- match(nmk, .sh$th_names)
-        if (!is.na(kk)) {
-          b <- .admShiftBase(Jl, .sh$eta_idx, .sh$du[, , kk, drop = FALSE])
-          if (!is.null(b)) graw <- graw + b
-        }
-      } else if (isTRUE(.sh$absorb)) {
-        if (nmk %in% colnames(.sh$dmu)) {
-          dLt <- .admCholDiff(.sh$Lt, .sh$dP[[nmk]])
-          b   <- .admAbsorbBase(Jl, X, dLt, .sh$dmu[, nmk])
-          if (!is.null(b)) graw <- graw + b
-        }
-      } else if (!is.null(.sh) && !is.null(.sh$du_dtheta) &&
-                 nmk %in% colnames(.sh$du_dtheta)) {
-        dk <- .sh$du_dtheta[, nmk]
-        if (!all(dk == 0)) graw <- graw + Jl[[.sh$eta_idx]] * dk
-      }
       mm <- mom(graw); tf <- tailf(mm$dmu, mm$dV)
       dEi[, k] <- tf$dE; dVi[[k]] <- tf$dV
     }
@@ -769,17 +742,9 @@
     # --- omega Cholesky ----------------------------------------------------
     if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
       i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
-      base <- if (isTRUE(.sh$multi)) {
-        aa <- match(i, .sh$eta_idx)
-        if (i == j && !is.na(aa))
-          .admShiftBase(Jl, .sh$eta_idx, .sh$du[, , .sh$n_th + aa, drop = FALSE])
-        else Jl[[i]] * X[, j]
-      } else if (isTRUE(.sh$absorb)) {
-        Eij <- matrix(0, n_eta, n_eta); Eij[i, j] <- 1
-        .admAbsorbBase(Jl, X, .admCholDiff(.sh$Lt, Eij %*% t(L) + L %*% t(Eij)),
-                       numeric(n_eta))
-      } else Jl[[i]] * X[, j]
-      if (is.null(base)) return(NULL)
+      # d(eta[q,])/d(L_ij) = X[q,j] e_i, so d(f[q,])/d(L_ij) = Jl[[i]][q,] X[q,j]
+      # -- the same base .adghGradNLL() contracts.
+      base <- Jl[[i]] * X[, j]
       mm  <- mom(base); tf <- tailf(mm$dmu, mm$dV)
       sc  <- if (pinfo$chol_diag[rr]) L[i, i] / 2 else 1
       pos <- n_s + n_e + rr
