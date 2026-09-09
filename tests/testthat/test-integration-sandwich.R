@@ -7,6 +7,8 @@ skip_on_cran()
 # .admCalcCov / .adfoCalcCov all pass `sandwich` through, that the label on the
 # returned fit reports what the covariance IS, and that nothing on the objective
 # side moved on the way.
+#
+# Fixture and its sigma level: see .int_sandwich_setup() in helper-integration.R.
 
 test_that("r,s changes the reported uncertainty and nothing else", {
   env <- .int_sandwich_setup()
@@ -31,19 +33,32 @@ test_that("the fit reports the covariance it HAS, not the one asked for", {
   }
 })
 
-test_that("r,s standard errors are finite, positive, and not a copy of r", {
+test_that("under correct specification the sandwich reduces to r", {
+  # THE load-bearing test. J = 2H when the model is right, so H^-1 J H^-1 must
+  # come back as 2H^-1 -- the number "r" reports. It runs the whole path (the
+  # moment Jacobian G, the ADF weight Omega, and the shared H), and a wrong G, a
+  # wrong Omega, or an H that is not the one "r" inverted would each break it
+  # while still producing finite, plausible standard errors.
+  #
+  # This replaces an earlier assertion that the two must DIFFER, which passed for
+  # the wrong reason: on the old fixture they differed because `add.err` was
+  # unidentified (cond(H) = 3.5e5) and the sandwich inverts H twice. That the
+  # weight moves the sandwich off 2H under MISspecification is pinned where it
+  # belongs, on a controlled ensemble, in test-adfweight.R.
   env <- .int_sandwich_setup()
   for (e in env$ests) {
-    se_r  <- env$fits[[e]]$r$parFixedDf$SE
-    se_rs <- env$fits[[e]]$rs$parFixedDf$SE
-    ok    <- is.finite(se_r) & is.finite(se_rs)
+    a <- env$fits[[e]]$r; b <- env$fits[[e]]$rs
+    ok <- is.finite(a$parFixedDf$SE) & is.finite(b$parFixedDf$SE)
     expect_true(any(ok), info = e)
-    expect_true(all(se_rs[ok] > 0), info = e)
-    # The correction must be substantial rather than decorative. It reduces to
-    # "r" only under correct specification, and this fixture is a study whose V
-    # was written down analytically rather than simulated from the model -- so
-    # the two agreeing to machine precision would mean the weight never moved.
-    expect_false(isTRUE(all.equal(se_rs[ok], se_r[ok])), info = e)
+    expect_true(all(b$parFixedDf$SE[ok] > 0), info = e)
+    ratio <- unname(b$parFixedDf$SE[ok] / a$parFixedDf$SE[ok])
+    # adgh is the exact-quadrature reference and holds tightest; the two MC
+    # estimators carry their own sampling noise into H, and adfo's G comes from
+    # the FO moment map rather than the ensemble, so it is not expected to be
+    # exact even here.
+    tol <- if (e == "adgh") 0.05 else 0.25
+    expect_equal(ratio, rep(1, length(ratio)), tolerance = tol,
+                 info = paste(e, "ratios:", paste(signif(ratio, 4), collapse = " ")))
   }
 })
 

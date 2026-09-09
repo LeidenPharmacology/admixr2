@@ -931,6 +931,20 @@
 #'   `pow`, `combined1`, `combined2`, `lnorm`) and for non-joint studies;
 #'   anything else falls back to `"r"` with a warning.
 #'
+#'   **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"` is.**
+#'   `"r"` reports `2H^-1` and inverts `H` once; the sandwich reports
+#'   `H^-1 J H^-1` and inverts it twice, so in a direction the data barely
+#'   identifies any gap between `J` and `2H` is amplified quadratically. A
+#'   residual SD contributing 0.01 variance against 1.7 from between-subject
+#'   variability is such a direction: measured on one 1-cmt fixture at
+#'   `cond(H) = 3.5e5`, the reported residual SE moved by a factor of 0.11 and
+#'   two omega entries by 0.59 and 1.55, while the same model and design on a
+#'   study the residual IS identified in (`cond(H) = 247`) reproduced `"r"` to
+#'   four decimals on every parameter. Neither number is a correction there --
+#'   both methods are reporting an unidentified direction, and `"r,s"` is louder
+#'   about it. Check the RSE of a parameter whose `"r,s"` SE surprises you before
+#'   reading the change as a finding.
+#'
 #'   All three blocks are reported on the scale the ESTIMATES are printed on, as
 #'   `nlmixr2est` does: structural thetas on the log/optimizer scale, residual
 #'   error as an SD, and omega as the variance/covariance entries (named
