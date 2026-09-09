@@ -559,6 +559,75 @@
   (M + t(M)) / 2
 }
 
+# A model source's own contribution to the OBJECTIVE, in MOMENT space.
+#
+# .admSrcMeat (above) projects a model source's C_src into the ANALYSIS
+# model's parameter space via G, for the post-fit sandwich. This is the
+# earlier step that projection depends on: C_src mapped into the space of
+# PREDICTED MOMENTS the source's own design produces, via the source's own
+# Jacobian D alone -- no G, because comparing predicted moments to the
+# source's reported moments needs no further projection; that comparison IS
+# already in moment space. Reused for the objective (a model source's
+# contribution there needs no G either, for the same reason) and, unlike G,
+# does not move with the analysis model's current candidate theta -- D is a
+# property of the SOURCE model at theta_src, fixed once C_src is fixed.
+#
+# A banded source stacks its J blocks' Jacobians (rbind, not sum): the
+# correction is stacked, not summed, is EXACTLY what keeps a banded source
+# counting as one contribution rather than J -- summing would already have
+# discarded the cross-band correlations a single theta_src induces, which
+# rbind + one shared C_src preserves.
+#
+# M = D C_src D' is RANK-DEFICIENT in general -- at most dim(theta_src)
+# directions survive, however many moments are stacked (the rank-2-over-90-
+# timepoints result). A naive inverse does not exist. Returns a pseudo-
+# inverse restricted to the directions C_src actually informs; every other
+# direction gets EXACTLY zero weight, not an arbitrary one -- the moment-space
+# analogue of Vt/n in .admSandwich, which exists for the identical reason.
+.admSrcWeight <- function(studies, idx, tol = 1e-8) {
+  D <- .admSrcJac(studies, idx)
+  if (is.null(D)) return(NULL)
+  Dstack <- tryCatch(do.call(rbind, D), error = function(e) NULL)
+  if (is.null(Dstack) || !all(is.finite(Dstack))) return(NULL)
+  prov <- studies[[idx[1L]]][[".adm_src"]]
+  C  <- prov$cov[colnames(Dstack), colnames(Dstack), drop = FALSE]
+  M  <- Dstack %*% C %*% t(Dstack)
+  M  <- (M + t(M)) / 2
+  ev <- tryCatch(eigen(M, symmetric = TRUE), error = function(e) NULL)
+  if (is.null(ev) || !all(is.finite(ev$values))) return(NULL)
+  keep <- ev$values > max(ev$values, 0) * tol
+  if (!any(keep)) return(NULL)
+  Mi <- ev$vectors[, keep, drop = FALSE] %*%
+    diag(1 / ev$values[keep], sum(keep)) %*%
+    t(ev$vectors[, keep, drop = FALSE])
+  list(Mpinv = Mi, rank = sum(keep), values = ev$values)
+}
+
+# Attach each model source group's Mpinv to its provenance, ONCE, before the
+# optimizer runs. .admSrcJac calls datagen() -- not something to redo on every
+# NLL evaluation -- so this is a SETUP step, called once from the driver, not
+# from inside .adghNLL. Stored on the group's FIRST study's `.adm_src`, the
+# exact place .admSrcMeat already reads provenance from, so .adghNLL needs no
+# new argument to find it: just look at s[[".adm_src"]]$Mpinv.
+#
+# A group whose weight could not be built (.admSrcWeight returns NULL) is left
+# WITHOUT an Mpinv, not given a fallback -- the caller must refuse rather than
+# silently keep scoring that source the old (n-weighted) way, which is exactly
+# the silent-wrong-number failure mode this file refuses everywhere else.
+.admAttachSrcWeight <- function(studies) {
+  grp <- .admSrcGroups(studies)
+  failed <- character(0)
+  for (nm in names(grp)) {
+    idx <- grp[[nm]]
+    w   <- .admSrcWeight(studies, idx)
+    if (is.null(w)) { failed <- c(failed, nm); next }
+    studies[[idx[1L]]][[".adm_src"]]$Mpinv <- w$Mpinv
+    studies[[idx[1L]]][[".adm_src"]]$Mpinv_rank <- w$rank
+  }
+  attr(studies, "srcWeightFailed") <- failed
+  studies
+}
+
 # A summary of a model cannot make us more certain than the analyst who had
 # every patient.
 #

@@ -602,7 +602,21 @@
   # Reject non-finite parameters before the solve; see .admParsFinite().
   if (!.admParsFinite(pars, pinfo)) return(Inf)
   total <- 0
-  for (s in studies) {
+  # EXPERIMENTAL (srcWeight = "cov"): a source GROUP whose first study carries
+  # an Mpinv (attached once, at setup, by .admAttachSrcWeight -- see
+  # nlmixr2Est.adgh) leaves the ordinary n-weighted sum below entirely, ALL of
+  # its member studies (a banded source has several), and is scored once,
+  # after this loop, against its own moment-space weight -- n never enters
+  # that term. .admSrcGroups is cheap (no datagen()), safe to call every
+  # evaluation; only Mpinv itself was expensive enough to need precomputing.
+  .grp <- .admSrcGroups(studies)
+  .cov_idx <- integer(0)
+  for (.nm in names(.grp))
+    if (!is.null(studies[[.grp[[.nm]][1L]]][[".adm_src"]][["Mpinv"]]))
+      .cov_idx <- c(.cov_idx, .grp[[.nm]])
+  for (i in seq_along(studies)) {
+    if (i %in% .cov_idx) next
+    s <- studies[[i]]
     if (isTRUE(s$is_joint)) {
       m   <- .adghMomentsJoint(pars, pinfo, s, rxMod, grid, cores)
       nll <- nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
@@ -615,6 +629,21 @@
     }
     if (!is.finite(nll)) return(Inf)
     total <- total + nll
+  }
+  for (.nm in names(.grp)) {
+    .idx <- .grp[[.nm]]
+    .mp  <- studies[[.idx[1L]]][[".adm_src"]][["Mpinv"]]
+    if (is.null(.mp)) next
+    # Stacked in the SAME order .admSrcWeight()/.admSrcJac() stacked D in, so
+    # the residual's rows line up with Mpinv's.
+    .r <- numeric(0)
+    for (.i in .idx) {
+      s <- studies[[.i]]
+      m <- .adghMoments(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores)
+      .r <- c(.r, .admTauVec(m$E, m$V, s) - .admTauVec(s$E, s$V, s))
+    }
+    if (!all(is.finite(.r))) return(Inf)
+    total <- total + as.numeric(t(.r) %*% .mp %*% .r)
   }
   total
 }
@@ -1727,6 +1756,15 @@ adghControl <- function(
     # had, so every positional call keeps its meaning.
     cov_integration  = c("quadrature", "auto", "sparse", "shift"),
     cov_sparse_level = 3L,
+    # LAST on purpose, as above. EXPERIMENTAL, not the default: "n" is today's
+    # shipped behaviour (a model source scored through nll_cov_cpp, weighted by
+    # its declared `n`). "cov" weights it instead by C_src, projected into
+    # moment space via .admSrcWeight -- no `n` anywhere in that term. See
+    # algorithm/covariate-shift/ on the experiment branch for the measurements
+    # motivating this; NOT yet validated for the SE (.adghGradNLL still scores
+    # a "cov" source's Hessian contribution the old way -- covMethod = "r,s"
+    # under srcWeight = "cov" is not self-consistent yet).
+    srcWeight        = c("n", "cov"),
     ...) {
 
   .xtra <- list(...)
@@ -1741,6 +1779,7 @@ adghControl <- function(
   covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
                                     !missing(covMethod))
   cov_integration <- match.arg(cov_integration)
+  srcWeight <- match.arg(srcWeight)
 
   checkmate::assertList(studies)
   checkmate::assertIntegerish(n_nodes,     lower = 1L, len = 1)
@@ -1821,6 +1860,7 @@ adghControl <- function(
     cov_nodes     = as.integer(cov_nodes),
     cov_integration = cov_integration,
     cov_sparse_level = cov_sparse_level,
+    srcWeight     = srcWeight,
     n_nodes       = as.integer(n_nodes),
     n_sim         = 1L,       # interface compat with .admRunRestarts()
     sampling      = "sobol",  # idem
@@ -1952,6 +1992,23 @@ nlmixr2Est.adgh <- function(env, ...) {
       .ctl$grad      <- "none"
       .ctl$algorithm <- .admDefaultAlgorithm("none")
     }
+  }
+
+  # EXPERIMENTAL (srcWeight = "cov"): a model source's Mpinv, built ONCE here
+  # -- .admSrcWeight()/.admSrcJac() call datagen(), not something to redo on
+  # every NLL evaluation. Attached to studies before the optimizer ever runs,
+  # so .adghNLL finds it via s[[".adm_src"]]$Mpinv with no new argument. A
+  # group whose weight could not be built is refused here, at setup, rather
+  # than silently falling back to the old n-weighted term mid-fit.
+  if (identical(.ctl$srcWeight, "cov")) {
+    studies <- .admAttachSrcWeight(studies)
+    .failed <- attr(studies, "srcWeightFailed")
+    if (length(.failed))
+      stop("admixr2: srcWeight = \"cov\" could not build a moment-space weight ",
+           "for source(s): ", paste(.failed, collapse = ", "), ". Falling back ",
+           "to the n-weighted term would silently reintroduce the defect this ",
+           "option exists to remove -- pass srcWeight = \"n\" explicitly if ",
+           "that is really what is wanted.", call. = FALSE)
   }
 
   want_grad    <- .ctl$grad != "none"
