@@ -110,15 +110,58 @@ below).
    scenario (data arm dominated); direction/magnitude not established --
    would need a replicate study, not a single draw.
 
+## Update: srcWeight = "cov" was a silent no-op under the DEFAULT gradient mode
+
+Found reproducing `vignettes/covariates.Rmd` faithfully (three published
+models -- Sato/Ito/Khan -- each `admStudy()`-built with its own `cov`, sex
+banded, renal effect marginalised, `est = "adgh"`): `srcWeight = "n"` and
+`"cov"` gave BIT-IDENTICAL results to 10 decimal places, and -- the tell --
+BOTH moved identically when one source's declared `n` was deliberately
+mis-set 20x, which is impossible if `"cov"` genuinely never reads `n`.
+
+Root cause: `.adghGradNLL` (see below) drives the optimizer under the
+DEFAULT `grad = "analytical"`, not `.adghNLL` -- so `srcWeight = "cov"`
+never reached the function it patches unless the caller also set
+`grad = "fd"` explicitly, which nothing enforced or even documented. Every
+earlier test in this file happened to set `grad = "fd"`, which is why none
+of them caught this.
+
+**Fixed**: `adghControl()` now forces `grad = "fd"` (with a message) whenever
+`srcWeight = "cov"` is requested under the default analytical gradient --
+same pattern already used for a beta() endpoint's own grad override. See
+`vignette_covariates_oldvsnew.R`, the script that found this, kept as the
+regression case.
+
+## The 1cmt/2cmt mismatch, inside the real 3-source vignette
+
+`vignette_2cmt_mismatch.R`: same three-source setup, but the true kinetics
+are 2-compartment and one analyst (moderate/Ito) fit their trial with a
+1-compartment model -- genuinely misspecified, not just a different
+covariate choice; normal/Sato and mild/Khan fit (correctly) 2-compartment
+models matching the pooled model. Natural scale:
+
+           CL      V1      Q      V2    bcrcl
+  truth   5.00   30.00   8.00   60.00   0.60
+  old     6.54   31.68   5.17   40.45   0.38
+  new     5.11   30.09   8.34   65.64   0.62
+
+`new` recovers every parameter within a few percent. `old`'s damage is not
+contained to Q/V2 (35%/33% understated, matching the standalone test) -- it
+leaks into `bcrcl`, the renal effect the whole vignette exists to recover
+(36% understated), because the fit is joint: a bad pull on Q/V2 distorts
+what `bcrcl` has to be to explain the rest of the data.
+
 ## What's NOT done -- in priority order
 
-1. **The SE is not fixed anywhere.** `.adghGradNLL` -- a structurally
-   SEPARATE, hand-coded copy of the objective used to build the Hessian for
-   `covMethod = "r,s"` -- still scores a model source the old, n-weighted way
-   regardless of `srcWeight`. `covMethod = "r,s"` under `srcWeight = "cov"`
-   is NOT self-consistent yet: the point estimate uses the new weighting, the
-   reported SE does not. `adghControl(covMethod = "none")` was used
-   throughout this branch's tests for exactly this reason.
+1. **The SE is still not fixed anywhere**, and now more precisely scoped:
+   `.adghGradNLL` -- a structurally SEPARATE, hand-coded copy of the
+   objective -- drives BOTH the analytical-gradient point estimate (now
+   worked around by forcing `grad = "fd"`) AND the Hessian for
+   `covMethod = "r,s"` (not worked around -- there is no `grad`-independent
+   path to the SE). `covMethod = "r,s"` under `srcWeight = "cov"` is NOT
+   self-consistent: the point estimate uses the new weighting, the reported
+   SE does not. `adghControl(covMethod = "none")` was used throughout this
+   branch's tests for exactly this reason.
 2. **Stratification/covariates + the CORRECTED moment-space fix, together:**
    never tested. The only stratified scenario tested (wt-covariate) used the
    now-invalidated named-parameter version. `.admSrcWeight`'s row-stacking
