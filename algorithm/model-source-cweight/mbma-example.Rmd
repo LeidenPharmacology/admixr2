@@ -1,0 +1,178 @@
+---
+title: "MBMA: a published 1-compartment model informing a 2-compartment analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{MBMA: a published model informing a richer analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>",
+  message = FALSE, warning = FALSE,
+  fig.width = 7, fig.height = 4.2, dpi = 120
+)
+```
+
+## The problem
+
+You are running a new, richly-sampled study of a drug that turns out to show
+real distribution-phase kinetics -- a two-compartment model fits your data
+well. But you are not starting from nothing: an earlier paper published a
+population PK model for the same drug, fit to steady-state peak and trough
+concentrations with a simple one-compartment model. You would like that
+paper's information to inform your analysis too, not just your own data.
+
+This is the classic **model-based meta-analysis (MBMA)** situation admixr2's
+`model_cov` argument exists for -- a *model* as a source, not just a table of
+means. But the source's structural form (1-compartment) and yours
+(2-compartment) are different, and the source's own parameter estimates are
+themselves uncertain (it reported a covariance matrix along with its
+estimates). Two questions this vignette answers:
+
+1. How much should the published model's uncertainty influence your own
+   analysis?
+2. What happens to the parameters the published model's simpler structure
+   *cannot* say anything about -- here, the distribution-phase parameters `Q`
+   and `V2`?
+
+```{r libs}
+library(admixr2)
+library(rxode2)
+library(nlmixr2est)
+```
+
+## The published (1-compartment) source
+
+```{r truth}
+TRUE_TCL <- log(5); TRUE_TV1 <- log(30); TRUE_Q <- log(8); TRUE_V2 <- log(60)
+TRUE_ADD <- 0.10; TRUE_OM <- 0.06
+DOSE <- 200; TAU <- 12
+```
+
+The paper reports typical clearance and volume, each with a reported standard
+error, from steady-state peak/trough sampling within one dosing interval.
+Its own estimates are offset a little from the truth this vignette knows and
+the paper does not -- exactly the situation a real analyst is in.
+
+```{r source-model}
+src_times <- c(0.5, 1, 2, 4, 8, 11.5)
+mk_src_ui <- function(tcl, tv, add.err, om) {
+  fn <- sprintf(paste0(
+    "function(){\n",
+    "  ini({ tcl <- %.6f; tv <- %.6f; add.err <- %.6f\n",
+    "        eta.cl ~ %.6f })\n",
+    "  model({ cl <- exp(tcl + eta.cl); v <- exp(tv)\n",
+    "          cp <- linCmt(); cp ~ add(add.err) }) }"),
+    tcl, tv, add.err, om)
+  suppressMessages(rxode2::rxode2(eval(parse(text = fn))))
+}
+sd_src <- c(tcl = 0.070, tv = 0.050, add.err = 0.004, eta.cl = 0.010)
+csrc   <- diag(sd_src^2); dimnames(csrc) <- list(names(sd_src), names(sd_src))
+
+theta_src <- c(tcl = TRUE_TCL - 0.15, tv = TRUE_TV1 - 0.10,
+              add.err = TRUE_ADD, eta.cl = TRUE_OM^2)
+
+src_ui <- mk_src_ui(theta_src[["tcl"]], theta_src[["tv"]],
+                    theta_src[["add.err"]], theta_src[["eta.cl"]])
+src_ev <- rxode2::et(amt = DOSE, ii = TAU, ss = 1, addl = 0)
+src_spec <- list(times = src_times, ev = src_ev, n = 300L, model_cov = csrc)
+g_src <- suppressWarnings(suppressMessages(datagen(
+  list(published_1cmt = src_spec), model = src_ui,
+  control = datagenControl(method = "gh", seed = 55L))))
+```
+
+## Your own (2-compartment) study
+
+```{r data-model}
+dense_times <- c(0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 12, 24)
+mk_2c_ui <- function(tcl, tv, q, v2, add.err, om) {
+  fn <- sprintf(paste0(
+    "function(){\n",
+    "  ini({ tcl <- %.6f; tv <- %.6f; q <- %.6f; v2 <- %.6f; add.err <- %.6f\n",
+    "        eta.cl ~ %.6f })\n",
+    "  model({ cl <- exp(tcl + eta.cl); v1 <- exp(tv); qq <- exp(q); vv2 <- exp(v2)\n",
+    "          d/dt(centr) <- -cl/v1*centr - qq/v1*centr + qq/vv2*periph\n",
+    "          d/dt(periph) <- qq/v1*centr - qq/vv2*periph\n",
+    "          cp <- centr/v1; cp ~ add(add.err) }) }"),
+    tcl, tv, q, v2, add.err, om)
+  suppressMessages(rxode2::rxode2(eval(parse(text = fn))))
+}
+fit_2c <- function() {
+  ini({ tcl <- log(4); tv <- log(25); q <- log(5); v2 <- log(45)
+        add.err <- 0.15; eta.cl ~ 0.1 })
+  model({ cl <- exp(tcl + eta.cl); v1 <- exp(tv); qq <- exp(q); vv2 <- exp(v2)
+          d/dt(centr) <- -cl/v1*centr - qq/v1*centr + qq/vv2*periph
+          d/dt(periph) <- qq/v1*centr - qq/vv2*periph
+          cp <- centr/v1; cp ~ add(add.err) })
+}
+data_ui <- mk_2c_ui(TRUE_TCL, TRUE_TV1, TRUE_Q, TRUE_V2, TRUE_ADD, TRUE_OM^2)
+data_ev <- rxode2::et(amt = DOSE)
+data_spec <- list(times = dense_times, ev = data_ev, n = 300L)
+g_data <- suppressWarnings(suppressMessages(datagen(
+  list(your_study = data_spec), model = data_ui,
+  control = datagenControl(method = "gh", seed = 2L))))
+```
+
+## Fitting both ways
+
+`srcWeight` controls how the published model's contribution is weighted.
+`"n"` is today's default: the source is scored as if it were a real sample of
+`n` patients. `"cov"` weights it instead by the covariance the paper actually
+reported, propagated through the source's own model.
+
+```{r fits}
+studies <- c(g_data, g_src)
+
+fit_old <- suppressMessages(nlmixr2est::nlmixr2(
+  fit_2c, admData(), est = "adgh",
+  control = adghControl(studies = studies, print = 0L, cores = 2L,
+                        covMethod = "none", grad = "fd", srcWeight = "n")))
+
+fit_new <- suppressMessages(nlmixr2est::nlmixr2(
+  fit_2c, admData(), est = "adgh",
+  control = adghControl(studies = studies, print = 0L, cores = 2L,
+                        covMethod = "none", grad = "fd", srcWeight = "cov")))
+```
+
+## Comparing the two
+
+```{r compare}
+truth <- c(tcl = TRUE_TCL, tv = TRUE_TV1, q = TRUE_Q, v2 = TRUE_V2)
+tab <- rbind(
+  truth    = truth,
+  old      = fit_old$parFixedDf[names(truth), "Estimate"],
+  new      = fit_new$parFixedDf[names(truth), "Estimate"]
+)
+round(tab, 4)
+```
+
+```{r compare-natural, echo=FALSE}
+nat <- exp(tab)
+colnames(nat) <- c("CL", "V1", "Q", "V2")
+cat(sprintf("%-6s %8s %8s %8s %8s\n", "", "CL", "V1", "Q", "V2"))
+for (r in rownames(nat))
+  cat(sprintf("%-6s %8.2f %8.2f %8.2f %8.2f\n", r, nat[r,1], nat[r,2], nat[r,3], nat[r,4]))
+```
+
+## What to notice
+
+`CL` and `V1` are the parameters the published source actually estimated, so
+both methods pull them somewhat toward the paper. `Q` and `V2` -- the
+distribution-phase parameters -- are where the two methods disagree sharply:
+the published model never estimated them at all, so nothing about them
+should depend on how the source is weighted.
+
+Under `srcWeight = "cov"`, `Q` and `V2` stay close to what your own dense
+data alone would give, regardless of the source. Under `srcWeight = "n"`,
+they are pulled toward whatever configuration makes the two-compartment
+model's *shape* better resemble the source's one-compartment profile --
+because `"n"` compares the two models' entire predicted curves, not just the
+parameters the source actually reported, and nothing bounds how hard that
+pull can be.
+
+Try re-running with the source's declared `n` raised to 1500 or 10000 under
+each method: `"cov"` gives back exactly the same numbers -- it never reads
+`n` at all -- while `"n"` keeps changing, and for `Q`/`V2` specifically, keeps
+getting worse.
