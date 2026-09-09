@@ -19,7 +19,7 @@ adghControl(
   grad_bounds = 5,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/4),
-  covMethod = c("r", "none"),
+  covMethod = c("r", "r,s", "none"),
   n_restarts = 1L,
   restart_sd = 0.5,
   workers = 1L,
@@ -104,6 +104,17 @@ included because excluding it also biases the STRUCTURAL standard errors
 downward -- a theta carrying an eta is correlated with that eta's variance.
 If the weakly-identified omega Cholesky makes the Hessian non-positive
 definite, the structural + residual sub-block is reported with a warning.
+
+\code{"r,s"} adds a sandwich correction, \verb{H^-1 J H^-1}, on the same Hessian.
+The aggregate objective scores the reported mean and covariance as though
+the subjects behind them were multivariate normal; they are not, because the
+model is nonlinear in the random effects, so the sampling law of \verb{(E, V)} is
+not the one the objective assumes. \code{"r,s"} scores that law from the model
+instead. Point estimates are untouched -- only the reported uncertainty
+changes -- and under correct specification it reduces to \code{"r"} exactly.
+Available for the conditionally-normal residual family (\code{add}, \code{prop},
+\code{pow}, \code{combined1}, \code{combined2}, \code{lnorm}) and for non-joint studies;
+anything else falls back to \code{"r"} with a warning.
 
 All three blocks are reported on the scale the ESTIMATES are printed on, as
 \code{nlmixr2est} does: structural thetas on the log/optimizer scale, residual

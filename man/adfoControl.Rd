@@ -18,7 +18,7 @@ adfoControl(
   grad_bounds = 5,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
-  covMethod = c("r", "none"),
+  covMethod = c("r", "r,s", "none"),
   n_restarts = 1L,
   restart_sd = 0.5,
   workers = 1L,
@@ -105,6 +105,17 @@ included because excluding it also biases the STRUCTURAL standard errors
 downward -- a theta carrying an eta is correlated with that eta's variance.
 If the weakly-identified omega Cholesky makes the Hessian non-positive
 definite, the structural + residual sub-block is reported with a warning.
+
+\code{"r,s"} adds a sandwich correction, \verb{H^-1 J H^-1}, on the same Hessian.
+For FO this does more than correct kurtosis: \verb{V = J Omega J' + Sigma} is the
+covariance of an exactly normal individual law, so the reported standard
+errors otherwise answer to the linearisation rather than to the model. The
+correction scores the FO fit against the model's true nonlinear law, built
+post-fit on a quadrature ensemble, and so absorbs part of the linearisation
+error as well. Point estimates are untouched. Available for the
+conditionally-normal residual family (\code{add}, \code{prop}, \code{pow}, \code{combined1},
+\code{combined2}, \code{lnorm}) and for non-joint studies; anything else falls back to
+\code{"r"} with a warning.
 
 All three blocks are reported on the scale the ESTIMATES are printed on, as
 \code{nlmixr2est} does: structural thetas on the log/optimizer scale, residual
