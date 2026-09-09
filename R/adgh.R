@@ -1780,6 +1780,23 @@ adghControl <- function(
                                     !missing(covMethod))
   cov_integration <- match.arg(cov_integration)
   srcWeight <- match.arg(srcWeight)
+  # .adghGradNLL is a SEPARATE, hand-coded copy of the objective -- it does not
+  # know about srcWeight = "cov" at all, and still scores a model source the
+  # old n-weighted way. Under grad = "analytical" (the default) THAT function
+  # drives the optimizer, so srcWeight = "cov" would silently do nothing --
+  # measured: bit-identical to srcWeight = "n" to 10 decimal places, in a real
+  # three-source fit, because .adghNLL (the function srcWeight = "cov" patches)
+  # was never being called. Force a gradient mode that actually differentiates
+  # the patched objective, the same way a beta() endpoint already forces
+  # grad = "none" below for its own, unrelated reason.
+  if (identical(srcWeight, "cov") && identical(grad, "analytical")) {
+    message("adghControl: srcWeight = \"cov\" is not implemented in the ",
+            "analytical-gradient path (.adghGradNLL still scores a model ",
+            "source by n) -- grad has been set to \"fd\" so the optimizer ",
+            "actually uses the weight just requested. Pass grad = \"fd\" ",
+            "explicitly to silence this message.")
+    grad <- "fd"
+  }
 
   checkmate::assertList(studies)
   checkmate::assertIntegerish(n_nodes,     lower = 1L, len = 1)
