@@ -2205,12 +2205,22 @@ without that parameter there is no residual to integrate"),
 # node can overflow the inverse transform, its GH weight is ~1e-30, and zeroing it
 # leaves the moments unchanged to machine precision while NOT zeroing it turns the
 # whole moment NaN.
+#
+# It has to be the SAME guard, node for node, and that is why the derivative is
+# evaluated here at all: nothing below reads `gp_all`. This function supplies the
+# ADF weight's `d` (and the exact conditional means `m1`) while .admTBSMomentsD()
+# supplies the V_pred the objective composes, and the J = 2H reduction the
+# sandwich rests on holds only where the two agree that S == V_pred. Dropping on
+# `!is.finite(yq_all)` alone would keep a node that MomentsD drops -- one whose
+# value survives but whose inverse-transform derivative overflows -- and the two
+# variances would then be taken over different node sets.
 .admTBSCentral <- function(f, sd, lam, yj, lo, hi, nodes = .ADM_TBS_NODES) {
   gq <- .adghNodes1(nodes)
   hz <- .admTBS(f, lam, yj, lo, hi)
   z_all  <- hz + outer(sd, gq$x)
   yq_all <- .admTBSi(z_all, lam, yj, lo, hi)
-  .bad <- !is.finite(yq_all)
+  gp_all <- .admTBSid(z_all, lam, yj, lo, hi)
+  .bad <- !is.finite(yq_all) | !is.finite(gp_all)
   if (any(.bad)) yq_all[.bad] <- 0
   n <- length(f)
   m1 <- m2 <- m3 <- m4 <- numeric(n)
