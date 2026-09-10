@@ -58,6 +58,24 @@
   design would use. `adfo` and `adirmc` refuse `cov_dist` rather than solve at
   the covariate mean.
 
+* **A covariate effect written through a nonlinear LINK now collapses too.**
+  The collapse asks one question --- does this assignment depend on the latent
+  variables only through a single linear combination? --- and it is now asked
+  once, of the relative gradient `d log p / d xi`, whose direction is constant
+  exactly when the answer is yes. It used to be asked four different ways, one
+  per detected "route", and the raw-slope route scaled with the random effect,
+  so a saturating or square-root covariate effect failed the check that guards
+  against covariate-by-eta interactions and silently fell back to the full
+  product grid. An `Emax` or `sqrt` link on three covariates now collapses to
+  rank 1, as its affine index always deserved. A genuine covariate-by-eta
+  interaction is still refused.
+
+  A consequence worth stating: **the collapse no longer depends on how the
+  model was spelled.** `exp(tcl + eta.cl) * (WT/70)^b1` and
+  `exp(tcl + eta.cl + b1 * log(WT/70))` are the same model and now get the same
+  design; the first used to take a slower path because rxode2 does not
+  mu-reference it.
+
 * **A study can contribute as a published MODEL**, not only as digitised
   aggregate data: give `admStudy()` a `model` with the paper's parameter table
   as `est`, and it is generated into the (E, V) the paper would have reported
