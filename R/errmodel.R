@@ -2182,13 +2182,67 @@ without that parameter there is no residual to integrate"),
 #   ev     = q$v[2] + 0.5*v''(f)*v0      -- the objective's curvature-corrected
 #                                           E_eta[Var(y|eta)]
 # `dv` is the full predicted variance for the row, ms^2*v0 + ev.
-.admTBSRow <- function(f, v0, a2, b2, cc, lam, yj, lo, hi, ftr, c1, nodes) {
-  hstep <- max(abs(f), 1) * 1e-4
-  fv    <- c(f - hstep, f, f + hstep)
+# Conditional central moments 2, 3 and 4 of a TBS endpoint given the structural
+# prediction, by the SAME Gauss-Hermite quadrature .admTBSMomentsD() runs for the
+# mean and variance -- two more accumulators over the same nodes, not a second
+# integration scheme.
+#
+#   y | f  =  g(h(f) + sd(f) * eps),   eps ~ N(0, 1)
+#   m_k    =  sum_q w_q g(h(f) + sd x_q)^k
+#   v      =  m_2 - m_1^2
+#   mu3    =  m_3 - 3 m_1 m_2 + 2 m_1^3
+#   mu4    =  m_4 - 4 m_1 m_3 + 6 m_1^2 m_2 - 3 m_1^4
+#
+# The ADF weight needs exactly (v, mu3, mu4) per node, which is why the four
+# transform-both-sides models -- boxCox, yeoJohnson, logitNorm, probitNorm -- were
+# the one residual family the sandwich refused despite being conditionally
+# independent across timepoints, which is the condition the expansion actually
+# rests on. Nothing about them makes the expansion invalid; they simply had no
+# closed form to read the higher moments off, and the quadrature that already
+# exists supplies them.
+#
+# The non-finite tail guard is .admTBSMomentsD()'s, for the same reason: a +-12 SD
+# node can overflow the inverse transform, its GH weight is ~1e-30, and zeroing it
+# leaves the moments unchanged to machine precision while NOT zeroing it turns the
+# whole moment NaN.
+.admTBSCentral <- function(f, sd, lam, yj, lo, hi, nodes = .ADM_TBS_NODES) {
+  gq <- .adghNodes1(nodes)
+  hz <- .admTBS(f, lam, yj, lo, hi)
+  z_all  <- hz + outer(sd, gq$x)
+  yq_all <- .admTBSi(z_all, lam, yj, lo, hi)
+  .bad <- !is.finite(yq_all)
+  if (any(.bad)) yq_all[.bad] <- 0
+  n <- length(f)
+  m1 <- m2 <- m3 <- m4 <- numeric(n)
+  for (q in seq_along(gq$x)) {
+    yq <- yq_all[, q]; w <- gq$w[q]
+    y2 <- yq * yq
+    m1 <- m1 + w * yq
+    m2 <- m2 + w * y2
+    m3 <- m3 + w * y2 * yq
+    m4 <- m4 + w * y2 * y2
+  }
+  v <- pmax(m2 - m1 * m1, 0)
+  list(m = m1, v = v,
+       mu3 = m3 - 3 * m1 * m2 + 2 * m1^3,
+       # pmax against 0 for the same reason v has it: a cancellation of four
+       # large like-signed terms can land a hair below zero, and a negative
+       # fourth central moment makes the weight indefinite rather than merely
+       # inaccurate.
+       mu4 = pmax(m4 - 4 * m1 * m3 + 6 * m1 * m1 * m2 - 3 * m1^4, 0))
+}
+
+# The residual SD on the TRANSFORMED scale, and its derivative w.r.t. f, exactly
+# as rxode2 builds rx_r_:
+#   combined2 : var = a^2 + (x^c * b)^2      combined1 : sd = a + x^c * b
+# where x is rx_pred_f_ = f, or rx_pred_ = h(f) when errTypeF is "transformed".
+#
+# Split out of .admTBSRow so the ADF weight can condition on the SAME sd the
+# objective uses. Two copies of this would be two chances to disagree about
+# which of `ftr`, `c1` and `cc` applies, and the disagreement would be a
+# plausible finite number rather than an error.
+.admTBSSd <- function(fv, a2, b2, cc, lam, yj, lo, hi, ftr, c1) {
   a2 <- max(a2, 0); b2 <- max(b2, 0)
-  # Residual SD on the TRANSFORMED scale, exactly as rxode2 builds rx_r_:
-  #   combined2 : var = a^2 + (x^c * b)^2      combined1 : sd = a + x^c * b
-  # where x is rx_pred_f_ = f, or rx_pred_ = h(f) when errTypeF is "transformed".
   if (ftr) {
     xb  <- .admTBS(fv, lam, yj, lo, hi)
     xbd <- 1 / .admTBSid(xb, lam, yj, lo, hi)          # dh/df
@@ -2205,6 +2259,14 @@ without that parameter there is no residual to integrate"),
     sdv <- sqrt(.vv)
     dsd <- (b2 * pw * pwd * xbd) / pmax(sdv, .Machine$double.xmin)
   }
+  list(sdv = sdv, dsd = dsd)
+}
+
+.admTBSRow <- function(f, v0, a2, b2, cc, lam, yj, lo, hi, ftr, c1, nodes) {
+  hstep <- max(abs(f), 1) * 1e-4
+  fv    <- c(f - hstep, f, f + hstep)
+  .sd <- .admTBSSd(fv, a2, b2, cc, lam, yj, lo, hi, ftr, c1)
+  sdv <- .sd$sdv; dsd <- .sd$dsd
   q <- .admTBSMomentsD(fv, sdv, lam, yj, lo, hi, nodes)
   # sd depends on f, so the TOTAL derivative picks up the sd path (both partials
   # analytic): dm/df = @m/@f + @m/@sd * dsd/df

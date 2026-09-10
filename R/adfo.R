@@ -831,7 +831,7 @@
   if (isTRUE(sandwich)) {
     sw <- tryCatch({
       grid <- .admSandwichGrid(pinfo)
-      if (is.null(grid)) stop("no random effects: no ensemble to weight against")
+      if (is.null(grid)) stop("no ensemble to weight against")
       mf <- .admAdfoMomFn(pinfo, studies, sensModel, rxMod, output_var,
                           params_list, cores)
       # `rxMod` is adfo's plain simulation model (its FD fallback solves through
@@ -1000,10 +1000,19 @@
 #'   errors otherwise answer to the linearisation rather than to the model. The
 #'   correction scores the FO fit against the model's true nonlinear law, built
 #'   post-fit on a quadrature ensemble, and so absorbs part of the linearisation
-#'   error as well. Point estimates are untouched. Available for the
-#'   conditionally-normal residual family (`add`, `prop`, `pow`, `combined1`,
-#'   `combined2`, `lnorm`) and for non-joint studies; anything else falls back to
-#'   `"r"` with a warning.
+#'   error as well. Point estimates are untouched.
+#'   Applies to every residual family whose conditional law is independent across
+#'   timepoints, which is all of them except `ar()`: the conditionally-normal set
+#'   (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
+#'   distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`, and
+#'   `t()` with `nu > 4`), and the transform-both-sides ones (`boxCox`,
+#'   `yeoJohnson`, `logitNorm`, `probitNorm`), whose third and fourth conditional
+#'   moments come off the same quadrature that already gives their mean and
+#'   variance. Refused, and degraded to `"r"`: `ar()`, because it correlates the
+#'   residual ACROSS timepoints and the cross terms the expansion drops are then
+#'   real; `t()` with `nu <= 4`, whose kurtosis does not exist; and `ordinal()`
+#'   and same-subject `joint` studies, which stack several outputs into one
+#'   covariance the per-output node ensemble does not describe.
 #'
 #'   **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"` is.**
 #'   `"r"` reports `2H^-1` and inverts `H` once; the sandwich reports

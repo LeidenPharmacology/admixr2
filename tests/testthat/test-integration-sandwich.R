@@ -134,3 +134,87 @@ test_that("an ill-conditioned Hessian is reported, and only then", {
   # is what stops this being a note every "r,s" fit carries.
   expect_false(flagged(env$fn, env$studies, "r,s"))
 })
+
+test_that("the transform-both-sides family reaches the sandwich", {
+  # boxCox / yeoJohnson / logitNorm / probitNorm were the one residual family
+  # "r,s" refused, and the refusal was never mathematical: they are conditionally
+  # independent across timepoints like every other supported family, they simply
+  # had no closed form for the third and fourth moments. The quadrature that
+  # already produces their mean and variance supplies those.
+  #
+  # This is the DRIVER-level half; the moments themselves are scored against a
+  # simulation of the conditional law, and the weight against the sampling
+  # covariance of simulated studies, in test-adfweight.R.
+  skip_if_not_installed("nlmixr2est")
+  TT <- c(2, 5, 9, 14); DOSE <- 100
+  E0 <- DOSE / 10 * exp(-0.1 * TT)
+  st <- list(s = list(E = E0, V = diag((0.3 * E0)^2), n = 150L, times = TT,
+                      ev = rxode2::et(amt = DOSE)))
+  mods <- list(
+    boxCox = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                aa <- 0.3; lam <- fix(0.5) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ add(aa) + boxCox(lam) }) },
+    yeoJohnson = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                    aa <- 0.3; lam <- fix(0.5) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ add(aa) + yeoJohnson(lam) }) },
+    logitNorm = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                   aa <- 0.25 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ logitNorm(aa, 0, 40) }) },
+    probitNorm = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                    aa <- 0.25 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ probitNorm(aa, 0, 40) }) })
+  for (nm in names(mods)) {
+    f <- suppressMessages(suppressWarnings(nlmixr2est::nlmixr2(
+      mods[[nm]], admData(), est = "adgh",
+      control = adghControl(studies = st, n_nodes = 5L, maxeval = 20L, seed = 1L,
+                            grad = "analytical", covMethod = "r,s", print = 0L))))
+    expect_identical(f$covMethod, "r,s", info = nm)
+    # every FREE parameter gets a standard error; a fix()ed one has none, which
+    # is why this filters rather than asserting all() -- boxCox and yeoJohnson
+    # hold lambda fixed here.
+    fixed <- f$ui$iniDf$fix %in% TRUE
+    nmf   <- f$ui$iniDf$name[fixed]
+    keep  <- !(rownames(f$parFixedDf) %in% nmf)
+    expect_true(all(is.finite(f$parFixedDf$SE[keep])), info = nm)
+  }
+})
+
+test_that("a model with no random effects still gets the sandwich", {
+  # .admSandwichGrid() used to refuse n_eta < 1 outright, which made admc and
+  # adfo degrade to "r" on every no-IIV model while adgh -- which passes its own
+  # grid -- applied the correction to the same fit. The single-point ensemble is
+  # the CORRECT one there: with no between-subject variability the summary's
+  # sampling law is the residual's alone, and for a skewed residual that is still
+  # not the normal-theory law the objective assumes.
+  skip_if_not_installed("nlmixr2est")
+  TT <- c(2, 5, 9, 14); DOSE <- 100
+  E0 <- DOSE / 10 * exp(-0.1 * TT)
+  st <- list(s = list(E = E0, V = diag((0.3 * E0)^2), n = 150L, times = TT,
+                      ev = rxode2::et(amt = DOSE)))
+  # lnorm, not add: with no IIV AND a normal residual the model really is
+  # exactly normal and the correction has nothing to say, so a skewed residual
+  # is what makes this test about more than the plumbing.
+  fn <- function() {
+    ini({ tcl <- log(1); tv <- log(10); aa <- 0.15 })
+    model({ cl <- exp(tcl); v <- exp(tv); cp <- linCmt(); cp ~ lnorm(aa) })
+  }
+  ctl <- function(est) switch(est,
+    adgh = adghControl(studies = st, n_nodes = 5L, maxeval = 20L, seed = 1L,
+                       grad = "analytical", covMethod = "r,s", print = 0L),
+    admc = admControl(studies = st, n_sim = 1500L, maxeval = 20L, seed = 1L,
+                      grad = "sens", covMethod = "r,s", print = 0L),
+    adfo = adfoControl(studies = st, maxeval = 20L, grad = "none",
+                       covMethod = "r,s", print = 0L))
+  for (e in c("adgh", "admc", "adfo")) {
+    f <- suppressMessages(suppressWarnings(
+      nlmixr2est::nlmixr2(fn, admData(), est = e, control = ctl(e))))
+    expect_identical(f$covMethod, "r,s", info = e)
+    expect_true(all(is.finite(f$parFixedDf$SE)), info = e)
+  }
+  # adirmc refuses a no-IIV model at the ESTIMATOR level (it draws its ensemble
+  # from the etas), which is unrelated to the sandwich and left alone.
+})

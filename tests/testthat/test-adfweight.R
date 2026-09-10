@@ -252,6 +252,57 @@ test_that("the weight's own S is the V_pred the objective scores against", {
   }
 })
 
+test_that("on TBS the weight's S is the EXACT marginal, which V_pred approximates", {
+  # The identity above holds to machine precision for every closed-form family
+  # and CANNOT hold for TBS, so this states the relationship rather than pretending.
+  #
+  # V_pred for a TBS endpoint is a second-order delta expansion in the structural
+  # variance, evaluated at the structural mean: V = ms^2 v0 + q$v + 0.5 v''(f) v0.
+  # The weight instead integrates the conditional moments over the quadrature
+  # nodes, which is exact. They therefore differ by the objective's own truncation
+  # error, measured here at 2e-06 to 2e-03 relative depending on the endpoint.
+  #
+  # The direction matters and was checked against a simulation of 4e5 subjects:
+  # S is CLOSER to the true marginal covariance than V_pred is, on all of
+  # add+prop+boxCox, logitNorm and probitNorm. So the gap is the objective
+  # approximating, not the weight drifting -- which is the right way round, since
+  # Omega is supposed to describe the truth while G describes the objective.
+  skip_if_not_installed("rxode2")
+  TIMES <- c(2, 5, 9, 14); DOSE <- 100; NQ <- 11L; N <- 100L
+  mods <- list(
+    boxCox = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                aa <- 0.3; lam <- fix(0.5) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ add(aa) + boxCox(lam) }) },
+    logitNorm = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                   aa <- 0.25 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ logitNorm(aa, 0, 40) }) })
+  for (nm in names(mods)) {
+    ui <- suppressMessages(rxode2::rxode2(mods[[nm]]))
+    ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+    E0 <- DOSE / 10 * exp(-0.1 * TIMES)
+    st <- list(s = list(E = E0, V = diag((0.3 * E0)^2), n = N, times = TIMES,
+                        ev = rxode2::et(amt = DOSE)))
+    ctl <- adghControl(studies = st, grad = "none", n_nodes = NQ, print = 0L,
+                       covMethod = "none")
+    pin <- admixr2:::.admDriverPinfo(ui, ctl)
+    u   <- admixr2:::.admDriverUnits(st, ui, ov)
+    g   <- admixr2:::.adghNodeGrid(NQ, pin$n_eta)
+    pars <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin)
+    pt  <- admixr2:::.admAdfParts(pars, pin, u$studies[[1L]], rx, ov, g, 1L)
+    # the family is REACHED -- this is what used to return NULL
+    expect_false(is.null(pt$Dv), info = nm)
+    m <- length(pt$E)
+    W <- admixr2:::.admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4)
+    S <- N * W[seq_len(m), seq_len(m)]
+    rel <- max(abs(S - pt$V)) / max(abs(pt$V))
+    # close, but NOT to machine precision -- both halves of that are the point
+    expect_lt(rel, 5e-3)
+    expect_gt(rel, 1e-12)
+  }
+})
+
 test_that("the analytic moment Jacobian matches the finite-difference oracle", {
   # G = d2F/(dPsi dt') is closed form in (dE/dPsi, dV/dPsi), so these two are the
   # only derivatives the sandwich takes. .admMomentJac forms them from one
@@ -274,6 +325,16 @@ test_that("the analytic moment Jacobian matches the finite-difference oracle", {
       model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ prop(e) }) },
     lnorm   = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.15 })
       model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ lnorm(e) }) },
+    # The TBS family: its forward composition goes through dmu_dv0/dms_df, the
+    # mean-from-covariance path no closed-form endpoint exercises, so the oracle
+    # matters more here than anywhere else in this list.
+    boxCox  = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                 e <- 0.3; lam <- fix(0.5) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ add(e) + boxCox(lam) }) },
+    logitN  = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.25 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ logitNorm(e, 0, 40) }) },
     addprop = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
                                  a <- 0.2; b <- 0.1 })
       model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
@@ -332,4 +393,93 @@ test_that(".admMomentJac refuses rather than approximates what it cannot reach",
   # no sensitivity model -> no analytic route, and it must say so rather than
   # silently reaching for the plain model's predictions
   expect_null(admixr2:::.admMomentJac(p, pin, u$studies, NULL, rx, ov, g, 1L))
+})
+
+test_that("TBS conditional moments match a simulation of the same law", {
+  # boxCox / yeoJohnson / logitNorm / probitNorm are the one residual family the
+  # sandwich used to refuse. Nothing about them breaks the Isserlis expansion --
+  # they are conditionally independent across timepoints like every other family
+  # here -- they simply had no closed form for the third and fourth moments. The
+  # quadrature that already computes the mean and variance supplies them.
+  #
+  # The oracle is a direct simulation of y | f = g(h(f) + sd * eps), NOT another
+  # admixr2 path, and the moments are compared on a scale-free footing (each
+  # divided by the matching power of the SD) so that a mu3 which is truly zero is
+  # judged absolutely rather than against Monte Carlo noise.
+  skip_on_cran()
+  set.seed(303)
+  n <- 4e5
+  cases <- list(
+    list("boxCox l=0.5",     0.5, 0L, c(2, 5, 10),      0.30),
+    list("boxCox l=0",       0.0, 0L, c(2, 5, 10),      0.25),
+    list("yeoJohnson l=0.5", 0.5, 1L, c(-2, 2, 8),      0.30),
+    list("logitNorm",        1.0, 4L, c(0.2, 0.5, 0.8), 0.40),
+    list("probitNorm",       1.0, 6L, c(0.2, 0.5, 0.8), 0.40))
+  for (cs in cases) {
+    lbl <- cs[[1L]]; lam <- cs[[2L]]; yj <- cs[[3L]]; f <- cs[[4L]]; sd <- cs[[5L]]
+    tm <- admixr2:::.admTBSCentral(f, rep(sd, length(f)), lam, yj, 0, 1)
+    for (i in seq_along(f)) {
+      z <- admixr2:::.admTBS(f[i], lam, yj, 0, 1) + sd * stats::rnorm(n)
+      y <- admixr2:::.admTBSi(z, lam, yj, 0, 1)
+      y <- y[is.finite(y)]
+      yc <- y - mean(y)
+      mc <- c(mean(yc^2), mean(yc^3), mean(yc^4))
+      qd <- c(tm$v[i], tm$mu3[i], tm$mu4[i])
+      sc <- sqrt(mc[1L])^c(2, 3, 4)
+      expect_lt(max(abs(qd - mc) / sc), 0.05)
+    }
+  }
+  # An untransformed endpoint is exactly normal, so this is a closed-form check
+  # rather than a simulated one: v = sd^2, mu3 = 0, mu4 = 3 sd^4.
+  ex <- admixr2:::.admTBSCentral(c(3, 7), c(0.25, 0.25), 1, 2L, 0, 1)
+  expect_equal(ex$v,   rep(0.0625, 2))
+  expect_equal(ex$mu3, rep(0, 2), tolerance = 1e-10)
+  expect_equal(ex$mu4, rep(3 * 0.0625^2, 2))
+})
+
+test_that("the TBS weight reproduces the sampling law of a simulated study", {
+  # The same check da4fddb ran for lognormal and Poisson, on the family this
+  # commit adds. `Omega` is scored against the empirical covariance of
+  # (ybar, vech V) over simulated studies -- the definition of what it is meant
+  # to be -- and the third/fourth moments are shown to be load-bearing by
+  # dropping them: on boxCox at lambda = 0 (a log transform, so a strongly
+  # skewed residual) the cross block goes from ~0.04 to ~0.85.
+  skip_on_cran()
+  set.seed(909)
+  TIMES <- c(1, 3, 6); DOSE <- 100; V0 <- 10; OM <- 0.4; N <- 80L; R <- 3000L
+  gh <- admixr2:::.adghNodes1(31L); x <- gh$x; w <- gh$w / sum(gh$w)
+  fmat <- function(eta) t(vapply(eta, function(e)
+    DOSE / V0 * exp(-exp(e) / V0 * TIMES), numeric(length(TIMES))))
+  F <- fmat(x * OM); m <- ncol(F)
+  ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  lam <- 0.0; yj <- 0L; sd <- 0.25                       # boxCox, lambda 0
+
+  tm <- admixr2:::.admTBSCentral(as.numeric(F), rep(sd, length(F)), lam, yj, 0, 1)
+  M1 <- matrix(tm$m, nrow(F)); Dv <- matrix(tm$v, nrow(F))
+  T3 <- matrix(tm$mu3, nrow(F)); Q4 <- matrix(tm$mu4, nrow(F))
+  # The conditional mean is NONLINEAR in f here, so C is the centred conditional
+  # means themselves -- the linearisation every closed-form family uses is only
+  # exact because their means are linear in f.
+  C <- sweep(M1, 2L, as.numeric(crossprod(w, M1)))
+
+  tv <- matrix(0, R, m + nrow(ij))
+  for (r in seq_len(R)) {
+    f <- fmat(stats::rnorm(N, 0, OM))
+    z <- admixr2:::.admTBS(f, lam, yj, 0, 1) + sd * stats::rnorm(length(f))
+    y <- matrix(admixr2:::.admTBSi(z, lam, yj, 0, 1), nrow(f))
+    V <- stats::cov.wt(y, method = "ML")$cov
+    tv[r, ] <- c(colMeans(y), V[cbind(ij[, 1L], ij[, 2L])])
+  }
+  ref <- stats::cov(tv)
+  rel <- function(A, r, c)
+    sqrt(sum((A[r, c] - ref[r, c])^2)) / sqrt(sum(ref[r, c]^2))
+  gen <- admixr2:::.admAdfWeightFast(C, w, Dv, N, T3, Q4)
+  sym <- admixr2:::.admAdfWeightFast(C, w, Dv, N)
+  expect_lt(rel(gen, seq_len(m), seq_len(m)),   0.15)
+  expect_lt(rel(gen, seq_len(m), -seq_len(m)),  0.20)
+  expect_lt(rel(gen, -seq_len(m), -seq_len(m)), 0.20)
+  # dropping the moments wrecks the cross block and leaves the mean block intact,
+  # which is why this class of error cannot be seen from the mean side
+  expect_lt(rel(sym, seq_len(m), seq_len(m)),   0.15)
+  expect_gt(rel(sym, seq_len(m), -seq_len(m)),  0.50)
 })

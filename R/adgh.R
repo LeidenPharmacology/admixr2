@@ -932,9 +932,18 @@
 #'   not the one the objective assumes. `"r,s"` scores that law from the model
 #'   instead. Point estimates are untouched -- only the reported uncertainty
 #'   changes -- and under correct specification it reduces to `"r"` exactly.
-#'   Available for the conditionally-normal residual family (`add`, `prop`,
-#'   `pow`, `combined1`, `combined2`, `lnorm`) and for non-joint studies;
-#'   anything else falls back to `"r"` with a warning.
+#'   Applies to every residual family whose conditional law is independent across
+#'   timepoints, which is all of them except `ar()`: the conditionally-normal set
+#'   (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
+#'   distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`, and
+#'   `t()` with `nu > 4`), and the transform-both-sides ones (`boxCox`,
+#'   `yeoJohnson`, `logitNorm`, `probitNorm`), whose third and fourth conditional
+#'   moments come off the same quadrature that already gives their mean and
+#'   variance. Refused, and degraded to `"r"`: `ar()`, because it correlates the
+#'   residual ACROSS timepoints and the cross terms the expansion drops are then
+#'   real; `t()` with `nu <= 4`, whose kurtosis does not exist; and `ordinal()`
+#'   and same-subject `joint` studies, which stack several outputs into one
+#'   covariance the per-output node ensemble does not describe.
 #'
 #'   **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"` is.**
 #'   `"r"` reports `2H^-1` and inverts `H` once; the sandwich reports

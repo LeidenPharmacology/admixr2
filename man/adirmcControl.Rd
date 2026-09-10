@@ -215,9 +215,19 @@ model is nonlinear in the random effects. \code{"r,s"} scores that law from the
 model instead, on a quadrature ensemble rather than on this fit's own MC
 draws, so the reported uncertainty carries no sampling noise of its own.
 Point estimates are untouched, and under correct specification it reduces to
-\code{"r"} exactly. Available for the conditionally-normal residual family
-(\code{add}, \code{prop}, \code{pow}, \code{combined1}, \code{combined2}, \code{lnorm}) and for non-joint
-studies; anything else falls back to \code{"r"} with a warning.
+\code{"r"} exactly.
+Applies to every residual family whose conditional law is independent across
+timepoints, which is all of them except \code{ar()}: the conditionally-normal set
+(\code{add}, \code{prop}, \code{pow}, \code{combined1}, \code{combined2}), the closed-form
+distributional ones (\code{lnorm}, \code{pois}, \code{binom}, \code{nbinomMu}, \code{beta}, and
+\code{t()} with \code{nu > 4}), and the transform-both-sides ones (\code{boxCox},
+\code{yeoJohnson}, \code{logitNorm}, \code{probitNorm}), whose third and fourth conditional
+moments come off the same quadrature that already gives their mean and
+variance. Refused, and degraded to \code{"r"}: \code{ar()}, because it correlates the
+residual ACROSS timepoints and the cross terms the expansion drops are then
+real; \code{t()} with \code{nu <= 4}, whose kurtosis does not exist; and \code{ordinal()}
+and same-subject \code{joint} studies, which stack several outputs into one
+covariance the per-output node ensemble does not describe.
 
 \strong{\code{"r,s"} is more sensitive to an ill-conditioned Hessian than \code{"r"} is.}
 \code{"r"} reports \verb{2H^-1} and inverts \code{H} once; the sandwich reports

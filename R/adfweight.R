@@ -55,6 +55,15 @@
   # longer factor and every cross term the expansion drops is real.
   if (any(!is.na(arr$rho))) return(NULL)
   d <- t3 <- q4 <- matrix(NA_real_, Q, m)
+  # The conditional MEAN, filled only by the forms whose mean is NONLINEAR in the
+  # structural prediction -- which is TBS and nothing else. Everywhere else the
+  # mean is ms * f for a constant ms (f for combined1/2 and pois, f exp(sv/2) for
+  # lnorm, size * f for binom, mu for nbinomMu and beta), so centring the nodes
+  # and scaling by ms is EXACT and .admAdfParts keeps doing that. Leaving m1 NULL
+  # there is what makes this change bit-identical for every existing family
+  # rather than a re-derivation of six conditional means that could disagree with
+  # the objective's.
+  m1 <- NULL
   col <- function(x, j) if (length(x) == 1L) x else x[[j]]
   for (j in seq_len(m)) {
     f  <- cp[, j]
@@ -116,13 +125,45 @@
                       (al * be * (sm + 2) * (sm + 3))
         d[, j] <- v; t3[, j] <- sk * v^1.5; q4[, j] <- ku * v^2
       },
-      # form 3 (TBS) needs the residual quadrature carried to third and fourth
-      # order and form 8 (ordinal) is a joint unit, refused upstream.
+      "3" = {                                          # TBS, by quadrature
+        # boxCox / yeoJohnson / logitNorm / probitNorm. Conditionally independent
+        # across timepoints like every other form here, so the expansion applies;
+        # what it needed was the third and fourth central moments, which
+        # .admTBSCentral() takes off the SAME node set the objective's mean and
+        # variance come from.
+        #
+        # The sd is derived by .admTBSSd(), the function .admTBSRow() uses, so the
+        # law conditioned on here is the law the objective composes V_pred from
+        # rather than a second reading of `ftr`/`c1`/`cc`.
+        # Accessed exactly as .admResidDeriv() accesses them: single-bracket, and
+        # `tbs_ftr`/`tbs_c1` guarded for NULL, which they are on a row that never
+        # went through the TBS builder. col() would have errored on NULL[[j]].
+        lam <- arr$lam[j]; yjc <- arr$yj[j]
+        lo  <- arr$tlo[j]; hi  <- arr$thi[j]
+        ftr <- !is.null(arr$tbs_ftr) && isTRUE(arr$tbs_ftr[j])
+        c1  <- !is.null(arr$tbs_c1)  && isTRUE(arr$tbs_c1[j])
+        if (length(lam) != 1L || length(yjc) != 1L ||
+            !is.finite(lam) || !is.finite(yjc)) return(NULL)
+        sdv <- .admTBSSd(f, a2, b2, cc, lam, yjc, lo, hi, ftr, c1)$sdv
+        if (any(!is.finite(sdv))) return(NULL)
+        tm <- .admTBSCentral(f, sdv, lam, yjc, lo, hi,
+                             arr$nodes %||% .ADM_TBS_NODES)
+        d[, j] <- tm$v; t3[, j] <- tm$mu3; q4[, j] <- tm$mu4
+        # E[y | node] is a nonlinear function of f here, so the linearisation
+        # ms * (f - fbar) that serves every other family understates the spread of
+        # the conditional means and Var(ybar) with it. Carry the exact means.
+        if (is.null(m1)) m1 <- matrix(NA_real_, Q, m)
+        m1[, j] <- tm$m
+      },
+      # form 8 (ordinal) is a joint unit, refused upstream.
       return(NULL))
   }
   if (!all(is.finite(d)) || !all(is.finite(t3)) || !all(is.finite(q4)))
     return(NULL)
-  list(d = d, t3 = t3, q4 = q4)
+  # A unit mixing a TBS endpoint with a closed-form one would leave m1 partly NA.
+  # Fall back to the linearisation for the whole unit rather than mix the two.
+  if (!is.null(m1) && !all(is.finite(m1))) m1 <- NULL
+  list(d = d, t3 = t3, q4 = q4, m1 = m1)
 }
 
 # Omega / N: the asymptotic covariance of (ybar, vech V).
@@ -308,10 +349,18 @@
   # mean is f exp(s/2), not f, so an unscaled C makes the weight's own S differ
   # from the V the objective scores against -- the two would then describe
   # different laws. ms is 1 on every other family, so this is a no-op there.
+  #
+  # A TBS endpoint returns the conditional means THEMSELVES (cm$m1), because
+  # there the mean is a nonlinear function of f and ms * (f - fbar) is only its
+  # linearisation. Centring is by the SAME normalised node weights the rest of
+  # the weight uses, so Var over nodes of the conditional mean comes out exact.
   cm  <- .admAdfCondMom(cp, arr)
-  list(E = m$mu, V = m$V, w = g$W / sum(g$W),
-       C  = if (is.null(m$ms)) sm$cpc else sweep(sm$cpc, 2L, m$ms, "*"),
-       Dv = cm$d, T3 = cm$t3, Q4 = cm$q4)
+  wn  <- g$W / sum(g$W)
+  Cm  <- if (!is.null(cm$m1)) sweep(cm$m1, 2L, as.numeric(crossprod(wn, cm$m1)))
+         else if (is.null(m$ms)) sm$cpc
+         else sweep(sm$cpc, 2L, m$ms, "*")
+  list(E = m$mu, V = m$V, w = wn,
+       C  = Cm, Dv = cm$d, T3 = cm$t3, Q4 = cm$q4)
 }
 
 # Freeze one weight per study at a first-stage estimate.
@@ -644,9 +693,20 @@
 # a node count that would be extravagant inside an optimisation loop is cheap
 # here; it is still capped, since the product grid is NQ^n_eta and a 5-eta model
 # at 9 nodes would be 59049 subjects in one solve for no accuracy that matters.
+#
+# n_eta == 0 IS A GRID, not a refusal. .adghNodeGrid() returns the single-point
+# ensemble there, which is the correct one: with no between-subject variability
+# every subject shares the structural prediction, and the summary's sampling law
+# is the residual's alone. That law is still not the normal-theory one the
+# objective assumes -- lnorm, pois, binom, beta and the TBS family are all skewed
+# or over-dispersed conditional on the prediction -- so the correction still has
+# something to say. Returning NULL here made admc and adfo degrade to "r" on
+# every no-IIV model while adgh, which passes its own grid, applied the sandwich
+# to the same fit; the two disagreed for no reason but this line.
 .admSandwichGrid <- function(pinfo, max_nodes = 5000L) {
   n_eta <- pinfo$n_eta
-  if (is.null(n_eta) || n_eta < 1L) return(NULL)
+  if (is.null(n_eta) || n_eta < 0L) return(NULL)
+  if (n_eta == 0L) return(.adghNodeGrid(1L, 0L))
   nq <- 9L
   while (nq > 3L && nq^n_eta > max_nodes) nq <- nq - 2L
   .adghNodeGrid(nq, n_eta)

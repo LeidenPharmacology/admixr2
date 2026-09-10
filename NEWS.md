@@ -49,13 +49,24 @@
   sandwich is still reported, since the well-determined parameters of the same
   fit are unaffected.
 
-  Available for the conditionally-normal residual family (`add`, `prop`, `pow`,
-  `combined1`, `combined2`, `lnorm`) plus closed-form conditional moments for
-  `lnorm`, `pois`, `binom`, `nbinomMu`, `beta` and `t(nu > 4)`; `ar()` is refused
-  outright, since it correlates across timepoints and the dropped cross terms are
-  real, as is `t(nu <= 4)`, whose kurtosis does not exist. A requested sandwich
-  that cannot be built degrades to `"r"` and **reports `"r"`**: `fit$covMethod`
-  records what the covariance IS, not what was asked for.
+  It applies to every residual family whose conditional law is independent across
+  timepoints, which is **all of them except `ar()`** -- the conditionally-normal
+  set (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
+  distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`, `t(nu > 4)`),
+  and the transform-both-sides ones (`boxCox`, `yeoJohnson`, `logitNorm`,
+  `probitNorm`). The last group needs the third and fourth conditional moments,
+  which come off the same Gauss-Hermite quadrature that already produces their
+  mean and variance -- two more accumulators over the same nodes, not a second
+  integration scheme, and validated against a direct simulation of the
+  conditional law and against the sampling covariance of simulated studies.
+
+  Refused, and degraded to `"r"`: `ar()`, because it correlates the residual
+  ACROSS timepoints, so the cross terms the expansion drops are real; `t()` with
+  `nu <= 4`, whose kurtosis does not exist; and `ordinal()` and same-subject
+  `joint` studies, which stack several outputs into one covariance that the
+  per-output node ensemble does not describe. A requested sandwich that cannot be
+  built degrades to `"r"` and **reports `"r"`**: `fit$covMethod` records what the
+  covariance IS, not what was asked for.
 
 * **`v_denom`: declare which denominator a study's `V` uses, rather than
   convert it by hand.** admixr2's two input types disagree about what `V` is. A
