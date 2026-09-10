@@ -153,15 +153,33 @@ what `bcrcl` has to be to explain the rest of the data.
 
 ## What's NOT done -- in priority order
 
-1. **The SE is still not fixed anywhere**, and now more precisely scoped:
-   `.adghGradNLL` -- a structurally SEPARATE, hand-coded copy of the
-   objective -- drives BOTH the analytical-gradient point estimate (now
-   worked around by forcing `grad = "fd"`) AND the Hessian for
-   `covMethod = "r,s"` (not worked around -- there is no `grad`-independent
-   path to the SE). `covMethod = "r,s"` under `srcWeight = "cov"` is NOT
-   self-consistent: the point estimate uses the new weighting, the reported
-   SE does not. `adghControl(covMethod = "none")` was used throughout this
-   branch's tests for exactly this reason.
+1. **FIXED.** `.adghGradNLL` -- a structurally SEPARATE, hand-coded copy of
+   the objective -- drove BOTH the analytical-gradient point estimate (worked
+   around earlier by forcing `grad = "fd"`) AND, independently, the Hessian
+   for `covMethod = "r"`/`"r,s"` (the `grad = "fd"` forcing did not reach
+   this: `use_grad_cov` at the covariance call site was computed separately
+   and stayed on the gradient-FD path). Two fixes, both in `.adghCalcCov`/
+   `.admSandwichCov`:
+   * `.adghCalcCov`'s `use_grad` guard now also forces NLL-FD (Mpinv-aware)
+     whenever any study carries an `Mpinv` -- the same test `.adghNLL`
+     itself uses to route a source group, so this cannot drift out of sync
+     with the objective the way the `grad = "fd"` forcing alone did.
+   * `.admSandwichCov` gained `.admSrcMeatCov()`/`.admTauVecDeriv()`, an
+     Mpinv-aware sandwich-meat term (`4 A' Mpinv A`, from the score of
+     `r' Mpinv r`) for cov-route groups, alongside the unchanged
+     `.admSrcMeat()` n-route path -- mixed n/cov fits work with no new
+     plumbing.
+   Verified on a correctly-specified 1-cmt fit (`verify_se_fix.R`):
+   `J ~= 2H` (diagonal ratios 0.999-1.055) and `covMethod = "r"` vs `"r,s"`
+   SEs agree to ~1%. `adghControl(covMethod = "none")` is no longer required
+   for `srcWeight = "cov"`.
+   * Remaining cost, not yet measured or surfaced: `srcWeight = "cov"` still
+     forces `grad = "fd"` for the OPTIMIZER (unchanged from before this fix)
+     -- so a fit using it loses the analytical gradient entirely. If
+     `srcWeight = "cov"` is to fully replace the n route, `.adghGradNLL`
+     itself needs the group term (`2 A' Mpinv r`, the same `A` this fix
+     already derives) so the analytical path stops being FD-only. Not
+     started.
 2. **Stratification/covariates + the CORRECTED moment-space fix, together:**
    never tested. The only stratified scenario tested (wt-covariate) used the
    now-invalidated named-parameter version. `.admSrcWeight`'s row-stacking
