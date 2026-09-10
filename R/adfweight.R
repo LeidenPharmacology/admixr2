@@ -726,7 +726,7 @@
   if (is.null(n_eta) || n_eta < 0L) return(NULL)
   if (n_eta == 0L) return(.adghNodeGrid(1L, 0L))
   nq <- 9L
-  while (nq > 3L && nq^n_eta > max_nodes) nq <- nq - 2L
+  while (nq > 1L && nq^n_eta > max_nodes) nq <- nq - 2L
   .adghNodeGrid(nq, n_eta)
 }
 

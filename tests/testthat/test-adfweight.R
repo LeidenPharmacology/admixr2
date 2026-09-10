@@ -1,5 +1,16 @@
 # The ADF weight: the sampling law of (ybar, vech V) implied by the model.
 
+test_that(".admSandwichGrid never exceeds max_nodes, even for many etas", {
+  # The decrement loop used to floor at nq = 3 and stop, so it never re-checked
+  # whether 3^n_eta was still over the cap -- for n_eta >= 8, 3^n_eta > 5000 and
+  # the "capped" grid silently blew past it (3^8 = 6561, 3^15 ~= 14.3M).
+  for (n_eta in c(1L, 5L, 8L, 12L)) {
+    grid <- admixr2:::.admSandwichGrid(list(n_eta = n_eta), max_nodes = 5000L)
+    expect_lte(nrow(grid$X), 5000L)
+    expect_length(grid$W, nrow(grid$X))
+  }
+})
+
 test_that("the fast weight equals the reference expansion", {
   # .admAdfWeight is the readable Wick expansion; .admAdfWeightFast hoists the
   # node contraction out of the q x q loop and is what runs. They must not drift:
