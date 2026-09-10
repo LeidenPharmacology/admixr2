@@ -1922,17 +1922,10 @@ nmObjGetControl.admc <- function(x, ...) {
       if (is.null(grid)) stop("no ensemble to weight against")
       .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
                       H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov,
-                      sensModel = sensModel)
+                      sensModel = sensModel, Hinv = Hinv)
     }, error = function(e) NULL)
-    ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
-    if (ok) {
-      cov_full <- (sw$cov + t(sw$cov)) / 2
-      sw_used  <- TRUE
-      sw_cond  <- attr(sw, "illcond")
-    } else {
-      warning("admCalcCov: the sandwich correction could not be computed; ",
-              "reporting the covMethod = \"r\" covariance instead.", call. = FALSE)
-    }
+    res      <- .admApplySandwich(sw, cov_full, "admCalcCov")
+    cov_full <- res$cov_full; sw_used <- res$sw_used; sw_cond <- res$sw_cond
   }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
   # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
@@ -3120,27 +3113,13 @@ nlmixr2Est.admc <- function(env, ...) {
                   sandwich = .ctl$covMethod == "r,s"),
       error = function(e) { warning("admCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
-  # A NULL covariance used to be completely silent: no warning reached the user,
-  # `warnings()` was empty, covMethod came back "" and every SE was NA with no
-  # indication why. Say so once, from the driver, where it cannot be swallowed.
-  if (.want_cov && is.null(.cov))
-    warning("covariance could not be computed (the Hessian was singular or ",
-            "non-finite); standard errors are unavailable for this fit.",
-            call. = FALSE)
+  # Warns if no covariance could be computed, re-raises any sandwich
+  # ill-conditioning note (as a warning -- see .admFinalizeCovLabel()'s own
+  # comment for why that specific mechanism matters), and returns what the
+  # covariance IS ("r,s" / "r" / ""), not what was asked for.
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
-  # what the covariance IS, not what was asked for -- a degraded sandwich is "r"
-  .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
-  # Raised HERE rather than where it is diagnosed, and as a warning, which in this
-  # stack does NOT mean an R warning reaches the caller -- it means the fit keeps
-  # it. nlmixr2est::nlmixr2Est0 wraps the whole estimator in .collectWarn(), which
-  # suppresses every warning at source and, for a nlmixr2FitCore result, assigns
-  # them to `fit$runInfo` instead of re-raising them. print() then lists them
-  # under "Information about run found". So the warning is durable on the fit and
-  # visible when it is printed, which a message() is not -- a message scrolls past
-  # during the run and is gone from a fit that is saved and read back later.
-  if (!is.null(.sw_cond <- attr(.cov, "sandwich_illcond")))
-    warning(.sw_cond, call. = FALSE)
+  .cov_lbl  <- .admFinalizeCovLabel(.cov, .want_cov)
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
@@ -3161,7 +3140,7 @@ nlmixr2Est.admc <- function(env, ...) {
   .ret$est        <- "admc"
   .ret$ofvType    <- "admc"
   .ret$adjObf     <- FALSE
-  .ret$covMethod  <- if (!is.null(.cov)) .cov_lbl else ""
+  .ret$covMethod  <- .cov_lbl
   .ret$cov        <- .cov
   .ret$message    <- opt$message
   .ret$extra      <- ""
