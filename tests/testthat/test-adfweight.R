@@ -164,6 +164,27 @@ test_that("a missing or unusable H is an error, not a silent NULL", {
     "`H` must be a finite square Hessian")
 })
 
+test_that(".admSandwich uses a supplied Hinv instead of re-inverting H", {
+  # Every default ("r,s") fit calls .admSandwichCov with the SAME H its "r" leg
+  # already inverted; re-deriving Hi = solve(H) here was a second O(P^3)
+  # factorisation of an identical matrix on every such fit. Threading the
+  # caller's Hinv through must actually be USED, not just accepted and ignored
+  # -- proven by passing a deliberately wrong Hinv and checking it changes the
+  # answer relative to the correct solve(H).
+  set.seed(9)
+  p <- 4L
+  A <- matrix(rnorm(p * p), p); H <- A %*% t(A) + diag(p)
+  G <- list(matrix(rnorm(p * 2), p, 2), matrix(rnorm(p * 2), p, 2))
+  Om <- list(diag(2) + 0.1, diag(2) + 0.2)
+
+  by_solve  <- admixr2:::.admSandwich(H, G, Om)
+  by_hinv   <- admixr2:::.admSandwich(H, G, Om, Hinv = solve(H))
+  expect_equal(by_hinv$cov, by_solve$cov, tolerance = 1e-10)
+
+  wrong <- admixr2:::.admSandwich(H, G, Om, Hinv = solve(H) * 1.5)
+  expect_false(isTRUE(all.equal(wrong$cov, by_solve$cov)))
+})
+
 test_that("the expansion is exact for a SKEWED conditional residual", {
   # The Wick expansion is often described as needing a conditionally NORMAL
   # residual. It does not: it needs one that is conditionally INDEPENDENT across

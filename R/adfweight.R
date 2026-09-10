@@ -190,7 +190,6 @@
 # residual is normal with diagonal covariance Dv, so every odd pairing collapses
 # and the even ones are sums of products of C and Dv.
 #
-# One weight per source, frozen at a first stage -- see .admAdfFreeze.
 .admAdfWeight <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL) {
   w  <- w / sum(w)
   m  <- ncol(C)
@@ -381,50 +380,6 @@
        C  = Cm, Dv = cm$d, T3 = cm$t3, Q4 = cm$q4)
 }
 
-# Freeze one weight per study at a first-stage estimate.
-#
-# FROZEN is not an approximation, it is a condition of the estimator. A
-# Psi-dependent W inside log|W| contributes score terms whose expectation is not
-# zero, so the two-stage form is the one that stays consistent -- and the current
-# objective is a fine first stage, being consistent for any weight.
-.admAdfFreeze <- function(p, pinfo, studies, rxMod, out_var, grid, cores) {
-  pars <- .admUnpack(p, pinfo)
-  lapply(studies, function(s) {
-    pt <- .admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores)
-    if (is.null(pt$Dv)) return(NULL)          # residual outside the free family
-    W  <- .admAdfWeightFast(pt$C, pt$w, pt$Dv, as.numeric(s$n), pt$T3, pt$Q4)
-    ch <- tryCatch(chol(W), error = function(e) NULL)
-    if (is.null(ch)) return(NULL)
-    list(Wi = chol2inv(ch), ldet = 2 * sum(log(diag(ch))))
-  })
-}
-
-# -2 log L for the summary vector scored against its own sampling law.
-#
-# tau's covariance block is (N-1)/N * Vt, not Vt: under the ML denominator
-# E[V] = (N-1)/N Vt, and scoring an unaligned tau makes the estimator MORE
-# biased than the one it replaces rather than less -- the O(1/N) term is required,
-# not cosmetic. log|W| is constant once W is frozen and is carried only so the
-# objective stays on a comparable scale.
-.admAdfNLL <- function(p, pinfo, studies, rxMod, out_var, grid, cores, Wl) {
-  pars <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
-  if (is.null(pars) || !.admParsFinite(pars, pinfo)) return(Inf)
-  tot <- 0
-  for (i in seq_along(studies)) {
-    s <- studies[[i]]; wi <- Wl[[i]]
-    if (is.null(wi)) return(Inf)
-    pt <- tryCatch(.admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var,
-                                grid, cores), error = function(e) NULL)
-    if (is.null(pt) || !all(is.finite(pt$E)) || !all(is.finite(pt$V))) return(Inf)
-    N  <- as.numeric(s$n)
-    lo <- lower.tri(pt$V, diag = TRUE)
-    d  <- c(as.numeric(s$E) - pt$E,
-            as.numeric(s$V[lo]) - as.numeric(((N - 1) / N * pt$V)[lo]))
-    tot <- tot + as.numeric(crossprod(d, wi$Wi %*% d)) + wi$ldet
-  }
-  if (is.finite(tot)) tot else Inf
-}
-
 # =============================================================================
 # The sandwich: covMethod = "r,s"
 # =============================================================================
@@ -486,24 +441,15 @@
   G
 }
 
-.admSandwich <- function(H, G, Om) {
-  Hi <- tryCatch(solve(H), error = function(e) NULL)
+.admSandwich <- function(H, G, Om, Hinv = NULL) {
+  # `Hinv` lets the caller thread through the inverse it already computed for
+  # the "r" leg (chol2inv(chol(H)), with its own fallbacks) instead of paying
+  # for a second O(P^3) factorisation of the identical H here.
+  Hi <- Hinv %||% tryCatch(solve(H), error = function(e) NULL)
   if (is.null(Hi)) return(NULL)
   p <- nrow(H); J <- matrix(0, p, p)
   for (i in seq_along(G)) J <- J + G[[i]] %*% Om[[i]] %*% t(G[[i]])
   list(cov = Hi %*% J %*% Hi, bread = 2 * Hi, J = J, H = H)
-}
-
-# The summary a study actually reports, stacked: (ybar, vech V) for a full
-# covariance and (ybar, diag V) for a variance-only study.
-#
-# A `method = "var"` study is not a degenerate covariance study -- it reports
-# fewer numbers, and its weight is the corresponding MARGINAL of the full one
-# rather than a different derivation. Scoring covariances the fit never saw
-# would invent information.
-.admTauVec <- function(E, V, s) {
-  if (identical(s$method, "var")) c(as.numeric(E), diag(V))
-  else c(as.numeric(E), V[lower.tri(V, diag = TRUE)])
 }
 
 # The weight the OBJECTIVE implicitly uses -- the baseline the sandwich corrects
@@ -639,7 +585,7 @@
 # moment solve. The caller falls back to "r" and says so.
 .admSandwichCov <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
                             H, md = NULL, keep = NULL, mom_fn = NULL,
-                            sensModel = NULL, nms = NULL) {
+                            sensModel = NULL, nms = NULL, Hinv = NULL) {
   # H is checked FIRST, and here rather than being left to solve() inside .admSandwich,
   # whose tryCatch is there for a singular matrix and cannot tell that apart from
   # an H that was never supplied. A caller that forgot the argument then gets a
@@ -696,9 +642,41 @@
     if (!is.null(keep)) G[[i]] <- G[[i]][keep, , drop = FALSE]
   }
   if (!is.null(keep) && nrow(H) != length(keep)) return(NULL)
-  out <- .admSandwich(H, G, Om)
+  out <- .admSandwich(H, G, Om, Hinv = Hinv)
   if (!is.null(out)) attr(out, "illcond") <- .cond
   out
+}
+
+# Validates a candidate sandwich result and folds it into the *CalcCov "r"
+# baseline, or falls back to that baseline with a warning. `label` names the
+# caller (e.g. "adghCalcCov") for the fallback warning.
+#
+# Shared by adgh/admc/adfo's *CalcCov -- what differs between them is how `sw`
+# is BUILT (adgh's own grid + sensModel; admc's quadrature grid + sensModel;
+# adfo's quadrature grid + moment map), not what happens to it once built.
+.admApplySandwich <- function(sw, cov_r, label) {
+  ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
+  if (!ok) {
+    warning(sprintf(paste("%s: the sandwich correction could not be computed;",
+                          "reporting the covMethod = \"r\" covariance instead."),
+                    label), call. = FALSE)
+    return(list(cov_full = cov_r, sw_used = FALSE, sw_cond = NULL))
+  }
+  list(cov_full = (sw$cov + t(sw$cov)) / 2, sw_used = TRUE, sw_cond = attr(sw, "illcond"))
+}
+
+# Finalises the covariance a driver reports: warns once if none could be
+# computed, re-raises any ill-conditioning note the sandwich attached (as a
+# warning, so nlmixr2est carries it onto fit$runInfo -- see the call sites),
+# and returns the covMethod label the fit should report ("r,s" / "r" / "").
+.admFinalizeCovLabel <- function(cov, want_cov) {
+  if (isTRUE(want_cov) && is.null(cov))
+    warning("covariance could not be computed (the Hessian was singular or ",
+            "non-finite); standard errors are unavailable for this fit.",
+            call. = FALSE)
+  if (!is.null(sw_cond <- attr(cov, "sandwich_illcond")))
+    warning(sw_cond, call. = FALSE)
+  if (is.null(cov)) "" else if (isTRUE(attr(cov, "sandwich"))) "r,s" else "r"
 }
 
 # -- adfo ----------------------------------------------------------------------
