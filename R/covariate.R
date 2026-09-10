@@ -4196,8 +4196,14 @@ print.covDist <- function(x, ...) {
   # The [[ ]] reads downstream stay as a second line of defence, and
   # test-covariate.R runs these paths under warnPartialMatchDollar so a field
   # added later cannot quietly reintroduce it.
+  .jc0 <- list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc,
+               ne = ne, pc = pc, nl = nl, Lc = Lc)
+  # Settled ONCE, here, for the same reason the routes are: which structure a
+  # reader has is a property of the model, and re-deciding it per call would let
+  # a borderline case change the design mid-fit.
+  .syn <- tryCatch(.admSynSpec(ui, .jc0), error = function(e) NULL)
   list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc, ne = ne, pc = pc,
-       nl = nl, Xi = Xi, Xv = Xv, Wv = Wv, out_var = out_var,
+       nl = nl, Xi = Xi, Xv = Xv, Wv = Wv, out_var = out_var, syn = .syn,
        n_nodes = as.integer(n_nodes), max_rows = max_rows, joint = TRUE,
        dn = dn, nms = nms, cells = cells, pcell = pcell,
        cell_list = cell_list, n_cell = max(nrow(cells), 1L),
@@ -4211,9 +4217,167 @@ print.covDist <- function(x, ...) {
   .admCovXFromZ(jc$cd, jc$cn, Zc)
 }
 
+# =============================================================================
+# SYNTACTIC loadings, from mu-referencing
+# =============================================================================
+#
+# The numeric route rediscovers, by probing, a structure rxode2 has already
+# parsed. Where mu-referencing supplies it, the loading is arithmetic instead:
+# for a reader `g(theta + eta + sum_j p_j T_j(cov_j))` with g = exp,
+#
+#   d log(reader) / d xi  =  L[eta row]  +  sum_j p_j * dT_j/d xi
+#
+# and dT_j/d xi does not depend on the coefficients at all, so it is settled
+# ONCE here and only multiplied by p_j on each objective call. That removes the
+# 512-point probe and the per-call lm.fit from the common path.
+#
+# THREE THINGS THIS HAS TO GET RIGHT, each of which was a real bug first:
+#
+#   * The frames disagree about what `covariate` MEANS.
+#     muRefCovariateDataFrame gives a NAME (`WT`);
+#     mu2RefCovariateReplaceDataFrame gives the DERIVED EXPRESSION
+#     (`log(0.0142857142857143 * WT)`) that becomes the nlmixrMuDerCov column;
+#     muRefExtra gives its expression under `extra` and names no covariate.
+#     So every field is parsed as an EXPRESSION and the name taken from
+#     all.vars(). Matching on a name finds nothing for two frames out of three,
+#     and a silent no-match is indistinguishable from "not mu-referenced".
+#
+#   * Zc = xi %*% Lc, so d z / d xi_k is ROW k of Lc, not column k. The two
+#     coincide at pc == 1, so a single-covariate test passes while any
+#     correlated pair is wrong by ~33%.
+#
+#   * A derivative at one point is a LOCAL SLOPE, not a certificate. `p*WT` on a
+#     LOGNORMAL margin has dT/dxi = p*WT*sdlog, which varies with z; the numeric
+#     route correctly calls that an `index`. The slope is therefore scored at
+#     several latent points and the reader declines unless they agree -- this is
+#     the syntactic analogue of .admShiftAffineResid, and it is what keeps the
+#     fast path honest. The same spelling on a NORMAL margin IS affine and is
+#     admitted, which is the control that stops "decline everything" passing.
+#
+# Anything not covered returns NULL for that reader and the whole syntactic
+# path stands down, so .admCovLoadings() runs exactly as before.
+.ADM_SYN_AFFINE_TOL <- 1e-6
+
+.admSynSpec <- function(ui, jc) {
+  if (is.null(ui) || is.null(jc) || !length(jc$cn)) return(NULL)
+  mrd <- tryCatch(.admMuRefPairs(ui), error = function(e) NULL)
+  if (is.null(mrd) || !nrow(mrd)) return(NULL)
+  # every frame, parsed as expressions
+  rows <- list()
+  add <- function(theta, txt, par) {
+    e <- tryCatch(str2lang(as.character(txt)), error = function(e) NULL)
+    if (is.null(e)) return(invisible())
+    cvn <- intersect(all.vars(e), jc$cn)
+    if (length(cvn) != 1L) return(invisible())
+    rows[[length(rows) + 1L]] <<- list(theta = theta, cov = cvn,
+                                       par = as.character(par), term = e)
+  }
+  gf <- function(nm) tryCatch(ui[[nm]], error = function(e) NULL)
+  for (fr in c("muRefCovariateDataFrame", "mu2RefCovariateReplaceDataFrame")) {
+    v <- gf(fr)
+    if (is.data.frame(v) && nrow(v) && all(c("theta", "covariate",
+                                             "covariateParameter") %in% names(v)))
+      for (r in seq_len(nrow(v)))
+        add(as.character(v$theta[r]), v$covariate[r], v$covariateParameter[r])
+  }
+  v <- gf("muRefExtra")
+  if (is.data.frame(v) && nrow(v) && all(c("parameter", "extra") %in% names(v)))
+    for (r in seq_len(nrow(v))) add(NA_character_, v$extra[r], v$parameter[r])
+  if (!length(rows)) return(NULL)
+
+  # dT/dxi, certified constant. Independent of the coefficients, so once.
+  dterm <- function(z) {
+    h <- 1e-5
+    dk <- function(kk, z0) {
+      zp <- matrix((z0 + h) * jc$Lc[kk, ], 1L, jc$pc)
+      zm <- matrix((z0 - h) * jc$Lc[kk, ], 1L, jc$pc)
+      ap <- .admJointCov(jc, zp)[1L, z$cov]
+      am <- .admJointCov(jc, zm)[1L, z$cov]
+      (eval(z$term, stats::setNames(list(ap), z$cov)) -
+       eval(z$term, stats::setNames(list(am), z$cov))) / (2 * h)
+    }
+    out <- numeric(jc$pc)
+    for (kk in seq_len(jc$pc)) {
+      ds <- vapply(c(-1.5, -0.5, 0, 0.5, 1.5), function(z0) dk(kk, z0), numeric(1))
+      if (!all(is.finite(ds))) return(NULL)
+      if (max(abs(ds - ds[3L])) > .ADM_SYN_AFFINE_TOL * max(abs(ds[3L]), 1e-8))
+        return(NULL)                       # not affine -> no syntactic route
+      out[kk] <- ds[3L]
+    }
+    out
+  }
+
+  lst <- jc$pr$lst; hit <- jc$pr$hit
+  spec <- vector("list", length(hit))
+  for (i in seq_along(hit)) {
+    rhs <- lst[[hit[i]]][[3L]]
+    vs  <- all.vars(rhs)
+    th  <- intersect(vs, as.character(mrd$theta))
+    if (!length(th)) return(NULL)
+    ce <- tryCatch(.admCurEvalFromModel(ui, th[1L])$curEval,
+                   error = function(e) "")
+    # .admCurEvalFromModel, NOT ui$muRefCurEval: upstream returns "" for the
+    # mu-3.0 spelling and "" reads as identity. parse.R already carries this.
+    if (!identical(ce, "exp")) return(NULL)
+    eta_rows <- integer(0)
+    for (nm in intersect(vs, jc$pr$eta_names))
+      eta_rows <- c(eta_rows, match(nm, jc$pr$eta_names))
+    use <- Filter(function(z) (is.na(z$theta) || z$theta %in% th) && z$par %in% vs,
+                  rows)
+    use <- use[!duplicated(vapply(use, function(z) paste(z$cov, z$par), ""))]
+    # A READER WITH ETAS AND NO COVARIATE IS FINE -- `v <- exp(tv + eta.v)` is an
+    # ordinary reader whose loading is just its eta row. Requiring a covariate
+    # term on EVERY reader made the whole spec decline for any model with a
+    # second eta'd parameter, which is most of them: the unit tests used
+    # `v <- exp(tv)`, so `v` never entered `hit` and the bug was invisible until
+    # a real fit ran. What must NOT be tolerated is a covariate the reader
+    # mentions and no term accounts for.
+    .acc <- unique(vapply(use, function(z) z$cov, ""))
+    if (length(setdiff(intersect(vs, jc$cn), .acc))) return(NULL)
+    terms <- list()
+    for (z in use) {
+      d <- dterm(z)
+      if (is.null(d)) return(NULL)
+      terms[[length(terms) + 1L]] <- list(par = z$par, d = d)
+    }
+    spec[[i]] <- list(eta_rows = eta_rows, terms = terms)
+  }
+  spec
+}
+
+# The loading matrix from that spec: arithmetic, no probe and no fit.
+.admSynB <- function(jc, st, L) {
+  spec <- jc[["syn"]]
+  if (is.null(spec)) return(NULL)
+  B <- matrix(0, jc$nl, length(spec))
+  for (i in seq_along(spec)) {
+    sp <- spec[[i]]
+    if (is.null(sp)) return(NULL)
+    for (j in sp$eta_rows)
+      B[seq_len(jc$ne), i] <- B[seq_len(jc$ne), i] + L[j, seq_len(jc$ne)]
+    for (tm in sp$terms) {
+      cf <- st[[tm$par]]
+      if (is.null(cf) || !is.finite(cf)) return(NULL)
+      B[jc$ne + seq_len(jc$pc), i] <- B[jc$ne + seq_len(jc$pc), i] + cf * tm$d
+    }
+  }
+  if (!all(is.finite(B))) return(NULL)
+  # routes are replayed by the numeric path; the syntactic one has none, and
+  # `const` is the only value anything downstream tests for.
+  attr(B, "routes") <- vector("list", ncol(B))
+  B
+}
+
 # The joint loading matrix at a given (struct, L). Etas enter scaled by L, so
 # this moves with Omega as well as with the structural thetas.
 .admJointB <- function(jc, st, L, Xi, routes = NULL, cell = NULL) {
+  # The syntactic route only applies to the UNSTRATIFIED design: a cell pins a
+  # covariate, which changes the loadings, and the spec was certified without
+  # one.
+  if (is.null(cell) && !is.null(jc[["syn"]])) {
+    .b <- .admSynB(jc, st, L)
+    if (!is.null(.b)) return(.b)
+  }
   Zc <- Xi[, jc$ne + seq_len(jc$pc), drop = FALSE] %*% jc$Lc
   Et <- Xi[, seq_len(jc$ne), drop = FALSE] %*% t(L)
   AA <- .admJointCov(jc, Zc)
