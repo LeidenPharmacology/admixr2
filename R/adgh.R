@@ -1295,6 +1295,21 @@
         logical(1))))
     use_grad <- FALSE
 
+  # EXPERIMENTAL (srcWeight = "cov"): .adghGradNLL is a structurally separate,
+  # hand-coded copy of the objective that has never been made Mpinv-aware --
+  # unlike .adghNLL, it still scores a model-source group the old n-weighted
+  # way. Differencing IT for the Hessian would silently report a covariance
+  # for a different objective than the one that was actually minimised.
+  # Keyed on the studies actually carrying an Mpinv (the same test .adghNLL
+  # itself uses to route a group), not on .ctl$srcWeight, so this cannot drift
+  # out of sync with the objective the way the analytical-gradient / grad="fd"
+  # forcing did -- that fix changed who drives the OPTIMIZER but left this
+  # independent decision untouched.
+  if (isTRUE(use_grad) &&
+      any(vapply(studies, function(s)
+        !is.null(s[[".adm_src"]][["Mpinv"]]), logical(1))))
+    use_grad <- FALSE
+
   if (use_grad) {
     # CENTRAL difference of the gradient -- see .adfoCalcCov() for the reasoning
     # and the cost (2*np_cov gradient evaluations against the old np_cov+1).

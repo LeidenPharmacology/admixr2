@@ -584,6 +584,70 @@
 # inverse restricted to the directions C_src actually informs; every other
 # direction gets EXACTLY zero weight, not an arbitrary one -- the moment-space
 # analogue of Vt/n in .admSandwich, which exists for the identical reason.
+# d(E_j, vech V_j) / dPsi for ONE member study, from the per-study moment
+# derivatives .admMomentJac()/.admMomentDeriv() already computed for every
+# study -- laid out exactly like .admTauVec() lays out (E, V) itself, so the
+# rows line up with a group's Mpinv row-for-row.
+.admTauVecDeriv <- function(dE_i, dV_i, s) {
+  m <- nrow(dE_i); p <- ncol(dE_i)
+  if (identical(s$method, "var")) {
+    out <- matrix(0, 2L * m, p)
+    out[seq_len(m), ] <- dE_i
+    for (k in seq_len(p)) out[m + seq_len(m), k] <- diag(dV_i[[k]])
+  } else {
+    ij  <- which(lower.tri(diag(m), diag = TRUE))
+    out <- matrix(0, m + length(ij), p)
+    out[seq_len(m), ] <- dE_i
+    for (k in seq_len(p)) out[m + seq_along(ij), k] <- dV_i[[k]][ij]
+  }
+  out
+}
+
+# A model source GROUP's contribution to the meat, for srcWeight = "cov".
+#
+# .admSrcMeat() (above) is the n-route's term: it projects C_src through the
+# FIT's score-cross derivative G, because under that route the source enters
+# the objective as an ordinary n-weighted nll_cov_cpp() term per member study.
+# Under srcWeight = "cov" the group leaves that sum entirely (.adghNLL skips
+# every member and scores the group once against r' Mpinv r instead -- see
+# there), so G -- which IS d(score)/d(moments) of the n-weighted per-study
+# objective -- describes a term that is no longer in the objective at all.
+# Reusing it here would score the sandwich against a different objective than
+# the one actually minimised, the exact defect covMethod = "r,s" exists to
+# rule out.
+#
+# The correct derivative is the plain moment Jacobian A = d(tau_pred)/dPsi,
+# already available from `md` (every caller of this function already computed
+# it for the ordinary per-study G above). The score of the group's own
+# objective term r' Mpinv r is 2 A' Mpinv r, so
+#   Var(score) = 4 A' Mpinv Var(r) Mpinv A = 4 A' Mpinv A
+# using Var(r) = M (the pre-inversion matrix .admSrcWeight() built) and the
+# Moore-Penrose identity Mpinv M Mpinv = Mpinv. This is exactly the "J = 2H
+# under correct specification" invariant .admSandwich() documents: at the
+# optimum H's group block is ALSO 2 A' Mpinv A (the Gauss-Newton Hessian of a
+# quadratic-in-r form dominates a term that vanishes at r = 0), so this
+# returns 2H's group block scaled by 2, not an independent measurement.
+.admSrcMeatCov <- function(studies, idx, md, Mpinv, keep = NULL) {
+  A <- vector("list", length(idx))
+  for (a in seq_along(idx)) {
+    i <- idx[a]
+    s <- studies[[i]]
+    dE_i <- md$dE[[i]]; dV_i <- md$dV[[i]]
+    if (is.null(dE_i) || is.null(dV_i)) return(NULL)
+    A[[a]] <- .admTauVecDeriv(dE_i, dV_i, s)
+  }
+  Astack <- tryCatch(do.call(rbind, A), error = function(e) NULL)
+  if (is.null(Astack) || !all(is.finite(Astack))) return(NULL)
+  if (nrow(Astack) != nrow(Mpinv)) return(NULL)
+  # `keep` mirrors the row-subset already applied to G above: H may have been
+  # reduced to the struct+sigma sub-block, and this term must lose the same
+  # columns to stay indexed by the same parameters.
+  if (!is.null(keep)) Astack <- Astack[, keep, drop = FALSE]
+  M <- 4 * t(Astack) %*% Mpinv %*% Astack
+  if (!all(is.finite(M))) return(NULL)
+  (M + t(M)) / 2
+}
+
 .admSrcWeight <- function(studies, idx, tol = 1e-8) {
   D <- .admSrcJac(studies, idx)
   if (is.null(D)) return(NULL)
@@ -884,6 +948,18 @@
   for (nm in names(grp)) {
     idx  <- grp[[nm]]
     prov <- studies[[idx[1L]]][[".adm_src"]]
+    # EXPERIMENTAL (srcWeight = "cov"): an Mpinv on the group means .adghNLL
+    # scored it via r' Mpinv r, not the n-weighted nll_cov_cpp() term -- see
+    # .admSrcMeatCov() for why that routes to a different meat term entirely,
+    # not a variant of .admSrcMeat(). No datagen() call here (md's moment
+    # derivatives are already in hand), so no rxLoad() reload is needed either.
+    if (!is.null(prov[["Mpinv"]])) {
+      M <- tryCatch(.admSrcMeatCov(studies, idx, md, prov$Mpinv, keep = keep),
+                    error = function(e) NULL)
+      if (is.null(M)) { failed <- c(failed, nm); next }
+      extra[[nm]] <- M; skip <- c(skip, idx)
+      next
+    }
     # AN INCOMPLETE C_src IS NOT A PARTIAL ANSWER. A parameter the source
     # ESTIMATED but did not report a covariance for contributes zero to
     # `G C_src G'`, which asserts the source knew it exactly -- so the reported
