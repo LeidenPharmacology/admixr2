@@ -3525,21 +3525,112 @@ print.covDist <- function(x, ...) {
 # Returns NULL for a link with no first-order signal. A SYMMETRIC one (v even in
 # u) has zero average derivative, so this declines it and the product grid
 # stands -- correct, if conservative.
-.admIndexDir <- function(v, Z) {
-  cf <- tryCatch(stats::lm.fit(cbind(1, Z), v)$coefficients,
-                 error = function(e) NULL)
-  if (is.null(cf) || !all(is.finite(cf))) return(NULL)
-  b <- cf[-1L]
-  nb <- sqrt(sum(b^2))
-  if (!is.finite(nb) || nb <= 0) return(NULL)
-  # A CONSTANT has no direction. Guarding on the ratio alone gets this
-  # backwards: sd(v) = 0 sends it to infinity and a floating-point 1e-16
-  # coefficient is returned as though it meant something.
-  sv <- stats::sd(v)
-  if (!is.finite(sv) || sv <= 0) return(NULL)
-  # and a direction whose signal is swamped is noise, not a direction
-  if (nb / sv < 1e-8) return(NULL)
-  b
+# -- THE LOADING: one mechanism, no lm.fit, no route -------------------------
+#
+# The loading of a covariate-reading assignment on the latent normal is the
+# RELATIVE gradient d log p / dz, and the certificate is that its DIRECTION
+# does not move across the latent space.
+#
+# ONE STATEMENT REPLACES FOUR ROUTES. Everything the design needs is that a
+# reader depend on the latents through a single linear combination -- p =
+# G(b'z) -- because the nodes are placed in z and a GH rule then integrates the
+# composition exactly. For any such reader
+#
+#     d log p / dz  =  (G'(b'z) / G(b'z)) * b
+#
+# so the DIRECTION is b at every z and the magnitude carries the link. Affine,
+# log-affine and single-index are that one statement at different G; `const` is
+# G' = 0. So there is no residual tolerance for a column to sit on the edge of,
+# and no per-column route to freeze and replay: `routes` existed because a
+# threshold decision could flip mid-fit and step the objective, and a gradient
+# direction moves smoothly with the thetas instead of switching.
+#
+# RELATIVE, not raw, for two reasons. The second is not a refinement:
+#
+#   * COMMENSURABILITY. d p / dz carries p's units, so a clearance in L/h and a
+#     volume in L enter one SVD on different scales and the rank comes out
+#     depending on which unit the model was written in. d log p / dz is
+#     dimensionless.
+#
+#   * ETA-INVARIANCE, which is the defect this fixes. The design must not
+#     depend on the random effect, and .admCovCollapse checks that by re-probing
+#     at eta = 0.5 and requiring the same loadings. For the standard
+#     multiplicative form p = exp(theta + eta) * G(b'z),
+#     log p = theta + eta + log G, so the eta DROPS OUT of the gradient exactly.
+#     The raw slope does not -- it scales by exp(eta), a 65% change at eta = 0.5
+#     -- so EVERY single-index model failed that check and silently fell back to
+#     the product grid. `algorithm/collapse-derivation/relgrad_eta.txt`: old
+#     6.487e-01 vs new 1.6e-11 on a sqrt link and on a logistic link. A genuine
+#     covariate-by-eta interaction still fails at 8.6e-01 under both, which is
+#     the control that stops "invariant by construction" meaning "blind".
+#
+# f evaluates the readers at a matrix of latent rows and returns one column per
+# reader. z0 carries the base points: the FIRST is where the loading is read,
+# the rest exist only to certify the direction. One f call for all of them.
+.ADM_GRAD_H   <- 1e-4
+.ADM_GRAD_TOL <- 1e-6      # on 1 - |cos| between gradient directions
+.ADM_GRAD_ZERO <- 1e-8     # below this a column is constant, not a direction
+
+.admCovGradB <- function(f, z0, h = .ADM_GRAD_H) {
+  S <- nrow(z0); nl <- ncol(z0)
+  ix <- expand.grid(s = seq_len(S), k = seq_len(nl))
+  n  <- nrow(ix)
+  Zp <- z0[ix$s, , drop = FALSE]; Zm <- Zp
+  ce <- cbind(seq_len(n), ix$k)
+  Zp[ce] <- Zp[ce] + h; Zm[ce] <- Zm[ce] - h
+  # ONE evaluation for the whole stencil AND the base points, because a reader
+  # is an R expression over vectors and the per-call cost is the dispatch.
+  V <- f(rbind(Zp, Zm, z0))
+  if (is.null(V) || !is.matrix(V) || !all(is.finite(V))) return(NULL)
+  m  <- ncol(V)
+  P0 <- V[2L * n + seq_len(S), , drop = FALSE]
+  D  <- (V[seq_len(n), , drop = FALSE] -
+         V[n + seq_len(n), , drop = FALSE]) / (2 * h)
+  # WHERE the loading is read. Not the first base point: a link can be
+  # STATIONARY there -- (b'z)^3 has a zero gradient at the origin -- and reading
+  # a zero would report no direction and pin the covariate at its median for the
+  # whole fit. So all columns are read at the base point carrying the most
+  # signal. One SHARED point, not one per column, because B has to be the
+  # loading matrix AT a latent point for its singular values to be comparable.
+  #
+  # THE SCALE IS TAKEN AT THAT POINT AND NOWHERE ELSE. This is the difference
+  # between a rule and a rule that happens to work: admission passes several
+  # base points and a refresh passes the ONE that was frozen, so any scale
+  # derived from the SET -- "is this column positive over the base points?",
+  # max|p| over them -- silently answers differently in the two calls, and the
+  # invariance re-probe then compares two loadings that differ only in their
+  # normalisation. Reading the scale at i0 alone makes the refresh reproduce
+  # admission exactly, because it is the same latent point.
+  rel <- vapply(seq_len(m), function(k) max(abs(P0[, k]), 1e-300), numeric(1))
+  # the argmax is a SELECTION, so a column-constant normaliser is enough for it
+  tot <- rowSums(matrix(vapply(seq_len(m), function(k)
+           rowSums(matrix(D[, k], S, nl)^2) / rel[k]^2, numeric(S)), S, m))
+  i0  <- which.max(tot)
+  B  <- matrix(0, nl, m)
+  cs <- rep(1, m)
+  for (k in seq_len(m)) {
+    sc <- abs(P0[i0, k])
+    # A reader that is ZERO where it is read has no relative scale; fall back to
+    # its own size over the base points so the column is still dimensionless.
+    if (!is.finite(sc) || sc <= 0) sc <- rel[k]
+    G  <- matrix(D[, k], S, nl) / sc
+    if (!all(is.finite(G))) return(NULL)
+    nr <- sqrt(rowSums(G^2))
+    if (max(nr) < .ADM_GRAD_ZERO) next               # constant: B[, k] stays 0
+    # A column flat AT THE CHOSEN POINT but not elsewhere is refused: its
+    # direction there is noise, and no other point can be substituted without
+    # reading B at two different latent points at once.
+    if (nr[i0] < .ADM_GRAD_ZERO) return(NULL)
+    U <- G / nr
+    cs[k] <- min(abs(U[nr >= .ADM_GRAD_ZERO, , drop = FALSE] %*% U[i0, ]))
+    B[, k] <- G[i0, ]
+  }
+  if (!all(is.finite(B))) return(NULL)
+  # The certificate is a SINGLE tolerance on a single quantity, checked here
+  # rather than by the caller, so there is one place to read it.
+  if (any(1 - cs > .ADM_GRAD_TOL)) return(NULL)
+  attr(B, "at") <- i0
+  B
 }
 
 # -- Dimension collapse: cost scales with the RANK, not the covariate count ----
@@ -3643,74 +3734,6 @@ print.covDist <- function(x, ...) {
   do.call(cbind, out)
 }
 
-# The direction each covariate-reading assignment depends on the latent normal
-# through: affine where that holds, single index otherwise.
-#
-# `routes` replays a decision already made instead of re-deciding it. Two
-# reasons, and the second is the important one:
-#
-#   - COST. This runs on every objective call now, and the affinity test is an
-#     lm.fit plus a residual norm per column. Replaying the chosen route is one
-#     lm.fit and no test.
-#   - CONTINUITY. The test is a threshold. A column sitting near it could be
-#     read as affine on one call and as a single index on the next, and the two
-#     do not agree to machine precision -- so the objective would step, for no
-#     reason the optimizer can see. Which route a column takes is a property of
-#     the MODEL, so it is settled once, at admission.
-.admCovLoadings <- function(P, Z, pc, routes = NULL) {
-  if (is.null(P)) return(NULL)
-  np <- nrow(Z)
-  W1 <- rep(1 / np, np)
-  B  <- matrix(0, pc, ncol(P))
-  rt <- vector("list", ncol(P))
-  for (k in seq_len(ncol(P))) {
-    pk <- P[, k]
-    if (stats::sd(pk) <= 0) { rt[[k]] <- "const"; next }
-    if (!is.null(routes)) {
-      r <- routes[[k]]
-      if (identical(r, "const")) next
-      b <- if (identical(r, "index")) .admIndexDir(pk, Z) else {
-        y  <- if (identical(r, "affine_log")) log(pk) else pk
-        cf <- tryCatch(stats::lm.fit(cbind(1, Z), y)$coefficients,
-                       error = function(e) NULL)
-        if (is.null(cf) || !all(is.finite(cf))) NULL else cf[-1L]
-      }
-      if (is.null(b)) return(NULL)
-      B[, k] <- b
-      next
-    }
-    b <- NULL
-    # AFFINE first, on the LOG and then the raw scale. Exact where it holds,
-    # and it holds for the multiplicative and allometric forms that dominate.
-    for (yi in seq_len(2L)) {
-      y <- if (yi == 1L) { if (all(pk > 0)) log(pk) else NULL } else pk
-      if (is.null(y)) next
-      if (.admShiftAffineResid(matrix(y, ncol = 1L), W1, Z) <
-          .ADM_SHIFT_GAUSS_TOL) {
-        cf <- tryCatch(stats::lm.fit(cbind(1, Z), y)$coefficients,
-                       error = function(e) NULL)
-        if (!is.null(cf) && all(is.finite(cf))) {
-          b <- cf[-1L]
-          rt[[k]] <- if (yi == 1L) "affine_log" else "affine_raw"
-          break
-        }
-      }
-    }
-    # SINGLE INDEX otherwise. Affine is far stronger than the construction
-    # needs: the design places Gauss-Hermite nodes in z, so it is enough that
-    # the parameter be SOME function of one linear combination u. Then u is
-    # normal, a GH rule integrates the composition exactly to degree 2n-1, and
-    # the preimage is unchanged. Affine is the special case of an identity link
-    # -- and requiring it refuses, for one, an Emax link on a product of
-    # lognormal covariates, whose INDEX is affine and whose LINK is not.
-    if (is.null(b)) { b <- .admIndexDir(pk, Z); rt[[k]] <- "index" }
-    if (is.null(b)) return(NULL)
-    B[, k] <- b
-  }
-  attr(B, "routes") <- rt
-  B
-}
-
 # Re-aim the collapsed design at the CURRENT structural thetas.
 #
 # The rotation depends on them. A covariate coefficient is an ESTIMATED
@@ -3741,8 +3764,15 @@ print.covDist <- function(x, ...) {
   # .adghGrid turns that into an unsolvable point.
   .stale <- function(x) { if (!is.null(x)) x$stale <- TRUE; x }
   if (is.null(co) || is.null(co$pr) || is.null(st)) return(.stale(co))
-  P <- .admCovProbeAt(co$pr, st, 0, co$cell_list[[1L]], co$Ap)
-  B <- .admCovLoadings(P, co$Zp, co$pc, co$pr$routes)
+  # The direction is read at the SAME base point admission read it at, so a
+  # refresh differs from admission only through the thetas -- which is the one
+  # thing it is meant to track. The certificate is not re-run: it is structural,
+  # settled at admission, and re-deciding it per call is what `routes` used to
+  # guard against.
+  B <- .admCovGradB(function(Z)
+         .admCovProbeAt(co$pr, st, 0, co$cell_list[[1L]],
+                        .admCovXFromZ(co$cd, co$cn, Z)),
+         co$z0)
   if (is.null(B)) return(.stale(co))
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || length(sv$d) < co$r) return(.stale(co))
@@ -3883,10 +3913,21 @@ print.covDist <- function(x, ...) {
   }
   probe    <- function(eta_at, cell) probe_gen(eta_at, cell, A)
   probe_at <- function(AA, cell)     probe_gen(0, cell, AA)
-  loadings <- function(P) .admCovLoadings(P, Z, pc)
-  B <- loadings(probe(0, cell_list[[1L]]))
+  # THE CERTIFICATE, once, at admission. z0[1, ] is the origin -- where every
+  # later refresh reads the loading -- and the rest spread over the latent
+  # space to certify that the direction does not move. .admCovGradB refuses the
+  # whole collapse if it does, so there is nothing per-column left to record.
+  z0 <- rbind(rep(0, pc), Z[c(1L, 8L, 20L, 50L, 97L) %% n_probe + 1L, ,
+                            drop = FALSE])
+  gradB <- function(cell, st_use = st, eta_at = 0)
+    .admCovGradB(function(ZZ) probe_gen(eta_at, cell,
+                                        .admCovXFromZ(cd, cn, ZZ), st_use), z0)
+  B <- gradB(cell_list[[1L]])
   if (is.null(B)) return(NULL)
-  pr$routes <- attr(B, "routes")   # settled here, replayed on every refresh
+  # FREEZE the point the loading is read at, alongside the rank and the node
+  # count and for the same reason: a refresh must differ from admission only
+  # through the thetas.
+  z0 <- z0[attr(B, "at"), , drop = FALSE]
   # A "const" ROUTE IS A STRUCTURAL CLAIM, NOT A THRESHOLD, AND IT MUST HOLD
   # AWAY FROM THIS POINT TOO.
   #
@@ -3909,13 +3950,14 @@ print.covDist <- function(x, ...) {
   # refuse the collapse if a constant column starts varying. A genuinely
   # constant assignment (`v <- exp(tv)`) is unaffected -- shifting tv scales it
   # without making it vary across design points.
-  .cst <- which(vapply(pr$routes, function(r) identical(r, "const"), logical(1)))
+  # A constant column is now just a ZERO column of B -- there is no route to
+  # name it -- but the hazard and the cure are unchanged.
+  .cst <- which(colSums(abs(B)) == 0)
   if (length(.cst)) {
-    Pp <- tryCatch(probe_gen(0, cell_list[[1L]], A,
-                             st_use = lapply(st, function(v) v + 0.1)),
+    Bp <- tryCatch(gradB(cell_list[[1L]],
+                         st_use = lapply(st, function(v) v + 0.1)),
                    error = function(e) NULL)
-    if (is.null(Pp) ||
-        any(vapply(.cst, function(k) stats::sd(Pp[, k]) > 0, logical(1))))
+    if (is.null(Bp) || any(colSums(abs(Bp[, .cst, drop = FALSE])) > 0))
       return(NULL)
   }
   # THE LOADING MUST NOT DEPEND ON THE RANDOM EFFECT. A covariate-by-eta
@@ -3929,9 +3971,20 @@ print.covDist <- function(x, ...) {
   if (length(pinfo$eta_col_names)) chk <- c(chk, list(list(0.5, cell_list[[1L]])))
   if (length(cell_list) > 1L)
     chk <- c(chk, lapply(cell_list[-1L], function(cl) list(0, cl)))
+  # The relative gradient makes the ETA half of this pass by construction for
+  # the ordinary multiplicative form -- see .admCovGradB -- which is the point:
+  # it used to fail there for every single-index model. What it still catches is
+  # a genuine covariate-by-eta interaction, whose direction really does move
+  # with eta (measured 8.6e-01, relgrad_eta.txt), and a covariate-by-stratum
+  # one. So the check stays; it is no longer the thing that rejects honest
+  # models.
   for (cc in chk) {
-    B2 <- loadings(probe(cc[[1L]], cc[[2L]]))
-    if (is.null(B2) || !isTRUE(all.equal(B, B2, tolerance = 1e-6)))
+    B2 <- gradB(cc[[2L]], eta_at = cc[[1L]])
+    # check.attributes = FALSE: B carries the index of the base point it was
+    # read at, and after freezing z0 the re-probe reads a one-row z0 whose index
+    # is 1. Comparing that attribute compares bookkeeping, not loadings.
+    if (is.null(B2) || !isTRUE(all.equal(B, B2, tolerance = 1e-6,
+                                         check.attributes = FALSE)))
       return(NULL)
   }
 
@@ -4050,7 +4103,8 @@ print.covDist <- function(x, ...) {
        # structural thetas. The probe ingredients, not a closure: a closure
        # captures its whole defining environment and has to survive being
        # stored on the study and shipped to a daemon.
-       pr = pr, st0 = st, Zp = Z, Ap = A, Rc = Rc, cell_list = cell_list)
+       pr = pr, st0 = st, Zp = Z, Ap = A, Rc = Rc, cell_list = cell_list,
+       z0 = z0)
 }
 
 # =============================================================================
@@ -4203,18 +4257,18 @@ print.covDist <- function(x, ...) {
   # The [[ ]] reads downstream stay as a second line of defence, and
   # test-covariate.R runs these paths under warnPartialMatchDollar so a field
   # added later cannot quietly reintroduce it.
-  .jc0 <- list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc,
-               ne = ne, pc = pc, nl = nl, Lc = Lc)
-  # Settled ONCE, here, for the same reason the routes are: which structure a
-  # reader has is a property of the model, and re-deciding it per call would let
-  # a borderline case change the design mid-fit.
-  .syn <- tryCatch(.admSynSpec(ui, .jc0), error = function(e) NULL)
+  # The base points the loading is read at and certified over. z0[1, ] is the
+  # ORIGIN, and every later refresh reads there, so a refresh differs from
+  # admission only through the thetas. The rest spread over the latent space and
+  # exist solely to certify that the direction does not move.
+  z0 <- rbind(rep(0, nl), Xi[c(1L, 8L, 20L, 50L, 97L) %% nrow(Xi) + 1L, ,
+                            drop = FALSE])
   list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc, ne = ne, pc = pc,
-       nl = nl, Xi = Xi, Xv = Xv, Wv = Wv, out_var = out_var, syn = .syn,
+       nl = nl, Xi = Xi, Xv = Xv, Wv = Wv, out_var = out_var, z0 = z0,
        n_nodes = as.integer(n_nodes), max_rows = max_rows, joint = TRUE,
        dn = dn, nms = nms, cells = cells, pcell = pcell,
        cell_list = cell_list, n_cell = max(nrow(cells), 1L),
-       r = NULL, m = NULL, routes = NULL)
+       r = NULL, m = NULL)
 }
 
 # The covariate values a latent block maps to, with the same clamp the collapse
@@ -4224,178 +4278,28 @@ print.covDist <- function(x, ...) {
   .admCovXFromZ(jc$cd, jc$cn, Zc)
 }
 
-# =============================================================================
-# SYNTACTIC loadings, from mu-referencing
-# =============================================================================
-#
-# The numeric route rediscovers, by probing, a structure rxode2 has already
-# parsed. Where mu-referencing supplies it, the loading is arithmetic instead:
-# for a reader `g(theta + eta + sum_j p_j T_j(cov_j))` with g = exp,
-#
-#   d log(reader) / d xi  =  L[eta row]  +  sum_j p_j * dT_j/d xi
-#
-# and dT_j/d xi does not depend on the coefficients at all, so it is settled
-# ONCE here and only multiplied by p_j on each objective call. That removes the
-# 512-point probe and the per-call lm.fit from the common path.
-#
-# THREE THINGS THIS HAS TO GET RIGHT, each of which was a real bug first:
-#
-#   * The frames disagree about what `covariate` MEANS.
-#     muRefCovariateDataFrame gives a NAME (`WT`);
-#     mu2RefCovariateReplaceDataFrame gives the DERIVED EXPRESSION
-#     (`log(0.0142857142857143 * WT)`) that becomes the nlmixrMuDerCov column;
-#     muRefExtra gives its expression under `extra` and names no covariate.
-#     So every field is parsed as an EXPRESSION and the name taken from
-#     all.vars(). Matching on a name finds nothing for two frames out of three,
-#     and a silent no-match is indistinguishable from "not mu-referenced".
-#
-#   * Zc = xi %*% Lc, so d z / d xi_k is ROW k of Lc, not column k. The two
-#     coincide at pc == 1, so a single-covariate test passes while any
-#     correlated pair is wrong by ~33%.
-#
-#   * A derivative at one point is a LOCAL SLOPE, not a certificate. `p*WT` on a
-#     LOGNORMAL margin has dT/dxi = p*WT*sdlog, which varies with z; the numeric
-#     route correctly calls that an `index`. The slope is therefore scored at
-#     several latent points and the reader declines unless they agree -- this is
-#     the syntactic analogue of .admShiftAffineResid, and it is what keeps the
-#     fast path honest. The same spelling on a NORMAL margin IS affine and is
-#     admitted, which is the control that stops "decline everything" passing.
-#
-# Anything not covered returns NULL for that reader and the whole syntactic
-# path stands down, so .admCovLoadings() runs exactly as before.
-.ADM_SYN_AFFINE_TOL <- 1e-6
-
-.admSynSpec <- function(ui, jc) {
-  if (is.null(ui) || is.null(jc) || !length(jc$cn)) return(NULL)
-  mrd <- tryCatch(.admMuRefPairs(ui), error = function(e) NULL)
-  if (is.null(mrd) || !nrow(mrd)) return(NULL)
-  # every frame, parsed as expressions
-  rows <- list()
-  add <- function(theta, txt, par) {
-    e <- tryCatch(str2lang(as.character(txt)), error = function(e) NULL)
-    if (is.null(e)) return(invisible())
-    cvn <- intersect(all.vars(e), jc$cn)
-    if (length(cvn) != 1L) return(invisible())
-    rows[[length(rows) + 1L]] <<- list(theta = theta, cov = cvn,
-                                       par = as.character(par), term = e)
+# The joint loading, over the WHOLE latent vector xi = (eta block, covariate
+# block). It is .admCovGradB again with no special case: an eta direction is a
+# latent normal coordinate like any other. That is why there is no separate
+# SYNTACTIC route here any more. The mu-referencing route existed only to avoid
+# a 512-point probe and a per-call lm.fit; a gradient costs 2*nl + 1 evaluations
+# of an R expression and needs neither. So the three mu-ref frames that disagree
+# about what `covariate` means, and the question of whether a model must be
+# mu-referenced at all to collapse, both go away with it -- a model collapses on
+# what it DOES, not on how it was spelled.
+.admJointB <- function(jc, st, L, Xi, cell = NULL, z0 = NULL) {
+  cl <- cell %||% jc$cell_list[[1L]]
+  f <- function(XX) {
+    Zc <- XX[, jc$ne + seq_len(jc$pc), drop = FALSE] %*% jc$Lc
+    Et <- XX[, seq_len(jc$ne), drop = FALSE] %*% t(L)
+    .admCovProbeAt(jc$pr, st, Et, cl, .admJointCov(jc, Zc))
   }
-  gf <- function(nm) tryCatch(ui[[nm]], error = function(e) NULL)
-  for (fr in c("muRefCovariateDataFrame", "mu2RefCovariateReplaceDataFrame")) {
-    v <- gf(fr)
-    if (is.data.frame(v) && nrow(v) && all(c("theta", "covariate",
-                                             "covariateParameter") %in% names(v)))
-      for (r in seq_len(nrow(v)))
-        add(as.character(v$theta[r]), v$covariate[r], v$covariateParameter[r])
-  }
-  v <- gf("muRefExtra")
-  if (is.data.frame(v) && nrow(v) && all(c("parameter", "extra") %in% names(v)))
-    for (r in seq_len(nrow(v))) add(NA_character_, v$extra[r], v$parameter[r])
-  if (!length(rows)) return(NULL)
-
-  # dT/dxi, certified constant. Independent of the coefficients, so once.
-  dterm <- function(z) {
-    h <- 1e-5
-    dk <- function(kk, z0) {
-      zp <- matrix((z0 + h) * jc$Lc[kk, ], 1L, jc$pc)
-      zm <- matrix((z0 - h) * jc$Lc[kk, ], 1L, jc$pc)
-      ap <- .admJointCov(jc, zp)[1L, z$cov]
-      am <- .admJointCov(jc, zm)[1L, z$cov]
-      (eval(z$term, stats::setNames(list(ap), z$cov)) -
-       eval(z$term, stats::setNames(list(am), z$cov))) / (2 * h)
-    }
-    out <- numeric(jc$pc)
-    for (kk in seq_len(jc$pc)) {
-      ds <- vapply(c(-1.5, -0.5, 0, 0.5, 1.5), function(z0) dk(kk, z0), numeric(1))
-      if (!all(is.finite(ds))) return(NULL)
-      if (max(abs(ds - ds[3L])) > .ADM_SYN_AFFINE_TOL * max(abs(ds[3L]), 1e-8))
-        return(NULL)                       # not affine -> no syntactic route
-      out[kk] <- ds[3L]
-    }
-    out
-  }
-
-  lst <- jc$pr$lst; hit <- jc$pr$hit
-  spec <- vector("list", length(hit))
-  for (i in seq_along(hit)) {
-    rhs <- lst[[hit[i]]][[3L]]
-    vs  <- all.vars(rhs)
-    th  <- intersect(vs, as.character(mrd$theta))
-    if (!length(th)) return(NULL)
-    ce <- tryCatch(.admCurEvalFromModel(ui, th[1L])$curEval,
-                   error = function(e) "")
-    # .admCurEvalFromModel, NOT ui$muRefCurEval: upstream returns "" for the
-    # mu-3.0 spelling and "" reads as identity. parse.R already carries this.
-    if (!identical(ce, "exp")) return(NULL)
-    eta_rows <- integer(0)
-    for (nm in intersect(vs, jc$pr$eta_names))
-      eta_rows <- c(eta_rows, match(nm, jc$pr$eta_names))
-    use <- Filter(function(z) (is.na(z$theta) || z$theta %in% th) && z$par %in% vs,
-                  rows)
-    use <- use[!duplicated(vapply(use, function(z) paste(z$cov, z$par), ""))]
-    # A READER WITH ETAS AND NO COVARIATE IS FINE -- `v <- exp(tv + eta.v)` is an
-    # ordinary reader whose loading is just its eta row. Requiring a covariate
-    # term on EVERY reader made the whole spec decline for any model with a
-    # second eta'd parameter, which is most of them: the unit tests used
-    # `v <- exp(tv)`, so `v` never entered `hit` and the bug was invisible until
-    # a real fit ran. What must NOT be tolerated is a covariate the reader
-    # mentions and no term accounts for.
-    .acc <- unique(vapply(use, function(z) z$cov, ""))
-    if (length(setdiff(intersect(vs, jc$cn), .acc))) return(NULL)
-    terms <- list()
-    for (z in use) {
-      d <- dterm(z)
-      if (is.null(d)) return(NULL)
-      terms[[length(terms) + 1L]] <- list(par = z$par, d = d)
-    }
-    spec[[i]] <- list(eta_rows = eta_rows, terms = terms)
-  }
-  spec
-}
-
-# The loading matrix from that spec: arithmetic, no probe and no fit.
-.admSynB <- function(jc, st, L) {
-  spec <- jc[["syn"]]
-  if (is.null(spec)) return(NULL)
-  B <- matrix(0, jc$nl, length(spec))
-  for (i in seq_along(spec)) {
-    sp <- spec[[i]]
-    if (is.null(sp)) return(NULL)
-    for (j in sp$eta_rows)
-      B[seq_len(jc$ne), i] <- B[seq_len(jc$ne), i] + L[j, seq_len(jc$ne)]
-    for (tm in sp$terms) {
-      cf <- st[[tm$par]]
-      if (is.null(cf) || !is.finite(cf)) return(NULL)
-      B[jc$ne + seq_len(jc$pc), i] <- B[jc$ne + seq_len(jc$pc), i] + cf * tm$d
-    }
-  }
-  if (!all(is.finite(B))) return(NULL)
-  # routes are replayed by the numeric path; the syntactic one has none, and
-  # `const` is the only value anything downstream tests for.
-  attr(B, "routes") <- vector("list", ncol(B))
-  B
-}
-
-# The joint loading matrix at a given (struct, L). Etas enter scaled by L, so
-# this moves with Omega as well as with the structural thetas.
-.admJointB <- function(jc, st, L, Xi, routes = NULL, cell = NULL) {
-  # The syntactic route only applies to the UNSTRATIFIED design: a cell pins a
-  # covariate, which changes the loadings, and the spec was certified without
-  # one.
-  if (is.null(cell) && !is.null(jc[["syn"]])) {
-    .b <- .admSynB(jc, st, L)
-    if (!is.null(.b)) return(.b)
-  }
-  Zc <- Xi[, jc$ne + seq_len(jc$pc), drop = FALSE] %*% jc$Lc
-  Et <- Xi[, seq_len(jc$ne), drop = FALSE] %*% t(L)
-  AA <- .admJointCov(jc, Zc)
-  P  <- .admCovProbeAt(jc$pr, st, Et, cell %||% jc$cell_list[[1L]], AA)
-  if (is.null(P)) return(NULL)
-  .admCovLoadings(P, Xi, jc$nl, routes)
+  .admCovGradB(f, z0 %||% jc$z0)
 }
 
 # Re-aim the joint design at the CURRENT parameters, and build it.
 .admJointDesign <- function(jc, st, L) {
-  B <- .admJointB(jc, st, L, jc$Xi, jc[["routes"]])
+  B <- .admJointB(jc, st, L, jc$Xi)
   if (is.null(B)) return(NULL)
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || !length(sv$d) || max(sv$d) <= 0) return(NULL)
@@ -4441,7 +4345,7 @@ print.covDist <- function(x, ...) {
   # same for any U spanning B's column space, so it vanishes to the accuracy the
   # design is verified to. FD-checked rather than argued.
   list(eta = eta, X = Xe, cov_rows = X, W = Wg, r = r, m = m,
-       U = U, d = sv$d, routes = attr(B, "routes"))
+       U = U, d = sv$d, at = attr(B, "at"))
 }
 
 # Settle everything STRUCTURAL about the joint design, once, and verify it.
@@ -4459,7 +4363,9 @@ print.covDist <- function(x, ...) {
   if (is.null(jc)) return(NULL)
   jd <- .admJointDesign(jc, st, L)
   if (is.null(jd)) return(NULL)
-  jc$r <- jd$r; jc$m <- jd$m; jc$routes <- jd$routes
+  jc$r <- jd$r; jc$m <- jd$m
+  # FREEZE the point the loading is read at, with the rank and the node count.
+  jc$z0 <- jc$z0[jd$at, , drop = FALSE]
   cl_list <- jc$cell_list %||% list(list())
   # THE SAME "const" RE-PROBE .admCovCollapse CARRIES, for the same reason.
   # `v <- exp(tv + eta.v) * (CRCL/90)^bcr` started at `bcr <- 0` -- the normal
@@ -4469,15 +4375,13 @@ print.covDist <- function(x, ...) {
   # and the optimizer reports convergence at the starting value. Admission's
   # own verification cannot see it: at bcr = 0 the design reproduces the
   # moments perfectly. Rank is frozen here, so this must be settled here too.
-  .cst <- which(vapply(jc$routes %||% list(), function(r) identical(r, "const"),
-                       logical(1)))
+  # A constant column is a ZERO column of B now, not a named route.
+  .cst <- which(colSums(abs(.admJointB(jc, st, L, jc$Xi) %||%
+                            matrix(0, jc$nl, 1L))) == 0)
   if (length(.cst)) {
-    .Ap <- .admJointCov(jc, jc$Xi[, jc$ne + seq_len(jc$pc), drop = FALSE] %*% jc$Lc)
-    Pp  <- tryCatch(.admCovProbeAt(jc$pr, lapply(st, function(v) v + 0.1), 0,
-                                   cl_list[[1L]], .Ap),
-                    error = function(e) NULL)
-    if (is.null(Pp) ||
-        any(vapply(.cst, function(k) stats::sd(Pp[, k]) > 0, logical(1))))
+    Bp <- tryCatch(.admJointB(jc, lapply(st, function(v) v + 0.1), L, jc$Xi),
+                   error = function(e) NULL)
+    if (is.null(Bp) || any(colSums(abs(Bp[, .cst, drop = FALSE])) > 0))
       return(NULL)
   }
   # THE ROTATION MUST NOT DIFFER BETWEEN STRATA. A covariate-by-stratum
@@ -4486,10 +4390,10 @@ print.covDist <- function(x, ...) {
   # the wrong one in all the others. Re-probe in each and require the same
   # loadings, as .admCovCollapse does.
   if (length(cl_list) > 1L) {
-    B0 <- .admJointB(jc, st, L, jc$Xi, jc$routes, cl_list[[1L]])
+    B0 <- .admJointB(jc, st, L, jc$Xi, cl_list[[1L]])
     if (is.null(B0)) return(NULL)
     for (cc in cl_list[-1L]) {
-      Bk <- .admJointB(jc, st, L, jc$Xi, jc$routes, cc)
+      Bk <- .admJointB(jc, st, L, jc$Xi, cc)
       if (is.null(Bk) || !isTRUE(all.equal(B0, Bk, tolerance = 1e-6,
                                            check.attributes = FALSE)))
         return(NULL)

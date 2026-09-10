@@ -1180,23 +1180,34 @@ test_that("the collapsed design is VERIFIED against the parameter law", {
   expect_equal(sum(co$W / vd),     mean(1 / vr), tolerance = 5e-3)
 })
 
-test_that(".admIndexDir returns a direction, or nothing", {
-  # It estimates the AVERAGE DERIVATIVE and does not verify -- verification
-  # belongs to the design. A SYMMETRIC link has zero average derivative, so it
-  # declines and the product grid stands: conservative, and correct.
+test_that(".admCovGradB recovers ONE direction under any link", {
+  # The whole certificate in one test. A reader that depends on the latents
+  # only through b'z has d log p / dz parallel to b at EVERY z, whatever the
+  # link does in between -- so affine, log-affine and single-index are one
+  # case, not three, and there is no route to choose.
   set.seed(3)
-  n <- 512L
-  Z <- matrix(stats::rnorm(n * 3L), n, 3L)
-  b <- c(0.6, -0.4, 0.2)
-  u <- as.numeric(Z %*% b)
-  for (f in list(function(x) x, exp, function(x) x / (1 + abs(x)),
-                 function(x) x^3, function(x) (x + 5) / (x + 8))) {
-    got <- admixr2:::.admIndexDir(f(u), Z)
+  b  <- c(0.6, -0.4, 0.2)
+  z0 <- rbind(c(0, 0, 0), c(1.2, 0, 0), c(-1.2, 0, 0),
+              c(0.8, 0.8, 0.8), c(-0.8, -0.8, -0.8))
+  mk <- function(f) function(Z) matrix(f(as.numeric(Z %*% b)), nrow(Z), 1L)
+  for (f in list(function(x) exp(x),            # log-affine
+                 function(x) x + 5,             # affine
+                 function(x) (x + 5) / (x + 8), # index, nonlinear link
+                 function(x) sqrt(x + 5),
+                 function(x) x^3 + 5)) {        # STATIONARY at the origin
+    got <- admixr2:::.admCovGradB(mk(f), z0)
     expect_false(is.null(got))
-    expect_gt(abs(sum(got * b)) / (sqrt(sum(got^2)) * sqrt(sum(b^2))), 0.99)
+    expect_gt(abs(sum(got * b)) / (sqrt(sum(got^2)) * sqrt(sum(b^2))), 0.999)
   }
-  # a constant has no direction at all
-  expect_null(admixr2:::.admIndexDir(rep(1, n), Z))
+  # a constant is a ZERO column, not a refusal: it carries no direction, and
+  # the caller re-probes it against a theta nudge rather than trusting it.
+  z <- admixr2:::.admCovGradB(function(Z) matrix(1, nrow(Z), 1L), z0)
+  expect_false(is.null(z))
+  expect_equal(sum(abs(z)), 0)
+  # TWO directions is not one: the certificate must refuse, or it certifies
+  # nothing. exp(z1) + exp(z2) has a direction that turns with z.
+  expect_null(admixr2:::.admCovGradB(
+    function(Z) matrix(exp(Z[, 1L]) + exp(Z[, 2L]), nrow(Z), 1L), z0))
 })
 
 test_that("the collapse composes with CONDITIONED covariates", {
@@ -1344,7 +1355,7 @@ test_that("the collapse paths do not rely on PARTIAL matching", {
   # and the joint descriptor declares its admission fields up front, so `$`
   # cannot fall through to max_rows before .admJointAdmit() sets them
   jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
-  expect_true(all(c("r", "m", "routes") %in% names(jc)))
+  expect_true(all(c("r", "m", "z0") %in% names(jc)))
   expect_null(jc$m)
   expect_null(jc$r)
   expect_null(jc$routes)
