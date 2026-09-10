@@ -61,6 +61,9 @@ test_that("the information equality holds: J(working weight) == 2H", {
   #   * the marginal of the normal-theory weight as the var baseline, where the
   #     objective in fact assumes WORKING INDEPENDENCE across the m variances.
   skip_if_not_installed("rxode2")
+  # numDeriv is Suggests, so this has to degrade rather than error where it is
+  # absent -- the companion TBS test below already guarded it and this one did not.
+  skip_if_not_installed("numDeriv")
   TIMES <- c(4, 8, 12, 16); DOSE <- 100; NQ <- 9L
   .mod <- function() {
     ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; prop.err <- 0.15 })
