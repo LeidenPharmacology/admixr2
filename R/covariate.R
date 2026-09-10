@@ -4136,8 +4136,8 @@ print.covDist <- function(x, ...) {
     if (is.null(Z) || !is.matrix(Z) || !all(is.finite(Z))) return(NULL)
     Z
   }
-  Xi <- mkXi(n_probe, 13L); Xv <- mkXi(n_ver, 17L)
-  if (is.null(Xi) || is.null(Xv)) return(NULL)
+  Xi <- mkXi(n_probe, 13L)
+  if (is.null(Xi)) return(NULL)
   # THE VERIFICATION REFERENCE IS DETERMINISTIC WHERE IT CAN AFFORD TO BE.
   #
   # A Sobol average was the reference, and it made admission measure its OWN
@@ -4172,8 +4172,11 @@ print.covDist <- function(x, ...) {
   # nl = 5 was admitted, which is not a boundary, it is the QMC error being
   # erratic (2.8e-2 at 8192 points, 4.5e-2 at 32768, 6.7e-3 at 131072). A
   # deterministic rule has no such regime.
+  # `n_ver` is now a POINT BUDGET rather than a sample size: it sizes the
+  # deterministic rule, and is only a Sobol count on the path where neither rule
+  # builds. Sobol is therefore not generated at all in the common case -- it used
+  # to be built (8192 x nl, plus the qnorm) and then immediately overwritten.
   mv <- min(40L, as.integer(floor(n_ver^(1 / nl))))
-  Wv <- rep(1 / nrow(Xv), nrow(Xv))
   .gv <- NULL
   if (mv >= 15L) .gv <- tryCatch(.adghNodeGrid(mv, nl), error = function(e) NULL)
   if (is.null(.gv))
@@ -4183,6 +4186,10 @@ print.covDist <- function(x, ...) {
       all(is.finite(.gv$X)) && all(is.finite(.gv$W)) && sum(.gv$W) > 0) {
     Xv <- .gv$X
     Wv <- .gv$W / sum(.gv$W)
+  } else {
+    Xv <- mkXi(n_ver, 17L)
+    if (is.null(Xv)) return(NULL)
+    Wv <- rep(1 / nrow(Xv), nrow(Xv))
   }
   # r, m and routes are settled by .admJointAdmit(), but they are declared HERE,
   # holding NULL, and that is load-bearing rather than tidiness.
