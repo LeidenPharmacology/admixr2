@@ -231,7 +231,31 @@ test_that("the weight's own S is the V_pred the objective scores against", {
     prop  = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.15 })
       model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ prop(e) }) },
     lnorm = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.15 })
-      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ lnorm(e) }) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ lnorm(e) }) },
+    # TBS belongs in this test, not in one of its own. Once the objective
+    # composes at the nodes the weight and the objective are the SAME
+    # aggregation, so the identity holds to machine precision here too -- it was
+    # only the delta expansion that made these families a special case.
+    boxCox = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                e <- 0.3; lam <- fix(0.5) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ add(e) + boxCox(lam) }) },
+    bc_prop = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                 e <- 0.3; b <- 0.2; lam <- fix(0.5) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ add(e) + prop(b) + boxCox(lam) }) },
+    yeoJohnson = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                    e <- 0.3; lam <- fix(0.5) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ add(e) + yeoJohnson(lam) }) },
+    logitNorm = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                   e <- 0.25 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ logitNorm(e, 0, 40) }) },
+    probitNorm = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                    e <- 0.25 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ probitNorm(e, 0, 40) }) })
   for (nm in names(mods)) {
     ui <- suppressMessages(rxode2::rxode2(mods[[nm]]))
     ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
@@ -249,57 +273,6 @@ test_that("the weight's own S is the V_pred the objective scores against", {
     W   <- admixr2:::.admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4)
     expect_equal(N * W[seq_len(m), seq_len(m)], pt$V, tolerance = 1e-10,
                  ignore_attr = TRUE, info = nm)
-  }
-})
-
-test_that("on TBS the weight's S is the EXACT marginal, which V_pred approximates", {
-  # The identity above holds to machine precision for every closed-form family
-  # and CANNOT hold for TBS, so this states the relationship rather than pretending.
-  #
-  # V_pred for a TBS endpoint is a second-order delta expansion in the structural
-  # variance, evaluated at the structural mean: V = ms^2 v0 + q$v + 0.5 v''(f) v0.
-  # The weight instead integrates the conditional moments over the quadrature
-  # nodes, which is exact. They therefore differ by the objective's own truncation
-  # error, measured here at 2e-06 to 2e-03 relative depending on the endpoint.
-  #
-  # The direction matters and was checked against a simulation of 4e5 subjects:
-  # S is CLOSER to the true marginal covariance than V_pred is, on all of
-  # add+prop+boxCox, logitNorm and probitNorm. So the gap is the objective
-  # approximating, not the weight drifting -- which is the right way round, since
-  # Omega is supposed to describe the truth while G describes the objective.
-  skip_if_not_installed("rxode2")
-  TIMES <- c(2, 5, 9, 14); DOSE <- 100; NQ <- 11L; N <- 100L
-  mods <- list(
-    boxCox = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
-                                aa <- 0.3; lam <- fix(0.5) })
-      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
-              cp ~ add(aa) + boxCox(lam) }) },
-    logitNorm = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
-                                   aa <- 0.25 })
-      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
-              cp ~ logitNorm(aa, 0, 40) }) })
-  for (nm in names(mods)) {
-    ui <- suppressMessages(rxode2::rxode2(mods[[nm]]))
-    ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
-    E0 <- DOSE / 10 * exp(-0.1 * TIMES)
-    st <- list(s = list(E = E0, V = diag((0.3 * E0)^2), n = N, times = TIMES,
-                        ev = rxode2::et(amt = DOSE)))
-    ctl <- adghControl(studies = st, grad = "none", n_nodes = NQ, print = 0L,
-                       covMethod = "none")
-    pin <- admixr2:::.admDriverPinfo(ui, ctl)
-    u   <- admixr2:::.admDriverUnits(st, ui, ov)
-    g   <- admixr2:::.adghNodeGrid(NQ, pin$n_eta)
-    pars <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin)
-    pt  <- admixr2:::.admAdfParts(pars, pin, u$studies[[1L]], rx, ov, g, 1L)
-    # the family is REACHED -- this is what used to return NULL
-    expect_false(is.null(pt$Dv), info = nm)
-    m <- length(pt$E)
-    W <- admixr2:::.admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4)
-    S <- N * W[seq_len(m), seq_len(m)]
-    rel <- max(abs(S - pt$V)) / max(abs(pt$V))
-    # close, but NOT to machine precision -- both halves of that are the point
-    expect_lt(rel, 5e-3)
-    expect_gt(rel, 1e-12)
   }
 })
 

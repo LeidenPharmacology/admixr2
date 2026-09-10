@@ -138,6 +138,17 @@
         # Accessed exactly as .admResidDeriv() accesses them: single-bracket, and
         # `tbs_ftr`/`tbs_c1` guarded for NULL, which they are on a row that never
         # went through the TBS builder. col() would have errored on NULL[[j]].
+        # t() folds nu/(nu-2) into a2/b2, which is exact for the combined forms
+        # because only the VARIANCE of the residual enters there. It is not exact
+        # here: this branch integrates g() over the conditional law, so a
+        # t-distributed error is not an inflated-sd normal one, and the third and
+        # fourth moments this returns would be a normal's. The combined branch
+        # above computes the t kurtosis explicitly; there is no such closed form
+        # once the transform is applied, so refuse and let the fit report "r".
+        # The OBJECTIVE keeps composing it as an inflated-sd normal, which is
+        # what it has always done -- see .admTBSRow().
+        vmj <- col(arr$vmul, j)
+        if (!is.null(vmj) && !isTRUE(all.equal(vmj, 1))) return(NULL)
         lam <- arr$lam[j]; yjc <- arr$yj[j]
         lo  <- arr$tlo[j]; hi  <- arr$thi[j]
         ftr <- !is.null(arr$tbs_ftr) && isTRUE(arr$tbs_ftr[j])
@@ -344,7 +355,14 @@
   sm  <- .adghStructMoments(cp, g$W)
   arr <- .admUnitResidRows(pinfo, out_var, pars$sigma_var, length(sm$mu),
                            phi = attr(cp, "phi"))
-  m   <- .admResidMoments(sm$mu, diag(sm$V), arr, sm$V, study$times)
+  # A TBS unit composes at the NODES, exactly as the objective does. G has to
+  # describe the objective, so reading the moments from a different composition
+  # than .adghNLL uses breaks the information equality by precisely the
+  # expansion's truncation -- measured as eigen(J/2H) drifting to 0.987/1.007 on
+  # logitNorm while boxCox, whose truncation is ~1e-06, still looked fine.
+  m   <- .admResidNodeMomentsTBS(cp, g$W, arr, study$times)
+  m   <- if (!is.null(m)) list(mu = m$E, V = m$V, ms = NULL)
+         else .admResidMoments(sm$mu, diag(sm$V), arr, sm$V, study$times)
   # C carries the residual's MEAN SCALING. On an lnorm endpoint the conditional
   # mean is f exp(s/2), not f, so an unscaled C makes the weight's own S differ
   # from the V the objective scores against -- the two would then describe
@@ -805,6 +823,57 @@
     mu    <- sm$mu; cpc <- sm$cpc; cov_f <- sm$V; var_f <- diag(cov_f)
     m     <- length(mu)
     arr   <- .admResidRows(pinfo, ov, pars$sigma_var, m)
+
+    # ---- TBS: the node-wise chain, matching the objective --------------------
+    .npj <- .admTBSNodeParts(res$cp_mat, arr)
+    if (!is.null(.npj)) {
+      .agj <- .admTBSAggregate(.npj, W)
+      wnj <- .agj$wn; Mcj <- .agj$Mc
+      dEi <- matrix(0, m, np)
+      dVi <- rep(list(matrix(0, m, m)), np)
+      .cnj <- function(A, dvn) {
+        de <- as.numeric(crossprod(wnj, A))
+        Ac <- sweep(A, 2L, de)
+        Bc <- crossprod(Ac, wnj * Mcj)
+        dV <- Bc + t(Bc)
+        diag(dV) <- diag(dV) + as.numeric(crossprod(wnj, dvn))
+        list(dE = de, dV = dV)
+      }
+      .cgj <- function(graw) .cnj(.npj$dm * graw, .npj$dv * graw)
+      for (k in seq_len(n_s)) {
+        graw <- if (is.null(pinfo$struct_has_eta) || pinfo$struct_has_eta[k]) {
+          ei <- which(pinfo$struct_eta_idx == k)[1L]
+          if (is.na(ei)) NULL else Jl[[ei]]
+        } else res$dtheta_list[[pinfo$struct_names[k]]]
+        if (is.null(graw)) return(NULL)
+        r <- .cgj(graw); dEi[, k] <- r$dE; dVi[[k]] <- r$dV
+      }
+      if (n_e > 0L) for (k in seq_len(n_e)) {
+        hk <- max(abs(p_hat[n_s + k]), 1) * 1e-5
+        mv <- lapply(c(1, -1), function(sgn) {
+          pk <- p_hat; pk[n_s + k] <- pk[n_s + k] + sgn * hk
+          pp <- tryCatch(.admUnpack(pk, pinfo), error = function(e) NULL)
+          if (is.null(pp)) return(NULL)
+          .admTBSNodeParts(res$cp_mat, .admResidRows(pinfo, ov, pp$sigma_var, m))
+        })
+        if (any(vapply(mv, is.null, TRUE))) return(NULL)
+        r <- .cnj((mv[[1L]]$m - mv[[2L]]$m) / (2 * hk),
+                  (mv[[1L]]$v - mv[[2L]]$v) / (2 * hk))
+        dEi[, n_s + k] <- r$dE; dVi[[n_s + k]] <- r$dV
+      }
+      if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
+        i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
+        r  <- .cgj(Jl[[i]] * X[, j])
+        sc <- if (pinfo$chol_diag[rr]) L[i, i] / 2 else 1
+        pos <- n_s + n_e + rr
+        dEi[, pos] <- r$dE * sc; dVi[[pos]] <- r$dV * sc
+      }
+      Eo[[si]] <- .agj$E; Vo[[si]] <- .agj$V
+      dEo[[si]] <- dEi;   dVo[[si]] <- dVi
+      next
+    }
+    # ---- end TBS ------------------------------------------------------------
+
     pmres <- .admResidMoments(mu, var_f, arr, cov_f, s$times)
     # ar()/ordinal put an off-diagonal residual term in rmat whose sigma and mu
     # paths this forward map does not carry. .admAdfCondMom refuses those

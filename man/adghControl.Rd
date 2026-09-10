@@ -44,6 +44,13 @@ adghControl(
 \code{observations} list for multi-compartment fits -- see \code{\link[=admControl]{admControl()}}).}
 
 \item{n_nodes}{Number of quadrature nodes per eta dimension (default 5).
+For a transform-both-sides endpoint (\code{boxCox}, \code{yeoJohnson}, \code{logitNorm},
+\code{probitNorm}) this also controls the accuracy of the RESIDUAL composition:
+those endpoints have a conditional mean that is nonlinear in the structural
+prediction, so the residual is composed at each node and aggregated rather
+than expanded about the ensemble mean. Before that, \code{n_nodes} had no effect
+at all on a TBS fit's accuracy -- the expansion's error was a floor no node
+count removed.
 Total nodes = \code{n_nodes^n_eta}. \code{n_nodes = 5} achieves near-exact covariance
 moments for IIV SD up to ~0.5; \code{n_nodes = 7} extends coverage to SD ~0.7.
 For models with >= 5 etas the node count grows steeply; consider reducing

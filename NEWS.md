@@ -219,6 +219,63 @@
 Several changes in this release alter results for scripts that do not name a new
 argument. None is a bug fix, so all are listed here rather than below.
 
+* **Transform-both-sides endpoints are composed EXACTLY, and their estimates
+  move.** `boxCox`, `yeoJohnson`, `logitNorm` and `probitNorm` predict the
+  aggregate moments through a residual whose conditional mean is NONLINEAR in the
+  structural prediction. admixr2 collapsed the ensemble to `(mu_struct, var_f)`
+  and expanded the residual around it to second order -- exact for every family
+  whose conditional mean is linear in `f`, and an approximation for these four.
+
+  **The expansion does not converge.** Measured against a 201-node evaluation of
+  the defining integral, its relative error in `V` is a floor that no node count
+  removes -- flat from 7 nodes to 25:
+
+  | | error in V | at n_nodes 7 -> 25 |
+  |---|---|---|
+  | `boxCox`, omega 0.16    | 3.4e-03 | unchanged |
+  | `boxCox`, omega 0.49    | 5.2e-03 | unchanged |
+  | `logitNorm`, omega 0.16 | 4.1e-03 | unchanged |
+  | `logitNorm`, omega 0.49 | 2.4e-02 | unchanged |
+  | `probitNorm`, omega 0.49| 3.1e-02 | unchanged |
+
+  The practical consequence was worse than the size suggests: **`n_nodes` bought
+  a TBS fit nothing.** Raising it returned the identical biased answer, which is
+  not the contract a quadrature estimator is supposed to offer.
+
+  The residual is now composed at each NODE (adgh) or DRAW (admc) and aggregated,
+  which is exact given the ensemble and converges properly -- to 1.8e-06 at 25
+  nodes on boxCox and to machine precision on `logitNorm`. Estimates for existing
+  TBS fits therefore move, by more the higher the between-subject variability and
+  the tighter a `logit`/`probit` bound.
+
+  `adfo` KEEPS the expansion and is now the one estimator that does. Having no
+  node ensemble is what FO means, so there is nothing to compose over; an adfo
+  TBS fit will differ from an adgh or admc one by roughly the figures above. That
+  is a property of the estimator, not a disagreement to reconcile. `adirmc`
+  refuses TBS residuals outright and is unaffected.
+
+  ONE COMBINATION IS STILL APPROXIMATE, and "exact" above does not cover it.
+  `t()` folds `nu/(nu-2)` into the variance coefficients, which is exact for the
+  combined forms because only the residual's VARIANCE enters there. It is not
+  exact under a transform: composing integrates the inverse transform over the
+  conditional law, and a t error is not an inflated-sd normal one. A `t()` + TBS
+  endpoint is therefore composed as an inflated-sd normal, which is what admixr2
+  has always done -- unchanged, not a regression. `covMethod = "r,s"` refuses
+  that combination outright and reports `"r"`, because the third and fourth
+  moments it would otherwise hand the weight are a normal's.
+
+  `datagen()` and the diagnostic panels compose the same way, so a generated
+  study and a plotted prediction still describe the law the fit was scored
+  against. Note that this makes `datagen()` unusable as an INDEPENDENT oracle for
+  the composition -- it shares the implementation, so a "generate then recover"
+  check is self-consistent by construction and cannot detect a composition bias.
+
+  admc's analytical gradient decomposition is written against the expansion, so a
+  TBS fit on admc now differences its own objective (the route a joint unit
+  already takes, with the fixed `z_list` making it a common-random-number
+  difference). That is slower; adgh's gradient is analytic throughout and was
+  verified against finite differences of its own NLL at 1.4e-07.
+
 * **Finite-difference steps are now MEASURED per parameter, by the Shi (2021)
   procedure, and this is not optional.** Every finite difference admixr2 takes
   of the objective -- the optimizer's gradient under `grad = "fd"`, and the

@@ -2232,6 +2232,93 @@ without that parameter there is no residual to integrate"),
        mu4 = pmax(m4 - 4 * m1 * m3 + 6 * m1 * m1 * m2 - 3 * m1^4, 0))
 }
 
+# EXACT node-wise composition for a unit whose rows are ALL transform-both-sides.
+#
+# The objective's usual route collapses the ensemble to (mu_struct, var_f) and
+# then delta-expands the residual around it to second order. That is exact for
+# every family whose conditional mean is linear in f, and approximate for TBS.
+# Here the conditional moments are taken at each NODE and aggregated:
+#
+#   E_j    = sum_q w_q m(f_qj)
+#   V_jk   = sum_q w_q (m_qj - E_j)(m_qk - E_k)              (j != k)
+#   V_jj  += sum_q w_q v(f_qj)
+#
+# which is exact given the eta quadrature. NULL for anything it does not cover --
+# a non-TBS row, an ar()/ordinal cross term, a non-finite sd -- so the caller
+# keeps the existing path rather than getting a partly-exact answer.
+# Does any unit of this fit carry a transform-both-sides endpoint?
+#
+# The residual FORM is structural -- it comes from the model's error spec, not
+# from parameter values -- so this is a property of the fit, answerable once, and
+# the sigma vector is needed only because .admResidRows() takes one.
+.admAnyTBS <- function(pinfo, studies, output_var, sigma_var) {
+  any(vapply(studies, function(s) {
+    ov <- s$output %||% output_var
+    n_t <- length(s$times %||% integer(0))
+    if (n_t == 0L) return(FALSE)
+    arr <- tryCatch(.admResidRows(pinfo, ov, sigma_var, n_t),
+                    error = function(e) NULL)
+    !is.null(arr) && !is.null(arr$form) && any(arr$form == .ADM_RESID_TBS)
+  }, logical(1)))
+}
+
+# Per-node conditional moments AND their derivatives w.r.t. the structural
+# prediction, for a unit whose rows are all TBS. Everything is vectorised over
+# the node grid: .admTBSSd() and .admTBSMomentsD() already take a vector of f, so
+# the whole ensemble costs one quadrature pass per timepoint rather than one per
+# (node, timepoint).
+#
+#   m, v            conditional mean and variance at each node
+#   dm, dv          their TOTAL derivatives w.r.t. f, which pick up the sd path
+#                   because sd depends on f: dm/df = @m/@f + @m/@sd * dsd/df
+#
+# NULL for anything not covered -- a non-TBS row, an ar() cross term, a
+# non-finite sd -- so a caller keeps the existing path rather than getting a
+# partly-exact answer.
+.admTBSNodeParts <- function(cp, arr) {
+  m <- ncol(cp)
+  if (is.null(arr$form) || !all(arr$form == .ADM_RESID_TBS)) return(NULL)
+  if (!is.null(arr$rho) && any(!is.na(arr$rho))) return(NULL)
+  col <- function(x, j) if (length(x) == 1L) x else x[[j]]
+  M1 <- V1 <- DM <- DV <- matrix(NA_real_, nrow(cp), m)
+  nodes <- arr$nodes %||% .ADM_TBS_NODES
+  for (j in seq_len(m)) {
+    lam <- arr$lam[j]; yjc <- arr$yj[j]; lo <- arr$tlo[j]; hi <- arr$thi[j]
+    if (length(lam) != 1L || !is.finite(lam) || !is.finite(yjc)) return(NULL)
+    fj <- cp[, j]
+    sdd <- .admTBSSd(fj, max(col(arr$a2, j), 0), max(col(arr$b2, j), 0),
+                     col(arr$cc, j), lam, yjc, lo, hi,
+                     !is.null(arr$tbs_ftr) && isTRUE(arr$tbs_ftr[j]),
+                     !is.null(arr$tbs_c1)  && isTRUE(arr$tbs_c1[j]))
+    if (any(!is.finite(sdd$sdv))) return(NULL)
+    q <- .admTBSMomentsD(fj, sdd$sdv, lam, yjc, lo, hi, nodes)
+    M1[, j] <- q$m
+    V1[, j] <- q$v
+    DM[, j] <- q$dm_df + q$dm_ds * sdd$dsd
+    DV[, j] <- q$dv_df + q$dv_ds * sdd$dsd
+  }
+  if (!all(is.finite(M1)) || !all(is.finite(V1)) ||
+      !all(is.finite(DM)) || !all(is.finite(DV))) return(NULL)
+  list(m = M1, v = V1, dm = DM, dv = DV)
+}
+
+# Aggregate per-node conditional moments into the unit's predicted (E, V).
+.admTBSAggregate <- function(np, W) {
+  wn <- W / sum(W)
+  E  <- as.numeric(crossprod(wn, np$m))
+  Mc <- sweep(np$m, 2L, E)
+  V  <- crossprod(Mc, wn * Mc)
+  diag(V) <- diag(V) + as.numeric(crossprod(wn, np$v))
+  list(E = E, V = V, Mc = Mc, wn = wn)
+}
+
+.admResidNodeMomentsTBS <- function(cp, W, arr, times = NULL) {
+  np <- .admTBSNodeParts(cp, arr)
+  if (is.null(np)) return(NULL)
+  ag <- .admTBSAggregate(np, W)
+  list(E = ag$E, V = ag$V)
+}
+
 # The residual SD on the TRANSFORMED scale, and its derivative w.r.t. f, exactly
 # as rxode2 builds rx_r_:
 #   combined2 : var = a^2 + (x^c * b)^2      combined1 : sd = a + x^c * b

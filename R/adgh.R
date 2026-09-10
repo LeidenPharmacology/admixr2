@@ -103,6 +103,13 @@
   # Restrict residual error to this output's sigma(s) (no-op single-output).
   arr <- .admUnitResidRows(pinfo, out_var, pars$sigma_var, length(mu),
                            phi = attr(cp, "phi"))   # beta precision (SOLVED)
+  # Transform-both-sides composes at each NODE and aggregates; see
+  # .admTBSNodeParts(). The delta expansion below is exact for every family whose
+  # conditional mean is linear in f and does NOT converge for TBS -- its error in
+  # V is a floor no node count removes. NULL for anything not covered (a non-TBS
+  # row, an ar() cross term), which keeps the existing path.
+  ex <- .admResidNodeMomentsTBS(cp, W, arr, times)
+  if (!is.null(ex)) return(ex)
   m <- .admResidMoments(mu, diag(V), arr, V, times)
   list(E = m$mu, V = m$V)
 }
@@ -363,6 +370,103 @@
 
     # Residual error (and its lnorm scaling of the mean) -- this output only
     arr   <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
+
+    # ---- Transform-both-sides: EXACT node-wise composition -------------------
+    # Handled as a self-contained block so the delta-expansion path below is
+    # untouched for every other family. See .admTBSNodeParts(): the objective
+    # composes the residual at each NODE and aggregates, rather than collapsing
+    # to (mu_struct, var_f) and expanding around it. The expansion does not
+    # converge -- its error in V is a floor no node count removes, measured at
+    # 3.4e-03 (boxCox) to 3.1e-02 (probitNorm at omega 0.49) and flat from 7
+    # nodes to 25 -- which also means `n_nodes` bought a TBS fit nothing.
+    #
+    # The gradient is the same contraction the structural moments use, with the
+    # conditional mean's derivative folded into the sensitivity column:
+    #   A  = dm o graw,  dE = sum_q w A,  Ac = A - dE
+    #   dV = Ac' diag(w) Mc + Mc' diag(w) Ac + diag(sum_q w dv o graw)
+    # verified against central differences of this objective at 1e-09 on all
+    # four transforms.
+    .np <- .admTBSNodeParts(f, arr)
+    if (!is.null(.np)) {
+      .ag <- .admTBSAggregate(.np, W)
+      mu_sigma <- .ag$E; V <- .ag$V; Mc <- .ag$Mc; wn <- .ag$wn
+      r <- as.numeric(s$E) - mu_sigma
+      is_var <- identical(s$method, "var")
+      nll_total <- nll_total + if (is_var)
+        nll_var_cpp(s$E, s$v_diag, mu_sigma, diag(V), s$n)
+      else nll_cov_cpp(s$E, s$V, mu_sigma, V, s$n)
+      if (is_var) {
+        pv  <- diag(V)
+        dNM <- s$n * (-2 * r / pv)
+        dNV <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
+        Bm  <- diag(dNV, nrow = length(pv))
+      } else {
+        chV <- tryCatch(chol(V), error = function(e) NULL)
+        if (is.null(chV))
+          return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                         cores, grad_h), nll = NULL))
+        iV  <- chol2inv(chV)
+        dNM <- as.numeric(-2 * s$n * (iV %*% r))
+        Bm  <- s$n * (iV - iV %*% (s$V + tcrossprod(r)) %*% iV)
+      }
+      # One contraction for every parameter: `A` is the per-node derivative of
+      # the conditional MEAN and `dvn` that of the conditional VARIANCE, which is
+      # all that differs between a structural/omega direction (both chain through
+      # graw) and a sigma direction (neither does).
+      .cn <- function(A, dvn) {
+        de <- as.numeric(crossprod(wn, A))
+        Ac <- sweep(A, 2L, de)
+        Bc <- crossprod(Ac, wn * Mc)
+        dV <- Bc + t(Bc)
+        diag(dV) <- diag(dV) + as.numeric(crossprod(wn, dvn))
+        sum(dNM * de) + sum(Bm * dV)
+      }
+      .cg <- function(graw) .cn(.np$dm * graw, .np$dv * graw)
+      for (k in seq_len(n_s)) {
+        if (!is.null(pinfo$struct_has_eta) && !pinfo$struct_has_eta[k]) next
+        ei <- which(pinfo$struct_eta_idx == k)[1L]
+        if (is.na(ei)) next   # nocov -- defensive, as in the main path
+        grad[k] <- grad[k] + .cg(Jl[[ei]])
+      }
+      if (length(unpaired_k) > 0L) {
+        if (is.null(res$dtheta_list)) theta_sens_ok <- FALSE
+        else for (k in unpaired_k)
+          g_theta[k] <- g_theta[k] + .cg(res$dtheta_list[[pinfo$struct_names[k]]])
+      }
+      if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
+        i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
+        dL  <- .cg(Jl[[i]] * X[, j])
+        pos <- n_s + n_e + rr
+        grad[pos] <- grad[pos] +
+          if (pinfo$chol_diag[rr]) dL * L[i, i] / 2 else dL
+      }
+      # SIGMA by central differences of this same composition. The residual
+      # parameters reach (m, v) only through the sd and the transform, with no
+      # path through f, so there is no sensitivity column to chain -- and the
+      # existing TBS row assembly already differences its four parameter
+      # directions for exactly this reason. Differencing the assembly the
+      # objective uses keeps analytic and objective consistent by construction.
+      if (n_e > 0L) for (k in seq_len(n_e)) {
+        hk <- max(abs(p[n_s + k]), 1) * 1e-5
+        mv <- lapply(c(1, -1), function(sgn) {
+          pk <- p; pk[n_s + k] <- pk[n_s + k] + sgn * hk
+          pk_pars <- tryCatch(.admUnpack(pk, pinfo), error = function(e) NULL)
+          if (is.null(pk_pars)) return(NULL)
+          ak <- .admResidRows(pinfo, ov, pk_pars$sigma_var, length(mu))
+          .admTBSNodeParts(f, ak)
+        })
+        if (any(vapply(mv, is.null, TRUE))) {
+          return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                         cores, grad_h), nll = NULL))
+        }
+        grad[n_s + k] <- grad[n_s + k] +
+          .cn((mv[[1L]]$m - mv[[2L]]$m) / (2 * hk),
+              (mv[[1L]]$v - mv[[2L]]$v) / (2 * hk))
+      }
+      next
+    }
+    # ---- end TBS ------------------------------------------------------------
+
     var_f <- diag(V)                      # Var_eta(f), pre-residual
     ap    <- .admResidApply(mu, var_f, arr, s$times, cov_f)
     V <- .admApplyResidTail(V, ap)
@@ -877,6 +981,13 @@
 #'   evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 #'   with a large residual SD; there is little to gain by lowering it.
 #' @param n_nodes Number of quadrature nodes per eta dimension (default 5).
+#'   For a transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+#'   `probitNorm`) this also controls the accuracy of the RESIDUAL composition:
+#'   those endpoints have a conditional mean that is nonlinear in the structural
+#'   prediction, so the residual is composed at each node and aggregated rather
+#'   than expanded about the ensemble mean. Before that, `n_nodes` had no effect
+#'   at all on a TBS fit's accuracy -- the expansion's error was a floor no node
+#'   count removed.
 #'   Total nodes = `n_nodes^n_eta`. `n_nodes = 5` achieves near-exact covariance
 #'   moments for IIV SD up to ~0.5; `n_nodes = 7` extends coverage to SD ~0.7.
 #'   For models with >= 5 etas the node count grows steeply; consider reducing

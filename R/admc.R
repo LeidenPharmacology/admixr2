@@ -549,6 +549,18 @@ nmObjGetControl.admc <- function(x, ...) {
     } else {
       # everything else: assemble the moments in R (form-agnostic), then score
       # with the plain kernels. See .admResidCppOK() for why.
+      # Transform-both-sides composes at each DRAW and aggregates, for the same
+      # reason adgh composes at each node: the delta expansion around
+      # (mu_struct, var_f) does not converge for a nonlinear conditional mean.
+      # An MC ensemble is the equal-weight case of the same aggregation.
+      .ex <- .admResidNodeMomentsTBS(cp_mat, rep(1, nrow(cp_mat)), ar, s$times)
+      if (!is.null(.ex)) {
+        nll2 <- nll2 + if (identical(s$method, "var"))
+          nll_var_cpp(as.numeric(s$E), s$v_diag, .ex$E, diag(.ex$V), s$n)
+        else nll_cov_cpp(as.numeric(s$E), s$V, .ex$E, .ex$V, s$n)
+        if (!is.finite(nll2)) return(Inf)
+        next
+      }
       mu_s <- colMeans(cp_mat)
       cpc  <- sweep(cp_mat, 2L, mu_s)
       Vs   <- crossprod(cpc) / nrow(cp_mat)
@@ -592,6 +604,16 @@ nmObjGetControl.admc <- function(x, ...) {
 .admGrad <- function(p, pinfo, studies, z_list, rxMod, output_var,
                      params_list, cores, h, sensModel = NULL,
                      use_central = FALSE) {
+  # A TBS endpoint composes the residual at each DRAW (see .admNLL); the
+  # analytical decomposition below is written against the delta expansion around
+  # (mu_struct, var_f) and would differentiate a different function than the
+  # objective now evaluates. Difference the objective instead -- the same route
+  # a joint unit already takes, and for the same reason. The fixed z_list makes
+  # it a common-random-number FD, so MC noise does not leak into the gradient.
+  .p0 <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
+  if (!is.null(.p0) && .admAnyTBS(pinfo, studies, output_var, .p0$sigma_var))
+    return(.admNLLGradFD(p, pinfo, studies, z_list, rxMod, output_var,
+                         params_list, cores, h, use_central))
   # `h` is either the fixed scalar or Gill83's per-parameter vector. It must be
   # read through .admGH()/.admGH0() and NEVER used bare, because this function
   # differences in two different spaces:
@@ -1186,6 +1208,15 @@ nmObjGetControl.admc <- function(x, ...) {
             nll_cov_from_samples_cpp(cp, as.numeric(s$E), s$V,
                                      s$n, ar$form, ar$a2, ar$b2, ar$cc)
         } else {
+          # Same composition .admNLL() uses -- batch and single-config must score
+          # one function, or a batched gradient differences something the
+          # objective never evaluates.
+          .exb <- .admResidNodeMomentsTBS(cp, rep(1, nrow(cp)), ar, s$times)
+          if (!is.null(.exb)) {
+            if (identical(s$method, "var"))
+              nll_var_cpp(as.numeric(s$E), s$v_diag, .exb$E, diag(.exb$V), s$n)
+            else nll_cov_cpp(as.numeric(s$E), s$V, .exb$E, .exb$V, s$n)
+          } else {
           mu_s <- colMeans(cp)
           cpc  <- sweep(cp, 2L, mu_s)
           Vs   <- crossprod(cpc) / nrow(cp)
@@ -1195,6 +1226,7 @@ nmObjGetControl.admc <- function(x, ...) {
           } else {
             Vp <- .admApplyResidTail(Vs, ap)
             nll_cov_cpp(as.numeric(s$E), s$V, ap$mu, Vp, s$n)
+          }
           }
         }
         if (is.finite(nll_ci)) nlls[ci] <- nlls[ci] + nll_ci
@@ -1227,7 +1259,12 @@ nmObjGetControl.admc <- function(x, ...) {
   # matrices are shaped for a single output and it errors with "non-conformable
   # arguments". .admNLLBatch() already falls back per config for these; mirror that
   # here rather than relying on the driver's `!any_joint` guard staying in place.
-  if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1))))
+  # TBS joins the joint units here for the same reason: .admGrad falls back to
+  # differencing the objective for both, and the batch path has no analytic
+  # decomposition of its own to offer them.
+  .pb <- tryCatch(.admUnpack(p_list[[1L]], pinfo), error = function(e) NULL)
+  if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1))) ||
+      (!is.null(.pb) && .admAnyTBS(pinfo, studies, output_var, .pb$sigma_var)))
     return(t(vapply(p_list, function(.p)
       .admGrad(.p, pinfo, studies, z_list, rxMod, output_var, params_list, cores,
                h, sensModel),

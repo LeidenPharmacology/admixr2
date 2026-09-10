@@ -113,6 +113,15 @@ errors otherwise answer to the linearisation rather than to the model. The
 correction scores the FO fit against the model's true nonlinear law, built
 post-fit on a quadrature ensemble, and so absorbs part of the linearisation
 error as well. Point estimates are untouched.
+\strong{Transform-both-sides endpoints.} \code{adfo} composes the residual by a
+second-order expansion about the linearised moments, because FO carries no
+node ensemble to compose over -- that is what the method is. \code{adgh} and
+\code{admc} compose exactly at their nodes/draws, so an \code{adfo} fit of a \code{boxCox},
+\code{yeoJohnson}, \code{logitNorm} or \code{probitNorm} endpoint differs from theirs by the
+expansion's truncation: roughly 0.3\% in \code{V} at moderate between-subject
+variability, rising to ~3\% for a tightly-bounded \code{logit}/\code{probit} at high
+variability. That is a property of the estimator, not a discrepancy.
+
 Applies to every residual family whose conditional law is independent across
 timepoints, which is all of them except \code{ar()}: the conditionally-normal set
 (\code{add}, \code{prop}, \code{pow}, \code{combined1}, \code{combined2}), the closed-form

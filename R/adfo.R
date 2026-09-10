@@ -1001,6 +1001,15 @@
 #'   correction scores the FO fit against the model's true nonlinear law, built
 #'   post-fit on a quadrature ensemble, and so absorbs part of the linearisation
 #'   error as well. Point estimates are untouched.
+#'   **Transform-both-sides endpoints.** `adfo` composes the residual by a
+#'   second-order expansion about the linearised moments, because FO carries no
+#'   node ensemble to compose over -- that is what the method is. `adgh` and
+#'   `admc` compose exactly at their nodes/draws, so an `adfo` fit of a `boxCox`,
+#'   `yeoJohnson`, `logitNorm` or `probitNorm` endpoint differs from theirs by the
+#'   expansion's truncation: roughly 0.3% in `V` at moderate between-subject
+#'   variability, rising to ~3% for a tightly-bounded `logit`/`probit` at high
+#'   variability. That is a property of the estimator, not a discrepancy.
+#'
 #'   Applies to every residual family whose conditional law is independent across
 #'   timepoints, which is all of them except `ar()`: the conditionally-normal set
 #'   (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
