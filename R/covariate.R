@@ -2567,6 +2567,31 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # is not a tuned quantity.
 .ADM_SHIFT_GAUSS_TOL <- 1e-8
 
+# Smolyak level for the joint design's VERIFICATION reference, where the full
+# product rule is too big.
+#
+# A REFERENCE MUST BE BETTER THAN WHAT IT JUDGES, and the level is not free to
+# choose. Measured at nl = 4 (1 eta + 3 lognormal covariates, sigma = 0.767) on
+# a model where log cl is exactly normal, so E[cl^2] is closed form:
+#
+#   rule                     points   rel err m1   rel err m2
+#   Sobol (the old one)        8192    1.152e-03    6.352e-03
+#   Smolyak level 3              49    1.693e-04    1.208e-02
+#   Smolyak level 4             201    1.097e-06    5.270e-04
+#   Smolyak level 5             681    2.765e-09    1.190e-05
+#   the DESIGN being judged      14    2.495e-15    1.845e-14
+#
+# Sobol's 6.4e-3 is ABOVE the 5e-3 tolerance, which is the false refusal in one
+# number. Level 3 would be WORSE than Sobol and is not a fix. Level 4 clears the
+# tolerance by only ~10x; level 5 clears it by ~400x, on 681 points against
+# 8192. Level 6 does not build.
+#
+# Note what the table also says: the design is still ~9 orders better than the
+# reference. The check therefore remains a measurement of the REFERENCE's error
+# -- it just cannot reach the tolerance any more, so it can no longer refuse a
+# design that is right.
+.ADM_JOINT_VER_LEVEL <- 5L
+
 .admShiftGaussResid <- function(D, W) {
   W  <- W / sum(W)
   m  <- sum(W * D)
@@ -4113,6 +4138,52 @@ print.covDist <- function(x, ...) {
   }
   Xi <- mkXi(n_probe, 13L); Xv <- mkXi(n_ver, 17L)
   if (is.null(Xi) || is.null(Xv)) return(NULL)
+  # THE VERIFICATION REFERENCE IS DETERMINISTIC WHERE IT CAN AFFORD TO BE.
+  #
+  # A Sobol average was the reference, and it made admission measure its OWN
+  # error rather than the design's. The quantity that fails is always the second
+  # moment of a reader, which for a lognormal reader is tail-dominated and the
+  # worst case for QMC. Measured on `cl <- exp(tcl + eta.cl) * (WT/70)^b1`,
+  # where log cl is exactly normal so the rank-1 design is exact by
+  # construction and E[cl^2] is closed form:
+  #
+  #     b     omega   sigma   design rel err   Sobol(8192) rel err
+  #   0.75    0.09    0.372        2.5e-15            1.2e-03
+  #   3.00    0.09    0.930        4.2e-12            2.8e-02
+  #   0.00    0.50    0.707        2.5e-15            7.8e-03
+  #   0.75    0.50    0.741        3.1e-15            1.1e-02
+  #
+  # The design is exact to machine precision and was REFUSED, because the
+  # reference's own error sits above the 5e-3 tolerance. Nor does raising n_ver
+  # fix it monotonically: 2.8e-2 at 8192, 4.5e-2 at 32768, 6.7e-3 at 131072,
+  # 6.4e-4 at 524288. That is the whole "joint only admits in a middle band" --
+  # a property of the verifier, not of the collapse.
+  #
+  # A GH product rule over the full nl-dimensional latent space is exact for
+  # these integrands and CHEAPER than the Sobol probe it replaces (nl = 2 costs
+  # 1600 points against 8192). It is not circular: the design is GH on the
+  # rank-r ROTATED subspace at m nodes, the reference is a rule over the FULL
+  # space, so a wrong rank still disagrees.
+  #
+  # Where the product rule stops being affordable, the SMOLYAK rule takes over
+  # rather than Sobol -- deterministic at any nl, and the same construction
+  # cov_integration = "sparse" already uses. Measured before this was added,
+  # with Sobol as the nl >= 4 fallback: nl = 4 at omega = 0.5 was REFUSED while
+  # nl = 5 was admitted, which is not a boundary, it is the QMC error being
+  # erratic (2.8e-2 at 8192 points, 4.5e-2 at 32768, 6.7e-3 at 131072). A
+  # deterministic rule has no such regime.
+  mv <- min(40L, as.integer(floor(n_ver^(1 / nl))))
+  Wv <- rep(1 / nrow(Xv), nrow(Xv))
+  .gv <- NULL
+  if (mv >= 15L) .gv <- tryCatch(.adghNodeGrid(mv, nl), error = function(e) NULL)
+  if (is.null(.gv))
+    .gv <- tryCatch(.admSparseNodes(nl, .ADM_JOINT_VER_LEVEL),
+                    error = function(e) NULL)
+  if (!is.null(.gv) && !is.null(.gv$X) && nrow(.gv$X) > 0L &&
+      all(is.finite(.gv$X)) && all(is.finite(.gv$W)) && sum(.gv$W) > 0) {
+    Xv <- .gv$X
+    Wv <- .gv$W / sum(.gv$W)
+  }
   # r, m and routes are settled by .admJointAdmit(), but they are declared HERE,
   # holding NULL, and that is load-bearing rather than tidiness.
   #
@@ -4126,7 +4197,7 @@ print.covDist <- function(x, ...) {
   # test-covariate.R runs these paths under warnPartialMatchDollar so a field
   # added later cannot quietly reintroduce it.
   list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc, ne = ne, pc = pc,
-       nl = nl, Xi = Xi, Xv = Xv, out_var = out_var,
+       nl = nl, Xi = Xi, Xv = Xv, Wv = Wv, out_var = out_var,
        n_nodes = as.integer(n_nodes), max_rows = max_rows, joint = TRUE,
        dn = dn, nms = nms, cells = cells, pcell = pcell,
        cell_list = cell_list, n_cell = max(nrow(cells), 1L),
@@ -4270,13 +4341,18 @@ print.covDist <- function(x, ...) {
     Pd <- .admCovProbeAt(jc$pr, st, jd$eta[ix, , drop = FALSE], cell,
                          jd$cov_rows[ix, , drop = FALSE])
     if (is.null(Pd) || ncol(Pd) != ncol(Pv)) return(NULL)
+    # WEIGHTED: the reference is a quadrature rule, not a sample, wherever
+    # .admJointCollapse could afford one -- see the table there. `Wv` is uniform
+    # on the Sobol fallback, which is what mean() was.
+    Wv <- jc$Wv %||% rep(1 / nrow(Pv), nrow(Pv))
     for (k in seq_len(ncol(Pv))) {
       tgt <- Pv[, k]; got <- Pd[, k]
-      sc  <- max(stats::sd(tgt), abs(mean(tgt)), .Machine$double.xmin)
+      sc  <- max(sqrt(max(sum(Wv * (tgt - sum(Wv * tgt))^2), 0)),
+                 abs(sum(Wv * tgt)), .Machine$double.xmin)
       mm  <- list(function(x) x, function(x) x^2)
       if (all(tgt > 0) && all(got > 0)) mm <- c(mm, list(function(x) 1 / x))
       for (f in mm) {
-        a1 <- mean(f(tgt)); a2 <- sum(Wc * f(got))
+        a1 <- sum(Wv * f(tgt)); a2 <- sum(Wc * f(got))
         if (!is.finite(a1) || !is.finite(a2)) return(NULL)
         if (abs(a2 - a1) / max(abs(a1), sc) > tol) return(NULL)
       }
