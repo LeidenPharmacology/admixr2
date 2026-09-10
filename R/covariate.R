@@ -611,8 +611,8 @@
         # NOT MESSAGED. Which reduction a study gets is an internal decision
         # the caller did not make and cannot act on, and announcing one per
         # study made an ordinary fit noisy. It is recorded on the study --
-        # .adm_cov_joint carries r, m and the routes -- which is what an
-        # inspecting caller reads.
+        # .adm_cov_joint carries r, m and the frozen base point -- which is
+        # what an inspecting caller reads.
       }
     }
     # ATTACHED WHENEVER IT IS FOUND, even if the joint also admitted. The joint
