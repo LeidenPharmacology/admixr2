@@ -506,6 +506,61 @@
   list(E = lapply(b, `[[`, "E"), V = lapply(b, `[[`, "V"), dE = dE, dV = dV)
 }
 
+# The conditioning bound the SANDWICH needs, which is not the one a single
+# inversion needs.
+#
+# covreport.R calls H singular below .ADM_NPD_RCOND = sqrt(eps): one inversion
+# loses about kappa * eps of relative accuracy, so that is where 2H^-1 is deemed
+# hopeless. The sandwich inverts H TWICE -- H^-1 J H^-1 -- so its effective
+# conditioning is kappa^2, and it reaches that same bound already at
+# kappa = eps^(-1/4), i.e. rcond = eps^(1/4) ~ 1.2e-04 (cond ~ 8200).
+#
+# Between the two thresholds is a band where "r" is usable and "r,s" is not, and
+# nothing else in the package looks at it. It is not a rounding problem: what is
+# amplified is the genuine gap between J and 2H in a direction the data barely
+# identifies, which is exactly where the two differ most and mean least. Measured
+# on a 1-cmt fixture whose residual SD contributed 0.01 variance against 1.7 from
+# IIV (RSE 186%, cond(H) = 3.5e05), the reported residual SE moved by 0.115 and
+# two omega entries by 0.59 and 1.55; the same model and design with the residual
+# identified (cond(H) = 247) reproduced "r" to four decimals throughout.
+#
+# WARN RATHER THAN DEGRADE. The number is not garbage in the way a non-finite or
+# non-PD one is, and the well-determined directions of the same fit are fine --
+# so withholding the whole covariance would cost more than it saves. What the
+# user cannot do is NOTICE, which is what this fixes: the warning names the
+# direction, so a surprising SE can be read against the parameter that caused it.
+.ADM_SANDWICH_RCOND <- .Machine$double.eps^(1/4)
+
+# RETURNS the diagnosis, it does not raise it. A warning() from here would be
+# swallowed: this runs inside the nlmixr2est stack, which is why the driver
+# raises "covariance could not be computed" itself rather than letting
+# .admCalcCov do it, and why an incomplete source covariance once cost a fit its
+# sandwich in silence. The message travels out on an attribute and each driver
+# emits it beside the covMethod label, where it reaches the user.
+.admSandwichCond <- function(H, nms = NULL) {
+  e <- tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
+  if (is.null(e)) return(NULL)
+  ev <- e$values
+  mx <- max(abs(ev))
+  if (!is.finite(mx) || mx <= 0) return(NULL)
+  rc <- min(abs(ev)) / mx
+  if (!is.finite(rc) || rc >= .ADM_SANDWICH_RCOND) return(NULL)
+  # The offending direction is the eigenvector of the smallest eigenvalue; report
+  # the parameter loading on it most heavily. That is the actionable half -- a
+  # condition number alone does not tell anyone which SE to distrust.
+  k  <- which.min(abs(ev))
+  ld <- abs(e$vectors[, k])
+  nm <- (nms %||% rownames(H) %||% paste0("p", seq_along(ev)))[which.max(ld)]
+  sprintf(
+    paste0("covMethod = \"r,s\": the Hessian is ill-conditioned (rcond %.1e, ",
+           "cond %.3g), and the sandwich inverts it twice where \"r\" inverts it ",
+           "once -- so the correction is amplified quadratically in the ",
+           "weakly-identified direction, which loads mainly on `%s`. Check that ",
+           "parameter's relative standard error before reading its \"r,s\" value ",
+           "as a finding; the well-determined parameters are unaffected."),
+    rc, 1 / rc, nm)
+}
+
 # Post-fit sandwich covariance for a fitted parameter vector.
 #
 # `H` is the Hessian of the objective at the optimum -- the SAME one
@@ -517,7 +572,7 @@
 # moment solve. The caller falls back to "r" and says so.
 .admSandwichCov <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
                             H, md = NULL, keep = NULL, mom_fn = NULL,
-                            sensModel = NULL) {
+                            sensModel = NULL, nms = NULL) {
   # H is checked FIRST, and here rather than being left to solve() inside .admSandwich,
   # whose tryCatch is there for a singular matrix and cannot tell that apart from
   # an H that was never supplied. A caller that forgot the argument then gets a
@@ -527,6 +582,11 @@
   if (missing(H) || !is.matrix(H) || nrow(H) != ncol(H) || !all(is.finite(H)))
     stop(".admSandwichCov: `H` must be a finite square Hessian of the objective ",
          "at the optimum -- the same one covMethod = \"r\" inverts.", call. = FALSE)
+  # Diagnosed here, where H is, and carried out on an attribute of the RESULT --
+  # so a sandwich that goes on to degrade for an unrelated reason returns NULL
+  # and takes the conditioning message with it, rather than warning about a
+  # covariance the fit never reported.
+  .cond <- .admSandwichCond(H, nms)
   pars <- tryCatch(.admUnpack(p_hat, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(NULL)
   # A joint (same-subject, multi-output) unit stacks several outputs into one
@@ -569,7 +629,9 @@
     if (!is.null(keep)) G[[i]] <- G[[i]][keep, , drop = FALSE]
   }
   if (!is.null(keep) && nrow(H) != length(keep)) return(NULL)
-  .admSandwich(H, G, Om)
+  out <- .admSandwich(H, G, Om)
+  if (!is.null(out)) attr(out, "illcond") <- .cond
+  out
 }
 
 # -- adfo ----------------------------------------------------------------------

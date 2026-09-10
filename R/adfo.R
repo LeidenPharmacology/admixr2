@@ -827,6 +827,7 @@
   # comes back is an SE for the FO fit that answers to the model's true
   # nonlinear law, so it also absorbs part of the linearisation error.
   sw_used <- FALSE
+  sw_cond <- NULL
   if (isTRUE(sandwich)) {
     sw <- tryCatch({
       grid <- .admSandwichGrid(pinfo)
@@ -836,12 +837,13 @@
       # `rxMod` is adfo's plain simulation model (its FD fallback solves through
       # it), which is exactly what .admAdfParts needs for the node ensemble.
       .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
-                      H = H, keep = match(nms_cov, names(p_hat)), mom_fn = mf)
+                      H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov, mom_fn = mf)
     }, error = function(e) NULL)
     ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
     if (ok) {
       cov_full <- (sw$cov + t(sw$cov)) / 2
       sw_used  <- TRUE
+      sw_cond  <- attr(sw, "illcond")
     } else {
       warning("adfoCalcCov: the sandwich correction could not be computed; ",
               "reporting the covMethod = \"r\" covariance instead.", call. = FALSE)
@@ -852,6 +854,9 @@
   # shared implementation for all three estimators -- see .admScaleReportedCov().
   out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
   attr(out, "sandwich") <- sw_used
+  # The conditioning diagnosis rides out with the covariance; the driver raises
+  # it, because a warning() from in here does not reach the user.
+  attr(out, "sandwich_illcond") <- sw_cond
   out
 }
 
@@ -1011,8 +1016,15 @@
 #'   study the residual IS identified in (`cond(H) = 247`) reproduced `"r"` to
 #'   four decimals on every parameter. Neither number is a correction there --
 #'   both methods are reporting an unidentified direction, and `"r,s"` is louder
-#'   about it. Check the RSE of a parameter whose `"r,s"` SE surprises you before
-#'   reading the change as a finding.
+#'   about it. admixr2 says so: when the Hessian's reciprocal condition number
+#'   falls below `eps^(1/4)` -- the point at which squaring the conditioning
+#'   reaches the bound a single inversion is already called singular at -- the fit
+#'   records a note naming the parameter that loads most heavily on the offending
+#'   direction. It arrives on `fit$runInfo` and is listed by `print(fit)`, which
+#'   is where `nlmixr2est` routes an estimator's warnings. The sandwich is still
+#'   reported, because the well-determined parameters of the same fit are
+#'   unaffected; check the named parameter's relative standard error before
+#'   reading its `"r,s"` value as a finding.
 #'
 #'   All three blocks are reported on the scale the ESTIMATES are printed on, as
 #'   `nlmixr2est` does: structural thetas on the log/optimizer scale, residual
@@ -1681,6 +1693,16 @@ nlmixr2Est.adfo <- function(env, ...) {
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   # what the covariance IS, not what was asked for -- a degraded sandwich is "r"
   .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
+  # Raised HERE rather than where it is diagnosed, and as a warning, which in this
+  # stack does NOT mean an R warning reaches the caller -- it means the fit keeps
+  # it. nlmixr2est::nlmixr2Est0 wraps the whole estimator in .collectWarn(), which
+  # suppresses every warning at source and, for a nlmixr2FitCore result, assigns
+  # them to `fit$runInfo` instead of re-raising them. print() then lists them
+  # under "Information about run found". So the warning is durable on the fit and
+  # visible when it is printed, which a message() is not -- a message scrolls past
+  # during the run and is gone from a fit that is saved and read back later.
+  if (!is.null(.sw_cond <- attr(.cov, "sandwich_illcond")))
+    warning(.sw_cond, call. = FALSE)
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]

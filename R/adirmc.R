@@ -1458,6 +1458,16 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   # what the covariance IS, not what was asked for -- a degraded sandwich is "r"
   .cov_lbl  <- if (isTRUE(attr(.cov, "sandwich"))) "r,s" else "r"
+  # Raised HERE rather than where it is diagnosed, and as a warning, which in this
+  # stack does NOT mean an R warning reaches the caller -- it means the fit keeps
+  # it. nlmixr2est::nlmixr2Est0 wraps the whole estimator in .collectWarn(), which
+  # suppresses every warning at source and, for a nlmixr2FitCore result, assigns
+  # them to `fit$runInfo` instead of re-raising them. print() then lists them
+  # under "Information about run found". So the warning is durable on the fit and
+  # visible when it is printed, which a message() is not -- a message scrolls past
+  # during the run and is gone from a fit that is saved and read back later.
+  if (!is.null(.sw_cond <- attr(.cov, "sandwich_illcond")))
+    warning(.sw_cond, call. = FALSE)
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]

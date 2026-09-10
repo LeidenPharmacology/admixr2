@@ -207,8 +207,15 @@ two omega entries by 0.59 and 1.55, while the same model and design on a
 study the residual IS identified in (\code{cond(H) = 247}) reproduced \code{"r"} to
 four decimals on every parameter. Neither number is a correction there --
 both methods are reporting an unidentified direction, and \code{"r,s"} is louder
-about it. Check the RSE of a parameter whose \code{"r,s"} SE surprises you before
-reading the change as a finding.
+about it. admixr2 says so: when the Hessian's reciprocal condition number
+falls below \code{eps^(1/4)} -- the point at which squaring the conditioning
+reaches the bound a single inversion is already called singular at -- the fit
+records a note naming the parameter that loads most heavily on the offending
+direction. It arrives on \code{fit$runInfo} and is listed by \code{print(fit)}, which
+is where \code{nlmixr2est} routes an estimator's warnings. The sandwich is still
+reported, because the well-determined parameters of the same fit are
+unaffected; check the named parameter's relative standard error before
+reading its \code{"r,s"} value as a finding.
 
 All three blocks are reported on the scale the ESTIMATES are printed on, as
 \code{nlmixr2est} does: structural thetas on the log/optimizer scale, residual

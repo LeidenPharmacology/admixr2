@@ -34,6 +34,21 @@
   moment map and the weight from a post-fit quadrature ensemble of the same
   model, so the correction absorbs part of the linearisation error as well.
 
+  **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"` is**, and
+  admixr2 now says so. `"r"` inverts `H` once, the sandwich inverts it twice, so
+  in a direction the data barely identifies the gap between `J` and `2H` is
+  amplified quadratically. A residual SD contributing 0.01 variance against 1.7
+  from IIV is such a direction: on one 1-cmt fixture at `cond(H) = 3.5e5` the
+  reported residual SE moved by a factor of 0.11 and two omega entries by 0.59
+  and 1.55, while the same model and design with the residual identified
+  (`cond(H) = 247`) reproduced `"r"` to four decimals throughout. Neither number
+  is a correction there -- both methods are reporting an unidentified direction.
+  Below `rcond(H) = eps^(1/4)` the fit records a note on `fit$runInfo` -- where
+  `nlmixr2est` routes an estimator's warnings, and which `print(fit)` lists --
+  naming the parameter that loads most heavily on the offending direction. The
+  sandwich is still reported, since the well-determined parameters of the same
+  fit are unaffected.
+
   Available for the conditionally-normal residual family (`add`, `prop`, `pow`,
   `combined1`, `combined2`, `lnorm`) plus closed-form conditional moments for
   `lnorm`, `pois`, `binom`, `nbinomMu`, `beta` and `t(nu > 4)`; `ar()` is refused

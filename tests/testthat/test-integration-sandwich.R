@@ -91,3 +91,46 @@ test_that("a residual the weight cannot reach degrades to r rather than guessing
   skip_if(inherits(fit, "error"), "ar() endpoint did not fit in this environment")
   expect_identical(fit$covMethod, "r")
 })
+
+test_that("an ill-conditioned Hessian is reported, and only then", {
+  # The trap this guards: the correction is amplified quadratically in a
+  # direction the data barely identifies, so "r,s" returns a finite, plausible,
+  # meaningless SE there while the rest of the fit is fine. Degrading the whole
+  # covariance would cost more than it saves, so the fit keeps its sandwich and
+  # says which parameter not to read.
+  #
+  # Read off `fit$runInfo`, NOT with a warning handler. nlmixr2Est0 wraps the
+  # estimator in .collectWarn(), which suppresses warnings at source and assigns
+  # them to runInfo for a nlmixr2FitCore result -- so a handler around nlmixr2()
+  # sees nothing and would make this test pass vacuously. runInfo is also what
+  # print() lists, which is the thing the user actually sees.
+  env <- .int_sandwich_setup()
+  times  <- c(0.5, 1, 2, 4)
+  E_true <- .one_cmt_mean(5, 20, 100, times)
+
+  flagged <- function(fn, st, cm) {
+    f <- suppressMessages(nlmixr2est::nlmixr2(fn, admData(), est = "adgh",
+      control = adghControl(studies = st, n_nodes = 7L, maxeval = 200L,
+                            seed = 1L, grad = "analytical", covMethod = cm,
+                            print = 0L)))
+    any(grepl("ill-conditioned", if (is.null(f$runInfo)) character() else f$runInfo))
+  }
+
+  # add.err = 0.1 contributes 0.01 variance against ~1.7 from IIV: RSE 186%,
+  # cond(H) = 3.5e5. This is the fixture the file used to run on.
+  ill_fn <- function() {
+    ini({ tcl <- log(5); tv <- log(20); add.err <- 0.1
+          eta.cl ~ 0.09; eta.v ~ 0.04 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v); linCmt() ~ add(add.err) })
+  }
+  ill_st <- list(s1 = list(E = E_true, V = diag((0.3 * E_true)^2), n = 200L,
+                           times = times, ev = rxode2::et(amt = 100)))
+
+  expect_true(flagged(ill_fn, ill_st, "r,s"))
+  # Silent under "r": one inversion is what the existing .ADM_NPD_RCOND bound is
+  # for, and it does not fire here -- rcond 2.8e-06 is well above sqrt(eps).
+  expect_false(flagged(ill_fn, ill_st, "r"))
+  # ... and silent on the well-conditioned study the rest of the file uses, which
+  # is what stops this being a note every "r,s" fit carries.
+  expect_false(flagged(env$fn, env$studies, "r,s"))
+})
