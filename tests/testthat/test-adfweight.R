@@ -483,3 +483,68 @@ test_that("the TBS weight reproduces the sampling law of a simulated study", {
   expect_lt(rel(sym, seq_len(m), seq_len(m)),   0.15)
   expect_gt(rel(sym, seq_len(m), -seq_len(m)),  0.50)
 })
+
+test_that("the information equality holds on a TBS endpoint too", {
+  # Separate from the equality test above rather than folded into it: that one
+  # caught three real bugs and is left structurally alone. This asks the same
+  # question of the family added later, where the residual composition runs
+  # through the mean-from-covariance path (dmu_dv0, dms_df) that no closed-form
+  # endpoint exercises.
+  #
+  # It also settles what the S != V_pred gap on TBS is and is not. G here comes
+  # from the OBJECTIVE's moment map and H from the objective's Hessian, so this
+  # holding exactly says the two halves the sandwich shares are consistent for
+  # TBS. The gap lives entirely in the objective's own second-order expansion,
+  # not in the sandwich's reading of it.
+  skip_if_not_installed("rxode2")
+  skip_if_not_installed("numDeriv")
+  TIMES <- c(4, 8, 12, 16); DOSE <- 100; NQ <- 9L; N <- 100L
+  mods <- list(
+    boxCox = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                aa <- 0.3; lam <- fix(0.5) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ add(aa) + boxCox(lam) }) },
+    logitNorm = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                   aa <- 0.25 })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ logitNorm(aa, 0, 40) }) })
+  for (nm in names(mods)) {
+    ui <- suppressMessages(rxode2::rxode2(mods[[nm]]))
+    ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+    sens <- admixr2:::.admLoadSensModel(ui)
+    E0 <- DOSE / 10 * exp(-0.1 * TIMES)
+    mk <- function(E, V, meth)
+      list(s = list(E = E, V = if (meth == "var") diag(V) else V, n = N,
+                    times = TIMES, ev = rxode2::et(amt = DOSE)))
+    for (meth in c("var", "cov")) {
+      st  <- mk(E0, diag((0.3 * E0)^2), meth)
+      ctl <- adghControl(studies = st, grad = "none", n_nodes = NQ, print = 0L,
+                         covMethod = "none")
+      pin <- admixr2:::.admDriverPinfo(ui, ctl)
+      u   <- admixr2:::.admDriverUnits(st, ui, ov)
+      g   <- admixr2:::.adghNodeGrid(NQ, pin$n_eta)
+      p   <- admixr2:::.admBuildOptVec(pin)$p0
+      pars <- admixr2:::.admUnpack(p, pin)
+      pt  <- admixr2:::.admAdfParts(pars, pin, u$studies[[1L]], rx, ov, g, 1L)
+      # well specified: the summary IS what the model predicts, so t = tau
+      u2  <- admixr2:::.admDriverUnits(mk(as.numeric(pt$E), pt$V, meth), ui, ov)
+      s1  <- u2$studies[[1L]]
+      f   <- function(q) admixr2:::.adghNLL(q, pin, u2$studies, rx, ov, g, 1L)
+      H   <- numDeriv::hessian(f, p)
+      p2  <- admixr2:::.admAdfParts(pars, pin, s1, rx, ov, g, 1L)
+      W   <- admixr2:::.admWorkingWeight(p2$V, N, s1$method)
+      mds <- list(
+        fd       = admixr2:::.admMomentDeriv(p, pin, u2$studies, rx, ov, g, 1L),
+        analytic = admixr2:::.admMomentJac(p, pin, u2$studies, sens, rx, ov, g, 1L))
+      for (route in names(mds)) {
+        md <- mds[[route]]
+        expect_false(is.null(md), info = paste(nm, meth, route))
+        G  <- admixr2:::.admScoreCross(md$E[[1L]], md$V[[1L]], md$dE[[1L]],
+                                       md$dV[[1L]], s1, N)
+        ev <- sort(Re(eigen(solve(2 * H) %*% (G %*% W %*% t(G)))$values))
+        expect_equal(ev, rep(1, length(ev)), tolerance = 1e-4,
+                     info = paste(nm, meth, route))
+      }
+    }
+  }
+})
