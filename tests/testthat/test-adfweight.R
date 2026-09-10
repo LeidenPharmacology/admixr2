@@ -1,14 +1,27 @@
 # The ADF weight: the sampling law of (ybar, vech V) implied by the model.
 
-test_that(".admSandwichGrid never exceeds max_nodes, even for many etas", {
-  # The decrement loop used to floor at nq = 3 and stop, so it never re-checked
-  # whether 3^n_eta was still over the cap -- for n_eta >= 8, 3^n_eta > 5000 and
-  # the "capped" grid silently blew past it (3^8 = 6561, 3^15 ~= 14.3M).
-  for (n_eta in c(1L, 5L, 8L, 12L)) {
+test_that(".admSandwichGrid caps the node count without degenerating the grid", {
+  # Two ways to get this wrong, and this pins both. Letting the loop stop at
+  # nq = 3 without re-checking blew past the cap (3^8 = 6561, 3^15 ~= 14.3M);
+  # letting it decrement to nq = 1 instead put every node at eta = 0, which is a
+  # grid describing a model with no IIV at all -- finite, positive-definite, and
+  # silently wrong, so .admApplySandwich() would report it as covMethod = "r,s".
+  # Above the cap the only honest answer is NULL, which both callers turn into
+  # a degrade to "r".
+  for (n_eta in c(1L, 5L, 7L)) {
     grid <- admixr2:::.admSandwichGrid(list(n_eta = n_eta), max_nodes = 5000L)
     expect_lte(nrow(grid$X), 5000L)
     expect_length(grid$W, nrow(grid$X))
+    # More than one distinct node per dimension, i.e. the ensemble actually
+    # spreads over eta rather than sitting on the mean.
+    expect_gt(nrow(grid$X), 1L)
+    expect_gt(length(unique(grid$X[, 1L])), 1L)
   }
+  for (n_eta in c(8L, 12L, 15L))
+    expect_null(admixr2:::.admSandwichGrid(list(n_eta = n_eta), max_nodes = 5000L))
+  # n_eta == 0 is the one legitimately single-point grid: no IIV to spread over.
+  g0 <- admixr2:::.admSandwichGrid(list(n_eta = 0L))
+  expect_equal(nrow(g0$X), 1L)
 })
 
 test_that("the fast weight equals the reference expansion", {

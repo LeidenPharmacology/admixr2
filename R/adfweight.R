@@ -704,7 +704,18 @@
   if (is.null(n_eta) || n_eta < 0L) return(NULL)
   if (n_eta == 0L) return(.adghNodeGrid(1L, 0L))
   nq <- 9L
-  while (nq > 1L && nq^n_eta > max_nodes) nq <- nq - 2L
+  while (nq > 3L && nq^n_eta > max_nodes) nq <- nq - 2L
+  # THREE IS THE FLOOR, and past it the answer is NULL rather than a smaller
+  # grid. The decrement used to run down to nq = 1, which for n_eta >= 8 it
+  # reached (3^8 = 6561 > 5000): .adghNodes1(1) is the single node at eta = 0, so
+  # C centres to identically zero, S collapses to diag(E[Var(y|eta)]), and the
+  # weight then describes a model with NO between-subject variability. That
+  # result is finite with a positive diagonal, so .admApplySandwich() accepts it
+  # and the fit reports covMethod = "r,s" over silently wrong SEs -- the one
+  # failure mode worse than not applying the correction at all. Both callers
+  # stop() on a NULL grid inside a tryCatch and degrade to "r", which is the
+  # honest answer for a model with more etas than a product grid can cover.
+  if (nq^n_eta > max_nodes) return(NULL)
   .adghNodeGrid(nq, n_eta)
 }
 
