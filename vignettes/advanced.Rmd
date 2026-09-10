@@ -305,8 +305,11 @@ than Sobol.
 
 ## Parameter uncertainty
 
-`covMethod = "r"` (default) computes a numerical Hessian after optimisation and
-reports standard errors in `print(fit)`. **Important:** these SEs are computed
+`covMethod = "r"` computes a numerical Hessian after optimisation and
+reports standard errors in `print(fit)`. As of this version the default is
+`covMethod = "r,s"` (see below), which reports the sandwich correction of
+that same Hessian; pass `covMethod = "r"` explicitly to get the uncorrected
+SEs. **Important:** these SEs are computed
 for structural and residual-error parameters only; omega (IIV) SEs are not
 computed (matching nlmixr2 FOCEI behavior). A larger `cov_n_sim` reduces MC
 noise in the Hessian:
@@ -364,11 +367,15 @@ move. Under correct specification `J = 2H` and `"r,s"` returns exactly what
 `"r"` would have, so the two agreeing is the expected outcome for a
 well-specified model, not a sign that nothing happened.
 
-It applies to the conditionally-normal residual family (`add`, `prop`, `pow`,
-`combined1`, `combined2`, `lnorm`) and to non-joint studies. Anything it cannot
-build — an `ar()` residual, a same-subject joint study, a singular ingredient —
-degrades to `"r"` with a warning, and `fit$covMethod` then reads `"r"`: it
-records what the covariance **is**, not what was asked for.
+It applies to every residual family whose conditional law is independent
+across timepoints — which is all of them except `ar()` — the
+conditionally-normal set (`add`, `prop`, `pow`, `combined1`, `combined2`), the
+closed-form distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`,
+`t(nu > 4)`), and the transform-both-sides ones (`boxCox`, `yeoJohnson`,
+`logitNorm`, `probitNorm`). Anything it cannot build — an `ar()` residual, a
+`t()` with `nu <= 4`, an `ordinal()` or same-subject joint study, a singular
+ingredient — degrades to `"r"` with a warning, and `fit$covMethod` then reads
+`"r"`: it records what the covariance **is**, not what was asked for.
 
 Under `"r,s"` the denominator of a study's reported `V` stops being cosmetic —
 see `v_denom` in the [aggregate data](aggregate-data.html) vignette.
