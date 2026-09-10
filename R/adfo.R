@@ -987,8 +987,9 @@
 #'   no other -- and nloptr reports normal convergence at a box corner, so a
 #'   warning is emitted if an estimate finishes on it.
 #' @param cov_h_outer Outer step scale for NLL-FD Hessian.
-#' @param covMethod `"r"` computes covariance via a numerical Hessian over the
-#'   structural, residual-error and omega parameters; `"none"` skips it. Omega is
+#' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
+#'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
 #'   If the weakly-identified omega Cholesky makes the Hessian non-positive
@@ -1009,6 +1010,13 @@
 #'   expansion's truncation: roughly 0.3% in `V` at moderate between-subject
 #'   variability, rising to ~3% for a tightly-bounded `logit`/`probit` at high
 #'   variability. That is a property of the estimator, not a discrepancy.
+#'
+#'   **It is the default because it is the conservative choice, not the aggressive
+#'   one.** Under correct specification `J = 2H` and the sandwich returns what
+#'   `"r"` returns, so defaulting to it costs nothing when the normal-theory
+#'   assumption holds and corrects the standard errors when it does not. Anything
+#'   it cannot build degrades to `"r"` and reports `"r"`, so no fit loses its
+#'   covariance by asking. Pass `covMethod = "r"` for the pre-0.4.2 behaviour.
 #'
 #'   Applies to every residual family whose conditional law is independent across
 #'   timepoints, which is all of them except `ar()`: the conditionally-normal set
@@ -1172,7 +1180,7 @@ adfoControl <- function(
     grad_bounds = 5,
     cov_h       = 1e-3,
     cov_h_outer = .Machine$double.eps^(1/5),
-    covMethod   = c("r", "r,s", "none"),
+    covMethod   = c("r,s", "r", "none"),
     n_restarts  = 1L,
     restart_sd  = 0.5,
     workers     = 1L,

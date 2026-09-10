@@ -12,7 +12,10 @@ test_that("adfoControl() returns correct class and key defaults", {
   expect_equal(ctl$cores,      as.integer(rxode2::rxCores()))
   expect_equal(ctl$n_restarts, 1L)
   expect_equal(ctl$workers,    1L)
-  expect_equal(ctl$covMethod,  "r")
+  # the DEFAULT: "r,s" reduces to "r" under correct specification, so it is the
+  # conservative choice rather than the aggressive one, and it degrades to "r"
+  # (reporting "r") wherever it cannot be built.
+  expect_equal(ctl$covMethod,  "r,s")
   expect_equal(ctl$returnAdmr, FALSE)
 })
 

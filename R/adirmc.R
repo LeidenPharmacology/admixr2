@@ -133,7 +133,7 @@ adirmcControl <- function(
     phases          = c(2, 1, 0.5, 0.01),
     convcrit        = 1e-5,
     max_worse       = 5L,
-    covMethod       = c("r", "r,s", "none"),
+    covMethod       = c("r,s", "r", "none"),
     cov_n_sim       = 10000L,
     n_restarts      = 1L,
     restart_sd      = 0.2,

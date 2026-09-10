@@ -20,7 +20,7 @@ admControl(
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
   grad_bounds = 5,
-  covMethod = c("r", "r,s", "none"),
+  covMethod = c("r,s", "r", "none"),
   cov_n_sim = 10000L,
   n_restarts = 1L,
   restart_sd = 0.5,
@@ -178,8 +178,9 @@ log-scale parameter is a factor of \code{exp(grad_bounds)} (~148 at the default
 no other -- and nloptr reports normal convergence at a box corner, so a
 warning is emitted if an estimate finishes on it.}
 
-\item{covMethod}{Covariance method: \code{"r"} (numerical Hessian over the
-structural, residual-error and omega parameters) or \code{"none"}. Omega is
+\item{covMethod}{\code{"r,s"} (the DEFAULT) computes the sandwich \verb{H^-1 J H^-1};
+\code{"r"} the numerical Hessian alone, \verb{2H^-1}; \code{"none"} skips the covariance.
+All three span the structural, residual-error and omega parameters. Omega is
 included because excluding it also biases the STRUCTURAL standard errors
 downward -- a theta carrying an eta is correlated with that eta's variance.
 If the weakly-identified omega Cholesky makes the Hessian non-positive
@@ -193,6 +194,13 @@ model instead, on a quadrature ensemble rather than on this fit's own MC
 draws, so the reported uncertainty carries no sampling noise of its own.
 Point estimates are untouched, and under correct specification it reduces to
 \code{"r"} exactly.
+\strong{It is the default because it is the conservative choice, not the aggressive
+one.} Under correct specification \verb{J = 2H} and the sandwich returns what
+\code{"r"} returns, so defaulting to it costs nothing when the normal-theory
+assumption holds and corrects the standard errors when it does not. Anything
+it cannot build degrades to \code{"r"} and reports \code{"r"}, so no fit loses its
+covariance by asking. Pass \code{covMethod = "r"} for the pre-0.4.2 behaviour.
+
 Applies to every residual family whose conditional law is independent across
 timepoints, which is all of them except \code{ar()}: the conditionally-normal set
 (\code{add}, \code{prop}, \code{pow}, \code{combined1}, \code{combined2}), the closed-form

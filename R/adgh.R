@@ -1029,8 +1029,9 @@
 #' @param cov_h_outer Outer step scale for numerical Hessian. Default
 #'   `eps^(1/4)` (tighter than admc's `eps^(1/5)` because the GH surface is
 #'   noise-free).
-#' @param covMethod `"r"` computes covariance via a numerical Hessian over the
-#'   structural, residual-error and omega parameters; `"none"` skips it. Omega is
+#' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
+#'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
 #'   If the weakly-identified omega Cholesky makes the Hessian non-positive
@@ -1043,6 +1044,13 @@
 #'   not the one the objective assumes. `"r,s"` scores that law from the model
 #'   instead. Point estimates are untouched -- only the reported uncertainty
 #'   changes -- and under correct specification it reduces to `"r"` exactly.
+#'   **It is the default because it is the conservative choice, not the aggressive
+#'   one.** Under correct specification `J = 2H` and the sandwich returns what
+#'   `"r"` returns, so defaulting to it costs nothing when the normal-theory
+#'   assumption holds and corrects the standard errors when it does not. Anything
+#'   it cannot build degrades to `"r"` and reports `"r"`, so no fit loses its
+#'   covariance by asking. Pass `covMethod = "r"` for the pre-0.4.2 behaviour.
+#'
 #'   Applies to every residual family whose conditional law is independent across
 #'   timepoints, which is all of them except `ar()`: the conditionally-normal set
 #'   (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
@@ -1184,7 +1192,7 @@ adghControl <- function(
     grad_bounds = 5,
     cov_h       = 1e-3,
     cov_h_outer = .Machine$double.eps^(1/4),
-    covMethod   = c("r", "r,s", "none"),
+    covMethod   = c("r,s", "r", "none"),
     n_restarts  = 1L,
     restart_sd  = 0.5,
     workers     = 1L,

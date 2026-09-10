@@ -19,7 +19,7 @@ adghControl(
   grad_bounds = 5,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/4),
-  covMethod = c("r", "r,s", "none"),
+  covMethod = c("r,s", "r", "none"),
   n_restarts = 1L,
   restart_sd = 0.5,
   workers = 1L,
@@ -105,8 +105,9 @@ warning is emitted if an estimate finishes on it.}
 \code{eps^(1/4)} (tighter than admc's \code{eps^(1/5)} because the GH surface is
 noise-free).}
 
-\item{covMethod}{\code{"r"} computes covariance via a numerical Hessian over the
-structural, residual-error and omega parameters; \code{"none"} skips it. Omega is
+\item{covMethod}{\code{"r,s"} (the DEFAULT) computes the sandwich \verb{H^-1 J H^-1};
+\code{"r"} the numerical Hessian alone, \verb{2H^-1}; \code{"none"} skips the covariance.
+All three span the structural, residual-error and omega parameters. Omega is
 included because excluding it also biases the STRUCTURAL standard errors
 downward -- a theta carrying an eta is correlated with that eta's variance.
 If the weakly-identified omega Cholesky makes the Hessian non-positive
@@ -119,6 +120,13 @@ model is nonlinear in the random effects, so the sampling law of \verb{(E, V)} i
 not the one the objective assumes. \code{"r,s"} scores that law from the model
 instead. Point estimates are untouched -- only the reported uncertainty
 changes -- and under correct specification it reduces to \code{"r"} exactly.
+\strong{It is the default because it is the conservative choice, not the aggressive
+one.} Under correct specification \verb{J = 2H} and the sandwich returns what
+\code{"r"} returns, so defaulting to it costs nothing when the normal-theory
+assumption holds and corrects the standard errors when it does not. Anything
+it cannot build degrades to \code{"r"} and reports \code{"r"}, so no fit loses its
+covariance by asking. Pass \code{covMethod = "r"} for the pre-0.4.2 behaviour.
+
 Applies to every residual family whose conditional law is independent across
 timepoints, which is all of them except \code{ar()}: the conditionally-normal set
 (\code{add}, \code{prop}, \code{pow}, \code{combined1}, \code{combined2}), the closed-form

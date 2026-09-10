@@ -18,7 +18,7 @@ adfoControl(
   grad_bounds = 5,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
-  covMethod = c("r", "r,s", "none"),
+  covMethod = c("r,s", "r", "none"),
   n_restarts = 1L,
   restart_sd = 0.5,
   workers = 1L,
@@ -99,8 +99,9 @@ warning is emitted if an estimate finishes on it.}
 
 \item{cov_h_outer}{Outer step scale for NLL-FD Hessian.}
 
-\item{covMethod}{\code{"r"} computes covariance via a numerical Hessian over the
-structural, residual-error and omega parameters; \code{"none"} skips it. Omega is
+\item{covMethod}{\code{"r,s"} (the DEFAULT) computes the sandwich \verb{H^-1 J H^-1};
+\code{"r"} the numerical Hessian alone, \verb{2H^-1}; \code{"none"} skips the covariance.
+All three span the structural, residual-error and omega parameters. Omega is
 included because excluding it also biases the STRUCTURAL standard errors
 downward -- a theta carrying an eta is correlated with that eta's variance.
 If the weakly-identified omega Cholesky makes the Hessian non-positive
@@ -121,6 +122,13 @@ node ensemble to compose over -- that is what the method is. \code{adgh} and
 expansion's truncation: roughly 0.3\% in \code{V} at moderate between-subject
 variability, rising to ~3\% for a tightly-bounded \code{logit}/\code{probit} at high
 variability. That is a property of the estimator, not a discrepancy.
+
+\strong{It is the default because it is the conservative choice, not the aggressive
+one.} Under correct specification \verb{J = 2H} and the sandwich returns what
+\code{"r"} returns, so defaulting to it costs nothing when the normal-theory
+assumption holds and corrects the standard errors when it does not. Anything
+it cannot build degrades to \code{"r"} and reports \code{"r"}, so no fit loses its
+covariance by asking. Pass \code{covMethod = "r"} for the pre-0.4.2 behaviour.
 
 Applies to every residual family whose conditional law is independent across
 timepoints, which is all of them except \code{ar()}: the conditionally-normal set

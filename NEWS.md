@@ -219,6 +219,29 @@
 Several changes in this release alter results for scripts that do not name a new
 argument. None is a bug fix, so all are listed here rather than below.
 
+* **`covMethod` now defaults to `"r,s"`, so reported standard errors change for
+  every script that does not name it.** Point estimates and objective values are
+  untouched -- the sandwich is computed after convergence and the optimizer never
+  sees it.
+
+  It is the default because it is the CONSERVATIVE choice. Under correct
+  specification `J = 2H`, so `"r,s"` returns exactly what `"r"` returns; measured
+  end-to-end on a well-specified study the ratio is 1.010 / 0.990 / 1.000 across
+  the four estimators. Where the normal-theory assumption does not hold -- which
+  is wherever the model is nonlinear in the random effects, i.e. essentially
+  always -- it corrects standard errors that were otherwise wrong in two specific
+  ways: `Cov(V_ij, V_kl)` mis-sized by the excess kurtosis, and `Cov(ybar, vech V)`
+  assumed zero where a real correlation of 0.3-0.6 sits. Defaulting to `"r"` meant
+  shipping the uncorrected number unless a user knew to ask.
+
+  Nothing loses its covariance by asking: a sandwich that cannot be built
+  degrades to `"r"` and REPORTS `"r"`, so `fit$covMethod` still records what the
+  covariance is. Runtime overhead is not material for `adgh`, `admc` or `adirmc`;
+  `adfo` pays roughly 20%, because FO carries no node ensemble and one has to be
+  built post-fit for the weight.
+
+  Set `covMethod = "r"` for the previous behaviour.
+
 * **Transform-both-sides endpoints are composed EXACTLY, and their estimates
   move.** `boxCox`, `yeoJohnson`, `logitNorm` and `probitNorm` predict the
   aggregate moments through a residual whose conditional mean is NONLINEAR in the
@@ -244,9 +267,19 @@ argument. None is a bug fix, so all are listed here rather than below.
 
   The residual is now composed at each NODE (adgh) or DRAW (admc) and aggregated,
   which is exact given the ensemble and converges properly -- to 1.8e-06 at 25
-  nodes on boxCox and to machine precision on `logitNorm`. Estimates for existing
-  TBS fits therefore move, by more the higher the between-subject variability and
-  the tighter a `logit`/`probit` bound.
+  nodes on boxCox and to machine precision on `logitNorm`. Estimates AND objective
+  values for existing TBS fits therefore move, by more the higher the
+  between-subject variability and the tighter a `logit`/`probit` bound. Measured
+  OFV shifts on a 6-timepoint fixture: 0.15 (boxCox, omega 0.16), 0.31
+  (`logitNorm(0, 12)`, omega 0.16), 3.13 (`logitNorm(0, 12)`, omega 0.49).
+
+  **Do not compare an OFV across this release.** The objective itself changed for
+  these endpoints, so a likelihood-ratio test, or an AIC/BIC comparison, between a
+  TBS model fitted before this version and one fitted after is NOT valid -- the
+  two numbers are not on the same scale. Refit both sides. A shift of ~3 units is
+  the size of a nested-model test, so this is not a rounding concern. Every other
+  residual family is unchanged, and `adfo` (which keeps the expansion) and
+  `adirmc` (which refuses TBS residuals) are unaffected.
 
   `adfo` KEEPS the expansion and is now the one estimator that does. Having no
   node ensemble is what FO means, so there is nothing to compose over; an adfo
