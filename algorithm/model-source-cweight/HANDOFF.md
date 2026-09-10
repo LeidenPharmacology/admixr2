@@ -169,22 +169,44 @@ what `bcrcl` has to be to explain the rest of the data.
      `r' Mpinv r`) for cov-route groups, alongside the unchanged
      `.admSrcMeat()` n-route path -- mixed n/cov fits work with no new
      plumbing.
-   Verified on a correctly-specified 1-cmt fit (`verify_se_fix.R`):
-   `J ~= 2H` (diagonal ratios 0.999-1.055) and `covMethod = "r"` vs `"r,s"`
-   SEs agree to ~1%. `adghControl(covMethod = "none")` is no longer required
-   for `srcWeight = "cov"`.
+   Verified two ways, both now in `tests/testthat/test-integration-model-source.R`
+   (not just `algorithm/`, so a regression here fails CI):
+   * At `theta_hat = theta_src` exactly (`r = 0`, the "lone source reports
+     its own uncertainty" fixture) `J = 2H` to `< 1e-5` -- the EXACT identity,
+     since the sandwich meat's Gauss-Newton form (`4 A' Mpinv A`) drops no
+     curvature term when the residual it was dropped from is itself zero.
+     This is the number that actually validates the formula.
+   * Off that point (a fit whose `theta_hat != theta_src`), `J` and `2H`
+     diverge by up to ~5% -- confirmed (by re-running at `cov_h_outer = 1e-4`,
+     unchanged, and by testing an intentionally-unbiased source, also
+     unchanged) to be the Gauss-Newton meat's dropped `r`-weighted curvature
+     term, not a bug: it is a property of `r != 0`, not of step size or of
+     whether the source happens to be correct. `covMethod = "r"` vs `"r,s"`
+     SEs still agree to within that ~5% there, which is the tolerance the
+     "off-target fit" test uses and explains.
+   * A BANDED source (`stratify` + `strata_nodes`) is also covered -- see
+     item 2 below, now done for exactly this reason.
+   `adghControl(covMethod = "none")` is no longer required for
+   `srcWeight = "cov"`.
    * Remaining cost, not yet measured or surfaced: `srcWeight = "cov"` still
      forces `grad = "fd"` for the OPTIMIZER (unchanged from before this fix)
      -- so a fit using it loses the analytical gradient entirely. If
      `srcWeight = "cov"` is to fully replace the n route, `.adghGradNLL`
      itself needs the group term (`2 A' Mpinv r`, the same `A` this fix
      already derives) so the analytical path stops being FD-only. Not
-     started.
-2. **Stratification/covariates + the CORRECTED moment-space fix, together:**
-   never tested. The only stratified scenario tested (wt-covariate) used the
-   now-invalidated named-parameter version. `.admSrcWeight`'s row-stacking
-   across a group's member studies should handle it -- theory says so,
-   nobody has run it.
+     started -- and not a small patch: `.adghGradNLL` fuses moment
+     derivatives directly into `grad` through `contrib_j`/`sig_V_extra`/
+     `.admResidChain` rather than exposing a per-study `dE`/`dV` this group
+     term could reuse, so this is a restructuring of that function's core
+     accumulation, not an addition to it.
+2. **DONE.** A banded (`stratify` + `strata_nodes`) source under
+   `srcWeight = "cov"`, `covMethod = "r,s"` is now a testthat test
+   ("a BANDED source still counts as one contribution, r,s") -- it exercises
+   `.admTauVecDeriv()`'s `rbind` ordering against a banded `Mpinv` (a
+   single-band source cannot catch a stacking mismatch between
+   `.admSrcJac()`, which builds `Mpinv`, and `.admTauVecDeriv()`, which
+   builds the sandwich meat); passes, and the SE is still J-invariant and
+   equal to the source's own reported SE.
 3. **`M` is frozen, not live.** Built once from `theta_src` (fixed, since `D`
    is a property of the source model alone). Measured sensitivity: ~36%
    relative Frobenius-norm change in `M` for a realistic parameter shift

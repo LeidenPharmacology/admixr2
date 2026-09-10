@@ -1776,9 +1776,11 @@ adghControl <- function(
     # its declared `n`). "cov" weights it instead by C_src, projected into
     # moment space via .admSrcWeight -- no `n` anywhere in that term. See
     # algorithm/covariate-shift/ on the experiment branch for the measurements
-    # motivating this; NOT yet validated for the SE (.adghGradNLL still scores
-    # a "cov" source's Hessian contribution the old way -- covMethod = "r,s"
-    # under srcWeight = "cov" is not self-consistent yet).
+    # motivating this. The SE is self-consistent for BOTH covMethod = "r" and
+    # "r,s" (.adghCalcCov/.admSandwichCov are Mpinv-aware; verified J ~= 2H --
+    # see algorithm/model-source-cweight/verify_se_fix.R). What is still
+    # missing is the ANALYTICAL gradient for the point estimate: see the
+    # grad = "fd" forcing just below.
     srcWeight        = c("n", "cov"),
     ...) {
 
@@ -1808,8 +1810,10 @@ adghControl <- function(
     message("adghControl: srcWeight = \"cov\" is not implemented in the ",
             "analytical-gradient path (.adghGradNLL still scores a model ",
             "source by n) -- grad has been set to \"fd\" so the optimizer ",
-            "actually uses the weight just requested. Pass grad = \"fd\" ",
-            "explicitly to silence this message.")
+            "actually uses the weight just requested. This affects the ",
+            "OPTIMIZER only, not standard errors: covMethod = \"r\"/\"r,s\" ",
+            "are both Mpinv-aware regardless of this setting. Pass ",
+            "grad = \"fd\" explicitly to silence this message.")
     grad <- "fd"
   }
 

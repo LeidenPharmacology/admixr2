@@ -160,3 +160,82 @@ test_that("the covariance route does not disturb a DATA source", {
   s2 <- stats::setNames(s2$parFixedDf[["SE"]], rownames(s2$parFixedDf))[["tcl"]]
   expect_gt(s1 / s2, 1.5)
 })
+
+# -- srcWeight = "cov": the SE must be self-consistent with the objective it --
+# -- actually minimised, for BOTH covMethod = "r" and "r,s" --------------------
+.ms_run_cov <- function(g, cm = "r,s", mod = .ms_fit)
+  suppressMessages(nlmixr2est::nlmixr2(mod, admData(), est = "adgh",
+    control = adghControl(studies = g, print = 0L, cores = 2L, covMethod = cm,
+                          srcWeight = "cov")))
+
+test_that("srcWeight = \"cov\": a lone source reports its OWN uncertainty exactly, r AND r,s", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # theta_hat = theta_src exactly here (the fit model reproduces the source),
+  # so r = 0 at the optimum -- the one point where the sandwich meat's
+  # Gauss-Newton approximation (4 A' Mpinv A) and the true curvature agree
+  # exactly, not just asymptotically. Both covMethod paths must therefore
+  # reproduce C_src to numerical precision, not merely approximately.
+  C  <- .ms_C()
+  sd <- sqrt(diag(C))
+  g  <- .ms_gen(400)
+  for (cm in c("r", "r,s")) {
+    f  <- .ms_run_cov(g, cm = cm)
+    # Pin that the requested route actually ran rather than silently degrading
+    # (the "r,s" -> "r" fallback is otherwise indistinguishable from a pass:
+    # at r = 0 both routes give C_src exactly, so a degraded "r,s" would still
+    # match sd below -- checking covMethod is the only way to know "r,s" was
+    # really exercised, not just requested).
+    expect_identical(f$covMethod, cm, info = paste("covMethod =", cm))
+    se <- stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))
+    for (k in c("tcl", "tv", "add.err"))
+      expect_equal(se[[k]], sd[[k]], tolerance = 1e-4,
+                   info = paste("covMethod =", cm, "parameter", k))
+    expect_equal(sqrt(diag(f$cov))[["om.eta.cl"]], sd[["eta.cl"]],
+                 tolerance = 1e-4, info = paste("covMethod =", cm, "omega"))
+    # At r = 0 the Gauss-Newton meat (4 A' Mpinv A) drops no curvature term --
+    # J = 2H should hold to numerical precision here, not just approximately.
+    # This is the assertion an .admSrcMeatCov()/.admTauVecDeriv() regression
+    # would actually fail; the SE checks above would not catch a formula error
+    # that happened to still cancel against C_src at this one point.
+    if (cm == "r,s") {
+      hj <- f$env$admExtra$sandwich
+      expect_false(is.null(hj), info = "sandwich did not engage")
+      if (!is.null(hj)) expect_equal(diag(hj$J), diag(2 * hj$H), tolerance = 1e-5)
+    }
+  }
+})
+
+test_that("srcWeight = \"cov\": r and r,s AGREE (J ~= 2H) on an off-target fit", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # .fit differs from .ms_published here (see .ms_fit's starting ini()s vs
+  # .ms_published -- both still converge to the SAME model class, so this is
+  # correctly specified, just not at the exact r = 0 point the test above
+  # pins). Off the r = 0 point, J = 2H only up to the Gauss-Newton meat's
+  # dropped r-weighted curvature term -- the test above pins that term to
+  # < 1e-5 exactly AT r = 0, so the 5% tolerance here is that curvature term's
+  # size on THIS off-target fixture, not slack for an unexplained discrepancy.
+  # Were .adghGradNLL (Mpinv-blind) still driving either the Hessian or the
+  # meat, "r" and "r,s" would disagree by far more than that, and
+  # unpredictably with n.
+  g     <- .ms_gen(400)
+  f_r   <- .ms_run_cov(g, cm = "r");   expect_identical(f_r$covMethod,  "r")
+  f_rs  <- .ms_run_cov(g, cm = "r,s"); expect_identical(f_rs$covMethod, "r,s")
+  expect_equal(f_rs$parFixedDf[["SE"]], f_r$parFixedDf[["SE"]], tolerance = 0.05)
+})
+
+test_that("srcWeight = \"cov\": a BANDED source still counts as one contribution, r,s", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # Same invariant as the n-route's banded test above, but exercising
+  # .admTauVecDeriv()'s rbind ordering against a banded Mpinv -- a single-band
+  # source cannot catch a stacking-order mismatch between .admSrcJac() (which
+  # built Mpinv) and .admTauVecDeriv() (which builds the sandwich meat).
+  se_at <- function(J) {
+    g <- .ms_gen(400, C = .ms_C_wt(), strat = "WT", J = J, mod = .ms_pub_wt)
+    f <- .ms_run_cov(g, cm = "r,s", mod = .ms_fit_wt)
+    expect_identical(f$covMethod, "r,s", info = paste("J strata =", J))
+    stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))[["bwt"]]
+  }
+  s4 <- se_at(4L); s9 <- se_at(9L)
+  expect_equal(s4, s9, tolerance = 1e-3)
+  expect_equal(s9, sqrt(.ms_C_wt()["bwt", "bwt"]), tolerance = 1e-3)
+})
