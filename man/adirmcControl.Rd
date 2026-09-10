@@ -222,7 +222,7 @@ one.} Under correct specification \verb{J = 2H} and the sandwich returns what
 \code{"r"} returns, so defaulting to it costs nothing when the normal-theory
 assumption holds and corrects the standard errors when it does not. Anything
 it cannot build degrades to \code{"r"} and reports \code{"r"}, so no fit loses its
-covariance by asking. Pass \code{covMethod = "r"} for the pre-0.4.2 behaviour.
+covariance by asking. Pass \code{covMethod = "r"} for the pre-0.4.1 behaviour.
 
 Applies to every residual family whose conditional law is independent across
 timepoints, which is all of them except \code{ar()}: the conditionally-normal set
