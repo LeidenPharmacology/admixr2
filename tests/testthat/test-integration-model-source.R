@@ -1,10 +1,13 @@
 # A study generated from a published MODEL is not a sample. Its (E, V) are exact
-# functions of theta_src, so the only random object in the chain is the estimate
-# the source published and the covariance of our fit is the delta method through
-# it. Reading `n` as precision instead makes the reported SE fall as exactly
-# 1/sqrt(n) -- a factor the analyst chooses by typing a number.
+# functions of theta_src, so `n` sets that study's RELATIVE WEIGHT against the
+# others rather than its precision, and there is no sampling law to build a
+# standard error from. Reading `n` as precision anyway makes the reported SE
+# fall as exactly 1/sqrt(n) -- a factor the analyst chooses by typing a number.
 #
-# See validation/SPEC-se-paths.md for the full taxonomy.
+# So admixr2 reports NO standard error for a fit that includes a model source,
+# and refuses an explicit covMethod rather than honouring one. These tests pin
+# that contract, and pin that an ordinary digitised study still gets its
+# sandwich -- the failure mode of removing this feature is over-cutting.
 
 TIMES_MS <- c(0.5, 1, 2, 4, 8, 12, 24)
 DOSE_MS  <- 200
@@ -21,142 +24,96 @@ DOSE_MS  <- 200
   model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
           cp <- linCmt(); cp ~ add(add.err) })
 }
-# a FULL C_src over every parameter the source estimates, with correlation
-.ms_C <- function() {
-  nm <- c("tcl", "tv", "add.err", "eta.cl")
-  sd <- c(0.080, 0.060, 0.004, 0.010)
-  R  <- diag(4); R[1, 2] <- R[2, 1] <- -0.5; R[1, 4] <- R[4, 1] <- 0.3
-  C  <- diag(sd) %*% R %*% diag(sd)
-  dimnames(C) <- list(nm, nm)
-  C
-}
-# the banded arm needs a model that actually READS the covariate it bands on
-.ms_pub_wt <- function() {
-  ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75
-        eta.cl ~ 0.05; add.err <- 0.08 })
-  model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt; v <- exp(tv)
-          cp <- linCmt(); cp ~ add(add.err) })
-}
-.ms_fit_wt <- function() {
-  ini({ tcl <- log(4); tv <- log(45); bwt <- 0.4
-        eta.cl ~ 0.1; add.err <- 0.1 })
-  model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt; v <- exp(tv)
-          cp <- linCmt(); cp ~ add(add.err) })
-}
-.ms_C_wt <- function() {
-  nm <- c("tcl", "tv", "bwt", "add.err", "eta.cl")
-  sd <- c(0.080, 0.060, 0.055, 0.004, 0.010)
-  C  <- diag(sd^2); dimnames(C) <- list(nm, nm); C
-}
-.ms_gen <- function(n, C = .ms_C(), strat = NULL, J = NULL, times = TIMES_MS,
-                    mod = .ms_published) {
-  sp <- list(times = times, ev = rxode2::et(amt = DOSE_MS), n = n,
-             model_cov = C)
-  if (!is.null(strat)) {
-    sp$cov_dist <- covDist(WT = c(mean = 78, sd = 16), dist = "lnorm")
-    sp$stratify <- strat; sp$strata_nodes <- J
-    sp$cov_range <- list(WT = c(50, 115))
-  }
+.ms_gen <- function(n = 400, times = TIMES_MS) {
   suppressWarnings(suppressMessages(datagen(
-    list(t1 = sp), model = mod,
+    list(t1 = list(times = times, ev = rxode2::et(amt = DOSE_MS), n = n)),
+    model = .ms_published,
     control = datagenControl(method = "gh", seed = 1L))))
 }
-.ms_run <- function(g, cm = "r,s", mod = .ms_fit) {
+# The same numbers, as a SIMULATED data study rather than a published one. This
+# is the control arm: identical (E, V), no model-source marker, so the sandwich
+# must still run. Anything that refuses BOTH has over-cut.
+.ms_as_data <- function(n = 400, times = TIMES_MS) {
+  suppressWarnings(suppressMessages(.admDatagenSim(
+    list(t1 = list(times = times, ev = rxode2::et(amt = DOSE_MS), n = n)),
+    model = .ms_published,
+    control = datagenControl(method = "gh", seed = 1L))))
+}
+# The control object is built OUTSIDE the suppressMessages(), because the
+# refusal is raised there and a test that cannot hear it proves nothing.
+.ms_ctl <- function(g, ...) adghControl(studies = g, print = 0L, cores = 2L, ...)
+.ms_run <- function(g, ..., mod = .ms_fit) {
+  ctl <- .ms_ctl(g, ...)
   suppressMessages(nlmixr2est::nlmixr2(mod, admData(), est = "adgh",
-    control = adghControl(studies = g, print = 0L, cores = 2L, covMethod = cm)))
+                                       control = ctl))
+}
+# covMethod = "none" is reported back as an empty string, not the literal word
+.ms_no_se <- function(f) {
+  expect_false(f$covMethod %in% c("r", "r,s"))
+  expect_true(all(is.na(f$parFixedDf[["SE"]])))
 }
 
-test_that("a lone model source reports the SOURCE's own uncertainty, at every n", {
+test_that("a model source fit reports NO standard error, at any n", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # Where our model can reproduce the source's, the discrepancy is exactly zero
-  # at theta = theta_src, so theta_hat = theta_src and G = I -- which makes
-  # Var(theta_hat) = C_src EXACTLY. That is the whole claim, and it is what the
-  # old path got wrong by a factor of sqrt(n).
-  C  <- .ms_C()
-  sd <- sqrt(diag(C))
+  # The point estimates are still combined -- only the uncertainty claim is
+  # withdrawn. covMethod resolves to "none" on its own, with a message saying
+  # so, rather than silently producing a number that tracks `n`.
   for (n in c(100, 1600)) {
-    f  <- .ms_run(.ms_gen(n))
-    pf <- f$parFixedDf
-    se <- stats::setNames(pf[["SE"]], rownames(pf))
-    for (k in c("tcl", "tv", "add.err"))
-      expect_equal(se[[k]], sd[[k]], tolerance = 1e-4,
-                   info = paste("n =", n, "parameter", k))
-    expect_equal(sqrt(diag(f$cov))[["om.eta.cl"]], sd[["eta.cl"]],
-                 tolerance = 1e-4, info = paste("n =", n, "omega"))
+    g <- .ms_gen(n)
+    expect_message(.ms_ctl(g), "no sampling law")
+    f <- .ms_run(g)
+    expect_s3_class(f, "admFit")
+    expect_true(all(is.finite(f$parFixedDf[["Estimate"]])),
+                info = paste("n =", n))
+    .ms_no_se(f)
   }
 })
 
-test_that("the source's parameter CORRELATIONS propagate", {
+test_that("an EXPLICIT covMethod is refused, not honoured", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # A scalar `n` carries no correlation at all. This is one of the things the
-  # covariance route gives that no choice of `n` ever could.
-  f  <- .ms_run(.ms_gen(400))
-  cc <- stats::cov2cor(f$cov)
-  expect_equal(cc["tcl", "tv"], -0.5, tolerance = 1e-3)
-  expect_equal(cc["tcl", "om.eta.cl"], 0.3, tolerance = 1e-2)
+  # The whole defect is a plausible-looking SE that moves with a number the
+  # analyst typed. Honouring an explicit covMethod would leave that number one
+  # argument away, so both sandwich and naive forms are refused by name.
+  g <- .ms_gen(400)
+  for (cm in c("r", "r,s"))
+    expect_error(.ms_ctl(g, covMethod = cm), "published MODEL", info = cm)
+  # "none" is what the refusal asks for, so it must be accepted silently
+  expect_silent(.ms_ctl(g, covMethod = "none"))
+  .ms_no_se(.ms_run(g, covMethod = "none"))
 })
 
-test_that("a BANDED model source counts as one contribution, not J", {
+test_that("the refusal is keyed on the model source, not on generated moments", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # C_src is applied ONCE across the stacked strata. Per-stratum application
-  # would give J independent copies, so raising the resolution would silently
-  # buy confidence -- the covariance analogue of the sum(n_k) = n rule the
-  # objective already keeps.
-  se_at <- function(J) {
-    g <- .ms_gen(400, C = .ms_C_wt(), strat = "WT", J = J, mod = .ms_pub_wt)
-    f <- .ms_run(g, mod = .ms_fit_wt)
-    stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))[["bwt"]]
+  # Byte-identical (E, V); only the marker differs. A digitised study reports on
+  # real patients, so `n` IS its precision and the sandwich is correct for it.
+  # This is the arm that fails if the removal cut too deep.
+  d <- .ms_as_data(400)
+  expect_silent(f <- .ms_run(d, covMethod = "r,s"))
+  expect_identical(f$covMethod, "r,s")
+  se <- stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))
+  expect_true(all(is.finite(se[c("tcl", "tv", "add.err")])))
+  expect_true(all(se[c("tcl", "tv", "add.err")] > 0))
+})
+
+test_that(".admDatagenSim is the same numbers without the published claim", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The two doors differ ONLY in the claim, never in the moments. If they ever
+  # diverge numerically then the marker has started changing the fit rather than
+  # changing what may be said about it, which is not what it is for.
+  pub <- .ms_gen(400); sim <- .ms_as_data(400)
+  expect_equal(pub$t1$E, sim$t1$E, tolerance = 1e-12)
+  expect_equal(pub$t1$V, sim$t1$V, tolerance = 1e-12)
+  expect_true(isTRUE(pub$t1[[".adm_src"]]))
+  expect_null(sim$t1[[".adm_src"]])
+})
+
+test_that("a digitised study's SE still scales with its n", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The ordinary path is untouched: for real patients 1/sqrt(n) is the right
+  # law, and it is only wrong for a study that never sampled anyone.
+  se_at <- function(n) {
+    f <- .ms_run(.ms_as_data(n), covMethod = "r")
+    stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))[["tcl"]]
   }
-  s4 <- se_at(4L); s9 <- se_at(9L)
-  expect_equal(s4, s9, tolerance = 1e-3)
-  # ... and it is still the source's own, not something J-dependent
-  expect_equal(s9, sqrt(.ms_C_wt()["bwt", "bwt"]), tolerance = 1e-3)
-})
-
-test_that("an INCOMPLETE model_cov is refused rather than understating the SE", {
-  skip_on_cran(); skip_if_not_installed("rxode2")
-  # A parameter the source ESTIMATED but did not report a covariance for
-  # contributes zero, which asserts the source knew it exactly and makes the
-  # reported SE too SMALL -- the dangerous direction, and nothing about the
-  # matrix looks wrong.
-  C <- .ms_C()[c("tcl", "tv"), c("tcl", "tv"), drop = FALSE]
-  # said at GENERATION time -- a warning raised later, from inside CalcCov, is
-  # swallowed by the nlmixr2est stack (the drivers record the same lesson)
-  expect_warning(
-    g <- suppressMessages(datagen(
-      list(t1 = list(times = TIMES_MS, ev = rxode2::et(amt = DOSE_MS),
-                     n = 400, model_cov = C)),
-      model = .ms_published, control = datagenControl(method = "gh", seed = 1L))),
-    "ESTIMATES")
-  # and the fit then refuses the sandwich rather than reporting a too-small SE
-  f <- suppressWarnings(.ms_run(g))
-  expect_s3_class(f, "admFit")
-  # NOT expect_false(all.equal(SE, declared)): that passes for ANY other value,
-  # including 0.008, NA and Inf -- i.e. for exactly the too-small-but-plausible
-  # outcome this test exists to rule out. Pin the covariance actually reported.
-  expect_identical(f$covMethod, "r")
-  .se <- stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))[["tcl"]]
-  # the naive value the refusal falls back to, reproduced independently
-  .naive <- suppressWarnings(suppressMessages(.ms_run(g, cm = "r")))
-  .se_r  <- stats::setNames(.naive$parFixedDf[["SE"]],
-                            rownames(.naive$parFixedDf))[["tcl"]]
-  expect_true(is.finite(.se) && .se > 0)
-  expect_equal(.se, .se_r, tolerance = 1e-6)
-})
-
-test_that("the covariance route does not disturb a DATA source", {
-  skip_on_cran(); skip_if_not_installed("rxode2")
-  # No `model_cov` means no provenance means the existing data weight, byte for
-  # byte. The change must be invisible to every fit that does not opt in.
-  g  <- .ms_gen(400, C = NULL)
-  a  <- .ms_run(g, cm = "r,s")
-  b  <- .ms_run(g, cm = "r")
-  expect_true(all(is.finite(sqrt(diag(a$cov)))))
-  expect_true(all(is.finite(sqrt(diag(b$cov)))))
-  # and a data source's SE DOES scale with n, which is correct for real patients
-  g2 <- .ms_gen(1600, C = NULL)
-  s1 <- stats::setNames(a$parFixedDf[["SE"]], rownames(a$parFixedDf))[["tcl"]]
-  s2 <- .ms_run(g2, cm = "r")
-  s2 <- stats::setNames(s2$parFixedDf[["SE"]], rownames(s2$parFixedDf))[["tcl"]]
-  expect_gt(s1 / s2, 1.5)
+  expect_gt(se_at(100) / se_at(1600), 1.5)
 })

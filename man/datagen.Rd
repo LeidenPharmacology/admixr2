@@ -18,29 +18,6 @@ default is supplied via the \code{model} argument.}
 \item{\code{ev}}{A dosing event table created with \code{rxode2::et()}.}
 \item{\code{n}}{(Optional) integer sample size; stored as metadata and
 used when supplying the result to \code{admControl()}.}
-\item{\code{model_cov}}{(Optional) the source model's OWN parameter
-covariance, as that model's analysis reported it. Supplying it is what
-makes a standard error meaningful for a study generated from a
-published model: such a study is not a sample, its \code{E}/\code{V} are exact
-functions of the source's parameters, so the only uncertainty in the
-chain is the source's own and the fit propagates it by the delta
-method. Without it \code{n} is read as a sample size instead, and the
-reported SE then falls as \code{1/sqrt(n)} --- a factor you choose by
-typing a number, not a property of the evidence.
-A \strong{named} matrix, whose dimnames are the source model's \code{ini()}
-parameter names. The names are load-bearing twice over: they say which
-parameter each row is, and they fix the SCALE, which is the scale that
-model's \code{ini()} uses --- log for a theta written \code{tcl <- log(5)}, an SD
-for a residual, a variance for an omega. That is also the scale
-nlmixr2 prints estimates on.
-It must cover every parameter the source ESTIMATES. A parameter left
-out contributes no uncertainty at all, which asserts the source knew it
-exactly and reports an SE that is too small, so an incomplete matrix
-warns and no standard error is reported. A \code{fix()}ed parameter is an
-assertion and must NOT appear. A diagonal --- a paper's relative
-standard errors, with no correlations --- is a valid fallback: it is
-exact at the source's own covariate reference and degrades only as you
-extrapolate away from it.}
 \item{\code{cov_dist}}{(Optional) the covariate distribution this study's
 subjects span --- see \code{\link[=covDraw]{covDraw()}} for the grammar. The generated
 \code{E}/\code{V} are MARGINAL over it, which is what a publication reports.

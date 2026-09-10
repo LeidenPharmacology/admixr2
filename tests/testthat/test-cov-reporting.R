@@ -132,7 +132,17 @@ test_that("the omega entry ORDER matches rxode2's own (row, col) enumeration", {
   # to upstream without a ::: dependency (admixr2 has none, deliberately).
   pinfo <- admixr2:::.admParseIniDf(make_inidf_2eta())
   Om    <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pinfo)$p0, pinfo)$omega
-  el    <- rxode2::rxOmegaVarCovDeriv(unname(Om), order = 1L)$elements
+  # rxode2 5.1.2 no longer EXPORTS rxOmegaVarCovDeriv, so reach it however it is
+  # reachable and skip if it has gone entirely. The point of this test is to pin
+  # our enumeration to upstream's; silently dropping the comparison when upstream
+  # moves is how the convention drifts unnoticed, and erroring on it tells us
+  # nothing about admixr2.
+  .rxOVD <- if ("rxOmegaVarCovDeriv" %in% getNamespaceExports("rxode2"))
+    rxode2::rxOmegaVarCovDeriv else
+    tryCatch(get("rxOmegaVarCovDeriv", envir = asNamespace("rxode2")),
+             error = function(e) NULL)
+  skip_if(is.null(.rxOVD), "rxode2 no longer provides rxOmegaVarCovDeriv")
+  el    <- .rxOVD(unname(Om), order = 1L)$elements
 
   # The SET of entries must match. The ORDER need not, and does not in general:
   # rxode2 enumerates the lower triangle column-major ((1,1), (2,1), (2,2)) while

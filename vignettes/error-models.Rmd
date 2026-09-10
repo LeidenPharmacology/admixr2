@@ -66,7 +66,12 @@ mod_prop <- function() {
   })
 }
 
-gen <- datagen(
+# .admDatagenSim(), not datagen(): this study STANDS IN for a digitised summary
+# so the true values are known, so it is treated as the digitised data it is
+# pretending to be. datagen() itself marks its output as a published model, for
+# which no standard error is available -- the right default for a real analysis,
+# and the wrong one for a stand-in that exists only to make the truth visible.
+gen <- admixr2:::.admDatagenSim(
   studies = list(s1 = list(times = times, ev = rxode2::et(amt = 100), n = 200L)),
   model = mod_prop, control = datagenControl(n_sim = 20000L, seed = 1L))
 ```

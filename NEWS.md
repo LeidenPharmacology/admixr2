@@ -58,11 +58,22 @@
   design would use. `adfo` and `adirmc` refuse `cov_dist` rather than solve at
   the covariate mean.
 
-* **A model source's own uncertainty reaches the standard errors.** A study
-  generated from a published model carries that fit's covariance, and the
-  objective is corrected for it (Woodbury form, so a fit with no model source is
-  bit-for-bit unchanged). `covMethod` defaults to `"r,s"` when any study is such
-  a source, since under `"r"` its standard error would shrink with `n`.
+* **A study can contribute as a published MODEL**, not only as digitised
+  aggregate data: give `admStudy()` a `model` with the paper's parameter table
+  as `est`, and it is generated into the (E, V) the paper would have reported
+  and combined with your own studies in one joint fit. `n` sets that study's
+  RELATIVE WEIGHT against the others.
+
+  **No standard error is reported for a fit that includes one, and an explicit
+  `covMethod` is refused rather than honoured.** Such a study is not a sample:
+  its mean and covariance are exact functions of the source's own parameters, so
+  there is no sampling law to build an interval from. Weighting it as if `n`
+  patients had been observed produces a plausible, finite standard error that
+  falls as exactly `1/sqrt(n)` --- measured 1.000 / 2.000 / 4.000 / 8.000 over
+  `n` = 100 / 400 / 1600 / 6400 --- i.e. a precision the analyst sets by typing
+  a number. Nothing downstream can tell that number from a real one, so it is
+  withheld instead of qualified. Point estimates are unaffected, and a fit with
+  no model source is unchanged in every respect.
 
 * **`anova()` on `admFit` objects**, with a misspecification-corrected
   likelihood-ratio test (Satorra-Bentler scaling, Ruben's series for the
@@ -335,6 +346,30 @@ argument. None is a bug fix, so all are listed here rather than below.
   progress table, which such a script does see.
 
 ## Bug fixes
+
+* **`cov_integration` is now `"on"` / `"sparse"` / `"off"`, and the covariate
+  integral is reduced automatically.** It used to take four values that mixed
+  two unrelated questions: which grid to use, and whether to attempt one
+  particular reduction. The second has a right answer per study, which the code
+  can determine, so it is no longer asked -- `"on"` reduces the integral
+  wherever a reduction verifies against the design it replaces, and `"off"`
+  integrates on the bare product grid.
+
+  Measured against a high-resolution reference across four model shapes, the
+  reduction taken is both cheaper and more accurate than the grid it replaces
+  -- 2.5x to 17x fewer design points and 100x to 170000x lower relative error --
+  so there is no speed-for-accuracy trade left for a caller to adjudicate.
+
+  **The covariate SHIFT path is removed** along with `"auto"` and `"shift"`. It
+  pinned a covariate at its reference and folded its contribution into one
+  random-effect column. `.admJointCollapse` finds the same structure -- rank 1
+  on the case the shift was built for -- without needing a certificate, and
+  wherever both applied the joint was more accurate for its rows: 2.05e-08 at 14
+  points against 1.03e-06 at 10 with one random effect, 2.35e-07 against
+  2.58e-06 with two. Its remaining niche was so narrow that its own test
+  fixtures could not reach it. Gradients and objectives are bit-identical for
+  every model that did not take the shift, which is every model the default ever
+  produced.
 
 * **Parallel restarts (`workers > 1`) could fail with "a parallel worker could
   not read the compiled-model cache" whenever a second R session was using

@@ -189,21 +189,11 @@ adirmcControl <- function(
   checkmate::assertNumeric(convcrit,        lower = 0,   len = 1)
   checkmate::assertIntegerish(max_worse,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(kappa_n_nodes, lower = 1L, len = 1)
-  covMethod <- match.arg(covMethod)
-  # A MODEL SOURCE CARRYING ITS OWN COVARIANCE IS REFUSED HERE, not silently
-  # scored without the correction. The D C_src D' term needs each study's mean
-  # in R, and adirmc's mu is the importance-weighted mean computed INSIDE
-  # irmc_inner_nll_cpp -- it never exists at R level, so there is nothing to
-  # correct. Left unsaid, the fit would run and report the too-tight weight the
-  # correction exists to remove. The other three estimators upgrade covMethod
-  # instead (see .admResolveCovMethod); adirmc has no such route.
-  if (.admHasModelSource(studies))
-    stop("admixr2: est = \"adirmc\" cannot fit a study that contributes as a ",
-         "published MODEL with its own reported uncertainty. Its predicted ",
-         "mean is the importance-weighted mean formed inside the C++ kernel, ",
-         "so the source-covariance correction has nothing to attach to.
-",
-         "  Use est = \"adgh\" or \"admc\", which carry it.", call. = FALSE)
+  # A model source is not a sample, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
   checkmate::assertIntegerish(cov_n_sim,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(n_restarts,   lower = 1L,  len = 1)
   checkmate::assertNumeric(restart_sd,      lower = 0,   len = 1)

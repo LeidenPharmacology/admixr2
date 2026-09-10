@@ -7,9 +7,6 @@
 admStudy(
   model = NULL,
   est = NULL,
-  rse = NULL,
-  se = NULL,
-  cov = NULL,
   E = NULL,
   V = NULL,
   sd = NULL,
@@ -35,19 +32,6 @@ admStudy(
 \item{est}{Named vector of the paper's parameter estimates, on the scale the
 model's \code{ini()} is written on --- so \code{tcl = log(5.2)} for a clearance
 reported as 5.2. Omitted parameters keep the model's own \code{ini()} value.}
-
-\item{rse}{Named vector of relative standard errors, \strong{as percentages}, the
-way a parameter table prints them. Converted to a covariance on the right
-scale automatically: for a log-parameterised theta the RSE of the reported
-quantity IS the standard error of the log, while an ordinary coefficient
-takes the usual \verb{|estimate| * RSE/100}. \code{print()} shows the conversion.}
-
-\item{se}{Named vector of standard errors instead of \code{rse}, already on the
-\code{ini()} scale. Use where a paper reports an SE rather than a percentage.}
-
-\item{cov}{A full parameter covariance matrix, if the source published one
-(or if you have its fit: pass \code{fit$cov}). Beats \code{rse}/\code{se}, because it
-carries the correlations those cannot.}
 
 \item{E, V, sd, sem}{Digitised aggregate data: the reported mean profile \code{E},
 with its spread as \code{sd} (per timepoint), \code{sem} (converted using \code{n}), or a
@@ -117,16 +101,14 @@ be read back against the source before anything is fitted.
 A study contributes in one of two currencies, and this takes either:
 \itemize{
 \item \strong{a published model} --- \code{model}, with the paper's parameter table as
-\code{est} and its uncertainty as \code{rse} (or \code{se}, or a full \code{cov});
+\code{est};
 \item \strong{digitised aggregate data} --- \code{E} with \code{sd} (or \code{sem}, or \code{V}).
 }
 
-Supplying uncertainty matters. A study generated from a model is not a
-sample: its mean and covariance are exact functions of that model's
-parameters, so the only uncertain thing in the chain is the estimate the
-original analyst published. Without it \code{n} is read as a sample size and the
-reported standard error becomes a number you chose rather than a property of
-the evidence.
+A study generated from a model is not a sample: its mean and covariance are
+exact functions of that model's parameters, and \code{n} sets its RELATIVE WEIGHT
+against the other studies rather than its precision. No standard error is
+reported for a fit that includes one --- see \code{\link[=admStudies]{admStudies()}}.
 
 Nothing is solved here. The study is generated when it reaches the fit, so
 building one is cheap and a mistake surfaces on \code{print()} rather than after a

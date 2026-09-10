@@ -45,11 +45,13 @@
   # NULL for the three estimators that have no eta grid; the joint collapse
   # needs it to price itself against the design it would replace
   pinfo$n_nodes          <- .ctl$n_nodes
-  # How the covariate distribution is integrated: "quadrature" (the product grid
-  # above) or "sparse" (a Smolyak grid over the same margins). Only
-  # adghControl() exposes it, so every other estimator falls back to
-  # "quadrature" here and is unchanged.
-  pinfo$cov_integration  <- .ctl$cov_integration %||% "quadrature"
+  # How the covariate distribution is integrated: "on" (the product grid above,
+  # reduced wherever a reduction verifies), "off" (that grid, unreduced) or
+  # "sparse" (a Smolyak grid over the same margins). Only adghControl() exposes
+  # it, so every other estimator lands on "off" here -- the reductions are
+  # quadrature constructions and the other estimators reach their etas through
+  # .admMakeZ, so "off" is not a default, it is the only correct value for them.
+  pinfo$cov_integration  <- .ctl$cov_integration %||% "off"
   # 3, matching adghControl's default and .adghGrid's own fallback. Level 2 is
   # the axial rule the retired Taylor design was; adghControl always supplies
   # the value so this fallback is unreachable today, but a control that did not
@@ -273,15 +275,13 @@
   # straight out of a single source's estimating equation, which is why it is
   # not required -- but across sources it sets the RELATIVE WEIGHT, and the
   # pooling is only optimal when that weight matches the precision the source
-  # actually has (n_m h_m proportional to C_m^-1). So a model source with no
-  # usable `n` is harmless alone and silently mis-weights a mixture. Said where
-  # the consequence is, which is the same reasoning that put the `model_cov`
-  # check in datagen().
-  .src <- tryCatch(.admSrcGroups(studies), error = function(e) list())
-  if (length(studies) > 1L && length(.src)) {
-    bad_n <- names(.src)[vapply(.src, function(ix) {
-      nn <- vapply(ix, function(i) as.numeric(studies[[i]]$n %||% NA_real_), 0)
-      !all(is.finite(nn)) || any(nn <= 0) }, logical(1))]
+  # actually has. So a model source with no usable `n` is harmless alone and
+  # silently mis-weights a mixture. Said where the consequence is.
+  .is_src <- vapply(studies, function(s) isTRUE(s[[".adm_src"]]), logical(1))
+  if (length(studies) > 1L && any(.is_src)) {
+    bad_n <- names(studies)[.is_src][vapply(studies[.is_src], function(s) {
+      nn <- as.numeric(s$n %||% NA_real_)
+      !is.finite(nn) || nn <= 0 }, logical(1))]
     if (length(bad_n))
       warning("admixr2: model source", if (length(bad_n) > 1L) "s " else " ",
               paste(sQuote(bad_n), collapse = ", "), " ",
@@ -293,23 +293,7 @@
               "the source actually has. Set `n` to the sample size the source ",
               "model was developed on.", call. = FALSE)
   }
-  yd <- tryCatch(.admSrcYardstick(cov, studies), error = function(e) NULL)
-  if (!is.null(yd))
-    warning("admixr2: the standard error for ",
-            paste(sQuote(yd$pars), collapse = ", "), " is BELOW the one source '",
-            yd$src, "' reported for the same parameter",
-            if (length(yd$pars) > 1L) "s" else "", " (ratio ",
-            paste(sprintf("%.3f", yd$ratio), collapse = ", "), ").
-",
-            "  A summary of a published model cannot carry more information ",
-            "than the analyst who had every patient, so this says this ",
-            "estimator's map from the source's parameters is not the identity ",
-            "-- it approximates the source rather than reproducing it. The ",
-            "covariance is the honest VARIANCE of that approximating estimator, ",
-            "but of a BIASED one, so it understates TOTAL error. `adfo` ",
-            "linearises and does this by construction; the quadrature and ",
-            "Monte-Carlo estimators reproduce the source and do not.",
-            call. = FALSE)
+
   invisible(NULL)
 }
 

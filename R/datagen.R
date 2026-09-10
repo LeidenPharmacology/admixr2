@@ -107,29 +107,6 @@ datagenControl <- function(
 #'     \item{`ev`}{A dosing event table created with `rxode2::et()`.}
 #'     \item{`n`}{(Optional) integer sample size; stored as metadata and
 #'       used when supplying the result to `admControl()`.}
-#'     \item{`model_cov`}{(Optional) the source model's OWN parameter
-#'       covariance, as that model's analysis reported it. Supplying it is what
-#'       makes a standard error meaningful for a study generated from a
-#'       published model: such a study is not a sample, its `E`/`V` are exact
-#'       functions of the source's parameters, so the only uncertainty in the
-#'       chain is the source's own and the fit propagates it by the delta
-#'       method. Without it `n` is read as a sample size instead, and the
-#'       reported SE then falls as `1/sqrt(n)` --- a factor you choose by
-#'       typing a number, not a property of the evidence.
-#'       A **named** matrix, whose dimnames are the source model's `ini()`
-#'       parameter names. The names are load-bearing twice over: they say which
-#'       parameter each row is, and they fix the SCALE, which is the scale that
-#'       model's `ini()` uses --- log for a theta written `tcl <- log(5)`, an SD
-#'       for a residual, a variance for an omega. That is also the scale
-#'       nlmixr2 prints estimates on.
-#'       It must cover every parameter the source ESTIMATES. A parameter left
-#'       out contributes no uncertainty at all, which asserts the source knew it
-#'       exactly and reports an SE that is too small, so an incomplete matrix
-#'       warns and no standard error is reported. A `fix()`ed parameter is an
-#'       assertion and must NOT appear. A diagonal --- a paper's relative
-#'       standard errors, with no correlations --- is a valid fallback: it is
-#'       exact at the source's own covariate reference and degrades only as you
-#'       extrapolate away from it.}
 #'     \item{`cov_dist`}{(Optional) the covariate distribution this study's
 #'       subjects span --- see [covDraw()] for the grammar. The generated
 #'       `E`/`V` are MARGINAL over it, which is what a publication reports.
@@ -277,9 +254,9 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   for (i in seq_along(studies)) {
     nm <- study_names[[i]]
     s  <- studies[[i]]
-    # `[[ ]]`, NOT `$`: a study also carries `model_cov`, and `$` PARTIAL-MATCHES
-    # on lists -- `s$model` silently returned the covariance MATRIX the moment
-    # that field was added, and every study then failed as "must be a function".
+    # `[[ ]]`, NOT `$`: `$` PARTIAL-MATCHES on lists, so `s$model` silently
+    # returned a longer field the moment one was added and every study then
+    # failed as "must be a function".
     m  <- s[["model"]] %||% model
     if (is.null(m))
       stop(sprintf(
@@ -348,43 +325,13 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # inert and the grid silently uses its own default.
     pinfo$cov_nodes   <- control$cov_nodes %||% 7L
     out_var <- .admOutputVar(ui)
-    .src_cov  <- .admSrcCov(s[["model_cov"]] %||% attr(mdl, "model_cov"), ui, nm)
-    # SOURCE IDENTITY IS A PROPERTY OF THE SOURCE, NOT OF THE CALL.
-    # It used to default to the study NAME within this datagen() call, which
-    # collides the moment a caller generates each source separately under the
-    # same name -- `datagen(list(s = ...))` once per paper is the obvious way to
-    # write it, and every study then lands in ONE group. Three different
-    # published models were merged into a single source: one paper's C_src
-    # applied to all of them, the other two silently discarded, and the whole
-    # set counted as one contribution. Numerically fine and completely wrong.
-    #
-    # The digest is over what actually makes a source distinct -- its model
-    # text, the parameter values it published, and its own covariance -- so
-    # studies that genuinely share a source still share an id. Both cases that
-    # matters for keep working: a BANDED source (same model and theta, several
-    # strata) and a source reported by subgroup (same model, different `cov`)
-    # digest identically and stay one group, which is what C_src being applied
-    # once across them requires.
-    .src_key <- tryCatch(
-      digest::digest(list(ui$lstExpr, .admSrcTheta(ui), .src_cov$cov)),
-      error = function(e) nm)
-    # THE NAME QUALIFIES THE DIGEST, it does not replace it. A bare name
-    # over-MERGES: two different published models generated under the same
-    # study name landed in one .admSrcGroups() group, and .admSrcJac() then
-    # regenerated paper B's blocks from paper A's model and published thetas
-    # while paper B's C_src was discarded -- its only guard is a dimension
-    # check, which the per-unit `times` satisfy. Pasting the digest on keeps
-    # `by`/`stratify`'s "one paper is one source" grouping (every level shares
-    # ui, theta and cov, so the digest is identical) while two genuinely
-    # different models can never merge.
-    .src_prov <- list(id    = if (is.null(s[[".adm_src_id"]])) .src_key
-                              else paste0(s[[".adm_src_id"]], "|", .src_key),
-                      model = mdl,
-                      theta = .admSrcTheta(ui),
-                      cov   = .src_cov$cov,
-                      par   = .src_cov$par,
-                      missing = .src_cov$missing,
-                      control = control)
+    # A generated block is not a sample. It carries a marker so the covariance
+    # step can refuse to report a standard error for it: the data weight
+    # Omega_s(n_s) is the wrong object for moments that are exact functions of
+    # the source's published theta, and applying it anyway makes the reported SE
+    # fall as 1/sqrt(n) -- measured 1.000/2.000/4.000/8.000 over n =
+    # 100/400/1600/6400. A number driven entirely by what the analyst typed.
+    .src_prov <- TRUE
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
 
     # A model mixing a continuous endpoint with a COUNT one is refused here for
@@ -587,11 +534,8 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       # declares "unbiased" and both are converted correctly.
       r$v_denom <- "ml"
       if (!is.null(cov_ref_of()))     { r$cov      <- cov_ref_of() }
-      # Provenance for the standard error. See .admSrcCov(): a generated block
-      # is not a sample, so its contribution to the covariance runs through the
-      # SOURCE's own uncertainty rather than through `n`. `id` groups the strata
-      # of one banded source, which must count as ONE contribution however fine
-      # the banding.
+      # The marker that says "generated from a published model, not sampled".
+      # .admResolveCovMethod() reads it to refuse a standard error.
       r$.adm_src <- .src_prov
       # The stratum resolution, carried for the same reason and by the same
       # route. .admExpandStrata() stamps it on the study, but one_result() builds
@@ -631,172 +575,21 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   stats::setNames(results, unlist(study_names))
 }
 
-# NOTE: these live at the END of the file deliberately. Inserting them above
-# datagenControl() put them BETWEEN that function and its roxygen block, so
-# the block bound to the helper instead -- datagenControl stopped being
-# exported and an internal was exported and documented in its place. Nothing
-# follows here, so nothing can be orphaned.
-# =============================================================================
-# Model sources: the provenance the standard error needs
-# =============================================================================
+# datagen() AS A SIMULATOR, not as a published source.
 #
-# A study generated from a published MODEL is not a sample. Its (E, V) are exact
-# functions of that model's parameters, so the only random thing in the whole
-# chain is `theta_src_hat` -- the estimate the source published -- and the
-# covariance of our fit is the delta method through it:
+# datagen() does two jobs that look identical from inside it and differ entirely
+# in what they claim. Turning a PUBLISHED model into a study says "this is what
+# that paper reported", and the result is not a sample: no standard error is
+# available for a fit that includes it (see .admResolveCovMethod). Turning a
+# model you wrote yourself into a study says "pretend a trial of `n` patients
+# came out like this", which is a simulated DATA study and the ordinary weight
+# is the right one for it.
 #
-#     Var(theta_hat) = G C_src G' ,      G = d theta_hat / d theta_src
-#
-# `n` is NOT a precision statement for such a study. It divides straight out of
-# a lone source's estimating equation (measured: the estimate is 0.75000 at
-# n = 100, 400, 1600 and 6400, unchanged), and sets only the RELATIVE WEIGHT
-# against other sources. Reading `n` as precision is what makes the reported SE
-# fall as exactly 1/sqrt(n) -- a factor the analyst chooses by typing a number.
-#
-# So the covariance is declared HERE, in the datagen block, beside the model it
-# belongs to. Nothing has to be restated at fit time, and a generated study
-# carries everything its own standard error needs.
-#
-#   datagen(list(trial1 = list(times = ..., ev = ..., n = 240,
-#                              model     = published_mod,
-#                              model_cov = C)),      # <- the source's own
-#           control = datagenControl(method = "gh"))
-#
-# SCALE. `C_src` is on the scale of the SOURCE MODEL'S OWN `ini()` block, which
-# is the scale that gets perturbed to form the Jacobian: log for a theta written
-# `tcl <- log(5)`, natural for one written `bwt <- 0.75`. This is checked rather
-# than documented -- the dimnames must be `iniDf` parameter names, so a matrix
-# built against the wrong parameterisation is refused instead of silently
-# rescaling every reported interval.
-# `arg` is the name the CALLER's user typed, and it goes last because
-# .admRestartWorker's rule applies to every helper a driver reaches: a new
-# formal in the middle re-binds every positional call site. admStudy() calls
-# this at construction so a malformed or incomplete matrix is refused where
-# the user is standing -- datagen() runs inside the nlmixr2est stack, which
-# swallows both warnings and the reason the sandwich then declined.
-.admSrcCov <- function(cov, ui, nm, arg = "model_cov") {
-  if (is.null(cov)) return(NULL)
-  bad <- function(...) stop("admixr2: study '", nm, "': `", arg, "` ", ...,
-                            call. = FALSE)
-  cov <- as.matrix(cov)
-  if (nrow(cov) != ncol(cov)) bad("must be square; got ", nrow(cov), " x ",
-                                  ncol(cov), ".")
-  rn <- rownames(cov) %||% colnames(cov)
-  if (is.null(rn))
-    bad("must carry the parameter NAMES as dimnames -- they are what says which ",
-        "parameter each row is, and on which scale. Use the names from the ",
-        "source model's `ini()` block, e.g. dimnames(C) <- list(c(\"tcl\", ",
-        "\"bwt\"), c(\"tcl\", \"bwt\")).")
-  if (!is.null(colnames(cov)) && !identical(rownames(cov), colnames(cov)))
-    bad("has different row and column names, so it does not describe one ",
-        "parameter set.")
-  ini <- tryCatch(ui$iniDf, error = function(e) NULL)
-  if (is.null(ini)) bad("cannot be checked: the source model would not parse.")
-  # ACCEPT A FIT'S COVARIANCE AS IT COMES. The obvious thing to pass is the
-  # source fit's own `$cov`, and nlmixr2 names its omega rows on the REPORTING
-  # convention -- `om.eta.cl` for the variance of `eta.cl`, `cov.a.b` for an
-  # off-diagonal -- while an `ini()` block calls that row `eta.cl`. Refusing
-  # `om.` would mean every user renaming a matrix by hand, so translate it.
-  # The scale already agrees: both are the variance.
-  .om <- grepl("^om[.]", rn)
-  if (any(.om)) {
-    cand <- sub("^om[.]", "", rn[.om])
-    okm  <- cand %in% ini$name[!is.na(ini$neta1) & ini$neta1 == ini$neta2]
-    if (any(okm)) rn[which(.om)[okm]] <- cand[okm]
-  }
-  # ...and the same for an OFF-DIAGONAL, `cov.<eta_i>.<eta_j>`. It cannot be
-  # split on dots -- an eta name contains them (`cov.eta.cl.eta.v`) -- so match
-  # the two halves against the eta names the model actually declares, longest
-  # first so `eta.cl` cannot shadow `eta.cl.2`. The `ini()` row for that
-  # covariance is named for the LATER eta pair, which is how .admCovNames()
-  # writes it and how rxode2 stores it.
-  .cv <- grepl("^cov[.]", rn)
-  if (any(.cv)) {
-    etas <- ini$name[!is.na(ini$neta1)]
-    etas <- etas[order(nchar(etas), decreasing = TRUE)]
-    for (k in which(.cv)) {
-      body <- sub("^cov[.]", "", rn[k])
-      hit  <- NA_character_
-      for (e1 in etas) {
-        if (startsWith(body, paste0(e1, "."))) {
-          e2 <- substring(body, nchar(e1) + 2L)
-          if (e2 %in% etas) {
-            row <- ini$name[!is.na(ini$neta1) & !is.na(ini$neta2) &
-                            ini$neta1 != ini$neta2]
-            pair <- intersect(row, c(paste0("(", e1, ",", e2, ")"),
-                                     paste0("(", e2, ",", e1, ")")))
-            if (length(pair)) { hit <- pair[1L]; break }
-          }
-        }
-      }
-      if (is.na(hit))
-        bad("names ", sQuote(rn[k]), ", an OFF-DIAGONAL omega entry that does ",
-            "not correspond to any covariance this model's `ini()` declares. ",
-            "Drop it and its row, or rename it to the `ini()` row name.")
-      rn[k] <- hit
-    }
-  }
-  dimnames(cov) <- list(rn, rn)
-  # Only ESTIMATED parameters carry uncertainty. A fix()ed one is an assertion
-  # -- the source claims to know it -- so it contributes no variance, and naming
-  # it is a sign the matrix came from somewhere other than that model's fit.
-  est <- ini$name[!ini$fix]
-  unknown <- setdiff(rn, ini$name)
-  if (length(unknown))
-    bad("names ", paste(sQuote(unknown), collapse = ", "),
-        ", which the source model's `ini()` does not declare. Declared: ",
-        paste(sQuote(ini$name), collapse = ", "), ".")
-  fixed <- intersect(rn, ini$name[ini$fix])
-  if (length(fixed))
-    bad("names ", paste(sQuote(fixed), collapse = ", "),
-        ", which the source model fix()es. A fixed parameter is an ASSERTION, ",
-        "so it carries no uncertainty to propagate -- drop ",
-        if (length(fixed) == 1L) "it" else "them", " from `", arg, "`.")
-  if (!isTRUE(all.equal(unname(cov), unname(t(cov)), tolerance = 1e-8)))
-    bad("is not symmetric, so it is not a covariance matrix.")
-  ev <- tryCatch(eigen(cov, symmetric = TRUE, only.values = TRUE)$values,
-                 error = function(e) NULL)
-  if (is.null(ev) || min(ev) < -1e-10 * max(1, max(ev)))
-    bad("is not positive semi-definite (smallest eigenvalue ",
-        sprintf("%.3g", if (is.null(ev)) NA_real_ else min(ev)),
-        "), so it describes no distribution. A matrix rebuilt from published ",
-        "SEs and correlations can fail this if the correlations were rounded; ",
-        "supplying SEs only, as a DIAGONAL, is a valid fallback.")
-  miss <- setdiff(est, rn)
-  # AN INCOMPLETE C_src IS NOT A PARTIAL ANSWER. A parameter the source
-  # ESTIMATED but reported no covariance for contributes zero to G C_src G',
-  # which asserts the source knew it exactly and makes the reported standard
-  # error too SMALL -- the dangerous direction, and nothing about the matrix
-  # looks wrong. Said HERE, at generation, because a warning raised later from
-  # inside CalcCov does not reach the user: the nlmixr2est stack swallows it,
-  # which is why the drivers report a missing covariance from their own frame.
-  if (length(miss))
-    warning("admixr2: study '", nm, "': `", arg, "` covers ",
-            paste(sQuote(rn), collapse = ", "), " but the source model also ",
-            "ESTIMATES ", paste(sQuote(miss), collapse = ", "),
-            ". A parameter with no covariance contributes none, which asserts ",
-            "the source knew it exactly and reports a standard error that is ",
-            "too small, so no standard error will be reported at all.
-",
-            "  Supply the missing ", if (length(miss) == 1L) "row" else "rows",
-            " -- a DIAGONAL entry from the paper's %RSE is a valid fallback -- ",
-            "or fix() ", if (length(miss) == 1L) "it" else "them",
-            " in the source model if it asserted ",
-            if (length(miss) == 1L) "it" else "them", " rather than ",
-            "estimating ", if (length(miss) == 1L) "it." else "them.",
-            call. = FALSE)
-  list(cov = cov, par = rn, missing = miss)
-}
-
-# Which parameters does a source model actually ESTIMATE, and at what values?
-#
-# Read at generation time rather than from the function text, because a model
-# routinely reads its values from variables -- `ini({ tcl <- log(CLp) })` is the
-# idiom for supplying a published model's numbers -- so the function alone does
-# not say what was generated.
-.admSrcTheta <- function(ui) {
-  ini <- tryCatch(ui$iniDf, error = function(e) NULL)
-  if (is.null(ini)) return(NULL)
-  keep <- !ini$fix
-  stats::setNames(ini$est[keep], ini$name[keep])
+# Only the caller knows which. datagen() assumes the first, because that is the
+# claim that is dangerous to get wrong -- a plausible standard error tracking a
+# number the analyst typed. This is the other door, for simulating a study to
+# exercise or demonstrate the machinery with. It is internal on purpose: an
+# exported version would be a way to ask for the SE the public route withholds.
+.admDatagenSim <- function(...) {
+  lapply(datagen(...), function(u) { u[[".adm_src"]] <- NULL; u })
 }

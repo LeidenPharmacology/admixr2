@@ -218,7 +218,7 @@ khan_model <- function() {
   })
 }
 
-.ctl <- foceiControl(print = 0L, covMethod = "r", covFull = TRUE)
+.ctl <- foceiControl(print = 0L, covMethod = "r")
 fit_normal   <- nlmixr2(sato_model, trial_data$normal,   est = "focei",
                         control = .ctl)
 fit_moderate <- nlmixr2(ito_model,  trial_data$moderate, est = "focei",
@@ -227,51 +227,32 @@ fit_mild     <- nlmixr2(khan_model, trial_data$mild,     est = "focei",
                         control = .ctl)
 ```
 
-Each analyst now writes up their trial. What goes in the paper is the estimates
-and --- this is the part that matters later --- the **parameter covariance from
-their own fit**, which is what makes a standard error meaningful downstream.
+Each analyst now writes up their trial. What goes in the paper is the model and
+its estimates --- which is all admixr2 needs to put the three papers into one
+fit.
 
 ```{r published}
-# `covFull = TRUE` above is the part that matters downstream. A source's
-# covariance has to span EVERY parameter it estimated -- residual error and IIV
-# included -- because a missing row reads as a parameter the source knew
-# exactly. admixr2 refuses the sandwich for the WHOLE fit rather than report
-# intervals that are too narrow, and says which row is missing when you build
-# the study.
-#
-# A source's matrix does not always cover the IIV -- a paper printing a %RSE
-# column rather than a covariance never does, and `covFull` itself returns the
-# fixed effects only for some fits. Fill that row from the %RSE reported for
-# it. A no-op when the matrix is already complete.
-with_om_row <- function(f, rse_om = 0.30, eta = "om.eta.cl") {
-  C <- f$cov
-  if (eta %in% rownames(C)) return(C)
-  nm  <- c(rownames(C), eta)
-  out <- matrix(0, length(nm), length(nm), dimnames = list(nm, nm))
-  out[rownames(C), rownames(C)] <- C
-  out[eta, eta] <- (rse_om * as.numeric(f$omega[1, 1]))^2
-  out
-}
+# What a paper prints: the model's parameter estimates, and the baseline table
+# describing who was enrolled. Nothing about the fit's own covariance is used --
+# a study generated from a published model is not a sample, so no standard error
+# is reported for a fit that includes one (see the last section).
 normal_paper <- list(
   CL   = exp(fit_normal$parFixedDf["tcl", "Estimate"]),
   V    = exp(fit_normal$parFixedDf["tv",  "Estimate"]),
   BSEX = fit_normal$parFixedDf["bsex",    "Estimate"],
-  OM   = as.numeric(fit_normal$omega[1, 1]),
-  COV  = with_om_row(fit_normal))
+  OM   = as.numeric(fit_normal$omega[1, 1]))
 
 mild_paper <- list(
   CL   = exp(fit_mild$parFixedDf["tcl", "Estimate"]),
   V    = exp(fit_mild$parFixedDf["tv",  "Estimate"]),
   BSEX = fit_mild$parFixedDf["bsex",    "Estimate"],
-  OM   = as.numeric(fit_mild$omega[1, 1]),
-  COV  = with_om_row(fit_mild))
+  OM   = as.numeric(fit_mild$omega[1, 1]))
 
 moderate_paper <- list(
   CL   = exp(fit_moderate$parFixedDf["tcl", "Estimate"]),
   V    = exp(fit_moderate$parFixedDf["tv",  "Estimate"]),
   BSEX = fit_moderate$parFixedDf["bsex",    "Estimate"],
-  OM   = as.numeric(fit_moderate$omega[1, 1]),
-  COV  = with_om_row(fit_moderate))
+  OM   = as.numeric(fit_moderate$omega[1, 1]))
 
 knitr::kable(data.frame(
   cohort      = c("normal", "mild", "moderate"),
@@ -302,8 +283,8 @@ printed: each trial's model, and the baseline table describing who was enrolled.
 That is enough --- `datagen()` turns a published model plus its population into
 the `(E, V, n)` a digitised figure would have given you.
 
-Each paper becomes one `admStudy()`: the model it published, the covariance it
-reported, the design, and the population it enrolled. Hand `population` the
+Each paper becomes one `admStudy()`: the model it published, the design, and the
+population it enrolled. Hand `population` the
 cohort itself and the baseline table is read off it --- mean and SD per
 continuous covariate, the sex split, the correlation between weight and renal
 function, and `n` from the row count. That correlation is taken on the LATENT
@@ -341,9 +322,8 @@ alongside `CRCL`.
 # to be shared between them.
 #
 # With a real paper you have no fit object. You write the model out yourself and
-# hand admStudy() the printed numbers -- `est = c(tcl = log(5.2), ...)` with
-# `rse = c(tcl = 4.1, ...)` -- which is the same study, transcribed instead of
-# recovered.
+# hand admStudy() the printed numbers -- `est = c(tcl = log(5.2), ...)` -- which
+# is the same study, transcribed instead of recovered.
 sato_published <- fit_normal$ui        # normal renal function
 ito_published  <- fit_moderate$ui      # moderate impairment
 khan_published <- fit_mild$ui          # mild impairment
@@ -351,7 +331,6 @@ khan_published <- fit_mild$ui          # mild impairment
 # --- each paper's study ----------------------------------------------------
 normal_study <- admStudy(
   model      = sato_published,
-  cov        = normal_paper$COV,
   population = cohorts$normal,
   dose       = DOSE,
   times      = TIMES,
@@ -359,7 +338,6 @@ normal_study <- admStudy(
 
 moderate_study <- admStudy(
   model      = ito_published,
-  cov        = moderate_paper$COV,
   population = cohorts$moderate,
   dose       = DOSE,
   times      = TIMES,
@@ -367,7 +345,6 @@ moderate_study <- admStudy(
 
 mild_study <- admStudy(
   model      = khan_published,
-  cov        = mild_paper$COV,
   population = cohorts$mild,
   dose       = DOSE,
   times      = TIMES,
@@ -437,8 +414,11 @@ adm_model <- function() {
 fit <- nlmixr2(adm_model, admData(), est = "adgh",
                control = adghControl(studies = studies, print = 0L))
 pf     <- fit$parFixedDf
-om     <- as.numeric(fit$omega[1L, 1L])
-om_se  <- sqrt(diag(fit$cov))[["om.eta.cl"]]   # omega's SE is in $cov, not pf
+# NO INTERVALS HERE, and that is the point: every study in this vignette is a
+# published model rather than a sample, so there is no sampling law to build one
+# from and admixr2 reports no standard error at all. The estimates are what the
+# three papers jointly imply; whether the renal effect is real is settled by the
+# likelihood-ratio test below, which needs no standard error.
 knitr::kable(data.frame(
   parameter = c("CL at 70 kg, CRCL 90, women (L/h)", "V at 70 kg (L)",
                 "renal exponent", "sex effect (log)", "additive SD (mg/L)",
@@ -447,15 +427,7 @@ knitr::kable(data.frame(
   estimate  = c(pf["tcl", "Back-transformed"], pf["tv", "Back-transformed"],
                 pf["bcrcl", "Back-transformed"], pf["bsex", "Back-transformed"],
                 pf["add.err", "Back-transformed"],
-                as.numeric(fit$omega[1L, 1L])),
-  # CIs, not SEs: a structural theta's SE is on the LOG scale, so printing it
-  # beside a back-transformed estimate invites reading 0.022 as 0.022 L/h
-  lower     = c(pf["tcl", "CI Lower"], pf["tv", "CI Lower"],
-                pf["bcrcl", "CI Lower"], pf["bsex", "CI Lower"],
-                pf["add.err", "CI Lower"], om - 1.96 * om_se),
-  upper     = c(pf["tcl", "CI Upper"], pf["tv", "CI Upper"],
-                pf["bcrcl", "CI Upper"], pf["bsex", "CI Upper"],
-                pf["add.err", "CI Upper"], om + 1.96 * om_se)),
+                as.numeric(fit$omega[1L, 1L]))),
   digits = 3, row.names = FALSE,
   caption = "Recovered from three analyses, none of which contained a renal term.")
 ```
@@ -475,57 +447,40 @@ that does not perfectly agree, pooled anyway, and honest about the residual.
 ## How far can you trust that number?
 
 A study generated from a published **model** is not a sample. Its `E` and `V` are
-exact functions of that model's parameters, so the only uncertain thing in the
-whole chain is the estimate the original analyst published --- and the interval
-on our answer has to come from theirs.
+exact functions of that model's parameters, so there is no sampling law
+underneath it --- and **admixr2 reports no standard error for a fit that
+includes one.** The table above has estimates and no intervals for that reason,
+and an explicit `covMethod` is refused rather than honoured.
 
-That is why each study above carries `cov`, the source fit's own covariance.
-Hand it the fit's `$cov` as it comes; the `om.eta.cl` naming is understood.
-
-Without it, `n` gets read as a sample size instead, and the reported SE then
-falls as `1/sqrt(n)` --- exactly proportional, measured to four significant
-figures. It is a factor you choose by typing a number, not a property of the
-evidence: the `n` that would reproduce one parameter's true uncertainty differs
-by more than eightfold from the `n` that reproduces another's, in the same
-model. No single value can be right for both.
+It would be easy to print one anyway: read `n` as a sample size and a finite,
+plausible standard error falls out. It falls as `1/sqrt(n)` --- exactly
+proportional, measured to four significant figures --- so it is a precision you
+choose by typing a number. Worse, no single number can be right: the `n` that
+would reproduce one parameter's true uncertainty differs by more than eightfold
+from the `n` that reproduces another's, in the same model. Nothing downstream
+can tell that number from a real one, so it is withheld rather than qualified.
 
 `n` still matters, but only for **relative weight** between sources. Set it to
 the sample size each source was developed on.
 
-Two conventions worth knowing, both easy to get wrong. A structural theta's SE
-is on the **log** scale --- printing it beside a back-transformed estimate would
-read as L/h and be off by an order of magnitude --- so `parFixedDf` gives
-back-transformed CIs, used above. And the **omega** SE is not in `parFixedDf` at
-all: by nlmixr2 convention it lives in `fit$cov`, as `om.eta.cl`.
+What you can still do is test. A likelihood-ratio test compares two fits by their
+objective functions and needs no standard error at all, which is the next
+section.
 
-### Why the covariance is a sandwich here
-
-Nothing above asked for one. Because a study here contributes as a published
-**model** carrying its own reported uncertainty, `covMethod` defaults to
-`"r,s"` rather than `"r"`, and says so when it does. Passing `covMethod = "r"`
-explicitly still gets you the naive form.
-
-That is not a stylistic default. A model source is not a sample of `n`
-patients: its mean and covariance are exact functions of somebody else's
-published estimate, so the only random object in the chain is that estimate and
-the uncertainty it carries is the source's own `C_src`. Only the sandwich
-carries that term. Under `"r"` the source is read as if `n` patients had been
-sampled and the reported standard error falls as `1/sqrt(n)` --- it reached
-0.08000 at every `n` under `"r,s"`, against a declared 0.08.
+### Why banding still matters
 
 Every source in this vignette marginalises over the covariates it did not
 condition on. That is the honest description of what these publications report
---- and it is also the one configuration where the default covariance is not
-valid. Over 720 replicates, with no source banded on the covariate its own
-model fitted: coverage **0.817** against a nominal 0.950, and a
-likelihood-ratio test sized **0.125** against a nominal 0.05. A biased point
-inside an interval that is too narrow is the combination that invalidates
-inference, so admixr2 warns rather than letting it pass.
+--- and it is also the configuration in which the pooled objective is least
+trustworthy. Over 720 replicates, with no source banded on the covariate its own
+model fitted, the likelihood-ratio test was sized **0.125** against a nominal
+0.05: a test that rejects two and a half times too often is a test that will
+find a covariate effect that is not there.
 
-Banding fixes it, and **one banded source is as good as three**: coverage 0.933
-with one, 0.925 with all of them, and test sizes 0.083 and 0.058 against the
-0.125 above. `stratify = TRUE` derives the banding from the source's own model,
-so it needs nothing restated.
+Banding fixes it, and **one banded source is as good as three**: test sizes
+**0.083** with one banded and **0.058** with all of them, against the 0.125
+above. `stratify = TRUE` derives the banding from the source's own model, so it
+needs nothing restated --- which is why all three studies above set it.
 
 ### Is the renal effect real?
 
@@ -814,10 +769,10 @@ be anything else, because the model has no renal term. It would return the same
 ## Doing this with your own papers
 
 **A paper contributes in one of two currencies**, and `admStudy()` takes either.
-A published *model* goes in as `model` with the paper's estimates and its
-uncertainty; *digitised* aggregate data goes in as `E` with `sd` (or `sem`, or a
-full `V`). Nothing is solved when you build one, so a study is cheap to write
-and `print()` back against the source before any fitting happens.
+A published *model* goes in as `model` with the paper's estimates as `est`;
+*digitised* aggregate data goes in as `E` with `sd` (or `sem`, or a full `V`).
+Nothing is solved when you build one, so a study is cheap to write and `print()`
+back against the source before any fitting happens.
 
 **The baseline table** goes to `admPopulation()` in whichever form the paper
 printed, one covariate per argument:
@@ -839,17 +794,17 @@ allometric term is `NaN`. `admPopulation()` warns when it sees this. If you have
 the individual covariates --- a digitised listing, or your own cohort --- pass
 `data =` and the table is read off them.
 
-**Uncertainty is what makes a standard error mean anything.** A study generated
+**A published model gets you an estimate, not an interval.** A study generated
 from a model is not a sample: its mean and covariance are exact functions of
-somebody else's published estimate, so the only random thing in the chain is
-that estimate. Give the paper's full `cov` where it reports one, or its `rse`
-column (as percentages, the way a parameter table prints them) --- `print()`
-shows the conversion, which is not the same for a log-parameterised theta as for
-an ordinary coefficient. It must cover **every** parameter the source estimated:
-a missing row reads as a parameter the source knew exactly, and admixr2 refuses
-the whole sandwich rather than report intervals that are too narrow. With an
-`nlmixr2` fit in hand, `foceiControl(covFull = TRUE)` makes `fit$cov` exactly
-that matrix.
+somebody else's published estimate, so there is no sampling law underneath it to
+build a standard error from. `n` sets that study's *relative weight* against the
+others and nothing more. Weighting it as though `n` patients had been observed
+does produce a standard error --- a finite, plausible one that shrinks as
+`1/sqrt(n)`, i.e. a precision you set by typing a number --- so admixr2 reports
+none at all for a fit that includes a model source, and refuses an explicit
+`covMethod` rather than honouring one. Point estimates are unaffected, and a
+model *is* still the right currency for a paper: it is what lets three
+incompatible published models be combined at all.
 
 **Then read `print()` before you fit.** It lays out which covariates each source
 bands, conditions and marginalises, and says so when one is marginal everywhere

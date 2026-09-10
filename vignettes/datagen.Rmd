@@ -168,14 +168,22 @@ regardless.
 fit_sim <- nlmixr2(
   analysis_model, admData(), est = "admc",
   control = admControl(
-    studies   = study_data,
-    maxeval   = 300L,
-    covMethod = "r"
+    studies = study_data,
+    maxeval = 300L
   )
 )
 
 print(fit_sim)
 ```
+
+**No standard errors are reported here, and that is not a shortcoming of the
+setup.** A study `datagen()` produced is not a sample: its `E` and `V` are exact
+functions of the generating model's parameters, so `n` sets that study's
+*relative weight* against the others rather than its precision. Reading `n` as a
+sample size does yield a standard error --- a finite, plausible one that shrinks
+as `1/sqrt(n)`, i.e. a precision chosen by typing a number --- so admixr2
+reports none, and refuses an explicit `covMethod` rather than honouring it.
+Point estimates are unaffected, which is what this section is checking.
 
 Structural parameter estimates and the truth:
 

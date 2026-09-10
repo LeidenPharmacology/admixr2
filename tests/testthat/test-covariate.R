@@ -7,8 +7,12 @@
 
 # ---- routing -----------------------------------------------------------------
 
-.cov_pinfo <- function(n_eta = 1L, cov_integration = NULL)
-  list(n_eta = n_eta,
+## n_nodes is present because a real adgh pinfo always has it, and the covariate
+## ladder keys on it to tell adgh from the estimators that have no eta grid --
+## driver.R hands those cov_integration = "on" by fallback, so the
+## string alone cannot make that distinction.
+.cov_pinfo <- function(n_eta = 1L, cov_integration = NULL, n_nodes = 5L)
+  list(n_eta = n_eta, n_nodes = n_nodes,
        eta_col_names = if (n_eta == 1L) "eta.cl" else c("eta.cl", "eta.v"),
        cov_integration = cov_integration,
        chol_diag = rep(TRUE, n_eta),
@@ -65,27 +69,18 @@ test_that(".admCheckCovariates routes to the general path by default", {
       cov_dist = list(WT = list(mu = 0, sd = 0.6))))), "rows")
 })
 
-test_that('cov_integration = "auto" falls back where "shift" errors', {
-  # `v <- exp(tv) * WT^vwt` has no random effect in the assignment carrying the
-  # covariate, so there is no column to shift. .admShiftSpec() decides that from
-  # the model text alone, which is why it is reachable without a compiled model;
-  # everything subtler is decided by .admShiftVerify() against the solver.
+test_that("a reduction that does not apply falls back quietly", {
+  # A covariate on a parameter carrying no random effect. Nothing reduces it,
+  # and that is the ordinary case rather than an event: no error, and nothing
+  # announced, because the caller asked for "on" and not for any particular
+  # reduction. The study is integrated on the full grid.
   ui <- .cov_ui(expr = list(quote(v <- exp(tv) * WT^vwt)))
   st <- list(a = list(cov_dist = list(WT = list(mu = 70, sd = 10))))
-
-  expect_error(
-    admixr2:::.admCheckCovariates(ui, .cov_pinfo(cov_integration = "shift"),
-                                  st),
-    "exactly one random effect")
-
-  # "auto" is a SPEED lever, and the fallback is the more accurate path, so a
-  # refusal must never be an error -- only a message and the reason recorded.
-  expect_message(
+  expect_silent(
     got <- admixr2:::.admCheckCovariates(
-      ui, .cov_pinfo(cov_integration = "auto"), st),
-    "auto")
+      ui, .cov_pinfo(cov_integration = "on"), st))
   expect_identical(got$a$.adm_cov_path, "rows")
-  expect_match(got$a$.adm_cov_shift_why, "exactly one random effect")
+  expect_null(got$a$.adm_cov_joint)
 })
 
 test_that(".admCovMeanOf gives the solve value each path needs", {
@@ -122,46 +117,6 @@ test_that(".admCheckCovariates still errors on genuinely unsupportable input", {
       "not a supported distribution")
 })
 
-test_that(".admShiftNodes solves F_u(u) = Phi(z) exactly, and smoothly", {
-  # The shift path's inversion, and the direct replacement for the retired
-  # .admCovUQuantile: Newton on the exact mixture CDF of u = Delta(a) + eta,
-  # never interpolation on a grid. A grid makes u piecewise-linear in the
-  # parameters, which is the mismatch that stops an analytic gradient being
-  # consistent with the objective it differentiates.
-  g   <- admixr2:::.adghNodes1(32L)
-  D   <- 0.75 * log(exp(log(72) + 0.28 * g$x) / 72)   # allometric Delta
-  om  <- 0.30
-  # 25, not more: beyond ~8 SD pnorm() saturates at exactly 1, so the target
-  # probability carries no information and Newton leaves those nodes wherever it
-  # found them (documented in .admShiftNodes -- their GH weight is ~1e-23, so
-  # they cannot move a moment). .adghNodes1(41) reaches there; 25 does not.
-  n_u <- 25L
-  un  <- admixr2:::.admShiftNodes(D, g$w, om, n_u)
-  tg  <- pnorm(admixr2:::.adghNodes1(n_u)$x)
-
-  Fu <- as.numeric(pnorm(outer(un$u, D, "-") / om) %*% g$w)
-  expect_lt(max(abs(Fu - tg)), 1e-10)         # solves its defining equation
-  # monotone IN z. The nodes come back in .adghNodes1's own order, which is
-  # descending -- asserting diff(u) > 0 instead pins the ordering convention of
-  # a helper this function only borrows.
-  expect_true(all(diff(un$u[order(tg)]) > 0))
-  expect_true(all(is.finite(un$u)))
-  expect_equal(sum(un$w), 1)
-
-  # SHIFTING every Delta by eps must shift u by exactly eps: an exact identity,
-  # and one a grid interpolant cannot reproduce without quantisation.
-  eps <- 1e-7
-  u2  <- admixr2:::.admShiftNodes(D + eps, g$w, om, n_u)$u
-  expect_equal(mean((u2 - un$u) / eps), 1, tolerance = 1e-6)
-  expect_lt(sd((u2 - un$u) / eps), 1e-6)
-
-  # u's first two moments are known in closed form (E[Delta], Var(Delta)+om^2),
-  # so the node set must reproduce them -- that is what the quadrature is for.
-  mD <- sum(g$w * D); vD <- sum(g$w * D^2) - mD^2
-  expect_equal(sum(un$w * un$u), mD, tolerance = 1e-6)
-  expect_equal(sum(un$w * (un$u - mD)^2), vD + om^2, tolerance = 1e-4)
-
-})
 
 test_that("an unidentifiable covariate coefficient is warned about", {
   # One population, or several with the SAME covariate distribution, cannot
@@ -852,64 +807,7 @@ test_that("print.covDist reports what was DECLARED, not what it canonicalised to
 # Shift path -- the pieces that need no compiled model
 # =============================================================================
 
-test_that(".admShiftNodes inverts the mixture CDF of u = Delta + eta", {
-  # u's law is sum_j W_j N(Delta_j, om^2); the nodes must sit exactly at its
-  # Gauss-Hermite probabilities, which is what makes n_u rows stand in for the
-  # whole covariate x eta product grid.
-  D <- c(-0.4, -0.1, 0.05, 0.3, 0.7); W <- c(.1, .2, .4, .2, .1); om <- 0.3
-  for (n_u in c(7L, 15L, 31L)) {
-    un <- admixr2:::.admShiftNodes(D, W, om, n_u)
-    g  <- admixr2:::.adghNodes1(n_u)
-    Fu <- vapply(un$u, function(t) sum(W * stats::pnorm((t - D) / om)), 0)
-    expect_equal(Fu, stats::pnorm(g$x), tolerance = 1e-10)
-    expect_equal(sum(un$w), 1)
-    # a quantile map is monotone, so the nodes come back in the SAME order as
-    # the probabilities that generated them (.adghNodes1 is not sorted
-    # ascending). Only where the probability is RESOLVABLE: by 31 nodes the
-    # outermost sits near 9.9 SD, where pnorm() saturates to exactly 1 and the
-    # quantile is not determined. Those nodes carry weight ~1e-23 and so cannot
-    # move a moment, but they are not ordered.
-    keep <- abs(g$x) < 8
-    expect_identical(order(un$u[keep]), order(g$x[keep]))
-  }
-  # a degenerate covariate (no spread) must give back the plain eta nodes
-  un <- admixr2:::.admShiftNodes(rep(0, 3L), rep(1/3, 3L), om, 9L)
-  expect_equal(un$u, om * admixr2:::.adghNodes1(9L)$x, tolerance = 1e-9)
-})
 
-test_that(".admShiftDu gives the chain factors as conditional expectations", {
-  # du/dtheta = E[dDelta/dtheta | u] and du/dom = E[(u-Delta)/om | u], both
-  # under the covariate quadrature that built F_u -- checked against a finite
-  # difference of the NODES themselves.
-  # spec carries one entry per AFFECTED random effect: eta, link and the
-  # model's own right-hand side, so `rhs` is a list even at m = 1
-  spec <- list(eta = "eta.cl", link = "exp",
-               rhs = list(quote(exp(tcl + eta.cl) * (WT / 70)^b1)))
-  st <- list(tcl = log(4), b1 = 0.75)
-  X  <- matrix(c(55, 62, 70, 85, 100), 5L, 1L, dimnames = list(NULL, "WT"))
-  W  <- c(.1, .2, .4, .2, .1); ar <- list(WT = 70); om <- 0.3; n_u <- 11L
-  D  <- admixr2:::.admShiftDelta(spec, st, X, ar)[, 1L]
-  u  <- admixr2:::.admShiftNodes(D, W, om, n_u)$u
-  du <- admixr2:::.admShiftDu(spec, st, X, ar, D, W, om, u)
-
-  h <- 1e-3
-  fd <- function(k) {
-    s1 <- st; s1[[k]] <- s1[[k]] + h; s2 <- st; s2[[k]] <- s2[[k]] - h
-    (admixr2:::.admShiftNodes(admixr2:::.admShiftDelta(spec, s1, X, ar)[, 1L],
-                              W, om, n_u)$u -
-     admixr2:::.admShiftNodes(admixr2:::.admShiftDelta(spec, s2, X, ar)[, 1L],
-                              W, om, n_u)$u) / (2 * h) }
-  expect_equal(du$du_dtheta[, "b1"], fd("b1"), tolerance = 1e-5)
-  # the TYPICAL VALUE cancels out of Delta (a difference of the same expression
-  # at two covariate values), so it contributes nothing through u. Analytically
-  # zero; what survives is the round-off of the finite difference that measures
-  # dDelta/dtheta, which is ~1e-11 against b1's ~0.6.
-  expect_lt(max(abs(du$du_dtheta[, "tcl"])), 1e-8)
-  expect_gt(max(abs(du$du_dtheta[, "b1"])), 0.1)
-  fo <- (admixr2:::.admShiftNodes(D, W, om + h, n_u)$u -
-         admixr2:::.admShiftNodes(D, W, om - h, n_u)$u) / (2 * h)
-  expect_equal(du$du_domega, fo, tolerance = 1e-5)
-})
 
 test_that(".admShiftDelta is the log-scale shift, vectorised over the nodes", {
   spec <- list(eta = "eta.cl", link = "exp",
@@ -939,73 +837,9 @@ test_that(".admShiftDelta is the log-scale shift, vectorised over the nodes", {
   expect_equal(D2[, 2L], 1.00 * (log(X[, 1L]) - log(70)))
 })
 
-test_that("the Gaussian shift branch fires on exactly the qualifying laws", {
-  # The condition is that Delta(a) is NORMAL, not that the covariate is. That
-  # admits the allometric case for free: for lognormal WT, tcov*log(WT/70) is
-  # affine in the latent normal score. Deliberately NOT read off the model text
-  # or off rxode2's covariate frames -- on 5.1.4 those split the three common
-  # spellings across muRefCovariateDataFrame, muRefExtra and
-  # mu2RefCovariateReplaceDataFrame, so no single one of them sees this.
-  gh <- admixr2:::.adghNodes1; g <- gh(31L)
-  z  <- g$x; W <- g$w / sum(g$w)
-  qual <- list(normal_linear = 0.8 * (70 + 6 * z),
-               normal_scaled = 0.8 * (70 + 6 * z) / 70,
-               lognormal_log = 0.8 * log(exp(log(70) + 0.17 * z) / 70),
-               degenerate    = rep(0.5, length(z)))
-  nope <- list(lognormal_linear = 0.8 * exp(log(70) + 0.17 * z),
-               normal_square    = 0.8 * (70 + 6 * z)^2 / 100,
-               normal_log       = 0.8 * log(70 + 6 * z))
-  for (nm in names(qual))
-    expect_lt(admixr2:::.admShiftGaussResid(qual[[nm]], W), 1e-8)
-  for (nm in names(nope))
-    expect_gt(admixr2:::.admShiftGaussResid(nope[[nm]], W), 1e-3)
-  # and the node builder flags it
-  expect_true(isTRUE(admixr2:::.admShiftNodes(qual$lognormal_log, W, 0.3, 20L)$gauss))
-  expect_null(admixr2:::.admShiftNodes(nope$normal_square, W, 0.3, 20L)$gauss)
-})
 
-test_that("the Gaussian branch is exact where the mixture route only converges", {
-  # u = Delta + eta is exactly normal here, so the closed form is the truth and
-  # the quadrature over it is exact. The mixture route degrades as the covariate
-  # outruns the random effect because n_u nodes resolve a widely separated
-  # mixture worst -- that is the regime the branch exists for.
-  gh <- admixr2:::.adghNodes1; g <- gh(31L); z <- g$x; W <- g$w / sum(g$w)
-  om <- 0.30
-  for (ratio in c(0.5, 2, 8)) {
-    D  <- ratio * om * z                       # exactly normal, mean 0
-    nd <- admixr2:::.admShiftNodes(D, W, om, 20L)
-    expect_true(isTRUE(nd$gauss))
-    gg  <- gh(20L); w <- gg$w / sum(gg$w)
-    # E[exp(u)] = exp(om^2/2) * E_a[exp(Delta)] exactly, eta independent of a
-    truth <- exp(om^2 / 2) * sum(W * exp(D))
-    expect_equal(sum(w * exp(nd$u)), truth, tolerance = 1e-10)
-  }
-})
 
-test_that("shift node derivatives match a difference where u is determined", {
-  # Only where the CDF is not saturated: the outermost node's target sits
-  # ~1e-14 from 1, u is undetermined across a plateau there, and its difference
-  # quotient is noise rather than a reference. Interior nodes are the check.
-  gh <- admixr2:::.adghNodes1; g <- gh(31L); z <- g$x; W <- g$w / sum(g$w)
-  om <- 0.30
-  D  <- 0.8 * (70 + 6 * z); D <- D - mean(D)   # Gaussian branch
-  nd <- admixr2:::.admShiftNodes(D, W, om, 20L)
-  mD <- sum(W * D); vD <- max(sum(W * D^2) - mD^2, 0); s <- sqrt(vD + om^2)
-  an <- (om / s) * ((nd$u - mD) / s)           # closed form used by .admShiftDu
-  h  <- 1e-6
-  fd <- (admixr2:::.admShiftNodes(D, W, om + h, 20L)$u -
-         admixr2:::.admShiftNodes(D, W, om - h, 20L)$u) / (2 * h)
-  expect_equal(an, fd, tolerance = 1e-6)
-})
 
-test_that("shift nodes refuse non-finite input instead of erroring", {
-  gh <- admixr2:::.adghNodes1; g <- gh(15L); W <- g$w / sum(g$w)
-  D <- 0.5 * g$x; D[3] <- NaN
-  # previously reached `if (max(abs(st)) < tol)` as a missing value
-  expect_null(admixr2:::.admShiftNodes(D, W, 0.3, 20L))
-  D2 <- 0.5 * g$x; D2[1] <- Inf
-  expect_null(admixr2:::.admShiftNodes(D2, W, 0.3, 20L))
-})
 
 test_that("the affine certificate decides the Gaussian branch in 2-D", {
   # Delta = c + B z is exactly (jointly) normal because admixr2 builds every
@@ -1035,38 +869,7 @@ test_that("the affine certificate decides the Gaussian branch in 2-D", {
   expect_false(admixr2:::.admShiftGaussOK(aff$correlated, W, NULL, 2L))
 })
 
-test_that("the 2-D absorption is exact and needs no recursion", {
-  # u = Delta + eta is multivariate normal here, so the whole eta grid comes
-  # from chol(Omega + B B') and there is no inversion at any level.
-  gh <- admixr2:::.adghNodes1; nc <- 21L; g <- gh(nc)
-  ix <- as.matrix(expand.grid(seq_len(nc), seq_len(nc)))
-  z  <- cbind(g$x[ix[, 1]], g$x[ix[, 2]])
-  W  <- g$w[ix[, 1]] * g$w[ix[, 2]]; W <- W / sum(W)
-  A  <- matrix(c(0.40, 0.15, 0, 0.30), 2, 2)
-  D  <- z %*% t(A); om <- c(0.30, 0.25)
-  Om <- diag(om^2)
-  ab <- admixr2:::.admShiftAbsorb(D, W, z, Om, 1:2, 9L, 5L)
-  expect_false(is.null(ab))
-  # Omega + B B' is what the nodes are drawn from
-  expect_equal(ab$Lt %*% t(ab$Lt), Om + A %*% t(A), tolerance = 1e-10)
-  # and a NON-affine Delta is refused, so no absorption is offered
-  D2 <- cbind(0.4 * z[, 1], 0.3 * exp(0.2 * z[, 2]))
-  expect_null(admixr2:::.admShiftAbsorb(D2, W, z, Om, 1:2, 9L, 5L))
-})
 
-test_that("non-finite input is refused rather than absorbed", {
-  # .admShiftGaussResid scores a non-finite spread Inf rather than 0, so a NaN
-  # cannot be mistaken for a degenerate-normal Delta and routed through the
-  # closed form as a node set full of NaN wearing a valid shape.
-  gh <- admixr2:::.adghNodes1; nc <- 11L; g <- gh(nc)
-  ix <- as.matrix(expand.grid(seq_len(nc), seq_len(nc)))
-  z  <- cbind(g$x[ix[, 1]], g$x[ix[, 2]])
-  W  <- g$w[ix[, 1]] * g$w[ix[, 2]]; W <- W / sum(W)
-  D  <- cbind(0.4 * z[, 1], 0.3 * z[, 2]); D[5, 2] <- NaN
-  expect_equal(admixr2:::.admShiftGaussResid(D[, 2], W), Inf)
-  expect_false(admixr2:::.admShiftGaussOK(D, W, z, 2L))
-  expect_null(admixr2:::.admShiftAbsorb(D, W, z, diag(c(0.09, 0.0625)), 1:2, 9L, 5L))
-})
 
 test_that(".admCovGrid returns the latent scores behind X", {
   d <- list(WT = list(mu = 70, sd = 8), AGE = list(mu = 50, sd = 10))
@@ -1121,57 +924,6 @@ test_that("lognormal and correlated covariates reach the Gaussian branch", {
   expect_gt(ar(matrix(0.8 * g$X[, "WT"], ncol = 1), g$W, g$z), 1e-3)
 })
 
-test_that("a discrete covariate beside a continuous one STRATIFIES the shift", {
-  skip_on_cran()
-  skip_if_not_installed("rxode2")
-  skip_if_not_installed("rxode2")   # Tier 1, but this block compiles a model
-  # `auto` is documented to try the shift and fall back to the product grid, and
-  # a discrete covariate used to be the one disqualification that stop()ed
-  # instead. It no longer disqualifies at all when a CONTINUOUS covariate
-  # reaches the shifted argument too: the discrete levels are conditioned on
-  # (.admCovGrid enumerates them exactly) and the continuous one stays off the
-  # product grid, which is where the n_cov^p cost lives.
-  #
-  # All-discrete is the other way round and still takes the grid -- see the
-  # companion test below.
-  .mk <- function(expr) {
-    f <- function() {
-      ini({ tcl <- log(1); tv <- log(10); tcov <- 0.75; tsex <- 0.2
-            eta.cl ~ 0.09; add.err <- 0.3 })
-      model({ v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
-    }
-    b <- body(f); mb <- b[[3]][[2]]
-    mb <- as.call(append(as.list(mb), expr, after = 1L))
-    b[[3]][[2]] <- mb; body(f) <- b
-    suppressMessages(rxode2::rxode2(f))
-  }
-  cd <- list(WT = list(meanlog = log(72), sdlog = 0.28),
-             SEX = list(values = c(0, 1)))
-  ui <- .mk(quote(cl <- exp(tcl + tcov * log(WT / 70) + tsex * SEX + eta.cl)))
-  st <- list(s = list(E = 1:3, V = diag(3), n = 10L, times = 1:3,
-                      ev = rxode2::et(amt = 100), cov_dist = cd))
-  ctl <- adghControl(studies = st, grad = "analytical", n_nodes = 5L,
-                     print = 0L, covMethod = "none", cov_integration = "auto")
-  pin <- admixr2:::.admDriverPinfo(ui, ctl)
-  u   <- admixr2:::.admDriverUnits(st, ui, admixr2:::.admOutputVar(ui))
-  out <- suppressMessages(
-    admixr2:::.admCheckCovariates(ui, pin, u$studies))
-  # WT is continuous, SEX is not: the shift is taken and SEX becomes strata
-  expect_identical(out[[1L]]$.adm_cov_path, "shift")
-  expect_null(out[[1L]]$.adm_cov_shift_why)
-  expect_false(is.null(out[[1L]]$.adm_cov_shift$strata))
-  expect_equal(length(unique(out[[1L]]$.adm_cov_shift$strata)), 2L)
-  # an EXPLICIT cov_integration = "shift" is now satisfiable, so it must NOT
-  # error where it used to
-  ctl2 <- adghControl(studies = st, grad = "analytical", n_nodes = 5L,
-                      print = 0L, covMethod = "none", cov_integration = "shift")
-  pin2 <- admixr2:::.admDriverPinfo(ui, ctl2)
-  # SEX rides an eta-carrying parameter and is only marginalised, so the
-  # identifiability guard speaks up -- correctly. The assertion here is that it
-  # RUNS, where an explicit `cov_integration = "shift"` used to error.
-  expect_warning(admixr2:::.admCheckCovariates(ui, pin2, u$studies),
-                 "DISCRETE covariate")
-})
 
 test_that("an ALL-discrete covariate set still takes the product grid", {
   skip_on_cran()
@@ -1193,53 +945,15 @@ test_that("an ALL-discrete covariate set still takes the product grid", {
                       ev = rxode2::et(amt = 100),
                       cov_dist = list(SEX = list(values = c(0, 1)))))
   ctl <- adghControl(studies = st, grad = "analytical", n_nodes = 5L,
-                     print = 0L, covMethod = "none", cov_integration = "auto")
+                     print = 0L, covMethod = "none", cov_integration = "on")
   pin <- admixr2:::.admDriverPinfo(ui, ctl)
   u   <- admixr2:::.admDriverUnits(st, ui, admixr2:::.admOutputVar(ui))
   out <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, u$studies))
+  # An all-discrete covariate set has no continuous dimension to reduce, so the
+  # product grid -- which enumerates the levels exactly -- is what runs.
   expect_identical(out[[1L]]$.adm_cov_path, "rows")
-  expect_match(out[[1L]]$.adm_cov_shift_why, "discrete")
 })
 
-test_that("nodes and derivatives choose the Gaussian branch by the SAME test", {
-  # .admShiftNodes picks the closed form with .admShiftGaussOK (affine
-  # certificate, or moments when no latent score is to hand); .admShiftDu must
-  # decide with the same call on the same inputs, or it differentiates a
-  # construction the objective is not using.
-  #
-  # They part company exactly where Gauss-Hermite stops reproducing the moments
-  # the fallback checks: n nodes are exact to degree 2n-1 and the test uses
-  # degrees 3..6, so at 3 nodes an EXACTLY affine Delta certifies and fails the
-  # moment test. The nodes were then closed-form and the derivatives were the
-  # mixture's, which put the analytic gradient 4.7e-03 from a central difference
-  # against 2.1e-09 at four nodes or more.
-  gh <- admixr2:::.adghNodes1
-  for (nc in c(3L, 4L, 7L)) {
-    g <- gh(nc)
-    z <- matrix(g$x, ncol = 1L); W <- g$w / sum(g$w)
-    D <- 0.8 * (70 + 6 * g$x)                       # exactly affine in z
-    # the objective's actual choice, read off the node set it returns
-    expect_true(isTRUE(admixr2:::.admShiftNodes(D, W, 0.3, 12L, z = z)$gauss),
-                info = paste("cov_nodes", nc))
-    # the MOMENT fallback alone is what disagrees at three nodes. This is the
-    # test .admShiftDu used to apply, so it pins the divergence rather than the
-    # fix: if a future change routes the derivatives back onto it, the two
-    # branches part company here first.
-    if (nc == 3L) expect_gt(admixr2:::.admShiftGaussResid(D, W), 1e-8)
-    else          expect_lt(admixr2:::.admShiftGaussResid(D, W), 1e-8)
-  }
-  # and the closed-form derivative must match a difference of the nodes it is
-  # paired with, at the node count where the two tests disagree
-  g <- gh(3L); z <- matrix(g$x, ncol = 1L); W <- g$w / sum(g$w)
-  D <- 0.8 * (70 + 6 * g$x); om <- 0.30
-  u  <- admixr2:::.admShiftNodes(D, W, om, 12L, z = z)$u
-  mD <- sum(W * D); vD <- max(sum(W * D^2) - mD^2, 0); sd_u <- sqrt(vD + om^2)
-  an <- (om / sd_u) * ((u - mD) / sd_u)             # what .admShiftDu returns
-  h  <- 1e-6
-  fd <- (admixr2:::.admShiftNodes(D, W, om + h, 12L, z = z)$u -
-         admixr2:::.admShiftNodes(D, W, om - h, 12L, z = z)$u) / (2 * h)
-  expect_equal(an, fd, tolerance = 1e-6)
-})
 
 test_that("the identifiability warning canonicalises the user's shorthand", {
   # It is the one entry point that reads the RAW study list -- every driver
@@ -2166,7 +1880,7 @@ test_that("a discrete spec with mismatched probs/values is refused", {
   # which .admCovGrid recycles to a UNIFORM 3-level covariate. Two estimators,
   # two different distributions, both finite and plausible.
   ui <- list(allCovs = "GRP")
-  pin <- list(cov_integration = "quadrature")
+  pin <- list(cov_integration = "on")
   st  <- list(s = list(times = 1, cov_dist = list(
     GRP = list(values = c(0, 1, 2), probs = c(0.5, 0.5)))))
   expect_error(admixr2:::.admCheckCovariates(ui, pin, st),
@@ -2287,7 +2001,7 @@ test_that("adghControl carries the sparse settings and validates the level", {
   st <- list(s = list(E = 1, V = 1, n = 10, times = 1,
                       ev = rxode2::et(amt = 1)))
   d <- adghControl(studies = st)
-  expect_identical(d$cov_integration, "quadrature")   # unchanged default
+  expect_identical(d$cov_integration, "on")   # reductions on by default
   expect_identical(d$cov_sparse_level, 3L)
   s <- adghControl(studies = st, cov_integration = "sparse",
                    cov_sparse_level = 2L)

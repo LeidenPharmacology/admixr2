@@ -34,7 +34,11 @@
 .beta_setup <- function() {
   if (!is.null(.beta_cache)) return(.beta_cache)
   skip_on_cran(); skip_if_not_installed("rxode2"); skip_if_not_installed("nlmixr2est")
-  gen <- datagen(
+  # SIMULATED, not published: this study stands in for a trial of 300 patients
+  # so the beta plumbing can be exercised end to end, and `covMethod = "r"`
+  # below is part of what is under test. The public datagen() route treats its
+  # output as a published model, for which no standard error is available.
+  gen <- admixr2:::.admDatagenSim(
     studies = list(s1 = list(times = c(1, 2, 4), ev = rxode2::et(amt = 0),
                              n = 300L)),
     model = .beta_model, control = datagenControl(n_sim = 20000L, seed = 1L))

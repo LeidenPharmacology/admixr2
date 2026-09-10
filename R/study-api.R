@@ -298,113 +298,6 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
   do.call(covDist, c(specs, list(cor = R, dist = dist)))
 }
 
-# A paper's %RSE column, turned into C_src on the scale the parameters live on.
-#
-# THIS IS THE CONVERSION MOST LIKELY TO BE DONE WRONG BY HAND, which is why it
-# is here rather than in a vignette. A relative standard error refers to the
-# quantity the PAPER printed, and that is not always the quantity `ini()` holds:
-#
-#   tcl <- log(5.2), reported as CL = 5.2 with 4.1% RSE
-#       SE(CL) = 0.041 * 5.2, and SE(log CL) = SE(CL)/CL = 0.041
-#       -> on OUR scale the SE is just RSE/100, with no 5.2 in it
-#
-#   bsex <- 0.17, reported as 0.17 with 31% RSE
-#       -> SE = 0.31 * 0.17, the ordinary reading
-#
-# Getting these two the same way round is a factor of log(5.2) = 1.65 on a
-# clearance, silently. The transform comes from the model's own
-# `muRefCurEval`, and print.admStudy() shows the conversion so it can be
-# checked against the paper rather than trusted.
-.admRseToCov <- function(ui, est, rse, nm_study) {
-  se <- vapply(names(rse), function(p) {
-    r <- unname(rse[[p]]) / 100
-    .rl <- .admRseRole(ui, p)
-    if (identical(.rl, "log")) {
-      # the reported quantity is exp(theta), so the RSE on it IS the SE here
-      r
-    } else if (.rl %in% c("expit", "probitInv")) {
-      # A BOUNDED transform is neither of the two easy cases. The %RSE is
-      # relative to the REPORTED value b = back(theta), so SE(b) = |b| * rse,
-      # and the optimizer-scale SE divides by |db/dtheta| -- which for a
-      # bounded transform is NOT b (as for exp) and NOT 1 (as for identity).
-      # Lumping it into "identity" gave logit(0.4) at 10 %RSE an SE of
-      # |logit(0.4)| * 0.10 = 0.0405 against the correct
-      # 0.04 / (0.4 * 0.6) = 0.1667 -- 4.1x too small, the over-confident
-      # direction, and it reaches the reported SEs through C_src.
-      .tr <- .admRseTransform(ui, p)
-      .th <- unname(est[[p]])
-      .b  <- .admBackTransform(.th, .tr)
-      .d  <- .admRseDeriv(.th, .tr)
-      if (!is.finite(.b) || !is.finite(.d) || .d <= 0)
-        stop("admixr2: study '", nm_study, "': `rse` was given for '", p,
-             "' but its bounded transform has no usable derivative at ",
-             format(.th), ". Give `se` for that parameter instead.",
-             call. = FALSE)
-      abs(.b) * r / .d
-    } else {
-      # everything else -- a plain coefficient, an omega variance, a residual
-      # SD -- is reported on the scale ini() holds, so the RSE is relative
-      e <- abs(unname(est[[p]]))
-      if (!is.finite(e) || e == 0)
-        stop("admixr2: study '", nm_study, "': `rse` was given for '", p,
-             "' but its estimate is ", unname(est[[p]]),
-             ", so a RELATIVE standard error has no meaning there. Give `se` ",
-             "for that parameter instead.", call. = FALSE)
-      e * r
-    }
-  }, numeric(1))
-  stats::setNames(se, names(rse))
-}
-
-# The transform metadata one theta is reported under, repaired the same way
-# parse.R repairs it.
-#
-# SINGLE-SOURCED, and it used to be two byte-identical copies that BOTH read
-# `mr$curEval == "exp"` raw. parse.R states the fact that ignores: rxode2
-# returns "" for the mu-3.0 spelling, and "" was read as identity -- so
-# `cl <- exp(tcl + bwt*wt70 + eta.cl)` with rse = c(tcl = 4.1) gave
-# |log(5.2)| * 0.041 = 0.0676 instead of 0.041, i.e. 1.65x on the SE and 2.72x
-# on the variance, reaching the reported standard errors through C_src under
-# the covMethod = "r,s" that a model source selects by default. They also
-# disagreed with parse.R on the OTHER branch: a missing row is "exp" there and
-# was "identity" here.
-.admRseTransform <- function(ui, p) {
-  mr <- tryCatch(ui$muRefCurEval, error = function(e) NULL)
-  .w <- if (is.null(mr)) integer(0) else which(mr$parameter == p)
-  if (length(.w) != 1L)
-    return(list(curEval = "exp", low = NA_real_, hi = NA_real_))
-  .cv <- mr$curEval[.w]
-  .lo <- if ("low" %in% names(mr)) mr$low[.w] else NA_real_
-  .hi <- if ("hi"  %in% names(mr)) mr$hi[.w]  else NA_real_
-  if (is.na(.cv) || !nzchar(.cv)) {
-    .fm <- .admCurEvalFromModel(ui, p)
-    if (!is.null(.fm) && nzchar(.fm$curEval)) {
-      .cv <- .fm$curEval; .lo <- .fm$low; .hi <- .fm$hi
-    }
-  }
-  list(curEval = .cv, low = .lo, hi = .hi)
-}
-
-# d(back-transform)/d(theta), for the %RSE conversion.
-.admRseDeriv <- function(th, tr, h = 1e-6) {
-  if (identical(tr$curEval, "exp")) return(abs(exp(th)))
-  s <- max(abs(th), 1) * h
-  abs((.admBackTransform(th + s, tr) - .admBackTransform(th - s, tr)) / (2 * s))
-}
-
-# What each parameter's reported scale IS, for print() to show.
-.admRseRole <- function(ui, p) {
-  ini <- ui$iniDf
-  r <- ini[ini$name == p, , drop = FALSE]
-  if (!nrow(r)) return(NA_character_)
-  if (!is.na(r$neta1[1L])) return("omega")
-  if (!is.na(r$err[1L]))   return("sigma")
-  ce <- .admRseTransform(ui, p)$curEval
-  if (identical(ce, "exp")) "log"
-  else if (ce %in% c("expit", "probitInv")) ce
-  else "identity"
-}
-
 #' Write down a published study
 #'
 #' One study, transcribed from one paper. It holds what the paper reported and
@@ -414,15 +307,13 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #' A study contributes in one of two currencies, and this takes either:
 #'
 #' * **a published model** --- `model`, with the paper's parameter table as
-#'   `est` and its uncertainty as `rse` (or `se`, or a full `cov`);
+#'   `est`;
 #' * **digitised aggregate data** --- `E` with `sd` (or `sem`, or `V`).
 #'
-#' Supplying uncertainty matters. A study generated from a model is not a
-#' sample: its mean and covariance are exact functions of that model's
-#' parameters, so the only uncertain thing in the chain is the estimate the
-#' original analyst published. Without it `n` is read as a sample size and the
-#' reported standard error becomes a number you chose rather than a property of
-#' the evidence.
+#' A study generated from a model is not a sample: its mean and covariance are
+#' exact functions of that model's parameters, and `n` sets its RELATIVE WEIGHT
+#' against the other studies rather than its precision. No standard error is
+#' reported for a fit that includes one --- see [admStudies()].
 #'
 #' Nothing is solved here. The study is generated when it reaches the fit, so
 #' building one is cheap and a mistake surfaces on `print()` rather than after a
@@ -433,16 +324,6 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #' @param est Named vector of the paper's parameter estimates, on the scale the
 #'   model's `ini()` is written on --- so `tcl = log(5.2)` for a clearance
 #'   reported as 5.2. Omitted parameters keep the model's own `ini()` value.
-#' @param rse Named vector of relative standard errors, **as percentages**, the
-#'   way a parameter table prints them. Converted to a covariance on the right
-#'   scale automatically: for a log-parameterised theta the RSE of the reported
-#'   quantity IS the standard error of the log, while an ordinary coefficient
-#'   takes the usual `|estimate| * RSE/100`. `print()` shows the conversion.
-#' @param se Named vector of standard errors instead of `rse`, already on the
-#'   `ini()` scale. Use where a paper reports an SE rather than a percentage.
-#' @param cov A full parameter covariance matrix, if the source published one
-#'   (or if you have its fit: pass `fit$cov`). Beats `rse`/`se`, because it
-#'   carries the correlations those cannot.
 #' @param v_denom Which denominator the supplied spread uses: `"unbiased"`
 #'   (`n - 1`) or `"ml"` (`n`). Usually leave it unset --- the currency you
 #'   wrote the study in already says which it is, and `admStudy()` resolves it
@@ -492,8 +373,8 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #' @seealso [admStudies()] to collect several, [admPopulation()] for the
 #'   baseline table.
 #' @export
-admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
-                     cov = NULL, E = NULL, V = NULL, sd = NULL, sem = NULL,
+admStudy <- function(model = NULL, est = NULL,
+                     E = NULL, V = NULL, sd = NULL, sem = NULL,
                      n = NULL, times = NULL, dose = NULL, ev = NULL,
                      population = NULL, at = NULL, by = NULL,
                      stratify = NULL, strata_nodes = NULL, range = NULL,
@@ -519,7 +400,7 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
     bad("has BOTH a `model` and digitised `E`. A study contributes in one ",
         "currency: the model it published, or the aggregate data it printed.")
   if (!has_model && !has_data)
-    bad("needs either a `model` (with `est`/`rse`) or digitised `E` (with ",
+    bad("needs either a `model` (with `est`) or digitised `E` (with ",
         "`sd`, `sem` or `V`).")
   # A COHORT KNOWS ITS OWN SIZE. When the population is handed over as the
   # data frame of enrolled subjects, `n` is its row count and asking for it
@@ -535,9 +416,6 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
         "cannot express.")
   if (!is.null(ev) && !is.null(dose))
     bad("has both `dose` and `ev`; `dose` is only shorthand for one.")
-  if (!is.null(cov) && (!is.null(rse) || !is.null(se)))
-    bad("has both a full `cov` and `rse`/`se`. Give one: `cov` carries the ",
-        "correlations, which `rse` cannot.")
 
   ui <- NULL
   if (has_model) {
@@ -556,7 +434,7 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
             ", which the model's `ini()` does not declare. Declared: ",
             paste(sQuote(known), collapse = ", "), ".")
     }
-    chk(est, "est"); chk(rse, "rse"); chk(se, "se")
+    chk(est, "est")
     # The paper's numbers go INTO the model, so nothing downstream has to carry
     # them separately -- and no global variable is involved. This is what the
     # `CLp <<- p$CL` idiom was working around.
@@ -565,50 +443,6 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
       d$est[match(names(est), d$name)] <- unname(est)
       ui$iniDf <- d
     }
-    if (!is.null(rse))
-      se <- .admRseToCov(ui, stats::setNames(
-        ui$iniDf$est[match(names(rse), ui$iniDf$name)], names(rse)), rse, nm)
-    if (!is.null(se) && is.null(cov)) {
-      cov <- diag(unname(se)^2, nrow = length(se))
-      dimnames(cov) <- list(names(se), names(se))
-      # SAY THAT THE CORRELATIONS WERE ASSERTED, NOT SUPPLIED. `se`/`rse` fill
-      # only a diagonal, so every parameter correlation is taken to be zero --
-      # a claim about the source, not a neutral default. Exact at the model's
-      # OWN reference, where the cross term is multiplied by log(x/xref) = 0,
-      # and worse the further you extrapolate: measured on real fits, a source
-      # referenced at a round 90 while its cohort sat at 60 carried
-      # corr(intercept, slope) = +0.735 and a diagonal 1.85x over-confident;
-      # re-centring the same model on the cohort median gave -0.036 and within
-      # 2%. Warned only where there is a correlation to lose.
-      if (length(se) > 1L)
-        warning("admixr2: study ", sQuote(nm), ": `",
-                if (!is.null(rse)) "rse" else "se",
-                "` fills only the DIAGONAL of this source's covariance, so all ",
-                "correlations between ", paste(sQuote(names(se)), collapse = ", "),
-                " are taken to be zero. That is exact at the model's own ",
-                "reference point and degrades as you extrapolate away from it ",
-                "-- measured up to 1.9x over-confident.
-",
-                "  Give the source's full `cov` where the paper reports one. ",
-                "Failing that, RE-CENTRE the source's model on its own ",
-                "covariate median: that makes intercept and slope ",
-                "near-orthogonal, and the diagonal nearly exact.",
-                call. = FALSE)
-    }
-    # CHECK THE MATRIX HERE, NOT AT THE FIT. .admSrcCov() is the one validator
-    # for a source covariance and datagen() runs it -- but datagen() runs
-    # INSIDE the nlmixr2est stack, which swallows warnings. An INCOMPLETE
-    # matrix therefore cost the whole fit its sandwich in silence:
-    # .admSandwichCov() refuses that source rather than weight it wrong,
-    # refusing one source refuses the sandwich for EVERY study, and covMethod
-    # came back "r" with the naive standard errors printed and nothing said.
-    # Running it here also turns every malformed-matrix error into one raised
-    # while the user is still writing the study down. `$cov` carries the mapped
-    # names back (`om.eta.cl` -> `eta.cl`) so print() and the fit agree.
-    if (!is.null(cov))
-      cov <- .admSrcCov(cov, ui, nm,
-                        if (!is.null(rse)) "rse" else
-                        if (!is.null(se))  "se"  else "cov")$cov
   } else {
     if (!is.null(sem)) {
       if (!is.null(sd)) bad("has both `sd` and `sem`; give one.")
@@ -677,7 +511,7 @@ admStudy <- function(model = NULL, est = NULL, rse = NULL, se = NULL,
     population <- admPopulation(data = population[, keep, drop = FALSE])
   }
   structure(list(
-    ui = ui, model = model, cov = cov, se = se, rse = rse,
+    ui = ui, model = model,
     E = E, V = V, n = as.numeric(n), times = as.numeric(times),
     ev = ev, dose = dose, population = population, at = at, by = by,
     stratify = stratify, strata_nodes = strata_nodes, range = range,
@@ -706,37 +540,8 @@ print.admStudy <- function(x, ...) {
                 sum(!ini$fix), if (sum(!ini$fix) == 1L) "" else "s",
                 if (length(cvs)) paste0("; reads ", paste(cvs, collapse = ", "))
                 else ""))
-    if (!is.null(x$rse)) {
-      cat("  reported  estimate and %RSE, converted to a standard error on ",
-          "the scale ini() uses:\n", sep = "")
-      for (p in names(x$rse)) {
-        e <- ini$est[ini$name == p]
-        rl <- .admRseRole(x$ui, p)
-        # The marker names the scale the %RSE was CONVERTED FROM, so a bounded
-        # transform has to say so too -- it is a third case, not "identity".
-        shown <- if (rl %in% c("log", "expit", "probitInv"))
-          sprintf("%.4g (reported %.4g)", e,
-                  .admBackTransform(e, .admRseTransform(x$ui, p)))
-        else sprintf("%.4g", e)
-        cat(sprintf("              %-9s %-22s %5.1f%%  ->  SE %.5g%s
-",
-                    p, shown, x$rse[[p]], x$se[[p]],
-                    switch(rl, log = "  [log scale]",
-                           expit = "  [logit scale]",
-                           probitInv = "  [probit scale]", "")))
-      }
-    } else if (!is.null(x$cov)) {
-      cat(sprintf("  reported  full covariance over %s\n",
-                  paste(rownames(x$cov), collapse = ", ")))
-    } else {
-      cat("  reported  NO uncertainty -- no standard error will be available\n")
-    }
-    miss <- setdiff(ini$name[!ini$fix],
-                    if (is.null(x$cov)) character(0) else
-                      sub("^om[.]", "", rownames(x$cov)))
-    if (!is.null(x$cov) && length(miss))
-      cat("  WARNING   no uncertainty for ", paste(miss, collapse = ", "),
-          " -- incomplete, so no SE will be reported\n", sep = "")
+    cat("  reported  a published model; no standard error is available for a ",
+        "fit that includes one\n", sep = "")
   } else {
     cat(sprintf("  reported  mean profile, %s\n",
                 if (is.matrix(x$V)) "full covariance" else "per-time spread"))
@@ -829,10 +634,7 @@ print.admStudies <- function(x, ...) {
     cat(sprintf("  %-14s %s  n = %-6s %d times%s
 ", nm,
                 if (is.null(s$ui)) "data " else "model", format(s$n),
-                length(s$times),
-                if (is.null(s$ui)) "" else
-                if (is.null(s$cov)) "  NO uncertainty" else
-                                    "  uncertainty supplied"))
+                length(s$times), ""))
   }
 
   # THE PRE-FLIGHT. Whether a covariate is IDENTIFIED is a property of the
@@ -899,15 +701,15 @@ NOTE: ", paste(sQuote(flat), collapse = ", "),
           "
 ", sep = "")
   }
-  miss <- names(x)[vapply(x, function(s) !is.null(s$ui) && is.null(s[["cov"]]),
-                          logical(1))]
-  if (length(miss))
+  src <- names(x)[vapply(x, function(s) !is.null(s$ui), logical(1))]
+  if (length(src))
     cat("
-NOTE: ", paste(sQuote(miss), collapse = ", "),
-        if (length(miss) == 1L) " reports a model but no uncertainty, so it"
-        else " report a model but no uncertainty, so they",
-        " will be weighted as if `n` patients had been sampled. A published",
-        " model is not a sample: give the paper's `cov`, or its `rse` column.
+NOTE: ", paste(sQuote(src), collapse = ", "),
+        if (length(src) == 1L) " contributes as a published MODEL, weighted"
+        else " contribute as published MODELS, weighted",
+        " as if `n` patients had been sampled -- `n` sets RELATIVE WEIGHT",
+        " against the other studies, not precision. No standard error is",
+        " reported for a fit that includes one.
 ",
         sep = "")
   cat("
@@ -950,7 +752,7 @@ print() a single study to check its transcription.
     # below, producing a `cov` with two SEX entries and a fit that returned no
     # standard errors at all. Third instance of this trap in one day; the house
     # rule exists for a reason.
-    sp <- list(times = s$times, ev = ev, n = s$n, model_cov = s[["cov"]])
+    sp <- list(times = s$times, ev = ev, n = s$n)
     if (!is.null(s[["population"]])) sp[["cov_dist"]] <- s[["population"]]
     if (!is.null(s[["at"]]))         sp[["cov"]]      <- s[["at"]]
     if (!is.null(s$stratify)) {
@@ -992,13 +794,6 @@ print() a single study to check its transcription.
         spk$n   <- s$n * pr[k]
         spk[["cov"]] <- c(sp[["cov"]], stats::setNames(list(lv[k]), s$by))
         spk$cov_dist <- .admCovDropMargin(s$population, s$by)
-        # ONE PAPER IS ONE SOURCE, however many subgroups it reported. The
-        # levels share a published model and a single C_src, so they must share
-        # a source id -- otherwise .admSrcGroups() sees k independent sources
-        # and applies C_src once per LEVEL, which counts the paper k times and
-        # shrinks the standard error by about sqrt(k). Exactly the rule
-        # .admExpandStrata() already keeps for the J strata of a banded source.
-        spk[[".adm_src_id"]] <- nm
         g <- datagen(stats::setNames(list(spk), paste0(nm, "_", s$by, lv[k])),
                      model = s$ui, control = datagenControl(method = "gh"))
         # every element: `by` combined with `stratify` expands each level into
@@ -1015,21 +810,10 @@ print() a single study to check its transcription.
 }
 
 # =============================================================================
-# The default that would otherwise be a silent wrong answer
+# The standard error that would otherwise be a silent wrong answer
 # =============================================================================
-#
-# A model source's uncertainty is its OWN published covariance: the only random
-# object in that study is the estimate its analyst got, so Var(t_s) = D C_src D'
-# and nothing about `n` enters. Only the sandwich carries that term -- under
-# covMethod = "r" the source is read as if `n` patients had been sampled, and
-# the reported standard error then FALLS as 1/sqrt(n) toward zero (measured
-# 0.08000 at every n under "r,s"; "r" tracked 1/sqrt(n) from n = 100 to 6400).
-#
-# Both numbers are finite and plausible, so nothing downstream can tell them
-# apart -- which is why this upgrades the default rather than warning about it.
-# An explicit covMethod is always honoured, including an explicit "r".
 
-# Does any study contribute as a published MODEL carrying uncertainty?
+# Does any study contribute as a published MODEL rather than as a sample?
 #
 # Three shapes reach here: an admStudy() spec, a raw datagen spec written by
 # hand, and an already-generated study. `[[ ]]` throughout -- `$cov` partial-
@@ -1056,19 +840,37 @@ print() a single study to check its transcription.
   if (!is.list(studies) || !length(studies)) return(FALSE)
   any(vapply(studies, function(s) {
     if (!is.list(s)) return(FALSE)
-    if (inherits(s, "admStudy")) return(!is.null(s$ui) && !is.null(s[["cov"]]))
-    !is.null(s[["model_cov"]]) || !is.null(s[[".adm_src"]][["cov"]])
+    if (inherits(s, "admStudy")) return(!is.null(s$ui))
+    isTRUE(s[[".adm_src"]])
   }, logical(1)))
 }
 
+# NO STANDARD ERROR FOR A MODEL SOURCE.
+#
+# A study generated from a published model is not a sample: its (E, V) are exact
+# functions of the source's own theta, and the only random thing in the chain is
+# an estimate this package never sees. The data weight Omega_s(n_s) therefore
+# describes a sampling law that study does not obey, and using it anyway makes
+# the reported SE fall as exactly 1/sqrt(n) -- measured 1.000/2.000/4.000/8.000
+# over n = 100/400/1600/6400. That factor is chosen by typing a number.
+#
+# So this REFUSES rather than resolves, and it refuses an EXPLICIT covMethod
+# too. Honouring one would leave the wrong number reachable by anyone who types
+# the argument, which is the entire defect.
 .admResolveCovMethod <- function(covMethod, studies, explicit) {
-  if (isTRUE(explicit) || !identical(covMethod, "r")) return(covMethod)
-  if (!.admHasModelSource(studies)) return(covMethod)
-  message("admixr2: a study contributes as a published MODEL with its own ",
-          "reported uncertainty, so covMethod has been set to \"r,s\". The ",
-          "sandwich is what carries that source's covariance into the ",
-          "standard errors; under \"r\" they would instead shrink with `n`, ",
-          "which a model source does not have. Pass covMethod = \"r\" ",
-          "explicitly to keep the naive form.")
-  "r,s"
+  if (!.admHasModelSource(studies) || identical(covMethod, "none"))
+    return(covMethod)
+  if (isTRUE(explicit))
+    stop("admixr2: covMethod = ", dQuote(covMethod), " was requested, but a ",
+         "study contributes as a published MODEL. Such a study is not a ",
+         "sample -- its mean and covariance are exact functions of the ",
+         "source's own parameters -- so `n` sets its RELATIVE WEIGHT against ",
+         "the other studies rather than its precision, and a standard error ",
+         "built from `n` would shrink as 1/sqrt(n) for a reason that is not ",
+         "evidence. Pass covMethod = \"none\".", call. = FALSE)
+  message("admixr2: a study contributes as a published MODEL, so covMethod ",
+          "has been set to \"none\". `n` weights that study against the ",
+          "others; it is not a sample size, so there is no sampling law to ",
+          "build a standard error from.")
+  "none"
 }

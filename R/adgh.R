@@ -94,280 +94,11 @@
   # and plausible NLL. It must not continue on the product grid either -- a
   # different number of quadrature points mid-fit steps the objective. It is an
   # UNSOLVABLE POINT, and every other unsolvable point here reports Inf.
-  .sh_fallback <- FALSE
-  sh <- if (!is.null(s)) s[[".adm_cov_shift"]] else NULL
-  if (!is.null(sh) && identical(s$.adm_cov_path, "shift") && pinfo$n_eta > 0L) {
-    j  <- sh$eta_idx
-    D  <- .admShiftDelta(sh$spec, .admShiftStruct(pinfo, pars$struct),
-                         sh$X, sh$aref)
-    if (is.null(D)) .sh_fallback <- TRUE
-    if (!is.null(D)) {
-      D <- as.matrix(D)
-      om <- sqrt(pmax(diag(as.matrix(pars$omega))[j], .Machine$double.eps))
-      # HOW MANY NODES u DESERVES. u = Delta(a) + eta carries variance
-      # Var(Delta) + omega^2, which is WIDER than the omega^2 that the eta
-      # column carries in the product grid -- the covariate's spread has been
-      # folded into this one dimension. The integrand is explored over a
-      # correspondingly wider range, so resolving it as well as n_nodes resolves
-      # eta needs n_nodes scaled by the ratio of standard deviations. Fixing
-      # n_u at cov_nodes instead left the shift path ~10x LESS accurate than the
-      # grid it replaces, which defeats the point of it.
-      #
-      # Cost is linear in n_u and CONSTANT in the number of covariates, so this
-      # is cheap; the cap keeps a pathological covariate spread from blowing the
-      # node count up without bound.
-      nn0 <- as.integer(round(nrow(grid$X)^(1 / max(pinfo$n_eta, 1L))))
-      # n_u MUST NOT depend on the current parameters. It used to scale with
-      # sqrt((Var(Delta) + omega^2)/omega^2), so the node count changed as the
-      # optimizer moved omega and the objective stepped discontinuously across
-      # each switch -- 0.078 -2LL units, enough to send an FD Hessian entry from
-      # -3169 to -256961. Fixed at admission instead (sh$n_u), from cov_dist,
-      # which is data.
-      n_u <- sh$n_u %||% min(101L, 4L * nn0)
-      # A correlated Omega takes the absorption instead: the covariate becomes
-      # Omega + P and the ORDINARY eta grid carries it, which is the only route
-      # that keeps the off-diagonals the column substitution would drop.
-      if (isTRUE(sh$absorb)) {
-        ab <- .admShiftAbsorb(D, sh$W, sh$z, pars$omega, j, n_u, nn0)
-        if (!is.null(ab)) {
-          colnames(ab$eta) <- pinfo$eta_col_names
-          cr <- matrix(rep(unlist(sh$aref[sh$cov_names]), each = nrow(ab$eta)),
-                       nrow(ab$eta), length(sh$cov_names),
-                       dimnames = list(NULL, sh$cov_names))
-          # X is the STANDARD normal node matrix. Under the absorption
-          # eta = mu + X chol(Omega + P)', so d(eta)/d(L_ab) is a Cholesky
-          # differential rather than a single column -- carried in `shift`,
-          # which .adghGrad applies through .admAbsorbBase.
-          dv <- .admShiftAbsorbDeriv(sh$spec, .admShiftStruct(pinfo, pars$struct),
-                                     sh$X, sh$aref, ab, pinfo$n_eta)
-          return(list(eta = ab$eta, W = ab$W, X = ab$X, cov_rows = cr,
-                      shift = if (is.null(dv)) list(degraded = TRUE) else
-                        list(absorb = TRUE, Lt = ab$Lt, dmu = dv$dmu,
-                             dP = dv$dP)))
-        }
-      }
-      # A correlated Omega that did NOT absorb: condition instead of dropping.
-      # The column substitution below rebuilds the unaffected etas from the
-      # DIAGONAL, so it cannot carry an off-diagonal; conditioning can. See
-      # .admCondShiftParts() for the construction and why it costs nothing --
-      # w's law is free of eta_O, so the mixture inversion still runs once, and
-      # the node count is unchanged.
-      if (isTRUE(sh$cond)) {
-        cp <- .admCondShiftParts(pars$omega, j)
-        if (!is.null(cp)) {
-          m_s <- ncol(D); Oc <- cp$O
-          # rotate: w | node ~ N(Ls^-1 Delta, I), a UNIT-covariance mixture,
-          # which is what the existing inversion already handles. om is 1 in
-          # every direction after the rotation, so every direction below has
-          # dom = 0 and only dD varies.
-          Dw  <- t(solve(cp$Ls, t(D)))
-          .st0 <- .admShiftStruct(pinfo, pars$struct)
-          .dD0 <- .admShiftDDelta(sh$spec, .st0, sh$X, sh$aref)
-          # struct thetas move Delta, hence Dw, with Ls held; omega parameters
-          # move Ls, K and Lo, hence Dw through -Ls^-1 dLs Dw as well as eta
-          # directly. Both are node-only: no solve, no extra rxSolve row.
-          .om_d <- lapply(seq_along(pinfo$omega_par), function(rr) {
-            a <- pinfo$chol_i[rr]; b <- pinfo$chol_j[rr]
-            E <- matrix(0, pinfo$n_eta, pinfo$n_eta); E[a, b] <- 1
-            .admCondShiftDeriv(cp, pars$omega, j,
-                               E %*% t(pars$L) + pars$L %*% t(E), Dw)
-          })
-          .z0 <- matrix(0, nrow(Dw), m_s)
-          dirs <- c(
-            lapply(names(.st0), function(k)
-              if (is.null(.dD0[[k]])) NULL else
-                list(dD = t(solve(cp$Ls, t(as.matrix(.dD0[[k]])))),
-                     dom = numeric(m_s))),
-            lapply(.om_d, function(d) list(dD = d$dDw, dom = numeric(m_s))))
-          if (any(vapply(dirs, is.null, logical(1)))) dirs <- NULL
-          unc <- .admShiftNodesStrat(Dw, sh$W, rep(1, m_s), n_u, sh$strata,
-                                     dirs)
-          if (!is.null(unc)) {
-            g1c  <- .adghNodes1(nn0)
-            lstc <- c(list(seq_len(nrow(unc$u))),
-                      lapply(Oc, function(k) seq_along(g1c$x)))
-            ixc <- as.matrix(expand.grid(lstc, KEEP.OUT.ATTRS = FALSE))
-            # eta_O = X_O Lo', on the ORDINARY grid, so Cov(eta_O) = Omega_OO
-            # exactly -- including between two etas the covariate never touches.
-            XO <- matrix(0, nrow(ixc), length(Oc))
-            Wc <- unc$w[ixc[, 1L]]
-            for (kk in seq_along(Oc)) {
-              XO[, kk] <- g1c$x[ixc[, kk + 1L]]
-              Wc <- Wc * g1c$w[ixc[, kk + 1L]]
-            }
-            wN   <- unc$u[ixc[, 1L], , drop = FALSE]
-            eO   <- if (length(Oc)) XO %*% t(cp$Lo) else NULL
-            etac <- matrix(0, nrow(ixc), pinfo$n_eta)
-            if (length(Oc)) etac[, Oc] <- eO
-            etac[, j] <- wN %*% t(cp$Ls) +
-              (if (length(Oc)) eO %*% t(cp$K) else 0)
-            colnames(etac) <- pinfo$eta_col_names
-            crc <- matrix(rep(unlist(sh$aref[sh$cov_names]), each = nrow(etac)),
-                          nrow(etac), length(sh$cov_names),
-                          dimnames = list(NULL, sh$cov_names))
-            shc <- list(degraded = TRUE)
-            if (!is.null(dirs) && !is.null(unc$du)) {
-              duN <- unc$du[ixc[, 1L], , , drop = FALSE]
-              n_th <- length(.st0)
-              # d(eta) per direction, assembled once. Struct directions move
-              # only w; omega directions move Lo, K and Ls as well, so every
-              # column responds and the contraction is taken in full.
-              mkE <- function(d, om_i) {
-                dE <- matrix(0, nrow(etac), pinfo$n_eta)
-                dw <- duN[, , d, drop = FALSE]; dim(dw) <- dim(duN)[1:2]
-                dS <- dw %*% t(cp$Ls)
-                if (!is.null(om_i)) {
-                  o <- .om_d[[om_i]]
-                  dS <- dS + wN %*% t(o$dLs)
-                  if (length(Oc)) {
-                    dEO <- XO %*% t(o$dLo)
-                    dE[, Oc] <- dEO
-                    dS <- dS + dEO %*% t(cp$K) + eO %*% t(o$dK)
-                  }
-                }
-                dE[, j] <- dS
-                dE
-              }
-              shc <- list(cond = TRUE, th_names = names(.st0),
-                          dEta_th = lapply(seq_len(n_th), function(k)
-                            mkE(k, NULL)),
-                          dEta_om = lapply(seq_along(pinfo$omega_par),
-                            function(rr) mkE(n_th + rr, rr)))
-            }
-            # X is read ONLY by the omega chain, which assumes eta = X L'. That
-            # does not hold here, so it is zero and dEta_om carries the whole
-            # omega path instead.
-            return(list(eta = etac, W = Wc / sum(Wc),
-                        X = matrix(0, nrow(etac), pinfo$n_eta),
-                        cov_rows = crc, shift = shc))
-          }
-        }
-      }
-      # ABSORPTION OR CONDITIONING FAILED AT RUNTIME, AND THE SUBSTITUTION
-      # BELOW IS NOT A DEGRADED VERSION OF EITHER -- it rebuilds the unaffected
-      # etas from the DIAGONAL, so it discards every Omega off-diagonal, which
-      # is the exact loss those two branches exist to prevent (measured at
-      # 2.5e-2 on E, 78x on V and 951 -2LL units). Both flags are set at
-      # admission precisely when Omega has estimated off-diagonals, and both
-      # constructions can fail later: .admAbsorbFit on a rank-deficient fit,
-      # .admCondShiftParts whenever a Schur complement goes non-PD as the
-      # optimizer drives an eta correlation toward +/-1. Fall through to the
-      # ordinary covariate grid instead -- slower, and right.
-      if (isTRUE(sh$absorb) || isTRUE(sh$cond)) {
-        .sh_fallback <- TRUE
-      } else {
-        # A VECTOR shift that did not absorb takes the Rosenblatt recursion, and
-        # carries its derivatives with it: every u_k moves both because Delta does
-        # and because the posterior weights conditioning level k do. Directions
-        # are the structural thetas (through d(Delta)/d(theta), two vectorised
-        # evaluations each and no solve) and the shifted etas' own scales.
-        .mdu <- NULL
-        if (ncol(D) > 1L) {
-          .stn <- pinfo$struct_names
-          .st0 <- .admShiftStruct(pinfo, pars$struct)
-          .dD0 <- .admShiftDDelta(sh$spec, .st0, sh$X, sh$aref)
-          .dirs <- c(
-            lapply(names(.st0), function(k)
-              if (is.null(.dD0[[k]])) NULL else
-                list(dD = .dD0[[k]], dom = numeric(ncol(D)))),
-            lapply(seq_len(ncol(D)), function(a) {
-              e <- numeric(ncol(D)); e[a] <- 1
-              list(dD = matrix(0, nrow(D), ncol(D)), dom = e)
-            }))
-          if (any(vapply(.dirs, is.null, logical(1)))) .dirs <- NULL
-          un <- .admShiftNodesStrat(D, sh$W, om, n_u, sh$strata, .dirs)
-          if (!is.null(un) && !is.null(.dirs))
-            .mdu <- list(n_th = length(.st0), th_names = names(.st0))
-        } else if (!is.null(sh$strata)) {
-          # A DISCRETE covariate: condition on its exactly-enumerated levels, so
-          # each cell is the mild sub-mixture the quadrature resolves well. The
-          # derivatives come from the SAME construction -- .admShiftDu answers for
-          # a single mixture and would disagree with a stratified node set, which
-          # is the objective-and-gradient split this file exists to avoid.
-          .st1 <- .admShiftStruct(pinfo, pars$struct)
-          .dD1 <- .admShiftDDelta(sh$spec, .st1, sh$X, sh$aref)
-          .d1  <- c(lapply(names(.st1), function(k)
-                      if (is.null(.dD1[[k]])) NULL else
-                        list(dD = as.matrix(.dD1[[k]]), dom = 0)),
-                    list(list(dD = matrix(0, nrow(D), 1L), dom = 1)))
-          if (any(vapply(.d1, is.null, logical(1)))) .d1 <- NULL
-          un <- .admShiftNodesStrat(D, sh$W, om, n_u, sh$strata, .d1)
-          if (!is.null(un) && !is.null(.d1) && !is.null(un$du))
-            .mdu <- list(n_th = length(.st1), th_names = names(.st1))
-        } else {
-          un0 <- .admShiftNodes(D[, 1L], sh$W, om[1L], n_u, z = sh$z)
-          un  <- if (is.null(un0)) NULL else
-            list(u = matrix(un0$u, ncol = 1L), w = un0$w)
-        }
-        # Every route above can return NULL (the mixture inversion failing at
-        # this parameter point), and nrow(un$u) on NULL aborts the fit mid-
-        # optimisation. Take the ordinary covariate grid instead, as the absorb
-        # and cond failures do.
-        if (is.null(un) || is.null(un$u)) {
-          .sh_fallback <- TRUE
-        } else {
-        # n_nodes per eta, recovered from the grid: nrow = n_nodes^n_eta. round(),
-        # not a bare fractional power -- 343^(1/3) is 6.999999999999999.
-        g1 <- .adghNodes1(nn0)
-        other <- setdiff(seq_len(pinfo$n_eta), j)
-        # the shifted columns move together (one index over the u node SET), the
-        # remaining etas keep their own product grid
-        lst <- c(list(seq_len(nrow(un$u))),
-                 lapply(other, function(k) seq_along(g1$x)))
-        ix <- as.matrix(expand.grid(lst, KEEP.OUT.ATTRS = FALSE))
-        eta <- matrix(0, nrow(ix), pinfo$n_eta)
-        eta[, j] <- un$u[ix[, 1L], , drop = FALSE]
-        W <- un$w[ix[, 1L]]
-        for (kk in seq_along(other)) {
-          k <- other[kk]
-          eta[, k] <- sqrt(pars$omega[k, k]) * g1$x[ix[, kk + 1L]]
-          W <- W * g1$w[ix[, kk + 1L]] }
-        colnames(eta) <- pinfo$eta_col_names
-        cr <- matrix(rep(unlist(sh$aref[sh$cov_names]), each = nrow(eta)),
-                     nrow(eta), length(sh$cov_names),
-                     dimnames = list(NULL, sh$cov_names))
-        # THE OMEGA CHAIN NEEDS NO SPECIAL CASE. It forms d(f)/d(L_ab) as
-        # Jl[[a]] * X[, b], and for the affected column eta_j = u with
-        # du/dp = (du/domega)(domega/dp) = (du/domega) * L_jj/2 -- exactly the
-        # shape the existing loop applies. So putting du/domega into X[, j] makes
-        # that loop correct as written; the OTHER columns keep their standard
-        # normal nodes, which is what they are.
-        Xz <- matrix(0, nrow(eta), pinfo$n_eta)
-        for (kk in seq_along(other))
-          Xz[, other[kk]] <- g1$x[ix[, kk + 1L]]
-        shinfo <- NULL
-        # A STRATIFIED node set joins the vector shift in needing its derivatives
-        # from the same construction: .admShiftDu below answers for a SINGLE
-        # mixture, so letting the m == 1 case fall through to it would pair
-        # stratified nodes with unstratified derivatives.
-        if ((ncol(D) > 1L || !is.null(sh$strata)) &&
-            (is.null(.mdu) || is.null(un$du))) {
-          # The node derivatives could not be built. Say so, rather than return a
-          # grid with no `shift`: the gradient would then simply omit this study's
-          # shift chain -- finite, plausible and a direction the objective does
-          # not follow, which is the failure this file keeps meeting.
-          shinfo <- list(degraded = TRUE)
-        } else if (!is.null(.mdu) && !is.null(un$du)) {
-          # Every shifted coordinate responds to every direction, so the omega
-          # chain cannot be folded into an X column the way the scalar case can:
-          # d(om_1) moves u_2 through the posterior weights. .adghGrad forms the
-          # full sum instead.
-          shinfo <- list(multi = TRUE, eta_idx = j, th_names = .mdu$th_names,
-                         du = un$du[ix[, 1L], , , drop = FALSE],
-                         n_th = .mdu$n_th)
-        } else if (length(j) == 1L) {
-          du <- .admShiftDu(sh$spec, .admShiftStruct(pinfo, pars$struct), sh$X,
-                            sh$aref, D, sh$W, om, un$u[, 1L], z = sh$z)
-          Xz[, j] <- du$du_domega[ix[, 1L]]
-          shinfo <- list(eta_idx = j,
-                         du_dtheta = du$du_dtheta[ix[, 1L], , drop = FALSE])
-        }
-        return(list(eta = eta, W = W / sum(W), X = Xz, cov_rows = cr,
-                    shift = shinfo))
-        }
-      }
-    }
-  }
+  # The covariate shift -- a separate reduction that pinned the covariate at
+  # its reference and folded its whole contribution into one eta column --
+  # was removed. .admJointCollapse finds the same structure (rank 1 on the
+  # certified single-eta case) without a certificate, and is both cheaper and
+  # more accurate than the shift wherever both applied. See NEWS.
   # JOINT COLLAPSE: one design over the etas AND the covariates together, where
   # they reach the model through the same directions. It replaces the eta grid
   # as well as the covariate design, so it returns before either is built.
@@ -379,8 +110,7 @@
   # quadrature re-choosing itself within the same column space, and vanishes to
   # the accuracy the design is verified to.
   .jc <- if (!is.null(s)) s[[".adm_cov_joint"]] else NULL
-  if (.sh_fallback) return(list(failed = TRUE))
-  if (!is.null(.jc) && !identical(s$.adm_cov_path, "shift")) {
+  if (!is.null(.jc)) {
     jd <- .admJointDesign(.jc, .admShiftStruct(pinfo, pars$struct), pars$L)
     # A FAILED RE-AIM IS AN UNSOLVABLE POINT, not a licence to change design and
     # not a reason to abort. Falling through to the branch below would swap in a
@@ -393,8 +123,7 @@
     if (is.null(jd)) return(list(failed = TRUE))
     return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
   }
-  if (!is.null(s) && !identical(s$.adm_cov_path, "shift") &&
-      !is.null(s[["cov_dist"]])) {
+  if (!is.null(s) && !is.null(s[["cov_dist"]])) {
     nq <- max(nrow(g$eta), 1L)
     # cov_integration = "sparse": a Smolyak grid in place of the product one.
     # It is an ORDINARY GRID -- (X, W) with signed W -- so the expansion below
@@ -402,7 +131,7 @@
     # know which rule produced the rows. That is what the retired "taylor"
     # design was not: it carried its own derivative-pair machinery, and two of
     # its three defects lived there.
-    .sparse <- identical(pinfo$cov_integration %||% "quadrature", "sparse")
+    .sparse <- identical(pinfo$cov_integration %||% "on", "sparse")
     # Cached on the study by .admCheckCovariates -- a pure function of
     # `cov_dist` and the level, both data -- so it is not rebuilt per objective
     # call. The %||% keeps a hand-built study (Tier-1 mocks, direct
@@ -925,93 +654,13 @@
       }
     }
 
-    # SHIFT path: every structural theta also moves the u nodes, because u's law
-    # is sum_j W_j N(Delta_j, omega^2) and Delta depends on the thetas. The
-    # chain factor is du/dtheta = E[dDelta/dtheta | u] (see .admShiftDu), and
-    # the derivative it multiplies is the affected eta's own sensitivity column,
-    # so the contribution is that column scaled ROW-WISE.
-    #
-    # A theta with no covariate in its Delta -- including every mu-referenced
-    # TYPICAL VALUE, which cancels out of a difference of the same expression at
-    # two covariate values -- gets a zero column here and is unaffected.
-    .sh <- .gS$shift
-    if (isTRUE(.sh$cond)) {
-      # Conditioned shift: eta is not X L', so every eta column responds to
-      # every direction and d(eta) is carried whole (see .admShiftCondBase).
-      for (k in seq_len(n_s)) {
-        kk <- match(pinfo$struct_names[k], .sh$th_names)
-        if (is.na(kk)) next
-        base <- .admShiftCondBase(Jl, .sh$dEta_th[[kk]])
-        if (is.null(base)) next
-        dmu_raw <- as.numeric(crossprod(W, base))
-        grad[k] <- grad[k] + contrib(base) + .sigma_V_extra(dmu_raw)
-      }
-    } else if (isTRUE(.sh$multi)) {
-      # Every shifted coordinate moves with every theta, through Delta and
-      # through the posterior weights that condition the later levels.
-      for (k in seq_len(n_s)) {
-        nmk <- pinfo$struct_names[k]
-        kk  <- match(nmk, .sh$th_names)
-        if (is.na(kk)) next
-        base <- .admShiftBase(Jl, .sh$eta_idx, .sh$du[, , kk, drop = FALSE])
-        if (is.null(base)) next
-        dmu_raw <- as.numeric(crossprod(W, base))
-        grad[k] <- grad[k] + contrib(base) + .sigma_V_extra(dmu_raw)
-      }
-    } else if (isTRUE(.sh$absorb)) {
-      # theta moves eta through BOTH mu and Omega + B B'; every eta dimension
-      # responds, so the contribution is the full .admAbsorbBase sum.
-      for (k in seq_len(n_s)) {
-        nmk <- pinfo$struct_names[k]
-        if (!nmk %in% colnames(.sh$dmu)) next
-        dLt  <- .admCholDiff(.sh$Lt, .sh$dP[[nmk]])
-        base <- .admAbsorbBase(Jl, X, dLt, .sh$dmu[, nmk])
-        if (is.null(base)) next
-        dmu_raw <- as.numeric(crossprod(W, base))
-        grad[k] <- grad[k] + contrib(base) + .sigma_V_extra(dmu_raw)
-      }
-    } else if (!is.null(.sh)) {
-      Jsh <- Jl[[.sh$eta_idx]]
-      for (k in seq_len(n_s)) {
-        nmk <- pinfo$struct_names[k]
-        if (!nmk %in% colnames(.sh$du_dtheta)) next
-        dk <- .sh$du_dtheta[, nmk]
-        # NON-FINITE, not just zero. .admShiftDu returns an all-NA column where
-        # the multi and stratified branches return NULL, so `all(dk == 0)` was
-        # NA and `if` raised "missing value where TRUE/FALSE needed" from
-        # inside the objective. A column that cannot be differentiated
-        # contributes nothing, which is what `next` already means here.
-        if (!all(is.finite(dk)) || all(dk == 0)) next
-        base    <- Jsh * dk
-        dmu_raw <- as.numeric(crossprod(W, base))
-        grad[k] <- grad[k] + contrib(base) + .sigma_V_extra(dmu_raw)
-      }
-    }
 
     # Omega Cholesky L: d(eta[q,])/d(L_ij) = x[q,j] * e_i (unit vector eta dim i)
     # So d(f[q,])/d(L_ij) = Jl[[i]][q,] * X[q,j]
     # Chain: L_ii stored as log(Omega_ii) -> d(L_ii)/dp = L_ii/2.
     if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
       i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
-      base <- if (isTRUE(.sh$cond)) {
-        # X is zero under conditioning, so Jl[[i]] * X[, j] would contribute
-        # nothing at all: the whole omega path is in dEta_om.
-        .admShiftCondBase(Jl, .sh$dEta_om[[rr]])
-      } else if (isTRUE(.sh$multi)) {
-        # A shifted eta's own scale moves EVERY shifted coordinate, so it cannot
-        # be folded into X[, j]; an unaffected eta keeps the standard column.
-        aa <- match(i, .sh$eta_idx)
-        if (i == j && !is.na(aa))
-          .admShiftBase(Jl, .sh$eta_idx,
-                        .sh$du[, , .sh$n_th + aa, drop = FALSE])
-        else Jl[[i]] * X[, j]
-      } else if (isTRUE(.sh$absorb)) {
-        # Omega enters through chol(Omega + P). dOmega/d(L_ij) = E_ij L' + L
-        # E_ij', and P does not depend on the omega parameters at all.
-        E <- matrix(0, n_eta, n_eta); E[i, j] <- 1
-        .admAbsorbBase(Jl, X, .admCholDiff(.sh$Lt, E %*% t(L) + L %*% t(E)),
-                       numeric(n_eta))
-      } else Jl[[i]] * X[, j]
+      base <- Jl[[i]] * X[, j]
       if (is.null(base)) next
       dmu_raw <- as.numeric(crossprod(W, base))
       dL      <- contrib(base) + .sigma_V_extra(dmu_raw)
@@ -1090,7 +739,6 @@
     # fit ever measures as the bottleneck, split it THEN, against a golden
     # gradient.
     if (any(vapply(studies, function(u) isTRUE(u$is_joint) ||
-                     identical(u$.adm_cov_path, "shift") ||
                      !is.null(u[[".adm_cov_collapse"]]) ||
                      !is.null(u[[".adm_cov_joint"]]), logical(1)))) {
       for (i in seq_len(n_u)) {
@@ -1241,8 +889,6 @@
     return(NULL)
   }
 
-  H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
-
   # Covariate studies: differentiate the NLL, not the gradient.
   #
   # The original reason given here was that .adghGradNLL builds its quadrature
@@ -1267,17 +913,8 @@
     use_grad <- FALSE
 
   if (use_grad) {
-    # CENTRAL difference of the gradient -- see .adfoCalcCov() for the reasoning
-    # and the cost (2*np_cov gradient evaluations against the old np_cov+1).
     h_c <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
-    for (jj in seq_len(np_cov)) {
-      ph      <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_c[jj]
-      pm      <- p_hat; pm[cov_idx[jj]] <- pm[cov_idx[jj]] - h_c[jj]
-      gp      <- grad_fn(ph)[cov_idx]
-      gm      <- grad_fn(pm)[cov_idx]
-      H[, jj] <- if (anyNA(gp) || anyNA(gm)) 0 else (gp - gm) / (2 * h_c[jj])
-    }
-    H <- (H + t(H)) / 2
+    H <- .admHessFromGrad(grad_fn, p_hat, cov_idx, h_c)
   } else {
     # Step selection. `pmax(abs(p), 0.1) * cov_h_outer` is a guess about how much
     # noise the objective carries, applied identically to every parameter -- and
@@ -1336,41 +973,11 @@
   # sandwich cannot supply -- a residual outside the conditionally-normal family,
   # a joint unit, a singular ingredient -- degrades to "r" and says so, rather
   # than reporting a number of unknown provenance.
-  sw_used <- FALSE; sw_HJ <- NULL
-  if (isTRUE(sandwich)) {
-    sw <- tryCatch(
-      .admSandwichCov(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
-                      H = H, keep = match(nms_cov, names(p_hat)),
-                      sensModel = sensModel),
-      error = function(e) NULL)
-    ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
-    if (ok) {
-      cov_full <- (sw$cov + t(sw$cov)) / 2
-      sw_used  <- TRUE
-      # H and J travel with the covariance because two more things are built
-      # from exactly this pair: the TIC penalty tr(H^-1 J), and the eigenvalue
-      # weights admCompare() rescales dOFV by. Recomputing them later would mean
-      # re-solving, and would let them drift from the SE actually reported.
-      sw_HJ    <- list(H = sw$H, J = sw$J, par_names = nms_cov,
-                       Om = sw$Om, study_names = names(studies))
-    } else {
-      warning("adghCalcCov: the sandwich correction could not be computed; ",
-              "reporting the covMethod = \"r\" covariance instead.", call. = FALSE)
-    }
-  }
-  dimnames(cov_full) <- list(nms_cov, nms_cov)
-  # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
-  # shared implementation for all three estimators -- see .admScaleReportedCov().
-  out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
-  # Directions H does not determine are reported as NA rather than as a large
-  # finite number. The reason travels on the covariance because a warning raised
-  # here does not reach the user -- .admFinaliseFit() says it.
-  .cchk <- .admCondCheck(H, .admCondReportNames(nms_cov, pinfo))
-  if (!is.null(.cchk)) out <- .admCondBlank(out, .cchk)
-  attr(out, "ill_cond") <- .cchk
-  attr(out, "sandwich") <- sw_used
-  attr(out, "sandwich_HJ") <- sw_HJ
-  out
+  .admFinaliseCov(cov_full, H, sandwich, function()
+    .admSandwichCov(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
+                    H = H, keep = match(nms_cov, names(p_hat)),
+                    sensModel = sensModel),
+    "adghCalcCov", p_hat, pinfo, nms_cov, studies, n_s, n_e, n_o, n_sub)
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -1477,12 +1084,29 @@
 #'   grid's 343. The same budget sizes the directions of a joint
 #'   random-effect/covariate design where one is used.
 #' @param cov_integration How a study's covariate distribution is integrated.
-#'   `"quadrature"` (default) evaluates the model on a product Gauss--Hermite
-#'   grid of `cov_nodes` points per covariate and forms the marginal moments
-#'   from the whole grid; it is the accurate route and the one every existing
-#'   fit uses. `"sparse"` uses a Smolyak sparse grid of `cov_sparse_level`
-#'   instead, which for `p` covariates costs far fewer than `cov_nodes^p`
-#'   points and is the speed lever for models with several covariates.
+#'   Three states.
+#'
+#'   `"on"` (default) integrates on a product Gauss--Hermite grid of
+#'   `cov_nodes` points per covariate and **reduces it wherever the model
+#'   permits**, choosing per study without being asked. Where the random
+#'   effects and the covariates span fewer directions than they have members --
+#'   an allometric weight effect on the same parameter as its random effect is
+#'   one direction, not two -- the integral is taken over those directions
+#'   instead, which for `p` covariates costs design points in the rank rather
+#'   than `cov_nodes^p`. A study that does not qualify is integrated on the full
+#'   grid. There is nothing to tune: a reduction is admitted only after it
+#'   reproduces the design it stands in for, so it cannot trade accuracy for
+#'   speed behind your back. Measured across four model shapes it is 2.5x to
+#'   17x cheaper AND 100x to 170000x more accurate than the unreduced grid.
+#'
+#'   `"off"` disables every reduction and integrates on the full product grid.
+#'   Slower, and useful mainly as a reference when a result is in question.
+#'
+#'   `"sparse"` replaces the product rule with a Smolyak sparse grid of
+#'   `cov_sparse_level`, which for `p` covariates costs far fewer than
+#'   `cov_nodes^p` points and is the speed lever for models with several
+#'   covariates.
+
 #'
 #'   Both are Gauss--Hermite rules; they differ in which product terms are
 #'   kept. Measured against an exact reference (lognormal margins, allometric
@@ -1725,7 +1349,14 @@ adghControl <- function(
     # cov_integration selects the method, cov_sparse_level the resolution of the
     # sparse one. cov_sparse_level occupies the slot the retired cov_taylor_h
     # had, so every positional call keeps its meaning.
-    cov_integration  = c("quadrature", "auto", "sparse", "shift"),
+    # THREE STATES. "on" reduces the covariate integral wherever the model
+    # permits and the reduction verifies against the design it replaces; "off"
+    # is the bare product grid; "sparse" swaps the product rule for a Smolyak
+    # one. The earlier four values mixed one real choice (which grid) with a
+    # second the caller should never have been asked -- whether to attempt a
+    # particular reduction -- which has a right answer per study that the code
+    # determines for itself.
+    cov_integration  = c("on", "sparse", "off"),
     cov_sparse_level = 3L,
     ...) {
 
@@ -1736,8 +1367,9 @@ adghControl <- function(
 
   addProp   <- match.arg(addProp)
   grad      <- match.arg(grad)
-  # A model source needs the sandwich to see its own C_src -- see
-  # .admResolveCovMethod(). An explicit covMethod is honoured untouched.
+  # A model source is not a sample, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it.
   covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
                                     !missing(covMethod))
   cov_integration <- match.arg(cov_integration)

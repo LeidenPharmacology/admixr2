@@ -55,30 +55,6 @@ test_that("cor names PAIRS, so an independent covariate needs no padding", {
                              cor = c(WT.SEX = 0.3)), "DISCRETE")
 })
 
-test_that("%RSE converts on the scale each parameter actually lives on", {
-  skip_if_not_installed("rxode2")
-  # THE conversion to get wrong. A paper reporting CL = 5.2 with 4.1% RSE means
-  # SE(CL) = 0.041 * 5.2, so SE(log CL) = 0.041 -- the estimate does NOT appear.
-  # An ordinary coefficient takes the usual |estimate| * RSE/100. Doing both the
-  # same way is a factor of log(5.2) = 1.65 on the clearance, silently.
-  s <- admStudy(model = .sa_model,
-                est = c(tcl = log(5.2), bsex = 0.17, eta.cl = 0.11,
-                        add.err = 0.09),
-                rse = c(tcl = 4.1, bsex = 31, eta.cl = 18, add.err = 9),
-                n = 240, dose = 200, times = c(1, 4, 12), label = "s")
-  expect_equal(s$se[["tcl"]], 0.041, tolerance = 1e-9)          # NOT 0.041*1.649
-  expect_equal(s$se[["bsex"]], 0.31 * 0.17, tolerance = 1e-9)
-  expect_equal(s$se[["eta.cl"]], 0.18 * 0.11, tolerance = 1e-9)
-  expect_equal(s$se[["add.err"]], 0.09 * 0.09, tolerance = 1e-9)
-  # and it lands in a covariance keyed by the ini() names
-  expect_setequal(rownames(s$cov), c("tcl", "bsex", "eta.cl", "add.err"))
-  expect_equal(sqrt(s$cov["tcl", "tcl"]), 0.041, tolerance = 1e-9)
-  # a relative error on a zero estimate has no meaning
-  expect_error(admStudy(model = .sa_model, est = c(bsex = 0),
-                        rse = c(bsex = 20), n = 10, dose = 1, times = 1),
-               "RELATIVE")
-})
-
 test_that("the paper's estimates go INTO the model, not into globals", {
   skip_if_not_installed("rxode2")
   s <- admStudy(model = .sa_model, est = c(tcl = log(7.5), bsex = 0.22),
@@ -170,74 +146,36 @@ test_that("`by` expands into one study per level, splitting n by the proportion"
 # has to happen at construction because the fit swallows it
 # ---------------------------------------------------------------------------
 
-test_that("covMethod upgrades to the sandwich only for a model source", {
+test_that("a model source withdraws the standard error, explicit or not", {
   skip_if_not_installed("rxode2")
-  src <- suppressWarnings(suppressMessages(
-    admStudy(model = .sa_model, se = c(tcl = .04, tv = .03, bsex = .05,
-                                       add.err = .004, eta.cl = .01),
-             n = 60, dose = 100, times = c(1, 4, 12),
-             population = admPopulation(WT = c(mean = 75, sd = 16),
-                                        SEX = c(male = 0.5)))))
+  src <- admStudy(model = .sa_model, n = 60, dose = 100, times = c(1, 4, 12),
+                  population = admPopulation(WT = c(mean = 75, sd = 16),
+                                             SEX = c(male = 0.5)))
   dat <- admStudy(E = c(1.6, 0.9, 0.3), sd = c(.4, .25, .1), n = 48,
                   dose = 100, times = c(1, 4, 12))
+  # A published model is a model source whatever it does or does not report
+  # about its own uncertainty -- the marker is the MODEL, because that is what
+  # makes the study something other than a sample.
   expect_true(admixr2:::.admHasModelSource(admStudies(a = src, b = dat)))
   expect_false(admixr2:::.admHasModelSource(admStudies(b = dat)))
-  # a source with NO reported uncertainty is not one either -- there is nothing
-  # for the sandwich to carry
-  bare <- admStudy(model = .sa_model, n = 60, dose = 100, times = c(1, 4, 12),
-                   population = admPopulation(WT = c(mean = 75, sd = 16),
-                                              SEX = c(male = 0.5)))
-  expect_false(admixr2:::.admHasModelSource(admStudies(c = bare)))
 
   st <- admStudies(a = src, b = dat)
   expect_equal(suppressMessages(
-    admixr2:::.admResolveCovMethod("r", st, FALSE)), "r,s")
-  # an EXPLICIT covMethod is honoured, including an explicit "r"
-  expect_equal(admixr2:::.admResolveCovMethod("r", st, TRUE), "r")
+    admixr2:::.admResolveCovMethod("r", st, FALSE)), "none")
+  # AN EXPLICIT covMethod IS REFUSED, NOT HONOURED. Honouring one would leave
+  # an SE that tracks the `n` the analyst typed exactly one argument away.
+  expect_error(admixr2:::.admResolveCovMethod("r", st, TRUE), "published MODEL")
+  expect_error(admixr2:::.admResolveCovMethod("r,s", st, TRUE), "published MODEL")
+  # "none" is what the refusal asks for, so it passes through either way
+  expect_equal(admixr2:::.admResolveCovMethod("none", st, TRUE), "none")
   expect_equal(admixr2:::.admResolveCovMethod("none", st, FALSE), "none")
+  # and a fit with no model source is untouched
   expect_equal(admixr2:::.admResolveCovMethod("r", admStudies(b = dat), FALSE), "r")
-  # and it reaches the control objects, which is where a fit reads it
-  expect_equal(suppressMessages(adghControl(studies = st))$covMethod, "r,s")
-  expect_equal(adghControl(studies = st, covMethod = "r")$covMethod, "r")
-})
-
-test_that("an incomplete source covariance is refused where the user is standing", {
-  skip_if_not_installed("rxode2")
-  # THE FAILURE THIS PINS: .admSandwichCov() refuses a source whose C_src does
-  # not cover every parameter the source ESTIMATED, and refusing one source
-  # refuses the sandwich for the whole fit. datagen() does warn -- but it runs
-  # inside the nlmixr2est stack, which swallows it, so covMethod came back "r"
-  # with the naive standard errors printed and nothing said anywhere.
-  expect_warning(
-    admStudy(model = .sa_model, rse = c(tcl = 4.1, tv = 6.0),
-             n = 60, dose = 100, times = c(1, 4, 12),
-             population = admPopulation(WT = c(mean = 75, sd = 16),
-                                        SEX = c(male = 0.5))),
-    "no standard error will be reported")
-  # naming which rows are missing is the actionable half
-  w <- tryCatch(suppressMessages(
-    admStudy(model = .sa_model, rse = c(tcl = 4.1), n = 60, dose = 100,
-             times = c(1, 4, 12),
-             population = admPopulation(WT = c(mean = 75, sd = 16),
-                                        SEX = c(male = 0.5)))),
-    warning = conditionMessage)
-  expect_match(w, "bsex")
-
-  # a malformed matrix ERRORS at construction, naming the argument the user
-  # actually typed rather than datagen()'s internal `model_cov`
-  C <- diag(2); dimnames(C) <- list(c("tcl", "nope"), c("tcl", "nope"))
-  expect_error(admStudy(model = .sa_model, cov = C, n = 60, dose = 100,
-                        times = c(1, 4, 12)),
-               "`cov` names 'nope'")
-
-  # a fit's own naming (`om.eta.cl`) is accepted and mapped onto the ini() row,
-  # so print() and the fit agree about which rows are covered
-  nm <- c("tcl", "tv", "bsex", "add.err", "om.eta.cl")
-  C2 <- diag(c(.04, .03, .05, .004, .01)^2); dimnames(C2) <- list(nm, nm)
-  s <- admStudy(model = .sa_model, cov = C2, n = 60, dose = 100,
-                times = c(1, 4, 12))
-  expect_equal(rownames(s$cov),
-               c("tcl", "tv", "bsex", "add.err", "eta.cl"))
+  expect_equal(admixr2:::.admResolveCovMethod("r,s", admStudies(b = dat), TRUE),
+               "r,s")
+  # it reaches the control objects, which is where a fit reads it
+  expect_equal(suppressMessages(adghControl(studies = st))$covMethod, "none")
+  expect_error(adghControl(studies = st, covMethod = "r"), "published MODEL")
 })
 
 # ---------------------------------------------------------------------------
@@ -356,13 +294,14 @@ test_that("print.admStudies flags a covariate no source can identify", {
   expect_match(out, "SEX +banded")
   expect_match(out, "WT +marginal")
   expect_match(out, "marginal in every source")
-  # a source with a model but no uncertainty is the other silent one
+  # that a published model carries no standard error is the other silent one:
+  # said at transcription time, where the user can still change the design
   bare <- suppressMessages(
     admStudy(model = .sa_model, population = coh, dose = 200,
              times = c(1, 4, 12), label = "b"))
   out2 <- paste(utils::capture.output(print(admStudies(b = bare))),
                 collapse = " ")
-  expect_match(out2, "no uncertainty")
+  expect_match(out2, "No standard error is reported")
 })
 
 test_that("a covariate constant within a study is pinned, not described", {
@@ -402,30 +341,6 @@ test_that("stratify = TRUE bands what the source ESTIMATED, not what it reads", 
     admixr2:::.admMaterialise(admStudies(s))))
   expect_setequal(unlist(lapply(got, function(g) names(g[["cov"]]))), "SEX")
   expect_equal(sum(vapply(got, function(g) g$n, 0)), 200)
-})
-
-test_that("a source covariance may use nlmixr2's off-diagonal omega names", {
-  skip_on_cran(); skip_if_not_installed("rxode2")
-  # `fit$cov` from a correlated two-eta model names the off-diagonal
-  # `cov.eta.cl.eta.v`, which cannot be split on dots because eta names contain
-  # them. It maps onto the `ini()` row `(eta.cl,eta.v)`.
-  m <- function() {
-    ini({ tcl <- log(5); tv <- log(50); a <- 0.1
-          eta.cl + eta.v ~ c(0.09, 0.01, 0.04) })
-    model({ cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v)
-            cp <- linCmt(); cp ~ add(a) })
-  }
-  u  <- suppressMessages(rxode2::rxode2(m))
-  nm <- c("tcl", "tv", "a", "om.eta.cl", "cov.eta.cl.eta.v", "om.eta.v")
-  C  <- diag(c(.05, .04, .004, .01, .005, .008)^2); dimnames(C) <- list(nm, nm)
-  got <- admixr2:::.admSrcCov(C, u, "src", "cov")
-  expect_setequal(rownames(got$cov),
-                  c("tcl", "tv", "a", "eta.cl", "(eta.cl,eta.v)", "eta.v"))
-  expect_length(got$missing, 0L)
-  # an off-diagonal the model does not declare is still refused
-  nm2 <- c("tcl", "tv", "a", "om.eta.cl", "cov.eta.cl.eta.zz", "om.eta.v")
-  C2 <- diag(rep(.01, 6)); dimnames(C2) <- list(nm2, nm2)
-  expect_error(admixr2:::.admSrcCov(C2, u, "src", "cov"), "OFF-DIAGONAL")
 })
 
 test_that("admStudy resolves v_denom from the currency the study is written in", {

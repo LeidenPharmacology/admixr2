@@ -373,3 +373,78 @@
   dimnames(e$cov) <- list(nms, nms)
   invisible(NULL)
 }
+
+# The tail every *CalcCov shares: try the sandwich, then rotate onto the
+# reported scale and stamp the provenance.
+#
+# THREE IDENTICAL COPIES, and this is the block that carries `sandwich_HJ` --
+# the (H, J) pair .admTICStats and admCompare() are both built from. CLAUDE.md
+# names this exact shape as where the covariate bugs came from ("rebuilt by SIX
+# consumers, and that is where the bugs are"): a third copy of a thirty-line
+# tail is a place for one estimator's attribute to go missing without any test
+# noticing, since each estimator is checked against its own output.
+#
+# `sw_fn` is a thunk rather than an argument list because that is the ONLY part
+# that genuinely differs -- adfo builds its own moment map, adgh already holds a
+# grid, admc derives one. `label` names the estimator in the degrade warning.
+# Everything after `ok <- ...` was byte-identical in all three.
+.admFinaliseCov <- function(cov_full, H, sandwich, sw_fn, label, p_hat, pinfo,
+                            nms_cov, studies, n_s, n_e, n_o, n_sub) {
+  sw_used <- FALSE; sw_HJ <- NULL
+  if (isTRUE(sandwich)) {
+    sw <- tryCatch(sw_fn(), error = function(e) NULL)
+    if (!is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)) {
+      cov_full <- (sw$cov + t(sw$cov)) / 2
+      sw_used  <- TRUE
+      # H and J travel with the covariance because two more things are built
+      # from exactly this pair: the TIC penalty tr(H^-1 J), and the eigenvalue
+      # weights admCompare() rescales dOFV by. Recomputing them later would mean
+      # re-solving, and would let them drift from the SE actually reported.
+      sw_HJ    <- list(H = sw$H, J = sw$J, par_names = nms_cov,
+                       Om = sw$Om, study_names = names(studies))
+    } else {
+      warning(label, ": the sandwich correction could not be computed; ",
+              "reporting the covMethod = \"r\" covariance instead.",
+              call. = FALSE)
+    }
+  }
+  dimnames(cov_full) <- list(nms_cov, nms_cov)
+  # Rotate onto the reported scale (residual delta factors + omega Jacobian).
+  out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  # Directions H does not determine are reported as NA rather than as a large
+  # finite number. The reason travels on the covariance because a warning raised
+  # here does not reach the user -- .admFinaliseFit() says it.
+  .cchk <- .admCondCheck(H, .admCondReportNames(nms_cov, pinfo))
+  if (!is.null(.cchk)) out <- .admCondBlank(out, .cchk)
+  attr(out, "ill_cond")    <- .cchk
+  attr(out, "sandwich")    <- sw_used
+  attr(out, "sandwich_HJ") <- sw_HJ
+  out
+}
+
+# The Hessian of the objective from CENTRAL differences of its GRADIENT, one
+# column per parameter -- two identical copies, adfo and adgh.
+#
+# Central, not forward: forward's truncation error is (h/2)|f''| against
+# central's (h^2/6)|f'''|, and h is pmax(|p|, 0.1) * cov_h_outer ~ 7e-4, which
+# is coarse. The symmetrisation was papering over the asymmetry that produced.
+# Cost: 2 * np gradient evaluations against the old np + 1.
+#
+# A column whose gradient came back non-finite is ZEROED rather than dropped:
+# the caller's PD check then fails legibly on the whole matrix instead of the
+# column silently carrying an NA into solve().
+.admHessFromGrad <- function(grad_fn, p_hat, cov_idx, h_c) {
+  np <- length(cov_idx)
+  # NAMED, as the pre-allocated matrix it replaces was: .admReduceNpdOmega
+  # subsets H and reports the rows it kept, and an unnamed H would make that
+  # report positional.
+  H  <- matrix(0, np, np, dimnames = rep(list(names(p_hat)[cov_idx]), 2L))
+  for (jj in seq_len(np)) {
+    ph      <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_c[jj]
+    pm      <- p_hat; pm[cov_idx[jj]] <- pm[cov_idx[jj]] - h_c[jj]
+    gp      <- grad_fn(ph)[cov_idx]
+    gm      <- grad_fn(pm)[cov_idx]
+    H[, jj] <- if (anyNA(gp) || anyNA(gm)) 0 else (gp - gm) / (2 * h_c[jj])
+  }
+  (H + t(H)) / 2
+}

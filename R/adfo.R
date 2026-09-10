@@ -825,17 +825,11 @@
     return(NULL)
   }
 
-  H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
-
   if (use_grad) {
-    # CENTRAL difference of the gradient. This path only runs when the gradient
-    # is ANALYTIC (see `have_d2` at the call site) -- differencing an already
-    # finite-differenced gradient is refused there -- so the function being
-    # differenced is smooth and exact, and a forward difference wastes that: its
-    # truncation error is (h/2)|f''| against central's (h^2/6)|f'''|, and h here
-    # is pmax(|p|,0.1)*cov_h_outer ~ 7e-4, which is coarse. The symmetrisation
-    # below was papering over the asymmetry that error produced.
-    # Cost: 2*np_cov gradient evaluations against the old np_cov+1.
+    # This path only runs when the gradient is ANALYTIC (see `have_d2` at the
+    # call site) -- differencing an already finite-differenced gradient is
+    # refused there -- so the function being differenced is smooth and exact.
+    # Why the difference is central, and what it costs: .admHessFromGrad().
     h_c <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
     # All 2*np_cov gradient points are known here; prime the memo with one solve
     # per study. Only the struct directions need one at all -- every sigma and
@@ -845,14 +839,7 @@
       pm <- p_hat; pm[cov_idx[jj]] <- pm[cov_idx[jj]] - h_c[jj]
       list(ph, pm)
     }), recursive = FALSE))
-    for (jj in seq_len(np_cov)) {
-      ph      <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_c[jj]
-      pm      <- p_hat; pm[cov_idx[jj]] <- pm[cov_idx[jj]] - h_c[jj]
-      gp      <- grad_fn(ph)[cov_idx]
-      gm      <- grad_fn(pm)[cov_idx]
-      H[, jj] <- if (anyNA(gp) || anyNA(gm)) 0 else (gp - gm) / (2 * h_c[jj])
-    }
-    H <- (H + t(H)) / 2
+    H <- .admHessFromGrad(grad_fn, p_hat, cov_idx, h_c)
   } else {
     # Step selection. `pmax(abs(p), 0.1) * cov_h_outer` is a guess about how much
     # noise the objective carries, applied identically to every parameter -- and
@@ -932,46 +919,16 @@
   # adfo's own moment map -- G describes the estimator, Omega the truth. What
   # comes back is an SE for the FO fit that answers to the model's true
   # nonlinear law, so it also absorbs part of the linearisation error.
-  sw_used <- FALSE; sw_HJ <- NULL
-  if (isTRUE(sandwich)) {
-    sw <- tryCatch({
-      grid <- .admSandwichGrid(pinfo)
-      if (is.null(grid)) stop("no random effects: no ensemble to weight against")
-      mf <- .admAdfoMomFn(pinfo, studies, sensModel, rxMod, output_var,
-                          params_list, cores)
-      # `rxMod` is adfo's plain simulation model (its FD fallback solves through
-      # it), which is exactly what .admAdfParts needs for the node ensemble.
-      .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
-                      H = H, keep = match(nms_cov, names(p_hat)), mom_fn = mf)
-    }, error = function(e) NULL)
-    ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
-    if (ok) {
-      cov_full <- (sw$cov + t(sw$cov)) / 2
-      sw_used  <- TRUE
-      # H and J travel with the covariance because two more things are built
-      # from exactly this pair: the TIC penalty tr(H^-1 J), and the eigenvalue
-      # weights admCompare() rescales dOFV by. Recomputing them later would mean
-      # re-solving, and would let them drift from the SE actually reported.
-      sw_HJ    <- list(H = sw$H, J = sw$J, par_names = nms_cov,
-                       Om = sw$Om, study_names = names(studies))
-    } else {
-      warning("adfoCalcCov: the sandwich correction could not be computed; ",
-              "reporting the covMethod = \"r\" covariance instead.", call. = FALSE)
-    }
-  }
-  dimnames(cov_full) <- list(nms_cov, nms_cov)
-  # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
-  # shared implementation for all three estimators -- see .admScaleReportedCov().
-  out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
-  # Directions H does not determine are reported as NA rather than as a large
-  # finite number. The reason travels on the covariance because a warning raised
-  # here does not reach the user -- .admFinaliseFit() says it.
-  .cchk <- .admCondCheck(H, .admCondReportNames(nms_cov, pinfo))
-  if (!is.null(.cchk)) out <- .admCondBlank(out, .cchk)
-  attr(out, "ill_cond") <- .cchk
-  attr(out, "sandwich") <- sw_used
-  attr(out, "sandwich_HJ") <- sw_HJ
-  out
+  .admFinaliseCov(cov_full, H, sandwich, function() {
+    grid <- .admSandwichGrid(pinfo)
+    if (is.null(grid)) stop("no random effects: no ensemble to weight against")
+    mf <- .admAdfoMomFn(pinfo, studies, sensModel, rxMod, output_var,
+                        params_list, cores)
+    # `rxMod` is adfo's plain simulation model (its FD fallback solves through
+    # it), which is exactly what .admAdfParts needs for the node ensemble.
+    .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
+                    H = H, keep = match(nms_cov, names(p_hat)), mom_fn = mf)
+  }, "adfoCalcCov", p_hat, pinfo, nms_cov, studies, n_s, n_e, n_o, n_sub)
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -1308,8 +1265,9 @@ adfoControl <- function(
   # options(warn = 2) here.
   .grad_explicit <- !missing(grad)
   grad     <- match.arg(grad)
-  # A model source needs the sandwich to see its own C_src -- see
-  # .admResolveCovMethod(). An explicit covMethod is honoured untouched.
+  # A model source is not a sample, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it.
   covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
                                     !missing(covMethod))
 

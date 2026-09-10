@@ -338,8 +338,9 @@ admControl <- function(
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
   checkmate::assertNumeric(grad_bounds, lower = 0,  len = 1, .var.name = "grad_bounds")
-  # A model source needs the sandwich to see its own C_src -- see
-  # .admResolveCovMethod(). An explicit covMethod is honoured untouched.
+  # A model source is not a sample, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it.
   covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
                                     !missing(covMethod))
   checkmate::assertIntegerish(cov_n_sim,   lower = 1L, len = 1, .var.name = "cov_n_sim")
@@ -1899,43 +1900,13 @@ nmObjGetControl.admc <- function(x, ...) {
   # the same reason -- admc's moments are noisy estimates of exactly that
   # integral, so the noise-free version describes the estimator's target
   # faithfully and its variance better.
-  sw_used <- FALSE; sw_HJ <- NULL
-  if (isTRUE(sandwich)) {
-    sw <- tryCatch({
-      grid <- .admSandwichGrid(pinfo)
-      if (is.null(grid)) stop("no random effects: no ensemble to weight against")
-      .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
-                      H = H, keep = match(nms_cov, names(p_hat)),
-                      sensModel = sensModel)
-    }, error = function(e) NULL)
-    ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
-    if (ok) {
-      cov_full <- (sw$cov + t(sw$cov)) / 2
-      sw_used  <- TRUE
-      # H and J travel with the covariance because two more things are built
-      # from exactly this pair: the TIC penalty tr(H^-1 J), and the eigenvalue
-      # weights admCompare() rescales dOFV by. Recomputing them later would mean
-      # re-solving, and would let them drift from the SE actually reported.
-      sw_HJ    <- list(H = sw$H, J = sw$J, par_names = nms_cov,
-                       Om = sw$Om, study_names = names(studies))
-    } else {
-      warning("admCalcCov: the sandwich correction could not be computed; ",
-              "reporting the covMethod = \"r\" covariance instead.", call. = FALSE)
-    }
-  }
-  dimnames(cov_full) <- list(nms_cov, nms_cov)
-  # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
-  # shared implementation for all three estimators -- see .admScaleReportedCov().
-  out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
-  # Directions H does not determine are reported as NA rather than as a large
-  # finite number. The reason travels on the covariance because a warning raised
-  # here does not reach the user -- .admFinaliseFit() says it.
-  .cchk <- .admCondCheck(H, .admCondReportNames(nms_cov, pinfo))
-  if (!is.null(.cchk)) out <- .admCondBlank(out, .cchk)
-  attr(out, "ill_cond") <- .cchk
-  attr(out, "sandwich") <- sw_used
-  attr(out, "sandwich_HJ") <- sw_HJ
-  out
+  .admFinaliseCov(cov_full, H, sandwich, function() {
+    grid <- .admSandwichGrid(pinfo)
+    if (is.null(grid)) stop("no random effects: no ensemble to weight against")
+    .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
+                    H = H, keep = match(nms_cov, names(p_hat)),
+                    sensModel = sensModel)
+  }, "admCalcCov", p_hat, pinfo, nms_cov, studies, n_s, n_e, n_o, n_sub)
 }
 
 # -- Restart worker ------------------------------------------------------------
