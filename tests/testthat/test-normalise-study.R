@@ -276,6 +276,28 @@ test_that("v_denom reaches the paths that bypass .admNormaliseObs", {
                diag(ma$observations$csf$V) * (10 - 1) / 10)
 })
 
+test_that("v_denom converts long-format `data` after it is expanded", {
+  # .admVDenom() must run AFTER .admExpandLongStudy(): while `data` is still a
+  # raw data frame, neither `V` nor `observations` exist yet, so an
+  # "unbiased" declaration used to silently no-op on the row-level SD/V.
+  N <- 60L; f <- (N - 1) / N
+  ns <- admixr2:::.admNormaliseStudy(
+    list(n = N, ev = "EV", data = .long_df(), v_denom = "unbiased"), "lit")
+  expect_equal(ns$observations$cp$v_diag, c(1.21, 0.81, 0.64) * f)
+  expect_equal(ns$observations$cb$v_diag, c(0.09, 0.09) * f)
+  expect_identical(ns$v_denom, "ml")
+
+  # joint long-format, `n` given via the documented data-frame column rather
+  # than at the study level -- must not error that `n` is missing.
+  V  <- diag(c(1.21, 0.81, 0.64, 0.09, 0.09))
+  V[1, 4] <- V[4, 1] <- 0.15
+  d  <- transform(.long_df(), n = N)
+  nj <- admixr2:::.admNormaliseStudy(
+    list(ev = "EV", data = d, V = V, v_denom = "unbiased"), "lit")
+  expect_equal(nj$observations[[1L]]$V, unname(V) * f)
+  expect_equal(nj$n, N)
+})
+
 test_that("v_denom refuses what it cannot convert", {
   base <- list(E = c(10, 8), times = c(1, 2), ev = rxode2::et(amt = 100))
   expect_error(admixr2:::.admNormaliseStudy(

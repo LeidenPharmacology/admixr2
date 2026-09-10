@@ -612,11 +612,14 @@
     }
     return(s)
   }
-  # BEFORE any branch reads V: the joint constructor assembles its own matrix
-  # from the raw per-observation blocks and never passes through
-  # .admNormaliseObs, so converting there would miss it.
-  s <- .admVDenom(s, nm)
+  # Long-format `data` must be expanded to `V`/`observations` BEFORE v_denom
+  # conversion -- otherwise .admVDenom() sees none of it (still raw rows) and
+  # silently no-ops, leaving an "unbiased" V uncorrected. And v_denom must run
+  # BEFORE the joint constructor below: it assembles its own matrix from the
+  # raw per-observation blocks and never passes through .admNormaliseObs, so
+  # converting after that would miss it.
   if (!is.null(s$data)) s <- .admExpandLongStudy(s, nm)
+  s <- .admVDenom(s, nm)
   if (!is.null(s$observations) &&
       (isTRUE(s$joint) || !is.null(s$cross) || !is.null(s$V))) {
     if (!is.list(s$observations) || length(s$observations) == 0L)
