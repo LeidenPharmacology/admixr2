@@ -1206,13 +1206,9 @@ nlmixr2Est.adirmc <- function(env, ...) {
     stop("Could not recover adirmcControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("adirmcControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adirmc")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   # IRMC draws its importance-sampling proposals FROM the random-effect
   # distribution, so a model with no random effect has nothing to propose: the
   # proposal draw is degenerate and the fit returned a silent objective = Inf
@@ -1273,6 +1269,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   studies        <- .u$studies
   .adm_multi_out <- .u$multi_out
   .adm_joint     <- .u$any_joint
+  .admRefuseCovariates(.u$studies, "adirmc")
   if (.adm_multi_out || .adm_joint)
     stop("adirmc does not yet support multiple observed outputs (multi-compartment observations). ",
          "Use est = 'admc', 'adfo', or 'adgh' for multi-output fits.", call. = FALSE)

@@ -1377,13 +1377,9 @@ nlmixr2Est.adfo <- function(env, ...) {
     stop("Could not recover adfoControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("adfoControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adfo")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   output_var <- .admOutputVar(.ui)
   # A beta endpoint's precision phi is SOLVED, not fitted: .admSimulate() returns
   # it as an attribute on cp_mat and admc/adgh patch it into the residual rows.
@@ -1407,6 +1403,7 @@ nlmixr2Est.adfo <- function(env, ...) {
   studies    <- .u$studies
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
+  .admRefuseCovariates(studies, "adfo")
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)
