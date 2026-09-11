@@ -10,6 +10,20 @@
 #' `"adgh"` for those. Single-output studies are fit as usual.
 #'
 #' @inheritParams admControl
+#' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
+#'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   All three span the structural, residual-error and omega parameters, and are
+#'   reported on the scale the estimates are printed on. [admControl()] documents
+#'   what the sandwich is, why it is the conservative default, and why it is more
+#'   sensitive than `"r"` to an ill-conditioned Hessian; the same implementation
+#'   runs here.
+#'   What does NOT carry over is the family coverage, because `adirmc` itself is
+#'   narrower: the estimator accepts only `add`, `prop`, `pow`, `combined1`,
+#'   `combined2` and `lnorm` residuals, and `"r,s"` applies to all six. The
+#'   count, `beta`, transform-both-sides, `ordinal` and `ar()` endpoints
+#'   [admControl()] lists are refused by `est = "adirmc"` itself, before any
+#'   covariance is reached -- they are not models whose sandwich degrades to
+#'   `"r"` here, they are models this estimator does not fit.
 #' @param grad Gradient mode for the inner optimiser: `"analytical"` (default,
 #'   closed-form weight-path gradient), `"none"` (derivative-free BOBYQA), or
 #'   `"fd"` (central finite differences). Note: `"sens"` is not available for the
@@ -133,7 +147,7 @@ adirmcControl <- function(
     phases          = c(2, 1, 0.5, 0.01),
     convcrit        = 1e-5,
     max_worse       = 5L,
-    covMethod       = c("r", "none"),
+    covMethod       = c("r,s", "r", "none"),
     cov_n_sim       = 10000L,
     n_restarts      = 1L,
     restart_sd      = 0.2,
@@ -1300,7 +1314,11 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # and therefore cannot poison anything. Cold cache keeps the old ordering.
   .sim_warm <- isTRUE(tryCatch(file.exists(.admModelCacheFile(.ui)),
                                error = function(e) FALSE))
-  sensModel <- if ((.ctl$covMethod == "r" && .ctl$grad == "analytical") || !.sim_warm)
+  # .admCovWantsHessian(), NOT `== "r"`: both "r" and "r,s" ask for a Hessian,
+  # so both need the sens model. An equality test here is the same shape of bug
+  # the note above describes -- it would silently take the FD-Hessian path for
+  # a "r,s" fit.
+  sensModel <- if ((.admCovWantsHessian(.ctl$covMethod) && .ctl$grad == "analytical") || !.sim_warm)
     tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
   else NULL
 
@@ -1324,7 +1342,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
   irmc_grad_label <- if (.ctl$grad == "none") "none" else {
     cov_label <- if (!is.null(sensModel)) "+Sens-Hessian" else "+FD-Hessian"
     grad_inner_label <- if (.ctl$grad == "fd") "central FD" else "analytic"
-    paste0(grad_inner_label, if (.ctl$covMethod == "r") cov_label else "")
+    paste0(grad_inner_label,
+           if (.admCovWantsHessian(.ctl$covMethod)) cov_label else "")
   }
   message("=== admixr2: Aggregate Data Modeling (IR-MC) ===")
   message(sprintf("  Studies: %d | MC samples: %d | Phases: %d | Iters/phase: %d | Expansion: %.2f | Grad: %s | Restarts: %d",
@@ -1412,7 +1431,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   p_hat_irmc <- setNames(best_p, names(ov$p0))
   t0_cov <- proc.time()
-  .cov <- if (.ctl$covMethod == "r") {
+  .want_cov <- .admCovWantsHessian(.ctl$covMethod)
+  .cov <- if (.want_cov) {
     # struct + sigma + OMEGA: .admCalcCov()'s Hessian spans all three, so the
     # advertised evaluation count must too (it understated it otherwise).
     np_cov       <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
@@ -1427,28 +1447,28 @@ nlmixr2Est.adirmc <- function(env, ...) {
     evals_label <- if (use_grad_cov) "gradient evaluations" else "NLL evaluations"
     hess_label  <- if (!use_grad_cov) "" else if (!is.null(sensModel))
       ", Sens-Hessian" else ", FD-Hessian"
-    message(sprintf("  Computing covariance (R method, MC NLL%s, %d %s)",
-                    hess_label, n_evals, evals_label))
+    message(sprintf("  Computing covariance (R method, MC NLL%s%s, %d %s)",
+                    hess_label, if (.admCovWantsSandwich(.ctl$covMethod)) ", sandwich" else "",
+                    n_evals, evals_label))
     tryCatch(
       .admCalcCov(p_hat_irmc, pinfo, studies_snap, z_list, rxMod, output_var,
                   params_list, cores, cov_n_sim = .ctl$cov_n_sim,
                   use_grad = use_grad_cov, grad_h = .ctl$grad_h,
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
-                  sensModel = sensModel, sampling = .ctl$sampling),
+                  sensModel = sensModel, sampling = .ctl$sampling,
+                  sandwich = .admCovWantsSandwich(.ctl$covMethod)),
       error = function(e) {
         warning("admCalcCov (adirmc) failed: ", conditionMessage(e))
         NULL
       })
   } else NULL
-  # A NULL covariance used to be completely silent: no warning reached the user,
-  # `warnings()` was empty, covMethod came back "" and every SE was NA with no
-  # indication why. Say so once, from the driver, where it cannot be swallowed.
-  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
-    warning("covariance could not be computed (the Hessian was singular or ",
-            "non-finite); standard errors are unavailable for this fit.",
-            call. = FALSE)
+  # Warns if no covariance could be computed, re-raises any sandwich
+  # ill-conditioning note (as a warning -- see .admFinalizeCovLabel()'s own
+  # comment for why that specific mechanism matters), and returns what the
+  # covariance IS ("r,s" / "r" / ""), not what was asked for.
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
+  .cov_lbl  <- .admFinalizeCovLabel(.cov, .want_cov)
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
@@ -1468,7 +1488,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   .ret$est       <- "adirmc"
   .ret$ofvType   <- "adirmc"
   .ret$adjObf    <- FALSE
-  .ret$covMethod <- if (!is.null(.cov)) "r" else ""
+  .ret$covMethod <- .cov_lbl
   .ret$cov       <- .cov
   .ret$message   <- if (.ctl$n_restarts > 1L) opt_restart$message else pl$last_opt_message
   .ret$extra     <- ""

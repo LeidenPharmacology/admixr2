@@ -305,10 +305,13 @@ than Sobol.
 
 ## Parameter uncertainty
 
-`covMethod = "r"` (default) computes a numerical Hessian after optimisation and
-reports standard errors in `print(fit)`. **Important:** these SEs are computed
-for structural and residual-error parameters only; omega (IIV) SEs are not
-computed (matching nlmixr2 FOCEI behavior). A larger `cov_n_sim` reduces MC
+`covMethod = "r"` computes a numerical Hessian after optimisation and
+reports standard errors in `print(fit)`. As of this version the default is
+`covMethod = "r,s"` (see below), which reports the sandwich correction of
+that same Hessian; pass `covMethod = "r"` explicitly to get the uncorrected
+SEs. SEs are reported for the structural, residual-error **and** omega (IIV)
+parameters; omega is reported on its natural scale, with the Hessian rotated
+off the Cholesky factor the optimiser works in. A larger `cov_n_sim` reduces MC
 noise in the Hessian:
 
 ```{r cov-method, eval=FALSE}
@@ -334,6 +337,48 @@ admControl(..., covMethod = "none")
 
 If the Hessian is non-positive-definite (SEs printed as `NA`), increase
 `cov_h_outer` or `cov_n_sim`.
+
+### `covMethod = "r,s"`: scoring the summary against its own sampling law
+
+The aggregate objective is the exact log-likelihood of `n` iid draws from
+`N(yt, Vt)`, so it assumes each subject's observation vector is multivariate
+normal. It is not — `y_i = f(theta, b_i) + eps_i` is nonlinear in the random
+effect, so the marginal is a mixture. This does **not** cost the point
+estimates: the score has expectation zero at the true parameters under any
+weight, so the fit stays consistent. It costs the reported uncertainty, in two
+ways that differ in kind: `Cov(V_ij, V_kl)` is mis-sized by the excess kurtosis,
+and `Cov(ybar, vech V)` is assumed zero where a real correlation of 0.3–0.6
+sits. The sample mean and the sample covariance are exactly independent for a
+multivariate normal, and for nothing else.
+
+`covMethod = "r,s"` scores `(ybar, vech V)` against its own asymptotic law and
+reports the sandwich `H^-1 J H^-1` — on the same `H` that `"r"` inverts:
+
+```{r cov-rs, eval=FALSE}
+fit_rs <- nlmixr2(
+  pk_model, admData(), est = "adgh",
+  control = adghControl(studies = list(examplomycin = study), covMethod = "r,s")
+)
+fit_rs$covMethod   # "r,s" if the correction was applied, "r" if it degraded
+```
+
+Point estimates and the objective are identical to the `"r"` fit; only the SEs
+move. Under correct specification `J = 2H` and `"r,s"` returns exactly what
+`"r"` would have, so the two agreeing is the expected outcome for a
+well-specified model, not a sign that nothing happened.
+
+It applies to every residual family whose conditional law is independent
+across timepoints — which is all of them except `ar()` — the
+conditionally-normal set (`add`, `prop`, `pow`, `combined1`, `combined2`), the
+closed-form distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`,
+`t(nu > 4)`), and the transform-both-sides ones (`boxCox`, `yeoJohnson`,
+`logitNorm`, `probitNorm`). Anything it cannot build — an `ar()` residual, a
+`t()` with `nu <= 4`, an `ordinal()` or same-subject joint study, a singular
+ingredient — degrades to `"r"` with a warning, and `fit$covMethod` then reads
+`"r"`: it records what the covariance **is**, not what was asked for.
+
+Under `"r,s"` the denominator of a study's reported `V` stops being cosmetic —
+see `v_denom` in the [aggregate data](aggregate-data.html) vignette.
 
 ## Model comparison: AIC and BIC
 

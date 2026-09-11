@@ -375,7 +375,8 @@ head.paged_df <- function(x, n = 6L, ...) {
 
   # Returns BOTH the residual-adjusted covariance and mean: lnorm rescales the
   # mean, and the predicted E must carry that scaling just as the NLL does.
-  .add_sigma <- function(V, mu, ov = out_var, times = NULL, phi = NULL) {
+  .add_sigma <- function(V, mu, ov = out_var, times = NULL, phi = NULL,
+                         cp = NULL) {
     # beta: the precision is SOLVED and rides back on the simulated matrix. Every
     # estimator patches it in; this path did not, so after a perfectly ordinary
     # beta fit the predicted-covariance heatmap, the standardised-residual panels
@@ -385,6 +386,14 @@ head.paged_df <- function(x, n = 6L, ...) {
     # ordinal) were dropped, so the predicted-covariance diagnostic panel showed
     # an independent-residual V for exactly the models whose off-diagonal is the
     # point of fitting them.
+    # Match the objective: a TBS endpoint composes at each DRAW, so what a
+    # diagnostic draws is what the fit was actually scored against. Needs the
+    # simulated matrix, which is why `cp` is threaded in; without it the panel
+    # falls back to the expansion, which is the previous behaviour.
+    if (!is.null(cp)) {
+      .ex <- .admResidNodeMomentsTBS(cp, rep(1, nrow(cp)), arr, times)
+      if (!is.null(.ex)) return(list(V = .ex$V, mu = .ex$E))
+    }
     ap  <- .admResidApply(mu, diag(V), arr, times, V)
     list(V = .admApplyResidTail(V, ap), mu = ap$mu)
   }
@@ -406,7 +415,7 @@ head.paged_df <- function(x, n = 6L, ...) {
                         s, pinfo_r, sv)
     else
       .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
-                 s$output %||% out_var, s$times, attr(cp_mat, "phi"))
+                 s$output %||% out_var, s$times, attr(cp_mat, "phi"), cp_mat)
     V_pred <- res$V; mu <- res$mu
     obs_E  <- as.numeric(s$E)
     obs_V  <- as.matrix(s$V)
@@ -601,6 +610,11 @@ plot.admFit <- function(x, which = c("mean", "cov", "nll", "par"),
 
   # -- Mean diagnostics: 2x2 grid (Obs | Pred / Residual | Standardised residual)
   # Obs/Pred: shared y scale; black mean line + point + \u00b11 SD ribbon (black, alpha 0.15).
+  # The ribbon is sqrt(diag(V_obs)) on the ML scale -- what the fit consumed --
+  # so a study declared `v_denom = "unbiased"` shows a ribbon slightly narrower
+  # than the SD read off its source figure. That is deliberate: it is compared
+  # against sqrt(diag(V_pred)), a population quantity, and pairing an (n-1)
+  # observed SD with it would build a 1/(2n) mismatch into the diagnostic.
   # Residual: raw (E_obs - mu_pred) lollipop with \u00b12 SE band (SE = sqrt(V_pred[t,t]/n)).
   # Standardised residual: z[t] = (E_obs[t] - mu[t]) / sqrt(V_pred[t,t]/n) ~ N(0,1).
   # Stars: |z| > 1.96 (*), > 2.58 (**), > 3.29 (***). Requires patchwork for 2x2.

@@ -495,6 +495,57 @@
 # Legacy single-output form: the study's E/V/n/times fields describe one implicit
 # observation. Top-level normalised fields (V, method, v_diag) are preserved for
 # backward compatibility; `$observations` holds the single unit either way.
+# Convert a study's reported covariance to the ML (denominator n) convention the
+# likelihood requires.
+#
+# The two input types admixr2 serves disagree about what `V` IS, and until now
+# the difference was a footnote the user had to act on:
+#
+#   a digitised figure  ->  SD is the UNBIASED (n-1) sample SD, so V = SD^2 is
+#                           an (n-1) covariance
+#   datagen / own data  ->  cov.wt(method = "ML"), an n covariance
+#
+# Eq. (1) is the exact log-likelihood of n iid draws only for the ML form, so a
+# published SD is strictly V = SD^2 * (n-1)/n. At n = 60 that is 1.7% and was
+# reasonably ignored. It stops being ignorable the moment the summary is scored
+# against its own sampling law: the same factor reappears there as the alignment
+# of tau with E[t], where getting it wrong is measurably WORSE than not
+# correcting at all.
+#
+# So it becomes a declaration rather than a convention, PER STUDY -- a
+# meta-analysis routinely mixes a digitised figure with a model-derived source,
+# and the two do not share a denominator.
+#
+# Idempotent: `v_denom` is set to "ml" once applied, so normalising twice cannot
+# apply it twice.
+.admVDenom <- function(s, nm) {
+  vd <- s[["v_denom"]] %||% "ml"
+  if (!is.character(vd) || length(vd) != 1L || !vd %in% c("ml", "unbiased"))
+    stop(sprintf("Study '%s': `v_denom` must be \"ml\" or \"unbiased\"", nm),
+         call. = FALSE)
+  if (identical(vd, "ml")) return(s)
+  conv <- function(V, n, what) {
+    if (is.null(V)) return(NULL)
+    if (is.null(n)) stop(sprintf(
+      "Study '%s': `v_denom = \"unbiased\"` needs `n` to convert %s to the ML denominator",
+      nm, what), call. = FALSE)
+    n <- as.numeric(n)[[1L]]
+    if (!is.finite(n) || n <= 1)
+      stop(sprintf("Study '%s': `v_denom = \"unbiased\"` needs n > 1 (got %s)",
+                   nm, format(n)), call. = FALSE)
+    V * (n - 1) / n
+  }
+  s$V <- conv(s$V, s$n, "V")
+  if (!is.null(s$observations))
+    s$observations <- lapply(s$observations, function(ob) {
+      ob$V <- conv(ob$V, ob$n %||% s$n, "an observation's V"); ob
+    })
+  if (!is.null(s$cross))
+    s$cross <- lapply(s$cross, function(x) conv(x, s$n, "a cross block"))
+  s$v_denom <- "ml"
+  s
+}
+
 .admNormaliseStudy <- function(s, nm, default_output = NULL) {
   # IDEMPOTENT, and it has to be stated rather than assumed.
   #
@@ -561,7 +612,14 @@
     }
     return(s)
   }
+  # Long-format `data` must be expanded to `V`/`observations` BEFORE v_denom
+  # conversion -- otherwise .admVDenom() sees none of it (still raw rows) and
+  # silently no-ops, leaving an "unbiased" V uncorrected. And v_denom must run
+  # BEFORE the joint constructor below: it assembles its own matrix from the
+  # raw per-observation blocks and never passes through .admNormaliseObs, so
+  # converting after that would miss it.
   if (!is.null(s$data)) s <- .admExpandLongStudy(s, nm)
+  s <- .admVDenom(s, nm)
   if (!is.null(s$observations) &&
       (isTRUE(s$joint) || !is.null(s$cross) || !is.null(s$V))) {
     if (!is.list(s$observations) || length(s$observations) == 0L)

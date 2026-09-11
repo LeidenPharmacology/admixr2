@@ -1646,6 +1646,37 @@ without that parameter there is no residual to integrate"),
   list(mu = mu, dv = dvo, ms = ms, ev = ev, rmat = rmat)
 }
 
+# Structural (mu, var) -> predicted (mu, diag, full V), in one call.
+#
+# .admResidApply -> .admApplyResidTail is a fixed two-step sequence, and every
+# consumer that needs the composed V writes both out. The ADF weight is another
+# such consumer, and it needs `ms` (the residual's mean scaling) alongside the
+# composed matrix -- so rather than adding a seventh hand-assembled copy, the
+# pair gets a name.
+#
+#   mu_struct  structural mean E_eta[f]
+#   var_f      diag(Cov_eta(f)) -- the STRUCTURAL variance
+#   arr        row array from .admUnitResidRows() / .admResidRows()
+#   cov_f      full Cov_eta(f), or NULL on the diagonal ("var" method) path
+#   times      observation times; forwarded ONLY alongside cov_f
+#   compose    build the full V_pred matrix; defaults to "whenever a structural
+#              covariance was supplied"
+#
+# THE VAR BRANCH MUST NOT SEE `times`/`cov_f`. arr$rho and the ordinal same-time
+# cross term both key off `times`, so forwarding it unconditionally CHANGES the
+# var-branch NLL. `times` is forwarded only alongside `cov_f` here, so a
+# diagonal-path caller physically cannot turn those terms on.
+#
+# Returns mu/dv (always) and V (when composed), plus the raw .admResidApply
+# result as `ap` for callers that want ms/ev/rmat.
+.admResidMoments <- function(mu_struct, var_f, arr, cov_f = NULL, times = NULL,
+                             compose = !is.null(cov_f)) {
+  ap <- if (is.null(cov_f)) .admResidApply(mu_struct, var_f, arr)
+        else                .admResidApply(mu_struct, var_f, arr, times, cov_f)
+  list(mu = ap$mu, dv = ap$dv, ms = ap$ms, ev = ap$ev, rmat = ap$rmat, ap = ap,
+       V = if (compose && !is.null(cov_f)) .admApplyResidTail(cov_f, ap) else NULL)
+}
+
 # Derivatives of the residual w.r.t. the residual parameters (optimizer scale)
 # and w.r.t. the structural prediction f.
 #
@@ -2151,13 +2182,164 @@ without that parameter there is no residual to integrate"),
 #   ev     = q$v[2] + 0.5*v''(f)*v0      -- the objective's curvature-corrected
 #                                           E_eta[Var(y|eta)]
 # `dv` is the full predicted variance for the row, ms^2*v0 + ev.
-.admTBSRow <- function(f, v0, a2, b2, cc, lam, yj, lo, hi, ftr, c1, nodes) {
-  hstep <- max(abs(f), 1) * 1e-4
-  fv    <- c(f - hstep, f, f + hstep)
+# Conditional central moments 2, 3 and 4 of a TBS endpoint given the structural
+# prediction, by the SAME Gauss-Hermite quadrature .admTBSMomentsD() runs for the
+# mean and variance -- two more accumulators over the same nodes, not a second
+# integration scheme.
+#
+#   y | f  =  g(h(f) + sd(f) * eps),   eps ~ N(0, 1)
+#   m_k    =  sum_q w_q g(h(f) + sd x_q)^k
+#   v      =  m_2 - m_1^2
+#   mu3    =  m_3 - 3 m_1 m_2 + 2 m_1^3
+#   mu4    =  m_4 - 4 m_1 m_3 + 6 m_1^2 m_2 - 3 m_1^4
+#
+# The ADF weight needs exactly (v, mu3, mu4) per node, which is why the four
+# transform-both-sides models -- boxCox, yeoJohnson, logitNorm, probitNorm -- were
+# the one residual family the sandwich refused despite being conditionally
+# independent across timepoints, which is the condition the expansion actually
+# rests on. Nothing about them makes the expansion invalid; they simply had no
+# closed form to read the higher moments off, and the quadrature that already
+# exists supplies them.
+#
+# The non-finite tail guard is .admTBSMomentsD()'s, for the same reason: a +-12 SD
+# node can overflow the inverse transform, its GH weight is ~1e-30, and zeroing it
+# leaves the moments unchanged to machine precision while NOT zeroing it turns the
+# whole moment NaN.
+#
+# It has to be the SAME guard, node for node, and that is why the derivative is
+# evaluated here at all: nothing below reads `gp_all`. This function supplies the
+# ADF weight's `d` (and the exact conditional means `m1`) while .admTBSMomentsD()
+# supplies the V_pred the objective composes, and the J = 2H reduction the
+# sandwich rests on holds only where the two agree that S == V_pred. Dropping on
+# `!is.finite(yq_all)` alone would keep a node that MomentsD drops -- one whose
+# value survives but whose inverse-transform derivative overflows -- and the two
+# variances would then be taken over different node sets.
+.admTBSCentral <- function(f, sd, lam, yj, lo, hi, nodes = .ADM_TBS_NODES) {
+  gq <- .adghNodes1(nodes)
+  hz <- .admTBS(f, lam, yj, lo, hi)
+  z_all  <- hz + outer(sd, gq$x)
+  yq_all <- .admTBSi(z_all, lam, yj, lo, hi)
+  gp_all <- .admTBSid(z_all, lam, yj, lo, hi)
+  .bad <- !is.finite(yq_all) | !is.finite(gp_all)
+  if (any(.bad)) yq_all[.bad] <- 0
+  n <- length(f)
+  m1 <- m2 <- m3 <- m4 <- numeric(n)
+  for (q in seq_along(gq$x)) {
+    yq <- yq_all[, q]; w <- gq$w[q]
+    y2 <- yq * yq
+    m1 <- m1 + w * yq
+    m2 <- m2 + w * y2
+    m3 <- m3 + w * y2 * yq
+    m4 <- m4 + w * y2 * y2
+  }
+  v <- pmax(m2 - m1 * m1, 0)
+  list(m = m1, v = v,
+       mu3 = m3 - 3 * m1 * m2 + 2 * m1^3,
+       # pmax against 0 for the same reason v has it: a cancellation of four
+       # large like-signed terms can land a hair below zero, and a negative
+       # fourth central moment makes the weight indefinite rather than merely
+       # inaccurate.
+       mu4 = pmax(m4 - 4 * m1 * m3 + 6 * m1 * m1 * m2 - 3 * m1^4, 0))
+}
+
+# EXACT node-wise composition for a unit whose rows are ALL transform-both-sides.
+#
+# The objective's usual route collapses the ensemble to (mu_struct, var_f) and
+# then delta-expands the residual around it to second order. That is exact for
+# every family whose conditional mean is linear in f, and approximate for TBS.
+# Here the conditional moments are taken at each NODE and aggregated:
+#
+#   E_j    = sum_q w_q m(f_qj)
+#   V_jk   = sum_q w_q (m_qj - E_j)(m_qk - E_k)              (j != k)
+#   V_jj  += sum_q w_q v(f_qj)
+#
+# which is exact given the eta quadrature. NULL for anything it does not cover --
+# a non-TBS row, an ar()/ordinal cross term, a non-finite sd -- so the caller
+# keeps the existing path rather than getting a partly-exact answer.
+# Does any unit of this fit carry a transform-both-sides endpoint?
+#
+# The residual FORM is structural -- it comes from the model's error spec, not
+# from parameter values -- so this is a property of the fit, answerable once, and
+# the sigma vector is needed only because .admResidRows() takes one.
+.admAnyTBS <- function(pinfo, studies, output_var, sigma_var) {
+  any(vapply(studies, function(s) {
+    ov <- s$output %||% output_var
+    n_t <- length(s$times %||% integer(0))
+    if (n_t == 0L) return(FALSE)
+    arr <- tryCatch(.admResidRows(pinfo, ov, sigma_var, n_t),
+                    error = function(e) NULL)
+    !is.null(arr) && !is.null(arr$form) && any(arr$form == .ADM_RESID_TBS)
+  }, logical(1)))
+}
+
+# Per-node conditional moments AND their derivatives w.r.t. the structural
+# prediction, for a unit whose rows are all TBS. Everything is vectorised over
+# the node grid: .admTBSSd() and .admTBSMomentsD() already take a vector of f, so
+# the whole ensemble costs one quadrature pass per timepoint rather than one per
+# (node, timepoint).
+#
+#   m, v            conditional mean and variance at each node
+#   dm, dv          their TOTAL derivatives w.r.t. f, which pick up the sd path
+#                   because sd depends on f: dm/df = @m/@f + @m/@sd * dsd/df
+#
+# NULL for anything not covered -- a non-TBS row, an ar() cross term, a
+# non-finite sd -- so a caller keeps the existing path rather than getting a
+# partly-exact answer.
+.admTBSNodeParts <- function(cp, arr) {
+  m <- ncol(cp)
+  if (is.null(arr$form) || !all(arr$form == .ADM_RESID_TBS)) return(NULL)
+  if (!is.null(arr$rho) && any(!is.na(arr$rho))) return(NULL)
+  col <- function(x, j) if (length(x) == 1L) x else x[[j]]
+  M1 <- V1 <- DM <- DV <- matrix(NA_real_, nrow(cp), m)
+  nodes <- arr$nodes %||% .ADM_TBS_NODES
+  for (j in seq_len(m)) {
+    lam <- arr$lam[j]; yjc <- arr$yj[j]; lo <- arr$tlo[j]; hi <- arr$thi[j]
+    if (length(lam) != 1L || !is.finite(lam) || !is.finite(yjc)) return(NULL)
+    fj <- cp[, j]
+    sdd <- .admTBSSd(fj, max(col(arr$a2, j), 0), max(col(arr$b2, j), 0),
+                     col(arr$cc, j), lam, yjc, lo, hi,
+                     !is.null(arr$tbs_ftr) && isTRUE(arr$tbs_ftr[j]),
+                     !is.null(arr$tbs_c1)  && isTRUE(arr$tbs_c1[j]))
+    if (any(!is.finite(sdd$sdv))) return(NULL)
+    q <- .admTBSMomentsD(fj, sdd$sdv, lam, yjc, lo, hi, nodes)
+    M1[, j] <- q$m
+    V1[, j] <- q$v
+    DM[, j] <- q$dm_df + q$dm_ds * sdd$dsd
+    DV[, j] <- q$dv_df + q$dv_ds * sdd$dsd
+  }
+  if (!all(is.finite(M1)) || !all(is.finite(V1)) ||
+      !all(is.finite(DM)) || !all(is.finite(DV))) return(NULL)
+  list(m = M1, v = V1, dm = DM, dv = DV)
+}
+
+# Aggregate per-node conditional moments into the unit's predicted (E, V).
+.admTBSAggregate <- function(np, W) {
+  wn <- W / sum(W)
+  E  <- as.numeric(crossprod(wn, np$m))
+  Mc <- sweep(np$m, 2L, E)
+  V  <- crossprod(Mc, wn * Mc)
+  diag(V) <- diag(V) + as.numeric(crossprod(wn, np$v))
+  list(E = E, V = V, Mc = Mc, wn = wn)
+}
+
+.admResidNodeMomentsTBS <- function(cp, W, arr, times = NULL) {
+  np <- .admTBSNodeParts(cp, arr)
+  if (is.null(np)) return(NULL)
+  ag <- .admTBSAggregate(np, W)
+  list(E = ag$E, V = ag$V)
+}
+
+# The residual SD on the TRANSFORMED scale, and its derivative w.r.t. f, exactly
+# as rxode2 builds rx_r_:
+#   combined2 : var = a^2 + (x^c * b)^2      combined1 : sd = a + x^c * b
+# where x is rx_pred_f_ = f, or rx_pred_ = h(f) when errTypeF is "transformed".
+#
+# Split out of .admTBSRow so the ADF weight can condition on the SAME sd the
+# objective uses. Two copies of this would be two chances to disagree about
+# which of `ftr`, `c1` and `cc` applies, and the disagreement would be a
+# plausible finite number rather than an error.
+.admTBSSd <- function(fv, a2, b2, cc, lam, yj, lo, hi, ftr, c1) {
   a2 <- max(a2, 0); b2 <- max(b2, 0)
-  # Residual SD on the TRANSFORMED scale, exactly as rxode2 builds rx_r_:
-  #   combined2 : var = a^2 + (x^c * b)^2      combined1 : sd = a + x^c * b
-  # where x is rx_pred_f_ = f, or rx_pred_ = h(f) when errTypeF is "transformed".
   if (ftr) {
     xb  <- .admTBS(fv, lam, yj, lo, hi)
     xbd <- 1 / .admTBSid(xb, lam, yj, lo, hi)          # dh/df
@@ -2174,6 +2356,14 @@ without that parameter there is no residual to integrate"),
     sdv <- sqrt(.vv)
     dsd <- (b2 * pw * pwd * xbd) / pmax(sdv, .Machine$double.xmin)
   }
+  list(sdv = sdv, dsd = dsd)
+}
+
+.admTBSRow <- function(f, v0, a2, b2, cc, lam, yj, lo, hi, ftr, c1, nodes) {
+  hstep <- max(abs(f), 1) * 1e-4
+  fv    <- c(f - hstep, f, f + hstep)
+  .sd <- .admTBSSd(fv, a2, b2, cc, lam, yj, lo, hi, ftr, c1)
+  sdv <- .sd$sdv; dsd <- .sd$dsd
   q <- .admTBSMomentsD(fv, sdv, lam, yj, lo, hi, nodes)
   # sd depends on f, so the TOTAL derivative picks up the sd path (both partials
   # analytic): dm/df = @m/@f + @m/@sd * dsd/df

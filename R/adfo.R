@@ -694,7 +694,8 @@
 .adfoCalcCov <- function(p_hat, pinfo, studies, sensModel, rxMod, output_var,
                           params_list, cores,
                           use_grad = FALSE, grad_h = 1e-4, cov_h = 1e-3,
-                          cov_h_outer = .Machine$double.eps^(1/5)
+                          cov_h_outer = .Machine$double.eps^(1/5),
+                          sandwich = FALSE
                           ) {
   n_s     <- length(pinfo$struct_names)
   n_e     <- length(pinfo$sigma_names)
@@ -817,10 +818,44 @@
   }
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
+  # covMethod = "r,s". FO is the one estimator for which the sandwich is not
+  # merely a kurtosis correction: V = J Omega J' + Sigma is the covariance of an
+  # exactly normal individual law, so scoring FO against its own assumption
+  # would return 2H^-1 by construction. The weight is therefore built on a
+  # quadrature ensemble of the SAME model (.admSandwichGrid), while G comes from
+  # adfo's own moment map -- G describes the estimator, Omega the truth. What
+  # comes back is an SE for the FO fit that answers to the model's true
+  # nonlinear law, so it also absorbs part of the linearisation error.
+  sw_used <- FALSE
+  sw_cond <- NULL
+  if (isTRUE(sandwich)) {
+    # The grid build cannot fail with NULL here for a reason .admWireSandwich's
+    # own .admSandwichNA() call has not already caught -- see the matching note
+    # in .admCalcCov().
+    res <- .admWireSandwich(p_hat, pinfo, studies, output_var, cov_full, "adfoCalcCov",
+      function() {
+        grid <- .admSandwichGrid(pinfo)
+        mf <- .admAdfoMomFn(pinfo, studies, sensModel, rxMod, output_var,
+                            params_list, cores)
+        # `rxMod` is adfo's plain simulation model (its FD fallback solves
+        # through it), which is exactly what .admAdfParts needs for the node
+        # ensemble.
+        .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
+                        H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov,
+                        mom_fn = mf, Hinv = Hinv, nll_fn = nll_fn,
+                        eig_dec = eig_dec)
+      })
+    cov_full <- res$cov_full; sw_used <- res$sw_used; sw_cond <- res$sw_cond
+  }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
   # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
   # shared implementation for all three estimators -- see .admScaleReportedCov().
-  .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  attr(out, "sandwich") <- sw_used
+  # The conditioning diagnosis rides out with the covariance; the driver raises
+  # it, because a warning() from in here does not reach the user.
+  attr(out, "sandwich_illcond") <- sw_cond
+  out
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -950,12 +985,73 @@
 #'   no other -- and nloptr reports normal convergence at a box corner, so a
 #'   warning is emitted if an estimate finishes on it.
 #' @param cov_h_outer Outer step scale for NLL-FD Hessian.
-#' @param covMethod `"r"` computes covariance via a numerical Hessian over the
-#'   structural, residual-error and omega parameters; `"none"` skips it. Omega is
+#' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
+#'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
 #'   If the weakly-identified omega Cholesky makes the Hessian non-positive
 #'   definite, the structural + residual sub-block is reported with a warning.
+#'
+#'   `"r,s"` adds a sandwich correction, `H^-1 J H^-1`, on the same Hessian.
+#'   For FO this does more than correct kurtosis: `V = J Omega J' + Sigma` is the
+#'   covariance of an exactly normal individual law, so the reported standard
+#'   errors otherwise answer to the linearisation rather than to the model. The
+#'   correction scores the FO fit against the model's true nonlinear law, built
+#'   post-fit on a quadrature ensemble, and so absorbs part of the linearisation
+#'   error as well. Point estimates are untouched.
+#'   **Transform-both-sides endpoints.** `adfo` composes the residual by a
+#'   second-order expansion about the linearised moments, because FO carries no
+#'   node ensemble to compose over -- that is what the method is. `adgh` and
+#'   `admc` compose exactly at their nodes/draws, so an `adfo` fit of a `boxCox`,
+#'   `yeoJohnson`, `logitNorm` or `probitNorm` endpoint differs from theirs by the
+#'   expansion's truncation: roughly 0.3% in `V` at moderate between-subject
+#'   variability, rising to ~3% for a tightly-bounded `logit`/`probit` at high
+#'   variability. That is a property of the estimator, not a discrepancy.
+#'
+#'   **It is the default because it is the conservative choice, not the aggressive
+#'   one.** Under correct specification `J = 2H` and the sandwich returns what
+#'   `"r"` returns, so defaulting to it costs nothing when the normal-theory
+#'   assumption holds and corrects the standard errors when it does not. Anything
+#'   it cannot build degrades to `"r"` and reports `"r"`, so no fit loses its
+#'   covariance by asking. Pass `covMethod = "r"` for the pre-0.4.1 behaviour.
+#'
+#'   Applies to every residual family whose conditional law is independent across
+#'   timepoints, which is all of them except `ar()`: the conditionally-normal set
+#'   (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
+#'   distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`, and
+#'   `t()` with `nu > 4`), and the transform-both-sides ones (`boxCox`,
+#'   `yeoJohnson`, `logitNorm`, `probitNorm`), whose third and fourth conditional
+#'   moments come off the same quadrature that already gives their mean and
+#'   variance. Refused, and degraded to `"r"`: `ar()`, because it correlates the
+#'   residual ACROSS timepoints and the cross terms the expansion drops are then
+#'   real; `t()` with `nu <= 4`, whose kurtosis does not exist; and `ordinal()`
+#'   and same-subject `joint` studies, which stack several outputs into one
+#'   covariance the per-output node ensemble does not describe. These four are
+#'   refusals by construction rather than failures, so the fit reports the reason
+#'   as a message and falls back to `"r"`; a sandwich that was attempted and could
+#'   not be built still warns.
+#'
+#'   **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"` is.**
+#'   `"r"` reports `2H^-1` and inverts `H` once; the sandwich reports
+#'   `H^-1 J H^-1` and inverts it twice, so in a direction the data barely
+#'   identifies any gap between `J` and `2H` is amplified quadratically. A
+#'   residual SD contributing 0.01 variance against 1.7 from between-subject
+#'   variability is such a direction: measured on one 1-cmt fixture at
+#'   `cond(H) = 3.5e5`, the reported residual SE moved by a factor of 0.11 and
+#'   two omega entries by 0.59 and 1.55, while the same model and design on a
+#'   study the residual IS identified in (`cond(H) = 247`) reproduced `"r"` to
+#'   four decimals on every parameter. Neither number is a correction there --
+#'   both methods are reporting an unidentified direction, and `"r,s"` is louder
+#'   about it. admixr2 says so: when the Hessian's reciprocal condition number
+#'   falls below `eps^(1/4)` -- the point at which squaring the conditioning
+#'   reaches the bound a single inversion is already called singular at -- the fit
+#'   records a note naming the parameter that loads most heavily on the offending
+#'   direction. It arrives on `fit$runInfo` and is listed by `print(fit)`, which
+#'   is where `nlmixr2est` routes an estimator's warnings. The sandwich is still
+#'   reported, because the well-determined parameters of the same fit are
+#'   unaffected; check the named parameter's relative standard error before
+#'   reading its `"r,s"` value as a finding.
 #'
 #'   All three blocks are reported on the scale the ESTIMATES are printed on, as
 #'   `nlmixr2est` does: structural thetas on the log/optimizer scale, residual
@@ -1085,7 +1181,7 @@ adfoControl <- function(
     grad_bounds = 5,
     cov_h       = 1e-3,
     cov_h_outer = .Machine$double.eps^(1/5),
-    covMethod   = c("r", "none"),
+    covMethod   = c("r,s", "r", "none"),
     n_restarts  = 1L,
     restart_sd  = 0.5,
     workers     = 1L,
@@ -1563,7 +1659,8 @@ nlmixr2Est.adfo <- function(env, ...) {
 
   p_hat  <- setNames(opt$solution, names(ov$p0))
   t0_cov <- proc.time()
-  .cov <- if (.ctl$covMethod == "r") {
+  .want_cov <- .admCovWantsHessian(.ctl$covMethod)
+  .cov <- if (.want_cov) {
     # struct + sigma + OMEGA: the Hessian spans all three, so the evaluation
     # count must too.
     np_cov     <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
@@ -1601,23 +1698,24 @@ nlmixr2Est.adfo <- function(env, ...) {
     # use_grad_cov implies have_d2 implies want_sens, so the gradient this
     # differences is always the analytic one.
     hess_label  <- if (use_grad_cov) ", Analytical-Hessian" else ""
-    message(sprintf("  Computing covariance (R method%s, %d %s)", hess_label, n_evals, evals_label))
+    message(sprintf("  Computing covariance (R method%s%s, %d %s)", hess_label,
+                    if (.admCovWantsSandwich(.ctl$covMethod)) ", sandwich" else "",
+                    n_evals, evals_label))
     tryCatch(
       .adfoCalcCov(p_hat, pinfo, studies, sensModel, rxMod, output_var,
                    params_list, cores, use_grad = use_grad_cov,
                    grad_h = .ctl$grad_h, cov_h = .ctl$cov_h,
-                   cov_h_outer = .ctl$cov_h_outer),
+                   cov_h_outer = .ctl$cov_h_outer,
+                   sandwich = .admCovWantsSandwich(.ctl$covMethod)),
       error = function(e) { warning("adfoCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
-  # A NULL covariance used to be completely silent: no warning reached the user,
-  # `warnings()` was empty, covMethod came back "" and every SE was NA with no
-  # indication why. Say so once, from the driver, where it cannot be swallowed.
-  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
-    warning("covariance could not be computed (the Hessian was singular or ",
-            "non-finite); standard errors are unavailable for this fit.",
-            call. = FALSE)
+  # Warns if no covariance could be computed, re-raises any sandwich
+  # ill-conditioning note (as a warning -- see .admFinalizeCovLabel()'s own
+  # comment for why that specific mechanism matters), and returns what the
+  # covariance IS ("r,s" / "r" / ""), not what was asked for.
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
+  .cov_lbl  <- .admFinalizeCovLabel(.cov, .want_cov)
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
@@ -1638,7 +1736,7 @@ nlmixr2Est.adfo <- function(env, ...) {
   .ret$est        <- "adfo"
   .ret$ofvType    <- "adfo"
   .ret$adjObf     <- FALSE
-  .ret$covMethod  <- if (!is.null(.cov)) "r" else ""
+  .ret$covMethod  <- .cov_lbl
   .ret$cov        <- .cov
   .ret$message    <- opt$message
   .ret$extra      <- ""

@@ -46,6 +46,7 @@ Suggests:
     mnormt,
     nlmixr2 (>= 5.0.0),
     nlmixr2data,
+    numDeriv,
     patchwork,
     rmarkdown,
     testthat (>= 3.0.0)

@@ -26,7 +26,7 @@ adirmcControl(
   phases = c(2, 1, 0.5, 0.01),
   convcrit = 1e-05,
   max_worse = 5L,
-  covMethod = c("r", "none"),
+  covMethod = c("r,s", "r", "none"),
   cov_n_sim = 10000L,
   n_restarts = 1L,
   restart_sd = 0.2,
@@ -55,6 +55,16 @@ adirmcControl(
 \item \code{times} -- numeric vector of observation times
 \item \code{ev} -- \code{rxode2::et()} dosing event table
 \item \code{method} -- \code{"cov"} or \code{"var"} (optional; auto-detected from \code{V})
+\item \code{v_denom} -- \code{"ml"} (default) or \code{"unbiased"}, declaring which denominator
+the supplied \code{V} uses. The likelihood is the exact one for \code{n} iid draws
+only under the ML (\code{n}) covariance, which is what \code{cov.wt(method = "ML")}
+and \code{\link[=datagen]{datagen()}} produce. A \strong{published} SD is the unbiased (\code{n - 1}) SD,
+so a digitised figure gives \code{V = SD^2} on the \code{n - 1} scale: declare
+\code{v_denom = "unbiased"} and admixr2 converts it. Declared per study, since
+a meta-analysis routinely mixes a digitised source with a model-derived
+one and the two need not share a denominator. At \code{n = 60} the factor is
+1.7\%; it matters more the smaller \code{n} is, and more again for any method
+that scores the reported covariance against its own sampling law.
 }
 
 \strong{Multi-compartment (multiple observed outputs).} To fit several observed
@@ -191,19 +201,20 @@ Phases progressively tighten the search region.}
 
 \item{max_worse}{Stop a phase after this many consecutive worsening iterations.}
 
-\item{covMethod}{Covariance method: \code{"r"} (numerical Hessian over the
-structural, residual-error and omega parameters) or \code{"none"}. Omega is
-included because excluding it also biases the STRUCTURAL standard errors
-downward -- a theta carrying an eta is correlated with that eta's variance.
-If the weakly-identified omega Cholesky makes the Hessian non-positive
-definite, the structural + residual sub-block is reported with a warning.
-
-All three blocks are reported on the scale the ESTIMATES are printed on, as
-\code{nlmixr2est} does: structural thetas on the log/optimizer scale, residual
-error as an SD, and omega as the variance/covariance entries (named
-\verb{om.<eta>} and \verb{cov.<eta_i>.<eta_j>}). The omega block is rotated by the
-full Jacobian of Omega with respect to the log-Cholesky, which is not
-diagonal once omega is correlated.}
+\item{covMethod}{\code{"r,s"} (the DEFAULT) computes the sandwich \verb{H^-1 J H^-1};
+\code{"r"} the numerical Hessian alone, \verb{2H^-1}; \code{"none"} skips the covariance.
+All three span the structural, residual-error and omega parameters, and are
+reported on the scale the estimates are printed on. \code{\link[=admControl]{admControl()}} documents
+what the sandwich is, why it is the conservative default, and why it is more
+sensitive than \code{"r"} to an ill-conditioned Hessian; the same implementation
+runs here.
+What does NOT carry over is the family coverage, because \code{adirmc} itself is
+narrower: the estimator accepts only \code{add}, \code{prop}, \code{pow}, \code{combined1},
+\code{combined2} and \code{lnorm} residuals, and \code{"r,s"} applies to all six. The
+count, \code{beta}, transform-both-sides, \code{ordinal} and \code{ar()} endpoints
+\code{\link[=admControl]{admControl()}} lists are refused by \code{est = "adirmc"} itself, before any
+covariance is reached -- they are not models whose sandwich degrades to
+\code{"r"} here, they are models this estimator does not fit.}
 
 \item{cov_n_sim}{Number of MC samples for the covariance (Hessian) step.
 More samples reduce MC noise in NLL evaluations. The NLL-based Hessian

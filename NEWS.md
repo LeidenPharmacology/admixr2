@@ -2,6 +2,128 @@
 
 ## New features
 
+* **`covMethod = "r,s"`: standard errors that answer to the model's own
+  sampling law, on all four estimators.** The aggregate objective is the exact
+  log-likelihood of `n` iid draws from `N(yt, Vt)`, which assumes each subject's
+  observation vector is multivariate normal. It is not:
+  `y_i = f(theta, b_i) + eps_i` with `f` nonlinear in `b_i`, so the marginal is a
+  mixture. That costs nothing in the point estimates -- the score has expectation
+  zero at the true parameters under any weight, so every fit stays consistent --
+  but it does cost the reported uncertainty, in two ways that differ in kind:
+  `Cov(V_ij, V_kl)` is mis-sized by the excess kurtosis, and `Cov(ybar, vech V)`
+  is assumed ZERO where a real correlation of 0.3-0.6 sits. The sample mean and
+  sample covariance are exactly independent for a multivariate normal and for
+  nothing else.
+
+  `covMethod = "r,s"` scores the summary `(ybar, vech V)` against its own
+  asymptotic law -- Browne's ADF estimator, with the fourth-moment matrix
+  computed from the MODEL rather than estimated from the sample, which is what
+  removes ADF's small-sample failure. The result is the sandwich
+  `H^-1 J H^-1`, where `H` is the Hessian `covMethod = "r"` already inverts,
+  passed in rather than rebuilt so the two cannot disagree about the half they
+  share. Under correct specification `J = 2H` and `"r,s"` returns exactly what
+  `"r"` would have; the reduction holds by construction, and is pinned as a test
+  (`eigen(J(W_normal) / 2H) = 1.0000` on both the `cov` and the `var` branch).
+
+  Point estimates and the objective are untouched -- `"r,s"` changes only the
+  reported standard errors. On `adgh`, `admc` and `adirmc` the weight is built
+  on the quadrature ensemble, so it carries none of a fit's own MC noise. On
+  `adfo` it does more than correct kurtosis: `V = J Omega J' + Sigma` is the
+  covariance of an exactly normal individual law, so scoring FO against its own
+  assumption would return `2H^-1` and say nothing. There, `G` comes from adfo's
+  moment map and the weight from a post-fit quadrature ensemble of the same
+  model, so the correction absorbs part of the linearisation error as well.
+
+  **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"` is**, and
+  admixr2 now says so. `"r"` inverts `H` once, the sandwich inverts it twice, so
+  in a direction the data barely identifies the gap between `J` and `2H` is
+  amplified quadratically. A residual SD contributing 0.01 variance against 1.7
+  from IIV is such a direction: on one 1-cmt fixture at `cond(H) = 3.5e5` the
+  reported residual SE moved by a factor of 0.11 and two omega entries by 0.59
+  and 1.55, while the same model and design with the residual identified
+  (`cond(H) = 247`) reproduced `"r"` to four decimals throughout. Neither number
+  is a correction there -- both methods are reporting an unidentified direction.
+  Below `rcond(H) = eps^(1/4)` the fit records a note on `fit$runInfo` -- where
+  `nlmixr2est` routes an estimator's warnings, and which `print(fit)` lists --
+  naming the parameter that loads most heavily on the offending direction. The
+  sandwich is still reported, since the well-determined parameters of the same
+  fit are unaffected.
+
+  It applies to every residual family whose conditional law is independent across
+  timepoints, which is **all of them except `ar()`** -- the conditionally-normal
+  set (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
+  distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`, `t(nu > 4)`),
+  and the transform-both-sides ones (`boxCox`, `yeoJohnson`, `logitNorm`,
+  `probitNorm`). The last group needs the third and fourth conditional moments,
+  which come off the same Gauss-Hermite quadrature that already produces their
+  mean and variance -- two more accumulators over the same nodes, not a second
+  integration scheme, and validated against a direct simulation of the
+  conditional law and against the sampling covariance of simulated studies.
+
+  `pow()` and `combined()` with an exponent outside `{0.5, 1}` need one extra
+  step, because there the OBJECTIVE's own `E[Var(y|eta)]` is a second-order
+  expansion of `E[f^2c]` while the weight integrates `b^2 |f|^2c` over the nodes
+  exactly. Both readings are defensible and they are not equal -- 9e-05 relative
+  at `c = 0.75`, up to 2.5e-02 at `c = 1.5` with `omega = 1` -- and the weight has
+  to describe the objective that was minimised, or `J = 2H` fails and a
+  correctly-specified `pow()` fit reports a "correction" that is nothing but the
+  truncation. The weight's conditional variance is therefore rescaled onto the
+  objective's composition, which leaves the node-to-node shape (and so the third
+  and fourth moments) alone and is not applied at all where the expansion is
+  exact. Pinned by the test that `S` rebuilt from the weight equals `V_pred`.
+
+  Models the correction does **not apply to** report the reason as a message and
+  fall back to `"r"`: `ar()`, because it correlates the residual ACROSS
+  timepoints, so the cross terms the expansion drops are real; `t()` with
+  `nu <= 4`, whose kurtosis does not exist; `t()` combined with a `boxCox()` /
+  `yeoJohnson()` / `logitNorm()` / `probitNorm()` endpoint at ANY `nu`, because
+  that branch integrates the residual's law over the node ensemble rather than
+  folding `nu/(nu-2)` into a variance, and there is no closed form for a
+  t-distributed residual there; a model with 8 or more random effects, whose
+  capped product quadrature grid (floored at 3 nodes/eta, capped at 5000 nodes
+  total) cannot cover them; and `ordinal()` and same-subject `joint` studies,
+  which stack several outputs into one covariance that the per-output node
+  ensemble does not describe. These are refusals by construction, not failures,
+  which is why they are not warnings -- `"r,s"` is the default, so an `ar()` fit
+  would otherwise put "the sandwich correction could not be computed" on
+  `fit$runInfo` on every run. A sandwich that was attempted and could not be
+  BUILT still warns. Either way `fit$covMethod` reports `"r"`: it records what
+  the covariance IS, not what was asked for.
+
+  The acceptance gate that decides between the two is now a full PSD check
+  rather than a diagonal one: `J = sum(G Om G')` is only guaranteed
+  positive-semi-definite if every per-study `Om` is, and a rescaled `pow()` /
+  `combined()` weight was not independently checked for that, so a
+  positive-diagonal, non-PSD covariance could have been silently accepted and
+  reported. A `method = "var"` study's weight is also no longer built as the
+  full `m + m(m+1)/2` covariance-summary matrix before discarding everything but
+  its mean and diagonal blocks -- that discarded work was `O(m^4)`, multiple
+  gigabytes at 200 timepoints, paid on every default-`covMethod` fit of a
+  variance-only study. And the finite-difference fallback for the sandwich's
+  Jacobian (used whenever the analytic route -- no sensitivity model, unpaired
+  thetas -- is unavailable, which is always for `adfo`) now measures its step
+  per parameter from the fit's own objective via Shi21, the same convention
+  every other finite difference in the package follows, rather than a fixed
+  `1e-5` regardless of parameter scale.
+
+* **`v_denom`: declare which denominator a study's `V` uses, rather than
+  convert it by hand.** admixr2's two input types disagree about what `V` is. A
+  digitised figure gives `V = SD^2` with `SD` the unbiased (`n - 1`) sample SD,
+  while `cov.wt(method = "ML")` and `datagen()` give the `n` covariance the
+  likelihood is exact for. The vignette documented the `(n - 1)/n` correction as
+  a manual step and said it was usually ignored -- a defensible O(1/n) wobble
+  while the reported covariance is treated as a sufficient statistic.
+
+  It stops being one under `covMethod = "r,s"`, where the same factor reappears
+  as the alignment of `tau` with `E[t]`, and getting it wrong is measurably worse
+  than not correcting at all. So `v_denom = c("ml", "unbiased")` becomes part of
+  the study spec, declared **per study** because a meta-analysis routinely mixes
+  a digitised source with a model-derived one and the two need not share a
+  denominator. The default is `"ml"`, so nothing changes for anyone; `datagen()`
+  now stamps `"ml"` on what it produces, so a generated study is self-describing
+  rather than relying on the default meaning the same thing. It is idempotent,
+  and it refuses rather than guesses when `n` is absent or `<= 1`.
+
 * **`sigdig` now controls the fit, not just the output tables -- and it is
   opt-in.** The `sigdig` and `rxControl` arguments were documented as solver
   controls, but the object they built only ever reached nlmixr2's *post-fit*
@@ -134,6 +256,96 @@
 
 Several changes in this release alter results for scripts that do not name a new
 argument. None is a bug fix, so all are listed here rather than below.
+
+* **`covMethod` now defaults to `"r,s"`, so reported standard errors change for
+  every script that does not name it.** Point estimates and objective values are
+  untouched -- the sandwich is computed after convergence and the optimizer never
+  sees it.
+
+  It is the default because it is the CONSERVATIVE choice. Under correct
+  specification `J = 2H`, so `"r,s"` returns exactly what `"r"` returns; measured
+  end-to-end on a well-specified study the ratio is 1.010 / 0.990 / 1.000 across
+  the four estimators. Where the normal-theory assumption does not hold -- which
+  is wherever the model is nonlinear in the random effects, i.e. essentially
+  always -- it corrects standard errors that were otherwise wrong in two specific
+  ways: `Cov(V_ij, V_kl)` mis-sized by the excess kurtosis, and `Cov(ybar, vech V)`
+  assumed zero where a real correlation of 0.3-0.6 sits. Defaulting to `"r"` meant
+  shipping the uncorrected number unless a user knew to ask.
+
+  Nothing loses its covariance by asking: a sandwich that cannot be built
+  degrades to `"r"` and REPORTS `"r"`, so `fit$covMethod` still records what the
+  covariance is. Runtime overhead is not material for `adgh`, `admc` or `adirmc`;
+  `adfo` pays roughly 20%, because FO carries no node ensemble and one has to be
+  built post-fit for the weight.
+
+  Set `covMethod = "r"` for the previous behaviour.
+
+* **Transform-both-sides endpoints are composed EXACTLY, and their estimates
+  move.** `boxCox`, `yeoJohnson`, `logitNorm` and `probitNorm` predict the
+  aggregate moments through a residual whose conditional mean is NONLINEAR in the
+  structural prediction. admixr2 collapsed the ensemble to `(mu_struct, var_f)`
+  and expanded the residual around it to second order -- exact for every family
+  whose conditional mean is linear in `f`, and an approximation for these four.
+
+  **The expansion does not converge.** Measured against a 201-node evaluation of
+  the defining integral, its relative error in `V` is a floor that no node count
+  removes -- flat from 7 nodes to 25:
+
+  | | error in V | at n_nodes 7 -> 25 |
+  |---|---|---|
+  | `boxCox`, omega 0.16    | 3.4e-03 | unchanged |
+  | `boxCox`, omega 0.49    | 5.2e-03 | unchanged |
+  | `logitNorm`, omega 0.16 | 4.1e-03 | unchanged |
+  | `logitNorm`, omega 0.49 | 2.4e-02 | unchanged |
+  | `probitNorm`, omega 0.49| 3.1e-02 | unchanged |
+
+  The practical consequence was worse than the size suggests: **`n_nodes` bought
+  a TBS fit nothing.** Raising it returned the identical biased answer, which is
+  not the contract a quadrature estimator is supposed to offer.
+
+  The residual is now composed at each NODE (adgh) or DRAW (admc) and aggregated,
+  which is exact given the ensemble and converges properly -- to 1.8e-06 at 25
+  nodes on boxCox and to machine precision on `logitNorm`. Estimates AND objective
+  values for existing TBS fits therefore move, by more the higher the
+  between-subject variability and the tighter a `logit`/`probit` bound. Measured
+  OFV shifts on a 6-timepoint fixture: 0.15 (boxCox, omega 0.16), 0.31
+  (`logitNorm(0, 12)`, omega 0.16), 3.13 (`logitNorm(0, 12)`, omega 0.49).
+
+  **Do not compare an OFV across this release.** The objective itself changed for
+  these endpoints, so a likelihood-ratio test, or an AIC/BIC comparison, between a
+  TBS model fitted before this version and one fitted after is NOT valid -- the
+  two numbers are not on the same scale. Refit both sides. A shift of ~3 units is
+  the size of a nested-model test, so this is not a rounding concern. Every other
+  residual family is unchanged, and `adfo` (which keeps the expansion) and
+  `adirmc` (which refuses TBS residuals) are unaffected.
+
+  `adfo` KEEPS the expansion and is now the one estimator that does. Having no
+  node ensemble is what FO means, so there is nothing to compose over; an adfo
+  TBS fit will differ from an adgh or admc one by roughly the figures above. That
+  is a property of the estimator, not a disagreement to reconcile. `adirmc`
+  refuses TBS residuals outright and is unaffected.
+
+  ONE COMBINATION IS STILL APPROXIMATE, and "exact" above does not cover it.
+  `t()` folds `nu/(nu-2)` into the variance coefficients, which is exact for the
+  combined forms because only the residual's VARIANCE enters there. It is not
+  exact under a transform: composing integrates the inverse transform over the
+  conditional law, and a t error is not an inflated-sd normal one. A `t()` + TBS
+  endpoint is therefore composed as an inflated-sd normal, which is what admixr2
+  has always done -- unchanged, not a regression. `covMethod = "r,s"` refuses
+  that combination outright and reports `"r"`, because the third and fourth
+  moments it would otherwise hand the weight are a normal's.
+
+  `datagen()` and the diagnostic panels compose the same way, so a generated
+  study and a plotted prediction still describe the law the fit was scored
+  against. Note that this makes `datagen()` unusable as an INDEPENDENT oracle for
+  the composition -- it shares the implementation, so a "generate then recover"
+  check is self-consistent by construction and cannot detect a composition bias.
+
+  admc's analytical gradient decomposition is written against the expansion, so a
+  TBS fit on admc now differences its own objective (the route a joint unit
+  already takes, with the fixed `z_list` making it a common-random-number
+  difference). That is slower; adgh's gradient is analytic throughout and was
+  verified against finite differences of its own NLL at 1.4e-07.
 
 * **Finite-difference steps are now MEASURED per parameter, by the Shi (2021)
   procedure, and this is not optional.** Every finite difference admixr2 takes

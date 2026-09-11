@@ -76,21 +76,42 @@
   }
 }
 
+# Structural moments (before any residual) from an already-solved node matrix:
+# one weighted mean and one weighted crossproduct about it.
+#
+# `cpc` -- the node matrix centred at the weighted mean -- is returned because
+# more than one consumer needs it: the gradient contracts against it, and the
+# ADF weight (covMethod = "r,s") IS a function of the centred nodes. Splitting
+# it out is what makes .admAdfParts() and .adghMoments() provably describe the
+# same node set rather than two copies of one expression.
+.adghStructMoments <- function(cp, W) {
+  mu  <- as.numeric(crossprod(W, cp))
+  cpc <- sweep(cp, 2L, mu)
+  list(mu = mu, cpc = cpc, V = crossprod(cpc, W * cpc))
+}
+
 # Weighted moments + residual error from an already-solved quadrature matrix.
 # Split out of .adghMoments so the solve and the assembly can be driven
 # independently: the assembly depends on sigma, but the SOLVE does not (sigma is
 # zeroed into it and re-added analytically here), so a set of configurations
 # that share a solve can each be assembled cheaply.
 .adghMomentsFromCp <- function(cp, W, pars, pinfo, out_var, times = NULL) {
-  mu  <- as.numeric(crossprod(W, cp))
-  cpc <- sweep(cp, 2L, mu)
-  V   <- crossprod(cpc, W * cpc)
+  sm <- .adghStructMoments(cp, W)
+  mu <- sm$mu
+  V  <- sm$V
 
   # Restrict residual error to this output's sigma(s) (no-op single-output).
   arr <- .admUnitResidRows(pinfo, out_var, pars$sigma_var, length(mu),
                            phi = attr(cp, "phi"))   # beta precision (SOLVED)
-  ap  <- .admResidApply(mu, diag(V), arr, times)
-  list(E = ap$mu, V = .admApplyResidTail(V, ap))
+  # Transform-both-sides composes at each NODE and aggregates; see
+  # .admTBSNodeParts(). The delta expansion below is exact for every family whose
+  # conditional mean is linear in f and does NOT converge for TBS -- its error in
+  # V is a floor no node count removes. NULL for anything not covered (a non-TBS
+  # row, an ar() cross term), which keeps the existing path.
+  ex <- .admResidNodeMomentsTBS(cp, W, arr, times)
+  if (!is.null(ex)) return(ex)
+  m <- .admResidMoments(mu, diag(V), arr, V, times)
+  list(E = m$mu, V = m$V)
 }
 
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
@@ -349,6 +370,103 @@
 
     # Residual error (and its lnorm scaling of the mean) -- this output only
     arr   <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
+
+    # ---- Transform-both-sides: EXACT node-wise composition -------------------
+    # Handled as a self-contained block so the delta-expansion path below is
+    # untouched for every other family. See .admTBSNodeParts(): the objective
+    # composes the residual at each NODE and aggregates, rather than collapsing
+    # to (mu_struct, var_f) and expanding around it. The expansion does not
+    # converge -- its error in V is a floor no node count removes, measured at
+    # 3.4e-03 (boxCox) to 3.1e-02 (probitNorm at omega 0.49) and flat from 7
+    # nodes to 25 -- which also means `n_nodes` bought a TBS fit nothing.
+    #
+    # The gradient is the same contraction the structural moments use, with the
+    # conditional mean's derivative folded into the sensitivity column:
+    #   A  = dm o graw,  dE = sum_q w A,  Ac = A - dE
+    #   dV = Ac' diag(w) Mc + Mc' diag(w) Ac + diag(sum_q w dv o graw)
+    # verified against central differences of this objective at 1e-09 on all
+    # four transforms.
+    .np <- .admTBSNodeParts(f, arr)
+    if (!is.null(.np)) {
+      .ag <- .admTBSAggregate(.np, W)
+      mu_sigma <- .ag$E; V <- .ag$V; Mc <- .ag$Mc; wn <- .ag$wn
+      r <- as.numeric(s$E) - mu_sigma
+      is_var <- identical(s$method, "var")
+      nll_total <- nll_total + if (is_var)
+        nll_var_cpp(s$E, s$v_diag, mu_sigma, diag(V), s$n)
+      else nll_cov_cpp(s$E, s$V, mu_sigma, V, s$n)
+      if (is_var) {
+        pv  <- diag(V)
+        dNM <- s$n * (-2 * r / pv)
+        dNV <- s$n * (1 / pv - s$v_diag / pv^2 - r^2 / pv^2)
+        Bm  <- diag(dNV, nrow = length(pv))
+      } else {
+        chV <- tryCatch(chol(V), error = function(e) NULL)
+        if (is.null(chV))
+          return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                         cores, grad_h), nll = NULL))
+        iV  <- chol2inv(chV)
+        dNM <- as.numeric(-2 * s$n * (iV %*% r))
+        Bm  <- s$n * (iV - iV %*% (s$V + tcrossprod(r)) %*% iV)
+      }
+      # One contraction for every parameter: `A` is the per-node derivative of
+      # the conditional MEAN and `dvn` that of the conditional VARIANCE, which is
+      # all that differs between a structural/omega direction (both chain through
+      # graw) and a sigma direction (neither does).
+      .cn <- function(A, dvn) {
+        de <- as.numeric(crossprod(wn, A))
+        Ac <- sweep(A, 2L, de)
+        Bc <- crossprod(Ac, wn * Mc)
+        dV <- Bc + t(Bc)
+        diag(dV) <- diag(dV) + as.numeric(crossprod(wn, dvn))
+        sum(dNM * de) + sum(Bm * dV)
+      }
+      .cg <- function(graw) .cn(.np$dm * graw, .np$dv * graw)
+      for (k in seq_len(n_s)) {
+        if (!is.null(pinfo$struct_has_eta) && !pinfo$struct_has_eta[k]) next
+        ei <- which(pinfo$struct_eta_idx == k)[1L]
+        if (is.na(ei)) next   # nocov -- defensive, as in the main path
+        grad[k] <- grad[k] + .cg(Jl[[ei]])
+      }
+      if (length(unpaired_k) > 0L) {
+        if (is.null(res$dtheta_list)) theta_sens_ok <- FALSE
+        else for (k in unpaired_k)
+          g_theta[k] <- g_theta[k] + .cg(res$dtheta_list[[pinfo$struct_names[k]]])
+      }
+      if (n_eta > 0L) for (rr in seq_along(pinfo$omega_par)) {
+        i <- pinfo$chol_i[rr]; j <- pinfo$chol_j[rr]
+        dL  <- .cg(Jl[[i]] * X[, j])
+        pos <- n_s + n_e + rr
+        grad[pos] <- grad[pos] +
+          if (pinfo$chol_diag[rr]) dL * L[i, i] / 2 else dL
+      }
+      # SIGMA by central differences of this same composition. The residual
+      # parameters reach (m, v) only through the sd and the transform, with no
+      # path through f, so there is no sensitivity column to chain -- and the
+      # existing TBS row assembly already differences its four parameter
+      # directions for exactly this reason. Differencing the assembly the
+      # objective uses keeps analytic and objective consistent by construction.
+      if (n_e > 0L) for (k in seq_len(n_e)) {
+        hk <- max(abs(p[n_s + k]), 1) * 1e-5
+        mv <- lapply(c(1, -1), function(sgn) {
+          pk <- p; pk[n_s + k] <- pk[n_s + k] + sgn * hk
+          pk_pars <- tryCatch(.admUnpack(pk, pinfo), error = function(e) NULL)
+          if (is.null(pk_pars)) return(NULL)
+          ak <- .admResidRows(pinfo, ov, pk_pars$sigma_var, length(mu))
+          .admTBSNodeParts(f, ak)
+        })
+        if (any(vapply(mv, is.null, TRUE))) {
+          return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                         cores, grad_h), nll = NULL))
+        }
+        grad[n_s + k] <- grad[n_s + k] +
+          .cn((mv[[1L]]$m - mv[[2L]]$m) / (2 * hk),
+              (mv[[1L]]$v - mv[[2L]]$v) / (2 * hk))
+      }
+      next
+    }
+    # ---- end TBS ------------------------------------------------------------
+
     var_f <- diag(V)                      # Var_eta(f), pre-residual
     ap    <- .admResidApply(mu, var_f, arr, s$times, cov_f)
     V <- .admApplyResidTail(V, ap)
@@ -622,7 +740,8 @@
 .adghCalcCov <- function(p_hat, pinfo, studies, sensModel, rxMod, out_var,
                            grid, cores,
                            use_grad = TRUE, grad_h = 1e-3,
-                           cov_h_outer = .Machine$double.eps^(1/4)
+                           cov_h_outer = .Machine$double.eps^(1/4),
+                           sandwich = FALSE
                            ) {
   n_s     <- length(pinfo$struct_names)
   n_e     <- length(pinfo$sigma_names)
@@ -739,10 +858,31 @@
   }
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
+  # covMethod = "r,s": replace the 2H^-1 filling with H^-1 J H^-1, built on the
+  # SAME H so the two cannot disagree about the half they share. Under correct
+  # specification J = 2H and this returns what "r" would have. Anything the
+  # sandwich cannot supply -- a residual outside the conditionally-normal family,
+  # a joint unit, a singular ingredient -- degrades to "r" and says so, rather
+  # than reporting a number of unknown provenance.
+  sw_used <- FALSE
+  sw_cond <- NULL
+  if (isTRUE(sandwich)) {
+    res <- .admWireSandwich(p_hat, pinfo, studies, out_var, cov_full, "adghCalcCov",
+      function() .admSandwichCov(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
+                                 H = H, keep = match(nms_cov, names(p_hat)),
+                                 nms = nms_cov, sensModel = sensModel, Hinv = Hinv,
+                                 nll_fn = nll_fn, eig_dec = eig_dec))
+    cov_full <- res$cov_full; sw_used <- res$sw_used; sw_cond <- res$sw_cond
+  }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
   # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
   # shared implementation for all three estimators -- see .admScaleReportedCov().
-  .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  attr(out, "sandwich") <- sw_used
+  # The conditioning diagnosis rides out with the covariance; the driver raises
+  # it, because a warning() from in here does not reach the user.
+  attr(out, "sandwich_illcond") <- sw_cond
+  out
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -833,6 +973,13 @@
 #'   evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 #'   with a large residual SD; there is little to gain by lowering it.
 #' @param n_nodes Number of quadrature nodes per eta dimension (default 5).
+#'   For a transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+#'   `probitNorm`) this also controls the accuracy of the RESIDUAL composition:
+#'   those endpoints have a conditional mean that is nonlinear in the structural
+#'   prediction, so the residual is composed at each node and aggregated rather
+#'   than expanded about the ensemble mean. Before that, `n_nodes` had no effect
+#'   at all on a TBS fit's accuracy -- the expansion's error was a floor no node
+#'   count removed.
 #'   Total nodes = `n_nodes^n_eta`. `n_nodes = 5` achieves near-exact covariance
 #'   moments for IIV SD up to ~0.5; `n_nodes = 7` extends coverage to SD ~0.7.
 #'   For models with >= 5 etas the node count grows steeply; consider reducing
@@ -874,12 +1021,64 @@
 #' @param cov_h_outer Outer step scale for numerical Hessian. Default
 #'   `eps^(1/4)` (tighter than admc's `eps^(1/5)` because the GH surface is
 #'   noise-free).
-#' @param covMethod `"r"` computes covariance via a numerical Hessian over the
-#'   structural, residual-error and omega parameters; `"none"` skips it. Omega is
+#' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
+#'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
 #'   If the weakly-identified omega Cholesky makes the Hessian non-positive
 #'   definite, the structural + residual sub-block is reported with a warning.
+#'
+#'   `"r,s"` adds a sandwich correction, `H^-1 J H^-1`, on the same Hessian.
+#'   The aggregate objective scores the reported mean and covariance as though
+#'   the subjects behind them were multivariate normal; they are not, because the
+#'   model is nonlinear in the random effects, so the sampling law of `(E, V)` is
+#'   not the one the objective assumes. `"r,s"` scores that law from the model
+#'   instead. Point estimates are untouched -- only the reported uncertainty
+#'   changes -- and under correct specification it reduces to `"r"` exactly.
+#'   **It is the default because it is the conservative choice, not the aggressive
+#'   one.** Under correct specification `J = 2H` and the sandwich returns what
+#'   `"r"` returns, so defaulting to it costs nothing when the normal-theory
+#'   assumption holds and corrects the standard errors when it does not. Anything
+#'   it cannot build degrades to `"r"` and reports `"r"`, so no fit loses its
+#'   covariance by asking. Pass `covMethod = "r"` for the pre-0.4.1 behaviour.
+#'
+#'   Applies to every residual family whose conditional law is independent across
+#'   timepoints, which is all of them except `ar()`: the conditionally-normal set
+#'   (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
+#'   distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`, and
+#'   `t()` with `nu > 4`), and the transform-both-sides ones (`boxCox`,
+#'   `yeoJohnson`, `logitNorm`, `probitNorm`), whose third and fourth conditional
+#'   moments come off the same quadrature that already gives their mean and
+#'   variance. Refused, and degraded to `"r"`: `ar()`, because it correlates the
+#'   residual ACROSS timepoints and the cross terms the expansion drops are then
+#'   real; `t()` with `nu <= 4`, whose kurtosis does not exist; and `ordinal()`
+#'   and same-subject `joint` studies, which stack several outputs into one
+#'   covariance the per-output node ensemble does not describe. These four are
+#'   refusals by construction rather than failures, so the fit reports the reason
+#'   as a message and falls back to `"r"`; a sandwich that was attempted and could
+#'   not be built still warns.
+#'
+#'   **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"` is.**
+#'   `"r"` reports `2H^-1` and inverts `H` once; the sandwich reports
+#'   `H^-1 J H^-1` and inverts it twice, so in a direction the data barely
+#'   identifies any gap between `J` and `2H` is amplified quadratically. A
+#'   residual SD contributing 0.01 variance against 1.7 from between-subject
+#'   variability is such a direction: measured on one 1-cmt fixture at
+#'   `cond(H) = 3.5e5`, the reported residual SE moved by a factor of 0.11 and
+#'   two omega entries by 0.59 and 1.55, while the same model and design on a
+#'   study the residual IS identified in (`cond(H) = 247`) reproduced `"r"` to
+#'   four decimals on every parameter. Neither number is a correction there --
+#'   both methods are reporting an unidentified direction, and `"r,s"` is louder
+#'   about it. admixr2 says so: when the Hessian's reciprocal condition number
+#'   falls below `eps^(1/4)` -- the point at which squaring the conditioning
+#'   reaches the bound a single inversion is already called singular at -- the fit
+#'   records a note naming the parameter that loads most heavily on the offending
+#'   direction. It arrives on `fit$runInfo` and is listed by `print(fit)`, which
+#'   is where `nlmixr2est` routes an estimator's warnings. The sandwich is still
+#'   reported, because the well-determined parameters of the same fit are
+#'   unaffected; check the named parameter's relative standard error before
+#'   reading its `"r,s"` value as a finding.
 #'
 #'   All three blocks are reported on the scale the ESTIMATES are printed on, as
 #'   `nlmixr2est` does: structural thetas on the log/optimizer scale, residual
@@ -988,7 +1187,7 @@ adghControl <- function(
     grad_bounds = 5,
     cov_h       = 1e-3,
     cov_h_outer = .Machine$double.eps^(1/4),
-    covMethod   = c("r", "none"),
+    covMethod   = c("r,s", "r", "none"),
     n_restarts  = 1L,
     restart_sd  = 0.5,
     workers     = 1L,
@@ -1423,7 +1622,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   p_hat  <- setNames(opt$solution, names(ov$p0))
 
   t0_cov <- proc.time()
-  .cov <- if (.ctl$covMethod == "r") {
+  .want_cov <- .admCovWantsHessian(.ctl$covMethod)
+  .cov <- if (.want_cov) {
     # struct + sigma + OMEGA: the Hessian spans all three, so the evaluation
     # count must too.
     np_cov    <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
@@ -1433,21 +1633,22 @@ nlmixr2Est.adgh <- function(env, ...) {
                  else { n_off <- np_cov * (np_cov - 1L) / 2L; 1L + 2L * np_cov + 4L * n_off }
     evals_lbl <- if (use_grad_cov) "gradient evaluations" else "NLL evaluations"
     hess_lbl  <- if (!use_grad_cov) "" else if (!is.null(sensModel)) ", Analytical-Hessian" else ", FD-Hessian"
-    message(sprintf("  Computing covariance (R method%s, %d %s)", hess_lbl, n_evals, evals_lbl))
+    sw_lbl    <- if (.admCovWantsSandwich(.ctl$covMethod)) ", sandwich" else ""
+    message(sprintf("  Computing covariance (R method%s%s, %d %s)",
+                    hess_lbl, sw_lbl, n_evals, evals_lbl))
     tryCatch(
       .adghCalcCov(p_hat, pinfo, studies, sensModel, rxMod, output_var, grid, cores,
                    use_grad    = use_grad_cov,
                    grad_h      = .ctl$cov_h,
-                   cov_h_outer = .ctl$cov_h_outer),
+                   cov_h_outer = .ctl$cov_h_outer,
+                   sandwich    = .admCovWantsSandwich(.ctl$covMethod)),
       error = function(e) { warning("adghCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
-  # A NULL covariance used to be completely silent: no warning reached the user,
-  # `warnings()` was empty, covMethod came back "" and every SE was NA with no
-  # indication why. Say so once, from the driver, where it cannot be swallowed.
-  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
-    warning("covariance could not be computed (the Hessian was singular or ",
-            "non-finite); standard errors are unavailable for this fit.",
-            call. = FALSE)
+  # Warns if no covariance could be computed, re-raises any sandwich
+  # ill-conditioning note (as a warning -- see .admFinalizeCovLabel()'s own
+  # comment for why that specific mechanism matters), and returns what the
+  # covariance IS ("r,s" / "r" / ""), not what was asked for.
+  .cov_lbl  <- .admFinalizeCovLabel(.cov, .want_cov)
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   .cov      <- .admCovThetaOrder(.cov, .ui)
@@ -1470,7 +1671,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   .ret$est        <- "adgh"
   .ret$ofvType    <- "adgh"
   .ret$adjObf     <- FALSE
-  .ret$covMethod  <- if (!is.null(.cov)) "r" else ""
+  .ret$covMethod  <- .cov_lbl
   .ret$cov        <- .cov
   .ret$message    <- opt$message
   .ret$extra      <- ""

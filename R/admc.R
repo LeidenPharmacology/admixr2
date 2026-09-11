@@ -12,6 +12,16 @@
 #'   - `times` -- numeric vector of observation times
 #'   - `ev` -- `rxode2::et()` dosing event table
 #'   - `method` -- `"cov"` or `"var"` (optional; auto-detected from `V`)
+#'   - `v_denom` -- `"ml"` (default) or `"unbiased"`, declaring which denominator
+#'     the supplied `V` uses. The likelihood is the exact one for `n` iid draws
+#'     only under the ML (`n`) covariance, which is what `cov.wt(method = "ML")`
+#'     and [datagen()] produce. A **published** SD is the unbiased (`n - 1`) SD,
+#'     so a digitised figure gives `V = SD^2` on the `n - 1` scale: declare
+#'     `v_denom = "unbiased"` and admixr2 converts it. Declared per study, since
+#'     a meta-analysis routinely mixes a digitised source with a model-derived
+#'     one and the two need not share a denominator. At `n = 60` the factor is
+#'     1.7%; it matters more the smaller `n` is, and more again for any method
+#'     that scores the reported covariance against its own sampling law.
 #'
 #'   **Multi-compartment (multiple observed outputs).** To fit several observed
 #'   compartments simultaneously (e.g. plasma and brain/CSF), give the study an
@@ -129,12 +139,65 @@
 #'   5). This bound is admixr2's, not the model's -- an unbounded parameter has
 #'   no other -- and nloptr reports normal convergence at a box corner, so a
 #'   warning is emitted if an estimate finishes on it.
-#' @param covMethod Covariance method: `"r"` (numerical Hessian over the
-#'   structural, residual-error and omega parameters) or `"none"`. Omega is
+#' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
+#'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
 #'   If the weakly-identified omega Cholesky makes the Hessian non-positive
 #'   definite, the structural + residual sub-block is reported with a warning.
+#'
+#'   `"r,s"` adds a sandwich correction, `H^-1 J H^-1`, on the same Hessian. The
+#'   aggregate objective scores the reported mean and covariance as though the
+#'   subjects behind them were multivariate normal; they are not, because the
+#'   model is nonlinear in the random effects. `"r,s"` scores that law from the
+#'   model instead, on a quadrature ensemble rather than on this fit's own MC
+#'   draws, so the reported uncertainty carries no sampling noise of its own.
+#'   Point estimates are untouched, and under correct specification it reduces to
+#'   `"r"` exactly.
+#'   **It is the default because it is the conservative choice, not the aggressive
+#'   one.** Under correct specification `J = 2H` and the sandwich returns what
+#'   `"r"` returns, so defaulting to it costs nothing when the normal-theory
+#'   assumption holds and corrects the standard errors when it does not. Anything
+#'   it cannot build degrades to `"r"` and reports `"r"`, so no fit loses its
+#'   covariance by asking. Pass `covMethod = "r"` for the pre-0.4.1 behaviour.
+#'
+#'   Applies to every residual family whose conditional law is independent across
+#'   timepoints, which is all of them except `ar()`: the conditionally-normal set
+#'   (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
+#'   distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`, and
+#'   `t()` with `nu > 4`), and the transform-both-sides ones (`boxCox`,
+#'   `yeoJohnson`, `logitNorm`, `probitNorm`), whose third and fourth conditional
+#'   moments come off the same quadrature that already gives their mean and
+#'   variance. Refused, and degraded to `"r"`: `ar()`, because it correlates the
+#'   residual ACROSS timepoints and the cross terms the expansion drops are then
+#'   real; `t()` with `nu <= 4`, whose kurtosis does not exist; and `ordinal()`
+#'   and same-subject `joint` studies, which stack several outputs into one
+#'   covariance the per-output node ensemble does not describe. These four are
+#'   refusals by construction rather than failures, so the fit reports the reason
+#'   as a message and falls back to `"r"`; a sandwich that was attempted and could
+#'   not be built still warns.
+#'
+#'   **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"` is.**
+#'   `"r"` reports `2H^-1` and inverts `H` once; the sandwich reports
+#'   `H^-1 J H^-1` and inverts it twice, so in a direction the data barely
+#'   identifies any gap between `J` and `2H` is amplified quadratically. A
+#'   residual SD contributing 0.01 variance against 1.7 from between-subject
+#'   variability is such a direction: measured on one 1-cmt fixture at
+#'   `cond(H) = 3.5e5`, the reported residual SE moved by a factor of 0.11 and
+#'   two omega entries by 0.59 and 1.55, while the same model and design on a
+#'   study the residual IS identified in (`cond(H) = 247`) reproduced `"r"` to
+#'   four decimals on every parameter. Neither number is a correction there --
+#'   both methods are reporting an unidentified direction, and `"r,s"` is louder
+#'   about it. admixr2 says so: when the Hessian's reciprocal condition number
+#'   falls below `eps^(1/4)` -- the point at which squaring the conditioning
+#'   reaches the bound a single inversion is already called singular at -- the fit
+#'   records a note naming the parameter that loads most heavily on the offending
+#'   direction. It arrives on `fit$runInfo` and is listed by `print(fit)`, which
+#'   is where `nlmixr2est` routes an estimator's warnings. The sandwich is still
+#'   reported, because the well-determined parameters of the same fit are
+#'   unaffected; check the named parameter's relative standard error before
+#'   reading its `"r,s"` value as a finding.
 #'
 #'   All three blocks are reported on the scale the ESTIMATES are printed on, as
 #'   `nlmixr2est` does: structural thetas on the log/optimizer scale, residual
@@ -268,7 +331,7 @@ admControl <- function(
     cov_h       = 1e-3,
     cov_h_outer = .Machine$double.eps^(1/5),
     grad_bounds = 5,
-    covMethod   = c("r", "none"),
+    covMethod   = c("r,s", "r", "none"),
     cov_n_sim   = 10000L,
     n_restarts  = 1L,
     restart_sd  = 0.5,
@@ -497,6 +560,18 @@ nmObjGetControl.admc <- function(x, ...) {
     } else {
       # everything else: assemble the moments in R (form-agnostic), then score
       # with the plain kernels. See .admResidCppOK() for why.
+      # Transform-both-sides composes at each DRAW and aggregates, for the same
+      # reason adgh composes at each node: the delta expansion around
+      # (mu_struct, var_f) does not converge for a nonlinear conditional mean.
+      # An MC ensemble is the equal-weight case of the same aggregation.
+      .ex <- .admResidNodeMomentsTBS(cp_mat, rep(1, nrow(cp_mat)), ar, s$times)
+      if (!is.null(.ex)) {
+        nll2 <- nll2 + if (identical(s$method, "var"))
+          nll_var_cpp(as.numeric(s$E), s$v_diag, .ex$E, diag(.ex$V), s$n)
+        else nll_cov_cpp(as.numeric(s$E), s$V, .ex$E, .ex$V, s$n)
+        if (!is.finite(nll2)) return(Inf)
+        next
+      }
       mu_s <- colMeans(cp_mat)
       cpc  <- sweep(cp_mat, 2L, mu_s)
       Vs   <- crossprod(cpc) / nrow(cp_mat)
@@ -540,6 +615,16 @@ nmObjGetControl.admc <- function(x, ...) {
 .admGrad <- function(p, pinfo, studies, z_list, rxMod, output_var,
                      params_list, cores, h, sensModel = NULL,
                      use_central = FALSE) {
+  # A TBS endpoint composes the residual at each DRAW (see .admNLL); the
+  # analytical decomposition below is written against the delta expansion around
+  # (mu_struct, var_f) and would differentiate a different function than the
+  # objective now evaluates. Difference the objective instead -- the same route
+  # a joint unit already takes, and for the same reason. The fixed z_list makes
+  # it a common-random-number FD, so MC noise does not leak into the gradient.
+  .p0 <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
+  if (!is.null(.p0) && .admAnyTBS(pinfo, studies, output_var, .p0$sigma_var))
+    return(.admNLLGradFD(p, pinfo, studies, z_list, rxMod, output_var,
+                         params_list, cores, h, use_central))
   # `h` is either the fixed scalar or Gill83's per-parameter vector. It must be
   # read through .admGH()/.admGH0() and NEVER used bare, because this function
   # differences in two different spaces:
@@ -1134,6 +1219,15 @@ nmObjGetControl.admc <- function(x, ...) {
             nll_cov_from_samples_cpp(cp, as.numeric(s$E), s$V,
                                      s$n, ar$form, ar$a2, ar$b2, ar$cc)
         } else {
+          # Same composition .admNLL() uses -- batch and single-config must score
+          # one function, or a batched gradient differences something the
+          # objective never evaluates.
+          .exb <- .admResidNodeMomentsTBS(cp, rep(1, nrow(cp)), ar, s$times)
+          if (!is.null(.exb)) {
+            if (identical(s$method, "var"))
+              nll_var_cpp(as.numeric(s$E), s$v_diag, .exb$E, diag(.exb$V), s$n)
+            else nll_cov_cpp(as.numeric(s$E), s$V, .exb$E, .exb$V, s$n)
+          } else {
           mu_s <- colMeans(cp)
           cpc  <- sweep(cp, 2L, mu_s)
           Vs   <- crossprod(cpc) / nrow(cp)
@@ -1143,6 +1237,7 @@ nmObjGetControl.admc <- function(x, ...) {
           } else {
             Vp <- .admApplyResidTail(Vs, ap)
             nll_cov_cpp(as.numeric(s$E), s$V, ap$mu, Vp, s$n)
+          }
           }
         }
         if (is.finite(nll_ci)) nlls[ci] <- nlls[ci] + nll_ci
@@ -1175,10 +1270,20 @@ nmObjGetControl.admc <- function(x, ...) {
   # matrices are shaped for a single output and it errors with "non-conformable
   # arguments". .admNLLBatch() already falls back per config for these; mirror that
   # here rather than relying on the driver's `!any_joint` guard staying in place.
-  if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1))))
+  # TBS joins the joint units here for the same reason: .admGrad falls back to
+  # differencing the objective for both, and the batch path has no analytic
+  # decomposition of its own to offer them.
+  .pb <- tryCatch(.admUnpack(p_list[[1L]], pinfo), error = function(e) NULL)
+  if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1))) ||
+      (!is.null(.pb) && .admAnyTBS(pinfo, studies, output_var, .pb$sigma_var)))
+    # `use_central` is NAMED, not left to the positional tail. .admGrad's
+    # signature ends (..., h, sensModel, use_central), so passing eight arguments
+    # positionally silently took the FORWARD difference here while .admCalcCov
+    # had asked for the central one -- making the covariance Hessian an outer
+    # central difference of a forward-difference gradient.
     return(t(vapply(p_list, function(.p)
       .admGrad(.p, pinfo, studies, z_list, rxMod, output_var, params_list, cores,
-               h, sensModel),
+               h, sensModel, use_central = use_central),
       numeric(length(p_list[[1L]])))))
 
   np            <- length(p_list[[1L]])
@@ -1620,7 +1725,7 @@ nmObjGetControl.admc <- function(x, ...) {
                         use_grad = FALSE, grad_h = 1e-4, cov_h = 1e-3,
                         cov_h_outer = .Machine$double.eps^(1/5),
                         sensModel = NULL, use_central = FALSE,
-                        sampling = "sobol") {
+                        sampling = "sobol", sandwich = FALSE) {
   np    <- length(p_hat)
   nms   <- names(p_hat)
 
@@ -1810,10 +1915,39 @@ nmObjGetControl.admc <- function(x, ...) {
   }
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
+  # covMethod = "r,s". The weight is built on a QUADRATURE ensemble rather than
+  # on this fit's own MC draws: Omega is a property of the model, not of how the
+  # integral was approximated, and a sample-based weight would carry the MC noise
+  # of the fit into the reported uncertainty. G comes from the same ensemble for
+  # the same reason -- admc's moments are noisy estimates of exactly that
+  # integral, so the noise-free version describes the estimator's target
+  # faithfully and its variance better.
+  sw_used <- FALSE
+  sw_cond <- NULL
+  if (isTRUE(sandwich)) {
+    # The grid build cannot fail with NULL here for a reason .admWireSandwich's
+    # own .admSandwichNA() call has not already caught: n_eta >= 8 (or a
+    # negative/missing n_eta) is exactly what .admSandwichGrid() refuses on, and
+    # .admSandwichNA() screens both up front on the SAME pinfo.
+    res <- .admWireSandwich(p_hat, pinfo, studies, output_var, cov_full, "admCalcCov",
+      function() {
+        grid <- .admSandwichGrid(pinfo)
+        .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
+                        H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov,
+                        sensModel = sensModel, Hinv = Hinv, nll_fn = nll_fn,
+                        eig_dec = eig_dec)
+      })
+    cov_full <- res$cov_full; sw_used <- res$sw_used; sw_cond <- res$sw_cond
+  }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
   # Rotate onto the reported scale (residual delta factors + omega Jacobian). One
   # shared implementation for all three estimators -- see .admScaleReportedCov().
-  .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  out <- .admScaleReportedCov(cov_full, p_hat, pinfo, n_s, n_e, n_o, n_sub)
+  attr(out, "sandwich") <- sw_used
+  # The conditioning diagnosis rides out with the covariance; the driver raises
+  # it, because a warning() from in here does not reach the user.
+  attr(out, "sandwich_illcond") <- sw_cond
+  out
 }
 
 # -- Restart worker ------------------------------------------------------------
@@ -2824,6 +2958,17 @@ nlmixr2Est.admc <- function(env, ...) {
   # Joint fits use FD only when no sens model is available; otherwise .admGrad's
   # joint branch computes the analytical stacked-MVN gradient.
   joint_fd <- any_joint && is.null(sensModel)
+  # A TBS endpoint takes that same route whether or not a sens model exists:
+  # .admGrad() hands it to .admNLLGradFD() because the analytical decomposition is
+  # written against the delta expansion and the objective now composes at the
+  # draws (and .admGradBatch() follows for the same reason). So it differences the
+  # OBJECTIVE in every coordinate, which is what .fd_idx and the label below have
+  # to describe -- left as "Sens" with an empty FD set, its steps were never
+  # measured and the printed label named a gradient it does not compute.
+  .p0u    <- tryCatch(.admUnpack(ov$p0, pinfo), error = function(e) NULL)
+  tbs_fd  <- !is.null(.p0u) &&
+    .admAnyTBS(pinfo, studies, output_var, .p0u$sigma_var)
+  obj_fd  <- joint_fd || tbs_fd
 
   # Measure the gradient's FD steps ONCE, here, for every later difference to
   # reuse (FOCEI's numericGrad mechanism at nF == 1).
@@ -2851,7 +2996,7 @@ nlmixr2Est.admc <- function(env, ...) {
   # either way -- the prediction difference is only the route to it. It remains a
   # transfer, and worth knowing when reading a step back.
   .fd_idx <- if (!want_grad) integer(0)
-    else if (joint_fd) seq_along(ov$p0)
+    else if (obj_fd) seq_along(ov$p0)
     else if (length(.unpaired) && !.theta_sens)
       which(pinfo$struct_names %in% .unpaired)
     else integer(0)
@@ -2872,6 +3017,7 @@ nlmixr2Est.admc <- function(env, ...) {
 
   grad_label <- if (!want_grad) "none"
   else if (joint_fd) "central FD (joint)"
+  else if (tbs_fd) paste0(if (want_central) "central" else "forward", " FD (TBS)")
   else if (any_joint) "Sens (joint)"
   else if (!is.null(sensModel))
     if (pinfo$has_kappa) "Sens+FD" else "Sens"
@@ -2955,7 +3101,8 @@ nlmixr2Est.admc <- function(env, ...) {
 
   p_hat  <- setNames(opt$solution, names(ov$p0))
   t0_cov <- proc.time()
-  .cov <- if (.ctl$covMethod == "r") {
+  .want_cov <- .admCovWantsHessian(.ctl$covMethod)
+  .cov <- if (.want_cov) {
     # Multi-output / joint fits use the NLL-FD Hessian (via .admNLLBatch); the
     # grad-FD Hessian relies on the single-output analytical grad batch. A zero-eta
     # (no-IIV) model also takes the NLL-FD path: grad-FD exists only to BATCH the
@@ -2975,28 +3122,31 @@ nlmixr2Est.admc <- function(env, ...) {
       np_cov * 2L + n_off * 4L + 1L
     }
     evals_label <- if (use_grad_cov) "gradient evaluations" else "NLL evaluations"
-    hess_label  <- if (!use_grad_cov) "" else if (!is.null(sensModel))
-      ", Sens-Hessian" else if (use_cent_cov) ", cFD-Hessian" else ", FD-Hessian"
-    message(sprintf("  Computing covariance (R method%s, %d %s)",
-                    hess_label, n_evals, evals_label))
+    # A TBS fit has a sens model but does NOT use it for the gradient (see tbs_fd),
+    # so naming it a Sens-Hessian here described the wrong derivative.
+    hess_label  <- if (!use_grad_cov) "" else
+      if (!is.null(sensModel) && !tbs_fd) ", Sens-Hessian" else
+      if (use_cent_cov) ", cFD-Hessian" else ", FD-Hessian"
+    message(sprintf("  Computing covariance (R method%s%s, %d %s)",
+                    hess_label, if (.admCovWantsSandwich(.ctl$covMethod)) ", sandwich" else "",
+                    n_evals, evals_label))
     tryCatch(
       .admCalcCov(p_hat, pinfo, studies, z_list, rxMod, output_var,
                   params_list, cores, cov_n_sim = .ctl$cov_n_sim,
                   use_grad = use_grad_cov, grad_h = .ctl$grad_h,
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
                   sensModel = sensModel, use_central = use_cent_cov,
-                  sampling = .ctl$sampling),
+                  sampling = .ctl$sampling,
+                  sandwich = .admCovWantsSandwich(.ctl$covMethod)),
       error = function(e) { warning("admCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
-  # A NULL covariance used to be completely silent: no warning reached the user,
-  # `warnings()` was empty, covMethod came back "" and every SE was NA with no
-  # indication why. Say so once, from the driver, where it cannot be swallowed.
-  if (isTRUE(.ctl$covMethod == "r") && is.null(.cov))
-    warning("covariance could not be computed (the Hessian was singular or ",
-            "non-finite); standard errors are unavailable for this fit.",
-            call. = FALSE)
+  # Warns if no covariance could be computed, re-raises any sandwich
+  # ill-conditioning note (as a warning -- see .admFinalizeCovLabel()'s own
+  # comment for why that specific mechanism matters), and returns what the
+  # covariance IS ("r,s" / "r" / ""), not what was asked for.
   # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
   # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
+  .cov_lbl  <- .admFinalizeCovLabel(.cov, .want_cov)
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
   t_cov     <- (proc.time() - t0_cov)["elapsed"]
@@ -3017,7 +3167,7 @@ nlmixr2Est.admc <- function(env, ...) {
   .ret$est        <- "admc"
   .ret$ofvType    <- "admc"
   .ret$adjObf     <- FALSE
-  .ret$covMethod  <- if (!is.null(.cov)) "r" else ""
+  .ret$covMethod  <- .cov_lbl
   .ret$cov        <- .cov
   .ret$message    <- opt$message
   .ret$extra      <- ""

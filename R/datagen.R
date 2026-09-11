@@ -400,6 +400,15 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         # emitted a V that contradicted the model it was handed -- and disagreed
         # with its own method = "gh" branch, which went through .adghMoments and
         # did include them.
+        # A TBS endpoint composes at each DRAW, as the estimators now do. Leaving
+        # datagen on the delta expansion would emit a study consistent with an
+        # approximation no estimator uses any more -- and since datagen is what
+        # the roundtrip tests generate from, the disagreement would show up as a
+        # recovery bias rather than as the composition difference it is.
+        .ex <- .admResidNodeMomentsTBS(cp_mat, rep(1, nrow(cp_mat)), arr,
+                                       study_tmp$times)
+        if (!is.null(.ex))
+          return(list(mu = .ex$E, V = .ex$V, cp_mat = cp_mat))
         ap   <- .admResidApply(mu, diag(V), arr, study_tmp$times, V)
         list(mu = ap$mu, V = .admApplyResidTail(V, ap), cp_mat = cp_mat)
       }
@@ -412,6 +421,11 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       names(mu) <- t_lbl; dimnames(V) <- list(t_lbl, t_lbl)
       r <- list(E = mu, V = V, n = spec$n %||% NA_integer_,
                 times = spec$times, ev = spec$ev)
+      # Self-describing: datagen builds V with the ML denominator, so say so
+      # rather than leaving the consumer to rely on the default meaning the same
+      # thing. A generated study can then be mixed with a digitised one that
+      # declares "unbiased" and both are converted correctly.
+      r$v_denom <- "ml"
       if (!is.null(spec$output)) r$output <- spec$output
       if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
       r
