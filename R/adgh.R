@@ -867,12 +867,16 @@
   sw_used <- FALSE
   sw_cond <- NULL
   if (isTRUE(sandwich)) {
-    sw <- tryCatch(
+    # A model the correction does not APPLY to (ar(), ordinal, a joint unit, a t
+    # with nu <= 4) is reported as such and not attempted -- see .admSandwichNA.
+    .sw_na <- tryCatch(.admSandwichNA(p_hat, pinfo, studies, out_var),
+                       error = function(e) NULL)
+    sw <- if (!is.null(.sw_na)) NULL else tryCatch(
       .admSandwichCov(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
                       H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov,
                       sensModel = sensModel, Hinv = Hinv),
       error = function(e) NULL)
-    res      <- .admApplySandwich(sw, cov_full, "adghCalcCov")
+    res      <- .admApplySandwich(sw, cov_full, "adghCalcCov", na = .sw_na)
     cov_full <- res$cov_full; sw_used <- res$sw_used; sw_cond <- res$sw_cond
   }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
@@ -1055,7 +1059,10 @@
 #'   residual ACROSS timepoints and the cross terms the expansion drops are then
 #'   real; `t()` with `nu <= 4`, whose kurtosis does not exist; and `ordinal()`
 #'   and same-subject `joint` studies, which stack several outputs into one
-#'   covariance the per-output node ensemble does not describe.
+#'   covariance the per-output node ensemble does not describe. These four are
+#'   refusals by construction rather than failures, so the fit reports the reason
+#'   as a message and falls back to `"r"`; a sandwich that was attempted and could
+#'   not be built still warns.
 #'
 #'   **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"` is.**
 #'   `"r"` reports `2H^-1` and inverts `H` once; the sandwich reports

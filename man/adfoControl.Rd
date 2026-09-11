@@ -141,7 +141,10 @@ variance. Refused, and degraded to \code{"r"}: \code{ar()}, because it correlate
 residual ACROSS timepoints and the cross terms the expansion drops are then
 real; \code{t()} with \code{nu <= 4}, whose kurtosis does not exist; and \code{ordinal()}
 and same-subject \code{joint} studies, which stack several outputs into one
-covariance the per-output node ensemble does not describe.
+covariance the per-output node ensemble does not describe. These four are
+refusals by construction rather than failures, so the fit reports the reason
+as a message and falls back to \code{"r"}; a sandwich that was attempted and could
+not be built still warns.
 
 \strong{\code{"r,s"} is more sensitive to an ill-conditioned Hessian than \code{"r"} is.}
 \code{"r"} reports \verb{2H^-1} and inverts \code{H} once; the sandwich reports

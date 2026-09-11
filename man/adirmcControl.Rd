@@ -203,67 +203,18 @@ Phases progressively tighten the search region.}
 
 \item{covMethod}{\code{"r,s"} (the DEFAULT) computes the sandwich \verb{H^-1 J H^-1};
 \code{"r"} the numerical Hessian alone, \verb{2H^-1}; \code{"none"} skips the covariance.
-All three span the structural, residual-error and omega parameters. Omega is
-included because excluding it also biases the STRUCTURAL standard errors
-downward -- a theta carrying an eta is correlated with that eta's variance.
-If the weakly-identified omega Cholesky makes the Hessian non-positive
-definite, the structural + residual sub-block is reported with a warning.
-
-\code{"r,s"} adds a sandwich correction, \verb{H^-1 J H^-1}, on the same Hessian. The
-aggregate objective scores the reported mean and covariance as though the
-subjects behind them were multivariate normal; they are not, because the
-model is nonlinear in the random effects. \code{"r,s"} scores that law from the
-model instead, on a quadrature ensemble rather than on this fit's own MC
-draws, so the reported uncertainty carries no sampling noise of its own.
-Point estimates are untouched, and under correct specification it reduces to
-\code{"r"} exactly.
-\strong{It is the default because it is the conservative choice, not the aggressive
-one.} Under correct specification \verb{J = 2H} and the sandwich returns what
-\code{"r"} returns, so defaulting to it costs nothing when the normal-theory
-assumption holds and corrects the standard errors when it does not. Anything
-it cannot build degrades to \code{"r"} and reports \code{"r"}, so no fit loses its
-covariance by asking. Pass \code{covMethod = "r"} for the pre-0.4.1 behaviour.
-
-Applies to every residual family whose conditional law is independent across
-timepoints, which is all of them except \code{ar()}: the conditionally-normal set
-(\code{add}, \code{prop}, \code{pow}, \code{combined1}, \code{combined2}), the closed-form
-distributional ones (\code{lnorm}, \code{pois}, \code{binom}, \code{nbinomMu}, \code{beta}, and
-\code{t()} with \code{nu > 4}), and the transform-both-sides ones (\code{boxCox},
-\code{yeoJohnson}, \code{logitNorm}, \code{probitNorm}), whose third and fourth conditional
-moments come off the same quadrature that already gives their mean and
-variance. Refused, and degraded to \code{"r"}: \code{ar()}, because it correlates the
-residual ACROSS timepoints and the cross terms the expansion drops are then
-real; \code{t()} with \code{nu <= 4}, whose kurtosis does not exist; and \code{ordinal()}
-and same-subject \code{joint} studies, which stack several outputs into one
-covariance the per-output node ensemble does not describe.
-
-\strong{\code{"r,s"} is more sensitive to an ill-conditioned Hessian than \code{"r"} is.}
-\code{"r"} reports \verb{2H^-1} and inverts \code{H} once; the sandwich reports
-\verb{H^-1 J H^-1} and inverts it twice, so in a direction the data barely
-identifies any gap between \code{J} and \verb{2H} is amplified quadratically. A
-residual SD contributing 0.01 variance against 1.7 from between-subject
-variability is such a direction: measured on one 1-cmt fixture at
-\code{cond(H) = 3.5e5}, the reported residual SE moved by a factor of 0.11 and
-two omega entries by 0.59 and 1.55, while the same model and design on a
-study the residual IS identified in (\code{cond(H) = 247}) reproduced \code{"r"} to
-four decimals on every parameter. Neither number is a correction there --
-both methods are reporting an unidentified direction, and \code{"r,s"} is louder
-about it. admixr2 says so: when the Hessian's reciprocal condition number
-falls below \code{eps^(1/4)} -- the point at which squaring the conditioning
-reaches the bound a single inversion is already called singular at -- the fit
-records a note naming the parameter that loads most heavily on the offending
-direction. It arrives on \code{fit$runInfo} and is listed by \code{print(fit)}, which
-is where \code{nlmixr2est} routes an estimator's warnings. The sandwich is still
-reported, because the well-determined parameters of the same fit are
-unaffected; check the named parameter's relative standard error before
-reading its \code{"r,s"} value as a finding.
-
-All three blocks are reported on the scale the ESTIMATES are printed on, as
-\code{nlmixr2est} does: structural thetas on the log/optimizer scale, residual
-error as an SD, and omega as the variance/covariance entries (named
-\verb{om.<eta>} and \verb{cov.<eta_i>.<eta_j>}). The omega block is rotated by the
-full Jacobian of Omega with respect to the log-Cholesky, which is not
-diagonal once omega is correlated.}
+All three span the structural, residual-error and omega parameters, and are
+reported on the scale the estimates are printed on. \code{\link[=admControl]{admControl()}} documents
+what the sandwich is, why it is the conservative default, and why it is more
+sensitive than \code{"r"} to an ill-conditioned Hessian; the same implementation
+runs here.
+What does NOT carry over is the family coverage, because \code{adirmc} itself is
+narrower: the estimator accepts only \code{add}, \code{prop}, \code{pow}, \code{combined1},
+\code{combined2} and \code{lnorm} residuals, and \code{"r,s"} applies to all six. The
+count, \code{beta}, transform-both-sides, \code{ordinal} and \code{ar()} endpoints
+\code{\link[=admControl]{admControl()}} lists are refused by \code{est = "adirmc"} itself, before any
+covariance is reached -- they are not models whose sandwich degrades to
+\code{"r"} here, they are models this estimator does not fit.}
 
 \item{cov_n_sim}{Number of MC samples for the covariance (Hessian) step.
 More samples reduce MC noise in NLL evaluations. The NLL-based Hessian

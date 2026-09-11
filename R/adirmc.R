@@ -10,6 +10,20 @@
 #' `"adgh"` for those. Single-output studies are fit as usual.
 #'
 #' @inheritParams admControl
+#' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
+#'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   All three span the structural, residual-error and omega parameters, and are
+#'   reported on the scale the estimates are printed on. [admControl()] documents
+#'   what the sandwich is, why it is the conservative default, and why it is more
+#'   sensitive than `"r"` to an ill-conditioned Hessian; the same implementation
+#'   runs here.
+#'   What does NOT carry over is the family coverage, because `adirmc` itself is
+#'   narrower: the estimator accepts only `add`, `prop`, `pow`, `combined1`,
+#'   `combined2` and `lnorm` residuals, and `"r,s"` applies to all six. The
+#'   count, `beta`, transform-both-sides, `ordinal` and `ar()` endpoints
+#'   [admControl()] lists are refused by `est = "adirmc"` itself, before any
+#'   covariance is reached -- they are not models whose sandwich degrades to
+#'   `"r"` here, they are models this estimator does not fit.
 #' @param grad Gradient mode for the inner optimiser: `"analytical"` (default,
 #'   closed-form weight-path gradient), `"none"` (derivative-free BOBYQA), or
 #'   `"fd"` (central finite differences). Note: `"sens"` is not available for the

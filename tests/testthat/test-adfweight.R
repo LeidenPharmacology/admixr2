@@ -29,8 +29,15 @@ test_that("the fast weight equals the reference expansion", {
   # node contraction out of the q x q loop and is what runs. They must not drift:
   # every term is a weighted sum over nodes of products of C and Dv columns, and
   # the fast form only reorders when that sum is taken.
+  #
+  # m == 1 IS IN THE LIST. A single-timepoint study has one vech entry, and the
+  # fast path's mu3 contraction used vapply(..., numeric(m)), which returns a
+  # VECTOR there rather than the m x q matrix the next line indexes -- so the fast
+  # path errored ("incorrect number of dimensions") on every such study while the
+  # reference handled it, and the drivers' tryCatch turned that into a silent
+  # degrade to "r". The original list started at m = 3 and could not see it.
   set.seed(4)
-  for (m in c(3L, 5L, 8L)) {
+  for (m in c(1L, 2L, 3L, 5L, 8L)) {
     Q  <- 15L
     C  <- matrix(stats::rnorm(Q * m), Q, m)
     C  <- sweep(C, 2L, colMeans(C))
@@ -38,8 +45,15 @@ test_that("the fast weight equals the reference expansion", {
     Dv <- matrix(stats::runif(Q * m, 0.01, 0.3), Q, m)
     a  <- admixr2:::.admAdfWeight(C, w, Dv, 200)
     b  <- admixr2:::.admAdfWeightFast(C, w, Dv, 200)
-    expect_equal(b, a, tolerance = 1e-12)
+    expect_equal(b, a, tolerance = 1e-12, info = paste("m =", m))
     expect_true(isSymmetric(round(b, 12)))
+    # and again with the third/fourth moments supplied, which is where the
+    # m-indexed TW/CT/KE lookups live
+    T3 <- matrix(stats::rnorm(Q * m, 0, 0.05), Q, m)
+    Q4 <- 3 * Dv^2 + matrix(stats::runif(Q * m, 0.001, 0.01), Q, m)
+    expect_equal(admixr2:::.admAdfWeightFast(C, w, Dv, 200, T3, Q4),
+                 admixr2:::.admAdfWeight(C, w, Dv, 200, T3, Q4),
+                 tolerance = 1e-12, info = paste("m =", m, "non-normal"))
   }
 })
 
@@ -280,6 +294,22 @@ test_that("the weight's own S is the V_pred the objective scores against", {
       model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ prop(e) }) },
     lnorm = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.15 })
       model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt(); cp ~ lnorm(e) }) },
+    # pow() WITH AN EXPONENT OUTSIDE {0.5, 1} is the case that made this a real
+    # constraint rather than a formality. The objective composes E[Var(y|eta)]
+    # through .admMomF's second-order expansion, exact only at k = 1 and k = 2,
+    # while .admAdfCondMom integrates b^2 |f|^2c over the nodes exactly -- so S
+    # sat 9e-05 (c = 0.75) to 2.5e-02 (c = 1.5, omega = 1) away from V_pred and
+    # a correctly-specified pow() fit reported a "r,s" correction that was
+    # nothing but the truncation. .admAdfAlignDv closes it; c = 0.5 and c = 1 are
+    # covered by `prop`/`add` above and must stay untouched.
+    pow075 = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                b <- 0.15; cx <- fix(0.75) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ pow(b, cx) }) },
+    addpow15 = function() { ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16
+                                  a <- 0.2; b <- 0.15; cx <- fix(1.5) })
+      model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+              cp ~ add(a) + pow(b, cx) }) },
     # TBS belongs in this test, not in one of its own. Once the objective
     # composes at the nodes the weight and the objective are the SAME
     # aggregation, so the identity holds to machine precision here too -- it was
@@ -322,6 +352,86 @@ test_that("the weight's own S is the V_pred the objective scores against", {
     expect_equal(N * W[seq_len(m), seq_len(m)], pt$V, tolerance = 1e-10,
                  ignore_attr = TRUE, info = nm)
   }
+})
+
+test_that("a single-timepoint study gets a weight rather than an error", {
+  # m == 1 reaches .admAdfWeightFast through .admAdfParts, which is where the
+  # vapply shape bug actually bit: the drivers wrap the call in tryCatch, so a
+  # one-timepoint study reported covMethod = "r" and a "could not be computed"
+  # warning instead of the correction. Pinned END TO END, because the unit test
+  # above can only see the shape and not who calls it.
+  skip_if_not_installed("rxode2")
+  .mod <- function() {
+    ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; prop.err <- 0.15 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+            cp ~ prop(prop.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(.mod))
+  ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+  DOSE <- 100; NQ <- 9L; N <- 100L
+  for (TIMES in list(8, c(4, 8))) {
+    E0 <- DOSE / 10 * exp(-0.1 * TIMES)
+    st <- list(s = list(E = E0, V = diag((0.3 * E0)^2, length(TIMES)), n = N,
+                        times = TIMES, ev = rxode2::et(amt = DOSE)))
+    ctl <- adghControl(studies = st, grad = "none", n_nodes = NQ, print = 0L,
+                       covMethod = "none")
+    pin <- admixr2:::.admDriverPinfo(ui, ctl)
+    u   <- admixr2:::.admDriverUnits(st, ui, ov)
+    g   <- admixr2:::.adghNodeGrid(NQ, pin$n_eta)
+    pars <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin)
+    pt  <- admixr2:::.admAdfParts(pars, pin, u$studies[[1L]], rx, ov, g, 1L)
+    m   <- length(pt$E)
+    expect_equal(m, length(TIMES))
+    W   <- admixr2:::.admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4)
+    expect_equal(dim(W), rep(m + m * (m + 1L) / 2L, 2L))
+    expect_true(all(is.finite(W)))
+    expect_equal(N * W[seq_len(m), seq_len(m)], pt$V, tolerance = 1e-10,
+                 ignore_attr = TRUE)
+  }
+})
+
+test_that("a model the sandwich does not APPLY to is a message, not a warning", {
+  # "r,s" is the default, so an ar() or joint fit was emitting "the sandwich
+  # correction could not be computed" on every run -- a sentence shaped like a
+  # failure, which nlmixr2est then carries onto fit$runInfo. A refusal by
+  # construction is reported as a message naming the reason instead; a genuine
+  # failure still warns.
+  skip_if_not_installed("rxode2")
+  mk <- function(f) {
+    ui <- suppressMessages(rxode2::rxode2(f))
+    ov <- admixr2:::.admOutputVar(ui)
+    TIMES <- c(2, 5, 9); E0 <- 10 * exp(-0.1 * TIMES)
+    st <- list(s = list(E = E0, V = diag((0.3 * E0)^2), n = 100L, times = TIMES,
+                        ev = rxode2::et(amt = 100)))
+    ctl <- adghControl(studies = st, grad = "none", n_nodes = 5L, print = 0L,
+                       covMethod = "none")
+    pin <- admixr2:::.admDriverPinfo(ui, ctl)
+    u   <- admixr2:::.admDriverUnits(st, ui, ov)
+    list(p = admixr2:::.admBuildOptVec(pin)$p0, pinfo = pin,
+         studies = u$studies, ov = ov)
+  }
+  plain <- mk(function() {
+    ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; prop.err <- 0.15 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+            cp ~ prop(prop.err) })
+  })
+  expect_null(with(plain, admixr2:::.admSandwichNA(p, pinfo, studies, ov)))
+  lowt <- mk(function() {
+    ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; e <- 0.15; nu <- fix(3) })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+            cp ~ prop(e) + t(nu) })
+  })
+  na <- with(lowt, admixr2:::.admSandwichNA(p, pinfo, studies, ov))
+  expect_true(is.character(na) && grepl("nu <= 4", na, fixed = TRUE))
+  # and the reason, not the failure warning, is what reaches the user
+  cov_r <- diag(2)
+  expect_message(res <- admixr2:::.admApplySandwich(NULL, cov_r, "adghCalcCov",
+                                                    na = na),
+                 "does not apply to this model")
+  expect_false(res$sw_used)
+  expect_equal(res$cov_full, cov_r)
+  expect_warning(admixr2:::.admApplySandwich(NULL, cov_r, "adghCalcCov"),
+                 "could not be computed")
 })
 
 test_that("the analytic moment Jacobian matches the finite-difference oracle", {

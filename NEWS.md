@@ -60,13 +60,29 @@
   integration scheme, and validated against a direct simulation of the
   conditional law and against the sampling covariance of simulated studies.
 
-  Refused, and degraded to `"r"`: `ar()`, because it correlates the residual
-  ACROSS timepoints, so the cross terms the expansion drops are real; `t()` with
+  `pow()` and `combined()` with an exponent outside `{0.5, 1}` need one extra
+  step, because there the OBJECTIVE's own `E[Var(y|eta)]` is a second-order
+  expansion of `E[f^2c]` while the weight integrates `b^2 |f|^2c` over the nodes
+  exactly. Both readings are defensible and they are not equal -- 9e-05 relative
+  at `c = 0.75`, up to 2.5e-02 at `c = 1.5` with `omega = 1` -- and the weight has
+  to describe the objective that was minimised, or `J = 2H` fails and a
+  correctly-specified `pow()` fit reports a "correction" that is nothing but the
+  truncation. The weight's conditional variance is therefore rescaled onto the
+  objective's composition, which leaves the node-to-node shape (and so the third
+  and fourth moments) alone and is not applied at all where the expansion is
+  exact. Pinned by the test that `S` rebuilt from the weight equals `V_pred`.
+
+  Models the correction does **not apply to** report the reason as a message and
+  fall back to `"r"`: `ar()`, because it correlates the residual ACROSS
+  timepoints, so the cross terms the expansion drops are real; `t()` with
   `nu <= 4`, whose kurtosis does not exist; and `ordinal()` and same-subject
   `joint` studies, which stack several outputs into one covariance that the
-  per-output node ensemble does not describe. A requested sandwich that cannot be
-  built degrades to `"r"` and **reports `"r"`**: `fit$covMethod` records what the
-  covariance IS, not what was asked for.
+  per-output node ensemble does not describe. These are refusals by construction,
+  not failures, which is why they are not warnings -- `"r,s"` is the default, so
+  an `ar()` fit would otherwise put "the sandwich correction could not be
+  computed" on `fit$runInfo` on every run. A sandwich that was attempted and
+  could not be BUILT still warns. Either way `fit$covMethod` reports `"r"`: it
+  records what the covariance IS, not what was asked for.
 
 * **`v_denom`: declare which denominator a study's `V` uses, rather than
   convert it by hand.** admixr2's two input types disagree about what `V` is. A

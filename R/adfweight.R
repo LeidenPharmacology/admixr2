@@ -177,6 +177,83 @@
   list(d = d, t3 = t3, q4 = q4, m1 = m1)
 }
 
+# Which timepoints the OBJECTIVE's residual variance is exact at.
+#
+# pow()/combined() compose E_eta[Var(y|eta)] as a2 + b2 E[f^2c] (plus a cross term
+# for combined1), and .admMomF supplies E[f^k] from (mu, var_f) by a second-order
+# delta expansion that is EXACT only at k = 1 and k = 2. Everywhere else it is a
+# truncation -- reached by pow()/combined() with an exponent outside {0.5, 1}, and
+# by nothing else.
+#
+# .admAdfCondMom, by contrast, evaluates b2 |f|^2c AT EVERY NODE, so its node
+# average is the exact integral. Both are defensible readings of the same model
+# and they are not equal: measured 9e-05 relative at c = 0.75 with omega = 0.16,
+# rising to 2.5e-02 at c = 1.5 with omega = 1 (against 8e-16 at c = 0.5 and c = 1).
+# See .admAdfAlignDv for why that gap has to be closed rather than tolerated.
+.admAdfMomExact <- function(arr, m) {
+  col <- function(x, j) if (length(x) == 1L) x else x[[j]]
+  vapply(seq_len(m), function(j) {
+    fm <- arr$form[[j]]
+    if (fm != .ADM_RESID_COMBINED2 && fm != .ADM_RESID_COMBINED1) return(TRUE)
+    a2 <- col(arr$a2, j); b2 <- col(arr$b2, j); cc <- col(arr$cc, j)
+    # b2 == 0 is add(): there is no E[f^k] to get wrong.
+    if (!is.finite(b2) || b2 == 0) return(TRUE)
+    if (!is.finite(cc)) return(FALSE)
+    # c == 1 (prop/add+prop) needs only E[f^2] = mu^2 + var_f, exact.
+    if (isTRUE(all.equal(cc, 1))) return(TRUE)
+    # c == 0.5 needs only E[f], also exact -- unless the form is combined1, whose
+    # cross term 2 sqrt(a2 b2) E[f^c] then asks for E[f^0.5], which is not. With
+    # a2 == 0 that term is absent and the row is exact again.
+    isTRUE(all.equal(cc, 0.5)) &&
+      (fm == .ADM_RESID_COMBINED2 || !is.finite(a2) || a2 == 0)
+  }, logical(1))
+}
+
+# Make the weight's implied residual variance the one the objective composes.
+#
+# S is rebuilt from (C, Dv) by the law of total variance, and the whole expansion
+# downstream is scaled by it -- so if S disagrees with the V_pred that G is the
+# cross-derivative of, the weight and the objective describe different laws and
+# J = 2H fails at a correctly-specified fit. On a pow(c = 1.5) model that showed
+# up as a reported "r,s" correction which was nothing but .admMomF's truncation.
+#
+# THE OBJECTIVE IS WHAT OMEGA HAS TO DESCRIBE, as it is for TBS one branch up: G
+# is a derivative of the criterion that was actually minimised, so reading the
+# moments from a second, better composition breaks the information equality by
+# exactly the difference between the two. The node integral being the more
+# accurate of the pair does not make it the right one here.
+#
+# Rescale each affected column's CONDITIONAL variance by the single factor that
+# puts its node average on the objective's E[Var(y|eta)]. The correction is not
+# applied at all where .admMomF is exact, which keeps every other family
+# bit-for-bit what it was.
+#
+# MULTIPLICATIVE, NOT A SHIFT. The two differ where it matters: b2 |f|^2c at the
+# outer nodes of a pow() grid runs down to 4e-08 while the gap to close is 2e-04,
+# so the constant that fixes the average drives those nodes' variance NEGATIVE and
+# the whole correction has to be abandoned. A factor cannot -- it preserves sign
+# and relative spread across nodes, which is what the third and fourth moments are
+# built out of, and it is the natural reading of a variance anyway.
+.admAdfAlignDv <- function(cm, w, ev, arr) {
+  if (is.null(cm) || is.null(cm$d) || is.null(ev)) return(cm)
+  ex <- .admAdfMomExact(arr, ncol(cm$d))
+  if (all(ex)) return(cm)
+  jj <- which(!ex)
+  d0 <- cm$d[, jj, drop = FALSE]
+  r  <- ev[jj] / as.numeric(crossprod(w, d0))
+  # A non-positive or non-finite ratio means the expansion and the node integral
+  # do not describe the same law at all -- .admMomF's near-zero cap can put ev
+  # below zero where the node integral cannot. Drop Dv and let the caller degrade
+  # to "r" rather than weight by it.
+  if (!all(is.finite(r)) || any(r <= 0)) { cm$d <- NULL; return(cm) }
+  # The combined branch of .admAdfCondMom leaves t3 = 0 and sets q4 = kappa d^2
+  # for a CONSTANT kappa (3, or the Student-t kurtosis), so scaling q4 by r^2
+  # carries the same kappa through and is all the fourth moment needs.
+  cm$q4[, jj] <- sweep(cm$q4[, jj, drop = FALSE], 2L, r^2, "*")
+  cm$d[, jj]  <- sweep(d0, 2L, r, "*")
+  cm
+}
+
 # Omega / N: the asymptotic covariance of (ybar, vech V).
 #
 # REFERENCE IMPLEMENTATION. .admAdfWeightFast computes the same matrix with the
@@ -277,8 +354,13 @@
   W[seq_len(m), seq_len(m)] <- S / N
 
   # mu3: E[C_i C_k C_l] + C_i D_kl + C_k D_il + C_l D_ik
-  CC <- vapply(seq_len(q), function(b)
-    as.numeric(crossprod(C, wP[, b])), numeric(m))      # m x q
+  # One crossprod, NOT a vapply over the columns of wP. At m == 1 there is a
+  # single vech entry and vapply(..., numeric(1)) returns a VECTOR, so the
+  # M3[, b] indexing below threw "incorrect number of dimensions" -- which the
+  # drivers' tryCatch swallowed, so every SINGLE-TIMEPOINT study warned that the
+  # sandwich could not be computed and silently reported "r". The reference
+  # .admAdfWeight() never had the problem, and the pinning tests all use m >= 3.
+  CC <- crossprod(C, wP)                                # m x q
   M3 <- CC
   for (b in seq_len(q)) {
     k <- I[b]; l <- J[b]
@@ -373,6 +455,11 @@
   # the weight uses, so Var over nodes of the conditional mean comes out exact.
   cm  <- .admAdfCondMom(cp, arr)
   wn  <- g$W / sum(g$W)
+  # Put the weight's residual variance on the objective's composition wherever
+  # .admMomF's expansion is a truncation (pow()/combined() outside c in {0.5, 1});
+  # a no-op for every other family. `m$ev` is NULL on the TBS branch, which
+  # composes at the nodes already and is exact by construction.
+  cm  <- .admAdfAlignDv(cm, wn, m$ev, arr)
   Cm  <- if (!is.null(cm$m1)) sweep(cm$m1, 2L, as.numeric(crossprod(wn, cm$m1)))
          else if (is.null(m$ms)) sm$cpc
          else sweep(sm$cpc, 2L, m$ms, "*")
@@ -647,19 +734,73 @@
   out
 }
 
+# Why the sandwich DOES NOT APPLY to this model, or NULL when it might.
+#
+# These are refusals by construction, not failures: the Wick expansion needs a
+# residual that is independent across timepoints given the node and has a finite
+# fourth moment, and it needs one output per unit. An ar() residual, an ordinal
+# endpoint, a joint unit and a t with nu <= 4 each break one of those, and no
+# amount of re-conditioning or re-solving would change the answer.
+#
+# Telling them apart from a failure MATTERS because "r,s" is the default: every
+# ar() and joint fit was emitting "the sandwich correction could not be
+# computed" -- a sentence shaped like something went wrong -- and nlmixr2est
+# carries that onto fit$runInfo, where it reads as a defect in the fit. For these
+# models the reason below is reported instead, once, as a message.
+#
+# Deliberately limited to causes that are cheap and CERTAIN to detect up front. A
+# refusal decided deeper in (a non-finite TBS sd, a singular weight, a failed
+# moment solve) still comes back as NULL and still warns -- that one is a failure
+# of something that was expected to work.
+.admSandwichNA <- function(p_hat, pinfo, studies, out_var) {
+  if (any(vapply(studies, function(s) isTRUE(s$is_joint), logical(1))))
+    return(paste("the study stacks several outputs per subject (a joint unit),",
+                 "whose conditional law the weight's node ensemble does not",
+                 "describe"))
+  sv <- tryCatch(.admUnpack(p_hat, pinfo)$sigma_var, error = function(e) NULL)
+  if (is.null(sv)) return(NULL)
+  for (s in studies) {
+    n_t <- length(s$times %||% integer(0))
+    if (n_t == 0L) next
+    arr <- tryCatch(.admResidRows(pinfo, s$output %||% out_var, sv, n_t),
+                    error = function(e) NULL)
+    if (is.null(arr)) next
+    if (!is.null(arr$rho) && any(!is.na(arr$rho)))
+      return(paste("the residual is autocorrelated (ar()), so the products the",
+                   "expansion factors across timepoints do not factor"))
+    if (any(arr$form == .ADM_RESID_ORDINAL))
+      return("the endpoint is ordinal, which is scored as a joint unit")
+    vm <- arr$vmul %||% 1
+    nu <- ifelse(is.finite(vm) & vm > 1, 2 * vm / (vm - 1), Inf)
+    if (any(nu <= 4))
+      return(paste("the residual is Student-t with nu <= 4, which has no finite",
+                   "kurtosis -- the sampling law of the reported V then has no",
+                   "variance for the weight to be made of"))
+  }
+  NULL
+}
+
 # Validates a candidate sandwich result and folds it into the *CalcCov "r"
 # baseline, or falls back to that baseline with a warning. `label` names the
 # caller (e.g. "adghCalcCov") for the fallback warning.
 #
+# `na` is .admSandwichNA()'s reason, for a model the correction does not apply to
+# at all: the fallback is then reported as a MESSAGE naming the reason, rather
+# than as a warning about a computation that failed.
+#
 # Shared by adgh/admc/adfo's *CalcCov -- what differs between them is how `sw`
 # is BUILT (adgh's own grid + sensModel; admc's quadrature grid + sensModel;
 # adfo's quadrature grid + moment map), not what happens to it once built.
-.admApplySandwich <- function(sw, cov_r, label) {
+.admApplySandwich <- function(sw, cov_r, label, na = NULL) {
   ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
   if (!ok) {
-    warning(sprintf(paste("%s: the sandwich correction could not be computed;",
-                          "reporting the covMethod = \"r\" covariance instead."),
-                    label), call. = FALSE)
+    if (!is.null(na))
+      message(sprintf(paste("  covMethod = \"r,s\" does not apply to this model:",
+                            "%s. Reporting the covMethod = \"r\" covariance."), na))
+    else
+      warning(sprintf(paste("%s: the sandwich correction could not be computed;",
+                            "reporting the covMethod = \"r\" covariance instead."),
+                      label), call. = FALSE)
     return(list(cov_full = cov_r, sw_used = FALSE, sw_cond = NULL))
   }
   list(cov_full = (sw$cov + t(sw$cov)) / 2, sw_used = TRUE, sw_cond = attr(sw, "illcond"))

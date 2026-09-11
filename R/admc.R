@@ -173,7 +173,10 @@
 #'   residual ACROSS timepoints and the cross terms the expansion drops are then
 #'   real; `t()` with `nu <= 4`, whose kurtosis does not exist; and `ordinal()`
 #'   and same-subject `joint` studies, which stack several outputs into one
-#'   covariance the per-output node ensemble does not describe.
+#'   covariance the per-output node ensemble does not describe. These four are
+#'   refusals by construction rather than failures, so the fit reports the reason
+#'   as a message and falls back to `"r"`; a sandwich that was attempted and could
+#'   not be built still warns.
 #'
 #'   **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"` is.**
 #'   `"r"` reports `2H^-1` and inverts `H` once; the sandwich reports
@@ -1273,9 +1276,14 @@ nmObjGetControl.admc <- function(x, ...) {
   .pb <- tryCatch(.admUnpack(p_list[[1L]], pinfo), error = function(e) NULL)
   if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1))) ||
       (!is.null(.pb) && .admAnyTBS(pinfo, studies, output_var, .pb$sigma_var)))
+    # `use_central` is NAMED, not left to the positional tail. .admGrad's
+    # signature ends (..., h, sensModel, use_central), so passing eight arguments
+    # positionally silently took the FORWARD difference here while .admCalcCov
+    # had asked for the central one -- making the covariance Hessian an outer
+    # central difference of a forward-difference gradient.
     return(t(vapply(p_list, function(.p)
       .admGrad(.p, pinfo, studies, z_list, rxMod, output_var, params_list, cores,
-               h, sensModel),
+               h, sensModel, use_central = use_central),
       numeric(length(p_list[[1L]])))))
 
   np            <- length(p_list[[1L]])
@@ -1917,14 +1925,18 @@ nmObjGetControl.admc <- function(x, ...) {
   sw_used <- FALSE
   sw_cond <- NULL
   if (isTRUE(sandwich)) {
-    sw <- tryCatch({
+    # A model the correction does not APPLY to (ar(), ordinal, a joint unit, a t
+    # with nu <= 4) is reported as such and not attempted -- see .admSandwichNA.
+    .sw_na <- tryCatch(.admSandwichNA(p_hat, pinfo, studies, output_var),
+                       error = function(e) NULL)
+    sw <- if (!is.null(.sw_na)) NULL else tryCatch({
       grid <- .admSandwichGrid(pinfo)
       if (is.null(grid)) stop("no ensemble to weight against")
       .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
                       H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov,
                       sensModel = sensModel, Hinv = Hinv)
     }, error = function(e) NULL)
-    res      <- .admApplySandwich(sw, cov_full, "admCalcCov")
+    res      <- .admApplySandwich(sw, cov_full, "admCalcCov", na = .sw_na)
     cov_full <- res$cov_full; sw_used <- res$sw_used; sw_cond <- res$sw_cond
   }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
@@ -2946,6 +2958,17 @@ nlmixr2Est.admc <- function(env, ...) {
   # Joint fits use FD only when no sens model is available; otherwise .admGrad's
   # joint branch computes the analytical stacked-MVN gradient.
   joint_fd <- any_joint && is.null(sensModel)
+  # A TBS endpoint takes that same route whether or not a sens model exists:
+  # .admGrad() hands it to .admNLLGradFD() because the analytical decomposition is
+  # written against the delta expansion and the objective now composes at the
+  # draws (and .admGradBatch() follows for the same reason). So it differences the
+  # OBJECTIVE in every coordinate, which is what .fd_idx and the label below have
+  # to describe -- left as "Sens" with an empty FD set, its steps were never
+  # measured and the printed label named a gradient it does not compute.
+  .p0u    <- tryCatch(.admUnpack(ov$p0, pinfo), error = function(e) NULL)
+  tbs_fd  <- !is.null(.p0u) &&
+    .admAnyTBS(pinfo, studies, output_var, .p0u$sigma_var)
+  obj_fd  <- joint_fd || tbs_fd
 
   # Measure the gradient's FD steps ONCE, here, for every later difference to
   # reuse (FOCEI's numericGrad mechanism at nF == 1).
@@ -2973,7 +2996,7 @@ nlmixr2Est.admc <- function(env, ...) {
   # either way -- the prediction difference is only the route to it. It remains a
   # transfer, and worth knowing when reading a step back.
   .fd_idx <- if (!want_grad) integer(0)
-    else if (joint_fd) seq_along(ov$p0)
+    else if (obj_fd) seq_along(ov$p0)
     else if (length(.unpaired) && !.theta_sens)
       which(pinfo$struct_names %in% .unpaired)
     else integer(0)
@@ -2994,6 +3017,7 @@ nlmixr2Est.admc <- function(env, ...) {
 
   grad_label <- if (!want_grad) "none"
   else if (joint_fd) "central FD (joint)"
+  else if (tbs_fd) paste0(if (want_central) "central" else "forward", " FD (TBS)")
   else if (any_joint) "Sens (joint)"
   else if (!is.null(sensModel))
     if (pinfo$has_kappa) "Sens+FD" else "Sens"
@@ -3098,8 +3122,11 @@ nlmixr2Est.admc <- function(env, ...) {
       np_cov * 2L + n_off * 4L + 1L
     }
     evals_label <- if (use_grad_cov) "gradient evaluations" else "NLL evaluations"
-    hess_label  <- if (!use_grad_cov) "" else if (!is.null(sensModel))
-      ", Sens-Hessian" else if (use_cent_cov) ", cFD-Hessian" else ", FD-Hessian"
+    # A TBS fit has a sens model but does NOT use it for the gradient (see tbs_fd),
+    # so naming it a Sens-Hessian here described the wrong derivative.
+    hess_label  <- if (!use_grad_cov) "" else
+      if (!is.null(sensModel) && !tbs_fd) ", Sens-Hessian" else
+      if (use_cent_cov) ", cFD-Hessian" else ", FD-Hessian"
     message(sprintf("  Computing covariance (R method%s%s, %d %s)",
                     hess_label, if (.ctl$covMethod == "r,s") ", sandwich" else "",
                     n_evals, evals_label))
