@@ -253,10 +253,48 @@
   routine as an oracle -- the intervals agree to within a factor of 1.15 and the
   derivatives to `10 * eps_f^(2/3)`.
 
+* **`anova()` on nested fits.** `anova(full, reduced)` is the ordinary
+  likelihood-ratio test: the objective difference against a chi-squared
+  reference with `Df` equal to the number of parameters the larger model adds.
+  It does not depend on which `covMethod` the fits used.
+
+  Three comparisons are REFUSED rather than reported, because none of them is a
+  likelihood ratio. Fits from different estimators --- each scores its own
+  approximation to the same likelihood, FO-linearised, quadrature or Monte
+  Carlo, so `anova(adfo_fit, adgh_fit)` was differencing two numbers on
+  different scales and returning a perfectly finite `p`. Fits on different node
+  counts, for the same reason: the objective moves with the grid. And a
+  non-nested pair, which is a different problem (Vuong) and must not come back
+  with a p-value.
+
+  A negative `dOFV` is reported rather than clamped to zero: the larger model
+  cannot fit worse at its own optimum, so a negative difference says one of the
+  two did not converge. Testing a variance AT zero is a boundary null, where the
+  exact reference is a chi-bar-squared mixture; the p-value reported there is
+  conservative, which is documented rather than refused, because dropping a
+  random effect is an ordinary thing to test.
+
 ## Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not name a new
 argument. None is a bug fix, so all are listed here rather than below.
+
+* **The sandwich's `G` is now evaluated at `tau`, not at the observed summary,
+  so every `covMethod = "r,s"` standard error moves slightly.** `J` is defined
+  as `Var(S)`. Expanding the score about `t = tau` gives
+  `Var(S) = sum_s G_s Omega_s G_s' + O(N^-3/2)` with `G_s` the derivative AT
+  `tau_s`; building `G` from the realised residual instead returns
+  `G_0 Omega G_0' + E[K delta Omega delta' K']`, and that second term is a
+  quadratic form --- non-negative --- so `J` came out biased UPWARD by `O(1/N)`,
+  by an amount growing with the residual relative to the structural spread.
+  Measured over 200,000 paired replicates: +0.33% at `omega = 0.2` rising to
+  +2.9% with a proportional residual, positive in every cell. Removing it also
+  cuts `sd(c_hat)` by 31--35%, which is pure gain for a reported SE.
+
+  This is not justified by test calibration: both versions calibrate `dOFV`
+  about equally well at these `N`, because the inflation is offset by variance
+  and covariance terms of the same order, and that cancellation is a
+  coincidence of sample size. It is justified by the definition of `J`.
 
 * **`covMethod` now defaults to `"r,s"`, so reported standard errors change for
   every script that does not name it.** Point estimates and objective values are

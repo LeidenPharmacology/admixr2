@@ -275,6 +275,14 @@ test_that("a sigma SE is on the same scale as the sigma estimate it is printed w
     control = adghControl(studies = list(s = d), maxeval = 200L, covMethod = "r"))))
   skip_if(is.null(fit$cov), "covariance not computed")
 
+  # THE anova() GUARD IS WIRED, not just written. `nNodes` is stamped onto the
+  # fit by .admFinaliseFit() and read by .admLRT() to refuse a difference of two
+  # objectives computed on different grids. Nothing else writes the field, so a
+  # unit test on a hand-built fit cannot tell "the guard works" from "the guard
+  # can never fire" -- only a real fit can, which is how it went missing once.
+  expect_identical(fit$env$nNodes, 5L)
+  expect_identical(fit$env$method, "adgh")
+
   pf  <- fit$parFixedDf
   est <- unname(pf["a", "Estimate"])
   # Read the SE off admixr2's OWN matrix. nlmixr2est < 6.2.0 lists every residual

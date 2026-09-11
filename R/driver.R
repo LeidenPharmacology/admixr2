@@ -107,6 +107,19 @@
     table = .ret$table, env = .ret, est = est)
 
   .fit$env$method <- est
+  # THE QUADRATURE RESOLUTION, stamped so anova() can refuse to difference two
+  # objectives computed on different grids. adgh's objective is a quadrature
+  # approximation and its VALUE moves with the node count, so a fit at
+  # n_nodes = 5 and the same model at 7 are not evaluating the same number --
+  # differencing them gives something that looks like a dOFV and is not. This
+  # is .adghGrid's own rule (it refuses to change the point count mid-fit)
+  # extended across fits.
+  #
+  # `[[ ]]`, not `$`: `$` partial-matches on a list, and a control gaining any
+  # longer `n_nodes*` field would silently stamp the wrong number. NULL for the
+  # three estimators that have no node grid, which makes the check a no-op
+  # there rather than a special case.
+  .fit$env$nNodes <- .ctl[["n_nodes"]]
   .admRestoreCovNames(.fit, cov_nms)
   .fit$env$studies <- studies
   .extra <- .ret[[extra_field]]
