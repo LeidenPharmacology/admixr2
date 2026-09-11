@@ -1227,7 +1227,11 @@ adfoControl <- function(
   # options(warn = 2) here.
   .grad_explicit <- !missing(grad)
   grad     <- match.arg(grad)
-  covMethod <- match.arg(covMethod)
+  # A model source is not a sample, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
 
   checkmate::assertList(studies)
   # A residual quadrature needs a real grid. .adghNodes1() refuses m < 1, but it
