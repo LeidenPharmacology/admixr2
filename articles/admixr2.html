@@ -97,7 +97,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Getting started with admixr2</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/admixr2.Rmd" class="external-link"><code>vignettes/admixr2.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.1/vignettes/admixr2.Rmd" class="external-link"><code>vignettes/admixr2.Rmd</code></a></small>
       <div class="d-none name"><code>admixr2.Rmd</code></div>
     </div>
 
@@ -330,26 +330,26 @@ random effect are handled.</p>
 <span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a></span>
 <span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>  optimize covariance other elapsed</span>
-<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">16.181</span>     <span class="fl">12.751</span>     <span class="dv">0</span>  <span class="fl">28.932</span></span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">21.076</span>     <span class="fl">18.795</span>     <span class="dv">0</span>  <span class="fl">39.871</span></span>
 <span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a></span>
 <span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a></span>
 <span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a>                                  Parameter    Est.       SE  %RSE</span>
-<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a>tcl                    Log <span class="fu">clearance</span> (L<span class="sc">/</span>hr)   <span class="fl">1.602</span>  <span class="fl">0.01962</span> <span class="fl">1.225</span></span>
-<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a>tv1                  Log central <span class="fu">volume</span> (L)   <span class="fl">2.328</span>   <span class="fl">0.1224</span> <span class="fl">5.256</span></span>
-<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a>tv2               Log peripheral <span class="fu">volume</span> (L)   <span class="fl">3.398</span>  <span class="fl">0.05247</span> <span class="fl">1.544</span></span>
-<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a>tq        Log inter<span class="sc">-</span>compartmental <span class="fu">CL</span> (L<span class="sc">/</span>hr)   <span class="fl">2.276</span>  <span class="fl">0.02651</span> <span class="fl">1.165</span></span>
-<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a>tka     Log absorption rate <span class="fu">constant</span> (<span class="dv">1</span><span class="sc">/</span>hr) <span class="fl">0.02992</span>   <span class="fl">0.1153</span> <span class="fl">385.5</span></span>
-<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a>prop.sd      Proportional residual error SD  <span class="fl">0.1895</span> <span class="fl">0.003209</span> <span class="fl">1.693</span></span>
+<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a>tcl                    Log <span class="fu">clearance</span> (L<span class="sc">/</span>hr)   <span class="fl">1.602</span>  <span class="fl">0.02022</span> <span class="fl">1.262</span></span>
+<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a>tv1                  Log central <span class="fu">volume</span> (L)   <span class="fl">2.328</span>   <span class="fl">0.1413</span> <span class="fl">6.068</span></span>
+<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a>tv2               Log peripheral <span class="fu">volume</span> (L)   <span class="fl">3.398</span>  <span class="fl">0.05620</span> <span class="fl">1.654</span></span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a>tq        Log inter<span class="sc">-</span>compartmental <span class="fu">CL</span> (L<span class="sc">/</span>hr)   <span class="fl">2.276</span>  <span class="fl">0.02742</span> <span class="fl">1.205</span></span>
+<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a>tka     Log absorption rate <span class="fu">constant</span> (<span class="dv">1</span><span class="sc">/</span>hr) <span class="fl">0.02992</span>   <span class="fl">0.1314</span> <span class="fl">439.4</span></span>
+<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a>prop.sd      Proportional residual error SD  <span class="fl">0.1895</span> <span class="fl">0.003280</span> <span class="fl">1.731</span></span>
 <span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a>        Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
-<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a>tcl        <span class="fl">4.963</span> (<span class="fl">4.775</span>, <span class="fl">5.157</span>)    <span class="fl">32.61</span>         <span class="cn">NaN</span></span>
-<span id="cb6-23"><a href="#cb6-23" tabindex="-1"></a>tv1        <span class="fl">10.26</span> (<span class="fl">8.071</span>, <span class="fl">13.04</span>)    <span class="fl">32.77</span>         <span class="cn">NaN</span></span>
-<span id="cb6-24"><a href="#cb6-24" tabindex="-1"></a>tv2        <span class="fl">29.90</span> (<span class="fl">26.98</span>, <span class="fl">33.14</span>)    <span class="fl">31.99</span>         <span class="cn">NaN</span></span>
-<span id="cb6-25"><a href="#cb6-25" tabindex="-1"></a>tq         <span class="fl">9.740</span> (<span class="fl">9.247</span>, <span class="fl">10.26</span>)    <span class="fl">33.66</span>         <span class="cn">NaN</span></span>
-<span id="cb6-26"><a href="#cb6-26" tabindex="-1"></a>tka       <span class="fl">1.030</span> (<span class="fl">0.8219</span>, <span class="fl">1.292</span>)    <span class="fl">32.19</span>         <span class="cn">NaN</span></span>
-<span id="cb6-27"><a href="#cb6-27" tabindex="-1"></a>prop.sd <span class="fl">0.1895</span> (<span class="fl">0.1832</span>, <span class="fl">0.1958</span>)                     </span>
+<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a>tcl        <span class="fl">4.963</span> (<span class="fl">4.770</span>, <span class="fl">5.163</span>)    <span class="fl">32.61</span>         <span class="cn">NaN</span></span>
+<span id="cb6-23"><a href="#cb6-23" tabindex="-1"></a>tv1        <span class="fl">10.26</span> (<span class="fl">7.777</span>, <span class="fl">13.53</span>)    <span class="fl">32.77</span>         <span class="cn">NaN</span></span>
+<span id="cb6-24"><a href="#cb6-24" tabindex="-1"></a>tv2        <span class="fl">29.90</span> (<span class="fl">26.78</span>, <span class="fl">33.39</span>)    <span class="fl">31.99</span>         <span class="cn">NaN</span></span>
+<span id="cb6-25"><a href="#cb6-25" tabindex="-1"></a>tq         <span class="fl">9.740</span> (<span class="fl">9.230</span>, <span class="fl">10.28</span>)    <span class="fl">33.66</span>         <span class="cn">NaN</span></span>
+<span id="cb6-26"><a href="#cb6-26" tabindex="-1"></a>tka       <span class="fl">1.030</span> (<span class="fl">0.7964</span>, <span class="fl">1.333</span>)    <span class="fl">32.19</span>         <span class="cn">NaN</span></span>
+<span id="cb6-27"><a href="#cb6-27" tabindex="-1"></a>prop.sd <span class="fl">0.1895</span> (<span class="fl">0.1831</span>, <span class="fl">0.1959</span>)                     </span>
 <span id="cb6-28"><a href="#cb6-28" tabindex="-1"></a> </span>
-<span id="cb6-29"><a href="#cb6-29" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit<span class="sc">$</span>covMethod)<span class="sc">:</span> r</span>
+<span id="cb6-29"><a href="#cb6-29" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit<span class="sc">$</span>covMethod)<span class="sc">:</span> r,s</span>
 <span id="cb6-30"><a href="#cb6-30" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
 <span id="cb6-31"><a href="#cb6-31" tabindex="-1"></a>  Full BSV <span class="fu">covariance</span> (fit<span class="sc">$</span>omega) or <span class="fu">correlation</span> (fit<span class="sc">$</span>omegaR; <span class="at">diagonals=</span>SDs) </span>
 <span id="cb6-32"><a href="#cb6-32" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> fit<span class="sc">$</span>shrink </span>
@@ -362,7 +362,7 @@ random effect are handled.</p>
 <span><span class="co">#&gt; [1] -3690.254</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">struct</span>          <span class="co"># structural parameters (log scale)</span></span>
 <span><span class="co">#&gt;        tcl        tv1        tv2         tq        tka </span></span>
-<span><span class="co">#&gt; 1.60193578 2.32808008 3.39796639 2.27623769 0.02991703</span></span>
+<span><span class="co">#&gt; 1.60193579 2.32808009 3.39796638 2.27623769 0.02991704</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">sigma_var</span>       <span class="co"># residual variance(s)</span></span>
 <span><span class="co">#&gt;    prop.sd </span></span>
 <span><span class="co">#&gt; 0.03591429</span></span>

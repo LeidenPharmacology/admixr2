@@ -81,16 +81,16 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.456      0.132     0   0.588 5.655
+elapsed    0.568       0.19     0   0.758 6.962
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
-            Est.      SE  %RSE      Back-transformed(95%CI) BSV(CV%)
-tcl      0.03321 0.03419 102.9        1.034 (0.9668, 1.105)    27.92
-tv1        2.292 0.06733 2.938         9.890 (8.668, 11.29)    15.12
-tq        0.8829  0.5840 66.14        2.418 (0.7698, 7.595)         
-tv2       0.8678  0.2138 24.64         2.382 (1.566, 3.621)         
-prop.cp 0.004104 0.04531  1104 0.004104 (-0.08470, 0.09291)         
+            Est.       SE   %RSE       Back-transformed(95%CI) BSV(CV%)
+tcl      0.03321  0.03553  107.0         1.034 (0.9642, 1.108)    27.92
+tv1        2.292  0.02073 0.9047          9.890 (9.496, 10.30)    15.12
+tq        0.8829  0.05598  6.340          2.418 (2.167, 2.698)         
+tv2       0.8678  0.02625  3.025          2.382 (2.262, 2.507)         
+prop.cp 0.004104 0.001774  43.23 0.004104 (6.266e-4, 0.007582)         
         Shrink(SD)%
 tcl             NaN
 tv1             NaN
@@ -98,12 +98,13 @@ tq
 tv2                
 prop.cp            
  
-  Covariance Type (fit_plasma$covMethod): r
+  Covariance Type (fit_plasma$covMethod): r,s
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit_plasma$omega) 
     or correlation (fit_plasma$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Information about run found (fit_plasma$runInfo):
+   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.2e-07, cond 4.47e+06), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `prop.cp`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
    • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. 
   Censoring (fit_plasma$censInformation): No censoring
   Minimization message (fit_plasma$message):  
@@ -197,23 +198,32 @@ adgh -88.59587 -72.59587 -36.65795       44.29794
 ── Time (sec fit_cns$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.507      0.262     0   0.769 5.918
+elapsed    0.644      0.374     0   1.018 7.343
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
-           Est.      SE   %RSE    Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl     0.04104 0.01899  46.27       1.042 (1.004, 1.081)    27.03         NaN
-tv1       2.269 0.01038 0.4574       9.674 (9.479, 9.872)    13.85         NaN
-tqin      1.085 0.03671  3.382       2.960 (2.755, 3.181)                     
-tqout     1.780 0.04220  2.371       5.932 (5.461, 6.443)                     
-prop.cp 0.04848 0.01805  37.23 0.04848 (0.01310, 0.08386)                     
-add.cb  0.01999  0.1743  871.8  0.01999 (-0.3216, 0.3615)                     
+           Est.      SE   %RSE      Back-transformed(95%CI) BSV(CV%)
+tcl     0.04104 0.02783  67.81        1.042 (0.9866, 1.100)    27.03
+tv1       2.269 0.01517 0.6685         9.674 (9.390, 9.966)    13.85
+tqin      1.085 0.03260  3.004         2.960 (2.777, 3.156)         
+tqout     1.780 0.03701  2.079         5.932 (5.517, 6.378)         
+prop.cp 0.04848 0.02566  52.92 0.04848 (-0.001808, 0.09877)         
+add.cb  0.01999 0.05307  265.5   0.01999 (-0.08402, 0.1240)         
+        Shrink(SD)%
+tcl             NaN
+tv1             NaN
+tqin               
+tqout              
+prop.cp            
+add.cb             
  
-  Covariance Type (fit_cns$covMethod): r
+  Covariance Type (fit_cns$covMethod): r,s
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit_cns$omega) 
     or correlation (fit_cns$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
+  Information about run found (fit_cns$runInfo):
+   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 1.0e-07, cond 9.95e+06), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `add.cb`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
   Censoring (fit_cns$censInformation): No censoring
   Minimization message (fit_cns$message):  
     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 

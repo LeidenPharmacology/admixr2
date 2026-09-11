@@ -83,8 +83,8 @@ fit <- nlmixr2(
 #> | 0010     |  1768.15 |    4.967 |    29.88 |   0.2587 |   0.0888 |  0.04603 |
 #> | 0020     |   862.47 |    6.391 |    37.74 |   0.3864 |  0.08003 |   0.0422 |
 #> | 0029 ✓   |   861.90 |    6.384 |    38.03 |     0.39 |  0.08051 |  0.04074 |
-#> | 0.7 sec  |          |          |          |          |          |          |
-#>   Computing covariance (R method, Analytical-Hessian, 6 gradient evaluations)
+#> | 0.5 sec  |          |          |          |          |          |          |
+#>   Computing covariance (R method, Analytical-Hessian, sandwich, 6 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  
@@ -96,17 +96,17 @@ print(fit)
 #> 
 #> ── Time (sec fit$time): ──
 #> 
-#>   optimize covariance other elapsed
-#> 1    0.652      0.158     0    0.81
+#>         optimize covariance other elapsed other
+#> elapsed    0.463       0.31     0   0.773 0.219
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>           Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl      1.854  0.01620 0.8742    6.384 (6.184, 6.590)    28.95         NaN
-#> tv       3.638  0.01234 0.3391    38.03 (37.13, 38.96)    20.39         NaN
-#> prop.sd 0.3900 0.006554  1.681 0.3900 (0.3771, 0.4028)                     
+#> tcl      1.854  0.01961  1.058    6.384 (6.143, 6.634)    28.95         NaN
+#> tv       3.638  0.01689 0.4641    38.03 (36.80, 39.31)    20.39         NaN
+#> prop.sd 0.3900 0.009106  2.335 0.3900 (0.3721, 0.4078)                     
 #>  
-#>   Covariance Type (fit$covMethod): r
+#>   Covariance Type (fit$covMethod): r,s
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 

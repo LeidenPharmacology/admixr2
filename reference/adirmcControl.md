@@ -28,7 +28,7 @@ adirmcControl(
   phases = c(2, 1, 0.5, 0.01),
   convcrit = 1e-05,
   max_worse = 5L,
-  covMethod = c("r", "none"),
+  covMethod = c("r,s", "r", "none"),
   cov_n_sim = 10000L,
   n_restarts = 1L,
   restart_sd = 0.2,
@@ -68,6 +68,20 @@ adirmcControl(
     dosing event table
 
   - `method` – `"cov"` or `"var"` (optional; auto-detected from `V`)
+
+  - `v_denom` – `"ml"` (default) or `"unbiased"`, declaring which
+    denominator the supplied `V` uses. The likelihood is the exact one
+    for `n` iid draws only under the ML (`n`) covariance, which is what
+    `cov.wt(method = "ML")` and
+    [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+    produce. A **published** SD is the unbiased (`n - 1`) SD, so a
+    digitised figure gives `V = SD^2` on the `n - 1` scale: declare
+    `v_denom = "unbiased"` and admixr2 converts it. Declared per study,
+    since a meta-analysis routinely mixes a digitised source with a
+    model-derived one and the two need not share a denominator. At
+    `n = 60` the factor is 1.7%; it matters more the smaller `n` is, and
+    more again for any method that scores the reported covariance
+    against its own sampling law.
 
   **Multi-compartment (multiple observed outputs).** To fit several
   observed compartments simultaneously (e.g. plasma and brain/CSF), give
@@ -259,20 +273,23 @@ adirmcControl(
 
 - covMethod:
 
-  Covariance method: `"r"` (numerical Hessian over the structural,
-  residual-error and omega parameters) or `"none"`. Omega is included
-  because excluding it also biases the STRUCTURAL standard errors
-  downward – a theta carrying an eta is correlated with that eta's
-  variance. If the weakly-identified omega Cholesky makes the Hessian
-  non-positive definite, the structural + residual sub-block is reported
-  with a warning.
-
-  All three blocks are reported on the scale the ESTIMATES are printed
-  on, as `nlmixr2est` does: structural thetas on the log/optimizer
-  scale, residual error as an SD, and omega as the variance/covariance
-  entries (named `om.<eta>` and `cov.<eta_i>.<eta_j>`). The omega block
-  is rotated by the full Jacobian of Omega with respect to the
-  log-Cholesky, which is not diagonal once omega is correlated.
+  `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`; `"r"` the
+  numerical Hessian alone, `2H^-1`; `"none"` skips the covariance. All
+  three span the structural, residual-error and omega parameters, and
+  are reported on the scale the estimates are printed on.
+  [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
+  documents what the sandwich is, why it is the conservative default,
+  and why it is more sensitive than `"r"` to an ill-conditioned Hessian;
+  the same implementation runs here. What does NOT carry over is the
+  family coverage, because `adirmc` itself is narrower: the estimator
+  accepts only `add`, `prop`, `pow`, `combined1`, `combined2` and
+  `lnorm` residuals, and `"r,s"` applies to all six. The count, `beta`,
+  transform-both-sides, `ordinal` and
+  [`ar()`](https://rdrr.io/r/stats/ar.html) endpoints
+  [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
+  lists are refused by `est = "adirmc"` itself, before any covariance is
+  reached – they are not models whose sandwich degrades to `"r"` here,
+  they are models this estimator does not fit.
 
 - cov_n_sim:
 
@@ -503,8 +520,8 @@ fit <- nlmixr2(
 #> | 0027     | -1266.48 |    4.939 |    7.884 |     31.5 |     8.85 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |
 #> | 0028     | -1266.48 |    4.939 |    7.884 |     31.5 |    8.851 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |
 #> | 0029 ✓   | -1266.48 |    4.939 |    7.885 |     31.5 |    8.851 |   0.7954 |   0.1856 |   0.1191 |  0.07769 |  0.09037 | 0.006749 |   0.1295 |
-#> | 1.4 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
-#>   Computing covariance (R method, MC NLL, Sens-Hessian, 12 gradient evaluations)
+#> | 1.2 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#>   Computing covariance (R method, MC NLL, Sens-Hessian, sandwich, 12 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  
@@ -517,22 +534,24 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance other elapsed
-#> 1    1.424     13.914     0  15.338
+#> 1    1.168     19.016     0  20.184
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>            Est.      SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl       1.597 0.04576 2.865    4.939 (4.515, 5.402)    35.57         NaN
-#> tv1       2.065  0.3649 17.67    7.885 (3.857, 16.12)    28.42         NaN
-#> tv2       3.450  0.1515 4.392    31.50 (23.41, 42.39)    30.75         NaN
-#> tq        2.180  0.1191 5.463    8.851 (7.008, 11.18)    8.229         NaN
-#> tka     -0.2290  0.3296 143.9  0.7954 (0.4169, 1.517)    37.18         NaN
-#> prop.sd  0.1856 0.01563 8.418 0.1856 (0.1550, 0.2163)                     
+#> tcl       1.597 0.05101 3.194    4.939 (4.469, 5.458)    35.57         NaN
+#> tv1       2.065  0.4625 22.40    7.885 (3.185, 19.52)    28.42         NaN
+#> tv2       3.450  0.1807 5.238    31.50 (22.11, 44.89)    30.75         NaN
+#> tq        2.180  0.1485 6.810    8.851 (6.616, 11.84)    8.229         NaN
+#> tka     -0.2290  0.4182 182.7  0.7954 (0.3504, 1.805)    37.18         NaN
+#> prop.sd  0.1856 0.01192 6.422 0.1856 (0.1623, 0.2090)                     
 #>  
-#>   Covariance Type (fit$covMethod): r
+#>   Covariance Type (fit$covMethod): r,s
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
+#>   Information about run found (fit$runInfo):
+#>    • covMethod = "r,s": the Hessian is ill-conditioned (rcond 1.0e-05, cond 1e+05), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `logchol_eta.q`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  
 #>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 

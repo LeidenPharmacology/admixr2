@@ -25,7 +25,7 @@ adghControl(
   grad_bounds = 5,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/4),
-  covMethod = c("r", "none"),
+  covMethod = c("r,s", "r", "none"),
   n_restarts = 1L,
   restart_sd = 0.5,
   workers = 1L,
@@ -57,11 +57,18 @@ adghControl(
 
 - n_nodes:
 
-  Number of quadrature nodes per eta dimension (default 5). Total nodes
-  = `n_nodes^n_eta`. `n_nodes = 5` achieves near-exact covariance
-  moments for IIV SD up to ~0.5; `n_nodes = 7` extends coverage to SD
-  ~0.7. For models with \>= 5 etas the node count grows steeply;
-  consider reducing `n_nodes` or using a different estimator.
+  Number of quadrature nodes per eta dimension (default 5). For a
+  transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
+  `probitNorm`) this also controls the accuracy of the RESIDUAL
+  composition: those endpoints have a conditional mean that is nonlinear
+  in the structural prediction, so the residual is composed at each node
+  and aggregated rather than expanded about the ensemble mean. Before
+  that, `n_nodes` had no effect at all on a TBS fit's accuracy – the
+  expansion's error was a floor no node count removed. Total nodes =
+  `n_nodes^n_eta`. `n_nodes = 5` achieves near-exact covariance moments
+  for IIV SD up to ~0.5; `n_nodes = 7` extends coverage to SD ~0.7. For
+  models with \>= 5 etas the node count grows steeply; consider reducing
+  `n_nodes` or using a different estimator.
 
 - grad:
 
@@ -143,13 +150,72 @@ adghControl(
 
 - covMethod:
 
-  `"r"` computes covariance via a numerical Hessian over the structural,
-  residual-error and omega parameters; `"none"` skips it. Omega is
-  included because excluding it also biases the STRUCTURAL standard
+  `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`; `"r"` the
+  numerical Hessian alone, `2H^-1`; `"none"` skips the covariance. All
+  three span the structural, residual-error and omega parameters. Omega
+  is included because excluding it also biases the STRUCTURAL standard
   errors downward – a theta carrying an eta is correlated with that
   eta's variance. If the weakly-identified omega Cholesky makes the
   Hessian non-positive definite, the structural + residual sub-block is
   reported with a warning.
+
+  `"r,s"` adds a sandwich correction, `H^-1 J H^-1`, on the same
+  Hessian. The aggregate objective scores the reported mean and
+  covariance as though the subjects behind them were multivariate
+  normal; they are not, because the model is nonlinear in the random
+  effects, so the sampling law of `(E, V)` is not the one the objective
+  assumes. `"r,s"` scores that law from the model instead. Point
+  estimates are untouched – only the reported uncertainty changes – and
+  under correct specification it reduces to `"r"` exactly. **It is the
+  default because it is the conservative choice, not the aggressive
+  one.** Under correct specification `J = 2H` and the sandwich returns
+  what `"r"` returns, so defaulting to it costs nothing when the
+  normal-theory assumption holds and corrects the standard errors when
+  it does not. Anything it cannot build degrades to `"r"` and reports
+  `"r"`, so no fit loses its covariance by asking. Pass
+  `covMethod = "r"` for the pre-0.4.1 behaviour.
+
+  Applies to every residual family whose conditional law is independent
+  across timepoints, which is all of them except
+  [`ar()`](https://rdrr.io/r/stats/ar.html): the conditionally-normal
+  set (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
+  distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`, and
+  [`t()`](https://rdrr.io/r/base/t.html) with `nu > 4`), and the
+  transform-both-sides ones (`boxCox`, `yeoJohnson`, `logitNorm`,
+  `probitNorm`), whose third and fourth conditional moments come off the
+  same quadrature that already gives their mean and variance. Refused,
+  and degraded to `"r"`: [`ar()`](https://rdrr.io/r/stats/ar.html),
+  because it correlates the residual ACROSS timepoints and the cross
+  terms the expansion drops are then real;
+  [`t()`](https://rdrr.io/r/base/t.html) with `nu <= 4`, whose kurtosis
+  does not exist; and `ordinal()` and same-subject `joint` studies,
+  which stack several outputs into one covariance the per-output node
+  ensemble does not describe. These four are refusals by construction
+  rather than failures, so the fit reports the reason as a message and
+  falls back to `"r"`; a sandwich that was attempted and could not be
+  built still warns.
+
+  **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"`
+  is.** `"r"` reports `2H^-1` and inverts `H` once; the sandwich reports
+  `H^-1 J H^-1` and inverts it twice, so in a direction the data barely
+  identifies any gap between `J` and `2H` is amplified quadratically. A
+  residual SD contributing 0.01 variance against 1.7 from
+  between-subject variability is such a direction: measured on one 1-cmt
+  fixture at `cond(H) = 3.5e5`, the reported residual SE moved by a
+  factor of 0.11 and two omega entries by 0.59 and 1.55, while the same
+  model and design on a study the residual IS identified in
+  (`cond(H) = 247`) reproduced `"r"` to four decimals on every
+  parameter. Neither number is a correction there – both methods are
+  reporting an unidentified direction, and `"r,s"` is louder about it.
+  admixr2 says so: when the Hessian's reciprocal condition number falls
+  below `eps^(1/4)` – the point at which squaring the conditioning
+  reaches the bound a single inversion is already called singular at –
+  the fit records a note naming the parameter that loads most heavily on
+  the offending direction. It arrives on `fit$runInfo` and is listed by
+  `print(fit)`, which is where `nlmixr2est` routes an estimator's
+  warnings. The sandwich is still reported, because the well-determined
+  parameters of the same fit are unaffected; check the named parameter's
+  relative standard error before reading its `"r,s"` value as a finding.
 
   All three blocks are reported on the scale the ESTIMATES are printed
   on, as `nlmixr2est` does: structural thetas on the log/optimizer
@@ -321,8 +387,8 @@ fit <- nlmixr2(
 #> | 0010     |  1000.18 |    6.203 |    35.45 |   0.3103 |  0.08888 |  0.05562 |
 #> | 0020     |   805.78 |    6.666 |    37.33 |   0.3781 |   0.1041 |  0.05946 |
 #> | 0022 ✓   |   805.78 |    6.667 |    37.33 |    0.378 |    0.104 |  0.05944 |
-#> | 0.4 sec  |          |          |          |          |          |          |
-#>   Computing covariance (R method, Analytical-Hessian, 6 gradient evaluations)
+#> | 0.2 sec  |          |          |          |          |          |          |
+#>   Computing covariance (R method, Analytical-Hessian, sandwich, 6 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  

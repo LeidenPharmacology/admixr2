@@ -97,7 +97,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Advanced usage</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/advanced.Rmd" class="external-link"><code>vignettes/advanced.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.1/vignettes/advanced.Rmd" class="external-link"><code>vignettes/advanced.Rmd</code></a></small>
       <div class="d-none name"><code>advanced.Rmd</code></div>
     </div>
 
@@ -439,11 +439,14 @@ normal draws for equivalent NLL variance. For small <code>n_sim</code>,
 <div class="section level2">
 <h2 id="parameter-uncertainty">Parameter uncertainty<a class="anchor" aria-label="anchor" href="#parameter-uncertainty"></a>
 </h2>
-<p><code>covMethod = "r"</code> (default) computes a numerical Hessian
-after optimisation and reports standard errors in
-<code>print(fit)</code>. <strong>Important:</strong> these SEs are
-computed for structural and residual-error parameters only; omega (IIV)
-SEs are not computed (matching nlmixr2 FOCEI behavior). A larger
+<p><code>covMethod = "r"</code> computes a numerical Hessian after
+optimisation and reports standard errors in <code>print(fit)</code>. As
+of this version the default is <code>covMethod = "r,s"</code> (see
+below), which reports the sandwich correction of that same Hessian; pass
+<code>covMethod = "r"</code> explicitly to get the uncorrected SEs. SEs
+are reported for the structural, residual-error <strong>and</strong>
+omega (IIV) parameters; omega is reported on its natural scale, with the
+Hessian rotated off the Cholesky factor the optimiser works in. A larger
 <code>cov_n_sim</code> reduces MC noise in the Hessian:</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit_cov</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
@@ -465,6 +468,57 @@ estimates:</p>
 <p>If the Hessian is non-positive-definite (SEs printed as
 <code>NA</code>), increase <code>cov_h_outer</code> or
 <code>cov_n_sim</code>.</p>
+<div class="section level3">
+<h3 id="covmethod-rs-scoring-the-summary-against-its-own-sampling-law">
+<code>covMethod = "r,s"</code>: scoring the summary against its own
+sampling law<a class="anchor" aria-label="anchor" href="#covmethod-rs-scoring-the-summary-against-its-own-sampling-law"></a>
+</h3>
+<p>The aggregate objective is the exact log-likelihood of <code>n</code>
+iid draws from <code>N(yt, Vt)</code>, so it assumes each subject’s
+observation vector is multivariate normal. It is not —
+<code>y_i = f(theta, b_i) + eps_i</code> is nonlinear in the random
+effect, so the marginal is a mixture. This does <strong>not</strong>
+cost the point estimates: the score has expectation zero at the true
+parameters under any weight, so the fit stays consistent. It costs the
+reported uncertainty, in two ways that differ in kind:
+<code>Cov(V_ij, V_kl)</code> is mis-sized by the excess kurtosis, and
+<code>Cov(ybar, vech V)</code> is assumed zero where a real correlation
+of 0.3–0.6 sits. The sample mean and the sample covariance are exactly
+independent for a multivariate normal, and for nothing else.</p>
+<p><code>covMethod = "r,s"</code> scores <code>(ybar, vech V)</code>
+against its own asymptotic law and reports the sandwich
+<code>H^-1 J H^-1</code> — on the same <code>H</code> that
+<code>"r"</code> inverts:</p>
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">fit_rs</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
+<span>  <span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"adgh"</span>,</span>
+<span>  control <span class="op">=</span> <span class="fu"><a href="../reference/adghControl.html">adghControl</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>examplomycin <span class="op">=</span> <span class="va">study</span><span class="op">)</span>, covMethod <span class="op">=</span> <span class="st">"r,s"</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
+<span><span class="va">fit_rs</span><span class="op">$</span><span class="va">covMethod</span>   <span class="co"># "r,s" if the correction was applied, "r" if it degraded</span></span></code></pre></div>
+<p>Point estimates and the objective are identical to the
+<code>"r"</code> fit; only the SEs move. Under correct specification
+<code>J = 2H</code> and <code>"r,s"</code> returns exactly what
+<code>"r"</code> would have, so the two agreeing is the expected outcome
+for a well-specified model, not a sign that nothing happened.</p>
+<p>It applies to every residual family whose conditional law is
+independent across timepoints — which is all of them except
+<code><a href="https://rdrr.io/r/stats/ar.html" class="external-link">ar()</a></code> — the conditionally-normal set (<code>add</code>,
+<code>prop</code>, <code>pow</code>, <code>combined1</code>,
+<code>combined2</code>), the closed-form distributional ones
+(<code>lnorm</code>, <code>pois</code>, <code>binom</code>,
+<code>nbinomMu</code>, <code>beta</code>, <code>t(nu &gt; 4)</code>),
+and the transform-both-sides ones (<code>boxCox</code>,
+<code>yeoJohnson</code>, <code>logitNorm</code>,
+<code>probitNorm</code>). Anything it cannot build — an
+<code><a href="https://rdrr.io/r/stats/ar.html" class="external-link">ar()</a></code> residual, a <code><a href="https://rdrr.io/r/base/t.html" class="external-link">t()</a></code> with
+<code>nu &lt;= 4</code>, an <code>ordinal()</code> or same-subject joint
+study, a singular ingredient — degrades to <code>"r"</code> with a
+warning, and <code>fit$covMethod</code> then reads <code>"r"</code>: it
+records what the covariance <strong>is</strong>, not what was asked
+for.</p>
+<p>Under <code>"r,s"</code> the denominator of a study’s reported
+<code>V</code> stops being cosmetic — see <code>v_denom</code> in the <a href="aggregate-data.html">aggregate data</a> vignette.</p>
+</div>
 </div>
 <div class="section level2">
 <h2 id="model-comparison-aic-and-bic">Model comparison: AIC and BIC<a class="anchor" aria-label="anchor" href="#model-comparison-aic-and-bic"></a>
@@ -480,7 +534,7 @@ likelihood that differs from these, so it must not be compared against
 the other three.</p>
 <p>Here we compare the full model (IIV on all five parameters) against a
 reduced model with IIV on CL and V1 only:</p>
-<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">ctl</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span></span>
 <span>  studies   <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>examplomycin <span class="op">=</span> <span class="va">study</span><span class="op">)</span>,</span>
 <span>  n_sim     <span class="op">=</span> <span class="fl">5000L</span>,</span>

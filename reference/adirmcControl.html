@@ -60,7 +60,7 @@ Monte Carlo estimator.'><meta property="og:image" content="https://leidenpharmac
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control settings for the IRMC estimator</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/adirmc.R" class="external-link"><code>R/adirmc.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.1/R/adirmc.R" class="external-link"><code>R/adirmc.R</code></a></small>
       <div class="d-none name"><code>adirmcControl.Rd</code></div>
     </div>
 
@@ -93,7 +93,7 @@ Monte Carlo estimator.</p>
 <span>  phases <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">2</span>, <span class="fl">1</span>, <span class="fl">0.5</span>, <span class="fl">0.01</span><span class="op">)</span>,</span>
 <span>  convcrit <span class="op">=</span> <span class="fl">1e-05</span>,</span>
 <span>  max_worse <span class="op">=</span> <span class="fl">5L</span>,</span>
-<span>  covMethod <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"r"</span>, <span class="st">"none"</span><span class="op">)</span>,</span>
+<span>  covMethod <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"r,s"</span>, <span class="st">"r"</span>, <span class="st">"none"</span><span class="op">)</span>,</span>
 <span>  cov_n_sim <span class="op">=</span> <span class="fl">10000L</span>,</span>
 <span>  n_restarts <span class="op">=</span> <span class="fl">1L</span>,</span>
 <span>  restart_sd <span class="op">=</span> <span class="fl">0.2</span>,</span>
@@ -125,6 +125,16 @@ Monte Carlo estimator.</p>
 <li><p><code>times</code> – numeric vector of observation times</p></li>
 <li><p><code>ev</code> – <code><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">rxode2::et()</a></code> dosing event table</p></li>
 <li><p><code>method</code> – <code>"cov"</code> or <code>"var"</code> (optional; auto-detected from <code>V</code>)</p></li>
+<li><p><code>v_denom</code> – <code>"ml"</code> (default) or <code>"unbiased"</code>, declaring which denominator
+the supplied <code>V</code> uses. The likelihood is the exact one for <code>n</code> iid draws
+only under the ML (<code>n</code>) covariance, which is what <code>cov.wt(method = "ML")</code>
+and <code><a href="datagen.html">datagen()</a></code> produce. A <strong>published</strong> SD is the unbiased (<code>n - 1</code>) SD,
+so a digitised figure gives <code>V = SD^2</code> on the <code>n - 1</code> scale: declare
+<code>v_denom = "unbiased"</code> and admixr2 converts it. Declared per study, since
+a meta-analysis routinely mixes a digitised source with a model-derived
+one and the two need not share a denominator. At <code>n = 60</code> the factor is
+1.7%; it matters more the smaller <code>n</code> is, and more again for any method
+that scores the reported covariance against its own sampling law.</p></li>
 </ul><p><strong>Multi-compartment (multiple observed outputs).</strong> To fit several observed
 compartments simultaneously (e.g. plasma and brain/CSF), give the study an
 <code>observations</code> list instead of top-level <code>E</code>/<code>V</code>/<code>times</code>. Each entry is one
@@ -294,18 +304,20 @@ Phases progressively tighten the search region.</p></dd>
 
 
 <dt id="arg-covmethod">covMethod<a class="anchor" aria-label="anchor" href="#arg-covmethod"></a></dt>
-<dd><p>Covariance method: <code>"r"</code> (numerical Hessian over the
-structural, residual-error and omega parameters) or <code>"none"</code>. Omega is
-included because excluding it also biases the STRUCTURAL standard errors
-downward – a theta carrying an eta is correlated with that eta's variance.
-If the weakly-identified omega Cholesky makes the Hessian non-positive
-definite, the structural + residual sub-block is reported with a warning.</p>
-<p>All three blocks are reported on the scale the ESTIMATES are printed on, as
-<code>nlmixr2est</code> does: structural thetas on the log/optimizer scale, residual
-error as an SD, and omega as the variance/covariance entries (named
-<code>om.&lt;eta&gt;</code> and <code>cov.&lt;eta_i&gt;.&lt;eta_j&gt;</code>). The omega block is rotated by the
-full Jacobian of Omega with respect to the log-Cholesky, which is not
-diagonal once omega is correlated.</p></dd>
+<dd><p><code>"r,s"</code> (the DEFAULT) computes the sandwich <code>H^-1 J H^-1</code>;
+<code>"r"</code> the numerical Hessian alone, <code>2H^-1</code>; <code>"none"</code> skips the covariance.
+All three span the structural, residual-error and omega parameters, and are
+reported on the scale the estimates are printed on. <code><a href="admControl.html">admControl()</a></code> documents
+what the sandwich is, why it is the conservative default, and why it is more
+sensitive than <code>"r"</code> to an ill-conditioned Hessian; the same implementation
+runs here.
+What does NOT carry over is the family coverage, because <code>adirmc</code> itself is
+narrower: the estimator accepts only <code>add</code>, <code>prop</code>, <code>pow</code>, <code>combined1</code>,
+<code>combined2</code> and <code>lnorm</code> residuals, and <code>"r,s"</code> applies to all six. The
+count, <code>beta</code>, transform-both-sides, <code>ordinal</code> and <code><a href="https://rdrr.io/r/stats/ar.html" class="external-link">ar()</a></code> endpoints
+<code><a href="admControl.html">admControl()</a></code> lists are refused by <code>est = "adirmc"</code> itself, before any
+covariance is reached – they are not models whose sandwich degrades to
+<code>"r"</code> here, they are models this estimator does not fit.</p></dd>
 
 
 <dt id="arg-cov-n-sim">cov_n_sim<a class="anchor" aria-label="anchor" href="#arg-cov-n-sim"></a></dt>
@@ -523,8 +535,8 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0027     | -1266.48 |    4.939 |    7.884 |     31.5 |     8.85 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0028     | -1266.48 |    4.939 |    7.884 |     31.5 |    8.851 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0029 ✓   | -1266.48 |    4.939 |    7.885 |     31.5 |    8.851 |   0.7954 |   0.1856 |   0.1191 |  0.07769 |  0.09037 | 0.006749 |   0.1295 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 1.4 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, MC NLL, Sens-Hessian, 12 gradient evaluations)</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 1.2 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, MC NLL, Sens-Hessian, sandwich, 12 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
@@ -537,22 +549,24 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance other elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    1.424     13.914     0  15.338</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1    1.168     19.016     0  20.184</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>            <span style="font-weight: bold;">Est.</span>      <span style="font-weight: bold;">SE</span>  <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>       1.597 0.04576 2.865    4.939 (4.515, 5.402)    35.57         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv1</span>       2.065  0.3649 17.67    7.885 (3.857, 16.12)    28.42         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv2</span>       3.450  0.1515 4.392    31.50 (23.41, 42.39)    30.75         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tq</span>        2.180  0.1191 5.463    8.851 (7.008, 11.18)    8.229         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tka</span>     -0.2290  0.3296 143.9  0.7954 (0.4169, 1.517)    37.18         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span>  0.1856 0.01563 8.418 0.1856 (0.1550, 0.2163)                     </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>       1.597 0.05101 3.194    4.939 (4.469, 5.458)    35.57         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv1</span>       2.065  0.4625 22.40    7.885 (3.185, 19.52)    28.42         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv2</span>       3.450  0.1807 5.238    31.50 (22.11, 44.89)    30.75         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tq</span>        2.180  0.1485 6.810    8.851 (6.616, 11.84)    8.229         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tka</span>     -0.2290  0.4182 182.7  0.7954 (0.3504, 1.805)    37.18         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span>  0.1856 0.01192 6.422 0.1856 (0.1623, 0.2090)                     </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>  </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   Covariance Type (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r</span></span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   Covariance Type (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r,s</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   No correlations in between subject variability (BSV) matrix</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Full BSV covariance (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$omega</span>) or correlation (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$omegaR</span>; diagonals=SDs) </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Distribution stats (mean/skewness/kurtosis/p-value) available in <span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$shrink</span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   Information about run found (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$runInfo</span>):</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>    • covMethod = "r,s": the Hessian is ill-conditioned (rcond 1.0e-05, cond 1e+05), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `logchol_eta.q`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Censoring (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$censInformation</span>): No censoring</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Minimization message (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$message</span>):  </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. </span>

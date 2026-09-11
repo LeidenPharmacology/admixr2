@@ -22,7 +22,7 @@ adfoControl(
   grad_bounds = 5,
   cov_h = 0.001,
   cov_h_outer = .Machine$double.eps^(1/5),
-  covMethod = c("r", "none"),
+  covMethod = c("r,s", "r", "none"),
   n_restarts = 1L,
   restart_sd = 0.5,
   workers = 1L,
@@ -142,13 +142,82 @@ adfoControl(
 
 - covMethod:
 
-  `"r"` computes covariance via a numerical Hessian over the structural,
-  residual-error and omega parameters; `"none"` skips it. Omega is
-  included because excluding it also biases the STRUCTURAL standard
+  `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`; `"r"` the
+  numerical Hessian alone, `2H^-1`; `"none"` skips the covariance. All
+  three span the structural, residual-error and omega parameters. Omega
+  is included because excluding it also biases the STRUCTURAL standard
   errors downward – a theta carrying an eta is correlated with that
   eta's variance. If the weakly-identified omega Cholesky makes the
   Hessian non-positive definite, the structural + residual sub-block is
   reported with a warning.
+
+  `"r,s"` adds a sandwich correction, `H^-1 J H^-1`, on the same
+  Hessian. For FO this does more than correct kurtosis:
+  `V = J Omega J' + Sigma` is the covariance of an exactly normal
+  individual law, so the reported standard errors otherwise answer to
+  the linearisation rather than to the model. The correction scores the
+  FO fit against the model's true nonlinear law, built post-fit on a
+  quadrature ensemble, and so absorbs part of the linearisation error as
+  well. Point estimates are untouched. **Transform-both-sides
+  endpoints.** `adfo` composes the residual by a second-order expansion
+  about the linearised moments, because FO carries no node ensemble to
+  compose over – that is what the method is. `adgh` and `admc` compose
+  exactly at their nodes/draws, so an `adfo` fit of a `boxCox`,
+  `yeoJohnson`, `logitNorm` or `probitNorm` endpoint differs from theirs
+  by the expansion's truncation: roughly 0.3% in `V` at moderate
+  between-subject variability, rising to ~3% for a tightly-bounded
+  `logit`/`probit` at high variability. That is a property of the
+  estimator, not a discrepancy.
+
+  **It is the default because it is the conservative choice, not the
+  aggressive one.** Under correct specification `J = 2H` and the
+  sandwich returns what `"r"` returns, so defaulting to it costs nothing
+  when the normal-theory assumption holds and corrects the standard
+  errors when it does not. Anything it cannot build degrades to `"r"`
+  and reports `"r"`, so no fit loses its covariance by asking. Pass
+  `covMethod = "r"` for the pre-0.4.1 behaviour.
+
+  Applies to every residual family whose conditional law is independent
+  across timepoints, which is all of them except
+  [`ar()`](https://rdrr.io/r/stats/ar.html): the conditionally-normal
+  set (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
+  distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`, and
+  [`t()`](https://rdrr.io/r/base/t.html) with `nu > 4`), and the
+  transform-both-sides ones (`boxCox`, `yeoJohnson`, `logitNorm`,
+  `probitNorm`), whose third and fourth conditional moments come off the
+  same quadrature that already gives their mean and variance. Refused,
+  and degraded to `"r"`: [`ar()`](https://rdrr.io/r/stats/ar.html),
+  because it correlates the residual ACROSS timepoints and the cross
+  terms the expansion drops are then real;
+  [`t()`](https://rdrr.io/r/base/t.html) with `nu <= 4`, whose kurtosis
+  does not exist; and `ordinal()` and same-subject `joint` studies,
+  which stack several outputs into one covariance the per-output node
+  ensemble does not describe. These four are refusals by construction
+  rather than failures, so the fit reports the reason as a message and
+  falls back to `"r"`; a sandwich that was attempted and could not be
+  built still warns.
+
+  **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"`
+  is.** `"r"` reports `2H^-1` and inverts `H` once; the sandwich reports
+  `H^-1 J H^-1` and inverts it twice, so in a direction the data barely
+  identifies any gap between `J` and `2H` is amplified quadratically. A
+  residual SD contributing 0.01 variance against 1.7 from
+  between-subject variability is such a direction: measured on one 1-cmt
+  fixture at `cond(H) = 3.5e5`, the reported residual SE moved by a
+  factor of 0.11 and two omega entries by 0.59 and 1.55, while the same
+  model and design on a study the residual IS identified in
+  (`cond(H) = 247`) reproduced `"r"` to four decimals on every
+  parameter. Neither number is a correction there – both methods are
+  reporting an unidentified direction, and `"r,s"` is louder about it.
+  admixr2 says so: when the Hessian's reciprocal condition number falls
+  below `eps^(1/4)` – the point at which squaring the conditioning
+  reaches the bound a single inversion is already called singular at –
+  the fit records a note naming the parameter that loads most heavily on
+  the offending direction. It arrives on `fit$runInfo` and is listed by
+  `print(fit)`, which is where `nlmixr2est` routes an estimator's
+  warnings. The sandwich is still reported, because the well-determined
+  parameters of the same fit are unaffected; check the named parameter's
+  relative standard error before reading its `"r,s"` value as a finding.
 
   All three blocks are reported on the scale the ESTIMATES are printed
   on, as `nlmixr2est` does: structural thetas on the log/optimizer
@@ -366,8 +435,8 @@ fit <- nlmixr2(
 #> | 0010     |  1768.15 |    4.967 |    29.88 |   0.2587 |   0.0888 |  0.04603 |
 #> | 0020     |   862.47 |    6.391 |    37.74 |   0.3864 |  0.08003 |   0.0422 |
 #> | 0029 ✓   |   861.90 |    6.384 |    38.03 |     0.39 |  0.08051 |  0.04074 |
-#> | 0.7 sec  |          |          |          |          |          |          |
-#>   Computing covariance (R method, Analytical-Hessian, 6 gradient evaluations)
+#> | 0.6 sec  |          |          |          |          |          |          |
+#>   Computing covariance (R method, Analytical-Hessian, sandwich, 6 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
 #>  
@@ -380,16 +449,16 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>         optimize covariance other elapsed other
-#> elapsed     0.71      0.159     0   0.869 4.612
+#> elapsed    0.551      0.331     0   0.882 6.172
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>           Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl      1.854  0.01620 0.8742    6.384 (6.184, 6.590)    28.95         NaN
-#> tv       3.638  0.01234 0.3391    38.03 (37.13, 38.96)    20.39         NaN
-#> prop.sd 0.3900 0.006554  1.681 0.3900 (0.3771, 0.4028)                     
+#> tcl      1.854  0.01961  1.058    6.384 (6.143, 6.634)    28.95         NaN
+#> tv       3.638  0.01689 0.4641    38.03 (36.80, 39.31)    20.39         NaN
+#> prop.sd 0.3900 0.009106  2.335 0.3900 (0.3721, 0.4078)                     
 #>  
-#>   Covariance Type (fit$covMethod): r
+#>   Covariance Type (fit$covMethod): r,s
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 

@@ -460,7 +460,7 @@ adfoControl(
   grad       = "none",      # "none" (BOBYQA), "analytical", "fd"
   maxeval    = 500L,
   n_restarts = 1L,
-  covMethod  = "r",         # SEs for struct+sigma only; omega SEs are not computed
+  covMethod  = "r",         # uncorrected Hessian SEs (no sandwich)
   seed       = 1L
 )
 
@@ -471,7 +471,7 @@ admControl(
   grad       = "sens",      # gradient mode: "sens", "fd", "none"
   n_restarts = 1L,          # number of optimizer restarts
   workers    = 1L,          # parallel workers for restarts
-  covMethod  = "r",         # SEs for struct+sigma only; omega SEs are not computed
+  covMethod  = "r",         # uncorrected Hessian SEs (no sandwich)
   seed       = 1L
 )
 
@@ -482,7 +482,7 @@ adghControl(
   grad       = "analytical",# gradient mode: "analytical", "fd", "none"
   n_restarts = 1L,
   workers    = 1L,
-  covMethod  = "r",         # SEs for struct+sigma only
+  covMethod  = "r",         # uncorrected Hessian SEs (no sandwich)
   seed       = 1L
 )
 

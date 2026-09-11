@@ -88,7 +88,7 @@ study_data <- datagen(
 
 # Each study returns E, V, n, times, ev
 names(study_data$low_dose)
-#> [1] "E"      "V"      "n"      "times"  "ev"     "output"
+#> [1] "E"       "V"       "n"       "times"   "ev"      "v_denom" "output"
 round(study_data$low_dose$E, 2)   # population mean at each time
 #>  0.5    1    2    4    8   12   24 
 #> 1.75 2.38 2.27 1.18 0.24 0.06 0.00
@@ -202,20 +202,20 @@ admc -7359.742 -7345.742 -7302.618       3679.871
 ── Time (sec fit_sim$time): ──
 
   optimize covariance other elapsed
-1   34.692      9.447     0  44.139
+1   39.655     12.706     0  52.361
 
 ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 
                         Parameter     Est.       SE   %RSE
-tcl           Log clearance (L/h)    1.608  0.01444 0.8985
+tcl           Log clearance (L/h)    1.608  0.01444 0.8984
 tv                 Log volume (L)    2.303  0.01994 0.8661
-tka     Log absorption rate (1/h) 0.001083  0.02641   2438
-prop.sd     Proportional error SD   0.2002 0.004183  2.090
+tka     Log absorption rate (1/h) 0.001082  0.02641   2441
+prop.sd     Proportional error SD   0.2001 0.004183  2.090
         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 tcl        4.991 (4.852, 5.135)    30.41         NaN
 tv         10.00 (9.619, 10.40)    19.60         NaN
 tka       1.001 (0.9506, 1.054)    20.88         NaN
-prop.sd 0.2002 (0.1920, 0.2084)                     
+prop.sd 0.2001 (0.1919, 0.2083)                     
  
   Covariance Type (fit_sim$covMethod): r
   No correlations in between subject variability (BSV) matrix

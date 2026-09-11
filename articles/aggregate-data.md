@@ -158,20 +158,20 @@ adgh -1323.144 -1313.144 -1292.943       661.5719
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed     0.39      0.108     0   0.498 3.654
+elapsed    0.439      0.165     0   0.604 4.446
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                           Parameter    Est.      SE   %RSE
-tcl             Log clearance (L/h)   1.556 0.02018  1.297
-tv                   Log volume (L)   3.911 0.01594 0.4075
-prop.cp Proportional residual error 0.09732 0.05262  54.07
+tcl             Log clearance (L/h)   1.556 0.03365  2.163
+tv                   Log volume (L)   3.911 0.02644 0.6761
+prop.cp Proportional residual error 0.09732 0.05374  55.22
             Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl            4.738 (4.555, 4.930)    25.77         NaN
-tv             49.96 (48.42, 51.55)    19.68         NaN
-prop.cp 0.09732 (-0.005812, 0.2005)                     
+tcl            4.738 (4.436, 5.062)    25.77         NaN
+tv             49.96 (47.44, 52.62)    19.68         NaN
+prop.cp 0.09732 (-0.008017, 0.2027)                     
  
-  Covariance Type (fit$covMethod): r
+  Covariance Type (fit$covMethod): r,s
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
@@ -200,25 +200,26 @@ adgh -2942.688 -2932.688 -2912.487       1471.344
 ── Time (sec fit_wrong$time): ──
 
   optimize covariance other elapsed
-1    0.575       0.08     0   0.655
+1    0.711       0.12     0   0.831
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
-                          Parameter     Est.       SE    %RSE
-tcl             Log clearance (L/h)    1.558 0.003134  0.2012
-tv                   Log volume (L)    3.908 0.002282 0.05841
-prop.cp Proportional residual error 0.008208 0.005416   65.98
-              Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl              4.749 (4.719, 4.778)    4.181         NaN
-tv               49.79 (49.57, 50.01)    2.935         NaN
-prop.cp 0.008208 (-0.002407, 0.01882)                     
+                          Parameter     Est.       SE   %RSE
+tcl             Log clearance (L/h)    1.558 0.005418 0.3478
+tv                   Log volume (L)    3.908 0.004076 0.1043
+prop.cp Proportional residual error 0.008208 0.002317  28.23
+             Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl             4.749 (4.698, 4.799)    4.181         NaN
+tv              49.79 (49.39, 50.19)    2.935         NaN
+prop.cp 0.008208 (0.003667, 0.01275)                     
  
-  Covariance Type (fit_wrong$covMethod): r
+  Covariance Type (fit_wrong$covMethod): r,s
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit_wrong$omega) 
     or correlation (fit_wrong$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Information about run found (fit_wrong$runInfo):
+   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.4e-06, cond 4.23e+05), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `prop.cp`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
    • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. 
   Censoring (fit_wrong$censInformation): No censoring
   Minimization message (fit_wrong$message):  
@@ -251,11 +252,11 @@ Nothing in the *point estimates* warns you. The *precision* does:
 round(c(RSE_CL_correct = fit$parFixedDf["tcl", "%RSE"],
         RSE_CL_wrong   = fit_wrong$parFixedDf["tcl", "%RSE"]), 3)
 #> RSE_CL_correct   RSE_CL_wrong 
-#>          1.297          0.201
+#>          2.163          0.348
 ```
 
 Clearance comes back not just right but implausibly certain — its
-standard error tightens about 6.4-fold, of order `sqrt(n)`. An RSE that
+standard error tightens about 6.2-fold, of order `sqrt(n)`. An RSE that
 looks too good for digitised literature data, or an IIV that comes back
 near zero, is the tell.
 
@@ -282,12 +283,32 @@ available when you have the subject-level matrix and can compute
 `cov.wt(dv_mat, method = "ML")$cov` — see [Getting
 started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md).
 
-Note the denominator. admixr2’s likelihood wants the ML (`n`) variance,
-while a published SD is the unbiased (`n - 1`) sample SD, so strictly
-`V = SD^2 * (n - 1) / n`. At `n = 60` that is a 1.7% change and is
-usually ignored; below `n` of about 15 it is worth applying. The
-`method = "ML"` rule matters most when you compute `V` yourself from
-subject-level data.
+Note the denominator, and declare it. admixr2’s likelihood is the exact
+one for `n` iid draws only under the ML (`n`) covariance, while a
+published SD is the unbiased (`n - 1`) sample SD – so `V = SD^2` from a
+figure is on the `n - 1` scale and strictly wants
+`V = SD^2 * (n - 1) / n`.
+
+Rather than applying that by hand, say which convention the number is
+on:
+
+``` r
+
+study <- list(E = E, V = SD^2, n = n, times = times, ev = ev,
+              v_denom = "unbiased")   # a published SD; admixr2 converts it
+```
+
+`v_denom` defaults to `"ml"`, which is what `cov.wt(method = "ML")` and
+[`datagen()`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)
+produce, so nothing changes for data you computed yourself. It is
+declared **per study** because a meta-analysis routinely mixes a
+digitised figure with a model-derived source, and the two need not share
+a denominator.
+
+At `n = 60` the factor is 1.7%, which is small; it grows as `n` falls,
+and it stops being cosmetic for any method that scores the reported
+covariance against its own sampling law rather than treating it as a
+sufficient statistic.
 
 ## Sample size
 

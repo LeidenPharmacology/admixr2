@@ -97,7 +97,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Estimator comparison: adfo, admc, adgh and adirmc</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/estimator-comparison.Rmd" class="external-link"><code>vignettes/estimator-comparison.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.1/vignettes/estimator-comparison.Rmd" class="external-link"><code>vignettes/estimator-comparison.Rmd</code></a></small>
       <div class="d-none name"><code>estimator-comparison.Rmd</code></div>
     </div>
 
@@ -747,7 +747,7 @@ accuracy</td>
 <span>  grad       <span class="op">=</span> <span class="st">"none"</span>,      <span class="co"># "none" (BOBYQA), "analytical", "fd"</span></span>
 <span>  maxeval    <span class="op">=</span> <span class="fl">500L</span>,</span>
 <span>  n_restarts <span class="op">=</span> <span class="fl">1L</span>,</span>
-<span>  covMethod  <span class="op">=</span> <span class="st">"r"</span>,         <span class="co"># SEs for struct+sigma only; omega SEs are not computed</span></span>
+<span>  covMethod  <span class="op">=</span> <span class="st">"r"</span>,         <span class="co"># uncorrected Hessian SEs (no sandwich)</span></span>
 <span>  seed       <span class="op">=</span> <span class="fl">1L</span></span>
 <span><span class="op">)</span></span>
 <span></span>
@@ -758,7 +758,7 @@ accuracy</td>
 <span>  grad       <span class="op">=</span> <span class="st">"sens"</span>,      <span class="co"># gradient mode: "sens", "fd", "none"</span></span>
 <span>  n_restarts <span class="op">=</span> <span class="fl">1L</span>,          <span class="co"># number of optimizer restarts</span></span>
 <span>  workers    <span class="op">=</span> <span class="fl">1L</span>,          <span class="co"># parallel workers for restarts</span></span>
-<span>  covMethod  <span class="op">=</span> <span class="st">"r"</span>,         <span class="co"># SEs for struct+sigma only; omega SEs are not computed</span></span>
+<span>  covMethod  <span class="op">=</span> <span class="st">"r"</span>,         <span class="co"># uncorrected Hessian SEs (no sandwich)</span></span>
 <span>  seed       <span class="op">=</span> <span class="fl">1L</span></span>
 <span><span class="op">)</span></span>
 <span></span>
@@ -769,7 +769,7 @@ accuracy</td>
 <span>  grad       <span class="op">=</span> <span class="st">"analytical"</span>,<span class="co"># gradient mode: "analytical", "fd", "none"</span></span>
 <span>  n_restarts <span class="op">=</span> <span class="fl">1L</span>,</span>
 <span>  workers    <span class="op">=</span> <span class="fl">1L</span>,</span>
-<span>  covMethod  <span class="op">=</span> <span class="st">"r"</span>,         <span class="co"># SEs for struct+sigma only</span></span>
+<span>  covMethod  <span class="op">=</span> <span class="st">"r"</span>,         <span class="co"># uncorrected Hessian SEs (no sandwich)</span></span>
 <span>  seed       <span class="op">=</span> <span class="fl">1L</span></span>
 <span><span class="op">)</span></span>
 <span></span>
