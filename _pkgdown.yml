@@ -131,6 +131,15 @@ reference:
       - nlmixr2Est.adgh
       - nlmixr2Est.adirmc
 
+  - title: Covariates
+    desc: >
+      Declare the covariate distribution a source enrolled, and how it enters
+      the fit.
+    contents:
+      - covDist
+      - covStrata
+      - covDraw
+
   - title: Simulation
     desc: Generate aggregate data from models for simulation studies.
     contents:
