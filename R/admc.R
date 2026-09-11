@@ -521,8 +521,16 @@ nmObjGetControl.admc <- function(x, ...) {
     # already does). A 0-column eta_mat flows correctly through .admSimulate and the
     # n_eta-indexed kernels (all seq_len(0) no-ops). For n_eta > 0 this is identical.
     eta_mat <- if (pinfo$n_eta > 0L) {
-      .em <- z %*% t(pars$L); colnames(.em) <- pinfo$eta_col_names; .em
+      .em <- z %*% t(pars$L)
+      colnames(.em) <- pinfo$eta_col_names; .em
     } else matrix(0, nrow(z), 0L)
+    # Covariate marginalisation, by the path chosen in .admCheckCovariates().
+    # admc has ONE path: every subject carries its own covariate value, so rxode2
+    # evaluates the whole model whatever the covariate touches. (adgh
+    # additionally offers a shift path, which needs a deterministic node grid.)
+    if (identical(s$.adm_cov_path, "rows")) {
+      s <- .admStudyCovRows(s, pinfo, nrow(eta_mat))
+    }
 
     # Joint (same-subject) unit: one shared-eta solve produces every output;
     # score the stacked vector with a single MVN over the joint covariance.
@@ -677,6 +685,19 @@ nmObjGetControl.admc <- function(x, ...) {
     eta_mat <- if (pinfo$n_eta > 0L) {          # zero-eta guard -- see .admNLL
       .em <- z %*% t(pars$L); colnames(.em) <- eta_col_names; .em
     } else matrix(0, nrow(z), 0L)
+    # Covariate marginalisation, "rows" path only (the collapse and u-quantile
+    # move Omega / the eta column themselves, which the chain rules below do not
+    # yet carry -- .admCheckCovariates refuses a gradient for those).
+    #
+    # Nothing else has to change here: on this path the covariate is DATA, a
+    # per-row column of the params frame like a time-varying covariate. The sens
+    # model's d(pred)/d(theta) columns are evaluated at each row's own covariate
+    # value, and a covariate coefficient is an unpaired struct theta that already
+    # gets its own THETA_j direction. .admCovRowsFor is deterministic given
+    # (cov_dist, n, n_eta), so these are the SAME rows the NLL used -- which is
+    # what keeps the common-random-numbers gradient valid.
+    if (identical(s$.adm_cov_path, "rows"))
+      s <- .admStudyCovRows(s, pinfo, nrow(eta_mat))
 
     unpaired_k <- which(vapply(pinfo$struct_names, function(nm)
       is.null(pinfo$struct_has_eta) || !isTRUE(pinfo$struct_has_eta[nm]), logical(1)))
@@ -812,6 +833,7 @@ nmObjGetControl.admc <- function(x, ...) {
       for (nm in names(pars$struct)) pdf_big[, nm] <- pars$struct[nm]
       for (nm in pinfo$sigma_names)  pdf_big[, nm] <- 0
       if (n_eta > 0L) pdf_big[seq_len(n_sim), eta_col_names] <- eta_mat
+      pdf_big <- .admCovColsTiled(pdf_big, rxMod$params, s, n_sim, n_runs)
 
       # eta perturbation rows
       if (n_eta > 0L) {
@@ -1056,6 +1078,7 @@ nmObjGetControl.admc <- function(x, ...) {
           nm   <- pinfo$struct_names[unpaired_k[bi]]
           pdf_hi[rows, nm] <- pars$struct[nm] + .admGH(h, unpaired_k[bi])
         }
+        pdf_hi <- .admCovColsTiled(pdf_hi, rxMod$params, s, n_sim, n_unp)
         out_hi  <- rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                     events = s$ev_full, cores = cores,
                                     nDisplayProgress = pinfo$nDisplayProgress,
@@ -1164,10 +1187,32 @@ nmObjGetControl.admc <- function(x, ...) {
         rows <- (cii - 1L) * n_sim + seq_len(n_sim)
         for (nm in pinfo$struct_names) pdf_mat[rows, nm] <- pars$struct[nm]
         if (pinfo$n_eta > 0L) {
+          # Same effective Cholesky the NLL uses, or the post-fit Hessian is of a
+          # different objective than the one that was minimised.
           eta_mat <- z %*% t(pars$L)
           pdf_mat[rows, pinfo$eta_col_names] <- eta_mat
         }
       }
+      # Covariates. This USED to sit inside the loop above as
+      #   for (.cn in intersect(colnames(.cr), colnames(pdf_mat))) ...
+      # which is a silent no-op: .admMakeParamsList() builds struct + eta +
+      # sigma + rxerr columns only, so the intersect was always empty and the
+      # covariate column was never created. rxSolve then failed on the missing
+      # parameter, the failure was swallowed by the tryCatch below into
+      # finite[ci] <- FALSE, and .admCalcCov reported a non-finite HESSIAN --
+      # naming the symptom, not the cause. Net effect: covMethod = "r" returned
+      # no covariance at all for any admc covariate fit.
+      # .admCovColsTiled() reads s$cov_rows, which only .admGrad set; the batch
+      # paths never did, so it would have tiled NULL and stayed a no-op.
+      s       <- .admStudyCovRows(s, pinfo, n_sim)
+      # n_chunk, NOT n_c: pdf_mat holds this CHUNK's configurations, and the
+      # loop above chunks at `chunk_size` (30). Passing the total tiled the
+      # covariate rows to n_c * n_sim against a frame of n_chunk * n_sim, which
+      # .admCovCols refuses outright rather than recycle -- so any admc covariate
+      # fit whose Hessian needs more than 30 points died at its last step. The
+      # point count is 2*np_cov + 4*n_off, so four reported parameters was
+      # enough, and covMethod = "r" routes EVERY admc covariate fit here.
+      pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim, n_chunk)
 
       out <- tryCatch(
         rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
@@ -1384,6 +1429,11 @@ nmObjGetControl.admc <- function(x, ...) {
       # dev-mode daemon, which cannot ADD bindings to the installed namespace)
       for (nm in names(sensModel$fixed_theta))
         inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
+      # Covariates, tiled per configuration block (see .admNLLBatch). Covariate
+      # names are model parameters, so they are NOT in the sens model's rename
+      # map -- match against sensModel$mod$params, not rxMod$params.
+      s        <- .admStudyCovRows(s, pinfo, n_sim)
+      inner_df <- .admCovColsTiled(inner_df, sensModel$mod$params, s, n_sim, n_c)
       # do.call + sensModel$solve_args: DDE sensitivity solves are forced onto pure
       # dop853 (see .admLoadSensModel); NULL, hence a no-op, for every other model.
       out <- tryCatch(
@@ -1445,6 +1495,10 @@ nmObjGetControl.admc <- function(x, ...) {
           pars <- pars_list[[ci]]
           for (nm in names(pars$struct)) pdf_mat[rows, nm] <- pars$struct[nm]
         }
+        # covariates, tiled across the configuration blocks (see .admNLLBatch)
+        s       <- .admStudyCovRows(s, pinfo, n_sim)
+        pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim,
+                                    nrow(pdf_mat) %/% n_sim)
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
                                          nDisplayProgress = pinfo$nDisplayProgress,
@@ -1497,6 +1551,10 @@ nmObjGetControl.admc <- function(x, ...) {
             }
           }
         }
+        # covariates, tiled across the configuration blocks (see .admNLLBatch)
+        s       <- .admStudyCovRows(s, pinfo, n_sim)
+        pdf_mat <- .admCovColsTiled(pdf_mat, rxMod$params, s, n_sim,
+                                    nrow(pdf_mat) %/% n_sim)
         out <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_mat),
                                          events = s$ev_full, cores = cores,
                                          nDisplayProgress = pinfo$nDisplayProgress,
@@ -1561,6 +1619,8 @@ nmObjGetControl.admc <- function(x, ...) {
         nm_u <- pinfo$struct_names[unpaired_k[bi]]
         pdf_hi[rows, nm_u] <- pars$struct[nm_u] + .admGH(h, unpaired_k[bi])
       }
+      s      <- .admStudyCovRows(s, pinfo, n_sim)
+      pdf_hi <- .admCovColsTiled(pdf_hi, rxMod$params, s, n_sim, n_cu)
       out_hi <- tryCatch(rxode2::rxSolve(rxMod, params = as.data.frame(pdf_hi),
                                           events = s$ev_full, cores = cores,
                                           nDisplayProgress = pinfo$nDisplayProgress,
@@ -1750,6 +1810,24 @@ nmObjGetControl.admc <- function(x, ...) {
       any(vapply(.admResidSpecs(pinfo),
                  function(x) identical(x$form, .ADM_RESID_BETA), logical(1))))
     use_grad <- FALSE
+
+  # A COVARIATE STUDY KEEPS THE GRADIENT PATH HERE, and the guard that used to
+  # take it away was justified on a property admc does not have.
+  #
+  # .admGradBatch() builds five params frames by hand, each with its own stride,
+  # and two of them carried no covariate columns -- so an unpaired struct theta
+  # (typically the covariate coefficient itself) had an rxSolve that failed on
+  # the missing parameter, swallowed into a skipped accumulation and a
+  # constant-ZERO Hessian row with `valid` still TRUE. All five carry them now,
+  # which is the actual fix.
+  #
+  # The other half of the old justification -- "its design moves with the
+  # parameters" -- is true of the QUADRATURE designs and false of admc: its
+  # only covariate path is "rows", whose design is .admCovRowsFor, deterministic
+  # in `cov_dist` alone, which is data. That determinism is exactly what common
+  # random numbers depend on and why the collapse was never given to the
+  # sampler. Forcing .admNLLBatch cost 129 NLL evaluations against 9 gradient
+  # evaluations on an 8-parameter model, each a full cov_n_sim solve.
 
   # Hessian over struct + sigma + omega (falls back to struct+sigma if not PD).
   # Matches nlmixr2 FOCEI: omega entries are in the optimizer but skipped for cov.
@@ -2810,13 +2888,9 @@ nlmixr2Est.admc <- function(env, ...) {
     stop("Could not recover admControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("admControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adm")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   output_var <- .admOutputVar(.ui)
 
   .u         <- .admDriverUnits(studies, .ui, output_var)
@@ -2824,6 +2898,10 @@ nlmixr2Est.admc <- function(env, ...) {
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
 
+
+  # RETURNS the studies, annotated with which covariate path each takes.
+  # Discarding the value silently disables covariate handling entirely.
+  studies <- .admCheckCovariates(.ui, pinfo, studies, "admc")
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)

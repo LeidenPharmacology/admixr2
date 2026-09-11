@@ -452,11 +452,28 @@ test_that("`gill` is gone from every control", {
   expect_error(adfoControl(gill = TRUE))
 })
 
-test_that("resid_nodes is the LAST control formal", {
-  # Positional calls are part of the interface: a new argument goes at the END.
-  for (f in list(adfoControl, adghControl, admControl, adirmcControl)) {
-    nms <- names(formals(f))
+test_that("a new control argument goes LAST in the formals", {
+  # Positional calls are part of the interface: `adghControl(studies, 7L)` has
+  # always meant n_nodes = 7, so anything inserted mid-signature silently
+  # rebinds it. The rule is that new arguments are APPENDED, and this pins the
+  # tail of each control as the record of what was appended last.
+  # The tail records what was appended last, in order. cov_nodes sets the
+  # covariate dimension of adgh's product grid (n_nodes does not);
+  # cov_integration/cov_sparse_level were appended after it, as a pair.
+  last <- list(adfoControl = "resid_nodes", adirmcControl = "resid_nodes",
+               admControl = "resid_nodes", adghControl = "cov_sparse_level")
+  for (nm in names(last)) {
+    nms <- names(formals(get(nm)))
     nms <- nms[nms != "..."]                    # every control ends with `...`
-    expect_identical(nms[[length(nms)]], "resid_nodes")
+    expect_identical(nms[[length(nms)]], last[[nm]], info = nm)
+    # resid_nodes must still be present in every one of them
+    expect_true("resid_nodes" %in% nms, info = nm)
+  }
+  # everything appended to adghControl, in the order it was appended
+  {
+    nms <- names(formals(adghControl))
+    expect_identical(tail(nms[nms != "..."], 4L),
+                     c("resid_nodes", "cov_nodes", "cov_integration",
+                       "cov_sparse_level"))
   }
 })
