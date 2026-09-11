@@ -3513,18 +3513,6 @@ print.covDist <- function(x, ...) {
 
 
 
-# The index DIRECTION for a parameter that is not affine in the latent scores.
-#
-# An ordinary least-squares fit of v on z estimates the AVERAGE DERIVATIVE,
-# which for a single-index model is proportional to the index direction whatever
-# the link does afterwards. It is only an estimate, and it is not verified here:
-# .admCovCollapse verifies the DESIGN instead, by checking that it reproduces
-# the parameter law -- which is the property actually needed, rather than a
-# proxy for it.
-#
-# Returns NULL for a link with no first-order signal. A SYMMETRIC one (v even in
-# u) has zero average derivative, so this declines it and the product grid
-# stands -- correct, if conservative.
 # -- THE LOADING: one mechanism, no lm.fit, no route -------------------------
 #
 # The loading of a covariate-reading assignment on the latent normal is the
