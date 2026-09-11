@@ -1038,3 +1038,152 @@ test_that("cov_integration takes exactly three states", {
   for (v in c("auto", "shift", "quadrature", "taylor"))
     expect_error(adghControl(studies = st, cov_integration = v))
 })
+
+test_that("covariates on ONE parameter collapse to a 1-D integral", {
+  # p covariates reaching the model through a single scalar make a
+  # ONE-dimensional integral whatever p is: the model cannot tell two covariate
+  # vectors apart when they give that parameter the same value. The product grid
+  # integrated it in p dimensions at n^p points.
+  #
+  # This is the shift's argument with the random effect removed, so it applies
+  # exactly where the shift refuses for want of an eta -- the allometric case,
+  # CL or V on weight and creatinine clearance.
+  skip_if_not_installed("rxode2")
+  TT <- c(1, 3, 6, 10, 16); DD <- 100; CV <- 0.5
+  sdl <- sqrt(log(1 + CV^2)); ml <- log(70) - sdl^2 / 2
+  .m3 <- function() {
+    ini({ tcl <- log(1); tv <- log(10); b1 <- 0.6; b2 <- 0.4; b3 <- 0.3
+          eta.cl ~ 0.09; add.err <- 0.3 })
+    # three covariates, ONE parameter, and that parameter carries no eta
+    model({ cl <- exp(tcl + eta.cl)
+            v  <- exp(tv) * (W1/70)^b1 * (W2/70)^b2 * (W3/70)^b3
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui  <- suppressMessages(rxode2::rxode2(.m3))
+  ov  <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  build <- function(nodes, collapse = TRUE) {
+    pin <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+    pin$nDisplayProgress <- .Machine$integer.max
+    pin$cov_integration <- "on"; pin$cov_nodes <- nodes
+    pin$n_nodes <- 7L
+    s <- list(E = rep(1, length(TT)), V = diag(length(TT)), n = 300L,
+              times = TT, ev = rxode2::et(amt = DD),
+              cov = stats::setNames(as.list(rep(70, 3L)), paste0("W", 1:3)),
+              cov_dist = cd)
+    st <- admixr2:::.admFlattenStudies(
+            list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
+    st <- admixr2:::.admBuildEvFull(st)
+    st <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, st))
+    # BOTH collapses: the joint one also fires here (etas and covariates span
+    # fewer directions than they occupy), so clearing only the covariate one
+    # leaves a reference that is not a product grid at all
+    if (!collapse) {
+      st[[1L]]$.adm_cov_collapse <- NULL
+      st[[1L]]$.adm_cov_joint    <- NULL
+    }
+    g  <- admixr2:::.adghNodeGrid(7L, pin$n_eta)
+    pr <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin)
+    m  <- admixr2:::.adghMoments(pr, pin, st[[1L]], rx, ov, g, 1L)
+    list(E = as.numeric(m$E), V = m$V, st = st,
+         rows = nrow(admixr2:::.adghGrid(pr, pin, g, st[[1L]])$eta))
+  }
+  # the design is found, and it is ONE-dimensional
+  co <- build(7L)$st[[1L]]$.adm_cov_collapse
+  expect_false(is.null(co))
+  expect_equal(co$r, 1L)                    # RANK is what sets the dimension
+  expect_equal(co$p, 3L)
+  # ceiling(cov_nodes * pc / r) = 21, not cov_nodes: one direction carrying
+  # three covariates' combined spread needs more resolution than one axis, not
+  # the same. Still 21 points against the grid's 343.
+  expect_equal(nrow(co$X), 21L)
+  expect_equal(sum(co$W), 1, tolerance = 1e-12)
+
+  # ... and it AGREES with a genuine 21^3 product grid, using far fewer rows
+  ref <- build(21L, collapse = FALSE)
+  for (nn in c(7L, 11L)) {
+    got <- build(nn)
+    expect_lt(max(abs(got$E - ref$E) / abs(ref$E)), 1e-6, label = paste("E", nn))
+    expect_lt(max(abs(got$V - ref$V) / abs(ref$V)), 1e-4, label = paste("V", nn))
+    expect_lt(got$rows, ref$rows / 100)
+  }
+  # 11 collapsed nodes beat a 7-node THREE-WAY grid on both count and accuracy
+  g7 <- build(7L, collapse = FALSE); c11 <- build(11L)
+  expect_lt(c11$rows, g7$rows)
+  expect_lt(max(abs(c11$V - ref$V) / abs(ref$V)),
+            max(abs(g7$V - ref$V) / abs(ref$V)))
+})
+
+test_that(".admCovCollapse refuses what it cannot certify", {
+  skip_if_not_installed("rxode2")
+  pin <- list(eta_col_names = "eta.cl", struct_names = c("tcl", "tv"),
+              cov_nodes = 7L)
+  mk <- function(expr) list(lstExpr = expr, allCovs = c("W1", "W2"))
+  cd <- list(W1 = list(meanlog = log(70), sdlog = 0.2),
+             W2 = list(meanlog = log(70), sdlog = 0.2))
+  pf <- function(ui) {
+    p <- pin
+    p$struct_names <- c("tcl", "tv"); p
+  }
+  # a single covariate has nothing to collapse
+  expect_null(admixr2:::.admCovCollapse(
+    mk(list(quote(v <- exp(tv) * (W1 / 70)^0.6))), pin,
+    list(W1 = cd$W1), 7L))
+  # TWO assignments reading covariates: two scalars, not one -- refused for now
+  expect_null(admixr2:::.admCovCollapse(
+    mk(list(quote(cl <- exp(tcl) * (W1 / 70)^0.6),
+            quote(v  <- exp(tv) * (W2 / 70)^0.4))), pin, cd, 7L))
+  # the assignment carries an ETA: that belongs to the shift, which removes the
+  # dimension rather than reducing it
+  expect_null(admixr2:::.admCovCollapse(
+    mk(list(quote(cl <- exp(tcl + eta.cl) * (W1/70)^0.6 * (W2/70)^0.4))),
+    pin, cd, 7L))
+  # a DISCRETE margin has no latent score to collapse along
+  expect_null(admixr2:::.admCovCollapse(
+    mk(list(quote(v <- exp(tv) * (W1/70)^0.6 * W2))), pin,
+    list(W1 = cd$W1, W2 = list(values = c(0, 1))), 7L))
+})
+
+# n_u sizing (algorithm/covariate-shift/HANDOFF.md, Change A). Same fixture as
+# .shift_setup but with n_nodes and the covariate spread under the caller's
+# control, which is what the sizing must now be independent of.
+.shift_nu_fx <- function(cd, n_nodes = 7L, mod = .shift_mod) {
+  ui <- suppressMessages(rxode2::rxode2(mod))
+  ov <- admixr2:::.admOutputVar(ui)
+  st <- list(s = list(E = c(9.9, 9.2, 8.1, 6.4, 5.2, 4.3, 2.9, 2.0, 0.9),
+                      V = diag(0.4, 9L) + 0.05, n = 200L,
+                      times = c(0.25,0.5,1,2,3,4,6,8,12),
+                      ev = rxode2::et(amt = 500), cov_dist = cd))
+  ctl <- adghControl(studies = st, grad = "none", print = 0L, covMethod = "none",
+                     n_nodes = n_nodes, cov_nodes = 7L, cov_integration = "on")
+  pin <- admixr2:::.admDriverPinfo(ui, ctl)
+  admixr2:::.admCheckCovariates(
+    ui, pin, admixr2:::.admDriverUnits(st, ui, ov)$studies)[[1L]]
+}
+
+
+test_that("the covariate path is chosen without asking, and is never worse", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # THE USER IS NOT ASKED WHICH REDUCTION TO USE. "on" reduces the covariate
+  # integral wherever a reduction verifies against the grid it replaces, "off"
+  # is that grid unreduced. The contract is not WHICH reduction is taken -- both
+  # are exact, and pinning one would fail the next time either improves -- but
+  # that one is taken, silently, and that it is at least as accurate as "off".
+  Son <- .shift_setup("on")
+  Soff <- .shift_setup("off")
+  expect_false(is.null(Son$stu[[1L]]$.adm_cov_joint) &&
+               is.null(Son$stu[[1L]]$.adm_cov_collapse))
+  expect_null(Soff$stu[[1L]]$.adm_cov_joint)
+  expect_null(Soff$stu[[1L]]$.adm_cov_collapse)
+  # nothing is announced: which reduction ran is an internal decision
+  expect_silent(.shift_setup("on"))
+
+  # and it agrees with the unreduced integral it stands in for
+  mon <- admixr2:::.adghMoments(admixr2:::.admUnpack(Son$p0, Son$pin),
+    Son$pin, Son$stu[[1L]], Son$rx, Son$ov, Son$g, 1L)
+  mof <- admixr2:::.adghMoments(admixr2:::.admUnpack(Soff$p0, Soff$pin),
+    Soff$pin, Soff$stu[[1L]], Soff$rx, Soff$ov, Soff$g, 1L)
+  expect_equal(as.numeric(mon$E), as.numeric(mof$E), tolerance = 1e-4)
+  expect_equal(mon$V, mof$V, tolerance = 1e-3)
+})

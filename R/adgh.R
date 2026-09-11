@@ -74,12 +74,55 @@
   } else {
     g <- list(eta = matrix(0, 1L, 0L), W = 1, X = grid$X, cov_rows = NULL)
   }
-  # adgh's analogue of admc's per-row covariate draws: a PRODUCT GRID over the
-  # covariate quadrature and the eta grid. Deterministic, so adgh stays
-  # noise-free, and it is still ONE rxSolve -- n_cov x n_node rows rather than
-  # n_node. The eta block cycles fastest, so the weights are
+  # General path, adgh's analogue of admc's per-row covariate draws: a PRODUCT
+  # GRID over the covariate quadrature and the eta grid. Deterministic, so adgh
+  # stays noise-free, and it is still ONE rxSolve -- n_cov x n_node rows rather
+  # than n_node. The eta block cycles fastest, so the weights are
   # rep(W_eta, times = n_cov) * rep(W_cov, each = n_eta), which is what
   # as.numeric(outer(W_eta, W_cov)) produces column-major.
+  # SHIFT: the covariate never reaches the solver. The affected eta column is
+  # replaced by quantiles of u = Delta(a) + eta and the covariates are held at
+  # their reference, so the solve costs n_u * (nodes for the OTHER etas) rows --
+  # CONSTANT in the number of covariates, against n_node^n_eta * n_cov^p.
+  # Set when the shift path admitted a study but could not build its design at
+  # the current parameters -- a NULL Delta, or an absorption/conditioning that
+  # failed as the optimizer drove an eta correlation toward +/-1.
+  #
+  # It must NOT continue on the bare eta grid: with cov_rows NULL, .admSimulate
+  # falls back to study$cov, which .admCheckCovariates filled with each
+  # covariate's MEAN, so the integral becomes the ecological plug-in at a finite
+  # and plausible NLL. It must not continue on the product grid either -- a
+  # different number of quadrature points mid-fit steps the objective. It is an
+  # UNSOLVABLE POINT, and every other unsolvable point here reports Inf.
+  # The covariate shift -- a separate reduction that pinned the covariate at
+  # its reference and folded its whole contribution into one eta column --
+  # was removed. .admJointCollapse finds the same structure (rank 1 on the
+  # certified single-eta case) without a certificate, and is both cheaper and
+  # more accurate than the shift wherever both applied. See NEWS.
+  # JOINT COLLAPSE: one design over the etas AND the covariates together, where
+  # they reach the model through the same directions. It replaces the eta grid
+  # as well as the covariate design, so it returns before either is built.
+  #
+  # X is the node matrix the omega chain rule differentiates. eta = X L' holds
+  # here exactly as it does for the ordinary grid -- the joint preimage's eta
+  # block IS that matrix -- so .adghGrad needs no branch of its own. What it
+  # does not carry is the rotation's own dependence on Omega; that term is the
+  # quadrature re-choosing itself within the same column space, and vanishes to
+  # the accuracy the design is verified to.
+  .jc <- if (!is.null(s)) s[[".adm_cov_joint"]] else NULL
+  if (!is.null(.jc)) {
+    jd <- .admJointDesign(.jc, .admShiftStruct(pinfo, pars$struct), pars$L)
+    # A FAILED RE-AIM IS AN UNSOLVABLE POINT, not a licence to change design and
+    # not a reason to abort. Falling through to the branch below would swap in a
+    # design with a DIFFERENT NUMBER OF POINTS mid-optimisation and step the
+    # objective; stop()ing kills a converging fit at a point the line search was
+    # merely trying (nothing between eval_f and here catches). Both are wrong.
+    # The failure mode is an affine_log probe going non-positive, which is
+    # exactly the region every other unsolvable point reports as Inf -- so mark
+    # the grid and let the moment functions do that.
+    if (is.null(jd)) return(list(failed = TRUE))
+    return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
+  }
   if (!is.null(s) && !is.null(s[["cov_dist"]])) {
     nq <- max(nrow(g$eta), 1L)
     # cov_integration = "sparse": a Smolyak grid in place of the product one.
@@ -97,7 +140,29 @@
                        .admCovSparseGrid(s[["cov_dist"]],
                                          pinfo$cov_sparse_level %||% 3L,
                                          pinfo$cov_nodes %||% 7L)
-          else         .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
+          # The COLLAPSED design when the covariates reach the model through a
+          # single scalar: the same integral in the dimension it actually has,
+          # so this is not an approximation the grid would beat. Cached at
+          # admission (.admCovCollapse costs a probe, no solves); the %||% keeps
+          # a hand-built study working at the old cost.
+          # RE-AIMED at the current thetas, not read from admission. The
+          # rotation depends on the covariate coefficients, which are estimated,
+          # so a design cached at the starting values integrates over the wrong
+          # line in latent space as soon as the optimizer moves them -- measured
+          # at 53 to 163 -2LL units for a 0.1 move in one coefficient. This is
+          # the same thing the shift branch above does with .admShiftDelta.
+          # The product grid ONLY when no collapse was admitted (a hand-built
+          # study): the two have different point counts, so swapping mid-fit
+          # steps the objective.
+          else if (is.null(s[[".adm_cov_collapse"]]))
+                       .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
+          else         .admCovRefresh(s[[".adm_cov_collapse"]],
+                                      .admShiftStruct(pinfo, pars$struct))
+    # .admCovRefresh RETURNS THE ADMISSION DESIGN ON FAILURE -- all five of its
+    # exits are `return(co)`, so a %||% here was dead code and a failed re-aim
+    # scored silently on the STARTING-VALUE rotation, which is the 53-163 -2LL
+    # error the re-aiming exists to prevent. It marks itself instead.
+    if (isTRUE(cg$stale)) return(list(failed = TRUE))
     nc <- nrow(cg$X)
     g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
     colnames(g$eta) <- pinfo$eta_col_names
@@ -712,7 +777,9 @@
       }))
     n_cfg <- length(p_pert)
 
-    if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))) {
+    if (any(vapply(studies, function(u) isTRUE(u$is_joint) ||
+                     !is.null(u[[".adm_cov_collapse"]]) ||
+                     !is.null(u[[".adm_cov_joint"]]), logical(1)))) {
       for (i in seq_len(n_u))
         grad[unpaired_k[i]] <-
           (.adghNLL(p_pert[[i]], pinfo, studies, rxMod, out_var, grid, cores) -
