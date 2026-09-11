@@ -1159,6 +1159,35 @@
   list(quantile = function(u) qf(pa + u * (pb - pa)))
 }
 
+# Drop ONE margin from a canonical spec, and rebuild everything derived from it.
+#
+# `cdk[[by]] <- NULL` alone is a silent wrong answer: `latentR` is indexed
+# POSITIONALLY and carries no dimnames, and `joint` is a closure over the
+# original margin list. After dropping SEX from (SEX, WT, CRCL), .admCovCollapse
+# read R[1:2, 1:2] -- the SEX/WT block, i.e. the identity -- so a declared
+# WT-CRCL correlation of 0.5 became independence in every `by`-level study,
+# while the quadrature route instead hard-errored inside a sampler the user
+# never wrote ("cov_dist$joint failed ... non-conformable arguments").
+# Re-express the surviving correlations as a NAMED `cor` and re-canonicalise.
+.admCovDropMargin <- function(cd, drop) {
+  nms  <- .admCovSpecNames(cd)
+  keep <- setdiff(nms, drop)
+  R    <- cd[["latentR"]]
+  out  <- cd
+  out[[drop]] <- NULL
+  out[c("joint", "jointOwn", "discExact", "latentR", "cor", "rho",
+        "Sigma")] <- NULL
+  if (!is.null(R) && length(keep) > 1L &&
+      identical(dim(R), c(length(nms), length(nms)))) {
+    i  <- match(keep, nms)
+    Rk <- R[i, i, drop = FALSE]
+    dimnames(Rk) <- list(keep, keep)
+    out[["cor"]] <- Rk
+  }
+  if (!length(.admCovSpecNames(out))) return(NULL)
+  .admCovDistCanon(out)
+}
+
 .admCovStrata <- function(cov_dist, stratify, n_nodes = 5L,
                           n_pool = 32768L, cov_range = NULL) {
   cov_dist <- .admCovDistCanon(cov_dist)

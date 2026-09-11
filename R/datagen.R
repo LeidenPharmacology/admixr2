@@ -606,24 +606,22 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   lapply(datagen(...), function(u) { u[[".adm_src"]] <- NULL; u })
 }
 
-# --- PR D: these two move from R/study-api.R into R/datagen.R ---------------
+# --- Who may be given a standard error --------------------------------------
 #
-# Under the order A -> B -> INF -> D -> E -> C, seam D lands BEFORE the study
-# API. They live in `study-api.R` on #121 only because C was written first, and
-# the ONLY thing tying them there is the `inherits(s, "admStudy")` branch, which
-# tests a class C defines. Dropping that branch makes D independent of C at no
-# cost: an `admStudy` spec is materialised into ordinary studies by
-# `.admMaterialise()` before any control object sees it, and the materialised
-# study carries `.adm_src` like any other.
-#
-# WHEN C LANDS, restore the branch. Until then a raw `admStudy` object handed
-# straight to a control function would not be recognised as a model source --
-# which cannot happen while `admStudy()` does not exist.
+# These live beside datagen() rather than beside the study API, because the
+# marker they read is datagen()'s and because they must answer for a study
+# whether or not the study API is what built it.
 
 .admHasModelSource <- function(studies) {
+  if (inherits(studies, "admStudies")) studies <- unclass(studies)
   if (!is.list(studies) || !length(studies)) return(FALSE)
   any(vapply(studies, function(s) {
     if (!is.list(s)) return(FALSE)
+    # An admStudy SPEC is lazy: it carries a `ui` and has not been generated
+    # yet, so it has no `.adm_src` to read. The control functions see specs --
+    # they run before .admMaterialise() -- so the spec has to answer for
+    # itself, or a covMethod would be honoured for a fit that must refuse one.
+    if (inherits(s, "admStudy")) return(!is.null(s$ui))
     isTRUE(s[[".adm_src"]])
   }, logical(1)))
 }
