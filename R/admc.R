@@ -1925,18 +1925,18 @@ nmObjGetControl.admc <- function(x, ...) {
   sw_used <- FALSE
   sw_cond <- NULL
   if (isTRUE(sandwich)) {
-    # A model the correction does not APPLY to (ar(), ordinal, a joint unit, a t
-    # with nu <= 4) is reported as such and not attempted -- see .admSandwichNA.
-    .sw_na <- tryCatch(.admSandwichNA(p_hat, pinfo, studies, output_var),
-                       error = function(e) NULL)
-    sw <- if (!is.null(.sw_na)) NULL else tryCatch({
-      grid <- .admSandwichGrid(pinfo)
-      if (is.null(grid)) stop("no ensemble to weight against")
-      .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
-                      H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov,
-                      sensModel = sensModel, Hinv = Hinv)
-    }, error = function(e) NULL)
-    res      <- .admApplySandwich(sw, cov_full, "admCalcCov", na = .sw_na)
+    # The grid build cannot fail with NULL here for a reason .admWireSandwich's
+    # own .admSandwichNA() call has not already caught: n_eta >= 8 (or a
+    # negative/missing n_eta) is exactly what .admSandwichGrid() refuses on, and
+    # .admSandwichNA() screens both up front on the SAME pinfo.
+    res <- .admWireSandwich(p_hat, pinfo, studies, output_var, cov_full, "admCalcCov",
+      function() {
+        grid <- .admSandwichGrid(pinfo)
+        .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
+                        H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov,
+                        sensModel = sensModel, Hinv = Hinv, nll_fn = nll_fn,
+                        eig_dec = eig_dec)
+      })
     cov_full <- res$cov_full; sw_used <- res$sw_used; sw_cond <- res$sw_cond
   }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
@@ -3101,7 +3101,7 @@ nlmixr2Est.admc <- function(env, ...) {
 
   p_hat  <- setNames(opt$solution, names(ov$p0))
   t0_cov <- proc.time()
-  .want_cov <- .ctl$covMethod %in% c("r", "r,s")
+  .want_cov <- .admCovWantsHessian(.ctl$covMethod)
   .cov <- if (.want_cov) {
     # Multi-output / joint fits use the NLL-FD Hessian (via .admNLLBatch); the
     # grad-FD Hessian relies on the single-output analytical grad batch. A zero-eta
@@ -3128,7 +3128,7 @@ nlmixr2Est.admc <- function(env, ...) {
       if (!is.null(sensModel) && !tbs_fd) ", Sens-Hessian" else
       if (use_cent_cov) ", cFD-Hessian" else ", FD-Hessian"
     message(sprintf("  Computing covariance (R method%s%s, %d %s)",
-                    hess_label, if (.ctl$covMethod == "r,s") ", sandwich" else "",
+                    hess_label, if (.admCovWantsSandwich(.ctl$covMethod)) ", sandwich" else "",
                     n_evals, evals_label))
     tryCatch(
       .admCalcCov(p_hat, pinfo, studies, z_list, rxMod, output_var,
@@ -3137,7 +3137,7 @@ nlmixr2Est.admc <- function(env, ...) {
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
                   sensModel = sensModel, use_central = use_cent_cov,
                   sampling = .ctl$sampling,
-                  sandwich = .ctl$covMethod == "r,s"),
+                  sandwich = .admCovWantsSandwich(.ctl$covMethod)),
       error = function(e) { warning("admCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
   # Warns if no covariance could be computed, re-raises any sandwich

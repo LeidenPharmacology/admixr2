@@ -75,14 +75,36 @@
   Models the correction does **not apply to** report the reason as a message and
   fall back to `"r"`: `ar()`, because it correlates the residual ACROSS
   timepoints, so the cross terms the expansion drops are real; `t()` with
-  `nu <= 4`, whose kurtosis does not exist; and `ordinal()` and same-subject
-  `joint` studies, which stack several outputs into one covariance that the
-  per-output node ensemble does not describe. These are refusals by construction,
-  not failures, which is why they are not warnings -- `"r,s"` is the default, so
-  an `ar()` fit would otherwise put "the sandwich correction could not be
-  computed" on `fit$runInfo` on every run. A sandwich that was attempted and
-  could not be BUILT still warns. Either way `fit$covMethod` reports `"r"`: it
-  records what the covariance IS, not what was asked for.
+  `nu <= 4`, whose kurtosis does not exist; `t()` combined with a `boxCox()` /
+  `yeoJohnson()` / `logitNorm()` / `probitNorm()` endpoint at ANY `nu`, because
+  that branch integrates the residual's law over the node ensemble rather than
+  folding `nu/(nu-2)` into a variance, and there is no closed form for a
+  t-distributed residual there; a model with 8 or more random effects, whose
+  capped product quadrature grid (floored at 3 nodes/eta, capped at 5000 nodes
+  total) cannot cover them; and `ordinal()` and same-subject `joint` studies,
+  which stack several outputs into one covariance that the per-output node
+  ensemble does not describe. These are refusals by construction, not failures,
+  which is why they are not warnings -- `"r,s"` is the default, so an `ar()` fit
+  would otherwise put "the sandwich correction could not be computed" on
+  `fit$runInfo` on every run. A sandwich that was attempted and could not be
+  BUILT still warns. Either way `fit$covMethod` reports `"r"`: it records what
+  the covariance IS, not what was asked for.
+
+  The acceptance gate that decides between the two is now a full PSD check
+  rather than a diagonal one: `J = sum(G Om G')` is only guaranteed
+  positive-semi-definite if every per-study `Om` is, and a rescaled `pow()` /
+  `combined()` weight was not independently checked for that, so a
+  positive-diagonal, non-PSD covariance could have been silently accepted and
+  reported. A `method = "var"` study's weight is also no longer built as the
+  full `m + m(m+1)/2` covariance-summary matrix before discarding everything but
+  its mean and diagonal blocks -- that discarded work was `O(m^4)`, multiple
+  gigabytes at 200 timepoints, paid on every default-`covMethod` fit of a
+  variance-only study. And the finite-difference fallback for the sandwich's
+  Jacobian (used whenever the analytic route -- no sensitivity model, unpaired
+  thetas -- is unavailable, which is always for `adfo`) now measures its step
+  per parameter from the fit's own objective via Shi21, the same convention
+  every other finite difference in the package follows, rather than a fixed
+  `1e-5` regardless of parameter scale.
 
 * **`v_denom`: declare which denominator a study's `V` uses, rather than
   convert it by hand.** admixr2's two input types disagree about what `V` is. A

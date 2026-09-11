@@ -867,16 +867,11 @@
   sw_used <- FALSE
   sw_cond <- NULL
   if (isTRUE(sandwich)) {
-    # A model the correction does not APPLY to (ar(), ordinal, a joint unit, a t
-    # with nu <= 4) is reported as such and not attempted -- see .admSandwichNA.
-    .sw_na <- tryCatch(.admSandwichNA(p_hat, pinfo, studies, out_var),
-                       error = function(e) NULL)
-    sw <- if (!is.null(.sw_na)) NULL else tryCatch(
-      .admSandwichCov(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
-                      H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov,
-                      sensModel = sensModel, Hinv = Hinv),
-      error = function(e) NULL)
-    res      <- .admApplySandwich(sw, cov_full, "adghCalcCov", na = .sw_na)
+    res <- .admWireSandwich(p_hat, pinfo, studies, out_var, cov_full, "adghCalcCov",
+      function() .admSandwichCov(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
+                                 H = H, keep = match(nms_cov, names(p_hat)),
+                                 nms = nms_cov, sensModel = sensModel, Hinv = Hinv,
+                                 nll_fn = nll_fn, eig_dec = eig_dec))
     cov_full <- res$cov_full; sw_used <- res$sw_used; sw_cond <- res$sw_cond
   }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
@@ -1627,7 +1622,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   p_hat  <- setNames(opt$solution, names(ov$p0))
 
   t0_cov <- proc.time()
-  .want_cov <- .ctl$covMethod %in% c("r", "r,s")
+  .want_cov <- .admCovWantsHessian(.ctl$covMethod)
   .cov <- if (.want_cov) {
     # struct + sigma + OMEGA: the Hessian spans all three, so the evaluation
     # count must too.
@@ -1638,7 +1633,7 @@ nlmixr2Est.adgh <- function(env, ...) {
                  else { n_off <- np_cov * (np_cov - 1L) / 2L; 1L + 2L * np_cov + 4L * n_off }
     evals_lbl <- if (use_grad_cov) "gradient evaluations" else "NLL evaluations"
     hess_lbl  <- if (!use_grad_cov) "" else if (!is.null(sensModel)) ", Analytical-Hessian" else ", FD-Hessian"
-    sw_lbl    <- if (.ctl$covMethod == "r,s") ", sandwich" else ""
+    sw_lbl    <- if (.admCovWantsSandwich(.ctl$covMethod)) ", sandwich" else ""
     message(sprintf("  Computing covariance (R method%s%s, %d %s)",
                     hess_lbl, sw_lbl, n_evals, evals_lbl))
     tryCatch(
@@ -1646,7 +1641,7 @@ nlmixr2Est.adgh <- function(env, ...) {
                    use_grad    = use_grad_cov,
                    grad_h      = .ctl$cov_h,
                    cov_h_outer = .ctl$cov_h_outer,
-                   sandwich    = .ctl$covMethod == "r,s"),
+                   sandwich    = .admCovWantsSandwich(.ctl$covMethod)),
       error = function(e) { warning("adghCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
   # Warns if no covariance could be computed, re-raises any sandwich

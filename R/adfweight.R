@@ -326,10 +326,22 @@
 #
 # Cost goes from O(q^2 Q) to O(m^3 Q + q^2), which is what makes the ceiling the
 # handoff quotes (m ~ 30, q = 465) reachable rather than theoretical.
-.admAdfWeightFast <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL) {
+#
+# `var_only`: a `method = "var"` study only ever reports the mean block plus
+# the DIAGONAL of the covariance-summary block, so building the full
+# q = m(m+1)/2 vech and then discarding the off-diagonal q - m of it is pure
+# waste -- and a quadratic one: T1/M3/M4 below are q x q, so at m = 200 the
+# full path allocates multiple ~3 GB matrices for a result that ends up
+# 2m x 2m. Restricting `ij` to the diagonal up front makes q = m and every
+# line below -- written generically in terms of `ij`/`I`/`J`/`q` -- comes out
+# already in the shape a `var` study needs, in the same ascending-i order the
+# old post-hoc trim (.admWeightSel, now folded into this switch) produced.
+.admAdfWeightFast <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL,
+                              var_only = FALSE) {
   w  <- w / sum(w)
   m  <- ncol(C)
-  ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  ij <- if (var_only) cbind(seq_len(m), seq_len(m))
+        else which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
   q  <- nrow(ij)
   I  <- ij[, 1L]; J <- ij[, 2L]
   dbar <- colSums(w * Dv)
@@ -428,8 +440,15 @@
 
 # The node-level quantities the weight needs, alongside the predicted moments.
 # Same path .adghMoments takes, so the two cannot describe different node sets.
-.admAdfParts <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
-  g     <- .adghGrid(pars, pinfo, grid)
+#
+# `g`: .adghGrid(pars, pinfo, grid) depends on pars/grid alone, not on `study`,
+# so it is identical across every study in one .admSandwichCov() call -- a
+# caller looping over studies with the same `pars`/`grid` can build it ONCE and
+# pass it in, rather than have every call recompute the same small matmul.
+# Optional and NULL by default so every other caller (the tests, the default
+# .admMomentDeriv() mom closure) is unaffected.
+.admAdfParts <- function(pars, pinfo, study, rxMod, out_var, grid, cores, g = NULL) {
+  g     <- g %||% .adghGrid(pars, pinfo, grid)
   pm    <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp    <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
                         out_var, pm, cores, pinfo$nDisplayProgress, pinfo$sigdig)
@@ -561,21 +580,23 @@
   W
 }
 
-# Restrict a full (m + q) weight to the rows a `var` study reports.
-.admWeightSel <- function(W, m, method) {
-  if (!identical(method, "var")) return(W)
-  ij  <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
-  keep <- c(seq_len(m), m + which(ij[, 1L] == ij[, 2L]))
-  W[keep, keep, drop = FALSE]
-}
-
 # d(yt)/dPsi and d(Vt)/dPsi per study, by central difference on the MOMENTS.
 #
 # These are analytic from what the gradient machinery already forms; this is the
 # reference until that extraction is written. Differencing the MOMENTS rather
 # than the objective keeps it well conditioned, and it runs once, post-fit.
+#
+# `h` is only the FALLBACK step now, used verbatim where it always was. When
+# `nll_fn` -- the estimator's own objective, already in scope at every call site
+# for the Hessian FD -- is supplied, the step is measured per parameter by
+# .admShi21Steps() instead, the same convention every other finite difference in
+# the package follows (NEWS.md: "not optional"). This differences the MOMENTS,
+# not the objective, but the objective's noise level is still the right proxy
+# for how finely `p` can be perturbed before the perturbation is swamped by
+# solver noise -- and measuring against a fixed 1e-5 regardless of parameter
+# scale is exactly the failure mode Shi21 exists to avoid.
 .admMomentDeriv <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
-                            h = 1e-5, mom_fn = NULL) {
+                            h = 1e-5, mom_fn = NULL, nll_fn = NULL) {
   # `mom_fn` is the ESTIMATOR's moment map, and it is separate from the ensemble
   # the weight is built on for a reason: G describes the objective that was
   # minimised, Omega describes the law the data actually came from. For adgh the
@@ -591,16 +612,21 @@
       .admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores))
   }
   p  <- length(p_hat)
+  hv <- if (is.null(nll_fn)) rep(h, p) else
+    tryCatch(.admShi21Steps(nll_fn, p_hat, seq_len(p), fallback = rep(h, p),
+                            .var.name = "admMomentDeriv"),
+             error = function(e) rep(h, p))
   b  <- mom(p_hat)
   dE <- lapply(b, function(x) matrix(0, length(x$E), p))
   dV <- lapply(b, function(x) rep(list(matrix(0, nrow(x$V), ncol(x$V))), p))
   for (k in seq_len(p)) {
-    a  <- p_hat; a[k]  <- a[k] + h
-    cc <- p_hat; cc[k] <- cc[k] - h
+    hk <- hv[[k]]
+    a  <- p_hat; a[k]  <- a[k] + hk
+    cc <- p_hat; cc[k] <- cc[k] - hk
     ma <- mom(a); mc <- mom(cc)
     for (i in seq_along(b)) {
-      dE[[i]][, k] <- (ma[[i]]$E - mc[[i]]$E) / (2 * h)
-      dV[[i]][[k]] <- (ma[[i]]$V - mc[[i]]$V) / (2 * h)
+      dE[[i]][, k] <- (ma[[i]]$E - mc[[i]]$E) / (2 * hk)
+      dV[[i]][[k]] <- (ma[[i]]$V - mc[[i]]$V) / (2 * hk)
     }
   }
   list(E = lapply(b, `[[`, "E"), V = lapply(b, `[[`, "V"), dE = dE, dV = dV)
@@ -637,8 +663,15 @@
 # .admCalcCov do it, and why an incomplete source covariance once cost a fit its
 # sandwich in silence. The message travels out on an attribute and each driver
 # emits it beside the covMethod label, where it reaches the user.
-.admSandwichCond <- function(H, nms = NULL) {
-  e <- tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
+#
+# `eig_dec`: every driver already has `eigen(H, symmetric = TRUE)` in hand --
+# .admReduceNpdOmega() built it deciding whether to drop the omega block, on
+# the SAME (possibly-reduced) H this function is handed -- so recomputing an
+# O(P^3) eigendecomposition of the identical matrix here on every "r,s" fit is
+# pure waste. Supplied, it is used as-is; NULL (a caller with no eigendecomp on
+# hand, e.g. a test) falls back to computing it, unchanged from before.
+.admSandwichCond <- function(H, nms = NULL, eig_dec = NULL) {
+  e <- eig_dec %||% tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
   if (is.null(e)) return(NULL)
   ev <- e$values
   mx <- max(abs(ev))
@@ -672,7 +705,8 @@
 # moment solve. The caller falls back to "r" and says so.
 .admSandwichCov <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
                             H, md = NULL, keep = NULL, mom_fn = NULL,
-                            sensModel = NULL, nms = NULL, Hinv = NULL) {
+                            sensModel = NULL, nms = NULL, Hinv = NULL,
+                            nll_fn = NULL, eig_dec = NULL) {
   # H is checked FIRST, and here rather than being left to solve() inside .admSandwich,
   # whose tryCatch is there for a singular matrix and cannot tell that apart from
   # an H that was never supplied. A caller that forgot the argument then gets a
@@ -686,7 +720,7 @@
   # so a sandwich that goes on to degrade for an unrelated reason returns NULL
   # and takes the conditioning message with it, rather than warning about a
   # covariance the fit never reported.
-  .cond <- .admSandwichCond(H, nms)
+  .cond <- .admSandwichCond(H, nms, eig_dec = eig_dec)
   pars <- tryCatch(.admUnpack(p_hat, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(NULL)
   # A joint (same-subject, multi-output) unit stacks several outputs into one
@@ -710,18 +744,22 @@
                                  out_var, grid, cores), error = function(e) NULL)
   md <- md %||% tryCatch(
     .admMomentDeriv(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
-                    mom_fn = mom_fn),
+                    mom_fn = mom_fn, nll_fn = nll_fn),
     error = function(e) NULL)
   if (is.null(md)) return(NULL)
   G <- Om <- vector("list", length(studies))
+  # .adghGrid(pars, pinfo, grid) is invariant across this loop (same pars, same
+  # grid for every study), so it is built once here rather than once per study
+  # inside .admAdfParts().
+  g_node <- .adghGrid(pars, pinfo, grid)
   for (i in seq_along(studies)) {
     s  <- studies[[i]]
     pt <- tryCatch(.admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var,
-                                grid, cores), error = function(e) NULL)
+                                grid, cores, g = g_node), error = function(e) NULL)
     if (is.null(pt) || is.null(pt$Dv)) return(NULL)
-    N <- as.numeric(s$n); m <- length(pt$E)
-    Om[[i]] <- .admWeightSel(
-      .admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4), m, s$method)
+    N <- as.numeric(s$n)
+    Om[[i]] <- .admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4,
+                                 var_only = identical(s$method, "var"))
     G[[i]]  <- .admScoreCross(md$E[[i]], md$V[[i]], md$dE[[i]], md$dV[[i]], s, N)
     if (is.null(G[[i]])) return(NULL)
     # H may have been reduced to the struct+sigma sub-block (.admReduceNpdOmega),
@@ -757,6 +795,17 @@
     return(paste("the study stacks several outputs per subject (a joint unit),",
                  "whose conditional law the weight's node ensemble does not",
                  "describe"))
+  # .admSandwichGrid() refuses rather than degrade to a coarser-than-floor grid
+  # once nq^n_eta cannot be covered at nq = 3 (n_eta >= 8, see its own comment).
+  # Checked here, up front, for the same reason as every other cause below: the
+  # driver's tryCatch(..., error = NULL) around the grid builder cannot tell
+  # this refusal apart from an actual failure, so without this check it fell
+  # through to the generic "could not be computed" warning instead.
+  if (is.null(.admSandwichGrid(pinfo)))
+    return(sprintf(paste("the model has %d random effects, too many for the",
+                         "sandwich's capped product quadrature grid (floored",
+                         "at 3 nodes/eta, capped at 5000 nodes total) to cover"),
+                   pinfo$n_eta %||% NA_integer_))
   sv <- tryCatch(.admUnpack(p_hat, pinfo)$sigma_var, error = function(e) NULL)
   if (is.null(sv)) return(NULL)
   for (s in studies) {
@@ -776,6 +825,19 @@
       return(paste("the residual is Student-t with nu <= 4, which has no finite",
                    "kurtosis -- the sampling law of the reported V then has no",
                    "variance for the weight to be made of"))
+    # TBS's conditional mean is nonlinear in f, so .admAdfCondMom integrates the
+    # residual's law over the node ensemble rather than folding nu/(nu-2) into a
+    # variance the way the combined forms do -- and there is no closed form for
+    # that integral under a t rather than a normal law, at any nu. See the TBS
+    # branch of .admAdfCondMom, which refuses on exactly this condition.
+    if (any(arr$form == .ADM_RESID_TBS & is.finite(vm) &
+            abs(vm - 1) > sqrt(.Machine$double.eps)))
+      return(paste("the endpoint composes a transform-both-sides law",
+                   "(boxCox/yeoJohnson/logitNorm/probitNorm) with a Student-t",
+                   "residual; the transformed residual's third and fourth",
+                   "moments have no closed form under a t rather than a normal",
+                   "law, at any nu -- the objective keeps composing it as an",
+                   "inflated-sd normal and the weight cannot"))
   }
   NULL
 }
@@ -791,8 +853,25 @@
 # Shared by adgh/admc/adfo's *CalcCov -- what differs between them is how `sw`
 # is BUILT (adgh's own grid + sensModel; admc's quadrature grid + sensModel;
 # adfo's quadrature grid + moment map), not what happens to it once built.
+#
+# The acceptance gate is a full PSD check, not a diagonal one. J = sum(G Om G')
+# is only guaranteed PSD if every per-study Om is -- and .admAdfAlignDv's
+# rescaling (pow()/combined() with an exponent outside {0.5, 1}) is not itself
+# checked for that, so a positive diagonal does not imply a valid covariance.
+# Reuses .ADM_NPD_RCOND (covreport.R), the same reciprocal-condition-number
+# tolerance the Hessian's own singularity test uses, so "PSD enough to trust"
+# means the same thing on both sides of the sandwich.
+.admIsPsd <- function(m) {
+  e <- tryCatch(eigen(m, symmetric = TRUE, only.values = TRUE)$values,
+               error = function(e) NULL)
+  if (is.null(e) || !length(e) || any(!is.finite(e))) return(FALSE)
+  mx <- max(abs(e))
+  if (!is.finite(mx) || mx <= 0) return(FALSE)
+  min(e) >= -.ADM_NPD_RCOND * mx
+}
+
 .admApplySandwich <- function(sw, cov_r, label, na = NULL) {
-  ok <- !is.null(sw) && all(is.finite(sw$cov)) && all(diag(sw$cov) > 0)
+  ok <- !is.null(sw) && all(is.finite(sw$cov)) && .admIsPsd(sw$cov)
   if (!ok) {
     if (!is.null(na))
       message(sprintf(paste("  covMethod = \"r,s\" does not apply to this model:",
@@ -804,6 +883,23 @@
     return(list(cov_full = cov_r, sw_used = FALSE, sw_cond = NULL))
   }
   list(cov_full = (sw$cov + t(sw$cov)) / 2, sw_used = TRUE, sw_cond = attr(sw, "illcond"))
+}
+
+# Wires the sandwich into a *CalcCov driver: refuse via .admSandwichNA(), build
+# `sw` from `build()` inside a tryCatch, and fold the result into `cov_r` via
+# .admApplySandwich(). Shared because this ~15-line block was copy-pasted
+# near-verbatim across adfo/adgh/admc's *CalcCov -- what differs between them is
+# how the sandwich's own ingredients (grid, sensModel or mom_fn) get built, which
+# is exactly what `build` (a zero-arg closure over the caller's locals) captures.
+# Returns list(cov_full, sw_used, sw_cond), ready to assign back at the call site.
+.admWireSandwich <- function(p_hat, pinfo, studies, out_var, cov_r, label, build) {
+  # A model the correction does not APPLY to (ar(), ordinal, a joint unit, a t
+  # with nu <= 4, TBS + t() at any nu, 8+ random effects) is reported as such
+  # and not attempted -- see .admSandwichNA.
+  .sw_na <- tryCatch(.admSandwichNA(p_hat, pinfo, studies, out_var),
+                     error = function(e) NULL)
+  sw <- if (!is.null(.sw_na)) NULL else tryCatch(build(), error = function(e) NULL)
+  .admApplySandwich(sw, cov_r, label, na = .sw_na)
 }
 
 # Finalises the covariance a driver reports: warns once if none could be
@@ -866,17 +962,34 @@
 # between estimators is this function. `V` is the full predicted covariance even
 # for a `method = "var"` study: .admScoreCross takes the diagonal itself, which
 # keeps the branch logic in one place rather than two.
+#
+# .admMomentDeriv's central-difference loop calls this 2p times (once per
+# +h/-h perturbation of every struct/sigma/omega parameter), each of which
+# used to cost .adfoGetMuJ() -- and so its own rxSolve -- per study: the "each
+# configuration cost its own rxSolve" anti-pattern .adfoGetMuJBatch exists to
+# collapse, reintroduced here by a loop that .adfoGetMuJBatch itself cannot
+# see into. But .adfoGetMuJ's result depends on pp ONLY through pars$struct
+# and, for a TBS endpoint whose lambda is an estimated sigma parameter, that
+# one sigma entry (.adfoMuJKey; see its own comment for why -- the ONLY place
+# a residual parameter feeds the structural solve). Every sigma/omega
+# direction this FD loop perturbs OTHER than that leaves both inputs at the
+# base point, so memoizing on .adfoMuJKey via .adfoMuJMemo -- exactly what
+# .adfoNLL()/.adfoGrad() already do for the same reason -- collapses those
+# directions' solves to one, reused, rather than reissuing them.
 .admAdfoMomFn <- function(pinfo, studies, sensModel, rxMod, out_var,
                           params_list, cores) {
+  cache <- new.env(parent = emptyenv())
   function(pp) {
     pars <- .admUnpack(pp, pinfo)
+    key  <- .adfoMuJKey(pars, sensModel)
     lapply(seq_along(studies), function(i) {
       s   <- studies[[i]]
       ov  <- s$output %||% out_var
       n_t <- length(s$times)
       arr <- .admResidRows(pinfo, ov, pars$sigma_var, n_t)
-      mj  <- .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
-                         params_list[[i]], cores)
+      mj  <- .adfoMuJMemo(cache, i, key, function()
+        .adfoGetMuJ(pars, pinfo, s, sensModel, rxMod, ov,
+                    params_list[[i]], cores))
       vp  <- .adfoVpred(mj$mu, mj$J, pars$L, arr, n_t, pinfo$n_eta, s$times)
       list(E = vp$mu_sigma, V = vp$V)
     })

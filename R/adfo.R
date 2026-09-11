@@ -829,22 +829,22 @@
   sw_used <- FALSE
   sw_cond <- NULL
   if (isTRUE(sandwich)) {
-    # A model the correction does not APPLY to (ar(), ordinal, a joint unit, a t
-    # with nu <= 4) is reported as such and not attempted -- see .admSandwichNA.
-    .sw_na <- tryCatch(.admSandwichNA(p_hat, pinfo, studies, output_var),
-                       error = function(e) NULL)
-    sw <- if (!is.null(.sw_na)) NULL else tryCatch({
-      grid <- .admSandwichGrid(pinfo)
-      if (is.null(grid)) stop("no ensemble to weight against")
-      mf <- .admAdfoMomFn(pinfo, studies, sensModel, rxMod, output_var,
-                          params_list, cores)
-      # `rxMod` is adfo's plain simulation model (its FD fallback solves through
-      # it), which is exactly what .admAdfParts needs for the node ensemble.
-      .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
-                      H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov, mom_fn = mf,
-                      Hinv = Hinv)
-    }, error = function(e) NULL)
-    res      <- .admApplySandwich(sw, cov_full, "adfoCalcCov", na = .sw_na)
+    # The grid build cannot fail with NULL here for a reason .admWireSandwich's
+    # own .admSandwichNA() call has not already caught -- see the matching note
+    # in .admCalcCov().
+    res <- .admWireSandwich(p_hat, pinfo, studies, output_var, cov_full, "adfoCalcCov",
+      function() {
+        grid <- .admSandwichGrid(pinfo)
+        mf <- .admAdfoMomFn(pinfo, studies, sensModel, rxMod, output_var,
+                            params_list, cores)
+        # `rxMod` is adfo's plain simulation model (its FD fallback solves
+        # through it), which is exactly what .admAdfParts needs for the node
+        # ensemble.
+        .admSandwichCov(p_hat, pinfo, studies, rxMod, output_var, grid, cores,
+                        H = H, keep = match(nms_cov, names(p_hat)), nms = nms_cov,
+                        mom_fn = mf, Hinv = Hinv, nll_fn = nll_fn,
+                        eig_dec = eig_dec)
+      })
     cov_full <- res$cov_full; sw_used <- res$sw_used; sw_cond <- res$sw_cond
   }
   dimnames(cov_full) <- list(nms_cov, nms_cov)
@@ -1659,7 +1659,7 @@ nlmixr2Est.adfo <- function(env, ...) {
 
   p_hat  <- setNames(opt$solution, names(ov$p0))
   t0_cov <- proc.time()
-  .want_cov <- .ctl$covMethod %in% c("r", "r,s")
+  .want_cov <- .admCovWantsHessian(.ctl$covMethod)
   .cov <- if (.want_cov) {
     # struct + sigma + OMEGA: the Hessian spans all three, so the evaluation
     # count must too.
@@ -1699,14 +1699,14 @@ nlmixr2Est.adfo <- function(env, ...) {
     # differences is always the analytic one.
     hess_label  <- if (use_grad_cov) ", Analytical-Hessian" else ""
     message(sprintf("  Computing covariance (R method%s%s, %d %s)", hess_label,
-                    if (.ctl$covMethod == "r,s") ", sandwich" else "",
+                    if (.admCovWantsSandwich(.ctl$covMethod)) ", sandwich" else "",
                     n_evals, evals_label))
     tryCatch(
       .adfoCalcCov(p_hat, pinfo, studies, sensModel, rxMod, output_var,
                    params_list, cores, use_grad = use_grad_cov,
                    grad_h = .ctl$grad_h, cov_h = .ctl$cov_h,
                    cov_h_outer = .ctl$cov_h_outer,
-                   sandwich = .ctl$covMethod == "r,s"),
+                   sandwich = .admCovWantsSandwich(.ctl$covMethod)),
       error = function(e) { warning("adfoCalcCov failed: ", conditionMessage(e)); NULL })
   } else NULL
   # Warns if no covariance could be computed, re-raises any sandwich

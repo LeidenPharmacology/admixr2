@@ -1314,10 +1314,11 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # and therefore cannot poison anything. Cold cache keeps the old ordering.
   .sim_warm <- isTRUE(tryCatch(file.exists(.admModelCacheFile(.ui)),
                                error = function(e) FALSE))
-  # `%in% c("r", "r,s")`, NOT `== "r"`: both ask for a Hessian, so both need the
-  # sens model. An equality test here is the same shape of bug the note above
-  # describes -- it would silently take the FD-Hessian path for a "r,s" fit.
-  sensModel <- if ((.ctl$covMethod %in% c("r", "r,s") && .ctl$grad == "analytical") || !.sim_warm)
+  # .admCovWantsHessian(), NOT `== "r"`: both "r" and "r,s" ask for a Hessian,
+  # so both need the sens model. An equality test here is the same shape of bug
+  # the note above describes -- it would silently take the FD-Hessian path for
+  # a "r,s" fit.
+  sensModel <- if ((.admCovWantsHessian(.ctl$covMethod) && .ctl$grad == "analytical") || !.sim_warm)
     tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
   else NULL
 
@@ -1342,7 +1343,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
     cov_label <- if (!is.null(sensModel)) "+Sens-Hessian" else "+FD-Hessian"
     grad_inner_label <- if (.ctl$grad == "fd") "central FD" else "analytic"
     paste0(grad_inner_label,
-           if (.ctl$covMethod %in% c("r", "r,s")) cov_label else "")
+           if (.admCovWantsHessian(.ctl$covMethod)) cov_label else "")
   }
   message("=== admixr2: Aggregate Data Modeling (IR-MC) ===")
   message(sprintf("  Studies: %d | MC samples: %d | Phases: %d | Iters/phase: %d | Expansion: %.2f | Grad: %s | Restarts: %d",
@@ -1430,7 +1431,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
   p_hat_irmc <- setNames(best_p, names(ov$p0))
   t0_cov <- proc.time()
-  .want_cov <- .ctl$covMethod %in% c("r", "r,s")
+  .want_cov <- .admCovWantsHessian(.ctl$covMethod)
   .cov <- if (.want_cov) {
     # struct + sigma + OMEGA: .admCalcCov()'s Hessian spans all three, so the
     # advertised evaluation count must too (it understated it otherwise).
@@ -1447,7 +1448,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
     hess_label  <- if (!use_grad_cov) "" else if (!is.null(sensModel))
       ", Sens-Hessian" else ", FD-Hessian"
     message(sprintf("  Computing covariance (R method, MC NLL%s%s, %d %s)",
-                    hess_label, if (.ctl$covMethod == "r,s") ", sandwich" else "",
+                    hess_label, if (.admCovWantsSandwich(.ctl$covMethod)) ", sandwich" else "",
                     n_evals, evals_label))
     tryCatch(
       .admCalcCov(p_hat_irmc, pinfo, studies_snap, z_list, rxMod, output_var,
@@ -1455,7 +1456,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
                   use_grad = use_grad_cov, grad_h = .ctl$grad_h,
                   cov_h = .ctl$cov_h, cov_h_outer = .ctl$cov_h_outer,
                   sensModel = sensModel, sampling = .ctl$sampling,
-                  sandwich = .ctl$covMethod == "r,s"),
+                  sandwich = .admCovWantsSandwich(.ctl$covMethod)),
       error = function(e) {
         warning("admCalcCov (adirmc) failed: ", conditionMessage(e))
         NULL

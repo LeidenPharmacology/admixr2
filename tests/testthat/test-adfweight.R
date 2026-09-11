@@ -432,6 +432,36 @@ test_that("a model the sandwich does not APPLY to is a message, not a warning", 
   expect_equal(res$cov_full, cov_r)
   expect_warning(admixr2:::.admApplySandwich(NULL, cov_r, "adghCalcCov"),
                  "could not be computed")
+
+  # TBS + t(nu > 4): nu <= 4 is caught above, but .admAdfCondMom's TBS branch
+  # refuses ANY t() combination regardless of nu -- the third/fourth moments it
+  # would need are a normal's, not a t's, at every nu. Before this was added to
+  # .admSandwichNA, this exact model fell through to the generic "could not be
+  # computed" warning instead of the graceful message.
+  tbst <- mk(function() {
+    ini({ tcl <- log(1); tv <- log(10); eta.cl ~ 0.16; aa <- 0.4
+          lam <- fix(0.5); nu <- fix(6) })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv); cp <- linCmt()
+            cp ~ add(aa) + boxCox(lam) + t(nu) })
+  })
+  na_tbst <- with(tbst, admixr2:::.admSandwichNA(p, pinfo, studies, ov))
+  expect_true(is.character(na_tbst))
+  expect_match(na_tbst, "transform-both-sides")
+})
+
+test_that(".admSandwichNA reports the n_eta >= 8 grid exhaustion as a reason", {
+  # .admSandwichGrid() refuses (returns NULL) once the capped product grid
+  # cannot cover the etas (n_eta >= 8 at the nq = 3 floor, see the pinning test
+  # above). Before this check was added to .admSandwichNA, the driver's
+  # tryCatch(..., error = NULL) around the grid builder could not tell that
+  # refusal apart from a real failure, so an 8+ eta model got the generic
+  # "could not be computed" warning instead of a named reason.
+  na <- admixr2:::.admSandwichNA(numeric(0), list(n_eta = 8L), list(), "cp")
+  expect_true(is.character(na))
+  expect_match(na, "8 random effects")
+  # Below the threshold the grid check does not fire, and control passes to the
+  # per-study machinery (which returns NULL here for lack of any studies).
+  expect_null(admixr2:::.admSandwichNA(numeric(0), list(n_eta = 3L), list(), "cp"))
 })
 
 test_that("the analytic moment Jacobian matches the finite-difference oracle", {
@@ -678,4 +708,83 @@ test_that("the information equality holds on a TBS endpoint too", {
       }
     }
   }
+})
+
+test_that(".admAdfWeightFast(var_only = TRUE) matches the full weight's diagonal selection", {
+  # A `method = "var"` study only ever needs the mean block plus the DIAGONAL
+  # of the covariance-summary block (.admScoreCross's own `isv`/`ij` restriction
+  # already follows this for G). var_only computes that subset directly rather
+  # than building the full q = m(m+1)/2 vech and discarding the rest -- this
+  # pins the two routes to agree exactly, standing in for the .admWeightSel()
+  # post-hoc trim this replaced.
+  set.seed(11)
+  m  <- 5L; Q <- 14L
+  C  <- matrix(stats::rnorm(Q * m), Q, m); C <- sweep(C, 2L, colMeans(C))
+  w  <- stats::runif(Q); w <- w / sum(w)
+  Dv <- matrix(stats::runif(Q * m, 0.02, 0.3), Q, m)
+  T3 <- matrix(stats::rnorm(Q * m, 0, 0.05), Q, m)
+  Q4 <- 3 * Dv^2 + matrix(stats::runif(Q * m, 0.001, 0.01), Q, m)
+  full <- admixr2:::.admAdfWeightFast(C, w, Dv, 180, T3, Q4)
+  fast <- admixr2:::.admAdfWeightFast(C, w, Dv, 180, T3, Q4, var_only = TRUE)
+  ij   <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
+  keep <- c(seq_len(m), m + which(ij[, 1L] == ij[, 2L]))
+  expect_equal(dim(fast), rep(2L * m, 2L))
+  expect_equal(fast, full[keep, keep, drop = FALSE], tolerance = 1e-12)
+})
+
+test_that(".admApplySandwich rejects a positive-diagonal but non-PSD covariance", {
+  # J = sum(G Om G') is only guaranteed PSD if every per-study Om is -- and
+  # .admAdfAlignDv's pow()/combined() rescaling is not itself checked for that,
+  # so a positive diagonal does not imply a valid covariance. This pins the
+  # acceptance gate against exactly the matrix shape a diagonal-only check
+  # would miss: positive diagonal, one negative eigenvalue.
+  M <- matrix(c(1, 1.5, 1.5, 1), 2, 2)
+  expect_true(all(diag(M) > 0))
+  expect_true(any(eigen(M, symmetric = TRUE, only.values = TRUE)$values < 0))
+  expect_false(admixr2:::.admIsPsd(M))
+  expect_true(admixr2:::.admIsPsd(diag(2)))
+
+  cov_r <- diag(2) * 5
+  expect_warning(res <- admixr2:::.admApplySandwich(list(cov = M), cov_r,
+                                                     "adghCalcCov"),
+                 "could not be computed")
+  expect_false(res$sw_used)
+  expect_equal(res$cov_full, cov_r)
+  # a genuinely PSD covariance is still accepted
+  ok <- admixr2:::.admApplySandwich(list(cov = diag(c(1, 2))), cov_r, "adghCalcCov")
+  expect_true(ok$sw_used)
+})
+
+test_that(".admMomentDeriv measures its FD step from nll_fn when supplied", {
+  # h = 1e-5 was a hardcoded step regardless of parameter or noise scale; the
+  # package's convention (NEWS.md: "not optional") is to measure it from the
+  # objective's own noise level via .admShi21Steps(), the same as every other
+  # FD site. A synthetic mom_fn with real curvature (d3E/dp1^3 = 6, constant)
+  # and a noisy nll_fn (the injected-noise construction
+  # test-optim-steps-shi.R's oracle test uses) isolates the mechanism from any
+  # ODE-solve noise of its own: central difference of p1^3 is exactly
+  # 3*p1^2 + h^2, so a measured step orders of magnitude above 1e-5 moves dE by
+  # more than all.equal()'s tolerance, while a genuinely correct derivative
+  # would stay close at either scale.
+  set.seed(3)
+  p_hat  <- c(1.6, -2.4)
+  mom_fn <- function(pp)
+    list(list(E = pp[1]^3 - 2 * pp[2]^2, V = matrix((pp[1] + pp[2])^2, 1, 1)))
+  noisy_nll <- function(q) sum(exp(q)) + 0.05 * (2 * stats::runif(1) - 1)
+
+  fixed <- admixr2:::.admMomentDeriv(p_hat, list(), list(list()), NULL, NULL,
+                                     NULL, 1L, mom_fn = mom_fn)
+  set.seed(3)
+  meas  <- admixr2:::.admMomentDeriv(p_hat, list(), list(list()), NULL, NULL,
+                                     NULL, 1L, mom_fn = mom_fn, nll_fn = noisy_nll)
+  expect_false(is.null(meas))
+  expect_false(isTRUE(all.equal(meas$dE, fixed$dE)))
+
+  # a broken nll_fn degrades to the fixed step rather than propagating an error
+  expect_warning(
+    broken <- admixr2:::.admMomentDeriv(p_hat, list(), list(list()), NULL, NULL,
+                                        NULL, 1L, mom_fn = mom_fn,
+                                        nll_fn = function(q) stop("no objective")),
+    "could not estimate")
+  expect_equal(broken$dE, fixed$dE, tolerance = 1e-8)
 })

@@ -128,6 +128,19 @@
 # number of 5.6e11) -- so a tighter 1e-12 threshold, tried first, did NOT fire.
 .ADM_NPD_RCOND <- sqrt(.Machine$double.eps)
 
+# Whether `covMethod` needs the Hessian at all, and whether it wants the
+# SANDWICH on top of it. Two different questions -- "r" and "r,s" both invert
+# H (only "none" skips it); only "r,s" also builds the sandwich -- spelled out
+# as `%in% c("r", "r,s")` and `== "r,s"` at ~9 sites across adfo.R/adgh.R/
+# admc.R/adirmc.R rather than shared. adirmc.R carries its own comment noting
+# that an equality test in place of the `%in%` one is "the same shape of bug"
+# as the r,s-vs-r fallback confusion that once cost it a silently wrong
+# covariance path -- a missed site among many raw comparisons is exactly how
+# that shape reappears. One predicate for each removes the duplication rather
+# than fixing it at the one site that was already caught.
+.admCovWantsHessian  <- function(covMethod) covMethod %in% c("r", "r,s")
+.admCovWantsSandwich <- function(covMethod) identical(covMethod, "r,s")
+
 .admReduceNpdOmega <- function(H, H_eigs, eig_dec, nms_cov, n_o, n_sub) {
   .singular <- function(e) {
     if (is.null(e) || !length(e) || any(!is.finite(e))) return(TRUE)
