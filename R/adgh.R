@@ -1215,7 +1215,11 @@ adghControl <- function(
 
   addProp   <- match.arg(addProp)
   grad      <- match.arg(grad)
-  covMethod <- match.arg(covMethod)
+  # A model source is not a sample, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
 
   checkmate::assertList(studies)
   checkmate::assertIntegerish(n_nodes,     lower = 1L, len = 1)

@@ -1448,7 +1448,10 @@ one_cmt_transit_fn <- function() {
   # method = "gh" is deterministic: an MC-generated V carries sampling noise of
   # its own, which shows up as a departure from J = 2H that has nothing to do
   # with the estimator.
-  st <- datagen(list(s1 = list(n = 200L, times = times,
+  # .admDatagenSim(), NOT datagen(): a SIMULATED stand-in, not a published
+  # model. The sandwich is exactly what these tests measure, and datagen()
+  # marks its output a model source, for which no standard error is reported.
+  st <- admixr2:::.admDatagenSim(list(s1 = list(n = 200L, times = times,
                                ev = rxode2::et(amt = 100))), sand_fn,
                 control = datagenControl(method = "gh", n_nodes = 9L))
 

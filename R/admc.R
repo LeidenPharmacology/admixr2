@@ -381,7 +381,11 @@ admControl <- function(
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
   checkmate::assertNumeric(grad_bounds, lower = 0,  len = 1, .var.name = "grad_bounds")
-  covMethod <- match.arg(covMethod)
+  # A model source is not a sample, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
   checkmate::assertIntegerish(cov_n_sim,   lower = 1L, len = 1, .var.name = "cov_n_sim")
   checkmate::assertIntegerish(n_restarts,  lower = 1L, len = 1, .var.name = "n_restarts")
   checkmate::assertNumeric(restart_sd,     lower = 0,  len = 1, .var.name = "restart_sd")
