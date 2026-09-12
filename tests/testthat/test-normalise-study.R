@@ -7,6 +7,22 @@ test_that("Vector V expanded to diagonal matrix with method = 'var'", {
   expect_equal(ns$v_diag, c(0.1, 0.2))
 })
 
+test_that("stratum resolution survives normalisation and flattening", {
+  flat <- list(E = 1, V = 1, n = 10L, times = 1,
+               .adm_strata_nodes = 9L)
+  unit <- function(s)
+    admixr2:::.admFlattenStudies(list(admixr2:::.admNormaliseStudy(s, "s")))[[1L]]
+
+  expect_identical(unit(flat)[[".adm_strata_nodes"]], 9L)
+  expect_identical(unit(list(n = 10L, .adm_strata_nodes = 9L,
+                             observations = list(a = flat[c("E", "V", "times")])))
+                   [[".adm_strata_nodes"]], 9L)
+  expect_identical(unit(list(n = 10L, ev = "EV", joint = TRUE,
+                             .adm_strata_nodes = 9L,
+                             observations = list(a = flat[c("E", "V", "times")])))
+                   [[".adm_strata_nodes"]], 9L)
+})
+
 test_that("Diagonal matrix auto-detected as method = 'var'", {
   s  <- list(E = c(1.0, 2.0), V = diag(c(0.1, 0.2)), n = 50L, times = c(1, 2))
   ns <- admixr2:::.admNormaliseStudy(s, "s2")

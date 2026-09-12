@@ -61,6 +61,7 @@ test_that("parallel: fit NLL matches sequential (workers = 2, same seed)", {
 
   expect_equal(fit_par$objective, fit_seq$objective, tolerance = 1e-2,
                label = "parallel NLL", expected.label = "sequential NLL")
+  expect_equal(admixr2:::.adm_worker_env$n, 0L)
 })
 
 # The augmented (theta-sensitivity) sens model has to survive the trip to a
@@ -97,26 +98,4 @@ test_that("parallel: theta-sens model survives the worker round-trip", {
   # same gradient path in both -> the same optimisation, to solver noise
   expect_equal(fit_par$objective, fit_seq$objective, tolerance = 1e-6,
                label = "parallel NLL", expected.label = "sequential NLL")
-})
-
-test_that("parallel: daemon pool is shut down after the fit", {
-  skip_on_cran()
-  skip_if_not_installed("rxode2")
-  skip_if_not_installed("nlmixr2")
-  skip_if_not_installed("mirai")
-
-  env <- .int_grad_setup()
-
-  suppressMessages(
-    nlmixr2est::nlmixr2(one_cmt_fn, admData(), est = "admc",
-                        control = admControl(studies    = env$studies,
-                                             n_sim      = 100L,
-                                             maxeval    = 3L,
-                                             seed       = 1L,
-                                             grad       = "sens",
-                                             n_restarts = 2L,
-                                             workers    = 2L))
-  )
-
-  expect_equal(admixr2:::.adm_worker_env$n, 0L)
 })

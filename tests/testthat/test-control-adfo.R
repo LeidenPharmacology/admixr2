@@ -29,11 +29,6 @@ test_that("adfoControl(): grad = 'fd' defaults to LBFGS", {
   expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
 })
 
-test_that("adfoControl(): grad = 'fd' defaults to LBFGS", {
-  ctl <- adfoControl(grad = "fd")
-  expect_equal(ctl$algorithm, "NLOPT_LD_LBFGS")
-})
-
 test_that("adfoControl(): grad = 'none' defaults to BOBYQA", {
   ctl <- adfoControl(grad = "none")
   expect_equal(ctl$algorithm, "NLOPT_LN_BOBYQA")

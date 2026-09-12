@@ -90,14 +90,7 @@
          "drops all but the first. Give each study its own name.",
          call. = FALSE)
   names(studies) <- .nm
-  # MATERIALISE FIRST, BEFORE ANYTHING INSPECTS A STUDY. admStudy() specs are
-  # lazy, and everything below this line reads study FIELDS -- so a spec has
-  # to become an ordinary study here, at the earliest shared point, not later
-  # in .admDriverUnits(). Doing it there left the checks below looking at an
-  # unmaterialised spec, which failed with a bare "subscript out of bounds"
-  # and only when a spec was MIXED with an already-generated study -- a
-  # pure-spec list happened to survive the same path, which is exactly the
-  # kind of partial coverage that hides a bug.
+  # Materialise before shared validation reads study fields.
   studies <- .admMaterialise(studies)
   pinfo <- .admDriverPinfo(.ui, .ctl)
   .admWarnCovIdentifiability(.ui, pinfo, studies)
@@ -229,6 +222,11 @@
   # three estimators that have no node grid, which makes the check a no-op
   # there rather than a special case.
   .fit$env$nNodes <- .ctl[["n_nodes"]]
+  # THE MONTE CARLO RESOLUTION, stamped for the same reason: admc/adirmc's
+  # objective is an average over `n_sim` draws, and that average moves with
+  # `n_sim` exactly as the quadrature objective moves with `n_nodes`. NULL for
+  # adfo/adgh, which makes the check below a no-op there.
+  .fit$env$nSim <- .ctl[["n_sim"]]
   .admRestoreCovNames(.fit, cov_nms)
   .fit$env$studies <- studies
   .extra <- .ret[[extra_field]]

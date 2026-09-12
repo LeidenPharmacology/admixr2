@@ -38,6 +38,7 @@ adghControl(
   cov_nodes = 7L,
   cov_integration = c("on", "sparse", "off"),
   cov_sparse_level = 3L,
+  xtol_rel = .Machine$double.eps^(1/2),
   ...
 )
 }
@@ -110,6 +111,8 @@ noise-free).}
 
 \item{covMethod}{\code{"r,s"} (the DEFAULT) computes the sandwich \verb{H^-1 J H^-1};
 \code{"r"} the numerical Hessian alone, \verb{2H^-1}; \code{"none"} skips the covariance.
+A study generated from a published model defaults to \code{"none"} and refuses
+an explicit covariance method because it has no sampling law.
 All three span the structural, residual-error and omega parameters. Omega is
 included because excluding it also biases the STRUCTURAL standard errors
 downward -- a theta carrying an eta is correlated with that eta's variance.
@@ -319,6 +322,9 @@ than reported.}
 five-point axes and the pairwise crosses, and each further level refines
 again at a growing weight-magnitude cost. See \code{cov_integration} for the
 measured accuracy and point counts.}
+
+\item{xtol_rel}{Relative parameter tolerance (default
+\code{sqrt(.Machine$double.eps)}).}
 
 \item{...}{Unused arguments (trigger an error).}
 }

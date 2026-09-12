@@ -1,4 +1,4 @@
-﻿# -- adgh: aggregate Gauss-Hermite quadrature estimator -------------------------
+# -- adgh: aggregate Gauss-Hermite quadrature estimator -------------------------
 # Computes population moments E[f] and Cov[f] for eta ~ N(0, Omega) by
 # deterministic Gauss-Hermite quadrature over the random-effects distribution,
 # then plugs them into the same aggregate MVN -2LL as adfo/admc.
@@ -1038,7 +1038,8 @@
   .res <- .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
                      use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
                      nll_fn, grad_fn, pinfo, print_progress, print,
-                     lock_rxMod = NULL)
+                     lock_rxMod = NULL,
+                     xtol_rel = pinfo$.xtol_rel %||% .Machine$double.eps^(1/2))
   # Carried back so .admRunRestarts() can report a worker that silently
   # dropped to a finite-difference gradient -- a daemon's own warning is
   # swallowed by mirai. NOT a new worker ARGUMENT: the signatures must stay
@@ -1192,6 +1193,8 @@
 #'   `NLOPT_GN_*`) turns the gradient off. Both emit a message.
 #' @param maxeval Maximum function evaluations (default 500).
 #' @param ftol_rel Relative tolerance (default `sqrt(.Machine$double.eps)`).
+#' @param xtol_rel Relative parameter tolerance (default
+#'   `sqrt(.Machine$double.eps)`).
 #' @param print Print-frequency for live progress (0 = silent).
 #' @param seed Random seed (used for restarts).
 #' @param cores OpenMP threads for `rxSolve()`. Defaults to
@@ -1216,6 +1219,8 @@
 #'   noise-free).
 #' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
 #'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   A study generated from a published model defaults to `"none"` and refuses
+#'   an explicit covariance method because it has no sampling law.
 #'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
@@ -1395,13 +1400,13 @@ adghControl <- function(
     sumProd       = FALSE,
     literalFix    = TRUE,
     returnAdmr    = FALSE,
-    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # TAIL arguments: inserting an argument mid-signature silently rebinds every
     # positional call -- adghControl(studies, 7L) used to set n_nodes = 7.
     resid_nodes   = 81L,
-    # LAST on purpose: a new argument inserted mid-signature silently rebinds
+    # TAIL-only: a new argument inserted mid-signature silently rebinds
     # every positional call. See the resid_nodes note in CLAUDE.md.
     cov_nodes     = 7L,
-    # LAST on purpose, as above. These two are the covariate-integration pair:
+    # TAIL-only, as above. These two are the covariate-integration pair:
     # cov_integration selects the method, cov_sparse_level the resolution of the
     # sparse one. cov_sparse_level occupies the slot the retired cov_taylor_h
     # had, so every positional call keeps its meaning.
@@ -1414,6 +1419,8 @@ adghControl <- function(
     # determines for itself.
     cov_integration  = c("on", "sparse", "off"),
     cov_sparse_level = 3L,
+    # LAST on purpose: new control arguments are appended.
+    xtol_rel = .Machine$double.eps^(1/2),
     ...) {
 
   .xtra <- list(...)
@@ -1423,14 +1430,15 @@ adghControl <- function(
 
   addProp   <- match.arg(addProp)
   grad      <- match.arg(grad)
-  # A model source is not a sample, so no standard error is available for a
+  checkmate::assertList(studies)
+  # A model source lacks source-parameter uncertainty, so no standard error is available for a
   # fit that includes one -- see .admResolveCovMethod(), which refuses an
-  # explicit covMethod rather than honouring it.
+  # explicit covMethod rather than honouring it. Runs AFTER assertList(): a
+  # malformed `studies` must fail on checkmate's message, not on a raw
+  # indexing error from inside the model-source helpers.
   covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
                                     !missing(covMethod))
   cov_integration <- match.arg(cov_integration)
-
-  checkmate::assertList(studies)
   checkmate::assertIntegerish(n_nodes,     lower = 1L, len = 1)
   # A residual quadrature needs a real grid. .adghNodes1() refuses m < 1, but it
   # accepts 1..4 happily and returns a rule that integrates nothing usefully --
@@ -1449,6 +1457,7 @@ adghControl <- function(
   # it against the installed nloptr, which is more than this line ever did.
   checkmate::assertIntegerish(maxeval,     lower = 1L, len = 1)
   checkmate::assertNumeric(ftol_rel,       lower = 0,  len = 1)
+  checkmate::assertNumeric(xtol_rel,       lower = 0,  len = 1)
   checkmate::assertIntegerish(print,       lower = 0L, len = 1)
   checkmate::assertIntegerish(seed,                    len = 1)
   checkmate::assertIntegerish(cores,       lower = 1L, len = 1)
@@ -1516,6 +1525,7 @@ adghControl <- function(
     algorithm     = algorithm,
     maxeval       = as.integer(maxeval),
     ftol_rel      = ftol_rel,
+    xtol_rel      = xtol_rel,
     print         = as.integer(print),
     seed          = as.integer(seed),
     cores         = as.integer(cores),
@@ -1787,6 +1797,7 @@ nlmixr2Est.adgh <- function(env, ...) {
                      lb = lb_sc, ub = ub_sc,
                      opts = list(algorithm = .ctl$algorithm,
                                  ftol_rel  = .ctl$ftol_rel,
+                                 xtol_rel  = .ctl$xtol_rel,
                                  maxeval   = .ctl$maxeval))
     })
     opt <- list(objective  = opt_raw$objective,
@@ -1897,7 +1908,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   .ret$extra      <- ""
   .ret$origData   <- studies
 
-  .ret$admExtra <- list(struct         = final$struct,
+  .ret$admExtra <- list(has_model_source = .admHasModelSource(studies),
+                        struct         = final$struct,
                         sigma_var      = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,

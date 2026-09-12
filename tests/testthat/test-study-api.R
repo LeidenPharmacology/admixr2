@@ -1,6 +1,4 @@
-# What a user has is a PAPER -- a parameter table with %RSE, a baseline
-# demographics table and a design -- not an nlmixr2 fit. These pin the
-# transcription, especially the conversions that are easy to do wrong by hand.
+# Published-study transcription and conversion checks.
 
 .sa_model <- function() {
   ini({ tcl <- log(5); tv <- log(50); bsex <- 0.15
@@ -27,9 +25,7 @@ test_that("admPopulation reads a baseline table in the forms papers print", {
 })
 
 test_that("a median and IQR inconsistent with the shape is SAID, not swallowed", {
-  # Real quartiles are rarely symmetric about the median on any scale, so only
-  # two of the three numbers can be honoured. Reproducing neither quartile
-  # silently is the failure this avoids.
+  # Inconsistent median/IQR inputs must be reported.
   expect_message(admPopulation(CRCL = c(median = 92, iqr = c(62, 118))),
                  "not consistent")
   expect_silent(admPopulation(CRCL = c(median = 92, iqr = c(70, 121))))
@@ -49,8 +45,7 @@ test_that("cor names PAIRS, so an independent covariate needs no padding", {
   expect_error(admPopulation(WT = c(mean = 75, sd = 16),
                              CRCL = c(mean = 92, sd = 24), cor = c(WT = 0.4)),
                "does not name two")
-  # a discrete covariate cannot be latently correlated -- a level would be a
-  # truncation of the latent normal rather than a point
+  # Discrete margins cannot use the continuous latent correlation model.
   expect_error(admPopulation(WT = c(mean = 75, sd = 16), SEX = c(male = 0.55),
                              cor = c(WT.SEX = 0.3)), "DISCRETE")
 })
@@ -80,9 +75,7 @@ test_that("a study is one currency or the other, and says which", {
 })
 
 test_that("a SEM is scaled back to a per-subject spread by sqrt(n)", {
-  # V is a per-SUBJECT covariance. Reading a standard error of the mean as an SD
-  # understates the spread by sqrt(n), which is the commonest error in
-  # digitising a published figure.
+  # V is per-subject, so SEM covariance is multiplied by n.
   s <- admStudy(E = c(9, 7, 5), sem = c(0.2, 0.15, 0.1), n = 100, dose = 200,
                 times = c(1, 4, 12), label = "s")
   expect_equal(sqrt(s$V), c(0.2, 0.15, 0.1) * 10, tolerance = 1e-12)
@@ -102,8 +95,7 @@ test_that("admStudies names studies from the objects they were built as", {
 
 test_that("materialising a spec is deferred, and matches datagen directly", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # Lazy on purpose: building a study solves nothing. What it eventually
-  # produces must be exactly what the equivalent datagen() call produces.
+  # Materialisation must match the equivalent datagen() call.
   s <- admStudy(model = .sa_model, est = c(tcl = log(5.2)),
                 n = 240, dose = 200, times = c(1, 4, 12),
                 population = admPopulation(WT = c(mean = 75, sd = 16),
@@ -123,9 +115,7 @@ test_that("materialising a spec is deferred, and matches datagen directly", {
 
 test_that("`by` expands into one study per level, splitting n by the proportion", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # A paper reporting results separately by sex really did report each
-  # subgroup, so each becomes an ordinary study with sex PINNED -- not a
-  # stratified one.
+  # Reported subgroups become ordinary pinned studies.
   s <- admStudy(model = .sa_model, n = 200, dose = 200, times = c(1, 4, 12),
                 population = admPopulation(WT = c(mean = 75, sd = 16),
                                            SEX = c(male = 0.6)),
@@ -152,11 +142,6 @@ test_that("materialising a subgroup refuses a colliding study name", {
                "duplicate name 'trial_SEX0'")
 })
 
-# ---------------------------------------------------------------------------
-# The default that would otherwise be a silent wrong answer, and the check that
-# has to happen at construction because the fit swallows it
-# ---------------------------------------------------------------------------
-
 test_that("a model source withdraws the standard error, explicit or not", {
   skip_if_not_installed("rxode2")
   src <- admStudy(model = .sa_model, n = 60, dose = 100, times = c(1, 4, 12),
@@ -164,19 +149,16 @@ test_that("a model source withdraws the standard error, explicit or not", {
                                              SEX = c(male = 0.5)))
   dat <- admStudy(E = c(1.6, 0.9, 0.3), sd = c(.4, .25, .1), n = 48,
                   dose = 100, times = c(1, 4, 12))
-  # A published model is a model source whatever it does or does not report
-  # about its own uncertainty -- the marker is the MODEL, because that is what
-  # makes the study something other than a sample.
+  # The model, not its uncertainty fields, marks a model source.
   expect_true(admixr2:::.admHasModelSource(admStudies(a = src, b = dat)))
   expect_false(admixr2:::.admHasModelSource(admStudies(b = dat)))
 
   st <- admStudies(a = src, b = dat)
   expect_equal(suppressMessages(
     admixr2:::.admResolveCovMethod("r", st, FALSE)), "none")
-  # AN EXPLICIT covMethod IS REFUSED, NOT HONOURED. Honouring one would leave
-  # an SE that tracks the `n` the analyst typed exactly one argument away.
-  expect_error(admixr2:::.admResolveCovMethod("r", st, TRUE), "published MODEL")
-  expect_error(admixr2:::.admResolveCovMethod("r,s", st, TRUE), "published MODEL")
+  # Explicit covariance methods are refused for model sources.
+  expect_error(admixr2:::.admResolveCovMethod("r", st, TRUE), "model-implied")
+  expect_error(admixr2:::.admResolveCovMethod("r,s", st, TRUE), "model-implied")
   # "none" is what the refusal asks for, so it passes through either way
   expect_equal(admixr2:::.admResolveCovMethod("none", st, TRUE), "none")
   expect_equal(admixr2:::.admResolveCovMethod("none", st, FALSE), "none")
@@ -186,7 +168,7 @@ test_that("a model source withdraws the standard error, explicit or not", {
                "r,s")
   # it reaches the control objects, which is where a fit reads it
   expect_equal(suppressMessages(adghControl(studies = st))$covMethod, "none")
-  expect_error(adghControl(studies = st, covMethod = "r"), "published MODEL")
+  expect_error(adghControl(studies = st, covMethod = "r"), "model-implied")
 })
 
 test_that("model-source provenance is recursive through observations", {
@@ -194,12 +176,8 @@ test_that("model-source provenance is recursive through observations", {
     cp = list(E = 1, V = 1, n = 20, times = 1, .adm_src = TRUE))))
   expect_true(admixr2:::.admHasModelSource(nested))
   expect_error(admixr2:::.admResolveCovMethod("r", nested, TRUE),
-               "published MODEL")
+               "model-implied")
 })
-
-# ---------------------------------------------------------------------------
-# Reading a baseline table off a cohort instead of transcribing it
-# ---------------------------------------------------------------------------
 
 .sa_cohort <- function(n = 6000L, rho = 0.5, p_male = 0.42, seed = 7L) {
   set.seed(seed)
@@ -213,9 +191,7 @@ test_that("model-source provenance is recursive through observations", {
 test_that("admPopulation(data=) reproduces the hand-written table", {
   skip_if_not_installed("randtoolbox")
   coh <- .sa_cohort()
-  # THE STEP THIS EXISTS FOR: the copula runs on the LATENT scale, so the
-  # correlation wanted is cor(log(WT), log(CRCL)) and not cor(WT, CRCL) --
-  # close enough to look right by hand and wrong enough to matter.
+  # The copula uses latent-scale correlation.
   byhand <- covDist(
     WT   = list(meanlog = mean(log(coh$WT)),   sdlog = stats::sd(log(coh$WT))),
     CRCL = list(meanlog = mean(log(coh$CRCL)), sdlog = stats::sd(log(coh$CRCL))),
@@ -304,9 +280,7 @@ test_that("a stated margin beats the data, and a dropped association is said", {
   X  <- covDraw(p3, n = 60000L)
   expect_equal(stats::cor(log(X[, "WT"]), log(X[, "CRCL"])), 0.05,
                tolerance = 0.02)
-  # a discrete covariate associated with a continuous one CANNOT be represented
-  # (a level would be a truncation of the latent normal), so it is dropped --
-  # out loud, because nothing downstream would show it
+  # Unsupported discrete-continuous dependence is reported when dropped.
   coh2 <- coh; coh2$SEX <- as.integer(coh$WT > stats::median(coh$WT))
   expect_message(admPopulation(data = coh2), "being DROPPED")
   expect_silent(invisible(admPopulation(data = coh)))
@@ -314,10 +288,7 @@ test_that("a stated margin beats the data, and a dropped association is said", {
 
 test_that("stratify = TRUE accepts the parsed model admStudy() hands down", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # admStudy() parses at construction so the transcription can be checked, so
-  # the ONLY thing .admExpandStrata() ever sees from that route is an rxUi.
-  # Demanding a function rejected the whole admStudy() path -- and only that
-  # path, since a raw datagen() spec passes the function through.
+  # admStudy() stores a parsed rxUi rather than the original function.
   s <- admStudy(model = .sa_model, n = 200, dose = 200, times = c(1, 4, 12),
                 population = admPopulation(WT = c(mean = 75, sd = 16),
                                            SEX = c(male = 0.55)),
@@ -339,10 +310,7 @@ test_that("a cohort data frame IS a population, and n comes from it", {
     admStudy(model = .sa_model, population = coh, dose = 200,
              times = c(1, 4, 12), label = "trial"))
   expect_equal(s$n, 300)
-  # EVERY covariate survives, not just the ones this source's model reads.
-  # .sa_model never mentions CRCL -- and a covariate no published model fitted
-  # is exactly what a meta-analysis is for, so dropping it would delete the
-  # evidence that identifies its effect and leave a fit that still converges.
+  # Keep covariates absent from the source model for cross-study inference.
   expect_setequal(admixr2:::.admCovSpecNames(s$population),
                   c("WT", "CRCL", "SEX"))
   # ...but a reserved data column is never a covariate
@@ -358,10 +326,7 @@ test_that("a cohort data frame IS a population, and n comes from it", {
 
 test_that("print.admStudies flags a covariate no source can identify", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # THE FAILURE IT PRE-EMPTS: a covariate marginalised identically everywhere
-  # is not identified, and converges anyway -- 0.019 objective units across its
-  # whole range, settling at -0.059 against a truth of +0.150. Nothing after
-  # the fit shows it, so it has to be said before.
+  # Report covariates marginalised identically across all studies.
   coh <- .sa_cohort(n = 300L)
   s <- suppressMessages(
     admStudy(model = .sa_model, population = coh, dose = 200,
@@ -382,9 +347,7 @@ test_that("print.admStudies flags a covariate no source can identify", {
 
 test_that("a covariate constant within a study is pinned, not described", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # Left to run, mean/sd gives sd = 0 -> sdlog = 0, and the refusal surfaced
-  # much later inside datagen() as "not a supported distribution" -- far from
-  # the column that caused it.
+  # Reject constant cohort columns at ingestion.
   coh <- .sa_cohort(n = 200L)
   coh$CRCL <- 62                       # one renal value for the whole study
   expect_error(
@@ -423,18 +386,14 @@ test_that("admStudy resolves v_denom from the currency the study is written in",
   ev <- rxode2::et(amt = 100)
   tt <- c(1, 2, 4); EE <- c(2, 1.5, 1)
 
-  # A PUBLISHED SPREAD IS THE n-1 ONE. admStudy() had no `v_denom` at all, so
-  # every study it built defaulted to "ml" -- and `sd =` is precisely the
-  # digitised-figure path the constructor exists for, so the one convention a
-  # paper never uses was the one silently assumed.
+  # Published sd/sem values use the n-1 denominator.
   s_sd <- admStudy(E = EE, sd = c(.4, .3, .2), n = 60L, times = tt, ev = ev)
   expect_identical(s_sd$v_denom, "unbiased")
   s_sem <- admStudy(E = EE, sem = c(.4, .3, .2) / sqrt(60), n = 60L,
                     times = tt, ev = ev)
   expect_identical(s_sem$v_denom, "unbiased")
 
-  # a covariance MATRIX is computed, not transcribed -- the docs tell you to
-  # use the ML denominator, so guessing "unbiased" there would corrupt it
+  # Supplied covariance matrices default to ML.
   s_V <- admStudy(E = EE, V = diag(c(.16, .09, .04)), n = 60L, times = tt, ev = ev)
   expect_identical(s_V$v_denom, "ml")
 
@@ -466,8 +425,7 @@ test_that("the resolved denominator reaches the conversion, and is shown", {
   expect_equal(vv(admixr2:::.admVDenom(got, "s")$V),
                sdv^2 * (n - 1) / n, tolerance = 1e-12)
 
-  # Materialisation is the production path; it must preserve the convention
-  # for the subsequent study normalisation rather than defaulting it to ML.
+  # Materialisation preserves the declared denominator.
   materialised <- admixr2:::.admMaterialise(admStudies(s))$s
   expect_identical(materialised$v_denom, "unbiased")
   expect_equal(vv(admixr2:::.admVDenom(materialised, "s")$V),
@@ -480,10 +438,7 @@ test_that("the resolved denominator reaches the conversion, and is shown", {
 })
 
 test_that("a `by` level keeps the correlations among the margins it retains", {
-  # `cdk[[by]] <- NULL` alone leaves latentR -- indexed POSITIONALLY, no
-  # dimnames -- describing the ORIGINAL set, so .admCovCollapse read the
-  # (SEX, WT) block, i.e. the identity, and a declared WT-CRCL correlation of
-  # 0.5 became independence in every by-level study.
+  # Dropping a margin must rebuild positional latentR.
   cd <- covDist(SEX = list(values = c(0, 1), probs = c(.45, .55)),
                 WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25),
                 cor = matrix(c(1, 0, 0, 0, 1, .5, 0, .5, 1), 3L, 3L,

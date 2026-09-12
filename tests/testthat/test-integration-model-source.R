@@ -1,8 +1,6 @@
-# A study generated from a published MODEL is not a sample. Its (E, V) are exact
-# functions of theta_src, so `n` sets that study's RELATIVE WEIGHT against the
-# others rather than its precision, and there is no sampling law to build a
-# standard error from. Reading `n` as precision anyway makes the reported SE
-# fall as exactly 1/sqrt(n) -- a factor the analyst chooses by typing a number.
+# A published model yields model-implied moments rather than observed sample
+# summaries. `n` remains the source study's true sample size, but without the
+# source parameter covariance there is no sampling law for a standard error.
 #
 # So admixr2 reports NO standard error for a fit that includes a model source,
 # and refuses an explicit covMethod rather than honouring one. These tests pin
@@ -34,7 +32,7 @@ DOSE_MS  <- 200
 # is the control arm: identical (E, V), no model-source marker, so the sandwich
 # must still run. Anything that refuses BOTH has over-cut.
 .ms_as_data <- function(n = 400, times = TIMES_MS) {
-  suppressWarnings(suppressMessages(.admDatagenSim(
+  suppressWarnings(suppressMessages(admixr2:::.admDatagenSim(
     list(t1 = list(times = times, ev = rxode2::et(amt = DOSE_MS), n = n)),
     model = .ms_published,
     control = datagenControl(method = "gh", seed = 1L))))
@@ -71,12 +69,11 @@ test_that("a model source fit reports NO standard error, at any n", {
 
 test_that("an EXPLICIT covMethod is refused, not honoured", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # The whole defect is a plausible-looking SE that moves with a number the
-  # analyst typed. Honouring an explicit covMethod would leave that number one
-  # argument away, so both sandwich and naive forms are refused by name.
+  # The source parameter covariance is unavailable, so both sandwich and naive
+  # forms are refused by name.
   g <- .ms_gen(400)
   for (cm in c("r", "r,s"))
-    expect_error(.ms_ctl(g, covMethod = cm), "published MODEL", info = cm)
+    expect_error(.ms_ctl(g, covMethod = cm), "model-implied", info = cm)
   # "none" is what the refusal asks for, so it must be accepted silently
   expect_silent(.ms_ctl(g, covMethod = "none"))
   .ms_no_se(.ms_run(g, covMethod = "none"))
@@ -88,11 +85,24 @@ test_that("the refusal is keyed on the model source, not on generated moments", 
   # real patients, so `n` IS its precision and the sandwich is correct for it.
   # This is the arm that fails if the removal cut too deep.
   d <- .ms_as_data(400)
-  expect_silent(f <- .ms_run(d, covMethod = "r,s"))
+  f <- .ms_run(d, covMethod = "r,s")
   expect_identical(f$covMethod, "r,s")
   se <- stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))
   expect_true(all(is.finite(se[c("tcl", "tv", "add.err")])))
   expect_true(all(se[c("tcl", "tv", "add.err")] > 0))
+})
+
+test_that("a multi-observation model source is detected", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  g <- suppressWarnings(suppressMessages(datagen(
+    list(t1 = list(n = 400, ev = rxode2::et(amt = DOSE_MS),
+                   observations = list(
+                     early = list(output = "cp", times = TIMES_MS[1:3]),
+                     late = list(output = "cp", times = TIMES_MS[4:7])))),
+    model = .ms_published,
+    control = datagenControl(method = "gh", seed = 1L))))
+  expect_true(isTRUE(g$t1[[".adm_src"]]))
+  expect_error(.ms_ctl(g, covMethod = "r,s"), "model-implied")
 })
 
 test_that(".admDatagenSim is the same numbers without the published claim", {
@@ -116,4 +126,27 @@ test_that("a digitised study's SE still scales with its n", {
     stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))[["tcl"]]
   }
   expect_gt(se_at(100) / se_at(1600), 1.5)
+})
+test_that("model-source guards include nested observations and anova", {
+  nested <- list(s = list(
+    n = 100,
+    observations = list(cp = list(.adm_src = TRUE))
+  ))
+  expect_error(
+    .admResolveCovMethod("r", nested, explicit = TRUE),
+    "model-implied"
+  )
+
+  fit <- function(has_model_source) {
+    e <- new.env(parent = emptyenv())
+    e$admExtra <- list(
+      has_model_source = has_model_source,
+      par_names = c("a", "b")
+    )
+    list(env = e)
+  }
+  expect_error(
+    .admLRT(fit(TRUE), fit(FALSE)),
+    "published model source"
+  )
 })

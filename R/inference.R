@@ -9,7 +9,9 @@
 # carry.
 #
 # WHAT THIS DELIBERATELY DOES NOT DO. Under misspecification the plain LRT is
-# not exactly chi-squared: H and J disagree and the exact reference becomes a
+# not exactly chi-squared: H (the Hessian of the objective at the optimum) and
+# J (the sandwich's middle term, Var of the score -- see the notation block at
+# the top of R/adfweight.R) disagree, and the exact reference becomes a
 # weighted sum of chi-squares. Correcting for that needs H and J from both fits
 # and a series evaluation of the weighted reference, and it constrains which
 # covMethod a fit must have used. That is the wrong default for the ordinary
@@ -23,7 +25,14 @@
 }
 
 # One nested comparison: dOFV, its degrees of freedom, and the p-value.
+.admFitHasModelSource <- function(fit) {
+  e <- tryCatch(fit$env, error = function(e) NULL)
+  !is.null(e) && isTRUE((e$admExtra %||% e$adirmcExtra)$has_model_source)
+}
+
 .admLRT <- function(full, reduced) {
+  if (.admFitHasModelSource(full) || .admFitHasModelSource(reduced))
+    stop("anova(): unavailable for fits containing a published model source because its parameter sampling law is unknown.", call. = FALSE)
   nm_f <- .admFitParNames(full)
   nm_r <- .admFitParNames(reduced)
   if (is.null(nm_f) || is.null(nm_r))
@@ -63,12 +72,23 @@
          .n2, "). The objective moves with the grid, so the difference is not ",
          "a likelihood ratio -- refit both with the same `n_nodes`.",
          call. = FALSE)
-  .s1 <- tryCatch(full$env$strataNodes, error = function(e) NULL)
-  .s2 <- tryCatch(reduced$env$strataNodes, error = function(e) NULL)
-  if (!identical(.s1, .s2))
-    stop("anova(): these fits used different stratum node counts. The objective ",
-         "moves with the strata grid, so the difference is not a likelihood ",
-         "ratio -- refit both with the same `strata_nodes`.", call. = FALSE)
+  # SAME ARGUMENT, FOR admc/adirmc: their objective is a Monte Carlo average
+  # over `n_sim` draws, so it moves with `n_sim` exactly as adgh's moves with
+  # `n_nodes`. NULL for adfo/adgh, so this is a no-op there.
+  .s1 <- tryCatch(full$env$nSim, error = function(e) NULL)
+  .s2 <- tryCatch(reduced$env$nSim, error = function(e) NULL)
+  if (!is.null(.s1) && !is.null(.s2) && !identical(.s1, .s2))
+    stop("anova(): these fits used different `n_sim` (", .s1, " and ",
+         .s2, "). The objective is a Monte Carlo average, so the difference ",
+         "is not a likelihood ratio -- refit both with the same `n_sim`.",
+         call. = FALSE)
+  .j1 <- tryCatch(full$env$strataNodes, error = function(e) NULL)
+  .j2 <- tryCatch(reduced$env$strataNodes, error = function(e) NULL)
+  if (!identical(.j1, .j2))
+    stop("anova(): these fits were built at different stratum resolutions (",
+         .j1, " and ", .j2, "). The objective is J-dependent, so their ",
+         "difference is not a likelihood ratio -- refit both at the same ",
+         "resolution.", call. = FALSE)
   o_f <- as.numeric(full$objective)
   o_r <- as.numeric(reduced$objective)
   if (!is.finite(o_f) || !is.finite(o_r))
@@ -88,9 +108,10 @@
 #' with `Df` equal to the number of parameters the larger model adds.
 #'
 #' Both fits must come from the same estimator and, for the quadrature
-#' estimators, the same node count. Each scores its own approximation to the
-#' likelihood, so objectives from different ones are not comparable and the
-#' comparison is refused rather than reported.
+#' estimators, the same node count (`n_nodes`) or, for the Monte Carlo ones
+#' (`admc`, `adirmc`), the same sample size (`n_sim`). Each scores its own
+#' approximation to the likelihood, so objectives from different ones are not
+#' comparable and the comparison is refused rather than reported.
 #'
 #' Testing a variance AT ZERO puts the null on the boundary of the parameter
 #' space, where the exact reference is a chi-bar-squared mixture rather than a

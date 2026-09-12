@@ -1,4 +1,4 @@
-﻿# -- Control object -------------------------------------------------------------
+# -- Control object -------------------------------------------------------------
 
 #' Control settings for the ADM estimator
 #'
@@ -98,6 +98,8 @@
 #'   the gradient off. Both emit a message.
 #' @param maxeval Maximum number of optimizer function evaluations.
 #' @param ftol_rel Relative function-value tolerance for convergence.
+#' @param xtol_rel Relative parameter tolerance for convergence (default
+#'   `sqrt(.Machine$double.eps)`).
 #' @param print Print progress every this many evaluations (0 = silent).
 #' @param seed Random seed for reproducibility.
 #' @param cores Number of OpenMP threads for `rxSolve()`. Defaults to
@@ -141,6 +143,8 @@
 #'   warning is emitted if an estimate finishes on it.
 #' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
 #'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   A study generated from a published model defaults to `"none"` and refuses
+#'   an explicit covariance method because it has no sampling law.
 #'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
@@ -347,10 +351,11 @@ admControl <- function(
     sumProd       = FALSE,
     literalFix    = TRUE,
     returnAdmr    = FALSE,
-    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # TAIL arguments: inserting an argument mid-signature silently rebinds every
     # positional call -- admControl(studies, 20000L) used to set n_sim = 20000.
     resid_nodes = 81L,
-    # ... and this one after it, for the same reason.
+    # LAST on purpose: new control arguments are appended.
+    xtol_rel = .Machine$double.eps^(1/2),
     ...) {
 
   .xtra <- list(...)
@@ -372,6 +377,7 @@ admControl <- function(
                               .var.name = "resid_nodes")
   checkmate::assertIntegerish(maxeval, lower = 1L, len = 1, .var.name = "maxeval")
   checkmate::assertNumeric(ftol_rel,   lower = 0,  len = 1, .var.name = "ftol_rel")
+  checkmate::assertNumeric(xtol_rel,   lower = 0,  len = 1, .var.name = "xtol_rel")
   checkmate::assertIntegerish(print,   lower = 0L, len = 1, .var.name = "print")
   checkmate::assertIntegerish(seed,                len = 1, .var.name = "seed")
   checkmate::assertIntegerish(cores,   lower = 1L, len = 1, .var.name = "cores")
@@ -381,7 +387,7 @@ admControl <- function(
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
   checkmate::assertNumeric(grad_bounds, lower = 0,  len = 1, .var.name = "grad_bounds")
-  # A model source is not a sample, so no standard error is available for a
+  # A model source lacks source-parameter uncertainty, so no standard error is available for a
   # fit that includes one -- see .admResolveCovMethod(), which refuses an
   # explicit covMethod rather than honouring it.
   covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
@@ -434,6 +440,7 @@ admControl <- function(
     algorithm     = algorithm,
     maxeval       = as.integer(maxeval),
     ftol_rel      = ftol_rel,
+    xtol_rel      = xtol_rel,
     print         = as.integer(print),
     seed          = as.integer(seed),
     cores         = as.integer(cores),
@@ -2085,7 +2092,8 @@ nmObjGetControl.admc <- function(x, ...) {
   .res <- .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
                      use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
                      nll_fn, grad_fn, pinfo, print_progress, print,
-                     lock_rxMod = lock_rxMod)
+                     lock_rxMod = lock_rxMod,
+                     xtol_rel = pinfo$.xtol_rel %||% .Machine$double.eps^(1/2))
   # Carried back so .admRunRestarts() can report a worker that silently
   # dropped to a finite-difference gradient -- a daemon's own warning is
   # swallowed by mirai. NOT a new worker ARGUMENT: the signatures must stay
@@ -2530,7 +2538,8 @@ admStopWorkers <- function() {
 .admScaledOptimize <- function(restart_id, p_init, ov_lower, ov_upper, scale_c,
                                use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
                                nll_fn, grad_fn, pinfo, print_progress, print,
-                               lock_rxMod = NULL) {
+                               lock_rxMod = NULL,
+                               xtol_rel = .Machine$double.eps^(1/2)) {
   .iter      <- 0L
   .best_nll  <- Inf
   .nll_trace <- numeric(0)
@@ -2576,7 +2585,8 @@ admStopWorkers <- function() {
       x0 = p_sc, eval_f = eval_f_sc,
       eval_grad_f = eval_grad_sc,
       lb = lb_sc, ub = ub_sc,
-      opts = list(algorithm = algorithm, ftol_rel = ftol_rel, maxeval = maxeval)
+      opts = list(algorithm = algorithm, ftol_rel = ftol_rel,
+                  xtol_rel = xtol_rel, maxeval = maxeval)
     ),
     error = function(e) list(objective = Inf, solution = NULL,
                              message = conditionMessage(e))
@@ -2658,6 +2668,7 @@ admStopWorkers <- function() {
   })
 
   ui_lstExpr <- ui$lstExpr
+  pinfo$.xtol_rel <- .ctl$xtol_rel
   ov_lower   <- ov$lower
   ov_upper   <- ov$upper
   scale_c    <- ov$scale_c
@@ -3130,6 +3141,7 @@ nlmixr2Est.admc <- function(env, ...) {
                      lb = lb_sc, ub = ub_sc,
                      opts = list(algorithm = .ctl$algorithm,
                                  ftol_rel  = .ctl$ftol_rel,
+                                 xtol_rel  = .ctl$xtol_rel,
                                  maxeval   = .ctl$maxeval))
     })
     opt <- list(objective = opt_raw$objective,
@@ -3255,7 +3267,8 @@ nlmixr2Est.admc <- function(env, ...) {
   .ret$extra      <- ""
   .ret$origData   <- studies
 
-  .ret$admExtra <- list(struct        = final$struct,
+  .ret$admExtra <- list(has_model_source = .admHasModelSource(studies),
+                        struct        = final$struct,
                         sigma_var     = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,

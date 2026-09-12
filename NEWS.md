@@ -258,14 +258,15 @@
   reference with `Df` equal to the number of parameters the larger model adds.
   It does not depend on which `covMethod` the fits used.
 
-  Three comparisons are REFUSED rather than reported, because none of them is a
+  Four comparisons are REFUSED rather than reported, because none of them is a
   likelihood ratio. Fits from different estimators --- each scores its own
   approximation to the same likelihood, FO-linearised, quadrature or Monte
   Carlo, so `anova(adfo_fit, adgh_fit)` was differencing two numbers on
   different scales and returning a perfectly finite `p`. Fits on different node
-  counts, for the same reason: the objective moves with the grid. And a
-  non-nested pair, which is a different problem (Vuong) and must not come back
-  with a p-value.
+  counts, for the same reason: the objective moves with the grid. Fits on
+  different `n_sim`, for admc/adirmc, whose objective is a Monte Carlo average
+  over that many draws. And a non-nested pair, which is a different problem
+  (Vuong) and must not come back with a p-value.
 
   A negative `dOFV` is reported rather than clamped to zero: the larger model
   cannot fit worse at its own optimum, so a negative difference says one of the
@@ -280,20 +281,15 @@
   given you. The result is marked as a model source.
 
   **No standard error is reported for a fit that contains one, and an explicit
-  `covMethod` is refused rather than honoured.** Such a study is not a sample:
-  its mean and covariance are exact functions of the source's own published
-  parameters, so there is no sampling law underneath them. Weighting it as if
-  `n` patients had been observed gives a perfectly plausible standard error
-  that falls as exactly `1/sqrt(n)` --- measured 1.000 / 2.000 / 4.000 / 8.000
-  over `n` = 100 / 400 / 1600 / 6400 --- a number driven entirely by what was
-  typed into `n`.
+  `covMethod` is refused rather than honoured.** Its mean and covariance are
+  exact functions of the published parameter estimates, while the uncertainty
+  and covariance of those source parameters are unavailable. The reported
+  study size alone cannot reconstruct that sampling law.
 
-  `n` still matters, as the RELATIVE WEIGHT against the other sources rather
-  than as precision. On a lone model source it divides straight out of the
-  estimating equation; across sources the pooling is only efficient when that
-  weight matches the precision the source actually has, so a model source with
-  no usable `n` is harmless alone and silently mis-weights a mixture --- which
-  is now said where the consequence is.
+  `n` is always the true sample size of the dataset used to develop the source
+  model. It divides out for a lone source and determines that study's
+  contribution when several sources are pooled, so a missing `n` is reported
+  before it can distort a pooled point estimate.
 
 * **Covariate marginalisation over a declared distribution**, for `admc` and
   `adgh`. A study declares who was in it --- `cov_dist`, see `covDist()` ---
@@ -588,6 +584,10 @@ argument. None is a bug fix, so all are listed here rather than below.
   progress table, which such a script does see.
 
 ## Bug fixes
+
+* **Derivative-free fits no longer inherit nloptr's loose `xtol_rel = 1e-4`.**
+  All four estimators now pass an explicit `xtol_rel`, exposed as the last
+  control argument and defaulting to `sqrt(.Machine$double.eps)`.
 
 * **Parallel restarts (`workers > 1`) could fail with "a parallel worker could
   not read the compiled-model cache" whenever a second R session was using
