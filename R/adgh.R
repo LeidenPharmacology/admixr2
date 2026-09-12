@@ -1104,7 +1104,8 @@
   .res <- .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
                      use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
                      nll_fn, grad_fn, pinfo, print_progress, print,
-                     lock_rxMod = NULL)
+                     lock_rxMod = NULL,
+                     xtol_rel = pinfo$.xtol_rel %||% .Machine$double.eps^(1/2))
   # Carried back so .admRunRestarts() can report a worker that silently
   # dropped to a finite-difference gradient -- a daemon's own warning is
   # swallowed by mirai. NOT a new worker ARGUMENT: the signatures must stay
@@ -1258,6 +1259,8 @@
 #'   `NLOPT_GN_*`) turns the gradient off. Both emit a message.
 #' @param maxeval Maximum function evaluations (default 500).
 #' @param ftol_rel Relative tolerance (default `sqrt(.Machine$double.eps)`).
+#' @param xtol_rel Relative parameter tolerance (default
+#'   `sqrt(.Machine$double.eps)`).
 #' @param print Print-frequency for live progress (0 = silent).
 #' @param seed Random seed (used for restarts).
 #' @param cores OpenMP threads for `rxSolve()`. Defaults to
@@ -1461,13 +1464,13 @@ adghControl <- function(
     sumProd       = FALSE,
     literalFix    = TRUE,
     returnAdmr    = FALSE,
-    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # TAIL arguments: inserting an argument mid-signature silently rebinds every
     # positional call -- adghControl(studies, 7L) used to set n_nodes = 7.
     resid_nodes   = 81L,
-    # LAST on purpose: a new argument inserted mid-signature silently rebinds
+    # TAIL-only: a new argument inserted mid-signature silently rebinds
     # every positional call. See the resid_nodes note in CLAUDE.md.
     cov_nodes     = 7L,
-    # LAST on purpose, as above. These two are the covariate-integration pair:
+    # TAIL-only, as above. These two are the covariate-integration pair:
     # cov_integration selects the method, cov_sparse_level the resolution of the
     # sparse one. cov_sparse_level occupies the slot the retired cov_taylor_h
     # had, so every positional call keeps its meaning.
@@ -1480,6 +1483,8 @@ adghControl <- function(
     # determines for itself.
     cov_integration  = c("on", "sparse", "off"),
     cov_sparse_level = 3L,
+    # LAST on purpose: new control arguments are appended.
+    xtol_rel = .Machine$double.eps^(1/2),
     ...) {
 
   .xtra <- list(...)
@@ -1515,6 +1520,7 @@ adghControl <- function(
   # it against the installed nloptr, which is more than this line ever did.
   checkmate::assertIntegerish(maxeval,     lower = 1L, len = 1)
   checkmate::assertNumeric(ftol_rel,       lower = 0,  len = 1)
+  checkmate::assertNumeric(xtol_rel,       lower = 0,  len = 1)
   checkmate::assertIntegerish(print,       lower = 0L, len = 1)
   checkmate::assertIntegerish(seed,                    len = 1)
   checkmate::assertIntegerish(cores,       lower = 1L, len = 1)
@@ -1582,6 +1588,7 @@ adghControl <- function(
     algorithm     = algorithm,
     maxeval       = as.integer(maxeval),
     ftol_rel      = ftol_rel,
+    xtol_rel      = xtol_rel,
     print         = as.integer(print),
     seed          = as.integer(seed),
     cores         = as.integer(cores),
@@ -1852,6 +1859,7 @@ nlmixr2Est.adgh <- function(env, ...) {
                      lb = lb_sc, ub = ub_sc,
                      opts = list(algorithm = .ctl$algorithm,
                                  ftol_rel  = .ctl$ftol_rel,
+                                 xtol_rel  = .ctl$xtol_rel,
                                  maxeval   = .ctl$maxeval))
     })
     opt <- list(objective  = opt_raw$objective,
