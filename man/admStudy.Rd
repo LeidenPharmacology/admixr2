@@ -50,8 +50,11 @@ cannot express.}
 \item{population}{The population the study enrolled --- see
 \code{\link[=admPopulation]{admPopulation()}}. Covariates the model reads are integrated over it.
 A \strong{data frame} of enrolled subjects is accepted directly and read into
-a table, using the columns this model actually reads and taking \code{n} from
-its row count.}
+a table, taking \code{n} from its row count. EVERY column that is not a
+reserved data column (\code{ID}, \code{TIME}, \code{DV}, \code{AMT}, ...) becomes a covariate,
+including ones this model does not read --- a covariate another source
+fitted is still evidence here, and each one adds a quadrature axis, so
+drop the columns you do not want integrated over.}
 
 \item{at}{Named list pinning a covariate at a value, for a study reported in
 one subgroup, e.g. \code{at = list(SEX = 1)}. A pinned covariate must be omitted

@@ -20,9 +20,10 @@ with \code{Df} equal to the number of parameters the larger model adds.
 }
 \details{
 Both fits must come from the same estimator and, for the quadrature
-estimators, the same node count. Each scores its own approximation to the
-likelihood, so objectives from different ones are not comparable and the
-comparison is refused rather than reported.
+estimators, the same node count (\code{n_nodes}) or, for the Monte Carlo ones
+(\code{admc}, \code{adirmc}), the same sample size (\code{n_sim}). Each scores its own
+approximation to the likelihood, so objectives from different ones are not
+comparable and the comparison is refused rather than reported.
 
 Testing a variance AT ZERO puts the null on the boundary of the parameter
 space, where the exact reference is a chi-bar-squared mixture rather than a
