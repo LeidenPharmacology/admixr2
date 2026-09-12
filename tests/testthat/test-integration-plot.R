@@ -14,11 +14,20 @@ skip_on_cran()
   force(code)
 }
 
+.int_plot_result <- NULL
+.int_plot_all <- function() {
+  if (!is.null(.int_plot_result)) return(.int_plot_result)
+  env <- .int_plot_setup()
+  .int_plot_result <<- .pdf_plot_int(
+    plot(env$fit, which = c("mean", "cov", "nll", "par"), n_sim = 50L)
+  )
+  .int_plot_result
+}
+
 # ---- Basic structure ---------------------------------------------------------
 
 test_that("plot.admFit real rxMod: returns named list", {
-  env <- .int_plot_setup()
-  out <- .pdf_plot_int(plot(env$fit, which = c("mean", "nll", "par"), n_sim = 50L))
+  out <- .int_plot_all()
   expect_type(out, "list")
   expect_gt(length(out), 0L)
 })
@@ -26,8 +35,7 @@ test_that("plot.admFit real rxMod: returns named list", {
 # ---- Mean panel: real simulation --------------------------------------------
 
 test_that("plot.admFit real rxMod: mean panel produced for the study", {
-  env <- .int_plot_setup()
-  out <- .pdf_plot_int(plot(env$fit, which = "mean", n_sim = 50L))
+  out <- .int_plot_all()
   expect_true(any(startsWith(names(out), "mean_")))
 })
 
@@ -37,8 +45,7 @@ test_that("plot.admFit real rxMod: mean panel produced for the study", {
        invert = TRUE, value = TRUE)[1]
 
 test_that("plot.admFit real rxMod: mean panel is gg or list of gg objects", {
-  env <- .int_plot_setup()
-  out <- .pdf_plot_int(plot(env$fit, which = "mean", n_sim = 50L))
+  out <- .int_plot_all()
   p   <- out[[.mean_combined_key(names(out))]]
   expect_true(
     inherits(p, "gg") ||
@@ -47,8 +54,7 @@ test_that("plot.admFit real rxMod: mean panel is gg or list of gg objects", {
 })
 
 test_that("plot.admFit real rxMod: mean panel produces finite predictions", {
-  env  <- .int_plot_setup()
-  out  <- .pdf_plot_int(plot(env$fit, which = "mean", n_sim = 50L))
+  out <- .int_plot_all()
   # Predicted sub-panel is now individually extractable.
   pred_panel <- out[[grep("^mean_.*_pred$", names(out), value = TRUE)[1]]]
   expect_s3_class(pred_panel, "gg")
@@ -56,8 +62,7 @@ test_that("plot.admFit real rxMod: mean panel produces finite predictions", {
 })
 
 test_that("plot.admFit real rxMod: mean sub-panels are individually extractable", {
-  env   <- .int_plot_setup()
-  out   <- .pdf_plot_int(plot(env$fit, which = "mean", n_sim = 50L))
+  out   <- .int_plot_all()
   study <- sub("^mean_", "", .mean_combined_key(names(out)))
   for (suf in c("obs", "pred", "resid", "std_resid")) {
     key <- paste0("mean_", study, "_", suf)
@@ -67,8 +72,7 @@ test_that("plot.admFit real rxMod: mean sub-panels are individually extractable"
 })
 
 test_that("plot.admFit real rxMod: cov sub-panels are individually extractable", {
-  env   <- .int_plot_setup()
-  out   <- .pdf_plot_int(plot(env$fit, which = "cov", n_sim = 50L))
+  out   <- .int_plot_all()
   cov_combined <- grep("_(obs|pred|resid)$", grep("^cov_", names(out), value = TRUE),
                        invert = TRUE, value = TRUE)[1]
   study <- sub("^cov_", "", cov_combined)
@@ -108,7 +112,7 @@ test_that("plot.admFit real rxMod: aggData pred matches the plot mean panel", {
   ui    <- env$fit$env$ui
   agg   <- admixr2:::.admAggData(extra, ui, n_sim = extra$n_sim, seed = 1L, warn = FALSE)
   study <- names(extra$studies)[1]
-  out   <- .pdf_plot_int(plot(env$fit, which = "mean", n_sim = extra$n_sim, seed = 1L))
+  out   <- .int_plot_all()
   pred_panel <- out[[grep("^mean_.*_pred$", names(out), value = TRUE)[1]]]
   expect_equal(as.numeric(pred_panel$data$pred_mean),
                as.numeric(agg[[study]]$pred$E))
@@ -117,21 +121,18 @@ test_that("plot.admFit real rxMod: aggData pred matches the plot mean panel", {
 # ---- NLL and parameter traces with real back-transform ----------------------
 
 test_that("plot.admFit real rxMod: nll_trace is a ggplot object", {
-  env <- .int_plot_setup()
-  out <- .pdf_plot_int(plot(env$fit, which = "nll"))
+  out <- .int_plot_all()
   expect_s3_class(out$nll_trace, "gg")
 })
 
 test_that("plot.admFit real rxMod: par_trace uses iniDf-driven display names", {
-  env <- .int_plot_setup()
-  out <- .pdf_plot_int(plot(env$fit, which = "par"))
+  out <- .int_plot_all()
   params <- unique(as.character(out$par_trace$data$param))
   # Real iniDf → omega diagonal shown as V(eta.x)
   expect_true(any(startsWith(params, "V(")))
 })
 
 test_that("plot.admFit real rxMod: all par_trace values finite", {
-  env <- .int_plot_setup()
-  out <- .pdf_plot_int(plot(env$fit, which = "par"))
+  out <- .int_plot_all()
   expect_true(all(is.finite(out$par_trace$data$value)))
 })
