@@ -796,13 +796,9 @@ the ten seconds.
 **Discrete covariates are strata**, enumerated exactly at their levels and
 weighted by their probabilities --- nothing about them is approximated.
 
-**Cost.** A product grid over `p` covariates costs `cov_nodes^p`, but where the
-covariates reach the model through fewer scalars than there are covariates,
-admixr2 integrates over those directions instead. Three covariates entering as
-one product are a one-dimensional integral, on
-`r admixr2:::.admCovDirNodes(7L, 3L, 1L)` design points rather than `r 7^3`.
-That is a change of variables, verified numerically before use — not an
-approximation.
+**Cost.** A product grid over `p` continuous covariates costs `cov_nodes^p`.
+For larger designs, `cov_integration = "sparse"` uses the Smolyak rule instead;
+raise `cov_sparse_level` only when a sensitivity check shows that it is needed.
 
 **Estimator support.** `admc` and `adgh` marginalise covariates; `adfo` and
 `adirmc` refuse rather than silently solving at the covariate mean. admixr2
