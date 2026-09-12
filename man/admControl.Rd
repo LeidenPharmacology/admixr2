@@ -180,6 +180,8 @@ warning is emitted if an estimate finishes on it.}
 
 \item{covMethod}{\code{"r,s"} (the DEFAULT) computes the sandwich \verb{H^-1 J H^-1};
 \code{"r"} the numerical Hessian alone, \verb{2H^-1}; \code{"none"} skips the covariance.
+A study generated from a published model defaults to \code{"none"} and refuses
+an explicit covariance method because it has no sampling law.
 All three span the structural, residual-error and omega parameters. Omega is
 included because excluding it also biases the STRUCTURAL standard errors
 downward -- a theta carrying an eta is correlated with that eta's variance.

@@ -203,6 +203,8 @@ Phases progressively tighten the search region.}
 
 \item{covMethod}{\code{"r,s"} (the DEFAULT) computes the sandwich \verb{H^-1 J H^-1};
 \code{"r"} the numerical Hessian alone, \verb{2H^-1}; \code{"none"} skips the covariance.
+A study generated from a published model defaults to \code{"none"} and refuses
+an explicit covariance method because it has no sampling law.
 All three span the structural, residual-error and omega parameters, and are
 reported on the scale the estimates are printed on. \code{\link[=admControl]{admControl()}} documents
 what the sandwich is, why it is the conservative default, and why it is more

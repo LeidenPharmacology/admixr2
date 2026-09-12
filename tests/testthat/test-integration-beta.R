@@ -34,7 +34,13 @@
 .beta_setup <- function() {
   if (!is.null(.beta_cache)) return(.beta_cache)
   skip_on_cran(); skip_if_not_installed("rxode2"); skip_if_not_installed("nlmixr2est")
-  gen <- datagen(
+  # .admDatagenSim(), NOT datagen(): this study STANDS IN for a digitised
+  # summary whose true values happen to be known, so the beta plumbing can be
+  # exercised end to end with `covMethod = "r"` -- which is part of what is
+  # under test. datagen() itself marks its output a published MODEL, for which
+  # no standard error is available; the right default for a real analysis, and
+  # the wrong one for a stand-in that exists to make the truth visible.
+  gen <- admixr2:::.admDatagenSim(
     studies = list(s1 = list(times = c(1, 2, 4), ev = rxode2::et(amt = 0),
                              n = 300L)),
     model = .beta_model, control = datagenControl(n_sim = 20000L, seed = 1L))

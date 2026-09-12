@@ -275,6 +275,22 @@
   conservative, which is documented rather than refused, because dropping a
   random effect is an ordinary thing to test.
 
+* **A study can contribute as a published MODEL, not only as digitised
+  aggregate data.** Give `datagen()` a model and the population it was
+  developed on, and it produces the `(E, V, n)` a digitised figure would have
+  given you. The result is marked as a model source.
+
+  **No standard error is reported for a fit that contains one, and an explicit
+  `covMethod` is refused rather than honoured.** Its mean and covariance are
+  exact functions of the published parameter estimates, while the uncertainty
+  and covariance of those source parameters are unavailable. The reported
+  study size alone cannot reconstruct that sampling law.
+
+  `n` is always the true sample size of the dataset used to develop the source
+  model. It divides out for a lone source and determines that study's
+  contribution when several sources are pooled, so a missing `n` is reported
+  before it can distort a pooled point estimate.
+
 ## Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not name a new

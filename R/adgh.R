@@ -1023,6 +1023,8 @@
 #'   noise-free).
 #' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
 #'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   A study generated from a published model defaults to `"none"` and refuses
+#'   an explicit covariance method because it has no sampling law.
 #'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
@@ -1215,9 +1217,15 @@ adghControl <- function(
 
   addProp   <- match.arg(addProp)
   grad      <- match.arg(grad)
-  covMethod <- match.arg(covMethod)
 
   checkmate::assertList(studies)
+  # A model source lacks source-parameter uncertainty, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it. Runs AFTER assertList(): a
+  # malformed `studies` must fail on checkmate's message, not on a raw
+  # indexing error from inside the model-source helpers.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
   checkmate::assertIntegerish(n_nodes,     lower = 1L, len = 1)
   # A residual quadrature needs a real grid. .adghNodes1() refuses m < 1, but it
   # accepts 1..4 happily and returns a rule that integrates nothing usefully --
@@ -1677,7 +1685,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   .ret$extra      <- ""
   .ret$origData   <- studies
 
-  .ret$admExtra <- list(struct         = final$struct,
+  .ret$admExtra <- list(has_model_source = .admHasModelSource(studies),
+                        struct         = final$struct,
                         sigma_var      = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,

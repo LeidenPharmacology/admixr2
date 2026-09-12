@@ -141,6 +141,8 @@
 #'   warning is emitted if an estimate finishes on it.
 #' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
 #'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   A study generated from a published model defaults to `"none"` and refuses
+#'   an explicit covariance method because it has no sampling law.
 #'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
@@ -381,7 +383,11 @@ admControl <- function(
   checkmate::assertNumeric(cov_h,       lower = 0, len = 1, .var.name = "cov_h")
   checkmate::assertNumeric(cov_h_outer, lower = 0, len = 1, .var.name = "cov_h_outer")
   checkmate::assertNumeric(grad_bounds, lower = 0,  len = 1, .var.name = "grad_bounds")
-  covMethod <- match.arg(covMethod)
+  # A model source lacks source-parameter uncertainty, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
   checkmate::assertIntegerish(cov_n_sim,   lower = 1L, len = 1, .var.name = "cov_n_sim")
   checkmate::assertIntegerish(n_restarts,  lower = 1L, len = 1, .var.name = "n_restarts")
   checkmate::assertNumeric(restart_sd,     lower = 0,  len = 1, .var.name = "restart_sd")
@@ -3173,7 +3179,8 @@ nlmixr2Est.admc <- function(env, ...) {
   .ret$extra      <- ""
   .ret$origData   <- studies
 
-  .ret$admExtra <- list(struct        = final$struct,
+  .ret$admExtra <- list(has_model_source = .admHasModelSource(studies),
+                        struct        = final$struct,
                         sigma_var     = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,

@@ -214,13 +214,20 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   for (i in seq_along(studies)) {
     nm <- study_names[[i]]
     s  <- studies[[i]]
-    m  <- s$model %||% model
+    # `[[ ]]`, NOT `$`: `$` PARTIAL-MATCHES on lists, so `s$model` silently
+    # returned the longer field the moment one was added to every study, which
+    # then failed "must be a function".
+    m  <- s[["model"]] %||% model
     if (is.null(m))
       stop(sprintf(
         "Study '%s' has no `model` and no top-level default was supplied.", nm),
         call. = FALSE)
-    if (!is.function(m))
-      stop(sprintf("Study '%s': `model` must be a function.", nm), call. = FALSE)
+    # An rxUi is accepted alongside a function because rxode2::rxode2() is
+    # idempotent on one, and a model source hands down a parsed `ui` rather
+    # than the function it came from.
+    if (!is.function(m) && !inherits(m, "rxUi"))
+      stop(sprintf("Study '%s': `model` must be a function or an rxUi.", nm),
+           call. = FALSE)
     if (!is.null(s$observations)) {
       if (!is.list(s$observations) || length(s$observations) == 0L)
         stop(sprintf("Study '%s': `observations` must be a non-empty list.", nm),
@@ -263,6 +270,10 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # consumes it integrate the residual identically.
     pinfo$resid_nodes <- control$resid_nodes %||% .ADM_TBS_NODES
     out_var <- .admOutputVar(ui)
+    # These are model-implied moments, not observed sample summaries. Mark them
+    # so the covariance step does not treat their reported study size `n` as
+    # enough to reconstruct a sampling law: source-parameter uncertainty is not
+    # available here.
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
 
     # A model mixing a continuous endpoint with a COUNT one is refused here for
@@ -426,6 +437,9 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       # thing. A generated study can then be mixed with a digitised one that
       # declares "unbiased" and both are converted correctly.
       r$v_denom <- "ml"
+      # The marker that says "model-implied, not observed sample summaries".
+      # .admResolveCovMethod() reads it to refuse a standard error.
+      r$.adm_src <- TRUE
       if (!is.null(spec$output)) r$output <- spec$output
       if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
       r
@@ -434,7 +448,8 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     if (!is.null(s$observations)) {
       obs_res <- lapply(obs_specs, one_result)
       names(obs_res) <- vapply(obs_specs, `[[`, character(1), "name")
-      results[[i]] <- list(observations = obs_res, n = s$n %||% NA_integer_)
+      results[[i]] <- list(observations = obs_res, n = s$n %||% NA_integer_,
+                           .adm_src = TRUE)
     } else {
       results[[i]] <- one_result(obs_specs[[1L]])
     }
@@ -442,3 +457,111 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 
   setNames(results, study_names)
 }
+
+
+# datagen() AS A SIMULATOR, not as a published source.
+#
+# datagen() does two jobs that look identical from inside it and differ entirely
+# in what they claim. Turning a PUBLISHED model into a study says "this is what
+# that paper's model implies". Its `n` remains the true sample size, but no
+# standard error is available because the source-parameter uncertainty is
+# absent (see .admResolveCovMethod). Turning a
+# model you wrote yourself into a study says "pretend a trial of `n` patients
+# came out like this", which is a simulated DATA study and the ordinary weight
+# is the right one for it.
+#
+# Only the caller knows which. datagen() assumes the first, because that is the
+# claim that is dangerous to get wrong. This is the other door, for simulating a study to
+# exercise or demonstrate the machinery with. It is internal on purpose: an
+# exported version would be a way to ask for the SE the public route withholds.
+.admDatagenSim <- function(...) {
+  lapply(datagen(...), function(u) {
+    u[[".adm_src"]] <- NULL
+    if (is.list(u[["observations"]]))
+      u$observations <- lapply(u$observations, function(o) {
+        o[[".adm_src"]] <- NULL
+        o
+      })
+    u
+  })
+}
+
+# --- PR D: these two move from R/study-api.R into R/datagen.R ---------------
+#
+# Under the order A -> B -> INF -> D -> E -> C, seam D lands BEFORE the study
+# API. They live in `study-api.R` on #121 only because C was written first, and
+# the ONLY thing tying them there is the `inherits(s, "admStudy")` branch, which
+# tests a class C defines. Dropping that branch makes D independent of C at no
+# cost: an `admStudy` spec is materialised into ordinary studies by
+# `.admMaterialise()` before any control object sees it, and the materialised
+# study carries `.adm_src` like any other.
+#
+# WHEN C LANDS, restore the branch. Until then a raw `admStudy` object handed
+# straight to a control function would not be recognised as a model source --
+# which cannot happen while `admStudy()` does not exist.
+
+.admStudyHasModelSource <- function(study) {
+  if (!is.list(study)) return(FALSE)
+  if (isTRUE(study[[".adm_src"]])) return(TRUE)
+  observations <- study[["observations"]]
+  is.list(observations) && any(vapply(
+    observations, function(x) is.list(x) && isTRUE(x[[".adm_src"]]), logical(1)
+  ))
+}
+
+.admHasModelSource <- function(studies) {
+  if (!is.list(studies) || !length(studies)) return(FALSE)
+  any(vapply(studies, .admStudyHasModelSource, logical(1)))
+}
+
+# unchanged from R/study-api.R
+# `n` is the source study's sample size; it affects pooled point estimates.
+#
+# Called from .admResolveCovMethod() -- the one place that already runs once
+# per fit with `studies` in hand -- and BEFORE its early return, so the
+# warning still fires when the caller has already asked for covMethod =
+# "none". At HEAD this lived in .admReportCovWarnings(), which does not
+# exist on this base; the check is the same.
+.admWarnSourceWeight <- function(studies) {
+  # `n` divides out for one source but determines its contribution when sources
+  # are pooled. Require the true sample size of the dataset used to develop the
+  # source model rather than letting a missing value silently distort the fit.
+  if (!is.list(studies) || !length(studies)) return(invisible(NULL))
+  # Same is.list(s) guard as .admHasModelSource(): a malformed study element
+  # must fall through to checkmate::assertList()'s message, not a raw
+  # subscript error out of this helper.
+  .is_src <- vapply(studies, .admStudyHasModelSource, logical(1))
+  if (length(studies) > 1L && any(.is_src)) {
+    study_names <- names(studies) %||% paste0("study", seq_along(studies))
+    bad_n <- study_names[.is_src][vapply(studies[.is_src], function(s) {
+      nn <- as.numeric(s[["n"]] %||% NA_real_)
+      !is.finite(nn) || nn <= 0 }, logical(1))]
+    if (length(bad_n))
+      warning("admixr2: model source", if (length(bad_n) > 1L) "s " else " ",
+              paste(sQuote(bad_n), collapse = ", "), " ",
+              if (length(bad_n) > 1L) "have" else "has",
+              " no usable `n`, and this fit combines several sources. Set `n` ",
+              "to the true sample size of the dataset used to develop the ",
+              "source model; it determines that study's contribution to the ",
+              "pooled point estimate.", call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+.admResolveCovMethod <- function(covMethod, studies, explicit) {
+  .admWarnSourceWeight(studies)
+  if (!.admHasModelSource(studies) || identical(covMethod, "none"))
+    return(covMethod)
+  if (isTRUE(explicit))
+    stop("admixr2: covMethod = ", dQuote(covMethod), " was requested, but a ",
+         "study contributes model-implied moments rather than observed sample ",
+         "summaries. `n` is the source study's true sample size, but the source ",
+         "parameter uncertainty needed for a sampling law is unavailable. ",
+         "Pass covMethod = \"none\".", call. = FALSE)
+  message("admixr2: a study contributes as a published MODEL, so covMethod ",
+          "has been set to \"none\". `n` remains the source study's sample ",
+          "size, but its parameter uncertainty is unavailable, so no sampling ",
+          "law can be built for a standard error.")
+  "none"
+}
+
