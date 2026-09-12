@@ -118,7 +118,7 @@ test_that("admGradBatch: single-element batch returns (1 x np) matrix of finite 
   expect_true(all(is.finite(result)))
 })
 
-test_that("admGradBatch: multi-element batch returns (n x np) matrix with named columns", {
+test_that("admGradBatch: multi-element batch returns equal, finite, named rows", {
   env <- .int_grad_setup()
   p0  <- env$vec$p0
 
@@ -131,18 +131,8 @@ test_that("admGradBatch: multi-element batch returns (n x np) matrix with named 
   expect_equal(dim(result), c(3L, length(p0)))
   expect_equal(colnames(result), names(p0))
   expect_true(all(is.finite(result)))
-})
-
-test_that("admGradBatch: rows for identical p0 entries are equal", {
-  env <- .int_grad_setup()
-  p0  <- env$vec$p0
-
-  result <- admixr2:::.admGradBatch(
-    list(p0, p0), env$pinfo, env$studies, env$z_list,
-    env$rxMod, env$output_var, env$params_list, 1L, h = 1e-3
-  )
-
   expect_equal(result[1L, ], result[2L, ], tolerance = 1e-10)
+  expect_equal(result[2L, ], result[3L, ], tolerance = 1e-10)
 })
 
 # ---- admNLLBatch additional coverage -----------------------------------------
