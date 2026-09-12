@@ -151,6 +151,7 @@ reference:
     contents:
       - print.admFit
       - plot.admFit
+      - anova.admFit
 
   - title: Data
     desc: Example datasets.

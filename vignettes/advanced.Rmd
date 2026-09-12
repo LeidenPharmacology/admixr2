@@ -352,7 +352,9 @@ sits. The sample mean and the sample covariance are exactly independent for a
 multivariate normal, and for nothing else.
 
 `covMethod = "r,s"` scores `(ybar, vech V)` against its own asymptotic law and
-reports the sandwich `H^-1 J H^-1` — on the same `H` that `"r"` inverts:
+reports the sandwich `H^-1 J H^-1`, where `H` is the same Hessian `"r"`
+inverts and `J` is the variance of the score built from that law (the
+model-derived weight above, not an empirical fourth moment):
 
 ```{r cov-rs, eval=FALSE}
 fit_rs <- nlmixr2(
@@ -411,6 +413,29 @@ BIC(fit_full, fit_reduced)
 
 Lower AIC/BIC favours the more parsimonious model; a difference > 10 is
 generally considered strong evidence.
+
+### `anova()`: a likelihood-ratio test on nested fits
+
+`fit_full` and `fit_reduced` are **nested** -- `fit_reduced` is `fit_full` with
+`eta.v2`, `eta.q` and `eta.ka` dropped -- so their objectives can be compared
+directly with a chi-squared test:
+
+```{r model-compare-anova}
+anova(fit_full, fit_reduced)
+```
+
+`dOFV` is the objective difference and `Df` the number of parameters the
+larger model adds (three etas here); `p` is `pchisq(dOFV, Df,
+lower.tail = FALSE)`, the ordinary likelihood-ratio test.
+
+`anova()` refuses to compare fits that are not on the same footing: different
+estimators score different approximations to the likelihood (FO-linearised,
+quadrature, Monte Carlo), and `adgh` fits on different `n_nodes` or
+`admc`/`adirmc` fits on different `n_sim` move the objective with the grid or
+sample size rather than with the model. All three are rejected with an error
+rather than silently returning a number. See `?anova.admFit` for the
+boundary-variance case (testing whether an eta's variance is zero) and why a
+negative `dOFV` is reported rather than clamped.
 
 ## See also
 

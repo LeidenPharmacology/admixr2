@@ -490,6 +490,22 @@
 # The sandwich: covMethod = "r,s"
 # =============================================================================
 #
+# NOTATION (t and tau are defined at the top of this file; repeated here
+# because this is the block a diff of this file most often shows on its own):
+#   Psi    the structural/variance parameters being optimised over.
+#   t      the observed aggregate summary (ybar, vech V) -- the model's INPUT.
+#   tau    tau(Psi) = E[t] at Psi, i.e. (yt, vech Vt) -- the model's PREDICTION
+#          of t. t - tau is the residual; it is zero in expectation at the
+#          true Psi for any weight, which is why point estimates stay
+#          consistent under misspecification.
+#   F      the objective actually minimised (per study F_s, summed to F).
+#   S      the score, dF/dPsi.
+#   Omega  the sampling covariance of t itself, Cov(t) -- the ADF weight
+#          computed from the model's conditional moments (see above).
+#   K      the linear map from (t - tau) to the delta expansion used when
+#          justifying why building G off the realised residual is wrong
+#          (see the comment inside .admScoreCross).
+#
 # Avar = H^-1 J H^-1,   H = d2F/dPsi dPsi' at the optimum,
 #                       J = sum_s G_s Omega_s G_s',  G_s = d2F_s/(dPsi dt_s')
 #
@@ -530,7 +546,26 @@
   Vi <- if (isv) diag(1 / diag(V), m) else
     tryCatch(chol2inv(chol(V)), error = function(e) NULL)
   if (is.null(Vi) || !all(is.finite(Vi))) return(NULL)
-  r  <- as.numeric(s$E) - as.numeric(E)
+  # G IS EVALUATED AT tau, NOT AT THE OBSERVED SUMMARY, so the residual here is
+  # identically zero. This line looks like an obvious omission and is not --
+  # before "restoring" it, read algorithm/adf/HANDOFF-INFERENCE.md section 1.
+  #
+  # J is DEFINED as Var(S). Expanding the score about t = tau with
+  # delta = t - tau gives Var(S) = sum_s G_s Omega_s G_s' + O(N^-3/2) with G_s
+  # the derivative AT tau_s. Building G from the realised residual instead
+  # returns G_0 Omega G_0' + E[K delta Omega delta' K'], and that second term is
+  # a quadratic form -- non-negative -- so J comes out biased UPWARD by O(1/N),
+  # by an amount growing with the residual relative to the structural spread.
+  # Measured over 200,000 paired replicates: +0.33% at omega = 0.2 rising to
+  # +2.9% with a proportional residual, positive in every cell. Removing it also
+  # cuts sd(c_hat) by 31-35%, which is pure gain for a reported SE.
+  #
+  # Note this is NOT justified by test calibration -- both versions calibrate
+  # dOFV about equally well at these N, because the inflation is offset by
+  # variance and covariance terms of the same order. That cancellation is a
+  # coincidence of sample size. It is justified by the definition of J.
+  #
+  # `s` stays in the signature: s$method still selects the branch.
   p  <- length(dV)
   ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
   if (isv) ij <- ij[ij[, 1L] == ij[, 2L], , drop = FALSE]
@@ -539,7 +574,12 @@
     # on the var branch only the diagonal of dV reaches the objective
     dVk <- if (isv) diag(diag(dV[[k]]), m) else dV[[k]]
     dVi <- -Vi %*% dVk %*% Vi
-    G[k, seq_len(m)] <- 2 * N * (as.numeric(dVi %*% r) -
+    if (!all(is.finite(dVi))) return(NULL)
+    # The residual term is dVi %*% r with r identically zero (see above) --
+    # written out as the zero vector rather than the matrix product so a
+    # non-finite dVi cannot turn its provably-zero contribution into NaN
+    # (Inf * 0) and poison an otherwise-finite G.
+    G[k, seq_len(m)] <- 2 * N * (numeric(m) -
                                  as.numeric(Vi %*% dE[, k]))
     dup <- ifelse(ij[, 1L] == ij[, 2L], 1, 2)      # vech duplication
     G[k, m + seq_len(nrow(ij))] <- N * dup * dVi[ij]
