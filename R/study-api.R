@@ -835,13 +835,28 @@ print() a single study to check its transcription.
                    tryCatch(s$ui$allCovs, error = function(e) character(0))))
 }
 
+# Is one study (already-generated shape, not an admStudy()/raw spec) a
+# published MODEL source? Checked at the study itself AND one level into
+# `observations`: a multi-output datagen() study carries the marker on each
+# per-output block, not on the wrapper -- one_result() sets it there and
+# results[[i]] <- list(observations = ..., n = ...) never copies it up.
+# Shared so every consumer (the SE refusal below and the n-weighting warning
+# in driver.R) sees the same multi-observation study the same way.
+.admStudyIsSource <- function(s) {
+  if (!is.list(s)) return(FALSE)
+  if (isTRUE(s[[".adm_src"]])) return(TRUE)
+  obs <- s[["observations"]]
+  is.list(obs) && length(obs) &&
+    any(vapply(obs, function(o) isTRUE(o[[".adm_src"]]), logical(1)))
+}
+
 .admHasModelSource <- function(studies) {
   if (inherits(studies, "admStudies")) studies <- unclass(studies)
   if (!is.list(studies) || !length(studies)) return(FALSE)
   any(vapply(studies, function(s) {
     if (!is.list(s)) return(FALSE)
     if (inherits(s, "admStudy")) return(!is.null(s$ui))
-    isTRUE(s[[".adm_src"]])
+    .admStudyIsSource(s)
   }, logical(1)))
 }
 

@@ -277,10 +277,14 @@
   # pooling is only optimal when that weight matches the precision the source
   # actually has. So a model source with no usable `n` is harmless alone and
   # silently mis-weights a mixture. Said where the consequence is.
-  .is_src <- vapply(studies, function(s) isTRUE(s[[".adm_src"]]), logical(1))
+  .is_src <- vapply(studies, .admStudyIsSource, logical(1))
   if (length(studies) > 1L && any(.is_src)) {
-    bad_n <- names(studies)[.is_src][vapply(studies[.is_src], function(s) {
-      nn <- as.numeric(s$n %||% NA_real_)
+    # names(studies) is NULL for an unnamed list -- `[.is_src]` on NULL stays
+    # NULL, so `bad_n` was silently empty for exactly the unnamed mixture this
+    # warning exists to catch. seq_along() gives every study a stand-in label.
+    src_names <- names(studies) %||% paste0("#", seq_along(studies))
+    bad_n <- src_names[.is_src][vapply(studies[.is_src], function(s) {
+      nn <- as.numeric(s[["n"]] %||% NA_real_)
       !is.finite(nn) || nn <= 0 }, logical(1))]
     if (length(bad_n))
       warning("admixr2: model source", if (length(bad_n) > 1L) "s " else " ",

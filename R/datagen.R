@@ -591,5 +591,15 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 # exercise or demonstrate the machinery with. It is internal on purpose: an
 # exported version would be a way to ask for the SE the public route withholds.
 .admDatagenSim <- function(...) {
-  lapply(datagen(...), function(u) { u[[".adm_src"]] <- NULL; u })
+  lapply(datagen(...), function(u) {
+    u[[".adm_src"]] <- NULL
+    # A multi-observation study nests the marker per output block (see
+    # .admHasModelSource); stripping only the wrapper left it detectable
+    # there and defeated the control arm this function exists to provide.
+    if (is.list(u[["observations"]]))
+      u$observations <- lapply(u$observations, function(o) {
+        o[[".adm_src"]] <- NULL; o
+      })
+    u
+  })
 }

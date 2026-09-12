@@ -88,7 +88,12 @@ test_that("the refusal is keyed on the model source, not on generated moments", 
   # real patients, so `n` IS its precision and the sandwich is correct for it.
   # This is the arm that fails if the removal cut too deep.
   d <- .ms_as_data(400)
-  expect_silent(f <- .ms_run(d, covMethod = "r,s"))
+  # Not expect_silent(): .ms_run() already suppresses messages/warnings, and a
+  # full nlmixr2() fit also prints rxode2 compilation output on a cold cache --
+  # under Config/testthat/parallel harmless but order-dependent, since it only
+  # stayed quiet here because an earlier test warmed the cache first. What this
+  # test pins is the SE values below, not console silence.
+  f <- .ms_run(d, covMethod = "r,s")
   expect_identical(f$covMethod, "r,s")
   se <- stats::setNames(f$parFixedDf[["SE"]], rownames(f$parFixedDf))
   expect_true(all(is.finite(se[c("tcl", "tv", "add.err")])))
