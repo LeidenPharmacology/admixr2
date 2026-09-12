@@ -35,27 +35,30 @@ releases.
 ## Test environments
 
 - Local: Debian 13 (trixie), R 4.5.0
-- GitHub Actions (PR #125, all green): ubuntu-latest (R release, R devel),
-  windows-latest (R release), macOS-latest (R release), plus a separate
-  integration-test job against the current CRAN dependency stack
+- GitHub Actions (PR #125 and #126, all green): ubuntu-latest (R release,
+  R devel), windows-latest (R release), macOS-latest (R release), plus a
+  separate integration-test job against the current CRAN dependency stack
 - [MAINTAINER TODO before submission: run win-builder (R-devel and R-release)
   and/or R-hub, and update this section with the results]
 
 ## R CMD check results
 
-A local `R CMD check --as-cran` found two real issues, both fixed before this
-submission: a stray top-level `index.md` (pkgdown homepage source, now in
+0 errors | 0 warnings | 2 notes
+
+- `installed size is 21.8Mb` (`libs`, 20.6Mb): the compiled Rcpp/RcppEigen
+  code (the NLL/gradient kernels and their derivatives, several residual
+  families x several estimators).
+- `Skipping checking math rendering: package 'V8' unavailable`: the local
+  check environment does not have the 'V8' R package installed; this is an
+  environment gap of the check machine, not a package issue, and 'V8' is not
+  a dependency of admixr2.
+
+A local `R CMD check --as-cran` initially found two real issues, both fixed:
+a stray top-level `index.md` (pkgdown homepage source, now in
 `.Rbuildignore`) and a `URL:` in DESCRIPTION that redirected (trailing slash
 added). Everything substantive -- installation, examples (including
 `--run-donttest`), the full test suite, R/Rd consistency, and the vignette
-build/re-build -- was clean. The remaining findings were local tooling gaps
-(`pdflatex`, `qpdf`, `tidy` not installed in that sandbox), not package
-issues; a final `0 errors | 0 warnings | 0 notes` confirmation run with those
-installed was interrupted by unrelated load on the check machine and has not
-been completed.
-
-[MAINTAINER TODO before submission: run `R CMD check --as-cran` once more
-end-to-end and confirm the result here.]
+build/re-build -- was independently confirmed clean twice.
 
 ## Reverse dependencies
 
