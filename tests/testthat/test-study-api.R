@@ -237,6 +237,32 @@ test_that("admPopulation(data=) reproduces the hand-written table", {
                stats::cor(log(Y[, "WT"]), log(Y[, "CRCL"])), tolerance = 0.02)
 })
 
+test_that("data-derived dependence follows overridden margin definitions", {
+  set.seed(42)
+  z <- stats::rnorm(5000)
+  d <- data.frame(WT = 75 + 10 * z,
+                  CRCL = exp(4 + .2 * (.8 * z + .6 * stats::rnorm(5000))))
+
+  p <- admPopulation(data = d, dist = "normal",
+                     CRCL = c(meanlog = mean(log(d$CRCL)),
+                              sdlog = stats::sd(log(d$CRCL))))
+  expect_equal(p[["latentR"]][1L, 2L], stats::cor(d$WT, log(d$CRCL)),
+               tolerance = 1e-12)
+
+  p <- admPopulation(data = d, dist = "normal",
+                     WT = c(mean = mean(d$WT), sd = stats::sd(d$WT)),
+                     CRCL = c(mean = mean(d$CRCL), sd = stats::sd(d$CRCL)))
+  expect_equal(p[["latentR"]][1L, 2L], stats::cor(d$WT, d$CRCL),
+               tolerance = 1e-12)
+})
+
+test_that("character binary columns report dependence that is dropped", {
+  z <- seq(-3, 3, length.out = 500)
+  d <- data.frame(WT = exp(4 + .2 * z),
+                  SEX = ifelse(z > 0, "male", "female"))
+  expect_message(admPopulation(data = d), "DROPPED")
+})
+
 test_that("overriding a cohort margin keeps its data-derived correlations", {
   skip_if_not_installed("randtoolbox")
   coh <- .sa_cohort()

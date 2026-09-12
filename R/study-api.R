@@ -21,9 +21,6 @@
   if (!is.data.frame(data)) data <- as.data.frame(data)
   given_nms <- names(given)
   nms <- setdiff(names(data), given_nms) # anything stated in `...` wins outright
-  if (!length(nms))
-    stop("admixr2: `data` adds no covariate that is not already given by name.",
-         call. = FALSE)
   bad <- function(nm, ...) stop("admixr2: covariate '", nm, "' ", ...,
                                 call. = FALSE)
   binary <- function(p) list(values = c(0, 1), probs = c(1 - p, p))
@@ -81,11 +78,18 @@
   # runs over log(x), so the number wanted is cor(log(WT), log(CRCL)) and NOT
   # cor(WT, CRCL) -- close enough to look right, wrong enough to matter, and
   # the reason this helper earns its place.
-  tf  <- if (identical(dist, "lnorm")) log else identity
+  resolved <- c(given, specs)
+  resolved <- stats::setNames(
+    lapply(names(resolved), function(nm) .admPopSpec(resolved[[nm]], nm, dist)),
+    names(resolved))
+  tf <- function(nm) {
+    v <- data[[nm]]
+    if (!is.null(resolved[[nm]][["meanlog"]])) log(v) else v
+  }
   rho <- numeric(0)
   if (length(cont) > 1L)
     for (p in asplit(utils::combn(cont, 2L), 2L)) {
-      r <- stats::cor(tf(data[[p[1L]]]), tf(data[[p[2L]]]))
+      r <- stats::cor(tf(p[1L]), tf(p[2L]))
       if (is.finite(r) && abs(r) > 1e-8) rho[paste(p, collapse = ".")] <- r
     }
 
@@ -99,11 +103,14 @@
   # independent cohort of 60 more often than not. Three SE, because this
   # message proposes changing the design; 0.1 stays as the floor so a huge
   # cohort does not report an association too small to matter.
-  disc <- setdiff(names(specs), cont)
+  disc <- names(resolved)[vapply(resolved, function(s) !is.null(s[["values"]]),
+                                 logical(1))]
   if (length(disc) && length(cont)) {
     lim  <- max(0.1, 3 / sqrt(nrow(data)))
     hit  <- function(d, c) {
-      r <- suppressWarnings(stats::cor(as.numeric(data[[d]]), data[[c]]))
+      v <- data[[d]]
+      if (!is.numeric(v)) v <- as.numeric(factor(v))
+      r <- suppressWarnings(stats::cor(v, data[[c]]))
       is.finite(r) && abs(r) > lim
     }
     drop <- outer(disc, cont, Vectorize(hit))
