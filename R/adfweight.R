@@ -441,14 +441,12 @@
 # The node-level quantities the weight needs, alongside the predicted moments.
 # Same path .adghMoments takes, so the two cannot describe different node sets.
 #
-# `g`: .adghGrid(pars, pinfo, grid) depends on pars/grid alone, not on `study`,
-# so it is identical across every study in one .admSandwichCov() call -- a
-# caller looping over studies with the same `pars`/`grid` can build it ONCE and
-# pass it in, rather than have every call recompute the same small matmul.
-# Optional and NULL by default so every other caller (the tests, the default
-# .admMomentDeriv() mom closure) is unaffected.
+# `g` is optional so callers without covariate distributions can reuse the
+# common eta grid. Otherwise the study must reach .adghGrid so its covariate
+# rows and weights match the objective.
 .admAdfParts <- function(pars, pinfo, study, rxMod, out_var, grid, cores, g = NULL) {
-  g     <- g %||% .adghGrid(pars, pinfo, grid)
+  g     <- g %||% .adghGrid(pars, pinfo, grid, study)
+  study <- .adghStudyCov(study, g)
   pm    <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp    <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
                         out_var, pm, cores, pinfo$nDisplayProgress, pinfo$sigdig)
@@ -768,18 +766,19 @@
     error = function(e) NULL)
   if (is.null(md)) return(NULL)
   G <- Om <- vector("list", length(studies))
-  # .adghGrid(pars, pinfo, grid) is invariant across this loop (same pars, same
-  # grid for every study), so it is built once here rather than once per study
-  # inside .admAdfParts().
+  # Reuse the common eta grid only where the study does not expand it over a
+  # covariate distribution.
   g_node <- .adghGrid(pars, pinfo, grid)
   for (i in seq_along(studies)) {
     s  <- studies[[i]]
+    g  <- if (is.null(s[["cov_dist"]])) g_node else .adghGrid(pars, pinfo, grid, s)
     pt <- tryCatch(.admAdfParts(pars, pinfo, s, rxMod, s$output %||% out_var,
-                                grid, cores, g = g_node), error = function(e) NULL)
+                                grid, cores, g = g), error = function(e) NULL)
     if (is.null(pt) || is.null(pt$Dv)) return(NULL)
     N <- as.numeric(s$n)
     Om[[i]] <- .admAdfWeightFast(pt$C, pt$w, pt$Dv, N, pt$T3, pt$Q4,
                                  var_only = identical(s$method, "var"))
+    if (!.admIsPsd(Om[[i]])) return(NULL)
     G[[i]]  <- .admScoreCross(md$E[[i]], md$V[[i]], md$dE[[i]], md$dV[[i]], s, N)
     if (is.null(G[[i]])) return(NULL)
     # H may have been reduced to the struct+sigma sub-block (.admReduceNpdOmega),

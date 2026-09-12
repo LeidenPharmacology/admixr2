@@ -70,6 +70,13 @@
          .n2, "). The objective moves with the grid, so the difference is not ",
          "a likelihood ratio -- refit both with the same `n_nodes`.",
          call. = FALSE)
+  .j1 <- tryCatch(full$env$strataNodes, error = function(e) NULL)
+  .j2 <- tryCatch(reduced$env$strataNodes, error = function(e) NULL)
+  if (!identical(.j1, .j2))
+    stop("anova(): these fits were built at different stratum resolutions (",
+         .j1, " and ", .j2, "). The objective is J-dependent, so their ",
+         "difference is not a likelihood ratio -- refit both at the same ",
+         "resolution.", call. = FALSE)
   o_f <- as.numeric(full$objective)
   o_r <- as.numeric(reduced$objective)
   if (!is.finite(o_f) || !is.finite(o_r))
