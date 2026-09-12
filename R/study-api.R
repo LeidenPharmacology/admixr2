@@ -22,8 +22,15 @@
                        error = function(e) TRUE))
   }, intersect(given_nms, names(data)))
   specs <- list()
+  missing_msg <- function(nm)
+    bad(nm, "has missing or non-finite values. A margin has to describe ",
+        "every subject the study reports on -- drop the column, or state ",
+        "it yourself.")
   for (nm in nms) {
     v <- data[[nm]]
+    # Checked before the split: `sort()` drops NA silently, so a factor with one
+    # came back as a proportion of NA rather than as an error.
+    if (anyNA(v)) missing_msg(nm)
     if (is.factor(v) || is.character(v)) {
       lv <- sort(unique(as.character(v)))
       if (length(lv) != 2L)
@@ -35,10 +42,7 @@
       next
     }
     v <- as.numeric(v)
-    if (!all(is.finite(v)))
-      bad(nm, "has missing or non-finite values. A margin has to describe ",
-          "every subject the study reports on -- drop the column, or state ",
-          "it yourself.")
+    if (!all(is.finite(v))) missing_msg(nm)
     if (all(unique(v) %in% c(0, 1))) { specs[[nm]] <- binary(mean(v)); next }
     # Constant columns are pinned values, not distributions.
     if (stats::sd(v) < .Machine$double.eps^0.5 * max(1, abs(mean(v))))
@@ -72,8 +76,13 @@
 
   # Report unsupported discrete-continuous dependence above a practical floor
   # and three sampling SEs.
-  disc <- names(resolved)[vapply(resolved, function(s) !is.null(s[["values"]]),
-                                 logical(1))]
+  # Only columns the cohort actually carries. A discrete margin typed into `...`
+  # for a covariate the listing does not report has nothing to correlate, and
+  # cor() on the resulting zero-length column errored out of the whole call.
+  disc <- intersect(
+    names(resolved)[vapply(resolved, function(s) !is.null(s[["values"]]),
+                           logical(1))],
+    names(data))
   if (length(disc) && length(cont)) {
     lim  <- max(0.1, 3 / sqrt(nrow(data)))
     hit  <- function(d, c) {
@@ -149,6 +158,16 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
       user_keys <- vapply(names(cor), pair_key, character(1))
       data_keys <- vapply(names(d$cor), pair_key, character(1))
       cor <- c(cor, d$cor[!data_keys %in% user_keys])
+    } else if (length(d$cor)) {
+      # A named vector overrides pairwise; a full matrix states every pair at
+      # once, so there is nothing left of the cohort's own to keep.
+      message("admixr2: `cor` is a full matrix, so the correlations the ",
+              "cohort itself shows (",
+              paste(sprintf("%s = %.2f", names(d$cor), d$cor),
+                    collapse = ", "),
+              ") are REPLACED rather than merged. Give `cor` as a named ",
+              "vector of the pairs you mean to override if that is not what ",
+              "you want.")
     }
   }
   if (!length(a) || is.null(names(a)) || any(!nzchar(names(a))))
@@ -165,7 +184,41 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
   if (!is.null(cor)) {
     if (is.matrix(cor)) {
       R <- cor
-      if (is.null(rownames(R))) dimnames(R) <- list(nms, nms)
+      # One set of names, however they were spelled.
+      nmR <- rownames(R) %||% colnames(R)
+      if (!is.null(nmR)) dimnames(R) <- list(nmR, nmR)
+      if (is.null(nmR)) {
+        # Positional only when the caller can see the position. Derived margins
+        # are appended AFTER the ones typed into `...`, an order nobody writing
+        # a matrix by hand would guess.
+        if (!is.null(data))
+          stop("admixr2: a matrix `cor` given alongside `data` must have ",
+               "dimnames -- the covariates are ordered as declared and then ",
+               "as derived from the data frame (",
+               paste(sQuote(nms), collapse = ", "),
+               "), which is not an order to rely on positionally.",
+               call. = FALSE)
+        dimnames(R) <- list(nms, nms)
+      } else {
+        if (!all(nms %in% nmR))
+          stop("admixr2: matrix `cor` is missing ",
+               paste(sQuote(setdiff(nms, nmR)), collapse = ", "),
+               ". Name every declared covariate. Declared: ",
+               paste(sQuote(nms), collapse = ", "), ".", call. = FALSE)
+        R <- R[nms, nms, drop = FALSE]
+      }
+      # The vector branch refuses this per entry; a matrix reached the copula
+      # unchecked and the discrete margin came off the grid at the wrong
+      # level probabilities.
+      off <- nms[lv][vapply(nms[lv], function(x)
+        any(abs(R[x, setdiff(nms, x)]) > 0), logical(1))]
+      if (length(off))
+        stop("admixr2: matrix `cor` correlates ",
+             paste(sQuote(off), collapse = " and "),
+             ", which is a DISCRETE covariate. A level would then be a ",
+             "truncation of the latent normal rather than a point, which ",
+             "admixr2 refuses -- see covStrata(). Declare it independent.",
+             call. = FALSE)
     } else {
       R <- diag(length(nms)); dimnames(R) <- list(nms, nms)
       cn <- names(cor)
@@ -250,8 +303,11 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #' @param population The population the study enrolled --- see
 #'   [admPopulation()]. Covariates the model reads are integrated over it.
 #'   A **data frame** of enrolled subjects is accepted directly and read into
-#'   a table, using the columns this model actually reads and taking `n` from
-#'   its row count.
+#'   a table, taking `n` from its row count. EVERY column that is not a
+#'   reserved data column (`ID`, `TIME`, `DV`, `AMT`, ...) becomes a covariate,
+#'   including ones this model does not read --- a covariate another source
+#'   fitted is still evidence here, and each one adds a quadrature axis, so
+#'   drop the columns you do not want integrated over.
 #' @param at Named list pinning a covariate at a value, for a study reported in
 #'   one subgroup, e.g. `at = list(SEX = 1)`. A pinned covariate must be omitted
 #'   from `population`.
@@ -305,6 +361,15 @@ admStudy <- function(model = NULL, est = NULL,
     bad("digitised data cannot be expanded with `by` or `stratify`: one ",
         "reported mean/spread profile contains no separate subgroup profiles. ",
         "Create one admStudy(..., at = ...) per reported subgroup instead.")
+  # Otherwise they are read only inside the banding branch and vanish.
+  if ((is.null(stratify) || identical(stratify, FALSE)) &&
+      (!is.null(strata_nodes) || !is.null(range)))
+    bad("gives ",
+        paste(sQuote(c("strata_nodes", "range")[
+          c(!is.null(strata_nodes), !is.null(range))]), collapse = " and "),
+        " -- the resolution and enrolled range for banding -- but `stratify` ",
+        "is not set, so nothing is banded and they would be ignored. Set ",
+        "`stratify`, or drop them.")
   # A cohort data frame supplies its own sample size.
   if (is.data.frame(population) && is.null(n)) n <- nrow(population)
   if (is.null(n) || !is.finite(n) || n <= 0)
@@ -382,6 +447,16 @@ admStudy <- function(model = NULL, est = NULL,
               else " are data columns, not covariates.")
     population <- admPopulation(data = population[, keep, drop = FALSE])
   }
+  # Canonicalise HERE, so a population written as a plain list is the same
+  # object as one from admPopulation() everywhere downstream -- `by` reads its
+  # levels and .admCovDropMargin() carries its dependence across, and both were
+  # silently wrong on the raw form. Also surfaces a malformed spec on build.
+  if (!is.null(population))
+    population <- tryCatch(.admCovDistCanon(population),
+                           error = function(e) bad("`population` is not a ",
+                                                   "valid covariate ",
+                                                   "specification: ",
+                                                   conditionMessage(e)))
   overlap <- intersect(names(at), .admCovSpecNames(population))
   if (length(overlap))
     bad("`at` pins ", paste(sQuote(overlap), collapse = ", "),
@@ -438,7 +513,13 @@ print.admStudy <- function(x, ...) {
   if (!is.null(x$at)) cat("  pinned at ",
     paste(sprintf("%s = %s", names(x$at), unlist(x$at)), collapse = ", "), "\n")
   if (!is.null(x$by))       cat("  reported by", x$by, "-> one study per level\n")
-  if (!is.null(x$stratify)) cat("  banded on ", x$stratify, "\n")
+  # Resolve `TRUE` to the covariates it actually bands; printing "TRUE" tells
+  # the reader nothing they can check against the paper.
+  .bn <- .admStudyBandNames(x)
+  if (length(.bn)) cat("  banded on ", paste(.bn, collapse = ", "), "\n")
+  else if (isTRUE(x$stratify))
+    cat("  banded on  nothing -- this model estimated no covariate ",
+        "coefficient\n", sep = "")
   invisible(x)
 }
 

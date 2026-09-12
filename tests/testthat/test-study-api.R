@@ -462,3 +462,66 @@ test_that("by refuses to discard an opaque joint sampler", {
                                            CRCL = stats::qlnorm(u[, 2], log(90), .2)))
   expect_error(admixr2:::.admCovDropMargin(cd, "SEX"), "user-supplied `joint`")
 })
+
+test_that("a population is canonicalised on build, so `by` sees the same object", {
+  # A plain list never went through the canon, so `cor` was still spelled `cor`
+  # and .admCovDropMargin() -- which carries only `latentR` across -- dropped
+  # the dependence without a word.
+  raw <- list(WT = list(mean = 70, sd = 15, dist = "lnorm"),
+              CRCL = list(mean = 90, sd = 22, dist = "lnorm"),
+              SEX = list(values = c(0, 1), probs = c(.45, .55)),
+              cor = matrix(c(1, .6, 0, .6, 1, 0, 0, 0, 1), 3L, 3L,
+                           dimnames = rep(list(c("WT", "CRCL", "SEX")), 2L)))
+  expect_equal(admixr2:::.admCovDropMargin(raw, "SEX")[["latentR"]][1L, 2L], 0.6)
+
+  s <- admStudy(model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+                population = raw, by = "SEX", label = "s")
+  expect_false(is.null(s$population[["latentR"]]))
+  expect_null(s$population[["cor"]])
+  expect_error(admStudy(model = .sa_model, n = 10, dose = 1, times = 1,
+                        population = list(WT = list(mean = 70, sd = 15,
+                                                    dist = "weibull"))),
+               "not a valid covariate specification")
+})
+
+test_that("`stratify = FALSE` is the same statement as omitting it", {
+  skip_if_not_installed("rxode2")
+  pop <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55))
+  s <- admStudy(model = .sa_model, est = c(bsex = .2), n = 100, dose = 200,
+                times = c(1, 4), population = pop, stratify = FALSE,
+                label = "s")
+  expect_named(admixr2:::.admMaterialise(list(s = s)), "s")
+  expect_identical(admixr2:::.admStudyBandNames(s), character(0))
+  # the resolution and range only mean something alongside a band
+  expect_error(admStudy(model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+                        population = pop, range = list(WT = c(50, 100))),
+               "`stratify` is not set")
+  # ...and `TRUE` prints as the covariates it resolves to, not as "TRUE"
+  expect_output(print(admStudy(model = .sa_model, n = 100, dose = 200,
+                               times = c(1, 4), population = pop,
+                               stratify = TRUE, label = "s")),
+                "banded on +SEX")
+})
+
+test_that("admPopulation guards the data-frame route it advertises", {
+  set.seed(4)
+  d <- data.frame(WT = rlnorm(60, log(70), .2), CRCL = rlnorm(60, log(90), .25))
+  # a discrete margin typed in for a covariate the listing does not report
+  p <- admPopulation(SEX = c(male = .55), data = d)
+  expect_setequal(admixr2:::.admCovSpecNames(p), c("SEX", "WT", "CRCL"))
+  # NA is a hole in the margin, not a level -- sort() used to swallow it
+  d2 <- d; d2$SEX <- factor(c(rep("m", 30), rep("f", 29), NA))
+  expect_error(admPopulation(data = d2), "missing or non-finite")
+  # a matrix `cor` is checked exactly as the named-vector form is
+  M <- matrix(c(1, .5, .5, 1), 2L, 2L,
+              dimnames = rep(list(c("WT", "SEX")), 2L))
+  expect_error(admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55),
+                             cor = M), "DISCRETE")
+  # positional dimnames are not guessable once the data appends its own columns
+  expect_error(admPopulation(data = d, cor = matrix(c(1, .3, .3, 1), 2L, 2L)),
+               "must have dimnames")
+  expect_message(admPopulation(data = d,
+                               cor = matrix(c(1, .3, .3, 1), 2L, 2L,
+                                            dimnames = rep(list(c("WT", "CRCL")), 2L))),
+                 "REPLACED rather than merged")
+})

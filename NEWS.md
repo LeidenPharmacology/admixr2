@@ -343,6 +343,24 @@
   containing one (above), and the reported covariance that would have fed those
   arguments has no role left.
 
+  The transcription routes are checked rather than trusted. `population` is
+  canonicalised as the study is built, so one written as a plain list is the
+  same object as one from `admPopulation()` everywhere downstream --- `by` reads
+  its levels and dropping the `by` margin carries its correlations across, both
+  of which silently did neither on the raw form. A matrix `cor` is now held to
+  the same rules as the named-vector form: it is reordered to the declared
+  covariates, must name them all, and is refused where it correlates a DISCRETE
+  margin (a level would be a truncation of the latent normal rather than a
+  point). Alongside `data =` it must carry dimnames, because the derived
+  columns are appended after the ones typed in and that order is not guessable,
+  and it says that it REPLACES the cohort's own correlations rather than merging
+  with them. A covariate named in `...` but absent from `data`, and a missing
+  value in a factor column, are now errors instead of a `cor()` failure and a
+  margin of `NA`. `stratify = FALSE` means the same as omitting it rather than
+  failing in `datagen()`; `strata_nodes` / `range` without a `stratify` are
+  refused rather than discarded; and `print()` shows the covariates a
+  `stratify = TRUE` resolves to instead of the word `TRUE`.
+
 ## Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not name a new

@@ -988,6 +988,10 @@
 
 # Drop one margin and rebuild positional correlation and joint-sampler state.
 .admCovDropMargin <- function(cd, drop) {
+  # Canonicalise FIRST. The `cor`/`rho`/`Sigma` spellings are dropped below and
+  # only `latentR` is carried across, so a spec that had never been through the
+  # canon lost its dependence here without a word.
+  cd <- .admCovDistCanon(cd)
   if (is.function(cd[["joint"]]) && !isTRUE(cd[["jointOwn"]]))
     stop("admixr2: `by` cannot drop a margin from a user-supplied `joint` ",
          "sampler without changing the dependence among the margins that ",
@@ -1561,7 +1565,13 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # subgroups reports their real sizes, which beat quadrature weights -- pass those as ordinary studies instead
 # of using `stratify` at all.
 .admExpandStrata <- function(studies, study_names, model = NULL) {
-  has <- vapply(studies, function(s) !is.null(s[["stratify"]]), logical(1))
+  # `stratify = FALSE` is "do not band", the same statement as omitting it. It
+  # reached .admCovStrata() as a length-1 logical and died on "must be a
+  # character vector of covariate names".
+  has <- vapply(studies, function(s) {
+    st <- s[["stratify"]]
+    !is.null(st) && !identical(st, FALSE)
+  }, logical(1))
   if (!any(has)) return(list(studies = studies, names = study_names))
   out <- list(); nms <- character(0)
   for (i in seq_along(studies)) {
