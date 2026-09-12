@@ -550,7 +550,6 @@
   # coincidence of sample size. It is justified by the definition of J.
   #
   # `s` stays in the signature: s$method still selects the branch.
-  r  <- numeric(m)
   p  <- length(dV)
   ij <- which(lower.tri(diag(m), diag = TRUE), arr.ind = TRUE)
   if (isv) ij <- ij[ij[, 1L] == ij[, 2L], , drop = FALSE]
@@ -559,7 +558,12 @@
     # on the var branch only the diagonal of dV reaches the objective
     dVk <- if (isv) diag(diag(dV[[k]]), m) else dV[[k]]
     dVi <- -Vi %*% dVk %*% Vi
-    G[k, seq_len(m)] <- 2 * N * (as.numeric(dVi %*% r) -
+    if (!all(is.finite(dVi))) return(NULL)
+    # The residual term is dVi %*% r with r identically zero (see above) --
+    # written out as the zero vector rather than the matrix product so a
+    # non-finite dVi cannot turn its provably-zero contribution into NaN
+    # (Inf * 0) and poison an otherwise-finite G.
+    G[k, seq_len(m)] <- 2 * N * (numeric(m) -
                                  as.numeric(Vi %*% dE[, k]))
     dup <- ifelse(ij[, 1L] == ij[, 2L], 1, 2)      # vech duplication
     G[k, m + seq_len(nrow(ij))] <- N * dup * dVi[ij]

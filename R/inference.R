@@ -63,6 +63,16 @@
          .n2, "). The objective moves with the grid, so the difference is not ",
          "a likelihood ratio -- refit both with the same `n_nodes`.",
          call. = FALSE)
+  # SAME ARGUMENT, FOR admc/adirmc: their objective is a Monte Carlo average
+  # over `n_sim` draws, so it moves with `n_sim` exactly as adgh's moves with
+  # `n_nodes`. NULL for adfo/adgh, so this is a no-op there.
+  .s1 <- tryCatch(full$env$nSim, error = function(e) NULL)
+  .s2 <- tryCatch(reduced$env$nSim, error = function(e) NULL)
+  if (!is.null(.s1) && !is.null(.s2) && !identical(.s1, .s2))
+    stop("anova(): these fits used different `n_sim` (", .s1, " and ",
+         .s2, "). The objective is a Monte Carlo average, so the difference ",
+         "is not a likelihood ratio -- refit both with the same `n_sim`.",
+         call. = FALSE)
   o_f <- as.numeric(full$objective)
   o_r <- as.numeric(reduced$objective)
   if (!is.finite(o_f) || !is.finite(o_r))

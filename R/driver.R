@@ -120,6 +120,11 @@
   # three estimators that have no node grid, which makes the check a no-op
   # there rather than a special case.
   .fit$env$nNodes <- .ctl[["n_nodes"]]
+  # THE MONTE CARLO RESOLUTION, stamped for the same reason: admc/adirmc's
+  # objective is an average over `n_sim` draws, and that average moves with
+  # `n_sim` exactly as the quadrature objective moves with `n_nodes`. NULL for
+  # adfo/adgh, which makes the check below a no-op there.
+  .fit$env$nSim <- .ctl[["n_sim"]]
   .admRestoreCovNames(.fit, cov_nms)
   .fit$env$studies <- studies
   .extra <- .ret[[extra_field]]

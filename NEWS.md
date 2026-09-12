@@ -258,14 +258,15 @@
   reference with `Df` equal to the number of parameters the larger model adds.
   It does not depend on which `covMethod` the fits used.
 
-  Three comparisons are REFUSED rather than reported, because none of them is a
+  Four comparisons are REFUSED rather than reported, because none of them is a
   likelihood ratio. Fits from different estimators --- each scores its own
   approximation to the same likelihood, FO-linearised, quadrature or Monte
   Carlo, so `anova(adfo_fit, adgh_fit)` was differencing two numbers on
   different scales and returning a perfectly finite `p`. Fits on different node
-  counts, for the same reason: the objective moves with the grid. And a
-  non-nested pair, which is a different problem (Vuong) and must not come back
-  with a p-value.
+  counts, for the same reason: the objective moves with the grid. Fits on
+  different `n_sim`, for admc/adirmc, whose objective is a Monte Carlo average
+  over that many draws. And a non-nested pair, which is a different problem
+  (Vuong) and must not come back with a p-value.
 
   A negative `dOFV` is reported rather than clamped to zero: the larger model
   cannot fit worse at its own optimum, so a negative difference says one of the
