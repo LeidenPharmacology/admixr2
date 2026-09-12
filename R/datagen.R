@@ -23,6 +23,11 @@
 #' @param sampling Quasi-random sampling method: `"sobol"` (default),
 #'   `"halton"`, `"torus"`, `"lhs"`, or `"rnorm"`. Ignored when `method = "fo"`
 #'   or `"gh"`.
+#' @param cov_nodes Gauss-Hermite nodes per covariate when `method = "gh"`
+#'   integrates a study's `cov_dist` (default 7). Total covariate points are
+#'   `cov_nodes^p` for `p` covariates. Ignored by `"mc"`, which draws a covariate
+#'   value per simulated subject instead, and by `"fo"`, which cannot integrate a
+#'   covariate at all.
 #' @param seed Integer seed.  Applied before stochastic methods
 #'   (`"rnorm"`, `"lhs"`). Ignored when `method = "fo"` or `"gh"`.
 #' @param cores Number of `rxSolve` threads.
@@ -52,18 +57,21 @@ datagenControl <- function(
   return_samples = FALSE,
   # LAST on purpose: inserting an argument mid-signature silently rebinds every
   # positional call (datagenControl("mc", 2000L, 7L) used to set n_nodes = 7).
-  resid_nodes    = 81L) {
+  resid_nodes    = 81L,
+  cov_nodes      = 7L) {
   method   <- match.arg(method)
   sampling <- match.arg(sampling)
   checkmate::assertIntegerish(n_sim,    lower = 1L, len = 1L)
   checkmate::assertIntegerish(n_nodes,  lower = 1L, len = 1L)
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1L)
+  checkmate::assertIntegerish(cov_nodes, lower = 1L, len = 1L)
   checkmate::assertIntegerish(seed,                 len = 1L)
   checkmate::assertIntegerish(cores,    lower = 1L, len = 1L)
   checkmate::assertFlag(return_samples)
   structure(
     list(
       method         = method,
+      cov_nodes      = as.integer(cov_nodes),
       n_sim          = as.integer(n_sim),
       n_nodes        = as.integer(n_nodes),
       resid_nodes    = as.integer(resid_nodes),
@@ -99,6 +107,32 @@ datagenControl <- function(
 #'     \item{`ev`}{A dosing event table created with `rxode2::et()`.}
 #'     \item{`n`}{(Optional) integer sample size; stored as metadata and
 #'       used when supplying the result to `admControl()`.}
+#'     \item{`cov_dist`}{(Optional) the covariate distribution this study's
+#'       subjects span --- see [covDraw()] for the grammar. The generated
+#'       `E`/`V` are MARGINAL over it, which is what a publication reports.
+#'       Needs `datagenControl(method = "mc")` or `"gh"`; `"fo"` integrates
+#'       over the random effects only and is refused. Prefer `"gh"`, which
+#'       adds no Monte Carlo noise to data that is meant to BE the reference.}
+#'     \item{`stratify`}{(Optional) `TRUE` to stratify on every covariate this
+#'       study's OWN data-generating model conditions on, marginalising the
+#'       rest --- the split is read from the model, so it cannot disagree with
+#'       it. Two sources sharing one `cov_dist` therefore stratify differently,
+#'       each according to what it fitted. A character vector names the
+#'       covariates explicitly instead. The study is expanded into
+#'       one ordinary study per covariate stratum, named `<study>_s1`,
+#'       `<study>_s2`, ..., each pinned at its own covariate value, carrying its
+#'       own effective size `n_k` (the quadrature weight times `n`, summing to
+#'       `n`), and marginalising the remaining covariates over their
+#'       distribution CONDITIONAL on that stratum. Use it when the source
+#'       reports --- or, being a published model, can report --- summaries by
+#'       covariate subgroup. Stratify only on what the source actually fitted:
+#'       a source with no term in a covariate has no contrast in it to give, and
+#'       nodes that vary it manufacture a null one. See [covStrata()].}
+#'     \item{`strata_nodes`}{(Optional) strata per stratified covariate
+#'       (default 5); a discrete covariate is cut at its levels instead. Each
+#'       stratum costs a solve and more of them do not buy accuracy: a matched
+#'       one-covariate fit recovers 0.7000 / 0.7002 / 0.7005 at 3 / 4 / 10
+#'       strata against a true 0.700. See [covStrata()].}
 #'     \item{`observations`}{(Optional) a named list to generate data for several
 #'       observed outputs (multi-compartment). Each entry gives one output's
 #'       `output` (model prediction variable, e.g. `"cp"`), `times`, and
@@ -110,7 +144,6 @@ datagenControl <- function(
 #'   supply its own `model` element.  At least one of `model` or each
 #'   study's `model` must be non-`NULL`.
 #' @param control A [datagenControl()] object.
-#'
 #' @return A named list with one element per study.  Each element contains:
 #'   \describe{
 #'     \item{`E`}{Population mean vector at `times`.}
@@ -209,18 +242,44 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   # Ensure studies are named
   study_names <- names(studies) %||% paste0("study", seq_along(studies))
 
+  # A study declaring `stratify` is expanded HERE, into one ordinary study per
+  # covariate stratum, before anything else looks at it. Everything downstream
+  # -- generation, and then the fit -- then sees plain studies and needs no
+  # knowledge of where they came from.
+  .ex <- .admExpandStrata(studies, study_names, model)
+  studies <- .ex$studies; study_names <- .ex$names
+
   # Validate study specs and resolve per-study model
   study_models <- vector("list", length(studies))
   for (i in seq_along(studies)) {
     nm <- study_names[[i]]
     s  <- studies[[i]]
-    m  <- s$model %||% model
+    # `[[ ]]`, NOT `$`: `$` PARTIAL-MATCHES on lists, so `s$model` silently
+    # returned a longer field the moment one was added and every study then
+    # failed as "must be a function".
+    m  <- s[["model"]] %||% model
     if (is.null(m))
       stop(sprintf(
         "Study '%s' has no `model` and no top-level default was supplied.", nm),
         call. = FALSE)
-    if (!is.function(m))
-      stop(sprintf("Study '%s': `model` must be a function.", nm), call. = FALSE)
+    # An rxUi is accepted alongside a function because rxode2::rxode2() is
+    # idempotent on one, and the model-source Jacobian re-generates the blocks
+    # at PERTURBED parameter values -- which is a modified ui, not a function.
+    if (!is.function(m) && !inherits(m, "rxUi"))
+      stop(sprintf("Study '%s': `model` must be a function or an rxUi.", nm),
+           call. = FALSE)
+    if (!is.null(s$covariate))
+      stop("datagen(): `covariate` (node-quadrature generation) was removed. ",
+           "Give the study a `cov_dist` instead -- ONE aggregate (E, V), ",
+           "marginal over the covariate distribution, which is what a ",
+           "publication reports. For summaries BY covariate stratum, generate ",
+           "one ordinary study per stratum with its own `cov` and `n`.",
+           call. = FALSE)
+    # Covariate marginalisation expands ONE study into one sub-study per
+    # quadrature node, each carrying a single E/V. A multi-output study is
+    # already a list of per-output blocks, and nothing downstream defines what
+    # the product of the two should be -- so refuse it rather than emit a shape
+    # no estimator reads.
     if (!is.null(s$observations)) {
       if (!is.list(s$observations) || length(s$observations) == 0L)
         stop(sprintf("Study '%s': `observations` must be a non-empty list.", nm),
@@ -262,7 +321,14 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # same route the estimators use, so a study generated here and the fit that
     # consumes it integrate the residual identically.
     pinfo$resid_nodes <- control$resid_nodes %||% .ADM_TBS_NODES
+    # Reaches .admCovGrid through .adghGrid; without it the control argument is
+    # inert and the grid silently uses its own default.
+    pinfo$cov_nodes   <- control$cov_nodes %||% 7L
     out_var <- .admOutputVar(ui)
+    # These are model-implied moments, not observed sample summaries. Mark them
+    # so the covariance step does not treat their reported study size `n` as
+    # enough to reconstruct a sampling law: source-parameter uncertainty is not
+    # available here.
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
 
     # A model mixing a continuous endpoint with a COUNT one is refused here for
@@ -345,6 +411,40 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       .adghNodeGrid(control$n_nodes, pinfo$n_eta) else NULL
 
     # Moments (mu, V) for one observed compartment via the chosen method.
+    # A study carrying `cov_dist` is generated MARGINAL over that distribution:
+    # each simulated subject gets its own covariate value, exactly as the
+    # estimator's general path does, so datagen() and the fit integrate the
+    # covariate identically rather than by two constructions that could drift.
+    # This is the ADM idiom -- a published model plus a study DESIGN (its dosing,
+    # its sampling times, its population) produces that study's aggregate data.
+    cov_rows_of <- function(n) {
+      if (is.null(s[["cov_dist"]])) return(NULL)
+      # `fo` linearises in the random effects around a single solve and has no
+      # covariate integral at all. `gh` does: .adghGrid crosses the covariate
+      # grid with the eta grid, which is the same construction the estimator
+      # uses, so it needs no samples and adds no Monte Carlo noise to data that
+      # is supposed to BE the reference.
+      if (identical(control$method, "fo"))
+        stop(sprintf(paste("Study '%s': `cov_dist` needs datagenControl(method =",
+                           "\"mc\") or \"gh\"; the fo moment path integrates over",
+                           "the random effects only."), nm), call. = FALSE)
+      if (!identical(control$method, "mc")) return(NULL)
+      .admCovRowsFor(s[["cov_dist"]], n, pinfo$n_eta)
+    }
+    # A study may fix a covariate VALUE (`cov`) instead of, or as well as, a
+    # distribution. Deriving only from `cov_dist` left a study with a fixed
+    # covariate unable to solve at all -- the model reads the covariate and
+    # nothing supplies it.
+    cov_ref_of <- function() {
+      if (!is.null(s[["cov"]])) return(s[["cov"]])
+      if (is.null(s[["cov_dist"]])) return(NULL)
+      # `rho`, `Sigma` and `joint` are metadata and a sampler, not covariate
+      # specs -- .admCovMeanOf() has nothing to compute from a function.
+      .cd <- s[["cov_dist"]][setdiff(names(s[["cov_dist"]]),
+                                     .ADM_COV_META)]
+      stats::setNames(lapply(.cd, .admCovMeanOf), names(.cd))
+    }
+
     compute_moments <- function(spec) {
       ov  <- spec$output
       n_t <- length(spec$times)
@@ -357,8 +457,19 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       # first shape parameter, so datagen() returned an `E` that was a shape (an
       # arbitrary positive number, not a probability) and a `V` whose diagonal was
       # entirely NA, with no error and no warning.
+      # `cov` rides on the study exactly as it does on the fit path, so the
+      # solve paths pick it up through the same channel.
       study_tmp <- list(ev_full = evf, times = spec$times,
-                        out_pair = .admBetaPair(ui))
+                        out_pair = .admBetaPair(ui),
+                        cov = cov_ref_of(),
+                        cov_rows = cov_rows_of(control$n_sim))
+      # `gh` integrates the covariate on its own grid, so it needs the
+      # DISTRIBUTION, not just the reference value. Passing only `cov` left it
+      # solving at the covariate mean -- the ecological plug-in, generating data
+      # for a population that does not exist. Measured against the mc path on a
+      # lognormal covariate: 2.1e-02 on the mean and 2.9e-01 on the covariance.
+      if (control$method == "gh")
+        study_tmp$cov_dist <- s[["cov_dist"]]
 
       if (control$method == "gh") {
         m <- .adghMoments(pars, pinfo, study_tmp, rxMod, ov, grid, control$cores)
@@ -421,11 +532,29 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       names(mu) <- t_lbl; dimnames(V) <- list(t_lbl, t_lbl)
       r <- list(E = mu, V = V, n = spec$n %||% NA_integer_,
                 times = spec$times, ev = spec$ev)
+      # Carry the covariate distribution onto the result so the generated study
+      # is directly fittable: the estimator must marginalise over the same
+      # population the data were generated for, and making the caller restate it
+      # is a way for the two to disagree.
+      if (!is.null(s[["cov_dist"]])) { r$cov_dist <- s[["cov_dist"]] }
       # Self-describing: datagen builds V with the ML denominator, so say so
       # rather than leaving the consumer to rely on the default meaning the same
       # thing. A generated study can then be mixed with a digitised one that
       # declares "unbiased" and both are converted correctly.
       r$v_denom <- "ml"
+      if (!is.null(cov_ref_of()))     { r$cov      <- cov_ref_of() }
+      # The marker that says "model-implied, not observed sample summaries".
+      # .admResolveCovMethod() reads it to refuse a standard error.
+      r$.adm_src <- TRUE
+      # The stratum resolution, carried for the same reason and by the same
+      # route. .admExpandStrata() stamps it on the study, but one_result() builds
+      # its output from an explicit field list, so it was being DROPPED here --
+      # which silently disabled everything downstream that reads it:
+      # .admFinaliseFit() never recorded `strataNodes`, so anova()'s refusal to
+      # compare two fits built at different resolutions could not fire on any
+      # generated study, which is the normal path.
+      if (!is.null(s[[".adm_strata_nodes"]]))
+        r$.adm_strata_nodes <- s[[".adm_strata_nodes"]]
       if (!is.null(spec$output)) r$output <- spec$output
       if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
       r
@@ -434,11 +563,131 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     if (!is.null(s$observations)) {
       obs_res <- lapply(obs_specs, one_result)
       names(obs_res) <- vapply(obs_specs, `[[`, character(1), "name")
-      results[[i]] <- list(observations = obs_res, n = s$n %||% NA_integer_)
+      results[[i]] <- list(observations = obs_res, n = s$n %||% NA_integer_,
+                           .adm_src = TRUE)
     } else {
       results[[i]] <- one_result(obs_specs[[1L]])
     }
   }
 
-  setNames(results, study_names)
+  # setNames, NOT an out[[nm]] <- loop. The loop DROPS a study on a name
+  # collision -- `out[["a"]] <- x` twice keeps one -- and collisions are
+  # reachable: a duplicated name, or a user study called `x_s1` beside an `x`
+  # that .admExpandStrata bands into `x_s1`, `x_s2`. setNames keeps both and
+  # the refusal below names the clash instead of losing a study to it.
+  if (anyDuplicated(unlist(study_names)))
+    stop("admixr2: datagen() produced duplicate study name(s) ",
+         paste(sQuote(unique(unlist(study_names)[
+           duplicated(unlist(study_names))])), collapse = ", "),
+         ". Studies are matched by name downstream, so a duplicate would ",
+         "silently drop all but one. Rename the study, or the banded source ",
+         "whose strata collide with it.", call. = FALSE)
+  stats::setNames(results, unlist(study_names))
 }
+
+# datagen() AS A SIMULATOR, not as a published source.
+#
+# datagen() does two jobs that look identical from inside it and differ entirely
+# in what they claim. Turning a PUBLISHED model into a study says "this is what
+# that paper's model implies". Its `n` remains the true sample size, but no
+# standard error is available because the source-parameter uncertainty is
+# absent (see .admResolveCovMethod). Turning a
+# model you wrote yourself into a study says "pretend a trial of `n` patients
+# came out like this", which is a simulated DATA study and the ordinary weight
+# is the right one for it.
+#
+# Only the caller knows which. datagen() assumes the first, because that is the
+# claim that is dangerous to get wrong. This is the other door, for simulating a study to
+# exercise or demonstrate the machinery with. It is internal on purpose: an
+# exported version would be a way to ask for the SE the public route withholds.
+.admDatagenSim <- function(...) {
+  lapply(datagen(...), function(u) {
+    u[[".adm_src"]] <- NULL
+    if (is.list(u[["observations"]]))
+      u$observations <- lapply(u$observations, function(o) {
+        o[[".adm_src"]] <- NULL
+        o
+      })
+    u
+  })
+}
+
+# --- PR D: these two move from R/study-api.R into R/datagen.R ---------------
+#
+# Under the order A -> B -> INF -> D -> E -> C, seam D lands BEFORE the study
+# API. They live in `study-api.R` on #121 only because C was written first, and
+# the ONLY thing tying them there is the `inherits(s, "admStudy")` branch, which
+# tests a class C defines. Dropping that branch makes D independent of C at no
+# cost: an `admStudy` spec is materialised into ordinary studies by
+# `.admMaterialise()` before any control object sees it, and the materialised
+# study carries `.adm_src` like any other.
+#
+# WHEN C LANDS, restore the branch. Until then a raw `admStudy` object handed
+# straight to a control function would not be recognised as a model source --
+# which cannot happen while `admStudy()` does not exist.
+
+.admStudyHasModelSource <- function(study) {
+  if (!is.list(study)) return(FALSE)
+  if (isTRUE(study[[".adm_src"]])) return(TRUE)
+  observations <- study[["observations"]]
+  is.list(observations) && any(vapply(
+    observations, function(x) is.list(x) && isTRUE(x[[".adm_src"]]), logical(1)
+  ))
+}
+
+.admHasModelSource <- function(studies) {
+  if (!is.list(studies) || !length(studies)) return(FALSE)
+  any(vapply(studies, .admStudyHasModelSource, logical(1)))
+}
+
+# unchanged from R/study-api.R
+# `n` is the source study's sample size; it affects pooled point estimates.
+#
+# Called from .admResolveCovMethod() -- the one place that already runs once
+# per fit with `studies` in hand -- and BEFORE its early return, so the
+# warning still fires when the caller has already asked for covMethod =
+# "none". At HEAD this lived in .admReportCovWarnings(), which does not
+# exist on this base; the check is the same.
+.admWarnSourceWeight <- function(studies) {
+  # `n` divides out for one source but determines its contribution when sources
+  # are pooled. Require the true sample size of the dataset used to develop the
+  # source model rather than letting a missing value silently distort the fit.
+  if (!is.list(studies) || !length(studies)) return(invisible(NULL))
+  # Same is.list(s) guard as .admHasModelSource(): a malformed study element
+  # must fall through to checkmate::assertList()'s message, not a raw
+  # subscript error out of this helper.
+  .is_src <- vapply(studies, .admStudyHasModelSource, logical(1))
+  if (length(studies) > 1L && any(.is_src)) {
+    study_names <- names(studies) %||% paste0("study", seq_along(studies))
+    bad_n <- study_names[.is_src][vapply(studies[.is_src], function(s) {
+      nn <- as.numeric(s[["n"]] %||% NA_real_)
+      !is.finite(nn) || nn <= 0 }, logical(1))]
+    if (length(bad_n))
+      warning("admixr2: model source", if (length(bad_n) > 1L) "s " else " ",
+              paste(sQuote(bad_n), collapse = ", "), " ",
+              if (length(bad_n) > 1L) "have" else "has",
+              " no usable `n`, and this fit combines several sources. Set `n` ",
+              "to the true sample size of the dataset used to develop the ",
+              "source model; it determines that study's contribution to the ",
+              "pooled point estimate.", call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+.admResolveCovMethod <- function(covMethod, studies, explicit) {
+  .admWarnSourceWeight(studies)
+  if (!.admHasModelSource(studies) || identical(covMethod, "none"))
+    return(covMethod)
+  if (isTRUE(explicit))
+    stop("admixr2: covMethod = ", dQuote(covMethod), " was requested, but a ",
+         "study contributes model-implied moments rather than observed sample ",
+         "summaries. `n` is the source study's true sample size, but the source ",
+         "parameter uncertainty needed for a sampling law is unavailable. ",
+         "Pass covMethod = \"none\".", call. = FALSE)
+  message("admixr2: a study contributes as a published MODEL, so covMethod ",
+          "has been set to \"none\". `n` remains the source study's sample ",
+          "size, but its parameter uncertainty is unavailable, so no sampling ",
+          "law can be built for a standard error.")
+  "none"
+}
+

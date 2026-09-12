@@ -12,6 +12,8 @@
 #' @inheritParams admControl
 #' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
 #'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   A study generated from a published model defaults to `"none"` and refuses
+#'   an explicit covariance method because it has no sampling law.
 #'   All three span the structural, residual-error and omega parameters, and are
 #'   reported on the scale the estimates are printed on. [admControl()] documents
 #'   what the sandwich is, why it is the conservative default, and why it is more
@@ -163,10 +165,11 @@ adirmcControl <- function(
     sumProd         = FALSE,
     literalFix      = TRUE,
     returnAdmr      = FALSE,
-    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # TAIL arguments: inserting an argument mid-signature silently rebinds every
     # positional call -- adirmcControl(studies, 2000L) used to set n_sim = 2000.
     resid_nodes     = 81L,
-    # ... and this one after it, for the same reason.
+    # LAST on purpose: new control arguments are appended.
+    xtol_rel        = .Machine$double.eps^(1/2),
     ...) {
 
   .xtra <- list(...)
@@ -189,6 +192,7 @@ adirmcControl <- function(
   checkmate::assertIntegerish(outer_iter,   lower = 1L,  len = 1)
   checkmate::assertIntegerish(maxeval,      lower = 1L,  len = 1)
   checkmate::assertNumeric(ftol_rel,        lower = 0,   len = 1)
+  checkmate::assertNumeric(xtol_rel,        lower = 0,   len = 1)
   checkmate::assertIntegerish(print,        lower = 0L,  len = 1)
   checkmate::assertNumeric(omega_expansion, lower = 1,   len = 1)
   checkmate::assertIntegerish(seed,                      len = 1)
@@ -203,7 +207,11 @@ adirmcControl <- function(
   checkmate::assertNumeric(convcrit,        lower = 0,   len = 1)
   checkmate::assertIntegerish(max_worse,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(kappa_n_nodes, lower = 1L, len = 1)
-  covMethod <- match.arg(covMethod)
+  # A model source lacks source-parameter uncertainty, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
   checkmate::assertIntegerish(cov_n_sim,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(n_restarts,   lower = 1L,  len = 1)
   checkmate::assertNumeric(restart_sd,      lower = 0,   len = 1)
@@ -251,6 +259,7 @@ adirmcControl <- function(
     algorithm       = algorithm,
     maxeval         = as.integer(maxeval),
     ftol_rel        = ftol_rel,
+    xtol_rel        = xtol_rel,
     print           = as.integer(print),
     omega_expansion = omega_expansion,
     seed            = as.integer(seed),
@@ -934,7 +943,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
   pinfo, studies,
   draw_proposals_inner,
   draw_proposals_exact,
-  print_progress = TRUE
+  print_progress = TRUE,
+  xtol_rel = .Machine$double.eps^(1/2)
 ) {
   phase_names      <- c("Wide", "Focused", "Fine-tuning", "Precision")
   global_iter      <- 0L
@@ -1058,12 +1068,14 @@ nmObjGetControl.adirmc <- function(x, ...) {
         nloptr::nloptr(x0 = p_cur, eval_f = eval_f, eval_grad_f = eval_grad_inner,
                        lb = lb_inner, ub = ub_inner,
                        opts = list(algorithm = algorithm_inner,
-                                   ftol_rel = ftol_rel, maxeval = maxeval)),
+                                   ftol_rel = ftol_rel, xtol_rel = xtol_rel,
+                                   maxeval = maxeval)),
         error = function(e)
           nloptr::nloptr(x0 = p_cur, eval_f = eval_f, eval_grad_f = NULL,
                          lb = lb_inner, ub = ub_inner,
                          opts = list(algorithm = "NLOPT_LN_BOBYQA",
-                                     ftol_rel = ftol_rel, maxeval = maxeval)))
+                                     ftol_rel = ftol_rel, xtol_rel = xtol_rel,
+                                     maxeval = maxeval)))
       last_opt_message <- opt$message
       p_new <- opt$solution; nll_approx <- opt$objective
       props_exact <- get_proposals(p_new)
@@ -1168,7 +1180,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
     pinfo = pinfo, studies = studies,
     draw_proposals_inner = .draw_proposals_inner,
     draw_proposals_exact = .draw_proposals_exact,
-    print_progress = print_progress
+    print_progress = print_progress,
+    xtol_rel = pinfo$.xtol_rel %||% .Machine$double.eps^(1/2)
   )
 
   list(restart_id = restart_id, objective = pl$best_nll,
@@ -1202,13 +1215,9 @@ nlmixr2Est.adirmc <- function(env, ...) {
     stop("Could not recover adirmcControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("adirmcControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adirmc")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   # IRMC draws its importance-sampling proposals FROM the random-effect
   # distribution, so a model with no random effect has nothing to propose: the
   # proposal draw is degenerate and the fit returned a silent objective = Inf
@@ -1269,6 +1278,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   studies        <- .u$studies
   .adm_multi_out <- .u$multi_out
   .adm_joint     <- .u$any_joint
+  .admRefuseCovariates(.u$studies, "adirmc")
   if (.adm_multi_out || .adm_joint)
     stop("adirmc does not yet support multiple observed outputs (multi-compartment observations). ",
          "Use est = 'admc', 'adfo', or 'adgh' for multi-output fits.", call. = FALSE)
@@ -1374,7 +1384,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
       phases = .ctl$phases, outer_iter = .ctl$outer_iter,
       convcrit = .ctl$convcrit, max_worse = .ctl$max_worse,
       print_every = .ctl$print, grad_mode = grad_mode_inner,
-      algorithm = .ctl$algorithm, ftol_rel = .ctl$ftol_rel, maxeval = .ctl$maxeval,
+      algorithm = .ctl$algorithm, ftol_rel = .ctl$ftol_rel,
+      maxeval = .ctl$maxeval, xtol_rel = .ctl$xtol_rel,
       ov_lower = ov$lower, ov_upper = ov$upper,
       pinfo = pinfo, studies = studies_snap,
       draw_proposals_inner = .draw_proposals_inner,
@@ -1493,7 +1504,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
   .ret$message   <- if (.ctl$n_restarts > 1L) opt_restart$message else pl$last_opt_message
   .ret$extra     <- ""
   .ret$origData  <- studies
-  .ret$adirmcExtra <- list(struct         = final$struct,
+  .ret$adirmcExtra <- list(has_model_source = .admHasModelSource(studies),
+                           struct         = final$struct,
                          sigma_var      = final$sigma_var,
                          sigma_is_prop  = pinfo$sigma_is_prop,
                          sigma_is_lnorm = pinfo$sigma_is_lnorm,

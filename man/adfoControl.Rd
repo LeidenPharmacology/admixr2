@@ -34,6 +34,7 @@ adfoControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
+  xtol_rel = .Machine$double.eps^(1/2),
   ...
 )
 }
@@ -101,6 +102,8 @@ warning is emitted if an estimate finishes on it.}
 
 \item{covMethod}{\code{"r,s"} (the DEFAULT) computes the sandwich \verb{H^-1 J H^-1};
 \code{"r"} the numerical Hessian alone, \verb{2H^-1}; \code{"none"} skips the covariance.
+A study generated from a published model defaults to \code{"none"} and refuses
+an explicit covariance method because it has no sampling law.
 All three span the structural, residual-error and omega parameters. Omega is
 included because excluding it also biases the STRUCTURAL standard errors
 downward -- a theta carrying an eta is correlated with that eta's variance.
@@ -235,6 +238,9 @@ This is an ACCURACY dial, not a speed one. The quadrature is linear in
 negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
 evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.}
+
+\item{xtol_rel}{Relative parameter tolerance (default
+\code{sqrt(.Machine$double.eps)}).}
 
 \item{...}{Unused arguments (trigger an error).}
 }

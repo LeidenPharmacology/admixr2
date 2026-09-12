@@ -275,6 +275,52 @@
   conservative, which is documented rather than refused, because dropping a
   random effect is an ordinary thing to test.
 
+* **A study can contribute as a published MODEL, not only as digitised
+  aggregate data.** Give `datagen()` a model and the population it was
+  developed on, and it produces the `(E, V, n)` a digitised figure would have
+  given you. The result is marked as a model source.
+
+  **No standard error is reported for a fit that contains one, and an explicit
+  `covMethod` is refused rather than honoured.** Its mean and covariance are
+  exact functions of the published parameter estimates, while the uncertainty
+  and covariance of those source parameters are unavailable. The reported
+  study size alone cannot reconstruct that sampling law.
+
+  `n` is always the true sample size of the dataset used to develop the source
+  model. It divides out for a lone source and determines that study's
+  contribution when several sources are pooled, so a missing `n` is reported
+  before it can distort a pooled point estimate.
+
+* **Covariate marginalisation over a declared distribution**, for `admc` and
+  `adgh`. A study declares who was in it --- `cov_dist`, see `covDist()` ---
+  and the estimator integrates the prediction over that distribution as well as
+  over the random effects, instead of solving at the covariate mean. Solving at
+  the mean is the ecological plug-in, and it is biased whenever the model is
+  non-linear in the covariate. `adfo` and `adirmc` REFUSE `cov_dist` rather
+  than silently solve at the mean.
+
+  `covDist()` takes margins in whichever currency the paper printed ---
+  `mean`/`sd`, `median`/`iqr`, a `cv` as a percent, a proportion --- joined by a
+  Gaussian copula whose correlation is taken on the LATENT scale. Discrete
+  margins are enumerated exactly, at their declared levels and probabilities,
+  rather than put on any quadrature rule. `covStrata()` bands a source so a
+  covariate its own model fitted contributes a contrast rather than one pooled
+  number, and `covDraw()` returns the rows a design would use, so the design is
+  inspectable.
+
+* **A sparse-grid route for several covariates.**
+  `adghControl(cov_integration = "sparse", cov_sparse_level = )` integrates the
+  covariate distribution on a Smolyak grid instead of the product one. At four
+  covariates and a correlation of 0.85 it is 49 design points against the
+  3-node product grid's 81, and roughly 40x more accurate on both the mean and
+  the covariance --- cheaper and better, with the advantage growing in the
+  number of covariates. Correlation does not cost it: its error at `rho = 0.85`
+  is lower than at `rho = 0`.
+
+  The weights are signed (they sum to 1, but the sum of their magnitudes grows
+  with the level), so a sandwich covariance whose weight matrix comes out
+  indefinite as a result is refused rather than reported.
+
 ## Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not name a new
@@ -516,6 +562,10 @@ argument. None is a bug fix, so all are listed here rather than below.
   progress table, which such a script does see.
 
 ## Bug fixes
+
+* **Derivative-free fits no longer inherit nloptr's loose `xtol_rel = 1e-4`.**
+  All four estimators now pass an explicit `xtol_rel`, exposed as the last
+  control argument and defaulting to `sqrt(.Machine$double.eps)`.
 
 * **Parallel restarts (`workers > 1`) could fail with "a parallel worker could
   not read the compiled-model cache" whenever a second R session was using

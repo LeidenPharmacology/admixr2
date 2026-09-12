@@ -907,7 +907,8 @@
   .res <- .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
                      use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
                      nll_fn, grad_fn, pinfo, print_progress, print,
-                     lock_rxMod = NULL)
+                     lock_rxMod = NULL,
+                     xtol_rel = pinfo$.xtol_rel %||% .Machine$double.eps^(1/2))
   # Carried back so .admRunRestarts() can report a worker that silently
   # dropped to a finite-difference gradient -- a daemon's own warning is
   # swallowed by mirai. NOT a new worker ARGUMENT: the signatures must stay
@@ -967,6 +968,8 @@
 #'   `NLOPT_GN_*`) turns the gradient off. Both emit a message.
 #' @param maxeval Maximum function evaluations (default 500).
 #' @param ftol_rel Relative tolerance (default `sqrt(.Machine$double.eps)`).
+#' @param xtol_rel Relative parameter tolerance (default
+#'   `sqrt(.Machine$double.eps)`).
 #' @param print Print-frequency for live progress (0 = silent).
 #' @param seed Random seed (used for restarts).
 #' @param cores OpenMP threads for `rxSolve()`. Defaults to
@@ -987,6 +990,8 @@
 #' @param cov_h_outer Outer step scale for NLL-FD Hessian.
 #' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
 #'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   A study generated from a published model defaults to `"none"` and refuses
+#'   an explicit covariance method because it has no sampling law.
 #'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
@@ -1196,10 +1201,11 @@ adfoControl <- function(
     sumProd       = FALSE,
     literalFix    = TRUE,
     returnAdmr    = FALSE,
-    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # TAIL arguments: inserting an argument mid-signature silently rebinds every
     # positional call -- adfoControl(studies, "fd") used to set grad = "fd".
     resid_nodes = 81L,
-    # ... and this one after it, for the same reason.
+    # LAST on purpose: new control arguments are appended.
+    xtol_rel = .Machine$double.eps^(1/2),
     ...) {
 
   .xtra <- list(...)
@@ -1227,9 +1233,15 @@ adfoControl <- function(
   # options(warn = 2) here.
   .grad_explicit <- !missing(grad)
   grad     <- match.arg(grad)
-  covMethod <- match.arg(covMethod)
 
   checkmate::assertList(studies)
+  # A model source lacks source-parameter uncertainty, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it. Runs AFTER assertList(): a
+  # malformed `studies` must fail on checkmate's message, not on a raw
+  # indexing error from inside the model-source helpers.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
   # A residual quadrature needs a real grid. .adghNodes1() refuses m < 1, but it
   # accepts 1..4 happily and returns a rule that integrates nothing usefully --
   # the measured error at 5 nodes is already 3.3e-1. Refuse here, where the
@@ -1237,6 +1249,7 @@ adfoControl <- function(
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1)
   checkmate::assertIntegerish(maxeval,    lower = 1L, len = 1)
   checkmate::assertNumeric(ftol_rel,      lower = 0,  len = 1)
+  checkmate::assertNumeric(xtol_rel,      lower = 0,  len = 1)
   checkmate::assertIntegerish(print,      lower = 0L, len = 1)
   checkmate::assertIntegerish(seed,                   len = 1)
   checkmate::assertIntegerish(cores,      lower = 1L, len = 1)
@@ -1289,6 +1302,7 @@ adfoControl <- function(
     algorithm     = algorithm,
     maxeval       = as.integer(maxeval),
     ftol_rel      = ftol_rel,
+    xtol_rel      = xtol_rel,
     print         = as.integer(print),
     seed          = as.integer(seed),
     cores         = as.integer(cores),
@@ -1373,13 +1387,9 @@ nlmixr2Est.adfo <- function(env, ...) {
     stop("Could not recover adfoControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("adfoControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adfo")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   output_var <- .admOutputVar(.ui)
   # A beta endpoint's precision phi is SOLVED, not fitted: .admSimulate() returns
   # it as an attribute on cp_mat and admc/adgh patch it into the residual rows.
@@ -1403,6 +1413,7 @@ nlmixr2Est.adfo <- function(env, ...) {
   studies    <- .u$studies
   multi_out  <- .u$multi_out
   any_joint  <- .u$any_joint
+  .admRefuseCovariates(studies, "adfo")
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)
@@ -1604,6 +1615,7 @@ nlmixr2Est.adfo <- function(env, ...) {
                      lb = lb_sc, ub = ub_sc,
                      opts = list(algorithm = .ctl$algorithm,
                                  ftol_rel  = .ctl$ftol_rel,
+                                 xtol_rel  = .ctl$xtol_rel,
                                  maxeval   = .ctl$maxeval))
     })
     opt <- list(objective = opt_raw$objective,
@@ -1742,7 +1754,8 @@ nlmixr2Est.adfo <- function(env, ...) {
   .ret$extra      <- ""
   .ret$origData   <- studies
 
-  .ret$admExtra <- list(struct         = final$struct,
+  .ret$admExtra <- list(has_model_source = .admHasModelSource(studies),
+                        struct         = final$struct,
                         sigma_var      = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
