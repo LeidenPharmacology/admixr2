@@ -1499,7 +1499,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
   .ret$message   <- if (.ctl$n_restarts > 1L) opt_restart$message else pl$last_opt_message
   .ret$extra     <- ""
   .ret$origData  <- studies
-  .ret$adirmcExtra <- list(struct         = final$struct,
+  .ret$adirmcExtra <- list(has_model_source = .admHasModelSource(studies),
+                           struct         = final$struct,
                          sigma_var      = final$sigma_var,
                          sigma_is_prop  = pinfo$sigma_is_prop,
                          sigma_is_lnorm = pinfo$sigma_is_lnorm,

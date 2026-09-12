@@ -500,12 +500,18 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 # straight to a control function would not be recognised as a model source --
 # which cannot happen while `admStudy()` does not exist.
 
+.admStudyHasModelSource <- function(study) {
+  if (!is.list(study)) return(FALSE)
+  if (isTRUE(study[[".adm_src"]])) return(TRUE)
+  observations <- study[["observations"]]
+  is.list(observations) && any(vapply(
+    observations, function(x) is.list(x) && isTRUE(x[[".adm_src"]]), logical(1)
+  ))
+}
+
 .admHasModelSource <- function(studies) {
   if (!is.list(studies) || !length(studies)) return(FALSE)
-  any(vapply(studies, function(s) {
-    if (!is.list(s)) return(FALSE)
-    isTRUE(s[[".adm_src"]])
-  }, logical(1)))
+  any(vapply(studies, .admStudyHasModelSource, logical(1)))
 }
 
 # unchanged from R/study-api.R
@@ -524,8 +530,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   # Same is.list(s) guard as .admHasModelSource(): a malformed study element
   # must fall through to checkmate::assertList()'s message, not a raw
   # subscript error out of this helper.
-  .is_src <- vapply(studies, function(s) is.list(s) && isTRUE(s[[".adm_src"]]),
-                     logical(1))
+  .is_src <- vapply(studies, .admStudyHasModelSource, logical(1))
   if (length(studies) > 1L && any(.is_src)) {
     study_names <- names(studies) %||% paste0("study", seq_along(studies))
     bad_n <- study_names[.is_src][vapply(studies[.is_src], function(s) {

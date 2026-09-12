@@ -127,3 +127,26 @@ test_that("a digitised study's SE still scales with its n", {
   }
   expect_gt(se_at(100) / se_at(1600), 1.5)
 })
+test_that("model-source guards include nested observations and anova", {
+  nested <- list(s = list(
+    n = 100,
+    observations = list(cp = list(.adm_src = TRUE))
+  ))
+  expect_error(
+    .admResolveCovMethod("r", nested, explicit = TRUE),
+    "model-implied"
+  )
+
+  fit <- function(has_model_source) {
+    e <- new.env(parent = emptyenv())
+    e$admExtra <- list(
+      has_model_source = has_model_source,
+      par_names = c("a", "b")
+    )
+    list(env = e)
+  }
+  expect_error(
+    .admLRT(fit(TRUE), fit(FALSE)),
+    "published model source"
+  )
+})

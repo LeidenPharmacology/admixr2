@@ -23,7 +23,14 @@
 }
 
 # One nested comparison: dOFV, its degrees of freedom, and the p-value.
+.admFitHasModelSource <- function(fit) {
+  e <- tryCatch(fit$env, error = function(e) NULL)
+  !is.null(e) && isTRUE((e$admExtra %||% e$adirmcExtra)$has_model_source)
+}
+
 .admLRT <- function(full, reduced) {
+  if (.admFitHasModelSource(full) || .admFitHasModelSource(reduced))
+    stop("anova(): unavailable for fits containing a published model source because its parameter sampling law is unknown.", call. = FALSE)
   nm_f <- .admFitParNames(full)
   nm_r <- .admFitParNames(reduced)
   if (is.null(nm_f) || is.null(nm_r))

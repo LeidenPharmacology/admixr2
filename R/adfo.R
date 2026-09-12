@@ -1750,7 +1750,8 @@ nlmixr2Est.adfo <- function(env, ...) {
   .ret$extra      <- ""
   .ret$origData   <- studies
 
-  .ret$admExtra <- list(struct         = final$struct,
+  .ret$admExtra <- list(has_model_source = .admHasModelSource(studies),
+                        struct         = final$struct,
                         sigma_var      = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
