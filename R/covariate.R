@@ -1175,6 +1175,11 @@
 # never wrote ("cov_dist$joint failed ... non-conformable arguments").
 # Re-express the surviving correlations as a NAMED `cor` and re-canonicalise.
 .admCovDropMargin <- function(cd, drop) {
+  if (is.function(cd[["joint"]]) && !isTRUE(cd[["jointOwn"]]))
+    stop("admixr2: `by` cannot drop a margin from a user-supplied `joint` ",
+         "sampler without changing the dependence among the margins that ",
+         "remain. Declare their marginal distribution explicitly instead.",
+         call. = FALSE)
   nms  <- .admCovSpecNames(cd)
   keep <- setdiff(nms, drop)
   R    <- cd[["latentR"]]

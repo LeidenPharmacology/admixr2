@@ -19,7 +19,8 @@
 
 .admPopFromData <- function(data, dist, given) {
   if (!is.data.frame(data)) data <- as.data.frame(data)
-  nms <- setdiff(names(data), given)     # anything stated in `...` wins outright
+  given_nms <- names(given)
+  nms <- setdiff(names(data), given_nms) # anything stated in `...` wins outright
   if (!length(nms))
     stop("admixr2: `data` adds no covariate that is not already given by name.",
          call. = FALSE)
@@ -27,7 +28,19 @@
                                 call. = FALSE)
   binary <- function(p) list(values = c(0, 1), probs = c(1 - p, p))
 
-  specs <- list(); cont <- character(0)
+  # A stated margin still participates in correlations read from the cohort.
+  # Only its marginal summary is overridden; dropping it from `cont` silently
+  # asserted independence from every other covariate.
+  cont <- Filter(function(nm) {
+    v <- data[[nm]]
+    is.numeric(v) && all(is.finite(v)) &&
+      !all(unique(v) %in% c(0, 1)) &&
+      stats::sd(v) >= .Machine$double.eps^0.5 * max(1, abs(mean(v))) &&
+      (!identical(dist, "lnorm") || all(v > 0)) &&
+      is.null(tryCatch(.admPopSpec(given[[nm]], nm, dist)[["values"]],
+                       error = function(e) TRUE))
+  }, intersect(given_nms, names(data)))
+  specs <- list()
   for (nm in nms) {
     v <- data[[nm]]
     if (is.factor(v) || is.character(v)) {
@@ -148,7 +161,7 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
   # wrong answer rather than a tedious one -- the correlation, which is on the
   # LATENT scale and so runs over log(WT) and log(CRCL), not WT and CRCL.
   if (!is.null(data)) {
-    d <- .admPopFromData(data, dist, names(a))
+    d <- .admPopFromData(data, dist, a)
     a <- c(a, d$specs)
     # `cor` the user gave WINS, pair by pair, so a stated correlation is never
     # silently replaced by the sample one.
@@ -279,9 +292,11 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   a table, using the columns this model actually reads and taking `n` from
 #'   its row count.
 #' @param at Named list pinning a covariate at a value, for a study reported in
-#'   one subgroup, e.g. `at = list(SEX = 1)`.
+#'   one subgroup, e.g. `at = list(SEX = 1)`. A pinned covariate must be omitted
+#'   from `population`.
 #' @param by Covariate the paper reports results SEPARATELY by, e.g.
-#'   `by = "SEX"`. Expands into one study per level.
+#'   `by = "SEX"`. Expands a published model into one study per level; digitised
+#'   subgroup profiles must be supplied as separate studies.
 #' @param stratify Band the source into strata, so a covariate it fitted
 #'   contributes a CONTRAST rather than one pooled number. `TRUE` bands over
 #'   every covariate the source's own model ESTIMATED a coefficient for, and
@@ -289,7 +304,8 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   be restated. A covariate the model merely READS is not banded: weight at a
 #'   fixed allometric exponent carries no fitted effect to recover, and banding
 #'   on it would buy strata and no evidence. Name a covariate explicitly to
-#'   override that judgement. Measured over 720 replicates: coverage 0.933
+#'   override that judgement. Available for published model sources only.
+#'   Measured over 720 replicates: coverage 0.933
 #'   with one source banded and 0.925 with all of them, against 0.817 with
 #'   none --- one banded source is as good as three. See [covStrata()].
 #' @param strata_nodes,range Resolution and the enrolled range for `stratify`.
@@ -329,6 +345,12 @@ admStudy <- function(model = NULL, est = NULL,
   if (!has_model && !has_data)
     bad("needs either a `model` (with `est`) or digitised `E` (with ",
         "`sd`, `sem` or `V`).")
+  if (!has_model && (!is.null(by) ||
+      (!is.null(stratify) && !identical(stratify, FALSE)) ||
+      !is.null(strata_nodes) || !is.null(range)))
+    bad("digitised data cannot be expanded with `by` or `stratify`: one ",
+        "reported mean/spread profile contains no separate subgroup profiles. ",
+        "Create one admStudy(..., at = ...) per reported subgroup instead.")
   # A COHORT KNOWS ITS OWN SIZE. When the population is handed over as the
   # data frame of enrolled subjects, `n` is its row count and asking for it
   # again is asking the user to restate what they just supplied. print() shows
@@ -437,6 +459,13 @@ admStudy <- function(model = NULL, est = NULL,
               else " are data columns, not covariates.")
     population <- admPopulation(data = population[, keep, drop = FALSE])
   }
+  overlap <- intersect(names(at), .admCovSpecNames(population))
+  if (length(overlap))
+    bad("`at` pins ", paste(sQuote(overlap), collapse = ", "),
+        ", but `population` also gives ",
+        if (length(overlap) == 1L) "it a distribution" else "them distributions",
+        ". Remove the pinned covariate from `population`; conditioning a ",
+        "dependent population requires its conditional distribution.")
   structure(list(
     ui = ui, model = model,
     E = E, V = V, n = as.numeric(n), times = as.numeric(times),

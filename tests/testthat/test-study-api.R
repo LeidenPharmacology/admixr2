@@ -237,6 +237,31 @@ test_that("admPopulation(data=) reproduces the hand-written table", {
                stats::cor(log(Y[, "WT"]), log(Y[, "CRCL"])), tolerance = 0.02)
 })
 
+test_that("overriding a cohort margin keeps its data-derived correlations", {
+  skip_if_not_installed("randtoolbox")
+  coh <- .sa_cohort()
+  p <- admPopulation(data = coh,
+                     WT = c(mean = mean(coh$WT), sd = stats::sd(coh$WT)))
+  X <- covDraw(p, n = 40000L)
+  expect_equal(stats::cor(log(X[, "WT"]), log(X[, "CRCL"])),
+               stats::cor(log(coh$WT), log(coh$CRCL)), tolerance = 0.02)
+})
+
+test_that("at cannot silently compete with a population margin", {
+  p <- admPopulation(SEX = c(male = 0.6))
+  expect_error(admStudy(E = 1, sd = 1, n = 20, dose = 1, times = 1,
+                        population = p, at = list(SEX = 1)),
+               "also gives it a distribution")
+})
+
+test_that("digitised profiles refuse source-only expansion arguments", {
+  args <- list(E = 1, sd = 1, n = 20, dose = 1, times = 1,
+               population = admPopulation(SEX = c(male = 0.6)))
+  expect_error(do.call(admStudy, c(args, list(by = "SEX"))), "digitised data")
+  expect_error(do.call(admStudy, c(args, list(stratify = "SEX"))),
+               "digitised data")
+})
+
 test_that("a stated margin beats the data, and a dropped association is said", {
   skip_if_not_installed("randtoolbox")
   coh <- .sa_cohort()
@@ -446,4 +471,13 @@ test_that("a `by` level keeps the correlations among the margins it retains", {
   # a single surviving margin needs no correlation and must not error
   expect_identical(admixr2:::.admCovSpecNames(
     admixr2:::.admCovDropMargin(cd, "CRCL")), c("SEX", "WT"))
+})
+
+test_that("by refuses to discard an opaque joint sampler", {
+  cd <- covDist(SEX = list(values = c(0, 1), probs = c(.5, .5)),
+                WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25),
+                joint = function(u) cbind(SEX = as.integer(u[, 1] > .5),
+                                           WT = stats::qlnorm(u[, 2], log(75), .2),
+                                           CRCL = stats::qlnorm(u[, 2], log(90), .2)))
+  expect_error(admixr2:::.admCovDropMargin(cd, "SEX"), "user-supplied `joint`")
 })

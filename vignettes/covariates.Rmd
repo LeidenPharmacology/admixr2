@@ -511,32 +511,12 @@ fit_null <- nlmixr2(adm_model_null, admData(), est = "adgh",
 anova(fit, fit_null)
 ```
 
-Read the `p` column, never `p.naive`, and **never AIC here**. Both of those
-assume the information equality `H = J`, which holds only if the objective is
-the true likelihood of the data. It is not: a model source's summary is a
-deterministic function of somebody else's published estimate, so the score's
-variance `J` is that source's `C_src` propagated through this fit, and has no
-reason to match `H`.
-
-The `p_eff` column is the size of the gap. It is `tr(H^-1 J)/2`, the objective's
-actual optimism, which equals the parameter count only under that equality.
-Where it exceeds `Npar`, AIC is charging too little per parameter and will keep
-covariates it should drop. Measured on a design like this one, over 200
-replicates with a covariate whose true effect was zero: AIC kept it **84%** of
-the time, TIC **14.5%** against its own nominal 15.7%, and the corrected `p`
-rejected at **7.5%**. The uncorrected `dOFV` kept it 75.5% of the time.
-
-So: **`p`, or TIC. Not AIC, not raw dOFV.** `anova()` prints a note when the
-gap is large enough to matter.
-
-The `Weight` column is the factor `dOFV` was divided by, and it is worth
-reading. It is *exactly* proportional to the uncertainty the sources declared
-and to the weight they carry (`n`), and it does not touch the estimates at all
---- scaling every source's `cov` by 64 leaves the fitted `bcrcl` bit-identical
-while moving `Weight` by exactly 64. So it is the share of this fit's apparent
-information that is really the source analysts' uncertainty rather than
-evidence. A `Weight` near 1 means the sources are precise enough to behave like
-data; well below 1 means the uncorrected test would have been conservative.
+The `p` column is the ordinary likelihood-ratio test: `dOFV` is compared with a
+chi-squared reference using `Df`, the number of parameters added by the larger
+model. Here `n` is each source study's sample size and supplies the sampling
+scale of its contribution. The study API does not take the published estimates'
+covariance, so this test does not propagate uncertainty in those source-model
+parameters; interpret a borderline result with that limitation in mind.
 
 ## Seeing the renal effect
 

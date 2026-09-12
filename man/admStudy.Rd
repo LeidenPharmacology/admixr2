@@ -54,10 +54,12 @@ a table, using the columns this model actually reads and taking \code{n} from
 its row count.}
 
 \item{at}{Named list pinning a covariate at a value, for a study reported in
-one subgroup, e.g. \code{at = list(SEX = 1)}.}
+one subgroup, e.g. \code{at = list(SEX = 1)}. A pinned covariate must be omitted
+from \code{population}.}
 
 \item{by}{Covariate the paper reports results SEPARATELY by, e.g.
-\code{by = "SEX"}. Expands into one study per level.}
+\code{by = "SEX"}. Expands a published model into one study per level; digitised
+subgroup profiles must be supplied as separate studies.}
 
 \item{stratify}{Band the source into strata, so a covariate it fitted
 contributes a CONTRAST rather than one pooled number. \code{TRUE} bands over
@@ -66,7 +68,8 @@ leaves the rest marginalised --- derived from the model, so nothing has to
 be restated. A covariate the model merely READS is not banded: weight at a
 fixed allometric exponent carries no fitted effect to recover, and banding
 on it would buy strata and no evidence. Name a covariate explicitly to
-override that judgement. Measured over 720 replicates: coverage 0.933
+override that judgement. Available for published model sources only.
+Measured over 720 replicates: coverage 0.933
 with one source banded and 0.925 with all of them, against 0.817 with
 none --- one banded source is as good as three. See \code{\link[=covStrata]{covStrata()}}.}
 
