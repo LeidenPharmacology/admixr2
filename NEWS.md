@@ -280,20 +280,15 @@
   given you. The result is marked as a model source.
 
   **No standard error is reported for a fit that contains one, and an explicit
-  `covMethod` is refused rather than honoured.** Such a study is not a sample:
-  its mean and covariance are exact functions of the source's own published
-  parameters, so there is no sampling law underneath them. Weighting it as if
-  `n` patients had been observed gives a perfectly plausible standard error
-  that falls as exactly `1/sqrt(n)` --- measured 1.000 / 2.000 / 4.000 / 8.000
-  over `n` = 100 / 400 / 1600 / 6400 --- a number driven entirely by what was
-  typed into `n`.
+  `covMethod` is refused rather than honoured.** Its mean and covariance are
+  exact functions of the published parameter estimates, while the uncertainty
+  and covariance of those source parameters are unavailable. The reported
+  study size alone cannot reconstruct that sampling law.
 
-  `n` still matters, as the RELATIVE WEIGHT against the other sources rather
-  than as precision. On a lone model source it divides straight out of the
-  estimating equation; across sources the pooling is only efficient when that
-  weight matches the precision the source actually has, so a model source with
-  no usable `n` is harmless alone and silently mis-weights a mixture --- which
-  is now said where the consequence is.
+  `n` is always the true sample size of the dataset used to develop the source
+  model. It divides out for a lone source and determines that study's
+  contribution when several sources are pooled, so a missing `n` is reported
+  before it can distort a pooled point estimate.
 
 ## Changes that can move an existing fit
 

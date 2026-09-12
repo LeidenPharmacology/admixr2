@@ -987,6 +987,8 @@
 #' @param cov_h_outer Outer step scale for NLL-FD Hessian.
 #' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
 #'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   A study generated from a published model defaults to `"none"` and refuses
+#'   an explicit covariance method because it has no sampling law.
 #'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
@@ -1229,7 +1231,7 @@ adfoControl <- function(
   grad     <- match.arg(grad)
 
   checkmate::assertList(studies)
-  # A model source is not a sample, so no standard error is available for a
+  # A model source lacks source-parameter uncertainty, so no standard error is available for a
   # fit that includes one -- see .admResolveCovMethod(), which refuses an
   # explicit covMethod rather than honouring it. Runs AFTER assertList(): a
   # malformed `studies` must fail on checkmate's message, not on a raw

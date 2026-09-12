@@ -270,14 +270,10 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # consumes it integrate the residual identically.
     pinfo$resid_nodes <- control$resid_nodes %||% .ADM_TBS_NODES
     out_var <- .admOutputVar(ui)
-    # A GENERATED BLOCK IS NOT A SAMPLE, and it carries a marker saying so, so
-    # that the covariance step can refuse to report a standard error for it.
-    # For digitised data the weight is Omega_s(n_s); for this it is the wrong
-    # object, because the moments are exact functions of the source's own
-    # published theta. Applying it anyway makes the reported SE fall as exactly
-    # 1/sqrt(n) -- measured 1.000/2.000/4.000/8.000 over n =
-    # 100/400/1600/6400 -- a number driven entirely by what the analyst typed.
-    .src_prov <- TRUE
+    # These are model-implied moments, not observed sample summaries. Mark them
+    # so the covariance step does not treat their reported study size `n` as
+    # enough to reconstruct a sampling law: source-parameter uncertainty is not
+    # available here.
     pars    <- .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)
 
     # A model mixing a continuous endpoint with a COUNT one is refused here for
@@ -441,9 +437,9 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       # thing. A generated study can then be mixed with a digitised one that
       # declares "unbiased" and both are converted correctly.
       r$v_denom <- "ml"
-      # The marker that says "generated from a published model, not sampled".
+      # The marker that says "model-implied, not observed sample summaries".
       # .admResolveCovMethod() reads it to refuse a standard error.
-      r$.adm_src <- .src_prov
+      r$.adm_src <- TRUE
       if (!is.null(spec$output)) r$output <- spec$output
       if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
       r
@@ -452,7 +448,8 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     if (!is.null(s$observations)) {
       obs_res <- lapply(obs_specs, one_result)
       names(obs_res) <- vapply(obs_specs, `[[`, character(1), "name")
-      results[[i]] <- list(observations = obs_res, n = s$n %||% NA_integer_)
+      results[[i]] <- list(observations = obs_res, n = s$n %||% NA_integer_,
+                           .adm_src = TRUE)
     } else {
       results[[i]] <- one_result(obs_specs[[1L]])
     }
@@ -466,19 +463,27 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 #
 # datagen() does two jobs that look identical from inside it and differ entirely
 # in what they claim. Turning a PUBLISHED model into a study says "this is what
-# that paper reported", and the result is not a sample: no standard error is
-# available for a fit that includes it (see .admResolveCovMethod). Turning a
+# that paper's model implies". Its `n` remains the true sample size, but no
+# standard error is available because the source-parameter uncertainty is
+# absent (see .admResolveCovMethod). Turning a
 # model you wrote yourself into a study says "pretend a trial of `n` patients
 # came out like this", which is a simulated DATA study and the ordinary weight
 # is the right one for it.
 #
 # Only the caller knows which. datagen() assumes the first, because that is the
-# claim that is dangerous to get wrong -- a plausible standard error tracking a
-# number the analyst typed. This is the other door, for simulating a study to
+# claim that is dangerous to get wrong. This is the other door, for simulating a study to
 # exercise or demonstrate the machinery with. It is internal on purpose: an
 # exported version would be a way to ask for the SE the public route withholds.
 .admDatagenSim <- function(...) {
-  lapply(datagen(...), function(u) { u[[".adm_src"]] <- NULL; u })
+  lapply(datagen(...), function(u) {
+    u[[".adm_src"]] <- NULL
+    if (is.list(u[["observations"]]))
+      u$observations <- lapply(u$observations, function(o) {
+        o[[".adm_src"]] <- NULL
+        o
+      })
+    u
+  })
 }
 
 # --- PR D: these two move from R/study-api.R into R/datagen.R ---------------
@@ -504,7 +509,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 }
 
 # unchanged from R/study-api.R
-# `n` on a model source: inert alone, load-bearing in a mixture.
+# `n` is the source study's sample size; it affects pooled point estimates.
 #
 # Called from .admResolveCovMethod() -- the one place that already runs once
 # per fit with `studies` in hand -- and BEFORE its early return, so the
@@ -512,12 +517,9 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 # "none". At HEAD this lived in .admReportCovWarnings(), which does not
 # exist on this base; the check is the same.
 .admWarnSourceWeight <- function(studies) {
-  # `n` IS INERT ON A LONE MODEL SOURCE AND IS NOT IN A MIXTURE. It divides
-  # straight out of a single source's estimating equation, which is why it is
-  # not required -- but across sources it sets the RELATIVE WEIGHT, and the
-  # pooling is only optimal when that weight matches the precision the source
-  # actually has. So a model source with no usable `n` is harmless alone and
-  # silently mis-weights a mixture. Said where the consequence is.
+  # `n` divides out for one source but determines its contribution when sources
+  # are pooled. Require the true sample size of the dataset used to develop the
+  # source model rather than letting a missing value silently distort the fit.
   if (!is.list(studies) || !length(studies)) return(invisible(NULL))
   # Same is.list(s) guard as .admHasModelSource(): a malformed study element
   # must fall through to checkmate::assertList()'s message, not a raw
@@ -525,19 +527,18 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   .is_src <- vapply(studies, function(s) is.list(s) && isTRUE(s[[".adm_src"]]),
                      logical(1))
   if (length(studies) > 1L && any(.is_src)) {
-    bad_n <- names(studies)[.is_src][vapply(studies[.is_src], function(s) {
-      nn <- as.numeric(s$n %||% NA_real_)
+    study_names <- names(studies) %||% paste0("study", seq_along(studies))
+    bad_n <- study_names[.is_src][vapply(studies[.is_src], function(s) {
+      nn <- as.numeric(s[["n"]] %||% NA_real_)
       !is.finite(nn) || nn <= 0 }, logical(1))]
     if (length(bad_n))
       warning("admixr2: model source", if (length(bad_n) > 1L) "s " else " ",
               paste(sQuote(bad_n), collapse = ", "), " ",
               if (length(bad_n) > 1L) "have" else "has",
-              " no usable `n`, and this fit combines several sources. On a lone ",
-              "model source `n` divides out of the estimating equation and does ",
-              "not matter; across sources it is the RELATIVE WEIGHT, and the ",
-              "pooling is only efficient when that weight matches the precision ",
-              "the source actually has. Set `n` to the sample size the source ",
-              "model was developed on.", call. = FALSE)
+              " no usable `n`, and this fit combines several sources. Set `n` ",
+              "to the true sample size of the dataset used to develop the ",
+              "source model; it determines that study's contribution to the ",
+              "pooled point estimate.", call. = FALSE)
   }
   invisible(NULL)
 }
@@ -548,16 +549,14 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     return(covMethod)
   if (isTRUE(explicit))
     stop("admixr2: covMethod = ", dQuote(covMethod), " was requested, but a ",
-         "study contributes as a published MODEL. Such a study is not a ",
-         "sample -- its mean and covariance are exact functions of the ",
-         "source's own parameters -- so `n` sets its RELATIVE WEIGHT against ",
-         "the other studies rather than its precision, and a standard error ",
-         "built from `n` would shrink as 1/sqrt(n) for a reason that is not ",
-         "evidence. Pass covMethod = \"none\".", call. = FALSE)
+         "study contributes model-implied moments rather than observed sample ",
+         "summaries. `n` is the source study's true sample size, but the source ",
+         "parameter uncertainty needed for a sampling law is unavailable. ",
+         "Pass covMethod = \"none\".", call. = FALSE)
   message("admixr2: a study contributes as a published MODEL, so covMethod ",
-          "has been set to \"none\". `n` weights that study against the ",
-          "others; it is not a sample size, so there is no sampling law to ",
-          "build a standard error from.")
+          "has been set to \"none\". `n` remains the source study's sample ",
+          "size, but its parameter uncertainty is unavailable, so no sampling ",
+          "law can be built for a standard error.")
   "none"
 }
 
