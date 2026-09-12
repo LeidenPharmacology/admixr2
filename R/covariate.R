@@ -254,6 +254,16 @@
     all(vapply(nm, function(k) isTRUE(cd[[k]][[".point"]]), logical(1)))
 }
 
+# How many of `cn` actually HAVE AN AXIS -- the same `.point` test, per margin.
+#
+# A degenerate margin gets ONE node (see .admCovNodesFor), so counting it as a
+# dimension is wrong in both directions at once: it inflates the per-direction
+# node cap (pc/r axes absorbed per direction), and it inflates cov_nodes^pc, the
+# product grid the reductions are priced against. A stratum with one point and
+# one real covariate priced itself at 14 rows against a grid that costs 7.
+.admCovNonPoint <- function(cd, cn)
+  sum(!vapply(cn, function(k) isTRUE(cd[[k]][[".point"]]), logical(1)))
+
 # `cov` as a LIST, on every study.
 
 # `cov` is documented as name -> value, and a named NUMERIC VECTOR is the natural way to write that -- but for
@@ -485,7 +495,7 @@
       if (!is.null(.jc)) {
         .alt <- (pinfo$n_nodes %||% 5L)^pinfo$n_eta *
                 (if (!is.null(.co)) nrow(.co$X)
-                 else (pinfo$cov_nodes %||% 7L)^.jc$pc *
+                 else (pinfo$cov_nodes %||% 7L)^(.jc[["pc_m"]] %||% .jc$pc) *
                       max(.jc$n_cell %||% 1L, 1L))
         # ONE expression for the cost, used by the decision AND by the message.
         # They were written out separately and had already drifted: the gate
@@ -3175,6 +3185,14 @@ print.covDist <- function(x, ...) {
     if (is.name(e[[2L]])) assign(as.character(e[[2L]]), v, ev)
     if (ii %in% pr$hit) {
       j <- j + 1L
+      # A READER OF DISCRETE COVARIATES ALONE IS CONSTANT WITHIN THE CELL, and a
+      # cell is what is being probed: discrete values come in as scalars
+      # (cell[[k]]), so `f <- exp(tf + bsex * SEX)` returned length 1 against
+      # nrw probe rows and was rejected -- refusing the whole study, and with it
+      # the collapse, for a covariate the design handles by ENUMERATION. Recycled
+      # it contributes a zero gradient column, which is the right answer: that
+      # direction is carried by the discrete cross, not by the rotation.
+      if (length(v) == 1L) v <- rep(v, nrw)
       if (length(v) != nrw || !all(is.finite(v))) return(NULL)
       out[[j]] <- as.numeric(v)
     }
@@ -3293,8 +3311,13 @@ print.covDist <- function(x, ...) {
   cn  <- nms[!dsc]                     # CONTINUOUS: what collapses
   dn  <- nms[dsc]                      # DISCRETE: enumerated, as strata
   pc  <- length(cn)
+  # NOT length(cn): a stratified covariate rides along as a degenerate point
+  # spec, which has no axis to merge -- see .admCovNonPoint(). pc still sizes the
+  # probe and the latent block (a point margin must be in scope to evaluate the
+  # readers); pcm is the DIMENSION COUNT, and only that.
+  pcm <- .admCovNonPoint(cd, cn)
   # one continuous covariate is already a one-dimensional integral
-  if (pc < 2L) return(NULL)
+  if (pcm < 2L) return(NULL)
   R <- cd[["latentR"]]
   # An opaque user `joint` publishes no latent structure to project along. The
   # `cor` sampler admixr2 builds itself DOES -- it is a Gaussian copula and
@@ -3457,7 +3480,12 @@ print.covDist <- function(x, ...) {
   # converged where the optimizer goes. Measured, it shaved one node off a
   # strongly loaded direction for 14% fewer rows and 5-10x the error once b
   # moved. The saving that survives is the rank reduction, which is structural.
-  nv <- rep(.admCovDirNodes(nn, pc, r), r)
+  nv <- rep(.admCovDirNodes(nn, pcm, r), r)
+  # AND IT MUST BE CHEAPER THAN THE GRID IT REPLACES -- the gate the joint
+  # already has (see the .jc_cost comparison at admission) and this did not. The
+  # discrete cross is common to both, so it cancels; r == pcm merges nothing and
+  # prices itself at exactly nn^pcm, which this refuses rather than dresses up.
+  if (prod(nv) >= nn^pcm) return(NULL)
   if (prod(nv) * max(nrow(cells), 1L) > max_rows) return(NULL)
   dd <- build(nv)
   if (is.null(dd)) return(NULL)
@@ -3578,7 +3606,11 @@ print.covDist <- function(x, ...) {
   # the two constructions stack instead of one disqualifying the other. Sex,
   # genotype and formulation are about as common as covariates get, and they
   # used to turn the whole joint path off.
-  if (pc < 1L) return(NULL)
+  #
+  # A degenerate point margin is not a direction either -- see .admCovNonPoint().
+  # pc sizes the latent block; pcm counts DIMENSIONS.
+  pcm <- .admCovNonPoint(cd, cn)
+  if (pcm < 1L) return(NULL)
   R <- cd[["latentR"]]
   if (is.function(cd[["joint"]]) && is.null(R)) return(NULL)
   # The identical four steps .admCovCollapse takes -- see .admCovLatentBlock().
@@ -3606,6 +3638,9 @@ print.covDist <- function(x, ...) {
              dn = dn, eta_names = pinfo$eta_col_names,
              cov_fixed = cov_fixed)
   nl <- ne + pc
+  # The dimension count the node cap and the price are read from; nl is the
+  # latent block's SIZE, which a point margin still occupies.
+  nl_m <- ne + pcm
   mkXi <- function(n, seed) {
     Z <- tryCatch(suppressWarnings(
            stats::qnorm(randtoolbox::sobol(n, dim = nl, seed = seed))),
@@ -3687,7 +3722,8 @@ print.covDist <- function(x, ...) {
   z0 <- rbind(rep(0, nl), Xi[c(1L, 8L, 20L, 50L, 97L) %% nrow(Xi) + 1L, ,
                             drop = FALSE])
   list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc, ne = ne, pc = pc,
-       nl = nl, Xi = Xi, Xv = Xv, Wv = Wv, out_var = out_var, z0 = z0,
+       nl = nl, nl_m = nl_m, pc_m = pcm,
+       Xi = Xi, Xv = Xv, Wv = Wv, out_var = out_var, z0 = z0,
        n_nodes = as.integer(n_nodes), max_rows = max_rows, joint = TRUE,
        dn = dn, nms = nms, cells = cells, pcell = pcell,
        cell_list = cell_list, n_cell = max(nrow(cells), 1L),
@@ -3736,7 +3772,7 @@ print.covDist <- function(x, ...) {
   U <- sv$u[, seq_len(r), drop = FALSE]
   # the cap lesson from .admCovDirNodes, over the joint space: a direction
   # absorbs (n_eta + pc)/r axes, so it needs that much more resolution than one
-  m <- jc[["m"]] %||% .admCovDirNodes(jc$n_nodes, jc$nl, r)
+  m <- jc[["m"]] %||% .admCovDirNodes(jc$n_nodes, jc[["nl_m"]] %||% jc$nl, r)
   nl_c <- jc$n_cell %||% 1L
   if (m^r * nl_c > jc$max_rows) return(NULL)
   g  <- .adghNodeGrid(m, r)

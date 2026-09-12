@@ -44,3 +44,61 @@ test_that("joint collapse refuses random effects inside branches", {
 
   expect_null(admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL))
 })
+
+test_that("a stale re-aim is an unsolvable point, not an error", {
+  skip_if_not_installed("randtoolbox")
+  cd <- list(W1 = list(meanlog = log(70), sdlog = 0.3),
+             W2 = list(meanlog = log(70), sdlog = 0.3))
+  ui <- list(lstExpr = list(
+    quote(cl <- (W1 / 70)^0.6),
+    quote(v <- (W1 / 70)^0.6 * (W2 / 70)^b)),
+    allCovs = c("W1", "W2"))
+  pin <- list(eta_col_names = character(), n_eta = 0L,
+              struct_names = character(), struct_init = c(b = 0),
+              cov_nodes = 7L)
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  expect_false(is.null(co))
+
+  st   <- list(cov_dist = cd, .adm_cov_collapse = co)
+  pr   <- list(struct = c(b = 1), L = matrix(0, 0, 0))
+  grid <- list(X = matrix(0, 1L, 0L), W = 1)
+  g    <- admixr2:::.adghGrid(pr, pin, grid, st)
+  expect_true(isTRUE(g$failed))
+  expect_null(g$eta)
+  # rxMod = NULL: a marked grid must be reported BEFORE the solve. This errored
+  # with "non-numeric matrix extent" on nrow(NULL), aborting the whole fit.
+  expect_equal(admixr2:::.adghMoments(pr, pin, st, NULL, "cp", grid, 1L),
+               list(failed = TRUE))
+})
+
+test_that("a degenerate point margin is not a dimension", {
+  skip_if_not_installed("randtoolbox")
+  pt <- list(.point = TRUE,
+             quantile = function(u) rep(70, length.out = length(u)))
+  cd <- list(W1 = list(meanlog = log(70), sdlog = 0.3), W2 = pt)
+  ui <- list(lstExpr = list(quote(cl <- (W1 / 70)^0.6 * (W2 / 70)^0.4)),
+             allCovs = c("W1", "W2"))
+  pin <- list(eta_col_names = character(), n_eta = 0L,
+              struct_names = character(), struct_init = numeric(),
+              cov_nodes = 7L)
+  # One real axis plus a point: the product grid already costs cov_nodes rows,
+  # and the collapse used to price itself at 2 * cov_nodes against it.
+  expect_null(admixr2:::.admCovCollapse(ui, pin, cd, 7L))
+})
+
+test_that("a reader of a discrete covariate alone does not refuse the study", {
+  skip_if_not_installed("randtoolbox")
+  cd <- list(WT = list(meanlog = log(70), sdlog = 0.3),
+             SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  ui <- list(lstExpr = list(
+    quote(cl <- exp(eta.cl) * (WT / 70)^0.75),
+    quote(f <- exp(0.2 * SEX))), allCovs = c("WT", "SEX"))
+  pin <- list(eta_col_names = "eta.cl", n_eta = 1L,
+              struct_names = character(), struct_init = numeric(),
+              cov_nodes = 7L)
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
+  expect_false(is.null(jc))
+  # `f` is constant within a cell -- carried by the discrete cross, not by the
+  # rotation -- so it contributes no direction and must not refuse the probe.
+  expect_false(is.null(admixr2:::.admJointAdmit(jc, list(), matrix(0.3))))
+})

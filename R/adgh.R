@@ -224,6 +224,12 @@
 
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
   g  <- .adghGrid(pars, pinfo, grid, study)
+  # THIS IS WHERE A MARKED GRID BECOMES THE Inf IT WAS MARKED TO BE. .adghGrid
+  # returns list(failed = TRUE) for a failed re-aim, with no `eta` -- so with
+  # nobody reading the flag, nrow(g$eta) was NULL, .admMakeParamsList() called
+  # matrix(0, nrow = NULL) and the fit died on "non-numeric matrix extent" at a
+  # point the line search was merely trying. Reported as unsolvable instead.
+  if (isTRUE(g$failed)) return(list(failed = TRUE))
   study <- .adghStudyCov(study, g)
   pm <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
@@ -308,6 +314,7 @@
       nll <- nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
     } else {
       m <- .adghMoments(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores)
+      if (isTRUE(m$failed)) return(Inf)
       nll <- if (identical(s$method, "var"))
         nll_var_cpp(s$E, s$v_diag, m$E, diag(m$V), s$n)
       else
@@ -386,6 +393,12 @@
     # so the two cases do not overlap.
     if (!is.null(s[["cov_dist"]])) {
       .gS <- .adghGrid(pars, pinfo, grid, s)
+      # Same marked grid .adghMoments turns into Inf -- see there. The point is
+      # unsolvable, so the objective is Inf and there is no gradient to form;
+      # .adghFusedFns takes both from here and must not be handed a NULL eta.
+      if (isTRUE(.gS$failed))
+        return(list(grad = stats::setNames(rep(Inf, length(p)), names(p)),
+                    nll = Inf))
       X   <- .gS$X
       W   <- .gS$W
       s   <- .adghStudyCov(s, .gS)
@@ -781,11 +794,15 @@
     if (any(vapply(studies, function(u) isTRUE(u$is_joint) ||
                      !is.null(u[[".adm_cov_collapse"]]) ||
                      !is.null(u[[".adm_cov_joint"]]), logical(1)))) {
-      for (i in seq_len(n_u))
-        grad[unpaired_k[i]] <-
+      for (i in seq_len(n_u)) {
+        gk <-
           (.adghNLL(p_pert[[i]], pinfo, studies, rxMod, out_var, grid, cores) -
              .adghNLL(p_pert[[n_u + i]], pinfo, studies, rxMod, out_var, grid, cores)) /
           (2 * hs[i])
+        # Inf - Inf is NaN, and both perturbations being unsolvable is the
+        # COMMON case at a boundary -- same guard as the batched branch below.
+        grad[unpaired_k[i]] <- if (is.nan(gk)) Inf else gk
+      }
     } else {
       struct_mat <- do.call(rbind,
         lapply(p_pert, function(pp) .admUnpack(pp, pinfo)$struct))
@@ -874,6 +891,9 @@
     g[k] <- (.adghNLL(pp, pinfo, studies, rxMod, out_var, grid, cores) -
              .adghNLL(pm, pinfo, studies, rxMod, out_var, grid, cores)) / (2 * hk)
   }
+  # Inf - Inf is NaN; the same guard the two configuration-differenced branches
+  # in .adghGradNLL carry, for the same reason.
+  g[is.nan(g)] <- Inf
   g
 }
 
