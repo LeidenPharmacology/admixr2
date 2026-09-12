@@ -1,4 +1,4 @@
-﻿# -- adgh: aggregate Gauss-Hermite quadrature estimator -------------------------
+# -- adgh: aggregate Gauss-Hermite quadrature estimator -------------------------
 # Computes population moments E[f] and Cov[f] for eta ~ N(0, Omega) by
 # deterministic Gauss-Hermite quadrature over the random-effects distribution,
 # then plugs them into the same aggregate MVN -2LL as adfo/admc.

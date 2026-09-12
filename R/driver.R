@@ -90,10 +90,8 @@
          "drops all but the first. Give each study its own name.",
          call. = FALSE)
   names(studies) <- .nm
-  # PR C adds .admMaterialise() here, at the earliest shared point: an
-  # admStudy() spec is lazy, and everything below reads study FIELDS, so a
-  # spec has to become an ordinary study before anything inspects one.
-  # There are no specs to materialise until that PR lands.
+  # Materialise before shared validation reads study fields.
+  studies <- .admMaterialise(studies)
   pinfo <- .admDriverPinfo(.ui, .ctl)
   .admWarnCovIdentifiability(.ui, pinfo, studies)
   list(studies = studies, pinfo = pinfo)
