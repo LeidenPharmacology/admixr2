@@ -518,7 +518,12 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   # pooling is only optimal when that weight matches the precision the source
   # actually has. So a model source with no usable `n` is harmless alone and
   # silently mis-weights a mixture. Said where the consequence is.
-  .is_src <- vapply(studies, function(s) isTRUE(s[[".adm_src"]]), logical(1))
+  if (!is.list(studies) || !length(studies)) return(invisible(NULL))
+  # Same is.list(s) guard as .admHasModelSource(): a malformed study element
+  # must fall through to checkmate::assertList()'s message, not a raw
+  # subscript error out of this helper.
+  .is_src <- vapply(studies, function(s) is.list(s) && isTRUE(s[[".adm_src"]]),
+                     logical(1))
   if (length(studies) > 1L && any(.is_src)) {
     bad_n <- names(studies)[.is_src][vapply(studies[.is_src], function(s) {
       nn <- as.numeric(s$n %||% NA_real_)
