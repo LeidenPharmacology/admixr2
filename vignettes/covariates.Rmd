@@ -87,7 +87,9 @@ patient_cl <- function(cohort, cl_70kg, bcrcl, bsex, omega) {
 
 # One trial's worth of individual data, in nlmixr2 layout.
 run_trial <- function(cohort, first_id) {
-  cl <- patient_cl(cohort, CL70, BCRCL, BSEX, OM_CL)
+  reference <- cohort
+  reference$CRCL <- median(cohort$CRCL)
+  cl <- patient_cl(reference, CL70, BCRCL, BSEX, OM_CL)
   v  <- V70 * (cohort$WT/70)
   records <- list()
   for (i in seq_len(nrow(cohort))) {
@@ -106,9 +108,9 @@ run_trial <- function(cohort, first_id) {
   do.call(rbind, records)
 }
 
-cohorts <- list(normal   = draw_cohort(260L, 78, .198, 95, .217),
-                mild     = draw_cohort(210L, 76, .198, 62, .198),
-                moderate = draw_cohort(180L, 74, .198, 38, .198))
+cohorts <- list(normal   = draw_cohort(260L, 78, .198, 95, .05),
+                mild     = draw_cohort(210L, 76, .198, 62, .05),
+                moderate = draw_cohort(180L, 74, .198, 38, .05))
 
 trial_data <- list(
   normal   = run_trial(cohorts$normal,   first_id = 10000),
@@ -168,7 +170,7 @@ sato_model <- function() {
   ini({
     tcl     <- log(4.5)
     tv      <- log(45)
-    bsex    <- 0.05
+    bsex    <- 0.10
     add.err <- 0.2
     eta.cl  ~ 0.1
   })
@@ -188,7 +190,7 @@ ito_model <- function() {
     tv      <- log(45)
     bwtcl   <- 0.75
     bwtv    <- 1
-    bsex    <- 0.05
+    bsex    <- 0.10
     add.err <- 0.2
     eta.cl  ~ 0.1
   })
@@ -205,7 +207,7 @@ khan_model <- function() {
   ini({
     tcl     <- log(4.5)
     tv      <- log(45)
-    bsex    <- 0.05
+    bsex    <- 0.10
     bsexv   <- 0
     add.err <- 0.2
     eta.cl  ~ 0.1
@@ -266,9 +268,9 @@ knitr::kable(data.frame(
   caption = "Three independent analyses, three different models, each sound on its own data.")
 ```
 
-Read that table the way the three analysts would have. All three agree on volume
-and on the sex effect --- a covariate that varies *inside* every trial, so every
-trial could see it. On clearance they disagree by nearly a factor of two, and
+Read that table the way the three analysts would have. All three retain the sex
+effect --- a covariate that varies *inside* every trial, so every trial could see
+it. On clearance they disagree by nearly a factor of two, and
 none of them can explain it, because the explanation is a covariate that barely
 moves within any one of them.
 
@@ -400,7 +402,7 @@ adm_model <- function() {
     tcl     <- log(4)
     tv      <- log(45)
     bcrcl   <- 0.3            # the renal effect no published model has
-    bsex    <- 0.05
+    bsex    <- 0.10
     add.err <- 0.1
     eta.cl  ~ 0.1
   })
@@ -414,6 +416,7 @@ adm_model <- function() {
 fit <- nlmixr2(adm_model, admData(), est = "adgh",
                control = adghControl(studies = studies, print = 0L))
 pf     <- fit$parFixedDf
+stopifnot(abs(pf["bsex", "Estimate"] - BSEX) < 0.08)
 # NO INTERVALS HERE, and that is the point: every study in this vignette is a
 # published model rather than a sample, so there is no sampling law to build one
 # from and admixr2 reports no standard error at all. The estimates are what the
@@ -495,7 +498,7 @@ adm_model_null <- function() {
     tcl     <- log(4)
     tv      <- log(45)
     bcrcl   <- fix(0)          # the restriction being tested
-    bsex    <- 0.05
+    bsex    <- 0.10
     add.err <- 0.1
     eta.cl  ~ 0.1
   })
