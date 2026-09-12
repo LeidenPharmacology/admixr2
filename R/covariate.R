@@ -3404,6 +3404,28 @@ print.covDist <- function(x, ...) {
   B
 }
 
+# The rank is frozen for a fit, but coefficients can make initially collinear
+# readers independent. Probe each estimated structural parameter on both sides
+# of its start so admission freezes the largest rank it can see. Refresh still
+# checks the invariant: these probes are a cheap admission screen, not a proof.
+.admCollapseRank <- function(B, st, mutable, probe) {
+  rank_of <- function(x) {
+    sv <- tryCatch(svd(x), error = function(e) NULL)
+    if (is.null(sv) || !length(sv$d)) return(NA_integer_)
+    .admSvdRank(sv)
+  }
+  r <- rank_of(B)
+  if (!is.finite(r)) return(NULL)
+  for (nm in intersect(mutable, names(st))) for (d in c(-0.1, 0.1)) {
+    sp <- st
+    sp[[nm]] <- sp[[nm]] + d
+    rp <- rank_of(tryCatch(probe(sp), error = function(e) NULL))
+    if (!is.finite(rp)) return(NULL)
+    r <- max(r, rp)
+  }
+  r
+}
+
 # -- Dimension collapse: cost scales with the RANK, not the covariate count ----
 #
 # p covariates reaching the model through r < p independent scalars make an
@@ -3546,7 +3568,8 @@ print.covDist <- function(x, ...) {
          co$z0)
   if (is.null(B)) return(.stale(co))
   sv <- tryCatch(svd(B), error = function(e) NULL)
-  if (is.null(sv) || length(sv$d) < co$r) return(.stale(co))
+  if (is.null(sv) || length(sv$d) < co$r || .admSvdRank(sv) > co$r)
+    return(.stale(co))
   U  <- sv$u[, seq_len(co$r), drop = FALSE]
   Sr <- t(U) %*% co$Rc %*% U
   Lr <- tryCatch(chol(Sr), error = function(e) NULL)
@@ -3699,38 +3722,12 @@ print.covDist <- function(x, ...) {
   # count and for the same reason: a refresh must differ from admission only
   # through the thetas.
   z0 <- z0[attr(B, "at"), , drop = FALSE]
-  # A "const" ROUTE IS A STRUCTURAL CLAIM, NOT A THRESHOLD, AND IT MUST HOLD
-  # AWAY FROM THIS POINT TOO.
-  #
-  # Every other route is a judgement about WHICH linear combination a column
-  # reaches the model through, and freezing it is right -- a borderline column
-  # would otherwise flip mid-fit and change the design. "const" is different:
-  # it says the column does not depend on the latents AT ALL, so B[, k] stays
-  # zero and the refresh replays that forever. It is false the moment a
-  # coefficient leaves zero, which is where `bcr <- 0` starts.
-  #
-  # Left unchecked: `v <- exp(tv) * (CRCL/90)^bcr` with bcr = 0 probes constant,
-  # the collapse is admitted at rank 1, U never turns toward CRCL, every design
-  # point sits at CRCL's median, and bcr has an identically zero gradient for
-  # the life of the fit. Nothing errors -- it is "solving at the covariate
-  # mean", reached from the other side.
-  #
-  # Re-probing cannot be deferred to the refresh, because turning a zero column
-  # on there would RAISE rank(B) and change the number of design points
-  # mid-optimisation. So it is settled here: nudge the structural thetas and
-  # refuse the collapse if a constant column starts varying. A genuinely
-  # constant assignment (`v <- exp(tv)`) is unaffected -- shifting tv scales it
-  # without making it vary across design points.
-  # A constant column is now just a ZERO column of B -- there is no route to
-  # name it -- but the hazard and the cure are unchanged.
-  .cst <- which(colSums(abs(B)) == 0)
-  if (length(.cst)) {
-    Bp <- tryCatch(gradB(cell_list[[1L]],
-                         st_use = lapply(st, function(v) v + 0.1)),
-                   error = function(e) NULL)
-    if (is.null(Bp) || any(colSums(abs(Bp[, .cst, drop = FALSE])) > 0))
-      return(NULL)
-  }
+  # Rank is structural for the fit, not merely the rank at its starting point.
+  # Two nonzero columns can start collinear and split when one coefficient
+  # moves, so checking only zero columns is insufficient.
+  r <- .admCollapseRank(B, st, pinfo$struct_names %||% character(0),
+                        function(sp) gradB(cell_list[[1L]], st_use = sp))
+  if (is.null(r)) return(NULL)
   # THE LOADING MUST NOT DEPEND ON THE RANDOM EFFECT. A covariate-by-eta
   # interaction (cl <- exp(tcl + b * WT * eta.cl)) has a direction that moves
   # with eta, and the probe at eta = 0 would report b = 0 -- a collapse onto
@@ -3761,7 +3758,6 @@ print.covDist <- function(x, ...) {
 
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || !length(sv$d)) return(NULL)
-  r <- .admSvdRank(sv)
   # r == pc is refused: no rank reduction to make, and with the node search gone
   # there is nothing else on this path to gain. The rotation alone buys nothing
   # there -- with B diagonal, U is a permutation and redistributes nothing.
@@ -3945,10 +3941,9 @@ print.covDist <- function(x, ...) {
   hit <- which(is_asgn & vapply(lst, function(e)
     is.call(e) && length(e) == 3L &&
       length(intersect(all.vars(e[[3L]]), lat)) > 0L, logical(1)))
-  # a covariate inside an if() never appears in `hit`, and the design would
-  # then pin it at its median without any probe noticing -- see
-  # .admCovInBranch().
-  if (.admCovInBranch(lst, c(cn, dn))) return(NULL)
+  # A latent used inside an if() never appears in `hit`; omitting an eta would
+  # pin that random effect at zero without any probe noticing.
+  if (.admCovInBranch(lst, lat)) return(NULL)
   if (!length(hit)) return(NULL)
   pr <- list(lst = lst, is_asgn = is_asgn, hit = hit, cn = cn,
              dn = dn, eta_names = pinfo$eta_col_names,
@@ -4039,7 +4034,7 @@ print.covDist <- function(x, ...) {
        n_nodes = as.integer(n_nodes), max_rows = max_rows, joint = TRUE,
        dn = dn, nms = nms, cells = cells, pcell = pcell,
        cell_list = cell_list, n_cell = max(nrow(cells), 1L),
-       r = NULL, m = NULL)
+       r = NULL, m = NULL, struct_names = pinfo$struct_names %||% character(0))
 }
 
 # The covariate values a latent block maps to, with the same clamp the collapse
@@ -4079,6 +4074,7 @@ print.covDist <- function(x, ...) {
   # these are deliberately absent until admission fixes them, which is exactly
   # the case partial matching turns into a wrong answer instead of a NULL.
   r <- jc[["r"]] %||% .admSvdRank(sv)
+  if (.admSvdRank(sv) > r) return(NULL)
   if (!is.finite(r) || r < 1L || r > jc$nl) return(NULL)
   U <- sv$u[, seq_len(r), drop = FALSE]
   # the cap lesson from .admCovDirNodes, over the joint space: a direction
@@ -4132,29 +4128,17 @@ print.covDist <- function(x, ...) {
 # first two moments and the reciprocal. Costs no solves.
 .admJointAdmit <- function(jc, st, L, tol = 5e-3) {
   if (is.null(jc)) return(NULL)
+  B0 <- .admJointB(jc, st, L, jc$Xi)
+  if (is.null(B0)) return(NULL)
+  jc$r <- .admCollapseRank(B0, st, jc$struct_names %||% character(0),
+                           function(sp) .admJointB(jc, sp, L, jc$Xi))
+  if (is.null(jc$r) || jc$r < 1L || jc$r > jc$nl) return(NULL)
   jd <- .admJointDesign(jc, st, L)
   if (is.null(jd)) return(NULL)
-  jc$r <- jd$r; jc$m <- jd$m
+  jc$m <- jd$m
   # FREEZE the point the loading is read at, with the rank and the node count.
   jc$z0 <- jc$z0[jd$at, , drop = FALSE]
   cl_list <- jc$cell_list %||% list(list())
-  # THE SAME "const" RE-PROBE .admCovCollapse CARRIES, for the same reason.
-  # `v <- exp(tv + eta.v) * (CRCL/90)^bcr` started at `bcr <- 0` -- the normal
-  # way to start a covariate effect -- probes constant in CRCL, so that row of
-  # B is ~1e-17, every left singular vector has U[CRCL, ] = 0, and every design
-  # point sits at CRCL's median forever. d(pred)/d(bcr) is then exactly zero
-  # and the optimizer reports convergence at the starting value. Admission's
-  # own verification cannot see it: at bcr = 0 the design reproduces the
-  # moments perfectly. Rank is frozen here, so this must be settled here too.
-  # A constant column is a ZERO column of B now, not a named route.
-  .cst <- which(colSums(abs(.admJointB(jc, st, L, jc$Xi) %||%
-                            matrix(0, jc$nl, 1L))) == 0)
-  if (length(.cst)) {
-    Bp <- tryCatch(.admJointB(jc, lapply(st, function(v) v + 0.1), L, jc$Xi),
-                   error = function(e) NULL)
-    if (is.null(Bp) || any(colSums(abs(Bp[, .cst, drop = FALSE])) > 0))
-      return(NULL)
-  }
   # THE ROTATION MUST NOT DIFFER BETWEEN STRATA. A covariate-by-stratum
   # interaction -- (WT/70)^(b + c*SEX) -- has a direction that changes cell to
   # cell, so a single shared design would be the right design in one cell and
