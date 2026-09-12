@@ -1,12 +1,10 @@
 # Covariate marginalisation, against an INDEPENDENT reference.
-#
-# Every check here compares the package against exact nested Gauss-Hermite
-# quadrature computed in plain R on an analytic 1-cmt solution, or compares two
-# independent code paths against each other. Nothing is pinned against its own
-# output: the two bugs this feature shipped during development (a discarded
-# return value that disabled the whole thing, and a covariate grid that dropped
-# the distribution's tails) both produced finite, plausible numbers, so
-# "the fit ran and the estimates look sane" catches neither.
+
+# Every check here compares the package against exact nested Gauss-Hermite quadrature computed in plain R on
+# an analytic 1-cmt solution, or compares two independent code paths against each other. Nothing is pinned
+# against its own output: the two bugs this feature shipped during development (a discarded return value that
+# disabled the whole thing, and a covariate grid that dropped the distribution's tails) both produced finite,
+# plausible numbers, so "the fit ran and the estimates look sane" catches neither.
 
 skip_on_cran()
 skip_if_not_installed("rxode2")
@@ -82,9 +80,9 @@ skip_if_not_installed("rxode2")
   if (!is.matrix(z)) z <- matrix(z, ncol = 1L)
   eta <- z %*% t(d$pars$L)
   colnames(eta) <- d$pinfo$eta_col_names
-  # Dispatch on the SAME field .admNLL dispatches on. An earlier version of this
-  # helper handled only "uq" and silently held the covariate at its reference on
-  # the "rows" path -- i.e. it reproduced the very bug the tests exist to catch.
+  # Dispatch on the SAME field .admNLL dispatches on. An earlier version of this helper handled only "uq" and
+  # silently held the covariate at its reference on the "rows" path -- i.e. it reproduced the very bug the
+  # tests exist to catch.
   su <- d$st[[1L]]
   if (identical(su$.adm_cov_path, "rows")) {
     su <- admixr2:::.admStudyCovRows(su, d$pinfo, nrow(eta))
@@ -98,8 +96,8 @@ skip_if_not_installed("rxode2")
   list(E = mu, V = crossprod(sweep(cp, 2L, mu)) / n_sim)
 }
 
-# Central difference of a scalar objective, for gradient checks. Written out at
-# eight sites before this; the step is the same at all of them.
+# Central difference of a scalar objective, for gradient checks. Written out at eight sites before this; the
+# step is the same at all of them.
 .cfd <- function(f, p, h = 1e-5)
   vapply(seq_along(p), function(k) {
     a <- p; a[k] <- a[k] + h
@@ -107,10 +105,9 @@ skip_if_not_installed("rxode2")
     (f(a) - f(b)) / (2 * h)
   }, numeric(1))
 
-# One adgh fixture for the shift/absorption tests. They differed only in the
-# model they closed over and, for two of them, in cov_integration / cov_nodes --
-# the rest of the closure was byte-identical four times over.
-## Shared fixture for the covariate-integration tests.
+# One adgh fixture for the shift/absorption tests. They differed only in the model they closed over and, for
+# two of them, in cov_integration / cov_nodes -- the rest of the closure was byte-identical four times over. #
+# Shared fixture for the covariate-integration tests.
 .shift_fx <- function(mod, E, V, ci = "on", n_nodes = 5L, cov_nodes = 7L,
                       cd = list(WT = list(meanlog = log(72), sdlog = 0.28))) {
   st0 <- list(s = list(E = E, V = V, n = 300L, times = .cov_TIMES,
@@ -123,9 +120,9 @@ skip_if_not_installed("rxode2")
   pin <- admixr2:::.admDriverPinfo(ui, ctl)
   u   <- admixr2:::.admDriverUnits(st0, ui, ov)
   stu <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, u$studies))
-  # NOT wrapped in tryCatch(..., NULL): a failed sens model makes every "sens"
-  # assertion below silently re-test the FD path, so the arm passes by testing
-  # nothing. Let it error. (sens BEFORE the sim model -- see CLAUDE.md.)
+  # NOT wrapped in tryCatch(..., NULL): a failed sens model makes every "sens" assertion below silently
+  # re-test the FD path, so the arm passes by testing nothing. Let it error. (sens BEFORE the sim model -- see
+  # CLAUDE.md.)
   sm  <- admixr2:::.admLoadSensModel(ui)
   testthat::expect_false(is.null(sm))
   list(pin = pin, stu = stu, ov = ov,
@@ -133,8 +130,6 @@ skip_if_not_installed("rxode2")
        g = admixr2:::.adghNodeGrid(n_nodes, pin$n_eta),
        sm = sm, rx = admixr2:::.admLoadModel(ui))
 }
-
-
 
 test_that("the general path reproduces exact nested quadrature for an ALLOMETRIC effect", {
   ml <- log(72); sl <- 0.28
@@ -177,9 +172,9 @@ test_that("the general path matches the retired collapse's closed form", {
 })
 
 test_that("a declared covariate distribution is never silently ignored", {
-  # If the covariate path is disabled, the predicted covariance must CHANGE.
-  # A discarded return value once turned the whole feature into a no-op while
-  # every reported number stayed plausible; this is the check that catches it.
+  # If the covariate path is disabled, the predicted covariance must CHANGE. A discarded return value once
+  # turned the whole feature into a no-op while every reported number stayed plausible; this is the check that
+  # catches it.
   ml <- log(72); sl <- 0.28
   ref <- .cov_ref(function(wt, eta) exp(.cov_TCL + eta) * (wt / 70)^0.75, ml, sl)
   Vo  <- ref$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
@@ -233,9 +228,8 @@ test_that("a covariate on SEVERAL parameters goes through the general path", {
   Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
   d  <- .cov_setup(.cov_both, list(WT = list(meanlog = ml, sdlog = sl)),
                    list(WT = exp(ml)), r$E, Vo)
-  # WT appears twice, so neither the collapse nor u-quantile can represent it:
-  # u-quantile would freeze the effect on `v` at the reference value (measured
-  # V 99.5% wrong before the general path existed).
+  # WT appears twice, so neither the collapse nor u-quantile can represent it: u-quantile would freeze the
+  # effect on `v` at the reference value (measured V 99.5% wrong before the general path existed).
   expect_identical(d$st[[1L]]$.adm_cov_path, "rows")
   p <- .cov_pred(d, n_sim = 12000L)
   expect_lt(max(abs(p$E / r$E - 1)), 5e-3)
@@ -257,11 +251,10 @@ test_that("a covariate on a parameter with NO random effect is supported", {
 })
 
 test_that("the general path is the default route for every covariate form", {
-  # Neither "collapse" (a bare theta*COV product, a NORMAL covariate, the study
-  # solved at the covariate mean, and grad = "none") nor "uq" (four conditions
-  # inferred from the model TEXT, each measured to be silently wrong when
-  # assumed and false) is routed to any more. cov_integration = "on"
-  # is the only route off "rows", and it is admitted numerically.
+  # Neither "collapse" (a bare theta*COV product, a NORMAL covariate, the study solved at the covariate mean,
+  # and grad = "none") nor "uq" (four conditions inferred from the model TEXT, each measured to be silently
+  # wrong when assumed and false) is routed to any more. cov_integration = "on" is the only route off "rows",
+  # and it is admitted numerically.
   ml <- log(72); sl <- 0.28
   E0 <- rep(1, length(.cov_TIMES)); V0 <- diag(length(.cov_TIMES))
   expect_identical(
@@ -278,13 +271,11 @@ test_that("the general path is the default route for every covariate form", {
 # ---- gradients on the general path -------------------------------------------
 
 test_that("the general path supports ANALYTIC gradients (vs central FD)", {
-  # The covariate is DATA here -- a per-row params column -- so the existing
-  # sensitivity directions already differentiate the function the NLL evaluates:
-  # a covariate coefficient is an unpaired struct theta with its own THETA_j
-  # direction, and the eta draws are untouched. Nothing new is derived, but the
-  # FINITE-DIFFERENCE frames in .admGrad build their params matrix by hand and
-  # had to be given the covariate columns explicitly (tiled per block, or the
-  # difference stops being common-random-numbers).
+  # The covariate is DATA here -- a per-row params column -- so the existing sensitivity directions already
+  # differentiate the function the NLL evaluates: a covariate coefficient is an unpaired struct theta with its
+  # own THETA_j direction, and the eta draws are untouched. Nothing new is derived, but the FINITE-DIFFERENCE
+  # frames in .admGrad build their params matrix by hand and had to be given the covariate columns explicitly
+  # (tiled per block, or the difference stops being common-random-numbers).
   ml <- log(72); sl <- 0.28
   r  <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
                   function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
@@ -321,10 +312,9 @@ test_that("the general path supports ANALYTIC gradients (vs central FD)", {
 })
 
 test_that("adgh marginalises a covariate by a PRODUCT GRID, not Monte Carlo", {
-  # adgh's analogue of admc's per-row draws is a product grid over the covariate
-  # quadrature and the eta grid -- still ONE rxSolve, but deterministic, so adgh
-  # keeps its noise-free objective. Accuracy is correspondingly ~1e-6 rather
-  # than admc's ~1e-4/1e-3 at a comparable cost.
+  # adgh's analogue of admc's per-row draws is a product grid over the covariate quadrature and the eta grid
+  # -- still ONE rxSolve, but deterministic, so adgh keeps its noise-free objective. Accuracy is
+  # correspondingly ~1e-6 rather than admc's ~1e-4/1e-3 at a comparable cost.
   ml <- log(72); sl <- 0.28
   r  <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
                   function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
@@ -352,9 +342,9 @@ test_that("adgh marginalises a covariate by a PRODUCT GRID, not Monte Carlo", {
 })
 
 test_that("estimators without a covariate path REFUSE cov_dist", {
-  # The dangerous outcome is silence: every study also carries a covariate VALUE,
-  # so an unwired estimator does not fail -- it solves at the covariate mean and
-  # reports a fit whose omega has absorbed the covariate spread.
+  # The dangerous outcome is silence: every study also carries a covariate VALUE, so an unwired estimator does
+  # not fail -- it solves at the covariate mean and reports a fit whose omega has absorbed the covariate
+  # spread.
   st <- list(a = list(cov_dist = list(WT = list(mu = 0, sd = 1))),
              b = list())
   for (est in c("adfo", "adirmc"))
@@ -364,14 +354,12 @@ test_that("estimators without a covariate path REFUSE cov_dist", {
 })
 
 test_that("adgh's ANALYTIC gradient carries the covariate product grid", {
-  # .adghGradNLL used to build its quadrature from pars$L directly, so it never
-  # saw the covariate grid .adghNLL evaluates on -- it differentiated a different
-  # function than the objective, during the FIT. It now derives the grid per
-  # study through .adghGrid(), the same helper the objective uses.
-  #
-  # Evaluated AWAY from the optimum on purpose: the reference data are generated
-  # at the true parameters, so at p0 every component is ~0 and the comparison
-  # could not tell a correct gradient from a broken one.
+  # .adghGradNLL used to build its quadrature from pars$L directly, so it never saw the covariate grid
+  # .adghNLL evaluates on -- it differentiated a different function than the objective, during the FIT. It now
+  # derives the grid per study through .adghGrid(), the same helper the objective uses.
+
+  # Evaluated AWAY from the optimum on purpose: the reference data are generated at the true parameters, so at
+  # p0 every component is ~0 and the comparison could not tell a correct gradient from a broken one.
   ml <- log(72); sl <- 0.28
   r  <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
                   function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
@@ -388,11 +376,9 @@ test_that("adgh's ANALYTIC gradient carries the covariate product grid", {
   stu   <- admixr2:::.admCheckCovariates(ui, pinfo, u$studies)
   expect_identical(stu[[1L]]$.adm_cov_path, "rows")
 
-  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return()
-  # on three paths, so a NULL here makes the "sens" arm silently re-test the
-  # FD path against its OWN central difference and pass for any state of the
-  # analytic one. The file states this rule at the top; four sites already
-  # implement it.
+  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return() on three paths, so a NULL here
+  # makes the "sens" arm silently re-test the FD path against its OWN central difference and pass for any
+  # state of the analytic one. The file states this rule at the top; four sites already implement it.
   sm   <- admixr2:::.admLoadSensModel(ui)
   expect_false(is.null(sm))
   rx   <- admixr2:::.admLoadModel(ui)
@@ -410,15 +396,14 @@ test_that("adgh's ANALYTIC gradient carries the covariate product grid", {
 })
 
 # -- A covariate that scales the DOSE, not just the parameters -----------------
-#
-# `f(centr) <- WT` (a mg/kg dose) is the PAGE case study's shape: the same WT
-# draw has to reach the dosing modifier AND cl/vp/q in the same solve. Nothing
-# else covers a covariate entering a dosing modifier, and the failure mode is
-# quiet -- a WT that reaches the parameters but not f() gives a fit that
-# converges to plausible numbers for a dose it was not given.
-#
-# Reference is INDEPENDENT: subjects drawn with their own WT and etas, solved by
-# plain rxode2, reduced to (E, V). No admixr2 covariate machinery in it.
+
+# `f(centr) <- WT` (a mg/kg dose) is the PAGE case study's shape: the same WT draw has to reach the dosing
+# modifier AND cl/vp/q in the same solve. Nothing else covers a covariate entering a dosing modifier, and the
+# failure mode is quiet -- a WT that reaches the parameters but not f() gives a fit that converges to
+# plausible numbers for a dose it was not given.
+
+# Reference is INDEPENDENT: subjects drawn with their own WT and etas, solved by plain rxode2, reduced to (E,
+# V). No admixr2 covariate machinery in it.
 
 test_that("a covariate scaling the dose is marginalised correctly", {
   WT <- list(meanlog = log(18.4), sdlog = 0.45)
@@ -486,8 +471,8 @@ test_that("a covariate scaling the dose is marginalised correctly", {
   expect_lt(max(abs(a$m$E - r$E) / abs(r$E)), 0.01)
   expect_lt(max(abs(a$m$V - r$V)) / max(abs(r$V)), 0.02)
 
-  # the check must be SENSITIVE to the dose term, or it proves nothing: dropping
-  # f(centr) <- WT moves the mean by more than an order of magnitude
+  # the check must be SENSITIVE to the dose term, or it proves nothing: dropping f(centr) <- WT moves the mean
+  # by more than an order of magnitude
   r0 <- ref(mk(FALSE))
   expect_gt(max(abs(r$E - r0$E) / r0$E), 5)
   a0 <- adm(mk(FALSE))
@@ -495,34 +480,27 @@ test_that("a covariate scaling the dose is marginalised correctly", {
 })
 
 # -- The node-study guard must fire THROUGH A DRIVER --------------------------
-#
-# test-covariate.R exercises .admRefuseNodeStudies() on a raw study list, which
-# is not the shape any driver hands it. That gap hid a real defect: the drivers
-# called the guard AFTER .admDriverUnits(), which strips the top-level `weight`
-# and `cov_method` fields it reads, so the guard never fired and a node study
-# list FITTED in all four estimators -- at exactly twice the correct objective
-# (720.715 against 360.358), weights silently ignored. Only an end-to-end test
-# can catch that, so this one goes through nlmixr2().
 
+# test-covariate.R exercises .admRefuseNodeStudies() on a raw study list, which is not the shape any driver
+# hands it. That gap hid a real defect: the drivers called the guard AFTER .admDriverUnits(), which strips the
+# top-level `weight` and `cov_method` fields it reads, so the guard never fired and a node study list FITTED
+# in all four estimators -- at exactly twice the correct objective (720.715 against 360.358), weights silently
+# ignored. Only an end-to-end test can catch that, so this one goes through nlmixr2().
 
 test_that("a DEPENDENT covariate distribution supports analytic gradients", {
-  # The `joint` sampler is the newest covariate path and the one a copula or an
-  # R-vine arrives through. It reaches the solve as per-row params columns, the
-  # same as the independent path, so the sensitivity directions still
-  # differentiate the function the NLL evaluates -- but the FD frames in
-  # .admGrad/.adghGrad tile those columns by hand, and a sampler consumes TWO
-  # uniform columns rather than one. Nothing else pins that, and a joint sampler
-  # dropped from a tiled frame would be a silently wrong gradient under a
-  # finite, plausible objective.
+  # The `joint` sampler is the newest covariate path and the one a copula or an R-vine arrives through. It
+  # reaches the solve as per-row params columns, the same as the independent path, so the sensitivity
+  # directions still differentiate the function the NLL evaluates -- but the FD frames in .admGrad/.adghGrad
+  # tile those columns by hand, and a sampler consumes TWO uniform columns rather than one. Nothing else pins
+  # that, and a joint sampler dropped from a tiled frame would be a silently wrong gradient under a finite,
+  # plausible objective.
   skip_if_not_installed("rxode2")
   ml <- log(72); sl <- 0.28; mc <- log(90); sc <- 0.30; rho <- 0.6
-  # A Gaussian copula written the way a user would: consume the supplied
-  # uniforms, return one column per declared covariate.
-  # NOTE the clamp AFTER pnorm as well as before qnorm. The quadrature grid's
-  # tail nodes reach |z| ~ 6.4, a copula's mixing step scales that by up to
-  # ~1.4, and pnorm() of the result rounds to exactly 1 -- after which
-  # qlnorm(1) is Inf. A per-subject sample never gets that far out, so this
-  # only bites the deterministic paths.
+  # A Gaussian copula written the way a user would: consume the supplied uniforms, return one column per
+  # declared covariate. NOTE the clamp AFTER pnorm as well as before qnorm. The quadrature grid's tail nodes
+  # reach |z| ~ 6.4, a copula's mixing step scales that by up to ~1.4, and pnorm() of the result rounds to
+  # exactly 1 -- after which qlnorm(1) is Inf. A per-subject sample never gets that far out, so this only
+  # bites the deterministic paths.
   cl <- function(x) pmin(pmax(x, 1e-12), 1 - 1e-12)
   jf <- function(u) {
     z  <- stats::qnorm(cl(u))
@@ -549,7 +527,7 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
                          n = 200L, times = tms,
                          ev = rxode2::et(amt = 100), cov_dist = cd))
 
-  ## ---- admc: per-subject draws --------------------------------------------
+  # # ---- admc: per-subject draws --------------------------------------------
   ctl   <- admControl(studies = st0, grad = "sens", n_sim = 4000L, print = 0L,
                       covMethod = "none")
   pinfo <- admixr2:::.admDriverPinfo(ui, ctl)
@@ -560,11 +538,9 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
   zl <- admixr2:::.admMakeZ(4000L, pinfo, 1L, "sobol")
   pl <- admixr2:::.admMakeParamsList(4000L, pinfo, 1L)
   rx <- admixr2:::.admLoadModel(ui)
-  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return()
-  # on three paths, so a NULL here makes the "sens" arm silently re-test the
-  # FD path against its OWN central difference and pass for any state of the
-  # analytic one. The file states this rule at the top; four sites already
-  # implement it.
+  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return() on three paths, so a NULL here
+  # makes the "sens" arm silently re-test the FD path against its OWN central difference and pass for any
+  # state of the analytic one. The file states this rule at the top; four sites already implement it.
   sm <- admixr2:::.admLoadSensModel(ui)
   expect_false(is.null(sm))
   f  <- function(pp) admixr2:::.admNLL(pp, pinfo, stu, zl, rx, ovar, pl, 1L)
@@ -575,13 +551,11 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
   expect_true(all(is.finite(ga)))
   expect_lt(max(abs(ga - gf) / pmax(abs(gf), 1e-8)), 2e-2)
 
-  ## ---- adgh now INTEGRATES a dependent joint, on the u-space grid ---------
-  # It used to refuse one, on the grounds that a product grid assumes
-  # independence. That is true of a grid over covariate MARGINS and false of a
-  # grid over the sampler's UNIFORMS: a copula maps independent uniforms to
-  # dependent values, so the product rule is exact there whatever the
-  # dependence. The check that matters is that adgh's moments match the
-  # per-subject draws admc uses -- the two estimators must see one distribution.
+  # # ---- adgh now INTEGRATES a dependent joint, on the u-space grid --------- It used to refuse one, on the
+  # grounds that a product grid assumes independence. That is true of a grid over covariate MARGINS and false
+  # of a grid over the sampler's UNIFORMS: a copula maps independent uniforms to dependent values, so the
+  # product rule is exact there whatever the dependence. The check that matters is that adgh's moments match
+  # the per-subject draws admc uses -- the two estimators must see one distribution.
   fit <- suppressMessages(nlmixr2est::nlmixr2(
     mod, admData(), est = "adgh",
     control = adghControl(studies = st0, print = 0L, covMethod = "none",
@@ -614,8 +588,8 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
   expect_lt(max(abs(mg$E - Em) / abs(Em)), 5e-3)
   expect_lt(max(abs(mg$V - Vmc)) / max(abs(Vmc)), 5e-3)
 
-  # ... and the dependence must actually MOVE the moments, or agreeing here
-  # would prove nothing (an arm that silently dropped `cor` would also pass).
+  # ... and the dependence must actually MOVE the moments, or agreeing here would prove nothing (an arm that
+  # silently dropped `cor` would also pass).
   st_ind <- st0                                   # NOTE: the study is `s1`
   st_ind$s1$cov_dist <- st0$s1$cov_dist[
     setdiff(names(st0$s1$cov_dist), c("cor", "rho", "Sigma", "joint"))]
@@ -627,13 +601,12 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
 })
 
 # -- Sparse-grid covariate integration (cov_integration = "sparse") -----------
-#
-# The Tier-1 file checks the expansion itself against exact nested quadrature on
-# an analytic solution. What is only testable here is the PIPELINE: that the
-# design points reach rxSolve as per-row covariates, that the residual and the
-# NLL are formed from the expanded moments, that the analytic gradient
-# differentiates the function the objective evaluates, and that asking for
-# "off" leaves every number exactly where the unreduced grid puts it.
+
+# The Tier-1 file checks the expansion itself against exact nested quadrature on an analytic solution. What is
+# only testable here is the PIPELINE: that the design points reach rxSolve as per-row covariates, that the
+# residual and the NLL are formed from the expanded moments, that the analytic gradient differentiates the
+# function the objective evaluates, and that asking for "off" leaves every number exactly where the unreduced
+# grid puts it.
 
 .tay_setup <- function(ci, grad = "analytical", n_nodes = 7L, ml, sl,
                        level = 3L, E, V) {
@@ -654,14 +627,13 @@ test_that("a DEPENDENT covariate distribution supports analytic gradients", {
        rxMod = admixr2:::.admLoadModel(ui))
 }
 
-
 test_that("cov_integration = 'sparse' reproduces the marginal moments", {
   ml <- log(72); sl <- 0.28
   cl_of <- function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75
   v_of  <- function(wt)    exp(.cov_TV) * (wt / 70)^1.0
   r  <- .cov_ref2(cl_of, v_of, ml, sl)
-  # the ecological plug-in: the same model solved AT the covariate mean, which
-  # is what a fit with a point `cov` and no marginalisation would report
+  # the ecological plug-in: the same model solved AT the covariate mean, which is what a fit with a point
+  # `cov` and no marginalisation would report
   pg <- .cov_ref2(cl_of, v_of, log(exp(ml + sl^2 / 2)), 1e-8)
   Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
 
@@ -672,19 +644,19 @@ test_that("cov_integration = 'sparse' reproduces the marginal moments", {
                                 d$grid, 1L)
   Vs  <- mm$V - diag(.cov_ADD^2, length(.cov_TIMES))
   eE  <- max(abs(mm$E / r$E - 1)); eV <- max(abs(Vs / r$V - 1))
-  # A demanding regime: WT enters v with NO random effect at all, so on that
-  # channel the covariate is the only source of variability. Level 3 has room
-  # to spare here -- the bounds are the ones the retired level-2 rule needed.
+  # A demanding regime: WT enters v with NO random effect at all, so on that channel the covariate is the only
+  # source of variability. Level 3 has room to spare here -- the bounds are the ones the retired level-2 rule
+  # needed.
   expect_lt(eE, 5e-3)
   expect_lt(eV, 2e-1)
-  # It must still be a large improvement on the plug-in, which is the thing it
-  # is an alternative to -- getting that backwards is the whole risk.
+  # It must still be a large improvement on the plug-in, which is the thing it is an alternative to -- getting
+  # that backwards is the whole risk.
   expect_lt(eV, max(abs(pg$V / r$V - 1)) / 5)
   expect_lt(eE, max(abs(pg$E / r$E - 1)) / 5)
 
-  # FEWER design points than the product grid, and the count read from the rule
-  # rather than hard-coded: at one covariate level 3 is the 5-point rule, and
-  # pinning "5" here would go stale the moment the default level moved.
+  # FEWER design points than the product grid, and the count read from the rule rather than hard-coded: at one
+  # covariate level 3 is the 5-point rule, and pinning "5" here would go stale the moment the default level
+  # moved.
   g   <- admixr2:::.adghGrid(prs, d$pinfo, d$grid, d$stu[[1L]])
   n_s <- nrow(d$stu[[1L]][[".adm_cov_sparse"]]$X)
   expect_identical(nrow(g$eta), as.integer(n_s) * nrow(d$grid$X))
@@ -692,10 +664,9 @@ test_that("cov_integration = 'sparse' reproduces the marginal moments", {
   expect_lt(n_s, d$pinfo$cov_nodes)
   dq <- .tay_setup("on", ml = ml, sl = sl, E = r$E, V = Vo)
   gq <- admixr2:::.adghGrid(prs, dq$pinfo, dq$grid, dq$stu[[1L]])
-  # read the default rather than hard-coding it: cov_nodes is a tuning
-  # default and pinning its VALUE here made this assertion stale the moment
-  # it moved. What matters is that quadrature costs cov_nodes^p and the
-  # sparse rule costs less.
+  # read the default rather than hard-coding it: cov_nodes is a tuning default and pinning its VALUE here made
+  # this assertion stale the moment it moved. What matters is that quadrature costs cov_nodes^p and the sparse
+  # rule costs less.
   expect_identical(nrow(gq$eta),
                    as.integer(dq$pinfo$cov_nodes) * nrow(dq$grid$X))
   expect_gt(nrow(gq$eta), nrow(g$eta))
@@ -718,19 +689,17 @@ test_that("the sandwich weight uses the study's covariate grid", {
 })
 
 test_that("the sparse path carries an ANALYTIC gradient (vs central FD)", {
-  # The rank-p term sum_j v_j g'_j g'_j' is quadratic in the conditional means,
-  # so it contributes a derivative the weighted-crossproduct contraction does
-  # not. Evaluated AWAY from the optimum, where every component is large.
+  # The rank-p term sum_j v_j g'_j g'_j' is quadratic in the conditional means, so it contributes a derivative
+  # the weighted-crossproduct contraction does not. Evaluated AWAY from the optimum, where every component is
+  # large.
   ml <- log(72); sl <- 0.28
   r  <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
                   function(wt) exp(.cov_TV) * (wt / 70)^1.0, ml, sl)
   Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
   d  <- .tay_setup("sparse", ml = ml, sl = sl, E = r$E, V = Vo)
-  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return()
-  # on three paths, so a NULL here makes the "sens" arm silently re-test the
-  # FD path against its OWN central difference and pass for any state of the
-  # analytic one. The file states this rule at the top; four sites already
-  # implement it.
+  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return() on three paths, so a NULL here
+  # makes the "sens" arm silently re-test the FD path against its OWN central difference and pass for any
+  # state of the analytic one. The file states this rule at the top; four sites already implement it.
   sm <- admixr2:::.admLoadSensModel(d$ui)
   expect_false(is.null(sm))
   f  <- function(pp)
@@ -757,11 +726,9 @@ test_that("cov_integration = 'quadrature' is the default and changes nothing", {
   ui   <- suppressMessages(rxode2::rxode2(.cov_both))
   ovar <- admixr2:::.admOutputVar(ui)
   rxM  <- admixr2:::.admLoadModel(ui)
-  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return()
-  # on three paths, so a NULL here makes the "sens" arm silently re-test the
-  # FD path against its OWN central difference and pass for any state of the
-  # analytic one. The file states this rule at the top; four sites already
-  # implement it.
+  # NOT tryCatch(..., NULL): .admLoadSensModel returns NULL by plain return() on three paths, so a NULL here
+  # makes the "sens" arm silently re-test the FD path against its OWN central difference and pass for any
+  # state of the analytic one. The file states this rule at the top; four sites already implement it.
   sm   <- admixr2:::.admLoadSensModel(ui)
   expect_false(is.null(sm))
   one <- function(ctl) {
@@ -785,11 +752,9 @@ test_that("cov_integration = 'quadrature' is the default and changes nothing", {
 })
 
 test_that("the sparse path ENUMERATES a discrete covariate, per study", {
-  # A discrete covariate is not put on a cubature rule, it is enumerated: its
-  # levels and probabilities ARE the integration, exactly. A sparse rule is a
-  # statement about the CONTINUOUS dimensions only, so a two-point covariate
-  # costs two design points whatever the level, and the continuous study
-  # alongside it is unaffected.
+  # A discrete covariate is not put on a cubature rule, it is enumerated: its levels and probabilities ARE the
+  # integration, exactly. A sparse rule is a statement about the CONTINUOUS dimensions only, so a two-point
+  # covariate costs two design points whatever the level, and the continuous study alongside it is unaffected.
   .st <- function(cd) list(E = rep(1, length(.cov_TIMES)),
                            V = diag(length(.cov_TIMES)), n = 100L,
                            times = .cov_TIMES,
@@ -820,10 +785,9 @@ test_that("the sparse path ENUMERATES a discrete covariate, per study", {
     admixr2:::.admCheckCovariates(ui, admixr2:::.admDriverPinfo(ui, ctlq),
                                   u$studies))
 
-  # What IS still refused: a discrete covariate DEPENDENT on a continuous one.
-  # A level is then a truncation of the latent normal rather than a point, so
-  # the continuous conditional differs cell by cell and one shared rule would
-  # be the wrong rule in every cell.
+  # What IS still refused: a discrete covariate DEPENDENT on a continuous one. A level is then a truncation of
+  # the latent normal rather than a point, so the continuous conditional differs cell by cell and one shared
+  # rule would be the wrong rule in every cell.
   Rz <- matrix(c(1, 0.3, 0.3, 1), 2L, 2L,
                dimnames = list(c("WT", "SEX"), c("WT", "SEX")))
   expect_error(
@@ -834,9 +798,7 @@ test_that("the sparse path ENUMERATES a discrete covariate, per study", {
     "DEPENDENT|discrete")
 })
 
-# =============================================================================
 # Shift path: the covariate leaves the solver
-# =============================================================================
 
 .shift_mod <- function() {
   ini({tcl <- log(4); tv <- log(30); b1 <- 0.75
@@ -865,28 +827,17 @@ test_that("the sparse path ENUMERATES a discrete covariate, per study", {
        p0 = admixr2:::.admBuildOptVec(pin)$p0)
 }
 
-
-
-
-
-
 # -- the covariate absorbed into Omega (correlated random effects) ------------
-
-
-
-
 
 # -- datagen: a covariate distribution without Monte Carlo -------------------
 
 test_that("datagen(method = 'gh') integrates a covariate distribution exactly", {
-  # `cov_dist` used to require method = "mc", which puts Monte Carlo noise into
-  # data that is meant to BE the reference for a simulation study. The gh path
-  # can integrate the covariate on its own grid -- the same construction the
-  # estimator uses -- but it was only ever handed the covariate REFERENCE VALUE,
-  # so lifting the restriction alone would have generated data at the covariate
-  # mean: the ecological plug-in, for a population that does not exist. Measured
-  # before the distribution was passed through: 2.1e-02 on the mean and 2.9e-01
-  # on the covariance.
+  # `cov_dist` used to require method = "mc", which puts Monte Carlo noise into data that is meant to BE the
+  # reference for a simulation study. The gh path can integrate the covariate on its own grid -- the same
+  # construction the estimator uses -- but it was only ever handed the covariate REFERENCE VALUE, so lifting
+  # the restriction alone would have generated data at the covariate mean: the ecological plug-in, for a
+  # population that does not exist. Measured before the distribution was passed through: 2.1e-02 on the mean
+  # and 2.9e-01 on the covariance.
   .m1 <- function() {
     ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.75
           eta.cl ~ 0.09; add.err <- 0.3 })
@@ -922,14 +873,11 @@ test_that("datagen(method = 'gh') integrates a covariate distribution exactly", 
   expect_error(datagen(st, .m1, datagenControl(method = "fo")), "mc")
 })
 
-
 test_that(".admNLLBatch tiles covariates per CHUNK, not per batch", {
-  # The batch chunks at 30 configurations and builds pdf_mat with
-  # n_chunk * n_sim rows, but the covariate tiling was handed the batch total.
-  # .admCovCols refuses that mismatch rather than recycling covariates onto the
-  # wrong subjects, so the fit died -- and covMethod = "r" routes EVERY admc
-  # covariate fit here, needing 2*np_cov + 4*n_off points, so four reported
-  # parameters was enough to cross the boundary.
+  # The batch chunks at 30 configurations and builds pdf_mat with n_chunk * n_sim rows, but the covariate
+  # tiling was handed the batch total. .admCovCols refuses that mismatch rather than recycling covariates onto
+  # the wrong subjects, so the fit died -- and covMethod = "r" routes EVERY admc covariate fit here, needing
+  # 2*np_cov + 4*n_off points, so four reported parameters was enough to cross the boundary.
   .mod <- function() {
     ini({ tcl <- log(1.0); tv <- log(10); tcov <- 0.75
           eta.cl ~ 0.09; add.err <- 0.3 })
@@ -964,18 +912,14 @@ test_that(".admNLLBatch tiles covariates per CHUNK, not per batch", {
 
 # -- correlated Omega through a NON-certified shift ----------------------------
 
-
-
 test_that("the ridge is flat only for a GAUSSIAN covariate, and only then warned", {
-  # .admWarnCovIdentifiability() says the likelihood is "exactly flat" along the
-  # (coefficient, fixed effect, omega) trade-off when every study declares the
-  # same covariate distribution. That rests on u = Delta(a) + eta being NORMAL,
-  # which by Cramer holds exactly when Delta is. For anything else u is a
-  # MIXTURE, whose law is not determined by its first two moments, and f is
-  # nonlinear -- so the aggregate V separates the pair.
-  #
-  # Measured here, walking the ridge from its centre with mean and sd matched
-  # across covariates so all four walk the SAME one.
+  # .admWarnCovIdentifiability() says the likelihood is "exactly flat" along the (coefficient, fixed effect,
+  # omega) trade-off when every study declares the same covariate distribution. That rests on u = Delta(a) +
+  # eta being NORMAL, which by Cramer holds exactly when Delta is. For anything else u is a MIXTURE, whose law
+  # is not determined by its first two moments, and f is nonlinear -- so the aggregate V separates the pair.
+
+  # Measured here, walking the ridge from its centre with mean and sd matched across covariates so all four
+  # walk the SAME one.
   skip_if_not_installed("rxode2")
   TT <- c(1, 3, 6, 10, 16); DD <- 100; MU <- 0.5; SD <- 0.5
   TCL0 <- log(1.0); TCOV0 <- 0.6; OM0 <- 0.30
@@ -1007,8 +951,8 @@ test_that("the ridge is flat only for a GAUSSIAN covariate, and only then warned
       p[grep("^logchol", nm)[1L]] <- log(om2)
       p
     }
-    # data = the model's own prediction at the ridge centre, so we sit AT the
-    # optimum and any movement is the ridge, not misfit
+    # data = the model's own prediction at the ridge centre, so we sit AT the optimum and any movement is the
+    # ridge, not misfit
     pr <- admixr2:::.admUnpack(rp(TCOV0), pin)
     m  <- admixr2:::.adghMoments(pr, pin, st[[1L]], rx, ov, g, 1L)
     st[[1L]]$E <- as.numeric(m$E); st[[1L]]$V <- m$V
@@ -1025,8 +969,8 @@ test_that("the ridge is flat only for a GAUSSIAN covariate, and only then warned
   sl <- sqrt(log(1 + (SD / MU)^2)); ml <- log(MU) - sl^2 / 2
   expect_gt(spread(list(A = list(meanlog = ml, sdlog = sl))), 3)
 
-  # ... and the WARNING follows the same line, so a user is not told a design
-  # cannot identify something it identifies strongly
+  # ... and the WARNING follows the same line, so a user is not told a design cannot identify something it
+  # identifies strongly
   one <- function(cd) list(s1 = list(E = rep(1, length(TT)),
                                      V = diag(length(TT)), n = 500L, times = TT,
                                      ev = rxode2::et(amt = DD),
@@ -1040,9 +984,6 @@ test_that("the ridge is flat only for a GAUSSIAN covariate, and only then warned
                   list(A = list(meanlog = ml, sdlog = sl))))
     expect_silent(admixr2:::.admWarnCovIdentifiability(ui, pin, one(cd)))
 })
-
-
-
 
 test_that("cov_integration takes exactly three states", {
   st <- list(s = list(E = 1, V = 1, n = 10, times = 1,
