@@ -177,7 +177,7 @@
   if (is.null(hit)) {
     # a plain bound, so a long session fitting many models cannot grow it
     # without limit; the entries are per (study x n_row), so a handful per fit
-    if (length(ls(.adm_covrows_env, all.names = TRUE)) > 64L)
+    if (length(ls(.adm_covrows_env, all.names = TRUE)) > .ADM_COVROWS_CACHE_MAX)
       rm(list = ls(.adm_covrows_env, all.names = TRUE), envir = .adm_covrows_env)
     hit <- .admCovRowsFor(s$cov_dist, n_row, pinfo$n_eta)
     .adm_covrows_env[[key]] <- hit
@@ -190,6 +190,7 @@
 # generic is.environment() filter that keeps the daemon payload from shipping
 # the parent's caches -- each worker keeps its own, which is what you want
 # since the draw is cheap to rebuild and heavy to send.
+.ADM_COVROWS_CACHE_MAX <- 64L
 .adm_covrows_env <- new.env(parent = emptyenv())
 
 # Refuse `cov_dist` for an estimator that has no covariate path.
@@ -530,6 +531,10 @@
       # the study.
       studies[[nm]]$.adm_cov_sparse <- .sg
     }
+    if (identical(studies[[nm]]$.adm_cov_path, "rows") &&
+        !identical(pinfo$cov_integration %||% "on", "sparse") &&
+        !.no_design)
+      studies[[nm]]$.adm_cov_grid <- .admCovGrid(cd, pinfo$cov_nodes %||% 7L)
   }
 
   # EVERY covariate the ANALYSIS model reads must be described by a study that
@@ -1946,7 +1951,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
          "distribution supplied as a `joint` sampler -- the sparse rule needs ",
          "the latent correlation and an opaque closure does not report one. ",
          "Declare it with `cor` (or `rho`/`Sigma`), which admixr2 builds its ",
-         "own sampler from, or use cov_integration = \"quadrature\".",
+         "own sampler from, or use cov_integration = \"on\".",
          call. = FALSE)
   # The refusal, the correlation block and the discrete enumeration all come
   # from .admCovLatentBlock, which the two collapses use. Writing them out here
@@ -1961,7 +1966,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
          "normal rather than a point, so the continuous conditional differs ",
          "from cell to cell and one shared design is the wrong design in ",
          "every cell), or the declared correlation is not positive definite. ",
-         "Use cov_integration = \"quadrature\", or declare the discrete ",
+         "Use cov_integration = \"on\", or declare the discrete ",
          "covariate independent of the continuous ones.", call. = FALSE)
   Rc <- .lb$Rc
   # Rotate onto the eigenvectors of the latent correlation, so the rule runs
@@ -2531,32 +2536,6 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   spec$mu
 }
 
-# Var(a) on the covariate's OWN scale -- which is NOT .admCovSdOf()^2.
-#
-# .admCovSdOf reports the spread "on the scale the identifiability ridge lives
-# on", so for a lognormal covariate it returns `sdlog`, a LOG-scale number,
-# while .admCovMeanOf returns the natural-scale mean. Squaring it and pairing it
-# with that mean would expand about the right point with the wrong second
-# moment. The Taylor expansion needs both moments on the scale the model reads
-# the covariate on, so it gets its own function rather than a caller remembering
-# which of the two conventions it is holding.
-.admCovVarOf <- function(spec) {
-  if (!is.null(spec$values)) {
-    pr <- spec$probs %||% rep(1, length(spec$values)); pr <- pr / sum(pr)
-    v  <- as.numeric(spec$values); m <- sum(v * pr)
-    return(sum(pr * (v - m)^2))
-  }
-  # The POPULATION variance of the same 1024 midpoints .admCovMeanOf averages,
-  # not stats::sd()^2: these are quadrature nodes for E_a[.], not a sample.
-  if (is.function(spec$quantile)) {
-    q <- as.numeric(spec$quantile((seq_len(1024L) - 0.5) / 1024L))
-    return(mean((q - mean(q))^2))
-  }
-  if (!is.null(spec$meanlog))
-    return((exp(spec$sdlog^2) - 1) * exp(2 * spec$meanlog + spec$sdlog^2))
-  as.numeric(spec$sd)^2
-}
-
 # Spread of a covariate spec, on the scale the identifiability ridge lives on.
 .admCovSdOf <- function(spec) {
   if (!is.null(spec$values)) {
@@ -2683,7 +2662,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 #'   names a covariate and describes its distribution, either as `mean` and `sd`
 #'   on the covariate's own scale --- NORMAL by default, so pass
 #'   `dist = "lnorm"` for the positive margin an allometric term needs (only
-#'   [admPopulation()] defaults to lognormal) --- or as a `quantile` function,
+#'   `covDist()` defaults to lognormal) --- or as a `quantile` function,
 #'   or as `values` (with optional
 #'   `probs`) for a discrete covariate. A `cor` entry --- a scalar for two
 #'   covariates, or a correlation matrix --- links them through a Gaussian
@@ -3067,10 +3046,14 @@ print.covDist <- function(x, ...) {
     sd = round(apply(X[, nms, drop = FALSE], 2L, stats::sd), 3),
     row.names = NULL)
   print(d, row.names = FALSE)
-  for (n in nms) if (!is.null(x[[n]]$labels))
+  for (n in nms) if (!is.null(x[[n]]$labels)) {
+    labels <- rep_len(x[[n]]$labels, length(x[[n]]$values))
+    if (length(x[[n]]$labels) == 1L && length(labels) == 2L)
+      labels <- c(paste0("not ", labels), labels)
     cat(sprintf("  %s levels: %s\n", n,
-        paste(sprintf("%s=%.0f (%.0f%%)", x[[n]]$labels, x[[n]]$values,
+        paste(sprintf("%s=%.0f (%.0f%%)", labels, x[[n]]$values,
                       100 * x[[n]]$probs), collapse = ", ")))
+  }
   if (length(nms) > 1L) {
     dep <- attr(x, "declared") %||%
            (if (is.function(x[["joint"]])) "joint sampler" else "independent")
