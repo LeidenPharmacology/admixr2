@@ -9,7 +9,9 @@
 # carry.
 #
 # WHAT THIS DELIBERATELY DOES NOT DO. Under misspecification the plain LRT is
-# not exactly chi-squared: H and J disagree and the exact reference becomes a
+# not exactly chi-squared: H (the Hessian of the objective at the optimum) and
+# J (the sandwich's middle term, Var of the score -- see the notation block at
+# the top of R/adfweight.R) disagree, and the exact reference becomes a
 # weighted sum of chi-squares. Correcting for that needs H and J from both fits
 # and a series evaluation of the weighted reference, and it constrains which
 # covMethod a fit must have used. That is the wrong default for the ordinary
@@ -92,9 +94,10 @@
 #' with `Df` equal to the number of parameters the larger model adds.
 #'
 #' Both fits must come from the same estimator and, for the quadrature
-#' estimators, the same node count. Each scores its own approximation to the
-#' likelihood, so objectives from different ones are not comparable and the
-#' comparison is refused rather than reported.
+#' estimators, the same node count (`n_nodes`) or, for the Monte Carlo ones
+#' (`admc`, `adirmc`), the same sample size (`n_sim`). Each scores its own
+#' approximation to the likelihood, so objectives from different ones are not
+#' comparable and the comparison is refused rather than reported.
 #'
 #' Testing a variance AT ZERO puts the null on the boundary of the parameter
 #' space, where the exact reference is a chi-bar-squared mixture rather than a
