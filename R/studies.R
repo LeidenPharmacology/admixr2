@@ -329,7 +329,6 @@
 
   list(is_joint = TRUE, label = nm, n = s$n, ev = s$ev,
        cov = s[["cov"]], cov_dist = s[["cov_dist"]],
-       cov = s[["cov"]], cov_dist = s[["cov_dist"]],
        output = blocks[[1L]]$output,   # any valid endpoint, for cmt-tagging
        times  = sort(unique(unlist(lapply(blocks, `[[`, "times")))),
        method = "cov", E = E_stacked, V = V, blocks = blocks,

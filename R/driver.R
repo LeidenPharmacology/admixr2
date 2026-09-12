@@ -183,7 +183,7 @@
 
 .admFinaliseFit <- function(.ret, .ui, .ctl, est, objective, ov, studies,
                             cov, cov_nms, multi_out, extra_field, handle_ctl,
-                            t_opt, t_cov, t_elapsed, pinfo = NULL) {
+                            t_opt, t_cov, t_elapsed) {
   # The stratum resolution the studies were generated at, if any. Recorded
   # HERE because all four drivers pass through this function -- a field set in
   # three of four is a silent divergence, not an error. The objective is

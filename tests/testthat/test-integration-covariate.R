@@ -701,6 +701,22 @@ test_that("cov_integration = 'sparse' reproduces the marginal moments", {
   expect_gt(nrow(gq$eta), nrow(g$eta))
 })
 
+test_that("the sandwich weight uses the study's covariate grid", {
+  ml <- log(72); sl <- 0.28
+  r <- .cov_ref2(function(wt, e) exp(.cov_TCL + e) * (wt / 70)^0.75,
+                 function(wt) exp(.cov_TV) * (wt / 70), ml, sl)
+  Vo <- r$V; diag(Vo) <- diag(Vo) + .cov_ADD^2
+  d <- .tay_setup("on", ml = ml, sl = sl, E = r$E, V = Vo)
+  prs <- admixr2:::.admUnpack(d$ov$p0, d$pinfo)
+  pt <- admixr2:::.admAdfParts(prs, d$pinfo, d$stu[[1L]], d$rxMod,
+                               d$ovar, d$grid, 1L)
+  mm <- admixr2:::.adghMoments(prs, d$pinfo, d$stu[[1L]], d$rxMod,
+                               d$ovar, d$grid, 1L)
+  S <- crossprod(pt$C, pt$w * pt$C)
+  diag(S) <- diag(S) + colSums(pt$w * pt$Dv)
+  expect_equal(S, mm$V)
+})
+
 test_that("the sparse path carries an ANALYTIC gradient (vs central FD)", {
   # The rank-p term sum_j v_j g'_j g'_j' is quadratic in the conditional means,
   # so it contributes a derivative the weighted-crossproduct contraction does

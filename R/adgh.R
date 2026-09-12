@@ -97,7 +97,8 @@
                        .admCovSparseGrid(s[["cov_dist"]],
                                          pinfo$cov_sparse_level %||% 3L,
                                          pinfo$cov_nodes %||% 7L)
-          else         .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
+          else         s[[".adm_cov_grid"]] %||%
+                       .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
     nc <- nrow(cg$X)
     g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
     colnames(g$eta) <- pinfo$eta_col_names
@@ -1612,6 +1613,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)
+  studies <- .admCheckCovariates(.ui, pinfo, studies, "adgh")
 
   # A beta endpoint's prediction is derived from TWO solved columns; the pair
   # travels on each study so the solve paths can combine them (see .admSimulate).

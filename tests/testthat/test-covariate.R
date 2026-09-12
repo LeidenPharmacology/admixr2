@@ -47,6 +47,14 @@ test_that(".admCheckCovariates is a no-op when no study declares cov_dist", {
                                               list(a = list())))
 })
 
+test_that(".admCheckCovariates caches the product grid for adgh", {
+  st <- list(a = list(cov = list(WT = 0),
+                      cov_dist = list(WT = list(mu = 0, sd = 0.6))))
+  got <- admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), st, "adgh")
+  expect_equal(got$a$.adm_cov_grid,
+               admixr2:::.admCovGrid(got$a$cov_dist, 7L))
+})
+
 test_that(".admCheckCovariates routes to the general path by default", {
   ok_st <- list(a = list(cov = list(WT = 0), cov_dist = list(WT = list(mu = 0, sd = 0.6))))
   path <- function(ui = .cov_ui(), pi = .cov_pinfo(), st = ok_st)
@@ -392,9 +400,9 @@ test_that("the grid and the per-subject sampler see the SAME distribution", {
   nms <- admixr2:::.admCovSpecNames(cd)
   jf  <- cd[["joint"]]
   if (!is.function(jf)) {
-    v <- vapply(nms, function(k) admixr2:::.admCovVarOf(cd[[k]]), numeric(1))
-    S <- diag(v, nrow = length(nms)); dimnames(S) <- list(nms, nms)
-    return(S)
+    g <- admixr2:::.admCovGrid(cd, 21L)
+    m <- as.numeric(crossprod(g$W, g$X))
+    return(crossprod(sweep(g$X, 2L, m), g$W * sweep(g$X, 2L, m)))
   }
   u <- randtoolbox::sobol(n, dim = length(nms))
   if (!is.matrix(u)) u <- matrix(u, nrow = n)
@@ -756,6 +764,9 @@ test_that("print.covDist reports what was DECLARED, not what it canonicalised to
   out2 <- utils::capture.output(print(covDist(SEX = c(f = 0.6, m = 0.4))))
   expect_true(any(grepl("categorical", out2)))
   expect_true(any(grepl("f=0", out2, fixed = TRUE)))
+  out3 <- utils::capture.output(print(covDist(SEX = c(male = 0.55))))
+  expect_true(any(grepl("not male=0", out3, fixed = TRUE)))
+  expect_true(any(grepl("male=1", out3, fixed = TRUE)))
 })
 
 # =============================================================================
