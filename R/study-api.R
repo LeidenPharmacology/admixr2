@@ -156,8 +156,23 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
     # not an empty correlation table -- it has no names, so the pair check
     # below rejects it. Absent means NULL.
     if (is.null(cor)) { if (length(d$cor)) cor <- d$cor }
-    else if (!is.matrix(cor))
-      cor <- c(cor, d$cor[setdiff(names(d$cor), names(cor))])
+    else if (!is.matrix(cor)) {
+      # A.B and B.A are the same correlation. Comparing their spelling let a
+      # data-derived WT.CRCL follow an explicit CRCL.WT and overwrite it in the
+      # matrix-building loop below. Match against the declared pairs, which
+      # also handles covariate names containing dots.
+      pair_key <- function(x) {
+        if (length(a) < 2L) return(x)
+        pairs <- utils::combn(names(a), 2L, simplify = FALSE)
+        hit <- vapply(pairs, function(p)
+          identical(x, paste(p, collapse = ".")) ||
+          identical(x, paste(rev(p), collapse = ".")), logical(1))
+        if (sum(hit) == 1L) paste(sort(pairs[[which(hit)]]), collapse = "\r") else x
+      }
+      user_keys <- vapply(names(cor), pair_key, character(1))
+      data_keys <- vapply(names(d$cor), pair_key, character(1))
+      cor <- c(cor, d$cor[!data_keys %in% user_keys])
+    }
   }
   if (!length(a) || is.null(names(a)) || any(!nzchar(names(a))))
     stop("admixr2: `admPopulation()` needs NAMED covariates, e.g. ",
@@ -652,7 +667,8 @@ print() a single study to check its transcription.
     ev <- s$ev %||% rxode2::et(amt = s$dose)
     if (is.null(s$ui)) {
       # digitised: it IS the data, nothing to generate
-      g <- list(E = as.numeric(s$E), V = s$V, n = s$n, times = s$times, ev = ev)
+      g <- list(E = as.numeric(s$E), V = s$V, n = s$n, times = s$times,
+                ev = ev, v_denom = s$v_denom)
       if (!is.null(s[["population"]])) g[["cov_dist"]] <- s[["population"]]
       if (!is.null(s[["at"]]))         g[["cov"]]      <- s[["at"]]
       out[[nm]] <- g

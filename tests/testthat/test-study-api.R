@@ -228,6 +228,12 @@ test_that("a stated margin beats the data, and a dropped association is said", {
   X  <- covDraw(p2, n = 60000L)
   expect_equal(stats::cor(log(X[, "WT"]), log(X[, "CRCL"])), 0.05,
                tolerance = 0.02)
+  # A pair is unordered, so reversing its spelling must still override the
+  # data-derived WT.CRCL entry rather than leaving both entries to be applied.
+  p3 <- admPopulation(data = coh, cor = c(CRCL.WT = 0.05))
+  X  <- covDraw(p3, n = 60000L)
+  expect_equal(stats::cor(log(X[, "WT"]), log(X[, "CRCL"])), 0.05,
+               tolerance = 0.02)
   # a discrete covariate associated with a continuous one CANNOT be represented
   # (a level would be a truncation of the latent normal), so it is dropped --
   # out loud, because nothing downstream would show it
@@ -388,6 +394,13 @@ test_that("the resolved denominator reaches the conversion, and is shown", {
   # ...and it is idempotent, so normalising twice cannot convert twice
   expect_identical(got$v_denom, "ml")
   expect_equal(vv(admixr2:::.admVDenom(got, "s")$V),
+               sdv^2 * (n - 1) / n, tolerance = 1e-12)
+
+  # Materialisation is the production path; it must preserve the convention
+  # for the subsequent study normalisation rather than defaulting it to ML.
+  materialised <- admixr2:::.admMaterialise(admStudies(s))$s
+  expect_identical(materialised$v_denom, "unbiased")
+  expect_equal(vv(admixr2:::.admVDenom(materialised, "s")$V),
                sdv^2 * (n - 1) / n, tolerance = 1e-12)
 
   # the resolved convention is visible rather than silent
