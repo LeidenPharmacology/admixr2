@@ -1524,3 +1524,511 @@ test_that("a single named proportion is a BINARY covariate, not a constant", {
   expect_error(covDist(SEX = c(male = -0.2)), "negative")
 })
 
+
+test_that(".admCovCollapse sizes the design by RANK, not by covariate count", {
+  # The effective dimension is rank(B), with B the matrix of latent loadings --
+  # not p, and not the number of parameters the covariates touch. Two
+  # parameters reading the SAME covariate with different exponents have
+  # proportional loadings and collapse to ONE dimension; counting parameters
+  # would have said two.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  mk  <- function(expr) list(lstExpr = expr, allCovs = paste0("W", 1:3))
+  rank_of <- function(expr) {
+    co <- admixr2:::.admCovCollapse(mk(expr), pin, cd, 7L)
+    if (is.null(co)) NA_integer_ else co$r
+  }
+  # three covariates, one parameter
+  expect_equal(rank_of(list(
+    quote(v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3))), 1L)
+  # reached through an INTERMEDIATE, which several parameters then read: the
+  # direct reader is the intermediate, so the span is still one direction
+  expect_equal(rank_of(list(
+    quote(wtf <- (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3),
+    quote(v   <- 10 * wtf),
+    quote(cl  <- exp(0.1) * wtf))), 1L)
+  # two parameters, but on the SAME covariate: proportional loadings, rank 1
+  expect_equal(rank_of(list(quote(cl <- exp(0.1) * (W1/70)^0.6),
+                            quote(v  <- 10 * (W1/70)^1.2))), 1L)
+  # genuinely two directions
+  expect_equal(rank_of(list(quote(cl <- exp(0.1) * (W1/70)^0.6 * (W2/70)^0.4),
+                            quote(v  <- 10 * (W3/70)^0.3))), 2L)
+  # rank == p: nothing to gain, and it declines rather than paying for a
+  # rotation that buys nothing -- B is diagonal, so U is a permutation
+  expect_true(is.na(rank_of(list(quote(cl <- exp(0.1) * (W1/70)^0.6),
+                                 quote(v  <- 10 * (W2/70)^0.4),
+                                 quote(q  <- 2 * (W3/70)^0.3)))))
+  # a covariate-by-eta INTERACTION has a direction that moves with eta, and the
+  # probe at eta = 0 would report the wrong one -- a silent collapse onto the
+  # wrong subspace. Refused by the second probe away from zero.
+  expect_true(is.na(rank_of(list(
+    quote(cl <- exp(0.1 + 0.5 * log(W1/70) * eta.cl))))))
+  # an assignment that will not evaluate in R (linCmt, an ODE line) is SKIPPED,
+  # not fatal -- bailing on the first one refused every linCmt model
+  expect_equal(rank_of(list(
+    quote(v  <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3),
+    quote(cp <- linCmt()))), 1L)
+})
+
+test_that(".admCovCollapse handles CORRELATED covariates and DISCRETE strata", {
+  # Two shapes that used to be refused outright.
+  #
+  # CORRELATED: an opaque user `joint` publishes no latent structure, but the
+  # `cor` sampler admixr2 builds itself is a Gaussian copula and records
+  # latentR. Then w = t(U) z is N(0, t(U) Rc U) rather than N(0, I_r), which
+  # costs one Cholesky and not a single extra design point.
+  #
+  # DISCRETE: the levels are enumerated exactly, as strata, and the continuous
+  # block collapses within them -- the same split the shift path uses.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  lnm <- function() list(meanlog = ml, sdlog = sdl)
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  mk  <- function(expr, covs) list(lstExpr = expr, allCovs = covs)
+  got <- function(expr, covs, cd)
+    admixr2:::.admCovCollapse(mk(expr, covs), pin, cd, 7L)
+
+  # correlated, three covariates on one parameter
+  cdc <- covDist(W1 = lnm(), W2 = lnm(), W3 = lnm(),
+                 cor = matrix(c(1, .6, .3, .6, 1, .4, .3, .4, 1), 3L, 3L,
+                              dimnames = list(paste0("W", 1:3),
+                                              paste0("W", 1:3))))
+  co <- got(list(quote(v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)),
+            paste0("W", 1:3), cdc)
+  expect_false(is.null(co))
+  expect_equal(co$r, 1L)
+  expect_equal(nrow(co$X), 21L)         # ceiling(7 * 3 / 1), not 7^3
+  expect_equal(sum(co$W), 1, tolerance = 1e-12)
+
+  # discrete SEX beside two continuous: cells x collapsed continuous
+  cds <- list(W1 = lnm(), W2 = lnm(),
+              SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  co2 <- got(list(quote(v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * exp(0.2 * SEX))),
+             c("W1", "W2", "SEX"), cds)
+  expect_false(is.null(co2))
+  expect_equal(co2$r, 1L)
+  expect_equal(co2$n_cell, 2L)
+  # the collapsed continuous block crossed with the cells. The direction absorbs
+  # BOTH continuous covariates, so it gets ceiling(cov_nodes * pc / r) = 14
+  # nodes, not 7 -- it carries their combined spread (see .admCovDirNodes).
+  expect_equal(prod(co2$nv), 14L)
+  expect_equal(nrow(co2$X), 14L * 2L)
+  expect_lt(nrow(co2$X), 7L^2L * 2L)
+  expect_equal(sum(co2$W), 1, tolerance = 1e-12)
+  # the discrete column carries its LEVELS, and each cell its probability
+  expect_setequal(unique(co2$X[, "SEX"]), c(0, 1))
+  expect_equal(sum(co2$W[co2$X[, "SEX"] == 1]), 0.5, tolerance = 1e-10)
+
+  # a covariate-by-STRATUM interaction has a direction that differs cell to
+  # cell, so one shared design would be wrong in all but one of them
+  expect_null(got(list(
+    quote(v <- 10 * (W1/70)^(0.6 + 0.5 * SEX) * (W2/70)^0.4)),
+    c("W1", "W2", "SEX"), cds))
+
+  # a discrete covariate DEPENDENT on a continuous one: a level is then a
+  # TRUNCATION of the latent normal, not a point, so the continuous conditional
+  # law differs cell to cell
+  cdd <- covDist(W1 = lnm(), W2 = lnm(),
+                 SEX = list(values = c(0, 1), probs = c(0.5, 0.5)),
+                 cor = matrix(c(1, .5, .4, .5, 1, .3, .4, .3, 1), 3L, 3L,
+                              dimnames = list(c("W1", "W2", "SEX"),
+                                              c("W1", "W2", "SEX"))))
+  expect_null(got(list(
+    quote(v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * exp(0.2 * SEX))),
+    c("W1", "W2", "SEX"), cdd))
+
+  # only ONE continuous covariate is already a one-dimensional integral
+  expect_null(got(list(quote(v <- 10 * (W1/70)^0.6 * exp(0.2 * SEX))),
+                  c("W1", "SEX"),
+                  list(W1 = lnm(),
+                       SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))))
+})
+
+test_that("the certificate separates the INDEX from the LINK", {
+  # Affine is far stronger than the construction needs. The design places
+  # Gauss-Hermite nodes in z, so it is enough that the parameter be SOME
+  # function of one linear combination u: then u is normal, a GH rule
+  # integrates the composition exactly to degree 2n-1, and the preimage is
+  # unchanged. Affine is the special case of an identity link.
+  #
+  # Requiring affinity refused an Emax link on a product of lognormal
+  # covariates, whose INDEX is perfectly affine and whose LINK is not -- a
+  # saturating covariate effect, which is an ordinary thing to write.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  lnm <- function() list(meanlog = ml, sdlog = sdl)
+  nrm <- function() list(mu = 70, sd = 12)
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  W3  <- paste0("W", 1:3)
+  rk  <- function(expr, cd) {
+    co <- admixr2:::.admCovCollapse(list(lstExpr = expr, allCovs = W3), pin,
+                                    cd, 7L)
+    if (is.null(co)) NA_integer_ else co$r
+  }
+  cdl <- stats::setNames(lapply(1:3, function(i) lnm()), W3)
+  cdn <- stats::setNames(lapply(1:3, function(i) nrm()), W3)
+  idx <- quote(s <- (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)
+
+  # an AFFINE index carries any smooth link
+  expect_equal(rk(list(quote(
+    v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)), cdl), 1L)
+  expect_equal(rk(list(idx, quote(v <- 10 * s / (s + 1.5))), cdl), 1L)
+  expect_equal(rk(list(idx, quote(v <- 10 * (1 - exp(-s)))), cdl), 1L)
+  expect_equal(rk(list(idx, quote(v <- 10 * s^2 / (1 + s^2))), cdl), 1L)
+  # on NORMAL margins a linear index does the same
+  lin <- quote(s <- 0.6*(W1-70)/70 + 0.4*(W2-70)/70 + 0.3*(W3-70)/70)
+  expect_equal(rk(list(lin, quote(v <- 10 * (1 + s) / (2 + s))), cdn), 1L)
+
+  # THE REFUSALS MUST SURVIVE. A power model on NORMAL margins is a SUM of
+  # separate nonlinear functions of separate latent scores -- the parameter is
+  # one number, but it is not a function of one linear combination, so the
+  # integral really is p-dimensional.
+  expect_true(is.na(rk(list(quote(
+    v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)), cdn)))
+  expect_true(is.na(rk(list(quote(
+    v <- 10 * (1 + exp(0.02*(W1-70)) + log(W2/70)^2))), cdn)))
+})
+
+test_that("the collapsed design is VERIFIED against the parameter law", {
+  # What the collapse needs is that the reduced design reproduce the LAW of
+  # every covariate-reading assignment. Affinity and single-index tests are only
+  # proxies for that, and neither is sharp: a within-bin spread reports 0.18 for
+  # an EXACT identity link, and a spline residual separates a genuine index from
+  # a sum of separate nonlinearities by only a factor of five.
+  #
+  # So the design is checked directly -- its weighted moments against a large
+  # probe -- which is the property itself rather than a stand-in for it, and
+  # costs no solves.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  idx <- quote(s <- (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)
+  co  <- admixr2:::.admCovCollapse(
+    list(lstExpr = list(idx, quote(v <- 10 * s / (s + 1.5))),
+         allCovs = paste0("W", 1:3)), pin, cd, 7L)
+  expect_false(is.null(co))
+  expect_equal(co$r, 1L)
+  # the design must reproduce the law it stands for. Recompute independently:
+  # E[v], E[v^2] and E[1/v] under the design against a large Sobol reference.
+  gfun <- function(W) 10 * ((W[, 1L]/70)^0.6 * (W[, 2L]/70)^0.4 *
+                            (W[, 3L]/70)^0.3) /
+                          ((W[, 1L]/70)^0.6 * (W[, 2L]/70)^0.4 *
+                           (W[, 3L]/70)^0.3 + 1.5)
+  Zr <- matrix(suppressWarnings(stats::qnorm(
+    randtoolbox::sobol(32768L, dim = 3L, seed = 3L))), ncol = 3L)
+  Ar <- vapply(1:3, function(k)
+    admixr2:::.admCovQuantile(cd[[k]], stats::pnorm(Zr[, k])), numeric(32768L))
+  vr <- gfun(Ar); vd <- gfun(co$X)
+  expect_equal(sum(co$W * vd),     mean(vr),     tolerance = 5e-3)
+  expect_equal(sum(co$W * vd^2),   mean(vr^2),   tolerance = 5e-3)
+  expect_equal(sum(co$W / vd),     mean(1 / vr), tolerance = 5e-3)
+})
+
+test_that(".admCovGradB recovers ONE direction under any link", {
+  # The whole certificate in one test. A reader that depends on the latents
+  # only through b'z has d log p / dz parallel to b at EVERY z, whatever the
+  # link does in between -- so affine, log-affine and single-index are one
+  # case, not three, and there is no route to choose.
+  set.seed(3)
+  b  <- c(0.6, -0.4, 0.2)
+  z0 <- rbind(c(0, 0, 0), c(1.2, 0, 0), c(-1.2, 0, 0),
+              c(0.8, 0.8, 0.8), c(-0.8, -0.8, -0.8))
+  mk <- function(f) function(Z) matrix(f(as.numeric(Z %*% b)), nrow(Z), 1L)
+  for (f in list(function(x) exp(x),            # log-affine
+                 function(x) x + 5,             # affine
+                 function(x) (x + 5) / (x + 8), # index, nonlinear link
+                 function(x) sqrt(x + 5),
+                 function(x) x^3 + 5)) {        # STATIONARY at the origin
+    got <- admixr2:::.admCovGradB(mk(f), z0)
+    expect_false(is.null(got))
+    expect_gt(abs(sum(got * b)) / (sqrt(sum(got^2)) * sqrt(sum(b^2))), 0.999)
+  }
+  # a constant is a ZERO column, not a refusal: it carries no direction, and
+  # the caller re-probes it against a theta nudge rather than trusting it.
+  z <- admixr2:::.admCovGradB(function(Z) matrix(1, nrow(Z), 1L), z0)
+  expect_false(is.null(z))
+  expect_equal(sum(abs(z)), 0)
+  # TWO directions is not one: the certificate must refuse, or it certifies
+  # nothing. exp(z1) + exp(z2) has a direction that turns with z.
+  expect_null(admixr2:::.admCovGradB(
+    function(Z) matrix(exp(Z[, 1L]) + exp(Z[, 2L]), nrow(Z), 1L), z0))
+})
+
+test_that("the collapse composes with CONDITIONED covariates", {
+  # A study declares a covariate one of two ways: as a DISTRIBUTION to
+  # marginalise over (cov_dist) or as a VALUE it is conditioned at (cov). Only
+  # the first is an integral, so only the first can collapse -- and a covariate
+  # held at a value must simply pass through untouched.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  lnm <- function() list(meanlog = ml, sdlog = sdl)
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  ui  <- list(lstExpr = list(quote(
+                v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3 * (AGE/40)^0.2)),
+              allCovs = c("W1", "W2", "W3", "AGE"))
+  # AGE is CONDITIONED (no cov_dist entry): the design covers only the three
+  # marginalised covariates, and AGE never appears in it
+  cd <- stats::setNames(lapply(1:3, function(i) lnm()), paste0("W", 1:3))
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L, cov_fixed = list(AGE = 40))
+  expect_false(is.null(co))
+  expect_equal(co$r, 1L)
+  expect_equal(co$p, 3L)
+  expect_setequal(colnames(co$X), paste0("W", 1:3))
+  expect_false("AGE" %in% colnames(co$X))
+})
+
+test_that("admc's covariate draws depend on the DATA and nothing else", {
+  # .admCovRowsFor is deterministic in `cov_dist` alone, so the same rows come
+  # back on every objective evaluation and common random numbers hold with no
+  # seed plumbing. The CRN-FD gradient directions depend on that property.
+  #
+  # Sampling from the collapsed subspace was tried and removed. It is an exact
+  # change of variables, but the rotation depends on the covariate
+  # coefficients, which are ESTIMATED -- so re-aiming it, which correctness
+  # requires, makes the draws move with the parameters: measured, a step of
+  # 1e-6 in one coefficient shifted the sampled covariate values by 1.1e-4.
+  # And it bought nothing measurable -- 1.12x to 1.47x on the covariance with
+  # randomised QMC, interquartile range spanning 1.0 in every cell.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", n_eta = 1L, cov_nodes = 7L)
+  s0  <- list(.adm_cov_path = "rows", cov_dist = cd)
+  a <- admixr2:::.admStudyCovRows(s0, pin, 500L)$cov_rows
+  b <- admixr2:::.admStudyCovRows(s0, pin, 500L)$cov_rows
+  expect_identical(a, b)                       # same rows, every call
+  expect_equal(nrow(a), 500L)
+  expect_setequal(colnames(a), paste0("W", 1:3))
+  # a certified collapse on the study must NOT change them -- the quadrature
+  # estimators use it, the sampler does not
+  s1 <- s0
+  s1[[".adm_cov_collapse"]] <- admixr2:::.admCovCollapse(
+    list(lstExpr = list(quote(
+           v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)),
+         allCovs = paste0("W", 1:3)),
+    c(pin, list(struct_names = character(0))), cd, 7L)
+  expect_false(is.null(s1[[".adm_cov_collapse"]]))
+  expect_identical(admixr2:::.admStudyCovRows(s1, pin, 500L)$cov_rows, a)
+  # and a study NOT on the rows path is returned untouched
+  s2 <- list(.adm_cov_path = "shift", cov_dist = cd)
+  expect_null(admixr2:::.admStudyCovRows(s2, pin, 500L)$cov_rows)
+})
+
+test_that("a collapsed direction gets MORE nodes than one covariate axis", {
+  # It carries the combined spread of the axes it replaced, so cov_nodes is the
+  # wrong cap: measured against a 21^3 product grid, a rank-1 collapse of three
+  # covariates at 7 nodes is WORSE than the plain grid everywhere except the
+  # starting values (2.3e-02 vs 4.5e-05 once a coefficient moves 0.3), and at
+  # ceiling(7 * 3 / 1) = 21 it is better everywhere on 16x fewer design points.
+  # The same lesson .adghGrid records for the shift path's n_u.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L)
+  ui  <- list(lstExpr = list(quote(
+                v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)),
+              allCovs = paste0("W", 1:3))
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  expect_false(is.null(co))
+  expect_equal(co$r, 1L)
+  expect_equal(co$nv, 21L)                 # ceiling(cov_nodes * pc / r)
+  expect_equal(nrow(co$X), 21L)
+  expect_lt(nrow(co$X), 7L^3L)             # still far below the product grid
+  expect_equal(sum(co$W), 1, tolerance = 1e-12)
+  # r == pc would recover cov_nodes exactly, claiming no more than it merged
+  expect_equal(admixr2:::.admCovDirNodes(7L, 3L, 3L), 7L)
+  expect_equal(admixr2:::.admCovDirNodes(7L, 3L, 1L), 21L)
+  expect_equal(admixr2:::.admCovDirNodes(7L, 4L, 2L), 14L)
+})
+
+test_that("the rotation does not saturate the margin quantile", {
+  # pnorm() returns exactly 1 from |z| >= 8.3, and the ROTATION reaches further
+  # than the one-dimensional node range does -- an r-direction corner sits at
+  # sqrt(r) times it. At cov_nodes = 15 and r = 2 that saturates, an unbounded
+  # margin quantile comes back infinite, and the finite check refused the
+  # collapse outright: a silent loss of the feature at raised cov_nodes rather
+  # than a wrong answer, but silent either way. .admCovNodesFor has carried the
+  # same clamp for the same reason.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 15L)
+  ui  <- list(lstExpr = list(
+                quote(cl <- exp(0.1) * (W1/70)^0.75 * (W2/70)^0.10),
+                quote(v  <- 10 * (W3/70)^0.30)),
+              allCovs = paste0("W", 1:3))
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 15L)
+  expect_false(is.null(co))
+  expect_equal(co$r, 2L)
+  expect_true(all(is.finite(co$X)))
+  expect_true(all(co$X > 0))              # lognormal margins, never 0 or Inf
+})
+
+test_that("the collapse paths do not rely on PARTIAL matching", {
+  # `$` partial-matches on lists, and it bit: while `m` was absent from the
+  # joint design's descriptor, jc$m resolved to jc$max_rows (20000), the row cap
+  # compared m^r against itself, and every design was rejected -- at every
+  # parameter point, with no error. A field that is deliberately absent until
+  # admission is exactly the case partial matching turns into a wrong value
+  # rather than a NULL.
+  #
+  # warnPartialMatchDollar makes R report the fall-through, so this fails if a
+  # later field is read before it is declared, or if a new name shadows a
+  # shorter one by prefix.
+  skip_if_not_installed("randtoolbox")
+  op <- options(warnPartialMatchDollar = TRUE)
+  on.exit(options(op), add = TRUE)
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:3, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:3))
+  pin <- list(eta_col_names = "eta.cl", struct_names = character(0),
+              cov_nodes = 7L, n_eta = 1L)
+  ui  <- list(lstExpr = list(quote(
+                v <- 10 * (W1/70)^0.6 * (W2/70)^0.4 * (W3/70)^0.3)),
+              allCovs = paste0("W", 1:3))
+  expect_no_warning({
+    co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+    admixr2:::.admCovRefresh(co, admixr2:::.admShiftStruct(pin))
+  })
+  # and the joint descriptor declares its admission fields up front, so `$`
+  # cannot fall through to max_rows before .admJointAdmit() sets them
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
+  expect_true(all(c("r", "m", "z0") %in% names(jc)))
+  expect_null(jc$m)
+  expect_null(jc$r)
+  expect_null(jc$routes)
+})
+
+test_that("the joint collapse declines when it would cost MORE", {
+  # Subsuming the covariate collapse on RANK does not make it cheaper. Where the
+  # latents share no directions the joint rank is the whole latent dimension,
+  # and the per-direction cap then applies to every one of them: measured on
+  # 3 random effects with 2 covariates on a parameter carrying none (rank 4 of
+  # 5), the joint design is 6561 rows against 1750 -- 3.75x WORSE. The absolute
+  # max_rows cap is far too loose to catch that, so admission prices the joint
+  # design against the one it would replace.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.5^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- stats::setNames(lapply(1:2, function(i)
+    list(meanlog = ml, sdlog = sdl)), paste0("W", 1:2))
+  pin <- list(eta_col_names = c("eta.cl", "eta.v", "eta.ka"),
+              struct_names = character(0), n_eta = 3L,
+              cov_nodes = 7L, n_nodes = 5L)
+  # nothing shares: each random effect on its own parameter, the covariates on
+  # a fourth that carries none
+  ui <- list(lstExpr = list(quote(cl <- exp(0.1 + eta.cl)),
+                            quote(v  <- exp(2.3 + eta.v)),
+                            quote(ka <- exp(0.2 + eta.ka)),
+                            quote(f  <- (W1/70)^0.6 * (W2/70)^0.4)),
+             allCovs = paste0("W", 1:2))
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
+  expect_false(is.null(jc))                       # it BUILDS -- and is admitted
+  jd <- admixr2:::.admJointDesign(jc, list(), diag(sqrt(c(.09, .04, .05))))
+  expect_false(is.null(jd))
+  # ... and costs more than the eta grid crossed with the covariate collapse,
+  # which is exactly what the admission guard compares
+  co  <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  alt <- 5L^3L * (if (is.null(co)) 7L^2L else nrow(co$X))
+  expect_gt(jd$m^jd$r, alt)
+})
+
+test_that("the joint collapse STACKS discrete strata onto the rotation", {
+  # A discrete covariate has no latent normal to rotate into, so it is a stratum
+  # rather than a direction -- enumerated exactly at its levels and crossed with
+  # the rotated continuous design, which is what .admCovCollapse already does.
+  # Before this the joint path refused a discrete covariate outright, so any
+  # model with sex, genotype or formulation lost the random-effect merge
+  # entirely and fell back to the covariate-only collapse.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.4^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- list(W1  = list(meanlog = ml, sdlog = sdl),
+              W2  = list(meanlog = ml, sdlog = sdl),
+              SEX = list(values = c(0, 1), probs = c(0.45, 0.55)))
+  pin <- list(eta_col_names = c("eta.cl", "eta.v"), struct_names = character(0),
+              n_eta = 2L, cov_nodes = 7L, n_nodes = 5L)
+  ui  <- list(lstExpr = list(
+                quote(cl <- exp(0.1 + eta.cl) * (W1/70)^0.6 * (W2/70)^0.4 *
+                              exp(0.25 * SEX)),
+                quote(v  <- exp(2.3 + eta.v))),
+              allCovs = c("W1", "W2", "SEX"))
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
+  expect_false(is.null(jc))
+  expect_equal(jc$n_cell, 2L)                    # SEX enumerated, not rotated
+  expect_equal(jc$pc, 2L)                        # only the continuous rotate
+  expect_equal(jc$nl, 4L)                        # 2 random effects + 2 covs
+  L  <- diag(sqrt(c(0.09, 0.04)))
+  jc <- admixr2:::.admJointAdmit(jc, list(), L)
+  expect_false(is.null(jc))                      # verified in EVERY cell
+  jd <- admixr2:::.admJointDesign(jc, list(), L)
+  expect_equal(nrow(jd$eta), jd$m^jd$r * jc$n_cell)
+  expect_equal(nrow(jd$cov_rows), nrow(jd$eta))
+  expect_equal(nrow(jd$X), nrow(jd$eta))         # the omega chain's node matrix
+  expect_equal(sum(jd$W), 1, tolerance = 1e-12)
+  # the discrete column carries its LEVELS, and each stratum its probability
+  expect_setequal(unique(jd$cov_rows[, "SEX"]), c(0, 1))
+  expect_equal(sum(jd$W[jd$cov_rows[, "SEX"] == 1]), 0.55, tolerance = 1e-10)
+  # ... and it is cheaper than the eta grid crossed with the covariate collapse,
+  # which is the design it takes over from
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  expect_false(is.null(co))
+  expect_lt(nrow(jd$eta), 5L^2L * nrow(co$X))
+})
+
+test_that("a covariate-by-STRATUM interaction is refused by the joint path", {
+  # (WT/70)^(b + c*SEX) has a loading that differs cell to cell, so one shared
+  # rotation would be right in one stratum and wrong in every other. Admission
+  # re-probes each cell and requires the same loadings.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.4^2)); ml <- log(70) - sdl^2 / 2
+  cd  <- list(W1  = list(meanlog = ml, sdlog = sdl),
+              W2  = list(meanlog = ml, sdlog = sdl),
+              SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  pin <- list(eta_col_names = c("eta.cl", "eta.v"), struct_names = character(0),
+              n_eta = 2L, cov_nodes = 7L, n_nodes = 5L)
+  ui  <- list(lstExpr = list(
+                quote(cl <- exp(0.1 + eta.cl) * (W1/70)^(0.6 + 0.3 * SEX) *
+                              (W2/70)^0.4),
+                quote(v  <- exp(2.3 + eta.v))),
+              allCovs = c("W1", "W2", "SEX"))
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
+  expect_false(is.null(jc))                      # it BUILDS ...
+  expect_null(admixr2:::.admJointAdmit(              # ... and is then refused
+    jc, list(), diag(sqrt(c(0.09, 0.04)))))
+})
+
+test_that("a discrete covariate CORRELATED with a continuous one is refused", {
+  # Then a level is a TRUNCATION of the latent normal rather than a point, so
+  # the continuous conditional law differs cell to cell and no single rotation
+  # serves them. The same refusal .admCovCollapse carries.
+  skip_if_not_installed("randtoolbox")
+  sdl <- sqrt(log(1 + 0.4^2)); ml <- log(70) - sdl^2 / 2
+  cdd <- covDist(W1 = list(meanlog = ml, sdlog = sdl),
+                 W2 = list(meanlog = ml, sdlog = sdl),
+                 SEX = list(values = c(0, 1), probs = c(0.5, 0.5)),
+                 cor = matrix(c(1, .5, .4, .5, 1, .3, .4, .3, 1), 3L, 3L,
+                              dimnames = list(c("W1", "W2", "SEX"),
+                                              c("W1", "W2", "SEX"))))
+  pin <- list(eta_col_names = c("eta.cl", "eta.v"), struct_names = character(0),
+              n_eta = 2L, cov_nodes = 7L, n_nodes = 5L)
+  ui  <- list(lstExpr = list(
+                quote(cl <- exp(0.1 + eta.cl) * (W1/70)^0.6 * (W2/70)^0.4 *
+                              exp(0.25 * SEX)),
+                quote(v  <- exp(2.3 + eta.v))),
+              allCovs = c("W1", "W2", "SEX"))
+  expect_null(admixr2:::.admJointCollapse(ui, pin, cdd, 7L, NULL, NULL))
+})
