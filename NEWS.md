@@ -563,6 +563,10 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 ## Bug fixes
 
+* **Derivative-free fits no longer inherit nloptr's loose `xtol_rel = 1e-4`.**
+  All four estimators now pass an explicit `xtol_rel`, exposed as the last
+  control argument and defaulting to `sqrt(.Machine$double.eps)`.
+
 * **Parallel restarts (`workers > 1`) could fail with "a parallel worker could
   not read the compiled-model cache" whenever a second R session was using
   admixr2 at the same time.** The compiled-model and sensitivity-model caches are

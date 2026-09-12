@@ -38,6 +38,7 @@ adghControl(
   cov_nodes = 7L,
   cov_integration = c("on", "sparse", "off"),
   cov_sparse_level = 3L,
+  xtol_rel = .Machine$double.eps^(1/2),
   ...
 )
 }
@@ -321,6 +322,9 @@ than reported.}
 five-point axes and the pairwise crosses, and each further level refines
 again at a growing weight-magnitude cost. See \code{cov_integration} for the
 measured accuracy and point counts.}
+
+\item{xtol_rel}{Relative parameter tolerance (default
+\code{sqrt(.Machine$double.eps)}).}
 
 \item{...}{Unused arguments (trigger an error).}
 }

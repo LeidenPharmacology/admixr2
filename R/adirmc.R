@@ -165,10 +165,11 @@ adirmcControl <- function(
     sumProd         = FALSE,
     literalFix      = TRUE,
     returnAdmr      = FALSE,
-    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # TAIL arguments: inserting an argument mid-signature silently rebinds every
     # positional call -- adirmcControl(studies, 2000L) used to set n_sim = 2000.
     resid_nodes     = 81L,
-    # ... and this one after it, for the same reason.
+    # LAST on purpose: new control arguments are appended.
+    xtol_rel        = .Machine$double.eps^(1/2),
     ...) {
 
   .xtra <- list(...)
@@ -191,6 +192,7 @@ adirmcControl <- function(
   checkmate::assertIntegerish(outer_iter,   lower = 1L,  len = 1)
   checkmate::assertIntegerish(maxeval,      lower = 1L,  len = 1)
   checkmate::assertNumeric(ftol_rel,        lower = 0,   len = 1)
+  checkmate::assertNumeric(xtol_rel,        lower = 0,   len = 1)
   checkmate::assertIntegerish(print,        lower = 0L,  len = 1)
   checkmate::assertNumeric(omega_expansion, lower = 1,   len = 1)
   checkmate::assertIntegerish(seed,                      len = 1)
@@ -257,6 +259,7 @@ adirmcControl <- function(
     algorithm       = algorithm,
     maxeval         = as.integer(maxeval),
     ftol_rel        = ftol_rel,
+    xtol_rel        = xtol_rel,
     print           = as.integer(print),
     omega_expansion = omega_expansion,
     seed            = as.integer(seed),
@@ -940,7 +943,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
   pinfo, studies,
   draw_proposals_inner,
   draw_proposals_exact,
-  print_progress = TRUE
+  print_progress = TRUE,
+  xtol_rel = .Machine$double.eps^(1/2)
 ) {
   phase_names      <- c("Wide", "Focused", "Fine-tuning", "Precision")
   global_iter      <- 0L
@@ -1064,12 +1068,14 @@ nmObjGetControl.adirmc <- function(x, ...) {
         nloptr::nloptr(x0 = p_cur, eval_f = eval_f, eval_grad_f = eval_grad_inner,
                        lb = lb_inner, ub = ub_inner,
                        opts = list(algorithm = algorithm_inner,
-                                   ftol_rel = ftol_rel, maxeval = maxeval)),
+                                   ftol_rel = ftol_rel, xtol_rel = xtol_rel,
+                                   maxeval = maxeval)),
         error = function(e)
           nloptr::nloptr(x0 = p_cur, eval_f = eval_f, eval_grad_f = NULL,
                          lb = lb_inner, ub = ub_inner,
                          opts = list(algorithm = "NLOPT_LN_BOBYQA",
-                                     ftol_rel = ftol_rel, maxeval = maxeval)))
+                                     ftol_rel = ftol_rel, xtol_rel = xtol_rel,
+                                     maxeval = maxeval)))
       last_opt_message <- opt$message
       p_new <- opt$solution; nll_approx <- opt$objective
       props_exact <- get_proposals(p_new)
@@ -1174,7 +1180,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
     pinfo = pinfo, studies = studies,
     draw_proposals_inner = .draw_proposals_inner,
     draw_proposals_exact = .draw_proposals_exact,
-    print_progress = print_progress
+    print_progress = print_progress,
+    xtol_rel = pinfo$.xtol_rel %||% .Machine$double.eps^(1/2)
   )
 
   list(restart_id = restart_id, objective = pl$best_nll,
@@ -1377,7 +1384,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
       phases = .ctl$phases, outer_iter = .ctl$outer_iter,
       convcrit = .ctl$convcrit, max_worse = .ctl$max_worse,
       print_every = .ctl$print, grad_mode = grad_mode_inner,
-      algorithm = .ctl$algorithm, ftol_rel = .ctl$ftol_rel, maxeval = .ctl$maxeval,
+      algorithm = .ctl$algorithm, ftol_rel = .ctl$ftol_rel,
+      maxeval = .ctl$maxeval, xtol_rel = .ctl$xtol_rel,
       ov_lower = ov$lower, ov_upper = ov$upper,
       pinfo = pinfo, studies = studies_snap,
       draw_proposals_inner = .draw_proposals_inner,

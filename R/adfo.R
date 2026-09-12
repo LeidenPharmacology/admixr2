@@ -907,7 +907,8 @@
   .res <- .admScaledOptimize(restart_id, p_init, ov_lower, ov_upper, scale_c,
                      use_grad, grad_bounds, algorithm, ftol_rel, maxeval,
                      nll_fn, grad_fn, pinfo, print_progress, print,
-                     lock_rxMod = NULL)
+                     lock_rxMod = NULL,
+                     xtol_rel = pinfo$.xtol_rel %||% .Machine$double.eps^(1/2))
   # Carried back so .admRunRestarts() can report a worker that silently
   # dropped to a finite-difference gradient -- a daemon's own warning is
   # swallowed by mirai. NOT a new worker ARGUMENT: the signatures must stay
@@ -967,6 +968,8 @@
 #'   `NLOPT_GN_*`) turns the gradient off. Both emit a message.
 #' @param maxeval Maximum function evaluations (default 500).
 #' @param ftol_rel Relative tolerance (default `sqrt(.Machine$double.eps)`).
+#' @param xtol_rel Relative parameter tolerance (default
+#'   `sqrt(.Machine$double.eps)`).
 #' @param print Print-frequency for live progress (0 = silent).
 #' @param seed Random seed (used for restarts).
 #' @param cores OpenMP threads for `rxSolve()`. Defaults to
@@ -1198,10 +1201,11 @@ adfoControl <- function(
     sumProd       = FALSE,
     literalFix    = TRUE,
     returnAdmr    = FALSE,
-    # LAST on purpose: inserting an argument mid-signature silently rebinds every
+    # TAIL arguments: inserting an argument mid-signature silently rebinds every
     # positional call -- adfoControl(studies, "fd") used to set grad = "fd".
     resid_nodes = 81L,
-    # ... and this one after it, for the same reason.
+    # LAST on purpose: new control arguments are appended.
+    xtol_rel = .Machine$double.eps^(1/2),
     ...) {
 
   .xtra <- list(...)
@@ -1245,6 +1249,7 @@ adfoControl <- function(
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1)
   checkmate::assertIntegerish(maxeval,    lower = 1L, len = 1)
   checkmate::assertNumeric(ftol_rel,      lower = 0,  len = 1)
+  checkmate::assertNumeric(xtol_rel,      lower = 0,  len = 1)
   checkmate::assertIntegerish(print,      lower = 0L, len = 1)
   checkmate::assertIntegerish(seed,                   len = 1)
   checkmate::assertIntegerish(cores,      lower = 1L, len = 1)
@@ -1297,6 +1302,7 @@ adfoControl <- function(
     algorithm     = algorithm,
     maxeval       = as.integer(maxeval),
     ftol_rel      = ftol_rel,
+    xtol_rel      = xtol_rel,
     print         = as.integer(print),
     seed          = as.integer(seed),
     cores         = as.integer(cores),
@@ -1609,6 +1615,7 @@ nlmixr2Est.adfo <- function(env, ...) {
                      lb = lb_sc, ub = ub_sc,
                      opts = list(algorithm = .ctl$algorithm,
                                  ftol_rel  = .ctl$ftol_rel,
+                                 xtol_rel  = .ctl$xtol_rel,
                                  maxeval   = .ctl$maxeval))
     })
     opt <- list(objective = opt_raw$objective,
