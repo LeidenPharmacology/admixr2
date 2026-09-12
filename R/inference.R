@@ -25,7 +25,14 @@
 }
 
 # One nested comparison: dOFV, its degrees of freedom, and the p-value.
+.admFitHasModelSource <- function(fit) {
+  e <- tryCatch(fit$env, error = function(e) NULL)
+  !is.null(e) && isTRUE((e$admExtra %||% e$adirmcExtra)$has_model_source)
+}
+
 .admLRT <- function(full, reduced) {
+  if (.admFitHasModelSource(full) || .admFitHasModelSource(reduced))
+    stop("anova(): unavailable for fits containing a published model source because its parameter sampling law is unknown.", call. = FALSE)
   nm_f <- .admFitParNames(full)
   nm_r <- .admFitParNames(reduced)
   if (is.null(nm_f) || is.null(nm_r))
@@ -75,6 +82,13 @@
          .s2, "). The objective is a Monte Carlo average, so the difference ",
          "is not a likelihood ratio -- refit both with the same `n_sim`.",
          call. = FALSE)
+  .j1 <- tryCatch(full$env$strataNodes, error = function(e) NULL)
+  .j2 <- tryCatch(reduced$env$strataNodes, error = function(e) NULL)
+  if (!identical(.j1, .j2))
+    stop("anova(): these fits were built at different stratum resolutions (",
+         .j1, " and ", .j2, "). The objective is J-dependent, so their ",
+         "difference is not a likelihood ratio -- refit both at the same ",
+         "resolution.", call. = FALSE)
   o_f <- as.numeric(full$objective)
   o_r <- as.numeric(reduced$objective)
   if (!is.finite(o_f) || !is.finite(o_r))

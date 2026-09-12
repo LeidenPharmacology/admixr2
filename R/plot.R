@@ -314,6 +314,10 @@ head.paged_df <- function(x, n = 6L, ...) {
                     sigma_output  = rep(NA_character_, length(sv)),
                     sigma_is_prop  = as.list(grepl("prop",  sig_nms, ignore.case = TRUE)),
                     sigma_is_lnorm = as.list(grepl("lnorm", sig_nms, ignore.case = TRUE)))
+  # No cov_map is rebuilt here: every study uses the plain Omega and carries its
+  # covariates as per-row data or as a shifted eta column, neither of which
+  # needs one. .admStudyCovRows() still needs n_eta, so that stays.
+  if (is.null(pinfo_r$n_eta)) pinfo_r$n_eta <- n_eta
   # .admParseIniDf() carries no resid_nodes -- only the DRIVERS set it, from the
   # control. Restore the count the fit actually used, or the diagnostics rebuild
   # V_pred on the 81-node default and a fit run with resid_nodes = 31L (or 201L)
@@ -340,6 +344,23 @@ head.paged_df <- function(x, n = 6L, ...) {
     } else {
       eta_mat <- matrix(0, nrow = n_sim, ncol = 0)
     }
+    # ... and on the general path every simulated subject carries its own
+    # covariate value. Without this the solve succeeds AT THE COVARIATE MEAN and
+    # the residual is composed onto a var_f with the covariate spread removed,
+    # while the OBSERVED V in the same panel still carries it: predicted
+    # covariances measured 29-35% low and off-diagonals 61% low on an audited
+    # model, i.e. structured standardised residuals for a fit that is fine.
+    # A SHIFT study has .adm_cov_path == "shift", and .admStudyCovRows returns
+    # it untouched -- correct in the estimator, where the covariate's whole
+    # effect rides in the shifted eta column, and wrong here, where the etas are
+    # ordinary draws from Omega. Left as it was, every panel for such a study
+    # described a model with no covariate effect at all. The general per-row
+    # representation is always valid, just slower, and cost does not matter for
+    # one diagnostic draw.
+    if (identical(s$.adm_cov_path, "shift") && !is.null(s[["cov_dist"]]))
+      s$.adm_cov_path <- "rows"
+    s <- tryCatch(.admStudyCovRows(s, pinfo_r, nrow(eta_mat)),
+                  error = function(e) s)
     # One residual placeholder per observed output (rxerr.<output>); a
     # multi-endpoint solve needs every endpoint's rxerr present. rxSolve
     # defaults everything else (CMT, hard-coded constants).

@@ -7,15 +7,17 @@
 # are refused rather than reported.
 
 # A minimal stand-in for an admFit: anova() reads only `objective`, `env$method`,
-# `env$nNodes`, `env$nSim`, `env$AIC`/`env$BIC` and the parameter names off
-# admExtra.
+# `env$nNodes`, `env$nSim`, `env$strataNodes`, `env$AIC`/`env$BIC` and the
+# parameter names off admExtra.
 .lrt_fit <- function(par_names, objective, method = "adgh", nNodes = 5L,
-                     nSim = NULL, AIC = NA_real_, BIC = NA_real_) {
+                     nSim = NULL, strataNodes = NULL,
+                     AIC = NA_real_, BIC = NA_real_) {
   e <- new.env(parent = emptyenv())
   e$admExtra <- list(par_names = par_names)
   e$method   <- method
   e$nNodes   <- nNodes
   e$nSim     <- nSim
+  e$strataNodes <- strataNodes
   e$AIC      <- AIC
   e$BIC      <- BIC
   structure(list(env = e, objective = objective), class = "admFit")
@@ -89,6 +91,14 @@ test_that("admc/adirmc fits on different n_sim are refused", {
   red  <- .lrt_fit(c("tcl", "tv"),       106, method = "admc", nNodes = NULL,
                     nSim = 2000L)
   expect_error(anova(full, red), "n_sim")
+})
+
+test_that("fits at different stratum resolutions are refused", {
+  full <- .lrt_fit(c("tcl", "tv", "b1"), 100, strataNodes = 9L)
+  red  <- .lrt_fit(c("tcl", "tv"),       106, strataNodes = 5L)
+  expect_error(anova(full, red), "stratum resolutions")
+  expect_error(anova(full, .lrt_fit(c("tcl", "tv"), 106)),
+               "stratum resolutions")
 })
 
 test_that("anova() needs a pair, and needs admFits", {

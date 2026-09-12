@@ -66,14 +66,50 @@
 # error added to the diagonal exactly as adfo/admc.
 # Quadrature grid (eta nodes + weights) for the current Omega. Shared by the
 # single and batched moment paths.
-.adghGrid <- function(pars, pinfo, grid) {
+.adghGrid <- function(pars, pinfo, grid, s = NULL) {
   if (pinfo$n_eta > 0L) {
     eta <- grid$X %*% t(pars$L)
     colnames(eta) <- pinfo$eta_col_names
-    list(eta = eta, W = grid$W)
+    g <- list(eta = eta, W = grid$W, X = grid$X, cov_rows = NULL)
   } else {
-    list(eta = matrix(0, 1L, 0L), W = 1)
+    g <- list(eta = matrix(0, 1L, 0L), W = 1, X = grid$X, cov_rows = NULL)
   }
+  # adgh's analogue of admc's per-row covariate draws: a PRODUCT GRID over the
+  # covariate quadrature and the eta grid. Deterministic, so adgh stays
+  # noise-free, and it is still ONE rxSolve -- n_cov x n_node rows rather than
+  # n_node. The eta block cycles fastest, so the weights are
+  # rep(W_eta, times = n_cov) * rep(W_cov, each = n_eta), which is what
+  # as.numeric(outer(W_eta, W_cov)) produces column-major.
+  if (!is.null(s) && !is.null(s[["cov_dist"]])) {
+    nq <- max(nrow(g$eta), 1L)
+    # cov_integration = "sparse": a Smolyak grid in place of the product one.
+    # It is an ORDINARY GRID -- (X, W) with signed W -- so the expansion below
+    # is the same one the product grid takes, and nothing downstream needs to
+    # know which rule produced the rows. That is what the retired "taylor"
+    # design was not: it carried its own derivative-pair machinery, and two of
+    # its three defects lived there.
+    .sparse <- identical(pinfo$cov_integration %||% "on", "sparse")
+    # Cached on the study by .admCheckCovariates -- a pure function of
+    # `cov_dist` and the level, both data -- so it is not rebuilt per objective
+    # call. The %||% keeps a hand-built study (Tier-1 mocks, direct
+    # .adghMoments calls) working, at the old cost.
+    cg <- if (.sparse) s[[".adm_cov_sparse"]] %||%
+                       .admCovSparseGrid(s[["cov_dist"]],
+                                         pinfo$cov_sparse_level %||% 3L,
+                                         pinfo$cov_nodes %||% 7L)
+          else         s[[".adm_cov_grid"]] %||%
+                       .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
+    nc <- nrow(cg$X)
+    g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
+    colnames(g$eta) <- pinfo$eta_col_names
+    # The node matrix has to be expanded with the SAME stride: the omega chain
+    # differentiates eta = X %*% t(L) row by row, so a gradient using the
+    # unexpanded X against an expanded eta would be silently misaligned.
+    g$X        <- g$X[rep(seq_len(nq), times = nc), , drop = FALSE]
+    g$cov_rows <- cg$X[rep(seq_len(nc), each = nq), , drop = FALSE]
+    g$W        <- as.numeric(outer(g$W, cg$W))
+  }
+  g
 }
 
 # Structural moments (before any residual) from an already-solved node matrix:
@@ -114,8 +150,16 @@
   list(E = m$mu, V = m$V)
 }
 
+# Attach the grid's per-row covariate values to a study, so .admSimulate writes
+# them into the params frame. Returns the study untouched when there are none.
+.adghStudyCov <- function(study, g) {
+  if (!is.null(g$cov_rows)) study$cov_rows <- g$cov_rows
+  study
+}
+
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
-  g  <- .adghGrid(pars, pinfo, grid)
+  g  <- .adghGrid(pars, pinfo, grid, study)
+  study <- .adghStudyCov(study, g)
   pm <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
                      out_var, pm, cores, pinfo$nDisplayProgress,
@@ -128,11 +172,17 @@
 # structural thetas move -- so the n_cfg quadrature solves stack into one call
 # of n_cfg * n_node subjects instead of n_cfg calls of n_node.
 .adghMomentsBatch <- function(struct_mat, pars, pinfo, study, rxMod, out_var, grid, cores) {
-  g     <- .adghGrid(pars, pinfo, grid)
+  g     <- .adghGrid(pars, pinfo, grid, study)
+  study <- .adghStudyCov(study, g)
   Q     <- nrow(g$eta)
   n_cfg <- nrow(struct_mat)
 
   sm_big  <- struct_mat[rep(seq_len(n_cfg), each = Q), , drop = FALSE]
+  # The frame stacks n_cfg blocks of Q rows, so the grid's covariate rows have to
+  # be tiled to match -- every configuration must see the SAME covariate nodes,
+  # or the struct-theta differences stop comparing like with like.
+  if (!is.null(g$cov_rows))
+    study$cov_rows <- g$cov_rows[rep(seq_len(Q), times = n_cfg), , drop = FALSE]
   eta_big <- g$eta[rep(seq_len(Q), times = n_cfg), , drop = FALSE]
   colnames(eta_big) <- colnames(g$eta)
 
@@ -160,7 +210,13 @@
 .adghMomentsJoint <- function(pars, pinfo, unit, rxMod, grid, cores) {
   n_eta <- pinfo$n_eta
   if (n_eta > 0L) {
-    eta <- grid$X %*% t(pars$L); colnames(eta) <- pinfo$eta_col_names; W <- grid$W
+    if (!is.null(unit[["cov_dist"]]))
+      stop("admixr2: covariate marginalisation is not supported for a JOINT ",
+           "(same-subject, multi-output) unit. The shared-eta joint solve has ",
+           "no per-row covariate path, so this would silently solve at the ",
+           "covariate mean.", call. = FALSE)
+    eta <- grid$X %*% t(pars$L)
+    colnames(eta) <- pinfo$eta_col_names; W <- grid$W
   } else { eta <- matrix(0, 1L, 0L); W <- 1 }
   pm <- .admMakeParamsList(nrow(eta), pinfo, 1L)[[1L]]
   cp <- .admSimulateJoint(rxMod, pars$struct, pinfo$sigma_names, eta, unit, pm, cores,
@@ -249,7 +305,31 @@
   g_theta       <- numeric(length(p))
 
   for (s in studies) {
-    eta <- X %*% t(L)
+    # PER STUDY, THROUGH .adghGrid(), WHERE THE STUDY DECLARES A COVARIATE
+    # DISTRIBUTION. Building the nodes from `grid` and pars$L directly is what
+    # made adgh's analytical gradient blind to the covariate product grid: it
+    # differentiated a different function from the one .adghNLL evaluated,
+    # silently, wherever a study declared cov_dist. X, W and eta must come from
+    # ONE place.
+    #
+    # Only where there IS a covariate distribution, though. .adghGrid()'s
+    # zero-eta branch collapses to the single point (eta 1 x 0, W = 1), which
+    # is the right answer for the OBJECTIVE and the wrong one here: this loop
+    # differentiates over the incoming node grid, and replacing it with one
+    # point at n_eta = 0 leaves the covariance with nothing to difference and
+    # the SEs non-finite. A no-IIV model has no covariate grid to carry either,
+    # so the two cases do not overlap.
+    if (!is.null(s[["cov_dist"]])) {
+      .gS <- .adghGrid(pars, pinfo, grid, s)
+      X   <- .gS$X
+      W   <- .gS$W
+      s   <- .adghStudyCov(s, .gS)
+      eta <- .gS$eta
+    } else {
+      X   <- grid$X
+      W   <- grid$W
+      eta <- X %*% t(L)
+    }
     colnames(eta) <- pinfo$eta_col_names
 
     # --- Joint (same-subject) analytical quadrature gradient -----------------
@@ -779,6 +859,29 @@
 
   H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
 
+  # Covariate studies: differentiate the NLL, not the gradient.
+  #
+  # The original reason given here was that .adghGradNLL builds its quadrature
+  # from pars$L rather than through .adghGrid(), so it could not carry the
+  # covariate grid. That is NOT true and has not been for some time -- it calls
+  # .adghGrid() per study and then .adghStudyCov(), so it is covariate-aware.
+  # Measured on a 1-cmt lognormal-covariate model at its optimum, the two forms
+  # agree to 2.7e-05 on the covariance with identical standard errors, and the
+  # gradient form is ~1.5x faster.
+  #
+  # The guard is kept anyway, deliberately. It buys one Hessian per fit, that
+  # measurement covers a single model, and the failure it would expose --
+  # standard errors computed from a different objective than the estimates --
+  # is silent and severe. Removing it wants a broader comparison than one
+  # model, not a rewritten comment.
+  if (isTRUE(use_grad) &&
+      # a fully stratified study's cov_dist is all point specs, so it
+      # marginalises nothing and need not cost the gradient-based Hessian
+      any(vapply(studies, function(s)
+        !is.null(s[["cov_dist"]]) && !.admCovDistDegenerate(s[["cov_dist"]]),
+        logical(1))))
+    use_grad <- FALSE
+
   if (use_grad) {
     # CENTRAL difference of the gradient -- see .adfoCalcCov() for the reasoning
     # and the cost (2*np_cov gradient evaluations against the old np_cov+1).
@@ -958,6 +1061,96 @@
 #' @param studies Named list of study specifications (same format as
 #'   [admControl()]: `E`, `V`, `n`, `times`, `ev`, optional `method`; or an
 #'   `observations` list for multi-compartment fits -- see [admControl()]).
+#' @param cov_nodes Gauss-Hermite nodes per covariate used to integrate the
+#'   COVARIATE distribution when a study declares `cov_dist` (default 7). This is
+#'   a separate dial from `n_nodes`, which refines the random-effect dimensions
+#'   only: raising `n_nodes` alone leaves the covariate integration exactly where
+#'   it was. Measured on a two-compartment model with an allometric weight effect
+#'   and a lognormal weight distribution, 7 nodes place the marginal moments
+#'   within 2e-06 (mean) and 2e-05 (covariance) of an exact reference, and the
+#'   remaining error is the ODE solver's rather than the quadrature's. A wider or
+#'   more skewed covariate distribution, or a more strongly non-linear covariate
+#'   effect, warrants more. Measured against an exact reference on a
+#'   two-compartment model with an allometric weight effect and a lognormal
+#'   weight distribution: 3 nodes give 7.3e-04 / 8.2e-03 (mean / covariance),
+#'   5 give 2.8e-05 / 3.7e-04, 7 give 2.2e-06 / 2.4e-05, and 9 onwards sit at
+#'   ~1.2e-06 / ~1.0e-06, which is the ODE solver's accuracy rather than the
+#'   quadrature's. The default is set past that knee, and raising it further
+#'   buys nothing: against a per-subject reference the accuracy is identical at
+#'   5, 9 and 15 nodes. Ignored when `cov_integration = "sparse"`, which sets
+#'   its own resolution through `cov_sparse_level`.
+#'
+#'   It is a nodes-per-DIRECTION budget rather than a literal node count.
+#'   Where the covariates reach the model through fewer scalars than there
+#'   are covariates, admixr2 integrates over those directions instead of
+#'   over a product grid, and each direction is given `cov_nodes * p / r`
+#'   nodes rounded up -- MORE than `cov_nodes`, because a direction that
+#'   absorbs several covariate axes carries their combined spread and needs
+#'   proportionally more resolution to resolve it. Three covariates reaching
+#'   the model as a single scalar therefore get 21 nodes on one direction at
+#'   the default, not 7, and still cost 21 design points against the product
+#'   grid's 343. The same budget sizes the directions of a joint
+#'   random-effect/covariate design where one is used.
+#' @param cov_integration How a study's covariate distribution is integrated.
+#'   Three states.
+#'
+#'   `"on"` (default) integrates on a product Gauss--Hermite grid of
+#'   `cov_nodes` points per covariate and **reduces it wherever the model
+#'   permits**, choosing per study without being asked. Where the random
+#'   effects and the covariates span fewer directions than they have members --
+#'   an allometric weight effect on the same parameter as its random effect is
+#'   one direction, not two -- the integral is taken over those directions
+#'   instead, which for `p` covariates costs design points in the rank rather
+#'   than `cov_nodes^p`. A study that does not qualify is integrated on the full
+#'   grid. There is nothing to tune: a reduction is admitted only after it
+#'   reproduces the design it stands in for, so it cannot trade accuracy for
+#'   speed behind your back. Measured across four model shapes it is 2.5x to
+#'   17x cheaper AND 100x to 170000x more accurate than the unreduced grid.
+#'
+#'   `"off"` disables every reduction and integrates on the full product grid.
+#'   Slower, and useful mainly as a reference when a result is in question.
+#'
+#'   `"sparse"` replaces the product rule with a Smolyak sparse grid of
+#'   `cov_sparse_level`, which for `p` covariates costs far fewer than
+#'   `cov_nodes^p` points and is the speed lever for models with several
+#'   covariates.
+
+#'
+#'   Both are Gauss--Hermite rules; they differ in which product terms are
+#'   kept. Measured against an exact reference (lognormal margins, allometric
+#'   plus a saturable term), relative error on the mean and the covariance:
+#'
+#'   | rule | p = 3, rho = 0.85 | p = 4, rho = 0.85 |
+#'   | --- | --- | --- |
+#'   | sparse, level 2 | 6 pts, 7.8e-04 / 4.7e-02 | 9 pts, 9.7e-04 / 6.1e-02 |
+#'   | product, 3 nodes | 27 pts, 4.0e-05 / 1.5e-02 | 81 pts, 1.5e-04 / 3.2e-02 |
+#'   | sparse, level 3 | 31 pts, 1.6e-06 / 5.0e-04 | 49 pts, 3.5e-06 / 9.5e-04 |
+#'
+#'   At four covariates level 3 is both cheaper than the 3-node product grid
+#'   and roughly 40x more accurate, and the advantage grows with `p`. Level 2
+#'   is the axial rule --- at one covariate it is exactly `cov_nodes = 3` ---
+#'   and it is offered for continuity rather than recommended.
+#'
+#'   DEPENDENT covariates (`cor`, `rho`, `Sigma`) are handled by rotating onto
+#'   the eigenvectors of the latent correlation, and correlation does not cost
+#'   the sparse rule accuracy: at `p = 2` its mean error is 6.6e-07 at
+#'   `rho = 0` and 4.8e-08 at `rho = 0.85`. (Level 2 behaves the other way,
+#'   losing an order of magnitude to correlation, which is one reason the
+#'   default is 3.) An opaque `joint` sampler is refused, because the rotation
+#'   needs a correlation the closure does not report --- declare the dependence
+#'   with `cor` and admixr2 builds the sampler itself.
+#'
+#'   The cost of a sparse rule is SIGNED weights: they sum to 1 exactly, but
+#'   the sum of their absolute values is 2.5 at level 3 for three covariates
+#'   and 4.1 for four, so the answer is a difference of terms several times its
+#'   own size and solver noise is amplified accordingly. A sandwich covariance
+#'   whose weight matrix comes out indefinite as a result is refused rather
+#'   than reported.
+#' @param cov_sparse_level Smolyak level for `cov_integration = "sparse"`
+#'   (default 3, minimum 2). Level 2 is the axial rule, level 3 adds the
+#'   five-point axes and the pairwise crosses, and each further level refines
+#'   again at a growing weight-magnitude cost. See `cov_integration` for the
+#'   measured accuracy and point counts.
 #' @param resid_nodes Gauss-Hermite nodes used to integrate the RESIDUAL for a
 #'   transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
 #'   `probitNorm`), where `y = g(h(f) + sigma*eps)` has no closed-form mean and
@@ -1023,6 +1216,8 @@
 #'   noise-free).
 #' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
 #'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   A study generated from a published model defaults to `"none"` and refuses
+#'   an explicit covariance method because it has no sampling law.
 #'   All three span the structural, residual-error and omega parameters. Omega is
 #'   included because excluding it also biases the STRUCTURAL standard errors
 #'   downward -- a theta carrying an eta is correlated with that eta's variance.
@@ -1205,7 +1400,22 @@ adghControl <- function(
     # LAST on purpose: inserting an argument mid-signature silently rebinds every
     # positional call -- adghControl(studies, 7L) used to set n_nodes = 7.
     resid_nodes   = 81L,
-    # ... and this one after it, for the same reason.
+    # LAST on purpose: a new argument inserted mid-signature silently rebinds
+    # every positional call. See the resid_nodes note in CLAUDE.md.
+    cov_nodes     = 7L,
+    # LAST on purpose, as above. These two are the covariate-integration pair:
+    # cov_integration selects the method, cov_sparse_level the resolution of the
+    # sparse one. cov_sparse_level occupies the slot the retired cov_taylor_h
+    # had, so every positional call keeps its meaning.
+    # THREE STATES. "on" reduces the covariate integral wherever the model
+    # permits and the reduction verifies against the design it replaces; "off"
+    # is the bare product grid; "sparse" swaps the product rule for a Smolyak
+    # one. The earlier four values mixed one real choice (which grid) with a
+    # second the caller should never have been asked -- whether to attempt a
+    # particular reduction -- which has a right answer per study that the code
+    # determines for itself.
+    cov_integration  = c("on", "sparse", "off"),
+    cov_sparse_level = 3L,
     ...) {
 
   .xtra <- list(...)
@@ -1215,15 +1425,28 @@ adghControl <- function(
 
   addProp   <- match.arg(addProp)
   grad      <- match.arg(grad)
-  covMethod <- match.arg(covMethod)
-
   checkmate::assertList(studies)
+  # A model source lacks source-parameter uncertainty, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it. Runs AFTER assertList(): a
+  # malformed `studies` must fail on checkmate's message, not on a raw
+  # indexing error from inside the model-source helpers.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
+  cov_integration <- match.arg(cov_integration)
   checkmate::assertIntegerish(n_nodes,     lower = 1L, len = 1)
   # A residual quadrature needs a real grid. .adghNodes1() refuses m < 1, but it
   # accepts 1..4 happily and returns a rule that integrates nothing usefully --
   # the measured error at 5 nodes is already 3.3e-1. Refuse here, where the
   # message can name the argument, rather than silently scoring a wrong NLL.
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1)
+  checkmate::assertIntegerish(cov_nodes, lower = 1L, len = 1)
+  # cov_sparse_level is the Smolyak level. 2 is the axial rule the retired
+  # "taylor" design was; 3 is the default because it is where the accuracy
+  # actually arrives (~30x on both moments) and where correlation stops being a
+  # liability. Higher levels keep improving but sum|W| grows with them, so the
+  # answer becomes a difference of larger terms -- see .admCovSparseGrid.
+  checkmate::assertIntegerish(cov_sparse_level, lower = 2L, upper = 5L, len = 1)
   # NOT assertString(algorithm) here: NULL is now the default and means "pick the
   # one that matches grad". .admResolveAlgorithm() asserts the string and checks
   # it against the installed nloptr, which is more than this line ever did.
@@ -1286,6 +1509,9 @@ adghControl <- function(
   .ret <- list(
     studies       = studies,
     resid_nodes   = as.integer(resid_nodes),
+    cov_nodes     = as.integer(cov_nodes),
+    cov_integration = cov_integration,
+    cov_sparse_level = cov_sparse_level,
     n_nodes       = as.integer(n_nodes),
     n_sim         = 1L,       # interface compat with .admRunRestarts()
     sampling      = "sobol",  # idem
@@ -1376,13 +1602,9 @@ nlmixr2Est.adgh <- function(env, ...) {
     stop("Could not recover adghControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("adghControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adgh")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   output_var <- .admOutputVar(.ui)
   n_nodes    <- .ctl$n_nodes
 
@@ -1394,6 +1616,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   .admCheckAR(pinfo, studies)
   .admCheckOrdinal(pinfo, studies)
   .admCheckMixedEndpoints(.ui)
+  studies <- .admCheckCovariates(.ui, pinfo, studies, "adgh")
 
   # A beta endpoint's prediction is derived from TWO solved columns; the pair
   # travels on each study so the solve paths can combine them (see .admSimulate).
@@ -1677,7 +1900,8 @@ nlmixr2Est.adgh <- function(env, ...) {
   .ret$extra      <- ""
   .ret$origData   <- studies
 
-  .ret$admExtra <- list(struct         = final$struct,
+  .ret$admExtra <- list(has_model_source = .admHasModelSource(studies),
+                        struct         = final$struct,
                         sigma_var      = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,

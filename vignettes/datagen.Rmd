@@ -169,8 +169,7 @@ fit_sim <- nlmixr2(
   analysis_model, admData(), est = "admc",
   control = admControl(
     studies   = study_data,
-    maxeval   = 300L,
-    covMethod = "r"
+      maxeval = 300L
   )
 )
 

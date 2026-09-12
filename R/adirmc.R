@@ -12,6 +12,8 @@
 #' @inheritParams admControl
 #' @param covMethod `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`;
 #'   `"r"` the numerical Hessian alone, `2H^-1`; `"none"` skips the covariance.
+#'   A study generated from a published model defaults to `"none"` and refuses
+#'   an explicit covariance method because it has no sampling law.
 #'   All three span the structural, residual-error and omega parameters, and are
 #'   reported on the scale the estimates are printed on. [admControl()] documents
 #'   what the sandwich is, why it is the conservative default, and why it is more
@@ -203,7 +205,11 @@ adirmcControl <- function(
   checkmate::assertNumeric(convcrit,        lower = 0,   len = 1)
   checkmate::assertIntegerish(max_worse,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(kappa_n_nodes, lower = 1L, len = 1)
-  covMethod <- match.arg(covMethod)
+  # A model source lacks source-parameter uncertainty, so no standard error is available for a
+  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # explicit covMethod rather than honouring it.
+  covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
+                                    !missing(covMethod))
   checkmate::assertIntegerish(cov_n_sim,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(n_restarts,   lower = 1L,  len = 1)
   checkmate::assertNumeric(restart_sd,      lower = 0,   len = 1)
@@ -1202,13 +1208,9 @@ nlmixr2Est.adirmc <- function(env, ...) {
     stop("Could not recover adirmcControl", call. = FALSE)
   assign("control", .ctl, envir = .ui)
 
-  studies <- .ctl$studies
-  if (length(studies) == 0L)
-    stop("adirmcControl(studies=...) required", call. = FALSE)
-  if (is.null(names(studies)))
-    names(studies) <- paste0("study", seq_along(studies))
-
-  pinfo      <- .admDriverPinfo(.ui, .ctl)
+  .ds     <- .admDriverStudies(.ui, .ctl, "adirmc")
+  studies <- .ds$studies
+  pinfo   <- .ds$pinfo
   # IRMC draws its importance-sampling proposals FROM the random-effect
   # distribution, so a model with no random effect has nothing to propose: the
   # proposal draw is degenerate and the fit returned a silent objective = Inf
@@ -1269,6 +1271,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   studies        <- .u$studies
   .adm_multi_out <- .u$multi_out
   .adm_joint     <- .u$any_joint
+  .admRefuseCovariates(.u$studies, "adirmc")
   if (.adm_multi_out || .adm_joint)
     stop("adirmc does not yet support multiple observed outputs (multi-compartment observations). ",
          "Use est = 'admc', 'adfo', or 'adgh' for multi-output fits.", call. = FALSE)
@@ -1493,7 +1496,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
   .ret$message   <- if (.ctl$n_restarts > 1L) opt_restart$message else pl$last_opt_message
   .ret$extra     <- ""
   .ret$origData  <- studies
-  .ret$adirmcExtra <- list(struct         = final$struct,
+  .ret$adirmcExtra <- list(has_model_source = .admHasModelSource(studies),
+                           struct         = final$struct,
                          sigma_var      = final$sigma_var,
                          sigma_is_prop  = pinfo$sigma_is_prop,
                          sigma_is_lnorm = pinfo$sigma_is_lnorm,
