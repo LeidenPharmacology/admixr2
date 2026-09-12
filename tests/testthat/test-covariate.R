@@ -746,6 +746,12 @@ test_that("covDist() refuses ambiguity, at construction, naming the covariate", 
                "lognormal margin cannot")
   expect_error(covDist(A = c(mean = 1, sd = 1), B = c(mean = 1, sd = 1),
                        cor = 1.4), "not positive definite")
+  expect_error(covDist(A = c(mean = 1, sd = 1), B = c(mean = 1, sd = 1),
+                       cor = diag(c(4, 1))), "unit diagonal")
+  expect_error(covDist(A = c(mean = 1, sd = 1), B = c(mean = 1, sd = 1),
+                       cor = matrix(c(1, 0.9, 0, 1), 2)), "not symmetric")
+  expect_error(covDist(A = c(mean = 1, sd = 1), B = c(mean = 1, sd = 1),
+                       cor = matrix(c(1, NA, NA, 1), 2)), "finite")
   expect_error(covDist(list(mean = 1, sd = 1)), "NAMED argument per covariate")
   # `dist` sets the default margin, and a per-covariate one still wins
   expect_equal(mean(covDraw(covDist(A = c(mean = 0, sd = 1), dist = "normal"),
@@ -1443,6 +1449,12 @@ test_that("the sparse grid refuses an opaque joint sampler and a bad level", {
                   out
                 })
   expect_error(admixr2:::.admCovSparseGrid(cd, 3L), "joint. sampler")
+  mixed <- covDist(
+    SEX = list(values = c(0, 1), probs = c(.5, .5)),
+    WT = c(mean = 0, sd = 1),
+    joint = function(u)
+      cbind(SEX = as.numeric(u[, 1L] > .5), WT = stats::qnorm(u[, 1L])))
+  expect_error(admixr2:::.admCovSparseGrid(mixed, 3L), "joint. sampler")
   cd2 <- covDist(WT = c(mean = 75, sd = 16))
   expect_error(admixr2:::.admCovSparseGrid(cd2, 1L), "between 2 and")
   expect_error(admixr2:::.admCovSparseGrid(cd2, 99L), "between 2 and")
