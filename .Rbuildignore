@@ -2,6 +2,7 @@
 ^pkgdown$
 ^docs$
 ^_pkgdown\.yml$
+^index\.md$
 ^\.github$
 ^\.Rproj\.user$
 ^LICENSE\.md$
@@ -9,6 +10,7 @@
 ^\.claude$
 ^CLAUDE\.md$
 ^CLAUDE\.original\.md$
+^\.serena$
 ^vignettes/articles/
 ^vignettes/diagnostic-plots\.Rmd$
 ^vignettes/multiple-studies\.Rmd$

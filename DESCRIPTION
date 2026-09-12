@@ -17,7 +17,7 @@ Description: Fit pharmacokinetic/pharmacodynamic (PK/PD) models to aggregate-lev
     based on Välitalo (2021) <doi:10.1007/s10928-021-09760-1>; software described in
     van de Beek et al. (2025) <doi:10.1007/s10928-025-10011-w>.
 License: GPL (>= 3)
-URL: https://leidenpharmacology.github.io/admixr2, https://github.com/LeidenPharmacology/admixr2
+URL: https://leidenpharmacology.github.io/admixr2/, https://github.com/LeidenPharmacology/admixr2
 BugReports: https://github.com/LeidenPharmacology/admixr2/issues
 Encoding: UTF-8
 LazyData: true

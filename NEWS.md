@@ -16,9 +16,10 @@
   nothing else.
 
   `covMethod = "r,s"` scores the summary `(ybar, vech V)` against its own
-  asymptotic law -- Browne's ADF estimator, with the fourth-moment matrix
-  computed from the MODEL rather than estimated from the sample, which is what
-  removes ADF's small-sample failure. The result is the sandwich
+  asymptotic law -- Browne's Asymptotically Distribution-Free (ADF) estimator,
+  with the fourth-moment matrix computed from the MODEL rather than estimated
+  from the sample, which is what removes ADF's small-sample failure. The
+  result is the sandwich
   `H^-1 J H^-1`, where `H` is the Hessian `covMethod = "r"` already inverts,
   passed in rather than rebuilt so the two cannot disagree about the half they
   share. Under correct specification `J = 2H` and `"r,s"` returns exactly what
