@@ -661,9 +661,16 @@ print() a single study to check its transcription.
   spec <- vapply(studies, inherits, logical(1), "admStudy")
   if (!any(spec)) return(studies)
   out <- list()
+  add <- function(nm, value) {
+    if (nm %in% names(out))
+      stop("admixr2: materialising the studies produced duplicate name ",
+           sQuote(nm), ". Rename the study whose `by` or `stratify` expansion ",
+           "collides with it.", call. = FALSE)
+    out[[nm]] <<- value
+  }
   for (nm in names(studies)) {
     s <- studies[[nm]]
-    if (!inherits(s, "admStudy")) { out[[nm]] <- s; next }
+    if (!inherits(s, "admStudy")) { add(nm, s); next }
     ev <- s$ev %||% rxode2::et(amt = s$dose)
     if (is.null(s$ui)) {
       # digitised: it IS the data, nothing to generate
@@ -671,7 +678,7 @@ print() a single study to check its transcription.
                 ev = ev, v_denom = s$v_denom)
       if (!is.null(s[["population"]])) g[["cov_dist"]] <- s[["population"]]
       if (!is.null(s[["at"]]))         g[["cov"]]      <- s[["at"]]
-      out[[nm]] <- g
+      add(nm, g)
       next
     }
     # `[[ ]]` THROUGHOUT on the datagen spec. `sp` carries `cov_dist`, so with
@@ -726,13 +733,13 @@ print() a single study to check its transcription.
                      model = s$ui, control = datagenControl(method = "gh"))
         # every element: `by` combined with `stratify` expands each level into
         # J bands, and taking only the first silently dropped J-1 of them
-        for (kk in names(g)) out[[kk]] <- g[[kk]]
+        for (kk in names(g)) add(kk, g[[kk]])
       }
       next
     }
     g <- datagen(stats::setNames(list(sp), nm), model = s$ui,
                  control = datagenControl(method = "gh"))
-    for (k in names(g)) out[[k]] <- g[[k]]
+    for (k in names(g)) add(k, g[[k]])
   }
   out
 }

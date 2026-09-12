@@ -603,7 +603,15 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 # exercise or demonstrate the machinery with. It is internal on purpose: an
 # exported version would be a way to ask for the SE the public route withholds.
 .admDatagenSim <- function(...) {
-  lapply(datagen(...), function(u) { u[[".adm_src"]] <- NULL; u })
+  lapply(datagen(...), function(u) {
+    u[[".adm_src"]] <- NULL
+    if (!is.null(u[["observations"]]))
+      u[["observations"]] <- lapply(u[["observations"]], function(ob) {
+        ob[[".adm_src"]] <- NULL
+        ob
+      })
+    u
+  })
 }
 
 # --- Who may be given a standard error --------------------------------------
@@ -622,7 +630,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     # they run before .admMaterialise() -- so the spec has to answer for
     # itself, or a covMethod would be honoured for a fit that must refuse one.
     if (inherits(s, "admStudy")) return(!is.null(s$ui))
-    isTRUE(s[[".adm_src"]])
+    isTRUE(s[[".adm_src"]]) || .admHasModelSource(s[["observations"]])
   }, logical(1)))
 }
 
@@ -641,7 +649,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   # pooling is only optimal when that weight matches the precision the source
   # actually has. So a model source with no usable `n` is harmless alone and
   # silently mis-weights a mixture. Said where the consequence is.
-  .is_src <- vapply(studies, function(s) isTRUE(s[[".adm_src"]]), logical(1))
+  .is_src <- vapply(studies, function(s) .admHasModelSource(list(s)), logical(1))
   if (length(studies) > 1L && any(.is_src)) {
     bad_n <- names(studies)[.is_src][vapply(studies[.is_src], function(s) {
       nn <- as.numeric(s$n %||% NA_real_)

@@ -9,11 +9,13 @@
 # A minimal stand-in for an admFit: anova() reads only `objective`, `env$method`,
 # `env$nNodes`, `env$AIC`/`env$BIC` and the parameter names off admExtra.
 .lrt_fit <- function(par_names, objective, method = "adgh", nNodes = 5L,
+                     strataNodes = NULL,
                      AIC = NA_real_, BIC = NA_real_) {
   e <- new.env(parent = emptyenv())
   e$admExtra <- list(par_names = par_names)
   e$method   <- method
   e$nNodes   <- nNodes
+  e$strataNodes <- strataNodes
   e$AIC      <- AIC
   e$BIC      <- BIC
   structure(list(env = e, objective = objective), class = "admFit")
@@ -77,6 +79,12 @@ test_that("fits on different node counts are refused", {
   full <- .lrt_fit(c("tcl", "tv", "b1"), 100, nNodes = 9L)
   red  <- .lrt_fit(c("tcl", "tv"),       106, nNodes = 5L)
   expect_error(anova(full, red), "node counts")
+})
+
+test_that("fits on different strata grids are refused", {
+  full <- .lrt_fit(c("tcl", "tv", "b1"), 100, strataNodes = 9L)
+  red  <- .lrt_fit(c("tcl", "tv"),       106, strataNodes = 5L)
+  expect_error(anova(full, red), "stratum node counts")
 })
 
 test_that("anova() needs a pair, and needs admFits", {

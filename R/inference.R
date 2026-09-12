@@ -63,6 +63,12 @@
          .n2, "). The objective moves with the grid, so the difference is not ",
          "a likelihood ratio -- refit both with the same `n_nodes`.",
          call. = FALSE)
+  .s1 <- tryCatch(full$env$strataNodes, error = function(e) NULL)
+  .s2 <- tryCatch(reduced$env$strataNodes, error = function(e) NULL)
+  if (!identical(.s1, .s2))
+    stop("anova(): these fits used different stratum node counts. The objective ",
+         "moves with the strata grid, so the difference is not a likelihood ",
+         "ratio -- refit both with the same `strata_nodes`.", call. = FALSE)
   o_f <- as.numeric(full$objective)
   o_r <- as.numeric(reduced$objective)
   if (!is.finite(o_f) || !is.finite(o_r))

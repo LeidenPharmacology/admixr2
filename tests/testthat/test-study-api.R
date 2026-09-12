@@ -141,6 +141,17 @@ test_that("`by` expands into one study per level, splitting n by the proportion"
   expect_false("SEX" %in% admixr2:::.admCovSpecNames(got[[1L]]$cov_dist))
 })
 
+test_that("materialising a subgroup refuses a colliding study name", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  s <- admStudy(model = .sa_model, n = 200, dose = 200, times = c(1, 4, 12),
+                population = admPopulation(WT = c(mean = 75, sd = 16),
+                                           SEX = c(male = 0.6)),
+                by = "SEX", label = "trial")
+  other <- list(E = 1, V = 1, n = 10, times = 1, ev = rxode2::et(amt = 1))
+  expect_error(admixr2:::.admMaterialise(list(trial_SEX0 = other, trial = s)),
+               "duplicate name 'trial_SEX0'")
+})
+
 # ---------------------------------------------------------------------------
 # The default that would otherwise be a silent wrong answer, and the check that
 # has to happen at construction because the fit swallows it
@@ -176,6 +187,14 @@ test_that("a model source withdraws the standard error, explicit or not", {
   # it reaches the control objects, which is where a fit reads it
   expect_equal(suppressMessages(adghControl(studies = st))$covMethod, "none")
   expect_error(adghControl(studies = st, covMethod = "r"), "published MODEL")
+})
+
+test_that("model-source provenance is recursive through observations", {
+  nested <- list(pub = list(observations = list(
+    cp = list(E = 1, V = 1, n = 20, times = 1, .adm_src = TRUE))))
+  expect_true(admixr2:::.admHasModelSource(nested))
+  expect_error(admixr2:::.admResolveCovMethod("r", nested, TRUE),
+               "published MODEL")
 })
 
 # ---------------------------------------------------------------------------
