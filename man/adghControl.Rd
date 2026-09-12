@@ -35,6 +35,7 @@ adghControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
+  xtol_rel = .Machine$double.eps^(1/2),
   ...
 )
 }
@@ -224,6 +225,9 @@ This is an ACCURACY dial, not a speed one. The quadrature is linear in
 negligible beside the ODE solve: a full NLL evaluation measured 0.750 s per 60
 evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.}
+
+\item{xtol_rel}{Relative parameter tolerance (default
+\code{sqrt(.Machine$double.eps)}).}
 
 \item{...}{Unused arguments (trigger an error).}
 }
