@@ -205,6 +205,9 @@
     defaults[[".adm_strata_nodes"]]
   for (f in c("n", "E", "V", "times"))
     if (is.null(ob[[f]])) stop(sprintf("Study '%s' missing '%s'", label, f), call. = FALSE)
+  if (!is.numeric(ob$n) || length(ob$n) != 1L || !is.finite(ob$n) || ob$n <= 0)
+    stop(sprintf("Study '%s': `n` must be one finite positive number", label),
+         call. = FALSE)
   ob$E <- as.numeric(ob$E)
   if (is.vector(ob$V) && !is.list(ob$V)) {
     if (identical(ob$method, "cov"))
@@ -216,6 +219,9 @@
     ob$method <- "var"
   } else {
     ob$V     <- unname(as.matrix(ob$V))
+    if (any(!is.finite(ob$V)))
+      stop(sprintf("Study '%s': V must have finite, non-negative variances", label),
+           call. = FALSE)
     is_diag <- all(ob$V[lower.tri(ob$V)] == 0) && all(ob$V[upper.tri(ob$V)] == 0)
     ob$method <- if (is_diag && is.null(ob$method)) "var" else
       match.arg(ob$method %||% "cov", c("cov", "var"))
@@ -229,6 +235,16 @@
   if (nrow(ob$V) != n_t || ncol(ob$V) != n_t)
     stop(sprintf("Study '%s': V must be %d x %d to match times", label, n_t, n_t),
          call. = FALSE)
+  if (any(!is.finite(ob$V)) || any(diag(ob$V) < 0))
+    stop(sprintf("Study '%s': V must have finite, non-negative variances", label),
+         call. = FALSE)
+  if (identical(ob$method, "cov")) {
+    tol <- sqrt(.Machine$double.eps) * max(1, max(abs(ob$V)))
+    if (!isSymmetric(ob$V, tol = tol) ||
+        min(eigen(ob$V, symmetric = TRUE, only.values = TRUE)$values) < -tol)
+      stop(sprintf("Study '%s': V must be a symmetric positive-semidefinite covariance matrix",
+                   label), call. = FALSE)
+  }
   if (identical(ob$method, "var")) ob$v_diag <- diag(ob$V)
   ob$label <- label
   ob
@@ -253,6 +269,9 @@
 # named list keyed "outA:outB"). Missing cross pairs are zero (block-diagonal).
 # Each output is simulated with the SAME random effects and scored by one MVN.
 .admBuildJointUnit <- function(s, nm, default_output) {
+  if (!is.numeric(s$n) || length(s$n) != 1L || !is.finite(s$n) || s$n <= 0)
+    stop(sprintf("Study '%s': `n` must be one finite positive number", nm),
+         call. = FALSE)
   onames <- names(s$observations)
   if (is.null(onames) || any(!nzchar(onames)))
     onames <- paste0("obs", seq_along(s$observations))
@@ -260,7 +279,7 @@
   blocks <- vector("list", length(s$observations))
   E_list <- vector("list", length(s$observations))
   Vmarg  <- vector("list", length(s$observations))
-  row_output <- integer(0); offset <- 0L
+  row_output <- integer(0); v_order <- integer(0); offset <- 0L
   for (k in seq_along(s$observations)) {
     ob     <- s$observations[[k]]
     output <- ob$output %||% default_output
@@ -268,6 +287,7 @@
       stop(sprintf("Study '%s' observation '%s': joint fits need `E` and `times`.",
                    nm, onames[k]), call. = FALSE)
     tk  <- as.numeric(ob$times); ord <- order(tk); tk <- tk[ord]
+    v_order <- c(v_order, offset + ord)
     Ek  <- as.numeric(ob$E)
     if (length(Ek) != length(tk))
       stop(sprintf("Study '%s.%s': length(E) (%d) != length(times) (%d)",
@@ -295,6 +315,7 @@
     if (nrow(V) != T_total || ncol(V) != T_total)
       stop(sprintf("Study '%s': joint `V` must be %d x %d (sum of per-output times)",
                    nm, T_total, T_total), call. = FALSE)
+    V <- V[v_order, v_order, drop = FALSE]
   } else {
     V <- matrix(0, T_total, T_total)
     for (k in seq_along(blocks)) {
@@ -397,6 +418,9 @@
 
   out  <- as.character(df[[c_out]])
   tvec <- as.numeric(df[[c_t]])
+  if (anyNA(out) || any(!nzchar(out)))
+    stop(sprintf("Study '%s': endpoint values in `data` must be non-missing and non-empty",
+                 nm), call. = FALSE)
   # Endpoints keep the order they first appear in (factor levels win if given).
   onames <- if (is.factor(df[[c_out]])) levels(droplevels(df[[c_out]])) else unique(out)
   joint  <- s$joint %||% (!is.null(s$V) || !is.null(s$cross))
