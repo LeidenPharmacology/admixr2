@@ -45,6 +45,10 @@ test_that("cor names PAIRS, so an independent covariate needs no padding", {
   expect_error(admPopulation(WT = c(mean = 75, sd = 16),
                              CRCL = c(mean = 92, sd = 24), cor = c(WT = 0.4)),
                "does not name two")
+  expect_error(admPopulation(WT = c(mean = 75, sd = 16),
+                             CRCL = c(mean = 92, sd = 24),
+                             cor = c(WT.CRCL = 0.2, CRCL.WT = 0.8)),
+               "same covariate pair")
   # Discrete margins cannot use the continuous latent correlation model.
   expect_error(admPopulation(WT = c(mean = 75, sd = 16), SEX = c(male = 0.55),
                              cor = c(WT.SEX = 0.3)), "DISCRETE")
@@ -328,6 +332,17 @@ test_that("stratify = TRUE accepts the parsed model admStudy() hands down", {
   expect_true(all(vapply(got, function(g) !is.null(g[["cov"]][["SEX"]]),
                          logical(1))))
   expect_equal(sum(vapply(got, function(g) g$n, 0)), 200)
+})
+
+test_that("`by` names one declared discrete population margin", {
+  pop <- admPopulation(SEX = c(male = 0.6), WT = c(mean = 75, sd = 16))
+  args <- list(model = .sa_model, n = 20, dose = 1, times = 1,
+               population = pop)
+  expect_error(do.call(admStudy, c(args, list(by = TRUE))), "one non-empty")
+  expect_error(do.call(admStudy, c(args, list(by = c("SEX", "WT")))),
+               "one non-empty")
+  expect_error(do.call(admStudy, c(args, list(by = "CRCL"))), "does not declare")
+  expect_error(do.call(admStudy, c(args, list(by = "WT"))), "discrete")
 })
 
 test_that("a cohort data frame IS a population, and n comes from it", {

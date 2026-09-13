@@ -140,6 +140,14 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
                           data = NULL) {
   dist <- match.arg(dist)
   a <- list(...)
+  pair_key <- function(x) {
+    if (length(a) < 2L) return(x)
+    pairs <- utils::combn(names(a), 2L, simplify = FALSE)
+    hit <- vapply(pairs, function(p)
+      identical(x, paste(p, collapse = ".")) ||
+      identical(x, paste(rev(p), collapse = ".")), logical(1))
+    if (sum(hit) == 1L) paste(sort(pairs[[which(hit)]]), collapse = "\r") else x
+  }
   if (!is.null(data)) {
     d <- .admPopFromData(data, dist, a)
     a <- c(a, d$specs)
@@ -147,14 +155,6 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
     if (is.null(cor)) { if (length(d$cor)) cor <- d$cor }
     else if (!is.matrix(cor)) {
       # Canonicalise unordered pairs without splitting dotted covariate names.
-      pair_key <- function(x) {
-        if (length(a) < 2L) return(x)
-        pairs <- utils::combn(names(a), 2L, simplify = FALSE)
-        hit <- vapply(pairs, function(p)
-          identical(x, paste(p, collapse = ".")) ||
-          identical(x, paste(rev(p), collapse = ".")), logical(1))
-        if (sum(hit) == 1L) paste(sort(pairs[[which(hit)]]), collapse = "\r") else x
-      }
       user_keys <- vapply(names(cor), pair_key, character(1))
       data_keys <- vapply(names(d$cor), pair_key, character(1))
       cor <- c(cor, d$cor[!data_keys %in% user_keys])
@@ -229,6 +229,11 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
       if (is.null(cn) || any(!nzchar(cn)))
         stop("admixr2: `cor` must name the PAIR it applies to, e.g. ",
              "cor = c(WT.CRCL = 0.45).", call. = FALSE)
+      keys <- vapply(cn, pair_key, character(1))
+      if (anyDuplicated(keys))
+        stop("admixr2: `cor` names the same covariate pair more than once: ",
+             paste(sQuote(cn[duplicated(keys)]), collapse = ", "), ".",
+             call. = FALSE)
       for (k in seq_along(cor)) {
         pr <- strsplit(cn[k], ".", fixed = TRUE)[[1L]]
         # Match declared names because covariate names may contain dots.
@@ -400,10 +405,7 @@ admStudy <- function(model = NULL, est = NULL,
 
   ui <- NULL
   if (has_model) {
-    # Reparse an rxUi's function so applying this study's estimates cannot
-    # mutate another study (or the caller's ui) through a shared environment.
-    source_model <- if (inherits(model, "rxUi")) model$fun else model
-    ui <- tryCatch(suppressMessages(rxode2::rxode2(source_model)),
+    ui <- tryCatch(suppressMessages(rxode2::rxode2(model)),
                    error = function(e)
                      bad("`model` could not be parsed: ", conditionMessage(e)))
     known <- ui$iniDf$name
@@ -483,6 +485,16 @@ admStudy <- function(model = NULL, est = NULL,
                                                    "valid covariate ",
                                                    "specification: ",
                                                    conditionMessage(e)))
+  if (!is.null(by)) {
+    if (!is.character(by) || length(by) != 1L || is.na(by) || !nzchar(by))
+      bad("`by` must be one non-empty covariate name.")
+    declared <- .admCovSpecNames(population)
+    if (!by %in% declared)
+      bad("`by` names ", sQuote(by), ", which `population` does not declare. ",
+          "Declared: ", paste(sQuote(declared), collapse = ", "), ".")
+    if (is.null(population[[by]][["values"]]))
+      bad("`by` must name a discrete population margin with declared levels.")
+  }
   overlap <- intersect(names(at), .admCovSpecNames(population))
   if (length(overlap))
     bad("`at` pins ", paste(sQuote(overlap), collapse = ", "),
