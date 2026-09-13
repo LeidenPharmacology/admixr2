@@ -785,6 +785,9 @@
     if (!identical(dim(S), c(d, d)))
       stop("admixr2: `Sigma` is ", nrow(S), " x ", ncol(S), " but ", d,
            " covariates are declared.", call. = FALSE)
+    if (!isSymmetric(S, tol = sqrt(.Machine$double.eps)))
+      stop("admixr2: `Sigma` is not symmetric, so it describes no distribution.",
+           call. = FALSE)
     if (!is.null(rownames(S)) && all(nms %in% rownames(S)))
       S <- S[nms, nms, drop = FALSE]
     if (any(diag(S) <= 0))
@@ -803,6 +806,15 @@
   if (is.null(R)) return(cov_dist)
   # An explicit sampler is the more specific statement; do not override it.
   if (is.function(cov_dist[["joint"]])) return(cov_dist)
+  if (!is.matrix(R) || !all(is.finite(R)))
+    stop("admixr2: `cor` is not a valid finite correlation matrix.",
+         call. = FALSE)
+  if (!isSymmetric(R, tol = sqrt(.Machine$double.eps)))
+    stop("admixr2: `cor` is not symmetric, so it describes no distribution.",
+         call. = FALSE)
+  if (any(abs(diag(R) - 1) > 1e-8))
+    stop("admixr2: `cor` must have unit diagonal, so it describes no distribution.",
+         call. = FALSE)
   dimnames(R) <- NULL                    # ordered above, in the branch that can
   Lc <- tryCatch(chol(R), error = function(e) NULL)   # receive a named matrix
   if (is.null(Lc))
@@ -1120,6 +1132,16 @@
   out[[drop]] <- NULL
   out[c("joint", "jointOwn", "discExact", "latentR", "cor", "rho",
         "Sigma")] <- NULL
+  if (!is.null(R) && is.character(drop) && !is.na(match(drop, nms))) {
+    ridx <- match(drop, nms)
+    kidx <- match(keep, nms)
+    if (length(kidx) &&
+        any(abs(R[ridx, kidx]) > 1e-12, na.rm = TRUE))
+      stop("admixr2: cannot materialise correlated ", sQuote(drop),
+           " subgroups from the same population distribution; use `stratify = TRUE` ",
+           "or provide a user-defined `population$joint` sampler.",
+           call. = FALSE)
+  }
   if (!is.null(R) && length(keep) > 1L &&
       identical(dim(R), c(length(nms), length(nms)))) {
     i  <- match(keep, nms)
@@ -2075,7 +2097,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   # the canoniser early-returns before recording `latentR`, so the rotation
   # below would read a dependent distribution as independent.
   Rz <- cov_dist[["latentR"]]
-  if (is.null(Rz) && is.function(cov_dist[["joint"]]) && dc > 1L)
+  if (is.null(Rz) && is.function(cov_dist[["joint"]]) && length(nms) > 1L)
     stop("admixr2: cov_integration = \"sparse\" cannot integrate a covariate ",
          "distribution supplied as a `joint` sampler -- the sparse rule needs ",
          "the latent correlation and an opaque closure does not report one. ",
