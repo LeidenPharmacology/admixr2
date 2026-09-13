@@ -449,9 +449,10 @@ test_that("a `by` level keeps the correlations among the margins it retains", {
   R <- out[["latentR"]]
   expect_identical(dim(R), c(2L, 2L))
   expect_equal(R[1L, 2L], 0.5)
-  # a single surviving margin needs no correlation and must not error
-  expect_identical(admixr2:::.admCovSpecNames(
-    admixr2:::.admCovDropMargin(cd, "CRCL")), c("SEX", "WT"))
+  # Dropping either member of a correlated pair would silently change the
+  # retained population distribution.
+  expect_error(admixr2:::.admCovDropMargin(cd, "CRCL"),
+               "cannot materialise correlated 'CRCL' subgroups")
 })
 
 test_that("by refuses to discard an opaque joint sampler", {
