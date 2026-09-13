@@ -61,12 +61,30 @@ test_that("the paper's estimates go INTO the model, not into globals", {
   expect_equal(s$ui$iniDf$est[s$ui$iniDf$name == "tv"], log(50))
   expect_error(admStudy(model = .sa_model, est = c(nope = 1), n = 10,
                         dose = 1, times = 1), "does not declare")
+  expect_error(admStudy(model = .sa_model, est = c(tcl = 1, tcl = 2), n = 10,
+                        dose = 1, times = 1), "must be unique")
+  expect_error(admStudy(model = .sa_model, est = c(tcl = Inf), n = 10,
+                        dose = 1, times = 1), "finite numeric")
+
+  ui <- suppressMessages(rxode2::rxode2(.sa_model))
+  original <- ui$iniDf$est[ui$iniDf$name == "tcl"]
+  a <- admStudy(model = ui, est = c(tcl = log(6)), n = 10,
+                dose = 1, times = 1)
+  b <- admStudy(model = ui, est = c(tcl = log(7)), n = 10,
+                dose = 1, times = 1)
+  expect_equal(ui$iniDf$est[ui$iniDf$name == "tcl"], original)
+  expect_equal(a$ui$iniDf$est[a$ui$iniDf$name == "tcl"], log(6))
+  expect_equal(b$ui$iniDf$est[b$ui$iniDf$name == "tcl"], log(7))
 })
 
 test_that("a study is one currency or the other, and says which", {
   skip_if_not_installed("rxode2")
   expect_error(admStudy(model = .sa_model, E = 1:3, n = 10, dose = 1,
                         times = 1:3), "BOTH")
+  expect_error(admStudy(model = .sa_model, V = 1, n = 10, dose = 1,
+                        times = 1), "BOTH")
+  expect_error(admStudy(E = 1, sd = 1, est = c(tcl = 1), n = 10, dose = 1,
+                        times = 1), "cannot have `est`")
   expect_error(admStudy(n = 10, dose = 1, times = 1:3), "either a .model.")
   expect_error(admStudy(E = 1:3, n = 10, dose = 1, times = 1:3), "spread")
   expect_error(admStudy(E = 1:3, sd = 1:3, dose = 1, times = 1:3), "positive .n.")

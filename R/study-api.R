@@ -353,12 +353,16 @@ admStudy <- function(model = NULL, est = NULL,
   bad <- function(...) stop("admixr2: study '", nm, "': ", ..., call. = FALSE)
   has_model <- !is.null(model)
   has_data  <- !is.null(E)
-  if (has_model && has_data)
-    bad("has BOTH a `model` and digitised `E`. A study contributes in one ",
+  if (has_model && any(!vapply(list(E, V, sd, sem), is.null, logical(1))))
+    bad("has BOTH a `model` and digitised summary fields (`E`, `V`, `sd` or ",
+        "`sem`). A study contributes in one ",
         "currency: the model it published, or the aggregate data it printed.")
   if (!has_model && !has_data)
     bad("needs either a `model` (with `est`) or digitised `E` (with ",
         "`sd`, `sem` or `V`).")
+  if (!has_model && !is.null(est))
+    bad("digitised data cannot have `est`; estimates belong to a published ",
+        "`model` source.")
   if (!has_model && (!is.null(by) ||
       (!is.null(stratify) && !identical(stratify, FALSE)) ||
       !is.null(strata_nodes) || !is.null(range)))
@@ -396,7 +400,10 @@ admStudy <- function(model = NULL, est = NULL,
 
   ui <- NULL
   if (has_model) {
-    ui <- tryCatch(suppressMessages(rxode2::rxode2(model)),
+    # Reparse an rxUi's function so applying this study's estimates cannot
+    # mutate another study (or the caller's ui) through a shared environment.
+    source_model <- if (inherits(model, "rxUi")) model$fun else model
+    ui <- tryCatch(suppressMessages(rxode2::rxode2(source_model)),
                    error = function(e)
                      bad("`model` could not be parsed: ", conditionMessage(e)))
     known <- ui$iniDf$name
@@ -412,6 +419,12 @@ admStudy <- function(model = NULL, est = NULL,
             paste(sQuote(known), collapse = ", "), ".")
     }
     chk(est, "est")
+    if (anyDuplicated(names(est)))
+      bad("`est` parameter names must be unique; repeated: ",
+          paste(sQuote(unique(names(est)[duplicated(names(est))])),
+                collapse = ", "), ".")
+    if (length(est) && (!is.numeric(est) || any(!is.finite(est))))
+      bad("`est` must contain finite numeric parameter estimates.")
     # Put published estimates directly into the source model.
     if (length(est)) {
       d <- ui$iniDf
