@@ -1000,6 +1000,16 @@
   nms  <- .admCovSpecNames(cd)
   keep <- setdiff(nms, drop)
   R    <- cd[["latentR"]]
+  if (!is.null(R) && is.character(drop) && !is.na(match(drop, nms))) {
+    ridx <- match(drop, nms)
+    kidx <- match(keep, nms)
+    if (length(kidx) &&
+        any(abs(R[ridx, kidx]) > 1e-12, na.rm = TRUE))
+      stop("admixr2: cannot materialise correlated ", sQuote(drop),
+           " subgroups from the same population distribution; use `stratify = TRUE` ",
+           "or provide a user-defined `population$joint` sampler.",
+           call. = FALSE)
+  }
   out  <- cd
   out[[drop]] <- NULL
   out[c("joint", "jointOwn", "discExact", "latentR", "cor", "rho",
