@@ -1,4 +1,4 @@
-﻿#' @importFrom stats cov dnorm pnorm qnorm rnorm runif setNames
+#' @importFrom stats cov dnorm pnorm qnorm rnorm runif setNames
 #' @importFrom utils assignInNamespace head
 #' @importFrom Rcpp sourceCpp
 #' @useDynLib admixr2, .registration = TRUE
@@ -42,7 +42,7 @@ utils::globalVariables(c(
 # nobs = sum(n_subjects * n_times) across studies, matching nlmixr2's individual-level convention.
 .admCalcObjStats <- function(objective, npar, studies) {
   nobs <- sum(vapply(studies, function(s)
-    as.integer(s$n) * (s$n_total %||% length(s$times)), integer(1)))
+    as.numeric(s$n) * (s$n_total %||% length(s$times)), numeric(1)))
   ll   <- -objective / 2
   attr(ll, "df")   <- npar
   attr(ll, "nobs") <- nobs

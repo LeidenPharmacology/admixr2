@@ -1,4 +1,4 @@
-﻿# Cache-key material shared by the simulation and sensitivity models.
+# Cache-key material shared by the simulation and sensitivity models.
 #
 # Names, fix flags and error types all change what gets emitted or what the
 # solve is handed. The fixed thetas' VALUES are in here for a sharper reason:

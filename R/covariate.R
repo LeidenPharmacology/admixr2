@@ -505,9 +505,10 @@
          "lognormal margin cannot represent. Give a positive mean, or ",
          'dist = "normal" if the covariate really is unbounded below.',
          call. = FALSE)
-  # match the natural-scale mean and SD exactly
-  list(meanlog = log(m^2 / sqrt(sd^2 + m^2)),
-       sdlog   = sqrt(log(1 + sd^2 / m^2)))
+  # match the natural-scale mean and SD without squaring either one
+  lr <- log(sd) - log(m)
+  s2 <- if (lr > 0) 2 * lr + log1p(exp(-2 * lr)) else log1p(exp(2 * lr))
+  list(meanlog = log(m) - s2 / 2, sdlog = sqrt(s2))
 }
 
 .admCovDistCanon <- function(cov_dist) {
@@ -2646,6 +2647,15 @@ covDist <- function(..., cor = NULL, joint = NULL,
         .admCovSpecFromVec(a[[i]], names(a)[i], dist)),
       names(a))
   }
+  if (!length(out))
+    stop("admixr2: covDist() needs at least one covariate.", call. = FALSE)
+  if (is.null(names(out)) || anyNA(names(out)) || any(!nzchar(names(out))))
+    stop("admixr2: covDist() needs a non-empty name for every covariate.",
+         call. = FALSE)
+  if (anyDuplicated(names(out)))
+    stop("admixr2: covDist() has duplicate covariate name(s): ",
+         paste(sQuote(unique(names(out)[duplicated(names(out))])),
+               collapse = ", "), ".", call. = FALSE)
   # the default margin applies only where the covariate did not choose one, and only to the mean/sd shorthand
   # -- every other form already names its scale
   for (nm in names(out)) {

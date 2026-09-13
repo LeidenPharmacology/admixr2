@@ -1,4 +1,4 @@
-﻿#' Dummy data frame for nlmixr2 dispatch
+#' Dummy data frame for nlmixr2 dispatch
 #'
 #' Returns a minimal NONMEM-style data frame that satisfies nlmixr2's data
 #' argument requirement. The single observation row carries a non-`NA`
