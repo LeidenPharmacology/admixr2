@@ -256,6 +256,16 @@ test_that("at cannot silently compete with a population margin", {
                "also gives it a distribution")
 })
 
+test_that("at requires named finite scalar values", {
+  args <- list(E = 1, sd = 1, n = 20, dose = 1, times = 1)
+  expect_error(do.call(admStudy, c(args, list(at = list(1)))),
+               "unique, non-empty covariate names")
+  expect_error(do.call(admStudy, c(args, list(at = list(SEX = c(0, 1))))),
+               "one finite number")
+  expect_error(do.call(admStudy, c(args, list(at = list(SEX = Inf)))),
+               "one finite number")
+})
+
 test_that("digitised profiles refuse source-only expansion arguments", {
   args <- list(E = 1, sd = 1, n = 20, dose = 1, times = 1,
                population = admPopulation(SEX = c(male = 0.6)))
@@ -525,4 +535,10 @@ test_that("admPopulation guards the data-frame route it advertises", {
                                cor = matrix(c(1, .3, .3, 1), 2L, 2L,
                                             dimnames = rep(list(c("WT", "CRCL")), 2L))),
                  "REPLACED rather than merged")
+})
+
+test_that("admPopulation refuses duplicate covariate names", {
+  expect_error(admPopulation(WT = c(mean = 70, sd = 10),
+                             WT = c(mean = 80, sd = 12)),
+               "covariate names must be unique")
 })

@@ -1007,7 +1007,7 @@
         any(abs(R[ridx, kidx]) > 1e-12, na.rm = TRUE))
       stop("admixr2: cannot materialise correlated ", sQuote(drop),
            " subgroups from the same population distribution; use `stratify = TRUE` ",
-           "or provide a user-defined `population$joint` sampler.",
+           "or declare each subgroup's remaining population distribution explicitly.",
            call. = FALSE)
   }
   out  <- cd

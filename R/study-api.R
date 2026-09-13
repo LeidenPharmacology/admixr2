@@ -174,6 +174,10 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
     stop("admixr2: `admPopulation()` needs NAMED covariates, e.g. ",
          "admPopulation(WT = c(mean = 75, sd = 16)), or a `data` frame to ",
          "derive them from.", call. = FALSE)
+  if (anyDuplicated(names(a)))
+    stop("admixr2: `admPopulation()` covariate names must be unique; repeated: ",
+         paste(sQuote(unique(names(a)[duplicated(names(a))])), collapse = ", "),
+         ".", call. = FALSE)
   nms <- names(a)
   specs <- stats::setNames(
     lapply(seq_along(a), function(i) .admPopSpec(a[[i]], nms[i], dist)), nms)
@@ -380,6 +384,15 @@ admStudy <- function(model = NULL, est = NULL,
         "cannot express.")
   if (!is.null(ev) && !is.null(dose))
     bad("has both `dose` and `ev`; `dose` is only shorthand for one.")
+  if (length(at)) {
+    if (is.null(names(at)) || any(!nzchar(names(at))) || anyDuplicated(names(at)))
+      bad("`at` must have unique, non-empty covariate names, e.g. ",
+          "at = list(SEX = 1).")
+    if (!all(vapply(as.list(at), function(x)
+      length(x) == 1L && (is.numeric(x) || is.logical(x)) && is.finite(x),
+      logical(1))))
+      bad("every `at` value must be one finite number.")
+  }
 
   ui <- NULL
   if (has_model) {
