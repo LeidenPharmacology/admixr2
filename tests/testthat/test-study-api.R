@@ -103,6 +103,10 @@ test_that("a SEM is scaled back to a per-subject spread by sqrt(n)", {
   expect_equal(sqrt(s$V), c(0.2, 0.15, 0.1) * 10, tolerance = 1e-12)
   expect_error(admStudy(E = c(9, 7), sd = c(1, 1), sem = c(1, 1), n = 10,
                         dose = 1, times = c(1, 2)), "both")
+  expect_error(admStudy(E = c(9, 7), sd = c(-1, 1), n = 10,
+                        dose = 1, times = c(1, 2)), "non-negative")
+  expect_error(admStudy(E = c(9, 7), sem = c(1, Inf), n = 10,
+                        dose = 1, times = c(1, 2)), "finite")
 })
 
 test_that("admStudies names studies from the objects they were built as", {

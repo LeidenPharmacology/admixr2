@@ -434,6 +434,10 @@ admStudy <- function(model = NULL, est = NULL,
       ui$iniDf <- d
     }
   } else {
+    spread <- if (is.null(V)) sem %||% sd else NULL
+    if (!is.null(spread) &&
+        (!is.numeric(spread) || any(!is.finite(spread)) || any(spread < 0)))
+      bad("`sd` and `sem` must contain finite, non-negative numbers.")
     if (!is.null(sem)) {
       if (!is.null(sd)) bad("has both `sd` and `sem`; give one.")
       # Convert SEM covariance back to per-subject covariance.
