@@ -321,6 +321,46 @@
   with the level), so a sandwich covariance whose weight matrix comes out
   indefinite as a result is refused rather than reported.
 
+* **A paper-shaped study API.** `admStudy()` / `admStudies()` describe a source
+  the way a publication does --- the model it published, the covariance it
+  reported, the cohort it enrolled --- rather than asking you to assemble
+  `(E, V, n)` by hand. `admPopulation()` reads a baseline-characteristics table
+  in whichever currency the paper used: `mean`/`sd`, `median`/`iqr`, a `cv` as a
+  percent, a bare proportion for a binary covariate, or the cohort itself via
+  `data =`. Correlations are taken on the LATENT scale --- the logs for a
+  lognormal margin --- which is the step easiest to get wrong transcribing a
+  table by hand, and a reported median and IQR inconsistent with the assumed
+  shape is reported rather than quietly fitted.
+
+  `print()` on the collection is a PRE-FLIGHT: per covariate and per source it
+  says `conditioned` / `banded` / `marginal` / `-`, and names any covariate that
+  no source can identify because every source marginalises over it. That is a
+  design fault the fit cannot repair, and it is cheaper to see before the fit
+  than after.
+
+  There are deliberately no `rse` / `se` / `cov` arguments. A study built from a
+  published model is not a sample, so no standard error is available for a fit
+  containing one (above), and the reported covariance that would have fed those
+  arguments has no role left.
+
+  The transcription routes are checked rather than trusted. `population` is
+  canonicalised as the study is built, so one written as a plain list is the
+  same object as one from `admPopulation()` everywhere downstream --- `by` reads
+  its levels and dropping the `by` margin carries its correlations across, both
+  of which silently did neither on the raw form. A matrix `cor` is now held to
+  the same rules as the named-vector form: it is reordered to the declared
+  covariates, must name them all, and is refused where it correlates a DISCRETE
+  margin (a level would be a truncation of the latent normal rather than a
+  point). Alongside `data =` it must carry dimnames, because the derived
+  columns are appended after the ones typed in and that order is not guessable,
+  and it says that it REPLACES the cohort's own correlations rather than merging
+  with them. A covariate named in `...` but absent from `data`, and a missing
+  value in a factor column, are now errors instead of a `cor()` failure and a
+  margin of `NA`. `stratify = FALSE` means the same as omitting it rather than
+  failing in `datagen()`; `strata_nodes` / `range` without a `stratify` are
+  refused rather than discarded; and `print()` shows the covariates a
+  `stratify = TRUE` resolves to instead of the word `TRUE`.
+
 ## Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not name a new

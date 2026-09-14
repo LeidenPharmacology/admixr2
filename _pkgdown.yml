@@ -131,6 +131,15 @@ reference:
       - nlmixr2Est.adgh
       - nlmixr2Est.adirmc
 
+  - title: Writing down the studies
+    desc: >
+      Describe a source the way its paper does — the model it published, the
+      cohort it enrolled — and let admixr2 assemble the summary it implies.
+    contents:
+      - admStudy
+      - admStudies
+      - admPopulation
+
   - title: Covariates
     desc: >
       Declare the covariate distribution a source enrolled, and how it enters
