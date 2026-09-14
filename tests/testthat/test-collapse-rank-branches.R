@@ -147,7 +147,9 @@ test_that("fitted-parameter probes also certify eta and strata", {
 
   ui <- list(lstExpr = list(quote(
     cl <- exp(eta.cl + .1 * W1 + b * SEX * W2))), allCovs = names(cd))
-  expect_null(admixr2:::.admCovCollapse(ui, pin, cd, 7L))
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  expect_length(co$by_cell, 2L)
+  expect_false(isTRUE(admixr2:::.admCovRefresh(co, list(b = 1))$stale))
   jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
   expect_null(admixr2:::.admJointAdmit(jc, list(b = 0), matrix(.3)))
 
@@ -156,6 +158,43 @@ test_that("fitted-parameter probes also certify eta and strata", {
   ui$lstExpr <- list(quote(
     cl <- exp(eta.cl + .1 * W1 + b * eta.cl * W2)))
   expect_null(admixr2:::.admCovCollapse(ui, pin, cd, 7L))
+})
+
+test_that("deterministic verification keeps strong exact collapses", {
+  skip_if_not_installed("randtoolbox")
+  b <- 3 * c(.2, .35, -.15)
+  cd <- stats::setNames(rep(list(list(mu = 0, sd = 1)), 3L), paste0("W", 1:3))
+  ui <- list(lstExpr = list(bquote(
+    cl <- exp(.(b[1]) * W1 + .(b[2]) * W2 + .(b[3]) * W3))),
+    allCovs = names(cd))
+  pin <- list(eta_col_names = character(), n_eta = 0L,
+              struct_names = character(), struct_init = numeric(), cov_nodes = 7L)
+
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  expect_false(is.null(co))
+  y <- exp(drop(as.matrix(co$X) %*% b))
+  expect_equal(sum(co$W * y^2), exp(2 * sum(b^2)), tolerance = 1e-10)
+})
+
+test_that("ordinal cells keep their own continuous collapse", {
+  skip_if_not_installed("randtoolbox")
+  pr <- c(.2, .3, .5)
+  cd <- list(W1 = list(mu = 0, sd = 1), W2 = list(mu = 0, sd = 1),
+             GROUP = list(values = 0:2, probs = pr))
+  ui <- list(lstExpr = list(quote(
+    cl <- exp((.1 + .2 * GROUP) * W1 + (.4 - .1 * GROUP) * W2))),
+    allCovs = names(cd))
+  pin <- list(eta_col_names = character(), n_eta = 0L,
+              struct_names = character(), struct_init = numeric(), cov_nodes = 7L)
+
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  expect_length(co$by_cell, 3L)
+  expect_equal(nrow(co$X), 42L)
+  y <- with(as.data.frame(co$X),
+            exp((.1 + .2 * GROUP) * W1 + (.4 - .1 * GROUP) * W2))
+  v <- vapply(0:2, function(k) (.1 + .2 * k)^2 + (.4 - .1 * k)^2, numeric(1))
+  expect_equal(sum(co$W * y), sum(pr * exp(v / 2)), tolerance = 1e-10)
+  expect_equal(sum(co$W * y^2), sum(pr * exp(2 * v)), tolerance = 1e-10)
 })
 
 test_that("eta invariance is certified in every discrete cell", {

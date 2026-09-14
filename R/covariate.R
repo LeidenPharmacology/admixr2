@@ -3185,7 +3185,7 @@ print.covDist <- function(x, ...) {
     # does not get defined, and if a covariate-reading assignment needed it,
     # THAT one fails and is caught. Bailing on the first unevaluable line
     # refused every model with a linCmt(), which is most of them.
-    v <- tryCatch(eval(e[[3L]], ev), error = function(e) NULL)
+    v <- tryCatch(suppressWarnings(eval(e[[3L]], ev)), error = function(e) NULL)
     if (is.null(v)) {
       if (ii %in% pr$hit) return(NULL)
       next
@@ -3248,6 +3248,23 @@ print.covDist <- function(x, ...) {
   # object is still returned (callers read its shape) but carries `stale`, and
   # .adghGrid turns that into an unsolvable point.
   .stale <- function(x) { if (!is.null(x)) x$stale <- TRUE; x }
+  if (!is.null(co[["by_cell"]])) {
+    ch <- lapply(co$by_cell, .admCovRefresh, st = st)
+    if (any(vapply(ch, function(x) is.null(x) || isTRUE(x$stale), logical(1))))
+      return(.stale(co))
+    nq <- vapply(ch, function(x) nrow(x$X), integer(1))
+    X <- do.call(rbind, lapply(seq_along(ch), function(i)
+      cbind(ch[[i]]$X,
+            co$cells[rep(i, nq[i]), , drop = FALSE])[, co$nms, drop = FALSE]))
+    co$X <- X
+    co$W <- unlist(Map(function(x, p) x$W * p, ch, co$pcell),
+                   use.names = FALSE)
+    co$W <- co$W / sum(co$W)
+    co$z <- do.call(rbind, lapply(ch, `[[`, "z"))
+    co$by_cell <- ch
+    co$stale <- NULL
+    return(co)
+  }
   if (is.null(co) || is.null(co$pr) || is.null(st)) return(.stale(co))
   # Reuse admission's candidate points so a link becoming stationary at one
   # point does not turn an active reader into a constant. Rank and node count
@@ -3374,20 +3391,22 @@ print.covDist <- function(x, ...) {
     .admCovQuantile(cd[[cn[k]]], stats::pnorm(Z[, k])), numeric(n_probe))
   colnames(A) <- cn
   if (!all(is.finite(A))) return(NULL)
-  # A SEPARATE, much larger probe for the VERIFICATION reference. The loadings
-  # come off the small one -- an average derivative needs no precision -- but
-  # the reference the design is judged against must be more accurate than the
-  # design, and at 128 points its own moments are only good to ~1e-2, which is
-  # looser than the tolerance. Costs no solves: these are R evaluations of the
-  # parameter assignment.
-  Zv <- tryCatch(suppressWarnings(
-          stats::qnorm(randtoolbox::sobol(n_ver, dim = pc, seed = 11L))),
-        error = function(e) NULL)
-  if (is.null(Zv) || !is.matrix(Zv) || !all(is.finite(Zv))) return(NULL)
-  Zv <- Zv %*% Lc
-  Av <- vapply(seq_len(pc), function(k)
-    .admCovQuantile(cd[[cn[k]]], stats::pnorm(Zv[, k])), numeric(n_ver))
-  colnames(Av) <- cn
+  # A deterministic verification rule over the FULL latent space. Sobol was a
+  # noisy yardstick for tail-dominated lognormal moments and refused exact
+  # rank-one designs as effects grew. This is the same GH/Smolyak reference the
+  # joint collapse uses; n_ver is a point budget.
+  mv <- min(40L, as.integer(floor(n_ver^(1 / pc))))
+  gv <- NULL
+  if (mv >= 15L) gv <- tryCatch(.adghNodeGrid(mv, pc), error = function(e) NULL)
+  if (is.null(gv))
+    gv <- tryCatch(.admSparseNodes(pc, .ADM_JOINT_VER_LEVEL),
+                   error = function(e) NULL)
+  if (is.null(gv) || is.null(gv$X) || !nrow(gv$X) ||
+      !all(is.finite(gv$X)) || !all(is.finite(gv$W)) || sum(gv$W) <= 0)
+    return(NULL)
+  Wv <- gv$W / sum(gv$W)
+  Zv <- gv$X %*% Lc
+  Av <- .admCovXFromZ(cd, cn, Zv)
   if (!all(is.finite(Av))) return(NULL)
 
   # Evaluate the assignments IN ORDER, so an intermediate is defined before the
@@ -3446,6 +3465,31 @@ print.covDist <- function(x, ...) {
   r <- .admCollapseRank(B, st, pinfo$struct_names %||% character(0),
                         function(sp) gradB(cell_list[[1L]], st_use = sp),
                         invariant)
+  if (is.null(r) && length(dn)) {
+    # Different discrete levels may rotate the SAME low-rank continuous
+    # integral differently. Certify each cell independently instead of dropping
+    # the whole study to the product grid.
+    child_cd <- cd[cn]
+    if (!is.null(Rc)) child_cd$latentR <- Rc
+    ch <- lapply(cell_list, function(cell)
+      .admCovCollapse(ui, pinfo, child_cd, n_nodes, n_probe, max_rows,
+                      n_ver, utils::modifyList(cov_fixed %||% list(), cell)))
+    if (all(vapply(ch, Negate(is.null), logical(1)))) {
+      nr <- vapply(ch, function(x) nrow(x$X), integer(1))
+      if (sum(nr) <= max_rows && sum(nr) < n_nodes^pcm * length(ch)) {
+        Xf <- do.call(rbind, lapply(seq_along(ch), function(i)
+          cbind(ch[[i]]$X,
+                cells[rep(i, nr[i]), , drop = FALSE])[, nms, drop = FALSE]))
+        Wf <- unlist(Map(function(x, p) x$W * p, ch, pcell), use.names = FALSE)
+        return(list(X = Xf, W = Wf / sum(Wf),
+                    z = do.call(rbind, lapply(ch, `[[`, "z")),
+                    collapsed = TRUE, by_cell = ch, p = p, pc = pc,
+                    r = max(vapply(ch, `[[`, numeric(1), "r")),
+                    n_cell = length(ch), Rc = Rc, cn = cn, dn = dn,
+                    cd = cd, nms = nms, cells = cells, pcell = pcell))
+      }
+    }
+  }
   if (is.null(r)) return(NULL)
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || !length(sv$d)) return(NULL)
@@ -3531,17 +3575,18 @@ print.covDist <- function(x, ...) {
     if (is.null(Pr)) return(FALSE)
     for (k in seq_len(ncol(Pr))) {
       tgt <- Pr[, k]; got <- Pd[, k]
-      sc  <- max(stats::sd(tgt), abs(mean(tgt)), .Machine$double.xmin)
+      mt  <- sum(Wv * tgt)
+      sc  <- max(sqrt(max(sum(Wv * (tgt - mt)^2), 0)), abs(mt),
+                 .Machine$double.xmin)
       # first two moments, and the reciprocal where it is defined: a PK
       # parameter enters the prediction as both v and 1/v
       mm <- list(function(x) x, function(x) x^2)
       if (all(tgt > 0) && all(got > 0)) mm <- c(mm, list(function(x) 1 / x))
       for (f in mm) {
-        a1 <- mean(f(tgt)); a2 <- sum(wcell * f(got))
+        a1 <- sum(Wv * f(tgt)); a2 <- sum(wcell * f(got))
         if (!is.finite(a1) || !is.finite(a2)) return(FALSE)
-        # 5e-3 sits an order of magnitude above the reference own error
-        # (~3e-4 at 8192 points) and two orders below the discrepancy a
-        # genuine failure produces, which is of order 1.
+        # 5e-3 leaves room for the sparse high-dimensional reference while
+        # remaining far below a genuine failure, which is of order 1.
         if (abs(a2 - a1) / max(abs(a1), sc) > 5e-3) return(FALSE)
       }
     }
