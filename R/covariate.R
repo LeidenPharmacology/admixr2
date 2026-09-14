@@ -908,11 +908,21 @@
 # latent normal rather than a point, so the continuous conditional differs cell to cell and one shared design
 # is the wrong design in every cell. Then subsets the correlation to the continuous block and factorises it.
 # `R` is indexed POSITIONALLY -- latentR carries no dimnames -- so `nms` must be the full declared order.
+#
+# Refuses any correlated DISCRETE margin. A level is a latent-normal interval,
+# not a point: correlation with a continuous margin changes its conditional
+# law, while correlation with another discrete margin changes the JOINT cell
+# probabilities. `.admCovDiscCells()` only has marginal probabilities, so it
+# cannot preserve either dependence. Then subsets the correlation to the
+# continuous block and factorises it. `R` is indexed POSITIONALLY -- latentR
+# carries no dimnames -- so `nms` must be the full declared order.
 .admCovLatentBlock <- function(cd, nms, cn, dn, R) {
   pc <- length(cn)
   ic <- match(cn, nms); id <- match(dn, nms)
-  if (length(dn) && !is.null(R) && any(abs(R[id, ic, drop = FALSE]) > 0))
-    return(NULL)
+  if (length(dn) && !is.null(R)) {
+    R0 <- R; diag(R0) <- 0
+    if (any(abs(R0[id, , drop = FALSE]) > 0)) return(NULL)
+  }
   Rc <- if (is.null(R)) diag(1, pc) else R[ic, ic, drop = FALSE]
   Lc <- tryCatch(chol(Rc), error = function(e) NULL)
   if (is.null(Lc)) return(NULL)
@@ -3143,12 +3153,14 @@ print.covDist <- function(x, ...) {
   nrw <- nrow(AA)
   ev  <- new.env(parent = asNamespace("rxode2"))
   for (k in names(st)) assign(k, st[[k]], ev)
-  # eta_at is a SCALAR for the covariate collapse (etas held, only their
-  # invariance is being checked) and a MATRIX for the joint one, where the etas
-  # are part of the latent vector being probed
+  # eta_at is a scalar/vector for the covariate collapse and a MATRIX for the
+  # joint one, where the etas are part of the latent vector being probed.
   if (is.matrix(eta_at)) {
     for (j in seq_along(pr$eta_names)) assign(pr$eta_names[j], eta_at[, j], ev)
-  } else for (e in pr$eta_names) assign(e, eta_at, ev)
+  } else {
+    eta_at <- rep_len(eta_at, length(pr$eta_names))
+    for (j in seq_along(pr$eta_names)) assign(pr$eta_names[j], eta_at[j], ev)
+  }
   for (k in pr$cn) assign(k, AA[, k], ev)
   for (k in pr$dn) assign(k, cell[[k]], ev)
   # A study declares a covariate one of two ways: as a DISTRIBUTION to
@@ -3398,10 +3410,6 @@ print.covDist <- function(x, ...) {
                                         .admCovXFromZ(cd, cn, ZZ), st_use), z0)
   B <- gradB(cell_list[[1L]])
   if (is.null(B)) return(NULL)
-  # FREEZE the point the loading is read at, alongside the rank and the node
-  # count and for the same reason: a refresh must differ from admission only
-  # through the thetas.
-  z0 <- z0[attr(B, "at"), , drop = FALSE]
   # Rank is structural for the fit, not merely the rank at its starting point.
   # Two nonzero columns can start collinear and split when one coefficient
   # moves, so checking only zero columns is insufficient.
@@ -3415,8 +3423,10 @@ print.covDist <- function(x, ...) {
   # loadings.
   # ... or with the STRATUM: a covariate-by-SEX interaction has a direction that
   # differs cell to cell, and one shared design would be wrong in all but one.
-  chk <- list()
-  if (length(pinfo$eta_col_names)) chk <- c(chk, list(list(0.5, cell_list[[1L]])))
+  chk <- lapply(seq_along(pinfo$eta_col_names), function(j) {
+    x <- numeric(length(pinfo$eta_col_names)); x[j] <- 0.5
+    list(x, cell_list[[1L]])
+  })
   if (length(cell_list) > 1L)
     chk <- c(chk, lapply(cell_list[-1L], function(cl) list(0, cl)))
   # The relative gradient makes the ETA half of this pass by construction for
@@ -3435,6 +3445,10 @@ print.covDist <- function(x, ...) {
                                          check.attributes = FALSE)))
       return(NULL)
   }
+  # Freeze only AFTER every structural and eta probe has certified the loading.
+  # Narrowing before those probes reduced the certificate to one point, where
+  # any smooth nonlinear reader has a locally constant gradient direction.
+  z0 <- z0[attr(B, "at"), , drop = FALSE]
 
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || !length(sv$d)) return(NULL)

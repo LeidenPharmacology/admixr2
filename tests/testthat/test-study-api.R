@@ -484,6 +484,17 @@ test_that("the resolved denominator reaches the conversion, and is shown", {
                                times = tt, ev = ev)), "ml denominator")
 })
 
+test_that("materialisation preserves the resolved variance denominator", {
+  n <- 5L; sdv <- c(1, 0.5)
+  s <- admStudy(E = c(2, 1), sd = sdv, n = n, times = c(1, 2),
+                ev = rxode2::et(amt = 100))
+  raw <- admixr2:::.admMaterialise(list(s = s))$s
+  got <- admixr2:::.admNormaliseStudy(raw, "s")
+
+  expect_identical(got$v_denom, "ml")
+  expect_equal(diag(got$V), sdv^2 * (n - 1) / n, tolerance = 1e-12)
+})
+
 test_that("a `by` level keeps the correlations among the margins it retains", {
   # Dropping a margin must rebuild positional latentR.
   cd <- covDist(SEX = list(values = c(0, 1), probs = c(.45, .55)),

@@ -102,3 +102,38 @@ test_that("a reader of a discrete covariate alone does not refuse the study", {
   # rotation -- so it contributes no direction and must not refuse the probe.
   expect_false(is.null(admixr2:::.admJointAdmit(jc, list(), matrix(0.3))))
 })
+
+test_that("coefficient probes keep the full single-index certificate", {
+  skip_if_not_installed("randtoolbox")
+  cd <- list(W1 = list(mu = 0, sd = 1), W2 = list(mu = 0, sd = 1))
+  ui <- list(lstExpr = list(quote(cl <- exp(0.1 * W1 + b * W2^2))),
+             allCovs = c("W1", "W2"))
+  pin <- list(eta_col_names = character(), n_eta = 0L,
+              struct_names = "b", struct_init = c(b = 0), cov_nodes = 7L)
+
+  # At b = 0 this looks one-dimensional. Once b moves, W2^2 is not a linear
+  # index; probing it at only one latent point admitted a wrong rank-1 law.
+  expect_null(admixr2:::.admCovCollapse(ui, pin, cd, 7L))
+})
+
+test_that("collapse refuses correlated discrete cell probabilities", {
+  cd <- list(W1 = list(mu = 0, sd = 1), W2 = list(mu = 0, sd = 1),
+             S1 = list(values = c(0, 1), probs = c(0.5, 0.5)),
+             S2 = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  R <- diag(4); R[3L, 4L] <- R[4L, 3L] <- 0.8
+  expect_null(admixr2:::.admCovLatentBlock(
+    cd, names(cd), c("W1", "W2"), c("S1", "S2"), R))
+})
+
+test_that("eta invariance is checked one random effect at a time", {
+  skip_if_not_installed("randtoolbox")
+  cd <- list(W1 = list(mu = 0, sd = 1), W2 = list(mu = 0, sd = 1))
+  ui <- list(lstExpr = list(quote(
+    cl <- exp(0.1 * W1 + (0.1 + eta.cl - eta.v) * W2))),
+    allCovs = c("W1", "W2"))
+  pin <- list(eta_col_names = c("eta.cl", "eta.v"), n_eta = 2L,
+              struct_names = character(), struct_init = numeric(), cov_nodes = 7L)
+
+  # Moving both etas by 0.5 cancels in eta.cl - eta.v; independent probes do not.
+  expect_null(admixr2:::.admCovCollapse(ui, pin, cd, 7L))
+})
