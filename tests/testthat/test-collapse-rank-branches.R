@@ -137,3 +137,52 @@ test_that("eta invariance is checked one random effect at a time", {
   # Moving both etas by 0.5 cancels in eta.cl - eta.v; independent probes do not.
   expect_null(admixr2:::.admCovCollapse(ui, pin, cd, 7L))
 })
+
+test_that("fitted-parameter probes also certify eta and strata", {
+  skip_if_not_installed("randtoolbox")
+  cd <- list(W1 = list(mu = 0, sd = 1), W2 = list(mu = 0, sd = 1),
+             SEX = list(values = c(0, 1), probs = c(.5, .5)))
+  pin <- list(eta_col_names = "eta.cl", n_eta = 1L, struct_names = "b",
+              struct_init = c(b = 0), cov_nodes = 7L)
+
+  ui <- list(lstExpr = list(quote(
+    cl <- exp(eta.cl + .1 * W1 + b * SEX * W2))), allCovs = names(cd))
+  expect_null(admixr2:::.admCovCollapse(ui, pin, cd, 7L))
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL)
+  expect_null(admixr2:::.admJointAdmit(jc, list(b = 0), matrix(.3)))
+
+  cd$SEX <- NULL
+  ui$allCovs <- names(cd)
+  ui$lstExpr <- list(quote(
+    cl <- exp(eta.cl + .1 * W1 + b * eta.cl * W2)))
+  expect_null(admixr2:::.admCovCollapse(ui, pin, cd, 7L))
+})
+
+test_that("joint sizing includes the requested eta resolution", {
+  skip_if_not_installed("randtoolbox")
+  cd <- list(WT = list(mu = 0, sd = 1))
+  ui <- list(lstExpr = list(quote(cl <- exp(eta.cl + b * WT))), allCovs = "WT")
+  pin <- list(eta_col_names = "eta.cl", n_eta = 1L, struct_names = "b",
+              struct_init = c(b = .1), cov_nodes = 7L)
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL,
+                                    eta_nodes = 31L)
+  jc <- admixr2:::.admJointAdmit(jc, list(b = .1), matrix(.7))
+  expect_false(is.null(jc))
+  expect_equal(jc$m, 38L)
+  expect_equal(nrow(admixr2:::.admJointDesign(jc, list(b = .1), matrix(.7))$eta),
+               38L)
+})
+
+test_that("an admitted reduction does not retain its product grid", {
+  skip_if_not_installed("randtoolbox")
+  cd <- stats::setNames(rep(list(list(mu = 0, sd = 1)), 5L), paste0("W", 1:5))
+  ui <- list(lstExpr = list(quote(cl <- exp(.02 * (W1 + W2 + W3 + W4 + W5)))),
+             allCovs = names(cd))
+  pin <- list(eta_col_names = character(), n_eta = 0L,
+              struct_names = character(), struct_init = numeric(),
+              cov_nodes = 7L, cov_integration = "on")
+  s <- admixr2:::.admCheckCovariates(ui, pin, list(s = list(cov_dist = cd)),
+                                     "adgh")[[1L]]
+  expect_false(is.null(s$.adm_cov_collapse))
+  expect_null(s$.adm_cov_grid)
+})

@@ -427,10 +427,6 @@
       # parallel-restart worker by value like the rest of the study.
       studies[[nm]]$.adm_cov_sparse <- .sg
     }
-    if (identical(studies[[nm]]$.adm_cov_path, "rows") &&
-        !identical(pinfo$cov_integration %||% "on", "sparse") &&
-        !.no_design)
-      studies[[nm]]$.adm_cov_grid <- .admCovGrid(cd, pinfo$cov_nodes %||% 7L)
   }
 
   # DIMENSION COLLAPSE. Where the covariates reach the model through a single
@@ -476,7 +472,8 @@
       .jc <- tryCatch({
         .j0 <- .admJointCollapse(.ui, pinfo, s_nm[["cov_dist"]],
                                  pinfo$cov_nodes %||% 7L, s_nm, NULL,
-                                 cov_fixed = s_nm[["cov"]])
+                                 cov_fixed = s_nm[["cov"]],
+                                 eta_nodes = pinfo$n_nodes %||% 5L)
         .p0 <- .admBuildOptVec(pinfo)$p0
         .pr <- .admUnpack(.p0, pinfo)
         .admJointAdmit(.j0, .admShiftStruct(pinfo, .pr$struct), .pr$L)
@@ -524,6 +521,16 @@
     # was then not used, dropped the study to the full product grid.
     if (!is.null(.co)) studies[[nm]]$.adm_cov_collapse <- .co
   }
+
+  # The full product grid is the fallback, so do not allocate or serialise it
+  # when either reduction was admitted.
+  for (nm in names(studies)[has])
+    if (identical(studies[[nm]]$.adm_cov_path, "rows") &&
+        !identical(pinfo$cov_integration %||% "on", "sparse") &&
+        !.no_design && is.null(studies[[nm]][[".adm_cov_collapse"]]) &&
+        is.null(studies[[nm]][[".adm_cov_joint"]]))
+      studies[[nm]]$.adm_cov_grid <-
+        .admCovGrid(studies[[nm]]$cov_dist, pinfo$cov_nodes %||% 7L)
 
   # EVERY covariate the ANALYSIS model reads must be described by a study that
   # has opted into covariate handling -- either a distribution to integrate
@@ -3085,7 +3092,7 @@ print.covDist <- function(x, ...) {
 # readers independent. Probe each estimated structural parameter on both sides
 # of its start so admission freezes the largest rank it can see. Refresh still
 # checks the invariant: these probes are a cheap admission screen, not a proof.
-.admCollapseRank <- function(B, st, mutable, probe) {
+.admCollapseRank <- function(B, st, mutable, probe, invariant = NULL) {
   rank_of <- function(x) {
     sv <- tryCatch(svd(x), error = function(e) NULL)
     if (is.null(sv) || !length(sv$d)) return(NA_integer_)
@@ -3093,11 +3100,14 @@ print.covDist <- function(x, ...) {
   }
   r <- rank_of(B)
   if (!is.finite(r)) return(NULL)
+  if (!is.null(invariant) && !isTRUE(invariant(st, B))) return(NULL)
   for (nm in intersect(mutable, names(st))) for (d in c(-0.1, 0.1)) {
     sp <- st
     sp[[nm]] <- sp[[nm]] + d
-    rp <- rank_of(tryCatch(probe(sp), error = function(e) NULL))
+    Bp <- tryCatch(probe(sp), error = function(e) NULL)
+    rp <- rank_of(Bp)
     if (!is.finite(rp)) return(NULL)
+    if (!is.null(invariant) && !isTRUE(invariant(sp, Bp))) return(NULL)
     r <- max(r, rp)
   }
   r
@@ -3410,12 +3420,6 @@ print.covDist <- function(x, ...) {
                                         .admCovXFromZ(cd, cn, ZZ), st_use), z0)
   B <- gradB(cell_list[[1L]])
   if (is.null(B)) return(NULL)
-  # Rank is structural for the fit, not merely the rank at its starting point.
-  # Two nonzero columns can start collinear and split when one coefficient
-  # moves, so checking only zero columns is insufficient.
-  r <- .admCollapseRank(B, st, pinfo$struct_names %||% character(0),
-                        function(sp) gradB(cell_list[[1L]], st_use = sp))
-  if (is.null(r)) return(NULL)
   # THE LOADING MUST NOT DEPEND ON THE RANDOM EFFECT. A covariate-by-eta
   # interaction (cl <- exp(tcl + b * WT * eta.cl)) has a direction that moves
   # with eta, and the probe at eta = 0 would report b = 0 -- a collapse onto
@@ -3436,15 +3440,18 @@ print.covDist <- function(x, ...) {
   # with eta (measured 8.6e-01, relgrad_eta.txt), and a covariate-by-stratum
   # one. So the check stays; it is no longer the thing that rejects honest
   # models.
-  for (cc in chk) {
-    B2 <- gradB(cc[[2L]], eta_at = cc[[1L]])
-    # check.attributes = FALSE: B carries the index of the base point it was
-    # read at, and after freezing z0 the re-probe reads a one-row z0 whose index
-    # is 1. Comparing that attribute compares bookkeeping, not loadings.
-    if (is.null(B2) || !isTRUE(all.equal(B, B2, tolerance = 1e-6,
-                                         check.attributes = FALSE)))
-      return(NULL)
-  }
+  invariant <- function(sp, B0)
+    all(vapply(chk, function(cc) {
+      B2 <- gradB(cc[[2L]], st_use = sp, eta_at = cc[[1L]])
+      !is.null(B2) && isTRUE(all.equal(B0, B2, tolerance = 1e-6,
+                                       check.attributes = FALSE))
+    }, logical(1)))
+  # Rank and the eta/stratum certificate must survive the same fitted-parameter
+  # probes. Checking them separately misses interactions that start at zero.
+  r <- .admCollapseRank(B, st, pinfo$struct_names %||% character(0),
+                        function(sp) gradB(cell_list[[1L]], st_use = sp),
+                        invariant)
+  if (is.null(r)) return(NULL)
   # Freeze only AFTER every structural and eta probe has certified the loading.
   # Narrowing before those probes reduced the certificate to one point, where
   # any smooth nonlinear reader has a locally constant gradient direction.
@@ -3605,7 +3612,8 @@ print.covDist <- function(x, ...) {
 # rank, the node count, the certificate.
 .admJointCollapse <- function(ui, pinfo, cov_dist, n_nodes, s, out_var,
                               n_probe = 512L, max_rows = 20000L,
-                              n_ver = 8192L, cov_fixed = NULL) {
+                              n_ver = 8192L, cov_fixed = NULL,
+                              eta_nodes = n_nodes) {
   ne <- pinfo$n_eta
   if (!is.finite(ne) || ne < 1L) return(NULL)
   cd  <- .admCovDistCanon(cov_dist)
@@ -3738,7 +3746,8 @@ print.covDist <- function(x, ...) {
   list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc, ne = ne, pc = pc,
        nl = nl, nl_m = nl_m, pc_m = pcm,
        Xi = Xi, Xv = Xv, Wv = Wv, out_var = out_var, z0 = z0,
-       n_nodes = as.integer(n_nodes), max_rows = max_rows, joint = TRUE,
+       n_nodes = as.integer(n_nodes), eta_nodes = as.integer(eta_nodes),
+       max_rows = max_rows, joint = TRUE,
        dn = dn, nms = nms, cells = cells, pcell = pcell,
        cell_list = cell_list, n_cell = max(nrow(cells), 1L),
        r = NULL, m = NULL, struct_names = pinfo$struct_names %||% character(0))
@@ -3786,7 +3795,9 @@ print.covDist <- function(x, ...) {
   U <- sv$u[, seq_len(r), drop = FALSE]
   # the cap lesson from .admCovDirNodes, over the joint space: a direction
   # absorbs (n_eta + pc)/r axes, so it needs that much more resolution than one
-  m <- jc[["m"]] %||% .admCovDirNodes(jc$n_nodes, jc[["nl_m"]] %||% jc$nl, r)
+  m <- jc[["m"]] %||% min(101L, as.integer(ceiling(
+    ((jc$eta_nodes %||% jc$n_nodes) * jc$ne +
+       jc$n_nodes * (jc$pc_m %||% jc$pc)) / r)))
   nl_c <- jc$n_cell %||% 1L
   if (m^r * nl_c > jc$max_rows) return(NULL)
   g  <- .adghNodeGrid(m, r)
@@ -3837,30 +3848,29 @@ print.covDist <- function(x, ...) {
   if (is.null(jc)) return(NULL)
   B0 <- .admJointB(jc, st, L, jc$Xi)
   if (is.null(B0)) return(NULL)
+  cl_list <- jc$cell_list %||% list(list())
+  invariant <- function(sp, B) {
+    if (length(cl_list) == 1L) return(TRUE)
+    all(vapply(cl_list[-1L], function(cc) {
+      Bk <- .admJointB(jc, sp, L, jc$Xi, cc)
+      !is.null(Bk) && isTRUE(all.equal(B, Bk, tolerance = 1e-6,
+                                       check.attributes = FALSE))
+    }, logical(1)))
+  }
   jc$r <- .admCollapseRank(B0, st, jc$struct_names %||% character(0),
-                           function(sp) .admJointB(jc, sp, L, jc$Xi))
+                           function(sp) .admJointB(jc, sp, L, jc$Xi),
+                           invariant)
   if (is.null(jc$r) || jc$r < 1L || jc$r > jc$nl) return(NULL)
   jd <- .admJointDesign(jc, st, L)
   if (is.null(jd)) return(NULL)
   jc$m <- jd$m
   # FREEZE the point the loading is read at, with the rank and the node count.
   jc$z0 <- jc$z0[jd$at, , drop = FALSE]
-  cl_list <- jc$cell_list %||% list(list())
   # THE ROTATION MUST NOT DIFFER BETWEEN STRATA. A covariate-by-stratum
   # interaction -- (WT/70)^(b + c*SEX) -- has a direction that changes cell to
   # cell, so a single shared design would be the right design in one cell and
   # the wrong one in all the others. Re-probe in each and require the same
   # loadings, as .admCovCollapse does.
-  if (length(cl_list) > 1L) {
-    B0 <- .admJointB(jc, st, L, jc$Xi, cl_list[[1L]])
-    if (is.null(B0)) return(NULL)
-    for (cc in cl_list[-1L]) {
-      Bk <- .admJointB(jc, st, L, jc$Xi, cc)
-      if (is.null(Bk) || !isTRUE(all.equal(B0, Bk, tolerance = 1e-6,
-                                           check.attributes = FALSE)))
-        return(NULL)
-    }
-  }
   # the truth to score against: a large probe in the SAME latent space
   Zv <- jc$Xv[, jc$ne + seq_len(jc$pc), drop = FALSE] %*% jc$Lc
   Ev <- jc$Xv[, seq_len(jc$ne), drop = FALSE] %*% t(L)
