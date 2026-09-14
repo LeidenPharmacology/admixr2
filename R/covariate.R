@@ -509,7 +509,7 @@
         # NOT MESSAGED. Which reduction a study gets is an internal decision
         # the caller did not make and cannot act on, and announcing one per
         # study made an ordinary fit noisy. It is recorded on the study --
-        # .adm_cov_joint carries r, m and the frozen base point -- which is
+        # .adm_cov_joint carries r, m and the certified base points -- which is
         # what an inspecting caller reads.
       }
     }
@@ -3048,14 +3048,9 @@ print.covDist <- function(x, ...) {
   # signal. One SHARED point, not one per column, because B has to be the
   # loading matrix AT a latent point for its singular values to be comparable.
   #
-  # THE SCALE IS TAKEN AT THAT POINT AND NOWHERE ELSE. This is the difference
-  # between a rule and a rule that happens to work: admission passes several
-  # base points and a refresh passes the ONE that was frozen, so any scale
-  # derived from the SET -- "is this column positive over the base points?",
-  # max|p| over them -- silently answers differently in the two calls, and the
-  # invariance re-probe then compares two loadings that differ only in their
-  # normalisation. Reading the scale at i0 alone makes the refresh reproduce
-  # admission exactly, because it is the same latent point.
+  # THE SCALE IS TAKEN AT THE SELECTED POINT AND NOWHERE ELSE. Admission and
+  # refresh both retain the same candidate points, so a stationary derivative
+  # at one of them cannot erase a real direction.
   rel <- vapply(seq_len(m), function(k) max(abs(P0[, k]), 1e-300), numeric(1))
   # the argmax is a SELECTION, so a column-constant normaliser is enough for it
   tot <- rowSums(matrix(vapply(seq_len(m), function(k)
@@ -3254,11 +3249,9 @@ print.covDist <- function(x, ...) {
   # .adghGrid turns that into an unsolvable point.
   .stale <- function(x) { if (!is.null(x)) x$stale <- TRUE; x }
   if (is.null(co) || is.null(co$pr) || is.null(st)) return(.stale(co))
-  # The direction is read at the SAME base point admission read it at, so a
-  # refresh differs from admission only through the thetas -- which is the one
-  # thing it is meant to track. The certificate is not re-run: it is structural,
-  # settled at admission, and re-deciding it per call is what `routes` used to
-  # guard against.
+  # Reuse admission's candidate points so a link becoming stationary at one
+  # point does not turn an active reader into a constant. Rank and node count
+  # remain fixed; only the direction is re-aimed.
   B <- .admCovGradB(function(Z)
          .admCovProbeAt(co$pr, st, 0, co$cell_list[[1L]],
                         .admCovXFromZ(co$cd, co$cn, Z)),
@@ -3320,7 +3313,7 @@ print.covDist <- function(x, ...) {
 # pc/r is how many axes each direction absorbs on average, so r == pc recovers
 # cov_nodes exactly and no collapse claims more than it merged.
 .admCovDirNodes <- function(n_nodes, pc, r)
-  min(101L, as.integer(ceiling(as.numeric(n_nodes) * pc / max(r, 1L))))
+  ceiling(as.numeric(n_nodes) * pc / max(r, 1L))
 
 .admCovCollapse <- function(ui, pinfo, cov_dist, n_nodes, n_probe = 128L,
                             max_rows = 20000L, n_ver = 8192L,
@@ -3427,12 +3420,14 @@ print.covDist <- function(x, ...) {
   # loadings.
   # ... or with the STRATUM: a covariate-by-SEX interaction has a direction that
   # differs cell to cell, and one shared design would be wrong in all but one.
-  chk <- lapply(seq_along(pinfo$eta_col_names), function(j) {
-    x <- numeric(length(pinfo$eta_col_names)); x[j] <- 0.5
-    list(x, cell_list[[1L]])
-  })
-  if (length(cell_list) > 1L)
-    chk <- c(chk, lapply(cell_list[-1L], function(cl) list(0, cl)))
+  chk <- list()
+  for (cl in cell_list) {
+    chk[[length(chk) + 1L]] <- list(0, cl)
+    for (j in seq_along(pinfo$eta_col_names)) {
+      x <- numeric(length(pinfo$eta_col_names)); x[j] <- 0.5
+      chk[[length(chk) + 1L]] <- list(x, cl)
+    }
+  }
   # The relative gradient makes the ETA half of this pass by construction for
   # the ordinary multiplicative form -- see .admCovGradB -- which is the point:
   # it used to fail there for every single-index model. What it still catches is
@@ -3452,11 +3447,6 @@ print.covDist <- function(x, ...) {
                         function(sp) gradB(cell_list[[1L]], st_use = sp),
                         invariant)
   if (is.null(r)) return(NULL)
-  # Freeze only AFTER every structural and eta probe has certified the loading.
-  # Narrowing before those probes reduced the certificate to one point, where
-  # any smooth nonlinear reader has a locally constant gradient direction.
-  z0 <- z0[attr(B, "at"), , drop = FALSE]
-
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || !length(sv$d)) return(NULL)
   # r == pc is refused: no rank reduction to make, and with the node search gone
@@ -3795,9 +3785,9 @@ print.covDist <- function(x, ...) {
   U <- sv$u[, seq_len(r), drop = FALSE]
   # the cap lesson from .admCovDirNodes, over the joint space: a direction
   # absorbs (n_eta + pc)/r axes, so it needs that much more resolution than one
-  m <- jc[["m"]] %||% min(101L, as.integer(ceiling(
+  m <- jc[["m"]] %||% ceiling(
     ((jc$eta_nodes %||% jc$n_nodes) * jc$ne +
-       jc$n_nodes * (jc$pc_m %||% jc$pc)) / r)))
+       jc$n_nodes * (jc$pc_m %||% jc$pc)) / r)
   nl_c <- jc$n_cell %||% 1L
   if (m^r * nl_c > jc$max_rows) return(NULL)
   g  <- .adghNodeGrid(m, r)
@@ -3864,8 +3854,6 @@ print.covDist <- function(x, ...) {
   jd <- .admJointDesign(jc, st, L)
   if (is.null(jd)) return(NULL)
   jc$m <- jd$m
-  # FREEZE the point the loading is read at, with the rank and the node count.
-  jc$z0 <- jc$z0[jd$at, , drop = FALSE]
   # THE ROTATION MUST NOT DIFFER BETWEEN STRATA. A covariate-by-stratum
   # interaction -- (WT/70)^(b + c*SEX) -- has a direction that changes cell to
   # cell, so a single shared design would be the right design in one cell and

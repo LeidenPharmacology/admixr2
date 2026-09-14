@@ -343,6 +343,18 @@
   if (!.admParsFinite(pars, pinfo))
     return(list(grad = stats::setNames(rep(NA_real_, length(p)), names(p)),
                 nll = Inf))
+  # A correlated covariate-only collapse preserves the current index law, but
+  # its minimum-norm preimage does not preserve coefficient sensitivities.
+  # Differentiate the scored objective until that conditional derivative is
+  # carried analytically. The joint collapse works in whitened coordinates and
+  # does not need this fallback.
+  if (any(vapply(studies, function(s) {
+    co <- s[[".adm_cov_collapse"]]
+    !is.null(co) && nrow(co$Rc) > 1L &&
+      any(abs(co$Rc - diag(nrow(co$Rc))) > sqrt(.Machine$double.eps))
+  }, logical(1))))
+    return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                    cores, grad_h), nll = NULL))
   L     <- pars$L
   n_eta <- pinfo$n_eta
   n_s   <- length(pinfo$struct_names)

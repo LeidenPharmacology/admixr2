@@ -158,6 +158,39 @@ test_that("fitted-parameter probes also certify eta and strata", {
   expect_null(admixr2:::.admCovCollapse(ui, pin, cd, 7L))
 })
 
+test_that("eta invariance is certified in every discrete cell", {
+  skip_if_not_installed("randtoolbox")
+  cd <- list(W1 = list(mu = 0, sd = 1), W2 = list(mu = 0, sd = 1),
+             SEX = list(values = c(0, 1), probs = c(.5, .5)))
+  pin <- list(eta_col_names = "eta.cl", n_eta = 1L, struct_names = "b",
+              struct_init = c(b = 1), cov_nodes = 7L)
+  ui <- list(lstExpr = list(quote(
+    cl <- exp(eta.cl + .1 * W1 + b * SEX * eta.cl * W2))),
+    allCovs = names(cd))
+
+  expect_null(admixr2:::.admCovCollapse(ui, pin, cd, 7L))
+})
+
+test_that("refresh retains the certificate points around a stationary link", {
+  skip_if_not_installed("randtoolbox")
+  cd <- list(W1 = list(mu = 0, sd = 1), W2 = list(mu = 0, sd = 1))
+  pin <- list(eta_col_names = character(), n_eta = 0L,
+              struct_names = "b", struct_init = c(b = 0), cov_nodes = 7L)
+  ui <- list(lstExpr = list(quote(cl <- exp((.1 * W1 + .2 * W2 - b)^2))),
+             allCovs = names(cd))
+  co <- admixr2:::.admCovCollapse(ui, pin, cd, 7L)
+  expect_false(is.null(co))
+  expect_gt(nrow(co$z0), 1L)
+
+  for (i in seq_len(nrow(co$z0))) {
+    b <- sum(co$z0[i, ] * c(.1, .2))
+    cr <- admixr2:::.admCovRefresh(co, list(b = b))
+    expect_false(isTRUE(cr$stale))
+    got <- sum(cr$W * exp((.1 * cr$X[, "W1"] + .2 * cr$X[, "W2"] - b)^2))
+    expect_equal(got, exp(b^2 / .9) / sqrt(.9), tolerance = 1e-8)
+  }
+})
+
 test_that("joint sizing includes the requested eta resolution", {
   skip_if_not_installed("randtoolbox")
   cd <- list(WT = list(mu = 0, sd = 1))
@@ -171,6 +204,12 @@ test_that("joint sizing includes the requested eta resolution", {
   expect_equal(jc$m, 38L)
   expect_equal(nrow(admixr2:::.admJointDesign(jc, list(b = .1), matrix(.7))$eta),
                38L)
+
+  jc <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL,
+                                    eta_nodes = 151L)
+  jc <- admixr2:::.admJointAdmit(jc, list(b = .1), matrix(.7))
+  expect_false(is.null(jc))
+  expect_equal(jc$m, 158L)
 })
 
 test_that("an admitted reduction does not retain its product grid", {
