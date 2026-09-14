@@ -717,7 +717,6 @@ print() a single study to check its transcription.
     ev <- s$ev %||% rxode2::et(amt = s$dose)
     if (is.null(s$ui)) {
       # Digitised studies need no generation.
-      # digitised: it IS the data, nothing to generate
       g <- list(E = as.numeric(s$E), V = s$V, n = s$n, times = s$times,
                 ev = ev, v_denom = s$v_denom)
       if (!is.null(s[["population"]])) g[["cov_dist"]] <- s[["population"]]
