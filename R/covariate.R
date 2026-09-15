@@ -525,7 +525,7 @@
         # was -- by the whole cell factor, which is where the discrete levels
         # live. Announcing a number the code did not act on is worse than
         # announcing none.
-        .jc_cost <- .jc$m^.jc$r * max(.jc$n_cell %||% 1L, 1L)
+        .jc_cost <- .admDesignCost(.jc$m, .jc$r, .jc$n_cell)
         if (.jc_cost >= .alt) .jc <- NULL
       }
       if (!is.null(.jc)) {
@@ -3491,6 +3491,15 @@ print.covDist <- function(x, ...) {
 .admCovDirNodes <- function(n_nodes, pc, r)
   ceiling(as.numeric(n_nodes) * pc / max(r, 1L))
 
+# The row count a collapsed design prices out to: m nodes per direction, r
+# directions, crossed with n_cell discrete strata. Shared by .admJointDesign's
+# own row-cap check and .admCheckCovariates's joint-vs-alternative cost
+# comparison -- both need the SAME m^r * n_cell a review already caught
+# disagreeing once (one priced it, a message announced m^r alone, so a design
+# with discrete cells told the user it was using fewer points than it was).
+# One formula now, so there is nowhere left for the two to drift apart.
+.admDesignCost <- function(m, r, n_cell) m^r * max(n_cell %||% 1L, 1L)
+
 .admCovCollapse <- function(ui, pinfo, cov_dist, n_nodes, n_probe = 128L,
                             max_rows = 20000L, n_ver = 8192L,
                             cov_fixed = NULL) {
@@ -3976,7 +3985,7 @@ print.covDist <- function(x, ...) {
     ((jc$eta_nodes %||% jc$n_nodes) * jc$ne +
        jc$n_nodes * (jc$pc_m %||% jc$pc)) / r)
   nl_c <- jc$n_cell %||% 1L
-  if (m^r * nl_c > jc$max_rows) return(NULL)
+  if (.admDesignCost(m, r, nl_c) > jc$max_rows) return(NULL)
   g  <- .adghNodeGrid(m, r)
   Xz <- g$X %*% t(U)                                   # preimage xi = U w
   Xe <- Xz[, seq_len(jc$ne), drop = FALSE]
