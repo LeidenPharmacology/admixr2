@@ -3682,10 +3682,8 @@ print.covDist <- function(x, ...) {
 
   # The design for one PER-DIRECTION node count.
   build <- function(nv) {
-    gl <- lapply(nv, function(m) .adghNodes1(m))
-    Xg <- as.matrix(expand.grid(lapply(gl, function(g) g$x)))
-    Wg <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
-    dimnames(Xg) <- NULL
+    .gg <- .admNodeGridNv(nv)
+    Xg <- .gg$X; Wg <- .gg$W
     Zg <- Xg %*% Lr %*% t(U)                            # preimage z = U w
     # CLAMP before a margin quantile function sees a probability. pnorm()
     # returns exactly 1 from |z| >= 8.3, and the ROTATION reaches further than
