@@ -3252,6 +3252,29 @@ print.covDist <- function(x, ...) {
   TRUE
 }
 
+# Cross a collapsed continuous covariate design with the EXACT discrete
+# enumeration -- the continuous block cycles fastest, so its weights and the
+# discrete cells' own columns stay aligned row for row with the design `z`
+# a caller needs to carry alongside it (the gradient reads z; the omega
+# chain rule for the joint design needs the analogous eta block, which is
+# NOT this function's problem -- .admJointDesign replicates eta/Xe itself
+# because it has no covariate-only counterpart here).
+#
+# Shared by .admCovCollapse (admission) and .admCovRefresh (every later
+# re-aim): identical seven lines, once building Xc/Wc from a fresh grid and
+# once from a re-aimed one. `ix` is returned so the caller can index its own
+# z-matrix by the same replication without recomputing it.
+.admCrossDiscreteCov <- function(Xc, Wc, cells, pcell, dn, nms) {
+  nq <- nrow(Xc); nl <- max(nrow(cells), 1L)
+  ix <- rep(seq_len(nq), times = nl)
+  Xf <- Xc[ix, , drop = FALSE]
+  Wf <- Wc[ix] * rep(pcell, each = nq)
+  if (length(dn))
+    Xf <- cbind(Xf, cells[rep(seq_len(nl), each = nq), , drop = FALSE])
+  Xf <- Xf[, nms, drop = FALSE]
+  list(X = Xf, W = Wf / sum(Wf), ix = ix, n_cell = nl)
+}
+
 # -- Dimension collapse: cost scales with the RANK, not the covariate count ----
 #
 # p covariates reaching the model through r < p independent scalars make an
@@ -3436,14 +3459,8 @@ print.covDist <- function(x, ...) {
   # solve rejects that region anyway, so the caller reports Inf there.
   if (!all(is.finite(Xc))) return(.stale(co))
   Wc <- Wg / sum(Wg)
-  nq <- nrow(Xc); nl <- max(nrow(co$cells), 1L)
-  ix <- rep(seq_len(nq), times = nl)
-  Xf <- Xc[ix, , drop = FALSE]
-  Wf <- Wc[ix] * rep(co$pcell, each = nq)
-  if (length(co$dn))
-    Xf <- cbind(Xf, co$cells[rep(seq_len(nl), each = nq), , drop = FALSE])
-  Xf <- Xf[, co$nms, drop = FALSE]
-  co$X <- Xf; co$W <- Wf / sum(Wf); co$z <- Zc[ix, , drop = FALSE]
+  cr <- .admCrossDiscreteCov(Xc, Wc, co$cells, co$pcell, co$dn, co$nms)
+  co$X <- cr$X; co$W <- cr$W; co$z <- Zc[cr$ix, , drop = FALSE]
   co$U <- U; co$Lr <- Lr
   co$stale <- NULL
   co
@@ -3695,14 +3712,8 @@ print.covDist <- function(x, ...) {
   Xc <- dd$X; Wc <- dd$W; Zc <- dd$z
 
   # cross the collapsed continuous design with the EXACT discrete enumeration
-  nq <- nrow(Xc); nl <- max(nrow(cells), 1L)
-  ix <- rep(seq_len(nq), times = nl)
-  Xf <- Xc[ix, , drop = FALSE]
-  Wf <- Wc[ix] * rep(pcell, each = nq)
-  if (length(dn))
-    Xf <- cbind(Xf, cells[rep(seq_len(nl), each = nq), , drop = FALSE])
-  Xf <- Xf[, nms, drop = FALSE]
-  Wf <- Wf / sum(Wf)
+  cr <- .admCrossDiscreteCov(Xc, Wc, cells, pcell, dn, nms)
+  Xf <- cr$X; Wf <- cr$W; ix <- cr$ix
 
   # VERIFY THE DESIGN, NOT THE CERTIFICATE. What the collapse needs is that the
   # reduced design reproduce the LAW of every covariate-reading assignment --
@@ -3733,7 +3744,7 @@ print.covDist <- function(x, ...) {
   # covariance improves ~2x at every sample size, and the covariance is what
   # log|V| + tr(V^-1 V_obs) leans on.
   list(X = Xf, W = Wf, z = Zc[ix, , drop = FALSE],
-       collapsed = TRUE, r = r, p = p, pc = pc, m = ncol(B), n_cell = nl,
+       collapsed = TRUE, r = r, p = p, pc = pc, m = ncol(B), n_cell = cr$n_cell,
        nv = nv,
        U = U, Lr = Lr, cn = cn, dn = dn, cd = cd, nms = nms,
        cells = cells, pcell = pcell,
