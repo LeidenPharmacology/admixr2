@@ -1961,11 +1961,49 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # returns it as ~1e-16 out of the eigen decomposition, so without the snap the same point arrives under
 # several keys and the grid comes back with spurious rows carrying split weights (measured: 7 rows where the
 # rule has 5, at p = 2 level 2).
+# The admissible multi-indices for the Smolyak rule, WITHOUT the level^d
+# tensor product .admSparseNodes used to build before filtering it down.
+#
+# Every i in {1,...,level}^d needs Lo <= sum(i) <= Hi, and with d = n_eta + p
+# ordinary (6 etas + 6 covariates is not an exotic model), level^d at level =
+# 5 is 5^12 = 244M rows -- built and thrown away almost entirely, unconditional
+# at admission, per study, before anything cheap could refuse the joint. The
+# `tryCatch(error = NULL)` around the caller turned the resulting allocation
+# failure into a silent fallback to Sobol, so it presented as a stall rather
+# than an error.
+#
+# Because each i_j >= 1, sum(i) >= d already, so with Lo = level (from
+# L - d + 1 = (d+level-1) - d + 1 = level) the admissible sums sit in
+# [max(level, d), d+level-1] -- a band of width level-1 across the cube, and
+# the count of multi-indices in it grows POLYNOMIALLY in d for fixed level
+# (compositions of a near-constant sum into d parts), not exponentially.
+# Building the index set one dimension at a time and dropping any partial row
+# whose sum cannot reach that band from the dimensions still to come produces
+# exactly the same rows .admSparseNodes filtered out of level^d, at the cost
+# of the admissible set itself rather than the full cube.
+.admSparseIdx <- function(d, level, Lo, Hi) {
+  cur <- matrix(integer(0), 1L, 0L)   # one empty partial row to start from
+  cs  <- 0L                           # its running sum
+  for (j in seq_len(d)) {
+    rem <- d - j                      # dimensions still to place after this one
+    parts <- vector("list", level); sums <- vector("list", level)
+    for (v in seq_len(level)) {
+      s <- cs + v
+      keep <- s + rem * 1L <= Hi & s + rem * level >= Lo
+      if (!any(keep)) next
+      parts[[v]] <- cbind(cur[keep, , drop = FALSE], v)
+      sums[[v]]  <- s[keep]
+    }
+    cur <- do.call(rbind, parts)
+    if (is.null(cur) || !nrow(cur)) return(matrix(integer(0), 0L, d))
+    cs <- unlist(sums, use.names = FALSE)
+  }
+  cur[cs >= Lo & cs <= Hi, , drop = FALSE]
+}
+
 .admSparseNodes <- function(d, level) {
   L   <- d + level - 1L
-  idx <- as.matrix(expand.grid(rep(list(seq_len(level)), d),
-                               KEEP.OUT.ATTRS = FALSE))
-  idx <- idx[rowSums(idx) >= L - d + 1L & rowSums(idx) <= L, , drop = FALSE]
+  idx <- .admSparseIdx(d, level, L - d + 1L, L)
   gs  <- lapply(.ADM_SPARSE_GROWTH[seq_len(level)], function(n) {
     g <- .adghNodes1(n); g$x[abs(g$x) < 1e-12] <- 0; g })
   env <- new.env(hash = TRUE, parent = emptyenv())

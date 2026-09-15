@@ -1,6 +1,7 @@
 test_that("correlated covariate collapse differentiates the scored objective", {
   skip_on_cran()
   skip_if_not_installed("rxode2")
+  skip_if_not_installed("randtoolbox")
   f <- function() {
     ini({ b1 <- .2; b2 <- .1; a <- .2; eta.a ~ .09 })
     model({ x <- exp(eta.a)
