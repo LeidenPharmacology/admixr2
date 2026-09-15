@@ -50,13 +50,63 @@
 
 # Tensor-product GH grid for n_eta dimensions.
 # Returns X (n_node x n_eta standard-normal nodes) and W (length n_node weights).
+#
+# Memoised, same pattern and same cache env as .adghNodes1 (which this calls):
+# depends on nothing but (m, n_eta), and .admCovRefresh/.admJointDesign both
+# call this (or the equivalent hand-rolled expand.grid) on EVERY objective
+# evaluation, since rank and node count are frozen at admission -- only the
+# ROTATION applied on top of this grid depends on the current parameters. The
+# grid itself is pure overhead when rebuilt: measured 68.6 ms/call at r=4,
+# m=15 (50625 rows, expand.grid + a row-wise apply for the weights), against
+# an rxSolve() call's ~11 ms baseline. Rebuilt on every gradient AND every NLL
+# evaluation of a fit using the joint or covariate collapse, it was larger
+# than the solve it sits beside.
 .adghNodeGrid <- function(m, n_eta) {
   if (n_eta == 0L) return(list(X = matrix(0, 1L, 0L), W = 1))
+  .env <- tryCatch(get(".adm_node_env", envir = asNamespace("admixr2")),
+                   error = function(e) NULL)
+  .key <- paste0("ghgrid_", m, "_", n_eta)
+  if (!is.null(.env)) {
+    .hit <- tryCatch(get(.key, envir = .env, inherits = FALSE),
+                      error = function(e) NULL)
+    if (!is.null(.hit)) return(.hit)
+  }
   g <- .adghNodes1(m)
   X <- as.matrix(expand.grid(rep(list(g$x), n_eta)))
   W <- as.numeric(apply(expand.grid(rep(list(g$w), n_eta)), 1L, prod))
   dimnames(X) <- NULL
-  list(X = X, W = W)
+  out <- list(X = X, W = W)
+  if (!is.null(.env)) assign(.key, out, envir = .env)
+  out
+}
+
+# As .adghNodeGrid, but for PER-DIRECTION node counts rather than one shared
+# `m` repeated `n_eta` times -- what .admCovRefresh needs for a collapsed
+# design's `nv`. .admCovDirNodes always returns the same count for every
+# direction today, so `.adghNodeGrid(nv[1], length(nv))` would currently
+# answer identically, but this does not assume that invariant holds forever;
+# it is keyed on the exact vector instead. Same cache env and pattern as
+# .adghNodeGrid, which .admCovRefresh used to reimplement inline (a third
+# copy of the same expand.grid/apply construction, rebuilt on every
+# objective evaluation despite `nv` being frozen at admission).
+.admNodeGridNv <- function(nv) {
+  d <- length(nv)
+  if (d == 0L) return(list(X = matrix(0, 1L, 0L), W = 1))
+  .env <- tryCatch(get(".adm_node_env", envir = asNamespace("admixr2")),
+                   error = function(e) NULL)
+  .key <- paste0("ghgridv_", paste(nv, collapse = "_"))
+  if (!is.null(.env)) {
+    .hit <- tryCatch(get(.key, envir = .env, inherits = FALSE),
+                      error = function(e) NULL)
+    if (!is.null(.hit)) return(.hit)
+  }
+  gl <- lapply(nv, .adghNodes1)
+  X <- as.matrix(expand.grid(lapply(gl, function(g) g$x)))
+  W <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
+  dimnames(X) <- NULL
+  out <- list(X = X, W = W)
+  if (!is.null(.env)) assign(.key, out, envir = .env)
+  out
 }
 
 # -- Moments -------------------------------------------------------------------

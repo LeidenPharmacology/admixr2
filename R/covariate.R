@@ -3448,10 +3448,8 @@ print.covDist <- function(x, ...) {
   Sr <- t(U) %*% co$Rc %*% U
   Lr <- tryCatch(chol(Sr), error = function(e) NULL)
   if (is.null(Lr)) return(.stale(co))
-  gl <- lapply(co$nv, function(m) .adghNodes1(m))
-  Xg <- as.matrix(expand.grid(lapply(gl, function(g) g$x)))
-  Wg <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
-  dimnames(Xg) <- NULL
+  .gg <- .admNodeGridNv(co$nv)
+  Xg <- .gg$X; Wg <- .gg$W
   Zc <- Xg %*% Lr %*% t(U)
   Xc <- .admCovXFromZ(co$cd, co$cn, Zc)
   # A refresh that cannot evaluate can only happen where the parameter
