@@ -307,6 +307,30 @@
   })
 }
 
+# WHICH covariate design governs a study, in the exact priority .adghGrid's
+# dispatch resolves it in: joint beats an explicit `cov_integration = "sparse"`
+# beats the covariate-only collapse beats the plain grid. Pure in (s, pinfo) --
+# no re-aim, no rxSolve -- so any consumer that only needs to know WHICH
+# design is active (not its current, parameter-dependent shape) reads this
+# instead of re-deriving the same priority order by hand.
+#
+# .adghGrid's own dispatch chain is NOT rewritten to call this -- it is the
+# hottest path in the estimator and already implements the same order inline,
+# correctly. This exists so a SECOND consumer never has to reimplement that
+# order and risk drifting from it, which is exactly what happened once
+# already: the FD-gradient fallback in .adghGradNLL checked `.adm_cov_collapse`
+# alone, without excluding a study where `.adm_cov_joint` -- which .adghGrid
+# actually prefers -- was also attached (both are legitimately attached
+# together; see the comment where .adm_cov_collapse is set, in
+# .admCheckCovariates below).
+.admCovKind <- function(s, pinfo) {
+  if (is.null(s) || is.null(s[["cov_dist"]])) return("rows")
+  if (!is.null(s[[".adm_cov_joint"]])) return("joint")
+  if (identical(pinfo$cov_integration %||% "on", "sparse")) return("sparse")
+  if (!is.null(s[[".adm_cov_collapse"]])) return("collapse")
+  "grid"
+}
+
 # `est` goes LAST, and defaults to NULL meaning "build everything" -- the historical behaviour, which every
 # Tier-1 mock and direct call relies on.
 .admCheckCovariates <- function(.ui, pinfo, studies, est = NULL) {
@@ -513,12 +537,25 @@
         # what an inspecting caller reads.
       }
     }
-    # ATTACHED WHENEVER IT IS FOUND, even if the joint also admitted. The joint
-    # subsumes it and .adghGrid prefers the joint, so carrying both costs
-    # nothing and keeps the cheaper design available if the joint is later
-    # refused at a parameter the admission check did not see. Making this
-    # conditional on the joint being absent lost the record and, where the joint
-    # was then not used, dropped the study to the full product grid.
+    # ATTACHED WHENEVER IT IS FOUND, even if the joint also admitted. .adghGrid
+    # prefers the joint and NEVER reads .adm_cov_collapse for a study that
+    # carries one -- its joint branch returns unconditionally, success or
+    # `failed = TRUE`, precisely BECAUSE falling through to a different design
+    # with a different row count would step the objective mid-optimisation
+    # (see the note at .adghGrid's joint branch). So this is not a live
+    # runtime fallback -- an earlier version of this comment claimed one, and
+    # was wrong; there is no code path that ever reads a study's
+    # .adm_cov_collapse once its .adm_cov_joint is set.
+    #
+    # It is kept for INSPECTION: a caller reading the study object (or the
+    # test suite verifying .admCovCollapse's own admission logic, e.g. a model
+    # where an eta and several covariates sit on DIFFERENT parameters with no
+    # shared direction -- .m3 in test-integration-covariate.R -- where the
+    # joint independently finds a different, also-valid reduction) can see
+    # every reduction that was independently valid, not only the one the fit
+    # used. Costs nothing to keep (a probe and an SVD, already paid for by the
+    # time we get here) and dropping it loses that record with no offsetting
+    # gain, since .adghGrid does not consult it in that case anyway.
     if (!is.null(.co)) studies[[nm]]$.adm_cov_collapse <- .co
   }
 
@@ -2030,6 +2067,30 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   list(X = matrix(X, sum(ok), d), W = unname(W[ok]))
 }
 
+# The deterministic verification reference used by both .admCovCollapse (over
+# the covariate block alone) and .admJointCollapse (over the covariate AND
+# eta block together): a Gauss-Hermite product rule where it is affordable,
+# the Smolyak sparse rule otherwise -- see .admSparseNodes for why level = 5
+# no longer costs level^d rows to build. Was two copies of the same seven
+# lines differing only in which dimension they were called with; a review
+# already caught them disagreeing once elsewhere on this PR (the m^r * n_cell
+# pricing), which is what two copies of one formula eventually do.
+#
+# Returns list(X, W) with W already unit-sum, or NULL if neither rule is
+# usable at this d and n_ver -- callers differ on what NULL means (one gives
+# up, the other falls back to a Sobol sample), so that choice stays with them.
+.admVerifyGrid <- function(d, n_ver, level = .ADM_JOINT_VER_LEVEL) {
+  mv <- min(40L, as.integer(floor(n_ver^(1 / d))))
+  gv <- NULL
+  if (mv >= 15L) gv <- tryCatch(.adghNodeGrid(mv, d), error = function(e) NULL)
+  if (is.null(gv))
+    gv <- tryCatch(.admSparseNodes(d, level), error = function(e) NULL)
+  if (is.null(gv) || is.null(gv$X) || !nrow(gv$X) ||
+      !all(is.finite(gv$X)) || !all(is.finite(gv$W)) || sum(gv$W) <= 0)
+    return(NULL)
+  list(X = gv$X, W = gv$W / sum(gv$W))
+}
+
 # Call a user-supplied `joint` sampler and hold it to its contract.
 
 # Two sites in .admCovGrid did this identically: the discExact branch, which crosses an enumerated discrete
@@ -3159,6 +3220,38 @@ print.covDist <- function(x, ...) {
   r
 }
 
+# VERIFY THE DESIGN, NOT THE CERTIFICATE. What a collapse needs is that the
+# reduced design reproduce the LAW of every covariate-reading assignment --
+# that is the property, and every affinity or single-index test is only a
+# proxy for it. So evaluate the assignments at the design points and compare
+# their weighted moments (mean, second moment, and the reciprocal where it is
+# defined -- a PK parameter enters the prediction as both v and 1/v) against a
+# large probe, which is the truth here. Costs no solves -- these are R
+# evaluations of the parameter assignment, not rxSolve calls.
+#
+# Shared by .admCovCollapse's `ver()` and .admJointAdmit's per-cell loop: both
+# used to carry this exact seven-line comparison inline, once against a
+# probe fixed for the whole admission and once against a probe re-sliced per
+# discrete cell. Same formula either way -- only what Pr/Pd/Wr/Wd are built
+# from differs, and that stays with the caller.
+.admMomentsMatch <- function(Pr, Pd, Wr, Wd, tol) {
+  if (is.null(Pr) || is.null(Pd) || ncol(Pr) != ncol(Pd)) return(FALSE)
+  for (k in seq_len(ncol(Pr))) {
+    tgt <- Pr[, k]; got <- Pd[, k]
+    mt  <- sum(Wr * tgt)
+    sc  <- max(sqrt(max(sum(Wr * (tgt - mt)^2), 0)), abs(mt),
+               .Machine$double.xmin)
+    mm  <- list(function(x) x, function(x) x^2)
+    if (all(tgt > 0) && all(got > 0)) mm <- c(mm, list(function(x) 1 / x))
+    for (f in mm) {
+      a1 <- sum(Wr * f(tgt)); a2 <- sum(Wd * f(got))
+      if (!is.finite(a1) || !is.finite(a2)) return(FALSE)
+      if (abs(a2 - a1) / max(abs(a1), sc) > tol) return(FALSE)
+    }
+  }
+  TRUE
+}
+
 # -- Dimension collapse: cost scales with the RANK, not the covariate count ----
 #
 # p covariates reaching the model through r < p independent scalars make an
@@ -3444,18 +3537,11 @@ print.covDist <- function(x, ...) {
   if (!all(is.finite(A))) return(NULL)
   # A deterministic verification rule over the FULL latent space. Sobol was a
   # noisy yardstick for tail-dominated lognormal moments and refused exact
-  # rank-one designs as effects grew. This is the same GH/Smolyak reference the
-  # joint collapse uses; n_ver is a point budget.
-  mv <- min(40L, as.integer(floor(n_ver^(1 / pc))))
-  gv <- NULL
-  if (mv >= 15L) gv <- tryCatch(.adghNodeGrid(mv, pc), error = function(e) NULL)
-  if (is.null(gv))
-    gv <- tryCatch(.admSparseNodes(pc, .ADM_JOINT_VER_LEVEL),
-                   error = function(e) NULL)
-  if (is.null(gv) || is.null(gv$X) || !nrow(gv$X) ||
-      !all(is.finite(gv$X)) || !all(is.finite(gv$W)) || sum(gv$W) <= 0)
-    return(NULL)
-  Wv <- gv$W / sum(gv$W)
+  # rank-one designs as effects grew. This is the same GH/Smolyak reference
+  # .admJointCollapse uses -- see .admVerifyGrid; n_ver is a point budget.
+  gv <- .admVerifyGrid(pc, n_ver)
+  if (is.null(gv)) return(NULL)
+  Wv <- gv$W
   Zv <- gv$X %*% Lc
   Av <- .admCovXFromZ(cd, cn, Zv)
   if (!all(is.finite(Av))) return(NULL)
@@ -3634,25 +3720,7 @@ print.covDist <- function(x, ...) {
     Pd <- probe_at(Xc, cell)
     if (is.null(Pd)) return(FALSE)
     Pr <- probe_at(Av, cell)
-    if (is.null(Pr)) return(FALSE)
-    for (k in seq_len(ncol(Pr))) {
-      tgt <- Pr[, k]; got <- Pd[, k]
-      mt  <- sum(Wv * tgt)
-      sc  <- max(sqrt(max(sum(Wv * (tgt - mt)^2), 0)), abs(mt),
-                 .Machine$double.xmin)
-      # first two moments, and the reciprocal where it is defined: a PK
-      # parameter enters the prediction as both v and 1/v
-      mm <- list(function(x) x, function(x) x^2)
-      if (all(tgt > 0) && all(got > 0)) mm <- c(mm, list(function(x) 1 / x))
-      for (f in mm) {
-        a1 <- sum(Wv * f(tgt)); a2 <- sum(wcell * f(got))
-        if (!is.finite(a1) || !is.finite(a2)) return(FALSE)
-        # 5e-3 leaves room for the sparse high-dimensional reference while
-        # remaining far below a genuine failure, which is of order 1.
-        if (abs(a2 - a1) / max(abs(a1), sc) > 5e-3) return(FALSE)
-      }
-    }
-    TRUE
+    .admMomentsMatch(Pr, Pd, Wv, wcell, 5e-3)
   }
   for (i in seq_along(cell_list))
     if (!ver(cell_list[[i]], Wc)) return(NULL)
@@ -3810,16 +3878,10 @@ print.covDist <- function(x, ...) {
   # deterministic rule, and is only a Sobol count on the path where neither rule
   # builds. Sobol is therefore not generated at all in the common case -- it used
   # to be built (8192 x nl, plus the qnorm) and then immediately overwritten.
-  mv <- min(40L, as.integer(floor(n_ver^(1 / nl))))
-  .gv <- NULL
-  if (mv >= 15L) .gv <- tryCatch(.adghNodeGrid(mv, nl), error = function(e) NULL)
-  if (is.null(.gv))
-    .gv <- tryCatch(.admSparseNodes(nl, .ADM_JOINT_VER_LEVEL),
-                    error = function(e) NULL)
-  if (!is.null(.gv) && !is.null(.gv$X) && nrow(.gv$X) > 0L &&
-      all(is.finite(.gv$X)) && all(is.finite(.gv$W)) && sum(.gv$W) > 0) {
+  .gv <- .admVerifyGrid(nl, n_ver)
+  if (!is.null(.gv)) {
     Xv <- .gv$X
-    Wv <- .gv$W / sum(.gv$W)
+    Wv <- .gv$W
   } else {
     Xv <- mkXi(n_ver, 17L)
     if (is.null(Xv)) return(NULL)
@@ -3999,18 +4061,7 @@ print.covDist <- function(x, ...) {
     # .admJointCollapse could afford one -- see the table there. `Wv` is uniform
     # on the Sobol fallback, which is what mean() was.
     Wv <- jc$Wv %||% rep(1 / nrow(Pv), nrow(Pv))
-    for (k in seq_len(ncol(Pv))) {
-      tgt <- Pv[, k]; got <- Pd[, k]
-      sc  <- max(sqrt(max(sum(Wv * (tgt - sum(Wv * tgt))^2), 0)),
-                 abs(sum(Wv * tgt)), .Machine$double.xmin)
-      mm  <- list(function(x) x, function(x) x^2)
-      if (all(tgt > 0) && all(got > 0)) mm <- c(mm, list(function(x) 1 / x))
-      for (f in mm) {
-        a1 <- sum(Wv * f(tgt)); a2 <- sum(Wc * f(got))
-        if (!is.finite(a1) || !is.finite(a2)) return(NULL)
-        if (abs(a2 - a1) / max(abs(a1), sc) > tol) return(NULL)
-      }
-    }
+    if (!.admMomentsMatch(Pv, Pd, Wv, Wc, tol)) return(NULL)
   }
   jc
 }

@@ -120,6 +120,13 @@
     # The failure mode is an affine_log probe going non-positive, which is
     # exactly the region every other unsolvable point reports as Inf -- so mark
     # the grid and let the moment functions do that.
+    #
+    # THIS RETURNS UNCONDITIONALLY -- success or `failed = TRUE` -- and never
+    # falls through to read a study's .adm_cov_collapse, for the reason just
+    # given. .admCheckCovariates keeps .adm_cov_collapse attached alongside
+    # .adm_cov_joint anyway, but only for INSPECTION; do not read it here as a
+    # fallback design, and do not "fix" that by making one -- it would
+    # reintroduce the exact mid-fit row-count change this comment refuses.
     if (is.null(jd)) return(list(failed = TRUE))
     return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
   }
@@ -350,7 +357,8 @@
   # does not need this fallback.
   if (any(vapply(studies, function(s) {
     co <- s[[".adm_cov_collapse"]]
-    !is.null(co) && is.null(s[[".adm_cov_joint"]]) && nrow(co$Rc) > 1L &&
+    identical(.admCovKind(s, pinfo), "collapse") && !is.null(co) &&
+      nrow(co$Rc) > 1L &&
       any(abs(co$Rc - diag(nrow(co$Rc))) > sqrt(.Machine$double.eps))
   }, logical(1))))
     return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
