@@ -350,7 +350,7 @@
   # does not need this fallback.
   if (any(vapply(studies, function(s) {
     co <- s[[".adm_cov_collapse"]]
-    !is.null(co) && nrow(co$Rc) > 1L &&
+    !is.null(co) && is.null(s[[".adm_cov_joint"]]) && nrow(co$Rc) > 1L &&
       any(abs(co$Rc - diag(nrow(co$Rc))) > sqrt(.Machine$double.eps))
   }, logical(1))))
     return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,

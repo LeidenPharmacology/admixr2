@@ -471,7 +471,7 @@
     if (pinfo$n_eta > 0L && !isTRUE(s_nm$is_joint)) {
       .jc <- tryCatch({
         .j0 <- .admJointCollapse(.ui, pinfo, s_nm[["cov_dist"]],
-                                 pinfo$cov_nodes %||% 7L, s_nm, NULL,
+                                 pinfo$cov_nodes %||% 7L,
                                  cov_fixed = s_nm[["cov"]],
                                  eta_nodes = pinfo$n_nodes %||% 5L)
         .p0 <- .admBuildOptVec(pinfo)$p0
@@ -3026,7 +3026,7 @@ print.covDist <- function(x, ...) {
 .ADM_GRAD_TOL <- 1e-6      # on 1 - |cos| between gradient directions
 .ADM_GRAD_ZERO <- 1e-8     # below this a column is constant, not a direction
 
-.admCovGradB <- function(f, z0, h = .ADM_GRAD_H) {
+.admCovGradB <- function(f, z0, h = .ADM_GRAD_H, i0 = NULL) {
   S <- nrow(z0); nl <- ncol(z0)
   ix <- expand.grid(s = seq_len(S), k = seq_len(nl))
   n  <- nrow(ix)
@@ -3051,11 +3051,24 @@ print.covDist <- function(x, ...) {
   # THE SCALE IS TAKEN AT THE SELECTED POINT AND NOWHERE ELSE. Admission and
   # refresh both retain the same candidate points, so a stationary derivative
   # at one of them cannot erase a real direction.
+  #
+  # i0 IS A CALLER-SUPPLIED FREEZE, not just a hint. Every caller that re-aims
+  # an already-admitted design (.admCovRefresh, .admJointDesign, the rank/
+  # invariance probes inside admission itself) passes the i0 admission chose,
+  # so the base point stays the SAME row of z0 across the whole fit. Left NULL
+  # only for the one call that gets to choose it. Without this, a coefficient
+  # moving between calls can flip which candidate point carries the most
+  # signal, rescaling every column of B by a different amount and rotating the
+  # SVD basis of the same column space -- stepping the GH design between
+  # objective evaluations, exactly the failure the `routes` machinery existed
+  # to avoid.
   rel <- vapply(seq_len(m), function(k) max(abs(P0[, k]), 1e-300), numeric(1))
-  # the argmax is a SELECTION, so a column-constant normaliser is enough for it
-  tot <- rowSums(matrix(vapply(seq_len(m), function(k)
-           rowSums(matrix(D[, k], S, nl)^2) / rel[k]^2, numeric(S)), S, m))
-  i0  <- which.max(tot)
+  if (is.null(i0)) {
+    # the argmax is a SELECTION, so a column-constant normaliser is enough for it
+    tot <- rowSums(matrix(vapply(seq_len(m), function(k)
+             rowSums(matrix(D[, k], S, nl)^2) / rel[k]^2, numeric(S)), S, m))
+    i0  <- which.max(tot)
+  }
   B  <- matrix(0, nl, m)
   cs <- rep(1, m)
   for (k in seq_len(m)) {
@@ -3272,7 +3285,7 @@ print.covDist <- function(x, ...) {
   B <- .admCovGradB(function(Z)
          .admCovProbeAt(co$pr, st, 0, co$cell_list[[1L]],
                         .admCovXFromZ(co$cd, co$cn, Z)),
-         co$z0)
+         co$z0, i0 = co[["i0"]])
   if (is.null(B)) return(.stale(co))
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || length(sv$d) < co$r || .admSvdRank(sv) > co$r)
@@ -3419,7 +3432,6 @@ print.covDist <- function(x, ...) {
   probe_gen <- function(eta_at, cell, AA, st_use = st) {
     .admCovProbeAt(pr, st_use, eta_at, cell, AA)
   }
-  probe    <- function(eta_at, cell) probe_gen(eta_at, cell, A)
   probe_at <- function(AA, cell)     probe_gen(0, cell, AA)
   # THE CERTIFICATE, once, at admission. z0[1, ] is the origin -- where every
   # later refresh reads the loading -- and the rest spread over the latent
@@ -3427,11 +3439,23 @@ print.covDist <- function(x, ...) {
   # whole collapse if it does, so there is nothing per-column left to record.
   z0 <- rbind(rep(0, pc), Z[c(1L, 8L, 20L, 50L, 97L) %% n_probe + 1L, ,
                             drop = FALSE])
-  gradB <- function(cell, st_use = st, eta_at = 0)
+  gradB <- function(cell, st_use = st, eta_at = 0, i0 = NULL)
     .admCovGradB(function(ZZ) probe_gen(eta_at, cell,
-                                        .admCovXFromZ(cd, cn, ZZ), st_use), z0)
+                                        .admCovXFromZ(cd, cn, ZZ), st_use), z0,
+                i0 = i0)
   B <- gradB(cell_list[[1L]])
   if (is.null(B)) return(NULL)
+  # FREEZE the base point THE FIRST TIME IT IS CHOSEN. Every later call in this
+  # admission -- the rank probe, the eta/stratum invariance check -- and every
+  # later .admCovRefresh() must read the loading at this same row of z0, or a
+  # coefficient moving between calls flips which candidate point carries the
+  # most signal and rescales B's columns differently, rotating the SVD basis
+  # of the same column space and stepping the GH design between calls.
+  i0 <- attr(B, "at")
+  gradB <- function(cell, st_use = st, eta_at = 0)
+    .admCovGradB(function(ZZ) probe_gen(eta_at, cell,
+                                        .admCovXFromZ(cd, cn, ZZ), st_use), z0,
+                i0 = i0)
   # THE LOADING MUST NOT DEPEND ON THE RANDOM EFFECT. A covariate-by-eta
   # interaction (cl <- exp(tcl + b * WT * eta.cl)) has a direction that moves
   # with eta, and the probe at eta = 0 would report b = 0 -- a collapse onto
@@ -3608,11 +3632,13 @@ print.covDist <- function(x, ...) {
        U = U, Lr = Lr, cn = cn, dn = dn, cd = cd, nms = nms,
        cells = cells, pcell = pcell,
        # everything .admCovRefresh() needs to redo the rotation at the CURRENT
-       # structural thetas. The probe ingredients, not a closure: a closure
+       # structural thetas -- the probe ingredients, not a closure: a closure
        # captures its whole defining environment and has to survive being
-       # stored on the study and shipped to a daemon.
-       pr = pr, st0 = st, Zp = Z, Ap = A, Rc = Rc, cell_list = cell_list,
-       z0 = z0)
+       # stored on the study and shipped to a daemon. st/Z/A themselves are
+       # NOT kept: .admCovRefresh re-derives the loading from `pr` and `st`
+       # (its own argument) alone, so shipping the admission-time struct
+       # thetas and probe matrices to every daemon would be dead payload.
+       pr = pr, Rc = Rc, cell_list = cell_list, z0 = z0, i0 = i0)
 }
 
 # =============================================================================
@@ -3645,7 +3671,8 @@ print.covDist <- function(x, ...) {
 # through L. So it is re-aimed on every objective call, and nothing about the
 # direction is cached. What is fixed at admission is structural only -- the
 # rank, the node count, the certificate.
-.admJointCollapse <- function(ui, pinfo, cov_dist, n_nodes, s, out_var,
+.admJointCollapse <- function(ui, pinfo, cov_dist, n_nodes, s = NULL,
+                              out_var = NULL,
                               n_probe = 512L, max_rows = 20000L,
                               n_ver = 8192L, cov_fixed = NULL,
                               eta_nodes = n_nodes) {
@@ -3780,7 +3807,7 @@ print.covDist <- function(x, ...) {
                             drop = FALSE])
   list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc, ne = ne, pc = pc,
        nl = nl, nl_m = nl_m, pc_m = pcm,
-       Xi = Xi, Xv = Xv, Wv = Wv, out_var = out_var, z0 = z0,
+       Xv = Xv, Wv = Wv, z0 = z0,
        n_nodes = as.integer(n_nodes), eta_nodes = as.integer(eta_nodes),
        max_rows = max_rows, joint = TRUE,
        dn = dn, nms = nms, cells = cells, pcell = pcell,
@@ -3804,19 +3831,25 @@ print.covDist <- function(x, ...) {
 # about what `covariate` means, and the question of whether a model must be
 # mu-referenced at all to collapse, both go away with it -- a model collapses on
 # what it DOES, not on how it was spelled.
-.admJointB <- function(jc, st, L, Xi, cell = NULL, z0 = NULL) {
+.admJointB <- function(jc, st, L, cell = NULL, z0 = NULL, i0 = NULL) {
   cl <- cell %||% jc$cell_list[[1L]]
   f <- function(XX) {
     Zc <- XX[, jc$ne + seq_len(jc$pc), drop = FALSE] %*% jc$Lc
     Et <- XX[, seq_len(jc$ne), drop = FALSE] %*% t(L)
     .admCovProbeAt(jc$pr, st, Et, cl, .admJointCov(jc, Zc))
   }
-  .admCovGradB(f, z0 %||% jc$z0)
+  .admCovGradB(f, z0 %||% jc$z0, i0 = i0)
 }
 
 # Re-aim the joint design at the CURRENT parameters, and build it.
+#
+# i0 is READ from jc, never chosen here: .admJointAdmit() freezes it the first
+# time B is computed, and every later refresh -- this is called once per
+# objective evaluation -- must read the loading at that same base point, or a
+# coefficient moving between calls rescales B's columns differently and steps
+# the GH design between calls.
 .admJointDesign <- function(jc, st, L) {
-  B <- .admJointB(jc, st, L, jc$Xi)
+  B <- .admJointB(jc, st, L, i0 = jc[["i0"]])
   if (is.null(B)) return(NULL)
   sv <- tryCatch(svd(B), error = function(e) NULL)
   if (is.null(sv) || !length(sv$d) || max(sv$d) <= 0) return(NULL)
@@ -3864,8 +3897,7 @@ print.covDist <- function(x, ...) {
   # L too. That term is the quadrature re-choosing itself: the integral is the
   # same for any U spanning B's column space, so it vanishes to the accuracy the
   # design is verified to. FD-checked rather than argued.
-  list(eta = eta, X = Xe, cov_rows = X, W = Wg, r = r, m = m,
-       U = U, d = sv$d, at = attr(B, "at"))
+  list(eta = eta, X = Xe, cov_rows = X, W = Wg, r = r, m = m, U = U)
 }
 
 # Settle everything STRUCTURAL about the joint design, once, and verify it.
@@ -3881,19 +3913,23 @@ print.covDist <- function(x, ...) {
 # first two moments and the reciprocal. Costs no solves.
 .admJointAdmit <- function(jc, st, L, tol = 5e-3) {
   if (is.null(jc)) return(NULL)
-  B0 <- .admJointB(jc, st, L, jc$Xi)
+  B0 <- .admJointB(jc, st, L)
   if (is.null(B0)) return(NULL)
+  # FREEZE the base point here, once -- see .admCovCollapse's identical freeze
+  # and .admJointDesign's use of jc$i0. Every probe below, and every later
+  # refresh, reads the loading at this same row of jc$z0.
+  jc$i0 <- attr(B0, "at")
   cl_list <- jc$cell_list %||% list(list())
   invariant <- function(sp, B) {
     if (length(cl_list) == 1L) return(TRUE)
     all(vapply(cl_list[-1L], function(cc) {
-      Bk <- .admJointB(jc, sp, L, jc$Xi, cc)
+      Bk <- .admJointB(jc, sp, L, cc, i0 = jc$i0)
       !is.null(Bk) && isTRUE(all.equal(B, Bk, tolerance = 1e-6,
                                        check.attributes = FALSE))
     }, logical(1)))
   }
   jc$r <- .admCollapseRank(B0, st, jc$struct_names %||% character(0),
-                           function(sp) .admJointB(jc, sp, L, jc$Xi),
+                           function(sp) .admJointB(jc, sp, L, i0 = jc$i0),
                            invariant)
   if (is.null(jc$r) || jc$r < 1L || jc$r > jc$nl) return(NULL)
   jd <- .admJointDesign(jc, st, L)
