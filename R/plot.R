@@ -626,11 +626,10 @@ head.paged_df <- function(x, n = 6L, ...) {
   # DISCRETE: a covariate with declared levels, or one every study conditions at
   # a point. Swept continuously it draws the model at SEX = 0.37, which is not a
   # patient and not a prediction anyone can act on; its axis is the levels.
-  lev <- unlist(lapply(studies, function(s) s[["cov_dist"]][[cv]]$values))
-  pts <- all(vapply(studies, function(s) {
-    sp <- s[["cov_dist"]][[cv]]
-    is.null(sp) || isTRUE(sp[[".point"]])
-  }, logical(1)))
+  # Through .admCovStudySpec, like `knd` above: one answer per function to where
+  # a study's description of a covariate lives.
+  lev <- unlist(lapply(studies, function(s) .admCovStudySpec(s, cv)$values))
+  pts <- all(knd == "conditional")
   disc <- if (length(lev)) sort(unique(as.numeric(lev)))
           else if (pts) { u <- sort(unique(mid[is.finite(mid)]))
                           if (length(u) <= 8L) u else NULL }
