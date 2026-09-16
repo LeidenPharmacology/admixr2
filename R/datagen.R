@@ -366,20 +366,16 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     grid <- if (control$method == "gh")
       .adghNodeGrid(control$n_nodes, pinfo$n_eta) else NULL
 
-    # Moments (mu, V) for one observed compartment via the chosen method.
-    # A study carrying `cov_dist` is generated MARGINAL over that distribution:
-    # each simulated subject gets its own covariate value, exactly as the
-    # estimator's general path does, so datagen() and the fit integrate the
-    # covariate identically rather than by two constructions that could drift.
-    # This is the ADM idiom -- a published model plus a study DESIGN (its dosing,
-    # its sampling times, its population) produces that study's aggregate data.
+    # Moments (mu, V) for one observed compartment via the chosen method. A
+    # study carrying `cov_dist` is generated MARGINAL over it, each simulated
+    # subject getting its own covariate value -- the ADM idiom: a published
+    # model plus a study DESIGN produces that study's aggregate data, and
+    # datagen()/the fit integrate the covariate identically so they can't drift.
     cov_rows_of <- function(n) {
       if (is.null(s[["cov_dist"]])) return(NULL)
-      # `fo` linearises in the random effects around a single solve and has no
-      # covariate integral at all. `gh` does: .adghGrid crosses the covariate
-      # grid with the eta grid, which is the same construction the estimator
-      # uses, so it needs no samples and adds no Monte Carlo noise to data that
-      # is supposed to BE the reference.
+      # `fo` linearises around a single solve, no covariate integral. `gh`
+      # crosses the covariate grid with the eta grid (.adghGrid), same as the
+      # estimator -- no sampling noise added to data meant to BE the reference.
       if (identical(control$method, "fo"))
         stop(sprintf(paste("Study '%s': `cov_dist` needs datagenControl(method =",
                            "\"mc\") or \"gh\"; the fo moment path integrates over",
@@ -497,12 +493,11 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   stats::setNames(results, unlist(study_names))
 }
 
-# datagen() as a SIMULATOR, not a published source: turning a published model
-# into a study says "this is what that paper's model implies" and gets no SE
-# (no source-parameter uncertainty); this door instead says "pretend a trial
-# of n patients came out like this" and strips .adm_src so it is weighted like
-# ordinary data. Internal on purpose -- exported, it would be a way to ask for
-# the SE the public route withholds.
+# datagen() as a SIMULATOR, not a published source: turning a model into a
+# study says "this is what that paper implies" and gets no SE; this instead
+# says "pretend a trial came out like this" and strips .adm_src so it weighs
+# like ordinary data. Internal on purpose -- exported it would leak the SE the
+# public route withholds.
 .admDatagenSim <- function(...) {
   lapply(datagen(...), function(u) {
     u[[".adm_src"]] <- NULL

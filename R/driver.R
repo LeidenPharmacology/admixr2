@@ -57,16 +57,14 @@
 }
 
 # Turn a fully-populated `.ret` environment into the returned nlmixr2 fit.
-# Caller invariants:
-# - Snapshot `cov_nms` before nlmixr2CreateOutputFromUi (re-dimnames covariance in place).
-# - Compute `.admCovSkip(cov, .ui)` from this fit's covariance (parFixedDf$SE aligns positionally).
-# - Preserve the `.foceiEnv` attribute on class rewrite.
-# `extra_field` is "admExtra", or "adirmcExtra" for adirmc -- deliberately NOT
-# unified: it is a user-visible field on fit$env (plot.admFit resolves both),
-# so renaming it here would be a silent interface change.
+# Caller invariants: snapshot `cov_nms` before nlmixr2CreateOutputFromUi
+# (re-dimnames in place); compute `.admCovSkip` from this fit's cov
+# (parFixedDf$SE aligns positionally); preserve `.foceiEnv` on class rewrite.
+# `extra_field` ("admExtra"/"adirmcExtra") stays split -- it's user-visible on
+# fit$env (plot.admFit resolves both), so unifying it would break the interface.
 #
-# Dummy frame for post-fit solve: populates model covariates with finite values
-# (mean across studies or 1) so rxode2 does not reject missing parameters.
+# Dummy frame for post-fit solve: fills model covariates with finite values
+# (mean across studies, else 1) so rxode2 does not reject missing parameters.
 .admDummyData <- function(.ui, multi_out, studies) {
   d  <- if (multi_out) admData(.admEndpointNames(.ui)) else admData()
   cv <- tryCatch(.ui$allCovs, error = function(e) NULL)

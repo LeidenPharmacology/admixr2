@@ -23,15 +23,12 @@
   value
 }
 
-# Write a compiled-model cache entry: warn once on failure and carry on with
-# the model in memory (non-fatal optimisation). A bare saveRDS used to be
-# either swallowed (restart workers then failed to find the file, far away
-# from the cause) or fatal (a sens-model write failure, wrapped in the
-# caller's own tryCatch, silently dropped adfo to a forward-FD gradient).
+# Write a compiled-model cache entry: warn once on failure and keep the model
+# in memory (non-fatal). A bare saveRDS either surfaced far from the cause
+# (workers restart, can't find the file) or silently dropped adfo to FD grad.
 .admCacheWrite <- function(object, file, what) {
-  # Write to unique tempfile in same directory, then rename atomically to prevent
-  # concurrent readers (e.g. parallel workers) seeing 0-byte or truncated files.
-  # tempfile() uses an internal counter + pid without perturbing R's RNG stream.
+  # Write to a unique tempfile then rename atomically, so concurrent readers
+  # (parallel workers) never see a 0-byte or truncated file.
   .tmp <- tryCatch(
     tempfile(pattern = paste0(basename(file), ".tmp"), tmpdir = dirname(file)),
     error = function(e) NULL)
@@ -47,8 +44,8 @@
   ok <- if (is.null(.tmp)) .fail(simpleError("no writable temporary name")) else
     tryCatch({ suppressWarnings(saveRDS(object, .tmp)); TRUE }, error = .fail)
   if (ok) {
-    # file.rename() returns FALSE/warns on Windows when target is open for reading.
-    # Leaving existing content-addressed entry in place is safe.
+    # file.rename() returns FALSE/warns on Windows if target is open for reading;
+    # leaving the existing content-addressed entry in place is safe.
     ok <- isTRUE(tryCatch(suppressWarnings(file.rename(.tmp, file)),
                           error = function(e) FALSE))
     if (!ok)
