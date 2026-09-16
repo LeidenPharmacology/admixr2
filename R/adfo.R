@@ -47,16 +47,13 @@
 # struct_mat is n_cfg x n_struct (natural scale). Returns a length-n_cfg list of
 # list(mu, J), one per row -- i.e. n_cfg independent FO linearisations.
 #
-# This is the primitive behind the FD batching. Previously each configuration
-# cost its own rxSolve, and under FO every one of those solves carries a single
-# subject: an ~11 ms fixed call cost to do ~0.015 ms of integration. Stacking the
-# configurations as rows collapses them into one call and, as a bonus, finally
-# gives rxSolve's OpenMP something to parallelise over (under FO it previously
-# had exactly one subject, so `cores` did nothing at all).
-#
-# The FD fallback (no sens model) stacks (1 + 2*n_eta) rows per configuration --
-# base plus a +eps and a -eps per eta dimension, the difference being central --
-# so it too is a single solve.
+# This is the primitive behind the FD batching. Previously each configuration cost
+# its own rxSolve, and under FO every one of those carries a single subject: an ~11 ms
+# fixed call cost to do ~0.015 ms of integration. Stacking the configurations as rows
+# collapses them into one call and finally gives rxSolve's OpenMP something to
+# parallelise over. The FD fallback (no sens model) stacks (1 + 2*n_eta) rows per
+# configuration -- base plus a +eps and a -eps per eta dimension -- so it too is a
+# single solve.
 .adfoGetMuJBatch <- function(struct_mat, pinfo, s, sensModel, rxMod, output_var, cores,
                              sigma_var = NULL) {
   n_cfg <- nrow(struct_mat)
@@ -99,13 +96,12 @@
   }
 
   # CENTRAL in eta. The base row stays -- mu = f(theta, 0) is the population
-  # prediction, not just an FD baseline -- so a block is [base, +eps_1..+eps_n,
-  # -eps_1..-eps_n]. Unlike the gradient sites this J feeds V_pred = J Omega J',
-  # so its error lands in the OBJECTIVE, not only in the search direction; a
-  # forward difference carried (eps/2)|f''| of it against central's
-  # (eps^2/6)|f'''|. The extra n_eta rows ride the SAME .admSimulateRows call --
-  # rxSolve cost is ~11 ms per CALL plus ~0.015 ms per row -- so this is close to
-  # free here. .adfoGetMuJJoint pays per solve and is handled there.
+  # prediction, not just an FD baseline -- so a block is
+  # [base, +eps_1..+eps_n, -eps_1..-eps_n]. Unlike the gradient sites this J feeds
+  # V_pred = J Omega J', so its error lands in the OBJECTIVE, not only in the search
+  # direction; a forward difference carried (eps/2)|f''| of it against central's
+  # (eps^2/6)|f'''|. The extra rows ride the SAME .admSimulateRows call, so this is
+  # close to free here. .adfoGetMuJJoint pays per solve and is handled there.
   eps    <- 1e-6
   n_blk  <- 1L + 2L * n_eta                 # base + one +eps and one -eps per dim
   n_row  <- n_cfg * n_blk
@@ -199,18 +195,16 @@
 # (V = J Omega J' + Sigma). Verified empirically: perturbing any omega or sigma
 # parameter leaves mu and J bit-for-bit unchanged.
 #
-# So an FD direction that perturbs an omega or a sigma needs NO solve at all --
-# it reuses the base (mu, J). That is what makes the FD gradient and the NLL-FD
-# Hessian cheap: their solve count collapses to the number of DISTINCT structural
-# vectors they visit, which for the Hessian is far smaller than the number of
-# NLL evaluations.
+# So an FD direction that perturbs an omega or a sigma needs NO solve at all -- it
+# reuses the base (mu, J). That is what makes the FD gradient and the NLL-FD Hessian
+# cheap: their solve count collapses to the number of DISTINCT structural vectors
+# they visit.
 #
-# `cache` is an environment created per top-level call (never persisted across
-# parameter points), so there is no staleness risk.
-# `struct` is the KEY, not the parameters: callers append an estimated Box-Cox /
-# Yeo-Johnson lambda to it, because that lambda reaches rx_pred_ and so the cached
-# (mu, J) is no longer a function of the structural thetas alone. Everything else
-# about FO's "omega/sigma cost no solve" property is unchanged.
+# `cache` is an environment created per top-level call, never persisted across
+# parameter points, so there is no staleness risk. `struct` is the KEY, not the
+# parameters: callers append an estimated Box-Cox / Yeo-Johnson lambda to it, because
+# that lambda reaches rx_pred_ and so the cached (mu, J) is no longer a function of
+# the structural thetas alone.
 .adfoMuJKey <- function(pars, sensModel) {
   .tbn <- if (is.null(sensModel)) NULL else sensModel$pred_tbs$lam_name
   if (!is.null(.tbn) && !is.na(.tbn) && .tbn %in% names(pars$sigma_var))
@@ -280,16 +274,11 @@
 # Gradient of FO NLL w.r.t. optimizer parameter vector p.
 #
 # Omega/sigma: analytical (chain rule through V_pred = J*Omega*J^T + sigma).
-# Struct thetas: central FD of full NLL -- required because J also depends on
-#   theta (V-path: d(J*Omega*J^T)/d(theta) needs second-order sensitivities
-#   unavailable from rxode2).
+# Struct thetas: central FD of the full NLL -- required because J also depends on
+#   theta, and the V-path needs second-order sensitivities rxode2 does not supply.
 #
-# (mu, J) are computed ONCE per study and shared between:
-#   - the FD baseline NLL for struct theta FD
-#   - the analytical omega/sigma gradient
-# This avoids the redundant extra rxSolve that would occur if .adfoNLL() were
-# called separately for the baseline and then .admSimulateSens() called again
-# for the analytical gradient.
+# (mu, J) are computed ONCE per study and shared between the FD baseline NLL and the
+# analytical omega/sigma gradient, which avoids a redundant extra rxSolve.
 #' @noRd
 .adfoGrad <- function(p, pinfo, studies, sensModel, rxMod, output_var,
                        params_list, cores, grad_h = 1e-4) {
@@ -362,11 +351,9 @@
   #
   # V_pred = J Omega J' + resid(mu, diag(J Omega J')), so d(NLL)/d(theta) needs
   # dJ/d(theta) = d2f/(d eta d theta) -- the cross block an order-2 sens model
-  # supplies. Requires every study to have returned it (a joint unit, a
-  # transformed endpoint or an order-1 fallback yields NULL), plus the direction
-  # map that says which column of dJ belongs to which theta. Anything missing and
-  # Pass 2's finite differences run exactly as before -- this is an accuracy
-  # upgrade with a fallback, not a new mode.
+  # supplies. Requires every study to have returned it (a joint unit, a transformed
+  # endpoint or an order-1 fallback yields NULL), plus the direction map. Anything
+  # missing and Pass 2's finite differences run exactly as before.
   use_d2 <- n_s > 0L && is.finite(nll_0) && n_eta > 0L &&
     !is.null(sensModel) && !is.null(sensModel$d2_cols) &&
     !any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1))) &&
@@ -381,15 +368,12 @@
       nm <- pinfo$struct_names[k]
       ei <- which(pinfo$struct_eta_idx == k)
       # `[`, NOT `[[`: theta_dirs is a named CHARACTER vector, and `[[` with an
-      # unmatched name on an atomic vector THROWS "subscript out of bounds"
-      # rather than returning NULL -- so `%||% NA_character_` could never fire
-      # and the intended FD degradation was unreachable. .adfoGrad is not wrapped
-      # in a tryCatch here, so that error propagated out of eval_grad_f and
-      # killed the whole nloptr run. Reachable whenever pinfo's unpaired set and
-      # the cached model's differ (theta_dirs is NULL when nothing was unpaired
-      # at build time, and `character(0)[["tka"]]` is the same error). Single-
-      # bracket indexing yields NA for an unmatched name, which is what the
-      # anyNA() check below is written to catch.
+      # unmatched name on an atomic vector THROWS rather than returning NULL -- so
+      # `%||% NA_character_` could never fire and the intended FD degradation was
+      # unreachable. .adfoGrad is not wrapped in a tryCatch here, so that error
+      # propagated out of eval_grad_f and killed the whole nloptr run. Reachable
+      # whenever pinfo's unpaired set and the cached model's differ. Single-bracket
+      # indexing yields NA, which is what the anyNA() check below catches.
       .td <- sensModel$theta_dirs %||% character(0)
       .dir_of[k] <- if (length(ei) > 0L && !is.na(ei[[1L]]))
         sensModel$eta_dirs[ei[[1L]]] %||% NA_character_
@@ -596,19 +580,17 @@
     }
 
     # Struct thetas, ANALYTICALLY (order-2 sensitivity model). Replaces Pass 2's
-    # forward FD of the whole NLL -- which was adfo's last finite-difference
-    # component, and the noisiest thing in the package (differencing a log-det and
-    # a quadratic form).
+    # forward FD of the whole NLL -- adfo's last finite-difference component, and the
+    # noisiest thing in the package.
     #
     # theta moves the objective two ways, because V_pred = J Omega J' + resid:
     #   mean:  d(NLL)/d(mu_struct) . d(mu)/d(theta)
     #   cov:   <dNLL/dV_struct, dJ Omega J' + J Omega dJ'>
     #        = 2 * sum(dJ * (B J Omega))          (B and Omega both symmetric)
-    # B is the SAME matrix the omega block above contracts (dNLL_dV rotated to the
-    # structural covariance by vchain, plus the TBS mean-from-variance term on the
-    # diagonal), so the theta and omega paths cannot drift apart -- they are two
-    # contractions of one object. d(mu)/d(theta) is the first-order column: the
-    # eta's for a mu-referenced theta, its own THETA_j_ column for an unpaired one.
+    # B is the SAME matrix the omega block above contracts, so the theta and omega
+    # paths cannot drift apart -- they are two contractions of one object.
+    # d(mu)/d(theta) is the first-order column: the eta's for a mu-referenced theta,
+    # its own THETA_j_ column for an unpaired one.
     if (use_d2) {
       .JO <- mc$JL %*% t(pars$L)                         # J Omega
       .G  <- if (is_var) .JO * (dNLL_dv_pred * diag(vchain) + dNLL_dmu * .dmv)
@@ -635,13 +617,13 @@
     }
 
     # Sigma gradient. Only this output's residual parameters contribute; rows
-    # belonging to other endpoints carry a zero derivative, so summing over all
-    # rows is a no-op for them.
-    # cov_f: the STRUCTURAL covariance J Omega J'. Needed because for lnorm/TBS the
+    # belonging to other endpoints carry a zero derivative.
+    #
+    # cov_f is the STRUCTURAL covariance J Omega J', needed because for lnorm/TBS the
     # mean scale ms is itself a function of a residual parameter, so sigma reaches
-    # every OFF-diagonal of V_pred (= ms_i ms_j cov_ij) and not just the diagonal.
-    # Under FO the struct thetas are finite-differenced through the full NLL, so
-    # only the sigma path needs this; omega's ms factor is already in vchain.
+    # every OFF-diagonal of V_pred and not just the diagonal. Under FO the struct
+    # thetas are finite-differenced through the full NLL, so only the sigma path
+    # needs this; omega's ms factor is already in vchain.
     grad[n_s + seq_len(n_e)] <- grad[n_s + seq_len(n_e)] +
       .admSigmaGrad(mu_pred, mc$arr, pinfo, dNLL_dV_diag, dNLL_dmu, var_f,
                     if (is_var) NULL else dNLL_dV, s$times,
@@ -1206,21 +1188,16 @@ adfoControl <- function(
   addProp  <- match.arg(addProp)
   # Whether the user NAMED `grad`, recorded before match.arg() erases the
   # distinction. It decides how loudly the driver reports a fall-back to finite
-  # differences: an unavailable sensitivity model is routine for a defaulted
-  # grad (a fixed-effects-only model, an ordinal endpoint) and merits a message,
-  # but silently ignoring an EXPLICIT grad = "analytical" does not -- a message is
-  # swallowed by suppressMessages(), a knitr chunk with message = FALSE, or any
-  # stderr-capturing wrapper, leaving no durable record that the run used a
-  # gradient the control asked it not to use.
+  # differences: an unavailable sensitivity model is routine for a defaulted grad and
+  # merits a message, but silently ignoring an EXPLICIT grad = "analytical" does not
+  # -- a message is swallowed by suppressMessages() or any stderr-capturing wrapper,
+  # leaving no durable record.
   #
-  # WHERE THE WARNING ACTUALLY SURVIVES, measured rather than assumed: NOT to
+  # WHERE THE WARNING ACTUALLY SURVIVES, measured rather than assumed: NOT in
   # warnings(), and options(warn = 2) does NOT turn it into an error -- nlmixr2est
-  # intercepts and muffles conditions raised inside nlmixr2Est.*, so even a
-  # deliberately injected probe warning never reaches a withCallingHandlers()
-  # around nlmixr2(). It survives on `fit$warnings`, which print(fit) shows. That
-  # is still a durable record where a message() leaves none, which is the point --
-  # but it is a weaker guarantee than the obvious one, so do not reason from
-  # options(warn = 2) here.
+  # intercepts and muffles conditions raised inside nlmixr2Est.*. It survives on
+  # `fit$warnings`, which print(fit) shows. That is a weaker guarantee than the
+  # obvious one, so do not reason from options(warn = 2) here.
   .grad_explicit <- !missing(grad)
   grad     <- match.arg(grad)
 
@@ -1262,22 +1239,12 @@ adfoControl <- function(
   algorithm <- .algo$algorithm
   grad      <- .algo$grad
 
-  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone".
-  # It is the one setting whose meaning does not move under an rxode2 upgrade,
-  # and it is the default because a looser solve is not free: this release is
-  # what first routed sigdig into the estimators' own rxSolve calls, and every
-  # finite-difference step that consumes those solves (grad_h 1e-4, cov_h 1e-3,
-  # cov_h_outer ~2.5e-3) is the same order as the tolerance sigdig = 4 asks for.
-  # rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4 (5.1.4 mapped it to 5e-7 -- 200x
-  # tighter for the same request), so differencing with a 1e-4 step differences
-  # noise: a moved objective and an indefinite Hessian, not an error. Shipping it
-  # on by default would have changed the numerics of every existing script
-  # silently, for a knob that looked like table formatting before this release.
-  #
-  # NULL is also the only way back: the sigdig -> tolerance map is
-  # one-dimensional while rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so
-  # no sigdig value reproduces them. The tables still need a number, so they fall
-  # back to 4 -- i.e. sigdigTable is unchanged whichever way sigdig is set.
+  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone" --
+  # see the same note in admControl(). A looser solve is not free: every
+  # finite-difference step that consumes these solves is the same order as the
+  # tolerance sigdig = 4 asks for, so differencing at a 1e-4 step differences noise.
+  # NULL is also the only way back, since no sigdig value reproduces rxode2's own
+  # (atol 1e-8, rtol 1e-6). The tables still need a number and fall back to 4.
   if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
     rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
@@ -1424,14 +1391,12 @@ nlmixr2Est.adfo <- function(env, ...) {
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   #
   # order = 2: adfo is the ONE estimator that needs the cross second-order block
-  # d2f/(d eta d theta), because its V_pred = J Omega J' depends on theta through
-  # J. With it .adfoGrad differentiates the struct thetas analytically instead of
-  # finite-differencing the whole NLL (measured against a central difference on a
-  # 1-cmt oral model: 2e-07..2e-06 relative, against 8e-04..1e-02 for the FD pass
-  # it replaces). Only asked for under grad = "analytical" -- the default
-  # grad = "none" runs BOBYQA and would pay the extra compartments for nothing.
-  # A model that cannot build it (transformed endpoint, joint unit, an rxode2
-  # that refuses) transparently gets the order-1 model back and keeps the FD pass.
+  # d2f/(d eta d theta), because its V_pred = J Omega J' depends on theta through J.
+  # With it .adfoGrad differentiates the struct thetas analytically instead of
+  # finite-differencing the whole NLL (2e-07..2e-06 relative against 8e-04..1e-02 for
+  # the FD pass it replaces). Only asked for under grad = "analytical" -- the default
+  # grad = "none" runs BOBYQA and would pay the extra compartments for nothing. A
+  # model that cannot build it transparently gets the order-1 model back.
   sensModel <- if (want_sens) {
     # order 1 for a JOINT (same-subject) fit: `have_d2` below excludes joint
     # units -- Pass 3 is not implemented for them -- so asking for order 2 would
@@ -1443,26 +1408,20 @@ nlmixr2Est.adfo <- function(env, ...) {
     if (is.null(sm)) {
       # How loudly depends on whether the user ASKED for this gradient.
       #
-      # Defaulted: a message. NULL here is very often BY DESIGN, not a failure --
-      # .admLoadSensModel returns it for a fixed-effects-only model (n_eta == 0),
-      # an ordinal endpoint, and mixed transformed/untransformed endpoints. Those
-      # models ran BOBYQA silently under the old grad = "none" default, and making
-      # "analytical" the default turned each of them into a warning on every fit,
-      # for a condition the user cannot act on. The fit is correct either way,
-      # just finite-differenced, and grad_label below already says "FD".
+      # Defaulted: a message. NULL here is very often BY DESIGN -- a
+      # fixed-effects-only model, an ordinal endpoint, mixed transformed and
+      # untransformed endpoints. Those ran BOBYQA silently under the old
+      # grad = "none" default, and making "analytical" the default turned each into a
+      # warning on every fit, for a condition the user cannot act on.
       #
-      # Explicit: a warning. Quietly giving someone who wrote grad = "analytical"
-      # the gradient they wrote it to avoid is a different matter, and a message
-      # leaves no record of it -- see .grad_explicit in adfoControl().
+      # Explicit: a warning. Quietly giving someone who wrote grad = "analytical" the
+      # gradient they wrote it to avoid is a different matter.
       #
-      # ... and equally on whether NULL was EXPECTED. .admLoadSensModel() also
-      # returns NULL when it genuinely failed -- a compile error, or an
-      # unwritable rxTempDir() whose .admCacheWrite() failure the caller's
-      # tryCatch swallows along with a model that did compile. That is not a
-      # by-design refusal and the user CAN act on it (it is usually a permissions
-      # problem), but the defaulted path would have said it in a message that
-      # suppressMessages() or a knitr chunk discards, leaving the same script
-      # converging to different estimates on a writable machine. So an
+      # ... and equally on whether NULL was EXPECTED. .admLoadSensModel() also returns
+      # NULL when it genuinely failed -- a compile error, or an unwritable
+      # rxTempDir(). The user CAN act on that (it is usually a permissions problem),
+      # but a message would be discarded by suppressMessages(), leaving the same
+      # script converging to different estimates on a writable machine. So an
       # unexplained NULL warns even when the gradient was defaulted.
       .by_design <- tryCatch(.admSensNullByDesign(.ui, pinfo),
                              error = function(e) TRUE)
