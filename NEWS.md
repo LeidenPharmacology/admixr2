@@ -163,6 +163,21 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **Stratified studies are titled by the covariate value they condition at**,
   not a bare `_s1`/`_s2` index.
 
+* **A covariate facet is kept when the model is flat at one conditioned level**
+  and varies at another, instead of being dropped on the first level alone.
+
+* **A marginalised level mix sits at its mean, not its median**, so an even
+  binary split no longer greys a studied level or loses its residual facet.
+
+* **The `lm` trend is guarded per covariate**, not across the figure, so a
+  facet with two studies gets no line through its two points.
+
+* **A source keeps one colour across both covariate panels**, and the effect
+  panel's curves split only on covariates some study conditions at a point.
+
+* **Merging a conditioned mark into a marginal one no longer invents a spread**
+  for it; the merged mark is drawn as the conditioned one it contains.
+
 ## Internal changes
 
 * **`print.admFit()` reaches nlmixr2est's printer through `getS3method()`**,

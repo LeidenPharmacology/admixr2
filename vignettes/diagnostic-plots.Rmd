@@ -121,8 +121,21 @@ A **conditioned** covariate gets **one line per level**, not a single line at it
 average. Averaging a covariate that half the studies fix at 0 and half at 1 puts
 it at 0.5 and draws a patient who does not exist. Splitting it is also how the
 figure reads: the swept covariate's effect is the **slope**, and the conditioned
-one's is the **gap** between the lines. Continuous covariates the facet is not
-sweeping stay at the pooled median.
+one's is the **gap** between the lines. Every other covariate stays at its
+pooled centre --- the weighted mean of the level mixes the sources declared, for
+a covariate they marginalise over, and its median otherwise.
+
+Only covariates some study actually *conditions* at a point split the curve.
+Splitting on one every source marginalises over would draw two lines that no
+source is on, and then have to put each source on one of them.
+
+Conditioned does not mean discrete. Ten sources each reported at one renal
+value --- `at = list(CRCL = 28)`, `at = list(CRCL = 36)`, ... --- give a
+**conditional continuous** covariate: past the level cap, so the axis is swept
+and the fitted curve is drawn right across it, while each source is a diamond
+with no bar sitting on the curve at its own value. The curve is the model's
+claim about the whole range; the diamonds are the only places anyone measured,
+and the grey is the rest. `inst/examples/covariate-panels.R` draws exactly this.
 
 **`covariate_resid`** plots each study's mean standardised residual against the
 covariate value it sits at. How it is read depends on the covariate:

@@ -358,11 +358,18 @@ test_that(".admMergeCovMarks unions the spread of the marks it absorbs", {
 })
 
 test_that(".admMergeCovMarks takes the weaker claim when merged kinds disagree", {
+  # `conditional` is the claim-less reading: a diamond and no bar. Calling the
+  # merge marginal would hand a study solved at one value the 10th-90th spread
+  # of whichever study it happened to land on -- a distribution out of a point.
   df <- data.frame(
     cov = "WT", param = "cl", study = c("a_s1", "a_s2"),
     kind = c("marginal", "conditional"), x = 70, y = 5,
-    xlo = 60, xhi = 80, xlo2 = 50, xhi2 = 90, stringsAsFactors = FALSE)
-  expect_equal(.admMergeCovMarks(df)$kind, "marginal")
+    xlo = c(60, 70), xhi = c(80, 70), xlo2 = c(50, 70), xhi2 = c(90, 70),
+    stringsAsFactors = FALSE)
+  out <- .admMergeCovMarks(df)
+  expect_equal(out$kind, "conditional")
+  # And no borrowed spread with it.
+  expect_equal(c(out$xlo, out$xhi, out$xlo2, out$xhi2), c(60, 80, 50, 90))
 })
 
 test_that(".admMergeCovMarks keeps strata that genuinely differ apart", {
@@ -585,4 +592,95 @@ test_that(".admCovResidData needs two studies to have a contrast", {
                mean((c(1, 2) - c(1.1, 2.1)) / sqrt(c(0.01, 0.04) / 100)),
                tolerance = 1e-8)
   expect_null(.admCovResidData("WT", st["lo"], agg["lo"]))
+})
+
+test_that(".admCovStudyCentre reads a marginalised level mix as its mean", {
+  # The median of an even binary split is a step function of `probs`: a cohort
+  # at c(0.45, 0.55) and one at c(0.55, 0.45) are all but the same, and their
+  # medians are the full width of the axis apart. The mean is the mixture.
+  sp <- list(values = c(0, 1), probs = c(0.7, 0.3))
+  s1 <- list(cov_dist = list(SEX = sp), cov = list(SEX = 0.3))
+  expect_equal(.admCovStudyCentre(s1, "SEX"), 0.3, tolerance = 1e-12)
+  # A conditioned study has no mixture to average: its centre is its value.
+  s2 <- list(cov_dist = list(SEX = list(.point = TRUE)), cov = list(SEX = 1))
+  expect_equal(.admCovStudyCentre(s2, "SEX"), 1)
+  # A continuous margin is unchanged -- still the median.
+  s3 <- list(cov_dist = list(WT = list(mu = 70, sd = 10)), cov = list(WT = 70))
+  expect_equal(.admCovStudyCentre(s3, "WT"), 70, tolerance = 1e-8)
+})
+
+test_that(".admCovStudySupport reads declared levels, not the centre", {
+  # An even split sits on NEITHER level by median, yet covers both. Reading
+  # centres would grey a level every source sampled as extrapolation.
+  s1 <- list(cov_dist = list(SEX = list(values = c(0, 1), probs = c(0.5, 0.5))),
+             cov = list(SEX = 0.5))
+  expect_equal(.admCovStudySupport(s1, "SEX", c(0, 1)), c(0, 1))
+  # A zero probability is a level the source declared and did not enrol.
+  s2 <- list(cov_dist = list(SEX = list(values = c(0, 1, 2),
+                                        probs = c(0.5, 0.5, 0))),
+             cov = list(SEX = 0.5))
+  expect_equal(.admCovStudySupport(s2, "SEX", c(0, 1, 2)), c(0, 1))
+  # A conditioned study covers the one level it was solved at.
+  s3 <- list(cov_dist = list(SEX = list(.point = TRUE)), cov = list(SEX = 1))
+  expect_equal(.admCovStudySupport(s3, "SEX", c(0, 1)), 1)
+})
+
+test_that(".admCovPalette gives a source the same colour in both panels", {
+  # The effect panel's marks come through .admMergeCovMarks(), which collapses
+  # `a_s1`/`a_s2` into `a`; the residual panel keeps them apart. An unnamed
+  # palette then hands `b` a different position in each and it changes colour
+  # across one figure.
+  pal <- .admCovPalette(c("a", "b", "a_s1", "a_s2"))
+  expect_equal(names(pal), c("a", "a_s1", "a_s2", "b"))
+  expect_equal(length(unique(pal)), 4L)
+  expect_true(!is.null(names(.admCovPalette(character(0)))) ||
+                length(.admCovPalette(character(0))) == 0L)
+})
+
+test_that(".admCovLevelScales keeps the empty level out of the legend", {
+  skip_if_not_installed("ggplot2")
+  # Two facets on one figure: one split by a conditioned covariate, one with
+  # nothing to split on. `""` is not a level -- it must not take `solid` from a
+  # real one, and it must not add a blank key.
+  lv <- c("", "SEX = 0", "SEX = 1")
+  sc <- .admCovLevelScales(lv)
+  lt <- sc[[1L]]; lt$train(lv)
+  fl <- sc[[2L]]; fl$train(lv)
+  # Keyed BY NAME: the blank facet keeps solid without taking it from a real
+  # level, and the two real levels are told apart.
+  expect_equal(lt$map(lv), c("solid", "solid", "22"))
+  expect_equal(fl$map(lv), c("black", "black", "white"))
+  # Neither legend shows the blank.
+  expect_setequal(as.character(lt$get_breaks()), c("SEX = 0", "SEX = 1"))
+  expect_setequal(as.character(fl$get_breaks()), c("SEX = 0", "SEX = 1"))
+  # No conditioned covariate anywhere: no legend at all.
+  none <- .admCovLevelScales("")
+  expect_equal(none[[1L]]$guide, "none")
+  expect_equal(none[[2L]]$guide, "none")
+})
+
+test_that(".admCovEffectData keeps a facet flat at one level and varying at another", {
+  skip_if_not_installed("rxode2")
+  # `cl` is constant across the WT sweep at SEX = 0 and varies at SEX = 1.
+  # Testing only the first combo threw the whole WT facet away, including the
+  # SEX = 1 curve that is the entire reason to look at the panel.
+  fn <- function() {
+    ini({
+      tcl <- log(5); bwt <- 0.75
+      add.err <- 0.1
+      eta.cl ~ 0.1
+    })
+    model({
+      cl <- exp(tcl + eta.cl + SEX * bwt * log(WT / 70))
+      v  <- exp(log(30))
+      cp <- linCmt()
+      cp ~ add(add.err)
+    })
+  }
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  d  <- .admCovEffectData(ui, "WT", .cov_studies(), NULL)
+  expect_false(is.null(d))
+  # One curve, for the level that actually moves.
+  expect_setequal(d$curve$level, "SEX = 1")
+  expect_gt(diff(range(d$curve$y)), 0)
 })
