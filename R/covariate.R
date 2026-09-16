@@ -3162,6 +3162,7 @@ print.covDist <- function(x, ...) {
   # objective evaluations, exactly the failure the `routes` machinery existed
   # to avoid.
   rel <- vapply(seq_len(m), function(k) max(abs(P0[, k]), 1e-300), numeric(1))
+  frozen <- !is.null(i0)
   if (is.null(i0)) {
     # the argmax is a SELECTION, so a column-constant normaliser is enough for it
     tot <- rowSums(matrix(vapply(seq_len(m), function(k)
@@ -3182,7 +3183,23 @@ print.covDist <- function(x, ...) {
     # A column flat AT THE CHOSEN POINT but not elsewhere is refused: its
     # direction there is noise, and no other point can be substituted without
     # reading B at two different latent points at once.
-    if (nr[i0] < .ADM_GRAD_ZERO) return(NULL)
+    #
+    # UNLESS the point is frozen, in which case this is not "no other point
+    # can be substituted" -- it is "not THIS one, today". A stationary link
+    # (a genuine zero gradient, e.g. (b'z)^3 at the origin, or a quadratic
+    # form at its vertex) can put the FROZEN point exactly on its stationary
+    # set as parameters move, even while every other candidate point still
+    # reads a perfectly good direction. That is not the flip-flop the freeze
+    # exists to stop -- the freeze stops a fixed set of EQUALLY VALID points
+    # from being re-ranked call to call; there is nothing to rank when the
+    # frozen one carries no signal at all, so re-deriving it fresh (once)
+    # cannot reintroduce the inconsistent rescaling finding #2 fixed. Pinned
+    # by test-collapse-rank-branches.R's "refresh retains the certificate
+    # points around a stationary link".
+    if (nr[i0] < .ADM_GRAD_ZERO) {
+      if (frozen) return(.admCovGradB(f, z0, h, i0 = NULL))
+      return(NULL)
+    }
     U <- G / nr
     cs[k] <- min(abs(U[nr >= .ADM_GRAD_ZERO, , drop = FALSE] %*% U[i0, ]))
     B[, k] <- G[i0, ]
