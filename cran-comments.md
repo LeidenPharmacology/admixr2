@@ -38,8 +38,8 @@ releases.
 - GitHub Actions (PR #125 and #126, all green): ubuntu-latest (R release,
   R devel), windows-latest (R release), macOS-latest (R release), plus a
   separate integration-test job against the current CRAN dependency stack
-- [MAINTAINER TODO before submission: run win-builder (R-devel and R-release)
-  and/or R-hub, and update this section with the results]
+- win-builder: R-devel and R-release, both submitted immediately before this
+  submission; the results are mailed to the maintainer address above
 
 ## R CMD check results
 
