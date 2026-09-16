@@ -42,9 +42,8 @@ admData <- function(outputs = NULL) {
 
   outputs <- as.character(outputs)
   n_o     <- length(outputs)
-  # DVID keys each endpoint (cf. nlmixr2data::warfarin); dose row targets a real
-  # dosing compartment (CMT = 1). Actual dosing/observation times come from each
-  # study's `ev`.
+  # DVID keys each endpoint (cf. nlmixr2data::warfarin); dose row targets CMT = 1.
+  # Real dosing/observation times come from each study's `ev`.
   data.frame(ID   = 1L,
              TIME = c(0, seq_len(n_o)),
              DV   = c(NA_real_, rep(1, n_o)),

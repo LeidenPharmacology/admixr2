@@ -107,13 +107,10 @@
   invisible(lab)
 }
 
-# Reconcile a user-chosen nloptr algorithm with the gradient mode.
-#   * algorithm = NULL (unset) -> pick the default matching `grad` (no message).
-#   * grad == "none" but a gradient-based algorithm was chosen -> there is no
-#     gradient to give nloptr, so fall back to BOBYQA (with a message).
-#   * grad != "none" but a derivative-free algorithm was chosen -> the gradient
-#     cannot be used, so turn it off (with a message).
-# Validates explicit algorithm names against the installed nloptr.
+# Reconcile a user-chosen nloptr algorithm with the gradient mode: NULL picks
+# the default for `grad`; grad="none" with a gradient-based algorithm falls
+# back to BOBYQA; grad!="none" with a derivative-free algorithm turns the
+# gradient off. Validates explicit names against the installed nloptr.
 # Returns list(algorithm = <chr>, grad = <chr>).
 .admResolveAlgorithm <- function(algorithm, grad, .var.name = "algorithm") {
   # Unset -> the default that matches the gradient mode; always consistent.
@@ -164,11 +161,10 @@
 # Balances truncation error (h^2/6)|f'''| against noise eps_f/h via
 #   h* = (3 * eps_f / |f'''|)^(1/3)
 # where |f'''| is estimated from the symmetric third difference D3(h).
-# Beats gill83's forward step by orders of magnitude on this package's
-# objectives (max relative error vs analytic gradient: gill83 ~8e-4,
-# shi21 central ~1e-7). Reimplemented rather than calling nlmixr2est's
-# unexported shi21CentralWrap -- admixr2 makes zero `:::`-equivalent calls,
-# and the wrapper drops the `eps_f` tuning argument this code needs.
+# Beats gill83's forward step by orders of magnitude here (max rel. error vs
+# analytic gradient: gill83 ~8e-4, shi21 central ~1e-7). Reimplemented rather
+# than nlmixr2est's unexported shi21CentralWrap -- admixr2 makes zero
+# `:::`-equivalent calls, and the wrapper drops the `eps_f` arg this needs.
 # Returns list(h, gr, measured).
 .admShi21Central <- function(fn, p, k, eps_f, h0 = NULL, maxiter = 10L) {
   scale <- max(abs(p[k]), 0.1)
@@ -177,10 +173,9 @@
   h <- if (!is.null(h0)) h0 else
     max((3 * eps_f)^(1/3), scale * .Machine$double.eps^(1/3))
   at <- function(d) { q <- p; q[k] <- q[k] + d; fn(q) }
-  # Estimate |f'''| at a probe step coarse enough for D3 to clear the noise floor
-  # (3.16 * eps_f) by 100x; fixed-point iteration on h* does not converge (at h*
-  # itself D3 ~ 6 eps_f, only ~2x the noise floor, so it gets rejected and the
-  # loop regrows/shrinks to maxiter without refining).
+  # Probe at a step coarse enough for D3 to clear the noise floor (3.16*eps_f)
+  # by 100x; fixed-point on h* itself does not converge (D3 there is only
+  # ~2x the floor, so it gets rejected and the loop never refines).
   d3_noise <- 3.1623 * eps_f
   f3 <- NA_real_
   for (i in seq_len(maxiter)) {

@@ -1,33 +1,34 @@
 # Covariate marginalisation for aggregate data modelling
 #
 # A study's subjects span a distribution of covariate values (`cov_dist`), and
-# the aggregate (E, V) it reports is MARGINAL over it, so the prediction must be:
+# the aggregate (E, V) it reports is MARGINAL over it:
 #
 #   mu = E_{a,eta}[f]        V = Cov_{a,eta}(f) + residual
 #
 # Covariate-induced between-subject variability belongs INSIDE V_pred. Two paths
-# compute those moments -- the general per-row/product-grid path ("rows") and the
-# shift path ("shift") -- chosen per study by .admCheckCovariates().
+# compute those moments -- general per-row/product-grid ("rows") and shift
+# ("shift") -- chosen per study by .admCheckCovariates().
 #
-# THE RULE, of which everything below is a consequence: a block's PREDICTION must
-# integrate over the same covariate distribution its DATA were aggregated over.
-# Both mismatches cost, in opposite directions, and neither announces itself. So
-# fit stratum summaries as ordinary studies, each with its own `n` and `cov_dist`
-# -- NOT `cov`, which is a POINT value and plugs the stratum mean into a relation
-# that is only affine if you are lucky (the ecological plug-in, biasing upward).
+# THE RULE: a block's PREDICTION must integrate over the same covariate
+# distribution its DATA were aggregated over. Both mismatches cost, in
+# opposite directions, and neither announces itself. Fit stratum summaries as
+# ordinary studies with their own `n` and `cov_dist` -- NOT `cov`, a POINT
+# value that plugs the stratum mean into a relation that's only affine if
+# you're lucky (the ecological plug-in, biasing upward).
 #
-# Do not restore the retired collapse, inferred-quantile, or per-node likelihood
-# paths: they are respectively a special case of shift, unsafe under general
-# covariate effects, and incorrect for pooled summary data.
+# Do not restore the retired collapse, inferred-quantile, or per-node
+# likelihood paths: respectively a special case of shift, unsafe under
+# general covariate effects, and incorrect for pooled summary data.
 #
 # (`%||%` is defined in utils.R.)
 
-# Append this study's covariate columns to an rxSolve params frame (matrix or data.frame). Returns `mat`
-# unchanged when there is nothing to add.
+# Append this study's covariate columns to an rxSolve params frame. Returns
+# `mat` unchanged when there is nothing to add.
 #
-# ONLY names present in `cov_s` are added -- deliberately NOT setdiff(mod$params, colnames(mat)) with a 0
-# default. That blanket zero-fill has bitten twice: it clobbered hard-coded model constants (qout/vb -> /0 ->
-# an NA objective) and handed the solve lambda = 0 for an ESTIMATED boxCox/yeoJohnson.
+# ONLY names present in `cov_s` are added -- deliberately not a blanket 0-fill
+# for setdiff(mod$params, colnames(mat)), which has bitten twice: it clobbered
+# hard-coded model constants (qout/vb -> /0 -> NA objective) and handed the
+# solve lambda = 0 for an ESTIMATED boxCox/yeoJohnson.
 #
 # Named .adm* on purpose: the daemon payload is collected by a /^\.(adm|adfo|adgh|adirmc)/i regex, so a
 # helper named .cov_fills would be missing inside every parallel-restart worker.
@@ -465,15 +466,14 @@
 # want of an eta.
 #
 # Cached for the same reason the Taylor design is: a pure function of
-# `cov_dist` and the model, both fixed for the fit, while .adghGrid runs
-# inside the objective. Numeric only, so it serialises to a restart worker
-# by value.
+# `cov_dist` and the model, fixed for the fit, while .adghGrid runs inside
+# the objective. Numeric only, so it serialises to a restart worker by value.
 #
-# THE REDUCTIONS, in the order they are tried. The joint collapse subsumes
-# the covariate collapse and adds the eta block, so it is preferred where it
-# admits; the covariate collapse takes what is left. Both are exact and
-# verify against the product grid they replace. A study that qualifies for
-# neither takes the full grid.
+# THE REDUCTIONS, in the order tried: joint collapse subsumes the covariate
+# collapse and adds the eta block, so it is preferred where it admits; the
+# covariate collapse takes what's left. Both are exact and verify against
+# the product grid they replace. A study qualifying for neither takes the
+# full grid.
   for (nm in names(studies)) {
     s_nm <- studies[[nm]]
     if (is.null(s_nm[["cov_dist"]])) next
@@ -483,19 +483,18 @@
                                     pinfo$cov_nodes %||% 7L,
                                     cov_fixed = s_nm[["cov"]]),
                     error = function(e) NULL)
-    # Computed, not yet attached: the study may still be on the shift path,
-    # and which reduction it ends up using isn't known until the joint has
-    # been tried below -- attaching (and announcing) a design the fit then
-    # doesn't use would describe a path nobody took.
+    # Computed, not yet attached: the reduction the study ends up using isn't
+    # known until the joint collapse is tried below -- attaching a design
+    # the fit doesn't use would describe a path nobody took.
     #
-    # JOINT: the etas are latent normal directions too, and the design crosses
+    # JOINT: etas are latent normal directions too, and the design crosses
     # them with the covariate design as if independent. Where an eta and a
     # covariate index reach the model through the same sum they are ONE
-    # direction, and the rank is bounded by how many PARAMETERS the latents
+    # direction, and rank is bounded by how many PARAMETERS the latents
     # reach, not by how many etas and covariates there are.
     #
-    # Tried after the covariate collapse and preferred over it where it holds:
-    # it subsumes that reduction and adds the eta block. adgh only -- admc
+    # Preferred over the plain covariate collapse where it holds, since it
+    # subsumes that reduction and adds the eta block. adgh only -- admc
     # reaches its etas through .admMakeZ instead.
     if (pinfo$n_eta > 0L && !isTRUE(s_nm$is_joint)) {
       .jc <- tryCatch({
@@ -535,16 +534,13 @@
         # inspecting caller instead.
       }
     }
-    # ATTACHED WHENEVER IT IS FOUND, even if the joint also admitted -- but NOT
-    # as a runtime fallback. .adghGrid prefers the joint and never reads
-    # .adm_cov_collapse for a study that carries one; its joint branch returns
-    # unconditionally, success or `failed = TRUE`, because falling through to
-    # a different design with a different row count would step the objective
-    # mid-optimisation.
-    #
-    # Kept for INSPECTION -- a caller can see every reduction that was
-    # independently valid, not only the one the fit used -- and costs nothing
-    # to keep since the probe and SVD are already paid for by this point.
+    # ATTACHED WHENEVER FOUND, even if the joint also admitted -- but NOT as a
+    # runtime fallback. .adghGrid prefers the joint and never reads
+    # .adm_cov_collapse for a study that carries one; its joint branch always
+    # returns, success or `failed = TRUE`, because falling through to a
+    # different design with a different row count would step the objective
+    # mid-optimisation. Kept only for INSPECTION -- costs nothing since the
+    # probe and SVD are already paid for by this point.
     if (!is.null(.co)) studies[[nm]]$.adm_cov_collapse <- .co
   }
 
@@ -559,17 +555,17 @@
         .admCovGrid(studies[[nm]]$cov_dist, pinfo$cov_nodes %||% 7L)
 
   # EVERY covariate the ANALYSIS model reads must be described by a study that
-  # has opted into covariate handling -- either a distribution to integrate
-  # over, or a `cov` value if it genuinely does not vary in that study.
-  # Otherwise it is silently held at whatever rxSolve defaults it to -- the
-  # ecological plug-in wearing a fit's clothes.
+  # opted into covariate handling -- a distribution to integrate over, or a
+  # `cov` value if it genuinely does not vary in that study. Otherwise it's
+  # silently held at whatever rxSolve defaults it to -- the ecological
+  # plug-in wearing a fit's clothes.
   #
-  # This is also what catches a MISTYPED covariate name. `WTT` for a model that
-  # reads `WT` no longer fails where the typo is written -- an unread name is
-  # dropped now, so a nested model may simply omit a term -- but `WT` is then
-  # undescribed and fails here, naming what went missing. Over `opted` rather
-  # than `has`: dropping the last unread margin empties `cov_dist`, and such a
-  # study still has to answer for the covariates the model reads.
+  # Also catches a MISTYPED covariate name: `WTT` for a model reading `WT` no
+  # longer fails where the typo is written (an unread name is now just
+  # dropped), but `WT` is then undescribed and fails here, naming what went
+  # missing. Over `opted` rather than `has`: dropping the last unread margin
+  # empties `cov_dist`, and such a study still must answer for the
+  # covariates the model reads.
   for (nm in names(studies)[opted]) {
     dcl <- c(.admCovSpecNames(studies[[nm]]$cov_dist),
              names(studies[[nm]][["cov"]] %||% list()))
@@ -642,27 +638,26 @@
        sdlog   = sqrt(log(1 + sd^2 / m^2)))
 }
 
-# A covariate a study declares but THE MODEL NEVER READS contributes nothing: f
-# does not depend on it, so integrating over it returns f unchanged, and
+# A covariate a study declares but THE MODEL NEVER READS contributes nothing:
+# f does not depend on it, so integrating over it returns f unchanged, and
 # marginalising it out of a Gaussian copula leaves every surviving margin
 # exactly as declared (the latent block is the corresponding submatrix of R).
-# Dropping it is therefore EXACT, not an approximation, and it is also what
-# lets a NESTED pair share one `studies` object: the null model of a covariate
-# LRT simply omits the term, while the population that declares the covariate
-# is still the honest description of who was enrolled. Refusing instead forced
-# the restriction to be written as `fix(0)` -- a property of the model text
-# rather than of the hypothesis -- and left the dropped covariate on the
-# quadrature grid, paying for nodes that cannot move the objective.
+# Dropping it is therefore EXACT, and it's what lets a NESTED pair share one
+# `studies` object: a covariate LRT's null model simply omits the term.
+# Refusing instead forced the restriction to be written as `fix(0)` -- a
+# property of the model text rather than the hypothesis -- and left the
+# dropped covariate on the quadrature grid, paying for nodes that cannot
+# move the objective.
 #
-# `cor`/`Sigma`/`latentR` are stated over the declared covariates in
-# DECLARATION ORDER, so the surviving block is that submatrix; a named one is
-# subset by name instead, since a user may state it in any order.
-# This is .admCovDropMargin's rebuild, WITHOUT its correlated-margin refusal.
-# That refusal belongs to `by`, which CONDITIONS a margin at a value and so
-# cannot honour its correlation with the margins that remain. Here the margin is
-# being MARGINALISED instead, and the kept block's latent correlation is just
-# the corresponding submatrix of R -- exact for any correlation, including a
-# `cor = c(WT.CRCL = 0.45)` pair where only WT survives.
+# `cor`/`Sigma`/`latentR` are stated over declared covariates in DECLARATION
+# ORDER, so the surviving block is that submatrix; a named one is subset by
+# name instead. This is .admCovDropMargin's rebuild, WITHOUT its
+# correlated-margin refusal -- that refusal belongs to `by`, which CONDITIONS
+# a margin at a value and so cannot honour its correlation with the margins
+# that remain. Here the margin is MARGINALISED instead, and the kept block's
+# latent correlation is just the corresponding submatrix of R -- exact for
+# any correlation, including a `cor = c(WT.CRCL = 0.45)` pair where only WT
+# survives.
 .admCovDistDrop <- function(cov_dist, drop) {
   cd   <- .admCovDistCanon(cov_dist)
   nms  <- .admCovSpecNames(cd)
@@ -1267,14 +1262,13 @@
   #
   # INDEPENDENCE IS A KNOWN LATENT STRUCTURE, not a missing one. `latentR` is
   # recorded only when `cor` was supplied, so a study declaring no dependence
-  # fell to the pooled branch below -- whose equiprobable-bin midpoint rule
-  # converges as O(1/J), not good enough to be a likelihood.
+  # fell to the pooled branch below, whose equiprobable-bin midpoint rule
+  # converges as O(1/J) -- not good enough to be a likelihood.
   #
-  # OFV, AIC, BIC and any likelihood ratio are comparable only once this has
-  # converged, so the fast rule is the default wherever the latent structure
-  # is KNOWN -- an explicit `cor` or no declared dependence at all, which IS
-  # independence. An opaque user `joint` is the one case that stays pooled,
-  # since nothing can be conditioned there.
+  # So the fast rule is the default wherever the latent structure is KNOWN --
+  # an explicit `cor` or no declared dependence at all, which IS independence.
+  # An opaque user `joint` is the one case that stays pooled, since nothing
+  # can be conditioned there.
 
   Rm <- cov_dist[["latentR"]]
   if (is.null(Rm) && is.null(cov_dist[["joint"]])) Rm <- diag(length(nms))
@@ -1307,7 +1301,7 @@
     #
     # ROTATED BY chol(R_SS), or the bands are laid out as if the stratified covariates were INDEPENDENT --
     # .adghNodeGrid returns a product grid over standard normals, and the declared correlation was read only for
-    # the marginalised block's conditional mean below. Measured on WT/AGE at rho = 0.9: the weight-weighted
+    # the marginalised block's conditional mean below. Measured on WT/AGE at rho = 0.9: weight-weighted
     # correlation across the 25 strata was 0.0000, and an essentially impossible corner carried weight 1.3e-04,
     # which .admExpandStrata turns into a real study with a real n.
 
@@ -1421,13 +1415,10 @@
   # the one declared, and their weights are counts rather than an assumption. Sobol, so it is a fixed function
   # of `cov_dist`, which is DATA and must not move between objective evaluations.
 
-  # Sobol, so this is a fixed function of `cov_dist` -- the covariate distribution is DATA and must not move
-  # between objective evaluations.
-
   # THE COST OF THIS ROUTE IS THE TAIL. A stratum resamples pool members, so no stratum can produce a covariate
   # value beyond the pool's own extremes, and the outermost strata are described by the fewest draws. A Sobol
-  # pool of 32768 reaches about the 99.997th percentile of a lognormal margin, so the truncation is far out --
-  # but it is real, and it is why a thin cell below is an error rather than a shrug.
+  # pool of 32768 reaches about the 99.997th percentile of a lognormal margin -- far out, but real, which is
+  # why a thin cell below is an error rather than a shrug.
   #
   # THE POOL MUST BE SIZED FOR THE CELLS, NOT THE POPULATION. Every stratum is a subset, so a pool that is ample
   # overall can still be thin in a corner cell -- and the corner cells carry the covariate extremes the
@@ -1974,9 +1965,9 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 #
 # Every i in {1,...,level}^d needs Lo <= sum(i) <= Hi, and with d = n_eta + p
 # ordinary, level^d at level = 5 and d = 12 is 244M rows -- built and thrown
-# away almost entirely per study. The `tryCatch(error = NULL)` around the
-# caller turned the resulting allocation failure into a silent fallback to
-# Sobol, so it presented as a stall.
+# away almost entirely per study. The caller's `tryCatch(error = NULL)`
+# turned the resulting allocation failure into a silent Sobol fallback, so
+# it presented as a stall.
 #
 # Since each i_j >= 1, sum(i) >= d already, so admissible sums sit in
 # [max(level, d), d+level-1], a band of width level-1 whose index count
@@ -2329,14 +2320,13 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # Smolyak level for the joint design's VERIFICATION reference, where the full
 # product rule is too big.
 #
-# A REFERENCE MUST BE BETTER THAN WHAT IT JUDGES, and the level is not free to
-# choose: measured at nl = 4 on a model where log cl is exactly normal (so
-# E[cl^2] is closed form), Sobol's rel err on m2 (6.4e-3) is ABOVE the 5e-3
-# tolerance -- the false refusal in one number. Level 4 clears the tolerance
-# by only ~10x on 201 points; level 5 clears it by ~400x on 681 points, and
-# level 6 does not build. The design being judged is still ~9 orders better
-# than the level-5 reference, so the check remains a measurement of the
-# REFERENCE's error -- it just can no longer refuse a design that is right.
+# A REFERENCE MUST BE BETTER THAN WHAT IT JUDGES. Measured on a model where
+# log cl is exactly normal (closed-form E[cl^2]): Sobol's rel err on m2
+# (6.4e-3) is ABOVE the 5e-3 tolerance -- a false refusal. Level 4 clears the
+# tolerance by only ~10x on 201 points; level 5 clears it by ~400x on 681
+# points, and level 6 does not build. The design being judged is still ~9
+# orders better than the level-5 reference, so the check just can no longer
+# refuse a design that is right.
 .ADM_JOINT_VER_LEVEL <- 5L
 .admShiftGaussResid <- function(D, W) {
   W  <- W / sum(W)
@@ -3018,15 +3008,14 @@ print.covDist <- function(x, ...) {
 # exactly, since d log p / dz = (G'(b'z)/G(b'z)) * b has direction b at every
 # z, only the magnitude varying with G. Affine, log-affine and single-index
 # are that one statement at different G (`const` is G' = 0), so no per-column
-# route needs freezing and replaying: a threshold could flip mid-fit and step
-# the objective, a direction moves smoothly.
+# route needs freezing and replaying: a threshold could flip mid-fit and
+# step the objective, a direction moves smoothly.
 #
 # RELATIVE, not raw: d p / dz carries p's units (a clearance and a volume
 # can't share one SVD scale), and raw slope is eta-dependent while the
 # relative gradient isn't (eta drops out of log p = theta + eta + log G). A
-# genuine covariate-by-eta interaction still fails .admCovCollapse's eta = 0.5
-# re-probe, which is the control against "invariant by construction" meaning
-# "blind". See algorithm/collapse-derivation/relgrad_eta.txt.
+# genuine covariate-by-eta interaction still fails .admCovCollapse's
+# eta = 0.5 re-probe. See algorithm/collapse-derivation/relgrad_eta.txt.
 #
 # f evaluates the readers at a matrix of latent rows, one column per reader;
 # z0's base point carries the loading read, the rest certify it.
@@ -3051,27 +3040,27 @@ print.covDist <- function(x, ...) {
          V[n + seq_len(n), , drop = FALSE]) / (2 * h)
   # WHERE the loading is read. Not the first base point: a link can be
   # STATIONARY there -- (b'z)^3 has a zero gradient at the origin -- and reading
-  # a zero would report no direction and pin the covariate at its median for the
-  # whole fit. So all columns are read at the base point carrying the most
-  # signal, and the scale is taken there and nowhere else. One SHARED point, not
-  # one per column, because B has to be the loading matrix AT a latent point for
-  # its singular values to be comparable.
+  # a zero would report no direction and pin the covariate at its median for
+  # the whole fit. So all columns are read at the base point carrying the
+  # most signal, scale taken there and nowhere else. One SHARED point, not
+  # one per column, because B has to be the loading matrix AT a latent point
+  # for its singular values to be comparable.
   #
   # WHAT IS FROZEN IS THE ORDER, NOT ONE ROW. i0 is a caller-supplied freeze;
   # every caller re-aiming an already-admitted design (.admCovRefresh,
-  # .admJointDesign, the probes inside admission) passes back the ordering
-  # admission chose. Without it a coefficient moving between calls can flip which
-  # point carries the most signal, rescaling every column of B differently and
+  # .admJointDesign, the admission probes) passes back the ordering admission
+  # chose. Without it a coefficient moving between calls can flip which point
+  # carries the most signal, rescaling every column of B differently and
   # rotating the SVD basis of the same column space -- stepping the design
   # between objective evaluations.
   #
   # An ORDER rather than the argmax alone, because the frozen point can go
-  # stationary as parameters move while every other candidate still reads a good
-  # direction. Re-ranking at the CURRENT parameters would fix that and
-  # reintroduce the rotation, so the ranking is done once, frozen whole, and a
-  # degenerate point hands off to the NEXT candidate in that fixed order --
-  # depending on the parameters only through "any signal at all", not how much.
-  # Pinned by test-collapse-rank-branches.R.
+  # stationary as parameters move while every other candidate still reads a
+  # good direction. Re-ranking at the CURRENT parameters would fix that and
+  # reintroduce the rotation, so the ranking is done once, frozen whole, and
+  # a degenerate point hands off to the NEXT candidate in that fixed order --
+  # depending on the parameters only through "any signal at all", not how
+  # much. Pinned by test-collapse-rank-branches.R.
   rel <- vapply(seq_len(m), function(k) max(abs(P0[, k]), 1e-300), numeric(1))
   ord <- if (is.null(i0)) {
     # the ranking is a SELECTION, so a column-constant normaliser is enough
@@ -3229,10 +3218,11 @@ print.covDist <- function(x, ...) {
 # each reading is affine (log-affine for the multiplicative forms) in z, the
 # model depends on z only through B'z (B: p x m loadings). Taking the SVD of
 # B, w = U_r' z ~ N(0, I_r) exactly, so a plain r-dim Gauss-Hermite grid on w
-# is exact: z = U_r w is a minimum-norm preimage since the model only sees U_r' z.
+# is exact: z = U_r w is a minimum-norm preimage since the model only sees
+# B'z through U_r' z.
 #
-# rank(B) decides everything: e.g. three covariates on one parameter give
-# r = 1, on three separate parameters r = 3 -- nothing to gain, declines.
+# rank(B) decides everything: three covariates on one parameter give r = 1,
+# on three separate parameters r = 3 -- nothing to gain, declines.
 #
 # Returns a design in .admCovGrid's shape, or NULL when it doesn't apply.
 # Evaluates the covariate-reading assignments at given structural thetas,
@@ -3240,9 +3230,6 @@ print.covDist <- function(x, ...) {
 #
 # Standalone rather than a closure in .admCovCollapse: it must be re-run on
 # every objective call at the CURRENT thetas -- see .admCovRefresh().
-# Standalone rather than a closure inside .admCovCollapse, because the SAME
-# evaluation has to be redone on every objective call at the CURRENT thetas --
-# see .admCovRefresh() for why.
 .admCovProbeAt <- function(pr, st, eta_at, cell, AA) {
   nrw <- nrow(AA)
   ev  <- new.env(parent = asNamespace("rxode2"))
@@ -3750,15 +3737,15 @@ print.covDist <- function(x, ...) {
     Wv <- rep(1 / nrow(Xv), nrow(Xv))
   }
   # r, m and routes are settled by .admJointAdmit() but declared HERE holding
-  # NULL, which is load-bearing: `$` PARTIAL-MATCHES on lists, and while `m` was
-  # absent jc$m resolved to jc$max_rows, so the row cap compared m^r against
-  # itself and rejected every design silently. The [[ ]] reads downstream stay as
-  # a second line of defence, and test-covariate.R runs these paths under
-  # warnPartialMatchDollar.
+  # NULL, which is load-bearing: `$` PARTIAL-MATCHES on lists, and while `m`
+  # was absent jc$m resolved to jc$max_rows, so the row cap compared m^r
+  # against itself and rejected every design silently. The [[ ]] reads
+  # downstream stay as a second line of defence, and test-covariate.R runs
+  # these paths under warnPartialMatchDollar.
   # The base points the loading is read at and certified over. z0[1, ] is the
-  # ORIGIN, and every later refresh reads there, so a refresh differs from
-  # admission only through the thetas. The rest spread over the latent space and
-  # exist solely to certify that the direction does not move.
+  # ORIGIN, where every later refresh reads too, so a refresh differs from
+  # admission only through the thetas. The rest spread over the latent space
+  # to certify that the direction does not move.
   z0 <- rbind(rep(0, nl), Xi[c(1L, 8L, 20L, 50L, 97L) %% nrow(Xi) + 1L, ,
                             drop = FALSE])
   # Xv/Wv are the VERIFICATION rule and nothing else reads them: .admJointAdmit
@@ -3901,8 +3888,8 @@ print.covDist <- function(x, ...) {
   # an off-diagonal both ways.
   #
   # Rank only, not the whole nested certificate: what walls the fit off is
-  # the `.admSvdRank(sv) > r` refusal in .admJointDesign, and the eta/stratum
-  # invariance is a statement about the model that L doesn't change.
+  # the `.admSvdRank(sv) > r` refusal in .admJointDesign, and the
+  # eta/stratum invariance is a statement about the model L doesn't change.
   r <- .admCollapseRank(B0, st, jc$struct_names %||% character(0),
                         function(sp) .admJointB(jc, sp, L, i0 = jc$i0),
                         inv_at(L))

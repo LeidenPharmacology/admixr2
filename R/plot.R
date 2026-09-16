@@ -97,9 +97,9 @@ print.admFit <- function(x, ...) {
 # Called by print.nlmixr2FitCore when it ends its console branch with
 # print(head(x)). Unlike rmarkdown's print.paged_df, this method is not in
 # nlmixr2est's import chain, so S3 dispatch falls through to admixr2's method
-# table and finds us first -- which is the supported way to intercept this path,
-# and the reason no namespace mutation is needed (see #58).
-# Converts to a plain data frame before head() to avoid .subset2(env, integer).
+# table and finds us first -- the supported way to intercept this path, with
+# no namespace mutation needed (see #58). Converts to a plain data frame
+# before head() to avoid .subset2(env, integer).
 #' @method head admFit
 #' @export
 head.admFit <- function(x, n = 6L, ...) {

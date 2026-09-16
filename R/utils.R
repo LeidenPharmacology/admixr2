@@ -58,12 +58,10 @@ utils::globalVariables(c(
 }
 
 # Bridge admControl/adirmcControl fields into foceiControl for nlmixr2 table machinery.
-#
-# `skip_cov` says which thetas nlmixr2est should NOT expect a standard error for.
-# It fills its SE column by walking the thetas in iniDf order and taking the next
-# entry of sqrt(diag(cov)) for each one it is not skipping, so this vector and the
-# row order of the covariance are two halves of the same contract -- see
-# .admCovSkip()/.admCovThetaOrder(). Left to nlmixr2est's own default when NULL.
+# `skip_cov`: thetas nlmixr2est should not expect an SE for. It fills the SE
+# column by walking iniDf order and consuming sqrt(diag(cov)) for each one not
+# skipped -- this vector and the cov row order are one contract, see
+# .admCovSkip()/.admCovThetaOrder(). NULL leaves nlmixr2est's own default.
 .admToFoceiControl <- function(ctl, skip_cov = NULL) {
   .args <- list(
     rxControl          = ctl$rxControl,
@@ -122,13 +120,10 @@ utils::globalVariables(c(
 }
 
 # Pre-allocate params matrix list -- one per study. Matrix avoids data.frame
-# list COW overhead (first col-write copies once, rest in-place);
-# as.data.frame() wraps at the rxSolve call site.
-#
-# One rxerr.<output> placeholder per observed output -- rxSolve requires it
-# present (value immaterial; admixr2 adds residual error analytically), one
-# per prediction line regardless of error model. Everything else (CMT,
-# hard-coded constants) is left for rxSolve to default -- do not add it here.
+# COW overhead (as.data.frame() wraps only at the rxSolve call site).
+# One rxerr.<output> placeholder per observed output: rxSolve requires it
+# present (value immaterial, admixr2 adds residual error analytically).
+# Everything else (CMT etc.) is left for rxSolve's own default.
 .admMakeParamsList <- function(n_sim, pinfo, n_studies = 1L) {
   so    <- unique(pinfo$sigma_output[!is.na(pinfo$sigma_output)])
   rxerr <- if (length(so)) paste0("rxerr.", so) else "rxerr.cp"

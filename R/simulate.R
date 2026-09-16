@@ -46,10 +46,9 @@
   for (nm in colnames(struct_mat)) params_mat[, nm] <- struct_mat[, nm]
   if (length(eta_cols) > 0L)       params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)          params_mat[, nm] <- 0
-  # Populate study covariates into parameter matrix. Omitting this made
-  # .adghMomentsBatch() fail with "parameter(s) required for solving: WT",
-  # reachable through .adghGradNLL's unpaired-struct-theta FD fallback and
-  # not wrapped in tryCatch, so it aborted the whole fit.
+  # Study covariates into the parameter matrix -- omitting this once aborted a
+  # whole fit ("parameter(s) required for solving: WT") via .adghGradNLL's
+  # uncaught FD fallback.
   params_mat <- .admCovCols(params_mat, rxMod$params, study[["cov"]],
                             study[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
@@ -118,11 +117,9 @@
     if (!is.na(.mapped) && .mapped %in% names(inner_df)) inner_df[[.mapped]][] <- .lam
   }
 
-  # Populate model covariates for sensitivity solve. Without them rxSolve stops
-  # with "parameter(s) required for solving", swallowed by the tryCatch below,
-  # so adfo's .adfoGetMuJBatch silently fell back to finite differences -- a
-  # covariate model under grad = "analytical" quietly lost its order-2 analytic
-  # gradient with nothing erroring.
+  # Model covariates for the sensitivity solve. Without them rxSolve fails,
+  # swallowed below, so adfo silently fell back to FD -- a covariate model
+  # under grad="analytical" quietly lost its order-2 gradient with no error.
   inner_df <- .admCovCols(inner_df, sensModel$mod$params, study[["cov"]],
                           study[["cov_rows"]])
   # Forward solve_args (e.g. forced dop853 for DDE sensitivity models).
@@ -146,10 +143,9 @@
     matrix(out[[sensModel$sens_cols[j]]][keep], nrow = n_row, ncol = n_t, byrow = TRUE))
   dtheta_list <- .admThetaSens(sensModel, out, keep, n_row, n_t)
 
-  # Second-order cross block d2(pred)/(d eta_i d dir) for order-2 sens models;
-  # dropped for transformed endpoints, which need g''(z) z_p z_q + g'(z) z_pq
-  # rather than a first-order chain (a silently first-order-chained second
-  # derivative made lnorm's gradient ~200x wrong before), so those use FD instead.
+  # Second-order cross block d2(pred)/(d eta_i d dir); dropped for transformed
+  # endpoints, which need g''(z)z_p z_q + g'(z)z_pq, not a first-order chain
+  # (that once made lnorm's gradient ~200x wrong) -- those use FD instead.
   d2_list <- NULL
   if (!is.null(sensModel$d2_cols) && all(sensModel$d2_cols %in% names(out))) {
     d2_list <- lapply(seq_len(ncol(sensModel$d2_cols)), function(b)
@@ -181,11 +177,9 @@
   for (nm in names(struct_theta)) params_mat[, nm] <- struct_theta[nm]
   if (length(eta_cols) > 0L)      params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)         params_mat[, nm] <- 0
-  # Forward covariates to joint solve: without this a same-subject unit never
-  # sees them even from a plain fixed `cov`, and since ordinal endpoints are
-  # always joint, ordinal + covariate was affected too -- admc's joint branch
-  # wraps the solve in tryCatch(error = NULL), so the symptom was an Inf
-  # objective at every parameter vector with no diagnosis.
+  # Forward covariates to joint solve -- ordinal endpoints are always joint,
+  # so without this ordinal + covariate broke too, and admc's tryCatch(error =
+  # NULL) around the joint solve turned it into an undiagnosed Inf objective.
   params_mat <- .admCovCols(params_mat, rxMod$params, unit[["cov"]],
                             unit[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
@@ -208,12 +202,9 @@
   cp
 }
 
-# Joint sensitivity simulation: for each observed output, one sens solve with the
-# SHARED eta draws (obs tagged with that output's cmt) gives its prediction and
-# d(pred)/d(eta_j); stacked column-wise into n_sim x n_total matrices. Returns
-# list(cp_mat, dpred_list) or NULL if any block's sens solve fails (caller then
-# falls back to FD). Enables the analytical gradient of a joint (same-subject)
-# unit's stacked MVN.
+# Joint sensitivity simulation: one sens solve per observed output with SHARED
+# eta draws, stacked column-wise into n_sim x n_total. NULL if any block fails
+# (caller falls back to FD). Enables the analytic gradient of a joint unit's MVN.
 .admSimulateJointSens <- function(sensModel, struct, sigma_names, eta_mat, unit,
                                   cores, ndp = .Machine$integer.max,
                                   sigma_var = NULL, sigdig = NULL) {
