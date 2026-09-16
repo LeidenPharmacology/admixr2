@@ -411,19 +411,15 @@ admControl <- function(
   algorithm <- .algo$algorithm
   grad      <- .algo$grad
 
-  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone".
-  # A looser solve is not free: this release is what first routed sigdig into the
-  # estimators' own rxSolve calls, and every finite-difference step that consumes
-  # those solves (grad_h 1e-4, cov_h 1e-3, cov_h_outer ~2.5e-3) is the same order as
-  # the tolerance sigdig = 4 asks for. rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4
-  # (5.1.4 mapped it to 5e-7 -- 200x tighter for the same request), so differencing
-  # with a 1e-4 step differences noise: a moved objective and an indefinite Hessian,
-  # not an error. Shipping it on by default would have changed the numerics of every
-  # existing script silently.
+  # sigdig = NULL (the DEFAULT) leaves rxode2's solver defaults alone. A
+  # looser solve isn't free: FD steps (grad_h 1e-4, cov_h 1e-3) are the
+  # same order as the tolerance sigdig = 4 implies, and rxode2 5.1.5
+  # maps sigdig = 4 to rtol = 1e-4 (200x looser than 5.1.4's 5e-7) -- a
+  # 1e-4 FD step would then difference NOISE, not signal, silently.
   #
-  # NULL is also the only way back: the sigdig -> tolerance map is one-dimensional
-  # while rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so no sigdig value
-  # reproduces them. The tables still need a number, so they fall back to 4.
+  # NULL is also the only way back: the sigdig -> tolerance map is
+  # one-dimensional and can't reproduce rxode2's real defaults (atol
+  # 1e-8, rtol 1e-6); the tables fall back to 4.
   if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
     rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
@@ -641,18 +637,17 @@ nmObjGetControl.admc <- function(x, ...) {
   if (!is.null(.p0) && .admAnyTBS(pinfo, studies, output_var, .p0$sigma_var))
     return(.admNLLGradFD(p, pinfo, studies, z_list, rxMod, output_var,
                          params_list, cores, h, use_central))
-  # `h` is either the fixed scalar or Gill83's per-parameter vector. It must be read
-  # through .admGH()/.admGH0() and NEVER used bare, because this function differences
-  # in two different spaces:
+  # `h` is the fixed scalar or Gill83's per-parameter vector. Must be
+  # read through .admGH()/.admGH0(), NEVER used bare: this differences
+  # in two spaces --
+  #   parameter space: unpaired struct thetas (unpaired_k[bi]), joint
+  #                    objective FD (k_s): .admGH(h, k)
+  #   ETA space:       eta_hi[, j] <- eta_hi[, j] + h, no parameter
+  #                    index: .admGH0(h)
   #
-  #   parameter space -- the unpaired struct thetas, keyed by unpaired_k[bi], and
-  #                      the joint objective FD, keyed by k_s: .admGH(h, k)
-  #   ETA space       -- eta_hi[, j] <- eta_hi[, j] + h, over n_sim rows, with no
-  #                      parameter index at all: .admGH0(h)
-  #
-  # Used bare, a length-n_par vector recycles into the n_sim-row perturbations
-  # WITHOUT a warning (n_sim %% n_par is virtually always 0), handing every draw a
-  # different perturbation and returning a plausible, wrong gradient.
+  # Used bare, a length-n_par vector recycles into n_sim rows WITHOUT
+  # a warning (n_sim %% n_par is virtually always 0) -- a plausible,
+  # wrong gradient.
   if (length(h) != 1L && length(h) != length(p))
     stop(".admGrad: `h` must be one step or one per parameter (got ",
          length(h), " for ", length(p), " parameters).", call. = FALSE)
@@ -1786,34 +1781,28 @@ nmObjGetControl.admc <- function(x, ...) {
   np    <- length(p_hat)
   nms   <- names(p_hat)
 
-  # .admGradBatch() has NO beta path: it builds each configuration's prediction from
-  # a SINGLE solved column, whereas a beta endpoint's mean is derived from the b1/b2
-  # pair and its variance needs the solved precision phi. Its .admResidRows() call
-  # therefore carries no phi and .admResidApply()'s beta branch returns NA on every
-  # row -- an all-NA Hessian, reported as "covariance could not be computed" for a
-  # fit that otherwise converged.
-  #
-  # nlmixr2Est.admc() currently makes that unreachable by fitting a beta endpoint
-  # derivative-free, but that is a coercion ~700 lines away and this function is
-  # callable directly. The NLL-FD path IS phi-aware, so route beta there explicitly.
+  # .admGradBatch() has NO beta path: it builds each prediction from a
+  # SINGLE solved column, but a beta endpoint's variance needs the
+  # solved precision phi, which .admResidRows() doesn't carry here --
+  # so .admResidApply()'s beta branch returns NA on every row,
+  # reported as "covariance could not be computed" for a fit that
+  # converged fine. nlmixr2Est.admc() currently fits beta
+  # derivative-free so this is unreachable in practice, but the
+  # NLL-FD path IS phi-aware, so route beta there explicitly.
+  # phi-aware, so route beta there explicitly.
   if (isTRUE(use_grad) &&
       any(vapply(.admResidSpecs(pinfo),
                  function(x) identical(x$form, .ADM_RESID_BETA), logical(1))))
     use_grad <- FALSE
 
-  # A COVARIATE STUDY KEEPS THE GRADIENT PATH HERE, and the guard that used to take
-  # it away was justified on a property admc does not have.
-  #
-  # .admGradBatch() builds five params frames by hand, each with its own stride, and
-  # two of them carried no covariate columns -- so an unpaired struct theta had an
-  # rxSolve that failed on the missing parameter, swallowed into a skipped
-  # accumulation and a constant-ZERO Hessian row with `valid` still TRUE. All five
-  # carry them now, which is the actual fix.
-  #
-  # The other half of the old justification -- "its design moves with the parameters"
-  # -- is true of the QUADRATURE designs and false of admc: its only covariate path
-  # is "rows", whose design is .admCovRowsFor, deterministic in `cov_dist` alone.
-  # Forcing .admNLLBatch cost 129 NLL evaluations against 9 gradient evaluations.
+  # A COVARIATE STUDY KEEPS THE GRADIENT PATH HERE -- the old guard
+  # removing it was wrong: .admGradBatch() builds five params frames
+  # by hand, and two carried no covariate columns, so an unpaired
+  # struct theta's rxSolve failed silently into a constant-ZERO
+  # Hessian row with `valid` still TRUE. All five carry them now. The
+  # claim that "its design moves with the parameters" is true only of
+  # the QUADRATURE designs -- admc's only covariate path ("rows") is
+  # deterministic in `cov_dist` via .admCovRowsFor.
 
   # Hessian over struct + sigma + omega (falls back to struct+sigma if not PD).
   # Matches nlmixr2 FOCEI: omega entries are in the optimizer but skipped for cov.
@@ -2174,20 +2163,17 @@ admStopWorkers <- function() {
   } else {
     # A patch ENVIRONMENT, not assignInNamespace() alone.
     #
-    # utils::assignInNamespace() can REPLACE a binding in the daemon's locked
-    # installed namespace but cannot ADD one -- and the error is swallowed by the
-    # tryCatch below, so a name the branch INTRODUCES is simply absent in the
-    # worker while everything looks healthy. Its callers then die with
-    # "could not find function", or worse compute a different answer: this is
-    # exactly how .ADM_SENS_EMITTERS made every daemon derive a different sens
-    # cache key from its parent, and how .admGH/.admGH0 -- called from .admGrad,
-    # .admGradBatch and .admNLLGradFD, all of which run in here -- would break
-    # every dev-mode parallel restart in this release.
+    # assignInNamespace() can REPLACE a binding in the daemon's locked
+    # namespace but cannot ADD one, and the error is swallowed below --
+    # so a name the branch INTRODUCES is simply absent in the worker,
+    # silently. That is exactly how .ADM_SENS_EMITTERS made every
+    # daemon derive a different sens cache key, and how
+    # .admGH/.admGH0 would break every dev-mode parallel restart in
+    # this release.
     #
-    # Re-parenting each patched closure onto an env that HOLDS the whole dev set
-    # makes new and existing names resolve alike, with the namespace as the
-    # fallback parent for everything not patched. So a new helper needs no
-    # bespoke handling and no inlining at its call sites; it just works.
+    # Re-parenting each patched closure onto an env that HOLDS the
+    # whole dev set makes new and existing names resolve alike, so a
+    # new helper needs no bespoke handling or inlining at call sites.
     .pe <- new.env(parent = .adm_ns)
     for (.nm in names(fn_list)) {
       .obj <- fn_list[[.nm]]
@@ -2251,24 +2237,20 @@ admStopWorkers <- function() {
     1L
   }
 
-  # nlmixr2est's load step (rxUiGet.foceiModel), INLINED rather than calling the
-  # .admRxLoadAll() the parent uses. A daemon resolves this function from the
-  # INSTALLED namespace and .admDaemonRestart() patches the dev body in with
-  # assignInNamespace(), which can replace a binding but cannot ADD one -- so calling
-  # a helper new in this release fails with `could not find function` on every
-  # restart of a dev-mode fit against a stale install.
+  # nlmixr2est's load step (rxUiGet.foceiModel), INLINED rather than
+  # calling .admRxLoadAll() -- a daemon resolves this from the
+  # INSTALLED namespace, and assignInNamespace() can replace a
+  # binding but not ADD one, so a new helper here would fail with
+  # `could not find function` on a dev-mode restart against a stale
+  # install.
   #
-  # THE PARENT'S DIRECTORY CHECK IS DELIBERATELY OMITTED HERE -- do not "restore
-  # parity" by adding it. .admRxLoadAll() rejects any artifact under a session-local
-  # *Sens build directory that is not THIS session's. A mirai daemon has its OWN
-  # tempdir(), so the parent-built sensitivity DLL fails that test in every worker,
-  # and copying the check faithfully would silently drop each worker to a
-  # finite-difference gradient while the parent ran sensitivities.
-  #
-  # Cross-session staleness is handled for the worker by the parent instead: all four
-  # drivers call .admLoadSensModel()/.admLoadModel() -- which DO run the full guard
-  # -- before .admSetupDaemons(), so a worker only ever reads an entry the parent
-  # refreshed in this session. Only the DLL-existence half is inlined below.
+  # THE PARENT'S DIRECTORY CHECK IS DELIBERATELY OMITTED: a mirai
+  # daemon has its OWN tempdir(), so that check would fail on every
+  # worker and silently drop it to a finite-difference gradient.
+  # Cross-session staleness is instead handled by the parent, which
+  # runs the full guard before .admSetupDaemons(); only
+  # DLL-existence is inlined below.
+  # entry the parent already refreshed. Only DLL-existence is inlined.
   .load_all <- function(x) {
     .one <- function(e) {
       if (!inherits(e, "rxode2")) return(TRUE)
@@ -2288,39 +2270,34 @@ admStopWorkers <- function() {
   if (!is.null(rxMod_direct)) {
     rxMod <- rxMod_direct
   } else {
-    # The parent's path, sent on `pinfo`. The worker has no `ui`, so it CANNOT derive
-    # the .admIniKey() component that keys a fix()ed parameter's VALUE into the
-    # simulation-model cache -- without it, two models differing only in
-    # `theta <- fix(0.5)` vs `fix(0.9)` collide and a restart solves at the other
-    # model's fixed value.
+    # The parent's path, sent on `pinfo`: the worker has no `ui`, so it
+    # cannot derive .admIniKey()'s component that keys a fix()ed
+    # parameter's VALUE -- without it, `fix(0.5)` vs `fix(0.9)` models
+    # collide and a restart solves at the other model's fixed value.
     #
-    # There is deliberately NO fallback. This used to recompute the old lstExpr-only
-    # name so a worker running a stale installed body would still find A file -- but
-    # finding *a* file is the bug, not the mitigation: that formula is precisely the
-    # one with the fix()-value collision, and rxTempDir() is not swept. If the parent
-    # supplied no path, the right outcome is the legible stop() below.
+    # Deliberately NO fallback: recomputing the old lstExpr-only name
+    # would find A file, but that formula is exactly the one with the
+    # fix()-value collision. No path from the parent means the legible
+    # stop() below, not a plausible-looking wrong answer.
     .cacheFile <- pinfo$sim_cache_file
-    # rxUiGet.foceiModel()'s read, verbatim in shape: file.exists() -> read ->
-    # load. No retry and no sleep -- upstream has neither, and a poll loop was
-    # this package's own invention.
-    # NULL path: `file.exists(NULL)` is logical(0) and `if (logical(0))` is an
-    # "argument is of length zero" error, which would replace the message below
-    # with an opaque one at the point it is most needed.
-    # tryCatch, as the parent does (model.R). This file lives in a SHARED persistent
-    # rxTempDir(), so a concurrent session recompiling the same key writes this very
-    # path; a bare readRDS on a half-written entry dies with "error reading from
-    # connection", which .admRunRestarts re-throws opaquely.
+    # rxUiGet.foceiModel()'s read, verbatim in shape: exists -> read ->
+    # load, no retry or sleep (upstream has neither; a poll loop would
+    # be this package's own invention).
     #
-    # .admCacheWrite() now publishes by rename, so no admixr2 from 0.4.1 on can
-    # produce a half-written entry. This stays because the guarantee is only as good
-    # as the OTHER process's version: a pre-0.4.1 session still writes in place.
+    # tryCatch, as the parent does: this file lives in a SHARED
+    # persistent rxTempDir(), so a concurrent session recompiling the
+    # same key may be writing it right now, and a bare readRDS on a
+    # half-written entry dies with an opaque "error reading from
+    # connection". .admCacheWrite() now publishes by rename so a
+    # current admixr2 can't leave one half-written, but a pre-0.4.1
+    # writer still writes in place.
     #
-    # WHICH of the three ways this can fail is recorded, because they have completely
-    # different causes: absent means the path is wrong or the entry was swept;
-    # unreadable-at-N-bytes means a half-written entry; wrong-shape means a digest
-    # collision or a foreign file. The branch runs only in a daemon, and by the time
-    # the parent reports the error the file is usually complete again, so the worker
-    # has to say what it saw at the moment it looked.
+    # WHICH of the three failure modes is recorded -- absent,
+    # unreadable (half-written), or wrong-shape (digest
+    # collision/foreign file) -- since this runs only in a daemon, and
+    # by the time the parent reports the error the file is often
+    # complete again: the worker has to say what it saw at the moment
+    # it looked.
     .why <- NULL
     rxMod <- NULL
     .sz <- NA_real_
@@ -2402,27 +2379,26 @@ admStopWorkers <- function() {
       # the belt to that pair of braces.)
       if (!is.null(sens_cols))   m$sens_cols  <- sens_cols
       if (!is.null(sens_rename)) m$rename_map <- sens_rename
-      # m$theta_sens_cols and m$fixed_theta are NOT overwritten here -- the parent
-      # does not thread them through (adding a worker-load argument would trip the
-      # dev-mode stale-daemon `unused argument` trap). Their staleness is guarded
-      # solely by the sens cache key, which digests .admIniKey(ui) -- including a
-      # FIXED parameter's value, which is exactly what fixed_theta carries -- and
-      # .admPkgKey(). Without both, a stale file would be a false hit and a worker
-      # could fill the wrong constant into a fixed theta's THETA[k] column.
+      # m$theta_sens_cols and m$fixed_theta are NOT overwritten here --
+      # the parent doesn't thread them through (a worker-load argument
+      # would trip the dev-mode stale-daemon "unused argument" trap).
+      # Staleness is guarded solely by the sens cache key
+      # (.admIniKey(ui) + .admPkgKey()), which includes a FIXED
+      # parameter's value -- without both, a stale file would be a
+      # false hit filling the wrong constant into THETA[k].
       #
-      # pred_tbs MUST be re-derived, exactly as .admLoadSensModel() does on the
-      # parent's cache-hit path: the key digests ui$lstExpr while lambda's starting
-      # value and fix() status live in ini({}), so `lam <- fix(0.5)` and
-      # `lam <- 0.5` COLLIDE. The parent overwrites the field; the worker did not,
-      # so a parallel restart could invert the transform with a different lambda
-      # from the sequential fit, invisibly, because the NLL stays bit-identical.
+      # pred_tbs MUST be re-derived, exactly as .admLoadSensModel()
+      # does: the key digests ui$lstExpr while lambda's fix() status
+      # lives in ini({}), so `lam <- fix(0.5)` and `lam <- 0.5`
+      # COLLIDE, and a parallel restart could invert the transform
+      # with a different lambda, invisibly (the NLL stays
+      # bit-identical).
       #
-      # INVARIANT: every field below must land on the same value
-      # .admLoadSensModel() would derive from `ui`. The two routes read different
-      # sources (predDf there, the parsed residual spec here) because the worker
-      # has no `ui`, so the only place they can disagree is their FALLBACKS -- and
-      # a per-field fallback to the CACHED value was exactly that disagreement.
-      # Rebuild wholesale or not at all, and mirror the parent's defaults exactly.
+      # INVARIANT: every field below lands on the value
+      # .admLoadSensModel() would derive from `ui`. The worker has no
+      # `ui`, so the two routes can only disagree in their
+      # FALLBACKS -- rebuild wholesale or not at all, mirroring the
+      # parent exactly.
       if (!is.null(pinfo) && !is.null(m$pred_tbs)) {
         .sp <- .admResidSpecs(pinfo)
         .s1 <- if (length(.sp)) .sp[[1L]] else NULL
@@ -2559,25 +2535,25 @@ admStopWorkers <- function() {
        message    = opt$message)
 }
 
-# Load admixr2 in every daemon BEFORE any of them is asked to read the model
+# Load admixr2 in every daemon BEFORE any is asked to read the model
 # cache, then repair the cache if that load destroyed it.
 #
-# A daemon's `library(admixr2)` loads nlmixr2est, whose .resetCacheIfNeeded() does
-# this (verified in the INSTALLED 6.2.0, which is what a daemon loads):
+# A daemon's `library(admixr2)` loads nlmixr2est, whose
+# .resetCacheIfNeeded() runs (verified in the INSTALLED 6.2.0):
 #
 #     if (.md5 != nlmixr2.md5) { message("detected new version ..."); rxClean() }
 #
-# rxClean() wipes the whole SHARED rxTempDir(), including the adm-sim-*.rds the
-# parent wrote seconds earlier and these very daemons are about to read -- so the
-# worker deletes its own input. Two details make it worse than a one-off: the
-# mismatch branch never REWRITES the stamp, so it is permanent rather than
-# self-healing, and it fires per daemon, on every fit. It is triggered by having
-# more than one nlmixr2est build in play (a pkgload::load_all() alongside the
-# installed package), and it was the second, independent cause of the intermittent
-# parallel-restart failures.
+# rxClean() wipes the whole SHARED rxTempDir(), including the
+# adm-sim-*.rds the parent wrote seconds earlier -- the worker
+# deletes its own input. The mismatch never REWRITES the stamp, so
+# it's permanent, not self-healing, and fires per daemon on every
+# fit; triggered by more than one nlmixr2est build in play
+# (load_all() alongside the installed package).
 #
-# The order is the fix: warm first, so every daemon-side clean has already
-# happened, then re-derive. .admLoadSensModel()/.admLoadModel() are cache-keyed and
+# The fix is ordering: warm first, so every daemon-side clean has
+# already happened, then re-derive -- cache-keyed calls cost
+# nothing on a survived entry and repair by recompiling on a
+# destroyed one.
 # cost nothing when the entries survived; when they did not, they recompile and
 # republish, which is exactly the repair.
 .admWarmDaemons <- function(ui, pinfo, sens_cache_file = NULL) {
@@ -3000,25 +2976,26 @@ nlmixr2Est.admc <- function(env, ...) {
     .admAnyTBS(pinfo, studies, output_var, .p0u$sigma_var)
   obj_fd  <- joint_fd || tbs_fd
 
-  # Measure the gradient's FD steps ONCE, here, for every later difference to
-  # reuse (FOCEI's numericGrad mechanism at nF == 1).
+  # Measure the gradient's FD steps ONCE, here, for every later
+  # difference to reuse (FOCEI's numericGrad mechanism at nF == 1).
   #
-  # The set is the parameters admc actually steps in PARAMETER space:
-  #   * joint study with no sens model -> .admNLLGradFD differences the objective
-  #     in every coordinate;
-  #   * otherwise the struct thetas the sens model has no THETA_j_ column for,
-  #     which .admGrad perturbs in the params frame. "Unpaired" alone does NOT
-  #     qualify: .admBuildThetaSens emits a direction per unpaired theta, and
-  #     .admGrad then reads d(pred)/d(theta) exactly and differences nothing.
+  # The set is the parameters admc steps in PARAMETER space: for a
+  # joint study with no sens model, every coordinate
+  # (.admNLLGradFD); otherwise only struct thetas with no THETA_j_
+  # column. "Unpaired" alone doesn't qualify -- .admBuildThetaSens
+  # emits a direction per unpaired theta, and .admGrad reads
+  # d(pred)/d(theta) exactly, differencing nothing.
   #
-  # The ETA perturbations keep the fixed scale regardless. They carry no parameter
-  # index, so .admGrad/.admGradBatch read them through .admGH0() -- indexing a
-  # per-parameter vector by an eta number would pick an unrelated parameter's step.
-  # That split is also the honest one: Gill83 measured the OBJECTIVE, and
-  # d(pred)/d(eta) is a different function.
+  # ETA perturbations keep the fixed scale regardless, read through
+  # .admGH0() since they carry no parameter index (indexing a
+  # per-parameter vector by an eta number would pick the wrong
+  # step). Gill83 measured the OBJECTIVE, so d(pred)/d(eta) is a
+  # different function -- the split is honest, not a shortcut.
   #
-  # Note the struct-theta steps ARE applied to a prediction difference rather than
-  # an objective one. Under common random numbers both are limited by the same
+  # The struct-theta steps ARE applied to a prediction difference
+  # rather than an objective one; both share the same
+  # solver-tolerance floor under common random numbers, so it is a
+  # transfer worth remembering.
   # solver-tolerance floor, and the quantity being made accurate is d(NLL)/d(theta)
   # either way. It remains a transfer, and worth knowing when reading a step back.
   .fd_idx <- if (!want_grad) integer(0)
