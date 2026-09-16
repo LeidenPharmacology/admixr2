@@ -103,13 +103,61 @@ test_that("a study omitting `cov` has it filled in from `cov_dist`", {
   expect_equal(st$a$cov$WT, 70)
 })
 
+# A covariate the model never reads used to be refused, which forced the null
+# model of a covariate LRT to be written as `fix(0)` rather than by deleting the
+# term. Integrating over a covariate f does not depend on returns f unchanged,
+# so it is taken off the design instead.
+test_that("a covariate the model never reads is dropped, not refused", {
+  st <- list(a = list(cov = list(WT = 70),
+                      cov_dist = list(WT   = list(mu = 70, sd = 10),
+                                      AGE  = list(mu = 40, sd = 12))))
+  expect_message(
+    out <- admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), st),
+    "left off the design")
+  expect_equal(admixr2:::.admCovSpecNames(out$a$cov_dist), "WT")
+  expect_null(out$a$cov_dist$AGE)
+})
+
+test_that("dropping an unread covariate leaves the kept margin's correlation intact", {
+  # WT and AGE correlated; only WT is read. Marginalising AGE out of the copula
+  # must leave WT exactly as declared -- the same spec as if AGE were absent.
+  with_cor <- list(a = list(cov = list(WT = 70),
+                            cov_dist = list(WT  = list(mu = 70, sd = 10),
+                                            AGE = list(mu = 40, sd = 12),
+                                            cor = 0.5)))
+  alone    <- list(a = list(cov = list(WT = 70),
+                            cov_dist = list(WT = list(mu = 70, sd = 10))))
+  a <- suppressMessages(
+    admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), with_cor))$a$cov_dist
+  b <- admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), alone)$a$cov_dist
+  expect_equal(admixr2:::.admCovSpecNames(a), "WT")
+  expect_equal(a$WT, b$WT)
+  # one survivor leaves nothing to correlate, so no copula is carried across
+  expect_null(a$joint)
+  expect_null(a$latentR)
+})
+
+test_that("every declared covariate being unread empties the design", {
+  st <- list(a = list(cov = list(AGE = 40, WT = 70),
+                      cov_dist = list(AGE = list(mu = 40, sd = 12))))
+  out <- suppressMessages(
+    admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), st))
+  expect_null(out$a$cov_dist)
+})
+
+# Dropping an unread name rather than refusing it moved where a TYPO is caught:
+# not at the name that was typed, but at the covariate left undescribed. A study
+# that emptied its whole design used to return early, past this check.
+test_that("a mistyped covariate name is still caught", {
+  st <- list(a = list(cov_dist = list(WTT = list(mu = 70, sd = 10))))
+  expect_error(
+    suppressMessages(
+      admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), st)),
+    "does not describe covariate")
+})
+
 test_that(".admCheckCovariates still errors on genuinely unsupportable input", {
   ok_st <- list(a = list(cov = list(WT = 0), cov_dist = list(WT = list(mu = 0, sd = 0.6))))
-
-  # covariate the model never reads -- almost always a typo
-  expect_error(
-    admixr2:::.admCheckCovariates(.cov_ui(cov = "AGE"), .cov_pinfo(), ok_st),
-    "which the model never reads")
 
   # distributions we cannot draw from
   for (spec in list(list(mu = 0), list(mu = 0, sd = 0), list(mu = 0, sd = NA_real_),

@@ -312,6 +312,49 @@
   has <- vapply(studies, function(s) !is.null(s$cov_dist), logical(1))
   if (!any(has)) return(studies)
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
+  # Which studies OPTED IN, recorded before any margin is dropped. Dropping the
+  # last unread margin empties `cov_dist`, and the "does not describe covariate"
+  # check at the end has to keep applying to such a study -- that check is what
+  # catches a mistyped covariate name now that an unread one is no longer
+  # refused where it is written.
+  opted <- has
+
+  covs <- tryCatch(.ui$allCovs, error = function(e) character(0))
+
+  # Covariates the model never reads come off the design. See .admCovDistDrop
+  # for why that is exact rather than an approximation.
+  .dropped <- character(0)
+  for (nm in names(studies)[has]) {
+    cd     <- studies[[nm]]$cov_dist
+    unread <- setdiff(.admCovSpecNames(cd), covs)
+    if (!length(unread)) next
+    # A sampler the USER wrote is opaque -- it returns whatever columns it was
+    # written to return -- so an unread margin cannot be taken out from under
+    # it, and guessing which column to discard would be worse than refusing.
+    # One admixr2 built from declared margins (`jointOwn`) is rebuilt instead.
+    if (is.function(.admCovDistCanon(cd)[["joint"]]) &&
+        !isTRUE(.admCovDistCanon(cd)[["jointOwn"]]))
+      bad("study '", nm, "' declares `cov_dist` for ",
+          paste(sQuote(unread), collapse = ", "),
+          ", which the model never reads, inside a user-supplied `joint` ",
+          "sampler. Marginalising it out would change the dependence among ",
+          "the margins that remain, so declare those explicitly instead. ",
+          "Model covariates: ",
+          if (length(covs)) paste(covs, collapse = ", ") else "(none)", ".")
+    .dropped <- union(.dropped, unread)
+    studies[[nm]]$cov_dist <- .admCovDistDrop(cd, unread)
+  }
+  if (length(.dropped)) {
+    .pl <- length(.dropped) > 1L
+    message("admixr2: ", paste(sQuote(.dropped), collapse = ", "),
+            if (.pl) " are" else " is", " declared by a study but not read by ",
+            "the model. Integrating over ", if (.pl) "them" else "it",
+            " cannot change the prediction, so ", if (.pl) "they are" else "it is",
+            " left off the design.")
+    # NO early return when this empties every design: the missing-covariate
+    # check below still has to run over the studies that opted in.
+    has <- vapply(studies, function(s) !is.null(s$cov_dist), logical(1))
+  }
 
   # Expand the friendly grammar ONCE, before anything routes on it: `cor` becomes a `joint` sampler, and every
   # downstream consumer (the per-row draws, the product grid, the Taylor design, the shift grid) reads `joint`
@@ -319,8 +362,6 @@
   # silently dropped.
   for (nm in names(studies)[has])
     studies[[nm]]$cov_dist <- .admCovDistCanon(studies[[nm]]$cov_dist)
-
-  covs <- tryCatch(.ui$allCovs, error = function(e) character(0))
   # A JOINT unit has no per-row covariate path -- the shared-eta solve produces one prediction set for every
   # output at once -- so marginalising over a covariate would silently solve at its mean. Refused HERE, at
   # admission, rather than only inside .adghMomentsJoint: that refusal sits on the NLL path, so a fit could
@@ -345,11 +386,9 @@
     # `rho` and `Sigma` are metadata siblings of the covariate specs, not covariates. Looping over them made a
     # correlated spec fail with "declares cov_dist for 'rho', which the model never reads" -- a message
     # pointing at the wrong thing.
+    # Every name reaching here is read by the model: the unread ones were taken
+    # off the design above.
     for (cv in .admCovSpecNames(cd)) {
-      if (!cv %in% covs)
-        bad("study '", nm, "' declares `cov_dist` for '", cv,
-            "', which the model never reads. Model covariates: ",
-            if (length(covs)) paste(covs, collapse = ", ") else "(none)", ".")
       sp <- cd[[cv]]
       if (!is.list(sp)) bad("`cov_dist` for '", cv, "' must be a list.")
       normal <- !is.null(sp$mu) && !is.null(sp$sd) &&
@@ -528,11 +567,13 @@
   # Otherwise it is silently held at whatever rxSolve defaults it to, which is
   # the ecological plug-in wearing a fit's clothes.
   #
-  # Checked LAST, because a mistyped covariate name fails BOTH this and the
-  # "declares a covariate the model never reads" check above, and that one names
-  # the typo directly. Only for opted-in studies, so a fit handling covariates
-  # entirely through fixed `cov` values is untouched.
-  for (nm in names(studies)[has]) {
+  # This is also what still catches a MISTYPED covariate name. Declaring `WTT`
+  # for a model that reads `WT` no longer fails where the typo is written -- an
+  # unread name is dropped with a message now, so that a nested model may simply
+  # omit a term -- but `WT` is then undescribed and fails here, naming the
+  # covariate that went missing. Only for opted-in studies, so a fit handling
+  # covariates entirely through fixed `cov` values is untouched.
+  for (nm in names(studies)[opted]) {
     dcl <- c(.admCovSpecNames(studies[[nm]]$cov_dist),
              names(studies[[nm]][["cov"]] %||% list()))
     miss <- setdiff(covs, dcl)
@@ -602,6 +643,49 @@
   # match the natural-scale mean and SD exactly
   list(meanlog = log(m^2 / sqrt(sd^2 + m^2)),
        sdlog   = sqrt(log(1 + sd^2 / m^2)))
+}
+
+# A covariate a study declares but THE MODEL NEVER READS contributes nothing: f
+# does not depend on it, so integrating over it returns f unchanged, and
+# marginalising it out of a Gaussian copula leaves every surviving margin
+# exactly as declared (the latent block is the corresponding submatrix of R).
+# Dropping it is therefore EXACT, not an approximation, and it is also what
+# lets a NESTED pair share one `studies` object: the null model of a covariate
+# LRT simply omits the term, while the population that declares the covariate
+# is still the honest description of who was enrolled. Refusing instead forced
+# the restriction to be written as `fix(0)` -- a property of the model text
+# rather than of the hypothesis -- and left the dropped covariate on the
+# quadrature grid, paying for nodes that cannot move the objective.
+#
+# `cor`/`Sigma`/`latentR` are stated over the declared covariates in
+# DECLARATION ORDER, so the surviving block is that submatrix; a named one is
+# subset by name instead, since a user may state it in any order.
+# This is .admCovDropMargin's rebuild, WITHOUT its correlated-margin refusal.
+# That refusal belongs to `by`, which CONDITIONS a margin at a value and so
+# cannot honour its correlation with the margins that remain. Here the margin is
+# being MARGINALISED instead, and the kept block's latent correlation is just
+# the corresponding submatrix of R -- exact for any correlation, including a
+# `cor = c(WT.CRCL = 0.45)` pair where only WT survives.
+.admCovDistDrop <- function(cov_dist, drop) {
+  cd   <- .admCovDistCanon(cov_dist)
+  nms  <- .admCovSpecNames(cd)
+  keep <- setdiff(nms, drop)
+  R    <- cd[["latentR"]]
+  out  <- cd
+  for (nm in drop) out[[nm]] <- NULL
+  # The expanded forms are rebuilt from `cor` below; carrying the old sampler
+  # across would leave it returning a column its consumers no longer expect.
+  out[c("joint", "jointOwn", "discExact", "latentR", "cor", "rho",
+        "Sigma")] <- NULL
+  if (!length(keep)) return(NULL)
+  if (!is.null(R) && length(keep) > 1L &&
+      identical(dim(R), c(length(nms), length(nms)))) {
+    i  <- match(keep, nms)
+    Rk <- R[i, i, drop = FALSE]
+    dimnames(Rk) <- list(keep, keep)
+    out[["cor"]] <- Rk
+  }
+  .admCovDistCanon(out)
 }
 
 .admCovDistCanon <- function(cov_dist) {
@@ -2805,6 +2889,20 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
 #'
 #' @return A validated `cov_dist`, ready to pass to a study. Printing it shows
 #'   each covariate's realised mean, SD and type.
+#'
+#' @section Covariates the model does not read:
+#'   A distribution may name covariates the analysis model never uses. The
+#'   prediction cannot depend on them, so integrating over them changes nothing
+#'   and they are left off the design, with a message naming them. This is what
+#'   lets a NESTED pair of models share one set of studies: the null model of a
+#'   covariate test simply omits the term, while the population it was fitted to
+#'   still describes everyone who was enrolled. Marginalising a covariate out of
+#'   a correlated specification is exact --- every surviving margin keeps the
+#'   distribution it was given.
+#'
+#'   A covariate the model *does* read must still be described, by a `cov_dist`
+#'   entry or a fixed `cov` value, so a mistyped name is reported as the
+#'   covariate it left undescribed rather than passing unnoticed.
 #'
 #' @examples
 #' # what a baseline-characteristics table reports

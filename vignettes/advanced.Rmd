@@ -22,50 +22,18 @@ library(rxode2)
 library(nlmixr2)
 library(ggplot2)
 
-data("examplomycin")
-obs   <- examplomycin[examplomycin$EVID == 0, ]
-obs   <- obs[order(obs$ID, obs$TIME), ]
-times <- sort(unique(obs$TIME))
-ids   <- unique(obs$ID)
-n     <- length(ids)
-dv_mat <- matrix(NA_real_, nrow = n, ncol = length(times))
-for (i in seq_along(ids)) {
-  sub         <- obs[obs$ID == ids[i], ]
-  dv_mat[i, ] <- sub$DV[order(sub$TIME)]
-}
-E <- colMeans(dv_mat)
-V <- cov.wt(dv_mat, method = "ML")$cov
+# The examplomycin study and model from `vignette("admixr2")`, assembled by the
+# shared helpers in this vignette's setup file.
+.s       <- admVignetteStats()
+E        <- .s$E
+V        <- .s$V
+n        <- .s$n
+times    <- .s$times
+pk_model <- admVignetteModel
+study    <- c(.s, list(ev = rxode2::et(amt = 100)))
 
-pk_model <- function() {
-  ini({
-    tcl     <- log(5)
-    tv1     <- log(10)
-    tv2     <- log(30)
-    tq      <- log(10)
-    tka     <- log(1)
-    prop.sd <- c(0, 0.2)
-    eta.cl ~ 0.09
-    eta.v1 ~ 0.09
-    eta.v2 ~ 0.09
-    eta.q  ~ 0.09
-    eta.ka ~ 0.09
-  })
-  model({
-    cl <- exp(tcl + eta.cl)
-    v1 <- exp(tv1 + eta.v1)
-    v2 <- exp(tv2 + eta.v2)
-    q  <- exp(tq  + eta.q)
-    ka <- exp(tka + eta.ka)
-    d/dt(depot)      <- -ka * depot
-    d/dt(central)    <- ka * depot - (cl/v1 + q/v1) * central + (q/v2) * peripheral
-    d/dt(peripheral) <- (q/v1) * central - (q/v2) * peripheral
-    cp <- central / v1
-    cp ~ prop(prop.sd)
-  })
-}
-
-study <- list(E = E, V = V, n = n, times = times, ev = rxode2::et(amt = 100))
-
+# IIV on CL and V1 only -- the reduced model the AIC/BIC section compares
+# against, and the one thing here that is not the running example.
 pk_reduced <- function() {
   ini({
     tcl     <- log(5)
@@ -94,8 +62,7 @@ pk_reduced <- function() {
 
 ## Full covariance vs variance NLL
 
-Each study's `V` determines which branch of the NLL is used. `admixr2`
-auto-detects the method:
+Each study's `V` selects a branch of the NLL, auto-detected:
 
 | V structure | Auto-detected `method` | NLL cost |
 |-------------|------------------------|----------|
@@ -120,24 +87,21 @@ study_var <- list(
 )
 ```
 
-Use `"cov"` when you have a full covariance matrix and expect temporal
-correlation to inform parameter estimates. Use `"var"` when only marginal
-variances are available (e.g. from a published table of means and SDs) or when
-runtime is a priority.
+Use `"cov"` when you have a full covariance matrix and expect the temporal
+correlation to inform the estimates; `"var"` when only marginal variances exist —
+a published table of means and SDs — or when runtime matters more.
 
 ## Gradient modes
 
-`admControl()` and `adfoControl()` offer gradient strategies via the `grad`
-argument.  `adghControl()` offers `"analytical"`, `"fd"`, and `"none"`.
-`adirmcControl()` offers `"analytical"`, `"none"`, and `"fd"` only (no
-`"sens"`).
+Every control takes a `grad` argument. `admControl()` names its analytical mode
+`"sens"`; `adfoControl()`, `adghControl()` and `adirmcControl()` call theirs
+`"analytical"`. All four also take `"fd"` and `"none"`.
 
-`"fd"` is a **central** difference.  Forward differencing was removed in 0.4.1:
-measured against the analytic gradient it was 10^2^ to 10^4^ times less
-accurate, and the one solve per parameter it saved did not pay for a gradient
-the optimizer struggles to descend.  The step is not a fixed constant either --
-it is measured per parameter by the Shi (2021) procedure, with `grad_h` kept as
-the fallback when no measurement can be made.
+`"fd"` is a **central** difference. Forward differencing was removed in 0.4.1: it
+measured 10^2^ to 10^4^ times less accurate than the analytic gradient, and the
+one solve per parameter it saved did not pay for a gradient the optimizer
+struggles to descend. Nor is the step a constant — it is measured per parameter
+by the Shi (2021) procedure, with `grad_h` the fallback when it cannot be.
 
 **`admControl()` gradient modes:**
 
@@ -163,13 +127,13 @@ the fallback when no measurement can be made.
 | `"fd"` | Central FD of full NLL | All parameters; `2 n_p` NLL evals per step |
 | `"none"` | BOBYQA (derivative-free) | No gradient |
 
-Because the GH objective is **noise-free** (deterministic quadrature, no MC
-draws), its analytical gradient is exact and the resulting Hessian is
-well-conditioned — `"analytical"` is the recommended default for `adgh`.
+The GH objective is **noise-free** — deterministic quadrature, no MC draws — so
+its analytical gradient is exact and the Hessian well-conditioned. Keep the
+default.
 
-For `adfo`, all gradient modes still use the sensitivity model inside each NLL
-evaluation to compute J in a single rxSolve — `grad` controls only how the
-*optimizer* gradient is formed.
+For `adfo`, every mode still uses the sensitivity model inside each NLL
+evaluation to get J in one rxSolve; `grad` only controls how the *optimizer*
+gradient is formed.
 
 ```{r grad-mode, eval=FALSE}
 # Analytical gradient (default; fastest for ODE models)
@@ -183,15 +147,14 @@ fit_bobyqa <- nlmixr2(pk_model, admData(), est = "admc",
                        n_sim = 5000L, seed = 1L))
 ```
 
-`"sens"` is recommended for all standard ODE and `linCmt()` models. If the
-sensitivity model is unavailable (e.g. rare ODE features), `admixr2` falls back
-to `"fd"` automatically with a warning.
+Use `"sens"` for any standard ODE or `linCmt()` model. Where the sensitivity
+model cannot be built — some rare ODE features — admixr2 falls back to `"fd"`
+with a warning.
 
 ## Mu-referencing and sensitivity equations
 
-**Mu-referencing** is the nlmixr2 convention of expressing each structural
-parameter as a fixed effect plus a random effect through a known
-back-transformation:
+**Mu-referencing** is the nlmixr2 convention of writing each structural parameter
+as a fixed effect plus a random effect under a known back-transformation:
 
 ```r
 cl <- exp(tcl + eta.cl)   # mu-referenced: tcl paired with eta.cl
@@ -201,60 +164,53 @@ cl <- exp(tcl + eta.cl)   # mu-referenced: tcl paired with eta.cl
 handled differently by `grad = "sens"`:
 
 **Paired (mu-referenced) parameters** — rxode2 augments the ODE system with
-sensitivity equations `d(pred)/d(eta_i)` for each random effect. Because
-`tcl` and `eta.cl` enter additively on the log scale, the gradient of the
-NLL with respect to `tcl` equals the gradient with respect to `eta.cl`. Both
-are recovered from a single ODE solve, with no extra function evaluations.
+sensitivity equations `d(pred)/d(eta_i)`. Since `tcl` and `eta.cl` enter
+additively on the log scale, the NLL gradient with respect to `tcl` equals the
+one with respect to `eta.cl`, and a single solve recovers both.
 
-**Non-mu-referenced parameters** — when a structural parameter and its random
-effect are written separately (e.g. `cl <- exp(tcl) * exp(eta.cl)`), the
-sensitivity equations keyed on the etas do not by themselves carry
-`d(pred)/d(tcl)`. `admixr2` therefore emits its own first-order sensitivity
-model over an explicit *direction set* — one direction per random effect plus
-one per unpaired structural theta — compiled with `eventSens = "jump"` so that
-dosing-modifier (`f`/`lag`/`rate`/`dur`) sensitivities are included. The unpaired
-thetas then get an **analytical** gradient from the same single solve, with no
-finite differences (a message notes that the sensitivity model carries them).
-This mirrors the direction-set scheme `nlmixr2est`'s fast-focei uses, at first
-order, and is cross-validated against its inner model to ~1e-13. A targeted CRN
-finite-difference solve is used only as a fallback, when the augmented model
-cannot be built.
+**Non-mu-referenced parameters** — written separately (`cl <- exp(tcl) *
+exp(eta.cl)`), the eta-keyed sensitivities do not carry `d(pred)/d(tcl)`. admixr2
+therefore emits its own first-order sensitivity model over an explicit *direction
+set* — one direction per random effect, one per unpaired theta — compiled with
+`eventSens = "jump"` so dosing-modifier (`f`/`lag`/`rate`/`dur`) sensitivities
+come too. The unpaired thetas then get an **analytical** gradient from that same
+solve, no finite differences, with a message saying so. This is the direction-set
+scheme `nlmixr2est`'s fast-focei uses, at first order, cross-validated against
+its inner model to ~1e-13. A targeted CRN finite-difference solve is the fallback
+when the augmented model cannot be built.
 
-**Parameters without a random effect** — a structural parameter with no
-corresponding eta (e.g. `v2 <- exp(tv2)` with IIV dropped from V2) is simply the
-same unpaired case: it gets its own direction in that sensitivity model and an
-exact analytical gradient. (`adfo` is the one exception — its
-`V_pred = J Ω Jᵀ + Σ` needs the second derivative `dJ/dθ`, so it keeps finite
-differences for structural thetas, as noted above.)
+**Parameters without a random effect** — one with no corresponding eta
+(`v2 <- exp(tv2)`, IIV dropped from V2) is the same unpaired case: its own
+direction in that sensitivity model, and an exact analytical gradient. (`adfo`
+needs one thing more: `V_pred = J Ω Jᵀ + Σ` depends on the second derivative
+`dJ/dθ`, which comes from the order-2 sensitivity model. Finite differences are
+the fallback when that cannot be built, not the rule.)
 
 ## IRMC kappa correction
 
-The IRMC estimator shifts IS weights by moving the proposal mean when a
-structural parameter changes. This works directly for mu-referenced parameters
-(e.g. `cl <- exp(tcl + eta.cl)`) because the weight shift is a closed-form
+IRMC shifts its importance weights by moving the proposal mean when a structural
+parameter changes. For a mu-referenced parameter that shift is a closed-form
 function of the back-transformed ratio.
 
-For **non-mu-referenced parameters** — structural thetas without a paired
-random effect (e.g. `ka <- exp(tka)` with no `eta.ka`) — changing `tka` during
-inner optimisation alters the population mean prediction `f(theta, 0)` without
-a corresponding IS weight path. The kappa correction accounts for this by
-adding `kappa = f(theta_cand, 0) - f(theta_outer, 0)` to the predicted mean,
-keeping the inner NLL anchored to the true prediction at the candidate point.
-Kappa is zero when all struct thetas are mu-referenced.
+A theta with **no paired random effect** (`ka <- exp(tka)`, no `eta.ka`) has no
+such weight path: changing `tka` in the inner loop moves `f(theta, 0)` and
+nothing else follows. The kappa correction adds
+`kappa = f(theta_cand, 0) - f(theta_outer, 0)` to the predicted mean, anchoring
+the inner NLL to the true prediction at the candidate. Kappa is zero when every
+theta is mu-referenced.
 
-Two methods control how `f(theta_cand, 0)` is evaluated during inner
-optimisation:
+How `f(theta_cand, 0)` gets evaluated is the choice:
 
-- **`"exact"`** (default): re-evaluates `f(theta_cand, 0)` via a single
-  rxSolve at each inner NLL evaluation. Exact; costs one extra rxSolve per
-  inner step.
-- **`"linearized"`**: precomputes `J = df/d(theta)` once per outer iteration via a
-  small FD batch. Approximates `kappa_fn(theta_cand) ≈ f0 + J %*% (theta_cand - theta0)` — pure arithmetic per inner step, zero extra rxSolve calls.
+- **`"exact"`** (default) re-solves it at each inner NLL evaluation — one extra
+  rxSolve per inner step.
+- **`"linearized"`** precomputes `J = df/d(theta)` once per outer iteration from
+  a small FD batch and takes
+  `kappa_fn(theta_cand) ≈ f0 + J %*% (theta_cand - theta0)` — arithmetic only,
+  no rxSolve at all.
 
-`"exact"` is accurate but adds an rxSolve to every inner NLL call.
-`"linearized"` is faster and the approximation is good when inner steps stay
-small relative to the outer box constraint — which is typical for converged
-phases. Prefer `"linearized"` for complex ODE models where each rxSolve is expensive.
+The approximation holds while inner steps stay small against the outer box
+constraint, which is typical once phases converge, so prefer `"linearized"`
+wherever a solve is expensive.
 
 ```{r kappa, eval=FALSE}
 adirmcControl(..., kappa_method = "exact")       # default
@@ -263,8 +219,8 @@ adirmcControl(..., kappa_method = "linearized")  # faster for complex ODE models
 
 ## Parallel restarts
 
-Multi-restart fitting guards against local optima. `workers > 1` runs restarts
-in parallel; `admixr2` manages the worker pool internally:
+Multi-restart fitting guards against local optima. `workers > 1` runs the
+restarts in parallel, over a pool admixr2 manages itself:
 
 ```{r parallel, eval=FALSE}
 fit_par <- nlmixr2(
@@ -281,11 +237,10 @@ fit_par <- nlmixr2(
 )
 ```
 
-`cores` is distributed automatically: `floor(total_cores / n_workers)` threads
-per worker, with remainder allocated cyclically (e.g. 13 cores / 4 workers →
-4, 3, 3, 3). Workers are stopped after the restart phase so all cores are freed
-for the covariance Hessian step. Call `admStopWorkers()` manually if a fit is
-interrupted before cleanup.
+`cores` is split automatically — `floor(total_cores / n_workers)` each, remainder
+cyclically, so 13 cores over 4 workers gives 4, 3, 3, 3. Workers stop after the
+restart phase, freeing every core for the covariance Hessian. Call
+`admStopWorkers()` by hand if a fit is interrupted before that cleanup.
 
 ## Quasi-random sampling
 
@@ -299,20 +254,18 @@ The `sampling` argument controls how eta samples are drawn:
 | `"lhs"` | Latin hypercube |
 | `"rnorm"` | Plain normal |
 
-Sobol sequences typically require 2–5× fewer samples than plain normal draws for
-equivalent NLL variance. For small `n_sim`, `"lhs"` provides better coverage
-than Sobol.
+Sobol typically needs 2–5× fewer samples than plain normal draws for the same NLL
+variance; at small `n_sim`, `"lhs"` covers better.
 
 ## Parameter uncertainty
 
-`covMethod = "r"` computes a numerical Hessian after optimisation and
-reports standard errors in `print(fit)`. As of this version the default is
-`covMethod = "r,s"` (see below), which reports the sandwich correction of
-that same Hessian; pass `covMethod = "r"` explicitly to get the uncorrected
-SEs. SEs are reported for the structural, residual-error **and** omega (IIV)
-parameters; omega is reported on its natural scale, with the Hessian rotated
-off the Cholesky factor the optimiser works in. A larger `cov_n_sim` reduces MC
-noise in the Hessian:
+`covMethod = "r"` takes a numerical Hessian after optimisation and reports
+standard errors in `print(fit)`. The default is `covMethod = "r,s"` (below),
+the sandwich correction of that same Hessian; ask for `"r"` to get the
+uncorrected ones. SEs cover the structural, residual-error **and** omega
+parameters, omega on its natural scale, with the Hessian rotated off the
+Cholesky factor the optimiser works in. A larger `cov_n_sim` cuts MC noise in
+the Hessian:
 
 ```{r cov-method, eval=FALSE}
 fit_cov <- nlmixr2(
@@ -321,15 +274,15 @@ fit_cov <- nlmixr2(
     studies     = list(examplomycin = study),
     n_sim       = 5000L,
     cov_n_sim   = 10000L,   # more samples → lower Hessian noise
-    cov_h_outer = 2.5e-3,   # outer FD step scale (default: eps^(1/5) ≈ 2.5e-3)
+    cov_h_outer = 2.5e-3,   # outer FD step scale (default: eps^(1/5) ≈ 7.4e-4)
     covMethod   = "r",
     seed        = 1L
   )
 )
 ```
 
-Set `covMethod = "none"` to skip uncertainty estimation during early model
-development when you only need the point estimates:
+Skip uncertainty altogether during early development, when only the point
+estimates matter:
 
 ```{r no-cov, eval=FALSE}
 admControl(..., covMethod = "none")
@@ -341,15 +294,15 @@ If the Hessian is non-positive-definite (SEs printed as `NA`), increase
 ### `covMethod = "r,s"`: scoring the summary against its own sampling law
 
 The aggregate objective is the exact log-likelihood of `n` iid draws from
-`N(yt, Vt)`, so it assumes each subject's observation vector is multivariate
-normal. It is not — `y_i = f(theta, b_i) + eps_i` is nonlinear in the random
-effect, so the marginal is a mixture. This does **not** cost the point
-estimates: the score has expectation zero at the true parameters under any
-weight, so the fit stays consistent. It costs the reported uncertainty, in two
-ways that differ in kind: `Cov(V_ij, V_kl)` is mis-sized by the excess kurtosis,
-and `Cov(ybar, vech V)` is assumed zero where a real correlation of 0.3–0.6
-sits. The sample mean and the sample covariance are exactly independent for a
-multivariate normal, and for nothing else.
+`N(yt, Vt)`, which assumes each subject's observation vector is multivariate
+normal. It is not: `y_i = f(theta, b_i) + eps_i` is nonlinear in the random
+effect, so the marginal is a mixture. The point estimates do **not** pay for
+this — the score has expectation zero at the true parameters under any weight,
+so the fit stays consistent. The reported uncertainty does, in two ways that
+differ in kind: `Cov(V_ij, V_kl)` is mis-sized by the excess kurtosis, and
+`Cov(ybar, vech V)` is assumed zero where a real correlation of 0.3–0.6 sits.
+Sample mean and sample covariance are exactly independent for a multivariate
+normal and for nothing else.
 
 `covMethod = "r,s"` scores `(ybar, vech V)` against its own asymptotic law and
 reports the sandwich `H^-1 J H^-1`, where `H` is the same Hessian `"r"`
@@ -364,20 +317,20 @@ fit_rs <- nlmixr2(
 fit_rs$covMethod   # "r,s" if the correction was applied, "r" if it degraded
 ```
 
-Point estimates and the objective are identical to the `"r"` fit; only the SEs
-move. Under correct specification `J = 2H` and `"r,s"` returns exactly what
-`"r"` would have, so the two agreeing is the expected outcome for a
-well-specified model, not a sign that nothing happened.
+Point estimates and objective are identical to the `"r"` fit; only the SEs move.
+Under correct specification `J = 2H`, so `"r,s"` returns exactly what `"r"`
+would: the two agreeing is the expected outcome for a well-specified model, not
+a sign that nothing happened.
 
-It applies to every residual family whose conditional law is independent
-across timepoints — which is all of them except `ar()` — the
-conditionally-normal set (`add`, `prop`, `pow`, `combined1`, `combined2`), the
-closed-form distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`,
-`t(nu > 4)`), and the transform-both-sides ones (`boxCox`, `yeoJohnson`,
-`logitNorm`, `probitNorm`). Anything it cannot build — an `ar()` residual, a
-`t()` with `nu <= 4`, an `ordinal()` or same-subject joint study, a singular
-ingredient — degrades to `"r"` with a warning, and `fit$covMethod` then reads
-`"r"`: it records what the covariance **is**, not what was asked for.
+It covers every residual family whose conditional law is independent across
+timepoints — all of them except `ar()`: the conditionally-normal set (`add`,
+`prop`, `pow`, `combined1`, `combined2`), the closed-form distributional ones
+(`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`, `t(nu > 4)`) and the
+transform-both-sides ones (`boxCox`, `yeoJohnson`, `logitNorm`, `probitNorm`).
+What it cannot build — `ar()`, `t()` with `nu <= 4`, `ordinal()`, a same-subject
+joint study, a singular ingredient — degrades to `"r"` with a warning, and
+`fit$covMethod` then reads `"r"`: it records what the covariance **is**, not
+what was asked for.
 
 Under `"r,s"` the denominator of a study's reported `V` stops being cosmetic —
 see `v_denom` in the [aggregate data](aggregate-data.html) vignette.
@@ -385,15 +338,12 @@ see `v_denom` in the [aggregate data](aggregate-data.html) vignette.
 ## Model comparison: AIC and BIC
 
 Standard information criteria work directly on `admFit` objects. **AIC and BIC
-are comparable only across estimators that evaluate the same likelihood.**
-`admc`, `adgh`, and `adirmc` all target the exact aggregate MVN likelihood
-(MC, quadrature, and importance-weighted estimates of the same integral), so
-their information criteria are mutually comparable. `adfo` evaluates a
-*linearised* likelihood that differs from these, so it must not be compared
-against the other three.
+compare only across estimators evaluating the same likelihood.** `admc`, `adgh`
+and `adirmc` all target the exact aggregate MVN likelihood — MC, quadrature and
+importance-weighted estimates of one integral — so they are mutually comparable.
+`adfo`'s is *linearised*, and must not be set against them.
 
-Here we compare the full model (IIV on all five parameters) against a reduced
-model with IIV on CL and V1 only:
+Full model (IIV on all five parameters) against a reduced one (IIV on CL and V1):
 
 ```{r model-compare}
 ctl <- admControl(
@@ -411,14 +361,14 @@ AIC(fit_full, fit_reduced)
 BIC(fit_full, fit_reduced)
 ```
 
-Lower AIC/BIC favours the more parsimonious model; a difference > 10 is
-generally considered strong evidence.
+The model with the lower AIC/BIC is preferred; a difference > 10 is generally
+considered strong evidence. BIC penalises added parameters more heavily than
+AIC, so the two can disagree on a marginal eta.
 
 ### `anova()`: a likelihood-ratio test on nested fits
 
-`fit_full` and `fit_reduced` are **nested** -- `fit_reduced` is `fit_full` with
-`eta.v2`, `eta.q` and `eta.ka` dropped -- so their objectives can be compared
-directly with a chi-squared test:
+The two are **nested** -- `fit_reduced` is `fit_full` without `eta.v2`, `eta.q`
+and `eta.ka` -- so a chi-squared test compares their objectives directly:
 
 ```{r model-compare-anova}
 anova(fit_full, fit_reduced)
@@ -428,14 +378,12 @@ anova(fit_full, fit_reduced)
 larger model adds (three etas here); `p` is `pchisq(dOFV, Df,
 lower.tail = FALSE)`, the ordinary likelihood-ratio test.
 
-`anova()` refuses to compare fits that are not on the same footing: different
-estimators score different approximations to the likelihood (FO-linearised,
-quadrature, Monte Carlo), and `adgh` fits on different `n_nodes` or
-`admc`/`adirmc` fits on different `n_sim` move the objective with the grid or
-sample size rather than with the model. All three are rejected with an error
-rather than silently returning a number. See `?anova.admFit` for the
-boundary-variance case (testing whether an eta's variance is zero) and why a
-negative `dOFV` is reported rather than clamped.
+`anova()` refuses fits that are not on the same footing. Different estimators
+score different approximations (FO-linearised, quadrature, Monte Carlo), and
+changing `n_nodes` or `n_sim` moves the objective with the grid or sample size
+rather than with the model. All three are errors rather than a number returned
+quietly. See `?anova.admFit` for the boundary-variance case — testing whether an
+eta's variance is zero — and why a negative `dOFV` is reported, not clamped.
 
 ## See also
 

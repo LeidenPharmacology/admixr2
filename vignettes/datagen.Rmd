@@ -18,29 +18,26 @@ source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R")
 
 ## When would you use `datagen`?
 
-Two common situations call for generating aggregate data programmatically:
+Two situations call for generating aggregate data programmatically:
 
-**Simulation studies.** You want to check that an estimator recovers the true
-parameters. Define a data-generating model with known parameters, call `datagen()`
-to obtain E and V, fit your analysis model, and compare the estimates to the truth.
+**Simulation studies.** To check that an estimator recovers the truth: define a
+data-generating model with known parameters, call `datagen()` for E and V, fit
+your analysis model, compare.
 
-**Using published models as an input.** Each published study was analysed with
-its own structural PK model (possibly a different number of compartments, a
-different parameterisation, or only a subset of the IIV terms). `datagen()` turns
-each such model into the aggregate data it implies, so a *previously published
-model* becomes a direct input to your analysis — one of admixr2's two input types
-alongside digitised summary data. Feeding several of these into
-`admControl(studies = ...)` is a meta-analysis across the published literature
-(see `vignette("multiple-studies", package = "admixr2")`).
+**Published models as input.** Each published study was analysed with its own
+structural model — a different number of compartments, a different
+parameterisation, only some of the IIV terms. `datagen()` turns such a model into
+the aggregate data it implies, making it a direct input alongside digitised
+summaries. Several of them in `admControl(studies = ...)` is a meta-analysis
+across the literature (see `vignette("multiple-studies")`).
 
-In both cases the output is a named list of `(E, V, n, times, ev)` objects that
-plug directly into `admControl(studies = ...)`.
+Either way the output is a named list of `(E, V, n, times, ev)` objects that
+plugs straight into `admControl(studies = ...)`.
 
 ## Simulation study: same model across studies
 
-Here we use a one-compartment oral model to generate two synthetic study
-datasets — a low-dose and a high-dose arm — then verify that `adfo` recovers
-the true structural parameters.
+A one-compartment oral model generates two synthetic studies — a low-dose and a
+high-dose arm — which the estimator should recover the truth from.
 
 ### Data-generating model
 
@@ -77,8 +74,8 @@ log scale) for CL and 0.2 for V and ka; proportional residual error SD = 0.2.
 
 ### Generating the data
 
-Pass the model as the top-level default so all studies inherit it. Each study
-spec needs only `times`, `ev`, and `n`:
+A top-level `model` is the default every study inherits, so each spec needs only
+`times`, `ev` and `n`:
 
 ```{r datagen-same}
 times <- c(0.5, 1, 2, 4, 8, 12, 24)
@@ -97,8 +94,8 @@ names(study_data$low_dose)
 round(study_data$low_dose$E, 2)   # population mean at each time
 ```
 
-The covariance matrix `V` captures both IIV-driven between-time correlation and
-the residual error contribution on the diagonal:
+`V` carries the IIV-driven between-time correlation and, on the diagonal, the
+residual error:
 
 ```{r show-v}
 knitr::kable(round(study_data$low_dose$V, 3),
@@ -128,14 +125,14 @@ ggplot(df_gen, aes(x = time, y = mean, colour = study, fill = study)) +
   theme_bw()
 ```
 
-The ribbon reflects the square root of the diagonal of V: IIV spread plus
-residual error. Off-diagonal entries (the within-subject correlation structure)
-are not shown but are passed to the estimator and used in the likelihood.
+The ribbon is the square root of the diagonal of V — IIV spread plus residual
+error. The off-diagonal within-subject correlation is not drawn, but it reaches
+the estimator and enters the likelihood.
 
 ### Parameter recovery
 
-The generated data plug directly into `admControl(studies = ...)`. The analysis
-model is the same structural model — this lets us verify estimator consistency:
+The generated data plug straight into `admControl(studies = ...)`. Using the same
+structural model for the analysis is what makes this a consistency check:
 
 ```{r analysis-model}
 analysis_model <- function() {
@@ -160,9 +157,8 @@ analysis_model <- function() {
 }
 ```
 
-Starting values are deliberately offset from the truth (CL start = 4 vs true 5,
-V start = 12 vs true 10) to demonstrate that the estimator finds them
-regardless.
+The starting values are deliberately off the truth (CL 4 against 5, V 12 against
+10), so finding it is the estimator's doing rather than the initialisation's.
 
 ```{r fit-simulation, comment = NA}
 fit_sim <- nlmixr2(
@@ -193,10 +189,9 @@ knitr::kable(
 
 ## Literature workflow: per-study models
 
-When digitising data from publications, each study comes with its own model.
-A 2016 paper may have used a one-compartment model; a 2022 follow-up may have
-used two compartments. `datagen()` accepts a `model` element inside each study
-spec that overrides the top-level default:
+Each publication comes with its own model — a 2016 paper with one compartment, a
+2022 follow-up with two. A `model` inside a study spec overrides the top-level
+default:
 
 ```{r lit-models}
 # One-compartment oral model (as published in a simpler earlier study)
@@ -248,10 +243,9 @@ model_2cmt <- function() {
 }
 ```
 
-Both studies share the same CL (5 L/h) but differ in how they describe
-distribution: the earlier study lumped peripheral distribution into a single
-larger apparent volume (V = 40 L), while the later study resolved the two
-compartments (V₁ = 10 L, V₂ = 30 L, Q = 10 L/h).
+Both share a CL of 5 L/h and differ only in how they describe distribution: the
+earlier study lumped the periphery into one larger apparent volume (V = 40 L),
+the later one resolved it (V₁ = 10 L, V₂ = 30 L, Q = 10 L/h).
 
 ```{r lit-datagen}
 lit_data <- datagen(
@@ -273,8 +267,8 @@ lit_data <- datagen(
 )
 ```
 
-The two studies share the same drug (same CL) but have different E profiles
-because of the different dosing and distributional assumptions:
+Same drug, same CL, different E profiles — the dosing and the distributional
+assumptions differ:
 
 ```{r lit-plot, fig.cap="Simulated aggregate profiles from two publications with different structural models."}
 df_lit <- do.call(rbind, lapply(names(lit_data), function(nm) {
@@ -299,8 +293,7 @@ ggplot(df_lit, aes(x = time, y = mean, colour = study, fill = study)) +
 ### Fitting an analysis model to literature data
 
 The data-generating models encode each publication's assumptions; the analysis
-model represents your unified structural hypothesis. Here we fit the
-two-compartment oral model to both studies jointly:
+model is your unified structural hypothesis, fitted to both studies at once:
 
 ```{r lit-fit, eval=FALSE}
 lit_analysis <- function() {
@@ -339,19 +332,17 @@ fit_lit <- nlmixr2(
 )
 ```
 
-Because the two studies used genuinely different structural models, the analysis
-model will find parameter values that minimise the joint discrepancy between its
-predictions and both studies' aggregate data — a weighted compromise across the
-two parameterisations. This is expected behaviour: aggregate-data modelling
-accepts that each study was published under a different structural assumption and
-seeks a unified set of parameters that is consistent with all of them.
+Because the two used genuinely different structural models, the analysis model
+lands on a weighted compromise between the two parameterisations, minimising the
+joint discrepancy rather than matching either exactly. That is the point:
+aggregate-data modelling takes each study as published and looks for one set of
+parameters consistent with all of them.
 
 ## Examining individual simulated samples
 
-Set `return_samples = TRUE` in `datagenControl()` to include the raw
-`n_sim × n_times` prediction matrix in each study's output. This is useful for
-inspecting the shape of the simulated distribution or for constructing custom
-summaries:
+`return_samples = TRUE` adds the raw `n_sim × n_times` prediction matrix to each
+study's output — useful for inspecting the shape of the simulated distribution,
+or for custom summaries:
 
 ```{r samples, fig.cap="First 200 individual simulated trajectories (grey) with the population mean (blue)."}
 study_with_samples <- datagen(
@@ -380,16 +371,14 @@ ggplot(df_samp, aes(x = time, y = conc, group = id)) +
   theme_bw()
 ```
 
-The blue line is the population mean E; the grey spaghetti shows the IIV spread.
-Note that `samples` contains concentrations **before** residual error is added;
-the diagonal of V additionally carries the residual error variance.
+Blue is the population mean E, the grey spaghetti the IIV spread. `samples` holds
+concentrations **before** residual error; only the diagonal of V carries that.
 
 ## First-Order moments for design evaluation
 
-By default `datagen()` integrates over the IIV distribution by Monte Carlo, the
-same engine as `est = "admc"`. For design evaluation and optimal-design work it
-is often preferable to generate `E` and `V` from the deterministic First-Order
-expansion instead, which is what `est = "adfo"` uses:
+`datagen()` integrates over the IIV by Monte Carlo, the same engine as
+`est = "admc"`. For design evaluation the deterministic First-Order expansion —
+what `est = "adfo"` uses — is often the better source of `E` and `V`:
 
 $$
 E = f(\theta, 0), \qquad V = J\,\Omega\,J^\top + \Sigma, \qquad
@@ -410,23 +399,20 @@ fo_data <- datagen(
 round(fo_data$single_study$E, 3)
 ```
 
-There are two reasons to prefer FO here. First, the moments are deterministic and
-fast — no `n_sim`, `sampling` or `seed` (those arguments are ignored), so the
-result is exactly reproducible. Second, and more importantly, it keeps the
-data-generating and data-analytic models identical: when you subsequently take
-the Hessian of the FO log-likelihood at the generating parameters (the expected
-information matrix), it is evaluated at a genuine maximum. If you generate with
-Monte Carlo and then analyse under FO, the generating parameters are not in
-general an FO maximum likelihood estimate of those data, and the resulting FIM is
-biased. So for FIM / optimal-design calculations, generate and analyse with the
-same FO approximation.
+Two reasons. The moments are deterministic and fast — `n_sim`, `sampling` and
+`seed` are ignored — so the result is exactly reproducible. More importantly, it
+keeps the data-generating and data-analytic models identical: the Hessian of the
+FO log-likelihood at the generating parameters, the expected information matrix,
+is then evaluated at a genuine maximum. Generate with Monte Carlo and analyse
+under FO and those parameters are not in general an FO maximum likelihood
+estimate, so the FIM is biased. For FIM and optimal-design work, generate and
+analyse under the same approximation.
 
 ## Gauss-Hermite moments for design evaluation with adgh
 
-`method = "fo"` matches `est = "adfo"` but inherits FO's bias for nonlinear
-models or large IIV. The GH method provides a deterministic, noise-free
-alternative that is **unbiased at any IIV magnitude** and matches the moments
-computed by `est = "adgh"`:
+`method = "fo"` matches `est = "adfo"`, bias and all, for nonlinear models or
+large IIV. GH is the deterministic, noise-free alternative that is **unbiased at
+any IIV** and matches the moments `est = "adgh"` computes:
 
 $$
 E = \sum_{q=1}^Q w_q\,f(\theta, \eta_q), \qquad
@@ -434,10 +420,9 @@ V = \sum_{q=1}^Q w_q\,(f_q - E)(f_q - E)^\top + \Sigma
 $$
 
 where $(\eta_q, w_q)$ are the $Q = m^{n_\eta}$ tensor-product Gauss-Hermite
-nodes and weights (Cholesky-scaled to the current $\Omega$). Like `method = "fo"`
-the result is exact and reproducible — no stochastic sampling. Use `method = "gh"`
-together with `est = "adgh"` for design evaluation and optimal-design work when
-FO bias would be non-negligible:
+nodes and weights, Cholesky-scaled to the current $\Omega$. Like `"fo"` it is
+exact and reproducible, with no stochastic sampling. Pair `method = "gh"` with
+`est = "adgh"` for design work wherever FO bias would not be negligible:
 
 ```{r gh-moments}
 gh_data <- datagen(
@@ -451,12 +436,11 @@ gh_data <- datagen(
 round(gh_data$single_study$E, 3)
 ```
 
-The MC, FO and GH means should agree closely when IIV is moderate and the model
-is nearly linear in $\eta$. GH and FO diverge from MC as IIV grows — GH tracks
-MC more accurately because it does not linearise $f$. The number of nodes
-`n_nodes` (per eta dimension) trades accuracy against computational cost:
-`n_nodes = 3` is fast; `n_nodes = 5` (default) achieves near-exact moments for
-IIV SD up to ~0.5; `n_nodes = 7` extends coverage to SD ~0.7.
+MC, FO and GH agree closely at moderate IIV on a model near-linear in $\eta$, and
+separate as IIV grows — GH tracking MC the more accurately of the two, since it
+does not linearise $f$. `n_nodes` (per eta dimension) trades accuracy against
+cost: 3 is fast, 5 (the default) is near-exact to IIV SD ~0.5, and 7 reaches
+~0.7.
 
 ## See also
 
