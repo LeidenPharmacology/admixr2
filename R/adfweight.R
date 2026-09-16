@@ -2,28 +2,29 @@
 # ADF weight matrix -- the sampling law of the reported summary
 # =============================================================================
 #
-# The aggregate objective scores (ybar, V) as if it were the log-likelihood of N iid
-# draws from N(yt, Vt). That is exact only when each subject's OBSERVATION VECTOR is
-# multivariate normal, and it is not: y_i = f(theta, a_i, b_i) + eps_i with f
-# nonlinear in b_i, so the marginal is a mixture. The covariate is not what breaks
-# it -- nonlinearity in the random effect alone is enough.
+# The aggregate objective scores (ybar, V) as if it were the
+# log-likelihood of N iid draws from N(yt, Vt), exact only when each
+# subject's observation vector is multivariate normal -- and it
+# isn't: y_i = f(theta, a_i, b_i) + eps_i with f nonlinear in b_i
+# makes the marginal a mixture. Nonlinearity in the random effect
+# alone is enough; the covariate isn't what breaks it.
 #
-# What that costs is NOT the point estimates. The score is
-# -2 (dtau/dPsi)' W^-1 (t - tau) and E[t] = tau at the true Psi for ANY W
-# (Gourieroux-Monfort-Trognon). It costs the reported UNCERTAINTY, two ways:
+# Point estimates are unaffected: the score is
+# -2 (dtau/dPsi)' W^-1 (t - tau) and E[t] = tau at the true Psi for
+# ANY W (Gourieroux-Monfort-Trognon). What it costs is the reported
+# UNCERTAINTY:
 #
 #   Cov(V_ij, V_kl)   assumed (V_ik V_jl + V_il V_jk)/N   true (mu4 - V V)/N
 #   Cov(ybar, vech V) assumed 0                           true mu3/N
 #
-# The first is mis-sized by the excess kurtosis. The second is a zero where a real
-# correlation of 0.3-0.6 sits: for a multivariate normal the sample mean and sample
-# covariance are exactly independent, and for anything else they are not.
+# The first is mis-sized by the excess kurtosis; the second is a
+# zero where a real 0.3-0.6 correlation sits (sample mean and
+# covariance are only independent under multivariate normality).
 #
-# So score t = (ybar, vech V) against its own asymptotic law instead. That is
-# Browne's ADF estimator, with Omega computed FROM THE MODEL rather than estimated
-# from the sample -- which removes ADF's small-sample failure, since the sample
-# estimate of a fourth moment is what needs enormous N. tau(Psi) is unchanged, so
-# this replaces the scoring, not the model.
+# So score t = (ybar, vech V) against its own asymptotic law: Browne's ADF
+# estimator, with Omega computed FROM THE MODEL rather than the sample --
+# removing ADF's small-sample failure, since a sample fourth moment needs
+# enormous N. tau(Psi) is unchanged; only the scoring changes.
 
 # Conditional central moments of the residual at every node, per timepoint.
 #
@@ -201,26 +202,28 @@
 
 # Make the weight's implied residual variance the one the objective composes.
 #
-# S is rebuilt from (C, Dv) by the law of total variance, and the whole expansion
-# downstream is scaled by it -- so if S disagrees with the V_pred that G is the
-# cross-derivative of, the weight and the objective describe different laws and
-# J = 2H fails at a correctly-specified fit. On a pow(c = 1.5) model that showed up as
-# a reported "r,s" correction which was nothing but .admMomF's truncation.
-# THE OBJECTIVE IS WHAT OMEGA HAS TO DESCRIBE, as it is for TBS one branch up: G is
-# a derivative of the criterion that was actually minimised, so reading the moments
-# from a second, better composition breaks the information equality by exactly the
-# difference between the two. The node integral being the more accurate of the pair
-# does not make it the right one here.
+# S is rebuilt from (C, Dv) by the law of total variance, and the
+# whole expansion downstream is scaled by it -- if S disagrees with
+# the V_pred that G is the cross-derivative of, the weight and
+# objective describe different laws and J = 2H fails at a
+# correctly-specified fit. On a pow(c = 1.5) model this showed up
+# as a reported "r,s" correction that was nothing but .admMomF's
+# truncation.
 #
-# Rescale each affected column's CONDITIONAL variance by the single factor that puts
-# its node average on the objective's E[Var(y|eta)]. Not applied at all where
-# .admMomF is exact, which keeps every other family bit-for-bit what it was.
+# THE OBJECTIVE IS WHAT OMEGA HAS TO DESCRIBE (as for TBS one branch
+# up): G is a derivative of the criterion actually minimised, so
+# reading moments from a second, more accurate composition breaks
+# the information equality by exactly the gap between the two --
+# rescale each affected column's CONDITIONAL variance by the single
+# factor that puts its node average on the objective's
+# E[Var(y|eta)] (not applied where .admMomF is exact).
 #
-# MULTIPLICATIVE, NOT A SHIFT. b2 |f|^2c at the outer nodes of a pow() grid runs down
-# to 4e-08 while the gap to close is 2e-04, so a constant drives those nodes'
-# variance NEGATIVE and the whole correction has to be abandoned. A factor preserves
-# sign and relative spread across nodes, which is what the third and fourth moments
-# are built out of.
+# MULTIPLICATIVE, NOT A SHIFT: b2 |f|^2c at a pow() grid's outer
+# nodes runs down to 4e-08 while the gap to close is 2e-04, so a
+# constant drives those nodes' variance NEGATIVE. A factor
+# preserves sign and relative spread, which the third/fourth
+# moments are built from.
+#
 .admAdfAlignDv <- function(cm, w, ev, arr) {
   if (is.null(cm) || is.null(cm$d) || is.null(ev)) return(cm)
   ex <- .admAdfMomExact(arr, ncol(cm$d))
@@ -300,23 +303,24 @@
 
 # The same weight, with the node contraction done once instead of q^2 times.
 #
-# Every term in the Wick expansion is a weighted sum over nodes of a product of
-# at most four C columns and Dv columns, so each DISTINCT contraction can be
-# formed as one crossprod and the q x q assembly reduces to indexing:
+# Every term in the Wick expansion is a weighted sum over nodes of a
+# product of at most four C columns and Dv columns, so each DISTINCT
+# contraction can be formed as one crossprod and the q x q assembly
+# reduces to indexing:
 #
 #   P[, a] = C_i C_j            T1 = P' w P          the four-C term
 #   PD     = P' w Dv            A_j = C' (w Dv_j) C  one C-pair with one Dv
 #   B      = Dv' w Dv           the two-Dv terms
 #
-# Cost goes from O(q^2 Q) to O(m^3 Q + q^2), which is what makes the ceiling the
+# Cost goes from O(q^2 Q) to O(m^3 Q + q^2), making the ceiling the
 # handoff quotes (m ~ 30, q = 465) reachable rather than theoretical.
 #
-# `var_only`: a `method = "var"` study only ever reports the mean block plus the
-# DIAGONAL of the covariance-summary block, so building the full q = m(m+1)/2 vech
-# and discarding the off-diagonal q - m of it is pure waste -- and a quadratic one:
-# T1/M3/M4 below are q x q, so at m = 200 the full path allocates multiple ~3 GB
-# matrices for a 2m x 2m result. Restricting `ij` to the diagonal up front makes
-# q = m, and every line below is written generically in terms of `ij`/`I`/`J`/`q`.
+# `var_only`: a `method = "var"` study only reports the mean block
+# plus the DIAGONAL of the covariance-summary block, so building
+# the full q = m(m+1)/2 vech is a quadratic waste -- T1/M3/M4 below
+# are q x q, so at m = 200 the full path allocates several ~3 GB
+# matrices for a 2m x 2m result. Restricting `ij` to the diagonal
+# makes q = m; every line below is generic in `ij`/`I`/`J`/`q`.
 .admAdfWeightFast <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL,
                               var_only = FALSE) {
   w  <- w / sum(w)
@@ -469,31 +473,31 @@
 # The sandwich: covMethod = "r,s"
 # =============================================================================
 #
-# NOTATION (t and tau are defined at the top of this file; repeated here because
-# this is the block a diff of this file most often shows on its own):
-#   Psi    the structural/variance parameters being optimised over.
-#   t      the observed aggregate summary (ybar, vech V) -- the model's INPUT.
-#   tau    tau(Psi) = E[t] at Psi. t - tau is the residual; it is zero in
-#          expectation at the true Psi for any weight, which is why point
-#          estimates stay consistent under misspecification.
-#   F      the objective actually minimised (per study F_s, summed to F).
-#   S      the score, dF/dPsi.
-#   Omega  the sampling covariance of t itself -- the ADF weight computed from the
-#          model's conditional moments (see above).
-#   K      the linear map from (t - tau) to the delta expansion used when
-#          justifying why building G off the realised residual is wrong.
+# NOTATION (t, tau defined at the top of this file; repeated here since
+# a diff of this file usually shows this block alone):
+#   Psi  structural/variance parameters being optimised.
+#   t    observed aggregate summary (ybar, vech V), the model's INPUT.
+#   tau  tau(Psi) = E[t]; t - tau is zero in expectation at the true Psi
+#        for any weight, so point estimates stay consistent under
+#        misspecification.
+#   F    objective actually minimised (per study F_s, summed to F).
+#   S    the score, dF/dPsi.
+#   Omega  sampling covariance of t -- the ADF weight from the model's
+#          conditional moments (see above).
+#   K    linear map from (t - tau) to the delta expansion, used when
+#        arguing why G off the realised residual is wrong.
 #
 # Avar = H^-1 J H^-1,   H = d2F/dPsi dPsi' at the optimum,
 #                       J = sum_s G_s Omega_s G_s',  G_s = d2F_s/(dPsi dt_s')
 #
-# H is the Hessian of the objective ACTUALLY minimised -- the same one
-# covMethod = "r" reports -- and that is what guarantees the reduction: under
-# correct specification J = 2H, so Avar collapses to 2 H^-1 by construction.
+# H is the Hessian of the objective ACTUALLY minimised (same as
+# covMethod = "r"), which is why under correct specification J = 2H
+# and Avar collapses to 2 H^-1 by construction.
 #
-# AN EARLIER VERSION OF THIS USED THE GLS SURROGATE and was wrong. That criterion
-# agrees with F only ASYMPTOTICALLY -- F is LINEAR in V and quadratic in ybar, while
-# GLS is quadratic in both -- so using (G' Wn^-1 G)^-1 as the bread drifts by terms
-# in (t - tau), measured as a ratio rising to 1.46 on log(om^2).
+# AN EARLIER VERSION USED THE GLS SURROGATE and was wrong: it agrees
+# with F only ASYMPTOTICALLY (F is LINEAR in V, quadratic in ybar;
+# GLS is quadratic in both), so (G' Wn^-1 G)^-1 as the bread drifts
+# by terms in (t - tau) -- a ratio rising to 1.46 on log(om^2).
 #
 # The cross-derivative, from F = N( log|Vt| + tr(Vt^-1 V) + r' Vt^-1 r ):
 #
@@ -503,8 +507,8 @@
 #   dF/dV_ij = N (Vt^-1)_ij            (x2 for an off-diagonal vech entry)
 #     => d2F/(dPsi dV_ij) = N d(Vt^-1)_ij/dPsi      (x2 off-diagonal)
 #
-# Note what the V block does NOT contain: any dtau/dPsi. That half of F is linear in
-# V, so only d(Vt^-1)/dPsi = -Vt^-1 (dVt/dPsi) Vt^-1 survives.
+# The V block has no dtau/dPsi term: that half of F is linear in V,
+# so only d(Vt^-1)/dPsi = -Vt^-1 (dVt/dPsi) Vt^-1 survives.
 .admScoreCross <- function(E, V, dE, dV, s, N) {
   m   <- length(E)
   isv <- identical(s$method, "var")
@@ -587,26 +591,28 @@
 
 # d(yt)/dPsi and d(Vt)/dPsi per study, by central difference on the MOMENTS.
 #
-# These are analytic from what the gradient machinery already forms; this is the
-# reference until that extraction is written. Differencing the MOMENTS rather
-# than the objective keeps it well conditioned, and it runs once, post-fit.
+# Reference implementation until the analytic extraction (below) is
+# written. Differencing the MOMENTS rather than the objective keeps
+# it well conditioned, and it runs once, post-fit.
 #
-# `h` is only the FALLBACK step now, used verbatim where it always was. When
-# `nll_fn` -- the estimator's own objective, already in scope at every call site for
-# the Hessian FD -- is supplied, the step is measured per parameter by
-# .admShi21Steps() instead, as every other finite difference in the package does.
-# This differences the MOMENTS, not the objective, but the objective's noise level is
+# `h` is only the FALLBACK step, used verbatim where it always was;
+# when `nll_fn` (the estimator's own objective, already in scope
+# for the Hessian FD) is supplied, the step is measured per
+# parameter by .admShi21Steps() instead, like every other FD in the
+# package -- the objective's noise level is still the right proxy
+# for how finely `p` can be perturbed, even differencing the MOMENTS.
 # still the right proxy for how finely `p` can be perturbed.
 .admMomentDeriv <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
                             h = 1e-5, mom_fn = NULL, nll_fn = NULL) {
-  # `mom_fn` is the ESTIMATOR's moment map, and it is separate from the ensemble the
-  # weight is built on for a reason: G describes the objective that was minimised,
-  # Omega describes the law the data actually came from. For adgh the two coincide.
-  # For adfo they do NOT -- adfo predicts V = J Omega J' + Sigma, whose implied
-  # individual law is exactly normal, so scoring it against its own assumption would
-  # make the sandwich identically 2H^-1 and say nothing. Passing adfo's moment map
-  # here and keeping the quadrature ensemble for Omega is what makes the correction
-  # meaningful: it scores an FO fit against the model's true nonlinear law.
+  # `mom_fn` is the ESTIMATOR's moment map, kept separate from the
+  # ensemble the weight is built on: G describes the objective that
+  # was minimised, Omega the law the data actually came from. They
+  # coincide for adgh. For adfo they do NOT -- adfo predicts
+  # V = J Omega J' + Sigma, an exactly-normal implied law, so
+  # scoring it against its own assumption would make the sandwich
+  # identically 2H^-1 and say nothing. Passing adfo's moment map
+  # here while keeping the quadrature ensemble for Omega is what
+  # makes the correction meaningful.
   mom <- mom_fn %||% function(pp) {
     pars <- .admUnpack(pp, pinfo)
     lapply(studies, function(s)
@@ -979,31 +985,34 @@
 
 # d(yt)/dPsi and d(Vt)/dPsi per study, analytically, from one sensitivity solve.
 #
-# G = d2F/(dPsi dt') is closed form in these two (see .admScoreCross), so this is the
-# only place a derivative is taken at all. Both moments are LINEAR in the raw
-# sensitivity column `graw = d(f)/dPsi`:
+# G = d2F/(dPsi dt') is closed form (see .admScoreCross), so this is
+# the only derivative taken at all. Both moments are LINEAR in the
+# raw sensitivity column `graw = d(f)/dPsi`:
 #
 #   d(mu_struct)/dPsi = W' graw
 #   d(V_struct)/dPsi  = A + A',   A = cpc' diag(W) graw
 #
-# so a parameter reached through SEVERAL paths is handled by summing its columns
-# before this is applied, exactly as .adghGradNLL sums its `contrib()` calls. That
-# linearity is why this does not need to know which path a parameter took.
+# A parameter reached through SEVERAL paths is handled by summing
+# its columns first, as .adghGradNLL sums its `contrib()` calls --
+# linearity means this doesn't need to know which path a parameter
+# took.
 #
-# The residual composition is then applied FORWARD, from the same .admResidDeriv()
-# partials the gradient chains BACKWARD:
+# The residual composition is applied FORWARD, from the same
+# .admResidDeriv() partials the gradient chains BACKWARD:
 #
 #   dE      = dmu_df o dmu_s + dmu_dv0 o diag(dV_s) + dmu %*% dsig
 #   dV_ij   = ms_i ms_j dV_s_ij + (dms_i ms_j + ms_i dms_j) cov_f_ij   (i != j)
 #   dV_ii   = dv_dv0_i dV_s_ii + dv_df_i dmu_s_i + dvar_i . dsig
 #
-# Deriving this tail by hand is the seventh consumer of the residual row arrays, and
-# CLAUDE.md is explicit that the moment tail is where the misses happen -- so it is
-# pinned against the finite-difference version (.admMomentDeriv) rather than trusted.
+# This is the seventh hand-derived consumer of the residual row
+# arrays, and CLAUDE.md flags the moment tail as where misses
+# happen -- so it's pinned against the finite-difference version
+# (.admMomentDeriv) rather than trusted.
 #
-# Returns NULL, not an approximation, whenever a path is not covered: no sens model,
-# a joint unit, unpaired thetas without their own columns, or an ar()/ordinal
-# residual whose rmat carries an off-diagonal this forward map does not model.
+# Returns NULL, not an approximation, when a path isn't covered: no
+# sens model, a joint unit, unpaired thetas without their own
+# columns, or an ar()/ordinal residual whose rmat carries an
+# off-diagonal this forward map doesn't model.
 .admMomentJac <- function(p_hat, pinfo, studies, sensModel, rxMod, out_var, grid,
                           cores) {
   if (is.null(sensModel)) return(NULL)
