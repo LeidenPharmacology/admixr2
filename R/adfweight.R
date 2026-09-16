@@ -2,60 +2,54 @@
 # ADF weight matrix -- the sampling law of the reported summary
 # =============================================================================
 #
-# The aggregate objective scores (ybar, V) as if it were the
-# log-likelihood of N iid draws from N(yt, Vt), exact only when each
-# subject's observation vector is multivariate normal -- and it
-# isn't: y_i = f(theta, a_i, b_i) + eps_i with f nonlinear in b_i
-# makes the marginal a mixture. Nonlinearity in the random effect
-# alone is enough; the covariate isn't what breaks it.
+# The aggregate objective scores (ybar, V) as if it were the log-likelihood
+# of N iid draws from N(yt, Vt), exact only when each subject's observation
+# vector is multivariate normal -- and it isn't: y_i = f(theta, a_i, b_i) +
+# eps_i with f nonlinear in b_i makes the marginal a mixture.
 #
-# Point estimates are unaffected: the score is
-# -2 (dtau/dPsi)' W^-1 (t - tau) and E[t] = tau at the true Psi for
-# ANY W (Gourieroux-Monfort-Trognon). What it costs is the reported
-# UNCERTAINTY:
+# Point estimates are unaffected: the score is -2 (dtau/dPsi)' W^-1 (t - tau)
+# and E[t] = tau at the true Psi for ANY W (Gourieroux-Monfort-Trognon). What
+# it costs is the reported UNCERTAINTY:
 #
 #   Cov(V_ij, V_kl)   assumed (V_ik V_jl + V_il V_jk)/N   true (mu4 - V V)/N
 #   Cov(ybar, vech V) assumed 0                           true mu3/N
 #
-# The first is mis-sized by the excess kurtosis; the second is a
-# zero where a real 0.3-0.6 correlation sits (sample mean and
-# covariance are only independent under multivariate normality).
+# The first is mis-sized by the excess kurtosis; the second is a zero where a
+# real 0.3-0.6 correlation sits (sample mean and covariance are only
+# independent under multivariate normality).
 #
 # So score t = (ybar, vech V) against its own asymptotic law: Browne's ADF
 # estimator, with Omega computed FROM THE MODEL rather than the sample --
-# removing ADF's small-sample failure, since a sample fourth moment needs
-# enormous N. tau(Psi) is unchanged; only the scoring changes.
+# removing ADF's small-sample failure. tau(Psi) is unchanged; only the
+# scoring changes.
 
 # Conditional central moments of the residual at every node, per timepoint.
 #
 # The node ensemble carries f; given the node the residual is a draw from the
-# endpoint's own distribution with that node's f as its mean parameter. What the
-# weight needs from it is the 2nd, 3rd and 4th CENTRAL moments -- the expansion below
-# is exact for any residual that is independent across timepoints given the node, not
-# only a normal one. Returns three Q x m matrices matching `cp`, or NULL when the
-# family cannot supply them.
+# endpoint's own distribution with that node's f as its mean parameter. What
+# the weight needs is the 2nd, 3rd and 4th CENTRAL moments -- exact for any
+# residual independent across timepoints given the node, not only a normal
+# one. Returns three Q x m matrices matching `cp`, or NULL when the family
+# can't supply them.
 #
-# Under normality t3 = 0 and q4 = 3 d^2 and the extra terms vanish identically, so
-# add/prop/pow/combined stay bit-for-bit what they were. lnorm does NOT: its
-# conditional law is lognormal, and treating it as normal understated the fourth
-# moment by exactly the lognormal excess kurtosis.
+# Under normality t3 = 0 and q4 = 3 d^2, so add/prop/pow/combined stay
+# bit-for-bit what they were. lnorm does NOT: its conditional law is
+# lognormal, and treating it as normal understated the fourth moment by
+# exactly the lognormal excess kurtosis.
 #
-# Dispatch is PER ROW. A single unit has one form today, but keying the whole matrix
-# off `form[[1]]` is a trap that costs nothing to avoid.
+# Dispatch is PER ROW: a single unit has one form today, but keying the
+# whole matrix off `form[[1]]` is a trap that costs nothing to avoid.
 .admAdfCondMom <- function(cp, arr) {
   Q <- nrow(cp); m <- ncol(cp)
   # ar() correlates the residual ACROSS timepoints, so the products below no
   # longer factor and every cross term the expansion drops is real.
   if (any(!is.na(arr$rho))) return(NULL)
   d <- t3 <- q4 <- matrix(NA_real_, Q, m)
-  # The conditional MEAN, filled only by the forms whose mean is NONLINEAR in the
-  # structural prediction -- which is TBS and nothing else. Everywhere else the
-  # mean is ms * f for a constant ms (f for combined1/2 and pois, f exp(sv/2) for
-  # lnorm, size * f for binom, mu for nbinomMu and beta), so centring the nodes
-  # and scaling by ms is EXACT and .admAdfParts keeps doing that. Leaving m1 NULL
-  # there is what makes this change bit-identical for every existing family
-  # rather than a re-derivation of six conditional means that could disagree with
-  # the objective's.
+  # The conditional MEAN, filled only by forms whose mean is NONLINEAR in the
+  # structural prediction (TBS only). Everywhere else the mean is ms * f for
+  # a constant ms, so centring the nodes and scaling by ms is EXACT and
+  # .admAdfParts keeps doing that -- this keeps the change bit-identical for
+  # every existing family.
   m1 <- NULL
   col <- function(x, j) if (length(x) == 1L) x else x[[j]]
   for (j in seq_len(m)) {
@@ -119,26 +113,21 @@
         d[, j] <- v; t3[, j] <- sk * v^1.5; q4[, j] <- ku * v^2
       },
       "3" = {                                          # TBS, by quadrature
-        # boxCox / yeoJohnson / logitNorm / probitNorm. Conditionally independent
-        # across timepoints like every other form here, so the expansion applies;
-        # what it needed was the third and fourth central moments, which
-        # .admTBSCentral() takes off the SAME node set the objective's mean and
-        # variance come from.
+        # boxCox / yeoJohnson / logitNorm / probitNorm. Conditionally
+        # independent across timepoints like every other form here, so the
+        # expansion applies; the third/fourth central moments come from
+        # .admTBSCentral() off the SAME node set the objective's mean and
+        # variance use. The sd is derived by .admTBSSd(), the function
+        # .admTBSRow() uses, so the law conditioned on here matches the one
+        # the objective composes V_pred from.
         #
-        # The sd is derived by .admTBSSd(), the function .admTBSRow() uses, so the
-        # law conditioned on here is the law the objective composes V_pred from
-        # rather than a second reading of `ftr`/`c1`/`cc`.
-        # Accessed exactly as .admResidDeriv() accesses them: single-bracket, and
-        # `tbs_ftr`/`tbs_c1` guarded for NULL, which they are on a row that never
-        # went through the TBS builder.
-        #
-        # t() folds nu/(nu-2) into a2/b2, exact for the combined forms because only
-        # the residual's VARIANCE enters there. It is not exact here: this branch
-        # integrates g() over the conditional law, so a t-distributed error is not
-        # an inflated-sd normal one and the moments returned would be a normal's.
-        # There is no closed form once the transform is applied, so refuse and let
-        # the fit report "r". The OBJECTIVE keeps composing it as an inflated-sd
-        # normal, which is what it has always done -- see .admTBSRow().
+        # t() folds nu/(nu-2) into a2/b2, exact for the combined forms since
+        # only the residual's VARIANCE enters there -- but not here, since
+        # this branch integrates g() over the conditional law and a
+        # t-distributed error's moments differ from an inflated-sd normal's.
+        # No closed form once the transform is applied, so refuse and let the
+        # fit report "r"; the objective keeps composing it as an inflated-sd
+        # normal as before (see .admTBSRow()).
         vmj <- col(arr$vmul, j)
         if (!is.null(vmj) && !isTRUE(all.equal(vmj, 1))) return(NULL)
         lam <- arr$lam[j]; yjc <- arr$yj[j]
@@ -171,16 +160,15 @@
 
 # Which timepoints the OBJECTIVE's residual variance is exact at.
 #
-# pow()/combined() compose E_eta[Var(y|eta)] as a2 + b2 E[f^2c] (plus a cross term
-# for combined1), and .admMomF supplies E[f^k] from (mu, var_f) by a second-order
-# delta expansion that is EXACT only at k = 1 and k = 2. Everywhere else it is a
-# truncation -- reached by pow()/combined() with an exponent outside {0.5, 1}.
+# pow()/combined() compose E_eta[Var(y|eta)] as a2 + b2 E[f^2c] (plus a cross
+# term for combined1), and .admMomF supplies E[f^k] from (mu, var_f) by a
+# second-order delta expansion, EXACT only at k = 1 and k = 2 -- a truncation
+# for any other exponent.
 #
-# .admAdfCondMom, by contrast, evaluates b2 |f|^2c AT EVERY NODE, so its node average
-# is the exact integral. Both are defensible readings of the same model and they are
-# not equal (9e-05 relative at c = 0.75, rising to 2.5e-02 at c = 1.5 with omega = 1,
-# against 8e-16 at c = 0.5 and c = 1). See .admAdfAlignDv for why that gap has to be
-# closed rather than tolerated.
+# .admAdfCondMom, by contrast, evaluates b2 |f|^2c AT EVERY NODE, so its node
+# average is the exact integral. The two disagree (9e-05 relative at c =
+# 0.75, rising to 2.5e-02 at c = 1.5 with omega = 1, against 8e-16 at c = 0.5
+# and c = 1). See .admAdfAlignDv for why that gap has to be closed.
 .admAdfMomExact <- function(arr, m) {
   col <- function(x, j) if (length(x) == 1L) x else x[[j]]
   vapply(seq_len(m), function(j) {
@@ -202,28 +190,24 @@
 
 # Make the weight's implied residual variance the one the objective composes.
 #
-# S is rebuilt from (C, Dv) by the law of total variance, and the
-# whole expansion downstream is scaled by it -- if S disagrees with
-# the V_pred that G is the cross-derivative of, the weight and
-# objective describe different laws and J = 2H fails at a
-# correctly-specified fit. On a pow(c = 1.5) model this showed up
-# as a reported "r,s" correction that was nothing but .admMomF's
-# truncation.
+# S is rebuilt from (C, Dv) by the law of total variance, and the whole
+# expansion downstream is scaled by it -- if S disagrees with the V_pred
+# that G is the cross-derivative of, the weight and objective describe
+# different laws and J = 2H fails at a correctly-specified fit. On a
+# pow(c = 1.5) model this showed up as a reported "r,s" correction that was
+# nothing but .admMomF's truncation.
 #
-# THE OBJECTIVE IS WHAT OMEGA HAS TO DESCRIBE (as for TBS one branch
-# up): G is a derivative of the criterion actually minimised, so
-# reading moments from a second, more accurate composition breaks
-# the information equality by exactly the gap between the two --
-# rescale each affected column's CONDITIONAL variance by the single
-# factor that puts its node average on the objective's
-# E[Var(y|eta)] (not applied where .admMomF is exact).
+# THE OBJECTIVE IS WHAT OMEGA HAS TO DESCRIBE (as for TBS one branch up): G
+# is a derivative of the criterion actually minimised, so reading moments
+# from a second, more accurate composition breaks the information equality
+# by exactly the gap between the two -- rescale each affected column's
+# CONDITIONAL variance by the single factor that puts its node average on
+# the objective's E[Var(y|eta)] (not applied where .admMomF is exact).
 #
-# MULTIPLICATIVE, NOT A SHIFT: b2 |f|^2c at a pow() grid's outer
-# nodes runs down to 4e-08 while the gap to close is 2e-04, so a
-# constant drives those nodes' variance NEGATIVE. A factor
-# preserves sign and relative spread, which the third/fourth
-# moments are built from.
-#
+# MULTIPLICATIVE, NOT A SHIFT: b2 |f|^2c at a pow() grid's outer nodes runs
+# down to 4e-08 while the gap to close is 2e-04, so a constant would drive
+# those nodes' variance NEGATIVE. A factor preserves sign and relative
+# spread, which the third/fourth moments are built from.
 .admAdfAlignDv <- function(cm, w, ev, arr) {
   if (is.null(cm) || is.null(cm$d) || is.null(ev)) return(cm)
   ex <- .admAdfMomExact(arr, ncol(cm$d))
