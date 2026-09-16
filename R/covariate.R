@@ -342,6 +342,17 @@
           "Model covariates: ",
           if (length(covs)) paste(covs, collapse = ", ") else "(none)", ".")
     .dropped <- union(.dropped, unread)
+    # KEPT for inspection, as .adm_cov_collapse is: the drop is right for the
+    # objective and wrong to forget. The commonest reason a model does not read
+    # a covariate the population declares is that the analyst LEFT IT OUT, and
+    # the question then is whether it belonged -- which the between-study
+    # residual panel answers by plotting against it. Discarding the spec makes
+    # that plot unbuildable for exactly the covariate it is wanted for, and the
+    # study's `cov` value alone cannot stand in: it is a single number where the
+    # source described a distribution, and nothing left would say which it was.
+    studies[[nm]]$.adm_cov_dropped <-
+      utils::modifyList(studies[[nm]][[".adm_cov_dropped"]] %||% list(),
+                        .admCovDistCanon(cd)[unread])
     studies[[nm]]$cov_dist <- .admCovDistDrop(cd, unread)
   }
   if (length(.dropped)) {

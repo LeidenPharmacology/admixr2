@@ -252,6 +252,30 @@ test_that(".admCovPanelCovs keeps covariates the model reads and a study describ
   expect_equal(.admCovPanelCovs(.cov_ui(), list(a = list(n = 1L))), character(0))
 })
 
+test_that(".admCovPanelCovs keeps a covariate the model never reads", {
+  skip_if_not_installed("rxode2")
+  # Dropped from the design because it cannot move the prediction, and retained
+  # on the study. This is the omitted-term case the residual panel exists for,
+  # so the facet has to survive the drop.
+  st <- .cov_studies()
+  st$lo$.adm_cov_dropped <- list(CRCL = list(meanlog = log(90), sdlog = 0.1))
+  st$hi$.adm_cov_dropped <- list(CRCL = list(meanlog = log(40), sdlog = 0.1))
+  expect_true("CRCL" %in% .admCovPanelCovs(.cov_ui(), st))
+})
+
+test_that(".admCovStudySpec and friends read a dropped covariate's distribution", {
+  s <- list(cov = list(CRCL = 90),
+            .adm_cov_dropped = list(CRCL = list(meanlog = log(90),
+                                                sdlog = 0.25)))
+  expect_false(is.null(.admCovStudySpec(s, "CRCL")))
+  # The source MARGINALISED over it; the `cov` value the drop leaves behind is
+  # a single number, and reading that alone would label it as conditioned and
+  # throw the spread away.
+  expect_equal(.admCovStudyKind(s, "CRCL"), "marginal")
+  expect_gt(.admCovStudyQ(s, "CRCL", 0.9), .admCovStudyQ(s, "CRCL", 0.1))
+  expect_equal(.admCovStudyQ(s, "CRCL", 0.5), 90, tolerance = 1e-6)
+})
+
 test_that(".admCovStudyKind separates a marginalised covariate from a conditioned one", {
   st <- .cov_studies()
   expect_equal(.admCovStudyKind(st$lo, "WT"),  "marginal")

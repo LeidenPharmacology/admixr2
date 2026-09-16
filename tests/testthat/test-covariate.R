@@ -118,6 +118,23 @@ test_that("a covariate the model never reads is dropped, not refused", {
   expect_null(out$a$cov_dist$AGE)
 })
 
+test_that("a dropped covariate's declared spec is kept for inspection", {
+  # The drop is right for the objective and wrong to forget. A model that does
+  # not read a covariate its population declares has usually LEFT THE TERM OUT,
+  # and whether it belonged is answered by plotting the between-study residual
+  # against it -- which needs the distribution, not just the `cov` value.
+  st <- list(a = list(cov = list(WT = 70),
+                      cov_dist = list(WT  = list(mu = 70, sd = 10),
+                                      AGE = list(mu = 40, sd = 12))))
+  out <- suppressMessages(
+    admixr2:::.admCheckCovariates(.cov_ui(), .cov_pinfo(), st))
+  expect_equal(names(out$a$.adm_cov_dropped), "AGE")
+  # The DISTRIBUTION, not a point: the quantiles still spread.
+  sp <- out$a$.adm_cov_dropped$AGE
+  expect_gt(admixr2:::.admCovQuantile(sp, 0.9),
+            admixr2:::.admCovQuantile(sp, 0.1))
+})
+
 test_that("dropping an unread covariate leaves the kept margin's correlation intact", {
   # WT and AGE correlated; only WT is read. Marginalising AGE out of the copula
   # must leave WT exactly as declared -- the same spec as if AGE were absent.

@@ -243,10 +243,13 @@ test_that("plot.admFit covariates: both covariate panels are produced", {
     model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl
             v  <- exp(tv) * (WT/70); cp <- linCmt(); cp ~ add(add.err) })
   }
-  null_fn <- function() {                       # the restriction being tested
-    ini({ tcl <- log(5); tv <- log(50); bcrcl <- fix(0); add.err <- 0.08
-          eta.cl ~ 0.05 })
-    model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl
+  # The restriction written the way it now reads: the term is simply GONE, so
+  # the model never mentions CRCL. The studies still declare it -- they describe
+  # who was enrolled -- so it comes off the design, and the panel has to keep
+  # plotting against it anyway. That is the whole case this diagnostic is for.
+  null_fn <- function() {
+    ini({ tcl <- log(5); tv <- log(50); add.err <- 0.08; eta.cl ~ 0.05 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75
             v  <- exp(tv) * (WT/70); cp <- linCmt(); cp ~ add(add.err) })
   }
   mk <- function(co) admStudy(model = true_fn, population = co, dose = 200,
@@ -254,6 +257,8 @@ test_that("plot.admFit covariates: both covariate panels are produced", {
   st <- admStudies(normal   = mk(draw(260L, 95)),
                    mild     = mk(draw(210L, 62)),
                    moderate = mk(draw(180L, 38)))
+  # ONE `studies` object for both models -- what dropping an unread covariate
+  # instead of refusing it is for.
   slope <- function(fn) {
     fit <- suppressMessages(suppressWarnings(
       nlmixr2(fn, admData(), est = "adgh",
@@ -266,6 +271,19 @@ test_that("plot.admFit covariates: both covariate panels are produced", {
   .int_cov_mis_result <<- list(ok = slope(true_fn), bad = slope(null_fn))
   .int_cov_mis_result
 }
+
+test_that("plot.admFit covariates: a dropped covariate is still plotted against", {
+  skip_on_cran()
+  env <- .int_cov_mis()
+  # The null model never reads CRCL, so it is off the design -- and it is still
+  # the covariate the analyst needs the residual plotted against. It also keeps
+  # its declared SPREAD: the source marginalised over a distribution, and the
+  # `cov` value the drop leaves behind is a single number that would have been
+  # mislabelled as a conditioned one.
+  expect_equal(nrow(env$bad), 3L)
+  expect_true(all(env$bad$kind == "marginal"))
+  expect_true(all(env$bad$xhi > env$bad$xlo))
+})
 
 test_that("plot.admFit covariates: a correct covariate form leaves no trend", {
   skip_on_cran()

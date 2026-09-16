@@ -517,8 +517,15 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## distribution. A conditioned/stratified covariate is a `.point` spec, so its
 ## value comes off `cov` and does not move with `u`. NA when the study says
 ## nothing about `cv`.
+## The distribution a study declared for `cv`, whether or not the design kept
+## it. A covariate the model never reads is dropped from `cov_dist` (it cannot
+## move the prediction, so integrating over it is waste) but the source still
+## described it, and that description is what the residual panel plots against.
+.admCovStudySpec <- function(s, cv)
+  s[["cov_dist"]][[cv]] %||% s[[".adm_cov_dropped"]][[cv]]
+
 .admCovStudyQ <- function(s, cv, u = 0.5) {
-  sp <- s[["cov_dist"]][[cv]]
+  sp <- .admCovStudySpec(s, cv)
   if (!is.null(sp) && !isTRUE(sp[[".point"]]))
     return(tryCatch(as.numeric(.admCovQuantile(sp, u))[1L],
                     error = function(e) NA_real_))
@@ -538,18 +545,28 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## would show the second as a degenerate version of the first, when it is a
 ## different kind of evidence.
 .admCovStudyKind <- function(s, cv) {
-  sp <- s[["cov_dist"]][[cv]]
+  sp <- .admCovStudySpec(s, cv)
   if (is.null(sp) || isTRUE(sp[[".point"]])) "conditional" else "marginal"
 }
 
-## Covariates the ANALYSIS model reads that at least one study describes.
-## A covariate no study describes cannot be placed on an axis; one the model
-## does not read has no effect to draw.
+## Covariates worth a facet: any covariate any study describes.
+##
+## NOT restricted to the ones the model reads. A covariate the model omits is
+## dropped from the design -- correctly, it cannot move the prediction -- and
+## that is precisely the case the residual panel exists for: the analyst left a
+## term out and wants to know whether it belonged. `.admCovEffectData()` returns
+## NULL for such a covariate on its own, since there is no fitted effect to
+## draw, so only the residual panel picks it up. A covariate no study describes
+## at all cannot be placed on an axis and is excluded here.
 .admCovPanelCovs <- function(ui, studies) {
-  covs <- tryCatch(ui$allCovs, error = function(e) character(0))
+  covs <- unique(c(tryCatch(ui$allCovs, error = function(e) character(0)),
+                   unlist(lapply(studies, function(s)
+                     c(.admCovSpecNames(s[["cov_dist"]]),
+                       names(s[[".adm_cov_dropped"]] %||% list()),
+                       names(s[["cov"]] %||% list()))), use.names = FALSE)))
   if (!length(covs)) return(character(0))
   covs[vapply(covs, function(cv) any(vapply(studies, function(s)
-    !is.null(s[["cov"]][[cv]]) || !is.null(s[["cov_dist"]][[cv]]),
+    !is.null(s[["cov"]][[cv]]) || !is.null(.admCovStudySpec(s, cv)),
     logical(1))), logical(1))]
 }
 
