@@ -2,10 +2,9 @@
 #
 # Every estimator needs the same three things from the residual error model:
 # the mean it induces, the variance it adds to diag(V), and the derivative of
-# both w.r.t. the residual parameters. Used to be an `if (prop) ... else if
-# (lnorm) ...` chain repeated at ~8 sites in R and 3 in C++, capping the
-# supported set at add/prop/lnorm. This file is the single place that knows
-# the error models.
+# both w.r.t. the residual parameters. This file is the single place that
+# knows the error models, replacing an `if (prop) ... else if (lnorm) ...`
+# chain that used to be repeated at ~8 sites in R and 3 in C++.
 #
 # The general form, for a prediction f and an endpoint's residual parameters:
 #
@@ -15,11 +14,11 @@
 #               var = mu^2 * (exp(s) - 1)         (moment-matched lognormal)
 #
 # with a the additive SD, b the proportional/power SD and c the power exponent
-# (c = 1 recovers prop, b = 0 recovers add). combined2 with c = 1 is exactly the old
-# independent per-sigma addition, so add/prop/lnorm fits are unchanged.
+# (c = 1 recovers prop, b = 0 recovers add). combined2 with c = 1 is exactly
+# the old independent per-sigma addition, so add/prop/lnorm fits are unchanged.
 #
-# Encoding of `form`: 0 = combined2, 1 = combined1, 2 = lnorm. The C++ kernels take
-# the same four row arrays (form, a2, b2, cc) and are error-model agnostic.
+# Encoding of `form`: 0 = combined2, 1 = combined1, 2 = lnorm. The C++
+# kernels take the same four row arrays (form, a2, b2, cc).
 
 .ADM_RESID_COMBINED2 <- 0L
 .ADM_RESID_COMBINED1 <- 1L
@@ -44,9 +43,7 @@
 #   Cov(1_j, 1_k)     = -p_j p_k        (j != k, SAME time point)
 #
 # i.e. diag(p) - p p' within a time, zero residual covariance across times
-# (given eta) -- the diagonal-plus-off-diagonal-rmat shape .admResidApply
-# already supports for ar(). Each p_k is an ordinary derived model
-# expression, so it gets analytic sensitivities like any other.
+# (given eta) -- the shape .admResidApply already supports for ar().
 .admOrdinalSpec <- function(ui, var) {
   a <- .admDistArgs(ui, var)
   if (is.null(a) || length(a) == 0L) return(NULL)
@@ -77,11 +74,8 @@
 # draws. If phi doesn't depend on eta every row is identical and the first is
 # representative, which is what the solve paths assume when collapsing with
 # [1L, ]. Checks and collapses together so the assumption can't drift from
-# its use -- previously only promised in a comment, with an eta-dependent
-# precision silently populating variance from whichever draw landed first.
-#
-# Rows that legitimately differ (one per STRUCTURAL configuration, as in
-# .admSimulateRows) are NOT eta draws and must not be passed here.
+# its use. Rows that legitimately differ (one per STRUCTURAL configuration,
+# as in .admSimulateRows) are NOT eta draws and must not be passed here.
 .admBetaPhiConst <- function(phi_mat, tol = 1e-6) {
   if (is.null(phi_mat)) return(NULL)
   if (!is.matrix(phi_mat)) return(phi_mat)
@@ -283,19 +277,15 @@
 # bottoms out in -- calling the kernel makes agreement with the solve
 # structural, rather than a line-by-line port re-deriving it.
 #
-# The two things the kernel does NOT do for us, and the only reason these
-# are wrappers rather than direct calls:
-#
-#   1. It DROPS dim(). The solve paths hand these an n_sim x n_t MATRIX,
-#      and a dropped dim turned cp_mat into a flat vector so every
-#      downstream colMeans()/sweep() produced NA.
-#   2. Its scalar-argument fast path asserts `any.missing = FALSE` on
-#      `lambda`, `low` and `high`.
-#
-# Not routed through the public boxCox()/yeoJohnson()/logit()/probit()
-# wrappers: those add their own `assertNumeric(x, lower = 0,
-# any.missing = FALSE)` and so ERROR on the NA/Inf that the quadrature's
-# tail nodes legitimately produce.
+# Two things the kernel does NOT do for us, and the only reason these are
+# wrappers rather than direct calls: it DROPS dim() (the solve paths hand
+# these an n_sim x n_t MATRIX, and a dropped dim turned cp_mat into a flat
+# vector so downstream colMeans()/sweep() produced NA), and its
+# scalar-argument fast path asserts `any.missing = FALSE` on `lambda`,
+# `low` and `high`. Not routed through the public
+# boxCox()/yeoJohnson()/logit()/probit() wrappers: those add their own
+# `assertNumeric(x, lower = 0, any.missing = FALSE)` and so ERROR on the
+# NA/Inf that the quadrature's tail nodes legitimately produce.
 .admTBSxf <- function(x, lam, yj, lo, hi, inverse) {
   d   <- dim(x)
   out <- rxode2::.rxTransform(x, lam, lo, hi, as.integer(yj), inverse)
@@ -371,15 +361,11 @@
 # Node count, measured against stats::integrate() at rel.tol 1e-13 over
 # boxCox/yeoJohnson/logit/probit x residual sd in {0.5, 1, 2, 3}. Cost is
 # linear in n but negligible beside the ODE solve, so `resid_nodes` is an
-# ACCURACY dial, not a speed one.
-#
-# Worst case is dominated by sd = 3 boxCox/yeoJohnson, whose inverse hits
-# its bounded support and clamps (see .admTBSp) -- a kink GH converges on
-# slowly. At sd <= 1 (a realistic transformed-scale residual), n = 31
-# already gives 1e-7 or better and logit/probit reach 1e-13.
-#
-# 81 stays the DEFAULT as safe across the whole grid above; configurable
-# per fit via `resid_nodes`.
+# ACCURACY dial, not a speed one. Worst case is sd = 3 boxCox/yeoJohnson,
+# whose inverse hits its bounded support and clamps (see .admTBSp) -- a
+# kink GH converges on slowly; at sd <= 1, n = 31 already gives 1e-7 or
+# better and logit/probit reach 1e-13. 81 stays the DEFAULT as safe across
+# the whole grid; configurable per fit via `resid_nodes`.
 .ADM_TBS_NODES <- 81L
 
 # Moments PLUS their exact partials w.r.t. f and the residual sd, by
@@ -1999,10 +1985,10 @@ without that parameter there is no residual to integrate"),
 # (.admResidApply) and the GRADIENT (.admResidDeriv's `.asm1`), since if
 # the two copies drift by a term the optimizer descends a direction the
 # NLL doesn't follow, the worst failure class in this file. Both need the
-# residual SD on the TRANSFORMED scale and its d/df (rxode2's rx_r_), the
-# quadrature moments over a 3-point f-stencil, and second-order curvature
-# terms differenced from the ANALYTIC first derivatives (one FD level, not
-# two -- nesting FD here cost 300% accuracy).
+# residual SD on the TRANSFORMED scale and its d/df, the quadrature moments
+# over a 3-point f-stencil, and curvature terms differenced from the
+# ANALYTIC first derivatives (one FD level, not two -- nesting FD here cost
+# 300% accuracy).
 #
 # ev = q$v[2] + 0.5*v''(f)*v0 is the objective's curvature-corrected
 # E_eta[Var(y|eta)] (`ev_resid`, which ar() correlates); `dv`, the full
