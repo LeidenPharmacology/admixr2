@@ -62,6 +62,8 @@ navbar:
           href: articles/aggregate-data.html
         - text: Simulating data & using published models
           href: articles/datagen.html
+        - text: Covariates in aggregate data
+          href: articles/covariates.html
         - text: "---"
         - text: Meta-analysis across studies
         - text: Multiple studies
@@ -99,10 +101,12 @@ articles:
   - title: Inputs — data & models
     desc: >
       The two ways to feed a meta-analysis — digitized study summaries, or
-      previously published PK/PD models.
+      previously published PK/PD models — and the covariate distribution each
+      source enrolled.
     contents:
       - aggregate-data
       - datagen
+      - covariates
 
   - title: Meta-analysis across studies
     desc: >

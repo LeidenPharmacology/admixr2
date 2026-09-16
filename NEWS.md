@@ -361,6 +361,33 @@
   refused rather than discarded; and `print()` shows the covariates a
   `stratify = TRUE` resolves to instead of the word `TRUE`.
 
+* **The covariate integral is collapsed onto the directions it actually has.**
+  Where the covariates and the random effects reach the model through fewer
+  independent directions than there are of them, the integral has that lower
+  dimension and the product grid was integrating it in the full one. Same
+  answers, fewer points: three covariates on one parameter is a
+  ONE-dimensional integral however many covariates there are.
+
+  Everything rests on one claim --- that each covariate-reading assignment
+  depends on the latent normal only through a single linear combination,
+  `p = G(b'xi)`. Then `d log p / d xi = (G'/G) * b`, so the DIRECTION is `b` at
+  every `xi` and the magnitude carries the link. The loading is that relative
+  gradient and the certificate is that its direction does not move. That single
+  statement replaces what were four separate detected "routes", each with its
+  own residual threshold --- and with them goes the hazard that a borderline
+  column flips route mid-fit and steps the objective.
+
+  A consequence worth stating: **a model now collapses on what it DOES, not on
+  how it was spelled.** `exp(tcl + eta.cl) * (WT/70)^b1` and
+  `exp(tcl + eta.cl + b1 * log(WT/70))` are the same model and get the same
+  design; the first used to take the slower path because rxode2 does not
+  mu-reference it. A covariate effect entering through a nonlinear LINK --- an
+  Emax or square-root term on an affine index --- now collapses too. It did not
+  before: the loading was a raw slope, which scales with the random effect, so
+  every such model failed the check that guards against covariate-by-eta
+  interactions and silently fell back to the full product grid. A genuine
+  covariate-by-eta interaction is still refused.
+
 ## Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not name a new
@@ -602,6 +629,29 @@ argument. None is a bug fix, so all are listed here rather than below.
   progress table, which such a script does see.
 
 ## Bug fixes
+
+* **A DISCRETE covariate latently correlated with ANY other margin is now
+  refused instead of being integrated as if it were independent.** A level is
+  an interval of the latent normal, not a point, so a correlation changes what
+  the exact enumeration of the levels means: correlation with a continuous
+  margin makes the continuous conditional differ from cell to cell, and one
+  shared design is then the wrong design in every cell, while correlation with
+  another DISCRETE margin changes the joint cell probabilities, which the
+  per-margin probabilities cannot carry. Both were previously integrated as
+  independent; the first was caught and refused during this release, and the
+  refusal now covers the second. `cov_integration = "sparse"` reports this as
+  an error, the collapse designs decline and fall back to the product grid.
+  A configuration that declared such a correlation and fitted before will now
+  stop: declare the discrete covariate independent of the other margins, or
+  use `cov_integration = "on"`.
+
+* **A joint collapse now probes OMEGA as well as the structural parameters
+  before it freezes the design's rank.** The joint loading's random-effect
+  block is `t(L) %*% d/d eta`, so an `Omega` that makes two initially collinear
+  eta directions independent raises the rank exactly as a coefficient leaving
+  zero does. Probing only the structural thetas could freeze a rank the fit
+  then outgrew, after which every re-aim was refused and the objective was
+  `+Inf` across a whole region of `Omega` rather than at an isolated point.
 
 * **Derivative-free fits no longer inherit nloptr's loose `xtol_rel = 1e-4`.**
   All four estimators now pass an explicit `xtol_rel`, exposed as the last

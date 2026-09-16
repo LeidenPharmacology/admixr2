@@ -797,11 +797,22 @@ ridge converges to a confident wrong number rather than failing, so it is worth
 the ten seconds.
 
 **Discrete covariates are strata**, enumerated exactly at their levels and
-weighted by their probabilities --- nothing about them is approximated.
+weighted by their probabilities --- nothing about them is approximated. That
+exactness is also why a discrete covariate must be declared INDEPENDENT of the
+other margins: a level is an interval of the latent normal rather than a point,
+so a `cor` entry naming a discrete covariate would change what the enumeration
+means --- the conditional law of a continuous margin within the stratum, or the
+joint probabilities of two strata --- and neither is carried by the per-level
+probabilities. admixr2 refuses such a table rather than integrating it as if it
+were independent.
 
-**Cost.** A product grid over `p` continuous covariates costs `cov_nodes^p`.
-For larger designs, `cov_integration = "sparse"` uses the Smolyak rule instead;
-raise `cov_sparse_level` only when a sensitivity check shows that it is needed.
+**Cost.** A product grid over `p` continuous covariates costs `cov_nodes^p`, but
+where they reach the model through fewer scalar directions, admixr2 integrates
+over those directions instead. Three covariates entering as one product use
+`r admixr2:::.admCovDirNodes(7L, 3L, 1L)` design points rather than `r 7^3`.
+That is a verified change of variables. For larger designs that do not collapse,
+`cov_integration = "sparse"` uses the Smolyak rule; raise `cov_sparse_level`
+only when a sensitivity check shows that it is needed.
 
 **Estimator support.** `admc` and `adgh` marginalise covariates; `adfo` and
 `adirmc` refuse rather than silently solving at the covariate mean. admixr2

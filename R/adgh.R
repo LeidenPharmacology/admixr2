@@ -50,13 +50,73 @@
 
 # Tensor-product GH grid for n_eta dimensions.
 # Returns X (n_node x n_eta standard-normal nodes) and W (length n_node weights).
+#
+# Memoised, same cache env as .adghNodes1 (which this calls) but NOT the same
+# retention policy. Both depend on nothing but their key, and .admCovRefresh/
+# .admJointDesign call this on EVERY objective evaluation, since rank and node
+# count are frozen at admission -- only the ROTATION applied on top of this
+# grid depends on the current parameters. The grid itself is pure overhead when
+# rebuilt: measured 68.6 ms/call at r=4, m=15 (50625 rows, expand.grid + a
+# row-wise apply for the weights), against an rxSolve() call's ~11 ms baseline.
+# Rebuilt on every gradient AND every NLL evaluation of a fit using the joint
+# or covariate collapse, it was larger than the solve it sits beside.
+#
+# WHAT A TENSOR GRID COSTS TO KEEP is the difference, and it is why this does
+# not use .adghNodes1's cache-everything-forever policy. The 1-D nodes are a
+# handful of short numeric vectors, so keeping every m ever seen is free; one
+# of these is 390625 x 8 (~25 MB) at 8 etas and 5 nodes, and the cache lives in
+# the namespace rather than in the fit, so keeping every (m, n_eta) would grow
+# with the number of models a session fits and never shrink. A fit asks for the
+# SAME grid on every objective evaluation, so ONE SLOT gets the entire saving:
+# a different key replaces the entry rather than joining it, which bounds the
+# cache at one grid without any eviction policy to get wrong.
+.admGridMemo <- function(slot, key, build) {
+  # The cache env is a package-level binding, and this runs inside mirai restart
+  # workers, where assignInNamespace() cannot ADD a binding to the locked
+  # installed namespace. Degrade to recomputing rather than erroring if absent.
+  .env <- tryCatch(get(".adm_node_env", envir = asNamespace("admixr2")),
+                   error = function(e) NULL)
+  if (is.null(.env)) return(build())
+  .hit <- tryCatch(get(slot, envir = .env, inherits = FALSE),
+                   error = function(e) NULL)
+  if (!is.null(.hit) && identical(.hit$key, key)) return(.hit$val)
+  val <- build()
+  assign(slot, list(key = key, val = val), envir = .env)
+  val
+}
+
 .adghNodeGrid <- function(m, n_eta) {
   if (n_eta == 0L) return(list(X = matrix(0, 1L, 0L), W = 1))
-  g <- .adghNodes1(m)
-  X <- as.matrix(expand.grid(rep(list(g$x), n_eta)))
-  W <- as.numeric(apply(expand.grid(rep(list(g$w), n_eta)), 1L, prod))
-  dimnames(X) <- NULL
-  list(X = X, W = W)
+  .admGridMemo(".adm_ghgrid", c(m, n_eta), function() {
+    g <- .adghNodes1(m)
+    X <- as.matrix(expand.grid(rep(list(g$x), n_eta)))
+    W <- as.numeric(apply(expand.grid(rep(list(g$w), n_eta)), 1L, prod))
+    dimnames(X) <- NULL
+    list(X = X, W = W)
+  })
+}
+
+# As .adghNodeGrid, but for PER-DIRECTION node counts rather than one shared
+# `m` repeated `n_eta` times -- what .admCovRefresh needs for a collapsed
+# design's `nv`. .admCovDirNodes always returns the same count for every
+# direction today, and this does not assume that invariant holds forever; it is
+# keyed on the exact vector instead. A uniform `nv` is HANDED STRAIGHT to
+# .adghNodeGrid rather than rebuilt under a second key, so the common case does
+# not hold two copies of the same tensor in the cache at once.
+# .admCovRefresh used to reimplement this inline (a third copy of the same
+# expand.grid/apply construction, rebuilt on every objective evaluation despite
+# `nv` being frozen at admission).
+.admNodeGridNv <- function(nv) {
+  d <- length(nv)
+  if (d == 0L) return(list(X = matrix(0, 1L, 0L), W = 1))
+  if (all(nv == nv[1L])) return(.adghNodeGrid(nv[1L], d))
+  .admGridMemo(".adm_ghgridv", nv, function() {
+    gl <- lapply(nv, .adghNodes1)
+    X <- as.matrix(expand.grid(lapply(gl, function(g) g$x)))
+    W <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
+    dimnames(X) <- NULL
+    list(X = X, W = W)
+  })
 }
 
 # -- Moments -------------------------------------------------------------------
@@ -74,12 +134,50 @@
   } else {
     g <- list(eta = matrix(0, 1L, 0L), W = 1, X = grid$X, cov_rows = NULL)
   }
-  # adgh's analogue of admc's per-row covariate draws: a PRODUCT GRID over the
-  # covariate quadrature and the eta grid. Deterministic, so adgh stays
-  # noise-free, and it is still ONE rxSolve -- n_cov x n_node rows rather than
-  # n_node. The eta block cycles fastest, so the weights are
+  # General path, adgh's analogue of admc's per-row covariate draws: a PRODUCT
+  # GRID over the covariate quadrature and the eta grid. Deterministic, so adgh
+  # stays noise-free, and it is still ONE rxSolve -- n_cov x n_node rows rather
+  # than n_node. The eta block cycles fastest, so the weights are
   # rep(W_eta, times = n_cov) * rep(W_cov, each = n_eta), which is what
   # as.numeric(outer(W_eta, W_cov)) produces column-major.
+  #
+  # The covariate shift -- a separate reduction that pinned the covariate at
+  # its reference and folded its whole contribution into one eta column --
+  # was removed. .admJointCollapse finds the same structure (rank 1 on the
+  # certified single-eta case) without a certificate, and is both cheaper and
+  # more accurate than the shift wherever both applied. See NEWS.
+  #
+  # JOINT COLLAPSE: one design over the etas AND the covariates together, where
+  # they reach the model through the same directions. It replaces the eta grid
+  # as well as the covariate design, so it returns before either is built.
+  #
+  # X is the node matrix the omega chain rule differentiates. eta = X L' holds
+  # here exactly as it does for the ordinary grid -- the joint preimage's eta
+  # block IS that matrix -- so .adghGrad needs no branch of its own. What it
+  # does not carry is the rotation's own dependence on Omega; that term is the
+  # quadrature re-choosing itself within the same column space, and vanishes to
+  # the accuracy the design is verified to.
+  .jc <- if (!is.null(s)) s[[".adm_cov_joint"]] else NULL
+  if (!is.null(.jc)) {
+    jd <- .admJointDesign(.jc, .admShiftStruct(pinfo, pars$struct), pars$L)
+    # A FAILED RE-AIM IS AN UNSOLVABLE POINT, not a licence to change design and
+    # not a reason to abort. Falling through to the branch below would swap in a
+    # design with a DIFFERENT NUMBER OF POINTS mid-optimisation and step the
+    # objective; stop()ing kills a converging fit at a point the line search was
+    # merely trying (nothing between eval_f and here catches). Both are wrong.
+    # The failure mode is an affine_log probe going non-positive, which is
+    # exactly the region every other unsolvable point reports as Inf -- so mark
+    # the grid and let the moment functions do that.
+    #
+    # THIS RETURNS UNCONDITIONALLY -- success or `failed = TRUE` -- and never
+    # falls through to read a study's .adm_cov_collapse, for the reason just
+    # given. .admCheckCovariates keeps .adm_cov_collapse attached alongside
+    # .adm_cov_joint anyway, but only for INSPECTION; do not read it here as a
+    # fallback design, and do not "fix" that by making one -- it would
+    # reintroduce the exact mid-fit row-count change this comment refuses.
+    if (is.null(jd)) return(list(failed = TRUE))
+    return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
+  }
   if (!is.null(s) && !is.null(s[["cov_dist"]])) {
     nq <- max(nrow(g$eta), 1L)
     # cov_integration = "sparse": a Smolyak grid in place of the product one.
@@ -97,8 +195,30 @@
                        .admCovSparseGrid(s[["cov_dist"]],
                                          pinfo$cov_sparse_level %||% 3L,
                                          pinfo$cov_nodes %||% 7L)
-          else         s[[".adm_cov_grid"]] %||%
+          # The COLLAPSED design when the covariates reach the model through a
+          # single scalar: the same integral in the dimension it actually has,
+          # so this is not an approximation the grid would beat. Cached at
+          # admission (.admCovCollapse costs a probe, no solves); the %||% keeps
+          # a hand-built study working at the old cost.
+          # RE-AIMED at the current thetas, not read from admission. The
+          # rotation depends on the covariate coefficients, which are estimated,
+          # so a design cached at the starting values integrates over the wrong
+          # line in latent space as soon as the optimizer moves them -- measured
+          # at 53 to 163 -2LL units for a 0.1 move in one coefficient. This is
+          # the same thing the shift branch above does with .admShiftDelta.
+          # The product grid ONLY when no collapse was admitted (a hand-built
+          # study): the two have different point counts, so swapping mid-fit
+          # steps the objective.
+          else if (is.null(s[[".adm_cov_collapse"]]))
+                       s[[".adm_cov_grid"]] %||%
                        .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
+          else         .admCovRefresh(s[[".adm_cov_collapse"]],
+                                      .admShiftStruct(pinfo, pars$struct))
+    # .admCovRefresh RETURNS THE ADMISSION DESIGN ON FAILURE -- all five of its
+    # exits are `return(co)`, so a %||% here was dead code and a failed re-aim
+    # scored silently on the STARTING-VALUE rotation, which is the 53-163 -2LL
+    # error the re-aiming exists to prevent. It marks itself instead.
+    if (isTRUE(cg$stale)) return(list(failed = TRUE))
     nc <- nrow(cg$X)
     g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
     colnames(g$eta) <- pinfo$eta_col_names
@@ -159,6 +279,12 @@
 
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
   g  <- .adghGrid(pars, pinfo, grid, study)
+  # THIS IS WHERE A MARKED GRID BECOMES THE Inf IT WAS MARKED TO BE. .adghGrid
+  # returns list(failed = TRUE) for a failed re-aim, with no `eta` -- so with
+  # nobody reading the flag, nrow(g$eta) was NULL, .admMakeParamsList() called
+  # matrix(0, nrow = NULL) and the fit died on "non-numeric matrix extent" at a
+  # point the line search was merely trying. Reported as unsolvable instead.
+  if (isTRUE(g$failed)) return(list(failed = TRUE))
   study <- .adghStudyCov(study, g)
   pm <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
@@ -243,6 +369,7 @@
       nll <- nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
     } else {
       m <- .adghMoments(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores)
+      if (isTRUE(m$failed)) return(Inf)
       nll <- if (identical(s$method, "var"))
         nll_var_cpp(s$E, s$v_diag, m$E, diag(m$V), s$n)
       else
@@ -271,6 +398,19 @@
   if (!.admParsFinite(pars, pinfo))
     return(list(grad = stats::setNames(rep(NA_real_, length(p)), names(p)),
                 nll = Inf))
+  # A correlated covariate-only collapse preserves the current index law, but
+  # its minimum-norm preimage does not preserve coefficient sensitivities.
+  # Differentiate the scored objective until that conditional derivative is
+  # carried analytically. The joint collapse works in whitened coordinates and
+  # does not need this fallback.
+  if (any(vapply(studies, function(s) {
+    co <- s[[".adm_cov_collapse"]]
+    identical(.admCovKind(s, pinfo), "collapse") && !is.null(co) &&
+      nrow(co$Rc) > 1L &&
+      any(abs(co$Rc - diag(nrow(co$Rc))) > sqrt(.Machine$double.eps))
+  }, logical(1))))
+    return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                    cores, grad_h), nll = NULL))
   L     <- pars$L
   n_eta <- pinfo$n_eta
   n_s   <- length(pinfo$struct_names)
@@ -321,6 +461,12 @@
     # so the two cases do not overlap.
     if (!is.null(s[["cov_dist"]])) {
       .gS <- .adghGrid(pars, pinfo, grid, s)
+      # Same marked grid .adghMoments turns into Inf -- see there. The point is
+      # unsolvable, so the objective is Inf and there is no gradient to form;
+      # .adghFusedFns takes both from here and must not be handed a NULL eta.
+      if (isTRUE(.gS$failed))
+        return(list(grad = stats::setNames(rep(Inf, length(p)), names(p)),
+                    nll = Inf))
       X   <- .gS$X
       W   <- .gS$W
       s   <- .adghStudyCov(s, .gS)
@@ -713,12 +859,18 @@
       }))
     n_cfg <- length(p_pert)
 
-    if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))) {
-      for (i in seq_len(n_u))
-        grad[unpaired_k[i]] <-
+    if (any(vapply(studies, function(u) isTRUE(u$is_joint) ||
+                     !is.null(u[[".adm_cov_collapse"]]) ||
+                     !is.null(u[[".adm_cov_joint"]]), logical(1)))) {
+      for (i in seq_len(n_u)) {
+        gk <-
           (.adghNLL(p_pert[[i]], pinfo, studies, rxMod, out_var, grid, cores) -
              .adghNLL(p_pert[[n_u + i]], pinfo, studies, rxMod, out_var, grid, cores)) /
           (2 * hs[i])
+        # Inf - Inf is NaN, and both perturbations being unsolvable is the
+        # COMMON case at a boundary -- same guard as the batched branch below.
+        grad[unpaired_k[i]] <- if (is.nan(gk)) Inf else gk
+      }
     } else {
       struct_mat <- do.call(rbind,
         lapply(p_pert, function(pp) .admUnpack(pp, pinfo)$struct))
@@ -807,6 +959,9 @@
     g[k] <- (.adghNLL(pp, pinfo, studies, rxMod, out_var, grid, cores) -
              .adghNLL(pm, pinfo, studies, rxMod, out_var, grid, cores)) / (2 * hk)
   }
+  # Inf - Inf is NaN; the same guard the two configuration-differenced branches
+  # in .adghGradNLL carry, for the same reason.
+  g[is.nan(g)] <- Inf
   g
 }
 
