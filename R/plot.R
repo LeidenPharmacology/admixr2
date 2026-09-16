@@ -489,10 +489,8 @@ head.paged_df <- function(x, n = 6L, ...) {
   # `cov_dist` entry, which read directly would label it as conditioned -- the
   # title would assert "solved at CRCL = 90" for a study that integrated over a
   # distribution centred there.
-  fix <- Filter(function(cv) {
-    sp <- .admCovStudySpec(s, cv)
-    is.null(sp) || isTRUE(sp[[".point"]])
-  }, names(cov))
+  fix <- Filter(function(cv)
+    .admCovStudyKind(s, cv) == "conditional", names(cov))
   if (!length(fix)) return("")
   paste(vapply(fix, function(cv)
     paste0(cv, " = ", format(cov[[cv]], digits = 3)), character(1)),
@@ -572,6 +570,24 @@ head.paged_df <- function(x, n = 6L, ...) {
   u <- sort(unique(mid[is.finite(mid)]))
   if (length(u) <= max_lev) u else NULL
 }
+
+## Scales and styling shared by the two covariate panels.
+##
+## Both key colour on the source and shape on marginal/conditioned, and both
+## want the small grey subtitle. Held once so a styling change cannot land on
+## one panel and not the other -- the legends are meant to be read across the
+## pair, so a source that is orange in one and blue in the other is worse than
+## either choice alone.
+.admCovPanelStyle <- function(studies, kinds)
+  list(
+    ggplot2::scale_colour_manual(
+      values = .admOkabeIto(length(unique(studies))), name = NULL),
+    ggplot2::scale_shape_manual(
+      values = c(marginal = 16L, conditional = 18L), name = NULL,
+      breaks = intersect(c("marginal", "conditional"), kinds)),
+    ggplot2::theme_bw(),
+    ggplot2::theme(plot.subtitle = ggplot2::element_text(
+      size = 7, colour = "grey40", face = "plain")))
 
 ## An axis-breaks function that ticks a discrete facet at its LEVELS only.
 ##
@@ -765,15 +781,31 @@ head.paged_df <- function(x, n = 6L, ...) {
       stringsAsFactors = FALSE)))
   }))
 
+  # EXTRAPOLATION, the same idea on both kinds of axis: grey marks where the
+  # fit is speaking past its sources.
+  #
+  # On a continuous axis that is the padding beyond the range they cover. On a
+  # discrete one it is any declared LEVEL no study sits at -- a `values` spec
+  # can declare a group nobody enrolled, and the model will happily predict for
+  # it. Drawn identically to the studied levels, that prediction looks equally
+  # earned; it is not.
+  shade <- if (!is_disc) data.frame(
+      cov  = cv,
+      xmin = c(min(grid), covered[2L]),
+      xmax = c(covered[1L], max(grid)),
+      stringsAsFactors = FALSE)
+    else {
+      un <- setdiff(grid, unique(mid[is.finite(mid)]))
+      if (!length(un) || length(grid) < 2L) NULL else {
+        w <- 0.4 * min(diff(sort(grid)))
+        data.frame(cov = cv, xmin = un - w, xmax = un + w,
+                   stringsAsFactors = FALSE)
+      }
+    }
+
   list(curve = curve,
        marks = if (is.null(mk)) NULL else .admMergeCovMarks(mk),
-       # No extrapolation region on a discrete axis: the levels ARE the support,
-       # so there is nowhere past them to warn about.
-       shade = if (is_disc) NULL else data.frame(
-         cov  = cv,
-         xmin = c(min(grid), covered[2L]),
-         xmax = c(covered[1L], max(grid)),
-         stringsAsFactors = FALSE))
+       shade = shade)
 }
 
 ## Collapse coincident study marks and name them by their shared source.
@@ -788,11 +820,28 @@ head.paged_df <- function(x, n = 6L, ...) {
   key <- paste(df$cov, df$param, signif(df$x, digits), signif(df$y, digits),
                sep = "\r")
   do.call(rbind, lapply(split(df, key), function(z) {
-    base <- unique(sub("_s[0-9]+$", "", z$study))
+    base <- unique(.admCovSource(z$study))
     out  <- z[1L, , drop = FALSE]
     out$study <- if (length(base) == 1L) base
                  else if (length(base) <= 2L) paste(base, collapse = "/")
                  else sprintf("%d studies", nrow(z))
+    # The merged mark speaks for ALL the rows it absorbed, so its spread is
+    # their UNION. Keeping the first row's was silently dropping the others':
+    # a mark labelled for two strata would draw only one of their ranges, and
+    # the label would claim coverage the bar did not show.
+    # Only columns the input actually has: widening a mark must not also change
+    # its shape, or rbind-ing the merged groups back together fails when one
+    # group was a single row and another grew a column.
+    if (nrow(z) > 1L) {
+      for (p in list(c("xlo", "min"), c("xlo2", "min"),
+                     c("xhi", "max"), c("xhi2", "max")))
+        if (!is.null(z[[p[1L]]]))
+          out[[p[1L]]] <- get(p[2L])(z[[p[1L]]])
+      # Merged rows that disagree about how the covariate entered are not one
+      # kind; the conservative reading is the one that claims less.
+      if (!is.null(z$kind) && length(unique(z$kind)) > 1L)
+        out$kind <- "marginal"
+    }
     out
   }))
 }
@@ -1037,7 +1086,15 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
 
   # The covariate residual panel reads the same predicted moments the mean and
   # cov panels do, so asking for "covariate" alone still has to simulate.
-  need_sim_local <- any(c("mean", "cov", "covariate") %in% which)
+  # Which covariates earn a facet -- read off the studies, so it costs nothing
+  # and is known BEFORE deciding whether to simulate.
+  cov_nms <- if ("covariate" %in% which)
+    .admCovPanelCovs(fit$env$ui, studies) else character(0)
+  # The covariate RESIDUAL panel reads the same predicted moments the mean and
+  # cov panels do, so asking for "covariate" has to simulate -- but only when
+  # there is a covariate to plot. A fit that declares none would otherwise pay
+  # for a full n_sim simulation and then draw nothing with it.
+  need_sim_local <- any(c("mean", "cov") %in% which) || length(cov_nms) > 0L
   # Observed + predicted aggregate moments per study (mean vector + cov matrix).
   # Reuse the fit's stored `aggData` slot when it matches the requested n_sim/seed
   # (avoids a redundant simulation); otherwise recompute via the shared helper.
@@ -1289,9 +1346,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
   # Both are BETWEEN-study plots; see the block comment on .admCovEffectData().
   # Silently absent for a fit with no covariates, which is why "covariate" can
   # sit in the default `which` without changing what a non-covariate fit prints.
-  if ("covariate" %in% which) {
-    cov_nms <- .admCovPanelCovs(fit$env$ui, studies)
-
+  if (length(cov_nms)) {
     eff <- Filter(Negate(is.null), lapply(cov_nms, function(cv)
       tryCatch(.admCovEffectData(fit$env$ui, cv, studies, extra$struct),
                error = function(e) NULL)))
@@ -1374,11 +1429,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
           ggplot2::geom_point(data = marks_df,
                               ggplot2::aes(colour = study, shape = kind),
                               size = 2.6) +
-          ggplot2::scale_colour_manual(values = .admOkabeIto(
-            length(unique(marks_df$study))), name = NULL) +
-          ggplot2::scale_shape_manual(
-            values = c(marginal = 16L, conditional = 18L), name = NULL,
-            breaks = intersect(c("marginal", "conditional"), marks_df$kind))
+          .admCovPanelStyle(marks_df$study, marks_df$kind)
       }
       # facet_wrap, not facet_grid: most parameters read only some covariates,
       # and a grid spends half the figure on empty (v, CRCL)-style panels.
@@ -1399,10 +1450,11 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
                            "10th-90th bar + 2.5th-97.5th whisker\nconditioned",
                            "source (diamond): the single value it was solved",
                            "at  |  grey: outside the range any source sampled",
-                           "-- extrapolation")) +
-        ggplot2::theme_bw() +
-        ggplot2::theme(plot.subtitle = ggplot2::element_text(
-          size = 7, colour = "grey40", face = "plain"))
+                           "-- extrapolation"))
+      # Styling comes from .admCovPanelStyle(), added with the marks above. A
+      # fit with no marks at all still needs it.
+      if (is.null(marks_df) || !nrow(marks_df))
+        p_eff <- p_eff + .admCovPanelStyle(character(0), character(0))
 
       plots[["covariate_effect"]] <- p_eff
       print_keys <- c(print_keys, "covariate_effect")
@@ -1458,11 +1510,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
         ggplot2::geom_point(ggplot2::aes(size = n, colour = study,
                                          shape = kind), alpha = 0.85) +
         ggplot2::scale_size_continuous(guide = "none") +
-        ggplot2::scale_colour_manual(values = .admOkabeIto(
-          length(unique(res_df$study))), name = NULL) +
-        ggplot2::scale_shape_manual(
-          values = c(marginal = 16L, conditional = 18L), name = NULL,
-          breaks = intersect(c("marginal", "conditional"), res_df$kind)) +
+        .admCovPanelStyle(res_df$study, res_df$kind) +
         ggplot2::scale_x_continuous(
           breaks = .admLevelBreaks(res_df$x[res_df$disc])) +
         ggplot2::facet_wrap(~ cov, scales = "free_x", nrow = 1L) +
@@ -1476,10 +1524,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
                            "mis-specified form  |  grey: one source's strata,",
                            "a consistent TILT is the same\nz averaged over",
                            "times, which are correlated, so +/-1.96 is",
-                           "indicative not a test")) +
-        ggplot2::theme_bw() +
-        ggplot2::theme(plot.subtitle = ggplot2::element_text(
-          size = 7, colour = "grey40", face = "plain"))
+                           "indicative not a test"))
 
       plots[["covariate_resid"]] <- p_cres
       print_keys <- c(print_keys, "covariate_resid")

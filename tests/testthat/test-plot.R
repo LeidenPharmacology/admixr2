@@ -343,6 +343,28 @@ test_that(".admMergeCovMarks merges coincident strata under their source name", 
   expect_setequal(out$study, c("a", "b"))
 })
 
+test_that(".admMergeCovMarks unions the spread of the marks it absorbs", {
+  # The merged mark is labelled for both strata, so it has to draw both their
+  # ranges. Keeping the first row's silently showed one stratum's coverage
+  # under a label claiming the pair's.
+  df <- data.frame(
+    cov = "WT", param = "cl", study = c("a_s1", "a_s2"),
+    kind = "marginal", x = 70, y = 5,
+    xlo = c(60, 55), xhi = c(80, 92), xlo2 = c(50, 45), xhi2 = c(90, 99),
+    stringsAsFactors = FALSE)
+  out <- .admMergeCovMarks(df)
+  expect_equal(nrow(out), 1L)
+  expect_equal(c(out$xlo, out$xhi, out$xlo2, out$xhi2), c(55, 92, 45, 99))
+})
+
+test_that(".admMergeCovMarks takes the weaker claim when merged kinds disagree", {
+  df <- data.frame(
+    cov = "WT", param = "cl", study = c("a_s1", "a_s2"),
+    kind = c("marginal", "conditional"), x = 70, y = 5,
+    xlo = 60, xhi = 80, xlo2 = 50, xhi2 = 90, stringsAsFactors = FALSE)
+  expect_equal(.admMergeCovMarks(df)$kind, "marginal")
+})
+
 test_that(".admMergeCovMarks keeps strata that genuinely differ apart", {
   # The axis they were banded ON: same source, different x, so no merge.
   df <- data.frame(
@@ -405,6 +427,36 @@ test_that(".admCovEffectData puts a discrete covariate on its levels", {
   expect_null(d$shade)
 })
 
+test_that(".admCovEffectData shades a declared level no study sits at", {
+  skip_if_not_installed("rxode2")
+  # `values` can declare a group nobody enrolled. The model predicts for it
+  # happily, and drawn like the studied levels that prediction looks equally
+  # earned. Grey means "extrapolating" on a discrete axis too.
+  fn <- function() {
+    ini({ tcl <- log(5); bg <- 0.2; add.err <- 0.1; eta.cl ~ 0.1 })
+    model({ cl <- exp(tcl + eta.cl) * exp(bg * GRP)
+            v <- exp(log(30)); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  mk <- function(at, vals) list(
+    n = 50L, cov = list(GRP = at),
+    cov_dist = list(GRP = c(list(values = vals), list(.point = TRUE))))
+
+  # Three declared levels, only two ever conditioned at.
+  d <- .admCovEffectData(ui, "GRP", list(a = mk(0, c(0, 1, 2)),
+                                         b = mk(1, c(0, 1, 2))),
+                         list(tcl = log(5), bg = 0.2))
+  expect_equal(sort(unique(d$curve$x)), c(0, 1, 2))
+  expect_equal(nrow(d$shade), 1L)
+  expect_true(d$shade$xmin < 2 && d$shade$xmax > 2)
+
+  # Every declared level studied: nothing to warn about.
+  d2 <- .admCovEffectData(ui, "GRP", list(a = mk(0, c(0, 1)),
+                                          b = mk(1, c(0, 1))),
+                          list(tcl = log(5), bg = 0.2))
+  expect_null(d2$shade)
+})
+
 test_that(".admCovEffectData returns NULL when there is nothing to sweep", {
   skip_if_not_installed("rxode2")
   ui <- .cov_ui()
@@ -415,6 +467,19 @@ test_that(".admCovEffectData returns NULL when there is nothing to sweep", {
     s$cov_dist <- list(WT = list(.point = TRUE)); s$cov <- list(WT = 70); s
   })
   expect_null(.admCovEffectData(ui, "WT", flat, list(tcl = log(5), bwt = 0.75)))
+})
+
+test_that("plot.admFit does not simulate for a fit with no covariates", {
+  # "covariate" is in the default `which`. A fit declaring no covariates must
+  # not pay for a full n_sim simulation to then draw nothing with it.
+  fit <- .make_mock_fit()
+  fit$env$admExtra$studies <- list(s1 = list(
+    E = c(1, 2), V = diag(2), n = 10L, times = c(1, 2)))
+  out <- .pdf_wrap(plot(fit, which = "covariate"))
+  # No panels, and -- the point of the test -- no simulation attempted on the
+  # way to producing none. That warning is the tell that .admAggData() ran.
+  expect_length(out, 0L)
+  expect_silent(.pdf_wrap(plot(fit, which = "covariate")))
 })
 
 test_that("plot.admFit covariate panel survives an all-discrete figure", {
