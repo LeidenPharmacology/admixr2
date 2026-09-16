@@ -213,8 +213,8 @@ For a detailed walkthrough of all four panel types and customisation options, se
 
 ## Where to next
 
-- [From a published figure to E, V and n](aggregate-data.html) — turn published summaries into `E`, `V` and `n`
-- [Simulating data & using published models](datagen.html) — the model-as-input path
-- [Multiple studies](multiple-studies.html) — meta-analysis across several studies
-- [Estimator comparison](estimator-comparison.html) — choosing a backend
-- [Choosing a residual error model](error-models.html) — what `cp ~ prop(...)` does to `E` and `V`
+- [From a published figure to E, V and n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.html) — turn published summaries into `E`, `V` and `n`
+- [Simulating data & using published models](https://leidenpharmacology.github.io/admixr2/articles/datagen.html) — the model-as-input path
+- [Multiple studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.html) — meta-analysis across several studies
+- [Estimator comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.html) — choosing a backend
+- [Choosing a residual error model](https://leidenpharmacology.github.io/admixr2/articles/error-models.html) — what `cp ~ prop(...)` does to `E` and `V`

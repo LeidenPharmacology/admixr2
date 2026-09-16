@@ -30,3 +30,7 @@
 ^CRAN-SUBMISSION$
 ^\.git$
 ^\.covrignore$
+^\.codex$
+^AGENTS\.md$
+^\.Rhistory$
+^\.scratch$

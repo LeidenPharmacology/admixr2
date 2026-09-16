@@ -12,3 +12,7 @@ vignette-preview/
 
 # Manual perf baseline (machine/rxode2-version specific; regenerate locally)
 tests/manual/golden-perf.rds
+.codex/
+AGENTS.md
+admixr2_*.tar.gz
+admixr2.Rcheck/
