@@ -201,6 +201,18 @@ test_that(".admStudyCovLabel is empty when the study declares no covariates", {
   expect_equal(.admStudyCovLabel(list(E = 1, V = 1)), "")
 })
 
+test_that(".admStudyCovLabel does not call a dropped covariate conditioned", {
+  # Dropped from the design, so no `cov_dist` entry -- but the source
+  # MARGINALISED over it. Read directly, the panel title would assert
+  # "Study 'normal' [CRCL = 90]" for a study that never solved at 90.
+  s <- list(cov      = list(WT = 76, CRCL = 90),
+            cov_dist = list(WT = list(meanlog = log(76), sdlog = 0.2)),
+            .adm_cov_dropped = list(CRCL = list(meanlog = log(90),
+                                                sdlog = 0.25)))
+  expect_equal(.admStudyCovLabel(s), "")
+  expect_equal(.admStudyTitle(s, "normal"), "Study 'normal'")
+})
+
 test_that(".admStudyTitle appends the conditioning, and omits it otherwise", {
   s_fix <- list(cov = list(SEX = 1), cov_dist = list(SEX = list(.point = TRUE)))
   expect_equal(.admStudyTitle(s_fix, "A_s2"), "Study 'A_s2' [SEX = 1]")

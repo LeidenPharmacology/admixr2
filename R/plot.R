@@ -484,9 +484,13 @@ head.paged_df <- function(x, n = 6L, ...) {
 .admStudyCovLabel <- function(s) {
   cov <- s[["cov"]]
   if (is.null(cov) || !length(cov)) return("")
-  cd  <- s[["cov_dist"]]
+  # Through .admCovStudySpec, so a covariate DROPPED from the design still
+  # counts as the marginalised one it is. It keeps a `cov` value and has no
+  # `cov_dist` entry, which read directly would label it as conditioned -- the
+  # title would assert "solved at CRCL = 90" for a study that integrated over a
+  # distribution centred there.
   fix <- Filter(function(cv) {
-    sp <- cd[[cv]]
+    sp <- .admCovStudySpec(s, cv)
     is.null(sp) || isTRUE(sp[[".point"]])
   }, names(cov))
   if (!length(fix)) return("")
