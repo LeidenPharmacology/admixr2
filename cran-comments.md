@@ -34,7 +34,7 @@ releases.
 
 ## Test environments
 
-- Local: Debian 13 (trixie), R 4.5.0
+- Local: Debian 13 (trixie), R 4.5.0; Windows 11, R 4.5.3
 - GitHub Actions (PR #125 and #126, all green): ubuntu-latest (R release,
   R devel), windows-latest (R release), macOS-latest (R release), plus a
   separate integration-test job against the current CRAN dependency stack
@@ -43,22 +43,34 @@ releases.
 
 ## R CMD check results
 
-0 errors | 0 warnings | 2 notes
+0 errors | 0 warnings | 1 note
 
-- `installed size is 21.8Mb` (`libs`, 20.6Mb): the compiled Rcpp/RcppEigen
-  code (the NLL/gradient kernels and their derivatives, several residual
-  families x several estimators).
 - `Skipping checking math rendering: package 'V8' unavailable`: the local
   check environment does not have the 'V8' R package installed; this is an
   environment gap of the check machine, not a package issue, and 'V8' is not
   a dependency of admixr2.
 
-A local `R CMD check --as-cran` initially found two real issues, both fixed:
-a stray top-level `index.md` (pkgdown homepage source, now in
-`.Rbuildignore`) and a `URL:` in DESCRIPTION that redirected (trailing slash
-added). Everything substantive -- installation, examples (including
+The first submission of 0.4.1 was rejected on three notes and a warning from
+the CRAN incoming checks, all caused by local working files that had been
+picked up by the build rather than by the package itself. All are fixed:
+
+- hidden directories (`.scratch/`, `.codex/`) and non-standard top-level
+  files (`AGENTS.md`, `dead.txt`, `meanlog`, `zrep.out`) are removed from the
+  package directory, and the editor/agent configuration that remains there
+  locally is now listed in `.Rbuildignore` next to the existing `.claude`
+  and `CLAUDE.md` entries;
+- the undeclared executable `.scratch/.../admixr2.dll` went with `.scratch/`;
+- the tarball is 0.7Mb, down from 13.3Mb (`.scratch/` was the whole of it);
+- the five "possibly invalid file URIs" in `inst/doc/admixr2.html` were
+  relative links from the shipped vignette to vignettes that are not shipped
+  (see "Vignettes" below). They now point at the package website.
+
+Earlier, a local `R CMD check --as-cran` found two further real issues, both
+fixed at the time: a stray top-level `index.md` (pkgdown homepage source, now
+in `.Rbuildignore`) and a `URL:` in DESCRIPTION that redirected (trailing
+slash added). Everything substantive -- installation, examples (including
 `--run-donttest`), the full test suite, R/Rd consistency, and the vignette
-build/re-build -- was independently confirmed clean twice.
+build/re-build -- was independently confirmed clean.
 
 ## Reverse dependencies
 
