@@ -889,7 +889,6 @@
 # system makes rxode2's adaptive stepper land ~1e-6 apart, so this is NOT
 # bit-identical to the pre-fusion objective, though both sit at the solver's own
 # rtol. It also makes f and grad-f self-consistent (one trajectory).
-# grad-f self-consistent (one trajectory), where before they came from two.
 #
 # Only for the analytical-sens path; grad = "fd"/"none" keep the old route.
 .adghFusedFns <- function(pinfo, studies, sensModel, rxMod, out_var, grid, cores,
@@ -1598,22 +1597,12 @@ adghControl <- function(
   algorithm <- .alg$algorithm
   grad      <- .alg$grad
 
-  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone".
-  # It is the one setting whose meaning does not move under an rxode2 upgrade,
-  # and it is the default because a looser solve is not free: this release is
-  # what first routed sigdig into the estimators' own rxSolve calls, and every
-  # finite-difference step that consumes those solves (grad_h 1e-4, cov_h 1e-3,
-  # cov_h_outer ~2.5e-3) is the same order as the tolerance sigdig = 4 asks for.
-  # rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4 (5.1.4 mapped it to 5e-7 -- 200x
-  # tighter for the same request), so differencing with a 1e-4 step differences
-  # noise: a moved objective and an indefinite Hessian, not an error. Shipping it
-  # on by default would have changed the numerics of every existing script
-  # silently, for a knob that looked like table formatting before this release.
-  #
-  # NULL is also the only way back: the sigdig -> tolerance map is
-  # one-dimensional while rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so
-  # no sigdig value reproduces them. The tables still need a number, so they fall
-  # back to 4 -- i.e. sigdigTable is unchanged whichever way sigdig is set.
+  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone" --
+  # see the same note in admControl(). A looser solve is not free: every
+  # finite-difference step that consumes these solves is the same order as the
+  # tolerance sigdig = 4 asks for, so differencing at a 1e-4 step differences noise.
+  # NULL is also the only way back, since no sigdig value reproduces rxode2's own
+  # (atol 1e-8, rtol 1e-6). The tables still need a number and fall back to 4.
   if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
     rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else

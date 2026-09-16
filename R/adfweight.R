@@ -783,8 +783,6 @@
 # Deliberately limited to causes that are cheap and CERTAIN to detect up front. A
 # refusal decided deeper in still comes back as NULL and still warns -- that one is a
 # failure of something that was expected to work.
-# moment solve) still comes back as NULL and still warns -- that one is a failure
-# of something that was expected to work.
 .admSandwichNA <- function(p_hat, pinfo, studies, out_var) {
   if (any(vapply(studies, function(s) isTRUE(s$is_joint), logical(1))))
     return(paste("the study stacks several outputs per subject (a joint unit),",

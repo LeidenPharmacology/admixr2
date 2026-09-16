@@ -229,22 +229,12 @@ adirmcControl <- function(
   algorithm <- .algo$algorithm
   grad      <- .algo$grad
 
-  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone".
-  # It is the one setting whose meaning does not move under an rxode2 upgrade,
-  # and it is the default because a looser solve is not free: this release is
-  # what first routed sigdig into the estimators' own rxSolve calls, and every
-  # finite-difference step that consumes those solves (grad_h 1e-4, cov_h 1e-3,
-  # cov_h_outer ~2.5e-3) is the same order as the tolerance sigdig = 4 asks for.
-  # rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4 (5.1.4 mapped it to 5e-7 -- 200x
-  # tighter for the same request), so differencing with a 1e-4 step differences
-  # noise: a moved objective and an indefinite Hessian, not an error. Shipping it
-  # on by default would have changed the numerics of every existing script
-  # silently, for a knob that looked like table formatting before this release.
-  #
-  # NULL is also the only way back: the sigdig -> tolerance map is
-  # one-dimensional while rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so
-  # no sigdig value reproduces them. The tables still need a number, so they fall
-  # back to 4 -- i.e. sigdigTable is unchanged whichever way sigdig is set.
+  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone" --
+  # see the same note in admControl(). A looser solve is not free: every
+  # finite-difference step that consumes these solves is the same order as the
+  # tolerance sigdig = 4 asks for, so differencing at a 1e-4 step differences noise.
+  # NULL is also the only way back, since no sigdig value reproduces rxode2's own
+  # (atol 1e-8, rtol 1e-6). The tables still need a number and fall back to 4.
   if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
     rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
@@ -1294,40 +1284,30 @@ nlmixr2Est.adirmc <- function(env, ...) {
 
 
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
-  # See model.R for rationale (linCmt foceiModel FD-path caching inner=NULL).
   # GATED ON covMethod TOO, because that is what actually consumes it.
   #
-  # adirmc is the one estimator whose FIT never reads a sensitivity model: the
-  # inner gradient is analytic through the softmax/MVN chain (.adirmcInnerGrad)
-  # and .adirmcProposal() takes no sens argument. The only consumer is
-  # .admCalcCov() for the post-fit Hessian, which runs only under
-  # covMethod = "r". Gating on `grad` alone therefore compiled a sensitivity
-  # model -- ~3.6s cold -- and then never read it for every
-  # adirmcControl(grad = "analytical", covMethod = "none") fit.
+  # adirmc is the one estimator whose FIT never reads a sensitivity model: the inner
+  # gradient is analytic through the softmax/MVN chain and .adirmcProposal() takes no
+  # sens argument. The only consumer is .admCalcCov() for the post-fit Hessian, so
+  # gating on `grad` alone compiled a sensitivity model -- ~3.6s cold -- and then
+  # never read it for every covMethod = "none" fit.
   #
-  # Behaviour-preserving: the progress label that also reads `sensModel` is
-  # itself appended only `if (.ctl$covMethod == "r")`, so the covMethod = "none"
-  # header is unchanged.
-  #
-  # ...but skipping the load outright would break the model-compilation ORDERING
-  # INVARIANT. `.admLoadSensModel()` must run before `.admLoadModel()`, because
-  # the latter's cache-MISS path calls `rxode2::rxode2(ui)`, and that caches
+  # ...but skipping the load outright would break the ORDERING INVARIANT.
+  # .admLoadModel()'s cache-MISS path calls rxode2::rxode2(ui), which caches
   # `ui$foceiModel$inner` as NULL. Nothing in this fit reads `inner`, but a LATER
-  # admc/adgh/adfo fit whose `.admBuildThetaSens()` bails falls back to
-  # `.admSensFromInner()`, gets NULL, and silently drops to an FD gradient -- and
-  # the stale-cache recovery that used to repair this no longer exists, so the
-  # ordering is the only defence. It persists via rxTempDir().
+  # admc/adgh/adfo fit whose .admBuildThetaSens() bails falls back to
+  # .admSensFromInner(), gets NULL, and silently drops to an FD gradient. The
+  # stale-cache recovery that used to repair this no longer exists, so the ordering is
+  # the only defence, and it persists via rxTempDir().
   #
-  # The compile only happens on a cache MISS, and `.admModelCacheFile()` is pure
-  # -- it derives the path without compiling anything. So ask first: skip the
-  # sens load only when `.admLoadModel()` is going to take its cache-HIT branch
-  # and therefore cannot poison anything. Cold cache keeps the old ordering.
+  # The compile only happens on a cache MISS, and .admModelCacheFile() is pure, so ask
+  # first: skip the sens load only when .admLoadModel() will take its cache-HIT branch
+  # and therefore cannot poison anything.
   .sim_warm <- isTRUE(tryCatch(file.exists(.admModelCacheFile(.ui)),
                                error = function(e) FALSE))
-  # .admCovWantsHessian(), NOT `== "r"`: both "r" and "r,s" ask for a Hessian,
-  # so both need the sens model. An equality test here is the same shape of bug
-  # the note above describes -- it would silently take the FD-Hessian path for
-  # a "r,s" fit.
+  # .admCovWantsHessian(), NOT `== "r"`: both "r" and "r,s" ask for a Hessian, so both
+  # need the sens model. An equality test here is the same shape of bug the note above
+  # describes -- it would silently take the FD-Hessian path for a "r,s" fit.
   sensModel <- if ((.admCovWantsHessian(.ctl$covMethod) && .ctl$grad == "analytical") || !.sim_warm)
     tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
   else NULL

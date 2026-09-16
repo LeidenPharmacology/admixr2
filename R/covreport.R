@@ -175,47 +175,40 @@
 
 # Put the dimnames back on fit$env$cov after nlmixr2est has been through it.
 #
-# nlmixr2est's C++ `foceiFitCpp_` re-dimnames whatever covariance it finds in the
-# fit environment using its OWN parameter-name vector, which knows about the
-# thetas only -- so the omega rows we append come back named "". This is a known
-# shape upstream, not a bug of ours: nlmixr2est ships `.impmapNameCov()` to
-# repair exactly these blanks for its importance-sampling estimator, reading the
-# omega names off the model. We do the same thing, except we already hold the
-# authoritative names (we built the block), so we restore them verbatim.
+# nlmixr2est's C++ `foceiFitCpp_` re-dimnames whatever covariance it finds in the fit
+# environment using its OWN parameter-name vector, which knows about the thetas only
+# -- so the omega rows we append come back named "". This is a known shape upstream,
+# not a bug of ours: nlmixr2est ships `.impmapNameCov()` to repair exactly these
+# blanks. We do the same, except we already hold the authoritative names.
 #
 # `nms` must be SNAPSHOT with .admCovNames() before the matrix is handed to
-# nlmixr2est: foceiFitCpp_ sets the dimnames attribute IN PLACE on the same SEXP
-# (no R-level copy happens when a matrix is merely assigned into an environment),
-# so by the time we get here the driver's own `.cov` has been blanked as well.
-# Reading the names back off it would restore nothing.
+# nlmixr2est: foceiFitCpp_ sets the dimnames attribute IN PLACE on the same SEXP, so
+# by the time we get here the driver's own `.cov` has been blanked too.
 #
-# Guarded on the length matching: if a future nlmixr2est returns a covariance of
-# a different shape, leaving it untouched is the safe outcome -- a wrongly
-# labelled SE is far worse than an unlabelled one.
+# Guarded on the length matching: if a future nlmixr2est returns a covariance of a
+# different shape, leaving it untouched is the safe outcome -- a wrongly labelled SE
+# is far worse than an unlabelled one.
 .admCovNames <- function(cov) if (is.matrix(cov)) rownames(cov) else NULL
 
 # Put the theta rows of the covariance in iniDf's OWN order.
 #
-# nlmixr2est fills its `SE` column POSITIONALLY: it walks the thetas in iniDf
-# order and takes the next entry of `sqrt(diag(cov))` for each one it did not
-# skip. admixr2 builds the covariance in OPTIMIZER order -- every structural
-# theta, then every residual parameter -- and those two orders agree only when
-# the model happens to declare its residual parameters last.
+# nlmixr2est fills its `SE` column POSITIONALLY: it walks the thetas in iniDf order
+# and takes the next entry of `sqrt(diag(cov))` for each one it did not skip. admixr2
+# builds the covariance in OPTIMIZER order -- every structural theta, then every
+# residual parameter -- and those two orders agree only when the model happens to
+# declare its residual parameters last:
 #
 #   ini({ a <- 0.1; tcl <- log(3); tv <- log(30) })   # residual declared FIRST
 #
-# printed `a` with tcl's SE, tcl with tv's and tv with a's: a silent rotation,
-# every value finite and plausible. So this is not cosmetic ordering -- it is
-# what makes the SE belong to the parameter it is printed beside.
+# printed `a` with tcl's SE, tcl with tv's and tv with a's: a silent rotation, every
+# value finite and plausible. So this is not cosmetic ordering -- it is what makes the
+# SE belong to the parameter it is printed beside.
 #
-# Rows that are not thetas (the appended omega block) keep their position at the
-# end. Anything unrecognised is left alone: a covariance we cannot map is better
-# reported in the order we built it than permuted on a guess.
-#
-# The other half of the contract is .admCovSkip(), which tells nlmixr2est WHICH
-# thetas this matrix carries -- without it, nlmixr2est < 6.2.0 skips every
-# residual-error theta (FOCEI computes its covariance without them) and so reads
-# the residual's row as the first structural theta's standard error.
+# Rows that are not thetas (the appended omega block) keep their position at the end.
+# Anything unrecognised is left alone. The other half of the contract is
+# .admCovSkip(), which tells nlmixr2est WHICH thetas this matrix carries -- without
+# it, nlmixr2est < 6.2.0 skips every residual-error theta and reads the residual's
+# row as the first structural theta's standard error.
 .admCovThetaOrder <- function(cov, ui) {
   if (!is.matrix(cov) || is.null(rownames(cov))) return(cov)
   .th <- .admThetaIniDf(ui)

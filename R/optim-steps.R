@@ -114,25 +114,20 @@
 # Per-parameter FD steps for the OPTIMIZER's gradient, measured once at the point
 # the fit starts from.
 #
-# The covariance Hessian can afford to call .admShi21Steps() directly: it runs
-# once, post-fit, at a known parameter vector. A gradient cannot -- the optimizer
-# calls it thousands of times. So measure once and REUSE, which is what FOCEI
-# does too (its gill83 runs at the first gradient evaluation, `nF == 1`, and
-# every later difference uses the stored per-parameter step). Here the
-# measurement happens in the driver, before the optimizer is handed anything, and
-# travels as the `grad_h` argument that was already there.
+# The covariance Hessian can afford to call .admShi21Steps() directly: it runs once,
+# post-fit, at a known parameter vector. A gradient cannot -- the optimizer calls it
+# thousands of times. So measure once and REUSE, which is what FOCEI does too (its
+# gill83 runs at `nF == 1` and every later difference uses the stored step). Here the
+# measurement happens in the driver, before the optimizer is handed anything.
 #
-# The measured step is ABSOLUTE at `p`. The estimators express theirs
-# differently -- adfo/adgh scale by `pmax(abs(p), 0.1)`, admc uses the raw
-# number -- so it is divided by whatever that site will multiply it back by
-# (`scaled`). The step is therefore exactly the measured one at `p`, and tracks
-# the parameter afterwards under the convention that site already had, rather
-# than freezing an absolute number that stops making sense once the optimizer
-# has moved a decade.
+# The measured step is ABSOLUTE at `p`. The estimators express theirs differently --
+# adfo/adgh scale by `pmax(abs(p), 0.1)`, admc uses the raw number -- so it is divided
+# by whatever that site will multiply it back by (`scaled`). The step is therefore
+# exactly the measured one at `p`, and tracks the parameter afterwards under the
+# convention that site already had.
 #
-# `idx` is the set of parameters that will actually be finite-differenced;
-# everything else keeps the constant and costs nothing. Passing `integer(0)` --
-# a fit whose gradient is fully analytic -- skips the probe entirely.
+# `idx` is the set of parameters that will actually be finite-differenced; passing
+# `integer(0)` -- a fully analytic gradient -- skips the probe entirely.
 .admShi21GradH <- function(fn, p, idx, grad_h, scaled = TRUE, .var.name = "grad") {
   if (length(idx) == 0L) return(grad_h)
   out <- rep_len(as.numeric(grad_h), length(p))
@@ -147,22 +142,19 @@
 # Warn when the fit finished ON the gradient-mode box constraint.
 #
 # A gradient fit is run inside `p0 +/- grad_bounds` on the optimizer scale, a
-# constraint the user did not write: .admBuildOptVec() returns -Inf/Inf for
-# struct thetas and omega unless the model declares explicit bounds. nloptr
-# reports normal convergence at a box corner, and a finite estimate and a finite
-# SE are printed, so a parameter pinned 5 optimizer units from its starting value
-# is indistinguishable from a converged one. On the log scale that is a factor of
-# exp(5) ~ 148: fit `tv <- log(20)` to data whose true V is 5000 and V is clamped
-# at ~2968, silently.
+# constraint the user did not write: .admBuildOptVec() returns -Inf/Inf for struct
+# thetas and omega unless the model declares explicit bounds. nloptr reports normal
+# convergence at a box corner, and a finite estimate and SE are printed, so a
+# parameter pinned 5 optimizer units from its starting value is indistinguishable
+# from a converged one. On the log scale that is a factor of ~148.
 #
-# admc/adgh/adirmc have always run with a gradient by default and so have always
-# had this; adfo acquired it in 0.4.1 when its default gradient mode changed.
-# Reporting it is the cheap half -- the fix is the user's (widen grad_bounds, or
-# start closer), and it is only actionable if they are told.
+# admc/adgh/adirmc have always run with a gradient by default and so have always had
+# this; adfo acquired it in 0.4.1 when its default gradient mode changed. Reporting it
+# is the cheap half -- the fix is the user's.
 #
 # `p` is the final optimizer-scale solution, `p0` the start. Only entries whose
-# model-declared bound is infinite are reported: a user-written bound reached is
-# the user's own constraint, not this one.
+# model-declared bound is infinite are reported: a user-written bound reached is the
+# user's own constraint, not this one.
 .admWarnOnBounds <- function(p, p0, ov, grad_bounds, pinfo) {
   if (is.null(p) || is.null(p0) || !is.finite(grad_bounds) || grad_bounds <= 0)
     return(invisible(character(0)))
@@ -171,18 +163,15 @@
   p  <- p[seq_len(n)]; p0 <- p0[seq_len(n)]
   lo <- if (is.null(ov$lower)) rep(-Inf, n) else ov$lower[seq_len(n)]
   hi <- if (is.null(ov$upper)) rep(Inf,  n) else ov$upper[seq_len(n)]
-  # Reconstruct the box nloptr was actually given, and ask whether the solution
-  # sits on it. Within 0.1% of the half-width counts as "on" -- nloptr stops just
-  # inside.
+  # Reconstruct the box nloptr was actually given, and ask whether the solution sits
+  # on it. Within 0.1% of the half-width counts as "on" -- nloptr stops just inside.
   #
-  # `lb > lo` / `ub < hi` is the whole point: it says the binding edge is
-  # ADMIXR2'S box and not a bound the model itself declared, which is the only
-  # case worth warning about. Testing `!is.finite(lo)` instead -- i.e. "warn only
-  # if the model declared no bound on that side at all" -- silently drops every
-  # hit on a parameter that has one, even when that bound is nowhere near and the
-  # box is what actually stopped the fit. A residual-error parameter carries a
-  # lower bound, so exactly the parameters most likely to run away were the ones
-  # that could never report it.
+  # `lb > lo` / `ub < hi` is the whole point: it says the binding edge is ADMIXR2'S
+  # box and not a bound the model itself declared. Testing `!is.finite(lo)` instead
+  # silently drops every hit on a parameter that has a bound, even when that bound is
+  # nowhere near and the box is what actually stopped the fit -- and a residual-error
+  # parameter carries a lower bound, so exactly the parameters most likely to run away
+  # were the ones that could never report it.
   tol <- grad_bounds * 1e-3
   lb  <- pmax(lo, p0 - grad_bounds)
   ub  <- pmin(hi, p0 + grad_bounds)

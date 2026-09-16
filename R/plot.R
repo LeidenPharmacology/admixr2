@@ -187,28 +187,23 @@ head.paged_df <- function(x, n = 6L, ...) {
 
 ## Build a nlmixr2-style `parHistData` frame from collected optimizer traces.
 ##
-## nlmixr2's `traceplot()` generic (`traceplot.nlmixr2FitCore` in nlmixr2plot)
-## reads `fit$parHistStacked`, which `nmObjGet.parHistStacked` derives from
-## `fit$env$parHistData` -- a wide data.frame with a `type` column (it keeps
-## `type == "Unscaled"`), an `iter` column, and one column per parameter.
-## Populating that slot is all that is required for `traceplot(fit)` to work on
-## an admixr2 fit; no S3 method registration is needed because admFit already
-## inherits `nlmixr2FitCore`.
+## nlmixr2's `traceplot()` generic reads `fit$parHistStacked`, which
+## `nmObjGet.parHistStacked` derives from `fit$env$parHistData` -- a wide data.frame
+## with a `type` column (it keeps `type == "Unscaled"`), an `iter` column, and one
+## column per parameter. Populating that slot is all `traceplot(fit)` needs; no S3
+## registration, because admFit already inherits `nlmixr2FitCore`.
 ##
 ## Semantics chosen here:
-## - single chain = the best restart (lowest final NLL); nlmixr2's shape stores
-##   one value per parameter per iter, so multi-restart overlay is not
-##   expressible -- that stays in `plot(fit, which = "par")`.
-## - natural scale under `"Unscaled"`, using the same back-transforms and
-##   display names as the custom par panel (`.admTraceDisplaySpec`).
-## - no burn-in marker: we leave `parHist`'s class without a `niter` attribute,
-##   so `traceplot()` draws no vline (the trace records improving nloptr
-##   evaluations, not SAEM iterations).
+## - single chain = the best restart (lowest final NLL); nlmixr2's shape stores one
+##   value per parameter per iter, so multi-restart overlay is not expressible --
+##   that stays in `plot(fit, which = "par")`.
+## - natural scale under `"Unscaled"`, using the same back-transforms and display
+##   names as the custom par panel (`.admTraceDisplaySpec`).
+## - no burn-in marker: `parHist`'s class carries no `niter` attribute, so
+##   `traceplot()` draws no vline.
 ##
-## Note the `iter` axis indexes improving optimizer evaluations (only steps that
-## lowered the best NLL are stored), not raw nloptr iterations.
-##
-## Returns `NULL` when no usable trace is available.
+## The `iter` axis indexes improving optimizer evaluations, not raw nloptr
+## iterations. Returns `NULL` when no usable trace is available.
 .admBuildParHistData <- function(all_traces, par_names, ui) {
   if (is.null(all_traces) || length(all_traces) == 0L || is.null(par_names))
     return(NULL)
