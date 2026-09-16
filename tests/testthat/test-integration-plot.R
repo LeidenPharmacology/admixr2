@@ -137,6 +137,17 @@ test_that("plot.admFit real rxMod: all par_trace values finite", {
   expect_true(all(is.finite(out$par_trace$data$value)))
 })
 
+test_that("plot.admFit default which: a fit with no covariates is unchanged", {
+  # "covariate" joined the default `which`, and it must be a no-op for a fit
+  # whose studies declare none -- otherwise every existing caller of plot(fit)
+  # gains an empty panel.
+  env <- .int_plot_setup()
+  out <- .pdf_plot_int(plot(env$fit, n_sim = 50L))
+  expect_true(any(startsWith(names(out), "mean_")))
+  expect_true(any(startsWith(names(out), "cov_")))
+  expect_false(any(startsWith(names(out), "covariate_")))
+})
+
 # ---- covariate fits ---------------------------------------------------------
 
 # A banded source becomes several studies named `<source>_s1`, `_s2`, ..., and a
