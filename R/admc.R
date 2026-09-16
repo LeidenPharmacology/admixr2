@@ -2490,27 +2490,19 @@ admStopWorkers <- function() {
        message    = opt$message)
 }
 
-# Load admixr2 in every daemon BEFORE any is asked to read the model
-# cache, then repair the cache if that load destroyed it.
+# Load admixr2 in every daemon BEFORE any is asked to read the model cache,
+# then repair the cache if that load destroyed it.
 #
-# A daemon's `library(admixr2)` loads nlmixr2est, whose
-# .resetCacheIfNeeded() runs (verified in the INSTALLED 6.2.0):
+# A daemon's `library(admixr2)` loads nlmixr2est, whose .resetCacheIfNeeded()
+# runs: `if (.md5 != nlmixr2.md5) rxClean()`. rxClean() wipes the whole shared
+# rxTempDir(), including the adm-sim-*.rds the parent wrote seconds earlier --
+# the worker deletes its own input. The mismatch never rewrites the stamp, so
+# it's permanent and fires per daemon on every fit when more than one
+# nlmixr2est build is in play (load_all() alongside the installed package).
 #
-#     if (.md5 != nlmixr2.md5) { message("detected new version ..."); rxClean() }
-#
-# rxClean() wipes the whole SHARED rxTempDir(), including the
-# adm-sim-*.rds the parent wrote seconds earlier -- the worker
-# deletes its own input. The mismatch never REWRITES the stamp, so
-# it's permanent, not self-healing, and fires per daemon on every
-# fit; triggered by more than one nlmixr2est build in play
-# (load_all() alongside the installed package).
-#
-# The fix is ordering: warm first, so every daemon-side clean has
-# already happened, then re-derive -- cache-keyed calls cost
-# nothing on a survived entry and repair by recompiling on a
-# destroyed one.
-# cost nothing when the entries survived; when they did not, they recompile and
-# republish, which is exactly the repair.
+# Fix is ordering: warm first so every daemon-side clean has already
+# happened, then re-derive -- cache-keyed calls cost nothing on a survived
+# entry and repair by recompiling on a destroyed one.
 .admWarmDaemons <- function(ui, pinfo, sens_cache_file = NULL) {
   # A mirai without everywhere() just means the warm-up is skipped; the repair
   # below still runs and is the half that matters, so this must not return early.
@@ -2568,19 +2560,18 @@ admStopWorkers <- function() {
     .fn_list <- list()
   } else {
     .fn_names <- ls(pkg_env, all.names = TRUE)
-    # CASE-INSENSITIVE: the package's constants are `.ADM_*` and a case-sensitive
-    # `^\\.adm` misses every one of them. That is the same hole .ADM_SENS_EMITTERS
-    # fell through -- a constant read by a patched function, absent in the daemon, no
-    # error, a different answer. The patch environment fixes how a missing name is
-    # INJECTED; it cannot help with a name that was never collected.
+    # CASE-INSENSITIVE: the package's constants are `.ADM_*`, and a
+    # case-sensitive `^\\.adm` misses them all -- the same hole
+    # .ADM_SENS_EMITTERS fell through (a constant read by a patched function,
+    # absent in the daemon, no error, a different answer).
     .fn_names <- .fn_names[grepl("^\\.(adm|adfo|adirmc|adgh|softmax|logdmvnorm)",
                                  .fn_names, ignore.case = TRUE)]
     .fn_list  <- setNames(lapply(.fn_names, get, envir = pkg_env), .fn_names)
-    # Code and constants travel; PER-PROCESS STATE does not. The name filter also
-    # catches the memo environments, and an environment is serialised by VALUE -- so
-    # every dev-mode dispatch was shipping the parent's cached rxode2 models to every
-    # daemon. Heavy, and semantically wrong: a deserialised model carries a dead
-    # pointer, so the worker rebuilds it anyway. Each daemon keeps its own.
+    # Code and constants travel; PER-PROCESS STATE does not. The name filter
+    # also catches memo environments, serialised by VALUE -- so every
+    # dev-mode dispatch was shipping the parent's cached rxode2 models to
+    # every daemon. A deserialised model carries a dead pointer anyway, so
+    # each daemon keeps its own.
     .fn_list  <- .fn_list[!vapply(.fn_list, is.environment, logical(1))]
     .fn_list[[.worker_fn_name]] <- worker_fn
   }
@@ -2920,39 +2911,33 @@ nlmixr2Est.admc <- function(env, ...) {
   # joint branch computes the analytical stacked-MVN gradient.
   joint_fd <- any_joint && is.null(sensModel)
   # A TBS endpoint takes that same route whether or not a sens model exists:
-  # .admGrad() hands it to .admNLLGradFD() because the analytical decomposition is
-  # written against the delta expansion while the objective now composes at the
-  # draws. So it differences the OBJECTIVE in every coordinate, which is what
-  # .fd_idx and the label below have to describe -- left as "Sens" with an empty FD
-  # set, its steps were never measured and the printed label named a gradient it
-  # does not compute.
+  # .admGrad() hands it to .admNLLGradFD() because the analytical decomposition
+  # is written against the delta expansion while the objective now composes at
+  # the draws, so it differences the OBJECTIVE in every coordinate -- which
+  # .fd_idx and the label below must describe, or a "Sens" label with an empty
+  # FD set would name a gradient it doesn't compute.
   .p0u    <- tryCatch(.admUnpack(ov$p0, pinfo), error = function(e) NULL)
   tbs_fd  <- !is.null(.p0u) &&
     .admAnyTBS(pinfo, studies, output_var, .p0u$sigma_var)
   obj_fd  <- joint_fd || tbs_fd
 
-  # Measure the gradient's FD steps ONCE, here, for every later
-  # difference to reuse (FOCEI's numericGrad mechanism at nF == 1).
+  # Measure the gradient's FD steps ONCE, here, for every later difference to
+  # reuse (FOCEI's numericGrad mechanism at nF == 1).
   #
-  # The set is the parameters admc steps in PARAMETER space: for a
-  # joint study with no sens model, every coordinate
-  # (.admNLLGradFD); otherwise only struct thetas with no THETA_j_
-  # column. "Unpaired" alone doesn't qualify -- .admBuildThetaSens
-  # emits a direction per unpaired theta, and .admGrad reads
-  # d(pred)/d(theta) exactly, differencing nothing.
+  # The set is the parameters admc steps in PARAMETER space: for a joint
+  # study with no sens model, every coordinate (.admNLLGradFD); otherwise
+  # only struct thetas with no THETA_j_ column. "Unpaired" alone doesn't
+  # qualify -- .admBuildThetaSens emits a direction per unpaired theta, and
+  # .admGrad reads d(pred)/d(theta) exactly, differencing nothing.
   #
-  # ETA perturbations keep the fixed scale regardless, read through
-  # .admGH0() since they carry no parameter index (indexing a
-  # per-parameter vector by an eta number would pick the wrong
-  # step). Gill83 measured the OBJECTIVE, so d(pred)/d(eta) is a
-  # different function -- the split is honest, not a shortcut.
+  # ETA perturbations keep the fixed scale regardless, read through .admGH0()
+  # since they carry no parameter index. Gill83 measured the OBJECTIVE, so
+  # d(pred)/d(eta) is a different function -- the split is honest.
   #
-  # The struct-theta steps ARE applied to a prediction difference
-  # rather than an objective one; both share the same
-  # solver-tolerance floor under common random numbers, so it is a
-  # transfer worth remembering.
-  # solver-tolerance floor, and the quantity being made accurate is d(NLL)/d(theta)
-  # either way. It remains a transfer, and worth knowing when reading a step back.
+  # Struct-theta steps ARE applied to a prediction difference rather than an
+  # objective one, but both share the same solver-tolerance floor under
+  # common random numbers -- a transfer worth remembering when reading a
+  # step back.
   .fd_idx <- if (!want_grad) integer(0)
     else if (obj_fd) seq_along(ov$p0)
     else if (length(.unpaired) && !.theta_sens)
