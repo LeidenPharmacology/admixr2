@@ -630,6 +630,29 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 ## Bug fixes
 
+* **A DISCRETE covariate latently correlated with ANY other margin is now
+  refused instead of being integrated as if it were independent.** A level is
+  an interval of the latent normal, not a point, so a correlation changes what
+  the exact enumeration of the levels means: correlation with a continuous
+  margin makes the continuous conditional differ from cell to cell, and one
+  shared design is then the wrong design in every cell, while correlation with
+  another DISCRETE margin changes the joint cell probabilities, which the
+  per-margin probabilities cannot carry. Both were previously integrated as
+  independent; the first was caught and refused during this release, and the
+  refusal now covers the second. `cov_integration = "sparse"` reports this as
+  an error, the collapse designs decline and fall back to the product grid.
+  A configuration that declared such a correlation and fitted before will now
+  stop: declare the discrete covariate independent of the other margins, or
+  use `cov_integration = "on"`.
+
+* **A joint collapse now probes OMEGA as well as the structural parameters
+  before it freezes the design's rank.** The joint loading's random-effect
+  block is `t(L) %*% d/d eta`, so an `Omega` that makes two initially collinear
+  eta directions independent raises the rank exactly as a coefficient leaving
+  zero does. Probing only the structural thetas could freeze a rank the fit
+  then outgrew, after which every re-aim was refused and the objective was
+  `+Inf` across a whole region of `Omega` rather than at an isolated point.
+
 * **Derivative-free fits no longer inherit nloptr's loose `xtol_rel = 1e-4`.**
   All four estimators now pass an explicit `xtol_rel`, exposed as the last
   control argument and defaulting to `sqrt(.Machine$double.eps)`.

@@ -51,62 +51,72 @@
 # Tensor-product GH grid for n_eta dimensions.
 # Returns X (n_node x n_eta standard-normal nodes) and W (length n_node weights).
 #
-# Memoised, same pattern and same cache env as .adghNodes1 (which this calls):
-# depends on nothing but (m, n_eta), and .admCovRefresh/.admJointDesign both
-# call this (or the equivalent hand-rolled expand.grid) on EVERY objective
-# evaluation, since rank and node count are frozen at admission -- only the
-# ROTATION applied on top of this grid depends on the current parameters. The
-# grid itself is pure overhead when rebuilt: measured 68.6 ms/call at r=4,
-# m=15 (50625 rows, expand.grid + a row-wise apply for the weights), against
-# an rxSolve() call's ~11 ms baseline. Rebuilt on every gradient AND every NLL
-# evaluation of a fit using the joint or covariate collapse, it was larger
-# than the solve it sits beside.
-.adghNodeGrid <- function(m, n_eta) {
-  if (n_eta == 0L) return(list(X = matrix(0, 1L, 0L), W = 1))
+# Memoised, same cache env as .adghNodes1 (which this calls) but NOT the same
+# retention policy. Both depend on nothing but their key, and .admCovRefresh/
+# .admJointDesign call this on EVERY objective evaluation, since rank and node
+# count are frozen at admission -- only the ROTATION applied on top of this
+# grid depends on the current parameters. The grid itself is pure overhead when
+# rebuilt: measured 68.6 ms/call at r=4, m=15 (50625 rows, expand.grid + a
+# row-wise apply for the weights), against an rxSolve() call's ~11 ms baseline.
+# Rebuilt on every gradient AND every NLL evaluation of a fit using the joint
+# or covariate collapse, it was larger than the solve it sits beside.
+#
+# WHAT A TENSOR GRID COSTS TO KEEP is the difference, and it is why this does
+# not use .adghNodes1's cache-everything-forever policy. The 1-D nodes are a
+# handful of short numeric vectors, so keeping every m ever seen is free; one
+# of these is 390625 x 8 (~25 MB) at 8 etas and 5 nodes, and the cache lives in
+# the namespace rather than in the fit, so keeping every (m, n_eta) would grow
+# with the number of models a session fits and never shrink. A fit asks for the
+# SAME grid on every objective evaluation, so ONE SLOT gets the entire saving:
+# a different key replaces the entry rather than joining it, which bounds the
+# cache at one grid without any eviction policy to get wrong.
+.admGridMemo <- function(slot, key, build) {
+  # The cache env is a package-level binding, and this runs inside mirai restart
+  # workers, where assignInNamespace() cannot ADD a binding to the locked
+  # installed namespace. Degrade to recomputing rather than erroring if absent.
   .env <- tryCatch(get(".adm_node_env", envir = asNamespace("admixr2")),
                    error = function(e) NULL)
-  .key <- paste0("ghgrid_", m, "_", n_eta)
-  if (!is.null(.env)) {
-    .hit <- tryCatch(get(.key, envir = .env, inherits = FALSE),
-                      error = function(e) NULL)
-    if (!is.null(.hit)) return(.hit)
-  }
-  g <- .adghNodes1(m)
-  X <- as.matrix(expand.grid(rep(list(g$x), n_eta)))
-  W <- as.numeric(apply(expand.grid(rep(list(g$w), n_eta)), 1L, prod))
-  dimnames(X) <- NULL
-  out <- list(X = X, W = W)
-  if (!is.null(.env)) assign(.key, out, envir = .env)
-  out
+  if (is.null(.env)) return(build())
+  .hit <- tryCatch(get(slot, envir = .env, inherits = FALSE),
+                   error = function(e) NULL)
+  if (!is.null(.hit) && identical(.hit$key, key)) return(.hit$val)
+  val <- build()
+  assign(slot, list(key = key, val = val), envir = .env)
+  val
+}
+
+.adghNodeGrid <- function(m, n_eta) {
+  if (n_eta == 0L) return(list(X = matrix(0, 1L, 0L), W = 1))
+  .admGridMemo(".adm_ghgrid", c(m, n_eta), function() {
+    g <- .adghNodes1(m)
+    X <- as.matrix(expand.grid(rep(list(g$x), n_eta)))
+    W <- as.numeric(apply(expand.grid(rep(list(g$w), n_eta)), 1L, prod))
+    dimnames(X) <- NULL
+    list(X = X, W = W)
+  })
 }
 
 # As .adghNodeGrid, but for PER-DIRECTION node counts rather than one shared
 # `m` repeated `n_eta` times -- what .admCovRefresh needs for a collapsed
 # design's `nv`. .admCovDirNodes always returns the same count for every
-# direction today, so `.adghNodeGrid(nv[1], length(nv))` would currently
-# answer identically, but this does not assume that invariant holds forever;
-# it is keyed on the exact vector instead. Same cache env and pattern as
-# .adghNodeGrid, which .admCovRefresh used to reimplement inline (a third
-# copy of the same expand.grid/apply construction, rebuilt on every
-# objective evaluation despite `nv` being frozen at admission).
+# direction today, and this does not assume that invariant holds forever; it is
+# keyed on the exact vector instead. A uniform `nv` is HANDED STRAIGHT to
+# .adghNodeGrid rather than rebuilt under a second key, so the common case does
+# not hold two copies of the same tensor in the cache at once.
+# .admCovRefresh used to reimplement this inline (a third copy of the same
+# expand.grid/apply construction, rebuilt on every objective evaluation despite
+# `nv` being frozen at admission).
 .admNodeGridNv <- function(nv) {
   d <- length(nv)
   if (d == 0L) return(list(X = matrix(0, 1L, 0L), W = 1))
-  .env <- tryCatch(get(".adm_node_env", envir = asNamespace("admixr2")),
-                   error = function(e) NULL)
-  .key <- paste0("ghgridv_", paste(nv, collapse = "_"))
-  if (!is.null(.env)) {
-    .hit <- tryCatch(get(.key, envir = .env, inherits = FALSE),
-                      error = function(e) NULL)
-    if (!is.null(.hit)) return(.hit)
-  }
-  gl <- lapply(nv, .adghNodes1)
-  X <- as.matrix(expand.grid(lapply(gl, function(g) g$x)))
-  W <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
-  dimnames(X) <- NULL
-  out <- list(X = X, W = W)
-  if (!is.null(.env)) assign(.key, out, envir = .env)
-  out
+  if (all(nv == nv[1L])) return(.adghNodeGrid(nv[1L], d))
+  .admGridMemo(".adm_ghgridv", nv, function() {
+    gl <- lapply(nv, .adghNodes1)
+    X <- as.matrix(expand.grid(lapply(gl, function(g) g$x)))
+    W <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
+    dimnames(X) <- NULL
+    list(X = X, W = W)
+  })
 }
 
 # -- Moments -------------------------------------------------------------------
@@ -130,25 +140,13 @@
   # than n_node. The eta block cycles fastest, so the weights are
   # rep(W_eta, times = n_cov) * rep(W_cov, each = n_eta), which is what
   # as.numeric(outer(W_eta, W_cov)) produces column-major.
-  # SHIFT: the covariate never reaches the solver. The affected eta column is
-  # replaced by quantiles of u = Delta(a) + eta and the covariates are held at
-  # their reference, so the solve costs n_u * (nodes for the OTHER etas) rows --
-  # CONSTANT in the number of covariates, against n_node^n_eta * n_cov^p.
-  # Set when the shift path admitted a study but could not build its design at
-  # the current parameters -- a NULL Delta, or an absorption/conditioning that
-  # failed as the optimizer drove an eta correlation toward +/-1.
   #
-  # It must NOT continue on the bare eta grid: with cov_rows NULL, .admSimulate
-  # falls back to study$cov, which .admCheckCovariates filled with each
-  # covariate's MEAN, so the integral becomes the ecological plug-in at a finite
-  # and plausible NLL. It must not continue on the product grid either -- a
-  # different number of quadrature points mid-fit steps the objective. It is an
-  # UNSOLVABLE POINT, and every other unsolvable point here reports Inf.
   # The covariate shift -- a separate reduction that pinned the covariate at
   # its reference and folded its whole contribution into one eta column --
   # was removed. .admJointCollapse finds the same structure (rank 1 on the
   # certified single-eta case) without a certificate, and is both cheaper and
   # more accurate than the shift wherever both applied. See NEWS.
+  #
   # JOINT COLLAPSE: one design over the etas AND the covariates together, where
   # they reach the model through the same directions. It replaces the eta grid
   # as well as the covariate design, so it returns before either is built.

@@ -289,3 +289,22 @@ test_that("nmObjGetControl.adgh: errors when no control found", {
   expect_error(admixr2:::nmObjGetControl.adgh(list(e)),
                regexp = "cannot find adgh control")
 })
+
+# ---- grid memo ---------------------------------------------------------------
+
+test_that("the tensor grid memo answers by key, not by whatever it cached last", {
+  a  <- admixr2:::.adghNodeGrid(4L, 2L)
+  b  <- admixr2:::.adghNodeGrid(6L, 2L)
+  a2 <- admixr2:::.adghNodeGrid(4L, 2L)          # after b displaced a
+  expect_equal(a, a2)
+  expect_equal(nrow(a$X), 16L)
+  expect_equal(nrow(b$X), 36L)
+})
+
+test_that("a uniform nv is the ordinary tensor grid, not a second copy of it", {
+  expect_identical(admixr2:::.admNodeGridNv(c(3L, 3L)),
+                   admixr2:::.adghNodeGrid(3L, 2L))
+  g <- admixr2:::.admNodeGridNv(c(3L, 5L))
+  expect_equal(nrow(g$X), 15L)
+  expect_equal(sum(g$W), 1, tolerance = 1e-12)
+})

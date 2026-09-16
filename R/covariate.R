@@ -948,11 +948,6 @@
 
 # The latent structure a design may use, or NULL if it may not.
 
-# Refuses a DISCRETE margin latently correlated with a CONTINUOUS one: a level is then a truncation of the
-# latent normal rather than a point, so the continuous conditional differs cell to cell and one shared design
-# is the wrong design in every cell. Then subsets the correlation to the continuous block and factorises it.
-# `R` is indexed POSITIONALLY -- latentR carries no dimnames -- so `nms` must be the full declared order.
-#
 # Refuses any correlated DISCRETE margin. A level is a latent-normal interval,
 # not a point: correlation with a continuous margin changes its conditional
 # law, while correlation with another discrete margin changes the JOINT cell
@@ -1937,18 +1932,21 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
          call. = FALSE)
   # The refusal, the correlation block and the discrete enumeration all come from .admCovLatentBlock, which
   # the two collapses use. Writing them out here is what let the REFUSAL be omitted from the first version of
-  # this function: a discrete margin latently correlated with a continuous one was integrated as if
-  # independent until a test caught it.
+  # this function: a discrete margin latently correlated with another one was integrated as if independent
+  # until a test caught it.
   .lb <- .admCovLatentBlock(cov_dist, nms, cn, dn, Rz)
   if (is.null(.lb))
     stop("admixr2: this covariate distribution cannot be integrated on a ",
          "sparse grid -- either a DISCRETE covariate is latently correlated ",
-         "with a continuous one (a level is then a truncation of the latent ",
-         "normal rather than a point, so the continuous conditional differs ",
-         "from cell to cell and one shared design is the wrong design in ",
-         "every cell), or the declared correlation is not positive definite. ",
-         "Use cov_integration = \"on\", or declare the discrete ",
-         "covariate independent of the continuous ones.", call. = FALSE)
+         "with ANOTHER MARGIN, or the declared correlation is not positive ",
+         "definite. A level is a latent-normal interval rather than a point: ",
+         "correlation with a continuous margin makes the continuous ",
+         "conditional differ from cell to cell, so one shared design is the ",
+         "wrong design in every cell, and correlation with another discrete ",
+         "margin changes the joint cell probabilities, which the exact ",
+         "enumeration of the levels does not carry. Use cov_integration = ",
+         "\"on\", or declare the discrete covariate independent of the ",
+         "other margins.", call. = FALSE)
   Rc <- .lb$Rc
   # Rotate onto the eigenvectors of the latent correlation, so the rule runs along the directions the
   # distribution actually varies in. At Rc = I this is the identity and the grid is the ordinary axis-aligned
@@ -3119,7 +3117,7 @@ print.covDist <- function(x, ...) {
 #     the control that stops "invariant by construction" meaning "blind".
 #
 # f evaluates the readers at a matrix of latent rows and returns one column per
-# reader. z0 carries the base points: the FIRST is where the loading is read,
+# reader. z0 carries the base points: the loading is read at one of them and
 # the rest exist only to certify the direction. One f call for all of them.
 .ADM_GRAD_H   <- 1e-4
 .ADM_GRAD_TOL <- 1e-6      # on 1 - |cos| between gradient directions
@@ -3151,65 +3149,79 @@ print.covDist <- function(x, ...) {
   # refresh both retain the same candidate points, so a stationary derivative
   # at one of them cannot erase a real direction.
   #
-  # i0 IS A CALLER-SUPPLIED FREEZE, not just a hint. Every caller that re-aims
-  # an already-admitted design (.admCovRefresh, .admJointDesign, the rank/
-  # invariance probes inside admission itself) passes the i0 admission chose,
-  # so the base point stays the SAME row of z0 across the whole fit. Left NULL
-  # only for the one call that gets to choose it. Without this, a coefficient
-  # moving between calls can flip which candidate point carries the most
-  # signal, rescaling every column of B by a different amount and rotating the
-  # SVD basis of the same column space -- stepping the GH design between
-  # objective evaluations, exactly the failure the `routes` machinery existed
-  # to avoid.
+  # WHAT IS FROZEN IS THE ORDER, NOT ONE ROW. i0 is a caller-supplied freeze,
+  # and every caller that re-aims an already-admitted design (.admCovRefresh,
+  # .admJointDesign, the rank/invariance probes inside admission itself) passes
+  # back the ordering admission chose; left NULL only for the one call that
+  # gets to choose it. Without the freeze, a coefficient moving between calls
+  # can flip which candidate point carries the most signal, rescaling every
+  # column of B by a different amount and rotating the SVD basis of the same
+  # column space -- stepping the GH design between objective evaluations,
+  # exactly the failure the `routes` machinery existed to avoid.
+  #
+  # An ORDER rather than the argmax alone, because the frozen point can go
+  # stationary. A genuine zero gradient (e.g. (b'z)^3 at the origin, or a
+  # quadratic form at its vertex) can land exactly on the frozen point as
+  # parameters move, while every other candidate still reads a perfectly good
+  # direction; refusing there would report an unsolvable point in the middle of
+  # a smooth region. Re-ranking the candidates at the CURRENT parameters would
+  # fix that and reintroduce the rotation, since the winner then depends on the
+  # thetas again. So the ranking is done once, frozen whole, and a degenerate
+  # point hands off to the NEXT candidate in that fixed order -- which depends
+  # on the parameters only through "does this point carry any signal at all",
+  # and not on how much. Pinned by test-collapse-rank-branches.R's "refresh
+  # retains the certificate points around a stationary link".
   rel <- vapply(seq_len(m), function(k) max(abs(P0[, k]), 1e-300), numeric(1))
-  frozen <- !is.null(i0)
-  if (is.null(i0)) {
-    # the argmax is a SELECTION, so a column-constant normaliser is enough for it
+  ord <- if (is.null(i0)) {
+    # the ranking is a SELECTION, so a column-constant normaliser is enough
     tot <- rowSums(matrix(vapply(seq_len(m), function(k)
              rowSums(matrix(D[, k], S, nl)^2) / rel[k]^2, numeric(S)), S, m))
-    i0  <- which.max(tot)
-  }
-  B  <- matrix(0, nl, m)
-  cs <- rep(1, m)
-  for (k in seq_len(m)) {
-    sc <- abs(P0[i0, k])
-    # A reader that is ZERO where it is read has no relative scale; fall back to
-    # its own size over the base points so the column is still dimensionless.
-    if (!is.finite(sc) || sc <= 0) sc <- rel[k]
-    G  <- matrix(D[, k], S, nl) / sc
-    if (!all(is.finite(G))) return(NULL)
-    nr <- sqrt(rowSums(G^2))
-    if (max(nr) < .ADM_GRAD_ZERO) next               # constant: B[, k] stays 0
-    # A column flat AT THE CHOSEN POINT but not elsewhere is refused: its
-    # direction there is noise, and no other point can be substituted without
-    # reading B at two different latent points at once.
-    #
-    # UNLESS the point is frozen, in which case this is not "no other point
-    # can be substituted" -- it is "not THIS one, today". A stationary link
-    # (a genuine zero gradient, e.g. (b'z)^3 at the origin, or a quadratic
-    # form at its vertex) can put the FROZEN point exactly on its stationary
-    # set as parameters move, even while every other candidate point still
-    # reads a perfectly good direction. That is not the flip-flop the freeze
-    # exists to stop -- the freeze stops a fixed set of EQUALLY VALID points
-    # from being re-ranked call to call; there is nothing to rank when the
-    # frozen one carries no signal at all, so re-deriving it fresh (once)
-    # cannot reintroduce the inconsistent rescaling finding #2 fixed. Pinned
-    # by test-collapse-rank-branches.R's "refresh retains the certificate
-    # points around a stationary link".
-    if (nr[i0] < .ADM_GRAD_ZERO) {
-      if (frozen) return(.admCovGradB(f, z0, h, i0 = NULL))
+    order(tot, decreasing = TRUE)
+  } else as.integer(i0)
+  # A refusal that is NOT about the base point -- a non-finite column, or the
+  # direction certificate failing -- is the whole collapse being refused, so it
+  # stops the walk down `ord` instead of being retried one row lower.
+  bad <- FALSE
+  at_point <- function(i) {
+    B  <- matrix(0, nl, m)
+    cs <- rep(1, m)
+    for (k in seq_len(m)) {
+      sc <- abs(P0[i, k])
+      # A reader that is ZERO where it is read has no relative scale; fall back
+      # to its own size over the base points so the column is still
+      # dimensionless.
+      if (!is.finite(sc) || sc <= 0) sc <- rel[k]
+      G  <- matrix(D[, k], S, nl) / sc
+      if (!all(is.finite(G))) { bad <<- TRUE; return(NULL) }
+      nr <- sqrt(rowSums(G^2))
+      if (max(nr) < .ADM_GRAD_ZERO) next             # constant: B[, k] stays 0
+      # Flat AT THIS POINT but not elsewhere: its direction here is noise, and
+      # no other point can be substituted for this column alone without reading
+      # B at two different latent points at once. The whole point moves on
+      # instead.
+      if (nr[i] < .ADM_GRAD_ZERO) return(NULL)
+      U <- G / nr
+      cs[k] <- min(abs(U[nr >= .ADM_GRAD_ZERO, , drop = FALSE] %*% U[i, ]))
+      B[, k] <- G[i, ]
+    }
+    # The certificate is a SINGLE tolerance on a single quantity, checked here
+    # rather than by the caller, so there is one place to read it.
+    if (!all(is.finite(B)) || any(1 - cs > .ADM_GRAD_TOL)) {
+      bad <<- TRUE
       return(NULL)
     }
-    U <- G / nr
-    cs[k] <- min(abs(U[nr >= .ADM_GRAD_ZERO, , drop = FALSE] %*% U[i0, ]))
-    B[, k] <- G[i0, ]
+    B
   }
-  if (!all(is.finite(B))) return(NULL)
-  # The certificate is a SINGLE tolerance on a single quantity, checked here
-  # rather than by the caller, so there is one place to read it.
-  if (any(1 - cs > .ADM_GRAD_TOL)) return(NULL)
-  attr(B, "at") <- i0
-  B
+  for (i in ord) {
+    B <- at_point(i)
+    if (bad) return(NULL)
+    if (!is.null(B)) {
+      # the ORDER travels with B: `at` is what a caller freezes and hands back.
+      attr(B, "at") <- ord
+      return(B)
+    }
+  }
+  NULL
 }
 
 # The rank is frozen for a fit, but coefficients can make initially collinear
@@ -3572,10 +3584,10 @@ print.covDist <- function(x, ...) {
        error = function(e) NULL)
   if (is.null(Z) || !is.matrix(Z) || !all(is.finite(Z))) return(NULL)
   Z <- Z %*% Lc
-  A <- vapply(seq_len(pc), function(k)
-    .admCovQuantile(cd[[cn[k]]], stats::pnorm(Z[, k])), numeric(n_probe))
-  colnames(A) <- cn
-  if (!all(is.finite(A))) return(NULL)
+  # Z is kept for the CERTIFICATE POINTS (z0) below, and for nothing else: the
+  # covariate matrix it used to be pushed through was a second probe that the
+  # deterministic verification rule replaced, and every remaining reader of the
+  # latent space -- gradB, ver() -- maps its own rows itself.
   # A deterministic verification rule over the FULL latent space. Sobol was a
   # noisy yardstick for tail-dominated lognormal moments and refused exact
   # rank-one designs as effects grew. This is the same GH/Smolyak reference
@@ -3593,7 +3605,7 @@ print.covDist <- function(x, ...) {
   pr <- list(lst = lst, is_asgn = is_asgn, hit = hit, cn = cn, dn = dn,
              eta_names = pinfo$eta_col_names, cov_fixed = cov_fixed)
   # evaluate the covariate-reading assignments at an ARBITRARY covariate matrix
-  # -- the probe uses A, the verification uses the design points Xc
+  # -- the verification compares the design points Xc against the rule's Av
   probe_gen <- function(eta_at, cell, AA, st_use = st) {
     .admCovProbeAt(pr, st_use, eta_at, cell, AA)
   }
@@ -3610,12 +3622,15 @@ print.covDist <- function(x, ...) {
                 i0 = i0)
   B <- gradB(cell_list[[1L]])
   if (is.null(B)) return(NULL)
-  # FREEZE the base point THE FIRST TIME IT IS CHOSEN. Every later call in this
-  # admission -- the rank probe, the eta/stratum invariance check -- and every
-  # later .admCovRefresh() must read the loading at this same row of z0, or a
-  # coefficient moving between calls flips which candidate point carries the
-  # most signal and rescales B's columns differently, rotating the SVD basis
-  # of the same column space and stepping the GH design between calls.
+  # FREEZE the base-point ORDER THE FIRST TIME IT IS CHOSEN. Every later call
+  # in this admission -- the rank probe, the eta/stratum invariance check --
+  # and every later .admCovRefresh() must read the loading at the same row of
+  # z0, or a coefficient moving between calls flips which candidate point
+  # carries the most signal and rescales B's columns differently, rotating the
+  # SVD basis of the same column space and stepping the GH design between
+  # calls. The order, rather than the single winning row, so that a link going
+  # stationary exactly at the frozen point has a fixed place to fall to -- see
+  # .admCovGradB.
   i0 <- attr(B, "at")
   gradB <- function(cell, st_use = st, eta_at = 0)
     .admCovGradB(function(ZZ) probe_gen(eta_at, cell,
@@ -3773,7 +3788,7 @@ print.covDist <- function(x, ...) {
        # everything .admCovRefresh() needs to redo the rotation at the CURRENT
        # structural thetas -- the probe ingredients, not a closure: a closure
        # captures its whole defining environment and has to survive being
-       # stored on the study and shipped to a daemon. st/Z/A themselves are
+       # stored on the study and shipped to a daemon. st/Z themselves are
        # NOT kept: .admCovRefresh re-derives the loading from `pr` and `st`
        # (its own argument) alone, so shipping the admission-time struct
        # thetas and probe matrices to every daemon would be dead payload.
@@ -3938,12 +3953,16 @@ print.covDist <- function(x, ...) {
   # exist solely to certify that the direction does not move.
   z0 <- rbind(rep(0, nl), Xi[c(1L, 8L, 20L, 50L, 97L) %% nrow(Xi) + 1L, ,
                             drop = FALSE])
+  # Xv/Wv are the VERIFICATION rule and nothing else reads them: .admJointAdmit
+  # scores the design against them once and then drops them, so what the study
+  # carries -- and ships to every restart daemon -- is not up to 8192 x nl of
+  # dead payload. Same policy .admCovCollapse states for its own st/Z probes.
   list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc, ne = ne, pc = pc,
        nl = nl, nl_m = nl_m, pc_m = pcm,
        Xv = Xv, Wv = Wv, z0 = z0,
        n_nodes = as.integer(n_nodes), eta_nodes = as.integer(eta_nodes),
        max_rows = max_rows, joint = TRUE,
-       dn = dn, nms = nms, cells = cells, pcell = pcell,
+       dn = dn, cells = cells, pcell = pcell,
        cell_list = cell_list, n_cell = max(nrow(cells), 1L),
        r = NULL, m = NULL, struct_names = pinfo$struct_names %||% character(0))
 }
@@ -3976,11 +3995,13 @@ print.covDist <- function(x, ...) {
 
 # Re-aim the joint design at the CURRENT parameters, and build it.
 #
-# i0 is READ from jc, never chosen here: .admJointAdmit() freezes it the first
-# time B is computed, and every later refresh -- this is called once per
-# objective evaluation -- must read the loading at that same base point, or a
-# coefficient moving between calls rescales B's columns differently and steps
-# the GH design between calls.
+# i0 is READ from jc, never chosen here: .admJointAdmit() freezes the
+# base-point order the first time B is computed, and every later refresh --
+# this is called once per objective evaluation -- must read the loading at that
+# same frozen order, or a coefficient moving between calls rescales B's columns
+# differently and steps the GH design between calls. Nothing writes back to jc
+# from here (the study holds it; this runs inside the objective), which is why
+# the freeze has to be a fixed ORDER and not a row re-chosen on the fly.
 .admJointDesign <- function(jc, st, L) {
   B <- .admJointB(jc, st, L, i0 = jc[["i0"]])
   if (is.null(B)) return(NULL)
@@ -4046,25 +4067,51 @@ print.covDist <- function(x, ...) {
 # first two moments and the reciprocal. Costs no solves.
 .admJointAdmit <- function(jc, st, L, tol = 5e-3) {
   if (is.null(jc)) return(NULL)
+  # A FRESH .admJointCollapse() only. Admission consumes the verification rule
+  # (dropped at the end of this function, so it does not ride along on the
+  # study), and there is nothing to score a re-admission against.
+  if (is.null(jc[["Xv"]])) return(NULL)
   B0 <- .admJointB(jc, st, L)
   if (is.null(B0)) return(NULL)
-  # FREEZE the base point here, once -- see .admCovCollapse's identical freeze
-  # and .admJointDesign's use of jc$i0. Every probe below, and every later
-  # refresh, reads the loading at this same row of jc$z0.
+  # FREEZE the base-point order here, once -- see .admCovCollapse's identical
+  # freeze and .admJointDesign's use of jc$i0. Every probe below, and every
+  # later refresh, ranks the rows of jc$z0 in this same frozen order.
   jc$i0 <- attr(B0, "at")
   cl_list <- jc$cell_list %||% list(list())
-  invariant <- function(sp, B) {
+  inv_at <- function(Lk) function(sp, B) {
     if (length(cl_list) == 1L) return(TRUE)
     all(vapply(cl_list[-1L], function(cc) {
-      Bk <- .admJointB(jc, sp, L, cc, i0 = jc$i0)
+      Bk <- .admJointB(jc, sp, Lk, cc, i0 = jc$i0)
       !is.null(Bk) && isTRUE(all.equal(B, Bk, tolerance = 1e-6,
                                        check.attributes = FALSE))
     }, logical(1)))
   }
-  jc$r <- .admCollapseRank(B0, st, jc$struct_names %||% character(0),
-                           function(sp) .admJointB(jc, sp, L, i0 = jc$i0),
-                           invariant)
-  if (is.null(jc$r) || jc$r < 1L || jc$r > jc$nl) return(NULL)
+  # THE RANK CAN MOVE WITH OMEGA, NOT ONLY WITH THE THETAS. B's eta block is
+  # t(L) %*% Deta, so the loading depends on the Cholesky factor the same way
+  # it depends on a structural coefficient -- an Omega that makes two
+  # initially-collinear eta directions independent raises the rank exactly as a
+  # coefficient leaving zero does. Probing the thetas alone freezes a rank the
+  # fit can then outgrow, and .admJointDesign refuses every design from there
+  # on (rank > r), so the objective is +Inf across a whole REGION rather than
+  # at an isolated point. So the probe scales L on both sides too, and takes
+  # the largest rank it sees anywhere. A scaling that cannot be read at all is
+  # skipped rather than refused: it is a screen for a rank the fit may reach,
+  # not a claim about that Omega.
+  r <- .admCollapseRank(B0, st, jc$struct_names %||% character(0),
+                        function(sp) .admJointB(jc, sp, L, i0 = jc$i0),
+                        inv_at(L))
+  if (is.null(r)) return(NULL)
+  for (f in c(0.9, 1.1)) {
+    Lk <- L * f
+    Bk <- .admJointB(jc, st, Lk, i0 = jc$i0)
+    if (is.null(Bk)) next
+    rk <- .admCollapseRank(Bk, st, jc$struct_names %||% character(0),
+                           function(sp) .admJointB(jc, sp, Lk, i0 = jc$i0),
+                           inv_at(Lk))
+    if (!is.null(rk)) r <- max(r, rk)
+  }
+  jc$r <- r
+  if (!is.finite(jc$r) || jc$r < 1L || jc$r > jc$nl) return(NULL)
   jd <- .admJointDesign(jc, st, L)
   if (is.null(jd)) return(NULL)
   jc$m <- jd$m
@@ -4096,5 +4143,9 @@ print.covDist <- function(x, ...) {
     Wv <- jc$Wv %||% rep(1 / nrow(Pv), nrow(Pv))
     if (!.admMomentsMatch(Pv, Pd, Wv, Wc, tol)) return(NULL)
   }
+  # The verification rule has done its one job. Nothing downstream reads it --
+  # .admJointDesign re-aims from pr/z0/i0 alone -- and jc is stored on the
+  # study and serialised to every restart daemon, so it does not travel.
+  jc$Xv <- NULL; jc$Wv <- NULL
   jc
 }

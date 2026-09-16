@@ -264,3 +264,28 @@ test_that("an admitted reduction does not retain its product grid", {
   expect_false(is.null(s$.adm_cov_collapse))
   expect_null(s$.adm_cov_grid)
 })
+
+test_that("the base-point ORDER is frozen, not re-ranked when a point goes flat", {
+  z0 <- rbind(c(0, 0), c(1, 0), c(0, 1))
+  # one reader through a stationary link: log p = (z1 + z2 - a)^2, whose gradient
+  # direction is constant and whose MAGNITUDE vanishes at z1 + z2 = a -- so the
+  # coefficient decides which candidate point carries no signal.
+  f_at <- function(a) function(Z) matrix(exp((Z[, 1] + Z[, 2] - a)^2), ncol = 1L)
+
+  ord <- attr(admixr2:::.admCovGradB(f_at(0.3), z0), "at")
+  expect_setequal(ord, seq_len(nrow(z0)))
+
+  # replayed whole, at any parameter: the ranking is never redone
+  for (a in c(0.1, 0.5, 0.9))
+    expect_identical(attr(admixr2:::.admCovGradB(f_at(a), z0, i0 = ord), "at"),
+                     ord)
+
+  # with the leading point exactly stationary the loading is read at the NEXT
+  # candidate in the frozen order -- not at an argmax re-ranked at these
+  # parameters, which is what would rotate the SVD basis mid-fit.
+  a  <- sum(z0[ord[1L], ])
+  B  <- admixr2:::.admCovGradB(f_at(a), z0, i0 = ord)
+  Bn <- admixr2:::.admCovGradB(f_at(a), z0, i0 = ord[-1L])
+  expect_false(is.null(B))
+  expect_equal(as.numeric(B), as.numeric(Bn), tolerance = 1e-8)
+})
