@@ -26,27 +26,22 @@
 # schema tag that was forgotten once and served a stale entry.
 #
 # The version ALONE is not enough: `Version:` moves only at release, so a
-# whole dev cycle shares one key. Editing .g2, the direction set, or the f2
-# naming would then hit a stale compiled model and produce a finite,
-# plausible, silently wrong gradient. So the key also digests the BODIES of
-# the functions that decide what gets emitted -- one deparse + digest per fit.
+# whole dev cycle shares one key, and editing .g2, the direction set, or
+# the f2 naming would then hit a stale compiled model and produce a
+# finite, plausible, silently wrong gradient. So the key also digests the
+# BODIES of the functions that decide what gets emitted.
 .admPkgKey <- function() {
   .ver <- tryCatch(as.character(utils::packageVersion("admixr2")),
                    error = function(e) "dev")
   # deparse(), not the closure: the package namespace digests differently
-  # between load_all() and an installed build.
-  #
-  # NAME LIST, not just the two entry points, since a helper like
-  # .admJumpCovers() also shapes the payload. Digested BY VALUE, per-name
-  # tryCatch so one unresolvable name doesn't disable invalidation entirely.
-  #
-  # LOCAL, not package-level: .admDaemonRestart() patches a dev body into the
-  # stale installed namespace via assignInNamespace(), which can REPLACE a
-  # binding but not ADD one -- a top-level constant would go missing there.
-  #
-  # RULE: belongs here if changing its BODY changes the cached payload.
-  # .admUnpairedThetas/.admMuRefPairs/.admIniKey are covered indirectly via
-  # their keyed results.
+  # between load_all() and an installed build. NAME LIST, not just the two
+  # entry points, since a helper like .admJumpCovers() also shapes the
+  # payload; digested BY VALUE, per-name tryCatch so one unresolvable name
+  # doesn't disable invalidation entirely. LOCAL, not package-level:
+  # .admDaemonRestart() patches a dev body into the stale installed
+  # namespace via assignInNamespace(), which can REPLACE a binding but not
+  # ADD one. RULE: belongs here if changing its BODY changes the cached
+  # payload.
   .emitters <- c(
     ".admBuildThetaSens",   # emits the direction set, the chains and the f2 block
     ".admLoadSensModel",    # assembles the cached list and its fallbacks
@@ -135,13 +130,11 @@
 # The .rds caches still live in rxTempDir(), so a cross-session hit may
 # reference a DLL this session no longer has; rxLoad() doesn't reliably
 # error on that, it quietly binds to whatever shares the entry-point name
-# and solves to garbage. .admRxLoadAll() guards this explicitly -- a
-# DELIBERATE DIVERGENCE from upstream, which keeps artifact and cache
-# lifetimes equal. admixr2 crosses them for the SENSITIVITY model only
-# (session-local artifact, persistent adm-sens-*.rds cache); the simulation
-# model stays on upstream's disk pairing. Chose the cross-session cache +
-# runtime guard over a session-only cache (breaks parallel grad = "sens",
-# which can't read `ui`) or a session-tokened filename, for the cold-start win.
+# and solves to garbage. .admRxLoadAll() guards this explicitly. admixr2
+# crosses artifact and cache lifetimes for the SENSITIVITY model only
+# (session-local artifact, persistent adm-sens-*.rds cache); the
+# simulation model stays on upstream's disk pairing -- chosen over a
+# session-only cache (breaks parallel grad = "sens") for the cold-start win.
 #
 # Disappears entirely once nlmixr2/rxode2#1171 is fixed.
 .admModDir <- function() {
@@ -441,17 +434,14 @@
 # which only adfo needs (its objective needs dJ/d(theta) = d2f/(d eta d
 # theta)); admc/adgh stay at order 1. Deliberately ASYMMETRIC -- eta
 # directions x ALL directions, not nlmixr2est's full symmetric triangle --
-# since adfo differentiates only ONCE per theta and skips the
-# rx_rvar*/rx_rsig* chains that dominate FOCEI's order-2 compile time.
+# since adfo differentiates only ONCE per theta and skips the chains that
+# dominate FOCEI's order-2 compile time.
 #
 # An ODE model gets rxode2::.rxSens() variational (state-sensitivity)
 # compartments; a linCmt model has no states to augment, so D(pred, dir)
-# resolves directly through linCmtB -- why the direction set works for
-# linCmt at first order even though nlmixr2est's augmented model can't.
-#
-# Compiled with eventSens = "jump" so a dosing modifier (f/lag/rate/dur)
-# gets analytic variational jumps at dose times, else its sensitivity is
-# silently ZERO. Parameter-dependent initial conditions are emitted too.
+# resolves directly through linCmtB. Compiled with eventSens = "jump" so a
+# dosing modifier (f/lag/rate/dur) gets analytic variational jumps at dose
+# times, else its sensitivity is silently ZERO.
 #
 # Returns list(mod, dirs, sens_cols, theta_sens_cols) or NULL (caller falls
 # back to nlmixr2est's inner model + FD). `pred_expr` defaults to
@@ -765,16 +755,16 @@
 #
 # ONE function because there are TWO frames it can legitimately be asked
 # about, and they must not diverge: an order-2 request on a linCmt() model
-# promotes the model to explicit ODE form, and .admBuildThetaSens numbers its
-# emitted directions from the PROMOTED iniDf, while the rename_map that FILLS
-# those THETA[k] columns at solve time used to build from the original. Any
-# iniDf difference across the promotion silently mis-slots each theta's
-# value against the derivative that differentiates it.
+# promotes the model to explicit ODE form, and .admBuildThetaSens numbers
+# its emitted directions from the PROMOTED iniDf, while the rename_map
+# that FILLS those THETA[k] columns at solve time used to build from the
+# original -- any iniDf difference across the promotion silently mis-slots
+# each theta's value against the derivative that differentiates it.
 .admSensNameMaps <- function(ini_df) {
   eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 &
                        !ini_df$fix, , drop = FALSE]
   # Order by neta1 so rename_map's ETA[i] labels line up with
-  # .admBuildThetaSens's ETA_i_ directions (which it numbers after order(neta1));
+  # .admBuildThetaSens's ETA_i_ directions (numbered after order(neta1));
   # otherwise, for an iniDf whose eta rows are out of neta1 order, sens_cols[i]
   # would report d(pred)/d(eta) for a different eta than rename_map fills ETA[i].
   eta_rows <- eta_rows[order(eta_rows$neta1), , drop = FALSE]
@@ -790,12 +780,12 @@
     stats::setNames(paste0("ETA[", seq_len(n_eta), "]"),
                     paste0("eta.", gsub("^eta\\.", "", eta_rows$name))))
 
-  # A FIXED theta is not an estimated parameter, so it never reaches the solve paths
-  # -- but the EMITTED sens model still has a THETA[k] slot for it and rxSolve
-  # REQUIRES every parameter. Left unset the sens solve errors and returns NULL,
-  # which silently drops admc/adfo to a finite-difference gradient and made
-  # .adghGrad skip the study entirely. Carry the fixed values so the solve paths can
-  # fill those columns (.admFillFixedTheta in simulate.R).
+  # A FIXED theta is not an estimated parameter, so it never reaches the solve
+  # paths -- but the EMITTED sens model still has a THETA[k] slot for it and
+  # rxSolve REQUIRES every parameter. Left unset the sens solve errors and
+  # returns NULL, silently dropping admc/adfo to a finite-difference gradient.
+  # Carry the fixed values so the solve paths can fill those columns
+  # (.admFillFixedTheta in simulate.R).
   fix_rows <- th_rows[th_rows$fix, , drop = FALSE]
   fixed_theta <- if (nrow(fix_rows) > 0L)
     stats::setNames(as.numeric(fix_rows$est), paste0("THETA[", fix_rows$ntheta, "]"))
@@ -817,15 +807,14 @@
 # Would .admLoadSensModel() return NULL for this model BY DESIGN?
 #
 # Distinguishes correct, permanent refusals (below) from genuine failures
-# (a compile error, or an unwritable rxTempDir() that discards a model that
-# actually compiled) -- the latter would otherwise silently degrade a user
-# to a coarser struct-theta gradient with different estimates and SEs. The
-# drivers ask this first: by-design NULL stays a message, an unexplained
-# NULL becomes a warning.
+# (a compile error, or an unwritable rxTempDir() that discards a model
+# that actually compiled) -- the latter would otherwise silently degrade a
+# user to a coarser struct-theta gradient. The drivers ask this first:
+# by-design NULL stays a message, an unexplained NULL becomes a warning.
 #
 # A SEPARATE predicate rather than a reason code from .admLoadSensModel():
-# that function's body is digested into the sens cache key (.admPkgKey), so
-# adding plumbing there would invalidate every cached model for nothing.
+# that function's body is digested into the sens cache key (.admPkgKey),
+# so adding plumbing there would invalidate every cached model for nothing.
 .admSensNullByDesign <- function(ui, pinfo = NULL) {
   # 1. No random effects: there is nothing to take a sensitivity with respect to.
   .n_eta <- tryCatch(pinfo$n_eta, error = function(e) NULL)
