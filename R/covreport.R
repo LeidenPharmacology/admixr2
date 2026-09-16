@@ -29,29 +29,20 @@
 # WHY NOT REUSE nlmixr2est/rxode2 -- checked, and the answer is structural:
 #
 #   * nlmixr2est never needs this Jacobian. `.foceiCalcRanalytic()` builds its R
-#     matrix on NATURAL-scale directions from the start (via `.omegaVarCovDeriv()`
-#     -> `rxode2::rxOmegaVarCovDeriv()`, the derivatives of Omega^-1 and
-#     log|Omega| w.r.t. the Omega ELEMENTS), so its result is already on the
-#     reported scale -- hence the variable is literally called `.covNat`. There is
-#     no transform of ours to borrow. We cannot borrow the assembler either: it
-#     needs FOCEI's EBEs, `etaObf` and individual-level `dataSav`, none of which
-#     exist in an aggregate fit. admixr2's covariance is a NUMERICAL Hessian of the
-#     OPTIMIZER-scale objective, so a change of variables is unavoidable.
+#     matrix on NATURAL-scale directions from the start, so its result is already on
+#     the reported scale -- hence the variable is literally called `.covNat`. We
+#     cannot borrow its assembler either: it needs FOCEI's EBEs, `etaObf` and
+#     individual-level `dataSav`, none of which exist in an aggregate fit.
 #   * `rxode2::rxOmegaVarCovDeriv()` differentiates the wrong way round (w.r.t.
 #     Omega's own entries, not w.r.t. a Cholesky parameter).
-#   * `rxode2::rxSymInvCholCreate()` is a Cholesky of **Omega^-1** with
-#     `diag.xform` in {sqrt, log, identity} -- a different parameterisation from
-#     admixr2's (Cholesky of Omega, diagonal held as log(Omega_ii)), so its thetas
-#     are not ours and its derivatives are not the ones we need.
+#   * `rxode2::rxSymInvCholCreate()` is a Cholesky of **Omega^-1** with a different
+#     `diag.xform`, so its thetas are not ours.
 #
-# What IS shared with upstream, deliberately: the (row, col) ENUMERATION of the
-# free Omega entries -- pinned to `rxOmegaVarCovDeriv()$elements` in
-# test-cov-reporting.R -- and the resulting names (`.foceiOmegaCovNames`'s
-# `om.<eta>` / `cov.<eta_i>.<eta_j>`). The delta-transform PATTERN is theirs too:
-# `.postEstimationBoundedTransformJacobian()` does `env$cov <- J cov J'` for
-# bounded structural thetas, with a diagonal J; the sigma factors in
-# .admSigmaReportJac() are that same pattern, and omega is the case where J is
-# not diagonal.
+# What IS shared with upstream, deliberately: the (row, col) ENUMERATION of the free
+# Omega entries -- pinned to `rxOmegaVarCovDeriv()$elements` in test-cov-reporting.R
+# -- and the resulting names. The delta-transform PATTERN is theirs too:
+# `.postEstimationBoundedTransformJacobian()` does `env$cov <- J cov J'` with a
+# diagonal J; omega is the case where J is not.
 .admOmegaJacobian <- function(pinfo, L) {
   n_o <- length(pinfo$omega_par)
   if (n_o == 0L) return(NULL)
@@ -83,11 +74,9 @@
 
 # Rotate an optimizer-scale covariance onto the scale the ESTIMATES are printed on.
 #
-# Shared by .adfoCalcCov / .adghCalcCov / .admCalcCov -- it was ~46 identical lines
-# in each, the exact "three places to forget when a sigma_role is added" hazard
-# CLAUDE.md cites as the reason .admSigmaReportJac was extracted. That extraction
-# stopped at the per-row factor; this finishes the job for the surrounding block.
-#
+# Shared by .adfoCalcCov / .adghCalcCov / .admCalcCov -- it was ~46 identical lines in
+# each, the exact "three places to forget when a sigma_role is added" hazard CLAUDE.md
+# cites as the reason .admSigmaReportJac was extracted.
 # `cov_full` is the (already symmetrised) inverse-Hessian in OPTIMIZER order --
 # struct thetas (n_s), then residual params (n_e), then omega Cholesky (n_o), with
 # n_sub = n_s + n_e. nlmixr2est prints `Estimate +- 1.96*SE`, so the covariance
@@ -110,22 +99,21 @@
 # reduced) H with its names and eigendecomposition; `reduced` flags whether the
 # fallback fired, so each caller can warn once with its own estimator label.
 #
-# The trigger is CONDITIONING, not sign. `min(H_eigs) < 0` alone was relying on
-# an accident: an unidentified omega has no curvature, so the entry it produces
-# is numerical junk, and whether that junk lands negative depends on the FD step
-# rather than on anything about the model. It did land negative under the old
-# fixed step, which is why the sign test appeared to work. Under Shi21's finer,
-# better step the same flat direction returns ~0 from the POSITIVE side
-# (measured 8.66e-19 against a largest eigenvalue of 1.1e-3, a condition number
-# of ~1e16) -- so the sign test silently stopped firing and an IIV estimated at
-# 1e-13 was reported with an SE of 9.3e-10, which reads as a precise estimate.
-# A singularity test should test for singularity; this one catches the old case
-# too, since a negative eigenvalue of that magnitude is also below the tolerance.
-# sqrt(eps), the conventional numerical-singularity tolerance: the covariance is
-# H inverted, so a reciprocal condition number below this means the reported SE
-# carries no significant digits. Measured on the flat-omega case the ratio is
-# 1.8e-12 (omega eigenvalues 2.0e-08 against a largest of 11290, i.e. a condition
-# number of 5.6e11) -- so a tighter 1e-12 threshold, tried first, did NOT fire.
+# The trigger is CONDITIONING, not a sign. `min(H_eigs) < 0` alone was relying on an
+# accident: an unidentified omega has no curvature, so the entry it produces is
+# numerical junk, and whether that junk lands negative depends on the FD step rather
+# than on anything about the model. It did land negative under the old fixed step,
+# which is why the sign test appeared to work. Under Shi21's finer step the same flat
+# direction returns ~0 from the POSITIVE side (measured 8.66e-19 against a largest
+# eigenvalue of 1.1e-3), so the sign test silently stopped firing and an IIV
+# estimated at 1e-13 was reported with an SE of 9.3e-10 -- which reads as a precise
+# estimate. A singularity test should test singularity; it catches the old case too,
+# since a negative eigenvalue that small is also below tolerance.
+#
+# sqrt(eps) is the conventional numerical-singularity tolerance: the covariance is H
+# inverted, so a reciprocal condition number below it means the reported SE carries
+# no significant digits. Measured on the flat-omega case the ratio is 1.8e-12, so a
+# tighter 1e-12 threshold, tried first, did NOT fire.
 .ADM_NPD_RCOND <- sqrt(.Machine$double.eps)
 
 # Whether `covMethod` needs the Hessian at all, and whether it wants the
@@ -187,47 +175,40 @@
 
 # Put the dimnames back on fit$env$cov after nlmixr2est has been through it.
 #
-# nlmixr2est's C++ `foceiFitCpp_` re-dimnames whatever covariance it finds in the
-# fit environment using its OWN parameter-name vector, which knows about the
-# thetas only -- so the omega rows we append come back named "". This is a known
-# shape upstream, not a bug of ours: nlmixr2est ships `.impmapNameCov()` to
-# repair exactly these blanks for its importance-sampling estimator, reading the
-# omega names off the model. We do the same thing, except we already hold the
-# authoritative names (we built the block), so we restore them verbatim.
+# nlmixr2est's C++ `foceiFitCpp_` re-dimnames whatever covariance it finds in the fit
+# environment using its OWN parameter-name vector, which knows about the thetas only
+# -- so the omega rows we append come back named "". This is a known shape upstream,
+# not a bug of ours: nlmixr2est ships `.impmapNameCov()` to repair exactly these
+# blanks. We do the same, except we already hold the authoritative names.
 #
 # `nms` must be SNAPSHOT with .admCovNames() before the matrix is handed to
-# nlmixr2est: foceiFitCpp_ sets the dimnames attribute IN PLACE on the same SEXP
-# (no R-level copy happens when a matrix is merely assigned into an environment),
-# so by the time we get here the driver's own `.cov` has been blanked as well.
-# Reading the names back off it would restore nothing.
+# nlmixr2est: foceiFitCpp_ sets the dimnames attribute IN PLACE on the same SEXP, so
+# by the time we get here the driver's own `.cov` has been blanked too.
 #
-# Guarded on the length matching: if a future nlmixr2est returns a covariance of
-# a different shape, leaving it untouched is the safe outcome -- a wrongly
-# labelled SE is far worse than an unlabelled one.
+# Guarded on the length matching: if a future nlmixr2est returns a covariance of a
+# different shape, leaving it untouched is the safe outcome -- a wrongly labelled SE
+# is far worse than an unlabelled one.
 .admCovNames <- function(cov) if (is.matrix(cov)) rownames(cov) else NULL
 
 # Put the theta rows of the covariance in iniDf's OWN order.
 #
-# nlmixr2est fills its `SE` column POSITIONALLY: it walks the thetas in iniDf
-# order and takes the next entry of `sqrt(diag(cov))` for each one it did not
-# skip. admixr2 builds the covariance in OPTIMIZER order -- every structural
-# theta, then every residual parameter -- and those two orders agree only when
-# the model happens to declare its residual parameters last.
+# nlmixr2est fills its `SE` column POSITIONALLY: it walks the thetas in iniDf order
+# and takes the next entry of `sqrt(diag(cov))` for each one it did not skip. admixr2
+# builds the covariance in OPTIMIZER order -- every structural theta, then every
+# residual parameter -- and those two orders agree only when the model happens to
+# declare its residual parameters last:
 #
 #   ini({ a <- 0.1; tcl <- log(3); tv <- log(30) })   # residual declared FIRST
 #
-# printed `a` with tcl's SE, tcl with tv's and tv with a's: a silent rotation,
-# every value finite and plausible. So this is not cosmetic ordering -- it is
-# what makes the SE belong to the parameter it is printed beside.
+# printed `a` with tcl's SE, tcl with tv's and tv with a's: a silent rotation, every
+# value finite and plausible. So this is not cosmetic ordering -- it is what makes the
+# SE belong to the parameter it is printed beside.
 #
-# Rows that are not thetas (the appended omega block) keep their position at the
-# end. Anything unrecognised is left alone: a covariance we cannot map is better
-# reported in the order we built it than permuted on a guess.
-#
-# The other half of the contract is .admCovSkip(), which tells nlmixr2est WHICH
-# thetas this matrix carries -- without it, nlmixr2est < 6.2.0 skips every
-# residual-error theta (FOCEI computes its covariance without them) and so reads
-# the residual's row as the first structural theta's standard error.
+# Rows that are not thetas (the appended omega block) keep their position at the end.
+# Anything unrecognised is left alone. The other half of the contract is
+# .admCovSkip(), which tells nlmixr2est WHICH thetas this matrix carries -- without
+# it, nlmixr2est < 6.2.0 skips every residual-error theta and reads the residual's
+# row as the first structural theta's standard error.
 .admCovThetaOrder <- function(cov, ui) {
   if (!is.matrix(cov) || is.null(rownames(cov))) return(cov)
   .th <- .admThetaIniDf(ui)

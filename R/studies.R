@@ -1,15 +1,12 @@
-# Study and observation-unit handling: resolving a model's endpoints, normalising
-# a study specification, flattening it to independent observation units (or one
-# joint same-subject unit), and the per-row maps the estimators read off a unit.
+# Study and observation-unit handling: resolving a model's endpoints, normalising a
+# study specification, flattening it to independent observation units (or one joint
+# same-subject unit), and the per-row maps the estimators read off a unit.
 #
-# Split out of utils.R; contents unchanged (see R/covreport.R for why that is
-# safe). This is the largest single concern that file held, and the one with the
-# most invariants: `multi_out` is MODEL-level while `is_joint` is study-level, a
-# joint unit routes per ROW (row_output) and so has no endpoint of its own --
-# though it still carries one copied off blocks[[1]] for cmt-tagging, and its
-# BLOCKS each have a real one -- and normalising twice must be idempotent WITHOUT
-# being inert: a second pass still has to fill an output the first pass had no
-# default for, in the blocks as well as in the plain units.
+# The invariants: `multi_out` is MODEL-level while `is_joint` is study-level; a joint
+# unit routes per ROW (row_output) and so has no endpoint of its own, though it still
+# carries one copied off blocks[[1]] for cmt-tagging and its BLOCKS each have a real
+# one; and normalising twice must be idempotent WITHOUT being inert -- a second pass
+# still has to fill an output the first pass had no default for.
 
 
 # Internal nlmixr2 linCmt names (rxLinCmt, linCmtB, ...) don't appear in the
@@ -74,13 +71,12 @@
 
 # The ENDPOINT names, as nlmixr2 knows them -- predDf$var verbatim.
 #
-# NOT the same thing as .admOutputVars(), and the difference matters for exactly
-# the endpoints that made .admEndpointVar() necessary: `y ~ pois(lam)` is SOLVED
-# through `lam` but nlmixr2 knows the endpoint as `y`. These names go in the DVID
-# column of the dummy frame handed to nlmixr2CreateOutputFromUi(), and its
-# dvid->cmt translation rejects a name that is not an endpoint -- so passing the
-# solve variable there made a converged multi-endpoint count fit die at the
-# output-building step with "'dvid'->'cmt' ... on a undefined compartment".
+# NOT the same thing as .admOutputVars(), and the difference matters for exactly the
+# endpoints that made .admEndpointVar() necessary: `y ~ pois(lam)` is SOLVED through
+# `lam` but nlmixr2 knows the endpoint as `y`. These names go in the DVID column of
+# the dummy frame handed to nlmixr2CreateOutputFromUi(), whose dvid->cmt translation
+# rejects a name that is not an endpoint -- so passing the solve variable there made
+# a converged multi-endpoint count fit die at the output-building step.
 .admEndpointNames <- function(ui) {
   nms <- tryCatch(as.character(ui$predDf$var), error = function(e) NULL)
   if (is.null(nms) || !length(nms)) return(.admOutputVars(ui))
@@ -90,16 +86,14 @@
 # A count or beta endpoint cannot share a model with other endpoints.
 #
 # Multi-endpoint solves route observations by COMPARTMENT: .admBuildEvFull() tags
-# each unit's records with `cmt = unit$output`, and rxode2 resolves that against
-# the model's endpoints. A count endpoint's output is its distribution's ARGUMENT
-# (`y ~ pois(lam)` is read through `lam`), which is an ordinary model variable and
-# not an endpoint at all, so the tagged records match nothing: the solve returns no
-# rows for that unit and the objective silently comes back Inf -- there is no
-# wrong-but-plausible number, but there is also nothing telling the user why.
+# each unit's records with `cmt = unit$output`, and rxode2 resolves that against the
+# model's endpoints. A count endpoint's output is its distribution's ARGUMENT, which
+# is an ordinary model variable and not an endpoint at all, so the tagged records
+# match nothing: the solve returns no rows and the objective silently comes back Inf.
 #
-# Single-endpoint count/beta models are unaffected (no tagging happens) and are
-# what the count/beta support was built for. An ordinal endpoint is ONE predDf row
-# whose categories are separate outputs, so it is not "mixed" either.
+# Single-endpoint count/beta models are unaffected (no tagging happens). An ordinal
+# endpoint is ONE predDf row whose categories are separate outputs, so it is not
+# "mixed" either.
 .admCheckMixedEndpoints <- function(ui) {
   pd <- tryCatch(ui$predDf, error = function(e) NULL)
   if (is.null(pd) || nrow(pd) < 2L || !"distribution" %in% names(pd))
@@ -507,8 +501,8 @@
 # Convert a study's reported covariance to the ML (denominator n) convention the
 # likelihood requires.
 #
-# The two input types admixr2 serves disagree about what `V` IS, and until now
-# the difference was a footnote the user had to act on:
+# The two input types admixr2 serves disagree about what `V` IS, and until now the
+# difference was a footnote the user had to act on:
 #
 #   a digitised figure  ->  SD is the UNBIASED (n-1) sample SD, so V = SD^2 is
 #                           an (n-1) covariance
@@ -517,16 +511,12 @@
 # Eq. (1) is the exact log-likelihood of n iid draws only for the ML form, so a
 # published SD is strictly V = SD^2 * (n-1)/n. At n = 60 that is 1.7% and was
 # reasonably ignored. It stops being ignorable the moment the summary is scored
-# against its own sampling law: the same factor reappears there as the alignment
-# of tau with E[t], where getting it wrong is measurably WORSE than not
-# correcting at all.
+# against its own sampling law: the same factor reappears there as the alignment of
+# tau with E[t], where getting it wrong is measurably WORSE than not correcting.
 #
-# So it becomes a declaration rather than a convention, PER STUDY -- a
-# meta-analysis routinely mixes a digitised figure with a model-derived source,
-# and the two do not share a denominator.
-#
-# Idempotent: `v_denom` is set to "ml" once applied, so normalising twice cannot
-# apply it twice.
+# So it becomes a declaration rather than a convention, PER STUDY -- a meta-analysis
+# routinely mixes a digitised figure with a model-derived source. Idempotent:
+# `v_denom` is set to "ml" once applied.
 .admVDenom <- function(s, nm) {
   vd <- s[["v_denom"]] %||% "ml"
   if (!is.character(vd) || length(vd) != 1L || !vd %in% c("ml", "unbiased"))
@@ -559,31 +549,24 @@
   # IDEMPOTENT, and it has to be stated rather than assumed.
   #
   # Normalising a legacy single-output study ADDS an `observations` list while
-  # KEEPING its top-level `V` -- which is precisely the signature the joint
-  # (same-subject) branch below tests for. So a second pass over an
-  # already-normalised study silently collapsed it into ONE JOINT unit:
+  # KEEPING its top-level `V` -- precisely the signature the joint (same-subject)
+  # branch below tests for. So a second pass over an already-normalised study
+  # silently collapsed it into ONE JOINT unit: no error, no warning, a plausible fit
+  # down a different likelihood path, and for adfo with `have_d2` forced FALSE, so
+  # the order-2 analytical struct-theta gradient quietly turns itself off.
   #
-  #   u <- .admFlattenStudies(list(.admNormaliseStudy(raw,  "s")))  # is_joint FALSE
-  #   u <- .admFlattenStudies(list(.admNormaliseStudy(once, "s")))  # is_joint TRUE
-  #
-  # No error, no warning, a plausible fit -- down a different likelihood path,
-  # and for adfo with `have_d2` forced FALSE (it requires `!any_joint`), so the
-  # order-2 analytical struct-theta gradient quietly turns itself off.
-  #
-  # Each driver normalises exactly once, so this was not reachable from a normal
-  # fit. It WAS reachable from the test fixtures, which hand out pre-normalised
-  # studies that then get normalised again by the driver -- which is how it was
-  # found. Guarding here rather than in the fixtures because "normalise a study"
-  # should not be an operation you can only safely perform once.
-  # ... but idempotent is not the same as INERT. The first pass may have run
-  # without a `default_output` (nothing but the driver knows the model's endpoint,
-  # and the fixtures normalise before there is a model), which leaves every unit
-  # with output = NULL. Short-circuiting outright made the driver's later pass --
-  # the one that DOES carry output_var -- a no-op, so the NULL was permanent: for a
-  # multi-endpoint model .admBuildEvFull(tag_cmt = TRUE) then has nothing to tag
-  # `cmt` with and the unit silently reads the wrong compartment's trajectory.
-  # Repeating the normalisation was masking that; so fill what is still missing,
-  # and only then return.
+  # Each driver normalises exactly once, so this was not reachable from a normal fit.
+  # It WAS reachable from the test fixtures, which hand out pre-normalised studies
+  # the driver then normalises again. Guarded here rather than in the fixtures
+  # because "normalise a study" should not be an operation you can only safely
+  # perform once.
+  # ... but idempotent is not the same as INERT. The first pass may have run without
+  # a `default_output` (nothing but the driver knows the model's endpoint, and the
+  # fixtures normalise before there is a model), which leaves every unit with
+  # output = NULL. Short-circuiting outright made the driver's later pass a no-op, so
+  # the NULL was permanent: for a multi-endpoint model .admBuildEvFull(tag_cmt = TRUE)
+  # then has nothing to tag `cmt` with and the unit reads the wrong compartment. So
+  # fill what is still missing, and only then return.
   if (isTRUE(s$.adm_normalised)) {
     if (!is.null(default_output)) {
       if (is.null(s$output)) s$output <- default_output
@@ -592,19 +575,14 @@
           if (is.null(u$output)) u$output <- default_output
           return(u)
         }
-        # A JOINT unit routes per ROW, so it carries no endpoint of its own --
-        # except the one .admBuildJointUnit() copies off blocks[[1]] purely for
-        # cmt-tagging. Skipping joint units ENTIRELY here was too strong: their
-        # BLOCKS each do have an output, taken from `ob$output %||% default_output`
-        # at construction, so a study normalised before the model was known (the
-        # fixtures do exactly this) leaves every blk$output NULL -- and nothing
-        # later fills it, because this short-circuit is the only second pass.
-        #
-        # .admBuildEvFull() then runs `et(blk$times, cmt = blk$output)` per block
-        # with cmt = NULL, so the joint sens solve either errors out of
-        # .admSimulateJointSens() -- dropping the fit to FD -- or reads an
-        # untagged compartment, giving a finite but wrong joint objective with no
-        # warning.
+        # A JOINT unit routes per ROW, so it carries no endpoint of its own except
+        # the one .admBuildJointUnit() copies off blocks[[1]] for cmt-tagging.
+        # Skipping joint units ENTIRELY here was too strong: their BLOCKS each do
+        # have an output, so a study normalised before the model was known leaves
+        # every blk$output NULL and nothing later fills it. .admBuildEvFull() then
+        # runs `et(blk$times, cmt = NULL)` per block, so the joint sens solve either
+        # errors out -- dropping the fit to FD -- or reads an untagged compartment,
+        # giving a finite but wrong joint objective with no warning.
         #
         # `row_output` needs nothing: it holds block INDICES, not names.
         if (!is.null(u$blocks))
@@ -621,12 +599,11 @@
     }
     return(s)
   }
-  # Long-format `data` must be expanded to `V`/`observations` BEFORE v_denom
-  # conversion -- otherwise .admVDenom() sees none of it (still raw rows) and
-  # silently no-ops, leaving an "unbiased" V uncorrected. And v_denom must run
-  # BEFORE the joint constructor below: it assembles its own matrix from the
-  # raw per-observation blocks and never passes through .admNormaliseObs, so
-  # converting after that would miss it.
+  # Long-format `data` must be expanded to `V`/`observations` BEFORE the v_denom
+  # conversion -- otherwise .admVDenom() sees none of it and silently no-ops, leaving
+  # an "unbiased" V uncorrected. And v_denom must run BEFORE the joint constructor
+  # below, which assembles its own matrix from the raw per-observation blocks and
+  # never passes through .admNormaliseObs.
   if (!is.null(s$data)) s <- .admExpandLongStudy(s, nm)
   s <- .admVDenom(s, nm)
   if (!is.null(s$observations) &&

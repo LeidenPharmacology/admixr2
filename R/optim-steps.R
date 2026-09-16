@@ -66,40 +66,31 @@
 
 # Per-parameter FD steps for the covariance HESSIAN.
 #
-# `pmax(abs(p[idx]), 0.1) * cov_h_outer` -- one constant applied to every
-# parameter -- is the FALLBACK now, not the behaviour. It is a guess about how
-# much noise the objective carries, and it is the guess behind the "Hessian not
-# positive definite ... try increasing cov_h_outer" advice: too fine a step and
-# the difference is noise, too coarse and it is curvature the second-order term
-# does not capture. Shi21 measures the objective instead of guessing, per
-# parameter (see .admShi21Central).
+# `pmax(abs(p[idx]), 0.1) * cov_h_outer` -- one constant applied to every parameter
+# -- is the FALLBACK now, not the behaviour. It is a guess about how much noise the
+# objective carries, and it is the guess behind the "Hessian not positive definite
+# ... try increasing cov_h_outer" advice: too fine a step and the difference is
+# noise, too coarse and it is curvature the second-order term does not capture.
+# Shi21 measures the objective instead of guessing, per parameter.
 #
-# Single-sourced because this expression used to be written out in
-# .adfoCalcCov(), .adghCalcCov() and .admCalcCov(), byte-identical but for the
-# label -- and the fixed-step form appeared TWICE inside each copy, so the
-# heuristic was restated six times across three files. The fallback exists so a
-# failed probe lands exactly where the fixed step would have.
+# Single-sourced because this expression used to be written out in .adfoCalcCov(),
+# .adghCalcCov() and .admCalcCov(), byte-identical but for the label. The fallback
+# exists so a failed probe lands exactly where the fixed step would have.
 #
 # NOT .admShi21Steps(). That returns the optimum for a FIRST central derivative,
 # `h ~ (3 eps_f/|f'''|)^(1/3)`, and the Hessian takes a SECOND difference, whose
 # error is `(h^2/12)|f''''| + 4 eps_f/h^2` and whose optimum therefore scales as
 # `eps_f^(1/4)` -- around ten times larger at a machine-precision objective. Too
 # fine a step in a second difference amplifies noise as `4 eps_f/h^2`, which is
-# precisely what tips a marginal Hessian out of positive-definiteness. Measured
-# against an exact second derivative, the first-derivative step was 6x to 385x
-# worse across noise levels from 1e-15 to 1e-7.
+# precisely what tips a marginal Hessian out of positive-definiteness (measured 6x
+# to 385x worse than the second-difference rule). So what is reused here is the
+# MEASUREMENT -- `eps_f` from ECnoise -- fed to the right rule.
 #
-# So what is reused here is the MEASUREMENT -- `eps_f` from ECnoise, the thing
-# `cov_h_outer` could only guess -- fed to the second-difference rule rather than
-# the first-difference one.
-# `cov_h_outer` SCALES the measured step; it does not merely back it up. Making
-# it a pure fallback was tried and is wrong: the measurement almost always
-# succeeds, so the argument would be inert in practice -- and it is the escape
-# hatch the docs point users at ("Hessian not positive definite ... try
-# increasing cov_h_outer"). An argument that looks like it does something and
-# does not is the exact failure mode `nlmixr2Gill83`'s dropped tuning arguments
-# are an example of. So the step is the measured one at the DEFAULT
-# `cov_h_outer`, and moves proportionally when the user changes it.
+# `cov_h_outer` SCALES the measured step; it does not merely back it up. Making it a
+# pure fallback was tried and is wrong: the measurement almost always succeeds, so
+# the argument would be inert -- and it is the escape hatch the docs point users at.
+# So the step is the measured one at the DEFAULT `cov_h_outer`, and moves
+# proportionally when the user changes it.
 .ADM_COV_H_REF <- .Machine$double.eps^(1/5)
 
 .admHessSteps <- function(fn, p, idx, cov_h_outer, .var.name = "CalcCov") {
@@ -123,25 +114,20 @@
 # Per-parameter FD steps for the OPTIMIZER's gradient, measured once at the point
 # the fit starts from.
 #
-# The covariance Hessian can afford to call .admShi21Steps() directly: it runs
-# once, post-fit, at a known parameter vector. A gradient cannot -- the optimizer
-# calls it thousands of times. So measure once and REUSE, which is what FOCEI
-# does too (its gill83 runs at the first gradient evaluation, `nF == 1`, and
-# every later difference uses the stored per-parameter step). Here the
-# measurement happens in the driver, before the optimizer is handed anything, and
-# travels as the `grad_h` argument that was already there.
+# The covariance Hessian can afford to call .admShi21Steps() directly: it runs once,
+# post-fit, at a known parameter vector. A gradient cannot -- the optimizer calls it
+# thousands of times. So measure once and REUSE, which is what FOCEI does too (its
+# gill83 runs at `nF == 1` and every later difference uses the stored step). Here the
+# measurement happens in the driver, before the optimizer is handed anything.
 #
-# The measured step is ABSOLUTE at `p`. The estimators express theirs
-# differently -- adfo/adgh scale by `pmax(abs(p), 0.1)`, admc uses the raw
-# number -- so it is divided by whatever that site will multiply it back by
-# (`scaled`). The step is therefore exactly the measured one at `p`, and tracks
-# the parameter afterwards under the convention that site already had, rather
-# than freezing an absolute number that stops making sense once the optimizer
-# has moved a decade.
+# The measured step is ABSOLUTE at `p`. The estimators express theirs differently --
+# adfo/adgh scale by `pmax(abs(p), 0.1)`, admc uses the raw number -- so it is divided
+# by whatever that site will multiply it back by (`scaled`). The step is therefore
+# exactly the measured one at `p`, and tracks the parameter afterwards under the
+# convention that site already had.
 #
-# `idx` is the set of parameters that will actually be finite-differenced;
-# everything else keeps the constant and costs nothing. Passing `integer(0)` --
-# a fit whose gradient is fully analytic -- skips the probe entirely.
+# `idx` is the set of parameters that will actually be finite-differenced; passing
+# `integer(0)` -- a fully analytic gradient -- skips the probe entirely.
 .admShi21GradH <- function(fn, p, idx, grad_h, scaled = TRUE, .var.name = "grad") {
   if (length(idx) == 0L) return(grad_h)
   out <- rep_len(as.numeric(grad_h), length(p))
@@ -156,22 +142,19 @@
 # Warn when the fit finished ON the gradient-mode box constraint.
 #
 # A gradient fit is run inside `p0 +/- grad_bounds` on the optimizer scale, a
-# constraint the user did not write: .admBuildOptVec() returns -Inf/Inf for
-# struct thetas and omega unless the model declares explicit bounds. nloptr
-# reports normal convergence at a box corner, and a finite estimate and a finite
-# SE are printed, so a parameter pinned 5 optimizer units from its starting value
-# is indistinguishable from a converged one. On the log scale that is a factor of
-# exp(5) ~ 148: fit `tv <- log(20)` to data whose true V is 5000 and V is clamped
-# at ~2968, silently.
+# constraint the user did not write: .admBuildOptVec() returns -Inf/Inf for struct
+# thetas and omega unless the model declares explicit bounds. nloptr reports normal
+# convergence at a box corner, and a finite estimate and SE are printed, so a
+# parameter pinned 5 optimizer units from its starting value is indistinguishable
+# from a converged one. On the log scale that is a factor of ~148.
 #
-# admc/adgh/adirmc have always run with a gradient by default and so have always
-# had this; adfo acquired it in 0.4.1 when its default gradient mode changed.
-# Reporting it is the cheap half -- the fix is the user's (widen grad_bounds, or
-# start closer), and it is only actionable if they are told.
+# admc/adgh/adirmc have always run with a gradient by default and so have always had
+# this; adfo acquired it in 0.4.1 when its default gradient mode changed. Reporting it
+# is the cheap half -- the fix is the user's.
 #
 # `p` is the final optimizer-scale solution, `p0` the start. Only entries whose
-# model-declared bound is infinite are reported: a user-written bound reached is
-# the user's own constraint, not this one.
+# model-declared bound is infinite are reported: a user-written bound reached is the
+# user's own constraint, not this one.
 .admWarnOnBounds <- function(p, p0, ov, grad_bounds, pinfo) {
   if (is.null(p) || is.null(p0) || !is.finite(grad_bounds) || grad_bounds <= 0)
     return(invisible(character(0)))
@@ -180,18 +163,15 @@
   p  <- p[seq_len(n)]; p0 <- p0[seq_len(n)]
   lo <- if (is.null(ov$lower)) rep(-Inf, n) else ov$lower[seq_len(n)]
   hi <- if (is.null(ov$upper)) rep(Inf,  n) else ov$upper[seq_len(n)]
-  # Reconstruct the box nloptr was actually given, and ask whether the solution
-  # sits on it. Within 0.1% of the half-width counts as "on" -- nloptr stops just
-  # inside.
+  # Reconstruct the box nloptr was actually given, and ask whether the solution sits
+  # on it. Within 0.1% of the half-width counts as "on" -- nloptr stops just inside.
   #
-  # `lb > lo` / `ub < hi` is the whole point: it says the binding edge is
-  # ADMIXR2'S box and not a bound the model itself declared, which is the only
-  # case worth warning about. Testing `!is.finite(lo)` instead -- i.e. "warn only
-  # if the model declared no bound on that side at all" -- silently drops every
-  # hit on a parameter that has one, even when that bound is nowhere near and the
-  # box is what actually stopped the fit. A residual-error parameter carries a
-  # lower bound, so exactly the parameters most likely to run away were the ones
-  # that could never report it.
+  # `lb > lo` / `ub < hi` is the whole point: it says the binding edge is ADMIXR2'S
+  # box and not a bound the model itself declared. Testing `!is.finite(lo)` instead
+  # silently drops every hit on a parameter that has a bound, even when that bound is
+  # nowhere near and the box is what actually stopped the fit -- and a residual-error
+  # parameter carries a lower bound, so exactly the parameters most likely to run away
+  # were the ones that could never report it.
   tol <- grad_bounds * 1e-3
   lb  <- pmax(lo, p0 - grad_bounds)
   ub  <- pmin(hi, p0 + grad_bounds)
@@ -287,31 +267,27 @@
 # Gill83, above, answers "what forward step balances condition error against
 # curvature". Shi/Xie/Xu/Nocedal (2021) answer the same question for a CENTRAL
 # difference, and measurement says they answer it far better on this package's
-# objectives. Scored against the analytic gradient (exact; cross-checked to 3e-9
-# against a high-accuracy central difference), max relative error over the five
+# objectives. Scored against the analytic gradient, max relative error over the five
 # parameters of the integration model:
 #
 #                       adirmc inner NLL   adfo NLL
 #   forward fixed 1e-4       7.3e-04        8.6e-04
-#   forward fixed 1e-6       7.3e-06        9.8e-06
 #   gill83 forward           8.1e-04        7.9e-04
 #   shi21 central            7.0e-08        9.5e-08
 #
-# Gill83 is not merely beaten, it is beaten by the FIXED step it exists to
-# improve on: its measured steps come out 5e-5..1.7e-3 where the objective wants
-# ~1e-8..1e-6. It is not mis-implemented here -- FOCEI's own defaults are what
-# the exported wrapper reaches, and those are
-# tuned for a per-subject objective carrying real solver noise, not for an
-# aggregate objective evaluated to near machine precision.
+# Gill83 is not merely beaten, it is beaten by the FIXED step it exists to improve
+# on: its measured steps come out 5e-5..1.7e-3 where the objective wants ~1e-8..1e-6.
+# It is not mis-implemented here -- FOCEI's own defaults are tuned for a per-subject
+# objective carrying real solver noise, not for an aggregate objective evaluated to
+# near machine precision.
 #
 # WHY REIMPLEMENTED rather than called. nlmixr2est HAS this algorithm, as
-# `shi21CentralWrap`, but it is not exported -- and admixr2 makes zero `:::`
-# calls into nlmixr2est, a rule that covers reaching in via asNamespace() just as
-# much as the `:::` token. Reimplementing also buys the thing the gill83 path
-# cannot have: `eps_f` is a real argument here. It is the single input that
-# matters (h* scales as eps_f^(1/3)), and nlmixr2Gill83's wrapper drops every
-# tuning argument it accepts, so its noise assumption is unreachable. Measured
-# against the upstream routine as an ORACLE in test-optim-steps-shi.R.
+# `shi21CentralWrap`, but it is not exported -- and admixr2 makes zero `:::` calls
+# into nlmixr2est, a rule that covers reaching in via asNamespace() too.
+# Reimplementing also buys what the gill83 path cannot have: `eps_f` is a real
+# argument here. It is the single input that matters (h* scales as eps_f^(1/3)), and
+# nlmixr2Gill83's wrapper drops every tuning argument it accepts. Measured against
+# the upstream routine as an ORACLE in test-optim-steps-shi.R.
 #
 # The maths. For a central difference the two error terms are
 #     truncation  (h^2/6)|f'''|      noise  eps_f/h
@@ -320,16 +296,13 @@
 # and the whole job is estimating |f'''| without knowing it. The symmetric third
 # difference does that:
 #     D3(h) = f(p+2h) - 2f(p+h) + 2f(p-h) - f(p-2h)  ~  2 h^3 f'''
-# It is used only when it stands clear of the noise floor: its four evaluations
-# carry coefficients (1,2,2,1), so noise in D3 has scale sqrt(1+4+4+1) = 3.16
-# eps_f, and a D3 below a multiple of that is measuring nothing but noise -- the
-# signal that h is too SMALL, which is the one failure a fixed step cannot detect
-# and the reason a too-fine step degrades so sharply (a fixed 1e-6 on an
-# objective with 1e-8 relative noise measured 2.55 relative error, i.e. no
-# correct digits at all).
+# It is used only when it stands clear of the noise floor: its four evaluations carry
+# coefficients (1,2,2,1), so noise in D3 has scale 3.16 eps_f, and a D3 below a
+# multiple of that is measuring nothing but noise -- the signal that h is too SMALL,
+# which is the one failure a fixed step cannot detect.
 #
-# Returns list(h, gr): the chosen step and the central-difference derivative at
-# it, per requested index. `gr` is free -- the last iterate already evaluated it.
+# Returns list(h, gr): the chosen step and the central-difference derivative at it,
+# per requested index. `gr` is free -- the last iterate already evaluated it.
 .admShi21Central <- function(fn, p, k, eps_f, h0 = NULL, maxiter = 10L) {
   scale <- max(abs(p[k]), 0.1)
   # Start where a unit third derivative would put the optimum, but never finer

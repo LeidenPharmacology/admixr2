@@ -26,23 +26,20 @@
 # difference (p_new vs p_orig) is the IRMC importance-sampling mean-shift for that
 # theta's eta, and whose derivative is the gradient chain factor.
 #
-# It is p itself, for EVERY transform. A mu-reference is `param <- h(theta + eta)`,
-# so eta and theta enter h through the SAME argument: shifting theta by Delta is
+# It is p itself, for EVERY transform. A mu-reference is `param <- h(theta + eta)`, so
+# eta and theta enter h through the SAME argument: shifting theta by Delta is
 # identical to shifting eta's mean by Delta, because
 #   f(theta + Delta, eta) = h(theta + Delta + eta) = f(theta, eta + Delta)
-# regardless of h. The exact eta-shift is therefore theta_new - theta_orig = p,
-# and its derivative is 1 -- the outer transform h (exp, expit, probit, identity)
-# does not enter at all.
+# regardless of h. The exact eta-shift is theta_new - theta_orig = p, its derivative
+# is 1, and the outer transform does not enter at all.
 #
-# The old switch returned log(back(p)), which equals p ONLY for exp (log(exp(p))).
-# For expit/probit it computed a natural-scale-log shift, and for an additive
-# theta (curEval == "") log(p); both were wrong. Measured against a direct adgh
-# evaluation, the expit shift drove the adirmc objective ~140 -2LL units off a few
-# tenths from the proposal point; the additive one biased its estimate and went
-# -Inf/NaN at theta <= 0. Returning p is exact for all and cannot go non-finite.
-# (Kept as a named function -- rather than inlining `p` -- because the C++
-# compute_mean_new kernel, .type_code and the gradient's d_logback_dp all mirror
-# this one definition, and naming it keeps the reason in one place.)
+# The old switch returned log(back(p)), which equals p ONLY for exp. For
+# expit/probit it computed a natural-scale-log shift and for an additive theta
+# log(p); both were wrong -- the expit shift drove the adirmc objective ~140 -2LL
+# units off a few tenths from the proposal point, and the additive one went -Inf at
+# theta <= 0. (Kept as a named function rather than inlined because the C++
+# compute_mean_new kernel, .type_code and the gradient's d_logback_dp all mirror this
+# one definition.)
 .admLogBackTransform <- function(p, tr) p
 
 # How many times each name appears in the model expressions.
@@ -64,20 +61,20 @@
 
 # The theta <-> eta mu-reference map, with SHARED etas removed.
 #
-# A mu-referenced theta may reuse its eta's sensitivity column, because theta and
-# eta enter the parameter identically: d(pred)/d(theta) == d(pred)/d(eta). That
-# identity FAILS if the eta also appears in another parameter (`eta.cl` in both
-# `cl` and `v`): d(pred)/d(eta.cl) then collects a path through `v` that
-# d(pred)/d(tcl) does not have. Such a theta must not reuse the eta column -- it
-# is treated as unpaired and gets its own sensitivity direction (an explicit
-# THETA_j_ direction in .admBuildThetaSens's sens model), which is always exact.
+# A mu-referenced theta may reuse its eta's sensitivity column, because theta and eta
+# enter the parameter identically: d(pred)/d(theta) == d(pred)/d(eta). That identity
+# FAILS if the eta also appears in another parameter (`eta.cl` in both `cl` and `v`):
+# d(pred)/d(eta.cl) then collects a path through `v` that d(pred)/d(tcl) does not
+# have. Such a theta is treated as unpaired and gets its own sensitivity direction,
+# which is always exact. In practice rxode2 already declines to mu-reference a shared
+# eta, so this mirrors nlmixr2est's equivalent guard; a false positive costs one
+# extra direction and stays exact.
 #
-# In practice rxode2 already declines to mu-reference a shared eta (it drops the
-# rows from muRefDataFrame), so this is belt-and-braces -- it mirrors the
-# equivalent guard in nlmixr2est (.foceiEtaOccurrence > 1 in foceiCovAnalytic.R).
-# A false positive costs one extra sensitivity direction and stays exact.
-# NULL means "no mu-reference information at all" (no ui, or no muRefDataFrame) --
-# the callers then keep their historical fallbacks. A ZERO-ROW frame is different:
+# NULL means "no mu-reference information at all" -- the callers then keep their
+# historical fallbacks. A ZERO-ROW frame is different: it means the information
+# exists and says nothing is paired. Conflating the two makes struct_eta_idx fall
+# back to identity pairing, which would add the eta-path gradient on top of the theta
+# column -- double counting.
 # it means the information exists and says nothing is paired (a non-mu-referenced
 # model, or every pair dropped by the shared-eta guard). Conflating the two makes
 # struct_eta_idx fall back to identity pairing (eta j <-> struct j), which would
@@ -404,28 +401,22 @@ covariance for admixr2 to match"),
 # - omega off-diagonal: pmax(|L_ij_init|, 0.1) (raw L values need magnitude scaling).
 # Are these unpacked parameters usable at all?
 #
-# A NON-FINITE parameter cannot produce a finite objective, but it CAN be handed
-# to rxSolve, which then integrates garbage: the covariance probe legitimately
-# perturbs a sigma to exp(1e5/2) = Inf (cov_h_outer is deliberately huge in the
-# guard tests), and lsoda answers with ~120k `intdy -- t = <denormal> illegal` /
-# `h too small` warnings before the caller's finite-check rejects the result
-# anyway. Rejecting it up front costs one comparison, removes a guaranteed-useless
-# solve, and keeps the console readable.
+# A NON-FINITE parameter cannot produce a finite objective, but it CAN be handed to
+# rxSolve, which then integrates garbage: the covariance probe legitimately perturbs
+# a sigma to exp(1e5/2) = Inf, and lsoda answers with ~120k `intdy -- t = <denormal>
+# illegal` warnings before the caller's finite-check rejects the result anyway.
+# Rejecting it up front costs one comparison and keeps the console readable.
 #
-# This lived INLINE at eight sites (.adfoNLL, .adfoGrad, .adghNLL, .adghGrad,
-# .admNLL, .admGrad, .admNLLBatch, .admGradBatch), each carrying a ~10-line
-# comment explaining that it could not be a shared predicate because these run
-# inside mirai daemons, "where assignInNamespace can replace a binding but not ADD
-# one, so a brand-new helper would be missing".
+# This lived INLINE at eight sites, each carrying a ~10-line comment explaining that
+# it could not be a shared predicate because these run inside mirai daemons, "where
+# assignInNamespace can replace a binding but not ADD one".
 #
 # That rationale is obsolete, and it was this branch that obsoleted it:
 # .admDaemonRestart() now builds a patch environment parented on the namespace and
-# re-parents every patched closure onto it, so new and existing names resolve
-# alike and a new helper needs no special handling. Pinned by
-# test-integration-daemon-patch.R, which runs in a real daemon.
+# re-parents every patched closure onto it, so new and existing names resolve alike.
+# Pinned by test-integration-daemon-patch.R, which runs in a real daemon.
 #
-# NULL `pars` (an .admUnpack that threw) is folded in, so the callers that tested
-# it separately can drop that too.
+# NULL `pars` (an .admUnpack that threw) is folded in.
 .admParsFinite <- function(pars, pinfo) {
   !is.null(pars) &&
     all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
