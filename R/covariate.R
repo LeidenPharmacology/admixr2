@@ -1569,44 +1569,92 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 
 # is non-zero -- iff changing theta changes what the covariate DOES. A literal exponent gives exactly zero; an
 # estimated one does not.
-.admCovCoefThetas <- function(ui, cov, cov_dist = NULL, tol = 1e-8) {
+## The model's parameter block, in the form the plain-R evaluator below wants.
+## Returns NULL when the ui carries neither, which every caller treats as "give
+## up" rather than as a model with no lines.
+.admModelLines <- function(ui) {
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
   ini <- tryCatch(ui$iniDf,   error = function(e) NULL)
   if (is.null(lst) || is.null(ini)) return(NULL)
-  th <- ini[is.na(ini$neta1) & is.na(ini$err) & !ini$fix, , drop = FALSE]
-  if (!nrow(th)) return(character(0))
-  etas <- unique(stats::na.omit(ini$name[!is.na(ini$neta1)]))
-  is_asgn <- vapply(lst, function(e) is.call(e) && length(e) == 3L &&
-                      (identical(e[[1L]], quote(`<-`)) ||
-                       identical(e[[1L]], quote(`=`))), logical(1))
-  hit <- which(is_asgn & vapply(lst, function(e)
+  list(lst = lst, ini = ini,
+       is_asgn = vapply(lst, function(e) is.call(e) && length(e) == 3L &&
+                          (identical(e[[1L]], quote(`<-`)) ||
+                           identical(e[[1L]], quote(`=`))), logical(1)),
+       etas = unique(stats::na.omit(ini$name[!is.na(ini$neta1)])))
+}
+
+## Which assignment lines READ `cov`?
+.admLinesReading <- function(ml, cov)
+  which(ml$is_asgn & vapply(ml$lst, function(e)
     is.call(e) && length(e) == 3L && cov %in% all.vars(e[[3L]]), logical(1)))
-  if (!length(hit)) return(character(0))
-  # a nominal value for every covariate: the declared median where there is one
+
+## Run the model's parameter assignments in plain R -- no compile, no solve.
+##
+## Every eta at 0, every theta at its iniDf value unless `th_over` names it,
+## every covariate at `cov_at`. Lines are evaluated in order and each result is
+## bound, so a line may use an earlier one. A line that errors is skipped rather
+## than fatal: half these models reference solved state (`linCmt()`, compartment
+## amounts) that has no meaning outside a solve, and the covariate lines --
+## which are the point -- evaluate fine without it.
+##
+## `cov_at` entries may be VECTORS, and then so is each returned value: R's
+## arithmetic vectorises through the whole parameter block, which is what turns
+## this into a covariate-effect curve for the price of one evaluation.
+##
+## Returns a list of `list(name = <lhs symbol>, value = <numeric>)` for the
+## lines in `keep` (all of them when NULL), in model order.
+.admEvalModelLines <- function(ml, cov_at, th_over = list(), keep = NULL) {
+  ev  <- new.env(parent = asNamespace("rxode2"))
+  ini <- ml$ini
+  for (i in seq_len(nrow(ini)))
+    if (is.na(ini$neta1[i])) assign(ini$name[i], ini$est[i], ev)
+  for (nm in names(th_over)) assign(nm, th_over[[nm]], ev)
+  for (e in ml$etas) assign(e, 0, ev)
+  for (nm in names(cov_at)) assign(nm, cov_at[[nm]], ev)
+  out <- list()
+  for (ii in seq_along(ml$lst)) {
+    if (!isTRUE(ml$is_asgn[ii])) next
+    v <- tryCatch(eval(ml$lst[[ii]][[3L]], ev), error = function(e) NULL)
+    if (is.null(v)) next
+    nm <- as.character(ml$lst[[ii]][[2L]])
+    assign(nm, v, ev)
+    if (is.null(keep) || ii %in% keep)
+      out[[length(out) + 1L]] <- list(name = nm, value = v)
+  }
+  out
+}
+
+## A nominal value for every covariate the model reads: the declared median
+## where there is one, and 1 where there is not -- never 0, which would collapse
+## a multiplicative term and make the difference below read as "no effect".
+.admCovNominal <- function(ui, cov_dist = NULL) {
   covs <- tryCatch(ui$allCovs, error = function(e) character(0))
-  base_cov <- stats::setNames(lapply(covs, function(nm) {
+  stats::setNames(lapply(covs, function(nm) {
     sp <- if (!is.null(cov_dist)) cov_dist[[nm]] else NULL
     v  <- if (!is.null(sp)) tryCatch(.admCovQuantile(sp, 0.5),
                                      error = function(e) NULL) else NULL
     if (is.null(v) || !is.finite(v) || v == 0) 1 else as.numeric(v)
   }), covs)
+}
+
+.admCovCoefThetas <- function(ui, cov, cov_dist = NULL, tol = 1e-8) {
+  ml <- .admModelLines(ui)
+  if (is.null(ml)) return(NULL)
+  ini <- ml$ini
+  th <- ini[is.na(ini$neta1) & is.na(ini$err) & !ini$fix, , drop = FALSE]
+  if (!nrow(th)) return(character(0))
+  hit <- .admLinesReading(ml, cov)
+  if (!length(hit)) return(character(0))
+  base_cov <- .admCovNominal(ui, cov_dist)
   ev_at <- function(cov_val, th_over) {
-    ev <- new.env(parent = asNamespace("rxode2"))
-    for (i in seq_len(nrow(ini)))
-      if (is.na(ini$neta1[i])) assign(ini$name[i], ini$est[i], ev)
-    for (nm in names(th_over)) assign(nm, th_over[[nm]], ev)
-    for (e in etas) assign(e, 0, ev)
-    for (nm in covs) assign(nm, base_cov[[nm]], ev)
-    assign(cov, cov_val, ev)
-    out <- numeric(0)
-    for (ii in seq_along(lst)) {
-      if (!isTRUE(is_asgn[ii])) next
-      v <- tryCatch(eval(lst[[ii]][[3L]], ev), error = function(e) NULL)
-      if (is.null(v)) next
-      assign(as.character(lst[[ii]][[2L]]), v, ev)
-      if (ii %in% hit && length(v) == 1L && is.finite(v)) out <- c(out, v)
-    }
-    out
+    vals <- .admEvalModelLines(
+      ml, utils::modifyList(base_cov, stats::setNames(list(cov_val), cov)),
+      th_over, keep = hit)
+    # Length-1 and finite only: a line that came back as a vector or an NaN is
+    # not a scalar effect to difference, and the caller compares lengths.
+    v <- lapply(vals, `[[`, "value")
+    as.numeric(unlist(v[vapply(v, function(z)
+      length(z) == 1L && is.finite(z), logical(1))]))
   }
   x0 <- base_cov[[cov]] %||% 1
   x1 <- x0 * 1.05

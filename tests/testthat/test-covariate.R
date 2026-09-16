@@ -952,6 +952,37 @@ test_that("a source that ASSERTED a covariate's coefficient is not banded", {
   expect_gt(length(ex$studies), 1L)
 })
 
+test_that(".admEvalModelLines runs the parameter block vectorised in a covariate", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  # The vectorisation is what turns one evaluation into a covariate-effect
+  # curve: R's arithmetic carries a vector straight through the parameter block.
+  fn <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75; eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  ml <- admixr2:::.admModelLines(ui)
+  hit <- admixr2:::.admLinesReading(ml, "WT")
+
+  wt  <- c(60, 70, 80)
+  out <- admixr2:::.admEvalModelLines(ml, list(WT = wt), keep = hit)
+  expect_equal(length(out), 1L)
+  expect_equal(out[[1L]]$name, "cl")
+  # eta at 0, theta at its ini value: cl = 5 * (WT/70)^0.75, exactly.
+  expect_equal(out[[1L]]$value, 5 * (wt / 70)^0.75, tolerance = 1e-8)
+
+  # `th_over` overrides the ini value, which is how the fitted estimates enter.
+  ov <- admixr2:::.admEvalModelLines(ml, list(WT = wt), list(bwt = 1),
+                                     keep = hit)
+  expect_equal(ov[[1L]]$value, 5 * (wt / 70), tolerance = 1e-8)
+
+  # keep = NULL returns every line that evaluated, not only the covariate ones.
+  expect_true("v" %in% vapply(admixr2:::.admEvalModelLines(ml, list(WT = 70)),
+                              `[[`, character(1), "name"))
+})
+
 test_that(".admCovCoefThetas separates an estimated coefficient from an asserted one", {
   skip_on_cran()
   skip_if_not_installed("rxode2")

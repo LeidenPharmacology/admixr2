@@ -4,17 +4,26 @@
 \alias{plot.admFit}
 \title{Diagnostic plots for an admixr2 fit}
 \usage{
-\method{plot}{admFit}(x, which = c("mean", "cov", "nll", "par"), n_sim = NULL, seed = 1L, ...)
+\method{plot}{admFit}(
+  x,
+  which = c("mean", "cov", "covariate", "nll", "par"),
+  n_sim = NULL,
+  seed = 1L,
+  ...
+)
 }
 \arguments{
 \item{x}{An \code{admFit} object returned by \code{nlmixr2()} with
 \code{est = "adfo"}, \code{est = "admc"}, \code{est = "adgh"}, or \code{est = "adirmc"}.}
 
 \item{which}{Character vector selecting which panel types to produce.
-Any subset of \code{c("mean", "cov", "nll", "par")}. Defaults to all four.}
+Any subset of \code{c("mean", "cov", "covariate", "nll", "par")}. Defaults to
+all five. Note \code{"cov"} (predicted vs observed covariance) and \code{"covariate"}
+(covariate effect) are different panels.}
 
 \item{n_sim}{Number of MC samples for the final prediction. Defaults to the
-value used during fitting. Only used when \code{"mean"} or \code{"cov"} is in \code{which}.}
+value used during fitting. Only used when \code{"mean"}, \code{"cov"} or
+\code{"covariate"} is in \code{which}.}
 
 \item{seed}{Random seed for reproducibility.}
 
@@ -47,6 +56,17 @@ grid). Upper row shares a common colour scale (blue-white-red). Lower row
 uses distinct diverging scales: residual (red-white-green) and
 standardised residual (gold-white-purple). Significance stars overlaid on
 the standardised residual panel.
+\item \code{"covariate"} -- Two BETWEEN-study covariate panels, one facet per
+covariate the model reads. \code{covariate_effect} sweeps each covariate across
+the range the sources between them cover and draws every model parameter
+that reads it, at the fitted thetas, with the other covariates held at the
+pooled median; the region no source sampled is shaded as extrapolation,
+and a discrete covariate is drawn on its levels rather than swept through
+the values between them. \code{covariate_resid} plots each study's mean
+standardised residual against the covariate value it sits at, with an \code{lm}
+trend: a slope there is a mis-specified covariate form. Produced only for
+a fit whose studies declare covariates, so it is silently absent
+otherwise.
 \item \code{"nll"} -- NLL trace per restart over optimizer evaluations. Restarts
 coloured with the Okabe-Ito palette.
 \item \code{"par"} -- Parameter trace per restart on the natural scale (struct thetas
@@ -55,6 +75,42 @@ back-transformed, sigma as SD, omega diagonal as variance labelled
 coloured with the Okabe-Ito palette.
 }
 }
+\section{Why the covariate panels are separate}{
+
+With aggregate data a covariate effect is identified BETWEEN studies: the
+renal exponent in \code{vignette("covariates")} is recovered from three cohorts
+sitting at three different creatinine-clearance medians, none of which fitted
+a renal term at all. The \code{"mean"} and \code{"cov"} panels are per study and in
+isolation, so every source can sit beautifully on its own panel while the
+relation tying them together is wrong. That contrast is what \code{"covariate"}
+draws.
+}
+
+\section{Marginal and conditioned sources}{
+
+Both panels distinguish how each study enters a covariate, because the two
+are different statements about the source rather than degrees of the same
+one. A \strong{marginalised} covariate -- one the estimator integrates over a
+declared distribution -- is drawn as a round point at the study's median with
+a 10th-90th percentile bar and a 2.5th-97.5th whisker: the source constrains
+the effect through the spread it induces, and the whole span is what it
+speaks for. A \strong{conditioned} covariate -- \code{stratify}, \code{at} or \code{by}, so the
+model is solved at one value -- is drawn as a diamond at that value with no
+spread, because it has none; its contribution is a point of contrast against
+the other studies. A banded source therefore appears as several diamonds on
+the covariate it was banded on, and as one merged marginal mark on every
+other, where its strata coincide.
+}
+
+\section{Reading a slope in \code{covariate_resid}}{
+
+With few sources, covariates whose study medians happen to move together
+cannot be told apart here -- three cohorts whose weights and renal function
+both decline will show a slope in both facets whichever one is
+mis-specified. The panel localises the problem to a set of covariates, not to
+one; separating them needs a source that breaks the pattern.
+}
+
 \section{Aggregate data slot}{
 
 Every admixr2 fit also carries the observed and predicted aggregate data in
