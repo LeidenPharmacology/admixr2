@@ -157,10 +157,10 @@
   # `pow(b, c)` emits TWO iniDf rows: the coefficient (err "pow") and the
   # EXPONENT (err "pow2"), which is not a variance -- must not be squared,
   # floored at zero, or reported as an SD -- so it gets its own role and an
-  # identity transform (.admSigmaRole()/.admSigmaNat()). Likewise: t() df is
-  # log(nu-2) so nu stays > 2; ar()'s correlation is logit-scale so rho stays in
-  # (0,1); a boxCox/yeoJohnson lambda is unconstrained identity-scale since it
-  # must allow zero/negative -- defaulting it to "var" silently squared it.
+  # identity transform (.admSigmaRole()/.admSigmaNat()). Likewise t() df is
+  # log(nu-2) so nu stays > 2, ar()'s correlation is logit-scale so rho
+  # stays in (0,1), and a boxCox/yeoJohnson lambda is unconstrained
+  # identity-scale since it must allow zero/negative.
   sigma_role <- setNames(
     ifelse(.err_vals %in% .ADM_ERR_POW_EXP, "pow_exp",
            ifelse(.err_vals %in% .ADM_ERR_T, "t_df",
