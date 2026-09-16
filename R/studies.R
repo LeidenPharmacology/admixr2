@@ -487,7 +487,12 @@
 # Legacy single-output form: E/V/n/times describe one implicit observation.
 #
 # Convert a study's reported covariance to the ML (denominator n) convention.
-# `v_denom`: "ml" (default, no-op) or "unbiased" (multiply by (n-1)/n).
+# `v_denom`: "ml" (default, no-op) or "unbiased" (multiply by (n-1)/n). A
+# digitised figure's SD is the unbiased (n-1) sample SD; datagen/own data uses
+# cov.wt(method = "ML"). Eq.(1)'s log-likelihood is exact only for the ML form
+# -- at n = 60 the gap is 1.7%, small enough to have been ignored until a
+# summary is scored against its own sampling law, where getting it wrong is
+# worse than not correcting. Declared per study since a meta-analysis mixes both.
 # Idempotent: `v_denom` is stamped "ml" after conversion.
 .admVDenom <- function(s, nm) {
   vd <- s[["v_denom"]] %||% "ml"
@@ -519,7 +524,13 @@
 
 .admNormaliseStudy <- function(s, nm, default_output = NULL) {
   # Guard re-normalisation: idempotent but not inert -- fill still-missing output
-  # fields that a first pass without a model could not supply.
+  # fields that a first pass without a model could not supply. Without the
+  # idempotency guard, re-normalising an already-normalised legacy study (its
+  # top-level `V` plus the `observations` this adds is exactly the joint-study
+  # signature) silently collapsed it into one joint unit -- no error, a
+  # plausible fit down the wrong likelihood path, adfo's order-2 gradient
+  # quietly disabled. Reachable from pre-normalised test fixtures, not from a
+  # normal fit (each driver normalises once).
   if (isTRUE(s$.adm_normalised)) {
     if (!is.null(default_output)) {
       if (is.null(s$output)) s$output <- default_output
@@ -611,7 +622,10 @@
   lapply(units, function(u) {
     ev <- if (!is.null(u$ev)) u$ev else rxode2::et(amt = 100)
     # `ev` should carry DOSING only. Observation rows in ev would duplicate the
-    # study's `times` (added below) silently, so warn.
+    # study's `times` (added below) silently, so warn rather than silently
+    # rewriting the event table -- reconstructing `ev` from a filtered
+    # data.frame loses event attributes rxode2 needs (it broke the sensitivity
+    # solve outright), so telling the user is both safer and clearer.
     if (isTRUE(getOption("admixr2.warn.ev.obs", TRUE))) {
       .nobs <- tryCatch({
         .d <- as.data.frame(ev)

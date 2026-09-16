@@ -24,7 +24,10 @@
 }
 
 # Write a compiled-model cache entry: warn once on failure and carry on with
-# the model in memory (non-fatal optimisation).
+# the model in memory (non-fatal optimisation). A bare saveRDS used to be
+# either swallowed (restart workers then failed to find the file, far away
+# from the cause) or fatal (a sens-model write failure, wrapped in the
+# caller's own tryCatch, silently dropped adfo to a forward-FD gradient).
 .admCacheWrite <- function(object, file, what) {
   # Write to unique tempfile in same directory, then rename atomically to prevent
   # concurrent readers (e.g. parallel workers) seeing 0-byte or truncated files.

@@ -61,6 +61,9 @@
 # - Snapshot `cov_nms` before nlmixr2CreateOutputFromUi (re-dimnames covariance in place).
 # - Compute `.admCovSkip(cov, .ui)` from this fit's covariance (parFixedDf$SE aligns positionally).
 # - Preserve the `.foceiEnv` attribute on class rewrite.
+# `extra_field` is "admExtra", or "adirmcExtra" for adirmc -- deliberately NOT
+# unified: it is a user-visible field on fit$env (plot.admFit resolves both),
+# so renaming it here would be a silent interface change.
 #
 # Dummy frame for post-fit solve: populates model covariates with finite values
 # (mean across studies or 1) so rxode2 does not reject missing parameters.

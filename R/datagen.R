@@ -408,7 +408,9 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
                         out_pair = .admBetaPair(ui),
                         cov = cov_ref_of(),
                         cov_rows = cov_rows_of(control$n_sim))
-      # GH integrates cov_dist over its quadrature grid, not at the mean.
+      # GH integrates cov_dist over its quadrature grid, not at the mean:
+      # passing only `cov` would solve at the ecological plug-in, measured 2.1e-02
+      # off on the mean and 2.9e-01 off on the covariance vs. the mc path.
       if (control$method == "gh")
         study_tmp$cov_dist <- s[["cov_dist"]]
 
@@ -495,7 +497,12 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
   stats::setNames(results, unlist(study_names))
 }
 
-# Strips .adm_src so simulated data can be treated as an observed study with SE.
+# datagen() as a SIMULATOR, not a published source: turning a published model
+# into a study says "this is what that paper's model implies" and gets no SE
+# (no source-parameter uncertainty); this door instead says "pretend a trial
+# of n patients came out like this" and strips .adm_src so it is weighted like
+# ordinary data. Internal on purpose -- exported, it would be a way to ask for
+# the SE the public route withholds.
 .admDatagenSim <- function(...) {
   lapply(datagen(...), function(u) {
     u[[".adm_src"]] <- NULL

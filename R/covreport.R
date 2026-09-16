@@ -10,8 +10,12 @@
 #   d(Omega_ij)/d(L_ab) = delta_ia L_jb + delta_ja L_ib
 #   d(L_ab)/d(p)        = L_aa/2 on diagonal (L_aa = exp(p/2)), 1 off it.
 # Returns an (n_report x n_par) matrix transforming as J %*% cov %*% t(J).
-# Upstream functions cannot provide d(Omega)/d(L); we enumerate free elements
-# matching rxOmegaVarCovDeriv()$elements and apply the J cov J' transformation.
+# Not reused from upstream: nlmixr2est's own R is already natural-scale (built
+# from FOCEI EBEs, which an aggregate fit has none of); rxOmegaVarCovDeriv()
+# differentiates the wrong way (w.r.t. Omega, not the Cholesky parameter); and
+# rxSymInvCholCreate() is a Cholesky of Omega^-1 with different thetas. What
+# IS shared: the (row, col) enumeration of free Omega entries, pinned to
+# rxOmegaVarCovDeriv()$elements in test-cov-reporting.R.
 .admOmegaJacobian <- function(pinfo, L) {
   n_o <- length(pinfo$omega_par)
   if (n_o == 0L) return(NULL)
@@ -44,10 +48,20 @@
 #   - residual params: natural scale via .admSigmaReportJac();
 #   - omega: transformed via J = .admOmegaJacobian(L).
 # If full Hessian is ill-conditioned (min(eig) < sqrt(eps) * max(|eig|)), falls
-# back to struct + sigma sub-block (rows 1:n_sub).
+# back to struct + sigma sub-block (rows 1:n_sub). The trigger is CONDITIONING,
+# not a negative eigenvalue: an unidentified omega's curvature is numerical
+# junk whose sign is an accident of the FD step, not of the model -- under
+# Shi21's finer step a flat direction can return ~0 from the positive side
+# (measured 8.66e-19 against a largest eigenvalue of 1.1e-3), so a sign test
+# silently stops firing and an IIV at 1e-13 gets reported with an SE of 9.3e-10.
+# sqrt(eps) is the conventional singularity tolerance for an inverted matrix;
+# measured ratio on the flat-omega case is 1.8e-12, so a tighter 1e-12 did not fire.
 .ADM_NPD_RCOND <- sqrt(.Machine$double.eps)
 
 # Covariance method predicates for Hessian inversion and sandwich calculation.
+# adirmc.R carries its own note that an `==` in place of `%in%` here is the
+# same shape of bug as the r,s-vs-r fallback confusion that once cost it a
+# silently wrong covariance path.
 .admCovWantsHessian  <- function(covMethod) covMethod %in% c("r", "r,s")
 .admCovWantsSandwich <- function(covMethod) identical(covMethod, "r,s")
 
@@ -96,7 +110,10 @@
 }
 
 # Restore dimnames on fit$env$cov: nlmixr2est re-dimnames using only theta names,
-# blanking appended omega entries in place.
+# blanking appended omega entries in place. Must be snapshot with this function
+# BEFORE the matrix is handed to nlmixr2est: foceiFitCpp_ sets dimnames on the
+# same SEXP in place, so the driver's own `.cov` is blanked too by the time we
+# would otherwise read it back.
 .admCovNames <- function(cov) if (is.matrix(cov)) rownames(cov) else NULL
 
 # Reorder theta rows of covariance into iniDf order so nlmixr2est's positional
@@ -123,7 +140,11 @@
   .th[order(.th$ntheta), , drop = FALSE]
 }
 
-# Construct skipCov indicator vector for nlmixr2est (TRUE for thetas missing an SE).
+# Construct skipCov indicator vector for nlmixr2est (TRUE for thetas missing an
+# SE). nlmixr2est's own default is version-dependent (6.2.0 skips only fixed
+# thetas; earlier versions also skip every residual-error theta, which admixr2
+# does carry an SE for) -- deriving this from the matrix itself is what makes
+# the residual SE print at all on the older host.
 .admCovSkip <- function(cov, ui) {
   if (!is.matrix(cov) || is.null(rownames(cov))) return(NULL)
   .th <- .admThetaIniDf(ui)

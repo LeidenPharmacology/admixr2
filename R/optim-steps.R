@@ -164,6 +164,11 @@
 # Balances truncation error (h^2/6)|f'''| against noise eps_f/h via
 #   h* = (3 * eps_f / |f'''|)^(1/3)
 # where |f'''| is estimated from the symmetric third difference D3(h).
+# Beats gill83's forward step by orders of magnitude on this package's
+# objectives (max relative error vs analytic gradient: gill83 ~8e-4,
+# shi21 central ~1e-7). Reimplemented rather than calling nlmixr2est's
+# unexported shi21CentralWrap -- admixr2 makes zero `:::`-equivalent calls,
+# and the wrapper drops the `eps_f` tuning argument this code needs.
 # Returns list(h, gr, measured).
 .admShi21Central <- function(fn, p, k, eps_f, h0 = NULL, maxiter = 10L) {
   scale <- max(abs(p[k]), 0.1)
@@ -173,7 +178,9 @@
     max((3 * eps_f)^(1/3), scale * .Machine$double.eps^(1/3))
   at <- function(d) { q <- p; q[k] <- q[k] + d; fn(q) }
   # Estimate |f'''| at a probe step coarse enough for D3 to clear the noise floor
-  # (3.16 * eps_f) by 100x; fixed-point iteration on h* does not converge.
+  # (3.16 * eps_f) by 100x; fixed-point iteration on h* does not converge (at h*
+  # itself D3 ~ 6 eps_f, only ~2x the noise floor, so it gets rejected and the
+  # loop regrows/shrinks to maxiter without refining).
   d3_noise <- 3.1623 * eps_f
   f3 <- NA_real_
   for (i in seq_len(maxiter)) {

@@ -2,7 +2,11 @@
 # anova() on nested admFits
 # =============================================================================
 # Ordinary likelihood-ratio test comparing nested admFits against a chi-squared
-# reference (df = number of added parameters).
+# reference (df = number of added parameters). Deliberately does NOT correct
+# for H/J disagreement under misspecification (see R/adfweight.R's notation
+# block) -- that needs H and J from both fits and a weighted-chi-square series,
+# and constrains which covMethod each fit used. Wrong default for "is this
+# extra parameter worth it".
 
 # The optimizer-scale parameter names a fit was built on.
 .admFitParNames <- function(fit) {

@@ -46,7 +46,10 @@
   for (nm in colnames(struct_mat)) params_mat[, nm] <- struct_mat[, nm]
   if (length(eta_cols) > 0L)       params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)          params_mat[, nm] <- 0
-  # Populate study covariates into parameter matrix.
+  # Populate study covariates into parameter matrix. Omitting this made
+  # .adghMomentsBatch() fail with "parameter(s) required for solving: WT",
+  # reachable through .adghGradNLL's unpaired-struct-theta FD fallback and
+  # not wrapped in tryCatch, so it aborted the whole fit.
   params_mat <- .admCovCols(params_mat, rxMod$params, study[["cov"]],
                             study[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
@@ -101,7 +104,11 @@
   for (nm in names(sensModel$fixed_theta))
     inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
 
-  # Supply current lambda estimate for TBS sensitivity solves.
+  # Supply current lambda estimate for TBS sensitivity solves: an ESTIMATED
+  # boxCox/yeoJohnson lambda is a sigma name, and the zero-fill above would
+  # otherwise hand the solve lambda = 0 while the back-transform inverts with
+  # the model's starting lambda -- two different transforms, a sens gradient
+  # measured ~60x wrong for boxCox and NaN for yeoJohnson.
   .tb <- sensModel$pred_tbs
   .lam <- if (is.null(.tb)) NA_real_ else .tb$lam
   if (!is.null(.tb) && !is.na(.tb$lam_name %||% NA_character_) &&
@@ -111,7 +118,11 @@
     if (!is.na(.mapped) && .mapped %in% names(inner_df)) inner_df[[.mapped]][] <- .lam
   }
 
-  # Populate model covariates for sensitivity solve.
+  # Populate model covariates for sensitivity solve. Without them rxSolve stops
+  # with "parameter(s) required for solving", swallowed by the tryCatch below,
+  # so adfo's .adfoGetMuJBatch silently fell back to finite differences -- a
+  # covariate model under grad = "analytical" quietly lost its order-2 analytic
+  # gradient with nothing erroring.
   inner_df <- .admCovCols(inner_df, sensModel$mod$params, study[["cov"]],
                           study[["cov_rows"]])
   # Forward solve_args (e.g. forced dop853 for DDE sensitivity models).
@@ -136,7 +147,9 @@
   dtheta_list <- .admThetaSens(sensModel, out, keep, n_row, n_t)
 
   # Second-order cross block d2(pred)/(d eta_i d dir) for order-2 sens models;
-  # dropped for transformed endpoints which use finite differences.
+  # dropped for transformed endpoints, which need g''(z) z_p z_q + g'(z) z_pq
+  # rather than a first-order chain (a silently first-order-chained second
+  # derivative made lnorm's gradient ~200x wrong before), so those use FD instead.
   d2_list <- NULL
   if (!is.null(sensModel$d2_cols) && all(sensModel$d2_cols %in% names(out))) {
     d2_list <- lapply(seq_len(ncol(sensModel$d2_cols)), function(b)
@@ -168,7 +181,11 @@
   for (nm in names(struct_theta)) params_mat[, nm] <- struct_theta[nm]
   if (length(eta_cols) > 0L)      params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)         params_mat[, nm] <- 0
-  # Forward covariates to joint solve.
+  # Forward covariates to joint solve: without this a same-subject unit never
+  # sees them even from a plain fixed `cov`, and since ordinal endpoints are
+  # always joint, ordinal + covariate was affected too -- admc's joint branch
+  # wraps the solve in tryCatch(error = NULL), so the symptom was an Inf
+  # objective at every parameter vector with no diagnosis.
   params_mat <- .admCovCols(params_mat, rxMod$params, unit[["cov"]],
                             unit[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
@@ -265,7 +282,11 @@
   for (nm in names(sensModel$fixed_theta))
     inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
 
-  # Supply current lambda estimate for TBS sensitivity solves.
+  # Supply current lambda estimate for TBS sensitivity solves: an ESTIMATED
+  # boxCox/yeoJohnson lambda is a sigma name, and the zero-fill above would
+  # otherwise hand the solve lambda = 0 while the back-transform inverts with
+  # the model's starting lambda -- two different transforms, a sens gradient
+  # measured ~60x wrong for boxCox and NaN for yeoJohnson.
   .tb <- sensModel$pred_tbs
   .lam <- if (is.null(.tb)) NA_real_ else .tb$lam
   if (!is.null(.tb) && !is.na(.tb$lam_name %||% NA_character_) &&
