@@ -694,3 +694,80 @@ test_that(".admCovEffectData keeps a facet flat at one level and varying at anot
   expect_setequal(d$curve$level, "SEX = 1")
   expect_gt(diff(range(d$curve$y)), 0)
 })
+
+test_that(".admCovSourceRange prefers what the source declared", {
+  # The enrolled range, then the table it enrolled, then the body of the
+  # margin it declared -- most authoritative first.
+  s1 <- list(range = list(WT = c(50, 110)),
+             population = list(WT = list(meanlog = log(70), sdlog = 0.2)))
+  expect_equal(.admCovSourceRange(s1, "WT"), c(50, 110))
+  # `population` is a covDist by the time it reaches the plot -- admStudy()
+  # fits margins and keeps those, not the rows -- so the specs live under the
+  # covariate names. Reading only a data frame found a range for nobody.
+  s2 <- list(population = list(WT = list(meanlog = log(70), sdlog = 0.2)))
+  r <- .admCovSourceRange(s2, "WT")
+  expect_true(r[1L] < 70 && r[2L] > 70)
+  # A raw baseline table: what it literally enrolled.
+  s3 <- list(population = data.frame(WT = c(52, 61, 88)))
+  expect_equal(.admCovSourceRange(s3, "WT"), c(52, 88))
+  # A source that says nothing gets no line rather than a guessed range.
+  expect_null(.admCovSourceRange(list(), "WT"))
+})
+
+test_that(".admCovSourceLines draws only what the source itself estimated", {
+  skip_if_not_installed("rxode2")
+  pop <- list(WT  = list(meanlog = log(75), sdlog = 0.2),
+              SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  src <- list(paper = list(ui = .cov_ui(), range = list(WT = c(60, 90)),
+                           population = pop))
+  d <- .admCovSourceLines("WT", src)
+  expect_false(is.null(d))
+  expect_equal(range(d$x), c(60, 90))
+  expect_false(any(d$disc))
+  expect_equal(unique(d$study), "paper")
+
+  # A model that READS the covariate at a FIXED exponent estimated nothing, so
+  # it has no claim of its own to draw. This is the same test `stratify = TRUE`
+  # uses to decide what a source can be banded on.
+  fn <- function() {
+    ini({ tcl <- log(5); add.err <- 0.1; eta.cl ~ 0.1 })
+    model({ cl <- exp(tcl + eta.cl) * (WT / 70)^0.75
+            v <- exp(log(30)); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  fixed <- list(paper = list(ui = suppressMessages(rxode2::rxode2(fn)),
+                             range = list(WT = c(60, 90)), population = pop))
+  expect_null(.admCovSourceLines("WT", fixed))
+})
+
+test_that(".admCovSourceLines puts a discrete claim on the levels", {
+  skip_if_not_installed("rxode2")
+  # A paper joining SEX = 0 to SEX = 1 asserts a prediction at SEX = 0.37
+  # exactly as much as the pooled curve would, and the panel refuses to draw
+  # that for the fit.
+  src <- list(paper = list(
+    ui = .cov_ui(), range = list(SEX = c(0, 1)),
+    population = list(WT  = list(meanlog = log(75), sdlog = 0.2),
+                      SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))))
+  d <- .admCovSourceLines("SEX", src, levels = c(0, 1))
+  expect_false(is.null(d))
+  expect_setequal(d$x, c(0, 1))
+  expect_true(all(d$disc))
+})
+
+test_that(".admCovSourceLines keeps to the facets the pooled curve drew", {
+  skip_if_not_installed("rxode2")
+  pop <- list(WT  = list(meanlog = log(75), sdlog = 0.2),
+              SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  src <- list(paper = list(ui = .cov_ui(), range = list(WT = c(60, 90)),
+                           population = pop))
+  # `v` is not a facet the pooled curve produced, so a source cannot conjure
+  # a panel of its own for it.
+  keep <- data.frame(cov = "WT", param = "cl", stringsAsFactors = FALSE)
+  d <- .admCovSourceLines("WT", src, pairs = keep)
+  expect_setequal(unique(d$param), "cl")
+})
+
+test_that(".admFitSourceStudies is absent rather than fatal", {
+  expect_null(.admFitSourceStudies(list()))
+  expect_null(.admFitSourceStudies(list(env = new.env())))
+})

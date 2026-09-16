@@ -220,9 +220,9 @@
 <text x='675.29' y='344.54' style='font-size: 8.80px; font-family: sans;' textLength='33.75px' lengthAdjust='spacingAndGlyphs'>marginal</text>
 <text x='35.24' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='365.81px' lengthAdjust='spacingAndGlyphs'>black: parameter at the fitted thetas; one line per level of a conditioned covariate, other covariates at the pooled centre</text>
 <text x='35.24' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='264.97px' lengthAdjust='spacingAndGlyphs'>this covariate's effect is the SLOPE, a conditioned one's is the GAP between the lines</text>
-<text x='35.24' y='42.72' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='354.11px' lengthAdjust='spacingAndGlyphs'>CONDITIONAL (diamond): the source model estimated this effect, so the paper is read at the one value it reported</text>
+<text x='35.24' y='42.72' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='542.40px' lengthAdjust='spacingAndGlyphs'>CONDITIONAL (diamond + coloured line): the source model estimated this effect -- the line is THAT PAPER's own model at its own published values, over the range it enrolled</text>
 <text x='35.24' y='50.28' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='371.24px' lengthAdjust='spacingAndGlyphs'>MARGINAL (round + 10th-90th bar + 2.5th-97.5th whisker): it did not, so admixr2 integrates over the population enrolled</text>
-<text x='35.24' y='57.84' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='184.85px' lengthAdjust='spacingAndGlyphs'>grey: outside the range any source sampled -- extrapolation</text>
+<text x='35.24' y='57.84' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='366.03px' lengthAdjust='spacingAndGlyphs'>black is the MBMA fit; a coloured line parting from it is a source the meta-analysis disagrees with  |  grey: extrapolation</text>
 <text x='35.24' y='14.56' style='font-size: 13.20px; font-family: sans;' textLength='126.21px' lengthAdjust='spacingAndGlyphs'>Fitted covariate effect</text>
 </g>
 </svg>

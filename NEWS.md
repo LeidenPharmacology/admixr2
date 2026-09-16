@@ -44,6 +44,9 @@
 * **`plot(fit, which = "covariate")`**: the fitted covariate effect, and each
   study's mean residual against it -- a slope is a bad covariate form.
 
+* **Each source's OWN published model is drawn against the pooled fit**, over
+  the covariate range it enrolled, where that source estimated the effect.
+
 ## Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not name a new
