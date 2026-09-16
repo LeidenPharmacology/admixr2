@@ -154,13 +154,17 @@ covariate cannot say anything about it, whatever the fitted line does, and with
 few sources two covariates whose study medians move together cannot be told
 apart.
 
-Both panels distinguish how a study enters a covariate, because the two are
-different kinds of evidence:
+Both panels distinguish how a study enters a covariate. This is a property of
+**the source's own published model** --- did that analyst estimate the effect
+--- and both kinds feed the same fit:
 
 | | drawn as | meaning |
 |---|---|---|
-| **marginalised** | round point, 10th–90th bar, 2.5th–97.5th whisker | the estimator integrates over a declared distribution; the source constrains the effect through the spread it induces |
-| **conditioned** | diamond, no spread | `stratify`, `at` or `by` --- the model is solved at one value, and the source contributes a point of contrast against the others |
+| **conditional** | diamond, no spread | the source model **estimated** this effect, so the paper can be read at one value of it: by subgroup (`at`, `by`) or banded into strata (`stratify`). It contributes a point of contrast against the other sources |
+| **marginal** | round point, 10th–90th bar, 2.5th–97.5th whisker | the source model **did not**. No single paper has a contrast to report, so admixr2 integrates over the population it enrolled; the source constrains the effect through the mixture that induces |
+
+Splitting a source on a covariate its model never saw would manufacture a
+contrast that is not in the literature --- see `vignette("covariates")`.
 
 A source banded with `stratify` therefore appears as several diamonds on the
 covariate it was banded on, and as one merged mark on every other, where its

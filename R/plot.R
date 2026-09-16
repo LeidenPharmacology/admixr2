@@ -462,11 +462,20 @@ head.paged_df <- function(x, n = 6L, ...) {
   invisible(fit)
 }
 
-## The Okabe-Ito qualitative palette, recycled to `n`. Colour-blind safe, and
-## already the package's choice for the restart traces.
-.admOkabeIto <- function(n)
-  rep_len(c("#000000", "#E69F00", "#56B4E9", "#009E73",
-            "#0072B2", "#D55E00", "#CC79A7"), n)
+## `n` distinct colours. Okabe-Ito while it lasts -- colour-blind safe, and
+## already the package's choice for the restart traces -- and a continuous HCL
+## ramp past it.
+##
+## NOT recycled. Okabe-Ito has seven colours, and `rep_len` gave the eighth
+## source the same black as the first: two entries in one legend, identically
+## coloured, with nothing saying they were different studies. A per-band
+## design with ten sources is an ordinary thing to plot.
+.admOkabeIto <- function(n) {
+  ok <- c("#000000", "#E69F00", "#56B4E9", "#009E73",
+          "#0072B2", "#D55E00", "#CC79A7")
+  if (n <= length(ok)) ok[seq_len(max(n, 0L))]
+  else grDevices::hcl.colors(n, "Dark 3")
+}
 
 ## The covariate values a study is CONDITIONED at, as a title fragment.
 ##
@@ -582,17 +591,24 @@ head.paged_df <- function(x, n = 6L, ...) {
   levels[levels >= lo - 1e-8 & levels <= hi + 1e-8]
 }
 
-## How a study enters covariate `cv`: does the estimator INTEGRATE over a
-## distribution for it, or solve at one value?
+## How a study enters covariate `cv`: CONDITIONAL or MARGINAL?
 ##
-## These are different statements about the source and they have to look
-## different on the plot. A marginalised source says "this covariate varied
-## across my patients and here is how" -- it constrains the effect through the
-## spread it induces. A conditioned one (`stratify`, `at`, `by`) says "this
-## covariate was held here", which is a point of contrast with the other
-## studies and carries no spread at all. Drawing both as a median and a bar
-## would show the second as a degenerate version of the first, when it is a
-## different kind of evidence.
+## This is a property of the SOURCE'S OWN published model, and the mechanism
+## follows from it rather than the other way round.
+##
+## CONDITIONAL means that analyst ESTIMATED this effect. Their result can
+## therefore be read at one value of the covariate -- by subgroup (`at`, `by`),
+## or by banding the source into strata (`stratify`) -- and the study carries a
+## point spec. It contributes a point of contrast against the other sources.
+##
+## MARGINAL means they did not. No single paper has a contrast to report, so
+## splitting it on that covariate would MANUFACTURE one; admixr2 integrates
+## over the population the paper enrolled instead, and the study carries a
+## distribution. It constrains the effect through the mixture that induces.
+##
+## Both feed the same fit, and they are different kinds of evidence, so they
+## have to look different. Drawing a conditioned source as a centre and a bar
+## would show it as a degenerate version of a marginal one.
 .admCovStudyKind <- function(s, cv) {
   sp <- .admCovStudySpec(s, cv)
   if (is.null(sp) || isTRUE(sp[[".point"]])) "conditional" else "marginal"
@@ -961,14 +977,19 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## on the axis where they genuinely differ they do not coincide, so they stay
 ## separate and keep their own names.
 .admMergeCovMarks <- function(df, digits = 8L) {
-  key <- paste(df$cov, df$param, signif(df$x, digits), signif(df$y, digits),
-               sep = "\r")
+  # KEYED ON THE SOURCE as well as the position. Coinciding is not the same as
+  # belonging together: ten per-band sources sharing one weight distribution
+  # all land on the same point of the WT axis, and merging them produced
+  # legend entries reading `band8/band10` and `3 studies` -- a relationship
+  # between separate studies that does not exist, and which of them got
+  # absorbed depended on floating-point equality at eight significant digits.
+  # Distinct sources now overprint, which is honest: they ARE distinct.
+  key <- paste(.admCovSource(df$study), df$cov, df$param,
+               signif(df$x, digits), signif(df$y, digits), sep = "\r")
   do.call(rbind, lapply(split(df, key), function(z) {
-    base <- unique(.admCovSource(z$study))
     out  <- z[1L, , drop = FALSE]
-    out$study <- if (length(base) == 1L) base
-                 else if (length(base) <= 2L) paste(base, collapse = "/")
-                 else sprintf("%d studies", nrow(z))
+    # One source by construction, so the merged strata are named for it.
+    out$study <- .admCovSource(z$study[1L])
     # The merged mark speaks for ALL the rows it absorbed, so its spread is
     # their UNION. Keeping the first row's was silently dropping the others':
     # a mark labelled for two strata would draw only one of their ranges, and
@@ -1158,11 +1179,13 @@ head.paged_df <- function(x, n = 6L, ...) {
                        "level of a conditioned covariate, other covariates",
                        "at the pooled centre\nthis covariate's effect is",
                        "the SLOPE, a conditioned one's is the GAP between",
-                       "the lines  |  marginalised source: centre +",
-                       "10th-90th bar + 2.5th-97.5th whisker\nconditioned",
-                       "source (diamond): the single value it was solved",
-                       "at  |  grey: outside the range any source sampled",
-                       "-- extrapolation"))
+                       "the lines\nCONDITIONAL (diamond): the source model",
+                       "estimated this effect, so the paper is read at the one",
+                       "value it reported\nMARGINAL (round + 10th-90th bar +",
+                       "2.5th-97.5th whisker): it did not, so admixr2",
+                       "integrates over the population enrolled\ngrey:",
+                       "outside the range any source sampled --",
+                       "extrapolation"))
   # Styling comes from .admCovPanelStyle(), added with the marks above. A
   # fit with no marks at all still needs it.
   if (is.null(marks_df) || !nrow(marks_df))
@@ -1237,12 +1260,12 @@ head.paged_df <- function(x, n = 6L, ...) {
       title = "Between-study residual vs covariate",
       x = "Covariate value the study speaks for (centre, 10th-90th)",
       y = "Mean standardised residual",
-      subtitle = paste("area = n  |  round + bar: marginalised over a",
-                       "distribution  |  diamond: conditioned at one value",
-                       "\ndashed blue: lm across studies, a SLOPE is a",
-                       "mis-specified form  |  grey: one source's strata,",
-                       "a consistent TILT is the same\nz averaged over",
-                       "times, which are correlated, so +/-1.96 is",
+      subtitle = paste("area = n  |  CONDITIONAL (diamond): the source",
+                       "model estimated this effect  |  MARGINAL (round +",
+                       "bar): it did not\ndashed blue: lm across studies, a",
+                       "SLOPE is a mis-specified form  |  grey: one source's",
+                       "strata, a consistent TILT is the same\nz averaged",
+                       "over times, which are correlated, so +/-1.96 is",
                        "indicative not a test"))
 }
 

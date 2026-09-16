@@ -184,6 +184,12 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **The covariate panels' legends keep a fixed order.** ggplot2 sorts
   equal-priority guides by a hash, which is not stable across sessions.
 
+* **Coincident marks from different sources are no longer merged**, which
+  invented labels like `3 studies` for studies that share only a position.
+
+* **An eighth source gets its own colour** instead of the first one's, via an
+  HCL ramp past the seven Okabe-Ito hues.
+
 ## Internal changes
 
 * **The covariate panels are built by `.admCovEffectPanel()` and

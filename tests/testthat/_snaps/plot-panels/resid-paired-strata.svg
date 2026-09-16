@@ -95,7 +95,7 @@
 <rect x='644.21' y='342.59' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
 <polygon points='650.89,351.23 652.85,349.27 654.80,351.23 652.85,353.18 ' style='stroke-width: 0.71; stroke: none; fill: #000000; fill-opacity: 0.85;' />
 <text x='666.96' y='354.26' style='font-size: 8.80px; font-family: sans;' textLength='42.08px' lengthAdjust='spacingAndGlyphs'>conditional</text>
-<text x='30.83' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='290.45px' lengthAdjust='spacingAndGlyphs'>area = n  |  round + bar: marginalised over a distribution  |  diamond: conditioned at one value </text>
+<text x='30.83' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='357.72px' lengthAdjust='spacingAndGlyphs'>area = n  |  CONDITIONAL (diamond): the source model estimated this effect  |  MARGINAL (round + bar): it did not</text>
 <text x='30.83' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='382.16px' lengthAdjust='spacingAndGlyphs'>dashed blue: lm across studies, a SLOPE is a mis-specified form  |  grey: one source's strata, a consistent TILT is the same</text>
 <text x='30.83' y='42.72' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='239.90px' lengthAdjust='spacingAndGlyphs'>z averaged over times, which are correlated, so +/-1.96 is indicative not a test</text>
 <text x='30.83' y='14.56' style='font-size: 13.20px; font-family: sans;' textLength='211.35px' lengthAdjust='spacingAndGlyphs'>Between-study residual vs covariate</text>
