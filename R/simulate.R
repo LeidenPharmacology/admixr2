@@ -282,11 +282,8 @@
   for (nm in names(sensModel$fixed_theta))
     inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
 
-  # Supply current lambda estimate for TBS sensitivity solves: an ESTIMATED
-  # boxCox/yeoJohnson lambda is a sigma name, and the zero-fill above would
-  # otherwise hand the solve lambda = 0 while the back-transform inverts with
-  # the model's starting lambda -- two different transforms, a sens gradient
-  # measured ~60x wrong for boxCox and NaN for yeoJohnson.
+  # Supply current lambda estimate for TBS sensitivity solves -- same fix as
+  # .admSimulateSensRows() above, needed again here for the joint-model path.
   .tb <- sensModel$pred_tbs
   .lam <- if (is.null(.tb)) NA_real_ else .tb$lam
   if (!is.null(.tb) && !is.na(.tb$lam_name %||% NA_character_) &&
