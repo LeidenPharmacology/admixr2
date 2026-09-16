@@ -743,6 +743,12 @@ head.paged_df <- function(x, n = 6L, ...) {
                label = .admStudyCovLabel(s), stringsAsFactors = FALSE)
   }))
   if (is.null(df) || nrow(df) < 2L) return(NULL)
+  # A covariate every study sits at the SAME value has no between-study
+  # contrast, which is the only thing this panel reads. Its facet would stack
+  # every point on one x and hand `geom_smooth()` a rank-deficient `lm`. Now
+  # that a covariate the model never reads earns a facet, this is reachable
+  # from an ordinary `at =` held constant across sources.
+  if (diff(range(df$x)) <= 0) return(NULL)
   df
 }
 

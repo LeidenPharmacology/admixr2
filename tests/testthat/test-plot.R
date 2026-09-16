@@ -403,6 +403,20 @@ test_that("plot.admFit covariate panel survives an all-discrete figure", {
   expect_setequal(d$x[d$cov == "SEX"], c(0, 1))
 })
 
+test_that(".admCovResidData drops a covariate with no between-study contrast", {
+  # Every study at the same value: nothing for the panel to read, and a facet
+  # that would stack every point on one x and fit a rank-deficient `lm`.
+  agg <- list(
+    lo = list(obs = list(E = c(1, 2)), pred = list(E = c(1.1, 2.1),
+                                                   V = diag(c(0.01, 0.04)))),
+    hi = list(obs = list(E = c(1, 2)), pred = list(E = c(0.9, 1.9),
+                                                   V = diag(c(0.01, 0.04)))))
+  flat <- lapply(.cov_studies(), function(s) {
+    s$cov_dist <- NULL; s$cov <- list(WT = 70); s
+  })
+  expect_null(.admCovResidData("WT", flat, agg))
+})
+
 test_that(".admCovResidData needs two studies to have a contrast", {
   agg <- list(
     lo = list(obs = list(E = c(1, 2)), pred = list(E = c(1.1, 2.1),
