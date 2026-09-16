@@ -48,18 +48,11 @@
 # Tensor-product GH grid for n_eta dimensions.
 # Returns X (n_node x n_eta standard-normal nodes) and W (length n_node weights).
 #
-# Memoised, same cache env as .adghNodes1 (which this calls) but NOT the same
-# retention policy. .admCovRefresh/.admJointDesign call this on EVERY
-# objective evaluation, since rank and node count are frozen at admission --
-# only the ROTATION on top depends on current parameters. Rebuilding the grid
-# itself is pure overhead: measured 68.6 ms/call at r=4, m=15 against an
-# rxSolve()'s ~11 ms.
-#
-# This skips .adghNodes1's cache-everything-forever policy because one grid
-# is ~25MB at 8 etas/5 nodes and the cache lives in the namespace, not the
-# fit -- caching every (m, n_eta) would grow with the session and never
-# shrink. A fit asks for the SAME grid every evaluation, so ONE SLOT
-# captures the entire saving with no eviction policy needed.
+# Memoised (same cache env as .adghNodes1, different policy): rank/node count
+# are frozen at admission, so a fit asks for the SAME grid every objective
+# evaluation -- rebuild cost is 68.6 ms/call at r=4, m=15 vs rxSolve()'s
+# ~11 ms. ONE SLOT (not .adghNodes1's cache-everything) because one grid is
+# ~25MB at 8 etas/5 nodes; caching every (m, n_eta) would only grow.
 .admGridMemo <- function(slot, key, build) {
   # The cache env is a package-level binding, and this runs inside mirai restart
   # workers, where assignInNamespace() cannot ADD a binding to the locked
@@ -120,67 +113,46 @@
   } else {
     g <- list(eta = matrix(0, 1L, 0L), W = 1, X = grid$X, cov_rows = NULL)
   }
-  # General path, adgh's analogue of admc's per-row covariate draws: a
-  # PRODUCT GRID over the covariate quadrature and the eta grid --
-  # deterministic, so adgh stays noise-free, and still ONE rxSolve. The eta
-  # block cycles fastest, so weights are as.numeric(outer(W_eta, W_cov))
-  # column-major. (The old covariate-shift reduction -- pinning the
-  # covariate at its reference and folding its contribution into one eta
-  # column -- was removed: .admJointCollapse finds the same structure
-  # without a certificate, cheaper and more accurate wherever both applied.)
+  # General path: a PRODUCT GRID over the covariate quadrature and the eta
+  # grid, deterministic so adgh stays noise-free and still ONE rxSolve. The
+  # eta block cycles fastest, so weights are as.numeric(outer(W_eta, W_cov))
+  # column-major.
   #
-  # JOINT COLLAPSE: one design over etas AND covariates together, where they
-  # reach the model through the same directions -- replaces both the eta
-  # grid and the covariate design, so it returns before either is built.
-  # X is the node matrix the omega chain rule differentiates; eta = X L'
-  # holds exactly as for the ordinary grid, so .adghGrad needs no branch of
-  # its own. Not carried: the rotation's own dependence on Omega, which
-  # vanishes to the verified accuracy.
+  # JOINT COLLAPSE: one design over etas AND covariates together where they
+  # reach the model through the same directions, returned before either the
+  # eta grid or covariate design is built. X is still the node matrix the
+  # omega chain rule differentiates (eta = X L' as usual), so .adghGrad
+  # needs no branch of its own.
   .jc <- if (!is.null(s)) s[[".adm_cov_joint"]] else NULL
   if (!is.null(.jc)) {
     jd <- .admJointDesign(.jc, .admShiftStruct(pinfo, pars$struct), pars$L)
-    # A FAILED RE-AIM IS AN UNSOLVABLE POINT, not a licence to change design and not
-    # a reason to abort. Falling through to the branch below would swap in a design
-    # with a DIFFERENT NUMBER OF POINTS mid-optimisation and step the objective;
-    # stop()ing kills a converging fit at a point the line search was merely trying.
-    # The failure mode is an affine_log probe going non-positive, which is exactly
-    # the region every other unsolvable point reports as Inf.
-    #
-    # THIS RETURNS UNCONDITIONALLY -- success or `failed = TRUE` -- and never falls
-    # through to read a study's .adm_cov_collapse, for the reason just given.
-    # .admCheckCovariates keeps that attached alongside .adm_cov_joint anyway, but
-    # only for INSPECTION; do not read it here as a fallback design.
+    # A failed re-aim is an unsolvable point (an affine_log probe going
+    # non-positive), not a licence to fall through to a design with a
+    # DIFFERENT NUMBER OF POINTS mid-optimisation, and not a reason to
+    # stop() a converging fit. So this returns unconditionally -- success or
+    # `failed = TRUE` -- never falling back to .adm_cov_collapse.
     if (is.null(jd)) return(list(failed = TRUE))
     return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
   }
   if (!is.null(s) && !is.null(s[["cov_dist"]])) {
     nq <- max(nrow(g$eta), 1L)
-    # cov_integration = "sparse": a Smolyak grid in place of the product one. It is
-    # an ORDINARY GRID -- (X, W) with signed W -- so the expansion below is the same
-    # one the product grid takes, and nothing downstream needs to know which rule
-    # produced the rows. That is what the retired "taylor" design was not: it carried
-    # its own derivative-pair machinery, and two of its three defects lived there.
+    # cov_integration = "sparse": a Smolyak grid, still an ORDINARY GRID
+    # (X, W) with signed W, so the expansion below and everything downstream
+    # is unchanged. (Unlike the retired "taylor" design, which carried its
+    # own derivative-pair machinery.)
     .sparse <- identical(pinfo$cov_integration %||% "on", "sparse")
-    # Cached on the study by .admCheckCovariates -- a pure function of
-    # `cov_dist` and the level, both data -- so it is not rebuilt per objective
-    # call. The %||% keeps a hand-built study (Tier-1 mocks, direct
-    # .adghMoments calls) working, at the old cost.
+    # Cached on the study by .admCheckCovariates (pure function of cov_dist
+    # and level). %||% keeps a hand-built study working at the old cost.
     cg <- if (.sparse) s[[".adm_cov_sparse"]] %||%
                        .admCovSparseGrid(s[["cov_dist"]],
                                          pinfo$cov_sparse_level %||% 3L,
                                          pinfo$cov_nodes %||% 7L)
-          # The COLLAPSED design when the covariates reach the model through
-          # a single scalar: the same integral in the dimension it actually
-          # has, not an approximation the grid would beat. Cached at
-          # admission but RE-AIMED at the current thetas: the rotation
-          # depends on the estimated covariate coefficients, so a design
-          # cached at starting values integrates the wrong line once the
-          # optimizer moves (53 to 163 -2LL units for a 0.1 move in one
-          # coefficient).
-          #
-          # The product grid ONLY when no collapse was admitted (a
-          # hand-built study): the two have different point counts, so
-          # swapping mid-fit steps the objective.
+          # COLLAPSED design when covariates reach the model through a single
+          # scalar. RE-AIMED at current thetas each call, not cached at
+          # admission values: the rotation depends on the estimated
+          # coefficients (53 to 163 -2LL units for a 0.1 move in one).
+          # Product grid only when no collapse was admitted -- the two have
+          # different point counts, so swapping mid-fit steps the objective.
           else if (is.null(s[[".adm_cov_collapse"]]))
                        s[[".adm_cov_grid"]] %||%
                        .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
@@ -414,17 +386,14 @@
   g_theta       <- numeric(length(p))
 
   for (s in studies) {
-    # PER STUDY, THROUGH .adghGrid(), WHERE THE STUDY DECLARES A COVARIATE
-    # DISTRIBUTION. Building nodes from `grid` and pars$L directly made
-    # adgh's analytical gradient blind to the covariate product grid --
-    # it differentiated a different function than .adghNLL evaluated,
-    # silently. X, W and eta must come from ONE place.
+    # PER STUDY, through .adghGrid(): building nodes from `grid`/pars$L
+    # directly made the analytical gradient blind to the covariate product
+    # grid, silently differentiating a different function than .adghNLL
+    # evaluated. X, W and eta must come from ONE place.
     #
-    # Only where there IS a covariate distribution: .adghGrid()'s
-    # zero-eta branch collapses to a single point (eta 1 x 0, W = 1),
-    # right for the OBJECTIVE but wrong here -- this loop differentiates
-    # over the incoming node grid, and one point at n_eta = 0 leaves the
-    # covariance nothing to difference and the SEs non-finite. A no-IIV
+    # Only where a covariate distribution exists: .adghGrid()'s zero-eta
+    # branch collapses to one point (right for the objective, wrong here --
+    # leaves the covariance nothing to difference, non-finite SEs). A no-IIV
     # model has no covariate grid either, so the cases don't overlap.
     if (!is.null(s[["cov_dist"]])) {
       .gS <- .adghGrid(pars, pinfo, grid, s)
@@ -1488,16 +1457,13 @@ adghControl <- function(
     # TAIL-only: a new argument inserted mid-signature silently rebinds
     # every positional call. See the resid_nodes note in CLAUDE.md.
     cov_nodes     = 7L,
-    # TAIL-only, as above. These two are the covariate-integration pair:
-    # cov_integration selects the method, cov_sparse_level the resolution of the
-    # sparse one. cov_sparse_level occupies the slot the retired cov_taylor_h had, so
-    # every positional call keeps its meaning.
+    # TAIL-only, as above. cov_integration selects the method, cov_sparse_level
+    # the resolution of the sparse one (occupies the slot retired cov_taylor_h
+    # had, so positional calls keep their meaning).
     #
-    # THREE STATES. "on" reduces the covariate integral wherever the model permits
-    # and the reduction verifies against the design it replaces; "off" is the bare
-    # product grid; "sparse" swaps the product rule for a Smolyak one. The earlier
-    # four values mixed one real choice (which grid) with a second the caller should
-    # never have been asked -- whether to attempt a particular reduction.
+    # THREE STATES: "on" reduces the covariate integral wherever the model
+    # permits and the reduction verifies against the design it replaces;
+    # "off" is the bare product grid; "sparse" swaps in a Smolyak rule.
     cov_integration  = c("on", "sparse", "off"),
     cov_sparse_level = 3L,
     # LAST on purpose: new control arguments are appended.
@@ -1776,17 +1742,13 @@ nlmixr2Est.adgh <- function(env, ...) {
   .best_nll  <- Inf
 
   # Measure the gradient's FD steps ONCE, here, and let every later
-  # difference reuse them (the mechanism FOCEI's numericGrad uses at nF == 1).
-  # Only the parameters actually finite-differenced: all of them under
-  # grad = "fd", otherwise the unpaired struct thetas -- but ONLY when the
-  # sens model carries no THETA_j_ column for them (`.theta_sens`).
-  #
-  # An unpaired theta is NOT automatically an FD theta. .admBuildThetaSens emits
-  # a direction per unpaired theta, so .adghGrad reads their gradient off the
-  # same solve as the etas' and returns BEFORE its FD block; that block is the
-  # fallback for when those columns could not be built. Probing them regardless
-  # would spend ten NLL evaluations each choosing a step nothing uses.
-  # `.ctl$grad_h` stays a scalar unless this fires.
+  # difference reuse them (FOCEI's numericGrad mechanism at nF == 1). Only
+  # the parameters actually finite-differenced: all of them under grad =
+  # "fd", otherwise the unpaired struct thetas -- and only when the sens
+  # model carries no THETA_j_ column for them (`.theta_sens`), since an
+  # unpaired theta with a sens column gets its gradient from that solve
+  # instead, before the FD block runs. `.ctl$grad_h` stays a scalar unless
+  # this fires.
   .fd_idx <- if (!want_grad) integer(0)
     else if (use_pure_fd) seq_along(ov$p0)
     else if (length(.unpaired) && !.theta_sens)
