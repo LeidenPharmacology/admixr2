@@ -10,28 +10,24 @@
 # ("shift") -- chosen per study by .admCheckCovariates().
 #
 # THE RULE: a block's PREDICTION must integrate over the same covariate
-# distribution its DATA were aggregated over. Both mismatches cost, in
-# opposite directions, and neither announces itself. Fit stratum summaries as
+# distribution its DATA were aggregated over. Fit stratum summaries as
 # ordinary studies with their own `n` and `cov_dist` -- NOT `cov`, a POINT
 # value that plugs the stratum mean into a relation that's only affine if
 # you're lucky (the ecological plug-in, biasing upward).
-#
-# Do not restore the retired collapse, inferred-quantile, or per-node
-# likelihood paths: respectively a special case of shift, unsafe under
-# general covariate effects, and incorrect for pooled summary data.
 #
 # (`%||%` is defined in utils.R.)
 
 # Append this study's covariate columns to an rxSolve params frame. Returns
 # `mat` unchanged when there is nothing to add.
 #
-# ONLY names present in `cov_s` are added -- deliberately not a blanket 0-fill
-# for setdiff(mod$params, colnames(mat)), which has bitten twice: it clobbered
+# ONLY names present in `cov_s` are added -- not a blanket 0-fill for
+# setdiff(mod$params, colnames(mat)), which has bitten twice: it clobbered
 # hard-coded model constants (qout/vb -> /0 -> NA objective) and handed the
 # solve lambda = 0 for an ESTIMATED boxCox/yeoJohnson.
 #
-# Named .adm* on purpose: the daemon payload is collected by a /^\.(adm|adfo|adgh|adirmc)/i regex, so a
-# helper named .cov_fills would be missing inside every parallel-restart worker.
+# Named .adm* on purpose: the daemon payload is collected by a
+# /^\.(adm|adfo|adgh|adirmc)/i regex, so `.cov_fills` would be missing
+# inside every parallel-restart worker.
 .admCovCols <- function(mat, mod_params, cov_s, cov_rows = NULL) {
   # PER-ROW values (general path): each simulated subject carries its own covariate, so rxode2 evaluates
   # whatever functional form the model contains.
@@ -247,24 +243,21 @@
   sum(!vapply(cn, function(k) isTRUE(cd[[k]][[".point"]]), logical(1)))
 
 # `cov` as a LIST, on every study.
-
+#
 # `cov` is documented as name -> value, and a named NUMERIC VECTOR is the natural way to write that -- but for
 # an atomic vector `x[["absent"]]` is an ERROR ("subscript out of bounds") where a list returns NULL. Every
 # consumer that asks "does this study pin covariate cv?" does so with `[[ ]]`, so the coercion has to happen
-# before ANY of them run, not part-way down one function.
+# before ANY of them run.
+
 # Does this covariate reach the model anywhere the probes cannot see?
-
+#
 # .admCovCollapse, .admJointCollapse and .admShiftSpec all decide which lines read a covariate by scanning
-# TOP-LEVEL ASSIGNMENTS. `quote(if (a) b else c)` has length 4 and `quote(if (a) b)` has `if` as its head, so
-# an if() is not an assignment either way and its covariate is invisible to all three.
-
-# The consequence is not a refusal, it is a wrong design: with `if (CRCL < 30) fr <- 0.5 else fr <- 1` beside an
-# allometric CL, the collapse is ADMITTED at r = 1 and CRCL takes exactly one value across the whole design --
-# its median -- so the renal branch is never exercised. Neither ver() nor the const re-probe can see it: both
-# score only the `hit` columns, which the design reproduces exactly.
-
-# A branch is not affine in the covariate, so there is nothing to rotate onto even in principle. Refuse, and
-# the study takes the ordinary product grid, which solves the whole model per row and handles if() correctly.
+# TOP-LEVEL ASSIGNMENTS; an `if()` is neither an assignment nor headed by one, so a covariate read only inside
+# a branch (e.g. `if (CRCL < 30) fr <- 0.5 else fr <- 1`) is invisible to all three. The consequence is a wrong
+# design, not a refusal: the collapse gets admitted with CRCL pinned at its median, so the branch is never
+# exercised, and neither ver() nor the const re-probe catches it (both score only the `hit` columns, which the
+# design reproduces exactly). A branch isn't affine in the covariate anyway, so refuse and fall back to the
+# ordinary product grid, which solves the whole model per row and handles if() correctly.
 .admCovInBranch <- function(lst, covs) {
   if (is.null(lst) || !length(covs)) return(FALSE)
   for (e in lst) {
@@ -286,17 +279,15 @@
 }
 
 # WHICH covariate design governs a study, in the exact priority .adghGrid's
-# dispatch resolves it in: joint beats an explicit `cov_integration = "sparse"`
-# beats the covariate-only collapse beats the plain grid. Pure in (s, pinfo) --
-# no re-aim, no rxSolve -- for any consumer that only needs to know WHICH
-# design is active, not its current parameter-dependent shape.
+# dispatch resolves it in: joint beats `cov_integration = "sparse"` beats the
+# covariate-only collapse beats the plain grid. Pure in (s, pinfo), no
+# re-aim, for any consumer that only needs to know WHICH design is active.
 #
-# .adghGrid's own dispatch is NOT rewritten to call this (it's the hottest
-# path and already implements the same order inline); this exists so a
-# SECOND consumer never reimplements that order and drifts from it, which
-# happened once: the FD-gradient fallback in .adghGradNLL checked
-# `.adm_cov_collapse` alone, without excluding a study where
-# `.adm_cov_joint` -- which .adghGrid prefers -- was also attached.
+# .adghGrid's own dispatch is NOT rewritten to call this (hottest path,
+# already inlines the same order); this exists so a second consumer never
+# drifts from it -- the FD-gradient fallback in .adghGradNLL once checked
+# `.adm_cov_collapse` alone, missing a study where `.adm_cov_joint` (which
+# .adghGrid prefers) was also attached.
 .admCovKind <- function(s, pinfo) {
   if (is.null(s) || is.null(s[["cov_dist"]])) return("rows")
   if (!is.null(s[[".adm_cov_joint"]])) return("joint")
@@ -423,25 +414,15 @@
       }
     }
 
-    # THE DEFAULT PATH IS "rows", and it assumes nothing at all: every simulated subject (admc) or grid point
-    # (adgh) carries its own covariate value, so rxode2 evaluates the whole model -- covariate on several
-    # parameters, on a parameter with no random effect, or interacting with one. It also carries a gradient with
-    # no new chain rule, because on this path the covariate is DATA (a per-row params column). It is the
-    # fallback for every refusal below, so a refusal costs solve rows and never accuracy: both paths are
-    # differentiable.
+    # THE DEFAULT PATH IS "rows": every simulated subject (admc) or grid point (adgh) carries its own covariate
+    # value, so rxode2 evaluates the whole model and the gradient needs no new chain rule (covariate is DATA, a
+    # per-row params column). Fallback for every refusal below, so a refusal costs solve rows, never accuracy.
 
     studies[[nm]]$.adm_cov_path <- "rows"
 
-    # The covariate SHIFT was removed here. It pinned the covariate at its reference and folded its whole
-    # contribution into one eta column, so the integral collapsed onto u = Delta(a) + eta. .admJointCollapse
-    # below finds the same structure without needing a certificate, and measured against a high-resolution
-    # reference it is both cheaper and more accurate than the shift wherever both applied. Where the joint
-    # refuses, the full product grid runs, which is the correct integral.
-
-    # cov_integration = "sparse" replaces the product grid on the "rows" path (and only there -- a study that
-    # took the shift has no product grid left to expand). Its refusals are properties of `cov_dist` alone, so
-    # build the grid once HERE, where the message can name the study, rather than letting the first objective
-    # evaluation error out of the middle of a fit.
+    # cov_integration = "sparse" replaces the product grid on the "rows" path only. Its refusals are properties
+    # of `cov_dist` alone, so build the grid once HERE, where the message can name the study, rather than
+    # letting the first objective evaluation error out mid-fit.
     if (identical(studies[[nm]]$.adm_cov_path, "rows") &&
         identical(pinfo$cov_integration %||% "on", "sparse") &&
         !.no_design) {
@@ -450,30 +431,21 @@
                       error = function(e) conditionMessage(e))
       if (is.character(.sg))
         bad("study '", nm, "': ", sub("^admixr2: ", "", .sg))
-      # KEEP it. The grid is a pure function of `cov_dist` and the level, both DATA, but .adghGrid runs inside
-      # the objective -- so rebuilding it there would repeat the combination technique's point merge on every
-      # evaluation for a design that cannot change. Numeric only (no closures), so it serialises to a
-      # parallel-restart worker by value like the rest of the study.
+      # KEEP it: a pure function of `cov_dist` and level, both DATA, but .adghGrid runs inside the objective, so
+      # rebuilding it there repeats the combination technique's point merge on every call for a design that
+      # cannot change. Numeric only (no closures), so it serialises to a restart worker by value.
       studies[[nm]]$.adm_cov_sparse <- .sg
     }
   }
 
-# DIMENSION COLLAPSE. Where covariates reach the model through a single
-# scalar -- p covariates on one parameter, the allometric case -- the
-# integral is ONE-dimensional however many covariates there are, and the
-# product grid was integrating it in p. This is the shift's argument with
-# the random effect removed, applying exactly where the shift refuses for
-# want of an eta.
+# DIMENSION COLLAPSE. Where covariates reach the model through a single scalar -- p covariates on one
+# parameter, the allometric case -- the integral is ONE-dimensional, and the product grid was integrating it
+# in p. Cached for the same reason the Taylor design is: a pure function of `cov_dist` and the model, fixed
+# for the fit, while .adghGrid runs inside the objective.
 #
-# Cached for the same reason the Taylor design is: a pure function of
-# `cov_dist` and the model, fixed for the fit, while .adghGrid runs inside
-# the objective. Numeric only, so it serialises to a restart worker by value.
-#
-# THE REDUCTIONS, in the order tried: joint collapse subsumes the covariate
-# collapse and adds the eta block, so it is preferred where it admits; the
-# covariate collapse takes what's left. Both are exact and verify against
-# the product grid they replace. A study qualifying for neither takes the
-# full grid.
+# THE REDUCTIONS, in the order tried: joint collapse subsumes the covariate collapse and adds the eta block,
+# so it is preferred where it admits; the covariate collapse takes what's left. Both are exact and verify
+# against the product grid they replace. A study qualifying for neither takes the full grid.
   for (nm in names(studies)) {
     s_nm <- studies[[nm]]
     if (is.null(s_nm[["cov_dist"]])) next
@@ -483,19 +455,14 @@
                                     pinfo$cov_nodes %||% 7L,
                                     cov_fixed = s_nm[["cov"]]),
                     error = function(e) NULL)
-    # Computed, not yet attached: the reduction the study ends up using isn't
-    # known until the joint collapse is tried below -- attaching a design
-    # the fit doesn't use would describe a path nobody took.
+    # Computed, not yet attached: the reduction the study ends up using isn't known until the joint collapse
+    # is tried below -- attaching a design the fit doesn't use would describe a path nobody took.
     #
-    # JOINT: etas are latent normal directions too, and the design crosses
-    # them with the covariate design as if independent. Where an eta and a
-    # covariate index reach the model through the same sum they are ONE
-    # direction, and rank is bounded by how many PARAMETERS the latents
-    # reach, not by how many etas and covariates there are.
-    #
-    # Preferred over the plain covariate collapse where it holds, since it
-    # subsumes that reduction and adds the eta block. adgh only -- admc
-    # reaches its etas through .admMakeZ instead.
+    # JOINT: etas are latent normal directions too, and where an eta and a covariate index reach the model
+    # through the same sum they are ONE direction; rank is bounded by how many PARAMETERS the latents reach,
+    # not by how many etas and covariates there are. Preferred over the plain covariate collapse where it
+    # holds, since it subsumes that reduction and adds the eta block. adgh only -- admc reaches its etas
+    # through .admMakeZ instead.
     if (pinfo$n_eta > 0L && !isTRUE(s_nm$is_joint)) {
       .jc <- tryCatch({
         .j0 <- .admJointCollapse(.ui, pinfo, s_nm[["cov_dist"]],
@@ -638,26 +605,16 @@
        sdlog   = sqrt(log(1 + sd^2 / m^2)))
 }
 
-# A covariate a study declares but THE MODEL NEVER READS contributes nothing:
-# f does not depend on it, so integrating over it returns f unchanged, and
-# marginalising it out of a Gaussian copula leaves every surviving margin
-# exactly as declared (the latent block is the corresponding submatrix of R).
-# Dropping it is therefore EXACT, and it's what lets a NESTED pair share one
-# `studies` object: a covariate LRT's null model simply omits the term.
-# Refusing instead forced the restriction to be written as `fix(0)` -- a
-# property of the model text rather than the hypothesis -- and left the
-# dropped covariate on the quadrature grid, paying for nodes that cannot
-# move the objective.
+# A covariate a study declares but THE MODEL NEVER READS contributes nothing: f does not depend on it, so
+# integrating over it returns f unchanged, and marginalising it out of a Gaussian copula leaves every
+# surviving margin exactly as declared. Dropping it is therefore EXACT, and it's what lets a NESTED pair
+# share one `studies` object: a covariate LRT's null model simply omits the term.
 #
-# `cor`/`Sigma`/`latentR` are stated over declared covariates in DECLARATION
-# ORDER, so the surviving block is that submatrix; a named one is subset by
-# name instead. This is .admCovDropMargin's rebuild, WITHOUT its
-# correlated-margin refusal -- that refusal belongs to `by`, which CONDITIONS
-# a margin at a value and so cannot honour its correlation with the margins
-# that remain. Here the margin is MARGINALISED instead, and the kept block's
-# latent correlation is just the corresponding submatrix of R -- exact for
-# any correlation, including a `cor = c(WT.CRCL = 0.45)` pair where only WT
-# survives.
+# `cor`/`Sigma`/`latentR` are stated over declared covariates in DECLARATION ORDER, so the surviving block is
+# that submatrix; a named one is subset by name instead. This is .admCovDropMargin's rebuild WITHOUT its
+# correlated-margin refusal -- that refusal belongs to `by`, which CONDITIONS a margin at a value and so
+# cannot honour its correlation with the margins that remain. Here the margin is MARGINALISED instead, and
+# the kept block's latent correlation is just the corresponding submatrix of R -- exact for any correlation.
 .admCovDistDrop <- function(cov_dist, drop) {
   cd   <- .admCovDistCanon(cov_dist)
   nms  <- .admCovSpecNames(cd)
@@ -769,13 +726,10 @@
   if (is.null(Lc))
     stop("admixr2: `cor` is not positive definite, so it describes no ",
          "distribution.", call. = FALSE)
-  # admixr2 built this copula, so it also knows its DENSITY -- and supplying it
-  # lets covStrata() condition on an exact covariate value by
-  # sampling-importance-resampling rather than by binning, which removes the
-  # attenuation a band carries. On the copula scale:
+  # admixr2 built this copula, so it also knows its DENSITY -- letting covStrata() condition on an exact
+  # covariate value by sampling-importance-resampling rather than binning. On the copula scale:
   #   c(u) = |R|^-1/2 exp(-0.5 z' (R^-1 - I) z),   z = qnorm(u)
-  # NOT named `cor_matrix`: `$` PARTIAL-MATCHES, so `cov_dist$cor` would have
-  # silently returned this matrix everywhere `cor` was read.
+  # NOT named `cor_matrix`: `$` PARTIAL-MATCHES, so `cov_dist$cor` would silently return this everywhere.
   cov_dist[["latentR"]] <- R
   cov_dist[["discExact"]] <- .admCovDiscExact(cov_dist, nms, R)
   margins <- lapply(nms, function(nm) cov_dist[[nm]])
@@ -987,26 +941,19 @@
     pr <- spec$probs %||% rep(1 / length(spec$values), length(spec$values))
     return(list(x = as.numeric(spec$values), w = pr / sum(pr)))
   }
-  # A DEGENERATE POINT NEEDS ONE NODE, NOT n_nodes COPIES OF ITSELF. A stratified covariate is held at a point
-  # inside its stratum (pt_spec), and a point spec carries only `quantile`, so it fell through to the branch
-  # below and was handed the whole standard-normal axis -- n_nodes rows with IDENTICAL covariate values. The
-  # answer was right and the grid was n_nodes times too big PER STRATIFIED COVARIATE, every extra row a
-  # duplicate solve.
+  # A DEGENERATE POINT NEEDS ONE NODE, NOT n_nodes COPIES OF ITSELF: a point spec (a stratified covariate held
+  # at pt_spec) carries only `quantile`, and without this branch it fell through and was handed the whole
+  # standard-normal axis -- n_nodes rows with IDENTICAL covariate values, every extra one a duplicate solve.
   if (isTRUE(spec[[".point"]]))
     return(list(x = as.numeric(spec$quantile(0.5)), w = 1))
   g <- .adghNodes1(n_nodes)                       # standard-normal nodes/weights
-  # A user-supplied quantile function. E_a[h(a)] = E_z[h(F^-1(Phi(z)))] for z ~ N(0,1), so pushing the
-  # standard-normal nodes through Phi and then F^-1 is an exact quadrature for ANY margin -- which is also what
-  # makes this the hook a copula-based joint sampler plugs into.
-
-  # Without this branch the function fell through to `spec$mu + spec$sd * g$x`, and a quantile spec has neither:
-  # x came back numeric(0) against 7 weights, .admCovGrid built a zero-row grid, and adgh died on the first
-  # objective evaluation. admc was unaffected, going through .admCovQuantile instead.
+  # A user-supplied quantile function: E_a[h(a)] = E_z[h(F^-1(Phi(z)))] for z ~ N(0,1), so pushing the
+  # standard-normal nodes through Phi and then F^-1 is an exact quadrature for ANY margin. Without this branch
+  # the function fell through to `spec$mu + spec$sd * g$x`, which a quantile spec has neither of.
   #
-  # CLAMP before a user quantile function sees it. pnorm() returns exactly 1 from |z| >= 8.30, which this grid
-  # reaches at 31 nodes, and an unbounded quantile is then infinite (qweibull(1, 1.5, 55) = Inf at 41 nodes),
-  # propagating silently into the moments. It costs nothing below 31 nodes. (The joint branch of .admCovGrid has
-  # the same guard for the same reason.)
+  # CLAMP before a user quantile function sees it: pnorm() returns exactly 1 from |z| >= 8.30 (reached at 31
+  # nodes), and an unbounded quantile is then infinite (qweibull(1, 1.5, 55) = Inf), propagating silently into
+  # the moments. Costs nothing below 31 nodes. (.admCovGrid's joint branch has the same guard.)
   if (is.function(spec$quantile))
     return(list(x = as.numeric(spec$quantile(
                      .admCovU(g$x))), w = g$w))
@@ -1061,43 +1008,32 @@
 # contrast is scored as evidence against sources that have a real one (measured: -53.2% against a true 0.450).
 
 # GENERATION-SIDE, NOT AN ESTIMATOR SETTING, because stratifying needs per-stratum OBSERVATIONS. Scoring one
-# pooled (E, V) against K conditional predictions is -2 log of an unnormalised geometric mean, which is not the
-# likelihood of anything. So strata arrive as ordinary studies, each with its own n and data (verified
-# bit-identical to fitting them as unrelated studies).
+# pooled (E, V) against K conditional predictions is -2 log of an unnormalised geometric mean, not the
+# likelihood of anything. So strata arrive as ordinary studies, each with its own n and data.
 
 # CONDITIONING. Within stratum k the covariates the source did NOT fit are marginalised over their distribution
-# CONDITIONAL on that stratum. The unconditional shortcut predicts the average-x2 response at every x1 node
-# while the source's high-x1 subjects had high x2 -- a mean error that VARIES ACROSS NODES, the shape that
-# biases the stratified covariate's own coefficient. Relative error of the block mean: 1e-3 conditional against
-# 0.20 at rho = 0.3 and 0.96 at rho = 0.85. They coincide exactly at rho = 0, which is why an
-# independent-covariate test never showed it.
-
+# CONDITIONAL on that stratum -- the unconditional shortcut predicts the average-x2 response at every x1 node
+# while high-x1 subjects had high x2, biasing the stratified covariate's own coefficient. Relative error of the
+# block mean: 1e-3 conditional against 0.20 at rho = 0.3 and 0.96 at rho = 0.85 (0 at rho = 0, why an
+# independent-covariate test never showed it).
+#
 # Done in U-SPACE, which is what makes it work for an arbitrary sampler: a copula maps INDEPENDENT uniforms to
 # dependent values, so holding the leading uniforms fixed and varying the rest samples the conditional
-# distribution. Nothing inverts the sampler and no forward Rosenblatt is needed, because a stratum is defined BY
-# ITS NODE in u-space and the covariate value there is read off the sampler.
-
-# THAT ROUTE IS GONE FOR AN OPAQUE SAMPLER, and the paragraph above now describes only admixr2's own `cor`
-# copula, which is unwrapped to margins plus `latentR` before it gets here. Fixing the stratified covariates'
-# INPUT uniforms requires them to lead the sampler's own conditioning cascade, and fails silently when they do
-# not -- so a user `joint` bins the sampler's OUTPUT instead. Do not reintroduce a cascade contract on the
-# strength of that paragraph: it was read that way once and cost a column reversal.
-
-# Do not reintroduce a cascade contract on the strength of the paragraph above: it was read that way once and
-# cost a column reversal that bound covariate k to the sampler's variable d-k+1. Strata per stratified
-# covariate.
+# distribution -- nothing inverts the sampler. This route is gone for an opaque sampler though: fixing the
+# stratified covariates' INPUT uniforms requires leading the sampler's own conditioning cascade, so a user
+# `joint` bins the sampler's OUTPUT instead. Do not reintroduce a cascade contract on the strength of that --
+# it was read that way once and cost a column reversal binding covariate k to the sampler's variable d-k+1.
 
 # A CONVERGENCE PARAMETER, NOT A MODELLING CHOICE -- the old default of 5 read like a preference. The
 # well-defined object is the J -> infinity limit (N * E_a[l]); any finite J approximates it, and under
 # misspecification the answer can jump between basins rather than drift (a verified counterexample flips from
-# beta = 1.57 at J = 4 to 1.6e-05 at J = 5). Drive it up until the answer stops moving. 9 is a starting point;
-# cost is J^p studies for p stratified covariates, so affordable in one and expensive in three.
-
-# How J-dependent the objective is depends on the rule, and on the default it is barely at all -- measured
-# across J = 5 to 100 on one banded source: Gauss-Hermite 0.03 units, pooled bins (an opaque `joint` only) 51
-# and still moving. So OFV, AIC, BIC and a likelihood ratio ARE comparable across resolutions on the default
-# path and are not on the pooled one, where the estimate also wanders. The value is stamped onto every generated
-# study and carried onto the fit so anova() can refuse the comparison.
+# beta = 1.57 at J = 4 to 1.6e-05 at J = 5). Drive it up until the answer stops moving; cost is J^p studies for
+# p stratified covariates.
+#
+# How J-dependent the objective is depends on the rule: measured across J = 5 to 100 on one banded source,
+# Gauss-Hermite moves 0.03 units, pooled bins (an opaque `joint` only) move 51 and are still moving. So OFV,
+# AIC, BIC and a likelihood ratio ARE comparable across resolutions on the default path, not the pooled one.
+# The value is stamped onto every generated study and carried onto the fit so anova() can refuse the comparison.
 .ADM_STRATA_NODES <- 9L
 
 # Truncate one covariate's margin to the range a source actually enrolled.
@@ -1260,15 +1196,13 @@
   # Every draw lands on it exactly, so the stratified covariate is a genuine
   # POINT rather than an importance-weighted sample.
   #
-  # INDEPENDENCE IS A KNOWN LATENT STRUCTURE, not a missing one. `latentR` is
+  # INDEPENDENCE IS A KNOWN LATENT STRUCTURE, not a missing one: `latentR` is
   # recorded only when `cor` was supplied, so a study declaring no dependence
   # fell to the pooled branch below, whose equiprobable-bin midpoint rule
-  # converges as O(1/J) -- not good enough to be a likelihood.
-  #
-  # So the fast rule is the default wherever the latent structure is KNOWN --
-  # an explicit `cor` or no declared dependence at all, which IS independence.
-  # An opaque user `joint` is the one case that stays pooled, since nothing
-  # can be conditioned there.
+  # converges as O(1/J) -- not good enough to be a likelihood. So the fast
+  # rule is the default wherever the latent structure is KNOWN -- an explicit
+  # `cor` or no declared dependence at all. An opaque user `joint` is the one
+  # case that stays pooled, since nothing can be conditioned there.
 
   Rm <- cov_dist[["latentR"]]
   if (is.null(Rm) && is.null(cov_dist[["joint"]])) Rm <- diag(length(nms))
@@ -1276,19 +1210,12 @@
                  logical(1))
   # A DISCRETE COVARIATE RIDES THIS BRANCH ONLY IF IT IS LATENTLY INDEPENDENT
   # of the rest: chol(R)[, j] is then e_j, its level a monotone function of
-  # its own uniform, so it enumerates EXACTLY -- as a stratum when stratified,
-  # as exact level nodes inside every stratum otherwise. Correlated with a
-  # continuous covariate it's a TRUNCATION of the latent, not a point, and
-  # keeps the pooled route.
-
-  # Getting here matters: discreteness used to send the whole study -- most
-  # real covariate models, e.g. sex, genotype, formulation -- to the pooled route.
-
-  # It is not only a rate issue: the pooled route represents a band by an
-  # equal-weight SAMPLE, a deterministic function of cov_dist, so whatever
-  # that one finite ensemble contains is read back out as population
-  # structure -- capable of manufacturing curvature in a coefficient that
-  # isn't identified at all.
+  # its own uniform, so it enumerates EXACTLY. Correlated with a continuous
+  # covariate it's a TRUNCATION of the latent, not a point, and keeps the
+  # pooled route -- discreteness used to send the whole study (most real
+  # covariate models: sex, genotype, formulation) to the pooled route, which
+  # represents a band by an equal-weight SAMPLE and can manufacture curvature
+  # in a coefficient that isn't identified at all.
   disc_sep <- !any(disc) || (!is.null(Rm) && all(vapply(which(disc), function(j)
     all(abs(Rm[j, -j, drop = TRUE]) < 1e-12), logical(1))))
   if (!is.null(Rm) && disc_sep) {
@@ -1844,24 +1771,17 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # weights or the row stride changes. A SMOLYAK SPARSE GRID over the continuous margins, crossed with the
 # discrete ones enumerated exactly.
 
-# WHY THIS REPLACED THE "taylor" DESIGN. That design was derived as a second-order moment expansion, but it is
-# a cubature rule and its own comment recorded which one: at the moment-matched radius it "coincides with
-# 3-point Gauss-Hermite". Measured, it was exactly Smolyak LEVEL 2 -- so the way to make it more accurate is the
-# next LEVEL, not a bigger radius and not more nodes along each axis. Three measurements settle that:
-
-#   * MORE NODES PER AXIS SATURATES. What is left is the mixed terms an axial
-#     rule structurally cannot see.
-#   * LEVEL 3 IS A LARGE AND CHEAP GAIN. At p = 4, rho = 0.85 it is 49 points
-#     against the product grid's 81 and is 44x more accurate on the mean --
-#     cheaper AND better.
-#   * CORRELATION FLIPS SIGN BETWEEN THE LEVELS. Level 2 gets WORSE with it,
-#     level 3 gets BETTER. The cheap rule that handles correlation well is real;
-#     it is level 3, and it was never level 2.
-
-# The price is SIGNED weights. sum(W) is exactly 1 at every level, but sum|W| is 1.0 at level 2 and up to 4.1
-# at level 3, so the answer is a difference of terms several times its own size and any solver noise in a design
-# point is amplified by that factor -- which is why .admSandwichCov checks Om for indefiniteness. Level 2 is not
-# innocent either: its centre weight is already negative at p = 4.
+# WHY THIS REPLACED THE "taylor" DESIGN. It was derived as a second-order moment expansion but IS a cubature
+# rule: at the moment-matched radius it coincides with 3-point Gauss-Hermite, measured exactly Smolyak LEVEL 2.
+# So the way to gain accuracy is the next LEVEL, not a bigger radius or more nodes per axis: more nodes per
+# axis saturates (what's left is mixed terms an axial rule can't see); level 3 at p = 4, rho = 0.85 is 49
+# points against the product grid's 81 and 44x more accurate on the mean; correlation flips sign between
+# levels (2 gets worse with it, 3 gets better).
+#
+# The price is SIGNED weights: sum(W) is exactly 1 at every level, but sum|W| is 1.0 at level 2 and up to 4.1
+# at level 3, so the answer is a difference of terms several times its own size and solver noise is amplified
+# by that factor -- why .admSandwichCov checks Om for indefiniteness. Level 2's centre weight is already
+# negative at p = 4.
 
 # Returns list(X, W, z) exactly as .admCovGrid does, so every consumer -- the moments, the omega chain, the ADF
 # weight, the shift certificate -- takes it unchanged. That is the whole reason this is a GRID rather than a
@@ -1965,9 +1885,8 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 #
 # Every i in {1,...,level}^d needs Lo <= sum(i) <= Hi, and with d = n_eta + p
 # ordinary, level^d at level = 5 and d = 12 is 244M rows -- built and thrown
-# away almost entirely per study. The caller's `tryCatch(error = NULL)`
-# turned the resulting allocation failure into a silent Sobol fallback, so
-# it presented as a stall.
+# away almost entirely per study; the resulting allocation failure used to
+# present as a silent stall via the caller's `tryCatch(error = NULL)`.
 #
 # Since each i_j >= 1, sum(i) >= d already, so admissible sums sit in
 # [max(level, d), d+level-1], a band of width level-1 whose index count
@@ -2203,20 +2122,16 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # therefore costs n_u * (nodes for the OTHER etas) rows instead of n_node^n_eta * n_cov^p, which is CONSTANT in
 # the number of covariates.
 
-# Two properties make this cheap as well as exact:
-
-#  * Delta is a function of the structural thetas and the covariates only -- no
-#    ODE, no eta, no time -- so it is evaluated by running the model's own
-#    parameter assignment in R over the covariate nodes as VECTORS.  Zero solves.
-#  * u's law is the mixture sum_j w_j N(Delta_j, omega^2), whose mean and
-#    variance are known exactly (E[Delta], Var(Delta) + omega^2), so its
-#    quantiles are found by Newton from a moment-matched normal start rather
-#    than by a grid or a bracketing solve.
+# Two properties make this cheap as well as exact: Delta is a function of the structural thetas and the
+# covariates only -- no ODE, no eta, no time -- so it's evaluated by running the model's own parameter
+# assignment in R over the covariate nodes as VECTORS (zero solves); and u's law is the mixture
+# sum_j w_j N(Delta_j, omega^2), whose mean and variance are known exactly, so its quantiles come from Newton
+# starting at a moment-matched normal rather than a grid or bracketing solve.
 
 # THE PRECONDITION IS CHECKED NUMERICALLY, NEVER READ OFF THE MODEL TEXT. .admShiftVerify() evaluates the
-# identity above against the compiled model at several etas and covariate values; the path is granted only if it
-# holds to tolerance. This is the positive check the earlier `uq` route lacked -- its four silent-wrong-answer
-# modes were all consequences of inferring the property from syntax.
+# identity above against the compiled model at several etas and covariate values; the path is granted only if
+# it holds to tolerance -- the positive check the earlier `uq` route lacked, whose silent-wrong-answer modes
+# were all consequences of inferring the property from syntax.
 
 # Which assignment carries the covariates, and which eta shares it? Returns NULL unless EXACTLY one eta appears
 # with them -- m > 1 (a covariate on two mu-referenced parameters) is representable but needs a vector u, which
@@ -2294,23 +2209,21 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 }
 
 # Quantiles of u = Delta + eta at Gauss-Hermite probabilities.
-
+#
 # u's law is the mixture sum_j W_j N(Delta_j, om^2). Its mean and variance are exact, so Newton starts from the
 # moment-matched normal and converges in a few steps. Beyond ~8 standard deviations pnorm() saturates at exactly
-# 0 or 1, so the target probability carries no information and the quantile there is not determined; those nodes
-# have Gauss-Hermite weight ~1e-23 and cannot move a moment, so they are left as Newton leaves them.
+# 0 or 1, so the target probability carries no information; those nodes have Gauss-Hermite weight ~1e-23 and
+# cannot move a moment, so they are left as Newton leaves them.
 #
-# Is the weighted law of Delta itself NORMAL?
-
-# When it is, u = Delta(a) + eta is normal too -- the convolution of two normals -- with variance Var(Delta) +
-# omega^2, and its quantiles are the closed form the Newton inversion below merely converges to. That is the
-# retired "collapse" path, recovered as a special case of the shift rather than a separate route.
-
-# The test is on (Delta, W) ALONE: no model text, no muRefCovariateDataFrame. That matters twice over. rxode2
-# splits covariate forms across THREE frames, so any single frame sees a third of the cases and the union is
-# still a syntactic guess. And the property that actually matters is not "the covariate is normal" but "Delta(a)
-# is normal", which admits the allometric case a distributional test catches for free: for lognormal WT,
-# `tcov*log(WT/70)` is affine in the latent normal score and so exactly qualifies.
+# Is the weighted law of Delta itself NORMAL? When it is, u = Delta(a) + eta is normal too -- the convolution
+# of two normals -- with variance Var(Delta) + omega^2, and its quantiles are the closed form the Newton
+# inversion below merely converges to. That is the retired "collapse" path, recovered as a special case of the
+# shift rather than a separate route.
+#
+# The test is on (Delta, W) ALONE: no model text, no muRefCovariateDataFrame -- rxode2 splits covariate forms
+# across THREE frames, so any single frame sees a third of the cases and the union is still a syntactic guess.
+# And the property that matters is not "the covariate is normal" but "Delta(a) is normal", which admits the
+# allometric case for free: for lognormal WT, `tcov*log(WT/70)` is affine in the latent normal score.
 
 # Standardised central moments 3..6 against N(0,1). Delta arrives on a Gauss-Hermite rule, which reproduces a
 # normal's moments to machine precision up to degree 2n-1, so a qualifying Delta scores ~1e-13 and a
@@ -2729,12 +2642,10 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
   if (!sum(v) > 0) bad("has probabilities summing to zero.")
   # A SINGLE named proportion is a BINARY covariate, not a one-level one. `SEX = c(male = 0.55)` is exactly how
   # a baseline table prints it, but normalising it like a level vector divides 0.55 by itself, giving one level
-  # at probability 1, i.e. a CONSTANT whose coefficient is not identified. .admPopSpec already handled it
-  # correctly, so the two parsers disagreed on the one form the docs teach most.
+  # at probability 1, i.e. a CONSTANT whose coefficient is not identified.
   #
-  # A SINGLE value is only a proportion if it IS one. `c(kg = 70)` is not, and reading it as one gives
-  # P(absent) = -69: the multi-level branch below is normalised by its sum and so absorbed any scale silently,
-  # but a lone value has no second number to be normalised against. Refuse it and name both spellings.
+  # A SINGLE value is only a proportion if it IS one: `c(kg = 70)` is not, and reading it as one gives
+  # P(absent) = -69. Refuse it and name both spellings.
   if (length(v) == 1L) {
     p1 <- as.numeric(v)
     if (!is.finite(p1) || p1 < 0 || p1 > 1)
@@ -2883,12 +2794,10 @@ covDist <- function(..., cor = NULL, joint = NULL,
   out <- .admCovDistCanon(out)
   # A NORMAL margin is unbounded below, and the quadrature reaches |z| = 5.19 at the default 7 nodes -- so any
   # covariate with a CV above about 0.27 gets a node at or below zero, and an allometric or log term evaluated
-  # there is NaN. That covers most PK covariates (weight 72+/-16 is CV 0.22), so it is worth saying out loud
-  # rather than leaving to a solver failure. It is only a WARNING: a centred covariate -- a log-ratio, a
-  # z-score, a change from baseline -- is legitimately negative and needs no fixing. .admCovSpecNames, NOT
+  # there is NaN (weight 72+/-16, CV 0.22, is a typical case). It is only a WARNING: a centred covariate --
+  # a log-ratio, a z-score -- is legitimately negative and needs no fixing. Use .admCovSpecNames, not
   # names(out): the metadata siblings are a function (`joint`) and a matrix (`latentR`), and sp[["mu"]] on
-  # either is an error, not a NULL. This is the third distinct bug from enumerating names(cov_dist) directly
-  # -- it is what the accessor exists for.
+  # either is an error, not a NULL.
   for (nm in .admCovSpecNames(out)) {
     sp <- out[[nm]]
     if (!is.list(sp) || is.null(sp[["mu"]]) || is.null(sp[["sd"]])) next
@@ -3008,14 +2917,12 @@ print.covDist <- function(x, ...) {
 # exactly, since d log p / dz = (G'(b'z)/G(b'z)) * b has direction b at every
 # z, only the magnitude varying with G. Affine, log-affine and single-index
 # are that one statement at different G (`const` is G' = 0), so no per-column
-# route needs freezing and replaying: a threshold could flip mid-fit and
-# step the objective, a direction moves smoothly.
+# route needs freezing and replaying.
 #
 # RELATIVE, not raw: d p / dz carries p's units (a clearance and a volume
 # can't share one SVD scale), and raw slope is eta-dependent while the
-# relative gradient isn't (eta drops out of log p = theta + eta + log G). A
-# genuine covariate-by-eta interaction still fails .admCovCollapse's
-# eta = 0.5 re-probe. See algorithm/collapse-derivation/relgrad_eta.txt.
+# relative gradient isn't. A genuine covariate-by-eta interaction still
+# fails .admCovCollapse's eta = 0.5 re-probe.
 #
 # f evaluates the readers at a matrix of latent rows, one column per reader;
 # z0's base point carries the loading read, the rest certify it.
@@ -3038,29 +2945,22 @@ print.covDist <- function(x, ...) {
   P0 <- V[2L * n + seq_len(S), , drop = FALSE]
   D  <- (V[seq_len(n), , drop = FALSE] -
          V[n + seq_len(n), , drop = FALSE]) / (2 * h)
-  # WHERE the loading is read. Not the first base point: a link can be
+  # WHERE the loading is read: not the first base point, since a link can be
   # STATIONARY there -- (b'z)^3 has a zero gradient at the origin -- and reading
-  # a zero would report no direction and pin the covariate at its median for
-  # the whole fit. So all columns are read at the base point carrying the
-  # most signal, scale taken there and nowhere else. One SHARED point, not
-  # one per column, because B has to be the loading matrix AT a latent point
-  # for its singular values to be comparable.
+  # a zero would pin the covariate at its median for the whole fit. All columns
+  # are read at ONE SHARED base point carrying the most signal, because B has
+  # to be the loading matrix AT a latent point for its singular values to be
+  # comparable.
   #
   # WHAT IS FROZEN IS THE ORDER, NOT ONE ROW. i0 is a caller-supplied freeze;
-  # every caller re-aiming an already-admitted design (.admCovRefresh,
-  # .admJointDesign, the admission probes) passes back the ordering admission
-  # chose. Without it a coefficient moving between calls can flip which point
-  # carries the most signal, rescaling every column of B differently and
-  # rotating the SVD basis of the same column space -- stepping the design
-  # between objective evaluations.
-  #
-  # An ORDER rather than the argmax alone, because the frozen point can go
-  # stationary as parameters move while every other candidate still reads a
-  # good direction. Re-ranking at the CURRENT parameters would fix that and
-  # reintroduce the rotation, so the ranking is done once, frozen whole, and
-  # a degenerate point hands off to the NEXT candidate in that fixed order --
-  # depending on the parameters only through "any signal at all", not how
-  # much. Pinned by test-collapse-rank-branches.R.
+  # callers re-aiming an already-admitted design pass back the ordering
+  # admission chose, since a coefficient moving between calls could otherwise
+  # flip which point carries the most signal and rotate the SVD basis of the
+  # same column space between objective evaluations. An ORDER rather than the
+  # argmax alone, because the frozen point can go stationary as parameters
+  # move while another candidate still reads a good direction; a degenerate
+  # point hands off to the NEXT candidate in that fixed order. Pinned by
+  # test-collapse-rank-branches.R.
   rel <- vapply(seq_len(m), function(k) max(abs(P0[, k]), 1e-300), numeric(1))
   ord <- if (is.null(i0)) {
     # the ranking is a SELECTION, so a column-constant normaliser is enough
@@ -3294,21 +3194,18 @@ print.covDist <- function(x, ...) {
 # parameter, and moving it turns the direction the covariates reach the model
 # through, so a design built once at admission pins them to the line the STARTING
 # values implied and misses the orthogonal variation entirely -- 53 to 163 -2LL
-# units out for a 0.1 move in one coefficient. Every unit and moment test passed
-# throughout, because they all evaluate at the initial point where the cached
-# design is correct by construction.
+# units out for a 0.1 move in one coefficient.
 #
 # .adghGrid recomputes the shift path's Delta on every objective call for the
 # same reason; this is the collapse's version. What stays fixed at admission is
 # everything STRUCTURAL -- rank, node counts, certificate -- none of which a
 # coefficient's VALUE can change. Costs no solves.
 .admCovRefresh <- function(co, st) {
-  # A FAILED REFRESH IS MARKED, not silently absorbed. Every exit below used to
-  # `return(co)` -- the ADMISSION design, aimed at the starting values -- so a
-  # re-aim that failed once the optimizer had moved scored the objective on the
-  # wrong line in latent space, through the one path nothing could see. The
-  # object is still returned (callers read its shape) but carries `stale`, and
-  # .adghGrid turns that into an unsolvable point.
+  # A FAILED REFRESH IS MARKED, not silently absorbed: a re-aim that failed
+  # once the optimizer had moved would otherwise score the objective on the
+  # wrong line in latent space. The object is still returned (callers read
+  # its shape) but carries `stale`, and .adghGrid turns that into an
+  # unsolvable point.
   .stale <- function(x) { if (!is.null(x)) x$stale <- TRUE; x }
   if (!is.null(co[["by_cell"]])) {
     ch <- lapply(co$by_cell, .admCovRefresh, st = st)
@@ -3361,16 +3258,15 @@ print.covDist <- function(x, ...) {
 
 # How many nodes ONE COLLAPSED DIRECTION deserves.
 #
-# It is not cov_nodes. A collapsed direction carries the COMBINED spread of the
-# pc covariate axes it replaced, so it is wider than any one of them and needs
-# proportionally more resolution -- the same reasoning behind the shift path's
-# n_u = min(101, 4 * nn0) in .adghGrid.
+# It is not cov_nodes: a collapsed direction carries the COMBINED spread of
+# the pc covariate axes it replaced, so it is wider than any one of them and
+# needs proportionally more resolution -- the same reasoning behind the
+# shift path's n_u = min(101, 4 * nn0) in .adghGrid.
 #
-# Measured on three lognormal covariates collapsing to one direction against a
-# 21^3 reference at cov_nodes = 7: at the cap the collapse beats the grid at
-# every parameter point on 16x fewer design points, while at cov_nodes it is
-# worse everywhere except the starting values -- which is where every moment
-# test evaluates, and why this survived until a real fit walked away from them.
+# Measured on three lognormal covariates collapsing to one direction against
+# a 21^3 reference at cov_nodes = 7: at the cap the collapse beats the grid
+# at every parameter point on 16x fewer design points, while at cov_nodes it
+# is worse everywhere except the starting values.
 #
 # pc/r is how many axes each direction absorbs on average, so r == pc
 # recovers cov_nodes exactly and no collapse claims more than it merged.
@@ -3472,23 +3368,23 @@ print.covDist <- function(x, ...) {
                 i0 = i0)
   B <- gradB(cell_list[[1L]])
   if (is.null(B)) return(NULL)
-  # FREEZE the base-point ORDER THE FIRST TIME IT IS CHOSEN. Every later call in
-  # this admission, and every later .admCovRefresh(), must read the loading at the
-  # same row of z0, or a coefficient moving between calls flips which candidate
-  # carries the most signal and rotates the SVD basis of the same column space,
-  # stepping the GH design. The order rather than the single winning row, so a
-  # link going stationary at the frozen point has a fixed place to fall to.
+  # FREEZE the base-point ORDER THE FIRST TIME IT IS CHOSEN. Every later call
+  # in this admission, and every later .admCovRefresh(), must read the loading
+  # at the same row of z0, or a coefficient moving between calls flips which
+  # candidate carries the most signal and rotates the SVD basis, stepping the
+  # GH design. The order rather than the single winning row, so a link going
+  # stationary at the frozen point has a fixed place to fall to.
   i0 <- attr(B, "at")
   gradB <- function(cell, st_use = st, eta_at = 0)
     .admCovGradB(function(ZZ) probe_gen(eta_at, cell,
                                         .admCovXFromZ(cd, cn, ZZ), st_use), z0,
                 i0 = i0)
   # THE LOADING MUST NOT DEPEND ON THE RANDOM EFFECT. A covariate-by-eta
-  # interaction (cl <- exp(tcl + b * WT * eta.cl)) has a direction that moves with
-  # eta, and the probe at eta = 0 would report b = 0 -- a collapse onto the wrong
-  # subspace, silently. Re-probe away from zero and require the same loadings. Or
-  # with the STRATUM: a covariate-by-SEX interaction differs cell to cell, and one
-  # shared design would be wrong in all but one.
+  # interaction (cl <- exp(tcl + b * WT * eta.cl)) has a direction that moves
+  # with eta, and the probe at eta = 0 would report b = 0 -- a collapse onto
+  # the wrong subspace, silently. Re-probe away from zero and require the
+  # same loadings; likewise a covariate-by-SEX interaction differs cell to
+  # cell, so re-probe with the STRATUM too.
   chk <- list()
   for (cl in cell_list) {
     chk[[length(chk) + 1L]] <- list(0, cl)
@@ -3497,10 +3393,6 @@ print.covDist <- function(x, ...) {
       chk[[length(chk) + 1L]] <- list(x, cl)
     }
   }
-  # The relative gradient makes the ETA half of this pass by construction for the
-  # ordinary multiplicative form -- see .admCovGradB -- which is the point: it used
-  # to fail there for every single-index model. What it still catches is a genuine
-  # covariate-by-eta interaction, and a covariate-by-stratum one.
   invariant <- function(sp, B0)
     all(vapply(chk, function(cc) {
       B2 <- gradB(cc[[2L]], st_use = sp, eta_at = cc[[1L]])
@@ -3595,12 +3487,10 @@ print.covDist <- function(x, ...) {
   # VERIFY THE DESIGN, NOT THE CERTIFICATE. What the collapse needs is that
   # the reduced design reproduce the LAW of every covariate-reading
   # assignment; the affinity/single-index proxies tried were not sharp
-  # enough (a within-bin spread reports 0.18 for an exact identity link).
-  #
-  # So evaluate the assignments at the DESIGN points and compare their
-  # weighted moments against a large probe. Costs no solves, and subsumes
-  # the affine test rather than replacing it -- an affine case passes
-  # trivially.
+  # enough (a within-bin spread reports 0.18 for an exact identity link). So
+  # evaluate the assignments at the DESIGN points and compare their weighted
+  # moments against a large probe -- costs no solves, and an affine case
+  # still passes trivially.
   ver <- function(cell, wcell) {
     Pd <- probe_at(Xc, cell)
     if (is.null(Pd)) return(FALSE)
@@ -3664,12 +3554,13 @@ print.covDist <- function(x, ...) {
   cn  <- nms[!dsc]                    # CONTINUOUS: what rotates
   dn  <- nms[dsc]                     # DISCRETE: enumerated, as strata
   pc  <- length(cn)
-  # A discrete covariate is a stratum, not a direction -- it has no latent normal
-  # to rotate into. It is crossed with the continuous design exactly as
+  # A discrete covariate is a stratum, not a direction -- it has no latent
+  # normal to rotate into. It is crossed with the continuous design exactly as
   # .admCovCollapse crosses it, so the two constructions stack instead of one
-  # disqualifying the other. Sex, genotype and formulation used to turn the whole
-  # joint path off. A degenerate point margin is not a direction either -- see
-  # .admCovNonPoint(); pc sizes the latent block, pcm counts DIMENSIONS.
+  # disqualifying the other (sex, genotype, formulation used to turn the
+  # whole joint path off). A degenerate point margin is not a direction
+  # either -- see .admCovNonPoint(); pc sizes the latent block, pcm counts
+  # DIMENSIONS.
   pcm <- .admCovNonPoint(cd, cn)
   if (pcm < 1L) return(NULL)
   R <- cd[["latentR"]]
@@ -3740,17 +3631,15 @@ print.covDist <- function(x, ...) {
   # NULL, which is load-bearing: `$` PARTIAL-MATCHES on lists, and while `m`
   # was absent jc$m resolved to jc$max_rows, so the row cap compared m^r
   # against itself and rejected every design silently. The [[ ]] reads
-  # downstream stay as a second line of defence, and test-covariate.R runs
-  # these paths under warnPartialMatchDollar.
+  # downstream stay as a second line of defence.
+  #
   # The base points the loading is read at and certified over. z0[1, ] is the
   # ORIGIN, where every later refresh reads too, so a refresh differs from
-  # admission only through the thetas. The rest spread over the latent space
-  # to certify that the direction does not move.
+  # admission only through the thetas.
   z0 <- rbind(rep(0, nl), Xi[c(1L, 8L, 20L, 50L, 97L) %% nrow(Xi) + 1L, ,
                             drop = FALSE])
   # Xv/Wv are the VERIFICATION rule and nothing else reads them: .admJointAdmit
-  # scores the design against them once and then drops them, so what the study
-  # carries -- and ships to every restart daemon -- is not dead payload.
+  # scores the design against them once and then drops them.
   list(pr = pr, cn = cn, cd = cd, nms = nms, Rc = Rc, Lc = Lc, ne = ne, pc = pc,
        nl = nl, nl_m = nl_m, pc_m = pcm,
        Xv = Xv, Wv = Wv, z0 = z0,
@@ -3876,19 +3765,14 @@ print.covDist <- function(x, ...) {
   }
   # THE RANK CAN MOVE WITH OMEGA, NOT ONLY WITH THE THETAS. B's eta block is
   # t(L) %*% Deta, so an Omega making two initially-collinear eta directions
-  # independent raises the rank exactly as a coefficient leaving zero does.
-  # Probing the thetas alone freezes a rank the fit can outgrow, after which
-  # .admJointDesign refuses every design and the objective is +Inf across a
-  # whole REGION rather than at a point.
+  # independent raises the rank exactly as a coefficient leaving zero does;
+  # probing the thetas alone would freeze a rank the fit can outgrow.
   #
   # ENTRYWISE, exactly as .admCollapseRank treats a theta -- NOT a scaling of
   # L, which can't find the case this is for: an eta whose variance starts at
   # ~0 contributes a row of B that's ~0, and L * 1.1 leaves it ~0. A diagonal
   # is probed UPWARD only (shrinking a variance can only remove a direction),
-  # an off-diagonal both ways.
-  #
-  # Rank only, not the whole nested certificate: what walls the fit off is
-  # the `.admSvdRank(sv) > r` refusal in .admJointDesign, and the
+  # an off-diagonal both ways. Rank only, not the whole nested certificate --
   # eta/stratum invariance is a statement about the model L doesn't change.
   r <- .admCollapseRank(B0, st, jc$struct_names %||% character(0),
                         function(sp) .admJointB(jc, sp, L, i0 = jc$i0),
