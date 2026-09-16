@@ -119,11 +119,21 @@ extrapolates. A discrete covariate is drawn on its levels rather than swept
 through the values between them.
 
 **`covariate_resid`** plots each study's mean standardised residual against the
-covariate value it sits at, with an `lm` trend across studies. A slope is a
-mis-specified covariate form. Read it with the coverage bars: three sources
-spanning the *same* range of a covariate cannot say anything about it, whatever
-the fitted line does, and with few sources two covariates whose study medians
-move together cannot be told apart.
+covariate value it sits at. How it is read depends on the covariate:
+
+* **continuous** --- a trend. The dashed `lm` across studies; a slope is a
+  mis-specified covariate form.
+* **discrete** --- a contrast. The axis is ticked at the levels and nowhere
+  else, and no regression is drawn: a line across the levels of a factor
+  reports as a slope what is really a difference between groups. Instead the
+  strata `stratify` cut from one source are joined in grey, because that
+  pairing is what banding buys --- the same study, one covariate moved. Several
+  sources tilting the same way is the mis-specification.
+
+Read it with the coverage bars: three sources spanning the *same* range of a
+covariate cannot say anything about it, whatever the fitted line does, and with
+few sources two covariates whose study medians move together cannot be told
+apart.
 
 Both panels distinguish how a study enters a covariate, because the two are
 different kinds of evidence:

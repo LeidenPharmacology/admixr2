@@ -553,6 +553,51 @@ head.paged_df <- function(x, n = 6L, ...) {
   if (is.null(sp) || isTRUE(sp[[".point"]])) "conditional" else "marginal"
 }
 
+## The levels of a DISCRETE covariate, or NULL when it is continuous.
+##
+## Discrete means declared levels (`values`), or a covariate every study
+## conditions at a point -- `stratify`, `at`, `by`. Both panels have to agree
+## about this: one drawing `SEX` on a swept axis while the other treats it as
+## two levels is the same kind of split that already mislabelled a dropped
+## covariate once.
+##
+## `mid` is each study's median, so a handful of distinct conditioned values
+## are read as levels. The cap stops a continuous covariate that happens to be
+## conditioned in every study from becoming a 30-level factor.
+.admCovLevels <- function(cv, studies, mid, max_lev = 8L) {
+  lev <- unlist(lapply(studies, function(s) .admCovStudySpec(s, cv)$values))
+  if (length(lev)) return(sort(unique(as.numeric(lev))))
+  if (!all(vapply(studies, .admCovStudyKind, character(1),
+                  cv = cv) == "conditional")) return(NULL)
+  u <- sort(unique(mid[is.finite(mid)]))
+  if (length(u) <= max_lev) u else NULL
+}
+
+## An axis-breaks function that ticks a discrete facet at its LEVELS only.
+##
+## `scales = "free_x"` gives each facet its own scale but they share one breaks
+## function, so it has to decide from the panel limits alone: a panel whose span
+## is filled by known levels is the discrete one. Everything else falls back to
+## base `pretty()`, which is what an untouched continuous axis would use.
+##
+## Without this a binary covariate is ticked at 0.25 and 0.75 -- values it does
+## not have, and that the model was never asked about.
+.admLevelBreaks <- function(levels) {
+  lv <- sort(unique(levels))
+  function(lims) {
+    inside <- lv[lv >= lims[1L] & lv <= lims[2L]]
+    if (length(inside) >= 2L && diff(range(inside)) >= 0.9 * diff(lims))
+      inside
+    else pretty(lims)
+  }
+}
+
+## The source a study came from: `stratify` splits one into `<source>_s1`,
+## `_s2`, ... and the strata of one source are a PAIRED set, not independent
+## points. That pairing is the evidence stratification creates, so the panels
+## need to be able to recover it.
+.admCovSource <- function(nm) sub("_s[0-9]+$", "", nm)
+
 ## Covariates worth a facet: any covariate any study describes.
 ##
 ## NOT restricted to the ones the model reads. A covariate the model omits is
@@ -626,14 +671,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   # DISCRETE: a covariate with declared levels, or one every study conditions at
   # a point. Swept continuously it draws the model at SEX = 0.37, which is not a
   # patient and not a prediction anyone can act on; its axis is the levels.
-  # Through .admCovStudySpec, like `knd` above: one answer per function to where
-  # a study's description of a covariate lives.
-  lev <- unlist(lapply(studies, function(s) .admCovStudySpec(s, cv)$values))
-  pts <- all(knd == "conditional")
-  disc <- if (length(lev)) sort(unique(as.numeric(lev)))
-          else if (pts) { u <- sort(unique(mid[is.finite(mid)]))
-                          if (length(u) <= 8L) u else NULL }
-          else NULL
+  disc <- .admCovLevels(cv, studies, mid)
 
   covered <- range(c(lo2, lo, mid, hi, hi2), na.rm = TRUE)
   span    <- diff(covered)
@@ -739,7 +777,8 @@ head.paged_df <- function(x, n = 6L, ...) {
     # the axis is not read as a study that only ever saw 62. A conditioned
     # study genuinely did see one value, and gets a zero-width span.
     xl <- .admCovStudyQ(s, cv, 0.1); xh <- .admCovStudyQ(s, cv, 0.9)
-    data.frame(cov = cv, study = nm, kind = .admCovStudyKind(s, cv),
+    data.frame(cov = cv, study = nm, source = .admCovSource(nm),
+               kind = .admCovStudyKind(s, cv),
                x = x, xlo = if (is.finite(xl)) xl else x,
                xhi = if (is.finite(xh)) xh else x,
                z = mean(z), n = n,
@@ -752,6 +791,13 @@ head.paged_df <- function(x, n = 6L, ...) {
   # that a covariate the model never reads earns a facet, this is reachable
   # from an ordinary `at =` held constant across sources.
   if (diff(range(df$x)) <= 0) return(NULL)
+  # A discrete covariate is read as a CONTRAST, not a trend, and the two are
+  # drawn differently: see the panel code.
+  df$disc <- !is.null(.admCovLevels(cv, studies, df$x))
+  # A source whose strata both survived is a PAIR -- the within-source contrast
+  # stratifying on this covariate produced. A source appearing once has no pair
+  # and its line would be a dot.
+  df$paired <- df$source %in% names(which(table(df$source) > 1L))
   df
 }
 
@@ -809,7 +855,19 @@ head.paged_df <- function(x, n = 6L, ...) {
 #' the covariate it was banded on, and as one merged marginal mark on every
 #' other, where its strata coincide.
 #'
-#' @section Reading a slope in `covariate_resid`:
+#' @section Reading `covariate_resid`:
+#' A **continuous** covariate is read as a trend: the dashed `lm` across studies,
+#' where a slope is a mis-specified covariate form.
+#'
+#' A **discrete** one is read as a contrast instead, and is drawn that way. Its
+#' axis is ticked at its levels and nowhere else, no regression is fitted
+#' through it -- a line across the levels of a factor reports as a slope what is
+#' a difference between groups -- and the strata `stratify` cut from one source
+#' are joined, because that pairing is the evidence banding creates: the same
+#' study, one covariate moved. Several sources tilting the same way is the
+#' mis-specification. A regression over the pooled cloud of strata cannot show
+#' it, since it averages the pairs away.
+#'
 #' With few sources, covariates whose study medians happen to move together
 #' cannot be told apart here -- three cohorts whose weights and renal function
 #' both decline will show a slope in both facets whichever one is
@@ -1213,15 +1271,21 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
           data = shade_df, inherit.aes = FALSE,
           ggplot2::aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
           fill = "grey85", alpha = 0.55)
-      p_eff <- p_eff + ggplot2::geom_line(colour = "black", linewidth = 1)
-      # Discrete levels get their own marks: the joining line is a reading aid
-      # between them, not a prediction at the values in between. HOLLOW, and
-      # under the study marks, so they read as the axis's support rather than
-      # competing with the filled points a study contributes.
+      # The CURVE is for a covariate that actually has intermediate values.
+      # Drawing one across the levels of a discrete covariate claims the model
+      # predicts something at SEX = 0.37; it does not, and no patient is there.
+      if (any(!curve_df$disc))
+        p_eff <- p_eff + ggplot2::geom_line(
+          data = curve_df[!curve_df$disc, , drop = FALSE],
+          colour = "black", linewidth = 1)
+      # A discrete covariate gets its LEVELS, and nothing between them. The gap
+      # between the points is the whole of its effect; anything joining them is
+      # either a prediction the model was never asked for or, as drop lines to
+      # the axis, an asymmetric stub at one level and a long dangle at the other.
       if (any(curve_df$disc))
         p_eff <- p_eff + ggplot2::geom_point(
           data = curve_df[curve_df$disc, , drop = FALSE],
-          colour = "black", shape = 1L, size = 3.2, stroke = 0.8)
+          colour = "black", size = 3.4)
       # Sources go in a LEGEND rather than inline text, as in the residual
       # panel: three cohorts enrolled at similar weights sit almost on top of
       # one another, and their names printed in place overlap into a smear.
@@ -1257,6 +1321,8 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       # facet_wrap, not facet_grid: most parameters read only some covariates,
       # and a grid spends half the figure on empty (v, CRCL)-style panels.
       p_eff <- p_eff +
+        ggplot2::scale_x_continuous(
+          breaks = .admLevelBreaks(curve_df$x[curve_df$disc])) +
         ggplot2::facet_wrap(~ cov + param, scales = "free",
                             labeller = ggplot2::labeller(
                               .multi_line = FALSE, .default = ggplot2::label_value)) +
@@ -1285,12 +1351,32 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
         ggplot2::geom_hline(yintercept = 0, colour = "grey40") +
         ggplot2::geom_hline(yintercept = c(-1.96, 1.96), linetype = "dashed",
                             colour = "grey60")
-      # A trend needs something to fit: two points define a line through
+      # A TREND, but only where one means anything. Regressing z on a covariate
+      # every study conditions at one of two levels fits a line through
+      # territory that has no patients in it, and reports as a slope what is
+      # really a difference between two groups. Continuous covariates only, and
+      # only with more than two studies -- two points define a line through
       # themselves and say nothing.
-      if (any(table(res_df$cov) > 2L))
+      cont_r <- res_df[!res_df$disc, , drop = FALSE]
+      if (nrow(cont_r) && any(table(cont_r$cov) > 2L))
         p_cres <- p_cres + ggplot2::geom_smooth(
-          method = "lm", formula = y ~ x, se = FALSE, na.rm = TRUE,
-          colour = "#2166AC", linewidth = 0.7, linetype = "longdash")
+          data = cont_r, method = "lm", formula = y ~ x, se = FALSE,
+          na.rm = TRUE, colour = "#2166AC", linewidth = 0.7,
+          linetype = "longdash")
+      # A CONTRAST, where a trend is meaningless. `stratify` splits one source
+      # into strata that differ only in this covariate, so the pair is what the
+      # banding bought: the same patients, the same study, one covariate moved.
+      # Joining them shows each source's own within-source contrast, and
+      # several sources tilting the same way is the mis-specification -- which a
+      # regression over the pooled cloud of strata cannot show, because it
+      # averages the pairs away.
+      pair_r <- res_df[res_df$disc & res_df$paired, , drop = FALSE]
+      # Neutral: the line joins two studies, so colouring it by `study` would
+      # split one connector across two colours. It is a connector, not a series.
+      if (nrow(pair_r))
+        p_cres <- p_cres + ggplot2::geom_line(
+          data = pair_r, ggplot2::aes(group = source),
+          colour = "grey45", linewidth = 0.6, alpha = 0.7)
       # Studies go in a LEGEND rather than inline text: banded sources sit at
       # nearly the same z, and six strata printed in place overlap into a smear.
       # The 10th-90th span a marginalised study speaks for, so a point plotted
@@ -1312,6 +1398,8 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
         ggplot2::scale_shape_manual(
           values = c(marginal = 16L, conditional = 18L), name = NULL,
           breaks = intersect(c("marginal", "conditional"), res_df$kind)) +
+        ggplot2::scale_x_continuous(
+          breaks = .admLevelBreaks(res_df$x[res_df$disc])) +
         ggplot2::facet_wrap(~ cov, scales = "free_x", nrow = 1L) +
         ggplot2::labs(
           title = "Between-study residual vs covariate",
@@ -1319,8 +1407,9 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
           y = "Mean standardised residual",
           subtitle = paste("area = n  |  round + bar: marginalised over a",
                            "distribution  |  diamond: conditioned at one value",
-                           "\ndashed blue: lm across studies -- a SLOPE is a",
-                           "mis-specified covariate form  |  z averaged over",
+                           "\ndashed blue: lm across studies, a SLOPE is a",
+                           "mis-specified form  |  grey: one source's strata,",
+                           "a consistent TILT is the same\nz averaged over",
                            "times, which are correlated, so +/-1.96 is",
                            "indicative not a test")) +
         ggplot2::theme_bw() +

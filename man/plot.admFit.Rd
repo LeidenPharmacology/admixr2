@@ -43,7 +43,7 @@ named sub-list). The sub-panel keys are \verb{<type>_<study>_obs}, \verb{_pred},
 The extra sub-panel keys are not printed on their own.
 }
 \description{
-Generates up to four diagnostic panels:
+Generates up to five diagnostic panels:
 }
 \details{
 \enumerate{
@@ -102,7 +102,19 @@ the covariate it was banded on, and as one merged marginal mark on every
 other, where its strata coincide.
 }
 
-\section{Reading a slope in \code{covariate_resid}}{
+\section{Reading \code{covariate_resid}}{
+
+A \strong{continuous} covariate is read as a trend: the dashed \code{lm} across studies,
+where a slope is a mis-specified covariate form.
+
+A \strong{discrete} one is read as a contrast instead, and is drawn that way. Its
+axis is ticked at its levels and nowhere else, no regression is fitted
+through it -- a line across the levels of a factor reports as a slope what is
+a difference between groups -- and the strata \code{stratify} cut from one source
+are joined, because that pairing is the evidence banding creates: the same
+study, one covariate moved. Several sources tilting the same way is the
+mis-specification. A regression over the pooled cloud of strata cannot show
+it, since it averages the pairs away.
 
 With few sources, covariates whose study medians happen to move together
 cannot be told apart here -- three cohorts whose weights and renal function

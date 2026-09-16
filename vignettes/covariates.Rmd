@@ -537,11 +537,19 @@ model that does not have it.
 Read it alongside the coverage bars, which is what the marks are for. Every
 cohort enrolled much the same weights, so the `WT` facet has its bars lying on
 top of one another and can say nothing about weight whichever way its line tips.
-The `CRCL` facet has three separated bars and can. `SEX` is drawn as diamonds
-because every source conditions on it --- a banded covariate contributes a
-contrast, not a spread. With only three sources, covariates whose medians move
-together cannot be separated here at all: the panel narrows the problem to a
-set, and a source that breaks the pattern is what narrows it further.
+The `CRCL` facet has three separated bars and can.
+
+`SEX` is drawn differently again, because every source conditions on it: ticked
+at its two levels and nowhere between, no regression through it, and each
+source's two strata joined in grey. That grey line is the contrast banding
+bought --- one study, one covariate moved --- and here all three are flat, which
+is the sex effect being fine. A tilt shared by all three would be the
+mis-specification, and it is invisible to a regression over the six strata
+pooled, which averages the pairs away.
+
+With only three sources, covariates whose medians move together cannot be
+separated here at all: the panel narrows the problem to a set, and a source that
+breaks the pattern is what narrows it further.
 
 ## Seeing the renal effect
 

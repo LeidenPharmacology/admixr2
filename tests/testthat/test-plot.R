@@ -429,6 +429,55 @@ test_that(".admCovResidData drops a covariate with no between-study contrast", {
   expect_null(.admCovResidData("WT", flat, agg))
 })
 
+test_that(".admCovLevels finds levels only where a covariate has them", {
+  st <- .cov_studies()
+  # Conditioned at a point in every study: the levels are those values.
+  expect_equal(.admCovLevels("SEX", st, c(0, 1)), c(0, 1))
+  # Marginalised over a lognormal: continuous, no levels.
+  expect_null(.admCovLevels("WT", st, c(70, 90)))
+  # Too many distinct conditioned values to be a factor.
+  flat <- lapply(seq_len(10L), function(i)
+    list(cov = list(AGE = i), n = 10L))
+  names(flat) <- paste0("s", seq_len(10L))
+  expect_null(.admCovLevels("AGE", flat, seq_len(10L)))
+})
+
+test_that(".admCovSource recovers the source a stratum came from", {
+  expect_equal(.admCovSource(c("normal_s1", "normal_s2", "plain")),
+               c("normal", "normal", "plain"))
+})
+
+test_that(".admLevelBreaks ticks a discrete panel at its levels only", {
+  brk <- .admLevelBreaks(c(0, 1))
+  # A panel spanned by the levels is the discrete one.
+  expect_equal(brk(c(-0.05, 1.05)), c(0, 1))
+  # A continuous panel falls back to pretty(), not to the levels.
+  expect_equal(brk(c(35, 98)), pretty(c(35, 98)))
+})
+
+test_that(".admCovResidData marks discreteness and pairs a source's strata", {
+  agg <- setNames(rep(list(list(obs = list(E = c(1, 2)),
+                                pred = list(E = c(1.1, 2.1),
+                                            V = diag(c(0.01, 0.04))))), 4L),
+                  c("a_s1", "a_s2", "b_s1", "b_s2"))
+  mk <- function(sex, wt) list(
+    n = 50L, cov = list(SEX = sex, WT = wt),
+    cov_dist = list(SEX = list(.point = TRUE),
+                    WT  = list(meanlog = log(wt), sdlog = 0.2)))
+  st <- list(a_s1 = mk(0, 70), a_s2 = mk(1, 70),
+             b_s1 = mk(0, 90), b_s2 = mk(1, 90))
+
+  sx <- .admCovResidData("SEX", st, agg)
+  # Conditioned in every study, so a contrast between levels -- not a trend.
+  expect_true(all(sx$disc))
+  expect_true(all(sx$paired))
+  expect_equal(sort(unique(sx$source)), c("a", "b"))
+
+  wt <- .admCovResidData("WT", st, agg)
+  # Marginalised: a continuous axis, where a regression does mean something.
+  expect_false(any(wt$disc))
+})
+
 test_that(".admCovResidData needs two studies to have a contrast", {
   agg <- list(
     lo = list(obs = list(E = c(1, 2)), pred = list(E = c(1.1, 2.1),
