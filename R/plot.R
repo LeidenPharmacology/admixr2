@@ -684,33 +684,79 @@ head.paged_df <- function(x, n = 6L, ...) {
           else seq(covered[1L] - pad * span, covered[2L] + pad * span,
                    length.out = n_grid)
 
-  base <- .admCovPooled(.admCovPanelCovs(ui, studies), studies)
-  vals <- .admEvalModelLines(ml, utils::modifyList(
-    base, setNames(list(grid), cv)), struct, keep = hit)
-  # A line is a curve only if it actually varied with the sweep: one evaluating
-  # to a scalar read `cv` inside something R could not vectorise, and one that
-  # is constant is a line the covariate reaches but does not move.
-  keep <- Filter(function(z) length(z$value) == length(grid) &&
-                   all(is.finite(z$value)) &&
-                   diff(range(z$value)) > 0, vals)
-  if (!length(keep)) return(NULL)
+  all_cov <- .admCovPanelCovs(ui, studies)
+  base    <- .admCovPooled(all_cov, studies)
+
+  # ONE CURVE PER LEVEL of every OTHER discrete covariate, rather than one curve
+  # at their pooled median. Pooling a covariate that is conditioned at 0 in half
+  # the studies and 1 in the other half puts it at 0.5, and the curve then
+  # describes a half-male patient -- the same fiction as sweeping SEX through
+  # 0.37, moved onto every other covariate's facet. Splitting is also how the
+  # effect READS: with one curve per level, this covariate's effect is the slope
+  # and the conditioned one's is the GAP between the curves.
+  lv <- Filter(Negate(is.null), setNames(lapply(setdiff(all_cov, cv),
+    function(o) .admCovLevels(o, studies,
+      vapply(studies, .admCovStudyQ, double(1), cv = o, u = 0.5))),
+    setdiff(all_cov, cv)))
+  # A cap, because the panel is a figure and not a lookup table: three binary
+  # covariates is already eight curves on one facet.
+  if (length(lv) && prod(vapply(lv, length, integer(1))) > 6L) lv <- list()
+  combos <- if (length(lv))
+    expand.grid(lv, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+  else data.frame(.pooled = 1)
 
   is_disc <- !is.null(disc) && length(disc) > 1L
-  curve <- do.call(rbind, lapply(keep, function(z)
-    data.frame(cov = cv, param = z$name, x = grid, y = as.numeric(z$value),
-               disc = is_disc, stringsAsFactors = FALSE)))
+  .label <- function(k) if (!length(lv)) "" else
+    paste(vapply(names(lv), function(o)
+      paste0(o, " = ", format(combos[k, o], digits = 3)), character(1)),
+      collapse = ", ")
+
+  per <- lapply(seq_len(nrow(combos)), function(k) {
+    at <- utils::modifyList(base, setNames(list(grid), cv))
+    if (length(lv))
+      at <- utils::modifyList(at, as.list(combos[k, names(lv), drop = FALSE]))
+    vals <- .admEvalModelLines(ml, at, struct, keep = hit)
+    # A line is a curve only if it actually varied with the sweep: one
+    # evaluating to a scalar read `cv` inside something R could not vectorise,
+    # and one that is constant is a line the covariate reaches but does not move.
+    Filter(function(z) length(z$value) == length(grid) &&
+             all(is.finite(z$value)) && diff(range(z$value)) > 0, vals)
+  })
+  if (!length(per[[1L]])) return(NULL)
+  keep <- per[[1L]]                      # the parameter set is the same per combo
+
+  curve <- do.call(rbind, lapply(seq_along(per), function(k)
+    do.call(rbind, lapply(per[[k]], function(z)
+      data.frame(cov = cv, param = z$name, x = grid, y = as.numeric(z$value),
+                 level = .label(k), disc = is_disc,
+                 stringsAsFactors = FALSE)))))
 
   # Per-study marks sit ON the curve, at that study's median `cv`: they say
   # where each source sampled, not what it independently claimed -- a fit keeps
   # no source model to ask (the study carries the moments it generated).
+  #
+  # And on ITS OWN curve. A study conditioned at SEX = 0 belongs on the SEX = 0
+  # line; placed on the pooled one it would sit off every curve drawn, at a
+  # height no level of the model predicts.
   .or <- function(v, i) if (is.finite(v[i])) v[i] else mid[i]
+  .combo_of <- function(i) {
+    if (!length(lv)) return(1L)
+    want <- vapply(names(lv), function(o)
+      .admCovStudyQ(studies[[i]], o, 0.5), double(1))
+    hit <- which(vapply(seq_len(nrow(combos)), function(k)
+      isTRUE(all.equal(unname(unlist(combos[k, names(lv)])), unname(want))),
+      logical(1)))
+    if (length(hit)) hit[1L] else 1L
+  }
   mk <- do.call(rbind, lapply(seq_along(studies), function(i) {
     if (!is.finite(mid[i])) return(NULL)
-    do.call(rbind, lapply(keep, function(z) data.frame(
+    k <- .combo_of(i)
+    do.call(rbind, lapply(per[[k]], function(z) data.frame(
       cov   = cv,
       param = z$name,
       study = names(studies)[i],
       kind  = knd[i],
+      level = .label(k),
       x     = mid[i],
       xlo   = .or(lo,  i), xhi  = .or(hi,  i),
       xlo2  = .or(lo2, i), xhi2 = .or(hi2, i),
@@ -817,8 +863,10 @@ head.paged_df <- function(x, n = 6L, ...) {
 #' 3. `"covariate"` -- Two BETWEEN-study covariate panels, one facet per
 #'    covariate the model reads. `covariate_effect` sweeps each covariate across
 #'    the range the sources between them cover and draws every model parameter
-#'    that reads it, at the fitted thetas, with the other covariates held at the
-#'    pooled median; the region no source sampled is shaded as extrapolation,
+#'    that reads it, at the fitted thetas, once per level of any *conditioned*
+#'    covariate and with the continuous others at the pooled median -- so the
+#'    swept covariate's effect is the slope and a conditioned one's is the gap
+#'    between the lines; the region no source sampled is shaded as extrapolation,
 #'    and a discrete covariate is drawn on its levels rather than swept through
 #'    the values between them. `covariate_resid` plots each study's mean
 #'    standardised residual against the covariate value it sits at, with an `lm`
@@ -1274,18 +1322,32 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       # The CURVE is for a covariate that actually has intermediate values.
       # Drawing one across the levels of a discrete covariate claims the model
       # predicts something at SEX = 0.37; it does not, and no patient is there.
+      # One line per level of any conditioned covariate. LINETYPE, not colour:
+      # colour already carries the source, and the two legends would otherwise
+      # compete for the same channel on the same figure.
+      n_lev <- length(unique(curve_df$level))
       if (any(!curve_df$disc))
         p_eff <- p_eff + ggplot2::geom_line(
           data = curve_df[!curve_df$disc, , drop = FALSE],
-          colour = "black", linewidth = 1)
+          ggplot2::aes(group = level, linetype = level),
+          colour = "black", linewidth = 0.9)
       # A discrete covariate gets its LEVELS, and nothing between them. The gap
       # between the points is the whole of its effect; anything joining them is
       # either a prediction the model was never asked for or, as drop lines to
       # the axis, an asymmetric stub at one level and a long dangle at the other.
+      # Plain black: `shape` is already spoken for by the marks' marginal /
+      # conditioned distinction, and ggplot2 allows one shape scale per plot.
       if (any(curve_df$disc))
         p_eff <- p_eff + ggplot2::geom_point(
           data = curve_df[curve_df$disc, , drop = FALSE],
           colour = "black", size = 3.4)
+      # A single level is no split at all -- suppress a legend reading
+      # `level: ""` on a model with no conditioned covariate.
+      p_eff <- p_eff + if (n_lev > 1L)
+        ggplot2::scale_linetype_manual(
+          values = rep_len(c("solid", "22", "42", "1343", "73", "2262"), n_lev),
+          name = NULL)
+      else ggplot2::scale_linetype_manual(values = "solid", guide = "none")
       # Sources go in a LEGEND rather than inline text, as in the residual
       # panel: three cohorts enrolled at similar weights sit almost on top of
       # one another, and their names printed in place overlap into a smear.
@@ -1329,12 +1391,15 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
         ggplot2::labs(
           title = "Fitted covariate effect",
           x = "Covariate value", y = "Model parameter",
-          subtitle = paste("black: parameter at the fitted thetas, other",
-                           "covariates at the pooled median  |  marginalised",
-                           "source: median + 10th-90th bar + 2.5th-97.5th",
-                           "whisker\nconditioned source (diamond): the single",
-                           "value it was solved at  |  grey: outside the range",
-                           "any source sampled -- extrapolation")) +
+          subtitle = paste("black: parameter at the fitted thetas; one line per",
+                           "level of a conditioned covariate, other covariates",
+                           "at the pooled median\nthis covariate's effect is",
+                           "the SLOPE, a conditioned one's is the GAP between",
+                           "the lines  |  marginalised source: median +",
+                           "10th-90th bar + 2.5th-97.5th whisker\nconditioned",
+                           "source (diamond): the single value it was solved",
+                           "at  |  grey: outside the range any source sampled",
+                           "-- extrapolation")) +
         ggplot2::theme_bw() +
         ggplot2::theme(plot.subtitle = ggplot2::element_text(
           size = 7, colour = "grey40", face = "plain"))

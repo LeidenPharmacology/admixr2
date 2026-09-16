@@ -357,13 +357,41 @@ test_that(".admCovEffectData sweeps a continuous covariate and pads past it", {
   d <- .admCovEffectData(.cov_ui(), "WT", .cov_studies(),
                          list(tcl = log(5), bwt = 0.75, bsex = 0.2))
   expect_equal(unique(d$curve$param), "cl")
-  expect_equal(nrow(d$curve), 120L)
-  # Allometric with a positive exponent: monotone increasing in weight.
-  expect_true(all(diff(d$curve$y) > 0))
+  # SEX is conditioned at 0 in one study and 1 in the other, so the sweep is
+  # drawn once per level rather than once at the pooled 0.5 -- a patient that
+  # does not exist. 120 grid points per level.
+  expect_setequal(unique(d$curve$level), c("SEX = 0", "SEX = 1"))
+  expect_equal(nrow(d$curve), 240L)
+  # Allometric with a positive exponent: monotone increasing in weight, within
+  # each level. Across the concatenation it is not, and should not be.
+  for (lv in unique(d$curve$level))
+    expect_true(all(diff(d$curve$y[d$curve$level == lv]) > 0))
+  # The conditioned covariate's own effect is the GAP between the levels.
+  y0 <- d$curve$y[d$curve$level == "SEX = 0"]
+  y1 <- d$curve$y[d$curve$level == "SEX = 1"]
+  expect_true(all(y1 > y0))
+  expect_equal(unique(round(y1 / y0, 8)), round(exp(0.2), 8))
   # Two shaded regions, one past each end of the range the studies cover.
   expect_equal(nrow(d$shade), 2L)
   expect_lt(min(d$curve$x), min(vapply(.cov_studies(), .admCovStudyQ,
                                        double(1), cv = "WT", u = 0.1)))
+})
+
+test_that(".admCovEffectData puts each study's mark on its OWN level's line", {
+  skip_if_not_installed("rxode2")
+  # `lo` is conditioned at SEX = 0, `hi` at SEX = 1. Each belongs on the line
+  # for the level it was solved at; on a single pooled line both would sit at a
+  # height no level of the model predicts.
+  m <- .admCovEffectData(.cov_ui(), "WT", .cov_studies(),
+                         list(tcl = log(5), bwt = 0.75, bsex = 0.2))$marks
+  expect_equal(m$level[m$study == "lo"], "SEX = 0")
+  expect_equal(m$level[m$study == "hi"], "SEX = 1")
+  # Tolerance is for the INTERPOLATION, not the model: a mark's y is read off
+  # the 120-point grid with approx(), so a convex curve lands a couple of parts
+  # per million away from the closed form.
+  expect_equal(m$y[m$study == "hi"] /
+                 (5 * (m$x[m$study == "hi"] / 70)^0.75),
+               exp(0.2), tolerance = 1e-4)
 })
 
 test_that(".admCovEffectData puts a discrete covariate on its levels", {

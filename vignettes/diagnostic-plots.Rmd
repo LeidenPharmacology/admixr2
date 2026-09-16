@@ -112,11 +112,17 @@ names(plots)
 ```
 
 **`covariate_effect`** sweeps each covariate across the range the sources cover
-and draws every model parameter that reads it, at the fitted estimates, with the
-other covariates held at the pooled median. One facet per (covariate, parameter)
-pair that exists. The region no source sampled is shaded: that is where the fit
-extrapolates. A discrete covariate is drawn on its levels rather than swept
-through the values between them.
+and draws every model parameter that reads it, at the fitted estimates. One
+facet per (covariate, parameter) pair that exists. The region no source sampled
+is shaded: that is where the fit extrapolates. A discrete covariate is drawn on
+its levels rather than swept through the values between them.
+
+A **conditioned** covariate gets **one line per level**, not a single line at its
+average. Averaging a covariate that half the studies fix at 0 and half at 1 puts
+it at 0.5 and draws a patient who does not exist. Splitting it is also how the
+figure reads: the swept covariate's effect is the **slope**, and the conditioned
+one's is the **gap** between the lines. Continuous covariates the facet is not
+sweeping stay at the pooled median.
 
 **`covariate_resid`** plots each study's mean standardised residual against the
 covariate value it sits at. How it is read depends on the covariate:

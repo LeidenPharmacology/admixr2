@@ -59,8 +59,10 @@ the standardised residual panel.
 \item \code{"covariate"} -- Two BETWEEN-study covariate panels, one facet per
 covariate the model reads. \code{covariate_effect} sweeps each covariate across
 the range the sources between them cover and draws every model parameter
-that reads it, at the fitted thetas, with the other covariates held at the
-pooled median; the region no source sampled is shaded as extrapolation,
+that reads it, at the fitted thetas, once per level of any \emph{conditioned}
+covariate and with the continuous others at the pooled median -- so the
+swept covariate's effect is the slope and a conditioned one's is the gap
+between the lines; the region no source sampled is shaded as extrapolation,
 and a discrete covariate is drawn on its levels rather than swept through
 the values between them. \code{covariate_resid} plots each study's mean
 standardised residual against the covariate value it sits at, with an \code{lm}
