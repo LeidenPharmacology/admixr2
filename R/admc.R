@@ -2335,24 +2335,21 @@ admStopWorkers <- function() {
     # NULL path: `file.exists(NULL)` is logical(0) and `if (logical(0))` is an
     # "argument is of length zero" error, which would replace the message below
     # with an opaque one at the point it is most needed.
-    # tryCatch, as the parent does (model.R). This file lives in a SHARED
-    # persistent rxTempDir(), so a concurrent session recompiling the same key
-    # writes this very path; a bare readRDS on a half-written entry dies with
-    # "error reading from connection", which .admRunRestarts re-throws as
-    # `parallel restart N failed: error reading from connection` -- losing the
-    # message below at exactly the moment it is most needed.
+    # tryCatch, as the parent does (model.R). This file lives in a SHARED persistent
+    # rxTempDir(), so a concurrent session recompiling the same key writes this very
+    # path; a bare readRDS on a half-written entry dies with "error reading from
+    # connection", which .admRunRestarts re-throws opaquely.
     #
     # .admCacheWrite() now publishes by rename, so no admixr2 from 0.4.1 on can
-    # produce a half-written entry -- that was the cause of the intermittent
-    # parallel-restart failures, and it is fixed at the writer. This stays
-    # because the guarantee is only as good as the OTHER process's version: a
-    # pre-0.4.1 session sharing this cache still writes in place.
-    # WHICH of the three ways this can fail is recorded, because they have
-    # completely different causes and the message used to name none of them:
-    # absent means the path is wrong or the entry was swept; unreadable-at-N-bytes
-    # means a half-written entry (a pre-0.4.1 peer publishing in place); and
-    # wrong-shape means a digest collision or a foreign file. Diagnosing this from
-    # the outside is near-impossible -- the branch runs only in a daemon, and by
+    # produce a half-written entry. This stays because the guarantee is only as good
+    # as the OTHER process's version: a pre-0.4.1 session still writes in place.
+    #
+    # WHICH of the three ways this can fail is recorded, because they have completely
+    # different causes: absent means the path is wrong or the entry was swept;
+    # unreadable-at-N-bytes means a half-written entry; wrong-shape means a digest
+    # collision or a foreign file. The branch runs only in a daemon, and by the time
+    # the parent reports the error the file is usually complete again, so the worker
+    # has to say what it saw at the moment it looked.
     # the time the parent reports the error the file is usually complete again --
     # so the worker has to say what it saw at the moment it looked.
     .why <- NULL
@@ -2438,35 +2435,25 @@ admStopWorkers <- function() {
       if (!is.null(sens_rename)) m$rename_map <- sens_rename
       # m$theta_sens_cols and m$fixed_theta are NOT overwritten here -- the parent
       # does not thread them through (adding a worker-load argument would trip the
-      # dev-mode stale-daemon `unused argument` trap; see .admRestartWorker's note).
-      # Their staleness is guarded solely by the sens cache key, which digests
-      # .admIniKey(ui) -- including a FIXED parameter's value, which is exactly
-      # what fixed_theta carries -- and .admPkgKey(), which changes whenever the
-      # code that derives these fields changes. Without both, a stale file would
-      # be a false hit and a worker could fill the wrong constant into a fixed
-      # theta's THETA[k] column, silently diverging from the sequential fit.
-      # Overwriting sens_cols/rename_map above is the belt; the key is the braces
-      # for these two.
+      # dev-mode stale-daemon `unused argument` trap). Their staleness is guarded
+      # solely by the sens cache key, which digests .admIniKey(ui) -- including a
+      # FIXED parameter's value, which is exactly what fixed_theta carries -- and
+      # .admPkgKey(). Without both, a stale file would be a false hit and a worker
+      # could fill the wrong constant into a fixed theta's THETA[k] column.
       #
-      # pred_tbs MUST be re-derived, exactly as .admLoadSensModel() re-derives it
-      # on the parent's cache-hit path. The cache key digests ui$lstExpr -- the
-      # model({}) block only -- while lambda's starting value and its fix() status
-      # live in ini({}), so `lam <- fix(0.5)` and `lam <- 0.5` COLLIDE on one key.
-      # The parent overwrites the field; the worker did not, so a parallel restart
-      # could invert the transform with a different lambda from the sequential fit
-      # -- the same silent parent/worker divergence the block above exists to
-      # prevent, and invisible because the NLL stays bit-identical.
-      # Derived from `pinfo`, which the worker already holds, rather than from a
-      # new worker ARGUMENT -- see .admRestartWorker's note on stale daemons.
-      # INVARIANT: every field below must land on the same value .admLoadSensModel()
-      # would derive from `ui`. The two routes read different sources (predDf there,
-      # the parsed residual spec here) because the worker has no `ui`, so the only
-      # place they can disagree is their FALLBACKS -- and a per-field fallback to
-      # the CACHED value was exactly that disagreement: the parent never falls back
-      # (it always derives yj from predDf$transform and lambda from the iniDf row),
-      # so a worker mixing a freshly-derived lambda with a stale yj or stale bounds
-      # could invert the transform differently from the sequential fit. Rebuild
-      # wholesale or not at all, and mirror the parent's defaults exactly.
+      # pred_tbs MUST be re-derived, exactly as .admLoadSensModel() does on the
+      # parent's cache-hit path: the key digests ui$lstExpr while lambda's starting
+      # value and fix() status live in ini({}), so `lam <- fix(0.5)` and
+      # `lam <- 0.5` COLLIDE. The parent overwrites the field; the worker did not,
+      # so a parallel restart could invert the transform with a different lambda
+      # from the sequential fit, invisibly, because the NLL stays bit-identical.
+      #
+      # INVARIANT: every field below must land on the same value
+      # .admLoadSensModel() would derive from `ui`. The two routes read different
+      # sources (predDf there, the parsed residual spec here) because the worker
+      # has no `ui`, so the only place they can disagree is their FALLBACKS -- and
+      # a per-field fallback to the CACHED value was exactly that disagreement.
+      # Rebuild wholesale or not at all, and mirror the parent's defaults exactly.
       if (!is.null(pinfo) && !is.null(m$pred_tbs)) {
         .sp <- .admResidSpecs(pinfo)
         .s1 <- if (length(.sp)) .sp[[1L]] else NULL
@@ -2611,30 +2598,24 @@ admStopWorkers <- function() {
 # Load admixr2 in every daemon BEFORE any of them is asked to read the model
 # cache, then repair the cache if that load destroyed it.
 #
-# A daemon's `library(admixr2)` loads nlmixr2est, whose .resetCacheIfNeeded()
-# does this (verified in the INSTALLED 6.2.0, which is what a daemon loads --
-# upstream main having dropped the call is irrelevant here):
+# A daemon's `library(admixr2)` loads nlmixr2est, whose .resetCacheIfNeeded() does
+# this (verified in the INSTALLED 6.2.0, which is what a daemon loads):
 #
 #     if (.md5 != nlmixr2.md5) { message("detected new version ..."); rxClean() }
 #
 # rxClean() wipes the whole SHARED rxTempDir(), including the adm-sim-*.rds the
 # parent wrote seconds earlier and these very daemons are about to read -- so the
-# worker deletes its own input and stops with "a parallel worker could not read
-# the compiled-model cache". Two details make it far worse than a one-off:
-# the mismatch branch never REWRITES the stamp, so the mismatch is permanent
-# rather than self-healing, and it fires per daemon, on every fit.
-#
-# It is triggered by having more than one nlmixr2est build in play (a
-# pkgload::load_all() of a source tree alongside the installed package, which is
-# ordinary during upstream development) -- and it was the second, independent
-# cause of the intermittent parallel-restart failures, the one that survived
-# making the cache writes atomic.
+# worker deletes its own input. Two details make it worse than a one-off: the
+# mismatch branch never REWRITES the stamp, so it is permanent rather than
+# self-healing, and it fires per daemon, on every fit. It is triggered by having
+# more than one nlmixr2est build in play (a pkgload::load_all() alongside the
+# installed package), and it was the second, independent cause of the intermittent
+# parallel-restart failures.
 #
 # The order is the fix: warm first, so every daemon-side clean has already
-# happened, then re-derive. .admLoadSensModel()/.admLoadModel() are cache-keyed
-# and cost nothing when the entries survived (the common case); when they did
-# not, they recompile and republish, which is exactly the repair. The ordering
-# invariant between the two still applies, so they are called in that order.
+# happened, then re-derive. .admLoadSensModel()/.admLoadModel() are cache-keyed and
+# cost nothing when the entries survived; when they did not, they recompile and
+# republish, which is exactly the repair.
 .admWarmDaemons <- function(ui, pinfo, sens_cache_file = NULL) {
   # A mirai without everywhere() just means the warm-up is skipped; the repair
   # below still runs and is the half that matters, so this must not return early.
@@ -3074,20 +3055,16 @@ nlmixr2Est.admc <- function(env, ...) {
   #     qualify: .admBuildThetaSens emits a direction per unpaired theta, and
   #     .admGrad then reads d(pred)/d(theta) exactly and differences nothing.
   #
-  # The ETA perturbations keep the fixed scale regardless. They carry no
-  # parameter index, so .admGrad/.admGradBatch read them through .admGH0(), which
-  # returns the scalar the Gill vector was built from -- indexing a per-parameter
-  # vector by an eta number would pick an unrelated parameter's step, and using
-  # it bare would recycle across the n_sim rows without a warning. That split is
-  # also the honest one: Gill83 measured the OBJECTIVE, and d(pred)/d(eta) is a
-  # different function.
+  # The ETA perturbations keep the fixed scale regardless. They carry no parameter
+  # index, so .admGrad/.admGradBatch read them through .admGH0() -- indexing a
+  # per-parameter vector by an eta number would pick an unrelated parameter's step.
+  # That split is also the honest one: Gill83 measured the OBJECTIVE, and
+  # d(pred)/d(eta) is a different function.
   #
-  # Note the struct-theta steps ARE applied to a prediction difference rather
-  # than an objective one. Under common random numbers both are limited by the
-  # same solver-tolerance floor (the draws are shared, so MC noise largely
-  # cancels from either), and the quantity being made accurate is d(NLL)/d(theta)
-  # either way -- the prediction difference is only the route to it. It remains a
-  # transfer, and worth knowing when reading a step back.
+  # Note the struct-theta steps ARE applied to a prediction difference rather than
+  # an objective one. Under common random numbers both are limited by the same
+  # solver-tolerance floor, and the quantity being made accurate is d(NLL)/d(theta)
+  # either way. It remains a transfer, and worth knowing when reading a step back.
   .fd_idx <- if (!want_grad) integer(0)
     else if (obj_fd) seq_along(ov$p0)
     else if (length(.unpaired) && !.theta_sens)

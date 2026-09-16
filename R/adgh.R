@@ -52,24 +52,19 @@
 # Returns X (n_node x n_eta standard-normal nodes) and W (length n_node weights).
 #
 # Memoised, same cache env as .adghNodes1 (which this calls) but NOT the same
-# retention policy. Both depend on nothing but their key, and .admCovRefresh/
-# .admJointDesign call this on EVERY objective evaluation, since rank and node
-# count are frozen at admission -- only the ROTATION applied on top of this
-# grid depends on the current parameters. The grid itself is pure overhead when
-# rebuilt: measured 68.6 ms/call at r=4, m=15 (50625 rows, expand.grid + a
-# row-wise apply for the weights), against an rxSolve() call's ~11 ms baseline.
-# Rebuilt on every gradient AND every NLL evaluation of a fit using the joint
-# or covariate collapse, it was larger than the solve it sits beside.
+# retention policy. .admCovRefresh/.admJointDesign call this on EVERY objective
+# evaluation, since rank and node count are frozen at admission -- only the ROTATION
+# applied on top depends on the current parameters. The grid itself is pure overhead
+# when rebuilt: measured 68.6 ms/call at r=4, m=15 against an rxSolve()'s ~11 ms, so
+# rebuilt on every NLL and gradient evaluation it was larger than the solve beside it.
 #
-# WHAT A TENSOR GRID COSTS TO KEEP is the difference, and it is why this does
-# not use .adghNodes1's cache-everything-forever policy. The 1-D nodes are a
-# handful of short numeric vectors, so keeping every m ever seen is free; one
-# of these is 390625 x 8 (~25 MB) at 8 etas and 5 nodes, and the cache lives in
-# the namespace rather than in the fit, so keeping every (m, n_eta) would grow
-# with the number of models a session fits and never shrink. A fit asks for the
-# SAME grid on every objective evaluation, so ONE SLOT gets the entire saving:
-# a different key replaces the entry rather than joining it, which bounds the
-# cache at one grid without any eviction policy to get wrong.
+# WHAT A TENSOR GRID COSTS TO KEEP is why this does not use .adghNodes1's
+# cache-everything-forever policy. The 1-D nodes are a handful of short vectors; one
+# of these is ~25 MB at 8 etas and 5 nodes, and the cache lives in the namespace
+# rather than the fit, so keeping every (m, n_eta) would grow with the number of
+# models a session fits and never shrink. A fit asks for the SAME grid on every
+# evaluation, so ONE SLOT gets the entire saving and bounds the cache without any
+# eviction policy to get wrong.
 .admGridMemo <- function(slot, key, build) {
   # The cache env is a package-level binding, and this runs inside mirai restart
   # workers, where assignInNamespace() cannot ADD a binding to the locked
@@ -141,40 +136,33 @@
   # rep(W_eta, times = n_cov) * rep(W_cov, each = n_eta), which is what
   # as.numeric(outer(W_eta, W_cov)) produces column-major.
   #
-  # The covariate shift -- a separate reduction that pinned the covariate at
-  # its reference and folded its whole contribution into one eta column --
-  # was removed. .admJointCollapse finds the same structure (rank 1 on the
-  # certified single-eta case) without a certificate, and is both cheaper and
-  # more accurate than the shift wherever both applied. See NEWS.
-  #
+  # The covariate shift -- a separate reduction that pinned the covariate at its
+  # reference and folded its whole contribution into one eta column -- was removed.
+  # .admJointCollapse finds the same structure without a certificate, and is both
+  # cheaper and more accurate wherever both applied. See NEWS.
   # JOINT COLLAPSE: one design over the etas AND the covariates together, where
   # they reach the model through the same directions. It replaces the eta grid
   # as well as the covariate design, so it returns before either is built.
   #
-  # X is the node matrix the omega chain rule differentiates. eta = X L' holds
-  # here exactly as it does for the ordinary grid -- the joint preimage's eta
-  # block IS that matrix -- so .adghGrad needs no branch of its own. What it
-  # does not carry is the rotation's own dependence on Omega; that term is the
-  # quadrature re-choosing itself within the same column space, and vanishes to
-  # the accuracy the design is verified to.
+  # X is the node matrix the omega chain rule differentiates. eta = X L' holds here
+  # exactly as for the ordinary grid -- the joint preimage's eta block IS that matrix
+  # -- so .adghGrad needs no branch of its own. What it does not carry is the
+  # rotation's own dependence on Omega; that term is the quadrature re-choosing
+  # itself within the same column space, and vanishes to the verified accuracy.
   .jc <- if (!is.null(s)) s[[".adm_cov_joint"]] else NULL
   if (!is.null(.jc)) {
     jd <- .admJointDesign(.jc, .admShiftStruct(pinfo, pars$struct), pars$L)
-    # A FAILED RE-AIM IS AN UNSOLVABLE POINT, not a licence to change design and
-    # not a reason to abort. Falling through to the branch below would swap in a
-    # design with a DIFFERENT NUMBER OF POINTS mid-optimisation and step the
-    # objective; stop()ing kills a converging fit at a point the line search was
-    # merely trying (nothing between eval_f and here catches). Both are wrong.
-    # The failure mode is an affine_log probe going non-positive, which is
-    # exactly the region every other unsolvable point reports as Inf -- so mark
-    # the grid and let the moment functions do that.
+    # A FAILED RE-AIM IS AN UNSOLVABLE POINT, not a licence to change design and not
+    # a reason to abort. Falling through to the branch below would swap in a design
+    # with a DIFFERENT NUMBER OF POINTS mid-optimisation and step the objective;
+    # stop()ing kills a converging fit at a point the line search was merely trying.
+    # The failure mode is an affine_log probe going non-positive, which is exactly
+    # the region every other unsolvable point reports as Inf.
     #
-    # THIS RETURNS UNCONDITIONALLY -- success or `failed = TRUE` -- and never
-    # falls through to read a study's .adm_cov_collapse, for the reason just
-    # given. .admCheckCovariates keeps .adm_cov_collapse attached alongside
-    # .adm_cov_joint anyway, but only for INSPECTION; do not read it here as a
-    # fallback design, and do not "fix" that by making one -- it would
-    # reintroduce the exact mid-fit row-count change this comment refuses.
+    # THIS RETURNS UNCONDITIONALLY -- success or `failed = TRUE` -- and never falls
+    # through to read a study's .adm_cov_collapse, for the reason just given.
+    # .admCheckCovariates keeps that attached alongside .adm_cov_joint anyway, but
+    # only for INSPECTION; do not read it here as a fallback design.
     if (is.null(jd)) return(list(failed = TRUE))
     return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
   }

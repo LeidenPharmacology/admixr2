@@ -2135,8 +2135,6 @@ without that parameter there is no residual to integrate"),
 # rests on holds only where the two agree that S == V_pred. Dropping on
 # `!is.finite(yq_all)` alone would keep a node MomentsD drops, and the two variances
 # would then be taken over different node sets.
-# value survives but whose inverse-transform derivative overflows -- and the two
-# variances would then be taken over different node sets.
 .admTBSCentral <- function(f, sd, lam, yj, lo, hi, nodes = .ADM_TBS_NODES) {
   gq <- .adghNodes1(nodes)
   hz <- .admTBS(f, lam, yj, lo, hi)

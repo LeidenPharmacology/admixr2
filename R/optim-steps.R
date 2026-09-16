@@ -66,40 +66,31 @@
 
 # Per-parameter FD steps for the covariance HESSIAN.
 #
-# `pmax(abs(p[idx]), 0.1) * cov_h_outer` -- one constant applied to every
-# parameter -- is the FALLBACK now, not the behaviour. It is a guess about how
-# much noise the objective carries, and it is the guess behind the "Hessian not
-# positive definite ... try increasing cov_h_outer" advice: too fine a step and
-# the difference is noise, too coarse and it is curvature the second-order term
-# does not capture. Shi21 measures the objective instead of guessing, per
-# parameter (see .admShi21Central).
+# `pmax(abs(p[idx]), 0.1) * cov_h_outer` -- one constant applied to every parameter
+# -- is the FALLBACK now, not the behaviour. It is a guess about how much noise the
+# objective carries, and it is the guess behind the "Hessian not positive definite
+# ... try increasing cov_h_outer" advice: too fine a step and the difference is
+# noise, too coarse and it is curvature the second-order term does not capture.
+# Shi21 measures the objective instead of guessing, per parameter.
 #
-# Single-sourced because this expression used to be written out in
-# .adfoCalcCov(), .adghCalcCov() and .admCalcCov(), byte-identical but for the
-# label -- and the fixed-step form appeared TWICE inside each copy, so the
-# heuristic was restated six times across three files. The fallback exists so a
-# failed probe lands exactly where the fixed step would have.
+# Single-sourced because this expression used to be written out in .adfoCalcCov(),
+# .adghCalcCov() and .admCalcCov(), byte-identical but for the label. The fallback
+# exists so a failed probe lands exactly where the fixed step would have.
 #
 # NOT .admShi21Steps(). That returns the optimum for a FIRST central derivative,
 # `h ~ (3 eps_f/|f'''|)^(1/3)`, and the Hessian takes a SECOND difference, whose
 # error is `(h^2/12)|f''''| + 4 eps_f/h^2` and whose optimum therefore scales as
 # `eps_f^(1/4)` -- around ten times larger at a machine-precision objective. Too
 # fine a step in a second difference amplifies noise as `4 eps_f/h^2`, which is
-# precisely what tips a marginal Hessian out of positive-definiteness. Measured
-# against an exact second derivative, the first-derivative step was 6x to 385x
-# worse across noise levels from 1e-15 to 1e-7.
+# precisely what tips a marginal Hessian out of positive-definiteness (measured 6x
+# to 385x worse than the second-difference rule). So what is reused here is the
+# MEASUREMENT -- `eps_f` from ECnoise -- fed to the right rule.
 #
-# So what is reused here is the MEASUREMENT -- `eps_f` from ECnoise, the thing
-# `cov_h_outer` could only guess -- fed to the second-difference rule rather than
-# the first-difference one.
-# `cov_h_outer` SCALES the measured step; it does not merely back it up. Making
-# it a pure fallback was tried and is wrong: the measurement almost always
-# succeeds, so the argument would be inert in practice -- and it is the escape
-# hatch the docs point users at ("Hessian not positive definite ... try
-# increasing cov_h_outer"). An argument that looks like it does something and
-# does not is the exact failure mode `nlmixr2Gill83`'s dropped tuning arguments
-# are an example of. So the step is the measured one at the DEFAULT
-# `cov_h_outer`, and moves proportionally when the user changes it.
+# `cov_h_outer` SCALES the measured step; it does not merely back it up. Making it a
+# pure fallback was tried and is wrong: the measurement almost always succeeds, so
+# the argument would be inert -- and it is the escape hatch the docs point users at.
+# So the step is the measured one at the DEFAULT `cov_h_outer`, and moves
+# proportionally when the user changes it.
 .ADM_COV_H_REF <- .Machine$double.eps^(1/5)
 
 .admHessSteps <- function(fn, p, idx, cov_h_outer, .var.name = "CalcCov") {
@@ -287,31 +278,27 @@
 # Gill83, above, answers "what forward step balances condition error against
 # curvature". Shi/Xie/Xu/Nocedal (2021) answer the same question for a CENTRAL
 # difference, and measurement says they answer it far better on this package's
-# objectives. Scored against the analytic gradient (exact; cross-checked to 3e-9
-# against a high-accuracy central difference), max relative error over the five
+# objectives. Scored against the analytic gradient, max relative error over the five
 # parameters of the integration model:
 #
 #                       adirmc inner NLL   adfo NLL
 #   forward fixed 1e-4       7.3e-04        8.6e-04
-#   forward fixed 1e-6       7.3e-06        9.8e-06
 #   gill83 forward           8.1e-04        7.9e-04
 #   shi21 central            7.0e-08        9.5e-08
 #
-# Gill83 is not merely beaten, it is beaten by the FIXED step it exists to
-# improve on: its measured steps come out 5e-5..1.7e-3 where the objective wants
-# ~1e-8..1e-6. It is not mis-implemented here -- FOCEI's own defaults are what
-# the exported wrapper reaches, and those are
-# tuned for a per-subject objective carrying real solver noise, not for an
-# aggregate objective evaluated to near machine precision.
+# Gill83 is not merely beaten, it is beaten by the FIXED step it exists to improve
+# on: its measured steps come out 5e-5..1.7e-3 where the objective wants ~1e-8..1e-6.
+# It is not mis-implemented here -- FOCEI's own defaults are tuned for a per-subject
+# objective carrying real solver noise, not for an aggregate objective evaluated to
+# near machine precision.
 #
 # WHY REIMPLEMENTED rather than called. nlmixr2est HAS this algorithm, as
-# `shi21CentralWrap`, but it is not exported -- and admixr2 makes zero `:::`
-# calls into nlmixr2est, a rule that covers reaching in via asNamespace() just as
-# much as the `:::` token. Reimplementing also buys the thing the gill83 path
-# cannot have: `eps_f` is a real argument here. It is the single input that
-# matters (h* scales as eps_f^(1/3)), and nlmixr2Gill83's wrapper drops every
-# tuning argument it accepts, so its noise assumption is unreachable. Measured
-# against the upstream routine as an ORACLE in test-optim-steps-shi.R.
+# `shi21CentralWrap`, but it is not exported -- and admixr2 makes zero `:::` calls
+# into nlmixr2est, a rule that covers reaching in via asNamespace() too.
+# Reimplementing also buys what the gill83 path cannot have: `eps_f` is a real
+# argument here. It is the single input that matters (h* scales as eps_f^(1/3)), and
+# nlmixr2Gill83's wrapper drops every tuning argument it accepts. Measured against
+# the upstream routine as an ORACLE in test-optim-steps-shi.R.
 #
 # The maths. For a central difference the two error terms are
 #     truncation  (h^2/6)|f'''|      noise  eps_f/h
@@ -320,16 +307,13 @@
 # and the whole job is estimating |f'''| without knowing it. The symmetric third
 # difference does that:
 #     D3(h) = f(p+2h) - 2f(p+h) + 2f(p-h) - f(p-2h)  ~  2 h^3 f'''
-# It is used only when it stands clear of the noise floor: its four evaluations
-# carry coefficients (1,2,2,1), so noise in D3 has scale sqrt(1+4+4+1) = 3.16
-# eps_f, and a D3 below a multiple of that is measuring nothing but noise -- the
-# signal that h is too SMALL, which is the one failure a fixed step cannot detect
-# and the reason a too-fine step degrades so sharply (a fixed 1e-6 on an
-# objective with 1e-8 relative noise measured 2.55 relative error, i.e. no
-# correct digits at all).
+# It is used only when it stands clear of the noise floor: its four evaluations carry
+# coefficients (1,2,2,1), so noise in D3 has scale 3.16 eps_f, and a D3 below a
+# multiple of that is measuring nothing but noise -- the signal that h is too SMALL,
+# which is the one failure a fixed step cannot detect.
 #
-# Returns list(h, gr): the chosen step and the central-difference derivative at
-# it, per requested index. `gr` is free -- the last iterate already evaluated it.
+# Returns list(h, gr): the chosen step and the central-difference derivative at it,
+# per requested index. `gr` is free -- the last iterate already evaluated it.
 .admShi21Central <- function(fn, p, k, eps_f, h0 = NULL, maxiter = 10L) {
   scale <- max(abs(p[k]), 0.1)
   # Start where a unit third derivative would put the optimum, but never finer

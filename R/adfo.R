@@ -1,25 +1,21 @@
 # Did .adfoGrad's last call actually take the order-2 path?
 #
-# The driver's `have_d2` is computed from the cached sens model's SHAPE alone
-# (`!is.null(sensModel$d2_cols) && !any_joint`). `.adfoGrad` then re-derives its
-# own `use_d2` with strictly more requirements that are only knowable at run
-# time: every study's `muj_cache[[i]]$dJ` must be present (it is NULL whenever
-# `.admSimulateSensRows()` returns no `d2_list` and `.admGetMuJBatch` falls
-# through to the FD-Jacobian branch), and every theta's direction must resolve
-# in `dJ`/`dth`.
+# The driver's `have_d2` is computed from the cached sens model's SHAPE alone.
+# `.adfoGrad` then re-derives its own `use_d2` with strictly more requirements that
+# are only knowable at run time: every study's `muj_cache[[i]]$dJ` must be present,
+# and every theta's direction must resolve in `dJ`/`dth`.
 #
-# When they disagree, `.adfoGrad` central-differences the whole NLL per theta
-# while the driver has already decided `use_grad_cov <- want_grad && have_d2` and
-# asks `.adfoCalcCov(use_grad = TRUE)` to central-difference THAT -- the nested
-# FD the gate exists to prevent, surfacing as a normal-looking fit whose every
-# `parFixedDf$SE` is NA. So `.adfoGrad` publishes what it actually did and the
-# driver believes that instead of its own prediction.
+# When they disagree, `.adfoGrad` central-differences the whole NLL per theta while
+# the driver has already asked `.adfoCalcCov(use_grad = TRUE)` to central-difference
+# THAT -- the nested FD the gate exists to prevent, surfacing as a normal-looking fit
+# whose every `parFixedDf$SE` is NA. So `.adfoGrad` publishes what it actually did
+# and the driver believes that instead of its own prediction.
 #
-# `use_d2` is a property of (sensModel, pinfo, studies), not of the parameter
-# vector, so the last call's value describes them all. Unset means no gradient
-# ran in THIS process -- parallel restarts run in daemons -- and the driver then
-# declines the grad-FD Hessian and takes the Gill NLL-FD one: slower, correct,
-# and the same path 0.4.0 used by default.
+# `use_d2` is a property of (sensModel, pinfo, studies), not of the parameter vector,
+# so the last call's value describes them all. Unset means no gradient ran in THIS
+# process -- parallel restarts run in daemons -- and the driver then declines the
+# grad-FD Hessian and takes the Gill NLL-FD one: slower, correct, and the same path
+# 0.4.0 used by default.
 .adfo_d2_env <- new.env(parent = emptyenv())
 
 # -- FO (First-Order) aggregate data estimator ---------------------------------
@@ -416,32 +412,26 @@
 
   # --- Pass 2: struct theta CENTRAL FD ----------------------------------------
   #
-  # The perturbed configurations differ ONLY in their structural thetas, and
-  # every one of them re-solves the same study. They are therefore stacked into a
-  # single rxSolve per study (.adfoGetMuJBatch) rather than driven through
-  # 2*n_s separate .adfoNLL calls. Same arithmetic, same FD steps -- just one
-  # call instead of (1 + 2*n_s) per study.
+  # The perturbed configurations differ ONLY in their structural thetas, and every
+  # one re-solves the same study. They are therefore stacked into a single rxSolve
+  # per study (.adfoGetMuJBatch) rather than driven through 2*n_s separate .adfoNLL
+  # calls. Same arithmetic, same FD steps -- just one call instead of (1 + 2*n_s).
   #
-  # CENTRAL, not forward, and the STEP is the reason. `grad_h` arrives here as
-  # Shi21's measured per-parameter step (.admShi21GradH, which the driver probes
-  # over exactly this parameter set), and Shi21 minimises the error of a CENTRAL
-  # difference: h* = (3 eps_f/|f'''|)^(1/3). The forward optimum is a square
-  # root, h ~ 2 sqrt(eps_f/|f''|), which is far coarser -- so a forward
-  # difference taken at the central step sits deep on the noise side of its own
-  # trade-off, where the eps_f/h term dominates. Forward here was measured
-  # 10^2-10^4x worse than central in 0.4.1; taking it at a step chosen for
-  # central compounded that rather than fixing it.
+  # CENTRAL, not forward, and the STEP is the reason. `grad_h` arrives as Shi21's
+  # measured per-parameter step, and Shi21 minimises the error of a CENTRAL
+  # difference: h* = (3 eps_f/|f'''|)^(1/3). The forward optimum is a square root and
+  # far coarser, so a forward difference taken at the central step sits deep on the
+  # noise side of its own trade-off. Forward here measured 10^2-10^4x worse than
+  # central in 0.4.1; taking it at a central step compounded that rather than fixing
+  # it.
   #
-  # The extra n_s configurations are extra ROWS of the same batched solve, not
-  # extra rxSolve calls, and rxSolve cost is dominated by the ~11 ms per CALL --
-  # so the non-joint branch pays almost nothing. The joint branch below does pay
-  # one .adfoNLL per configuration, i.e. 2*n_s instead of n_s.
-  #
-  # Joint units keep the original per-configuration path: their sensitivity solve
-  # is per output block, so batching them needs a per-ID event table (deferred --
-  # a subtle bug there yields wrong-but-plausible gradients rather than an error).
-  # Skipped entirely when the second-order block is available: the struct thetas
-  # are then accumulated analytically in Pass 3, which already holds dNLL/dV.
+  # The extra n_s configurations are extra ROWS of the same batched solve, and
+  # rxSolve cost is dominated by the ~11 ms per CALL, so the non-joint branch pays
+  # almost nothing. Joint units keep the original per-configuration path: their
+  # sensitivity solve is per output block, so batching them needs a per-ID event
+  # table (deferred -- a subtle bug there yields wrong-but-plausible gradients rather
+  # than an error). Skipped entirely when the second-order block is available: the
+  # struct thetas are then accumulated analytically in Pass 3.
   if (n_s > 0L && is.finite(nll_0) && !use_d2) {
     hs   <- pmax(abs(p[seq_len(n_s)]), 0.1) * .admGH(grad_h, seq_len(n_s))
     # Configurations 1..n_s are p + h_k; n_s+1..2*n_s are p - h_k, SAME order, so
