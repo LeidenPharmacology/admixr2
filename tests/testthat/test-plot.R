@@ -230,6 +230,18 @@ test_that(".admStudyTitle appends the conditioning, and omits it otherwise", {
               cov_dist = list(WT  = list(meanlog = log(90), sdlog = 0.2),
                               SEX = list(.point = TRUE))))
 
+## The ORIGINAL studies for `.cov_studies()`, keyed by SOURCE: each carries
+## its own published model, which is what puts a source at its own parameter
+## value on the effect panel rather than on the fitted line.
+.cov_src <- function()
+  stats::setNames(lapply(c("lo", "hi"), function(k) list(
+    ui = .cov_ui(),
+    range = list(WT = c(55, 105), SEX = c(0, 1)),
+    population = list(WT  = list(meanlog = log(if (k == "lo") 70 else 90),
+                                 sdlog = 0.2),
+                      SEX = list(values = c(0, 1), probs = c(0.5, 0.5))))),
+    c("lo", "hi"))
+
 .cov_ui <- function() {
   fn <- function() {
     ini({
@@ -301,18 +313,27 @@ test_that(".admCovEffectData marks marginal spread and conditioned points apart"
   skip_if_not_installed("rxode2")
   st <- .cov_studies()
   mw <- .admCovEffectData(.cov_ui(), "WT", st,
-                          list(tcl = log(5), bwt = 0.75, bsex = 0.2))$marks
+                          list(tcl = log(5), bwt = 0.75, bsex = 0.2),
+                          .cov_src())$marks
   expect_true(all(mw$kind == "marginal"))
-  # A distribution, drawn as one: median inside a 10th-90th bar inside a
+  # A distribution, drawn as one: centre inside a 10th-90th bar inside a
   # 2.5th-97.5th whisker.
   expect_true(all(mw$xlo2 < mw$xlo & mw$xlo < mw$x &
                   mw$x < mw$xhi & mw$xhi < mw$xhi2))
+  # And at the SOURCE's own parameter value, not read off the fitted line.
+  # `.cov_ui()` at its own ini: cl = 5 * (WT/70)^0.75 * exp(0.2 * SEX).
+  expect_equal(mw$y[mw$study == "lo"],
+               5 * (70 / 70)^0.75 * exp(0.2 * 0), tolerance = 1e-6)
 
   ms <- .admCovEffectData(.cov_ui(), "SEX", st,
-                          list(tcl = log(5), bwt = 0.75, bsex = 0.2))$marks
+                          list(tcl = log(5), bwt = 0.75, bsex = 0.2),
+                          .cov_src())$marks
   expect_true(all(ms$kind == "conditional"))
-  # Conditioned at one value: no spread to draw at all.
-  expect_true(all(ms$xlo == ms$x & ms$xhi == ms$x & ms$xlo2 == ms$x))
+  # The solid line is a RANGE, and only a continuous covariate gives one. SEX
+  # is levels: a stratum at SEX = 0 covers that level and not the other, so it
+  # stays a point. Drawn across the declared 0-1 it would claim both.
+  expect_true(all(ms$xlo == ms$x & ms$xhi == ms$x))
+  expect_setequal(ms$x, c(0, 1))
 })
 
 test_that(".admCovResidData carries the span each study speaks for", {
@@ -384,49 +405,34 @@ test_that(".admMergeCovMarks keeps strata that genuinely differ apart", {
 test_that(".admCovEffectData sweeps a continuous covariate and pads past it", {
   skip_if_not_installed("rxode2")
   d <- .admCovEffectData(.cov_ui(), "WT", .cov_studies(),
-                         list(tcl = log(5), bwt = 0.75, bsex = 0.2))
+                         list(tcl = log(5), bwt = 0.75, bsex = 0.2),
+                         .cov_src())
   expect_equal(unique(d$curve$param), "cl")
-  # SEX is conditioned at 0 in one study and 1 in the other, so the sweep is
-  # drawn once per level rather than once at the pooled 0.5 -- a patient that
-  # does not exist. 120 grid points per level.
-  expect_setequal(unique(d$curve$level), c("SEX = 0", "SEX = 1"))
-  expect_equal(nrow(d$curve), 240L)
-  # Allometric with a positive exponent: monotone increasing in weight, within
-  # each level. Across the concatenation it is not, and should not be.
-  for (lv in unique(d$curve$level))
-    expect_true(all(diff(d$curve$y[d$curve$level == lv]) > 0))
-  # The conditioned covariate's own effect is the GAP between the levels.
-  y0 <- d$curve$y[d$curve$level == "SEX = 0"]
-  y1 <- d$curve$y[d$curve$level == "SEX = 1"]
-  expect_true(all(y1 > y0))
-  expect_equal(unique(round(y1 / y0, 8)), round(exp(0.2), 8))
+  # ONE line: the estimated effect. Other covariates sit at the pooled centre.
+  expect_equal(nrow(d$curve), 120L)
+  # Allometric with a positive exponent: monotone increasing in weight.
+  expect_true(all(diff(d$curve$y) > 0))
   # Two shaded regions, one past each end of the range the studies cover.
   expect_equal(nrow(d$shade), 2L)
   expect_lt(min(d$curve$x), min(vapply(.cov_studies(), .admCovStudyQ,
                                        double(1), cv = "WT", u = 0.1)))
 })
 
-test_that(".admCovEffectData puts each study's mark on its OWN level's line", {
+test_that(".admCovEffectData draws no mark for a source with no model", {
   skip_if_not_installed("rxode2")
-  # `lo` is conditioned at SEX = 0, `hi` at SEX = 1. Each belongs on the line
-  # for the level it was solved at; on a single pooled line both would sit at a
-  # height no level of the model predicts.
-  m <- .admCovEffectData(.cov_ui(), "WT", .cov_studies(),
-                         list(tcl = log(5), bwt = 0.75, bsex = 0.2))$marks
-  expect_equal(m$level[m$study == "lo"], "SEX = 0")
-  expect_equal(m$level[m$study == "hi"], "SEX = 1")
-  # Tolerance is for the INTERPOLATION, not the model: a mark's y is read off
-  # the 120-point grid with approx(), so a convex curve lands a couple of parts
-  # per million away from the closed form.
-  expect_equal(m$y[m$study == "hi"] /
-                 (5 * (m$x[m$study == "hi"] / 70)^0.75),
-               exp(0.2), tolerance = 1e-4)
+  # Falling back to the fitted curve would put the study exactly on the dotted
+  # line and read as agreement with a claim it never made.
+  d <- .admCovEffectData(.cov_ui(), "WT", .cov_studies(),
+                         list(tcl = log(5), bwt = 0.75, bsex = 0.2), NULL)
+  expect_false(is.null(d$curve))
+  expect_null(d$marks)
 })
 
 test_that(".admCovEffectData puts a discrete covariate on its levels", {
   skip_if_not_installed("rxode2")
   d <- .admCovEffectData(.cov_ui(), "SEX", .cov_studies(),
-                         list(tcl = log(5), bwt = 0.75, bsex = 0.2))
+                         list(tcl = log(5), bwt = 0.75, bsex = 0.2),
+                         .cov_src())
   # The levels ARE the support: no sweep through SEX = 0.37, no extrapolation
   # region past them.
   expect_equal(sort(unique(d$curve$x)), c(0, 1))
@@ -466,6 +472,21 @@ test_that(".admCovEffectData shades a declared level no study sits at", {
                                           b = mk(1, c(0, 1))),
                           list(tcl = log(5), bg = 0.2))
   expect_null(d2$shade)
+})
+
+test_that(".admCovEffectData gives no facet where nothing is estimated", {
+  skip_if_not_installed("rxode2")
+  # A FIXED allometric exponent: the model reads WT and varies with it, but
+  # estimates no coefficient for it. There is no fitted effect to agree or
+  # disagree with, so the panel would invite a reader to check an agreement
+  # that was never in question.
+  fn <- function() {
+    ini({ tcl <- log(5); add.err <- 0.1; eta.cl ~ 0.1 })
+    model({ cl <- exp(tcl + eta.cl) * (WT / 70)^0.75
+            v <- exp(log(30)); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  expect_null(.admCovEffectData(ui, "WT", .cov_studies(), list(tcl = log(5))))
 })
 
 test_that(".admCovEffectData returns NULL when there is nothing to sweep", {
@@ -641,60 +662,6 @@ test_that(".admCovPalette gives a source the same colour in both panels", {
                 length(.admCovPalette(character(0))) == 0L)
 })
 
-test_that(".admCovLevelScales keeps the empty level out of the legend", {
-  skip_if_not_installed("ggplot2")
-  # Two facets on one figure: one split by a conditioned covariate, one with
-  # nothing to split on. `""` is not a level -- it must not take `solid` from a
-  # real one, and it must not add a blank key.
-  lv <- c("", "SEX = 0", "SEX = 1")
-  sc <- .admCovLevelScales(lv)
-  lt <- sc[[1L]]; lt$train(lv)
-  fl <- sc[[2L]]; fl$train(lv)
-  # Keyed BY NAME: the blank facet keeps solid without taking it from a real
-  # level, and the two real levels are told apart.
-  expect_equal(lt$map(lv), c("solid", "solid", "22"))
-  expect_equal(fl$map(lv), c("black", "black", "white"))
-  # Neither legend shows the blank.
-  expect_setequal(as.character(lt$get_breaks()), c("SEX = 0", "SEX = 1"))
-  expect_setequal(as.character(fl$get_breaks()), c("SEX = 0", "SEX = 1"))
-  # No conditioned covariate anywhere: no legend at all.
-  none <- .admCovLevelScales("")
-  expect_equal(none[[1L]]$guide, "none")
-  expect_equal(none[[2L]]$guide, "none")
-  # A figure whose facets are all discrete draws no lines, so it gets no
-  # linetype scale at all -- ggplot2 warns about a manual scale for an
-  # aesthetic nothing maps.
-  only_pts <- .admCovLevelScales(lv, lines = FALSE)
-  expect_length(only_pts, 1L)
-  expect_true("fill" %in% only_pts[[1L]]$aesthetics)
-})
-
-test_that(".admCovEffectData keeps a facet flat at one level and varying at another", {
-  skip_if_not_installed("rxode2")
-  # `cl` is constant across the WT sweep at SEX = 0 and varies at SEX = 1.
-  # Testing only the first combo threw the whole WT facet away, including the
-  # SEX = 1 curve that is the entire reason to look at the panel.
-  fn <- function() {
-    ini({
-      tcl <- log(5); bwt <- 0.75
-      add.err <- 0.1
-      eta.cl ~ 0.1
-    })
-    model({
-      cl <- exp(tcl + eta.cl + SEX * bwt * log(WT / 70))
-      v  <- exp(log(30))
-      cp <- linCmt()
-      cp ~ add(add.err)
-    })
-  }
-  ui <- suppressMessages(rxode2::rxode2(fn))
-  d  <- .admCovEffectData(ui, "WT", .cov_studies(), NULL)
-  expect_false(is.null(d))
-  # One curve, for the level that actually moves.
-  expect_setequal(d$curve$level, "SEX = 1")
-  expect_gt(diff(range(d$curve$y)), 0)
-})
-
 test_that(".admCovSourceRange prefers what the source declared", {
   # The enrolled range, then the table it enrolled, then the body of the
   # margin it declared -- most authoritative first.
@@ -714,58 +681,18 @@ test_that(".admCovSourceRange prefers what the source declared", {
   expect_null(.admCovSourceRange(list(), "WT"))
 })
 
-test_that(".admCovSourceLines draws only what the source itself estimated", {
-  skip_if_not_installed("rxode2")
+.pan_src <- function(cond = "WT") {
   pop <- list(WT  = list(meanlog = log(75), sdlog = 0.2),
               SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
-  src <- list(paper = list(ui = .cov_ui(), range = list(WT = c(60, 90)),
-                           population = pop))
-  d <- .admCovSourceLines("WT", src)
-  expect_false(is.null(d))
-  expect_equal(range(d$x), c(60, 90))
-  expect_false(any(d$disc))
-  expect_equal(unique(d$study), "paper")
-
-  # A model that READS the covariate at a FIXED exponent estimated nothing, so
-  # it has no claim of its own to draw. This is the same test `stratify = TRUE`
-  # uses to decide what a source can be banded on.
-  fn <- function() {
-    ini({ tcl <- log(5); add.err <- 0.1; eta.cl ~ 0.1 })
-    model({ cl <- exp(tcl + eta.cl) * (WT / 70)^0.75
-            v <- exp(log(30)); cp <- linCmt(); cp ~ add(add.err) })
-  }
-  fixed <- list(paper = list(ui = suppressMessages(rxode2::rxode2(fn)),
-                             range = list(WT = c(60, 90)), population = pop))
-  expect_null(.admCovSourceLines("WT", fixed))
-})
-
-test_that(".admCovSourceLines puts a discrete claim on the levels", {
-  skip_if_not_installed("rxode2")
-  # A paper joining SEX = 0 to SEX = 1 asserts a prediction at SEX = 0.37
-  # exactly as much as the pooled curve would, and the panel refuses to draw
-  # that for the fit.
-  src <- list(paper = list(
-    ui = .cov_ui(), range = list(SEX = c(0, 1)),
-    population = list(WT  = list(meanlog = log(75), sdlog = 0.2),
-                      SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))))
-  d <- .admCovSourceLines("SEX", src, levels = c(0, 1))
-  expect_false(is.null(d))
-  expect_setequal(d$x, c(0, 1))
-  expect_true(all(d$disc))
-})
-
-test_that(".admCovSourceLines keeps to the facets the pooled curve drew", {
-  skip_if_not_installed("rxode2")
-  pop <- list(WT  = list(meanlog = log(75), sdlog = 0.2),
-              SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
-  src <- list(paper = list(ui = .cov_ui(), range = list(WT = c(60, 90)),
-                           population = pop))
-  # `v` is not a facet the pooled curve produced, so a source cannot conjure
-  # a panel of its own for it.
-  keep <- data.frame(cov = "WT", param = "cl", stringsAsFactors = FALSE)
-  d <- .admCovSourceLines("WT", src, pairs = keep)
-  expect_setequal(unique(d$param), "cl")
-})
+  cd <- list(WT  = list(meanlog = log(75), sdlog = 0.2),
+             SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  for (cv in cond) cd[[cv]] <- list(.point = TRUE)
+  list(src = list(paper = list(ui = .cov_ui(),
+                               range = list(WT = c(60, 90), SEX = c(0, 1)),
+                               population = pop)),
+       studies = list(paper_s1 = list(n = 100L, cov = list(WT = 75, SEX = 0),
+                                      cov_dist = cd)))
+}
 
 test_that(".admFitSourceStudies is absent rather than fatal", {
   expect_null(.admFitSourceStudies(list()))

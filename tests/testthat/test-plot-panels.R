@@ -80,10 +80,19 @@ skip_if_no_vdiffr <- function() {
 
 .pan_lnorm <- function(m, s = 0.2) list(meanlog = log(m), sdlog = s)
 
-.pan_eff <- function(ui, covs, studies) {
+## The original studies, keyed by SOURCE: each carries its own published model,
+## which is what puts a source at its own parameter value rather than on the
+## fitted line.
+.pan_src_of <- function(ui, studies, rng)
+  stats::setNames(lapply(names(studies), function(nm)
+    list(ui = ui, range = rng,
+         population = studies[[nm]]$cov_dist)), names(studies))
+
+.pan_eff <- function(ui, covs, studies, rng = list()) {
+  src <- .pan_src_of(ui, studies, rng)
   eff <- Filter(Negate(is.null),
                 lapply(covs, function(cv)
-                  .admCovEffectData(ui, cv, studies, NULL)))
+                  .admCovEffectData(ui, cv, studies, NULL, src)))
   pal <- .admCovPalette(unlist(lapply(eff, function(z) z$marks$study),
                                use.names = FALSE))
   .admCovEffectPanel(eff, pal)

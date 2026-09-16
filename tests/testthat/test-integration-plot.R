@@ -218,13 +218,13 @@ test_that("plot.admFit covariates: both covariate panels are produced", {
   expect_s3_class(out$covariate_effect, "gg")
   expect_s3_class(out$covariate_resid,  "gg")
   # WT is swept; SEX is banded, so its facet is the two levels and nothing
-  # between them. The WT sweep is drawn once per SEX level, so monotonicity is
-  # a within-level property -- across the concatenation it is not one.
+  # between them. ONE estimated-effect line per facet -- other covariates sit
+  # at the pooled centre, and the line is the thing the sources are compared
+  # against.
   d  <- out$covariate_effect$data
   wt <- d[d$cov == "WT" & d$param == "cl", , drop = FALSE]
-  expect_gt(length(unique(wt$level)), 1L)
-  for (lv in unique(wt$level))
-    expect_true(all(diff(wt$y[wt$level == lv]) > 0))
+  expect_gt(nrow(wt), 0L)
+  expect_true(all(diff(wt$y) > 0))
   expect_equal(sort(unique(d$x[d$cov == "SEX"])), c(0, 1))
 })
 

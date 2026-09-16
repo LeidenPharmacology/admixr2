@@ -672,56 +672,6 @@ head.paged_df <- function(x, n = 6L, ...) {
     ggplot2::theme(plot.subtitle = ggplot2::element_text(
       size = 7, colour = "grey40", face = "plain")))
 
-## The linetype and fill scales that carry "which level of the conditioned
-## covariate is this", for the effect panel.
-##
-## `level` is "" on a facet with nothing to split on, and the panel pools every
-## covariate, so a figure mixing a split facet with an unsplit one carries both.
-## The empty level is not a level: it takes solid/black BY NAME and is kept out
-## of the legend. Left to an unnamed palette it sorts to the front, takes solid
-## away from every real level and adds a blank key to the legend.
-##
-## Both channels, because the two halves of the panel have different room for
-## them: a continuous facet draws lines, which linetype fits, and a discrete one
-## draws points, which it does not. `shape` is not available for the points --
-## the marks' marginal/conditioned distinction owns it, and ggplot2 allows one
-## shape scale per plot -- so they are a fixed shape 21 keyed by fill.
-## `lines`/`points` say which halves of the panel exist. A figure whose facets
-## are ALL discrete draws no line for linetype to land on, and adding the scale
-## anyway makes ggplot2 warn that the manual values share no levels with the
-## data -- a scale for an aesthetic nothing maps.
-.admCovLevelScales <- function(levels, lines = TRUE, points = TRUE) {
-  lv_all <- sort(unique(levels))
-  key    <- setdiff(lv_all, "")
-  blank  <- "" %in% lv_all
-  lt <- c(stats::setNames(
-            rep_len(c("solid", "22", "42", "1343", "73", "2262"), length(key)),
-            key),
-          if (blank) stats::setNames("solid", ""))
-  fl <- c(stats::setNames(
-            rep_len(c("black", "white", "grey55", "grey25", "grey80", "grey40"),
-                    length(key)), key),
-          if (blank) stats::setNames("black", ""))
-  # A single level is no split at all -- suppress a legend reading `level: ""`
-  # on a model with no conditioned covariate.
-  # `order`, for the same reason as .admCovPanelStyle(): after the source and
-  # the marginal/conditioned key, which the reader consults first.
-  out <- list()
-  if (lines)
-    out <- c(out, list(if (length(key))
-      ggplot2::scale_linetype_manual(
-        values = lt, breaks = key, name = NULL,
-        guide = ggplot2::guide_legend(order = 3L))
-      else ggplot2::scale_linetype_manual(values = lt, guide = "none")))
-  if (points)
-    out <- c(out, list(if (length(key))
-      ggplot2::scale_fill_manual(
-        values = fl, breaks = key, name = NULL,
-        guide = ggplot2::guide_legend(order = 4L))
-      else ggplot2::scale_fill_manual(values = fl, guide = "none")))
-  out
-}
-
 ## An axis-breaks function that ticks a discrete facet at its LEVELS only.
 ##
 ## `scales = "free_x"` gives each facet its own scale but they share one breaks
@@ -786,160 +736,137 @@ head.paged_df <- function(x, n = 6L, ...) {
   }), covs)
 }
 
-## Fitted covariate-effect curve for one covariate.
+## One panel per (parameter, covariate) the model ESTIMATES an effect for.
 ##
-## Sweeps `cv` across the range the studies between them cover, holding every
-## other covariate at the pooled median, and evaluates the model's parameter
-## block at the FITTED thetas -- in plain R, so no compile and no solve. Each
-## model line that reads `cv` becomes one curve, named by its left-hand side.
+## The question the panel answers is "does the fitted covariate effect agree
+## with the sources it was fitted from". So it carries exactly three things:
 ##
-## The grid is padded past the covered range and the padding is returned
-## separately: the region no source sampled is where the fit is extrapolating,
-## which is both the reason to build a meta-analysis and the place it can be
-## most wrong. Drawing it without marking it would be the misleading choice.
+##   * the ESTIMATED EFFECT, as a dotted line across the covariate axis -- the
+##     MBMA model's parameter at the fitted thetas.
+##   * each SOURCE at its own parameter value, from that source's own published
+##     model. This is the comparison: a source sitting off the dotted line is
+##     one the meta-analysis does not reproduce.
+##   * how far along the axis each source SPEAKS FOR, and that is where
+##     conditional and marginal differ. A conditional source was banded or
+##     reported at a value, so it covers a stated range: a solid line. A
+##     marginal one reported no contrast and admixr2 integrates over the
+##     population it enrolled: a whisker, because that is a distribution.
 ##
-## Returns NULL when the model reads `cv` in no line, when no study gives it a
-## finite value, or when no line evaluates to a finite curve.
-.admCovEffectData <- function(ui, cv, studies, struct, n_grid = 120L,
-                              pad = 0.15) {
+## A covariate whose coefficient the model does not estimate gets no panel.
+## There is no fitted effect to agree or disagree with, and a facet drawn for
+## one -- a fixed 0.75 allometric exponent, say -- invites a reader to check an
+## agreement that was never in question.
+##
+## Returns NULL when the model estimates nothing for `cv`, when no line reads
+## it, when no study gives it a finite value, or when nothing varies.
+.admCovEffectData <- function(ui, cv, studies, struct, src = NULL,
+                              n_grid = 120L, pad = 0.15) {
   ml <- .admModelLines(ui)
   if (is.null(ml)) return(NULL)
   hit <- .admLinesReading(ml, cv)
   if (!length(hit)) return(NULL)
+  est <- tryCatch(.admCovCoefThetas(ui, cv, NULL), error = function(e) NULL)
+  if (is.null(est) || !length(est)) return(NULL)
 
-  lo  <- vapply(studies, .admCovStudyQ, double(1), cv = cv, u = 0.1)
   mid <- vapply(studies, .admCovStudyCentre, double(1), cv = cv)
+  lo  <- vapply(studies, .admCovStudyQ, double(1), cv = cv, u = 0.1)
   hi  <- vapply(studies, .admCovStudyQ, double(1), cv = cv, u = 0.9)
   # The tails as well as the body: a marginalised source is a DISTRIBUTION the
   # estimator integrates over, and 10th-90th alone draws it as if it stopped
-  # there. The 2.5th-97.5th whisker is also what decides how far the shaded
-  # extrapolation region starts from -- see `covered` below.
+  # there. The 2.5th-97.5th also decides where extrapolation starts.
   lo2 <- vapply(studies, .admCovStudyQ, double(1), cv = cv, u = 0.025)
   hi2 <- vapply(studies, .admCovStudyQ, double(1), cv = cv, u = 0.975)
   knd <- vapply(studies, .admCovStudyKind, character(1), cv = cv)
   if (!any(is.finite(mid))) return(NULL)
 
-  # DISCRETE: a covariate with declared levels, or one every study conditions at
-  # a point. Swept continuously it draws the model at SEX = 0.37, which is not a
+  # DISCRETE: declared levels, or a covariate every study conditions at a
+  # point. Swept continuously it draws the model at SEX = 0.37, which is not a
   # patient and not a prediction anyone can act on; its axis is the levels.
-  disc <- .admCovLevels(cv, studies, mid)
+  disc    <- .admCovLevels(cv, studies, mid)
+  is_disc <- !is.null(disc) && length(disc) > 1L
 
   covered <- range(c(lo2, lo, mid, hi, hi2), na.rm = TRUE)
   span    <- diff(covered)
-  # Nothing to sweep: every study holds `cv` at the same single value, so the
-  # model has no covariate effect to show here. Inventing a range around the
-  # point would draw a curve through territory no source spoke to.
+  # Every study at one value: no covariate effect to show, and a curve through
+  # territory no source spoke to would be invention.
   if (!is.finite(span) || span <= 0) return(NULL)
 
-  grid <- if (!is.null(disc) && length(disc) > 1L) disc
+  grid <- if (is_disc) disc
           else seq(covered[1L] - pad * span, covered[2L] + pad * span,
                    length.out = n_grid)
 
-  all_cov <- .admCovPanelCovs(ui, studies)
-  base    <- .admCovPooled(all_cov, studies)
+  # THE ESTIMATED EFFECT. Other covariates at the pooled centre: this is one
+  # line, not one per level of something else. A panel that splits is a panel
+  # answering a second question, and the effect is the slope of this one.
+  base <- .admCovPooled(.admCovPanelCovs(ui, studies), studies)
+  at   <- utils::modifyList(base, stats::setNames(list(grid), cv))
+  vals <- .admEvalModelLines(ml, at, struct, keep = hit)
+  vals <- Filter(function(z) length(z$value) == length(grid) &&
+                   all(is.finite(z$value)) && diff(range(z$value)) > 0, vals)
+  if (!length(vals)) return(NULL)
 
-  # ONE CURVE PER LEVEL of every OTHER discrete covariate, rather than one curve
-  # at their pooled median. Pooling a covariate that is conditioned at 0 in half
-  # the studies and 1 in the other half puts it at 0.5, and the curve then
-  # describes a half-male patient -- the same fiction as sweeping SEX through
-  # 0.37, moved onto every other covariate's facet. Splitting is also how the
-  # effect READS: with one curve per level, this covariate's effect is the slope
-  # and the conditioned one's is the GAP between the curves.
-  #
-  # Only on a covariate some study CONDITIONS at a point. Splitting on one
-  # every source marginalises over draws two curves neither source is on, and
-  # then has to put each source on one of them -- by a median that for an even
-  # binary mixture is a coin flip. That is a claim about who was enrolled that
-  # nobody made. Marginalised covariates stay at the pooled mixture mean, which
-  # is what marginalising over them means.
-  oth <- setdiff(all_cov, cv)
-  oth <- oth[vapply(oth, function(o) any(vapply(studies, .admCovStudyKind,
-    character(1), cv = o) == "conditional"), logical(1))]
-  lv <- Filter(Negate(is.null), setNames(lapply(oth,
-    function(o) .admCovLevels(o, studies,
-      vapply(studies, .admCovStudyCentre, double(1), cv = o))), oth))
-  # A cap, because the panel is a figure and not a lookup table: three binary
-  # covariates is already eight curves on one facet.
-  if (length(lv) && prod(vapply(lv, length, integer(1))) > 6L) lv <- list()
-  combos <- if (length(lv))
-    expand.grid(lv, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
-  else data.frame(.pooled = 1)
+  curve <- do.call(rbind, lapply(vals, function(z)
+    data.frame(cov = cv, param = z$name, x = grid, y = as.numeric(z$value),
+               disc = is_disc, stringsAsFactors = FALSE)))
+  params <- unique(curve$param)
 
-  is_disc <- !is.null(disc) && length(disc) > 1L
-  .label <- function(k) if (!length(lv)) "" else
-    paste(vapply(names(lv), function(o)
-      paste0(o, " = ", format(combos[k, o], digits = 3)), character(1)),
-      collapse = ", ")
-
-  per <- lapply(seq_len(nrow(combos)), function(k) {
-    at <- utils::modifyList(base, setNames(list(grid), cv))
-    if (length(lv))
-      at <- utils::modifyList(at, as.list(combos[k, names(lv), drop = FALSE]))
-    vals <- .admEvalModelLines(ml, at, struct, keep = hit)
-    # A line is a curve only if it actually varied with the sweep: one
-    # evaluating to a scalar read `cv` inside something R could not vectorise,
-    # and one that is constant is a line the covariate reaches but does not move.
-    Filter(function(z) length(z$value) == length(grid) &&
-             all(is.finite(z$value)) && diff(range(z$value)) > 0, vals)
-  })
-  # ANY combo, not the first. A model line can be flat at one level and vary
-  # at another -- `cl <- exp(tcl + eta.cl + SEX * bwt * log(WT/70))` is constant
-  # across the WT sweep at SEX = 0 -- and testing combo 1 alone threw away the
-  # whole WT facet, including the SEX = 1 curve that is the thing worth seeing.
-  if (!any(lengths(per))) return(NULL)
-
-  curve <- do.call(rbind, lapply(seq_along(per), function(k)
-    do.call(rbind, lapply(per[[k]], function(z)
-      data.frame(cov = cv, param = z$name, x = grid, y = as.numeric(z$value),
-                 level = .label(k), disc = is_disc,
-                 stringsAsFactors = FALSE)))))
-
-  # Per-study marks sit ON the curve, at that study's median `cv`: they say
-  # where each source sampled, not what it independently claimed -- a fit keeps
-  # no source model to ask (the study carries the moments it generated).
-  #
-  # And on ITS OWN curve. A study conditioned at SEX = 0 belongs on the SEX = 0
-  # line; placed on the pooled one it would sit off every curve drawn, at a
-  # height no level of the model predicts.
-  .or <- function(v, i) if (is.finite(v[i])) v[i] else mid[i]
-  .combo_of <- function(i) {
-    if (!length(lv)) return(1L)
-    want <- vapply(names(lv), function(o)
-      .admCovStudyCentre(studies[[i]], o), double(1))
-    hit <- which(vapply(seq_len(nrow(combos)), function(k)
-      isTRUE(all.equal(unname(unlist(combos[k, names(lv)])), unname(want))),
-      logical(1)))
-    if (length(hit)) hit[1L] else 1L
+  # EACH SOURCE AT ITS OWN VALUE. The paper's own model, at the paper's own
+  # published estimates, evaluated where that study sits. Falling back to the
+  # fitted curve when a source carries no model would put every such study
+  # exactly on the dotted line and read as agreement, so those get no mark.
+  own <- function(nm) {
+    so <- src[[.admCovSource(nm)]]
+    if (is.null(so) || is.null(so[["ui"]])) return(NULL)
+    sml <- .admModelLines(so[["ui"]])
+    if (is.null(sml)) return(NULL)
+    a <- .admCovSourceAt(so, so[["ui"]])
+    # This stratum's own covariate values on top of the source's centres: a
+    # banded source says different things about cl at SEX = 0 and SEX = 1.
+    cvv <- studies[[nm]][["cov"]]
+    for (k in intersect(names(a), names(cvv)))
+      if (is.finite(suppressWarnings(as.numeric(cvv[[k]])[1L])))
+        a[[k]] <- as.numeric(cvv[[k]])[1L]
+    v <- tryCatch(.admEvalModelLines(sml, a), error = function(e) list())
+    v <- Filter(function(z) length(z$value) == 1L && is.finite(z$value), v)
+    if (!length(v)) return(NULL)
+    stats::setNames(lapply(v, `[[`, "value"), vapply(v, `[[`, "", "name"))
   }
+
+  # How far along the axis a source speaks for. Conditional: the range it was
+  # banded or reported over, which is a stated extent and is drawn solid.
+  # Marginal: its declared distribution, drawn as a whisker.
+  .or <- function(v, i) if (is.finite(v[i])) v[i] else mid[i]
   mk <- do.call(rbind, lapply(seq_along(studies), function(i) {
+    nm <- names(studies)[i]
     if (!is.finite(mid[i])) return(NULL)
-    k <- .combo_of(i)
-    do.call(rbind, lapply(per[[k]], function(z) data.frame(
-      cov   = cv,
-      param = z$name,
-      study = names(studies)[i],
-      kind  = knd[i],
-      level = .label(k),
-      x     = mid[i],
-      xlo   = .or(lo,  i), xhi  = .or(hi,  i),
-      xlo2  = .or(lo2, i), xhi2 = .or(hi2, i),
-      y     = stats::approx(grid, as.numeric(z$value), xout = mid[i],
-                            rule = 2L)$y,
-      stringsAsFactors = FALSE)))
+    o <- own(nm)
+    if (is.null(o)) return(NULL)
+    # The solid line is a RANGE, and only a continuous covariate gives one: a
+    # renal band of 45-75 is an extent, a stratum at SEX = 0 is a level. Drawn
+    # across the declared 0-1 it would claim the stratum covers both.
+    rg <- if (knd[i] == "conditional" && !is_disc)
+      .admCovSourceRange(src[[.admCovSource(nm)]] %||% list(), cv) else NULL
+    do.call(rbind, lapply(intersect(params, names(o)), function(pp)
+      data.frame(
+        cov   = cv,
+        param = pp,
+        study = nm,
+        kind  = knd[i],
+        x     = mid[i],
+        xlo   = if (is.null(rg)) .or(lo,  i) else rg[1L],
+        xhi   = if (is.null(rg)) .or(hi,  i) else rg[2L],
+        xlo2  = if (is.null(rg)) .or(lo2, i) else rg[1L],
+        xhi2  = if (is.null(rg)) .or(hi2, i) else rg[2L],
+        y     = as.numeric(o[[pp]]),
+        stringsAsFactors = FALSE)))
   }))
 
   # EXTRAPOLATION, the same idea on both kinds of axis: grey marks where the
-  # fit is speaking past its sources.
-  #
-  # On a continuous axis that is the padding beyond the range they cover. On a
-  # discrete one it is any declared LEVEL no study sits at -- a `values` spec
-  # can declare a group nobody enrolled, and the model will happily predict for
-  # it. Drawn identically to the studied levels, that prediction looks equally
-  # earned; it is not.
-  #
-  # From the studies' SUPPORT, not their centres: a source marginalising over an
-  # even binary split has a centre at 0.5 and sits on no level, and reading the
-  # centres would grey both levels of a covariate every source sampled.
+  # fit is speaking past its sources. On a continuous axis that is the padding
+  # beyond the range they cover; on a discrete one it is a declared LEVEL no
+  # study sits at. From the studies' SUPPORT, not their centres: a source
+  # marginalising over an even binary split has a centre at 0.5 and sits on no
+  # level, and reading centres would grey a level every source sampled.
   shade <- if (!is_disc) data.frame(
       cov  = cv,
       xmin = c(min(grid), covered[2L]),
@@ -950,11 +877,9 @@ head.paged_df <- function(x, n = 6L, ...) {
                                   cv = cv, levels = grid)))
       un  <- setdiff(grid, sup)
       if (!length(un) || length(grid) < 2L) NULL else {
-        # CLAMPED to the level range. A rect hanging half a gap past the
-        # outermost level widens the panel limits enough that
-        # .admLevelBreaks() gives up and falls back to pretty(), which ticks a
-        # three-level factor at 0.5 and 1.5 -- values it does not have, and the
-        # exact thing that helper exists to prevent.
+        # Clamped to the level range: a rect hanging past the outermost level
+        # widens the limits enough that .admLevelBreaks() falls back to
+        # pretty() and ticks a three-level factor at 0.5 and 1.5.
         w <- 0.4 * min(diff(sort(grid)))
         data.frame(cov = cv,
                    xmin = pmax(un - w, min(grid)),
@@ -967,6 +892,7 @@ head.paged_df <- function(x, n = 6L, ...) {
        marks = if (is.null(mk)) NULL else .admMergeCovMarks(mk),
        shade = shade)
 }
+
 
 ## Collapse coincident study marks and name them by their shared source.
 ##
@@ -1137,76 +1063,6 @@ head.paged_df <- function(x, n = 6L, ...) {
   base
 }
 
-## Each source's OWN covariate curve, over the range it enrolled.
-##
-## This is the claim the paper itself makes -- its published model at its own
-## published values -- and drawing it against the pooled MBMA curve is the
-## comparison the panel exists for. Where the two part company over a range a
-## source actually enrolled, the meta-analysis is disagreeing with a paper
-## about that paper's own patients, which is a thing to find out.
-##
-## Only a source whose model ESTIMATED the effect gets a line, because only
-## then is there a claim to draw: that is what makes the source conditional on
-## the covariate in the first place. A model that merely READS it at a fixed
-## exponent estimated nothing. `.admCovCoefThetas()` is the test, and it is the
-## same one `stratify = TRUE` uses to decide what a source can be banded on.
-##
-## `pairs` restricts the result to (covariate, parameter) facets the pooled
-## curve already draws, so a source line cannot conjure a panel of its own.
-##
-## `levels` makes the covariate DISCRETE, and then a source's claim is not a
-## line: joining SEX = 0 to SEX = 1 asserts a prediction at SEX = 0.37 just as
-## much when a paper draws it as when the meta-analysis does. Discrete rows come
-## back as a short tick at each level (`xlo`/`xhi`) instead.
-.admCovSourceLines <- function(cv, src, pairs = NULL, levels = NULL,
-                               n_grid = 60L) {
-  if (is.null(src) || !length(src)) return(NULL)
-  df <- do.call(rbind, Filter(Negate(is.null), lapply(names(src), function(nm) {
-    s  <- src[[nm]]
-    ui <- s[["ui"]]
-    if (is.null(ui)) return(NULL)
-    ml <- .admModelLines(ui)
-    if (is.null(ml)) return(NULL)
-    hit <- .admLinesReading(ml, cv)
-    if (!length(hit)) return(NULL)
-    est <- tryCatch(.admCovCoefThetas(ui, cv, s[["cov_dist"]] %||%
-                                        s[["population"]]),
-                    error = function(e) NULL)
-    if (is.null(est) || !length(est)) return(NULL)
-    rg <- .admCovSourceRange(s, cv)
-    if (is.null(rg)) return(NULL)
-    is_disc <- !is.null(levels) && length(levels) > 1L
-    grid <- if (is_disc)
-      levels[levels >= rg[1L] - 1e-8 & levels <= rg[2L] + 1e-8]
-    else seq(rg[1L], rg[2L], length.out = n_grid)
-    if (!length(grid)) return(NULL)
-    at   <- utils::modifyList(.admCovSourceAt(s, ui),
-                              stats::setNames(list(grid), cv))
-    vals <- tryCatch(.admEvalModelLines(ml, at, keep = hit),
-                     error = function(e) list())
-    # Same test as the pooled curve: a line is a curve only if it varied with
-    # the sweep. One that came back a scalar read `cv` inside something R could
-    # not vectorise; one that is flat is a line the covariate does not move.
-    # On a level axis a flat result is kept -- "this paper found no difference
-    # between the groups" is a claim, and the reader wants to see it sitting
-    # against the ones that did.
-    vals <- Filter(function(z) length(z$value) == length(grid) &&
-                     all(is.finite(z$value)) &&
-                     (is_disc || diff(range(z$value)) > 0), vals)
-    if (!length(vals)) return(NULL)
-    do.call(rbind, lapply(vals, function(z) data.frame(
-      cov = cv, param = z$name, study = nm, x = grid,
-      y = as.numeric(z$value), disc = is_disc, stringsAsFactors = FALSE)))
-  })))
-  if (is.null(df) || !nrow(df)) return(NULL)
-  if (!is.null(pairs) && nrow(pairs)) {
-    df <- merge(df, unique(pairs[, c("cov", "param")]),
-                by = c("cov", "param"))
-    if (!nrow(df)) return(NULL)
-  }
-  df
-}
-
 ## ---- covariate panel BUILDERS ----------------------------------------------
 ##
 ## Data frames in, a ggplot out. These were 200 lines inline in plot.admFit(),
@@ -1232,90 +1088,52 @@ head.paged_df <- function(x, n = 6L, ...) {
   if (!is.null(shade_df))
     shade_df <- shade_df[shade_df$xmax > shade_df$xmin, , drop = FALSE]
   # Carry the shading onto the (cov, param) pairs that EXIST. Faceting on
-  # ~cov+param over a layer keyed by `cov` alone makes ggplot2 conjure a
-  # panel for every combination, so a parameter that never reads CRCL still
-  # got an empty "CRCL, v" panel containing nothing but the grey rect.
+  # ~cov+param over a layer keyed by `cov` alone makes ggplot2 conjure a panel
+  # for every combination, so a parameter that never reads CRCL still got an
+  # empty "CRCL, v" panel containing nothing but the grey rect.
   if (!is.null(shade_df) && nrow(shade_df))
     shade_df <- merge(shade_df, unique(curve_df[, c("cov", "param")]),
                       by = "cov")
 
   p_eff <- ggplot2::ggplot(curve_df, ggplot2::aes(x = x, y = y))
-  # NULL when every covariate on the figure is discrete -- the levels are
-  # the whole support, so there is no extrapolation region anywhere.
   if (!is.null(shade_df) && nrow(shade_df))
     p_eff <- p_eff + ggplot2::geom_rect(
       data = shade_df, inherit.aes = FALSE,
       ggplot2::aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
       fill = "grey85", alpha = 0.55)
-  # The CURVE is for a covariate that actually has intermediate values.
-  # Drawing one across the levels of a discrete covariate claims the model
-  # predicts something at SEX = 0.37; it does not, and no patient is there.
-  # One line per level of any conditioned covariate. LINETYPE, not colour:
-  # colour already carries the source, and the two legends would otherwise
-  # compete for the same channel on the same figure.
+
+  # THE ESTIMATED EFFECT: one dotted line, heavy enough to read as the
+  # reference the sources are being compared against.
   if (any(!curve_df$disc))
     p_eff <- p_eff + ggplot2::geom_line(
       data = curve_df[!curve_df$disc, , drop = FALSE],
-      ggplot2::aes(group = level, linetype = level),
-      colour = "black", linewidth = 0.9)
-  # A discrete covariate gets its LEVELS, and nothing between them. The gap
-  # between the points is the whole of its effect; anything joining them is
-  # either a prediction the model was never asked for or, as drop lines to
-  # the axis, an asymmetric stub at one level and a long dangle at the other.
-  # The points carry `level` through FILL -- a discrete facet has no line for
-  # linetype to land on, so conditioning on a second covariate drew two
-  # identical black dots per level at different heights with nothing saying
-  # which was which. See .admCovLevelScales().
+      colour = "black", linewidth = 1.1, linetype = "dotted")
+  # On a discrete axis the levels ARE the effect. Joining them would claim a
+  # prediction at SEX = 0.37, which the model was never asked for.
   if (any(curve_df$disc))
     p_eff <- p_eff + ggplot2::geom_point(
       data = curve_df[curve_df$disc, , drop = FALSE],
-      ggplot2::aes(fill = level), colour = "black", shape = 21L,
-      size = 3.4, stroke = 0.6)
-  p_eff <- p_eff + .admCovLevelScales(curve_df$level,
-                                      lines  = any(!curve_df$disc),
-                                      points = any(curve_df$disc))
-  # EACH SOURCE'S OWN CURVE, in its own colour, over the range it enrolled.
-  # Thinner than the pooled line and stopping where that source's patients
-  # stop: the black curve is the meta-analysis speaking, these are the papers.
-  # Drawn under the marks so a source's point stays legible on top of it.
-  if (!is.null(src) && nrow(src)) {
-    s_cont <- src[!src$disc, , drop = FALSE]
-    s_disc <- src[src$disc, , drop = FALSE]
-    if (nrow(s_cont))
-      p_eff <- p_eff + ggplot2::geom_line(
-        data = s_cont, inherit.aes = FALSE,
-        ggplot2::aes(x = x, y = y, colour = study, group = paste(study, param)),
-        linewidth = 0.7, alpha = 0.85)
-    # A DASH at each level, not a line between them: a paper joining SEX = 0 to
-    # SEX = 1 asserts a prediction at SEX = 0.37 exactly as much as the pooled
-    # curve would, and the panel refuses to draw that for the fit.
-    #
-    # A dash GLYPH (pch 45) rather than a segment, because a segment is data and
-    # widens the panel limits -- enough that .admLevelBreaks() gives up and
-    # ticks a binary covariate at 0.2, 0.4, 0.6. A point occupies no data width.
-    if (nrow(s_disc))
-      p_eff <- p_eff + ggplot2::geom_point(
-        data = s_disc, inherit.aes = FALSE,
-        ggplot2::aes(x = x, y = y, colour = study),
-        shape = 45L, size = 9, alpha = 0.9)
-  }
-  # Sources go in a LEGEND rather than inline text, as in the residual
-  # panel: three cohorts enrolled at similar weights sit almost on top of
-  # one another, and their names printed in place overlap into a smear.
-  #
-  # MARGINAL sources are drawn as the distribution the estimator integrates
-  # over -- a thin 2.5th-97.5th whisker under a thick 10th-90th bar, round
-  # point at the centre. CONDITIONED ones are drawn as what they are, one
-  # value, with a diamond and no spread. The shape legend keeps the two
-  # readable apart when they share a colour.
+      colour = "black", size = 3.4)
+
+  # EACH SOURCE at its own published parameter value, over the stretch of the
+  # axis it speaks for. CONDITIONAL: a solid line over the range it was banded
+  # or reported across -- a stated extent. MARGINAL: a whisker, because what it
+  # reported is a distribution, and drawing that as a line would claim the
+  # source covers its tails as evenly as its middle.
   if (!is.null(marks_df) && nrow(marks_df)) {
+    cond <- marks_df[marks_df$kind == "conditional" &
+                       marks_df$xhi > marks_df$xlo, , drop = FALSE]
     marg <- marks_df[marks_df$kind == "marginal", , drop = FALSE]
+    if (nrow(cond))
+      p_eff <- p_eff + ggplot2::geom_segment(
+        data = cond, inherit.aes = FALSE,
+        ggplot2::aes(x = xlo, xend = xhi, y = y, yend = y, colour = study),
+        linewidth = 1.4)
     if (nrow(marg))
       p_eff <- p_eff +
         ggplot2::geom_segment(
           data = marg, inherit.aes = FALSE,
-          ggplot2::aes(x = xlo2, xend = xhi2, y = y, yend = y,
-                       colour = study),
+          ggplot2::aes(x = xlo2, xend = xhi2, y = y, yend = y, colour = study),
           linewidth = 0.5, alpha = 0.7) +
         ggplot2::geom_segment(
           data = marg, inherit.aes = FALSE,
@@ -1327,8 +1145,9 @@ head.paged_df <- function(x, n = 6L, ...) {
                           size = 2.6) +
       .admCovPanelStyle(pal, marks_df$kind)
   }
-  # facet_wrap, not facet_grid: most parameters read only some covariates,
-  # and a grid spends half the figure on empty (v, CRCL)-style panels.
+
+  # facet_wrap, not facet_grid: most parameters read only some covariates, and
+  # a grid spends half the figure on empty (v, CRCL)-style panels.
   p_eff <- p_eff +
     ggplot2::scale_x_continuous(
       breaks = .admLevelBreaks(curve_df$x[curve_df$disc])) +
@@ -1336,27 +1155,25 @@ head.paged_df <- function(x, n = 6L, ...) {
                         labeller = ggplot2::labeller(
                           .multi_line = FALSE, .default = ggplot2::label_value)) +
     ggplot2::labs(
-      title = "Fitted covariate effect",
+      title = "Estimated covariate effect against its sources",
       x = "Covariate value", y = "Model parameter",
-      subtitle = paste("black: parameter at the fitted thetas; one line per",
-                       "level of a conditioned covariate, other covariates",
-                       "at the pooled centre\nthis covariate's effect is",
-                       "the SLOPE, a conditioned one's is the GAP between",
-                       "the lines\nCONDITIONAL (diamond + coloured line):",
-                       "the source model estimated this effect -- the line is",
-                       "THAT PAPER's own model at its own published values,",
-                       "over the range it enrolled\nMARGINAL (round +",
-                       "10th-90th bar + 2.5th-97.5th whisker): it did not, so",
-                       "admixr2 integrates over the population",
-                       "enrolled\nblack is the MBMA fit; a coloured line",
-                       "parting from it is a source the meta-analysis",
-                       "disagrees with  |  grey: extrapolation"))
-  # Styling comes from .admCovPanelStyle(), added with the marks above. A
-  # fit with no marks at all still needs it.
+      subtitle = paste("dotted black: the ESTIMATED effect, at the fitted",
+                       "thetas  |  each source at its OWN published value",
+                       "\nCONDITIONAL (solid line): banded or reported at a",
+                       "value -- the line is the range it covers",
+                       "\nMARGINAL (whisker): no contrast reported, so admixr2",
+                       "integrates over the population enrolled --",
+                       "10th-90th over 2.5th-97.5th",
+                       "\na source off the dotted line is one the",
+                       "meta-analysis does not reproduce  |  grey:",
+                       "extrapolation"))
+  # Styling comes from .admCovPanelStyle(), added with the marks above. A fit
+  # with no marks at all still needs it.
   if (is.null(marks_df) || !nrow(marks_df))
     p_eff <- p_eff + .admCovPanelStyle(pal, character(0))
   p_eff
 }
+
 
 ## The between-study residual panel. `res` is the list .admCovResidData()
 ## returns, one element per covariate. NULL when no covariate produced rows.
@@ -1885,8 +1702,12 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
   # Silently absent for a fit with no covariates, which is why "covariate" can
   # sit in the default `which` without changing what a non-covariate fit prints.
   if (length(cov_nms)) {
+    # The ORIGINAL studies, off the estimator's control: each source's own
+    # published model, which is what puts a source at its own parameter value
+    # rather than on the fitted line. See .admFitSourceStudies().
+    src_st <- tryCatch(.admFitSourceStudies(fit), error = function(e) NULL)
     eff <- Filter(Negate(is.null), lapply(cov_nms, function(cv)
-      tryCatch(.admCovEffectData(fit$env$ui, cv, studies, extra$struct),
+      tryCatch(.admCovEffectData(fit$env$ui, cv, studies, extra$struct, src_st),
                error = function(e) NULL)))
     res <- Filter(Negate(is.null), lapply(cov_nms, function(cv)
       tryCatch(.admCovResidData(cv, studies, agg), error = function(e) NULL)))
@@ -1894,27 +1715,13 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
     # Each source's OWN published claim, read off the UNEXPANDED studies the
     # control kept. Restricted to the facets the pooled curve draws, so a
     # source cannot conjure a panel of its own.
-    src_st <- tryCatch(.admFitSourceStudies(fit), error = function(e) NULL)
-    # Per covariate, off the pooled curve that covariate produced: it already
-    # knows the (cov, param) facets that exist and whether the axis is a set of
-    # levels, and the source lines have to agree with it on both.
-    src_df <- if (is.null(src_st)) NULL else
-      do.call(rbind, Filter(Negate(is.null), lapply(eff, function(z) {
-        cu  <- z$curve
-        lev <- if (isTRUE(cu$disc[1L])) sort(unique(cu$x)) else NULL
-        tryCatch(.admCovSourceLines(cu$cov[1L], src_st,
-                                    unique(cu[, c("cov", "param")]), lev),
-                 error = function(e) NULL)
-      })))
-
     # Both panels' colour scale, from the union of the names they use. See
     # .admCovPalette(): the sets differ, and the figure is read as a pair.
     cov_pal <- .admCovPalette(c(
       unlist(lapply(eff, function(z) z$marks$study), use.names = FALSE),
-      unlist(lapply(res, `[[`, "study"), use.names = FALSE),
-      src_df$study))
+      unlist(lapply(res, `[[`, "study"), use.names = FALSE)))
 
-    p_eff <- .admCovEffectPanel(eff, cov_pal, src_df)
+    p_eff <- .admCovEffectPanel(eff, cov_pal)
     if (!is.null(p_eff)) {
       plots[["covariate_effect"]] <- p_eff
       print_keys <- c(print_keys, "covariate_effect")

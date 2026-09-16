@@ -111,31 +111,27 @@ names(plots)
 #> [1] "covariate_effect" "covariate_resid"
 ```
 
-**`covariate_effect`** sweeps each covariate across the range the sources cover
-and draws every model parameter that reads it, at the fitted estimates. One
-facet per (covariate, parameter) pair that exists. The region no source sampled
-is shaded: that is where the fit extrapolates. A discrete covariate is drawn on
-its levels rather than swept through the values between them.
+**`covariate_effect`** asks one question: **does the estimated covariate effect
+agree with the sources it was fitted from?** One small panel per (parameter,
+covariate) pair, carrying three things and nothing else.
 
-A **conditioned** covariate gets **one line per level**, not a single line at its
-average. Averaging a covariate that half the studies fix at 0 and half at 1 puts
-it at 0.5 and draws a patient who does not exist. Splitting it is also how the
-figure reads: the swept covariate's effect is the **slope**, and the conditioned
-one's is the **gap** between the lines. Every other covariate stays at its
-pooled centre --- the weighted mean of the level mixes the sources declared, for
-a covariate they marginalise over, and its median otherwise.
+* the **estimated effect**, as a dotted black line across the covariate axis ---
+  the fitted model's parameter at the fitted thetas, with every other covariate
+  at the pooled centre.
+* **each source at its own parameter value**, taken from that source's own
+  published model at its own published estimates. This is the comparison: a
+  source sitting off the dotted line is one the meta-analysis does not
+  reproduce.
+* **how far along the axis each source speaks for**, which is where conditional
+  and marginal differ --- see the table below.
 
-Only covariates some study actually *conditions* at a point split the curve.
-Splitting on one every source marginalises over would draw two lines that no
-source is on, and then have to put each source on one of them.
+A covariate whose coefficient the model does **not** estimate gets no panel at
+all. A fixed allometric exponent is not a finding; drawing a facet for it invites
+a reader to check an agreement that was never in question.
 
-Conditioned does not mean discrete. Ten sources each reported at one renal
-value --- `at = list(CRCL = 28)`, `at = list(CRCL = 36)`, ... --- give a
-**conditional continuous** covariate: past the level cap, so the axis is swept
-and the fitted curve is drawn right across it, while each source is a diamond
-with no bar sitting on the curve at its own value. The curve is the model's
-claim about the whole range; the diamonds are the only places anyone measured,
-and the grey is the rest. `inst/examples/covariate-panels.R` draws exactly this.
+The region no source sampled is shaded: that is where the fit extrapolates. A
+discrete covariate is drawn on its levels rather than swept through the values
+between them, so nothing claims a prediction at `SEX = 0.37`.
 
 **`covariate_resid`** plots each study's mean standardised residual against the
 covariate value it sits at. How it is read depends on the covariate:
@@ -160,11 +156,20 @@ Both panels distinguish how a study enters a covariate. This is a property of
 
 | | drawn as | meaning |
 |---|---|---|
-| **conditional** | diamond, no spread | the source model **estimated** this effect, so the paper can be read at one value of it: by subgroup (`at`, `by`) or banded into strata (`stratify`). It contributes a point of contrast against the other sources |
-| **marginal** | round point, 10th–90th bar, 2.5th–97.5th whisker | the source model **did not**. No single paper has a contrast to report, so admixr2 integrates over the population it enrolled; the source constrains the effect through the mixture that induces |
+| **conditional** | diamond, and a **solid line** over the range it covers | the source is banded or reported at a value of this covariate (`stratify`, `at`, `by`) --- which is what its own model estimating the effect buys you. A stated extent, so a solid line; on a level axis the extent is the level, and it stays a point |
+| **marginal** | round point and a **whisker** --- 10th–90th over 2.5th–97.5th | the source reported no contrast here, so admixr2 integrates over the population it enrolled. What it covers is a distribution, and drawing that as a line would claim it covers its tails as evenly as its middle |
 
 Splitting a source on a covariate its model never saw would manufacture a
 contrast that is not in the literature --- see `vignette("covariates")`.
+
+Read the panel by looking for sources that sit **off** the dotted line. Black is
+the meta-analysis; the coloured marks are the papers, each at the value its own
+model publishes. Where they part company over a stretch a source actually
+enrolled, the fit is disagreeing with a paper about that paper's own patients.
+
+On a level axis the source's own effect is the **gap between its own marks** ---
+one per level it reported --- against the gap between the black points.
+`inst/examples/covariate-panels.R` draws both cases.
 
 A source banded with `stratify` therefore appears as several diamonds on the
 covariate it was banded on, and as one merged mark on every other, where its

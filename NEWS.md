@@ -44,8 +44,8 @@
 * **`plot(fit, which = "covariate")`**: the fitted covariate effect, and each
   study's mean residual against it -- a slope is a bad covariate form.
 
-* **Each source's OWN published model is drawn against the pooled fit**, over
-  the covariate range it enrolled, where that source estimated the effect.
+* **The effect panel compares the estimated effect against its sources**: a
+  dotted line, each source at its OWN published parameter value.
 
 ## Changes that can move an existing fit
 
@@ -166,8 +166,8 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **Stratified studies are titled by the covariate value they condition at**,
   not a bare `_s1`/`_s2` index.
 
-* **A covariate facet is kept when the model is flat at one conditioned level**
-  and varies at another, instead of being dropped on the first level alone.
+* **No effect panel for a covariate the model does not estimate** -- a fixed
+  allometric exponent is not a finding to check agreement on.
 
 * **A marginalised level mix sits at its mean, not its median**, so an even
   binary split no longer greys a studied level or loses its residual facet.
