@@ -17,30 +17,24 @@ source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R")
 
 ## Why aggregate data?
 
-Meta-analysis in pharmacometrics means combining evidence across studies to
-obtain parameter estimates that no single study could support on its own. The
-classical approach pools individual patient data (IPD) from multiple studies
-into one dataset. This is scientifically ideal but practically rare: data
-sharing agreements, proprietary restrictions, and the simple fact that most
-published work reports only summary statistics make IPD pooling the exception
-rather than the rule.
+Meta-analysis in pharmacometrics means combining evidence across studies for
+estimates no single study could support alone. The classical approach pools
+individual patient data (IPD) into one dataset — scientifically ideal, and rare:
+data sharing agreements, proprietary restrictions and the fact that most
+published work reports only summary statistics make IPD pooling the exception.
 
-Model-based meta-analysis (MBMA) addresses this by fitting pharmacometric
-models directly to aggregate summaries. These summaries come from two distinct
-sources. The first is *directly published*: many clinical studies report a mean
-concentration-time profile together with the variance at each time point, and
-sometimes the full covariance matrix. The second is *model-derived*: a
-published pharmacometric model with its parameter estimates (fixed effects,
-random-effects variance, residual error) can be used to generate the expected
-mean vector and covariance matrix via simulation, without access to the
-original data. The covariance structure carries information about the shape of
-individual profiles that a variance-only summary would discard — two studies
-can have identical variances at each time point yet very different correlation
-structures, reflecting different sources of variability. Both types of
-aggregate data, whether published directly or derived from a published model,
-can be analysed within the same framework. This makes the full literature —
-competitor compounds, historical datasets, regulatory submissions — available
-as modelling input for dose selection, trial design, and disease-progression
+Model-based meta-analysis (MBMA) fits pharmacometric models directly to aggregate
+summaries instead. Those summaries come from two sources. *Directly published*:
+many studies report a mean concentration-time profile with the variance at each
+time point, sometimes the full covariance matrix. *Model-derived*: a published
+model and its estimates (fixed effects, random-effects variance, residual error)
+generate the expected mean vector and covariance by simulation, without the
+original data. The covariance carries information about the shape of individual
+profiles that a variance-only summary discards — two studies can share every
+variance and differ entirely in correlation structure, reflecting different
+sources of variability. Both types analyse within the same framework, which makes
+the full literature — competitor compounds, historical datasets, regulatory
+submissions — available for dose selection, trial design and disease-progression
 modelling.
 
 The aggregate data likelihood, first systematically described by
@@ -92,8 +86,21 @@ covariance
 
 $$
 \mu_\text{pred} = \mathbb{E}_\eta\bigl[f(\theta, \eta)\bigr], \qquad
-V_\text{pred}   = \operatorname{Var}_\eta\bigl[f(\theta, \eta)\bigr] + \Sigma.
+V_\text{pred}   = \operatorname{Var}_\eta\bigl[f(\theta, \eta)\bigr]
+                + \mathbb{E}_\eta\bigl[\operatorname{Var}(y \mid \eta)\bigr].
 $$
+
+This is the law of total variance, and the second term is written out rather than
+abbreviated to $\Sigma$ for a reason. Only for **additive** error is the residual
+variance free of the prediction, giving
+$\mathbb{E}_\eta[\operatorname{Var}(y\mid\eta)] = \Sigma$. With `prop()`, `pow()`
+or `lnorm()` it is a function of $f$, and averaging it over subjects is not
+evaluating it at the population mean — for proportional error the two differ by
+exactly $b^2\operatorname{Var}_\eta(f)$. admixr2 averages. Writing $+\,\Sigma$
+throughout is the "no $\eta$--$\varepsilon$ interaction" convention of
+individual-level fitting, and it understates $\operatorname{diag}(V_\text{pred})$
+here; see [Choosing a residual error model](error-models.html). The sections
+below write $\Sigma$ for brevity, with that averaging understood.
 
 ### The aggregate log-likelihood
 
@@ -113,14 +120,13 @@ $$
 r = \bar{y} - \mu_\text{pred}.
 $$
 
-This is the central formula in admixr2. Each estimator minimises the same
-objective; they differ only in how $\mu_\text{pred}$ and $V_\text{pred}$ are
-computed.
+This is the central formula in admixr2. Every estimator minimises it; they differ
+only in how $\mu_\text{pred}$ and $V_\text{pred}$ are computed.
 
-The trace and quadratic terms are evaluated via Cholesky factorisation of
-$V_\text{pred}$, which avoids explicit matrix inversion and is numerically
-stable even for near-singular covariances. The log-determinant falls out as
-twice the sum of log-diagonal elements of the Cholesky factor.
+The trace and quadratic terms go through a Cholesky factorisation of
+$V_\text{pred}$, avoiding explicit inversion and staying stable even for
+near-singular covariances. The log-determinant falls out as twice the sum of the
+factor's log-diagonal.
 
 ---
 
@@ -163,26 +169,25 @@ $$
 \frac{\partial g}{\partial \eta_j},
 $$
 
-where $g$ is the ODE right-hand side. A single solver call delivers both $f$ and
-all columns of $J$ simultaneously — no additional ODE solves per random-effect
-dimension. In the predecessor admr, this Jacobian was computed by
-**finite differences** on $f$, requiring one extra ODE solve per random-effect
-dimension.
+where $g$ is the ODE right-hand side. One solver call delivers $f$ and every
+column of $J$ together, with no extra solve per random-effect dimension. Its
+predecessor admr computed this Jacobian by **finite differences** on $f$, one
+extra solve per dimension.
 
 **Gradient of the FO NLL.** Because $V_\text{pred} = J\Omega J^\top + \Sigma$ is
 explicit in $\Omega$ and $\Sigma$, the gradient with respect to these parameters
 is available analytically via the matrix derivative identities
 $d \log|A| = \operatorname{tr}(A^{-1} dA)$ and
 $d \operatorname{tr}(A^{-1}B) = -\operatorname{tr}(A^{-1} dA\, A^{-1} B)$.
-Structural parameter gradients use forward finite differences through the full
-FO NLL, reusing the sensitivity solve.
+Structural parameter gradients need the second derivative $dJ/d\theta$, which
+admixr2 takes from an order-2 sensitivity model, so they too are analytical;
+central finite differences are the fallback for when that model cannot be built.
 
-**Accuracy.** The FO approximation is exact when $f$ is linear in $\eta$. For
-nonlinear models with large IIV the approximation underestimates
-$\operatorname{Var}_\eta[f(\theta, \eta)]$: $V_\text{pred}$ is too small and
-the estimated $\Omega$ is negatively biased. Practically, bias is negligible
-when the coefficient of variation for each PK parameter is below 20–30 % and
-the model is weakly nonlinear in $\eta$.
+**Accuracy.** Exact when $f$ is linear in $\eta$. For nonlinear models at large
+IIV it underestimates $\operatorname{Var}_\eta[f(\theta, \eta)]$, so
+$V_\text{pred}$ comes out too small and $\Omega$ negatively biased. In practice
+the bias is negligible below a CV of 20–30 % on each PK parameter, on a model
+weakly nonlinear in $\eta$.
 
 ---
 
@@ -199,31 +204,27 @@ $$
 \qquad \eta_i \sim \mathcal{N}(0, \Omega).
 $$
 
-The estimator converges to the true population moments as $N \to \infty$;
-its AIC is directly interpretable.
+It converges to the true population moments as $N \to \infty$, and its AIC is
+directly interpretable.
 
-**Quasi-random sampling.** admixr2 draws samples using Sobol sequences (also
-available in admr) rather than pseudo-random normal deviates. Sobol sequences
-are *low-discrepancy*: successive points are placed to fill gaps in the sample
-space, rather than clustering randomly. For the smooth integrands that arise in
-pharmacometric MC integration, this uniform coverage reduces the integration
-error for a given $N$ compared to i.i.d. draws, at the cost of no additional
-model evaluations.
+**Quasi-random sampling.** admixr2 draws from Sobol sequences (also in admr)
+rather than pseudo-random normal deviates. Sobol points are *low-discrepancy*,
+placed to fill gaps in the sample space rather than clustering at random. On the
+smooth integrands of pharmacometric MC integration that uniform coverage cuts the
+integration error at a given $N$, for no extra model evaluations.
 
-**Numerical stability.** The sample covariance is computed in fused C++ kernels
-that accumulate centred products in a single pass, avoiding an intermediate
-$N \times T$ allocation. The resulting $\hat{V}$ is guaranteed positive
-semi-definite by construction.
+**Numerical stability.** The sample covariance accumulates centred products in a
+single pass through fused C++ kernels, avoiding an intermediate $N \times T$
+allocation, and the resulting $\hat{V}$ is positive semi-definite by construction.
 
 ---
 
 ## Gauss-Hermite quadrature (adgh)
 
-The MC estimator replaces the population integral with a *random* average. The
-GH estimator replaces it with a *deterministic* one: a tensor-product
-Gauss-Hermite quadrature rule that evaluates the same expectation over
-$\eta \sim \mathcal{N}(0, \Omega)$ at a small set of fixed nodes. This estimator
-is new in admixr2 — it has no counterpart in admr.
+MC replaces the population integral with a *random* average; GH replaces it with a
+*deterministic* one, a tensor-product Gauss-Hermite rule evaluating the same
+expectation over $\eta \sim \mathcal{N}(0, \Omega)$ at a small set of fixed nodes.
+It is new in admixr2, with no counterpart in admr.
 
 For a single random effect, the probabilists' Gauss-Hermite rule approximates an
 expectation under the standard normal by a weighted sum over $m$ nodes,
@@ -252,31 +253,28 @@ Structurally this is the MC estimator with a fixed deterministic node grid in
 place of $N$ random draws and quadrature weights in place of uniform ones, so it
 plugs into exactly the same aggregate MVN $-2\ell$.
 
-**Noise-free objective.** Because the nodes and weights are fixed, the objective
-is a smooth deterministic function of $(\theta, \Omega, \Sigma)$ — there is no
-Monte Carlo noise to average away and no `n_sim` to tune. The analytical
-gradient (closed-form contractions through the same ODE sensitivity outputs used
-by the MC estimator) is therefore exact, and the numerical Hessian used for
-standard errors is well-conditioned. Like `admc` it makes no approximation to
-$f$, so it is unbiased at any IIV magnitude, and its likelihood is on the same
-scale — its AIC is directly comparable to `admc` and `adirmc`.
+**Noise-free objective.** Fixed nodes and weights make the objective a smooth
+deterministic function of $(\theta, \Omega, \Sigma)$ — no Monte Carlo noise to
+average away, no `n_sim` to tune. The analytical gradient (closed-form
+contractions through the same ODE sensitivity outputs the MC estimator uses) is
+therefore exact, and the numerical Hessian behind the standard errors is
+well-conditioned. Like `admc` it approximates nothing about $f$, so it is unbiased
+at any IIV, on the same likelihood scale, and its AIC compares directly to `admc`
+and `adirmc`.
 
-**Cost.** The grid size $Q = m^{n_\eta}$ grows exponentially in the number of
-random effects. For models with up to ~4 etas, $Q$ is small (e.g. $5^4 = 625$
-nodes) and `adgh` is substantially faster than MC at equivalent accuracy; for
-high-dimensional IIV the node count becomes prohibitive and `admc` or `adirmc`
-are preferable. A modest node count (`n_nodes = 5`) gives near-exact covariance
-moments for IIV SD up to ~0.5; `n_nodes = 7` extends this to ~0.7.
+**Cost.** $Q = m^{n_\eta}$ grows exponentially in the number of random effects. Up
+to ~4 etas it stays small ($5^4 = 625$) and `adgh` is substantially faster than MC
+at equal accuracy; beyond that the node count becomes prohibitive and `admc` or
+`adirmc` are preferable. `n_nodes = 5` gives near-exact covariance moments to IIV
+SD ~0.5, and 7 extends that to ~0.7.
 
 ---
 
 ## Iterative Reweighting MC (adirmc)
 
-The central bottleneck of the MC estimator is that *every* NLL evaluation
-requires $N$ ODE solves — one per sample. For a complex model each solve is
-expensive, and an L-BFGS optimisation may require hundreds of NLL evaluations.
-
-IRMC decouples sample generation from optimisation.
+MC's central bottleneck is that *every* NLL evaluation takes $N$ ODE solves, one
+per sample — expensive on a complex model, over the hundreds of evaluations an
+L-BFGS optimisation may need. IRMC decouples sample generation from optimisation.
 
 ### Proposal distribution
 
@@ -287,16 +285,15 @@ $$
 \qquad \alpha \geq 1,
 $$
 
-where $\Omega_0$ is the current Omega estimate and $\alpha$ is the expansion
-factor. The predictions $f(\theta_0, \tilde{\eta}_i)$ are computed once and
-stored. For the remainder of the inner optimisation they are reused without
-further ODE solves.
+where $\Omega_0$ is the current Omega estimate and $\alpha$ the expansion factor.
+The predictions $f(\theta_0, \tilde{\eta}_i)$ are computed once, stored, and reused
+for the rest of the inner optimisation without further ODE solves.
 
 ### Importance weights
 
-When the parameter vector moves to a candidate $(\theta, \Omega)$, the stored
-predictions are no longer exact. For the random-effects covariance $\Omega$,
-the proposals are reweighted by the ratio of target density to proposal density:
+A move to a candidate $(\theta, \Omega)$ leaves the stored predictions inexact. For
+the random-effects covariance, the proposals are reweighted by the ratio of target
+to proposal density:
 
 $$
 w_i \propto \frac{p(\tilde{\eta}_i \mid \Omega)}{q(\tilde{\eta}_i \mid \alpha\,\Omega_0)}
@@ -307,9 +304,8 @@ w_i \propto \frac{p(\tilde{\eta}_i \mid \Omega)}{q(\tilde{\eta}_i \mid \alpha\,\
 \right].
 $$
 
-Weights are normalised via softmax. The weighted mean and covariance of the
-predictions then provide the IRMC estimates of $\mu_\text{pred}$ and
-$V_\text{pred}$:
+Weights are normalised by softmax, and the weighted mean and covariance of the
+predictions are the IRMC estimates of $\mu_\text{pred}$ and $V_\text{pred}$:
 
 $$
 \mu_\text{pred} = \sum_i w_i\, f(\theta_0, \tilde\eta_i), \qquad
@@ -318,19 +314,17 @@ V_\text{pred} = \sum_i w_i\,
   (\cdots)^\top + \Sigma.
 $$
 
-Given fixed proposals this inner objective is a smooth, deterministic function
-of $(\theta, \Omega)$ and can be optimised to high precision. Between phases,
-proposals are refreshed and box constraints are progressively tightened to guide
-global convergence. The number of ODE solves scales with the number of phases,
-not the number of inner optimizer steps.
+With fixed proposals the inner objective is a smooth deterministic function of
+$(\theta, \Omega)$, optimisable to high precision. Proposals refresh between
+phases, whose box constraints tighten progressively to guide global convergence,
+so the number of ODE solves scales with phases rather than inner steps.
 
 ---
 
 ## Gradient computation: from finite differences to sensitivity equations
 
-The gradient is the single most important ingredient for efficient nonlinear
-optimisation. The improvements in gradient computation represent the most
-consequential algorithmic differences between admr and admixr2.
+The gradient is the single most important ingredient in efficient nonlinear
+optimisation, and it is where admr and admixr2 differ most consequentially.
 
 ### Gradient in admr
 
@@ -345,17 +339,16 @@ $$
 \frac{\ell(\theta + h\,e_k) - \ell(\theta)}{h}, \qquad h = 10^{-6}.
 $$
 
-For a model with $p$ parameters, each gradient call therefore costs $p$ extra
-NLL evaluations, i.e.\ $p \times N$ additional ODE solves. Because this is
-expensive, admr defaults to gradient-free BOBYQA; L-BFGS with FD gradient is
-available but off by default (`use_grad = FALSE`).
+On a model with $p$ parameters each gradient call therefore costs $p$ extra NLL
+evaluations, $p \times N$ additional ODE solves. That being expensive, admr
+defaults to gradient-free BOBYQA, with L-BFGS and an FD gradient available but off
+(`use_grad = FALSE`).
 
-For the IRMC estimator, proposals are fixed inside a closure before the inner
-optimisation begins, so each inner NLL evaluation requires only matrix
-operations — no ODE solves. admr's optional FD inner gradient therefore incurs
-$p$ extra importance-weighted recomputations per step, but still no extra ODE
-solves. Nonetheless, the inner optimizer defaults to BOBYQA (no gradient) and
-the FD approximation introduces truncation error of order $O(h)$.
+Under IRMC, proposals are fixed inside a closure before the inner optimisation, so
+each inner NLL evaluation is matrix operations only. admr's optional FD inner
+gradient costs $p$ extra importance-weighted recomputations per step and no ODE
+solves — but the inner optimizer still defaults to BOBYQA, and the FD
+approximation carries truncation error of order $O(h)$.
 
 ### CRN analytical gradient in admixr2
 
@@ -380,16 +373,15 @@ i.e.\ the sample average of the ODE sensitivity output $\partial f / \partial
 \eta_k$ — which is already available from the NLL evaluation via the augmented
 ODE system. No additional ODE solves are needed.
 
-The gradient of $\hat{V}$ with respect to $\Omega$ follows similarly: the
-Cholesky factor $L$ ($\Omega = LL^\top$) enters through the sample covariance,
-and differentiating through the MVN chain rule yields closed-form expressions
-in the stored sensitivity outputs.
+The gradient of $\hat{V}$ with respect to $\Omega$ follows similarly: the Cholesky
+factor $L$ ($\Omega = LL^\top$) enters through the sample covariance, and
+differentiating through the MVN chain rule gives closed-form expressions in the
+stored sensitivity outputs.
 
-The net result is that the **full MC gradient costs the same as a single NLL
-evaluation** — it requires no additional ODE solves and is exact rather than a
-finite-difference approximation. For a model with $p = 10$ parameters and
-$N = 5000$ samples, admr's FD gradient requires $50\,000$ additional ODE
-solves per optimizer step; admixr2's CRN gradient requires none.
+So the **full MC gradient costs the same as a single NLL evaluation** — no extra
+ODE solves, and exact rather than a finite-difference approximation. On a model
+with $p = 10$ parameters and $N = 5000$ samples, admr's FD gradient needs
+$50\,000$ additional solves per optimizer step; admixr2's CRN gradient needs none.
 
 ### Analytical IRMC inner gradient
 
@@ -403,25 +395,23 @@ $$
   \frac{\partial \log w_i}{\partial p}\,(g_i - \bar{g})\right),
 $$
 
-where $\bar{g} = \sum_i w_i g_i$. Differentiating the multivariate normal
-log-likelihood of the weighted mean and covariance through this identity yields
-closed-form expressions in the pre-computed ODE solutions and sensitivity
-outputs. Since proposals are fixed, the inner gradient evaluation requires no
-ODE solves regardless of the implementation — the admixr2 advantage over admr's
-FD approach is exactness and a $p\times$ reduction in inner-level matrix
-operations.
+where $\bar{g} = \sum_i w_i g_i$. Differentiating the MVN log-likelihood of the
+weighted mean and covariance through this identity gives closed-form expressions
+in the pre-computed ODE solutions and sensitivity outputs. Fixed proposals mean no
+inner gradient evaluation needs an ODE solve under any implementation, so the gain
+over admr's FD approach is exactness and a $p\times$ reduction in inner-level
+matrix operations.
 
-The inner optimizer therefore runs L-BFGS with an exact gradient and converges
-in far fewer iterations than BOBYQA.
+The inner optimizer therefore runs L-BFGS on an exact gradient, converging in far
+fewer iterations than BOBYQA.
 
 ### Kappa correction for non-mu-referenced parameters
 
-Both admr and admixr2 handle models where some structural parameters $\beta_k$
-enter $f$ without a paired random effect (e.g.\ $\mathrm{CL} = \exp(\beta_1)
-\cdot \exp(\eta_1)$, but $V_\text{max}$ has no $\eta$). When such parameters
-change during the inner IRMC optimisation, the stored predictions $f(\theta_0,
-\tilde\eta_i)$ are no longer exact even for the mean. Both packages apply a
-kappa correction:
+Both packages handle structural parameters $\beta_k$ entering $f$ with no paired
+random effect ($\mathrm{CL} = \exp(\beta_1)\cdot\exp(\eta_1)$, but
+$V_\text{max}$ has no $\eta$). Changing one during the inner IRMC optimisation
+leaves the stored predictions $f(\theta_0, \tilde\eta_i)$ inexact even in the
+mean, so both apply a kappa correction:
 
 $$
 \kappa(\beta) = f(\beta_\text{new}, 0) - f(\beta_\text{orig}, 0),
@@ -429,15 +419,13 @@ $$
 
 shifting $\mu_\text{pred}$ by the predicted change at $\eta = 0$.
 
-admixr2 introduces a **linearized kappa** option (`kappa_method = "linearized"`)
-that computes the Jacobian $J_\kappa = \partial f / \partial \beta_\text{single}$
-once per outer iteration (via a single batched FD solve) and approximates the
-correction as $J_\kappa (\beta_\text{new} - \beta_\text{orig})$ during the inner
-loop — a pure matrix operation requiring no ODE solver calls. This is
-particularly valuable for complex ODE systems where each kappa evaluation is
-otherwise expensive: with the exact kappa, every inner NLL step requires one
-extra rxSolve for the single-beta parameters; with linearized kappa, the inner
-loop is completely free of ODE solver calls.
+admixr2 adds a **linearized kappa** (`kappa_method = "linearized"`) that computes
+$J_\kappa = \partial f / \partial \beta_\text{single}$ once per outer iteration
+from one batched FD solve, then takes the correction as
+$J_\kappa (\beta_\text{new} - \beta_\text{orig})$ through the inner loop — matrix
+work only, no solver calls. That matters most on complex ODE systems: exact kappa
+costs one extra rxSolve per inner NLL step for the single-beta parameters, while
+linearized kappa leaves the inner loop entirely free of them.
 
 ---
 
@@ -445,15 +433,13 @@ loop is completely free of ODE solver calls.
 
 ### Cholesky parameterisation of $\Omega$
 
-The between-subject covariance $\Omega$ must be positive definite.
-Unconstrained optimisation in the space of symmetric matrices can produce
-non-positive-definite steps.
+$\Omega$ must be positive definite, and unconstrained optimisation over symmetric
+matrices can step outside that.
 
-Both admr and admixr2 parameterise $\Omega$ through a Cholesky factor $L$
-($\Omega = LL^\top$). The packages differ in how the Cholesky entries are
-encoded. admr uses a log transform for diagonal entries and a **covlogit**
-transform for off-diagonal entries (the correlation corresponding to each
-$L_{jk}$ is mapped through a logit after normalisation). admixr2 uses:
+Both packages parameterise it through a Cholesky factor $L$ ($\Omega = LL^\top$),
+and differ in how the entries are encoded. admr uses a log transform on the
+diagonal and a **covlogit** off it, mapping each $L_{jk}$'s corresponding
+correlation through a logit after normalisation. admixr2 uses:
 
 $$
 p_k = \log(\Omega_{kk}) = 2\log(L_{kk})
@@ -462,34 +448,31 @@ p_{jk} = L_{jk}
 \quad\text{(off-diagonal, raw)}.
 $$
 
-The raw parameterisation simplifies the gradient computation substantially:
-the Jacobian $\partial \Omega / \partial p_{jk}$ is a simple rank-1 matrix with
-no logit derivative to chain through. It also avoids the numerical instability
-of logit-based transforms when correlations approach ±1.
+The raw form simplifies the gradient substantially — $\partial \Omega / \partial
+p_{jk}$ is a rank-1 matrix with no logit derivative to chain through — and avoids
+the instability of logit transforms as correlations approach ±1.
 
-The specific encoding $p = \log(\Omega_{kk})$ rather than $p = \log(L_{kk})$
-equalises gradient sensitivity across parameter types: a unit optimizer step
-changes $\Omega_{kk}$ by a factor of $e^2$, matching the sensitivity of
-structural parameters on the log scale.
+Encoding $p = \log(\Omega_{kk})$ rather than $\log(L_{kk})$ equalises gradient
+sensitivity across parameter types: a unit optimizer step changes $\Omega_{kk}$ by
+$e^2$, matching structural parameters on the log scale.
 
 ### Parameter preconditioning
 
-The unconstrained parameter vector is pre-scaled by a diagonal matrix $C$ before
-being passed to L-BFGS. Each diagonal entry estimates the curvature in that
-direction: unity for exponential transforms, a derivative-based magnitude for
-logit/probit transforms, and $\max(|L_{jk}|, 0.1)$ for off-diagonal Cholesky
-entries. Preconditioning reduces condition number and accelerates convergence
-when structural parameters and variance components differ by orders of magnitude.
+The unconstrained parameter vector is pre-scaled by a diagonal $C$ before reaching
+L-BFGS, each entry estimating the curvature in that direction: unity for
+exponential transforms, a derivative-based magnitude for logit/probit, and
+$\max(|L_{jk}|, 0.1)$ off the Cholesky diagonal. This lowers the condition number
+and speeds convergence wherever structural parameters and variance components
+differ by orders of magnitude.
 
 ---
 
 ## Summary of improvements over admr
 
-admr (van de Beek et al., 2025) established the core aggregate data workflow in
-R. admixr2 preserves the same three estimators (FO, MC, IRMC) and the same
-aggregate MVN likelihood — adding a fourth, deterministic Gauss-Hermite
-estimator — while replacing the surrounding architecture and several
-algorithmic components.
+admr (van de Beek et al., 2025) established the core aggregate data workflow in R.
+admixr2 keeps its three estimators (FO, MC, IRMC) and the same aggregate MVN
+likelihood, adds a fourth deterministic Gauss-Hermite estimator, and replaces the
+surrounding architecture and several algorithmic components.
 
 | Aspect | admr | admixr2 |
 |--------|------|---------|
@@ -506,20 +489,18 @@ algorithmic components.
 | Parameter preconditioning | No | Yes (diagonal scaling) |
 | Parallel restarts | Sequential chains | `mirai` workers |
 
-The gradient improvements are the most consequential. Moving from a gradient
-that requires $p \times N$ extra ODE solves per step (admr FD) to one that
-requires none (admixr2 CRN) reduces wall-clock fitting time by one to two
-orders of magnitude for gradient-based algorithms on complex models. The
-analytical IRMC inner gradient compounds this saving: the inner optimisation
-converges in fewer iterations, each iteration is faster, and the linearized
-kappa option allows the entire inner loop to run without any ODE solver calls.
+The gradient improvements are the most consequential. Going from $p \times N$ extra
+ODE solves per step (admr FD) to none (admixr2 CRN) cuts wall-clock fitting time
+by one to two orders of magnitude for gradient-based algorithms on complex models.
+The analytical IRMC inner gradient compounds it: the inner optimisation converges
+in fewer iterations, each iteration is faster, and linearized kappa lets the whole
+inner loop run without touching the ODE solver.
 
 ---
 
 ## Further reading
 
-The mathematical foundations are described in detail in the papers linked at the
-top of this post. The [Estimator comparison](estimator-comparison.html)
-vignette shows worked examples on the included `examplomycin` dataset with all
-four estimators. The [Advanced usage](advanced.html) vignette covers
-gradient modes, multi-restart fitting, and model comparison via AIC.
+The papers linked at the top give the mathematical foundations in full.
+[Estimator comparison](estimator-comparison.html) works all four estimators
+through the included `examplomycin` dataset, and [Advanced usage](advanced.html)
+covers gradient modes, multi-restart fitting and model comparison via AIC.
