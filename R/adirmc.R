@@ -309,15 +309,10 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
 # -- Analytical gradient of IRMC inner NLL -------------------------------------
 # Proposals are fixed -> inner NLL is deterministic -> gradient is exact.
-# has_kappa=FALSE (all params mu-referenced, weight-shift):
-#   struct(paired) -> mean_new -> w -> mu_w, V_w -> -2LL  (analytical via d_logback_dp)
-#   omega          -> log_new -> w -> mu_w, V_w -> -2LL   (analytical via S kernel)
-#   sigma          -> V_w -> -2LL                         (direct, analytical)
-# has_kappa=TRUE (any unpaired param, combined weight-shift + kappa):
-#   struct(paired) -> mean_new -> w -> mu_w  (weight-shift, analytical via d_logback_dp)
-#   struct(single) -> kappa_jac (linearized) or kappa_fn_batch CFD (exact) -> mu_w
-#   omega          -> log_new -> w -> mu_w, V_w -> -2LL   (analytical via S kernel)
-#   sigma          -> V_w -> -2LL                         (direct, analytical)
+# has_kappa=FALSE: struct/omega/sigma all flow through the weight-shift path
+# (analytical via d_logback_dp / S kernel / direct).
+# has_kappa=TRUE: paired struct still weight-shifts; single (unpaired) struct
+# goes through kappa_jac (linearized) or kappa_fn_batch CFD (exact) instead.
 
 # Fused NLL + analytical gradient in one study pass, called by the memo-cached
 # eval_f/eval_grad_f pair in .adirmcPhaseLoop for grad_mode = "analytical" --
@@ -747,12 +742,10 @@ nmObjGetControl.adirmc <- function(x, ...) {
           if (!is.null(.cache_key) && identical(struct_cand, .cache_key))
             return(.cache_val)
           cand <- unname(vapply(.single_nms, function(nm) struct_cand[[nm]], numeric(1)))
-          # kappa_delta is identically ZERO at the proposal's own p: kappa_fn only
-          # overwrites the single-beta columns of the base row, so if those already
-          # hold the proposal's values the solve reproduces mu_pop exactly. That is
-          # an algebraic identity, and it fires once per study per outer iteration
-          # (the exact-NLL check) plus on the first inner evaluation -- each of
-          # which used to cost a full rxSolve to recompute a value we already have.
+          # kappa_delta is identically ZERO at the proposal's own p (solve reproduces
+          # mu_pop exactly), which fires once per study per outer iteration plus on
+          # the first inner evaluation -- each used to cost a full rxSolve for a
+          # value already known.
           if (identical(cand, .base_single)) return(.mu_pop)
           params_cand <- .params_base[1L, , drop = FALSE]
           for (nm in .single_nms)
@@ -809,10 +802,9 @@ nmObjGetControl.adirmc <- function(x, ...) {
   else seq_len(n_eta_prop)
 
   .type_code <- function(nm) {
-    # ALWAYS 0L (C++ compute_mean_new case 0, log_back = p). The IRMC eta-shift for
-    # a paired theta is p_new - p_orig for every transform -- see .admLogBackTransform.
-    # Cases 1/2 (expit/probit natural-scale-log) and 3 (additive log) modelled the
-    # shift as if the transform entered it; it does not. `nm` retained for interface.
+    # ALWAYS 0L: the IRMC eta-shift is p_new - p_orig for every transform (see
+    # .admLogBackTransform), unlike C++ cases 1-3 which build the shift from the
+    # transform. `nm` retained for interface.
     force(nm)
     0L
   }
@@ -860,12 +852,10 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
 # -- Proposal-drawing closure --------------------------------------------------
 
-# Factory for the closure .adirmcPhaseLoop() calls to redraw proposals at a
-# parameter vector. Two are needed per run -- inner optimiser and exact-NLL
-# check -- differing only in `use_grad`; a factory avoids writing that pair out
-# longhand twice (driver + restart worker). Returns ONE closure rather than
-# .adirmcPhaseLoop taking a function+flag, so its two-closure interface (and the
-# worker's signature, which must stay stable for daemons) doesn't move.
+# Factory for the closure .adirmcPhaseLoop() calls to redraw proposals. Two
+# are needed per run -- inner optimiser and exact-NLL check, differing only in
+# `use_grad` -- so a factory avoids writing that pair out twice (driver +
+# restart worker) while keeping the worker's daemon-stable signature fixed.
 .adirmcProposalFn <- function(rxMod, pinfo, studies, z_list, params_list,
                               output_var, cores, omega_expansion,
                               kappa_method, kappa_n_nodes, use_grad) {
@@ -910,23 +900,18 @@ nmObjGetControl.adirmc <- function(x, ...) {
   par_trace        <- NULL
   last_opt_message <- ""
 
-  # Inner FD step for grad_mode = "fd". Carried on `pinfo` rather than added to
-  # this function's formals, so .adirmcRestartWorker's signature is untouched --
-  # a daemon resolves that worker from the stale INSTALLED namespace, where a new
-  # argument throws `unused argument` before the patched dev body can run.
-  # `.shi_h` is filled on the first outer iteration and reused (see the note at
-  # the FD closure below).
+  # Inner FD step for grad_mode = "fd", carried on `pinfo` rather than added to
+  # this function's formals: a daemon resolves .adirmcRestartWorker from the
+  # stale INSTALLED namespace, where a new formal throws `unused argument`.
+  # `.shi_h` is filled on the first outer iteration and reused below.
   .fd_h   <- pinfo$grad_h %||% 1e-6
   .shi_h <- NULL
 
-  # Proposal memo (one entry). Each iteration draws proposals at p_cur for the
-  # inner optimisation, then again at p_new for the exact-NLL check; after
-  # p_cur <- p_new the next inner draw is at the same p, so one draw is pure
-  # waste (proposals are a deterministic function of p) -- this memo skips it,
-  # roughly halving the dominant rxSolve cost. draw_proposals_inner/_exact differ
-  # only in whether the (solve-free) kappa_fn_batch closure gets built, so the
-  # gradient-capable draw serves both. Correctly MISSES at a phase start
-  # (p_cur <- best_p) and the max_worse bail-out.
+  # Proposal memo (one entry): after p_cur <- p_new, the next inner draw would
+  # be at the same p (proposals are deterministic in p), so this skips it --
+  # roughly halving the dominant rxSolve cost. inner/_exact differ only in
+  # whether kappa_fn_batch gets built, so the gradient-capable draw serves
+  # both. Correctly MISSES at a phase start and the max_worse bail-out.
   .prop_p <- NULL; .prop_v <- NULL
   get_proposals <- function(p) {
     if (!is.null(.prop_p) && identical(p, .prop_p)) return(.prop_v)
@@ -965,20 +950,15 @@ nmObjGetControl.adirmc <- function(x, ...) {
         eval_f <- function(p) .adirmcNLL(p, pinfo, studies, proposals)
         eval_grad_inner <- switch(grad_mode,
           fd = local({
-            # The step used to be a hard-coded 1e-6 that ignored `grad_h`
-            # entirely, so adirmc was the one estimator whose documented
-            # finite-difference control did nothing to its gradient. It now
-            # honours grad_h, and takes Shi21's measured steps when they can be
-            # measured, falling back to grad_h when they cannot.
+            # Previously hard-coded 1e-6, ignoring `grad_h`; now honours it and
+            # takes Shi21's measured step when available.
             #
-            # Measured ONCE, on the FIRST outer iteration, and reused for the
-            # rest -- the same reuse FOCEI's numericGrad does at nF == 1. It has
-            # to be reuse rather than re-measurement: `proposals` are redrawn
-            # every outer iteration, so `eval_f` is strictly a different function
-            # each time, and re-probing it would cost 10 x n_par extra inner NLL
-            # evaluations PER ITERATION. The inner objective keeps the same
-            # noise and curvature character throughout, which is what the step
-            # depends on, so the first iteration's measurement stays apt.
+            # Measured ONCE on the first outer iteration and reused after, like
+            # FOCEI's numericGrad at nF == 1: `proposals` are redrawn every outer
+            # iteration so `eval_f` is a different function each time, and
+            # re-probing would cost 10 x n_par extra inner NLL evals per
+            # iteration. Noise/curvature character stays stable across
+            # iterations, so the first measurement stays apt.
             if (is.null(.shi_h)) {
               .shi_h <<- .admShi21GradH(eval_f, p_cur, seq_along(p_cur),
                                         .fd_h, scaled = FALSE,
@@ -1163,12 +1143,11 @@ nlmixr2Est.adirmc <- function(env, ...) {
          "importance-sampling\n  proposals from the random-effect distribution, and ",
          "a model with no IIV has nothing to propose.\n  Use est = \"adfo\", ",
          "\"admc\" or \"adgh\" for a population-only (no-IIV) model.", call. = FALSE)
-  # irmc_inner_nll_cpp computes mu INSIDE the kernel (importance-weighted), so
-  # the residual can't be pre-assembled in R as admc does. The kernel implements
-  # forms 0/1/2 only, no off-diagonal channel -- a TBS/count/beta/ordinal/ar model
-  # was silently scored as combined2 there while the R gradient path scored it
-  # correctly, so the inner optimiser and the exact-NLL check disagreed and never
-  # converged. Refuse rather than approximate.
+  # irmc_inner_nll_cpp computes mu inside the kernel, so the residual can't be
+  # pre-assembled in R as admc does; the kernel only implements forms 0/1/2.
+  # A TBS/count/beta/ordinal/ar model was once silently scored as combined2
+  # there while the R gradient path scored it correctly, so inner optimiser
+  # and exact-NLL check disagreed and never converged. Refuse rather than approximate.
   .bad_form <- vapply(.admResidSpecs(pinfo), function(sp) {
     f <- sp$form %||% 0L
     !identical(f, .ADM_RESID_COMBINED2) && !identical(f, .ADM_RESID_COMBINED1) &&
@@ -1221,15 +1200,14 @@ nlmixr2Est.adirmc <- function(env, ...) {
   }
 
 
-  # Ordering invariant: .admLoadSensModel() must run before .admLoadModel(), and
-  # gated on covMethod too. adirmc's FIT never reads a sensitivity model (the
-  # inner gradient is analytic), only .admCalcCov()'s post-fit Hessian does --
-  # gating on `grad` alone compiled one (~3.6s cold) and never used it for
-  # covMethod = "none" fits. But skipping the load outright breaks the ordering
-  # invariant: .admLoadModel()'s cache-MISS path caches `ui$foceiModel$inner` as
-  # NULL, and a LATER admc/adgh/adfo fit falling back to .admSensFromInner()
-  # would then silently get an FD gradient with no recovery path. So skip the
-  # sens load only when .admLoadModel() is known to take its cache-HIT branch.
+  # .admLoadSensModel() must run before .admLoadModel(), gated on covMethod too:
+  # adirmc's FIT never reads a sensitivity model itself, only .admCalcCov()'s
+  # post-fit Hessian does, so gating on `grad` alone compiled one (~3.6s cold)
+  # unused for covMethod = "none". But skipping it outright breaks the cache:
+  # .admLoadModel()'s cache-MISS path caches `ui$foceiModel$inner` as NULL, so a
+  # later admc/adgh/adfo fit falling back to .admSensFromInner() would silently
+  # get an FD gradient with no recovery. So skip only when .admLoadModel() is
+  # known to take its cache-HIT branch.
   .sim_warm <- isTRUE(tryCatch(file.exists(.admModelCacheFile(.ui)),
                                error = function(e) FALSE))
   # .admCovWantsHessian(), not `== "r"`: "r" and "r,s" both need the sens model.
