@@ -178,7 +178,19 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **Merging a conditioned mark into a marginal one no longer invents a spread**
   for it; the merged mark is drawn as the conditioned one it contains.
 
+* **A shaded discrete level no longer costs the axis its level-only ticks**,
+  which had a three-level factor ticked at 0.5 and 1.5.
+
+* **The covariate panels' legends keep a fixed order.** ggplot2 sorts
+  equal-priority guides by a hash, which is not stable across sessions.
+
 ## Internal changes
+
+* **The covariate panels are built by `.admCovEffectPanel()` and
+  `.admCovResidPanel()`**, not inline in `plot.admFit()`, which loses 170 lines.
+
+* **Visual regression tests for the covariate panels**, on synthetic studies
+  and no fit. Requires the new `vdiffr` suggested dependency.
 
 * **`print.admFit()` reaches nlmixr2est's printer through `getS3method()`**,
   not an `asNamespace()` lookup.

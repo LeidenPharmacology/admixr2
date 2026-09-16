@@ -637,12 +637,21 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## one panel and not the other -- the legends are meant to be read across the
 ## pair, so a source that is orange in one and blue in the other is worse than
 ## either choice alone.
+##
+## The guides carry an explicit `order`. Left at the default ggplot2 sorts
+## equal-priority guides by a hash of their contents, which is not stable across
+## sessions -- the source legend and the shape legend swapped places between two
+## runs of the same code, which is both a confusing figure and a snapshot test
+## that fails at random. Source first, since it is the one a reader looks up.
 .admCovPanelStyle <- function(pal, kinds)
   list(
-    ggplot2::scale_colour_manual(values = pal, name = NULL),
+    ggplot2::scale_colour_manual(
+      values = pal, name = NULL,
+      guide = ggplot2::guide_legend(order = 1L)),
     ggplot2::scale_shape_manual(
       values = c(marginal = 16L, conditional = 18L), name = NULL,
-      breaks = intersect(c("marginal", "conditional"), kinds)),
+      breaks = intersect(c("marginal", "conditional"), kinds),
+      guide = ggplot2::guide_legend(order = 2L)),
     ggplot2::theme_bw(),
     ggplot2::theme(plot.subtitle = ggplot2::element_text(
       size = 7, colour = "grey40", face = "plain")))
@@ -661,7 +670,11 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## draws points, which it does not. `shape` is not available for the points --
 ## the marks' marginal/conditioned distinction owns it, and ggplot2 allows one
 ## shape scale per plot -- so they are a fixed shape 21 keyed by fill.
-.admCovLevelScales <- function(levels) {
+## `lines`/`points` say which halves of the panel exist. A figure whose facets
+## are ALL discrete draws no line for linetype to land on, and adding the scale
+## anyway makes ggplot2 warn that the manual values share no levels with the
+## data -- a scale for an aesthetic nothing maps.
+.admCovLevelScales <- function(levels, lines = TRUE, points = TRUE) {
   lv_all <- sort(unique(levels))
   key    <- setdiff(lv_all, "")
   blank  <- "" %in% lv_all
@@ -675,12 +688,22 @@ head.paged_df <- function(x, n = 6L, ...) {
           if (blank) stats::setNames("black", ""))
   # A single level is no split at all -- suppress a legend reading `level: ""`
   # on a model with no conditioned covariate.
-  if (length(key))
-    list(ggplot2::scale_linetype_manual(values = lt, breaks = key, name = NULL),
-         ggplot2::scale_fill_manual(values = fl, breaks = key, name = NULL))
-  else
-    list(ggplot2::scale_linetype_manual(values = lt, guide = "none"),
-         ggplot2::scale_fill_manual(values = fl, guide = "none"))
+  # `order`, for the same reason as .admCovPanelStyle(): after the source and
+  # the marginal/conditioned key, which the reader consults first.
+  out <- list()
+  if (lines)
+    out <- c(out, list(if (length(key))
+      ggplot2::scale_linetype_manual(
+        values = lt, breaks = key, name = NULL,
+        guide = ggplot2::guide_legend(order = 3L))
+      else ggplot2::scale_linetype_manual(values = lt, guide = "none")))
+  if (points)
+    out <- c(out, list(if (length(key))
+      ggplot2::scale_fill_manual(
+        values = fl, breaks = key, name = NULL,
+        guide = ggplot2::guide_legend(order = 4L))
+      else ggplot2::scale_fill_manual(values = fl, guide = "none")))
+  out
 }
 
 ## An axis-breaks function that ticks a discrete facet at its LEVELS only.
@@ -696,7 +719,9 @@ head.paged_df <- function(x, n = 6L, ...) {
   lv <- sort(unique(levels))
   function(lims) {
     inside <- lv[lv >= lims[1L] & lv <= lims[2L]]
-    if (length(inside) >= 2L && diff(range(inside)) >= 0.9 * diff(lims))
+    # 0.8, not 0.95: the levels sit inside ggplot2's default 5%-a-side
+    # expansion, and a shaded end level pushes the limits out further still.
+    if (length(inside) >= 2L && diff(range(inside)) >= 0.8 * diff(lims))
       inside
     else pretty(lims)
   }
@@ -909,8 +934,15 @@ head.paged_df <- function(x, n = 6L, ...) {
                                   cv = cv, levels = grid)))
       un  <- setdiff(grid, sup)
       if (!length(un) || length(grid) < 2L) NULL else {
+        # CLAMPED to the level range. A rect hanging half a gap past the
+        # outermost level widens the panel limits enough that
+        # .admLevelBreaks() gives up and falls back to pretty(), which ticks a
+        # three-level factor at 0.5 and 1.5 -- values it does not have, and the
+        # exact thing that helper exists to prevent.
         w <- 0.4 * min(diff(sort(grid)))
-        data.frame(cov = cv, xmin = un - w, xmax = un + w,
+        data.frame(cov = cv,
+                   xmin = pmax(un - w, min(grid)),
+                   xmax = pmin(un + w, max(grid)),
                    stringsAsFactors = FALSE)
       }
     }
@@ -1014,6 +1046,204 @@ head.paged_df <- function(x, n = 6L, ...) {
   # and its line would be a dot.
   df$paired <- df$source %in% names(which(table(df$source) > 1L))
   df
+}
+
+## ---- covariate panel BUILDERS ----------------------------------------------
+##
+## Data frames in, a ggplot out. These were 200 lines inline in plot.admFit(),
+## which meant the only way to reach them was to run a fit -- so every bug in
+## them was a bug the test suite structurally could not see, and both rounds of
+## review found rendering defects the suite had passed through. Out here they
+## take synthetic study lists through .admCovEffectData()/.admCovResidData()
+## and render in milliseconds, which is what makes a snapshot test possible.
+##
+## `pal` is shared and comes from .admCovPalette(): the two panels are read as
+## a pair, so a source has to keep one colour across both.
+
+## The fitted-effect panel. `eff` is the list .admCovEffectData() returns, one
+## element per covariate. NULL when no covariate produced a curve.
+.admCovEffectPanel <- function(eff, pal) {
+  if (!length(eff)) return(NULL)
+  curve_df <- do.call(rbind, lapply(eff, `[[`, "curve"))
+  marks_df <- do.call(rbind, lapply(eff, `[[`, "marks"))
+  shade_df <- do.call(rbind, lapply(eff, `[[`, "shade"))
+  if (is.null(curve_df) || !nrow(curve_df)) return(NULL)
+  # Degenerate padding (a covariate covering the whole grid) would draw a
+  # zero-width rect; harmless, but it puts a stray border on the panel.
+  if (!is.null(shade_df))
+    shade_df <- shade_df[shade_df$xmax > shade_df$xmin, , drop = FALSE]
+  # Carry the shading onto the (cov, param) pairs that EXIST. Faceting on
+  # ~cov+param over a layer keyed by `cov` alone makes ggplot2 conjure a
+  # panel for every combination, so a parameter that never reads CRCL still
+  # got an empty "CRCL, v" panel containing nothing but the grey rect.
+  if (!is.null(shade_df) && nrow(shade_df))
+    shade_df <- merge(shade_df, unique(curve_df[, c("cov", "param")]),
+                      by = "cov")
+
+  p_eff <- ggplot2::ggplot(curve_df, ggplot2::aes(x = x, y = y))
+  # NULL when every covariate on the figure is discrete -- the levels are
+  # the whole support, so there is no extrapolation region anywhere.
+  if (!is.null(shade_df) && nrow(shade_df))
+    p_eff <- p_eff + ggplot2::geom_rect(
+      data = shade_df, inherit.aes = FALSE,
+      ggplot2::aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+      fill = "grey85", alpha = 0.55)
+  # The CURVE is for a covariate that actually has intermediate values.
+  # Drawing one across the levels of a discrete covariate claims the model
+  # predicts something at SEX = 0.37; it does not, and no patient is there.
+  # One line per level of any conditioned covariate. LINETYPE, not colour:
+  # colour already carries the source, and the two legends would otherwise
+  # compete for the same channel on the same figure.
+  if (any(!curve_df$disc))
+    p_eff <- p_eff + ggplot2::geom_line(
+      data = curve_df[!curve_df$disc, , drop = FALSE],
+      ggplot2::aes(group = level, linetype = level),
+      colour = "black", linewidth = 0.9)
+  # A discrete covariate gets its LEVELS, and nothing between them. The gap
+  # between the points is the whole of its effect; anything joining them is
+  # either a prediction the model was never asked for or, as drop lines to
+  # the axis, an asymmetric stub at one level and a long dangle at the other.
+  # The points carry `level` through FILL -- a discrete facet has no line for
+  # linetype to land on, so conditioning on a second covariate drew two
+  # identical black dots per level at different heights with nothing saying
+  # which was which. See .admCovLevelScales().
+  if (any(curve_df$disc))
+    p_eff <- p_eff + ggplot2::geom_point(
+      data = curve_df[curve_df$disc, , drop = FALSE],
+      ggplot2::aes(fill = level), colour = "black", shape = 21L,
+      size = 3.4, stroke = 0.6)
+  p_eff <- p_eff + .admCovLevelScales(curve_df$level,
+                                      lines  = any(!curve_df$disc),
+                                      points = any(curve_df$disc))
+  # Sources go in a LEGEND rather than inline text, as in the residual
+  # panel: three cohorts enrolled at similar weights sit almost on top of
+  # one another, and their names printed in place overlap into a smear.
+  #
+  # MARGINAL sources are drawn as the distribution the estimator integrates
+  # over -- a thin 2.5th-97.5th whisker under a thick 10th-90th bar, round
+  # point at the centre. CONDITIONED ones are drawn as what they are, one
+  # value, with a diamond and no spread. The shape legend keeps the two
+  # readable apart when they share a colour.
+  if (!is.null(marks_df) && nrow(marks_df)) {
+    marg <- marks_df[marks_df$kind == "marginal", , drop = FALSE]
+    if (nrow(marg))
+      p_eff <- p_eff +
+        ggplot2::geom_segment(
+          data = marg, inherit.aes = FALSE,
+          ggplot2::aes(x = xlo2, xend = xhi2, y = y, yend = y,
+                       colour = study),
+          linewidth = 0.5, alpha = 0.7) +
+        ggplot2::geom_segment(
+          data = marg, inherit.aes = FALSE,
+          ggplot2::aes(x = xlo, xend = xhi, y = y, yend = y, colour = study),
+          linewidth = 1.6, alpha = 0.55)
+    p_eff <- p_eff +
+      ggplot2::geom_point(data = marks_df,
+                          ggplot2::aes(colour = study, shape = kind),
+                          size = 2.6) +
+      .admCovPanelStyle(pal, marks_df$kind)
+  }
+  # facet_wrap, not facet_grid: most parameters read only some covariates,
+  # and a grid spends half the figure on empty (v, CRCL)-style panels.
+  p_eff <- p_eff +
+    ggplot2::scale_x_continuous(
+      breaks = .admLevelBreaks(curve_df$x[curve_df$disc])) +
+    ggplot2::facet_wrap(~ cov + param, scales = "free",
+                        labeller = ggplot2::labeller(
+                          .multi_line = FALSE, .default = ggplot2::label_value)) +
+    ggplot2::labs(
+      title = "Fitted covariate effect",
+      x = "Covariate value", y = "Model parameter",
+      subtitle = paste("black: parameter at the fitted thetas; one line per",
+                       "level of a conditioned covariate, other covariates",
+                       "at the pooled centre\nthis covariate's effect is",
+                       "the SLOPE, a conditioned one's is the GAP between",
+                       "the lines  |  marginalised source: centre +",
+                       "10th-90th bar + 2.5th-97.5th whisker\nconditioned",
+                       "source (diamond): the single value it was solved",
+                       "at  |  grey: outside the range any source sampled",
+                       "-- extrapolation"))
+  # Styling comes from .admCovPanelStyle(), added with the marks above. A
+  # fit with no marks at all still needs it.
+  if (is.null(marks_df) || !nrow(marks_df))
+    p_eff <- p_eff + .admCovPanelStyle(pal, character(0))
+  p_eff
+}
+
+## The between-study residual panel. `res` is the list .admCovResidData()
+## returns, one element per covariate. NULL when no covariate produced rows.
+.admCovResidPanel <- function(res, pal) {
+  if (!length(res)) return(NULL)
+  res_df <- do.call(rbind, res)
+  if (is.null(res_df) || !nrow(res_df)) return(NULL)
+  p_cres <- ggplot2::ggplot(res_df, ggplot2::aes(x = x, y = z)) +
+    ggplot2::geom_hline(yintercept = 0, colour = "grey40") +
+    ggplot2::geom_hline(yintercept = c(-1.96, 1.96), linetype = "dashed",
+                        colour = "grey60")
+  # A TREND, but only where one means anything. Regressing z on a covariate
+  # every study conditions at one of two levels fits a line through
+  # territory that has no patients in it, and reports as a slope what is
+  # really a difference between two groups. Continuous covariates only, and
+  # only with more than two studies -- two points define a line through
+  # themselves and say nothing.
+  # PER COVARIATE, not across the figure: facet_wrap fits a separate `lm`
+  # per panel, so a single covariate with 3+ studies used to add the layer
+  # for all of them and draw a "trend" through another covariate's two
+  # points -- exactly what the paragraph above says must not happen.
+  cont_r <- res_df[!res_df$disc, , drop = FALSE]
+  if (nrow(cont_r))
+    cont_r <- cont_r[cont_r$cov %in%
+                       names(which(table(cont_r$cov) > 2L)), , drop = FALSE]
+  if (nrow(cont_r))
+    p_cres <- p_cres + ggplot2::geom_smooth(
+      data = cont_r, method = "lm", formula = y ~ x, se = FALSE,
+      na.rm = TRUE, colour = "#2166AC", linewidth = 0.7,
+      linetype = "longdash")
+  # A CONTRAST, where a trend is meaningless. `stratify` splits one source
+  # into strata that differ only in this covariate, so the pair is what the
+  # banding bought: the same patients, the same study, one covariate moved.
+  # Joining them shows each source's own within-source contrast, and
+  # several sources tilting the same way is the mis-specification -- which a
+  # regression over the pooled cloud of strata cannot show, because it
+  # averages the pairs away.
+  pair_r <- res_df[res_df$disc & res_df$paired, , drop = FALSE]
+  # Neutral: the line joins two studies, so colouring it by `study` would
+  # split one connector across two colours. It is a connector, not a series.
+  if (nrow(pair_r))
+    p_cres <- p_cres + ggplot2::geom_line(
+      data = pair_r, ggplot2::aes(group = source),
+      colour = "grey45", linewidth = 0.6, alpha = 0.7)
+  # Studies go in a LEGEND rather than inline text: banded sources sit at
+  # nearly the same z, and six strata printed in place overlap into a smear.
+  # The 10th-90th span a marginalised study speaks for, so a point plotted
+  # at its centre is not read as a study that only ever saw that value.
+  # Conditioned studies have a zero-width span and drop out of the layer.
+  marg_r <- res_df[res_df$kind == "marginal" & res_df$xhi > res_df$xlo, ,
+                   drop = FALSE]
+  if (nrow(marg_r))
+    p_cres <- p_cres + ggplot2::geom_segment(
+      data = marg_r, inherit.aes = FALSE,
+      ggplot2::aes(x = xlo, xend = xhi, y = z, yend = z, colour = study),
+      linewidth = 1.1, alpha = 0.45)
+  p_cres +
+    ggplot2::geom_point(ggplot2::aes(size = n, colour = study,
+                                     shape = kind), alpha = 0.85) +
+    ggplot2::scale_size_continuous(guide = "none") +
+    .admCovPanelStyle(pal, res_df$kind) +
+    ggplot2::scale_x_continuous(
+      breaks = .admLevelBreaks(res_df$x[res_df$disc])) +
+    ggplot2::facet_wrap(~ cov, scales = "free_x", nrow = 1L) +
+    ggplot2::labs(
+      title = "Between-study residual vs covariate",
+      x = "Covariate value the study speaks for (centre, 10th-90th)",
+      y = "Mean standardised residual",
+      subtitle = paste("area = n  |  round + bar: marginalised over a",
+                       "distribution  |  diamond: conditioned at one value",
+                       "\ndashed blue: lm across studies, a SLOPE is a",
+                       "mis-specified form  |  grey: one source's strata,",
+                       "a consistent TILT is the same\nz averaged over",
+                       "times, which are correlated, so +/-1.96 is",
+                       "indicative not a test"))
 }
 
 #' Diagnostic plots for an admixr2 fit
@@ -1478,185 +1708,13 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       unlist(lapply(eff, function(z) z$marks$study), use.names = FALSE),
       unlist(lapply(res, `[[`, "study"), use.names = FALSE)))
 
-    if (length(eff)) {
-      curve_df <- do.call(rbind, lapply(eff, `[[`, "curve"))
-      marks_df <- do.call(rbind, lapply(eff, `[[`, "marks"))
-      shade_df <- do.call(rbind, lapply(eff, `[[`, "shade"))
-      # Degenerate padding (a covariate covering the whole grid) would draw a
-      # zero-width rect; harmless, but it puts a stray border on the panel.
-      if (!is.null(shade_df))
-        shade_df <- shade_df[shade_df$xmax > shade_df$xmin, , drop = FALSE]
-      # Carry the shading onto the (cov, param) pairs that EXIST. Faceting on
-      # ~cov+param over a layer keyed by `cov` alone makes ggplot2 conjure a
-      # panel for every combination, so a parameter that never reads CRCL still
-      # got an empty "CRCL, v" panel containing nothing but the grey rect.
-      if (!is.null(shade_df) && nrow(shade_df))
-        shade_df <- merge(shade_df, unique(curve_df[, c("cov", "param")]),
-                          by = "cov")
-
-      p_eff <- ggplot2::ggplot(curve_df, ggplot2::aes(x = x, y = y))
-      # NULL when every covariate on the figure is discrete -- the levels are
-      # the whole support, so there is no extrapolation region anywhere.
-      if (!is.null(shade_df) && nrow(shade_df))
-        p_eff <- p_eff + ggplot2::geom_rect(
-          data = shade_df, inherit.aes = FALSE,
-          ggplot2::aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
-          fill = "grey85", alpha = 0.55)
-      # The CURVE is for a covariate that actually has intermediate values.
-      # Drawing one across the levels of a discrete covariate claims the model
-      # predicts something at SEX = 0.37; it does not, and no patient is there.
-      # One line per level of any conditioned covariate. LINETYPE, not colour:
-      # colour already carries the source, and the two legends would otherwise
-      # compete for the same channel on the same figure.
-      if (any(!curve_df$disc))
-        p_eff <- p_eff + ggplot2::geom_line(
-          data = curve_df[!curve_df$disc, , drop = FALSE],
-          ggplot2::aes(group = level, linetype = level),
-          colour = "black", linewidth = 0.9)
-      # A discrete covariate gets its LEVELS, and nothing between them. The gap
-      # between the points is the whole of its effect; anything joining them is
-      # either a prediction the model was never asked for or, as drop lines to
-      # the axis, an asymmetric stub at one level and a long dangle at the other.
-      # Plain black: `shape` is already spoken for by the marks' marginal /
-      # conditioned distinction, and ggplot2 allows one shape scale per plot.
-      # The points carry `level` too, through FILL -- a discrete facet has no
-      # line for linetype to land on, so conditioning on a second covariate drew
-      # two identical black dots per level at different heights with nothing
-      # saying which was which. See .admCovLevelScales().
-      if (any(curve_df$disc))
-        p_eff <- p_eff + ggplot2::geom_point(
-          data = curve_df[curve_df$disc, , drop = FALSE],
-          ggplot2::aes(fill = level), colour = "black", shape = 21L,
-          size = 3.4, stroke = 0.6)
-      p_eff <- p_eff + .admCovLevelScales(curve_df$level)
-      # Sources go in a LEGEND rather than inline text, as in the residual
-      # panel: three cohorts enrolled at similar weights sit almost on top of
-      # one another, and their names printed in place overlap into a smear.
-      #
-      # MARGINAL sources are drawn as the distribution the estimator integrates
-      # over -- a thin 2.5th-97.5th whisker under a thick 10th-90th bar, round
-      # point at the median. CONDITIONED ones are drawn as what they are, one
-      # value, with a diamond and no spread. The shape legend keeps the two
-      # readable apart when they share a colour.
-      if (!is.null(marks_df) && nrow(marks_df)) {
-        marg <- marks_df[marks_df$kind == "marginal", , drop = FALSE]
-        if (nrow(marg))
-          p_eff <- p_eff +
-            ggplot2::geom_segment(
-              data = marg, inherit.aes = FALSE,
-              ggplot2::aes(x = xlo2, xend = xhi2, y = y, yend = y,
-                           colour = study),
-              linewidth = 0.5, alpha = 0.7) +
-            ggplot2::geom_segment(
-              data = marg, inherit.aes = FALSE,
-              ggplot2::aes(x = xlo, xend = xhi, y = y, yend = y, colour = study),
-              linewidth = 1.6, alpha = 0.55)
-        p_eff <- p_eff +
-          ggplot2::geom_point(data = marks_df,
-                              ggplot2::aes(colour = study, shape = kind),
-                              size = 2.6) +
-          .admCovPanelStyle(cov_pal, marks_df$kind)
-      }
-      # facet_wrap, not facet_grid: most parameters read only some covariates,
-      # and a grid spends half the figure on empty (v, CRCL)-style panels.
-      p_eff <- p_eff +
-        ggplot2::scale_x_continuous(
-          breaks = .admLevelBreaks(curve_df$x[curve_df$disc])) +
-        ggplot2::facet_wrap(~ cov + param, scales = "free",
-                            labeller = ggplot2::labeller(
-                              .multi_line = FALSE, .default = ggplot2::label_value)) +
-        ggplot2::labs(
-          title = "Fitted covariate effect",
-          x = "Covariate value", y = "Model parameter",
-          subtitle = paste("black: parameter at the fitted thetas; one line per",
-                           "level of a conditioned covariate, other covariates",
-                           "at the pooled centre\nthis covariate's effect is",
-                           "the SLOPE, a conditioned one's is the GAP between",
-                           "the lines  |  marginalised source: centre +",
-                           "10th-90th bar + 2.5th-97.5th whisker\nconditioned",
-                           "source (diamond): the single value it was solved",
-                           "at  |  grey: outside the range any source sampled",
-                           "-- extrapolation"))
-      # Styling comes from .admCovPanelStyle(), added with the marks above. A
-      # fit with no marks at all still needs it.
-      if (is.null(marks_df) || !nrow(marks_df))
-        p_eff <- p_eff + .admCovPanelStyle(cov_pal, character(0))
-
+    p_eff <- .admCovEffectPanel(eff, cov_pal)
+    if (!is.null(p_eff)) {
       plots[["covariate_effect"]] <- p_eff
       print_keys <- c(print_keys, "covariate_effect")
     }
-
-    if (length(res)) {
-      res_df <- do.call(rbind, res)
-      p_cres <- ggplot2::ggplot(res_df, ggplot2::aes(x = x, y = z)) +
-        ggplot2::geom_hline(yintercept = 0, colour = "grey40") +
-        ggplot2::geom_hline(yintercept = c(-1.96, 1.96), linetype = "dashed",
-                            colour = "grey60")
-      # A TREND, but only where one means anything. Regressing z on a covariate
-      # every study conditions at one of two levels fits a line through
-      # territory that has no patients in it, and reports as a slope what is
-      # really a difference between two groups. Continuous covariates only, and
-      # only with more than two studies -- two points define a line through
-      # themselves and say nothing.
-      # PER COVARIATE, not across the figure: facet_wrap fits a separate `lm`
-      # per panel, so a single covariate with 3+ studies used to add the layer
-      # for all of them and draw a "trend" through another covariate's two
-      # points -- exactly what the paragraph above says must not happen.
-      cont_r <- res_df[!res_df$disc, , drop = FALSE]
-      if (nrow(cont_r))
-        cont_r <- cont_r[cont_r$cov %in%
-                           names(which(table(cont_r$cov) > 2L)), , drop = FALSE]
-      if (nrow(cont_r))
-        p_cres <- p_cres + ggplot2::geom_smooth(
-          data = cont_r, method = "lm", formula = y ~ x, se = FALSE,
-          na.rm = TRUE, colour = "#2166AC", linewidth = 0.7,
-          linetype = "longdash")
-      # A CONTRAST, where a trend is meaningless. `stratify` splits one source
-      # into strata that differ only in this covariate, so the pair is what the
-      # banding bought: the same patients, the same study, one covariate moved.
-      # Joining them shows each source's own within-source contrast, and
-      # several sources tilting the same way is the mis-specification -- which a
-      # regression over the pooled cloud of strata cannot show, because it
-      # averages the pairs away.
-      pair_r <- res_df[res_df$disc & res_df$paired, , drop = FALSE]
-      # Neutral: the line joins two studies, so colouring it by `study` would
-      # split one connector across two colours. It is a connector, not a series.
-      if (nrow(pair_r))
-        p_cres <- p_cres + ggplot2::geom_line(
-          data = pair_r, ggplot2::aes(group = source),
-          colour = "grey45", linewidth = 0.6, alpha = 0.7)
-      # Studies go in a LEGEND rather than inline text: banded sources sit at
-      # nearly the same z, and six strata printed in place overlap into a smear.
-      # The 10th-90th span a marginalised study speaks for, so a point plotted
-      # at its median is not read as a study that only ever saw that value.
-      # Conditioned studies have a zero-width span and drop out of the layer.
-      marg_r <- res_df[res_df$kind == "marginal" & res_df$xhi > res_df$xlo, ,
-                       drop = FALSE]
-      if (nrow(marg_r))
-        p_cres <- p_cres + ggplot2::geom_segment(
-          data = marg_r, inherit.aes = FALSE,
-          ggplot2::aes(x = xlo, xend = xhi, y = z, yend = z, colour = study),
-          linewidth = 1.1, alpha = 0.45)
-      p_cres <- p_cres +
-        ggplot2::geom_point(ggplot2::aes(size = n, colour = study,
-                                         shape = kind), alpha = 0.85) +
-        ggplot2::scale_size_continuous(guide = "none") +
-        .admCovPanelStyle(cov_pal, res_df$kind) +
-        ggplot2::scale_x_continuous(
-          breaks = .admLevelBreaks(res_df$x[res_df$disc])) +
-        ggplot2::facet_wrap(~ cov, scales = "free_x", nrow = 1L) +
-        ggplot2::labs(
-          title = "Between-study residual vs covariate",
-          x = "Covariate value the study speaks for (centre, 10th-90th)",
-          y = "Mean standardised residual",
-          subtitle = paste("area = n  |  round + bar: marginalised over a",
-                           "distribution  |  diamond: conditioned at one value",
-                           "\ndashed blue: lm across studies, a SLOPE is a",
-                           "mis-specified form  |  grey: one source's strata,",
-                           "a consistent TILT is the same\nz averaged over",
-                           "times, which are correlated, so +/-1.96 is",
-                           "indicative not a test"))
-
+    p_cres <- .admCovResidPanel(res, cov_pal)
+    if (!is.null(p_cres)) {
       plots[["covariate_resid"]] <- p_cres
       print_keys <- c(print_keys, "covariate_resid")
     }

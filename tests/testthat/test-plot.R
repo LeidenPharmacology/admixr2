@@ -455,7 +455,11 @@ test_that(".admCovEffectData shades a declared level no study sits at", {
                          list(tcl = log(5), bg = 0.2))
   expect_equal(sort(unique(d$curve$x)), c(0, 1, 2))
   expect_equal(nrow(d$shade), 1L)
-  expect_true(d$shade$xmin < 2 && d$shade$xmax > 2)
+  # Reaches level 2 and stops there. Hanging past the outermost level widens
+  # the panel limits enough that .admLevelBreaks() falls back to pretty() and
+  # ticks the factor at 0.5 and 1.5.
+  expect_true(d$shade$xmin < 2)
+  expect_equal(d$shade$xmax, 2)
 
   # Every declared level studied: nothing to warn about.
   d2 <- .admCovEffectData(ui, "GRP", list(a = mk(0, c(0, 1)),
@@ -657,6 +661,12 @@ test_that(".admCovLevelScales keeps the empty level out of the legend", {
   none <- .admCovLevelScales("")
   expect_equal(none[[1L]]$guide, "none")
   expect_equal(none[[2L]]$guide, "none")
+  # A figure whose facets are all discrete draws no lines, so it gets no
+  # linetype scale at all -- ggplot2 warns about a manual scale for an
+  # aesthetic nothing maps.
+  only_pts <- .admCovLevelScales(lv, lines = FALSE)
+  expect_length(only_pts, 1L)
+  expect_true("fill" %in% only_pts[[1L]]$aesthetics)
 })
 
 test_that(".admCovEffectData keeps a facet flat at one level and varying at another", {
