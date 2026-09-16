@@ -3249,6 +3249,26 @@ print.covDist <- function(x, ...) {
   r
 }
 
+# The Cholesky factors a rank screen should look at, one entry at a time. The
+# same +/-0.1 step .admCollapseRank takes on a theta, over the triangle L
+# actually occupies: a diagonal upward only (a variance leaving zero is what
+# reaches a new direction; shrinking one cannot), an off-diagonal both ways.
+.admOmegaProbes <- function(L, d = 0.1) {
+  if (!is.matrix(L) || !nrow(L)) return(list())
+  up  <- all(abs(L[lower.tri(L)]) == 0)
+  ix  <- which(if (up) upper.tri(L, diag = TRUE) else lower.tri(L, diag = TRUE),
+               arr.ind = TRUE)
+  out <- list()
+  for (q in seq_len(nrow(ix))) {
+    i <- ix[q, 1L]; j <- ix[q, 2L]
+    for (s in if (i == j) d else c(-d, d)) {
+      Lk <- L; Lk[i, j] <- Lk[i, j] + s
+      out[[length(out) + 1L]] <- Lk
+    }
+  }
+  out
+}
+
 # VERIFY THE DESIGN, NOT THE CERTIFICATE. What a collapse needs is that the
 # reduced design reproduce the LAW of every covariate-reading assignment --
 # that is the property, and every affinity or single-index test is only a
@@ -4093,22 +4113,35 @@ print.covDist <- function(x, ...) {
   # coefficient leaving zero does. Probing the thetas alone freezes a rank the
   # fit can then outgrow, and .admJointDesign refuses every design from there
   # on (rank > r), so the objective is +Inf across a whole REGION rather than
-  # at an isolated point. So the probe scales L on both sides too, and takes
-  # the largest rank it sees anywhere. A scaling that cannot be read at all is
-  # skipped rather than refused: it is a screen for a rank the fit may reach,
-  # not a claim about that Omega.
+  # at an isolated point.
+  #
+  # ENTRYWISE, exactly as .admCollapseRank treats a theta -- NOT a scaling of
+  # L. Scaling is the one perturbation that cannot find the case this is for:
+  # an eta whose variance starts at ~0 contributes a row of B that is ~0, and
+  # L * 1.1 leaves it ~0, so the screen returns the same rank it started with.
+  # Measured on `cl <- exp(tcl + eta.cl + b*WT)` beside `v <- exp(tv + eta.v)`
+  # at omega.v = 1e-9: rank 1 at L, rank 1 at L * 1.1, rank 2 at L[2,2] + 0.1,
+  # and rank 2 everywhere the fit actually goes. A diagonal entry is probed
+  # UPWARD only -- shrinking a variance can only remove a direction, and the
+  # max below would discard that anyway -- and an off-diagonal both ways, since
+  # a correlation can reach a new direction from either side.
+  #
+  # Rank only, not the whole nested certificate: what walls the fit off is the
+  # `.admSvdRank(sv) > r` refusal in .admJointDesign, and the eta/stratum
+  # invariance is a statement about the model that L does not change. These are
+  # R evaluations of the parameter assignments, so the cost is ne^2 gradient
+  # stencils and no solves.
   r <- .admCollapseRank(B0, st, jc$struct_names %||% character(0),
                         function(sp) .admJointB(jc, sp, L, i0 = jc$i0),
                         inv_at(L))
   if (is.null(r)) return(NULL)
-  for (f in c(0.9, 1.1)) {
-    Lk <- L * f
+  for (Lk in .admOmegaProbes(L)) {
     Bk <- .admJointB(jc, st, Lk, i0 = jc$i0)
+    # A perturbation that cannot be read at all is SKIPPED, not refused: this
+    # is a screen for a rank the fit may reach, not a claim about that Omega.
     if (is.null(Bk)) next
-    rk <- .admCollapseRank(Bk, st, jc$struct_names %||% character(0),
-                           function(sp) .admJointB(jc, sp, Lk, i0 = jc$i0),
-                           inv_at(Lk))
-    if (!is.null(rk)) r <- max(r, rk)
+    sk <- tryCatch(svd(Bk), error = function(e) NULL)
+    if (!is.null(sk) && length(sk$d)) r <- max(r, .admSvdRank(sk))
   }
   jc$r <- r
   if (!is.finite(jc$r) || jc$r < 1L || jc$r > jc$nl) return(NULL)

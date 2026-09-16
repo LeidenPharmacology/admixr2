@@ -289,3 +289,34 @@ test_that("the base-point ORDER is frozen, not re-ranked when a point goes flat"
   expect_false(is.null(B))
   expect_equal(as.numeric(B), as.numeric(Bn), tolerance = 1e-8)
 })
+
+test_that("joint admission probes Omega entrywise, so a variance leaving zero is not walled off", {
+  skip_if_not_installed("randtoolbox")
+  cd  <- list(WT = list(mu = 0, sd = 1))
+  ui  <- list(lstExpr = list(quote(cl <- exp(tcl + eta.cl + b * WT)),
+                             quote(v  <- exp(tv + eta.v))), allCovs = "WT")
+  pin <- list(eta_col_names = c("eta.cl", "eta.v"), n_eta = 2L,
+              struct_names = "b", struct_init = c(b = .3), cov_nodes = 7L)
+  jc  <- admixr2:::.admJointCollapse(ui, pin, cd, 7L, NULL, NULL,
+                                     eta_nodes = 5L)
+  st  <- list(tcl = 0, tv = 0, b = .3)
+
+  # eta.v's variance starts at ~0, so v contributes no latent direction YET
+  L0 <- matrix(c(.3, 0, 0, 1e-9), 2L, 2L, byrow = TRUE)
+  expect_equal(admixr2:::.admSvdRank(
+    svd(admixr2:::.admJointB(jc, st, L0, i0 = NULL))), 1L)
+
+  # admission must freeze the rank the fit can REACH, not the one it starts at
+  jc <- admixr2:::.admJointAdmit(jc, st, L0)
+  expect_false(is.null(jc))
+  expect_equal(jc$r, 2L)
+
+  # ... or every design from there on is refused and the objective is Inf
+  # across the whole region of Omega the optimizer has to cross.
+  L1 <- matrix(c(.3, 0, 0, .4), 2L, 2L, byrow = TRUE)
+  expect_false(is.null(admixr2:::.admJointDesign(jc, st, L1)))
+
+  # a scaling of L is the one perturbation that cannot see this
+  expect_equal(admixr2:::.admSvdRank(
+    svd(admixr2:::.admJointB(jc, st, L0 * 1.1, i0 = NULL))), 1L)
+})
