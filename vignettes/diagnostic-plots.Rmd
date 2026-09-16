@@ -38,12 +38,16 @@ fit <- nlmixr2(
 )
 ```
 
-`plot.admFit()` draws up to four panel types, all four by default. Each is
+`plot.admFit()` draws up to five panel types, all five by default. Each is
 returned as a named ggplot2 object in a list.
 
 ```r
-plots <- plot(fit, which = c("mean", "cov", "nll", "par"))
+plots <- plot(fit, which = c("mean", "cov", "covariate", "nll", "par"))
 ```
+
+`"covariate"` needs studies that declare covariates and is silently absent
+otherwise, so this vignette's single-study examplomycin fit produces the other
+four. It has its own section below.
 
 ## Mean diagnostics
 
@@ -90,6 +94,54 @@ over-predicts.
 **Bottom-right — Standardised residual:** each entry over its asymptotic SE —
 √(2 V[i,i]² / (n−1)) on the diagonal, √((V[i,i]·V[j,j] + V[i,j]²) / (n−1)) off
 it. Stars as above.
+
+## Covariate diagnostics
+
+The mean and covariance panels are per study, in isolation. With aggregate data
+a covariate effect is identified *between* studies --- the renal exponent in
+`vignette("covariates")` comes from three cohorts sitting at three different
+creatinine-clearance medians, none of which fitted a renal term --- so every
+source can sit beautifully on its own panel while the relation tying them
+together is wrong. `which = "covariate"` draws that contrast, and returns two
+plots.
+
+```r
+plots <- plot(fit, which = "covariate")
+names(plots)
+#> [1] "covariate_effect" "covariate_resid"
+```
+
+**`covariate_effect`** sweeps each covariate across the range the sources cover
+and draws every model parameter that reads it, at the fitted estimates, with the
+other covariates held at the pooled median. One facet per (covariate, parameter)
+pair that exists. The region no source sampled is shaded: that is where the fit
+extrapolates. A discrete covariate is drawn on its levels rather than swept
+through the values between them.
+
+**`covariate_resid`** plots each study's mean standardised residual against the
+covariate value it sits at, with an `lm` trend across studies. A slope is a
+mis-specified covariate form. Read it with the coverage bars: three sources
+spanning the *same* range of a covariate cannot say anything about it, whatever
+the fitted line does, and with few sources two covariates whose study medians
+move together cannot be told apart.
+
+Both panels distinguish how a study enters a covariate, because the two are
+different kinds of evidence:
+
+| | drawn as | meaning |
+|---|---|---|
+| **marginalised** | round point, 10th–90th bar, 2.5th–97.5th whisker | the estimator integrates over a declared distribution; the source constrains the effect through the spread it induces |
+| **conditioned** | diamond, no spread | `stratify`, `at` or `by` --- the model is solved at one value, and the source contributes a point of contrast against the others |
+
+A source banded with `stratify` therefore appears as several diamonds on the
+covariate it was banded on, and as one merged mark on every other, where its
+strata coincide.
+
+A covariate the model **does not read** still gets a `covariate_resid` facet.
+That is the case the panel exists for: the null model of a covariate test simply
+omits the term, admixr2 takes the covariate off the design because it cannot
+change the prediction, and the question you are asking is precisely whether it
+belonged.
 
 ## NLL trace
 

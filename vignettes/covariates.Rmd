@@ -514,6 +514,35 @@ the sampling scale of its contribution. The study API does not take the publishe
 estimates' covariance, so the test does not propagate uncertainty in those
 source-model parameters --- read a borderline result with that in mind.
 
+### What the null model looks like on a plot
+
+The test returns one number. `plot(fit, which = "covariate")` shows where it
+came from: each study's mean standardised residual against the covariate it sits
+at. `CRCL` is not on the null model's design at all --- it reads no renal term,
+so admixr2 took the covariate off --- and the panel still plots against it,
+because that is the question being asked.
+
+```{r null-resid, fig.height = 3.6, fig.cap = "Null model, covariate panels. The effect panel has no CRCL facet -- the model has no renal term -- and the residual panel does, because that is the question being asked."}
+plots <- plot(fit_null, which = "covariate")
+```
+
+The effect panel has no `CRCL` facet: there is no renal effect in this model to
+draw. The residual panel has one --- and across it the three sources run from
++5 at the moderate-impairment cohort to −4.5 at the normal one, monotone in
+creatinine clearance and far outside ±1.96. (Six marks, three positions: each
+source is banded into two sex strata, and a source's two strata share its renal
+median.) That trend *is* the renal effect, showing up in the residuals of the
+model that does not have it.
+
+Read it alongside the coverage bars, which is what the marks are for. Every
+cohort enrolled much the same weights, so the `WT` facet has its bars lying on
+top of one another and can say nothing about weight whichever way its line tips.
+The `CRCL` facet has three separated bars and can. `SEX` is drawn as diamonds
+because every source conditions on it --- a banded covariate contributes a
+contrast, not a spread. With only three sources, covariates whose medians move
+together cannot be separated here at all: the panel narrows the problem to a
+set, and a source that breaks the pattern is what narrows it further.
+
 ## Seeing the renal effect
 
 Here is what the meta-analysis actually did:
