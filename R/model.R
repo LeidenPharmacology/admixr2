@@ -1,15 +1,14 @@
 # Cache-key material shared by the simulation and sensitivity models.
 #
-# Names, fix flags and error types all change what gets emitted or what the solve
-# is handed. The fixed thetas' VALUES are in here for a sharper reason: a fix()ed
-# theta never reaches the optimizer, so it travels to the solve as DATA on the
-# cached object. Without it, `tka <- fix(0.5)` and `tka <- fix(0.9)` key alike and
-# a parallel worker -- which reads the cached file and cannot re-derive from a
-# `ui` it does not have -- solves every restart at the other fit's fixed value,
-# across sessions, because rxTempDir() is a persistent user cache.
+# Names, fix flags, error types, and the fixed thetas' VALUES: a fix()ed
+# theta never reaches the optimizer, so it travels to the solve as DATA
+# on the cached object. Without it, `tka <- fix(0.5)` and `tka <-
+# fix(0.9)` key alike, and a parallel worker with no `ui` to re-derive
+# from solves every restart at the other fit's value, across sessions
+# (rxTempDir() persists).
 #
-# Only the FIXED rows' values. Folding in every `est` would make an ordinary
-# change of starting value invalidate the compiled model: a starting value is
+# Only FIXED rows: folding in `est` would invalidate the cache on every
+# starting-value change, which is optimizer state, not model text.
 # optimizer state, not model text.
 .admIniKey <- function(ui) {
   tryCatch({
@@ -43,33 +42,29 @@
 .admPkgKey <- function() {
   .ver <- tryCatch(as.character(utils::packageVersion("admixr2")),
                    error = function(e) "dev")
-  # deparse(), not the closure itself: a function's environment is the package
-  # namespace, which digests differently between load_all() and an installed build
-  # and would make every dev session a cache miss for no reason.
+  # deparse(), not the closure: a function's environment (the package
+  # namespace) digests differently between load_all() and an installed
+  # build, causing spurious cache misses in dev.
   #
-  # Driven off a NAME LIST, because digesting only the two entry points was not
-  # enough: the payload is shaped by every function that decides what gets emitted
-  # or how it is compiled, including .admJumpCovers(), which decides
-  # NULL-versus-cache-a-model. The constants are digested by VALUE, being
-  # referenced by name inside the deparsed bodies. Per-name tryCatch, NOT one
-  # around the whole digest: wrapping the lot means a single unresolvable name
-  # collapses the key to one constant and switches invalidation off altogether.
+  # Driven off a NAME LIST, since digesting just the two entry points
+  # misses every function that shapes the payload (e.g. .admJumpCovers(),
+  # which decides NULL-versus-cache-a-model). Constants are digested BY
+  # VALUE, per-name tryCatch rather than one around the whole digest, so
+  # one unresolvable name doesn't disable invalidation entirely.
   #
-  # The list is a LOCAL, not a package-level constant: a daemon resolves this
-  # function from the stale INSTALLED namespace and .admDaemonRestart() patches the
-  # dev body in with assignInNamespace(), which can REPLACE a binding but cannot
-  # ADD one -- so a top-level constant would be missing in the worker, which would
-  # then compute a DIFFERENT key from its parent while looking healthy.
+  # A LOCAL, not a package-level constant: .admDaemonRestart() patches a
+  # dev body into the stale installed namespace with
+  # assignInNamespace(), which can REPLACE a binding but not ADD one -- a
+  # top-level constant would go missing in the worker and silently
+  # compute a different key.
   #
-  # THE RULE: a function belongs here if changing its BODY changes the cached
-  # payload WITHOUT changing some other value already in the key. Adding a name is
-  # cheap; omitting one produces a cache HIT on a payload built by superseded code.
-  # Two ways a name gets missed, both of which have happened: EXTRACTION (logic
-  # lifted into a new function is invisible from the moment it moves) and GROWTH (a
-  # helper the emitters start calling).
+  # THE RULE: a function belongs here if changing its BODY changes the
+  # cached payload independent of the rest of the key. A missed name
+  # causes a cache HIT on stale code, via EXTRACTION (moved logic becomes
+  # invisible) or GROWTH (a new helper call).
   #
-  # Covered BY VALUE and deliberately absent: .admUnpairedThetas / .admMuRefPairs
-  # and .admIniKey, whose results are already components of the key.
+  # .admUnpairedThetas/.admMuRefPairs/.admIniKey are covered indirectly,
+  # via their already-keyed results.
   .emitters <- c(
     ".admBuildThetaSens",   # emits the direction set, the chains and the f2 block
     ".admLoadSensModel",    # assembles the cached list and its fallbacks
@@ -98,21 +93,23 @@
 
 # Compile a generated model under a stable, role-tagged artifact name.
 #
-# This is nlmixr2est's .nlmixr2estRxode2()/.nlmixr2estModName()/.nlmixr2estModDir()
-# (added on its main in fef5be69, after 6.2.0), ported with admixr2's own roles.
+# Ported from nlmixr2est's
+# .nlmixr2estRxode2()/.nlmixr2estModName()/.nlmixr2estModDir()
+# (main@fef5be69, post-6.2.0), with admixr2's own roles.
 #
-# rxode2 names a model's generated .c/.so from `.rxPre(model, modName)`, which for
-# an ANONYMOUS model is the parsed model text ALONE. The emitted C also depends on
-# inputs the parsed text cannot see, above all the event-sensitivity code, which is
-# generated afterwards and injected. So two builds of one model text that differ in
-# those inputs land on a single .so; the later build wins for both, and because
-# entry points resolve BY NAME a model object bound to the earlier one silently
-# starts executing the replacement. See nlmixr2/rxode2#1171.
+# rxode2 names a model's .c/.so from `.rxPre(model, modName)`, which for
+# an ANONYMOUS model is the parsed text ALONE -- it can't see inputs
+# like the event-sensitivity code injected afterward. Two builds of one
+# text differing only in those inputs land on a single .so; the later
+# build wins for both, and since entry points resolve BY NAME an object
+# bound to the earlier build silently starts executing the replacement
+# (nlmixr2/rxode2#1171).
 #
-# admixr2 is exposed in the worst way of any package: .admSensFromInner()
-# recompiles NLMIXR2EST'S OWN inner model text with eventSens = "jump", where
-# nlmixr2est built the same text with a different one. Same parsed md5, same
-# directory, different emitted C -- and rxTempDir() here is a PERSISTENT user
+# admixr2 hits this hardest: .admSensFromInner() recompiles
+# nlmixr2est's OWN inner model text with eventSens = "jump" where
+# nlmixr2est built it with a different one -- same parsed md5, same
+# directory, different emitted C, and rxTempDir() persists across
+# sessions.
 # cache, so a collision survives restarts.
 .admRxode2 <- function(model, role, ...) {
   .nm <- .admModName(model, role, ...)
@@ -160,50 +157,48 @@
 
 # Where generated models are built. Upstream's three constraints hold here too.
 #
-# NOT getwd(): a NAMED model builds there by default, scattering <modName>.d
-# directories through the user's working directory.
+# NOT getwd(): a NAMED model builds there by default, scattering
+# <modName>.d directories through the user's working directory.
 #
-# NOT rxTempDir(): that directory is rxode2's, and something in a session
-# invalidates artifacts inside it -- upstream measured a generated model's .so
-# replaced mid-run by a build emitting different event-sensitivity code, still
-# reproducible with every model uniquely named, so role-tagged names alone do NOT
-# protect against it. For admixr2 it is also a PERSISTENT user cache.
+# NOT rxTempDir(): something in a session invalidates artifacts
+# inside it -- upstream measured a generated model's .so replaced
+# mid-run by a build emitting different event-sensitivity code, even
+# with unique names. For admixr2 it's also a PERSISTENT user cache.
 #
-# R's session temp directory is neither: nothing else clears it, no consent is
-# needed, and it goes away when R exits. The cost is that artifacts are not shared
-# across sessions, so each session rebuilds them once -- worth it while
-# nlmixr2/rxode2#1171 is open, since the alternative is a silently wrong gradient.
+# R's session temp directory is neither: nothing else clears it, and
+# it goes away when R exits. Cost: artifacts aren't shared across
+# sessions, so each rebuilds once -- worth it while
+# nlmixr2/rxode2#1171 is open, vs. a silently wrong gradient.
 #
-# NOTE on "persists", asserted in several comments here: rxTempDir() is genuinely
-# persistent ONLY when R_user_dir("rxode2", "cache") already exists, i.e. the user
-# has run rxCreateCache(). Otherwise it dies with the session. So the cross-session
-# scenarios below are reachable on a machine with an rxode2 cache and unreachable
-# on a fresh CI runner.
+# ("persists", used below) rxTempDir() is genuinely persistent only
+# once the user has run rxCreateCache(); otherwise the cross-session
+# scenarios below only apply on a machine with an rxode2 cache.
 #
-# The .rds caches stay in rxTempDir(), which may PERSIST, so a cross-session hit
-# necessarily references a DLL this session no longer has. .admRxLoadAll() checks
-# file.exists(rxDll()) and reports the entry stale so it is rebuilt. It has to be
-# an explicit check: rxLoad() on a vanished DLL does not reliably error, it quietly
-# leaves the model bound to whatever shares its entry-point names, and the model
-# then solves to garbage.
-# A DELIBERATE DIVERGENCE FROM UPSTREAM, chosen with the alternatives measured --
-# do not "restore parity" by moving either half of it.
+# The .rds caches stay in rxTempDir(), so a cross-session hit may
+# reference a DLL this session no longer has. .admRxLoadAll() checks
+# file.exists(rxDll()) and reports the entry stale -- required
+# because rxLoad() on a vanished DLL doesn't reliably error; it
+# quietly binds to whatever shares the entry-point name and solves
+# to garbage. A DELIBERATE DIVERGENCE from upstream; don't "restore
+# parity" by moving either half.
 #
-# nlmixr2est keeps one invariant that admixr2 does not: an artifact's lifetime
-# always equals its cache's. admixr2 crosses them for the SENSITIVITY model only:
-# session-local artifact, persistent adm-sens-*.rds. The simulation model is on
-# upstream's disk pairing and needs nothing.
+# nlmixr2est keeps one invariant admixr2 doesn't: an artifact's
+# lifetime equals its cache's. admixr2 crosses them for the
+# SENSITIVITY model only (session-local artifact, persistent
+# adm-sens-*.rds); the simulation model stays on upstream's disk
+# pairing.
 #
-# Three options were considered:
-#   A  session-only sens cache, exactly upstream. Deletes every guard below --
-#      but a mirai worker cannot read a session env and receives only ui_lstExpr,
-#      not a `ui`, so parallel grad = "sens" would break.
-#   B  keep the file, add a session token to its NAME, so a new session misses and
-#      rebuilds and can never SEE a foreign entry.
-#   C  keep the cross-session cache and guard it at runtime.  <-- CHOSEN
-# C keeps the measured cold-start win (~2.8x) at the price of .admRxLoadAll()'s
-# checks below. If that price ever looks too high, B is the cheap way out.
+# Three options considered:
+#   A  session-only sens cache, upstream's. A mirai worker can't read
+#      a session env (only ui_lstExpr, not `ui`), so parallel
+#      grad = "sens" would break.
+#   B  add a session token to the cache file's NAME, so a new session
+#      misses and rebuilds rather than seeing a foreign entry.
+#   C  keep the cross-session cache and guard it at runtime.  <--
+#      CHOSEN, for the cold-start win, at the cost of
+#      .admRxLoadAll()'s checks below.
 #
+# Disappears entirely once nlmixr2/rxode2#1171 is fixed.
 # When nlmixr2/rxode2#1171 is fixed the constraint disappears entirely.
 .admModDir <- function() {
   .d <- file.path(tempdir(), "admixr2Sens")
@@ -219,26 +214,25 @@
 
 # Re-load every compiled model inside a cached object.
 #
-# This is nlmixr2est's own load step, verbatim in behaviour (rxUiGet.foceiModel).
+# nlmixr2est's own load step, verbatim (rxUiGet.foceiModel).
 #
-# A deserialised rxode2 object carries a dead pointer until rxLoad() re-attaches
-# its shared library, and it is the CONTAINER that gets cached -- so every
-# rxode2-classed element has to be re-loaded, not just the one the caller happens
-# to read first. admixr2 loaded exactly one element by name, which is correct today
-# and silently wrong the moment a second is added.
+# A deserialised rxode2 object carries a dead pointer until rxLoad()
+# re-attaches its shared library, and it is the CONTAINER that gets
+# cached -- so every rxode2-classed element must be re-loaded, not just
+# the one the caller reads first. admixr2 loaded exactly one element by
+# name, correct today and silently wrong once a second is added.
 #
-# TRUE if everything loadable loaded; FALSE if any load failed, which the callers
+# TRUE if everything loaded; FALSE if any load failed, which callers
 # treat as a stale cache entry (delete and rebuild).
 # Canonical spelling of a path, for comparing two of them.
 #
-# normalizePath() resolves Windows 8.3 short components ("RT6EC4~1") against the
-# long form tempdir() reports; it warns and returns its input for a path that does
-# not exist, which is itself a mismatch, so suppress and compare what comes back.
+# normalizePath() resolves Windows 8.3 short components ("RT6EC4~1")
+# against the long form tempdir() reports; it warns and returns its
+# input for a path that doesn't exist, so suppress and compare that.
 #
-# Case-folded on Windows ONLY. Its file system is case-insensitive, so two
-# spellings of one directory must compare equal; folding elsewhere would make two
-# GENUINELY different directories compare equal -- which in the session guard below
-# means accepting a foreign session's artifact.
+# Case-folded on Windows ONLY, since its file system is
+# case-insensitive; folding elsewhere would make two GENUINELY
+# different directories compare equal in the session guard below.
 .admNormPath <- function(p) {
   .p <- tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE),
                  error = function(e) p, warning = function(w) p)
@@ -249,20 +243,17 @@
 
 # Does `path` lie inside THIS session's temporary directory?
 #
-# The session-ownership guard below wants "built by the session that is running
-# now", and more than one build directory satisfies that: admixr2's own
-# .admModDir() and nlmixr2est 7.x's <tempdir>/nlmixr2estSens. Testing against
-# .admModDir() alone can never accept the second -- so a cached .admSensFromInner()
-# result was reported stale on EVERY call, in the session that built it, and the
-# model was recompiled for every fit. A prefix test rather than a fixed depth: it
-# is the tempdir that identifies the session.
+# More than one build directory counts as "this session": admixr2's
+# own .admModDir() and nlmixr2est 7.x's <tempdir>/nlmixr2estSens.
+# Testing .admModDir() alone rejected the second, so a cached
+# .admSensFromInner() result was reported stale on EVERY call in the
+# session that built it, and the model recompiled every fit. Hence a
+# prefix test against the tempdir, not a fixed depth.
 #
-# BOTH SPELLINGS OF tempdir(), and this is not belt-and-braces. normalizePath()
-# resolves symlinks only for a path that EXISTS. On macOS tempdir() is a symlink,
-# so tempdir() itself resolves while a not-yet-built artifact path under it does
-# not, and the two spellings fail a prefix test against each other. In production
-# the artifact always exists by this point, so this was luck of ordering rather
-# than a live defect.
+# BOTH SPELLINGS OF tempdir() are needed: normalizePath() resolves
+# symlinks only for a path that EXISTS. On macOS tempdir() is a
+# symlink, so tempdir() itself resolves while a not-yet-built artifact
+# path under it doesn't, failing a prefix test against its own root.
 .admUnderTemp <- function(path) {
   # Collapse repeated separators before comparing. R's tempdir() on macOS is
   # commonly ".../T//RtmpXXXX", and an unresolved path keeps that doubled slash
@@ -333,17 +324,18 @@
 
 # Disk-cache path for the compiled simulation model.
 #
-# The key covers the model({}) block AND .admIniKey(ui) -- the parameter names,
-# their fix() flags, the error types, and the VALUES of the fixed ones. The lstExpr
-# digest alone is not enough, and the gap was not theoretical: `tka <- fix(0.5)` and
-# `tka <- fix(0.9)` give the same digest(ui$lstExpr), and since a fixed theta never
-# reaches the optimizer the value the solve uses is the one rxode2 BAKED INTO
-# $simulationModel. So the second fit read the first's cache entry and silently
-# solved at the first's fixed value, persisting across sessions.
+# The key covers the model({}) block AND .admIniKey(ui) -- names, fix()
+# flags, error types, and the VALUES of the fixed thetas. The lstExpr
+# digest alone isn't enough: `tka <- fix(0.5)` and `tka <- fix(0.9)`
+# give the same digest(ui$lstExpr), and since a fixed theta never
+# reaches the optimizer the solve uses whatever value rxode2 BAKED
+# INTO $simulationModel -- so the second fit silently read the
+# first's cache entry and solved at its fixed value, across sessions.
+# Same collision .admIniKey() was added to close for the SENSITIVITY
+# cache; only the simulation cache had been left on the old key.
 #
-# This is the same collision .admIniKey() was added to close for the SENSITIVITY
-# cache; only the simulation cache had been left on the old key. The ini ORDER
-# rides along for free.
+# Split out because a parallel worker has no `ui` to recompute this;
+# the parent stores the path on pinfo for .admWorkerLoadModels().
 #
 # Split out as its own function because a parallel worker cannot recompute it: it
 # has no `ui`. The parent stores this path on pinfo and .admWorkerLoadModels()
@@ -424,22 +416,19 @@
   .admCacheAssign(.model_key, mod, .adm_model_env)
 }
 
-# Remove transient rxode2 model objects that $simulationModel / $foceiModel leave
-# behind in ui$meta.
+# Remove transient rxode2 model objects that $simulationModel /
+# $foceiModel leave behind in ui$meta.
 #
-# nlmixr2's output machinery (nlmixr2CreateOutputFromUi -> ... -> nmObjGet.*)
-# deep-clones the ui with nlmixr2est's internal .cloneEnv(), which recurses into
-# every environment-valued member and has no cycle detection. rxode2's compiled
-# model objects hold a back-reference to the global .rxModels registry
-# (registry -> model -> .rx -> .rxModels -> registry ...), so cloning one loops
-# forever -- surfacing as "evaluation nested too deeply: infinite recursion"
-# (interactive) or "node stack overflow" (batch). A normal nlmixr2 fit never
-# hits this because its estimators do not populate ui$meta with these objects;
-# admixr2 does, because it simulates via $simulationModel. Keeping our ui clean
-# is the in-framework fix: no wrapping of nlmixr2's code, we just do not feed it
-# a ui it was never designed to clone. Safe because admixr2 simulates via its
-# own cached model (the return value of .admLoadModel), and rxode2 regenerates
-# these lazily if any downstream method needs them.
+# nlmixr2's output machinery deep-clones the ui with nlmixr2est's
+# internal .cloneEnv(), recursing into every environment-valued
+# member with no cycle detection. rxode2's compiled model objects
+# hold a back-reference to the global .rxModels registry (registry ->
+# model -> .rx -> .rxModels -> registry ...), so cloning one loops
+# forever ("infinite recursion" / "node stack overflow"). A normal
+# nlmixr2 fit never populates ui$meta with these; admixr2 does,
+# because it simulates via $simulationModel. Safe to drop: admixr2
+# simulates via its own cached model, and rxode2 regenerates these
+# lazily if a downstream method needs them.
 .admDropSimModelMeta <- function(ui) {
   .meta <- ui$meta
   if (!is.environment(.meta)) return(invisible())
@@ -451,10 +440,14 @@
   invisible()
 }
 
-# Structural thetas with no usable mu-referenced eta ("unpaired"): the ones whose
-# gradient cannot come from an eta sensitivity column and would otherwise be
-# finite-differenced. These are the thetas that get their OWN sensitivity
-# direction (THETA_j_) in the sens model.
+# Structural thetas with no usable mu-referenced eta ("unpaired") --
+# these get their OWN sensitivity direction (THETA_j_) in the sens
+# model rather than reusing an eta's gradient column.
+#
+# Uses .admMuRefPairs() -- the SAME map pinfo$struct_has_eta is built
+# from -- so the estimators' theta-column routing and the sens
+# model's built columns cannot drift apart. Includes the shared-eta
+# guard: a theta whose eta appears in another parameter is unpaired.
 #
 # Uses .admMuRefPairs() -- the SAME map pinfo$struct_has_eta is built from -- so
 # the set of thetas the estimators route through the theta columns and the set the
@@ -474,23 +467,23 @@
 # text instead of the model code. (nlmixr2est's aug builder has the same wrapper.)
 .admToRx <- function(l) rxode2::rxFromSE(l)
 
-# Promote a linCmt() model to the equivalent explicit ODE system, so it can carry
+# Promote a linCmt() model to the equivalent explicit ODE system, for
 # SECOND-order sensitivities.
 #
-# Why this exists: linCmt()'s first derivative resolves through rxode2's linCmtB
-# rules, but there is no second one, so d2f/(d eta d theta) is unavailable and adfo
-# would be stuck with its finite-difference struct-theta pass. nlmixr2est hits the
-# identical wall and refuses linCmt outright. Promotion sidesteps it: the ODE form
-# has ordinary state sensitivities, so .rxSens() expands it to any order.
+# linCmt()'s first derivative resolves through rxode2's linCmtB rules,
+# but there is no second one, so adfo's struct-theta pass would be
+# stuck finite-differencing (nlmixr2est refuses linCmt outright). The
+# ODE form has ordinary state sensitivities instead, so .rxSens()
+# expands it to any order.
 #
-# `rxode2::linToOde()` does the translation, but its output cannot be used as-is:
-# it names the prediction `rxLinCmt`, and an `rx`-prefixed lhs is RESERVED, so
-# ui$loadPruneSens dies with "syntax errors" on the model rxode2 just generated.
-# Renaming that one variable is the whole fix. Measured on a 1-cmt oral model, the
-# promoted solve reproduces the analytic linCmt prediction to 1.8e-08 relative.
+# `rxode2::linToOde()`'s output can't be used as-is: it names the
+# prediction `rxLinCmt`, and an `rx`-prefixed lhs is RESERVED, so
+# ui$loadPruneSens dies with "syntax errors". Renaming that variable
+# is the whole fix. Reproduces the analytic linCmt prediction to
+# 1.8e-08 relative on a 1-cmt oral model.
 #
-# NULL on any failure -- the caller falls back to the first-order model. Only ever
-# called for an order-2 request; admc/adgh stay on the SOLVED form.
+# NULL on failure -- caller falls back to first-order. Only called
+# for order-2; admc/adgh stay on the SOLVED form.
 .admLinCmtToOde <- function(ui) {
   tryCatch({
     .u   <- rxode2::linToOde(ui)
@@ -505,26 +498,27 @@
   }, error = function(e) NULL)
 }
 
-# The dosing-modifier variables rxode2 emits into the pruned sens env as
-# rx_<mod>_<state>_ (f/lag/rate/dur; lag() is stored as alag()). ONE regex, used
-# everywhere a dose modifier is found or its name extracted, so a change to
-# rxode2's naming is a single edit rather than four. Group 1 = modifier, 2 = state.
+# The dosing-modifier variables rxode2 emits into the pruned sens env
+# as rx_<mod>_<state>_ (f/lag/rate/dur; lag() stored as alag()). ONE
+# regex used everywhere a dose modifier is found or extracted, so a
+# rxode2 naming change is a single edit. Group 1 = modifier, 2 = state.
 .admDoseModRe <- "^rx_(f|lag|alag|rate|dur)_(.+)_$"
 
-# Can this rxode2 build differentiate every dosing modifier that one of OUR
+# Can this rxode2 build differentiate every dosing modifier one of OUR
 # directions actually feeds?
 #
-# A direction entering f()/lag()/rate()/dur() only has a sensitivity if rxode2
-# attaches its analytic variational jumps at dose times (eventSens = "jump");
-# otherwise its column is silently ZERO. Support is version-dependent, so
-# FEATURE-DETECT rather than version-compare: the compiled model carries
-# eventSensInfo$derivs, one table per modifier, and an unsupported one has zero rows.
+# A direction entering f()/lag()/rate()/dur() only has a sensitivity if
+# rxode2 attaches analytic variational jumps at dose times (eventSens
+# = "jump"); otherwise the column is silently ZERO. FEATURE-DETECT
+# rather than version-compare: the compiled model carries
+# eventSensInfo$derivs, and an unsupported modifier has zero rows.
 #
-# The test must be per DIRECTION, not merely "the model has a lag()": nlmixr2est's
-# inner model has no theta directions, so for `alag(depot) = exp(tlag)` its
-# derivs$lag is legitimately empty. Only a modifier some direction differentiates
-# to non-zero needs cover.
+# Tested per DIRECTION, not "the model has a lag()": nlmixr2est's
+# inner model has no theta directions, so its derivs$lag is
+# legitimately empty for `alag(depot) = exp(tlag)`.
 #
+# FALSE -> caller returns NULL for the whole sens model and falls back
+# to a finite-difference gradient, rather than a silently-zero one.
 # FALSE -> the caller returns NULL for the whole sens model and the estimators fall
 # back to a finite-difference gradient. Far better than an identically-zero
 # gradient component, silently.
@@ -559,64 +553,53 @@
 #   dirs = ETA_1_ .. ETA_n_        (one per random effect)
 #        + THETA_j_                (one per UNPAIRED structural theta)
 #
-# A mu-referenced theta needs no direction of its own -- d(pred)/d(theta) ==
-# d(pred)/d(eta) -- so it reuses its eta's column for free. Only a theta with no
-# usable eta (eta-less, non-mu-referenced, or one whose eta is shared across
-# parameters) gets its own direction. Sigmas get none (they never enter the
-# prediction). This is the same direction/linking scheme nlmixr2est's fast-focei
-# uses (.foceiAnalyticDirections).
+# A mu-referenced theta needs no direction of its own -- d(pred)/d(theta)
+# == d(pred)/d(eta) -- so it reuses its eta's column for free. Only a
+# theta with no usable eta gets its own. Sigmas get none. Same scheme
+# as nlmixr2est's fast-focei (.foceiAnalyticDirections).
 #
 # `order = 2L` additionally emits the CROSS second-order block
 #   rx_f2_<eta_i>_<dir_b> = d2(pred)/(d eta_i d dir_b)
-# which is what adfo -- and only adfo -- needs. Its objective is built on
-# V_pred = J Omega J' + resid(mu, diag(J Omega J')) with J = df/d(eta)|_0, so a
-# structural theta's gradient needs dJ/d(theta) = d2f/(d eta d theta): a second
-# derivative, which is why adfo alone still finite-differenced its struct thetas
-# while admc/adgh read theirs off the first-order columns.
+# which only adfo needs: its objective is built on
+# V_pred = J Omega J' + resid(mu, diag(J Omega J')) with J = df/d(eta)|_0,
+# so a structural theta's gradient needs dJ/d(theta) = d2f/(d eta
+# d theta). admc/adgh read theirs off the first-order columns and
+# stay at order 1.
 #
-# The block is deliberately ASYMMETRIC -- eta directions x ALL directions -- and
-# that is the whole economy of it. nlmixr2est's builder expands the full symmetric
-# triangle over every direction (it needs the Laplace Hessian); adfo needs no
-# theta x theta pair at all, because the objective is only ever differentiated ONCE
-# with respect to a theta. rxode2's rxExpandSens2_() accepts two different direction
-# sets, so for 2 states / 2 etas / 1 unpaired theta that is 12 second-order
-# compartments instead of 18. admixr2 also needs no rx_rvar*/rx_rsig* variance
-# chains at all, which is the larger part of what FOCEI's order-2 build spends its
-# compile time on.
+# The block is deliberately ASYMMETRIC -- eta directions x ALL
+# directions, not the full symmetric triangle nlmixr2est's builder
+# needs for the Laplace Hessian. adfo differentiates only ONCE
+# w.r.t. a theta, and needs none of the rx_rvar*/rx_rsig* variance
+# chains that dominate FOCEI's order-2 compile time.
 #
-# admc/adgh stay at order 1: their moments need d(pred)/d(dir) and nothing
-# higher, so they must not pay for the second-order compartments.
+# Two branches: an ODE model has rxode2::.rxSens() augment the system
+# with variational (state-sensitivity) compartments, emitting
+#   rx_f1_<dir> = d(pred)/d(dir) + sum_states d(pred)/d(state) * d(state)/d(dir)
+# A linCmt model has no states to augment (.rxSens errors), so the
+# state sum drops out and D(pred, dir) alone is emitted, resolved
+# through rxode2's linCmtB derivative rules (.rxD$linCmtB) -- which is
+# why the direction set works for linCmt at first order even though
+# nlmixr2est's augmented outer model can't build it.
 #
-# Two branches:
-#   * ODE    -- rxode2::.rxSens() augments the system with the variational
-#               (state-sensitivity) compartments for each direction; the emitted
-#               prediction chain is
-#                 rx_f1_<dir> = d(pred)/d(dir) + sum_states d(pred)/d(state)
-#                                                 * d(state)/d(dir)
-#   * linCmt -- there are no states to augment (.rxSens errors), so the state sum
-#               drops out and D(pred, dir) alone is emitted: symengine resolves it
-#               through rxode2's linCmtB derivative rules (.rxD$linCmtB), which
-#               give d(linCmt)/d(micro parameter) in closed form. This is why the
-#               direction set works for linCmt at first order even though
-#               nlmixr2est's (second-order) augmented outer model cannot build it.
+# Compiled with eventSens = "jump" so a parameter entering a dosing
+# modifier (f/lag/rate/dur) gets rxode2's analytic variational jumps at
+# dose times -- without it such a sensitivity is silently ZERO. State
+# initial conditions and their direction derivatives are emitted too (a
+# parameter-dependent IC otherwise starts every sensitivity compartment at 0).
 #
-# Compiled with eventSens = "jump" so a parameter entering a dosing modifier
-# (f/lag/rate/dur) gets rxode2's analytic variational jumps at dose times --
-# without it such a sensitivity is silently ZERO. State initial conditions and
-# their direction derivatives are emitted too (a parameter-dependent IC otherwise
-# starts every sensitivity compartment at 0).
+# Returns list(mod, dirs, sens_cols, theta_sens_cols) or NULL on any
+# failure (the caller falls back to nlmixr2est's inner model + FD).
+# `pred_expr`: the model expression whose sensitivities to emit, as a
+# symengine object. Defaults to `rx_pred_`, the prediction for every
+# ordinary endpoint -- but NOT for a likelihood-form endpoint, where
+# rxode2 puts the LOG-LIKELIHOOD there. FOCEI wants exactly that;
+# admixr2 moment-matches and needs the MEAN, so such an endpoint passes
+# its own derived expression.
 #
-# Returns list(mod, dirs, sens_cols, theta_sens_cols) or NULL on any failure (the
-# caller then falls back to nlmixr2est's inner model + FD for the thetas).
-# `pred_expr`: the model expression whose sensitivities to emit, as a symengine
-# object. Defaults to `rx_pred_`, which is the prediction for every ordinary
-# endpoint -- but NOT for a likelihood-form endpoint, where rxode2 puts the
-# LOG-LIKELIHOOD there. FOCEI wants exactly that; admixr2 moment-matches and needs
-# the MEAN, so such an endpoint passes its own derived expression.
-#
-# This works because .rxSens() builds the variational compartments for the WHOLE
-# ODE SYSTEM -- d(state)/d(dir), once -- not for a particular target, and .g1()
-# then applies the chain rule to any expression on top of them.
+# This works because .rxSens() builds the variational compartments for
+# the WHOLE ODE SYSTEM -- d(state)/d(dir), once -- not for a particular
+# target, and .g1() then applies the chain rule to any expression on top
+# of them.
 .admBuildThetaSens <- function(ui, unpaired, pred_expr = NULL, order = 1L) {
   order <- as.integer(order)
   s <- tryCatch(ui$loadPruneSens, error = function(e) NULL)
@@ -928,22 +911,22 @@
 #   sens_cols       -- one column per eta, in eta order:      d(pred)/d(eta_i)
 #   theta_sens_cols -- named by theta, for the UNPAIRED ones: d(pred)/d(theta_k)
 #                      (NULL when the model has none, or when the emitted model
-#                       could not be built and we fell back to nlmixr2est's inner
+#                       couldn't be built and we fell back to nlmixr2est's inner
 #                       model -- the estimators then finite-difference those thetas)
 #
-# Parameter names the estimators speak -> the model's THETA[j] / ETA[i], for one
-# iniDf. Returns list(rename_map, fixed_theta, n_eta), or NULL when the frame has
-# no estimated eta.
+# Parameter names the estimators speak -> the model's THETA[j] / ETA[i], for
+# one iniDf. Returns list(rename_map, fixed_theta, n_eta), or NULL when the
+# frame has no estimated eta.
 #
-# ONE function because there are TWO frames it can legitimately be asked about, and
-# they must not diverge: an order-2 request on a linCmt() model promotes the model
-# to explicit ODE form, and .admBuildThetaSens numbers its emitted directions from
-# the PROMOTED iniDf, while .admLoadSensModel used to build the rename_map -- which
-# is what FILLS those THETA[k] columns at solve time -- from the original. Any iniDf
-# difference across the promotion therefore wrote each theta's value into a
-# different slot than the one the emitted derivative differentiates. The solve still
-# succeeds and the fit converges to wrong estimates and SEs with no error. Latent on
-# every model measured here, but latent is not fixed.
+# ONE function because there are TWO frames it can legitimately be asked
+# about, and they must not diverge: an order-2 request on a linCmt() model
+# promotes the model to explicit ODE form, and .admBuildThetaSens numbers
+# its emitted directions from the PROMOTED iniDf, while the rename_map that
+# FILLS those THETA[k] columns at solve time used to build from the
+# original. Any iniDf difference across the promotion wrote each theta's
+# value into a different slot than the one the emitted derivative
+# differentiates -- the solve still succeeds and the fit converges to
+# wrong estimates and SEs with no error.
 .admSensNameMaps <- function(ini_df) {
   eta_rows <- ini_df[!is.na(ini_df$neta1) & ini_df$neta1 == ini_df$neta2 &
                        !ini_df$fix, , drop = FALSE]
@@ -978,39 +961,43 @@
   list(rename_map = rename_map, fixed_theta = fixed_theta, n_eta = n_eta)
 }
 
-# Preferred model: admixr2's own direction-set model (.admBuildThetaSens), which
-# carries a direction per eta plus one per unpaired theta, and is compiled with
-# eventSens = "jump".
+# Preferred model: admixr2's own direction-set model (.admBuildThetaSens),
+# which carries a direction per eta plus one per unpaired theta, and is
+# compiled with eventSens = "jump".
 #
-# Fallback: nlmixr2est's `ui$foceiModel$inner`, which only ever emits eta columns
-# (its sensitivity block is keyed on etas), recompiled with eventSens = "jump" --
-# WITHOUT that flag a parameter entering a dosing modifier (f/lag/rate/dur) has a
-# sensitivity of exactly ZERO, silently, because FOCEI computes event/dose
-# sensitivities separately (its `predNoLhs` FD model) and admixr2 reads the inner
-# model's columns directly.
-# `order`: 1L (default) emits d(pred)/d(dir) only -- what admc/adgh need. 2L adds
-# the cross second-order block d2(pred)/(d eta d dir) that adfo needs for dJ/dtheta;
-# it costs extra state compartments, so only adfo asks for it, and a failed order-2
-# build falls back to order 1 (adfo then keeps its finite-difference pass).
+# Fallback: nlmixr2est's `ui$foceiModel$inner`, which only ever emits eta
+# columns (its sensitivity block is keyed on etas), recompiled with
+# eventSens = "jump" -- WITHOUT that flag a parameter entering a dosing
+# modifier (f/lag/rate/dur) has a sensitivity of exactly ZERO, silently,
+# because FOCEI computes event/dose sensitivities separately (its
+# `predNoLhs` FD model) and admixr2 reads the inner model's columns
+# directly.
+#
+# `order`: 1L (default) emits d(pred)/d(dir) only -- what admc/adgh need.
+# 2L adds the cross second-order block d2(pred)/(d eta d dir) that adfo
+# needs for dJ/dtheta; a failed order-2 build falls back to order 1 (adfo
+# then keeps its finite-difference pass).
 # Would .admLoadSensModel() return NULL for this model BY DESIGN?
 #
-# It returns NULL for two very different reasons and the callers could not tell them
-# apart: refusals that are correct and permanent (below), and genuine failures -- a
-# compile error inside .admBuildThetaSens(), or an unwritable rxTempDir() where
-# .admCacheWrite() fails and the caller's tryCatch(error =) discards a model that
-# actually compiled. A user on a locked-down HPC home directory then silently gets a
-# struct-theta gradient at 8e-4 relative instead of 2e-7, converging to different
-# estimates and SEs than the same script on a writable machine.
+# It returns NULL for two very different reasons the callers couldn't
+# tell apart: correct, permanent refusals (below), and genuine failures --
+# a compile error inside .admBuildThetaSens(), or an unwritable
+# rxTempDir() where .admCacheWrite() fails and the caller's
+# tryCatch(error =) discards a model that actually compiled. A user on a
+# locked-down HPC home directory then silently gets a coarser
+# struct-theta gradient, converging to different estimates and SEs than
+# the same script on a writable machine.
 #
 # So the drivers ask this first: by-design NULL stays a message, while an
 # unexplained NULL becomes a warning.
 #
-# Deliberately a SEPARATE predicate rather than a reason code returned from
-# .admLoadSensModel(): that function's body is digested into the sens cache key (see
-# .admPkgKey), so touching it to add plumbing would invalidate every cached model
-# for a change that emits nothing.
+# Deliberately a SEPARATE predicate rather than a reason code returned
+# from .admLoadSensModel(): that function's body is digested into the
+# sens cache key (see .admPkgKey), so touching it to add plumbing would
+# invalidate every cached model for a change that emits nothing.
 #
-# Mirrors the guards in .admLoadSensModel(); if one moves, this moves with it.
+# Mirrors the guards in .admLoadSensModel(); if one moves, this moves
+# with it.
 .admSensNullByDesign <- function(ui, pinfo = NULL) {
   # 1. No random effects: there is nothing to take a sensitivity with respect to.
   .n_eta <- tryCatch(pinfo$n_eta, error = function(e) NULL)
