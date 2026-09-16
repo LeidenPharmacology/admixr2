@@ -121,19 +121,14 @@ utils::globalVariables(c(
   }, simplify = FALSE)
 }
 
-# Pre-allocate params matrix list -- one per study.
-# Matrix avoids data.frame list COW overhead: first col-write copies once,
-# subsequent writes modify in-place. as.data.frame() wraps at rxSolve call site.
+# Pre-allocate params matrix list -- one per study. Matrix avoids data.frame
+# list COW overhead (first col-write copies once, rest in-place);
+# as.data.frame() wraps at the rxSolve call site.
 #
-# Includes one residual-error placeholder column per observed output
-# (rxerr.<output>). rxSolve requires every endpoint's rxerr parameter to be
-# present in the params frame (its value is immaterial -- admixr2 adds residual
-# error analytically and reads the structural prediction). There is exactly one
-# rxerr per prediction line regardless of the error model (add/prop/lnorm or a
-# combined add+prop), so the endpoint set is `unique(sigma_output)`; the mapping
-# holds for named endpoints and linCmt (`rxerr.rxLinCmt`). All other model
-# parameters (CMT, hard-coded constants) are left for rxSolve to fill from the
-# model's own defaults -- do not add them here.
+# One rxerr.<output> placeholder per observed output -- rxSolve requires it
+# present (value immaterial; admixr2 adds residual error analytically), one
+# per prediction line regardless of error model. Everything else (CMT,
+# hard-coded constants) is left for rxSolve to default -- do not add it here.
 .admMakeParamsList <- function(n_sim, pinfo, n_studies = 1L) {
   so    <- unique(pinfo$sigma_output[!is.na(pinfo$sigma_output)])
   rxerr <- if (length(so)) paste0("rxerr.", so) else "rxerr.cp"
