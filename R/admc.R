@@ -637,17 +637,11 @@ nmObjGetControl.admc <- function(x, ...) {
   if (!is.null(.p0) && .admAnyTBS(pinfo, studies, output_var, .p0$sigma_var))
     return(.admNLLGradFD(p, pinfo, studies, z_list, rxMod, output_var,
                          params_list, cores, h, use_central))
-  # `h` is the fixed scalar or Gill83's per-parameter vector. Must be
-  # read through .admGH()/.admGH0(), NEVER used bare: this differences
-  # in two spaces --
-  #   parameter space: unpaired struct thetas (unpaired_k[bi]), joint
-  #                    objective FD (k_s): .admGH(h, k)
-  #   ETA space:       eta_hi[, j] <- eta_hi[, j] + h, no parameter
-  #                    index: .admGH0(h)
-  #
-  # Used bare, a length-n_par vector recycles into n_sim rows WITHOUT
-  # a warning (n_sim %% n_par is virtually always 0) -- a plausible,
-  # wrong gradient.
+  # `h` is the fixed scalar or Gill83's per-parameter vector. Must be read
+  # through .admGH()/.admGH0(), never used bare: parameter space indexes it
+  # via .admGH(h, k), eta space via .admGH0(h) with no index. Used bare, a
+  # length-n_par vector silently recycles into n_sim rows (n_sim %% n_par is
+  # virtually always 0) -- a plausible, wrong gradient.
   if (length(h) != 1L && length(h) != length(p))
     stop(".admGrad: `h` must be one step or one per parameter (got ",
          length(h), " for ", length(p), " parameters).", call. = FALSE)
@@ -681,16 +675,14 @@ nmObjGetControl.admc <- function(x, ...) {
     eta_mat <- if (pinfo$n_eta > 0L) {          # zero-eta guard -- see .admNLL
       .em <- z %*% t(pars$L); colnames(.em) <- eta_col_names; .em
     } else matrix(0, nrow(z), 0L)
-    # Covariate marginalisation, "rows" path only (the collapse and u-quantile move
-    # Omega / the eta column themselves, which the chain rules below do not yet
-    # carry -- .admCheckCovariates refuses a gradient for those).
-    #
-    # Nothing else has to change here: on this path the covariate is DATA, a per-row
-    # column of the params frame. The sens model's d(pred)/d(theta) columns are
-    # evaluated at each row's own covariate value, and a covariate coefficient is an
-    # unpaired struct theta that already gets its own THETA_j direction.
-    # .admCovRowsFor is deterministic given (cov_dist, n, n_eta), so these are the
-    # SAME rows the NLL used -- which is what keeps the CRN gradient valid.
+    # Covariate marginalisation, "rows" path only (collapse and u-quantile move
+    # Omega/the eta column, which the chain rules below don't carry yet --
+    # .admCheckCovariates refuses a gradient for those). On this path the
+    # covariate is DATA, a per-row params-frame column; the sens model's
+    # d(pred)/d(theta) is evaluated at each row's own value, and a covariate
+    # coefficient is an unpaired struct theta with its own THETA_j direction.
+    # .admCovRowsFor is deterministic in (cov_dist, n, n_eta), so these are the
+    # same rows the NLL used, keeping the CRN gradient valid.
     if (identical(s$.adm_cov_path, "rows"))
       s <- .admStudyCovRows(s, pinfo, nrow(eta_mat))
 
@@ -1379,17 +1371,14 @@ nmObjGetControl.admc <- function(x, ...) {
       inner_df <- as.data.frame(matrix(0, nrow = n_c * n_sim,
                                         ncol = length(inner_nms),
                                         dimnames = list(NULL, unname(inner_nms))))
-      # An ESTIMATED boxCox/yeoJohnson lambda is a SIGMA name, so the zero-fill of
-      # inner_df hands the solve lambda = 0 -- a plain log transform -- while the
-      # back-transform below would invert with pred_tbs$lam, the model's STARTING
-      # lambda, held constant across every configuration. Two different transforms:
-      # the same mismatch .admSimulateSens documents as making the sens gradient
-      # ~60x wrong for boxCox and NaN for yeoJohnson. This function IS the
-      # covMethod = "r" Hessian evaluator, so it would put that error into every
-      # reported standard error -- and lambda's own row would be insensitive to
-      # lambda. Each configuration carries its OWN lambda, so it is written per
-      # block of rows and inverted with that same number below.
-      # Inlined, not factored out -- see the dev-mode daemon note in simulate.R.
+      # An ESTIMATED boxCox/yeoJohnson lambda is a SIGMA name, so zero-filling
+      # inner_df would solve with lambda = 0 while the back-transform inverts
+      # with the model's STARTING lambda held constant -- the same mismatch
+      # .admSimulateSens documents as making the sens gradient ~60x wrong for
+      # boxCox and NaN for yeoJohnson, and this function IS the covMethod = "r"
+      # Hessian evaluator. So each configuration's own lambda is written per
+      # block of rows and inverted with that same number below. Inlined, not
+      # factored out -- see the dev-mode daemon note in simulate.R.
       .tb0    <- sensModel$pred_tbs
       .lam_nm <- if (is.null(.tb0)) NA_character_ else .tb0$lam_name %||% NA_character_
       .lam_ci <- rep(if (is.null(.tb0)) NA_real_ else .tb0$lam, n_c)
@@ -2164,16 +2153,13 @@ admStopWorkers <- function() {
     # A patch ENVIRONMENT, not assignInNamespace() alone.
     #
     # assignInNamespace() can REPLACE a binding in the daemon's locked
-    # namespace but cannot ADD one, and the error is swallowed below --
-    # so a name the branch INTRODUCES is simply absent in the worker,
-    # silently. That is exactly how .ADM_SENS_EMITTERS made every
-    # daemon derive a different sens cache key, and how
-    # .admGH/.admGH0 would break every dev-mode parallel restart in
-    # this release.
-    #
-    # Re-parenting each patched closure onto an env that HOLDS the
-    # whole dev set makes new and existing names resolve alike, so a
-    # new helper needs no bespoke handling or inlining at call sites.
+    # namespace but cannot ADD one, and the error is swallowed below -- so a
+    # name the branch introduces is silently absent in the worker. That is
+    # exactly how .ADM_SENS_EMITTERS made every daemon derive a different
+    # sens cache key, and how .admGH/.admGH0 would break dev-mode parallel
+    # restarts. Re-parenting each patched closure onto an env that holds the
+    # whole dev set makes new and existing names resolve alike, so a new
+    # helper needs no bespoke handling or inlining at call sites.
     .pe <- new.env(parent = .adm_ns)
     for (.nm in names(fn_list)) {
       .obj <- fn_list[[.nm]]
@@ -2237,20 +2223,17 @@ admStopWorkers <- function() {
     1L
   }
 
-  # nlmixr2est's load step (rxUiGet.foceiModel), INLINED rather than
-  # calling .admRxLoadAll() -- a daemon resolves this from the
-  # INSTALLED namespace, and assignInNamespace() can replace a
-  # binding but not ADD one, so a new helper here would fail with
-  # `could not find function` on a dev-mode restart against a stale
-  # install.
+  # nlmixr2est's load step (rxUiGet.foceiModel), inlined rather than calling
+  # .admRxLoadAll(): a daemon resolves this from the INSTALLED namespace, and
+  # assignInNamespace() can replace a binding but not add one, so a new
+  # helper here would fail with `could not find function` on a dev-mode
+  # restart against a stale install.
   #
-  # THE PARENT'S DIRECTORY CHECK IS DELIBERATELY OMITTED: a mirai
-  # daemon has its OWN tempdir(), so that check would fail on every
-  # worker and silently drop it to a finite-difference gradient.
-  # Cross-session staleness is instead handled by the parent, which
-  # runs the full guard before .admSetupDaemons(); only
-  # DLL-existence is inlined below.
-  # entry the parent already refreshed. Only DLL-existence is inlined.
+  # The parent's directory check is deliberately omitted: a mirai daemon has
+  # its own tempdir(), so that check would fail on every worker and silently
+  # drop it to a finite-difference gradient. Cross-session staleness is
+  # handled by the parent before .admSetupDaemons(); only DLL-existence is
+  # inlined below.
   .load_all <- function(x) {
     .one <- function(e) {
       if (!inherits(e, "rxode2")) return(TRUE)
@@ -2270,34 +2253,26 @@ admStopWorkers <- function() {
   if (!is.null(rxMod_direct)) {
     rxMod <- rxMod_direct
   } else {
-    # The parent's path, sent on `pinfo`: the worker has no `ui`, so it
-    # cannot derive .admIniKey()'s component that keys a fix()ed
-    # parameter's VALUE -- without it, `fix(0.5)` vs `fix(0.9)` models
-    # collide and a restart solves at the other model's fixed value.
-    #
-    # Deliberately NO fallback: recomputing the old lstExpr-only name
-    # would find A file, but that formula is exactly the one with the
-    # fix()-value collision. No path from the parent means the legible
-    # stop() below, not a plausible-looking wrong answer.
+    # The parent's path, sent on `pinfo`: the worker has no `ui`, so it can't
+    # derive .admIniKey()'s component that keys a fix()ed parameter's VALUE --
+    # without it, `fix(0.5)` vs `fix(0.9)` models collide and a restart solves
+    # at the other model's fixed value. Deliberately no fallback: recomputing
+    # the old lstExpr-only name would find A file, but that's exactly the one
+    # with the fix()-value collision. No path from the parent means the
+    # legible stop() below, not a plausible-looking wrong answer.
     .cacheFile <- pinfo$sim_cache_file
-    # rxUiGet.foceiModel()'s read, verbatim in shape: exists -> read ->
-    # load, no retry or sleep (upstream has neither; a poll loop would
-    # be this package's own invention).
+    # rxUiGet.foceiModel()'s read, verbatim in shape: exists -> read -> load,
+    # no retry or sleep (upstream has neither). tryCatch, as the parent does:
+    # this file lives in a shared persistent rxTempDir(), so a concurrent
+    # session recompiling the same key may be writing it right now, and a bare
+    # readRDS on a half-written entry dies with an opaque connection error.
+    # .admCacheWrite() now publishes by rename so a current admixr2 can't
+    # leave one half-written, but a pre-0.4.1 writer still writes in place.
     #
-    # tryCatch, as the parent does: this file lives in a SHARED
-    # persistent rxTempDir(), so a concurrent session recompiling the
-    # same key may be writing it right now, and a bare readRDS on a
-    # half-written entry dies with an opaque "error reading from
-    # connection". .admCacheWrite() now publishes by rename so a
-    # current admixr2 can't leave one half-written, but a pre-0.4.1
-    # writer still writes in place.
-    #
-    # WHICH of the three failure modes is recorded -- absent,
-    # unreadable (half-written), or wrong-shape (digest
-    # collision/foreign file) -- since this runs only in a daemon, and
-    # by the time the parent reports the error the file is often
-    # complete again: the worker has to say what it saw at the moment
-    # it looked.
+    # Records WHICH of the three failure modes fired -- absent, unreadable
+    # (half-written), or wrong-shape (digest collision/foreign file) -- since
+    # this runs only in a daemon and the file is often complete again by the
+    # time the parent reports the error: the worker has to say what it saw.
     .why <- NULL
     rxMod <- NULL
     .sz <- NA_real_
@@ -2341,15 +2316,12 @@ admStopWorkers <- function() {
            "see it half-written. Re-run the fit, or use workers = 1.",
            call. = FALSE)
     }
-    # Re-load EVERY compiled model in the cached object, and STOP if any of them
-    # will not load. The bare rxLoad() this replaced propagated its own error out
-    # of the worker, which .admRunRestarts() re-threw with the restart id; a
-    # discarded FALSE instead lets the worker walk on into .admRestartWorker with
-    # a live-looking model over an unloaded shared library, where the first
-    # rxSolve() dereferences a dead external pointer -- an opaque rxode2 error
-    # deep in the restart, or on Windows the STATUS_HEAP_CORRUPTION crash. Made
-    # likely by the drivers themselves: every nlmixr2Est.* runs
-    # gc(FALSE); rxUnloadAll() on exit. The sens branch below already did this.
+    # Re-load EVERY compiled model in the cached object and STOP if any fails.
+    # A discarded FALSE here would let the worker walk into .admRestartWorker
+    # with a live-looking model over an unloaded shared library, where the
+    # first rxSolve() dereferences a dead external pointer -- an opaque rxode2
+    # error, or on Windows STATUS_HEAP_CORRUPTION. Made likely by the drivers
+    # themselves: every nlmixr2Est.* runs gc(FALSE); rxUnloadAll() on exit.
     if (!.load_all(rxMod))
       stop("admixr2: a parallel worker read the compiled-model cache but could ",
            "not load its shared library\n  ", .cacheFile,
@@ -2369,36 +2341,27 @@ admStopWorkers <- function() {
       # same reason it is the inlined .load_all rather than .admRxLoadAll).
       if (!inherits(m$mod, "rxode2") || !.load_all(m))
         stop("sens model failed to load")
-      # PREFER the parent's values over whatever is in the file. The worker cannot
-      # re-derive these (it has no ui), so a cache written by an older admixr2 --
-      # with the position-indexed rename_map, which puts a theta's value in the
-      # wrong THETA[k] slot -- would otherwise be used verbatim and the parallel
-      # fit would silently disagree with the sequential one. (The cache key now
-      # carries .admPkgKey() -- the admixr2 version plus a digest of the
-      # emitter's own source -- so such a file is no longer even a hit; this is
-      # the belt to that pair of braces.)
+      # Prefer the parent's values over whatever is in the file: an older
+      # admixr2's position-indexed rename_map puts a theta's value in the
+      # wrong THETA[k] slot, so using the file's verbatim would silently
+      # diverge from the sequential fit. (The cache key now carries
+      # .admPkgKey() so such a file is no longer even a hit; belt and braces.)
       if (!is.null(sens_cols))   m$sens_cols  <- sens_cols
       if (!is.null(sens_rename)) m$rename_map <- sens_rename
-      # m$theta_sens_cols and m$fixed_theta are NOT overwritten here --
-      # the parent doesn't thread them through (a worker-load argument
-      # would trip the dev-mode stale-daemon "unused argument" trap).
-      # Staleness is guarded solely by the sens cache key
-      # (.admIniKey(ui) + .admPkgKey()), which includes a FIXED
-      # parameter's value -- without both, a stale file would be a
-      # false hit filling the wrong constant into THETA[k].
+      # m$theta_sens_cols/fixed_theta are NOT overwritten (the parent doesn't
+      # thread them through -- a worker-load argument would trip the dev-mode
+      # stale-daemon "unused argument" trap). Staleness is guarded solely by
+      # the sens cache key (.admIniKey(ui) + .admPkgKey()), which includes a
+      # fixed parameter's value.
       #
-      # pred_tbs MUST be re-derived, exactly as .admLoadSensModel()
-      # does: the key digests ui$lstExpr while lambda's fix() status
-      # lives in ini({}), so `lam <- fix(0.5)` and `lam <- 0.5`
-      # COLLIDE, and a parallel restart could invert the transform
-      # with a different lambda, invisibly (the NLL stays
-      # bit-identical).
+      # pred_tbs MUST be re-derived, exactly as .admLoadSensModel() does: the
+      # key digests ui$lstExpr while lambda's fix() status lives in ini({}),
+      # so `lam <- fix(0.5)` and `lam <- 0.5` collide, and a parallel restart
+      # could invert the transform with a different lambda invisibly.
       #
-      # INVARIANT: every field below lands on the value
-      # .admLoadSensModel() would derive from `ui`. The worker has no
-      # `ui`, so the two routes can only disagree in their
-      # FALLBACKS -- rebuild wholesale or not at all, mirroring the
-      # parent exactly.
+      # INVARIANT: every field below matches what .admLoadSensModel() would
+      # derive from `ui`. The worker has no `ui`, so the two routes can only
+      # disagree in their fallbacks, mirroring the parent exactly.
       if (!is.null(pinfo) && !is.null(m$pred_tbs)) {
         .sp <- .admResidSpecs(pinfo)
         .s1 <- if (length(.sp)) .sp[[1L]] else NULL
@@ -2422,32 +2385,24 @@ admStopWorkers <- function() {
       }
       m
     }, error = function(e) {
-      # Do not fail the restart: a worker without a sens model still fits, by finite
-      # differences. But do not do it silently -- the parent is running grad =
-      # "sens", so this worker now computes a DIFFERENT gradient from the sequential
-      # fit, invisibly in the objective.
-      #
-      # warning() here is INERT: mirai does not relay a daemon's conditions to the
-      # parent, and this branch is reachable ONLY in a daemon. So the package's one
-      # signal for "this worker computed a different gradient" fired exclusively
-      # where it was guaranteed to be swallowed. Record it on the RESULT instead;
-      # .admRunRestarts() raises it in the parent.
+      # Do not fail the restart: a worker without a sens model still fits, by
+      # finite differences -- but not silently, since this worker now computes
+      # a different gradient from the sequential fit. warning() here is inert
+      # (mirai doesn't relay a daemon's conditions to the parent), so record
+      # it on the result instead; .admRunRestarts() raises it in the parent.
       .adm_sens_fallback <<- paste0(
         "could not load the sensitivity model (", conditionMessage(e), ")")
       NULL
     })
   } else {
-    # A path the parent SUPPLIED but this worker cannot find is the same silent
-    # divergence the note above exists for, so say so. `sens_cache_file = NULL` is
-    # the different, legitimate case (the parent has no sensitivity model either) and
-    # stays quiet, or every gradient-free fit would report on every restart.
-    # Recorded rather than warned, for the same reason: a daemon's warning never
-    # reaches the parent.
+    # A path the parent SUPPLIED but this worker cannot find is the same
+    # silent divergence the note above exists for, so say so. `sens_cache_file
+    # = NULL` is the legitimate case (no sensitivity model at all) and stays
+    # quiet, or every gradient-free fit would report on every restart.
     #
-    # `<-`, NOT `<<-`: if/else does not create an environment, so this runs in the
-    # function frame and a `<<-` here would skip the local and assign into the
-    # NAMESPACE. (The tryCatch handler above is a real function, so its `<<-`
-    # correctly reaches this frame -- the two are not interchangeable.)
+    # `<-`, not `<<-`: if/else doesn't create an environment, so this runs in
+    # the function frame; `<<-` here would skip the local and hit the
+    # namespace (unlike the tryCatch handler above, a real function).
     if (!is.null(sens_cache_file))
       .adm_sens_fallback <- paste0(
         "could not find the sensitivity model cache (", sens_cache_file, ")")
