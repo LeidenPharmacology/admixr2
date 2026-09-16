@@ -2,6 +2,25 @@
 
 ## New features
 
+* **A covariate the model does not read is dropped, not refused, so nested
+  models need no `fix()`.** A study declaring a `cov_dist` for a covariate the
+  analysis model never uses was an error. That made the null model of a
+  covariate test unwritable in the obvious way: the term had to be kept and its
+  coefficient pinned with `fix(0)`, turning the restriction being tested into a
+  property of the model text, and leaving the covariate on the quadrature grid
+  paying for nodes that could not move the objective. The prediction cannot
+  depend on a covariate the model does not read, so integrating over it returns
+  the prediction unchanged; it is now left off the design with a message naming
+  it, and the full and null models share one set of studies. Marginalising a
+  covariate out of a correlated specification is exact -- the surviving block of
+  the latent correlation is the corresponding submatrix -- so a `cor` pair with
+  only one member read keeps that member's declared distribution. Checked
+  against the old workaround: objectives agree to 1.5e-09. A covariate the model
+  *does* read must still be described, so a mistyped name is still an error,
+  reported now as the covariate it left undescribed. A `joint` sampler the
+  *user* supplied is still refused, since its columns cannot be marginalised
+  from outside.
+
 * **`covMethod = "r,s"`: standard errors that answer to the model's own
   sampling law, on all four estimators.** The aggregate objective is the exact
   log-likelihood of `n` iid draws from `N(yt, Vt)`, which assumes each subject's

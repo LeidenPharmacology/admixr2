@@ -63,6 +63,22 @@ reports: a mean and a standard deviation per covariate, and optionally a
 correlation between them. Validation happens here, where an error can name
 the covariate, rather than at the first objective evaluation of a fit.
 }
+\section{Covariates the model does not read}{
+
+A distribution may name covariates the analysis model never uses. The
+prediction cannot depend on them, so integrating over them changes nothing
+and they are left off the design, with a message naming them. This is what
+lets a NESTED pair of models share one set of studies: the null model of a
+covariate test simply omits the term, while the population it was fitted to
+still describes everyone who was enrolled. Marginalising a covariate out of
+a correlated specification is exact --- every surviving margin keeps the
+distribution it was given.
+
+A covariate the model \emph{does} read must still be described, by a \code{cov_dist}
+entry or a fixed \code{cov} value, so a mistyped name is reported as the
+covariate it left undescribed rather than passing unnoticed.
+}
+
 \examples{
 # what a baseline-characteristics table reports
 cd <- covDist(WT = c(mean = 72, sd = 16), CRCL = c(mean = 90, sd = 25),
