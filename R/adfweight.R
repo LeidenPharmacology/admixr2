@@ -626,35 +626,35 @@
 # The conditioning bound the SANDWICH needs, which is not the one a single
 # inversion needs.
 #
-# covreport.R calls H singular below .ADM_NPD_RCOND = sqrt(eps): one inversion loses
-# about kappa * eps of relative accuracy, so that is where 2H^-1 is deemed hopeless.
-# The sandwich inverts H TWICE, so its effective conditioning is kappa^2 and it
-# reaches that same bound already at rcond = eps^(1/4) ~ 1.2e-04.
+# covreport.R calls H singular below .ADM_NPD_RCOND = sqrt(eps): one
+# inversion loses about kappa * eps of relative accuracy. The sandwich
+# inverts H TWICE, so its effective conditioning is kappa^2 and it reaches
+# that same bound already at rcond = eps^(1/4) ~ 1.2e-04.
 #
-# Between the two thresholds is a band where "r" is usable and "r,s" is not. It is
-# not a rounding problem: what is amplified is the genuine gap between J and 2H in a
-# direction the data barely identifies, which is exactly where the two differ most
-# and mean least (measured on a fixture with cond(H) = 3.5e05, the reported residual
-# SE moved by 0.115 and two omega entries by 0.59 and 1.55; the same model with the
-# residual identified reproduced "r" to four decimals).
-# WARN RATHER THAN DEGRADE. The number is not garbage in the way a non-finite or
-# non-PD one is, and the well-determined directions of the same fit are fine --
-# so withholding the whole covariance would cost more than it saves. What the
-# user cannot do is NOTICE, which is what this fixes: the warning names the
-# direction, so a surprising SE can be read against the parameter that caused it.
+# Between the two thresholds is a band where "r" is usable and "r,s" is not
+# -- not a rounding problem: what's amplified is the genuine gap between J
+# and 2H in a direction the data barely identifies (measured on a fixture
+# with cond(H) = 3.5e05, the reported residual SE moved by 0.115 and two
+# omega entries by 0.59 and 1.55; the same model with the residual
+# identified reproduced "r" to four decimals).
+#
+# WARN RATHER THAN DEGRADE: the number isn't garbage the way a non-finite or
+# non-PD one is, and the well-determined directions of the same fit are
+# fine, so withholding the whole covariance would cost more than it saves.
+# The warning names the direction, so a surprising SE can be read against
+# the parameter that caused it.
 .ADM_SANDWICH_RCOND <- .Machine$double.eps^(1/4)
 
 # RETURNS the diagnosis, it does not raise it. A warning() from here would be
-# swallowed: this runs inside the nlmixr2est stack, which is why the driver
-# raises "covariance could not be computed" itself rather than letting
-# .admCalcCov do it, and why an incomplete source covariance once cost a fit its
-# sandwich in silence. The message travels out on an attribute and each driver
-# emits it beside the covMethod label, where it reaches the user.
+# swallowed inside the nlmixr2est stack, which is why the driver raises
+# "covariance could not be computed" itself rather than letting .admCalcCov
+# do it. The message travels out on an attribute and each driver emits it
+# beside the covMethod label, where it reaches the user.
 #
-# `eig_dec`: every driver already has `eigen(H, symmetric = TRUE)` in hand --
-# .admReduceNpdOmega() built it on the SAME (possibly-reduced) H this function is
-# handed -- so recomputing an O(P^3) eigendecomposition here on every "r,s" fit is
-# pure waste. Supplied, it is used as-is; NULL falls back to computing it.
+# `eig_dec`: every driver already has `eigen(H, symmetric = TRUE)` in hand
+# (.admReduceNpdOmega() built it on the SAME possibly-reduced H), so
+# recomputing an O(P^3) eigendecomposition here on every "r,s" fit is pure
+# waste. Supplied, it is used as-is; NULL falls back to computing it.
 .admSandwichCond <- function(H, nms = NULL, eig_dec = NULL) {
   e <- eig_dec %||% tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
   if (is.null(e)) return(NULL)
@@ -825,23 +825,21 @@
 
 # Validates a candidate sandwich result and folds it into the *CalcCov "r"
 # baseline, or falls back to that baseline with a warning. `label` names the
-# caller (e.g. "adghCalcCov") for the fallback warning.
+# caller (e.g. "adghCalcCov") for the fallback warning. `na` is
+# .admSandwichNA()'s reason, for a model the correction doesn't apply to at
+# all: the fallback is then a MESSAGE naming the reason, not a warning about
+# a failed computation.
 #
-# `na` is .admSandwichNA()'s reason, for a model the correction does not apply to
-# at all: the fallback is then reported as a MESSAGE naming the reason, rather
-# than as a warning about a computation that failed.
+# Shared by adgh/admc/adfo's *CalcCov -- what differs is how `sw` is BUILT
+# (adgh's own grid + sensModel; admc's quadrature grid + sensModel; adfo's
+# quadrature grid + moment map), not what happens to it once built.
 #
-# Shared by adgh/admc/adfo's *CalcCov -- what differs between them is how `sw`
-# is BUILT (adgh's own grid + sensModel; admc's quadrature grid + sensModel;
-# adfo's quadrature grid + moment map), not what happens to it once built.
-#
-# The acceptance gate is a full PSD check, not a diagonal one. J = sum(G Om G')
-# is only guaranteed PSD if every per-study Om is -- and .admAdfAlignDv's
-# rescaling (pow()/combined() with an exponent outside {0.5, 1}) is not itself
-# checked for that, so a positive diagonal does not imply a valid covariance.
-# Reuses .ADM_NPD_RCOND (covreport.R), the same reciprocal-condition-number
-# tolerance the Hessian's own singularity test uses, so "PSD enough to trust"
-# means the same thing on both sides of the sandwich.
+# The acceptance gate is a full PSD check, not a diagonal one: J =
+# sum(G Om G') is only guaranteed PSD if every per-study Om is, and
+# .admAdfAlignDv's rescaling isn't itself checked for that. Reuses
+# .ADM_NPD_RCOND (covreport.R), the same tolerance the Hessian's own
+# singularity test uses, so "PSD enough to trust" means the same thing on
+# both sides of the sandwich.
 .admIsPsd <- function(m) {
   e <- tryCatch(eigen(m, symmetric = TRUE, only.values = TRUE)$values,
                error = function(e) NULL)
@@ -906,13 +904,14 @@
 # that would be extravagant inside an optimisation loop is cheap here; it is still
 # capped, since the product grid is NQ^n_eta.
 #
-# n_eta == 0 IS A GRID, not a refusal. .adghNodeGrid() returns the single-point
-# ensemble, which is correct: with no between-subject variability every subject
-# shares the structural prediction and the summary's sampling law is the residual's
-# alone. That law is still not the normal-theory one the objective assumes -- lnorm,
-# pois, binom, beta and TBS are all skewed or over-dispersed -- so the correction
-# still has something to say. Returning NULL here made admc and adfo degrade to "r"
-# on every no-IIV model while adgh applied the sandwich to the same fit.
+# n_eta == 0 IS A GRID, not a refusal. .adghNodeGrid() returns the
+# single-point ensemble, correct because with no between-subject variability
+# every subject shares the structural prediction and the summary's sampling
+# law is the residual's alone -- still not the normal-theory one the
+# objective assumes (lnorm/pois/binom/beta/TBS are skewed or over-dispersed),
+# so the correction still has something to say. Returning NULL here made
+# admc and adfo degrade to "r" on every no-IIV model while adgh applied the
+# sandwich to the same fit.
 .admSandwichGrid <- function(pinfo, max_nodes = 5000L) {
   n_eta <- pinfo$n_eta
   if (is.null(n_eta) || n_eta < 0L) return(NULL)
@@ -937,14 +936,13 @@
 # for a `method = "var"` study: .admScoreCross takes the diagonal itself, which
 # keeps the branch logic in one place rather than two.
 #
-# .admMomentDeriv's central-difference loop calls this 2p times, each of which used
-# to cost .adfoGetMuJ() -- and so its own rxSolve -- per study: the "each
-# configuration cost its own rxSolve" anti-pattern .adfoGetMuJBatch exists to
-# collapse, reintroduced by a loop it cannot see into. But .adfoGetMuJ's result
-# depends on pp ONLY through pars$struct and, for a TBS endpoint whose lambda is an
-# estimated sigma, that one sigma entry (.adfoMuJKey). Every other sigma/omega
-# direction leaves both inputs at the base point, so memoizing on .adfoMuJKey
-# collapses those directions' solves to one.
+# .admMomentDeriv's central-difference loop calls this 2p times, each of
+# which used to cost its own rxSolve per study -- the anti-pattern
+# .adfoGetMuJBatch exists to collapse, reintroduced by a loop it can't see
+# into. But .adfoGetMuJ's result depends on pp ONLY through pars$struct and,
+# for a TBS endpoint, that one lambda sigma entry (.adfoMuJKey). Every other
+# sigma/omega direction leaves both inputs at the base point, so memoizing
+# on .adfoMuJKey collapses those directions' solves to one.
 .admAdfoMomFn <- function(pinfo, studies, sensModel, rxMod, out_var,
                           params_list, cores) {
   cache <- new.env(parent = emptyenv())
