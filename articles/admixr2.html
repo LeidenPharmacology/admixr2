@@ -109,12 +109,11 @@
 </h2>
 <p><code>admixr2</code> fits pharmacometric PK/PD models to
 <strong>summary-level data</strong> instead of individual records — a
-<strong>meta-analysis</strong> framework for population PK/PD. The
-inputs can be <strong>digitised aggregate data</strong> from published
-studies (means, error bars and covariances), <strong>previously
-published PK/PD models</strong>, or a mix of both. The result is a
-single unified population model with interpretable fixed, random and
-covariate effects, recovered without individual patient data.</p>
+<strong>meta-analysis</strong> framework for population PK/PD. The input
+is <strong>digitised aggregate data</strong> (means, error bars and
+covariances), <strong>previously published models</strong>, or both, and
+the result is one population model with interpretable fixed, random and
+covariate effects.</p>
 <p>For each study you supply:</p>
 <ul>
 <li>
@@ -131,14 +130,11 @@ vector)</li>
 <strong>ev</strong> — dosing event table</li>
 </ul>
 <p>The estimators match E and V against their model-predicted
-counterparts and return a standard nlmixr2 fit object, so established
-nlmixr2 models apply to aggregate statistics from publications or
-internal summaries where individual records are unavailable. Turning a
+counterparts and return a standard nlmixr2 fit object. Turning a
 published figure into <code>E</code>, <code>V</code> and <code>n</code>
-is covered in
-<code><a href="../articles/aggregate-data.html">vignette("aggregate-data", package = "admixr2")</a></code>; letting
-each study carry its own published model as the input is covered in
-<code><a href="../articles/datagen.html">vignette("datagen", package = "admixr2")</a></code>.</p>
+is covered in <code><a href="../articles/aggregate-data.html">vignette("aggregate-data")</a></code>; letting a study
+carry its own published model instead, in
+<code><a href="../articles/datagen.html">vignette("datagen")</a></code>.</p>
 <p>Four estimators are available:</p>
 <table class="table">
 <colgroup>
@@ -183,14 +179,12 @@ calls</td>
 </tr>
 </tbody>
 </table>
-<p><code>adfo</code> is the natural starting point for model screening
-and initial estimates. <code>admc</code> is the workhorse for standard
-PK models. <code>adgh</code> is a noise-free alternative to
-<code>admc</code>, most efficient when the number of random effects is
-small. <code>adirmc</code> is preferred for complex ODE systems with
-expensive solves, high-dimensional IIV, or poor starting values. See
-<code><a href="../articles/estimator-comparison.html">vignette("estimator-comparison", package = "admixr2")</a></code> for a
-detailed comparison.</p>
+<p>Start with <code>adfo</code> for screening and initial estimates.
+<code>admc</code> is the workhorse for standard PK models;
+<code>adgh</code> is its noise-free alternative, most efficient when
+there are few random effects; <code>adirmc</code> suits expensive ODE
+solves, high-dimensional IIV or poor starting values. See
+<code><a href="../articles/estimator-comparison.html">vignette("estimator-comparison")</a></code>.</p>
 </div>
 <div class="section level2">
 <h2 id="the-examplomycin-dataset">The examplomycin dataset<a class="anchor" aria-label="anchor" href="#the-examplomycin-dataset"></a>
@@ -225,29 +219,25 @@ IIV = 0.3 (SD on log scale) for all parameters; proportional error SD =
 <p>Reshape individual records into a subjects × times matrix, then
 compute E and V:</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">obs</span>   <span class="op">&lt;-</span> <span class="va">examplomycin</span><span class="op">[</span><span class="va">examplomycin</span><span class="op">$</span><span class="va">EVID</span> <span class="op">==</span> <span class="fl">0</span>, <span class="op">]</span></span>
-<span><span class="va">obs</span>   <span class="op">&lt;-</span> <span class="va">obs</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/order.html" class="external-link">order</a></span><span class="op">(</span><span class="va">obs</span><span class="op">$</span><span class="va">ID</span>, <span class="va">obs</span><span class="op">$</span><span class="va">TIME</span><span class="op">)</span>, <span class="op">]</span></span>
-<span><span class="va">times</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/unique.html" class="external-link">unique</a></span><span class="op">(</span><span class="va">obs</span><span class="op">$</span><span class="va">TIME</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="va">ids</span>   <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/unique.html" class="external-link">unique</a></span><span class="op">(</span><span class="va">obs</span><span class="op">$</span><span class="va">ID</span><span class="op">)</span></span>
-<span><span class="va">n</span>     <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">ids</span><span class="op">)</span>                     <span class="co"># 500</span></span>
+<code class="sourceCode R"><span><span class="va">dv_mat</span> <span class="op">&lt;-</span> <span class="fu">admVignetteDvMatrix</span><span class="op">(</span><span class="op">)</span>          <span class="co"># 500 subjects x 9 times</span></span>
 <span></span>
-<span><span class="va">dv_mat</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="cn">NA_real_</span>, nrow <span class="op">=</span> <span class="va">n</span>, ncol <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">times</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="kw">for</span> <span class="op">(</span><span class="va">i</span> <span class="kw">in</span> <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq_along</a></span><span class="op">(</span><span class="va">ids</span><span class="op">)</span><span class="op">)</span> <span class="op">{</span></span>
-<span>  <span class="va">sub</span>         <span class="op">&lt;-</span> <span class="va">obs</span><span class="op">[</span><span class="va">obs</span><span class="op">$</span><span class="va">ID</span> <span class="op">==</span> <span class="va">ids</span><span class="op">[</span><span class="va">i</span><span class="op">]</span>, <span class="op">]</span></span>
-<span>  <span class="va">dv_mat</span><span class="op">[</span><span class="va">i</span>, <span class="op">]</span> <span class="op">&lt;-</span> <span class="va">sub</span><span class="op">$</span><span class="va">DV</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/order.html" class="external-link">order</a></span><span class="op">(</span><span class="va">sub</span><span class="op">$</span><span class="va">TIME</span><span class="op">)</span><span class="op">]</span></span>
-<span><span class="op">}</span></span>
-<span></span>
-<span><span class="va">E</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colSums.html" class="external-link">colMeans</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span></span>
-<span><span class="va">V</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cov.wt.html" class="external-link">cov.wt</a></span><span class="op">(</span><span class="va">dv_mat</span>, method <span class="op">=</span> <span class="st">"ML"</span><span class="op">)</span><span class="op">$</span><span class="va">cov</span></span>
+<span><span class="va">E</span>     <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colSums.html" class="external-link">colMeans</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span></span>
+<span><span class="va">V</span>     <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cov.wt.html" class="external-link">cov.wt</a></span><span class="op">(</span><span class="va">dv_mat</span>, method <span class="op">=</span> <span class="st">"ML"</span><span class="op">)</span><span class="op">$</span><span class="va">cov</span></span>
+<span><span class="va">n</span>     <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/nrow.html" class="external-link">nrow</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span>                    <span class="co"># 500</span></span>
+<span><span class="va">times</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/numeric.html" class="external-link">as.numeric</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/colnames.html" class="external-link">colnames</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">E</span>, <span class="fl">2</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] 0.97 1.94 2.79 3.02 2.26 1.65 1.06 0.75 0.51</span></span></code></pre></div>
-<p><code>V</code> is the 9×9 sample covariance matrix. Its off-diagonal
-entries capture within-subject correlation across time; using the full
-matrix (<code>method = "cov"</code>) typically tightens parameter
-estimates compared to the diagonal-only approximation
-(<code>method = "var"</code>). <code>admixr2</code> auto-detects the
-method from the structure of V.</p>
+<span><span class="co">#&gt;  0.1 0.25  0.5    1    2    3    5    8   12 </span></span>
+<span><span class="co">#&gt; 0.97 1.94 2.79 3.02 2.26 1.65 1.06 0.75 0.51</span></span></code></pre></div>
+<p><code>admVignetteDvMatrix()</code> is a helper defined in this
+vignette’s setup file; it does nothing but reshape
+<code>examplomycin</code>’s individual records into one row per subject
+and one column per time.</p>
+<p><code>V</code>’s off-diagonal entries capture within-subject
+correlation across time. Using the full matrix
+(<code>method = "cov"</code>) typically tightens estimates against the
+diagonal-only approximation (<code>method = "var"</code>); admixr2 picks
+the method from the structure of <code>V</code>.</p>
 </div>
 <div class="section level2">
 <h2 id="model-definition">Model definition<a class="anchor" aria-label="anchor" href="#model-definition"></a>
@@ -282,13 +272,11 @@ parameters:</p>
 <span>    <span class="va">cp</span> <span class="op">~</span> <span class="fu">prop</span><span class="op">(</span><span class="va">prop.sd</span><span class="op">)</span></span>
 <span>  <span class="op">}</span><span class="op">)</span></span>
 <span><span class="op">}</span></span></code></pre></div>
-<p>Writing each parameter as <code>exp(tcl + eta.cl)</code> is called
-<strong>mu-referencing</strong>: the structural fixed effect and its
-random effect enter additively on the log scale. <code>admixr2</code>
-exploits this pairing to compute analytical gradients via sensitivity
-equations. See the <a href="https://leidenpharmacology.github.io/admixr2/articles/advanced.html#mu-referencing-and-sensitivity-equations">Advanced
-usage</a> vignette for details, including how parameters without a
-random effect are handled.</p>
+<p>Writing each parameter as <code>exp(tcl + eta.cl)</code> is
+<strong>mu-referencing</strong>: the fixed effect and its random effect
+enter additively on the log scale. admixr2 uses that pairing to get
+analytical gradients from sensitivity equations — see <a href="advanced.html#mu-referencing-and-sensitivity-equations">Advanced
+usage</a>, which also covers parameters with no random effect.</p>
 </div>
 <div class="section level2">
 <h2 id="assembling-the-study-specification">Assembling the study specification<a class="anchor" aria-label="anchor" href="#assembling-the-study-specification"></a>
@@ -331,7 +319,7 @@ random effect are handled.</p>
 <span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a></span>
 <span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>  optimize covariance other elapsed</span>
-<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">37.116</span>      <span class="fl">16.34</span>     <span class="dv">0</span>  <span class="fl">53.456</span></span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">28.125</span>     <span class="fl">11.538</span>     <span class="dv">0</span>  <span class="fl">39.663</span></span>
 <span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a></span>
 <span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a></span>
@@ -356,14 +344,14 @@ random effect are handled.</p>
 <span id="cb6-32"><a href="#cb6-32" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> fit<span class="sc">$</span>shrink </span>
 <span id="cb6-33"><a href="#cb6-33" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
 <span id="cb6-34"><a href="#cb6-34" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit<span class="sc">$</span>message)<span class="sc">:</span>  </span>
-<span id="cb6-35"><a href="#cb6-35" tabindex="-1"></a>    NLOPT_FAILURE<span class="sc">:</span> Generic failure code. </span></code></pre></div>
+<span id="cb6-35"><a href="#cb6-35" tabindex="-1"></a>    NLOPT_XTOL_REACHED<span class="sc">:</span> Optimization stopped because xtol_rel or <span class="fu">xtol_abs</span> (above) was reached. </span></code></pre></div>
 <p>Key entries in <code>fit$env$admExtra</code>:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit</span><span class="op">$</span><span class="va">objective</span>                    <span class="co"># -2 log-likelihood</span></span>
 <span><span class="co">#&gt; [1] -3690.262</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">struct</span>          <span class="co"># structural parameters (log scale)</span></span>
 <span><span class="co">#&gt;        tcl        tv1        tv2         tq        tka </span></span>
-<span><span class="co">#&gt; 1.60197150 2.32807210 3.39738138 2.27604273 0.02978594</span></span>
+<span><span class="co">#&gt; 1.60197115 2.32807483 3.39738144 2.27604233 0.02978847</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">sigma_var</span>       <span class="co"># residual variance(s)</span></span>
 <span><span class="co">#&gt;    prop.sd </span></span>
 <span><span class="co">#&gt; 0.03592041</span></span>
@@ -421,25 +409,24 @@ random effect are handled.</p>
 <div class="section level2">
 <h2 id="diagnostic-plots">Diagnostic plots<a class="anchor" aria-label="anchor" href="#diagnostic-plots"></a>
 </h2>
-<p><code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> produces up to four panel types and returns them
-as a named list of ggplot2 objects:</p>
+<p><code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> draws up to four panel types and returns them as
+a named list of ggplot2 objects:</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"mean"</span>, <span class="st">"nll"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
-<img src="admixr2_files/figure-html/plot-1.png" class="r-plt" alt="Left: observed vs predicted mean with residuals. Right: NLL convergence trace." width="672"><p class="caption">
-Left: observed vs predicted mean with residuals. Right: NLL convergence
-trace.
+<img src="admixr2_files/figure-html/plot-1.png" class="r-plt" alt="Mean diagnostics (observed vs predicted, with residuals), then the NLL convergence trace." width="672"><p class="caption">
+Mean diagnostics (observed vs predicted, with residuals), then the NLL
+convergence trace.
 </p>
 </div>
 <div class="figure">
-<img src="admixr2_files/figure-html/plot-2.png" class="r-plt" alt="Left: observed vs predicted mean with residuals. Right: NLL convergence trace." width="672"><p class="caption">
-Left: observed vs predicted mean with residuals. Right: NLL convergence
-trace.
+<img src="admixr2_files/figure-html/plot-2.png" class="r-plt" alt="Mean diagnostics (observed vs predicted, with residuals), then the NLL convergence trace." width="672"><p class="caption">
+Mean diagnostics (observed vs predicted, with residuals), then the NLL
+convergence trace.
 </p>
 </div>
-<p>For a detailed walkthrough of all four panel types and customisation
-options, see
-<code><a href="../articles/diagnostic-plots.html">vignette("diagnostic-plots", package = "admixr2")</a></code>.</p>
+<p>All four panel types and their customisation are covered in
+<code><a href="../articles/diagnostic-plots.html">vignette("diagnostic-plots")</a></code>.</p>
 </div>
 <div class="section level2">
 <h2 id="where-to-next">Where to next<a class="anchor" aria-label="anchor" href="#where-to-next"></a>

@@ -108,15 +108,14 @@
 <h2 id="the-problem">The problem<a class="anchor" aria-label="anchor" href="#the-problem"></a>
 </h2>
 <p>You are developing a CNS drug and you want one number: <strong>how
-much of it reaches the brain?</strong> You don’t have patient-level
-data. What you <em>do</em> have is a published paper with two figures —
-a <strong>plasma</strong> and a <strong>brain</strong>
-concentration–time curve, each drawn as a mean with error bars. You
-digitise them into a mean and an SD at every sampling time.</p>
-<p>That aggregate summary is exactly what admixr2 is built for. It fits
-a population PK model <em>directly</em> to means-and-covariances, so a
-digitised figure becomes a fittable dataset — no individual records
-required. This vignette builds the analysis in two steps:</p>
+much of it reaches the brain?</strong> There is no patient-level data,
+only a published paper with two figures — a <strong>plasma</strong> and
+a <strong>brain</strong> concentration–time curve, each a mean with
+error bars, which you digitise into a mean and an SD per sampling
+time.</p>
+<p>That summary is what admixr2 is built for: it fits a population PK
+model directly to means and covariances, so a digitised figure is a
+fittable dataset. Two steps:</p>
 <ol style="list-style-type: decimal">
 <li>
 <strong>Plasma only</strong> — the ordinary single-output workflow,
@@ -136,12 +135,12 @@ output and read the brain-penetration ratio straight off the fit.</li>
 <div class="section level2">
 <h2 id="step-1-plasma-only">Step 1 — Plasma only<a class="anchor" aria-label="anchor" href="#step-1-plasma-only"></a>
 </h2>
-<p>Start where every PK analysis starts: the plasma curve. In admixr2 a
+<p>Start where every PK analysis starts: the plasma curve. A
 <strong>study</strong> is the digitised summary bundled with its design
 — the mean vector <code>E</code>, its variance <code>V</code> (here
-<code>SD^2</code>, read as a diagonal covariance, exactly what error
+<code>SD^2</code>, read as a diagonal covariance, which is all error
 bars give you), the sample size <code>n</code>, the sampling
-<code>times</code>, and the dosing <code>ev</code>.</p>
+<code>times</code> and the dosing <code>ev</code>.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plasma_times</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0.5</span>, <span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">4</span>, <span class="fl">8</span>, <span class="fl">12</span><span class="op">)</span></span>
 <span><span class="va">plasma_mean</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">8.793</span>, <span class="fl">7.812</span>, <span class="fl">6.850</span>, <span class="fl">5.597</span>, <span class="fl">3.985</span>, <span class="fl">2.910</span><span class="op">)</span></span>
@@ -151,10 +150,9 @@ bars give you), the sample size <code>n</code>, the sampling
 <span>  E <span class="op">=</span> <span class="va">plasma_mean</span>, V <span class="op">=</span> <span class="va">plasma_sd</span><span class="op">^</span><span class="fl">2</span>, n <span class="op">=</span> <span class="fl">60L</span>,</span>
 <span>  times <span class="op">=</span> <span class="va">plasma_times</span>, ev <span class="op">=</span> <span class="va">ev</span></span>
 <span><span class="op">)</span></span></code></pre></div>
-<p>The model is an ordinary two-compartment PK model with one observed
-output, <code>cp</code>. Fitting is a single call to
-<code>nlmixr2()</code> with <code>est = "adgh"</code>, admixr2’s
-Gauss–Hermite estimator:</p>
+<p>An ordinary two-compartment model with one observed output,
+<code>cp</code>, fitted in one call to <code>nlmixr2()</code> with
+admixr2’s Gauss–Hermite estimator:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>pk_plasma <span class="ot">&lt;-</span> <span class="cf">function</span>() {</span>
 <span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>  <span class="fu">ini</span>({</span>
 <span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>    tcl <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="dv">1</span>);  tv1 <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="dv">10</span>);  tq <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="dv">3</span>);  tv2 <span class="ot">&lt;-</span> <span class="fu">log</span>(<span class="dv">8</span>)</span>
@@ -183,7 +181,7 @@ Gauss–Hermite estimator:</p>
 <span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_plasma<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a></span>
 <span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a>elapsed    <span class="fl">0.637</span>      <span class="fl">0.202</span>     <span class="dv">0</span>   <span class="fl">0.839</span> <span class="fl">4.743</span></span>
+<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a>elapsed    <span class="fl">0.413</span>      <span class="fl">0.136</span>     <span class="dv">0</span>   <span class="fl">0.549</span> <span class="fl">3.583</span></span>
 <span id="cb3-30"><a href="#cb3-30" tabindex="-1"></a></span>
 <span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_plasma<span class="sc">$</span>parFixed or fit_plasma<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb3-32"><a href="#cb3-32" tabindex="-1"></a></span>
@@ -211,11 +209,10 @@ Gauss–Hermite estimator:</p>
 <span id="cb3-54"><a href="#cb3-54" tabindex="-1"></a><span class="st">  Censoring (fit_plasma$censInformation): No censoring</span></span>
 <span id="cb3-55"><a href="#cb3-55" tabindex="-1"></a><span class="st">  Minimization message (fit_plasma$message):  </span></span>
 <span id="cb3-56"><a href="#cb3-56" tabindex="-1"></a><span class="st">    NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. </span></span></code></pre></div>
-<p>This is a perfectly good plasma model — but look at what it
-<em>cannot</em> answer. Its <code>periph</code> compartment is a
-mathematical distribution store: we never measured it, and nothing
-connects it to the brain. To quantify brain exposure we need brain data
-<strong>and</strong> a model with a real brain compartment.</p>
+<p>A perfectly good plasma model — and look at what it cannot answer.
+<code>periph</code> is a mathematical distribution store: never
+measured, and connected to the brain by nothing. Brain exposure needs
+brain data <strong>and</strong> a real brain compartment.</p>
 </div>
 <div class="section level2">
 <h2 id="step-2-add-the-brain">Step 2 — Add the brain<a class="anchor" aria-label="anchor" href="#step-2-add-the-brain"></a>
@@ -225,16 +222,16 @@ connects it to the brain. To quantify brain exposure we need brain data
 <code class="sourceCode R"><span><span class="va">brain_times</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">4</span>, <span class="fl">8</span>, <span class="fl">12</span><span class="op">)</span></span>
 <span><span class="va">brain_mean</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">3.004</span>, <span class="fl">3.394</span>, <span class="fl">3.018</span>, <span class="fl">2.157</span>, <span class="fl">1.551</span><span class="op">)</span></span>
 <span><span class="va">brain_sd</span>    <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0.353</span>, <span class="fl">0.349</span>, <span class="fl">0.309</span>, <span class="fl">0.369</span>, <span class="fl">0.405</span><span class="op">)</span></span></code></pre></div>
-<p>Now swap the anonymous peripheral compartment for a
-<strong>mechanistic brain compartment</strong>. Drug moves plasma →
-brain with influx clearance <code>qin</code> and back brain → plasma
-with efflux clearance <code>qout</code>. The steady-state brain:plasma
-ratio is the quantity we want:</p>
+<p>Swap the anonymous peripheral compartment for a <strong>mechanistic
+brain compartment</strong>: drug moves plasma → brain with influx
+clearance <code>qin</code> and back with efflux clearance
+<code>qout</code>. The steady-state brain:plasma ratio is what we are
+after:</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>K</mi><mrow><mi>p</mi><mo>,</mo><mi>u</mi><mi>u</mi></mrow></msub><mo>=</mo><mfrac><msub><mi>q</mi><mrow><mi>i</mi><mi>n</mi></mrow></msub><msub><mi>q</mi><mrow><mi>o</mi><mi>u</mi><mi>t</mi></mrow></msub></mfrac></mrow><annotation encoding="application/x-tex">K_{p,uu} = \frac{q_{in}}{q_{out}}</annotation></semantics></math></p>
-<p>The model now has <strong>two</strong> observed outputs — plasma
-<code>cp</code> and brain <code>cb</code> — so it carries a
-residual-error term for each. (<code>vb</code>, the brain volume, is a
-fixed physiological constant, not an estimated parameter.)</p>
+<p>With <strong>two</strong> observed outputs — plasma <code>cp</code>
+and brain <code>cb</code> — the model carries a residual-error term for
+each. (<code>vb</code>, the brain volume, is a fixed physiological
+constant, not an estimated parameter.)</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pk_cns</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span>
@@ -257,10 +254,10 @@ fixed physiological constant, not an estimated parameter.)</p>
 <span>    <span class="va">cb</span> <span class="op">~</span> <span class="fu">add</span><span class="op">(</span><span class="va">add.cb</span><span class="op">)</span></span>
 <span>  <span class="op">}</span><span class="op">)</span></span>
 <span><span class="op">}</span></span></code></pre></div>
-<p>Two observed outputs means the study needs two summaries. Instead of
-a single <code>E</code>/<code>V</code>, give it an
+<p>Two outputs means two summaries. In place of a single
+<code>E</code>/<code>V</code>, give the study an
 <strong><code>observations</code> list</strong> — one named entry per
-observed compartment, each pairing a model output with its own
+observed compartment, pairing a model output with its own
 <code>times</code>, <code>E</code> and <code>V</code>:</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">cns_study</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
@@ -271,7 +268,7 @@ observed compartment, each pairing a model output with its own
 <span>  <span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
 <p>The only other change is telling <code><a href="../reference/admData.html">admData()</a></code> which outputs
-to expect. Then the fit call is identical to Step 1:</p>
+to expect; the fit call is otherwise identical to Step 1:</p>
 <div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>fit_cns <span class="ot">&lt;-</span> <span class="fu">nlmixr2</span>(pk_cns, <span class="fu">admData</span>(<span class="fu">c</span>(<span class="st">"cp"</span>, <span class="st">"cb"</span>)), <span class="at">est =</span> <span class="st">"adgh"</span>,</span>
 <span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>                   <span class="at">control =</span> <span class="fu">adghControl</span>(<span class="at">studies =</span> <span class="fu">list</span>(<span class="at">lit =</span> cns_study)))</span>
 <span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>fit_cns</span>
@@ -283,7 +280,7 @@ to expect. Then the fit call is identical to Step 1:</p>
 <span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_cns<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a></span>
 <span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed    <span class="fl">0.979</span>      <span class="fl">0.389</span>     <span class="dv">0</span>   <span class="fl">1.368</span>  <span class="fl">3.59</span></span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed     <span class="fl">0.63</span>      <span class="fl">0.245</span>     <span class="dv">0</span>   <span class="fl">0.875</span> <span class="fl">2.581</span></span>
 <span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a></span>
 <span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_cns<span class="sc">$</span>parFixed or fit_cns<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a></span>
@@ -309,18 +306,16 @@ to expect. Then the fit call is identical to Step 1:</p>
 <div class="section level2">
 <h2 id="the-same-study-in-long-format">The same study in long format<a class="anchor" aria-label="anchor" href="#the-same-study-in-long-format"></a>
 </h2>
-<p>If you have used nlmixr2 with <a href="https://nlmixr2.org/articles/multiple-endpoints.html" class="external-link">multiple
-endpoints</a>, the <code>observations</code> list above may feel like a
-detour: nlmixr2 does not group observations into per-endpoint objects —
-it stacks them in <strong>one</strong> data frame and labels each row
-with the endpoint it belongs to (<code>DVID</code> /
+<p>If you have used nlmixr2’s <a href="https://nlmixr2.org/articles/multiple-endpoints.html" class="external-link">multiple
+endpoints</a>, the <code>observations</code> list may feel like a
+detour: nlmixr2 stacks observations in <strong>one</strong> data frame
+and labels each row with its endpoint (<code>DVID</code> /
 <code>CMT</code>).</p>
-<p>admixr2 accepts a study written that way too. Give the study a
-<code>data</code> frame with one row per observed <em>endpoint ×
-time</em> — an endpoint column (<code>DVID</code>, <code>CMT</code> or
-<code>output</code>), a time column (<code>TIME</code>), the mean
-(<code>E</code>) and its variance (<code>V</code>, or an <code>SD</code>
-column):</p>
+<p>admixr2 takes a study written that way too — a <code>data</code>
+frame with one row per observed <em>endpoint × time</em>: an endpoint
+column (<code>DVID</code>, <code>CMT</code> or <code>output</code>), a
+time column (<code>TIME</code>), the mean (<code>E</code>) and its
+variance (<code>V</code>, or an <code>SD</code> column):</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">cns_long</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
 <span>  n <span class="op">=</span> <span class="fl">60L</span>, ev <span class="op">=</span> <span class="va">ev</span>,</span>
@@ -331,37 +326,33 @@ column):</p>
 <span>    V    <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="va">plasma_sd</span>,    <span class="va">brain_sd</span><span class="op">)</span><span class="op">^</span><span class="fl">2</span></span>
 <span>  <span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
-<p>This is the same study, written differently — admixr2 normalises it
-into exactly the same likelihood blocks, so the fits agree to the last
-digit:</p>
+<p>The same study, written differently: admixr2 normalises it into the
+same likelihood blocks, so the fits agree to the last digit.</p>
 <div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a>fit_long <span class="ot">&lt;-</span> <span class="fu">nlmixr2</span>(pk_cns, <span class="fu">admData</span>(<span class="fu">c</span>(<span class="st">"cp"</span>, <span class="st">"cb"</span>)), <span class="at">est =</span> <span class="st">"adgh"</span>,</span>
 <span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a>                    <span class="at">control =</span> <span class="fu">adghControl</span>(<span class="at">studies =</span> <span class="fu">list</span>(<span class="at">lit =</span> cns_long)))</span>
 <span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a></span>
 <span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a><span class="fu">c</span>(<span class="at">observations =</span> fit_cns<span class="sc">$</span>objective, <span class="at">long =</span> fit_long<span class="sc">$</span>objective)</span>
 <span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a>observations         long </span>
 <span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a>   <span class="sc">-</span><span class="fl">88.64046</span>    <span class="sc">-</span><span class="fl">88.64046</span> </span></code></pre></div>
-<p>Which form to use is a matter of taste. The <code>observations</code>
-list keeps each compartment’s design visibly together and is the more
-natural way to write a study <em>by hand</em>. The long format is the
-more natural way to write one <em>from data</em>: it is the shape you
-already have if your summaries live in a spreadsheet or come out of a
-<code>dplyr</code> pipeline, and it is the shape nlmixr2 itself
-uses.</p>
+<p>Which to use is taste. <code>observations</code> keeps each
+compartment’s design visibly together, the natural way to write a study
+<em>by hand</em>. Long format is the natural way to write one <em>from
+data</em> — the shape summaries already have in a spreadsheet or out of
+a <code>dplyr</code> pipeline, and the shape nlmixr2 itself uses.</p>
 <div class="section level3">
 <h3 id="same-subject-data-one-stacked-covariance">Same-subject data: one stacked covariance<a class="anchor" aria-label="anchor" href="#same-subject-data-one-stacked-covariance"></a>
 </h3>
-<p>The long format earns its keep when plasma and brain were measured in
-the <strong>same subjects</strong>. Then the two curves are correlated,
-and that correlation is information the fit should use — but it lives
-<em>between</em> the compartments, so there is nowhere to put it in
-per-compartment <code>V</code> matrices.</p>
-<p>In long format there is: because every observation is just a row, the
-study takes <strong>one</strong> covariance matrix spanning all of them
-— rows and columns aligned with the rows of <code>data</code>, exactly
-what <code>cov.wt(dv_mat, method = "ML")$cov</code> hands you when you
-still have the subject-level matrix (<code>dv_mat</code>: one row per
-subject, one column per observation, plasma columns then brain
-columns).</p>
+<p>Long format earns its keep when plasma and brain were measured in the
+<strong>same subjects</strong>. The two curves are then correlated, and
+that correlation is information the fit should use — but it lives
+<em>between</em> the compartments, where per-compartment <code>V</code>
+matrices have nowhere to put it.</p>
+<p>Long format does: every observation being a row, the study takes
+<strong>one</strong> covariance matrix spanning all of them, aligned
+with the rows of <code>data</code> — exactly what
+<code>cov.wt(dv_mat, method = "ML")$cov</code> returns from the
+subject-level matrix (one row per subject, one column per observation,
+plasma columns then brain).</p>
 <div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">cns_joint</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
 <span>  n <span class="op">=</span> <span class="fl">60L</span>, ev <span class="op">=</span> <span class="va">ev</span>,</span>
@@ -374,30 +365,29 @@ columns).</p>
 <span><span class="op">)</span></span></code></pre></div>
 <p>admixr2 then scores all 11 observations with a
 <strong>single</strong> multivariate normal, simulating both
-compartments from shared random effects. Supplying a study-level
-<code>V</code> is what marks the study as same-subject; without one,
-each endpoint stays an independent likelihood block. (The
-<code>observations</code> form can express this too, via a
-<code>cross</code> list of per-pair blocks — see
-<code><a href="../reference/admControl.html">?admControl</a></code> — but assembling those by hand is precisely the
-chore the long format removes.)</p>
-<p>Note that the choice is a <strong>modelling</strong> decision, not a
-formatting one: a joint fit with zero cross-covariances is <em>not</em>
-the same as two independent blocks. The model predicts plasma and brain
-to co-vary (they share <code>eta.cl</code> and <code>eta.v1</code>);
-telling it you observed no covariance is a real statement about the
-data, and the likelihood will hold you to it. Use the joint form when
-the compartments came from the same subjects, the independent form when
-they came from different ones — here, from two separate figures.</p>
+compartments from shared random effects. A study-level <code>V</code> is
+what marks the study same-subject; without one each endpoint stays an
+independent block. (<code>observations</code> can express this too, via
+a <code>cross</code> list of per-pair blocks — see
+<code><a href="../reference/admControl.html">?admControl</a></code> — but assembling those by hand is the chore
+long format removes.)</p>
+<p>The choice is a <strong>modelling</strong> decision, not a formatting
+one: a joint fit with zero cross-covariances is <em>not</em> two
+independent blocks. The model predicts plasma and brain to co-vary,
+sharing <code>eta.cl</code> and <code>eta.v1</code>, so telling it you
+observed no covariance is a real statement about the data and the
+likelihood will hold you to it. Joint when the compartments came from
+the same subjects, independent when they did not — here, two separate
+figures.</p>
 </div>
 <div class="section level3">
 <h3 id="model-against-data">Model against data<a class="anchor" aria-label="anchor" href="#model-against-data"></a>
 </h3>
-<p>A single fit now describes both compartments. The figure overlays the
-observed summaries (points, mean ± SD) with the fitted population
-prediction — the mean curve and the ±SD band implied by the estimated
-between-subject variability (1000 simulated subjects, residual error
-excluded). Plasma and brain are distinguished by colour.</p>
+<p>One fit now describes both compartments. Below, the observed
+summaries (points, mean ± SD) sit under the fitted population prediction
+— the mean curve and the ±SD band implied by the estimated
+between-subject variability, over 1000 simulated subjects with residual
+error excluded.</p>
 <div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># 1. Pull the fitted estimates from the fit (standard nlmixr2 accessors).</span></span>
 <span><span class="va">theta</span> <span class="op">&lt;-</span> <span class="va">fit_cns</span><span class="op">$</span><span class="va">theta</span>   <span class="co"># fixed effects (tcl, tv1, tqin, tqout, residuals)</span></span>
@@ -475,24 +465,23 @@ excluded). Plasma and brain are distinguished by colour.</p>
 <span>    plot.margin <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">margin</a></span><span class="op">(</span><span class="fl">12</span>, <span class="fl">16</span>, <span class="fl">10</span>, <span class="fl">12</span><span class="op">)</span></span>
 <span>  <span class="op">)</span></span></code></pre></div>
 <p><img src="multi-compartment_files/figure-html/brain-plot-1.png" class="r-plt" alt="" width="840"></p>
-<p>The prediction tracks both compartments. Now the payoff — read the
-brain penetration directly off the estimates:</p>
+<p>The prediction tracks both compartments. Now the payoff, read
+straight off the estimates:</p>
 <div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">Kp_uu</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">theta</span><span class="op">[[</span><span class="st">"tqin"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span> <span class="op">/</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">theta</span><span class="op">[[</span><span class="st">"tqout"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">Kp_uu</span>, <span class="fl">2</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] 0.5</span></span></code></pre></div>
 <p><code>Kp,uu</code> ≈ 0.5: at steady state the brain sees about half
-the plasma concentration. This is the whole reason the brain data was
-needed — with plasma alone, <code>qin</code> and <code>qout</code> are
-not separately identifiable and <code>Kp,uu</code> cannot be estimated.
-The brain measurements resolve it.</p>
+the plasma concentration. This is why the brain data was needed at all —
+with plasma alone <code>qin</code> and <code>qout</code> are not
+separately identifiable, and <code>Kp,uu</code> cannot be estimated.</p>
 </div>
 <div class="section level3">
 <h3 id="built-in-diagnostics">Built-in diagnostics<a class="anchor" aria-label="anchor" href="#built-in-diagnostics"></a>
 </h3>
-<p>The overlay above was assembled by hand for a custom figure, but you
-don’t have to: calling <code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> on the fit draws
-observed-vs-predicted panels directly — one per observed output.</p>
+<p>That overlay was assembled by hand for a custom figure. You don’t
+have to: <code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> draws observed-vs-predicted panels
+directly, one per observed output.</p>
 <div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit_cns</span>, which <span class="op">=</span> <span class="st">"mean"</span><span class="op">)</span></span></code></pre></div>
 <p><img src="multi-compartment_files/figure-html/plot-fit-1.png" class="r-plt" alt="" width="840"><img src="multi-compartment_files/figure-html/plot-fit-2.png" class="r-plt" alt="" width="840"></p>
@@ -504,33 +493,33 @@ observed-vs-predicted panels directly — one per observed output.</p>
 <ul>
 <li>
 <strong>Estimators.</strong> <code>adgh</code> (used here),
-<code>adfo</code> and <code>admc</code> all support several observed
+<code>adfo</code> and <code>admc</code> support several observed
 outputs, each with its own analytical / sensitivity gradient.
-<code>adirmc</code> does not — use one of the other three. See the <a href="estimator-comparison.html">estimator comparison</a> vignette to
+<code>adirmc</code> does not. See the <a href="estimator-comparison.html">estimator comparison</a> to
 choose.</li>
 <li>
 <strong>Structural vs. observed compartments.</strong> How many
-compartments the ODEs contain is irrelevant to admixr2; what matters is
-how many outputs you <em>observe</em> and fit — one in Step 1, two in
-Step 2.</li>
+compartments the ODEs hold is irrelevant; what counts is how many
+outputs you <em>observe</em> and fit — one in Step 1, two in Step
+2.</li>
 <li>
 <strong>Hard-coded constants</strong> such as
-<code>vb &lt;- 5</code> keep their value; not every physiological
-constant has to be an estimated parameter.</li>
+<code>vb &lt;- 5</code> keep their value. Not every physiological
+constant has to be estimated.</li>
 <li>
-<strong>Two ways to write a study.</strong> The
-<code>observations</code> list and the long-format <code>data</code>
-frame are interchangeable — same normalisation, same likelihood, same
-numbers. Independent experiments can also carry a per-endpoint
-<code>n</code> column and a per-endpoint <code>ev</code> (a list of
-event tables keyed by endpoint).</li>
+<strong>Two ways to write a study.</strong>
+<code>observations</code> and the long-format <code>data</code> frame
+are interchangeable: same normalisation, same likelihood, same numbers.
+Independent experiments can also carry a per-endpoint <code>n</code>
+column and a per-endpoint <code>ev</code>, a list of event tables keyed
+by endpoint.</li>
 <li>
-<strong>Same-subject data.</strong> Here plasma and brain came from
-separate figures, so they are treated as independent likelihood blocks.
-If they had instead been measured in the <em>same</em> subjects, supply
-the plasma–brain cross-covariance for a joint fit — one stacked
-<code>V</code> in long format, or a per-output-pair <code>cross</code>
-list with <code>observations</code>; see <code><a href="../reference/admControl.html">?admControl</a></code>.</li>
+<strong>Same-subject data.</strong> Plasma and brain came from
+separate figures here, so they are independent likelihood blocks.
+Measured in the <em>same</em> subjects, supply the cross-covariance
+instead — one stacked <code>V</code> in long format, or a
+per-output-pair <code>cross</code> list with <code>observations</code>;
+see <code><a href="../reference/admControl.html">?admControl</a></code>.</li>
 </ul>
 </div>
 <div class="section level2">
@@ -543,8 +532,7 @@ endpoint</li>
 <li>
 <a href="multiple-studies.html">Multiple studies</a> — meta-analysis
 across studies</li>
-<li>
-<a href="diagnostic-plots.html">Diagnostic plots</a> ```</li>
+<li><a href="diagnostic-plots.html">Diagnostic plots</a></li>
 </ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

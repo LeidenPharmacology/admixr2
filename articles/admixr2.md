@@ -4,11 +4,10 @@
 
 `admixr2` fits pharmacometric PK/PD models to **summary-level data**
 instead of individual records — a **meta-analysis** framework for
-population PK/PD. The inputs can be **digitised aggregate data** from
-published studies (means, error bars and covariances), **previously
-published PK/PD models**, or a mix of both. The result is a single
-unified population model with interpretable fixed, random and covariate
-effects, recovered without individual patient data.
+population PK/PD. The input is **digitised aggregate data** (means,
+error bars and covariances), **previously published models**, or both,
+and the result is one population model with interpretable fixed, random
+and covariate effects.
 
 For each study you supply:
 
@@ -19,14 +18,11 @@ For each study you supply:
 - **ev** — dosing event table
 
 The estimators match E and V against their model-predicted counterparts
-and return a standard nlmixr2 fit object, so established nlmixr2 models
-apply to aggregate statistics from publications or internal summaries
-where individual records are unavailable. Turning a published figure
+and return a standard nlmixr2 fit object. Turning a published figure
 into `E`, `V` and `n` is covered in
-[`vignette("aggregate-data", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md);
-letting each study carry its own published model as the input is covered
-in
-[`vignette("datagen", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md).
+[`vignette("aggregate-data")`](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md);
+letting a study carry its own published model instead, in
+[`vignette("datagen")`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md).
 
 Four estimators are available:
 
@@ -37,14 +33,11 @@ Four estimators are available:
 | Gauss-Hermite | `"adgh"` | [`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md) | Deterministic quadrature over η; noise-free, unbiased at any IIV |
 | Iterative Reweighting MC | `"adirmc"` | [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md) | Proposals fixed per phase; inner loop needs no new rxSolve calls |
 
-`adfo` is the natural starting point for model screening and initial
-estimates. `admc` is the workhorse for standard PK models. `adgh` is a
-noise-free alternative to `admc`, most efficient when the number of
-random effects is small. `adirmc` is preferred for complex ODE systems
-with expensive solves, high-dimensional IIV, or poor starting values.
-See
-[`vignette("estimator-comparison", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
-for a detailed comparison.
+Start with `adfo` for screening and initial estimates. `admc` is the
+workhorse for standard PK models; `adgh` is its noise-free alternative,
+most efficient when there are few random effects; `adirmc` suits
+expensive ODE solves, high-dimensional IIV or poor starting values. See
+[`vignette("estimator-comparison")`](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md).
 
 ## The examplomycin dataset
 
@@ -81,30 +74,26 @@ E and V:
 
 ``` r
 
-obs   <- examplomycin[examplomycin$EVID == 0, ]
-obs   <- obs[order(obs$ID, obs$TIME), ]
-times <- sort(unique(obs$TIME))
-ids   <- unique(obs$ID)
-n     <- length(ids)                     # 500
+dv_mat <- admVignetteDvMatrix()          # 500 subjects x 9 times
 
-dv_mat <- matrix(NA_real_, nrow = n, ncol = length(times))
-for (i in seq_along(ids)) {
-  sub         <- obs[obs$ID == ids[i], ]
-  dv_mat[i, ] <- sub$DV[order(sub$TIME)]
-}
-
-E <- colMeans(dv_mat)
-V <- cov.wt(dv_mat, method = "ML")$cov
+E     <- colMeans(dv_mat)
+V     <- cov.wt(dv_mat, method = "ML")$cov
+n     <- nrow(dv_mat)                    # 500
+times <- as.numeric(colnames(dv_mat))
 
 round(E, 2)
-#> [1] 0.97 1.94 2.79 3.02 2.26 1.65 1.06 0.75 0.51
+#>  0.1 0.25  0.5    1    2    3    5    8   12 
+#> 0.97 1.94 2.79 3.02 2.26 1.65 1.06 0.75 0.51
 ```
 
-`V` is the 9×9 sample covariance matrix. Its off-diagonal entries
-capture within-subject correlation across time; using the full matrix
-(`method = "cov"`) typically tightens parameter estimates compared to
-the diagonal-only approximation (`method = "var"`). `admixr2`
-auto-detects the method from the structure of V.
+`admVignetteDvMatrix()` is a helper defined in this vignette’s setup
+file; it does nothing but reshape `examplomycin`’s individual records
+into one row per subject and one column per time.
+
+`V`’s off-diagonal entries capture within-subject correlation across
+time. Using the full matrix (`method = "cov"`) typically tightens
+estimates against the diagonal-only approximation (`method = "var"`);
+admixr2 picks the method from the structure of `V`.
 
 ## Model definition
 
@@ -142,14 +131,12 @@ pk_model <- function() {
 }
 ```
 
-Writing each parameter as `exp(tcl + eta.cl)` is called
-**mu-referencing**: the structural fixed effect and its random effect
-enter additively on the log scale. `admixr2` exploits this pairing to
-compute analytical gradients via sensitivity equations. See the
-[Advanced
-usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html#mu-referencing-and-sensitivity-equations)
-vignette for details, including how parameters without a random effect
-are handled.
+Writing each parameter as `exp(tcl + eta.cl)` is **mu-referencing**: the
+fixed effect and its random effect enter additively on the log scale.
+admixr2 uses that pairing to get analytical gradients from sensitivity
+equations — see [Advanced
+usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html#mu-referencing-and-sensitivity-equations),
+which also covers parameters with no random effect.
 
 ## Assembling the study specification
 
@@ -197,7 +184,7 @@ admc -3690.262 -3668.262 -3597.732       1845.131
 ── Time (sec fit$time): ──
 
   optimize covariance other elapsed
-1   37.116      16.34     0  53.456
+1   28.125     11.538     0  39.663
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -222,7 +209,7 @@ prop.sd 0.1895 (0.1831, 0.1960)
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
   Censoring (fit$censInformation): No censoring
   Minimization message (fit$message):  
-    NLOPT_FAILURE: Generic failure code. 
+    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 
 Key entries in `fit$env$admExtra`:
@@ -233,7 +220,7 @@ fit$objective                    # -2 log-likelihood
 #> [1] -3690.262
 fit$env$admExtra$struct          # structural parameters (log scale)
 #>        tcl        tv1        tv2         tq        tka 
-#> 1.60197150 2.32807210 3.39738138 2.27604273 0.02978594
+#> 1.60197115 2.32807483 3.39738144 2.27604233 0.02978847
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
 #> 0.03592041
@@ -264,7 +251,7 @@ Estimated Omega (between-subject covariance). {.table}
 
 ## Diagnostic plots
 
-[`plot()`](https://rdrr.io/r/graphics/plot.default.html) produces up to
+[`plot()`](https://rdrr.io/r/graphics/plot.default.html) draws up to
 four panel types and returns them as a named list of ggplot2 objects:
 
 ``` r
@@ -272,21 +259,20 @@ four panel types and returns them as a named list of ggplot2 objects:
 plots <- plot(fit, which = c("mean", "nll"))
 ```
 
-![Left: observed vs predicted mean with residuals. Right: NLL
+![Mean diagnostics (observed vs predicted, with residuals), then the NLL
 convergence trace.](admixr2_files/figure-html/plot-1.png)
 
-Left: observed vs predicted mean with residuals. Right: NLL convergence
-trace.
+Mean diagnostics (observed vs predicted, with residuals), then the NLL
+convergence trace.
 
-![Left: observed vs predicted mean with residuals. Right: NLL
+![Mean diagnostics (observed vs predicted, with residuals), then the NLL
 convergence trace.](admixr2_files/figure-html/plot-2.png)
 
-Left: observed vs predicted mean with residuals. Right: NLL convergence
-trace.
+Mean diagnostics (observed vs predicted, with residuals), then the NLL
+convergence trace.
 
-For a detailed walkthrough of all four panel types and customisation
-options, see
-[`vignette("diagnostic-plots", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md).
+All four panel types and their customisation are covered in
+[`vignette("diagnostic-plots")`](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md).
 
 ## Where to next
 

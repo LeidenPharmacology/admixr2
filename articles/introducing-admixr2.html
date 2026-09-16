@@ -116,31 +116,26 @@ Beek</h4>
 <h2 id="why-aggregate-data">Why aggregate data?<a class="anchor" aria-label="anchor" href="#why-aggregate-data"></a>
 </h2>
 <p>Meta-analysis in pharmacometrics means combining evidence across
-studies to obtain parameter estimates that no single study could support
-on its own. The classical approach pools individual patient data (IPD)
-from multiple studies into one dataset. This is scientifically ideal but
-practically rare: data sharing agreements, proprietary restrictions, and
-the simple fact that most published work reports only summary statistics
-make IPD pooling the exception rather than the rule.</p>
-<p>Model-based meta-analysis (MBMA) addresses this by fitting
-pharmacometric models directly to aggregate summaries. These summaries
-come from two distinct sources. The first is <em>directly
-published</em>: many clinical studies report a mean concentration-time
-profile together with the variance at each time point, and sometimes the
-full covariance matrix. The second is <em>model-derived</em>: a
-published pharmacometric model with its parameter estimates (fixed
-effects, random-effects variance, residual error) can be used to
-generate the expected mean vector and covariance matrix via simulation,
-without access to the original data. The covariance structure carries
-information about the shape of individual profiles that a variance-only
-summary would discard — two studies can have identical variances at each
-time point yet very different correlation structures, reflecting
-different sources of variability. Both types of aggregate data, whether
-published directly or derived from a published model, can be analysed
-within the same framework. This makes the full literature — competitor
-compounds, historical datasets, regulatory submissions — available as
-modelling input for dose selection, trial design, and
-disease-progression modelling.</p>
+studies for estimates no single study could support alone. The classical
+approach pools individual patient data (IPD) into one dataset —
+scientifically ideal, and rare: data sharing agreements, proprietary
+restrictions and the fact that most published work reports only summary
+statistics make IPD pooling the exception.</p>
+<p>Model-based meta-analysis (MBMA) fits pharmacometric models directly
+to aggregate summaries instead. Those summaries come from two sources.
+<em>Directly published</em>: many studies report a mean
+concentration-time profile with the variance at each time point,
+sometimes the full covariance matrix. <em>Model-derived</em>: a
+published model and its estimates (fixed effects, random-effects
+variance, residual error) generate the expected mean vector and
+covariance by simulation, without the original data. The covariance
+carries information about the shape of individual profiles that a
+variance-only summary discards — two studies can share every variance
+and differ entirely in correlation structure, reflecting different
+sources of variability. Both types analyse within the same framework,
+which makes the full literature — competitor compounds, historical
+datasets, regulatory submissions — available for dose selection, trial
+design and disease-progression modelling.</p>
 <p>The aggregate data likelihood, first systematically described by <a href="https://doi.org/10.1007/s10928-021-09760-1" class="external-link">Välitalo (2021)</a>,
 provides the statistical foundation for MBMA: given a nonlinear
 mixed-effects model, what is the probability of observing the reported
@@ -204,10 +199,33 @@ structural prediction, e.g. proportional error).</p>
 <p>Under this model the population-level distribution of
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>y</mi><mi>i</mi></msub><annotation encoding="application/x-tex">y_i</annotation></semantics></math>
 has mean and covariance</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><msub><mi>𝔼</mi><mi>η</mi></msub><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">[</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">]</mo><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><msub><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mi>η</mi></msub><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">[</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">]</mo><mo>+</mo><mi mathvariant="normal">Σ</mi><mi>.</mi></mrow><annotation encoding="application/x-tex">
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><msub><mi>𝔼</mi><mi>η</mi></msub><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">[</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">]</mo><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><msub><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mi>η</mi></msub><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">[</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">]</mo><mo>+</mo><msub><mi>𝔼</mi><mi>η</mi></msub><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">[</mo><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>y</mi><mo>∣</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">]</mo><mi>.</mi></mrow><annotation encoding="application/x-tex">
 \mu_\text{pred} = \mathbb{E}_\eta\bigl[f(\theta, \eta)\bigr], \qquad
-V_\text{pred}   = \operatorname{Var}_\eta\bigl[f(\theta, \eta)\bigr] + \Sigma.
+V_\text{pred}   = \operatorname{Var}_\eta\bigl[f(\theta, \eta)\bigr]
+                + \mathbb{E}_\eta\bigl[\operatorname{Var}(y \mid \eta)\bigr].
 </annotation></semantics></math></p>
+<p>This is the law of total variance, and the second term is written out
+rather than abbreviated to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Σ</mi><annotation encoding="application/x-tex">\Sigma</annotation></semantics></math>
+for a reason. Only for <strong>additive</strong> error is the residual
+variance free of the prediction, giving
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>𝔼</mi><mi>η</mi></msub><mo stretchy="false" form="prefix">[</mo><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>y</mi><mo>∣</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="postfix">]</mo><mo>=</mo><mi mathvariant="normal">Σ</mi></mrow><annotation encoding="application/x-tex">\mathbb{E}_\eta[\operatorname{Var}(y\mid\eta)] = \Sigma</annotation></semantics></math>.
+With <code>prop()</code>, <code>pow()</code> or <code>lnorm()</code> it
+is a function of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>,
+and averaging it over subjects is not evaluating it at the population
+mean — for proportional error the two differ by exactly
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>b</mi><mn>2</mn></msup><msub><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mi>η</mi></msub><mo stretchy="false" form="prefix">(</mo><mi>f</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">b^2\operatorname{Var}_\eta(f)</annotation></semantics></math>.
+admixr2 averages. Writing
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>+</mi><mspace width="0.167em"></mspace><mi mathvariant="normal">Σ</mi></mrow><annotation encoding="application/x-tex">+\,\Sigma</annotation></semantics></math>
+throughout is the “no
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>η</mi><annotation encoding="application/x-tex">\eta</annotation></semantics></math>–<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ε</mi><annotation encoding="application/x-tex">\varepsilon</annotation></semantics></math>
+interaction” convention of individual-level fitting, and it understates
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">diag</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\operatorname{diag}(V_\text{pred})</annotation></semantics></math>
+here; see <a href="error-models.html">Choosing a residual error
+model</a>. The sections below write
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Σ</mi><annotation encoding="application/x-tex">\Sigma</annotation></semantics></math>
+for brevity, with that averaging understood.</p>
 </div>
 <div class="section level3">
 <h3 id="the-aggregate-log-likelihood">The aggregate log-likelihood<a class="anchor" aria-label="anchor" href="#the-aggregate-log-likelihood"></a>
@@ -234,18 +252,17 @@ the log-likelihood reduces to</p>
 \Bigr], \qquad
 r = \bar{y} - \mu_\text{pred}.
 </annotation></semantics></math></p>
-<p>This is the central formula in admixr2. Each estimator minimises the
-same objective; they differ only in how
+<p>This is the central formula in admixr2. Every estimator minimises it;
+they differ only in how
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><annotation encoding="application/x-tex">\mu_\text{pred}</annotation></semantics></math>
 and
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><annotation encoding="application/x-tex">V_\text{pred}</annotation></semantics></math>
 are computed.</p>
-<p>The trace and quadratic terms are evaluated via Cholesky
-factorisation of
+<p>The trace and quadratic terms go through a Cholesky factorisation of
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><annotation encoding="application/x-tex">V_\text{pred}</annotation></semantics></math>,
-which avoids explicit matrix inversion and is numerically stable even
-for near-singular covariances. The log-determinant falls out as twice
-the sum of log-diagonal elements of the Cholesky factor.</p>
+avoiding explicit inversion and staying stable even for near-singular
+covariances. The log-determinant falls out as twice the sum of the
+factor’s log-diagonal.</p>
 <hr>
 </div>
 </div>
@@ -296,15 +313,15 @@ sensitivity equations</strong></p>
 </annotation></semantics></math></p>
 <p>where
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math>
-is the ODE right-hand side. A single solver call delivers both
+is the ODE right-hand side. One solver call delivers
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>
-and all columns of
+and every column of
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>J</mi><annotation encoding="application/x-tex">J</annotation></semantics></math>
-simultaneously — no additional ODE solves per random-effect dimension.
-In the predecessor admr, this Jacobian was computed by <strong>finite
+together, with no extra solve per random-effect dimension. Its
+predecessor admr computed this Jacobian by <strong>finite
 differences</strong> on
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>,
-requiring one extra ODE solve per random-effect dimension.</p>
+one extra solve per dimension.</p>
 <p><strong>Gradient of the FO NLL.</strong> Because
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><mo>=</mo><mi>J</mi><mi mathvariant="normal">Ω</mi><msup><mi>J</mi><mi>⊤</mi></msup><mo>+</mo><mi mathvariant="normal">Σ</mi></mrow><annotation encoding="application/x-tex">V_\text{pred} = J\Omega J^\top + \Sigma</annotation></semantics></math>
 is explicit in
@@ -316,20 +333,23 @@ via the matrix derivative identities
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">|</mo><mi>A</mi><mo stretchy="false" form="prefix">|</mo><mo>=</mo><mrow><mi mathvariant="normal">tr</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msup><mi>A</mi><mrow><mi>−</mi><mn>1</mn></mrow></msup><mi>d</mi><mi>A</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">d \log|A| = \operatorname{tr}(A^{-1} dA)</annotation></semantics></math>
 and
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi><mrow><mi mathvariant="normal">tr</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msup><mi>A</mi><mrow><mi>−</mi><mn>1</mn></mrow></msup><mi>B</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>−</mi><mrow><mi mathvariant="normal">tr</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msup><mi>A</mi><mrow><mi>−</mi><mn>1</mn></mrow></msup><mi>d</mi><mi>A</mi><mspace width="0.167em"></mspace><msup><mi>A</mi><mrow><mi>−</mi><mn>1</mn></mrow></msup><mi>B</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">d \operatorname{tr}(A^{-1}B) = -\operatorname{tr}(A^{-1} dA\, A^{-1} B)</annotation></semantics></math>.
-Structural parameter gradients use forward finite differences through
-the full FO NLL, reusing the sensitivity solve.</p>
-<p><strong>Accuracy.</strong> The FO approximation is exact when
+Structural parameter gradients need the second derivative
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi><mi>J</mi><mi>/</mi><mi>d</mi><mi>θ</mi></mrow><annotation encoding="application/x-tex">dJ/d\theta</annotation></semantics></math>,
+which admixr2 takes from an order-2 sensitivity model, so they too are
+analytical; central finite differences are the fallback for when that
+model cannot be built.</p>
+<p><strong>Accuracy.</strong> Exact when
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>
 is linear in
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>η</mi><annotation encoding="application/x-tex">\eta</annotation></semantics></math>.
-For nonlinear models with large IIV the approximation underestimates
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mi>η</mi></msub><mo stretchy="false" form="prefix">[</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">\operatorname{Var}_\eta[f(\theta, \eta)]</annotation></semantics></math>:
+For nonlinear models at large IIV it underestimates
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mrow><mi mathvariant="normal">Var</mi><mo>⁡</mo></mrow><mi>η</mi></msub><mo stretchy="false" form="prefix">[</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">\operatorname{Var}_\eta[f(\theta, \eta)]</annotation></semantics></math>,
+so
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><annotation encoding="application/x-tex">V_\text{pred}</annotation></semantics></math>
-is too small and the estimated
+comes out too small and
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Ω</mi><annotation encoding="application/x-tex">\Omega</annotation></semantics></math>
-is negatively biased. Practically, bias is negligible when the
-coefficient of variation for each PK parameter is below 20–30 % and the
-model is weakly nonlinear in
+negatively biased. In practice the bias is negligible below a CV of
+20–30 % on each PK parameter, on a model weakly nonlinear in
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>η</mi><annotation encoding="application/x-tex">\eta</annotation></semantics></math>.</p>
 <hr>
 </div>
@@ -348,38 +368,35 @@ random-effect samples and computes sample moments:</p>
   \bigl(f(\theta,\eta_i) - \hat{\mu}\bigr)^\top + \Sigma,
 \qquad \eta_i \sim \mathcal{N}(0, \Omega).
 </annotation></semantics></math></p>
-<p>The estimator converges to the true population moments as
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>→</mo><mi>∞</mi></mrow><annotation encoding="application/x-tex">N \to \infty</annotation></semantics></math>;
-its AIC is directly interpretable.</p>
-<p><strong>Quasi-random sampling.</strong> admixr2 draws samples using
-Sobol sequences (also available in admr) rather than pseudo-random
-normal deviates. Sobol sequences are <em>low-discrepancy</em>:
-successive points are placed to fill gaps in the sample space, rather
-than clustering randomly. For the smooth integrands that arise in
-pharmacometric MC integration, this uniform coverage reduces the
-integration error for a given
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>
-compared to i.i.d. draws, at the cost of no additional model
-evaluations.</p>
-<p><strong>Numerical stability.</strong> The sample covariance is
-computed in fused C++ kernels that accumulate centred products in a
-single pass, avoiding an intermediate
+<p>It converges to the true population moments as
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>→</mo><mi>∞</mi></mrow><annotation encoding="application/x-tex">N \to \infty</annotation></semantics></math>,
+and its AIC is directly interpretable.</p>
+<p><strong>Quasi-random sampling.</strong> admixr2 draws from Sobol
+sequences (also in admr) rather than pseudo-random normal deviates.
+Sobol points are <em>low-discrepancy</em>, placed to fill gaps in the
+sample space rather than clustering at random. On the smooth integrands
+of pharmacometric MC integration that uniform coverage cuts the
+integration error at a given
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>,
+for no extra model evaluations.</p>
+<p><strong>Numerical stability.</strong> The sample covariance
+accumulates centred products in a single pass through fused C++ kernels,
+avoiding an intermediate
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>×</mo><mi>T</mi></mrow><annotation encoding="application/x-tex">N \times T</annotation></semantics></math>
-allocation. The resulting
+allocation, and the resulting
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mover><mi>V</mi><mo accent="true">̂</mo></mover><annotation encoding="application/x-tex">\hat{V}</annotation></semantics></math>
-is guaranteed positive semi-definite by construction.</p>
+is positive semi-definite by construction.</p>
 <hr>
 </div>
 <div class="section level2">
 <h2 id="gauss-hermite-quadrature-adgh">Gauss-Hermite quadrature (adgh)<a class="anchor" aria-label="anchor" href="#gauss-hermite-quadrature-adgh"></a>
 </h2>
-<p>The MC estimator replaces the population integral with a
-<em>random</em> average. The GH estimator replaces it with a
-<em>deterministic</em> one: a tensor-product Gauss-Hermite quadrature
-rule that evaluates the same expectation over
+<p>MC replaces the population integral with a <em>random</em> average;
+GH replaces it with a <em>deterministic</em> one, a tensor-product
+Gauss-Hermite rule evaluating the same expectation over
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>η</mi><mo>∼</mo><mi>𝒩</mi><mo stretchy="false" form="prefix">(</mo><mn>0</mn><mo>,</mo><mi mathvariant="normal">Ω</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\eta \sim \mathcal{N}(0, \Omega)</annotation></semantics></math>
-at a small set of fixed nodes. This estimator is new in admixr2 — it has
-no counterpart in admr.</p>
+at a small set of fixed nodes. It is new in admixr2, with no counterpart
+in admr.</p>
 <p>For a single random effect, the probabilists’ Gauss-Hermite rule
 approximates an expectation under the standard normal by a weighted sum
 over
@@ -422,44 +439,37 @@ grid in place of
 random draws and quadrature weights in place of uniform ones, so it
 plugs into exactly the same aggregate MVN
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>−</mi><mn>2</mn><mi>ℓ</mi></mrow><annotation encoding="application/x-tex">-2\ell</annotation></semantics></math>.</p>
-<p><strong>Noise-free objective.</strong> Because the nodes and weights
-are fixed, the objective is a smooth deterministic function of
+<p><strong>Noise-free objective.</strong> Fixed nodes and weights make
+the objective a smooth deterministic function of
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi mathvariant="normal">Ω</mi><mo>,</mo><mi mathvariant="normal">Σ</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(\theta, \Omega, \Sigma)</annotation></semantics></math>
-— there is no Monte Carlo noise to average away and no
-<code>n_sim</code> to tune. The analytical gradient (closed-form
-contractions through the same ODE sensitivity outputs used by the MC
-estimator) is therefore exact, and the numerical Hessian used for
-standard errors is well-conditioned. Like <code>admc</code> it makes no
-approximation to
+— no Monte Carlo noise to average away, no <code>n_sim</code> to tune.
+The analytical gradient (closed-form contractions through the same ODE
+sensitivity outputs the MC estimator uses) is therefore exact, and the
+numerical Hessian behind the standard errors is well-conditioned. Like
+<code>admc</code> it approximates nothing about
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>,
-so it is unbiased at any IIV magnitude, and its likelihood is on the
-same scale — its AIC is directly comparable to <code>admc</code> and
-<code>adirmc</code>.</p>
-<p><strong>Cost.</strong> The grid size
+so it is unbiased at any IIV, on the same likelihood scale, and its AIC
+compares directly to <code>admc</code> and <code>adirmc</code>.</p>
+<p><strong>Cost.</strong>
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Q</mi><mo>=</mo><msup><mi>m</mi><msub><mi>n</mi><mi>η</mi></msub></msup></mrow><annotation encoding="application/x-tex">Q = m^{n_\eta}</annotation></semantics></math>
-grows exponentially in the number of random effects. For models with up
-to ~4 etas,
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Q</mi><annotation encoding="application/x-tex">Q</annotation></semantics></math>
-is small
-(e.g. <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mn>5</mn><mn>4</mn></msup><mo>=</mo><mn>625</mn></mrow><annotation encoding="application/x-tex">5^4 = 625</annotation></semantics></math>
-nodes) and <code>adgh</code> is substantially faster than MC at
-equivalent accuracy; for high-dimensional IIV the node count becomes
-prohibitive and <code>admc</code> or <code>adirmc</code> are preferable.
-A modest node count (<code>n_nodes = 5</code>) gives near-exact
-covariance moments for IIV SD up to ~0.5; <code>n_nodes = 7</code>
-extends this to ~0.7.</p>
+grows exponentially in the number of random effects. Up to ~4 etas it
+stays small
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mn>5</mn><mn>4</mn></msup><mo>=</mo><mn>625</mn></mrow><annotation encoding="application/x-tex">5^4 = 625</annotation></semantics></math>)
+and <code>adgh</code> is substantially faster than MC at equal accuracy;
+beyond that the node count becomes prohibitive and <code>admc</code> or
+<code>adirmc</code> are preferable. <code>n_nodes = 5</code> gives
+near-exact covariance moments to IIV SD ~0.5, and 7 extends that to
+~0.7.</p>
 <hr>
 </div>
 <div class="section level2">
 <h2 id="iterative-reweighting-mc-adirmc">Iterative Reweighting MC (adirmc)<a class="anchor" aria-label="anchor" href="#iterative-reweighting-mc-adirmc"></a>
 </h2>
-<p>The central bottleneck of the MC estimator is that <em>every</em> NLL
-evaluation requires
+<p>MC’s central bottleneck is that <em>every</em> NLL evaluation takes
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>
-ODE solves — one per sample. For a complex model each solve is
-expensive, and an L-BFGS optimisation may require hundreds of NLL
-evaluations.</p>
-<p>IRMC decouples sample generation from optimisation.</p>
+ODE solves, one per sample — expensive on a complex model, over the
+hundreds of evaluations an L-BFGS optimisation may need. IRMC decouples
+sample generation from optimisation.</p>
 <div class="section level3">
 <h3 id="proposal-distribution">Proposal distribution<a class="anchor" aria-label="anchor" href="#proposal-distribution"></a>
 </h3>
@@ -474,21 +484,19 @@ proposals are drawn once from an inflated prior:</p>
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi mathvariant="normal">Ω</mi><mn>0</mn></msub><annotation encoding="application/x-tex">\Omega_0</annotation></semantics></math>
 is the current Omega estimate and
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>α</mi><annotation encoding="application/x-tex">\alpha</annotation></semantics></math>
-is the expansion factor. The predictions
+the expansion factor. The predictions
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>f</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>θ</mi><mn>0</mn></msub><mo>,</mo><msub><mover><mi>η</mi><mo accent="true">̃</mo></mover><mi>i</mi></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">f(\theta_0, \tilde{\eta}_i)</annotation></semantics></math>
-are computed once and stored. For the remainder of the inner
-optimisation they are reused without further ODE solves.</p>
+are computed once, stored, and reused for the rest of the inner
+optimisation without further ODE solves.</p>
 </div>
 <div class="section level3">
 <h3 id="importance-weights">Importance weights<a class="anchor" aria-label="anchor" href="#importance-weights"></a>
 </h3>
-<p>When the parameter vector moves to a candidate
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi mathvariant="normal">Ω</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(\theta, \Omega)</annotation></semantics></math>,
-the stored predictions are no longer exact. For the random-effects
-covariance
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Ω</mi><annotation encoding="application/x-tex">\Omega</annotation></semantics></math>,
-the proposals are reweighted by the ratio of target density to proposal
-density:</p>
+<p>A move to a candidate
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi mathvariant="normal">Ω</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(\theta, \Omega)</annotation></semantics></math>
+leaves the stored predictions inexact. For the random-effects
+covariance, the proposals are reweighted by the ratio of target to
+proposal density:</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>w</mi><mi>i</mi></msub><mo>∝</mo><mfrac><mrow><mi>p</mi><mo stretchy="false" form="prefix">(</mo><msub><mover><mi>η</mi><mo accent="true">̃</mo></mover><mi>i</mi></msub><mo>∣</mo><mi mathvariant="normal">Ω</mi><mo stretchy="false" form="postfix">)</mo></mrow><mrow><mi>q</mi><mo stretchy="false" form="prefix">(</mo><msub><mover><mi>η</mi><mo accent="true">̃</mo></mover><mi>i</mi></msub><mo>∣</mo><mi>α</mi><mspace width="0.167em"></mspace><msub><mi mathvariant="normal">Ω</mi><mn>0</mn></msub><mo stretchy="false" form="postfix">)</mo></mrow></mfrac><mo>=</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">[</mo><mi>−</mi><mstyle displaystyle="false"><mfrac><mn>1</mn><mn>2</mn></mfrac></mstyle><msubsup><mover><mi>η</mi><mo accent="true">̃</mo></mover><mi>i</mi><mi>⊤</mi></msubsup><mo stretchy="false" form="prefix">(</mo><msup><mi mathvariant="normal">Ω</mi><mrow><mi>−</mi><mn>1</mn></mrow></msup><mo>−</mo><mo stretchy="false" form="prefix">(</mo><mi>α</mi><mspace width="0.167em"></mspace><msub><mi mathvariant="normal">Ω</mi><mn>0</mn></msub><msup><mo stretchy="false" form="postfix">)</mo><mrow><mi>−</mi><mn>1</mn></mrow></msup><mo stretchy="false" form="postfix">)</mo><msub><mover><mi>η</mi><mo accent="true">̃</mo></mover><mi>i</mi></msub><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
 w_i \propto \frac{p(\tilde{\eta}_i \mid \Omega)}{q(\tilde{\eta}_i \mid \alpha\,\Omega_0)}
 = \exp\!\left[
@@ -497,8 +505,8 @@ w_i \propto \frac{p(\tilde{\eta}_i \mid \Omega)}{q(\tilde{\eta}_i \mid \alpha\,\
   \tilde{\eta}_i
 \right].
 </annotation></semantics></math></p>
-<p>Weights are normalised via softmax. The weighted mean and covariance
-of the predictions then provide the IRMC estimates of
+<p>Weights are normalised by softmax, and the weighted mean and
+covariance of the predictions are the IRMC estimates of
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><annotation encoding="application/x-tex">\mu_\text{pred}</annotation></semantics></math>
 and
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mtext mathvariant="normal">pred</mtext></msub><annotation encoding="application/x-tex">V_\text{pred}</annotation></semantics></math>:</p>
@@ -508,13 +516,12 @@ V_\text{pred} = \sum_i w_i\,
   (f(\theta_0, \tilde\eta_i) - \mu_\text{pred})
   (\cdots)^\top + \Sigma.
 </annotation></semantics></math></p>
-<p>Given fixed proposals this inner objective is a smooth, deterministic
+<p>With fixed proposals the inner objective is a smooth deterministic
 function of
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi mathvariant="normal">Ω</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(\theta, \Omega)</annotation></semantics></math>
-and can be optimised to high precision. Between phases, proposals are
-refreshed and box constraints are progressively tightened to guide
-global convergence. The number of ODE solves scales with the number of
-phases, not the number of inner optimizer steps.</p>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mi mathvariant="normal">Ω</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(\theta, \Omega)</annotation></semantics></math>,
+optimisable to high precision. Proposals refresh between phases, whose
+box constraints tighten progressively to guide global convergence, so
+the number of ODE solves scales with phases rather than inner steps.</p>
 <hr>
 </div>
 </div>
@@ -522,10 +529,9 @@ phases, not the number of inner optimizer steps.</p>
 <h2 id="gradient-computation-from-finite-differences-to-sensitivity-equations">Gradient computation: from finite differences to sensitivity
 equations<a class="anchor" aria-label="anchor" href="#gradient-computation-from-finite-differences-to-sensitivity-equations"></a>
 </h2>
-<p>The gradient is the single most important ingredient for efficient
-nonlinear optimisation. The improvements in gradient computation
-represent the most consequential algorithmic differences between admr
-and admixr2.</p>
+<p>The gradient is the single most important ingredient in efficient
+nonlinear optimisation, and it is where admr and admixr2 differ most
+consequentially.</p>
 <div class="section level3">
 <h3 id="gradient-in-admr">Gradient in admr<a class="anchor" aria-label="anchor" href="#gradient-in-admr"></a>
 </h3>
@@ -540,23 +546,22 @@ forward finite differences of this deterministic NLL:</p>
 \frac{\partial \ell}{\partial \theta_k} \approx
 \frac{\ell(\theta + h\,e_k) - \ell(\theta)}{h}, \qquad h = 10^{-6}.
 </annotation></semantics></math></p>
-<p>For a model with
+<p>On a model with
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>p</mi><annotation encoding="application/x-tex">p</annotation></semantics></math>
-parameters, each gradient call therefore costs
+parameters each gradient call therefore costs
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>p</mi><annotation encoding="application/x-tex">p</annotation></semantics></math>
 extra NLL evaluations,
-i.e. <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>p</mi><mo>×</mo><mi>N</mi></mrow><annotation encoding="application/x-tex">p \times N</annotation></semantics></math>
-additional ODE solves. Because this is expensive, admr defaults to
-gradient-free BOBYQA; L-BFGS with FD gradient is available but off by
-default (<code>use_grad = FALSE</code>).</p>
-<p>For the IRMC estimator, proposals are fixed inside a closure before
-the inner optimisation begins, so each inner NLL evaluation requires
-only matrix operations — no ODE solves. admr’s optional FD inner
-gradient therefore incurs
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>p</mi><mo>×</mo><mi>N</mi></mrow><annotation encoding="application/x-tex">p \times N</annotation></semantics></math>
+additional ODE solves. That being expensive, admr defaults to
+gradient-free BOBYQA, with L-BFGS and an FD gradient available but off
+(<code>use_grad = FALSE</code>).</p>
+<p>Under IRMC, proposals are fixed inside a closure before the inner
+optimisation, so each inner NLL evaluation is matrix operations only.
+admr’s optional FD inner gradient costs
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>p</mi><annotation encoding="application/x-tex">p</annotation></semantics></math>
-extra importance-weighted recomputations per step, but still no extra
-ODE solves. Nonetheless, the inner optimizer defaults to BOBYQA (no
-gradient) and the FD approximation introduces truncation error of order
+extra importance-weighted recomputations per step and no ODE solves —
+but the inner optimizer still defaults to BOBYQA, and the FD
+approximation carries truncation error of order
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mo stretchy="false" form="prefix">(</mo><mi>h</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">O(h)</annotation></semantics></math>.</p>
 </div>
 <div class="section level3">
@@ -592,19 +597,18 @@ follows similarly: the Cholesky factor
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>L</mi><annotation encoding="application/x-tex">L</annotation></semantics></math>
 (<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Ω</mi><mo>=</mo><mi>L</mi><msup><mi>L</mi><mi>⊤</mi></msup></mrow><annotation encoding="application/x-tex">\Omega = LL^\top</annotation></semantics></math>)
 enters through the sample covariance, and differentiating through the
-MVN chain rule yields closed-form expressions in the stored sensitivity
+MVN chain rule gives closed-form expressions in the stored sensitivity
 outputs.</p>
-<p>The net result is that the <strong>full MC gradient costs the same as
-a single NLL evaluation</strong> — it requires no additional ODE solves
-and is exact rather than a finite-difference approximation. For a model
-with
+<p>So the <strong>full MC gradient costs the same as a single NLL
+evaluation</strong> — no extra ODE solves, and exact rather than a
+finite-difference approximation. On a model with
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>p</mi><mo>=</mo><mn>10</mn></mrow><annotation encoding="application/x-tex">p = 10</annotation></semantics></math>
 parameters and
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mn>5000</mn></mrow><annotation encoding="application/x-tex">N = 5000</annotation></semantics></math>
-samples, admr’s FD gradient requires
+samples, admr’s FD gradient needs
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>50</mn><mspace width="0.167em"></mspace><mn>000</mn></mrow><annotation encoding="application/x-tex">50\,000</annotation></semantics></math>
-additional ODE solves per optimizer step; admixr2’s CRN gradient
-requires none.</p>
+additional solves per optimizer step; admixr2’s CRN gradient needs
+none.</p>
 </div>
 <div class="section level3">
 <h3 id="analytical-irmc-inner-gradient">Analytical IRMC inner gradient<a class="anchor" aria-label="anchor" href="#analytical-irmc-inner-gradient"></a>
@@ -623,35 +627,33 @@ identity</p>
 </annotation></semantics></math></p>
 <p>where
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mover><mi>g</mi><mo accent="true">‾</mo></mover><mo>=</mo><msub><mo>∑</mo><mi>i</mi></msub><msub><mi>w</mi><mi>i</mi></msub><msub><mi>g</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">\bar{g} = \sum_i w_i g_i</annotation></semantics></math>.
-Differentiating the multivariate normal log-likelihood of the weighted
-mean and covariance through this identity yields closed-form expressions
-in the pre-computed ODE solutions and sensitivity outputs. Since
-proposals are fixed, the inner gradient evaluation requires no ODE
-solves regardless of the implementation — the admixr2 advantage over
-admr’s FD approach is exactness and a
+Differentiating the MVN log-likelihood of the weighted mean and
+covariance through this identity gives closed-form expressions in the
+pre-computed ODE solutions and sensitivity outputs. Fixed proposals mean
+no inner gradient evaluation needs an ODE solve under any
+implementation, so the gain over admr’s FD approach is exactness and a
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>p</mi><mo>×</mo></mrow><annotation encoding="application/x-tex">p\times</annotation></semantics></math>
 reduction in inner-level matrix operations.</p>
-<p>The inner optimizer therefore runs L-BFGS with an exact gradient and
-converges in far fewer iterations than BOBYQA.</p>
+<p>The inner optimizer therefore runs L-BFGS on an exact gradient,
+converging in far fewer iterations than BOBYQA.</p>
 </div>
 <div class="section level3">
 <h3 id="kappa-correction-for-non-mu-referenced-parameters">Kappa correction for non-mu-referenced parameters<a class="anchor" aria-label="anchor" href="#kappa-correction-for-non-mu-referenced-parameters"></a>
 </h3>
-<p>Both admr and admixr2 handle models where some structural parameters
+<p>Both packages handle structural parameters
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>β</mi><mi>k</mi></msub><annotation encoding="application/x-tex">\beta_k</annotation></semantics></math>
-enter
+entering
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>
-without a paired random effect
-(e.g. <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">C</mi><mi mathvariant="normal">L</mi></mrow><mo>=</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>β</mi><mn>1</mn></msub><mo stretchy="false" form="postfix">)</mo><mo>⋅</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>η</mi><mn>1</mn></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\mathrm{CL} = \exp(\beta_1)
-\cdot \exp(\eta_1)</annotation></semantics></math>, but
+with no paired random effect
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">C</mi><mi mathvariant="normal">L</mi></mrow><mo>=</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>β</mi><mn>1</mn></msub><mo stretchy="false" form="postfix">)</mo><mo>⋅</mo><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>η</mi><mn>1</mn></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\mathrm{CL} = \exp(\beta_1)\cdot\exp(\eta_1)</annotation></semantics></math>,
+but
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mtext mathvariant="normal">max</mtext></msub><annotation encoding="application/x-tex">V_\text{max}</annotation></semantics></math>
 has no
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>η</mi><annotation encoding="application/x-tex">\eta</annotation></semantics></math>).
-When such parameters change during the inner IRMC optimisation, the
-stored predictions
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>f</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>θ</mi><mn>0</mn></msub><mo>,</mo><msub><mover><mi>η</mi><mo accent="true">̃</mo></mover><mi>i</mi></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">f(\theta_0,
-\tilde\eta_i)</annotation></semantics></math> are no longer exact even
-for the mean. Both packages apply a kappa correction:</p>
+Changing one during the inner IRMC optimisation leaves the stored
+predictions
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>f</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>θ</mi><mn>0</mn></msub><mo>,</mo><msub><mover><mi>η</mi><mo accent="true">̃</mo></mover><mi>i</mi></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">f(\theta_0, \tilde\eta_i)</annotation></semantics></math>
+inexact even in the mean, so both apply a kappa correction:</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>κ</mi><mo stretchy="false" form="prefix">(</mo><mi>β</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>β</mi><mtext mathvariant="normal">new</mtext></msub><mo>,</mo><mn>0</mn><mo stretchy="false" form="postfix">)</mo><mo>−</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>β</mi><mtext mathvariant="normal">orig</mtext></msub><mo>,</mo><mn>0</mn><mo stretchy="false" form="postfix">)</mo><mo>,</mo></mrow><annotation encoding="application/x-tex">
 \kappa(\beta) = f(\beta_\text{new}, 0) - f(\beta_\text{orig}, 0),
 </annotation></semantics></math></p>
@@ -659,18 +661,16 @@ for the mean. Both packages apply a kappa correction:</p>
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>μ</mi><mtext mathvariant="normal">pred</mtext></msub><annotation encoding="application/x-tex">\mu_\text{pred}</annotation></semantics></math>
 by the predicted change at
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>η</mi><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\eta = 0</annotation></semantics></math>.</p>
-<p>admixr2 introduces a <strong>linearized kappa</strong> option
-(<code>kappa_method = "linearized"</code>) that computes the Jacobian
+<p>admixr2 adds a <strong>linearized kappa</strong>
+(<code>kappa_method = "linearized"</code>) that computes
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>J</mi><mi>κ</mi></msub><mo>=</mo><mi>∂</mi><mi>f</mi><mi>/</mi><mi>∂</mi><msub><mi>β</mi><mtext mathvariant="normal">single</mtext></msub></mrow><annotation encoding="application/x-tex">J_\kappa = \partial f / \partial \beta_\text{single}</annotation></semantics></math>
-once per outer iteration (via a single batched FD solve) and
-approximates the correction as
+once per outer iteration from one batched FD solve, then takes the
+correction as
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>J</mi><mi>κ</mi></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>β</mi><mtext mathvariant="normal">new</mtext></msub><mo>−</mo><msub><mi>β</mi><mtext mathvariant="normal">orig</mtext></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">J_\kappa (\beta_\text{new} - \beta_\text{orig})</annotation></semantics></math>
-during the inner loop — a pure matrix operation requiring no ODE solver
-calls. This is particularly valuable for complex ODE systems where each
-kappa evaluation is otherwise expensive: with the exact kappa, every
-inner NLL step requires one extra rxSolve for the single-beta
-parameters; with linearized kappa, the inner loop is completely free of
-ODE solver calls.</p>
+through the inner loop — matrix work only, no solver calls. That matters
+most on complex ODE systems: exact kappa costs one extra rxSolve per
+inner NLL step for the single-beta parameters, while linearized kappa
+leaves the inner loop entirely free of them.</p>
 <hr>
 </div>
 </div>
@@ -681,56 +681,51 @@ ODE solver calls.</p>
 <h3 id="cholesky-parameterisation-of-omega">Cholesky parameterisation of
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Ω</mi><annotation encoding="application/x-tex">\Omega</annotation></semantics></math><a class="anchor" aria-label="anchor" href="#cholesky-parameterisation-of-omega"></a>
 </h3>
-<p>The between-subject covariance
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Ω</mi><annotation encoding="application/x-tex">\Omega</annotation></semantics></math>
-must be positive definite. Unconstrained optimisation in the space of
-symmetric matrices can produce non-positive-definite steps.</p>
-<p>Both admr and admixr2 parameterise
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Ω</mi><annotation encoding="application/x-tex">\Omega</annotation></semantics></math>
-through a Cholesky factor
+<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Ω</mi><annotation encoding="application/x-tex">\Omega</annotation></semantics></math>
+must be positive definite, and unconstrained optimisation over symmetric
+matrices can step outside that.</p>
+<p>Both packages parameterise it through a Cholesky factor
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>L</mi><annotation encoding="application/x-tex">L</annotation></semantics></math>
-(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Ω</mi><mo>=</mo><mi>L</mi><msup><mi>L</mi><mi>⊤</mi></msup></mrow><annotation encoding="application/x-tex">\Omega = LL^\top</annotation></semantics></math>).
-The packages differ in how the Cholesky entries are encoded. admr uses a
-log transform for diagonal entries and a <strong>covlogit</strong>
-transform for off-diagonal entries (the correlation corresponding to
-each
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>L</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub><annotation encoding="application/x-tex">L_{jk}</annotation></semantics></math>
-is mapped through a logit after normalisation). admixr2 uses:</p>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Ω</mi><mo>=</mo><mi>L</mi><msup><mi>L</mi><mi>⊤</mi></msup></mrow><annotation encoding="application/x-tex">\Omega = LL^\top</annotation></semantics></math>),
+and differ in how the entries are encoded. admr uses a log transform on
+the diagonal and a <strong>covlogit</strong> off it, mapping each
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>L</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub><annotation encoding="application/x-tex">L_{jk}</annotation></semantics></math>’s
+corresponding correlation through a logit after normalisation. admixr2
+uses:</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>p</mi><mi>k</mi></msub><mo>=</mo><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi mathvariant="normal">Ω</mi><mrow><mi>k</mi><mi>k</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mn>2</mn><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>L</mi><mrow><mi>k</mi><mi>k</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo><mspace width="1.0em"></mspace><mtext mathvariant="normal">(diagonal)</mtext><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>p</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub><mo>=</mo><msub><mi>L</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub><mspace width="1.0em"></mspace><mtext mathvariant="normal">(off-diagonal, raw)</mtext><mi>.</mi></mrow><annotation encoding="application/x-tex">
 p_k = \log(\Omega_{kk}) = 2\log(L_{kk})
 \quad\text{(diagonal)}, \qquad
 p_{jk} = L_{jk}
 \quad\text{(off-diagonal, raw)}.
 </annotation></semantics></math></p>
-<p>The raw parameterisation simplifies the gradient computation
-substantially: the Jacobian
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>∂</mi><mi mathvariant="normal">Ω</mi><mi>/</mi><mi>∂</mi><msub><mi>p</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub></mrow><annotation encoding="application/x-tex">\partial \Omega / \partial p_{jk}</annotation></semantics></math>
-is a simple rank-1 matrix with no logit derivative to chain through. It
-also avoids the numerical instability of logit-based transforms when
-correlations approach ±1.</p>
-<p>The specific encoding
+<p>The raw form simplifies the gradient substantially —
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>∂</mi><mi mathvariant="normal">Ω</mi><mi>/</mi><mi>∂</mi><msub><mi>p</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub></mrow><annotation encoding="application/x-tex">\partial \Omega / \partial
+p_{jk}</annotation></semantics></math> is a rank-1 matrix with no logit
+derivative to chain through — and avoids the instability of logit
+transforms as correlations approach ±1.</p>
+<p>Encoding
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>p</mi><mo>=</mo><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi mathvariant="normal">Ω</mi><mrow><mi>k</mi><mi>k</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">p = \log(\Omega_{kk})</annotation></semantics></math>
 rather than
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>p</mi><mo>=</mo><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>L</mi><mrow><mi>k</mi><mi>k</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">p = \log(L_{kk})</annotation></semantics></math>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">log</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>L</mi><mrow><mi>k</mi><mi>k</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\log(L_{kk})</annotation></semantics></math>
 equalises gradient sensitivity across parameter types: a unit optimizer
 step changes
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi mathvariant="normal">Ω</mi><mrow><mi>k</mi><mi>k</mi></mrow></msub><annotation encoding="application/x-tex">\Omega_{kk}</annotation></semantics></math>
-by a factor of
+by
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mi>e</mi><mn>2</mn></msup><annotation encoding="application/x-tex">e^2</annotation></semantics></math>,
-matching the sensitivity of structural parameters on the log scale.</p>
+matching structural parameters on the log scale.</p>
 </div>
 <div class="section level3">
 <h3 id="parameter-preconditioning">Parameter preconditioning<a class="anchor" aria-label="anchor" href="#parameter-preconditioning"></a>
 </h3>
-<p>The unconstrained parameter vector is pre-scaled by a diagonal matrix
+<p>The unconstrained parameter vector is pre-scaled by a diagonal
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>C</mi><annotation encoding="application/x-tex">C</annotation></semantics></math>
-before being passed to L-BFGS. Each diagonal entry estimates the
-curvature in that direction: unity for exponential transforms, a
-derivative-based magnitude for logit/probit transforms, and
+before reaching L-BFGS, each entry estimating the curvature in that
+direction: unity for exponential transforms, a derivative-based
+magnitude for logit/probit, and
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">max</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mo stretchy="false" form="prefix">|</mo><msub><mi>L</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub><mo stretchy="false" form="prefix">|</mo><mo>,</mo><mn>0.1</mn><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\max(|L_{jk}|, 0.1)</annotation></semantics></math>
-for off-diagonal Cholesky entries. Preconditioning reduces condition
-number and accelerates convergence when structural parameters and
-variance components differ by orders of magnitude.</p>
+off the Cholesky diagonal. This lowers the condition number and speeds
+convergence wherever structural parameters and variance components
+differ by orders of magnitude.</p>
 <hr>
 </div>
 </div>
@@ -738,10 +733,10 @@ variance components differ by orders of magnitude.</p>
 <h2 id="summary-of-improvements-over-admr">Summary of improvements over admr<a class="anchor" aria-label="anchor" href="#summary-of-improvements-over-admr"></a>
 </h2>
 <p>admr (van de Beek et al., 2025) established the core aggregate data
-workflow in R. admixr2 preserves the same three estimators (FO, MC,
-IRMC) and the same aggregate MVN likelihood — adding a fourth,
-deterministic Gauss-Hermite estimator — while replacing the surrounding
-architecture and several algorithmic components.</p>
+workflow in R. admixr2 keeps its three estimators (FO, MC, IRMC) and the
+same aggregate MVN likelihood, adds a fourth deterministic Gauss-Hermite
+estimator, and replaces the surrounding architecture and several
+algorithmic components.</p>
 <table class="table">
 <colgroup>
 <col width="34%">
@@ -824,27 +819,24 @@ off-diagonal encoding</td>
 </tr>
 </tbody>
 </table>
-<p>The gradient improvements are the most consequential. Moving from a
-gradient that requires
+<p>The gradient improvements are the most consequential. Going from
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>p</mi><mo>×</mo><mi>N</mi></mrow><annotation encoding="application/x-tex">p \times N</annotation></semantics></math>
-extra ODE solves per step (admr FD) to one that requires none (admixr2
-CRN) reduces wall-clock fitting time by one to two orders of magnitude
-for gradient-based algorithms on complex models. The analytical IRMC
-inner gradient compounds this saving: the inner optimisation converges
-in fewer iterations, each iteration is faster, and the linearized kappa
-option allows the entire inner loop to run without any ODE solver
-calls.</p>
+extra ODE solves per step (admr FD) to none (admixr2 CRN) cuts
+wall-clock fitting time by one to two orders of magnitude for
+gradient-based algorithms on complex models. The analytical IRMC inner
+gradient compounds it: the inner optimisation converges in fewer
+iterations, each iteration is faster, and linearized kappa lets the
+whole inner loop run without touching the ODE solver.</p>
 <hr>
 </div>
 <div class="section level2">
 <h2 id="further-reading">Further reading<a class="anchor" aria-label="anchor" href="#further-reading"></a>
 </h2>
-<p>The mathematical foundations are described in detail in the papers
-linked at the top of this post. The <a href="estimator-comparison.html">Estimator comparison</a> vignette shows
-worked examples on the included <code>examplomycin</code> dataset with
-all four estimators. The <a href="advanced.html">Advanced usage</a>
-vignette covers gradient modes, multi-restart fitting, and model
-comparison via AIC.</p>
+<p>The papers linked at the top give the mathematical foundations in
+full. <a href="estimator-comparison.html">Estimator comparison</a> works
+all four estimators through the included <code>examplomycin</code>
+dataset, and <a href="advanced.html">Advanced usage</a> covers gradient
+modes, multi-restart fitting and model comparison via AIC.</p>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

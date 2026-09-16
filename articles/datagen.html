@@ -107,32 +107,30 @@
 <div class="section level2">
 <h2 id="when-would-you-use-datagen">When would you use <code>datagen</code>?<a class="anchor" aria-label="anchor" href="#when-would-you-use-datagen"></a>
 </h2>
-<p>Two common situations call for generating aggregate data
+<p>Two situations call for generating aggregate data
 programmatically:</p>
-<p><strong>Simulation studies.</strong> You want to check that an
-estimator recovers the true parameters. Define a data-generating model
-with known parameters, call <code><a href="../reference/datagen.html">datagen()</a></code> to obtain E and V,
-fit your analysis model, and compare the estimates to the truth.</p>
-<p><strong>Using published models as an input.</strong> Each published
-study was analysed with its own structural PK model (possibly a
-different number of compartments, a different parameterisation, or only
-a subset of the IIV terms). <code><a href="../reference/datagen.html">datagen()</a></code> turns each such model
-into the aggregate data it implies, so a <em>previously published
-model</em> becomes a direct input to your analysis — one of admixr2’s
-two input types alongside digitised summary data. Feeding several of
-these into <code>admControl(studies = ...)</code> is a meta-analysis
-across the published literature (see
-<code><a href="../articles/multiple-studies.html">vignette("multiple-studies", package = "admixr2")</a></code>).</p>
-<p>In both cases the output is a named list of
-<code>(E, V, n, times, ev)</code> objects that plug directly into
+<p><strong>Simulation studies.</strong> To check that an estimator
+recovers the truth: define a data-generating model with known
+parameters, call <code><a href="../reference/datagen.html">datagen()</a></code> for E and V, fit your analysis
+model, compare.</p>
+<p><strong>Published models as input.</strong> Each published study was
+analysed with its own structural model — a different number of
+compartments, a different parameterisation, only some of the IIV terms.
+<code><a href="../reference/datagen.html">datagen()</a></code> turns such a model into the aggregate data it
+implies, making it a direct input alongside digitised summaries. Several
+of them in <code>admControl(studies = ...)</code> is a meta-analysis
+across the literature (see
+<code><a href="../articles/multiple-studies.html">vignette("multiple-studies")</a></code>).</p>
+<p>Either way the output is a named list of
+<code>(E, V, n, times, ev)</code> objects that plugs straight into
 <code>admControl(studies = ...)</code>.</p>
 </div>
 <div class="section level2">
 <h2 id="simulation-study-same-model-across-studies">Simulation study: same model across studies<a class="anchor" aria-label="anchor" href="#simulation-study-same-model-across-studies"></a>
 </h2>
-<p>Here we use a one-compartment oral model to generate two synthetic
-study datasets — a low-dose and a high-dose arm — then verify that
-<code>adfo</code> recovers the true structural parameters.</p>
+<p>A one-compartment oral model generates two synthetic studies — a
+low-dose and a high-dose arm — which the estimator should recover the
+truth from.</p>
 <div class="section level3">
 <h3 id="data-generating-model">Data-generating model<a class="anchor" aria-label="anchor" href="#data-generating-model"></a>
 </h3>
@@ -169,8 +167,8 @@ error SD = 0.2.</p>
 <div class="section level3">
 <h3 id="generating-the-data">Generating the data<a class="anchor" aria-label="anchor" href="#generating-the-data"></a>
 </h3>
-<p>Pass the model as the top-level default so all studies inherit it.
-Each study spec needs only <code>times</code>, <code>ev</code>, and
+<p>A top-level <code>model</code> is the default every study inherits,
+so each spec needs only <code>times</code>, <code>ev</code> and
 <code>n</code>:</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">times</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0.5</span>, <span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">4</span>, <span class="fl">8</span>, <span class="fl">12</span>, <span class="fl">24</span><span class="op">)</span></span>
@@ -191,9 +189,8 @@ Each study spec needs only <code>times</code>, <code>ev</code>, and
 <span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">study_data</span><span class="op">$</span><span class="va">low_dose</span><span class="op">$</span><span class="va">E</span>, <span class="fl">2</span><span class="op">)</span>   <span class="co"># population mean at each time</span></span>
 <span><span class="co">#&gt;  0.5    1    2    4    8   12   24 </span></span>
 <span><span class="co">#&gt; 1.75 2.38 2.27 1.18 0.24 0.06 0.00</span></span></code></pre></div>
-<p>The covariance matrix <code>V</code> captures both IIV-driven
-between-time correlation and the residual error contribution on the
-diagonal:</p>
+<p><code>V</code> carries the IIV-driven between-time correlation and,
+on the diagonal, the residual error:</p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu">knitr</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/knitr/man/kable.html" class="external-link">kable</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">study_data</span><span class="op">$</span><span class="va">low_dose</span><span class="op">$</span><span class="va">V</span>, <span class="fl">3</span><span class="op">)</span>,</span>
 <span>             caption <span class="op">=</span> <span class="st">"Generated covariance matrix V for the low-dose study"</span><span class="op">)</span></span></code></pre></div>
@@ -310,17 +307,16 @@ diagonal:</p>
 Generated population mean ± 1 SD for both dose levels.
 </p>
 </div>
-<p>The ribbon reflects the square root of the diagonal of V: IIV spread
-plus residual error. Off-diagonal entries (the within-subject
-correlation structure) are not shown but are passed to the estimator and
-used in the likelihood.</p>
+<p>The ribbon is the square root of the diagonal of V — IIV spread plus
+residual error. The off-diagonal within-subject correlation is not
+drawn, but it reaches the estimator and enters the likelihood.</p>
 </div>
 <div class="section level3">
 <h3 id="parameter-recovery">Parameter recovery<a class="anchor" aria-label="anchor" href="#parameter-recovery"></a>
 </h3>
-<p>The generated data plug directly into
-<code>admControl(studies = ...)</code>. The analysis model is the same
-structural model — this lets us verify estimator consistency:</p>
+<p>The generated data plug straight into
+<code>admControl(studies = ...)</code>. Using the same structural model
+for the analysis is what makes this a consistency check:</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">analysis_model</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span>
@@ -342,9 +338,9 @@ structural model — this lets us verify estimator consistency:</p>
 <span>    <span class="va">cp</span> <span class="op">~</span> <span class="fu">prop</span><span class="op">(</span><span class="va">prop.sd</span><span class="op">)</span></span>
 <span>  <span class="op">}</span><span class="op">)</span></span>
 <span><span class="op">}</span></span></code></pre></div>
-<p>Starting values are deliberately offset from the truth (CL start = 4
-vs true 5, V start = 12 vs true 10) to demonstrate that the estimator
-finds them regardless.</p>
+<p>The starting values are deliberately off the truth (CL 4 against 5, V
+12 against 10), so finding it is the estimator’s doing rather than the
+initialisation’s.</p>
 <div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>fit_sim <span class="ot">&lt;-</span> <span class="fu">nlmixr2</span>(</span>
 <span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a>  analysis_model, <span class="fu">admData</span>(), <span class="at">est =</span> <span class="st">"admc"</span>,</span>
 <span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a>  <span class="at">control =</span> <span class="fu">admControl</span>(</span>
@@ -362,7 +358,7 @@ finds them regardless.</p>
 <span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_sim<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a></span>
 <span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a>  optimize covariance other elapsed</span>
-<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">47.386</span>          <span class="dv">0</span>     <span class="dv">0</span>  <span class="fl">47.386</span></span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">40.558</span>      <span class="fl">0.001</span>     <span class="dv">0</span>  <span class="fl">40.559</span></span>
 <span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a></span>
 <span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_sim<span class="sc">$</span>parFixed or fit_sim<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a></span>
@@ -383,7 +379,7 @@ finds them regardless.</p>
 <span id="cb6-36"><a href="#cb6-36" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> <span class="sc">$</span>shrink </span>
 <span id="cb6-37"><a href="#cb6-37" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit_sim<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
 <span id="cb6-38"><a href="#cb6-38" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit_sim<span class="sc">$</span>message)<span class="sc">:</span>  </span>
-<span id="cb6-39"><a href="#cb6-39" tabindex="-1"></a>    NLOPT_XTOL_REACHED<span class="sc">:</span> Optimization stopped because xtol_rel or <span class="fu">xtol_abs</span> (above) was reached. </span></code></pre></div>
+<span id="cb6-39"><a href="#cb6-39" tabindex="-1"></a>    NLOPT_FAILURE<span class="sc">:</span> Generic failure code. </span></code></pre></div>
 <p>Structural parameter estimates and the truth:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">est</span>   <span class="op">&lt;-</span> <span class="va">fit_sim</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">struct</span></span>
@@ -426,11 +422,9 @@ finds them regardless.</p>
 <div class="section level2">
 <h2 id="literature-workflow-per-study-models">Literature workflow: per-study models<a class="anchor" aria-label="anchor" href="#literature-workflow-per-study-models"></a>
 </h2>
-<p>When digitising data from publications, each study comes with its own
-model. A 2016 paper may have used a one-compartment model; a 2022
-follow-up may have used two compartments. <code><a href="../reference/datagen.html">datagen()</a></code> accepts
-a <code>model</code> element inside each study spec that overrides the
-top-level default:</p>
+<p>Each publication comes with its own model — a 2016 paper with one
+compartment, a 2022 follow-up with two. A <code>model</code> inside a
+study spec overrides the top-level default:</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># One-compartment oral model (as published in a simpler earlier study)</span></span>
 <span><span class="va">model_1cmt</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
@@ -479,10 +473,10 @@ top-level default:</p>
 <span>    <span class="va">cp</span> <span class="op">~</span> <span class="fu">prop</span><span class="op">(</span><span class="va">prop.sd</span><span class="op">)</span></span>
 <span>  <span class="op">}</span><span class="op">)</span></span>
 <span><span class="op">}</span></span></code></pre></div>
-<p>Both studies share the same CL (5 L/h) but differ in how they
-describe distribution: the earlier study lumped peripheral distribution
-into a single larger apparent volume (V = 40 L), while the later study
-resolved the two compartments (V₁ = 10 L, V₂ = 30 L, Q = 10 L/h).</p>
+<p>Both share a CL of 5 L/h and differ only in how they describe
+distribution: the earlier study lumped the periphery into one larger
+apparent volume (V = 40 L), the later one resolved it (V₁ = 10 L, V₂ =
+30 L, Q = 10 L/h).</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">lit_data</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/datagen.html">datagen</a></span><span class="op">(</span></span>
 <span>  studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
@@ -501,9 +495,8 @@ resolved the two compartments (V₁ = 10 L, V₂ = 30 L, Q = 10 L/h).</p>
 <span>  <span class="op">)</span>,</span>
 <span>  control <span class="op">=</span> <span class="fu"><a href="../reference/datagenControl.html">datagenControl</a></span><span class="op">(</span>n_sim <span class="op">=</span> <span class="fl">10000L</span>, seed <span class="op">=</span> <span class="fl">2L</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
-<p>The two studies share the same drug (same CL) but have different E
-profiles because of the different dosing and distributional
-assumptions:</p>
+<p>Same drug, same CL, different E profiles — the dosing and the
+distributional assumptions differ:</p>
 <div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">df_lit</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/do.call.html" class="external-link">do.call</a></span><span class="op">(</span><span class="va">rbind</span>, <span class="fu"><a href="https://rdrr.io/r/base/lapply.html" class="external-link">lapply</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">lit_data</span><span class="op">)</span>, <span class="kw">function</span><span class="op">(</span><span class="va">nm</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="va">s</span>  <span class="op">&lt;-</span> <span class="va">lit_data</span><span class="op">[[</span><span class="va">nm</span><span class="op">]</span><span class="op">]</span></span>
@@ -532,8 +525,8 @@ structural models.
 <h3 id="fitting-an-analysis-model-to-literature-data">Fitting an analysis model to literature data<a class="anchor" aria-label="anchor" href="#fitting-an-analysis-model-to-literature-data"></a>
 </h3>
 <p>The data-generating models encode each publication’s assumptions; the
-analysis model represents your unified structural hypothesis. Here we
-fit the two-compartment oral model to both studies jointly:</p>
+analysis model is your unified structural hypothesis, fitted to both
+studies at once:</p>
 <div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">lit_analysis</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span>
@@ -569,23 +562,21 @@ fit the two-compartment oral model to both studies jointly:</p>
 <span>    seed      <span class="op">=</span> <span class="fl">3L</span></span>
 <span>  <span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
-<p>Because the two studies used genuinely different structural models,
-the analysis model will find parameter values that minimise the joint
-discrepancy between its predictions and both studies’ aggregate data — a
-weighted compromise across the two parameterisations. This is expected
-behaviour: aggregate-data modelling accepts that each study was
-published under a different structural assumption and seeks a unified
-set of parameters that is consistent with all of them.</p>
+<p>Because the two used genuinely different structural models, the
+analysis model lands on a weighted compromise between the two
+parameterisations, minimising the joint discrepancy rather than matching
+either exactly. That is the point: aggregate-data modelling takes each
+study as published and looks for one set of parameters consistent with
+all of them.</p>
 </div>
 </div>
 <div class="section level2">
 <h2 id="examining-individual-simulated-samples">Examining individual simulated samples<a class="anchor" aria-label="anchor" href="#examining-individual-simulated-samples"></a>
 </h2>
-<p>Set <code>return_samples = TRUE</code> in
-<code><a href="../reference/datagenControl.html">datagenControl()</a></code> to include the raw
-<code>n_sim × n_times</code> prediction matrix in each study’s output.
-This is useful for inspecting the shape of the simulated distribution or
-for constructing custom summaries:</p>
+<p><code>return_samples = TRUE</code> adds the raw
+<code>n_sim × n_times</code> prediction matrix to each study’s output —
+useful for inspecting the shape of the simulated distribution, or for
+custom summaries:</p>
 <div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">study_with_samples</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/datagen.html">datagen</a></span><span class="op">(</span></span>
 <span>  studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
@@ -617,20 +608,18 @@ First 200 individual simulated trajectories (grey) with the population
 mean (blue).
 </p>
 </div>
-<p>The blue line is the population mean E; the grey spaghetti shows the
-IIV spread. Note that <code>samples</code> contains concentrations
-<strong>before</strong> residual error is added; the diagonal of V
-additionally carries the residual error variance.</p>
+<p>Blue is the population mean E, the grey spaghetti the IIV spread.
+<code>samples</code> holds concentrations <strong>before</strong>
+residual error; only the diagonal of V carries that.</p>
 </div>
 <div class="section level2">
 <h2 id="first-order-moments-for-design-evaluation">First-Order moments for design evaluation<a class="anchor" aria-label="anchor" href="#first-order-moments-for-design-evaluation"></a>
 </h2>
-<p>By default <code><a href="../reference/datagen.html">datagen()</a></code> integrates over the IIV
-distribution by Monte Carlo, the same engine as
-<code>est = "admc"</code>. For design evaluation and optimal-design work
-it is often preferable to generate <code>E</code> and <code>V</code>
-from the deterministic First-Order expansion instead, which is what
-<code>est = "adfo"</code> uses:</p>
+<p><code><a href="../reference/datagen.html">datagen()</a></code> integrates over the IIV by Monte Carlo, the
+same engine as <code>est = "admc"</code>. For design evaluation the
+deterministic First-Order expansion — what <code>est = "adfo"</code>
+uses — is often the better source of <code>E</code> and
+<code>V</code>:</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>E</mi><mo>=</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mn>0</mn><mo stretchy="false" form="postfix">)</mo><mo>,</mo><mspace width="2.0em"></mspace><mi>V</mi><mo>=</mo><mi>J</mi><mspace width="0.167em"></mspace><mi mathvariant="normal">Ω</mi><mspace width="0.167em"></mspace><msup><mi>J</mi><mi>⊤</mi></msup><mo>+</mo><mi mathvariant="normal">Σ</mi><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>J</mi><mrow><mi>t</mi><mi>j</mi></mrow></msub><mo>=</mo><msub><mrow><mfrac><mrow><mi>∂</mi><msub><mi>f</mi><mi>t</mi></msub></mrow><mrow><mi>∂</mi><msub><mi>η</mi><mi>j</mi></msub></mrow></mfrac><mo stretchy="true" form="postfix">|</mo></mrow><mrow><mi>η</mi><mo>=</mo><mn>0</mn></mrow></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
 E = f(\theta, 0), \qquad V = J\,\Omega\,J^\top + \Sigma, \qquad
 J_{tj} = \left.\frac{\partial f_t}{\partial \eta_j}\right|_{\eta = 0}.
@@ -649,27 +638,24 @@ J_{tj} = \left.\frac{\partial f_t}{\partial \eta_j}\right|_{\eta = 0}.
 <span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">fo_data</span><span class="op">$</span><span class="va">single_study</span><span class="op">$</span><span class="va">E</span>, <span class="fl">3</span><span class="op">)</span></span>
 <span><span class="co">#&gt;   0.5     1     2     4     8    12    24 </span></span>
 <span><span class="co">#&gt; 3.445 4.773 4.651 2.340 0.360 0.049 0.000</span></span></code></pre></div>
-<p>There are two reasons to prefer FO here. First, the moments are
-deterministic and fast — no <code>n_sim</code>, <code>sampling</code> or
-<code>seed</code> (those arguments are ignored), so the result is
-exactly reproducible. Second, and more importantly, it keeps the
-data-generating and data-analytic models identical: when you
-subsequently take the Hessian of the FO log-likelihood at the generating
-parameters (the expected information matrix), it is evaluated at a
-genuine maximum. If you generate with Monte Carlo and then analyse under
-FO, the generating parameters are not in general an FO maximum
-likelihood estimate of those data, and the resulting FIM is biased. So
-for FIM / optimal-design calculations, generate and analyse with the
-same FO approximation.</p>
+<p>Two reasons. The moments are deterministic and fast —
+<code>n_sim</code>, <code>sampling</code> and <code>seed</code> are
+ignored — so the result is exactly reproducible. More importantly, it
+keeps the data-generating and data-analytic models identical: the
+Hessian of the FO log-likelihood at the generating parameters, the
+expected information matrix, is then evaluated at a genuine maximum.
+Generate with Monte Carlo and analyse under FO and those parameters are
+not in general an FO maximum likelihood estimate, so the FIM is biased.
+For FIM and optimal-design work, generate and analyse under the same
+approximation.</p>
 </div>
 <div class="section level2">
 <h2 id="gauss-hermite-moments-for-design-evaluation-with-adgh">Gauss-Hermite moments for design evaluation with adgh<a class="anchor" aria-label="anchor" href="#gauss-hermite-moments-for-design-evaluation-with-adgh"></a>
 </h2>
-<p><code>method = "fo"</code> matches <code>est = "adfo"</code> but
-inherits FO’s bias for nonlinear models or large IIV. The GH method
-provides a deterministic, noise-free alternative that is
-<strong>unbiased at any IIV magnitude</strong> and matches the moments
-computed by <code>est = "adgh"</code>:</p>
+<p><code>method = "fo"</code> matches <code>est = "adfo"</code>, bias
+and all, for nonlinear models or large IIV. GH is the deterministic,
+noise-free alternative that is <strong>unbiased at any IIV</strong> and
+matches the moments <code>est = "adgh"</code> computes:</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>E</mi><mo>=</mo><munderover><mo>∑</mo><mrow><mi>q</mi><mo>=</mo><mn>1</mn></mrow><mi>Q</mi></munderover><msub><mi>w</mi><mi>q</mi></msub><mspace width="0.167em"></mspace><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><msub><mi>η</mi><mi>q</mi></msub><mo stretchy="false" form="postfix">)</mo><mo>,</mo><mspace width="2.0em"></mspace><mi>V</mi><mo>=</mo><munderover><mo>∑</mo><mrow><mi>q</mi><mo>=</mo><mn>1</mn></mrow><mi>Q</mi></munderover><msub><mi>w</mi><mi>q</mi></msub><mspace width="0.167em"></mspace><mo stretchy="false" form="prefix">(</mo><msub><mi>f</mi><mi>q</mi></msub><mo>−</mo><mi>E</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="prefix">(</mo><msub><mi>f</mi><mi>q</mi></msub><mo>−</mo><mi>E</mi><msup><mo stretchy="false" form="postfix">)</mo><mi>⊤</mi></msup><mo>+</mo><mi mathvariant="normal">Σ</mi></mrow><annotation encoding="application/x-tex">
 E = \sum_{q=1}^Q w_q\,f(\theta, \eta_q), \qquad
 V = \sum_{q=1}^Q w_q\,(f_q - E)(f_q - E)^\top + \Sigma
@@ -678,13 +664,12 @@ V = \sum_{q=1}^Q w_q\,(f_q - E)(f_q - E)^\top + \Sigma
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>η</mi><mi>q</mi></msub><mo>,</mo><msub><mi>w</mi><mi>q</mi></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(\eta_q, w_q)</annotation></semantics></math>
 are the
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Q</mi><mo>=</mo><msup><mi>m</mi><msub><mi>n</mi><mi>η</mi></msub></msup></mrow><annotation encoding="application/x-tex">Q = m^{n_\eta}</annotation></semantics></math>
-tensor-product Gauss-Hermite nodes and weights (Cholesky-scaled to the
+tensor-product Gauss-Hermite nodes and weights, Cholesky-scaled to the
 current
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Ω</mi><annotation encoding="application/x-tex">\Omega</annotation></semantics></math>).
-Like <code>method = "fo"</code> the result is exact and reproducible —
-no stochastic sampling. Use <code>method = "gh"</code> together with
-<code>est = "adgh"</code> for design evaluation and optimal-design work
-when FO bias would be non-negligible:</p>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Ω</mi><annotation encoding="application/x-tex">\Omega</annotation></semantics></math>.
+Like <code>"fo"</code> it is exact and reproducible, with no stochastic
+sampling. Pair <code>method = "gh"</code> with <code>est = "adgh"</code>
+for design work wherever FO bias would not be negligible:</p>
 <div class="sourceCode" id="cb14"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">gh_data</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/datagen.html">datagen</a></span><span class="op">(</span></span>
 <span>  studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
@@ -697,16 +682,14 @@ when FO bias would be non-negligible:</p>
 <span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">gh_data</span><span class="op">$</span><span class="va">single_study</span><span class="op">$</span><span class="va">E</span>, <span class="fl">3</span><span class="op">)</span></span>
 <span><span class="co">#&gt;   0.5     1     2     4     8    12    24 </span></span>
 <span><span class="co">#&gt; 3.495 4.753 4.549 2.365 0.485 0.113 0.003</span></span></code></pre></div>
-<p>The MC, FO and GH means should agree closely when IIV is moderate and
-the model is nearly linear in
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>η</mi><annotation encoding="application/x-tex">\eta</annotation></semantics></math>.
-GH and FO diverge from MC as IIV grows — GH tracks MC more accurately
-because it does not linearise
+<p>MC, FO and GH agree closely at moderate IIV on a model near-linear in
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>η</mi><annotation encoding="application/x-tex">\eta</annotation></semantics></math>,
+and separate as IIV grows — GH tracking MC the more accurately of the
+two, since it does not linearise
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>.
-The number of nodes <code>n_nodes</code> (per eta dimension) trades
-accuracy against computational cost: <code>n_nodes = 3</code> is fast;
-<code>n_nodes = 5</code> (default) achieves near-exact moments for IIV
-SD up to ~0.5; <code>n_nodes = 7</code> extends coverage to SD ~0.7.</p>
+<code>n_nodes</code> (per eta dimension) trades accuracy against cost: 3
+is fast, 5 (the default) is near-exact to IIV SD ~0.5, and 7 reaches
+~0.7.</p>
 </div>
 <div class="section level2">
 <h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a>

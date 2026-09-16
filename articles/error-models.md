@@ -3,17 +3,17 @@
 ## The question
 
 Your model ends with `cp ~ prop(res.sd)`, as in an individual-level fit.
-The input is not individual data, though. It is a mean and an error bar
-per time point, digitised from a published figure or implied by a
-published model you supplied through
-[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-— and usually several studies of them at once.
+The input is not individual data, though: it is a mean and an error bar
+per time point, digitised from a figure or implied by a published model
+through
+[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md),
+and usually several studies at once.
 
-Each error bar holds two things the fit has to tell apart: subjects
-genuinely **differ** from one another, and each reported value carries
-variability the structural model does not explain. Your residual model
-is the claim about how to split them, and that split decides what goes
-to `omega` and what to the residual.
+Each error bar holds two things the fit has to tell apart — subjects
+genuinely **differ**, and each reported value carries variability the
+structural model does not explain. Your residual model is the claim
+about how to split them, and that split decides what goes to `omega` and
+what to the residual.
 
 ``` r
 
@@ -25,16 +25,15 @@ library(ggplot2)
 
 ## How residual error lives in aggregate data
 
-An error bar in a published figure is one number covering two sources of
-spread: subjects differ from one another, and each reported value
-carries variability the structural model does not explain. Only the
-second is your residual model’s job.
+A published error bar is one number covering both sources of spread, and
+only the second — the variability the structural model does not explain
+— is your residual model’s job.
 
-Everything below uses one model and one study.
+Everything below uses one model and one study, with
 [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-stands in for a digitised summary here so that the true values are
-known; a real analysis would read `E`, `V` and `n` off the paper — see
-[From a published figure to E, V and
+standing in for a digitised summary so the true values are known. A real
+analysis would read `E`, `V` and `n` off the paper; see [From a
+published figure to E, V and
 n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md).
 
 ``` r
@@ -64,8 +63,8 @@ gen <- datagen(
 ```
 
 Simulating the individual data behind such a summary — 20 000 subjects,
-each observed 25 times so that the two sources can be separated — shows
-how the two parts sit inside the error bar:
+each observed 25 times, so the two sources can be separated — shows how
+they sit inside the error bar:
 
 ![The light band is the whole error bar; the dark band is how much of it
 residual error alone would produce. The dark band is drawn inside the
@@ -78,10 +77,10 @@ residual error alone would produce. The dark band is drawn inside the
 light one, not stacked on it: the total SD is sqrt(var_between +
 var_resid), not the sum of the two SDs.
 
-The residual’s share of the error bar is not constant: it dominates
-early and is almost invisible by 24 h. That changing share is the shape
-information a fit uses to tell the two apart, which is why the residual
-model you name matters and why a wrong one has somewhere to hide.
+The residual’s share is not constant: it dominates early and is almost
+invisible by 24 h. That changing share is the shape information a fit
+uses to tell the two apart — which is why the residual model you name
+matters, and why a wrong one has somewhere to hide.
 
 ## What a wrong residual model does to a fit
 
@@ -132,15 +131,15 @@ residual SD is in mg/L and is not comparable to the proportional one.
 {.table}
 
 The proportional fit recovers all five generating values. The additive
-fit leaves clearance and volume within a few percent, which is the
-dangerous part, since CL and V are usually the first numbers anyone
-checks. Meanwhile the IIV on volume comes back 63% too large: the
-variance the residual failed to account for has to go somewhere, and a
-trial sized from that fit would simulate the wrong spread.
+fit leaves clearance and volume within a few percent — the dangerous
+part, CL and V being the first numbers anyone checks — while the IIV on
+volume comes back 63% too large. The variance the residual failed to
+account for has to go somewhere, and a trial sized from that fit would
+simulate the wrong spread.
 
-The objective moves 1538 points, so comparing the two fits catches it.
-The covariance panel shows the same thing without needing a second fit
-to compare against:
+The objective moves 1538 points, so comparing the two catches it. The
+covariance panel shows the same thing without needing a second fit at
+all:
 
 ``` r
 
@@ -161,21 +160,19 @@ Here the diagonal is starred early and late in opposite directions: one
 constant variance spread over the whole profile, too small where
 concentrations are high and too large where they have decayed. That
 opposite-sign pattern is the signature of an additive model on
-proportional data, and the fix is to refit with `prop()` or
-`add() + prop()`.
+proportional data; refit with `prop()` or `add() + prop()`.
 
 This panel is the aggregate-data replacement for a residual-vs-predicted
-plot; see [Diagnostic
+plot — see [Diagnostic
 plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md).
 
 ## What you can write
 
-You write the error model in ordinary nlmixr2 syntax; admixr2 adds
-nothing to the language. The estimator is the constraint: **`adirmc`
-supports the closed-form continuous models only**, because it computes
-its mean by importance-reweighting samples inside a single compiled
-routine that knows only those variance forms. `admc`, `adfo` and `adgh`
-support all of it.
+Ordinary nlmixr2 syntax; admixr2 adds nothing to the language. The
+estimator is the constraint: **`adirmc` supports the closed-form
+continuous models only**, computing its mean by importance-reweighting
+samples inside one compiled routine that knows just those variance
+forms. `admc`, `adfo` and `adgh` support all of it.
 
 | Written as | Estimators | Notes |
 |----|----|----|
@@ -207,17 +204,17 @@ compartments](https://leidenpharmacology.github.io/admixr2/articles/multi-compar
 
 `nu` and `rho` are the two parameters aggregate data does not identify,
 and they fail differently. `nu` enters only through the variance
-multiplier, so it is aliased with the scale: admixr2 warns and returns
-your starting value, which is why you should fix it. `rho` lives in the
-off-diagonal, so a diagonal `V` carries no information about it at all,
-and that is a hard error rather than a warning.
+multiplier, so it is aliased with the scale — admixr2 warns and hands
+back your starting value, which is why you should fix it. `rho` lives in
+the off-diagonal, where a diagonal `V` carries no information at all, so
+that is a hard error.
 
 Anything else is refused: `lnorm` mixed with `prop`/`pow`/`ar`/`t`, `ar`
 with a prediction-dependent variance or a transform,
 [`t()`](https://rdrr.io/r/base/t.html) with no scale term, `cauchy()`,
-and the distributions with no admixr2 implementation. In each case the
-combination has no single well-defined aggregate mean and variance, so
-admixr2 refuses rather than fitting something else:
+and the distributions admixr2 does not implement. Each has no single
+well-defined aggregate mean and variance, so it is refused rather than
+quietly fitted as something else:
 
 ``` r
 
@@ -255,57 +252,53 @@ nlmixr2(bad, admData(), est = "adgh", control = adghControl(studies = gen))
 
 ## Setting `resid_nodes` on a transformed endpoint
 
-Writing `cp ~ boxCox(lambda) + add(a)` says the residual is normal on
-the **transformed** scale, not in mg/L. But the study you are fitting
-reports its mean and SD in mg/L. So admixr2 has to answer a question
-that never comes up in an individual-level fit: if the residual is
-normal after transformation, what are the mean and variance back on the
-original scale?
+`cp ~ boxCox(lambda) + add(a)` says the residual is normal on the
+**transformed** scale, not in mg/L — while the study reports its mean
+and SD in mg/L. So admixr2 has to answer a question that never comes up
+in an individual-level fit: if the residual is normal after
+transformation, what are the mean and variance back on the original
+scale?
 
-For `add()` and `prop()` that back-transformation has a formula. For
-`boxCox`, `yeoJohnson`, `logitNorm` and `probitNorm` it does not.
-Because the transform bends the residual, the mean of the
-back-transformed values is not the back-transform of the mean, and there
-is no closed form for either moment.
+For `add()` and `prop()` there is a formula. For `boxCox`, `yeoJohnson`,
+`logitNorm` and `probitNorm` there is not: the transform bends the
+residual, so the mean of the back-transformed values is not the
+back-transform of the mean, and neither moment has a closed form.
 
-admixr2 integrates over the residual instead. This is the same machinery
-as the Gaussian quadrature used to integrate over the **etas** in a
-mixed-effects likelihood — nlmixr2’s `agq`, or `nAGQ` in `lme4` — aimed
-at a different integral: over the residual at one observation, rather
-than over a subject’s random effects.
+admixr2 integrates over the residual instead — the same machinery as the
+Gaussian quadrature that integrates over the **etas** in a mixed-effects
+likelihood (nlmixr2’s `agq`, `lme4`’s `nAGQ`), aimed at a different
+integral: over the residual at one observation rather than over a
+subject’s random effects.
 
-Concretely: rather than one prediction, the endpoint is evaluated at
-`resid_nodes` different residual values, each weighted by how probable
-it is under the normal, and the results averaged. Two things separate
-this from simulating residuals.
+Concretely, the endpoint is evaluated at `resid_nodes` different
+residual values, each weighted by its probability under the normal, and
+averaged. Two things separate this from simulating residuals.
 
 **The values are chosen, not drawn.** Gauss-Hermite places `n` points so
-that the weighted average is exact whenever the quantity being averaged
-behaves like a polynomial of degree `2n - 1` or less. A few well-placed
-points therefore do the work of a great many random draws. They sit
-symmetrically about zero and reach out to about `±sqrt(2n)` residual
-SDs, so a higher count both resolves the middle and reaches further into
-the tails.
+the weighted average is exact whenever the averaged quantity behaves
+like a polynomial of degree `2n - 1` or less, so a few well-placed
+points do the work of a great many random draws. They sit symmetrically
+about zero and reach to about `±sqrt(2n)` residual SDs, so a higher
+count resolves the middle and reaches further into the tails at once.
 
 **The grid never moves.** The same points at every likelihood
-evaluation, so the objective is smooth and its gradient usable. Drawing
-fresh residuals would add Monte Carlo noise to every evaluation, which
-the optimiser would have to work through.
+evaluation, so the objective is smooth and its gradient usable. Fresh
+residuals would add Monte Carlo noise to every evaluation for the
+optimiser to work through.
 
 How many nodes you need depends on how curved the back-transformation is
-over the range the residual explores. A residual that is narrow on the
+over the range the residual explores. A residual narrow on the
 transformed scale stays where that curve is nearly straight, and a
 handful of nodes covers it.
 
 The demanding case is a wide residual on a **bounded** endpoint —
 `logitNorm` or `probitNorm` on a score with a floor and a ceiling —
-because the back-transform flattens against both bounds. For a
-logit-normal endpoint with an SD of 2 on the transformed scale, 7 nodes
-puts the 24 h variance 7% low and 15 nodes 0.6% low; 31 is converged. A
-more typical residual width converges by about 15. The default of 81
-covers the awkward cases with room to spare, at a cost invisible next to
-the ODE solve. Lower it only if profiling shows the quadrature is your
-bottleneck, and check that the objective does not move when you do.
+where the back-transform flattens against both bounds. At an SD of 2 on
+the transformed scale, 7 nodes puts the 24 h variance 7% low and 15
+nodes 0.6% low; 31 is converged. A more typical width converges by about
+15. The default of 81 covers the awkward cases with room to spare, at a
+cost invisible beside the ODE solve. Lower it only if profiling says the
+quadrature is your bottleneck, and check the objective does not move.
 
 `resid_nodes` is on all four estimator controls and on
 [`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md),
@@ -315,66 +308,64 @@ residual the same way unless you change one of them.
 ## How to choose
 
 There is no residual plot to look at. The choice comes from the
-published error bars, from what the source papers already report, and
-from the diagnostics above.
+published error bars, from what the source papers report, and from the
+diagnostics above.
 
 - **Read the error bars.** Widening roughly in proportion to the mean
-  points to `prop()`; roughly constant width across the profile points
-  to `add()`; wide at the top *and* not shrinking to nothing at the
-  bottom points to `add() + prop()`.
+  points to `prop()`; constant width across the profile to `add()`; wide
+  at the top *and* not shrinking to nothing at the bottom to
+  `add() + prop()`.
 
-- **Take the residual from the source where one is reported.** A study
-  that published its own population model has already estimated a
-  residual error model from the individual data you do not have — better
-  information than an aggregate fit can recover. Supply that model to
+- **Take the residual from the source that reports one.** A study
+  publishing its own population model has already estimated a residual
+  from the individual data you do not have — better information than an
+  aggregate fit can recover. Supply that model to
   [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  and it comes along with it, or carry it across by fixing yours to the
-  same value:
+  and it comes along, or fix yours to the same value:
 
   ``` r
 
   ini({ res.sd <- fix(0.15) })   # residual error reported by the source study
   ```
 
-- **Ask whether one residual across studies is credible.** Studies run
-  in different laboratories, on different assays, years apart will not
-  share a residual magnitude. A single pooled residual is an assumption,
-  not a default. If one study’s error bars are much wider relative to
-  its means than the rest, give that study’s endpoint its own residual
-  rather than letting it set the value for every study.
+- **Ask whether one residual across studies is credible.** Different
+  laboratories, different assays, years apart — they will not share a
+  residual magnitude. A single pooled residual is an assumption, not a
+  default. Where one study’s error bars are much wider relative to its
+  means, give that endpoint its own residual rather than letting it set
+  the value for everyone.
 
 - **Bounded endpoints belong on a transformed scale.** A score with a
-  floor and a ceiling should use `logitNorm()` or `probitNorm()`, not
+  floor and a ceiling wants `logitNorm()` or `probitNorm()`, not
   `add()`, which will happily predict outside the range without warning.
 
-- **Then check.** Fit the candidates, compare objectives, and read the
+- **Then check.** Fit the candidates, compare objectives, read the
   covariance panel. A residual model that fits leaves no structure in
   the standardised residual.
 
 **The residual and the IIV are separated only by their different
-time-course.** This is the constraint behind everything above. Where the
+time-course.** That is the constraint behind everything above. Where the
 two have a similar shape — a proportional residual against IIV on a
-parameter that scales the whole profile — they trade off, and the split
+parameter that scales the whole profile — they trade off and the split
 is weakly determined. The worked example is that failure in miniature:
 the misspecified residual put its missing variance straight into
 `omega.v`.
 
-This is also an argument for the thing admixr2 is for. One study with
-few time points barely identifies the split. Several studies at
-different doses and sampling schedules constrain it from more directions
-at once, which is why a meta-analysis across studies is better posed
-here than a reanalysis of any one of them.
+It is also an argument for what admixr2 is for. One study with few time
+points barely identifies the split; several at different doses and
+schedules constrain it from more directions at once, which is why a
+meta-analysis is better posed here than a reanalysis of any single
+study.
 
 ## How the residual enters the covariance
 
-This is the one place where admixr2 changed behaviour in the current
-release, and the change moves results for most models, so it is worth
-being precise about.
+This is the one place admixr2 changed behaviour in the current release,
+and the change moves results for most models, so it is worth being
+precise about.
 
-Both the old and the new rule start from the same structural covariance
-`Cov(f)` — the spread caused by subjects differing from one another —
-and then account for the residual on top of it. They differ in **what
-they add**.
+Old and new start from the same structural covariance `Cov(f)` — the
+spread from subjects differing — and account for the residual on top.
+They differ in **what they add**.
 
 **Up to version 0.3.0**, the residual variance was worked out once, at
 the population mean prediction, and added to the diagonal:
@@ -384,9 +375,9 @@ V \;=\; \mathrm{Cov}(f) \;+\; \mathrm{diag}\big(\Sigma(\bar f)\big),
 \qquad \text{proportional: } \Sigma(\bar f) \;=\; b^2\,\bar f^{\,2}
 ```
 
-This is the “no eta-eps interaction” convention, familiar from
+That is the “no eta-eps interaction” convention, familiar from
 individual-level fitting, where each observation has its own prediction
-and the question does not arise.
+and the question never arises.
 
 **From this release**, the residual variance is averaged over subjects —
 the law of total variance:
@@ -399,9 +390,9 @@ V \;=\; \mathrm{Cov}(f) \;+\;
 ```
 
 The two differ by exactly `b^2 Var(f)`. A subject’s residual scales with
-**that subject’s** prediction, not with the population mean, and the
-average of a square exceeds the square of the average by the
-between-subject variance. The old rule drops that term.
+**that subject’s** prediction, not the population mean, and the average
+of a square exceeds the square of the average by the between-subject
+variance. The old rule drops that term.
 
 | error model | up to 0.3.0 added | now adds |
 |----|----|----|
@@ -410,9 +401,8 @@ between-subject variance. The old rule drops that term.
 | `pow(b, c)` | `b²·mean^(2c)` | `b²·E[f^(2c)]` |
 | `lnorm(a)` | the diagonal only | the diagonal, **and** the off-diagonals scaled by `exp(s)` |
 
-`lnorm()` is the one that is not only a diagonal correction: its
-conditional mean is `f·exp(s/2)`, so the whole covariance is scaled, not
-just its diagonal.
+`lnorm()` is the one that is not merely a diagonal correction: its
+conditional mean is `f·exp(s/2)`, so the whole covariance is scaled.
 
 Against the simulated subjects from earlier, where the residual’s true
 contribution is known:
@@ -432,34 +422,33 @@ the residual by 24 h, where they differ from one another by more than
 the mean itself.
 
 **What this means for results you already have.** Purely additive models
-are unaffected, bit for bit — `a²` does not depend on the prediction, so
+are unaffected, bit for bit: `a²` does not depend on the prediction, so
 there is nothing to average. Every `prop()`, `pow()` and `lnorm()` fit
-changes. Checked against individual-level simulation, the old rule
-carried a fixed 15-20% bias in the predicted variance that did not
-shrink as the study grew; in a proportional model with 30-50% IIV the
-reported residual SD and omega were each biased upward by roughly 2-4%,
-and for `lnorm()` the effect is larger. A refit will not reproduce the
-numbers a 0.3.0 fit gave you, and the new ones are the correct
-comparison to a residual estimated from individual data.
+changes. Against individual-level simulation the old rule carried a
+fixed 15-20% bias in the predicted variance that did not shrink as the
+study grew; in a proportional model with 30-50% IIV the reported
+residual SD and omega were each biased upward by roughly 2-4%, and
+`lnorm()` more. A refit will not reproduce a 0.3.0 fit’s numbers, and
+the new ones are the right comparison to a residual estimated from
+individual data.
 
 ## Two caveats
 
 - **Point estimates are recovered; the reported uncertainty is
-  approximate.** The covariance term of the objective treats your
-  observed `V` as coming from normally distributed subjects. That holds
-  for `add`/`prop`/`pow`/`lnorm`, and is an approximation for a
-  heavy-tailed or bounded per-subject residual (small-`nu` `t`, counts,
-  `beta`). State it when reporting SEs or intervals from those.
+  approximate.** The objective’s covariance term treats your observed
+  `V` as coming from normally distributed subjects. That holds for
+  `add`/`prop`/`pow`/`lnorm` and approximates a heavy-tailed or bounded
+  per-subject residual (small-`nu` `t`, counts, `beta`). Say so when
+  reporting SEs or intervals from those.
 - **New since 0.3.0.** That release supported `add`, `prop`, `pow`, both
-  combined forms and `lnorm`; everything else above was refused. This
-  release adds `t(nu)`, the four transformed endpoints, the discrete
-  endpoints and ordinal, [`beta()`](https://rdrr.io/r/base/Special.html)
-  under `admc`/`adgh`, `ar(rho)` with `add()`, and `resid_nodes`. It
-  also changes how the residual is composed into the covariance, so
-  `prop()`, `pow()` and `lnorm()` results move — see the section above.
-  If you have results from a version that accepted a now-refused model
-  with only a warning — `pow()` above all — treat them as suspect: they
-  were fitted as **additive** error.
+  combined forms and `lnorm`, refusing everything else above. This one
+  adds `t(nu)`, the four transformed endpoints, the discrete endpoints
+  and ordinal, [`beta()`](https://rdrr.io/r/base/Special.html) under
+  `admc`/`adgh`, `ar(rho)` with `add()`, and `resid_nodes` — and changes
+  how the residual composes into the covariance, so `prop()`, `pow()`
+  and `lnorm()` results move. If you have results from a version that
+  accepted a now-refused model with only a warning — `pow()` above all —
+  treat them as suspect: they were fitted as **additive** error.
 
 ## See also
 

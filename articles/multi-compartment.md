@@ -3,15 +3,14 @@
 ## The problem
 
 You are developing a CNS drug and you want one number: **how much of it
-reaches the brain?** You don’t have patient-level data. What you *do*
-have is a published paper with two figures — a **plasma** and a
-**brain** concentration–time curve, each drawn as a mean with error
-bars. You digitise them into a mean and an SD at every sampling time.
+reaches the brain?** There is no patient-level data, only a published
+paper with two figures — a **plasma** and a **brain** concentration–time
+curve, each a mean with error bars, which you digitise into a mean and
+an SD per sampling time.
 
-That aggregate summary is exactly what admixr2 is built for. It fits a
-population PK model *directly* to means-and-covariances, so a digitised
-figure becomes a fittable dataset — no individual records required. This
-vignette builds the analysis in two steps:
+That summary is what admixr2 is built for: it fits a population PK model
+directly to means and covariances, so a digitised figure is a fittable
+dataset. Two steps:
 
 1.  **Plasma only** — the ordinary single-output workflow, to set the
     scene.
@@ -30,11 +29,11 @@ ev <- rxode2::et(amt = 100, cmt = "central")   # single 100-unit dose, shared th
 
 ## Step 1 — Plasma only
 
-Start where every PK analysis starts: the plasma curve. In admixr2 a
-**study** is the digitised summary bundled with its design — the mean
-vector `E`, its variance `V` (here `SD^2`, read as a diagonal
-covariance, exactly what error bars give you), the sample size `n`, the
-sampling `times`, and the dosing `ev`.
+Start where every PK analysis starts: the plasma curve. A **study** is
+the digitised summary bundled with its design — the mean vector `E`, its
+variance `V` (here `SD^2`, read as a diagonal covariance, which is all
+error bars give you), the sample size `n`, the sampling `times` and the
+dosing `ev`.
 
 ``` r
 
@@ -48,9 +47,8 @@ plasma_study <- list(
 )
 ```
 
-The model is an ordinary two-compartment PK model with one observed
-output, `cp`. Fitting is a single call to `nlmixr2()` with
-`est = "adgh"`, admixr2’s Gauss–Hermite estimator:
+An ordinary two-compartment model with one observed output, `cp`, fitted
+in one call to `nlmixr2()` with admixr2’s Gauss–Hermite estimator:
 
 ``` r
 pk_plasma <- function() {
@@ -81,7 +79,7 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.637      0.202     0   0.839 4.743
+elapsed    0.413      0.136     0   0.549 3.583
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
@@ -111,11 +109,10 @@ prop.cp
     NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. 
 ```
 
-This is a perfectly good plasma model — but look at what it *cannot*
-answer. Its `periph` compartment is a mathematical distribution store:
-we never measured it, and nothing connects it to the brain. To quantify
-brain exposure we need brain data **and** a model with a real brain
-compartment.
+A perfectly good plasma model — and look at what it cannot answer.
+`periph` is a mathematical distribution store: never measured, and
+connected to the brain by nothing. Brain exposure needs brain data
+**and** a real brain compartment.
 
 ## Step 2 — Add the brain
 
@@ -128,18 +125,18 @@ brain_mean  <- c(3.004, 3.394, 3.018, 2.157, 1.551)
 brain_sd    <- c(0.353, 0.349, 0.309, 0.369, 0.405)
 ```
 
-Now swap the anonymous peripheral compartment for a **mechanistic brain
-compartment**. Drug moves plasma → brain with influx clearance `qin` and
-back brain → plasma with efflux clearance `qout`. The steady-state
-brain:plasma ratio is the quantity we want:
+Swap the anonymous peripheral compartment for a **mechanistic brain
+compartment**: drug moves plasma → brain with influx clearance `qin` and
+back with efflux clearance `qout`. The steady-state brain:plasma ratio
+is what we are after:
 
 ``` math
 K_{p,uu} = \frac{q_{in}}{q_{out}}
 ```
 
-The model now has **two** observed outputs — plasma `cp` and brain `cb`
-— so it carries a residual-error term for each. (`vb`, the brain volume,
-is a fixed physiological constant, not an estimated parameter.)
+With **two** observed outputs — plasma `cp` and brain `cb` — the model
+carries a residual-error term for each. (`vb`, the brain volume, is a
+fixed physiological constant, not an estimated parameter.)
 
 ``` r
 
@@ -166,10 +163,9 @@ pk_cns <- function() {
 }
 ```
 
-Two observed outputs means the study needs two summaries. Instead of a
-single `E`/`V`, give it an **`observations` list** — one named entry per
-observed compartment, each pairing a model output with its own `times`,
-`E` and `V`:
+Two outputs means two summaries. In place of a single `E`/`V`, give the
+study an **`observations` list** — one named entry per observed
+compartment, pairing a model output with its own `times`, `E` and `V`:
 
 ``` r
 
@@ -184,7 +180,7 @@ cns_study <- list(
 
 The only other change is telling
 [`admData()`](https://leidenpharmacology.github.io/admixr2/reference/admData.md)
-which outputs to expect. Then the fit call is identical to Step 1:
+which outputs to expect; the fit call is otherwise identical to Step 1:
 
 ``` r
 fit_cns <- nlmixr2(pk_cns, admData(c("cp", "cb")), est = "adgh",
@@ -198,7 +194,7 @@ adgh -88.64046 -72.64046 -36.70254       44.32023
 ── Time (sec fit_cns$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.979      0.389     0   1.368  3.59
+elapsed     0.63      0.245     0   0.875 2.581
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
@@ -224,17 +220,16 @@ add.cb  0.01997 0.01843  92.27 0.01997 (-0.01614, 0.05609)
 
 ## The same study in long format
 
-If you have used nlmixr2 with [multiple
+If you have used nlmixr2’s [multiple
 endpoints](https://nlmixr2.org/articles/multiple-endpoints.html), the
-`observations` list above may feel like a detour: nlmixr2 does not group
-observations into per-endpoint objects — it stacks them in **one** data
-frame and labels each row with the endpoint it belongs to (`DVID` /
+`observations` list may feel like a detour: nlmixr2 stacks observations
+in **one** data frame and labels each row with its endpoint (`DVID` /
 `CMT`).
 
-admixr2 accepts a study written that way too. Give the study a `data`
-frame with one row per observed *endpoint × time* — an endpoint column
-(`DVID`, `CMT` or `output`), a time column (`TIME`), the mean (`E`) and
-its variance (`V`, or an `SD` column):
+admixr2 takes a study written that way too — a `data` frame with one row
+per observed *endpoint × time*: an endpoint column (`DVID`, `CMT` or
+`output`), a time column (`TIME`), the mean (`E`) and its variance (`V`,
+or an `SD` column):
 
 ``` r
 
@@ -249,8 +244,8 @@ cns_long <- list(
 )
 ```
 
-This is the same study, written differently — admixr2 normalises it into
-exactly the same likelihood blocks, so the fits agree to the last digit:
+The same study, written differently: admixr2 normalises it into the same
+likelihood blocks, so the fits agree to the last digit.
 
 ``` r
 fit_long <- nlmixr2(pk_cns, admData(c("cp", "cb")), est = "adgh",
@@ -261,27 +256,25 @@ observations         long
    -88.64046    -88.64046 
 ```
 
-Which form to use is a matter of taste. The `observations` list keeps
-each compartment’s design visibly together and is the more natural way
-to write a study *by hand*. The long format is the more natural way to
-write one *from data*: it is the shape you already have if your
-summaries live in a spreadsheet or come out of a `dplyr` pipeline, and
-it is the shape nlmixr2 itself uses.
+Which to use is taste. `observations` keeps each compartment’s design
+visibly together, the natural way to write a study *by hand*. Long
+format is the natural way to write one *from data* — the shape summaries
+already have in a spreadsheet or out of a `dplyr` pipeline, and the
+shape nlmixr2 itself uses.
 
 ### Same-subject data: one stacked covariance
 
-The long format earns its keep when plasma and brain were measured in
-the **same subjects**. Then the two curves are correlated, and that
+Long format earns its keep when plasma and brain were measured in the
+**same subjects**. The two curves are then correlated, and that
 correlation is information the fit should use — but it lives *between*
-the compartments, so there is nowhere to put it in per-compartment `V`
-matrices.
+the compartments, where per-compartment `V` matrices have nowhere to put
+it.
 
-In long format there is: because every observation is just a row, the
-study takes **one** covariance matrix spanning all of them — rows and
-columns aligned with the rows of `data`, exactly what
-`cov.wt(dv_mat, method = "ML")$cov` hands you when you still have the
-subject-level matrix (`dv_mat`: one row per subject, one column per
-observation, plasma columns then brain columns).
+Long format does: every observation being a row, the study takes **one**
+covariance matrix spanning all of them, aligned with the rows of `data`
+— exactly what `cov.wt(dv_mat, method = "ML")$cov` returns from the
+subject-level matrix (one row per subject, one column per observation,
+plasma columns then brain).
 
 ``` r
 
@@ -297,31 +290,27 @@ cns_joint <- list(
 ```
 
 admixr2 then scores all 11 observations with a **single** multivariate
-normal, simulating both compartments from shared random effects.
-Supplying a study-level `V` is what marks the study as same-subject;
-without one, each endpoint stays an independent likelihood block. (The
-`observations` form can express this too, via a `cross` list of per-pair
-blocks — see
+normal, simulating both compartments from shared random effects. A
+study-level `V` is what marks the study same-subject; without one each
+endpoint stays an independent block. (`observations` can express this
+too, via a `cross` list of per-pair blocks — see
 [`?admControl`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
-— but assembling those by hand is precisely the chore the long format
-removes.)
+— but assembling those by hand is the chore long format removes.)
 
-Note that the choice is a **modelling** decision, not a formatting one:
-a joint fit with zero cross-covariances is *not* the same as two
-independent blocks. The model predicts plasma and brain to co-vary (they
-share `eta.cl` and `eta.v1`); telling it you observed no covariance is a
-real statement about the data, and the likelihood will hold you to it.
-Use the joint form when the compartments came from the same subjects,
-the independent form when they came from different ones — here, from two
-separate figures.
+The choice is a **modelling** decision, not a formatting one: a joint
+fit with zero cross-covariances is *not* two independent blocks. The
+model predicts plasma and brain to co-vary, sharing `eta.cl` and
+`eta.v1`, so telling it you observed no covariance is a real statement
+about the data and the likelihood will hold you to it. Joint when the
+compartments came from the same subjects, independent when they did not
+— here, two separate figures.
 
 ### Model against data
 
-A single fit now describes both compartments. The figure overlays the
-observed summaries (points, mean ± SD) with the fitted population
-prediction — the mean curve and the ±SD band implied by the estimated
-between-subject variability (1000 simulated subjects, residual error
-excluded). Plasma and brain are distinguished by colour.
+One fit now describes both compartments. Below, the observed summaries
+(points, mean ± SD) sit under the fitted population prediction — the
+mean curve and the ±SD band implied by the estimated between-subject
+variability, over 1000 simulated subjects with residual error excluded.
 
 ``` r
 
@@ -404,8 +393,8 @@ ggplot() +
 
 ![](multi-compartment_files/figure-html/brain-plot-1.png)
 
-The prediction tracks both compartments. Now the payoff — read the brain
-penetration directly off the estimates:
+The prediction tracks both compartments. Now the payoff, read straight
+off the estimates:
 
 ``` r
 
@@ -415,16 +404,15 @@ round(Kp_uu, 2)
 ```
 
 `Kp,uu` ≈ 0.5: at steady state the brain sees about half the plasma
-concentration. This is the whole reason the brain data was needed — with
-plasma alone, `qin` and `qout` are not separately identifiable and
-`Kp,uu` cannot be estimated. The brain measurements resolve it.
+concentration. This is why the brain data was needed at all — with
+plasma alone `qin` and `qout` are not separately identifiable, and
+`Kp,uu` cannot be estimated.
 
 ### Built-in diagnostics
 
-The overlay above was assembled by hand for a custom figure, but you
-don’t have to: calling
-[`plot()`](https://rdrr.io/r/graphics/plot.default.html) on the fit
-draws observed-vs-predicted panels directly — one per observed output.
+That overlay was assembled by hand for a custom figure. You don’t have
+to: [`plot()`](https://rdrr.io/r/graphics/plot.default.html) draws
+observed-vs-predicted panels directly, one per observed output.
 
 ``` r
 
@@ -435,27 +423,25 @@ plot(fit_cns, which = "mean")
 
 ## Notes
 
-- **Estimators.** `adgh` (used here), `adfo` and `admc` all support
-  several observed outputs, each with its own analytical / sensitivity
-  gradient. `adirmc` does not — use one of the other three. See the
-  [estimator
+- **Estimators.** `adgh` (used here), `adfo` and `admc` support several
+  observed outputs, each with its own analytical / sensitivity gradient.
+  `adirmc` does not. See the [estimator
   comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md)
-  vignette to choose.
+  to choose.
 - **Structural vs. observed compartments.** How many compartments the
-  ODEs contain is irrelevant to admixr2; what matters is how many
-  outputs you *observe* and fit — one in Step 1, two in Step 2.
-- **Hard-coded constants** such as `vb <- 5` keep their value; not every
-  physiological constant has to be an estimated parameter.
-- **Two ways to write a study.** The `observations` list and the
-  long-format `data` frame are interchangeable — same normalisation,
-  same likelihood, same numbers. Independent experiments can also carry
-  a per-endpoint `n` column and a per-endpoint `ev` (a list of event
-  tables keyed by endpoint).
-- **Same-subject data.** Here plasma and brain came from separate
-  figures, so they are treated as independent likelihood blocks. If they
-  had instead been measured in the *same* subjects, supply the
-  plasma–brain cross-covariance for a joint fit — one stacked `V` in
-  long format, or a per-output-pair `cross` list with `observations`;
+  ODEs hold is irrelevant; what counts is how many outputs you *observe*
+  and fit — one in Step 1, two in Step 2.
+- **Hard-coded constants** such as `vb <- 5` keep their value. Not every
+  physiological constant has to be estimated.
+- **Two ways to write a study.** `observations` and the long-format
+  `data` frame are interchangeable: same normalisation, same likelihood,
+  same numbers. Independent experiments can also carry a per-endpoint
+  `n` column and a per-endpoint `ev`, a list of event tables keyed by
+  endpoint.
+- **Same-subject data.** Plasma and brain came from separate figures
+  here, so they are independent likelihood blocks. Measured in the
+  *same* subjects, supply the cross-covariance instead — one stacked `V`
+  in long format, or a per-output-pair `cross` list with `observations`;
   see
   [`?admControl`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md).
 
@@ -469,4 +455,3 @@ plot(fit_cns, which = "mean")
   — meta-analysis across studies
 - [Diagnostic
   plots](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md)
-  \`\`\`

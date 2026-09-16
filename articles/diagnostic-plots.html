@@ -104,18 +104,15 @@
 
     
     
-<p><code><a href="../reference/plot.admFit.html">plot.admFit()</a></code> produces up to four diagnostic panel
-types. Call with <code>which</code> to select a subset; the default is
-all four. Each panel is returned as a named ggplot2 object in a
-list.</p>
+<p><code><a href="../reference/plot.admFit.html">plot.admFit()</a></code> draws up to four panel types, all four by
+default. Each is returned as a named ggplot2 object in a list.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"mean"</span>, <span class="st">"cov"</span>, <span class="st">"nll"</span>, <span class="st">"par"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
 <div class="section level2">
 <h2 id="mean-diagnostics">Mean diagnostics<a class="anchor" aria-label="anchor" href="#mean-diagnostics"></a>
 </h2>
-<p>The <code>"mean"</code> panel is a 2×2 grid per study. Requires
-<code>patchwork</code> for the composite layout; without it, four
-separate plots are returned.</p>
+<p>A 2×2 grid per study. <code>patchwork</code> composes it; without it
+you get four separate plots.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="st">"mean"</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
@@ -126,26 +123,25 @@ Mean diagnostics for the examplomycin study.
 <p><strong>Top-left — Observed:</strong> sample mean with ±1 SD ribbon,
 where SD = √diag(<strong>V</strong>_obs).</p>
 <p><strong>Top-right — Predicted:</strong> predicted mean with ±1 SD
-ribbon, where SD = √diag(<strong>V</strong>_pred).
-<strong>V</strong>_pred combines between-subject variability (Omega) and
-residual error (sigma). Both top panels share the same y-axis scale so
-differences in magnitude are immediately visible.</p>
+ribbon, where SD = √diag(<strong>V</strong>_pred), combining
+between-subject variability (Omega) and residual error (sigma). Both top
+panels share a y-axis, so a difference in magnitude is visible at
+once.</p>
 <p><strong>Bottom-left — Raw residual:</strong>
 <code>E_obs[t] − μ_pred[t]</code> as a lollipop. The grey band is ±2
-SE(mean), where SE = √(<strong>V</strong>_pred[t,t] / n). Points outside
-the band indicate systematic bias at that time point.</p>
+SE(mean), SE = √(<strong>V</strong>_pred[t,t] / n); points outside it
+are systematic bias at that time.</p>
 <p><strong>Bottom-right — Standardised residual:</strong>
-<code>z[t] = residual[t] / SE[t]</code>. Under a well-specified model, z
-should be approximately N(0, 1). Stars flag |z| &gt; 1.96 (∗), 2.58
-(∗∗), 3.29 (∗∗∗). With 9 time points and no multiplicity correction, one
-flagged time point is expected by chance alone.</p>
+<code>z[t] = residual[t] / SE[t]</code>, which a well-specified model
+leaves approximately N(0, 1). Stars flag |z| &gt; 1.96 (∗), 2.58 (∗∗),
+3.29 (∗∗∗). Across 9 uncorrected time points, one flag is expected by
+chance.</p>
 </div>
 <div class="section level2">
 <h2 id="covariance-diagnostics">Covariance diagnostics<a class="anchor" aria-label="anchor" href="#covariance-diagnostics"></a>
 </h2>
-<p>The <code>"cov"</code> panel compares observed and predicted
-(co)variance as heatmaps. Requires <code>patchwork</code> for the
-composite layout.</p>
+<p>Observed against predicted (co)variance, as heatmaps. Also composed
+with <code>patchwork</code>.</p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="st">"cov"</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
@@ -154,24 +150,20 @@ Covariance diagnostics: observed and predicted covariance matrices with
 residuals.
 </p>
 </div>
-<p><strong>Top row — Observed | Predicted:</strong> both matrices
-plotted on a shared blue-white-red scale. A good fit shows matching
-patterns of magnitude and sign — including the off-diagonal temporal
-correlation structure.</p>
+<p><strong>Top row — Observed | Predicted:</strong> one shared
+blue-white-red scale. A good fit matches in magnitude and sign,
+off-diagonal temporal structure included.</p>
 <p><strong>Bottom-left — Residual (V_obs − V_pred):</strong> diverging
-scale (purple-white-teal). Persistent positive residuals on the diagonal
-mean the model under-predicts variance; negative residuals indicate
-over-prediction.</p>
+purple-white-teal. Positive on the diagonal means the model
+under-predicts variance; negative, over-predicts.</p>
 <p><strong>Bottom-right — Standardised residual:</strong> each entry
-divided by its asymptotic SE. Diagonal SE = √(2 V[i,i]² / (n−1));
-off-diagonal SE = √((V[i,i]·V[j,j] + V[i,j]²) / (n−1)). Stars use the
-same thresholds as the mean panel.</p>
+over its asymptotic SE — √(2 V[i,i]² / (n−1)) on the diagonal,
+√((V[i,i]·V[j,j] + V[i,j]²) / (n−1)) off it. Stars as above.</p>
 </div>
 <div class="section level2">
 <h2 id="nll-trace">NLL trace<a class="anchor" aria-label="anchor" href="#nll-trace"></a>
 </h2>
-<p>The <code>"nll"</code> panel shows how the objective function evolved
-across optimizer iterations, coloured by restart:</p>
+<p>The objective across optimizer iterations, coloured by restart:</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="st">"nll"</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
@@ -179,16 +171,14 @@ across optimizer iterations, coloured by restart:</p>
 NLL convergence trace. Each line is one optimizer restart.
 </p>
 </div>
-<p>Restarts that converge to the same final value support a unimodal
-landscape. A spread of final NLL values suggests local optima — increase
-<code>n_restarts</code> and <code>restart_sd</code> in
-<code><a href="../reference/admControl.html">admControl()</a></code>.</p>
+<p>Restarts landing on the same value support a unimodal landscape; a
+spread of final values suggests local optima, so raise
+<code>n_restarts</code> and <code>restart_sd</code>.</p>
 </div>
 <div class="section level2">
 <h2 id="parameter-trace">Parameter trace<a class="anchor" aria-label="anchor" href="#parameter-trace"></a>
 </h2>
-<p>The <code>"par"</code> panel facets each parameter’s trajectory over
-optimizer iterations:</p>
+<p>One facet per parameter, over optimizer iterations:</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="st">"par"</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
@@ -197,38 +187,30 @@ Parameter trace on the natural scale. Struct thetas back-transformed;
 sigma shown as SD; V(eta) = variance.
 </p>
 </div>
-<p>Parameters are displayed on the natural scale:</p>
-<ul>
-<li>Structural thetas: back-transformed (e.g. <code><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp()</a></code> for
-log-scale params)</li>
-<li>Sigma: displayed as SD</li>
-<li>Omega diagonal: displayed as variance, labelled
-<code>V(eta.x)</code>
-</li>
-<li>Omega off-diagonal: raw Cholesky L[i,j]</li>
-</ul>
-<p>Smoothly converging traces that stabilise well before
-<code>maxeval</code> indicate the optimizer is not being artificially
-cut off. If traces still drift at the end, increase
+<p>Everything is on the natural scale: structural thetas
+back-transformed, sigma as an SD, the Omega diagonal as a variance
+labelled <code>V(eta.x)</code>, its off-diagonal as the raw Cholesky
+<code>L[i,j]</code>.</p>
+<p>Traces that flatten well before <code>maxeval</code> mean the
+optimizer was not cut off. If they still drift at the end, raise
 <code>maxeval</code>.</p>
 </div>
 <div class="section level2">
 <h2 id="accessing-individual-panels">Accessing individual panels<a class="anchor" aria-label="anchor" href="#accessing-individual-panels"></a>
 </h2>
-<p><code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> returns its list invisibly. Assign it to retrieve
-or modify panels:</p>
+<p><code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> returns its list invisibly; assign it to reach
+individual panels:</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"nll"</span>, <span class="st">"par"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
 <p><img src="diagnostic-plots_files/figure-html/access-1.png" class="r-plt" alt="" width="672"><img src="diagnostic-plots_files/figure-html/access-2.png" class="r-plt" alt="" width="672"></p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">plots</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] "nll_trace" "par_trace"</span></span></code></pre></div>
-<p>Panel names follow the pattern
-<code>&lt;type&gt;_&lt;study&gt;</code> for per-study panels, or
-<code>nll_trace</code> / <code>par_trace</code> for the trace panels.
-For a study with several observed outputs the study label gains the
-output name — e.g. <code>mean_lit.plasma</code>,
-<code>cov_lit.brain</code> — so each compartment gets its own panel:</p>
+<p>Per-study panels are named <code>&lt;type&gt;_&lt;study&gt;</code>,
+the traces <code>nll_trace</code> and <code>par_trace</code>. With
+several observed outputs the label gains the output name —
+<code>mean_lit.plasma</code>, <code>cov_lit.brain</code> — so each gets
+its own panel:</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span><span class="op">$</span><span class="va">nll_trace</span></span>
 <span><span class="va">plots</span><span class="op">$</span><span class="va">par_trace</span></span>
@@ -252,9 +234,8 @@ NLL trace with a custom theme.
 <div class="section level2">
 <h2 id="iiv-correlation-heatmap">IIV correlation heatmap<a class="anchor" aria-label="anchor" href="#iiv-correlation-heatmap"></a>
 </h2>
-<p>The estimated Omega matrix can be visualised as a correlation heatmap
-to inspect the inter-individual variability structure. This is
-especially informative for models with off-diagonal omega entries.</p>
+<p>The estimated Omega reads as a correlation heatmap, which is worth a
+look whenever the model has off-diagonal omega entries.</p>
 <div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">omega</span>   <span class="op">&lt;-</span> <span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">omega</span></span>
 <span><span class="va">eta_nms</span> <span class="op">&lt;-</span> <span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">eta_col_names</span></span>

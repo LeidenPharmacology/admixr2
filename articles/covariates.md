@@ -3,17 +3,16 @@
 ## A dose for a patient nobody studied
 
 A woman is admitted with a creatinine clearance of 21 mL/min. The drug
-she needs is renally cleared, and the label gives one dose — 200 mg, the
-dose every trial used.
+she needs is renally cleared, and the label gives one dose: 200 mg, what
+every trial used.
 
-Three trials have been published: one in normal renal function, one in
-mild impairment, one in moderate. **None enrolled anyone like her.** And
-none of the three reported a renal effect at all, because within each
-trial creatinine clearance barely varied, so each analyst sensibly left
-it out.
+Three trials have been published — normal renal function, mild
+impairment, moderate. **None enrolled anyone like her**, and none
+reported a renal effect at all, because within each trial creatinine
+clearance barely varied and each analyst sensibly left it out.
 
-You have three population models that disagree about clearance by nearly
-a factor of two, and not one of them can say why. This vignette recovers
+So you have three population models that disagree about clearance by
+nearly a factor of two, and not one can say why. This vignette recovers
 the renal effect none of them contains — from the three papers alone —
 and turns it into a dose.
 
@@ -24,15 +23,15 @@ library(admixr2); library(rxode2); library(nlmixr2); library(ggplot2)
 
 ## The world those trials sampled
 
-To check the answer we need a truth to check it against, so the patients
-here are simulated. Weight and creatinine clearance are correlated, so
-they are drawn jointly through a Gaussian copula: each covariate keeps
-its own lognormal margin, the dependence goes on the latent scale.
+Checking the answer needs a truth to check against, so the patients are
+simulated. Weight and creatinine clearance are correlated, so they are
+drawn jointly through a Gaussian copula: each keeps its own lognormal
+margin, the dependence going on the latent scale.
 
 The truth, unknown to all three analysts, is CL = 5 L/h and V = 50 L at
 70 kg, allometric weight scaling, **a renal exponent of 0.6**, and men
-clearing about 20% faster. The three trials differ only in which slice
-of renal function they sampled — and that alone is enough to make their
+clearing about 20% faster. The trials differ only in which slice of
+renal function they sampled — which alone is enough to make their
 answers disagree.
 
 ``` r
@@ -109,8 +108,8 @@ trial_data <- list(
 Here is where the information is lost. A published summary keeps the
 mean and the spread and throws the patients away, so an orderly,
 explainable difference between individuals survives only as extra width
-in a grey ribbon. Poor clearers at the top, good clearers at the bottom,
-and nothing in what gets printed to say which is which:
+in a grey ribbon — poor clearers at the top, good clearers at the
+bottom, and nothing in print to say which is which:
 
 ``` r
 
@@ -135,18 +134,17 @@ ggplot() +
 
 ![](covariates_files/figure-html/hidden-1.png)
 
-Each analyst now fits their own trial, and — as in practice — they do
-not write the same model. Sato fixes the allometric exponents at the
-conventional 0.75 and 1; Ito estimates both of them; Khan looks for a
-sex effect on volume as well as on clearance. Five, seven and six
-parameters, with different names. None of that has to be reconciled: a
-study carries its own model, and admixr2 asks for no agreement between
-sources.
+Each analyst now fits their own trial and, as in practice, they do not
+write the same model. Sato fixes the allometric exponents at the
+conventional 0.75 and 1; Ito estimates both; Khan looks for a sex effect
+on volume as well as clearance. Five, seven and six parameters, under
+different names. None of that has to be reconciled: a study carries its
+own model, and admixr2 asks for no agreement between sources.
 
 What they *do* agree on is which covariates they can see. **Sex they can
 see** — both sexes are enrolled, so it varies inside their own data.
 **Renal function they cannot** — within one cohort it barely moves, and
-what little movement there is cannot be told apart from ordinary
+what little movement there is cannot be told from ordinary
 between-patient variability.
 
 ``` r
@@ -222,9 +220,8 @@ fit_mild     <- nlmixr2(khan_model, trial_data$mild,     est = "focei",
                         control = .ctl)
 ```
 
-Each analyst now writes up their trial. What goes in the paper is the
-model and its estimates — which is all admixr2 needs to put the three
-papers into one fit.
+What goes in each paper is the model and its estimates — all admixr2
+needs to put the three into one fit.
 
 ``` r
 
@@ -271,59 +268,58 @@ knitr::kable(data.frame(
 Three independent analyses, three different models, each sound on its
 own data. {.table}
 
-Read that table the way the three analysts would have. All three retain
-the sex effect — a covariate that varies *inside* every trial, so every
-trial could see it. On clearance they disagree by nearly a factor of
-two, and none of them can explain it, because the explanation is a
-covariate that barely moves within any one of them.
+Read that table as the analysts would have. All three retain the sex
+effect — a covariate that varies *inside* every trial, so every trial
+could see it. On clearance they disagree by nearly a factor of two and
+none can explain it, the explanation being a covariate that barely moves
+within any one of them.
 
-That asymmetry is the entire problem. **A covariate that varies within a
+That asymmetry is the whole problem. **A covariate that varies within a
 study is estimable there. One that varies only between studies is
 invisible to each study separately, and visible only to a
 meta-analysis.**
 
 ## Giving admixr2 the papers, not the patients
 
-Nobody is going to send you the individual data. What you have is what
-was printed: each trial’s model, and the baseline table describing who
-was enrolled. That is enough —
+Nobody will send you the individual data. What you have is what was
+printed: each trial’s model, and the baseline table describing who was
+enrolled. That is enough —
 [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
 turns a published model plus its population into the `(E, V, n)` a
 digitised figure would have given you.
 
 Each paper becomes one
 [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md):
-the model it published, the design, and the population it enrolled. Hand
+the model it published, the design, the population it enrolled. Hand
 `population` the cohort itself and the baseline table is read off it —
-mean and SD per continuous covariate, the sex split, the correlation
-between weight and renal function, and `n` from the row count. That
-correlation is taken on the LATENT scale, so on the *logs* for a
-lognormal margin, which is the step easiest to get wrong writing a table
-out by hand. With a real paper you have a printed Table 1 rather than a
-cohort, and you write that out instead — see the last section.
+mean and SD per continuous covariate, the sex split, the weight–renal
+correlation, and `n` from the row count. That correlation is on the
+LATENT scale, so on the *logs* for a lognormal margin, which is the step
+easiest to get wrong writing a table out by hand. With a real paper you
+have a printed Table 1 instead, and write that out — see the last
+section.
 
-The population then enters the fit one of three ways, and which one is
-not a style choice: it follows from what the paper’s own model
-estimated.
+The population then enters the fit one of three ways, and which is not a
+style choice: it follows from what the paper’s own model estimated.
 
 - **Marginalised** — the estimator integrates the prediction over the
-  distribution. This is what a pooled result requires: one published
-  curve standing for a whole population of patients.
+  distribution, which is what a pooled result requires: one published
+  curve standing for a whole population.
 - **Banded** (`stratify`) — the source is split into strata with the
   covariate conditioned in each, so a covariate it *fitted* contributes
   a contrast rather than one pooled number.
-- **Conditioned** (`at`, `by`) — the model is solved at one value. This
+- **Conditioned** (`at`, `by`) — the model is solved at one value, which
   is what a result reported *by subgroup* allows.
 
 **All three analysts fitted a sex effect**, so all three band on `SEX`:
-each becomes two studies with sex conditioned, `n` divided between them
-by the level probabilities, and both halves still marked as ONE source
-so the pair is not counted as two papers. **Nobody fitted renal
-function**, so `CRCL` is marginalised everywhere — there is no contrast
-inside any single trial to report, and splitting a source on a covariate
-its model never saw would manufacture one. Weight is read by every model
-but at a *fixed* exponent, so there is no fitted weight effect to
-recover either, and it is marginalised alongside `CRCL`.
+each becomes two studies with sex conditioned, `n` split by the level
+probabilities, both halves still marked as ONE source so the pair is not
+counted as two papers. **Nobody fitted renal function**, so `CRCL` is
+marginalised everywhere — no single trial has a contrast to report, and
+splitting a source on a covariate its model never saw would manufacture
+one. Weight every model reads, but at a *fixed* exponent, so there is no
+fitted weight effect to recover either and it is marginalised alongside
+`CRCL`.
 
 ``` r
 
@@ -388,39 +384,37 @@ studies
 #> print() a single study to check its transcription.
 ```
 
-Each study carries the trial’s **model**, the **covariance that trial
-reported**, and the **population it enrolled** — nothing that was not in
-the paper. Nothing is solved yet: a study is a transcription, so it is
-cheap to build and [`print()`](https://rdrr.io/r/base/print.html) one to
-read it back against the source before any fitting happens. The banding
-on sex is applied when the studies reach the fit, which is why three
-papers still print as three sources here.
+Each study carries the trial’s **model**, the **covariance it reported**
+and the **population it enrolled** — nothing that was not in the paper.
+Nothing is solved yet: a study is a transcription, cheap to build and to
+[`print()`](https://rdrr.io/r/base/print.html) back against the source
+before any fitting. Banding on sex is applied when the studies reach the
+fit, which is why three papers still print as three sources.
 
-Note what is *not* in there. None of the published models has a renal
-term; the `population` does. We are telling admixr2 who was enrolled,
-and letting it work out what that implies about a covariate no analyst
-ever estimated.
+Note what is *not* in there. No published model has a renal term; the
+`population` does. We tell admixr2 who was enrolled and let it work out
+what that implies about a covariate no analyst ever estimated.
 
-**Why the sex effect has to be stratified and the renal effect must not
-be.** A covariate that every study marginalises is not identified. Its
-effect then enters only through the mixture it induces — the level
-probabilities shift `E`, the spread between levels adds to `V` — which
-is exactly what a random effect on the same parameter does, so the two
-trade off freely. With a similar sex split in every trial there is no
-between-study contrast to separate them either: the profile goes nearly
-flat, and a deterministic optimiser stops in the same place every run,
-which reads as convergence.
+**Why sex has to be stratified and renal function must not be.** A
+covariate every study marginalises is not identified: its effect enters
+only through the mixture it induces — the level probabilities shift `E`,
+the spread between levels adds to `V` — which is exactly what a random
+effect on the same parameter does, so the two trade off freely. With a
+similar sex split in every trial there is no between-study contrast to
+separate them either, and the profile goes nearly flat. A deterministic
+optimiser then stops in the same place every run, which reads as
+convergence.
 
 Stratifying a source that *did* fit the covariate recovers its evidence,
 because within one of its strata sex is a known constant rather than
-something `omega` can absorb. Doing the reverse — splitting a source on
-a covariate its model never saw — is the error in the other direction:
-it manufactures a contrast the paper never reported, and attenuates the
-coefficient. Hence sex stratified everywhere and renal function nowhere.
+something `omega` can absorb. The reverse — splitting a source on a
+covariate its model never saw — manufactures a contrast the paper never
+reported and attenuates the coefficient. Hence sex stratified
+everywhere, renal function nowhere.
 
-The renal effect is identified by a completely different route: no trial
+The renal effect is identified by a different route entirely: no trial
 could condition on it, so it comes purely from the contrast *between*
-the three cohorts. Two covariates, two mechanisms, one fit.
+cohorts. Two covariates, two mechanisms, one fit.
 
 ## Pooling three models that disagree
 
@@ -479,68 +473,71 @@ knitr::kable(data.frame(
 Recovered from three analyses, none of which contained a renal term.
 {.table}
 
-Both covariate effects come back — out of three analyses that between
-them contained only one of them.
+Both effects come back, out of three analyses that between them
+contained one.
 
 The sex effect is worth a pause, because it shows what pooling costs.
-The three trials reported 0.16, 0.11, 0.18 for a quantity that is
-genuinely identical in all three; sampling noise alone put them that far
-apart. The meta-analysis has to settle on one number, and **reconciling
+The trials reported 0.16, 0.11, 0.18 for a quantity genuinely identical
+in all three; sampling noise alone put them that far apart. The
+meta-analysis has to settle on one number, and **reconciling
 disagreement is not free** — some of it lands in the other parameters,
 which is why the renal exponent comes back a little below its truth and
-the prediction further down is a few per cent off rather than exact.
-That is what a meta-analysis is: evidence that does not perfectly agree,
-pooled anyway, and honest about the residual.
+the prediction below is a few per cent off rather than exact. That is
+what a meta-analysis is: evidence that does not quite agree, pooled
+anyway, and honest about the residual.
 
 ## How far can you trust that number?
 
 A study generated from a published **model** is not a sample. Its `E`
 and `V` are exact functions of that model’s parameters, so there is no
 sampling law underneath it — and **admixr2 reports no standard error for
-a fit that includes one.** The table above has estimates and no
-intervals for that reason, and an explicit `covMethod` is refused rather
-than honoured.
+a fit that includes one.** That is why the table above has estimates and
+no intervals, and why an explicit `covMethod` is refused rather than
+honoured.
 
-It would be easy to print one anyway: read `n` as a sample size and a
+Printing one anyway would be easy: read `n` as a sample size and a
 finite, plausible standard error falls out. It falls as `1/sqrt(n)` —
-exactly proportional, measured to four significant figures — so it is a
-precision you choose by typing a number. Worse, no single number can be
-right: the `n` that would reproduce one parameter’s true uncertainty
-differs by more than eightfold from the `n` that reproduces another’s,
-in the same model. Nothing downstream can tell that number from a real
-one, so it is withheld rather than qualified.
+exactly proportional, to four significant figures — so it is a precision
+you choose by typing a number. Worse, no single number can be right: the
+`n` reproducing one parameter’s true uncertainty differs more than
+eightfold from the `n` reproducing another’s, in the same model. Nothing
+downstream could tell it from a real one, so it is withheld rather than
+qualified.
 
-`n` still matters, but only for **relative weight** between sources. Set
-it to the sample size each source was developed on.
+`n` still matters, but only for **relative weight** between sources; set
+it to the sample size each was developed on.
 
 What you can still do is test. A likelihood-ratio test compares two fits
-by their objective functions and needs no standard error at all, which
-is the next section.
+by their objectives and needs no standard error at all.
 
 ### Why banding still matters
 
-Every source in this vignette marginalises over the covariates it did
-not condition on. That is the honest description of what these
-publications report — and it is also the configuration in which the
-pooled objective is least trustworthy. Over 720 replicates, with no
-source banded on the covariate its own model fitted, the
-likelihood-ratio test was sized **0.125** against a nominal 0.05: a test
-that rejects two and a half times too often is a test that will find a
-covariate effect that is not there.
+Every source here marginalises over the covariates it did not condition
+on. That is the honest description of what these publications report —
+and also the configuration in which the pooled objective is least
+trustworthy. Over 720 replicates, with no source banded on the covariate
+its own model fitted, the likelihood-ratio test was sized **0.125**
+against a nominal 0.05. A test that rejects two and a half times too
+often will find a covariate effect that is not there.
 
 Banding fixes it, and **one banded source is as good as three**: test
 sizes **0.083** with one banded and **0.058** with all of them, against
-the 0.125 above. `stratify = TRUE` derives the banding from the source’s
-own model, so it needs nothing restated — which is why all three studies
-above set it.
+the 0.125 above. The three studies above name the covariate outright,
+`stratify = "SEX"`. `stratify = TRUE` is the alternative: it derives the
+banding from the source’s own model, banding on every covariate that
+model estimated a coefficient for and leaving the rest marginalised, so
+nothing has to be restated.
 
 ### Is the renal effect real?
 
-The interval says the renal exponent is not zero, but the honest test is
-a likelihood-ratio test against the model without it. Fix the
-coefficient rather than deleting the term — the `population` declares
-`CRCL`, and admixr2 refuses a distribution naming a covariate the model
-never reads.
+The estimate is close to its truth, but that is not evidence on its own
+— and with no standard error there is no interval to appeal to. The test
+is a likelihood-ratio test against the model without the term. Write the
+null model the obvious way: delete the term. The same `studies` object
+serves both fits — the population still declares `CRCL`, because that is
+still who was enrolled, and a covariate the null model does not read
+cannot change its prediction, so admixr2 leaves it off the design and
+says so.
 
 ``` r
 
@@ -548,13 +545,13 @@ adm_model_null <- function() {
   ini({
     tcl     <- log(4)
     tv      <- log(45)
-    bcrcl   <- fix(0)          # the restriction being tested
     bsex    <- 0.10
     add.err <- 0.1
     eta.cl  ~ 0.1
   })
   model({
-    cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl * exp(bsex * SEX)
+    # no renal term -- the restriction being tested
+    cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * exp(bsex * SEX)
     v  <- exp(tv) * (WT/70)
     cp <- linCmt()
     cp ~ add(add.err)
@@ -572,13 +569,12 @@ anova(fit, fit_null)
 #> adgh_1    6 -12608 -12596 -12557 1 vs 2 668.5  1 2.17e-147
 ```
 
-The `p` column is the ordinary likelihood-ratio test: `dOFV` is compared
-with a chi-squared reference using `Df`, the number of parameters added
-by the larger model. Here `n` is each source study’s sample size and
-supplies the sampling scale of its contribution. The study API does not
-take the published estimates’ covariance, so this test does not
-propagate uncertainty in those source-model parameters; interpret a
-borderline result with that limitation in mind.
+`p` is the ordinary likelihood-ratio test: `dOFV` against a chi-squared
+reference on `Df`, the number of parameters the larger model adds. Each
+source’s `n` sets the sampling scale of its contribution. The study API
+does not take the published estimates’ covariance, so the test does not
+propagate uncertainty in those source-model parameters — read a
+borderline result with that in mind.
 
 ## Seeing the renal effect
 
@@ -644,23 +640,23 @@ ggplot(curve_df, aes(CRCL, CL, colour = sex)) +
 
 Both effects are in that picture, and they look nothing alike.
 
-The **sex effect** is the vertical gap between the two lines. Every
-trial found it, so every flat bar comes in a matching pair with the same
-gap — a covariate that varies within a study is visible to that study.
+The **sex effect** is the vertical gap between the lines. Every trial
+found it, so every flat bar comes in a matching pair with the same gap:
+a covariate that varies within a study is visible to it.
 
 The **renal effect** is the slope, and no trial has one. Each is a pair
-of flat bars, claiming clearance is whatever it happened to measure, at
-any renal function. Three pairs at three different heights: each correct
-over its own range and contradicting the others everywhere else. The
-meta-analysis draws the line through them. That line is the renal effect
-— recovered entirely from *between* the trials, and carried into the
-shaded region none of them sampled.
+of flat bars claiming clearance is whatever it happened to measure, at
+any renal function — three pairs at three heights, each correct over its
+own range and contradicting the others everywhere else. The
+meta-analysis draws the line through them, recovered entirely from
+*between* the trials and carried into the shaded region none of them
+sampled.
 
 ## Back to the patient
 
 Her creatinine clearance is 21 mL/min, outside every trial’s range.
-Without a meta-analysis you would reach for the published model closest
-to her — the moderate-impairment one — and use it.
+Without a meta-analysis you would reach for the closest published model
+— the moderate-impairment one — and use it.
 
 ``` r
 
@@ -682,10 +678,10 @@ p_near  <- severe_mean_conc(moderate_paper$CL, moderate_paper$V,
 p_truth <- severe_mean_conc(CL70, V70, BCRCL, BSEX, OM_CL)
 ```
 
-Predicting the *mean* is only half of it. Simulate a severe cohort under
-each model and compare the whole distribution — median and 90% interval
-— against what those patients would really do. The truth is repeated in
-grey behind every panel.
+The *mean* is only half of it. Simulate a severe cohort under each model
+and compare the whole distribution — median and 90% interval — against
+what those patients would really do. The truth is repeated in grey
+behind every panel.
 
 ``` r
 
@@ -735,7 +731,7 @@ ggplot(sims, aes(t)) +
 
 Each trial model reproduces the population it was fitted in, not this
 one, and the miss is ordered by how far that population sits from
-severe. At 24 h, against the truth:
+severe. At 24 h against the truth:
 
 ``` r
 
@@ -767,12 +763,12 @@ knitr::kable(err_table, digits = 1, row.names = FALSE,
 
 % error in the median and in the 90% interval width, at 24 h. {.table}
 
-They miss on **spread** as much as on level. A model with no renal term
-applied to this cohort has only weight and `omega` to generate
-between-patient variability, and the `omega` it carries was fitted where
-creatinine clearance hardly varied — so it cannot reproduce a population
-whose clearance varies a great deal. Only the meta-analysis, which knows
-what renal function does, lands on the grey.
+They miss on **spread** as much as on level. With no renal term, a model
+has only weight and `omega` to generate between-patient variability, and
+that `omega` was fitted where creatinine clearance hardly varied — so it
+cannot reproduce a population whose clearance varies a great deal. Only
+the meta-analysis, which knows what renal function does, lands on the
+grey.
 
 ``` r
 
@@ -796,7 +792,7 @@ Severe renal impairment: predicted mean concentration. {.table}
 
 The nearest published model carries a clearance fitted in patients who
 clear the drug considerably faster than she does, so it drifts further
-wrong the longer you look, and it **underpredicts exposure** — the
+wrong the longer you look and it **underpredicts exposure** — the
 direction that matters clinically.
 
 ## The dose
@@ -844,25 +840,24 @@ The meta-analysis, built from those three papers and nothing else, gives
 
 The nearest published model gives 187 mg — about 2.5 times the dose she
 should get. Note where its small reduction below 200 mg comes from:
-purely the weight difference between the two cohorts. Its renal
-recommendation is exactly zero, and it cannot be anything else, because
-the model has no renal term. It would return the same 187 mg just as
-confidently at 15 mL/min, or at 5.
+purely the weight difference between cohorts. Its renal recommendation
+is exactly zero and cannot be anything else, the model having no renal
+term. It would return the same 187 mg just as confidently at 15 mL/min,
+or at 5.
 
 ## Doing this with your own papers
 
 **A paper contributes in one of two currencies**, and
 [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
 takes either. A published *model* goes in as `model` with the paper’s
-estimates as `est`; *digitised* aggregate data goes in as `E` with `sd`
-(or `sem`, or a full `V`). Nothing is solved when you build one, so a
-study is cheap to write and
-[`print()`](https://rdrr.io/r/base/print.html) back against the source
-before any fitting happens.
+estimates as `est`; *digitised* aggregate data as `E` with `sd` (or
+`sem`, or a full `V`). Nothing is solved when you build one, so a study
+is cheap to write and to [`print()`](https://rdrr.io/r/base/print.html)
+back against the source before any fitting.
 
 **The baseline table** goes to
 [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)
-in whichever form the paper printed, one covariate per argument:
+in whichever form the paper printed it, one covariate per argument:
 
 ``` r
 
@@ -878,57 +873,50 @@ admPopulation(WT   = c(mean = 78, sd = 16),        # mean and SD
 #>   dependence: correlation matrix
 ```
 
-`cv` (as a percent) and `range = c(min, max)` are accepted too, and
-`cor` names only the pairs the paper gave — everything else is
-independent, so a partial table needs no identity padding. Correlations
-are on the LATENT scale, which for a lognormal margin means the logs.
-Prefer `dist = "lnorm"` for anything positive: a normal margin is
-unbounded below and the quadrature reaches about 3.75 SD, so a CV above
-roughly 0.27 puts a node at or below zero, where an allometric term is
-`NaN`.
+`cv` (as a percent) and `range = c(min, max)` work too, and `cor` names
+only the pairs the paper gave — everything else is independent, so a
+partial table needs no identity padding. Correlations are on the LATENT
+scale, meaning the logs for a lognormal margin. Prefer `dist = "lnorm"`
+for anything positive: a normal margin is unbounded below and the
+quadrature reaches about 3.75 SD, so a CV above roughly 0.27 puts a node
+at or below zero where an allometric term is `NaN`.
 [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)
-warns when it sees this. If you have the individual covariates — a
+warns when it sees this. With the individual covariates in hand — a
 digitised listing, or your own cohort — pass `data =` and the table is
 read off them.
 
-**A published model gets you an estimate, not an interval.** A study
-generated from a model is not a sample: its mean and covariance are
-exact functions of somebody else’s published estimate, so there is no
-sampling law underneath it to build a standard error from. `n` sets that
-study’s *relative weight* against the others and nothing more. Weighting
-it as though `n` patients had been observed does produce a standard
-error — a finite, plausible one that shrinks as `1/sqrt(n)`, i.e. a
-precision you set by typing a number — so admixr2 reports none at all
-for a fit that includes a model source, and refuses an explicit
-`covMethod` rather than honouring one. Point estimates are unaffected,
-and a model *is* still the right currency for a paper: it is what lets
-three incompatible published models be combined at all.
+**A published model gets you an estimate, not an interval**, for the
+reason given above: no sampling law, so no standard error, and `n` sets
+only relative weight. Point estimates are unaffected, and a model *is*
+still the right currency for a paper — it is what lets three
+incompatible published models be combined at all.
 
 **Then read [`print()`](https://rdrr.io/r/base/print.html) before you
 fit.** It lays out which covariates each source bands, conditions and
-marginalises, and says so when one is marginal everywhere — that
+marginalises, and says so when one is marginal everywhere. Such a
 covariate is identified only by the contrast *between* sources, which is
-legitimate when they really differ and a flat ridge when they do not. A
-flat ridge converges to a confident wrong number rather than failing, so
-it is worth the ten seconds.
+legitimate when they really differ and a flat ridge when they do not —
+and a flat ridge converges to a confident wrong number rather than
+failing.
 
 **Discrete covariates are strata**, enumerated exactly at their levels
-and weighted by their probabilities — nothing about them is
-approximated. That exactness is also why a discrete covariate must be
-declared INDEPENDENT of the other margins: a level is an interval of the
-latent normal rather than a point, so a `cor` entry naming a discrete
-covariate would change what the enumeration means — the conditional law
-of a continuous margin within the stratum, or the joint probabilities of
-two strata — and neither is carried by the per-level probabilities.
-admixr2 refuses such a table rather than integrating it as if it were
-independent.
+and weighted by their probabilities — nothing approximated. That
+exactness is why a discrete covariate must be declared INDEPENDENT of
+the other margins: a level is an interval of the latent normal rather
+than a point, so a `cor` entry naming one would change what the
+enumeration means — the conditional law of a continuous margin within
+the stratum, or the joint probabilities of two strata — and the
+per-level probabilities carry neither. admixr2 refuses such a table
+rather than integrating it as though it were independent.
 
 **Cost.** A product grid over `p` continuous covariates costs
 `cov_nodes^p`, but where they reach the model through fewer scalar
-directions, admixr2 integrates over those directions instead. Three
-covariates entering as one product use 21 design points rather than 343.
-That is a verified change of variables. For larger designs that do not
-collapse, `cov_integration = "sparse"` uses the Smolyak rule; raise
+directions, admixr2 integrates over those directions instead. At the
+default `cov_nodes = 7`, three covariates entering as one product use 21
+design points rather than 343 — a direction that absorbs three axes is
+given three axes’ worth of nodes. That is a verified change of
+variables. For larger designs that do not collapse,
+`cov_integration = "sparse"` uses the Smolyak rule; raise
 `cov_sparse_level` only when a sensitivity check shows that it is
 needed.
 
@@ -942,9 +930,9 @@ reads.
 - **A covariate effect is identified by contrast across sources.** That
   is the whole of this vignette. Within one cohort a covariate barely
   varies, and what little it does is confounded with between-subject
-  variability — a covariate enters `V` where `omega` does.
-- **Fix what convention fixes.** Allometric exponents are 0.75 and 1;
-  aggregate data is not the place to re-estimate them. Estimate the
+  variability — it enters `V` where `omega` does.
+- **Fix what convention fixes.** Allometric exponents are 0.75 and 1,
+  and aggregate data is not the place to re-estimate them. Estimate the
   covariate effects a popPK analysis would.
 - **Extrapolation is extrapolation.** The severe prediction works
   because the power model is the right functional form and the three

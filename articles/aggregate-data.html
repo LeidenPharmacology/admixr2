@@ -112,13 +112,13 @@
 <code>n</code>, the observation <code>times</code> and a dosing event
 table <code>ev</code>. A published figure gives you a mean and an error
 bar.</p>
-<p>Reading the mean off is easy. Getting the variance right is where
-aggregate analyses go wrong: a standard error used as a standard
-deviation is off by a factor of <code>sqrt(n)</code>, and the fit does
-not tell you — the structural parameters come back correct and only the
-between-subject variability collapses. This vignette converts a
-published figure into <code>E</code>, <code>V</code> and <code>n</code>,
-and shows what that mistake costs.</p>
+<p>The mean is easy. The variance is where aggregate analyses go wrong:
+a standard error used as a standard deviation is off by
+<code>sqrt(n)</code>, and the fit will not tell you — the structural
+parameters come back correct and only the between-subject variability
+collapses. This vignette turns a figure into <code>E</code>,
+<code>V</code> and <code>n</code>, and shows what that mistake
+costs.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2/">admixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span></span>
@@ -132,11 +132,11 @@ and shows what that mistake costs.</p>
 precision of the mean. admixr2’s likelihood is</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>−</mi><mn>2</mn><mi>L</mi><mi>L</mi><mo>=</mo><mi>n</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi mathvariant="normal">log</mi><mo stretchy="false" form="prefix">|</mo><msub><mi>V</mi><mrow><mi>p</mi><mi>r</mi><mi>e</mi><mi>d</mi></mrow></msub><mo stretchy="false" form="prefix">|</mo><mi>+</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">r</mi></mrow><mo stretchy="false" form="prefix">(</mo><msubsup><mi>V</mi><mrow><mi>p</mi><mi>r</mi><mi>e</mi><mi>d</mi></mrow><mrow><mi>−</mi><mn>1</mn></mrow></msubsup><msub><mi>V</mi><mrow><mi>o</mi><mi>b</mi><mi>s</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo><mo>+</mo><msup><mi>r</mi><mi>⊤</mi></msup><msubsup><mi>V</mi><mrow><mi>p</mi><mi>r</mi><mi>e</mi><mi>d</mi></mrow><mrow><mi>−</mi><mn>1</mn></mrow></msubsup><mi>r</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">-2LL = n \left( \log|V_{pred}| + \mathrm{tr}(V_{pred}^{-1} V_{obs}) + r^{\top} V_{pred}^{-1} r \right)</annotation></semantics></math></p>
 <p>where <code>r</code> is the mismatch between observed and predicted
-means, and <code>V_pred = J Omega J' + Sigma</code> — one subject’s
+means and <code>V_pred = J Omega J' + Sigma</code> is ONE subject’s
 covariance, built from the between-subject variability and the residual
-error. <code>V_obs</code> must be the same object, and the sample size
-<code>n</code> sits outside it. Hand the likelihood a standard error
-squared and you have told it about <code>n</code> twice.</p>
+error. <code>V_obs</code> must be the same object, with <code>n</code>
+sitting outside it. Hand the likelihood a standard error squared and you
+have told it about <code>n</code> twice.</p>
 <p>So <code>V = SD^2</code>, never <code>SEM^2</code>.</p>
 </div>
 <div class="section level2">
@@ -168,10 +168,8 @@ rather than assuming:</p>
 </tr>
 <tr class="odd">
 <td>95% CI of the mean</td>
-<td><code>SD = (upper - lower) * sqrt(n) / 3.92</code></td>
-<td>3.92 = 2 × 1.96; for small <code>n</code> use
-<code>2 * qt(0.975, n - 1)</code>
-</td>
+<td><code>SD = (upper - lower) * sqrt(n) / (2 * qt(0.975, n - 1))</code></td>
+<td>the divisor tends to 3.92 = 2 × 1.96 as <code>n</code> grows</td>
 </tr>
 <tr class="even">
 <td>Interquartile range</td>
@@ -189,15 +187,15 @@ rather than assuming:</p>
 <code class="sourceCode R"><span><span class="va">sd_from_sem</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">sem</span>, <span class="va">n</span><span class="op">)</span>        <span class="va">sem</span> <span class="op">*</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="va">n</span><span class="op">)</span></span>
 <span><span class="va">sd_from_ci</span>  <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">lower</span>, <span class="va">upper</span>, <span class="va">n</span><span class="op">)</span> <span class="op">(</span><span class="va">upper</span> <span class="op">-</span> <span class="va">lower</span><span class="op">)</span> <span class="op">*</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="va">n</span><span class="op">)</span> <span class="op">/</span> <span class="op">(</span><span class="fl">2</span> <span class="op">*</span> <span class="fu"><a href="https://rdrr.io/r/stats/TDist.html" class="external-link">qt</a></span><span class="op">(</span><span class="fl">0.975</span>, <span class="va">n</span> <span class="op">-</span> <span class="fl">1</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">sd_from_iqr</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">q1</span>, <span class="va">q3</span><span class="op">)</span>        <span class="op">(</span><span class="va">q3</span> <span class="op">-</span> <span class="va">q1</span><span class="op">)</span> <span class="op">/</span> <span class="fl">1.35</span></span></code></pre></div>
-<p>An LS-mean SE deserves care because it is the one row that can
-silently reproduce the error this vignette is about. It comes out of a
-model, usually an MMRM: baseline and covariate adjustment remove
-variance from the residual, and the covariance structure borrows across
-visits, so <code>SE * sqrt(n)</code> is usually <strong>smaller</strong>
-than the true between-subject SD — the same direction as mistaking a SEM
-for an SD. It also describes whatever the MMRM modelled, often a change
-from baseline rather than an absolute value. Prefer a descriptive SD
-from the paper’s own baseline table, or from a comparable study.</p>
+<p>The LS-mean SE is the row that can silently reproduce the error this
+vignette is about. It comes out of a model, usually an MMRM: baseline
+and covariate adjustment strip variance from the residual and the
+covariance structure borrows across visits, so <code>SE * sqrt(n)</code>
+usually comes out <strong>smaller</strong> than the true between-subject
+SD — the same direction as mistaking a SEM for an SD. It also describes
+whatever the MMRM modelled, often a change from baseline rather than an
+absolute value. Prefer a descriptive SD from the paper’s own baseline
+table, or from a comparable study.</p>
 </div>
 <div class="section level2">
 <h2 id="a-figure-reporting-standard-errors">A figure reporting standard errors<a class="anchor" aria-label="anchor" href="#a-figure-reporting-standard-errors"></a>
@@ -213,10 +211,9 @@ whose caption reads “mean ± SEM” — the same arm used in <a href="pkpd.htm
 <span><span class="va">SD</span> <span class="op">&lt;-</span> <span class="fu">sd_from_sem</span><span class="op">(</span><span class="va">SEM</span>, <span class="va">n</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">SD</span>, <span class="fl">3</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] 0.207 0.188 0.159 0.125 0.106 0.097 0.062</span></span></code></pre></div>
-<p>The bars the figure plots are <code>sqrt(n)</code> — nearly eight
-times — smaller than the standard deviations the fit needs. Plotting
-both makes it concrete: the SEM band is far too tight to be a
-between-subject spread.</p>
+<p>The plotted bars are <code>sqrt(n)</code> — nearly eight times —
+smaller than the standard deviations the fit needs. Side by side, the
+SEM band is obviously too tight to be a between-subject spread.</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">band</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">rbind</a></span><span class="op">(</span></span>
 <span>  <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>t <span class="op">=</span> <span class="va">times</span>, m <span class="op">=</span> <span class="va">E</span>, lo <span class="op">=</span> <span class="va">E</span> <span class="op">-</span> <span class="va">SD</span>,  hi <span class="op">=</span> <span class="va">E</span> <span class="op">+</span> <span class="va">SD</span>,  what <span class="op">=</span> <span class="st">"mean ± SD (what V needs)"</span><span class="op">)</span>,</span>
@@ -269,7 +266,7 @@ admixr2 expands it to a diagonal matrix and sets
 <span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a></span>
 <span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed    <span class="fl">0.429</span>      <span class="fl">0.174</span>     <span class="dv">0</span>   <span class="fl">0.603</span> <span class="fl">3.497</span></span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed    <span class="fl">0.382</span>      <span class="fl">0.133</span>     <span class="dv">0</span>   <span class="fl">0.515</span> <span class="fl">2.664</span></span>
 <span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a></span>
 <span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a></span>
@@ -310,7 +307,7 @@ small.</p>
 <span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_wrong<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a></span>
 <span id="cb8-14"><a href="#cb8-14" tabindex="-1"></a>  optimize covariance other elapsed</span>
-<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a><span class="dv">1</span>    <span class="fl">0.726</span>      <span class="fl">0.126</span>     <span class="dv">0</span>   <span class="fl">0.852</span></span>
+<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a><span class="dv">1</span>    <span class="fl">0.523</span>      <span class="fl">0.096</span>     <span class="dv">0</span>   <span class="fl">0.619</span></span>
 <span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a></span>
 <span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_wrong<span class="sc">$</span>parFixed or fit_wrong<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb8-18"><a href="#cb8-18" tabindex="-1"></a></span>
@@ -341,13 +338,13 @@ between-subject variability is not:</p>
 <span><span class="co">#&gt; eta.cl  eta.v </span></span>
 <span><span class="co">#&gt;   36.8   44.1</span></span></code></pre></div>
 <p><code>Omega</code> shrinks by more than an order of magnitude on both
-random effects, because the model is asked to reproduce a
-between-subject spread <code>n</code> times tighter than the real one.
+random effects: the model is being asked to reproduce a between-subject
+spread <code>n</code> times tighter than the real one.
 <code>V_pred = J Omega J' + Sigma</code> is linear in <code>Omega</code>
 and in the residual variance, so both shrink together and the structural
-parameters are free to stay where they were. The shrinkage stops short
-of the full factor of <code>n</code> only because the mean-mismatch term
-<code>r' V_pred^-1 r</code> does not rescale.</p>
+parameters are free to stay put. Only the mean-mismatch term
+<code>r' V_pred^-1 r</code>, which does not rescale, stops the shrinkage
+short of the full factor of <code>n</code>.</p>
 <p>Nothing in the <em>point estimates</em> warns you. The
 <em>precision</em> does:</p>
 <div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
@@ -362,52 +359,49 @@ comes back near zero, is the tell.</p>
 <p>Two things make this worse than the demo suggests:</p>
 <ul>
 <li>
-<strong>The structural parameters only survive because this model
-fits.</strong> With a misspecified model, <code>r</code> is not zero,
-and a <code>V_pred</code> that is <code>n</code> times too small weights
-that mismatch <code>n</code> times too heavily — dragging the structural
-estimates to close a gap they cannot close.</li>
+<strong>The structural parameters survive only because this model
+fits.</strong> Misspecify it and <code>r</code> is not zero, so a
+<code>V_pred</code> that is <code>n</code> times too small weights that
+mismatch <code>n</code> times too heavily, dragging the structural
+estimates toward a gap they cannot close.</li>
 <li>
-<strong>In a multi-study fit, one bad <code>V</code> captures the
-whole fit.</strong> Getting <code>V</code> wrong in a single study
-inflates that study’s weight in the joint likelihood roughly
-<code>n</code>-fold. It then dominates every other arm and biases the
-shared parameters. This is the usual way admixr2 is used, and it is
-where the mistake is most expensive.</li>
+<strong>In a multi-study fit, one bad <code>V</code> captures
+everything.</strong> It inflates that study’s weight in the joint
+likelihood roughly <code>n</code>-fold, whereupon it dominates every
+other arm and biases the shared parameters. That is the usual way
+admixr2 is used, and where the mistake is most expensive.</li>
 </ul>
 </div>
 <div class="section level2">
 <h2 id="why-v-is-usually-diagonal">Why V is usually diagonal<a class="anchor" aria-label="anchor" href="#why-v-is-usually-diagonal"></a>
 </h2>
-<p>A figure gives one error bar per time point and nothing about how the
-times covary, so the off-diagonal entries of <code>V</code> are not
-available from published summaries. A diagonal <code>V</code> selects
-<code>method = "var"</code>, which skips the Cholesky solve the
-full-covariance path needs. This is the honest default for literature
-data. The full-covariance path is available when you have the
-subject-level matrix and can compute
-<code>cov.wt(dv_mat, method = "ML")$cov</code> — see <a href="admixr2.html">Getting started</a>.</p>
+<p>A figure gives one error bar per time point and says nothing about
+how the times covary, so published summaries carry no off-diagonal
+entries. A diagonal <code>V</code> selects <code>method = "var"</code>
+and skips the Cholesky solve — the honest default for literature data.
+The full-covariance path needs the subject-level matrix and
+<code>cov.wt(dv_mat, method = "ML")$cov</code>; see <a href="admixr2.html">Getting started</a>.</p>
 <p>Note the denominator, and declare it. admixr2’s likelihood is the
 exact one for <code>n</code> iid draws only under the ML
 (<code>n</code>) covariance, while a published SD is the unbiased
-(<code>n - 1</code>) sample SD – so <code>V = SD^2</code> from a figure
-is on the <code>n - 1</code> scale and strictly wants
+(<code>n - 1</code>) one – so <code>V = SD^2</code> off a figure is on
+the <code>n - 1</code> scale and strictly wants
 <code>V = SD^2 * (n - 1) / n</code>.</p>
-<p>Rather than applying that by hand, say which convention the number is
+<p>Rather than apply that by hand, say which convention the number is
 on:</p>
 <div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">study</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E</span>, V <span class="op">=</span> <span class="va">SD</span><span class="op">^</span><span class="fl">2</span>, n <span class="op">=</span> <span class="va">n</span>, times <span class="op">=</span> <span class="va">times</span>, ev <span class="op">=</span> <span class="va">ev</span>,</span>
-<span>              v_denom <span class="op">=</span> <span class="st">"unbiased"</span><span class="op">)</span>   <span class="co"># a published SD; admixr2 converts it</span></span></code></pre></div>
-<p><code>v_denom</code> defaults to <code>"ml"</code>, which is what
-<code>cov.wt(method = "ML")</code> and <a href="datagen.html"><code>datagen()</code></a> produce, so nothing
-changes for data you computed yourself. It is declared <strong>per
-study</strong> because a meta-analysis routinely mixes a digitised
-figure with a model-derived source, and the two need not share a
-denominator.</p>
-<p>At <code>n = 60</code> the factor is 1.7%, which is small; it grows
-as <code>n</code> falls, and it stops being cosmetic for any method that
-scores the reported covariance against its own sampling law rather than
-treating it as a sufficient statistic.</p>
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E</span>, V <span class="op">=</span> <span class="va">SD</span><span class="op">^</span><span class="fl">2</span>, n <span class="op">=</span> <span class="va">n</span>, times <span class="op">=</span> <span class="va">times</span>,</span>
+<span>     ev      <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">50</span>, cmt <span class="op">=</span> <span class="st">"central"</span><span class="op">)</span>,</span>
+<span>     v_denom <span class="op">=</span> <span class="st">"unbiased"</span><span class="op">)</span>   <span class="co"># a published SD; admixr2 converts it</span></span></code></pre></div>
+<p><code>v_denom</code> defaults to <code>"ml"</code> — what
+<code>cov.wt(method = "ML")</code> and <a href="datagen.html"><code>datagen()</code></a> produce — so nothing
+changes for data you computed yourself. It is <strong>per
+study</strong>, because a meta-analysis routinely mixes a digitised
+figure with a model-derived source and the two need not agree.</p>
+<p>At <code>n = 60</code> the factor is 1.7%. It grows as <code>n</code>
+falls, and it stops being cosmetic for any method that scores the
+reported covariance against its own sampling law rather than treating it
+as a sufficient statistic.</p>
 </div>
 <div class="section level2">
 <h2 id="sample-size">Sample size<a class="anchor" aria-label="anchor" href="#sample-size"></a>
@@ -417,41 +411,39 @@ per arm — not the total across arms, and not the number of
 observations.</p>
 <ul>
 <li>
-<strong>Dropout.</strong> <code>n</code> often falls over time, so a
+<strong>Dropout.</strong> <code>n</code> falls over time, so a
 figure’s late points may rest on fewer subjects than its early ones.
-Convert each point’s error bar with the <code>n</code> that applies to
-it, and pass the number contributing to the observations you are fitting
-— the number at risk, not the number randomised.</li>
+Convert each error bar with the <code>n</code> that applies to it, and
+pass the number contributing to the observations you are fitting — at
+risk, not randomised.</li>
 <li>
 <strong>Per-endpoint <code>n</code>.</strong> PK and PD are not
-always measured in the same people. A study’s <code>observations</code>
-entries may each carry their own <code>n</code>.</li>
+always measured in the same people, so each <code>observations</code>
+entry may carry its own <code>n</code>.</li>
 </ul>
 </div>
 <div class="section level2">
 <h2 id="absolute-values-or-change-from-baseline">Absolute values or change from baseline?<a class="anchor" aria-label="anchor" href="#absolute-values-or-change-from-baseline"></a>
 </h2>
 <p>Many PD papers report a least-squares-mean change from baseline
-rather than an absolute value. Either can be fitted, but the model must
-predict the same quantity as the data:</p>
+rather than an absolute value. Either can be fitted, so long as the
+model predicts the same quantity as the data:</p>
 <ul>
-<li>Fitting absolute values needs a baseline parameter in the model; see
-<a href="pkpd.html">PD and PK/PD data</a>.</li>
-<li>Fitting a change means the model output must itself be a change, and
-the SD of the change — not of the absolute value — is the one
-<code>V</code> needs.</li>
+<li>Absolute values need a baseline parameter in the model; see <a href="pkpd.html">PD and PK/PD data</a>.</li>
+<li>A change means the model output must itself be a change, and
+<code>V</code> wants the SD of the change, not of the absolute
+value.</li>
 </ul>
-<p>Studies that report different quantities must be converted to a
-common one before fitting, not after.</p>
+<p>Studies reporting different quantities must be converted to a common
+one before fitting, not after.</p>
 </div>
 <div class="section level2">
 <h2 id="when-there-is-no-variability-at-all">When there is no variability at all<a class="anchor" aria-label="anchor" href="#when-there-is-no-variability-at-all"></a>
 </h2>
-<p>A paper often gives a mean with no SD, SEM or CI — a placebo arm
-reported only in a footnote, for example.</p>
-<p>You then have to assume a <code>V</code>, and it is worth knowing
-what that assumption does. Refit the arm above with the SD deliberately
-wrong in each direction:</p>
+<p>A paper often gives a mean with no SD, SEM or CI — a placebo arm in a
+footnote, say. You then have to assume a <code>V</code>, so it is worth
+knowing what that assumption does. Refit the arm above with the SD
+deliberately wrong in each direction:</p>
 <div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">assume</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">mult</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="va">f</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span><span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"adgh"</span>,</span>
@@ -518,14 +510,13 @@ var(eta.cl) = 0.09, var(eta.v) = 0.04.</caption>
 </tr>
 </tbody>
 </table>
-<p><code>Omega</code> follows the assumption in whichever direction it
-is wrong: too small and the between-subject variability collapses, too
-large and it inflates several-fold. <code>V</code> is data the model
-must reproduce, not a weight — so an assumed <code>V</code> is an
-assumption about the IIV you are trying to estimate, and it propagates
-to every study through the shared <code>Omega</code>. Push it far enough
-and the fit stops being sensible at all: at <code>4x</code> the
-structural parameters leave the building.</p>
+<p><code>Omega</code> follows the assumption whichever way it is wrong:
+too small and the between-subject variability collapses, too large and
+it inflates several-fold. <code>V</code> is data the model must
+reproduce, not a weight — so assuming one is assuming the IIV you are
+trying to estimate, and it reaches every study through the shared
+<code>Omega</code>. Push far enough and the fit stops being sensible: at
+<code>4x</code> the structural parameters leave the building.</p>
 <p>There is no safe direction to err in. In rough order of
 preference:</p>
 <ol style="list-style-type: decimal">
@@ -534,9 +525,9 @@ the same endpoint.</li>
 <li>Use a published typical SD for that endpoint and population.</li>
 <li>Exclude the study.</li>
 </ol>
-<p>Whichever you choose, record it, and refit across the range you
+<p>Whichever you choose, record it and refit across the range you
 consider plausible. If the estimates move, the assumption is doing the
-work and the result belongs in a sensitivity table rather than a
+work, and the result belongs in a sensitivity table rather than a
 headline.</p>
 </div>
 <div class="section level2">
@@ -544,17 +535,17 @@ headline.</p>
 </h2>
 <ul>
 <li>
-<strong>The error bar is the dominant error source.</strong>
+<strong>The error bar dominates every other error source.</strong>
 Digitisation software is accurate to a few percent; mistaking a SEM for
-an SD is an error of <code>sqrt(n)</code>. Reading the caption matters
-more than the pixels.</li>
+an SD is an error of <code>sqrt(n)</code>. The caption matters more than
+the pixels.</li>
 <li>
-<strong>Geometric means.</strong> A paper reporting a geometric mean
-and CV% is describing a log-normal distribution, while <code>E</code>
-and <code>V</code> are arithmetic moments. Convert before fitting.</li>
+<strong>Geometric means.</strong> A geometric mean with CV%
+describes a log-normal distribution, while <code>E</code> and
+<code>V</code> are arithmetic moments. Convert first.</li>
 <li>
-<strong>Digitising.</strong> WebPlotDigitizer is the usual tool.
-Extracting a figure twice and comparing is a cheap check.</li>
+<strong>Digitising.</strong> WebPlotDigitizer is the usual tool;
+extracting a figure twice and comparing is a cheap check.</li>
 <li>
 <strong><code>%RSE</code> is on the estimation scale.</strong> These
 parameters are log-scale, so an RSE on <code>tcl</code> is not an RSE on

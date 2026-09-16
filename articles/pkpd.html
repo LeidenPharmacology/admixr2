@@ -108,9 +108,9 @@
 <h2 id="the-problem">The problem<a class="anchor" aria-label="anchor" href="#the-problem"></a>
 </h2>
 <p>A blood-pressure trial reports two doses, 50 mg and 400 mg. You are
-choosing a dose for the next study and you want <strong>150 mg</strong>,
-which nobody measured. This vignette fits a PK/PD model to the two
-published arms and predicts the arm that was never run.</p>
+choosing the dose for the next study and you want <strong>150
+mg</strong>, which nobody measured. This vignette fits a PK/PD model to
+the two published arms and predicts the arm that was never run.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2/">admixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span></span>
@@ -120,11 +120,10 @@ published arms and predicts the arm that was never run.</p>
 <div class="section level2">
 <h2 id="the-data">The data<a class="anchor" aria-label="anchor" href="#the-data"></a>
 </h2>
-<p>Two dose arms, 60 subjects each. Each arm reports a plasma
-concentration–time curve and a diastolic blood pressure (DBP) curve.
-Concentrations are sampled at seven times, DBP at four — PD is usually
-measured more sparsely than PK, and admixr2 does not require the two to
-share a grid:</p>
+<p>Two arms, 60 subjects each, reporting a plasma concentration–time
+curve and a diastolic blood pressure (DBP) curve. Concentrations at
+seven times, DBP at four: PD is usually measured more sparsely than PK,
+and the two need not share a grid.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pk_times</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0.5</span>, <span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">4</span>, <span class="fl">8</span>, <span class="fl">12</span>, <span class="fl">24</span><span class="op">)</span></span>
 <span><span class="va">pd_times</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">4</span>, <span class="fl">12</span>, <span class="fl">24</span><span class="op">)</span></span>
@@ -140,30 +139,27 @@ share a grid:</p>
 <span><span class="va">conc400_sd</span>   <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">1.557</span>, <span class="fl">1.440</span>, <span class="fl">1.270</span>, <span class="fl">1.106</span>, <span class="fl">1.027</span>, <span class="fl">0.951</span>, <span class="fl">0.599</span><span class="op">)</span></span>
 <span><span class="va">dbp400_mean</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">83.1</span>, <span class="fl">84.0</span>, <span class="fl">86.8</span>, <span class="fl">90.7</span><span class="op">)</span></span>
 <span><span class="va">dbp400_sd</span>    <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span> <span class="fl">8.5</span>,  <span class="fl">8.5</span>,  <span class="fl">8.7</span>,  <span class="fl">8.8</span><span class="op">)</span></span></code></pre></div>
-<p>These two arms are a simulated 60-subject study, drawn from a known
-model — CL = 5 L/h, V = 50 L, baseline DBP = 95 mmHg, Emax = 15 mmHg,
-EC50 = 2 mg/L — so the 150 mg prediction can be checked against a truth
-at the end. Being a sample rather than the population, the numbers carry
-the scatter any 60-subject trial would. A digitised figure gives you
-exactly these fields.</p>
-<p>By 24 h the 50 mg arm is back at its baseline with the drug almost
-gone (0.1 mg/L); the 400 mg arm is still about 4 mmHg below it. The DBP
-standard deviations barely move across time because the spread is
-dominated by between-subject differences in <em>baseline</em> blood
-pressure, which are the same people at every visit.</p>
+<p>Both arms are simulated from a known model — CL = 5 L/h, V = 50 L,
+baseline DBP = 95 mmHg, Emax = 15 mmHg, EC50 = 2 mg/L — so the 150 mg
+prediction can be checked against a truth at the end. Being a sample
+rather than the population, the numbers carry the scatter any 60-subject
+trial would. A digitised figure gives you exactly these fields.</p>
+<p>By 24 h the 50 mg arm is back at baseline with the drug almost gone
+(0.1 mg/L), while the 400 mg arm is still about 4 mmHg below it. The DBP
+standard deviations barely move across time, the spread being dominated
+by between-subject differences in <em>baseline</em> blood pressure — the
+same people at every visit.</p>
 <p>These are standard deviations. Published figures often plot a
-standard <em>error</em> or a model-based least-squares-mean SE instead,
-which must be converted first — see <a href="aggregate-data.html">From a
+standard <em>error</em> or a model-based least-squares-mean SE, which
+must be converted first; see <a href="aggregate-data.html">From a
 published figure to E, V and n</a>.</p>
 </div>
 <div class="section level2">
 <h2 id="the-model">The model<a class="anchor" aria-label="anchor" href="#the-model"></a>
 </h2>
-<p>A one-compartment model with a direct-effect <code>Emax</code> term
-acting to <em>lower</em> DBP. Two observed outputs make this a
-multiple-endpoint model, so it carries a residual error term for each,
-exactly as in <a href="multi-compartment.html">Several observed
-compartments</a>:</p>
+<p>One compartment with a direct-effect <code>Emax</code> term that
+<em>lowers</em> DBP. Two observed outputs make it a multiple-endpoint
+model, carrying a residual error term for each, as in <a href="multi-compartment.html">Several observed compartments</a>:</p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pkpd_model</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span>
@@ -193,32 +189,30 @@ compartments</a>:</p>
 <span><span class="op">}</span></span></code></pre></div>
 <p>A few points to note:</p>
 <ul>
-<li>Each observed output carries its own residual error term
-(<code>prop.cp</code>, <code>add.dbp</code>). This is ordinary nlmixr2
+<li>Each output carries its own residual error term
+(<code>prop.cp</code>, <code>add.dbp</code>) — ordinary nlmixr2
 multiple-endpoint syntax.</li>
 <li>
-<code>e0</code> is the baseline. There is no pre-dose DBP
-observation here, so <code>e0</code> is identified by extrapolating the
-Emax curve to zero concentration. The 50 mg arm’s 24 h point, where the
-drug contributes about 5% of <code>emax</code>, is what keeps that
-extrapolation short. A pre-dose observation or a placebo arm is the
-robust way to pin a baseline; without one, <code>e0</code> and
-<code>emax</code> trade off.</li>
-<li>The drug enters with a minus sign because it lowers DBP, so
-<code>emax</code> is the maximum <em>reduction</em>, in mmHg.</li>
+<code>e0</code> is the baseline. With no pre-dose DBP observation it
+is identified by extrapolating the Emax curve to zero concentration, and
+the 50 mg arm’s 24 h point — where the drug contributes about 5% of
+<code>emax</code> — is what keeps that extrapolation short. A pre-dose
+observation or a placebo arm is the robust way to pin a baseline;
+without one, <code>e0</code> and <code>emax</code> trade off.</li>
+<li>The minus sign is because the drug lowers DBP, so <code>emax</code>
+is the maximum <em>reduction</em>, in mmHg.</li>
 <li>
 <code>emax</code> and <code>ec50</code> carry no <code>eta</code>:
-the reported DBP SDs are nearly flat across time and dose, which carries
-little information about PD-parameter IIV, and <code>eta.e0</code>
-already reproduces the observed spread.</li>
+DBP SDs nearly flat across time and dose say little about PD-parameter
+IIV, and <code>eta.e0</code> already reproduces the spread.</li>
 </ul>
 </div>
 <div class="section level2">
 <h2 id="assembling-the-study-specification">Assembling the study specification<a class="anchor" aria-label="anchor" href="#assembling-the-study-specification"></a>
 </h2>
-<p>Each study gives one <code>observations</code> entry per observed
-output, naming the model variable it corresponds to and its own
-<code>times</code>, <code>E</code> and <code>V</code>:</p>
+<p>One <code>observations</code> entry per output, naming the model
+variable it corresponds to and its own <code>times</code>,
+<code>E</code> and <code>V</code>:</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">study50</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
 <span>  n <span class="op">=</span> <span class="fl">60L</span>, ev <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">50</span>, cmt <span class="op">=</span> <span class="st">"central"</span><span class="op">)</span>,</span>
@@ -238,9 +232,9 @@ output, naming the model variable it corresponds to and its own
 <h2 id="fitting">Fitting<a class="anchor" aria-label="anchor" href="#fitting"></a>
 </h2>
 <p><code><a href="../reference/admData.html">admData()</a></code> builds the placeholder data frame nlmixr2’s
-interface expects — the observations themselves live in the control, not
-in the data argument — and takes the names of the observed outputs.
-Otherwise this is an ordinary admixr2 fit:</p>
+interface expects, and takes the names of the observed outputs — the
+observations themselves live in the control, not the data argument.
+Otherwise an ordinary admixr2 fit:</p>
 <div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">nlmixr2</span>(pkpd_model, <span class="fu">admData</span>(<span class="fu">c</span>(<span class="st">"cp"</span>, <span class="st">"dbp"</span>)), <span class="at">est =</span> <span class="st">"adgh"</span>,</span>
 <span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a>               <span class="at">control =</span> <span class="fu">adghControl</span>(<span class="at">studies =</span> <span class="fu">list</span>(<span class="at">mg50  =</span> study50,</span>
 <span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>                                                    <span class="at">mg400 =</span> study400)))</span>
@@ -253,7 +247,7 @@ Otherwise this is an ordinary admixr2 fit:</p>
 <span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a></span>
 <span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">2.647</span>      <span class="fl">1.168</span>     <span class="dv">0</span>   <span class="fl">3.815</span> <span class="fl">2.623</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">1.625</span>      <span class="fl">0.761</span>     <span class="dv">0</span>   <span class="fl">2.386</span> <span class="fl">2.156</span></span>
 <span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a></span>
 <span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a></span>
@@ -293,11 +287,11 @@ observed output:</p>
 <div class="section level2">
 <h2 id="predicting-an-unstudied-dose">Predicting an unstudied dose<a class="anchor" aria-label="anchor" href="#predicting-an-unstudied-dose"></a>
 </h2>
-<p>The fit gives the two things the question needs: how a dose becomes a
+<p>The fit gives both things the question needs: how a dose becomes a
 concentration over time (<code>cl</code>, <code>v</code>), and how
 concentration becomes an effect (<code>emax</code>, <code>ec50</code>).
-For this model both are closed form — a bolus decays exponentially, and
-the effect follows the concentration instantly:</p>
+Here both are closed form — a bolus decays exponentially and the effect
+follows instantly:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">theta</span> <span class="op">&lt;-</span> <span class="va">fit</span><span class="op">$</span><span class="va">theta</span></span>
 <span><span class="va">cl</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">theta</span><span class="op">[[</span><span class="st">"tcl"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span>; <span class="va">v</span>    <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">theta</span><span class="op">[[</span><span class="st">"tv"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span></span>
@@ -316,11 +310,11 @@ mmHg</strong> below baseline, against 5.3 mmHg for 50 mg and 13.3 mmHg
 for 400 mg. The two studied arms are the check: the model’s DBP at 1 h
 is 90.6 and 82.6 mmHg against the observed 91.5 and 83.1, so the
 prediction sits on data rather than beside it.</p>
-<p>A naive linear interpolation in dose would put 150 mg at 7.6 mmHg.
-The curve gives more, because the response is already flattening: 150 mg
-buys much of what 400 mg does.</p>
-<p>The whole predicted time course follows, and can be laid over the
-arms that were measured:</p>
+<p>Naive linear interpolation in dose would put 150 mg at 7.6 mmHg. The
+curve gives more, the response already flattening: 150 mg buys much of
+what 400 mg does.</p>
+<p>The whole predicted time course follows, laid over the arms that were
+measured:</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">tt</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">0</span>, <span class="fl">24</span>, length.out <span class="op">=</span> <span class="fl">200</span><span class="op">)</span></span>
 <span><span class="va">pred</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">rbind</a></span><span class="op">(</span></span>
@@ -366,33 +360,33 @@ precise <code>Emax</code>.</p>
 <p>A few points to note:</p>
 <ul>
 <li>
-<strong>The prediction is for a typical subject, not a population
-mean.</strong> <code><a href="https://rdrr.io/r/base/drop.html" class="external-link">drop()</a></code> uses <code>exp(theta)</code>, i.e. η
-= 0, whereas the estimator matched <code>E</code> to a population
-<em>mean</em> — and the mean of a nonlinear function is not that
-function at the mean. Here the two agree to about 0.01 mmHg, because the
-median-to-mean shift and the curvature nearly cancel at
-<code>eta.v ~ 0.04</code>. The gap grows with IIV, and would matter if
-<code>emax</code> or <code>ec50</code> carried an <code>eta</code>. For
-a population mean, simulate over the estimated <code>Omega</code>.</li>
+<strong>This is a typical subject, not a population mean.</strong>
+<code><a href="https://rdrr.io/r/base/drop.html" class="external-link">drop()</a></code> uses <code>exp(theta)</code>, i.e. η = 0, whereas
+the estimator matched <code>E</code> to a population <em>mean</em> — and
+the mean of a nonlinear function is not that function at the mean. The
+two agree to about 0.01 mmHg here, the median-to-mean shift and the
+curvature nearly cancelling at <code>eta.v ~ 0.04</code>. The gap grows
+with IIV and would matter if <code>emax</code> or <code>ec50</code>
+carried an <code>eta</code>. For a population mean, simulate over the
+estimated <code>Omega</code>.</li>
 <li>
-<strong>Each arm sweeps a range of concentrations</strong>, because
-the drug clears. That is why a single arm carries more than a static
-dose–response intuition suggests: the 400 mg arm alone spans 0.4–4 ×
+<strong>Each arm sweeps a range of concentrations</strong> as the
+drug clears, which is why one arm carries more than a static
+dose–response intuition suggests: 400 mg alone spans 0.4–4 ×
 <code>EC50</code> and largely identifies <code>emax</code> and
-<code>ec50</code> on its own.</li>
+<code>ec50</code>.</li>
 <li>
 <strong>The 50 mg arm’s job is the baseline.</strong> With 400 mg
-alone, the lowest concentration observed is still ~29% of
+alone the lowest observed concentration is still ~29% of
 <code>emax</code>, so the drug-free state is never approached and
 <code>e0</code> and <code>emax</code> trade off. The 50 mg arm’s 24 h
-point is the only near-drug-free observation in the data.</li>
+point is the only near-drug-free observation there is.</li>
 <li>
-<strong>Check before predicting.</strong> <code>ec50</code> is
-estimated here to 26% RSE — identified, but not precisely, and a dose
-prediction inherits that. A <code>temax</code>/<code>tec50</code>
-correlation near ±1 would mean the two are trading off and the curve’s
-plateau is not identified at all:</li>
+<strong>Check before predicting.</strong> <code>ec50</code> comes
+back at 26% RSE — identified but not precise, and a dose prediction
+inherits that. A <code>temax</code>/<code>tec50</code> correlation near
+±1 would mean the two are trading off and the plateau is not identified
+at all:</li>
 </ul>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">cv</span> <span class="op">&lt;-</span> <span class="va">fit</span><span class="op">$</span><span class="va">cov</span></span>
@@ -414,31 +408,31 @@ E, V and n</a>.</li>
 <li>
 <strong>Which estimators.</strong> <code>adgh</code> (used here),
 <code>adfo</code> and <code>admc</code> support several observed
-outputs. <code>adirmc</code> does not — it errors on multi-output
-models. See the <a href="estimator-comparison.html">estimator
-comparison</a>.</li>
+outputs; <code>adirmc</code> errors on multi-output models. See the <a href="estimator-comparison.html">estimator comparison</a>.</li>
 <li>
-<strong>Same-subject PK and PD.</strong> Here concentration and DBP
-are independent likelihood blocks, as they would be if digitised from
-two figures. If they were measured in the same subjects — usually true
-in a PK/PD study — the two are correlated, and a joint fit with zero
-cross-covariance is not the same as two independent blocks. Supply the
-cross-covariance; see <code><a href="../reference/admControl.html">?admControl</a></code> and <a href="multi-compartment.html">Several observed compartments</a>.</li>
+<strong>Same-subject PK and PD.</strong> Concentration and DBP are
+independent likelihood blocks here, as they would be from two figures.
+Measured in the same subjects — usually the case in a PK/PD study — they
+are correlated, and a joint fit with zero cross-covariance is not two
+independent blocks. Supply the cross-covariance; see
+<code><a href="../reference/admControl.html">?admControl</a></code> and <a href="multi-compartment.html">Several
+observed compartments</a>.</li>
 <li>
 <strong>Delayed effects.</strong> <code>dbp</code> responds to
-<code>cp</code> instantly here, which is what makes the prediction a
-formula. If the effect lags concentration, use an effect compartment or
-a turnover model and simulate the prediction instead.</li>
+<code>cp</code> instantly, which is what makes the prediction a formula.
+If the effect lags, use an effect compartment or a turnover model and
+simulate instead.</li>
 <li>
 <strong>Placebo arms.</strong> With only active arms, drug effect
-and the natural time course of the disease are confounded. A placebo arm
-is just another study with a zero-amount <code>ev</code>.</li>
+and the disease’s natural time course are confounded. A placebo arm is
+just another study with a zero-amount <code>ev</code>.</li>
 <li>
 <strong>Bounded endpoints.</strong> An additive residual can predict
-outside the range of a bounded score. Transform the endpoint instead —
+outside a bounded score’s range. Transform instead —
 <code>logitNorm()</code>, <code>probitNorm()</code>,
-<code><a href="https://nlmixr2.github.io/rxode2/reference/boxCox.html" class="external-link">boxCox()</a></code> and <code><a href="https://nlmixr2.github.io/rxode2/reference/boxCox.html" class="external-link">yeoJohnson()</a></code> are supported, with
-lambda either estimated or fixed. See <a href="error-models.html">Choosing a residual error model</a>.</li>
+<code><a href="https://nlmixr2.github.io/rxode2/reference/boxCox.html" class="external-link">boxCox()</a></code> and <code><a href="https://nlmixr2.github.io/rxode2/reference/boxCox.html" class="external-link">yeoJohnson()</a></code>, lambda estimated or
+fixed. See <a href="error-models.html">Choosing a residual error
+model</a>.</li>
 </ul>
 </div>
 <div class="section level2">

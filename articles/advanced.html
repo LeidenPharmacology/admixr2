@@ -107,8 +107,8 @@
 <div class="section level2">
 <h2 id="full-covariance-vs-variance-nll">Full covariance vs variance NLL<a class="anchor" aria-label="anchor" href="#full-covariance-vs-variance-nll"></a>
 </h2>
-<p>Each study’s <code>V</code> determines which branch of the NLL is
-used. <code>admixr2</code> auto-detects the method:</p>
+<p>Each study’s <code>V</code> selects a branch of the NLL,
+auto-detected:</p>
 <table class="table">
 <thead><tr class="header">
 <th>V structure</th>
@@ -150,27 +150,25 @@ list:</p>
 <span>  method <span class="op">=</span> <span class="st">"var"</span></span>
 <span><span class="op">)</span></span></code></pre></div>
 <p>Use <code>"cov"</code> when you have a full covariance matrix and
-expect temporal correlation to inform parameter estimates. Use
-<code>"var"</code> when only marginal variances are available (e.g. from
-a published table of means and SDs) or when runtime is a priority.</p>
+expect the temporal correlation to inform the estimates;
+<code>"var"</code> when only marginal variances exist — a published
+table of means and SDs — or when runtime matters more.</p>
 </div>
 <div class="section level2">
 <h2 id="gradient-modes">Gradient modes<a class="anchor" aria-label="anchor" href="#gradient-modes"></a>
 </h2>
-<p><code><a href="../reference/admControl.html">admControl()</a></code> and <code><a href="../reference/adfoControl.html">adfoControl()</a></code> offer
-gradient strategies via the <code>grad</code> argument.
-<code><a href="../reference/adghControl.html">adghControl()</a></code> offers <code>"analytical"</code>,
-<code>"fd"</code>, and <code>"none"</code>. <code><a href="../reference/adirmcControl.html">adirmcControl()</a></code>
-offers <code>"analytical"</code>, <code>"none"</code>, and
-<code>"fd"</code> only (no <code>"sens"</code>).</p>
+<p>Every control takes a <code>grad</code> argument.
+<code><a href="../reference/admControl.html">admControl()</a></code> names its analytical mode <code>"sens"</code>;
+<code><a href="../reference/adfoControl.html">adfoControl()</a></code>, <code><a href="../reference/adghControl.html">adghControl()</a></code> and
+<code><a href="../reference/adirmcControl.html">adirmcControl()</a></code> call theirs <code>"analytical"</code>. All
+four also take <code>"fd"</code> and <code>"none"</code>.</p>
 <p><code>"fd"</code> is a <strong>central</strong> difference. Forward
-differencing was removed in 0.4.1: measured against the analytic
-gradient it was 10<sup>2</sup> to 10<sup>4</sup> times less accurate,
-and the one solve per parameter it saved did not pay for a gradient the
-optimizer struggles to descend. The step is not a fixed constant either
-– it is measured per parameter by the Shi (2021) procedure, with
-<code>grad_h</code> kept as the fallback when no measurement can be
-made.</p>
+differencing was removed in 0.4.1: it measured 10<sup>2</sup> to
+10<sup>4</sup> times less accurate than the analytic gradient, and the
+one solve per parameter it saved did not pay for a gradient the
+optimizer struggles to descend. Nor is the step a constant — it is
+measured per parameter by the Shi (2021) procedure, with
+<code>grad_h</code> the fallback when it cannot be.</p>
 <p><strong><code><a href="../reference/admControl.html">admControl()</a></code> gradient modes:</strong></p>
 <table class="table">
 <colgroup>
@@ -266,15 +264,12 @@ node grid</td>
 </tr>
 </tbody>
 </table>
-<p>Because the GH objective is <strong>noise-free</strong>
-(deterministic quadrature, no MC draws), its analytical gradient is
-exact and the resulting Hessian is well-conditioned —
-<code>"analytical"</code> is the recommended default for
-<code>adgh</code>.</p>
-<p>For <code>adfo</code>, all gradient modes still use the sensitivity
-model inside each NLL evaluation to compute J in a single rxSolve —
-<code>grad</code> controls only how the <em>optimizer</em> gradient is
-formed.</p>
+<p>The GH objective is <strong>noise-free</strong> — deterministic
+quadrature, no MC draws — so its analytical gradient is exact and the
+Hessian well-conditioned. Keep the default.</p>
+<p>For <code>adfo</code>, every mode still uses the sensitivity model
+inside each NLL evaluation to get J in one rxSolve; <code>grad</code>
+only controls how the <em>optimizer</em> gradient is formed.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># Analytical gradient (default; fastest for ODE models)</span></span>
 <span><span class="va">fit_sens</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span><span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
@@ -285,91 +280,78 @@ formed.</p>
 <span><span class="va">fit_bobyqa</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span><span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
 <span>  control <span class="op">=</span> <span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>s <span class="op">=</span> <span class="va">study</span><span class="op">)</span>, grad <span class="op">=</span> <span class="st">"none"</span>,</span>
 <span>                       n_sim <span class="op">=</span> <span class="fl">5000L</span>, seed <span class="op">=</span> <span class="fl">1L</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
-<p><code>"sens"</code> is recommended for all standard ODE and
-<code>linCmt()</code> models. If the sensitivity model is unavailable
-(e.g. rare ODE features), <code>admixr2</code> falls back to
-<code>"fd"</code> automatically with a warning.</p>
+<p>Use <code>"sens"</code> for any standard ODE or <code>linCmt()</code>
+model. Where the sensitivity model cannot be built — some rare ODE
+features — admixr2 falls back to <code>"fd"</code> with a warning.</p>
 </div>
 <div class="section level2">
 <h2 id="mu-referencing-and-sensitivity-equations">Mu-referencing and sensitivity equations<a class="anchor" aria-label="anchor" href="#mu-referencing-and-sensitivity-equations"></a>
 </h2>
-<p><strong>Mu-referencing</strong> is the nlmixr2 convention of
-expressing each structural parameter as a fixed effect plus a random
-effect through a known back-transformation:</p>
+<p><strong>Mu-referencing</strong> is the nlmixr2 convention of writing
+each structural parameter as a fixed effect plus a random effect under a
+known back-transformation:</p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">cl</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tcl</span> <span class="op">+</span> <span class="va">eta.cl</span><span class="op">)</span>   <span class="co"># mu-referenced: tcl paired with eta.cl</span></span></code></pre></div>
 <p><code>admixr2</code> uses this pairing to classify parameters into
 three cases, each handled differently by <code>grad = "sens"</code>:</p>
 <p><strong>Paired (mu-referenced) parameters</strong> — rxode2 augments
-the ODE system with sensitivity equations <code>d(pred)/d(eta_i)</code>
-for each random effect. Because <code>tcl</code> and <code>eta.cl</code>
-enter additively on the log scale, the gradient of the NLL with respect
-to <code>tcl</code> equals the gradient with respect to
-<code>eta.cl</code>. Both are recovered from a single ODE solve, with no
-extra function evaluations.</p>
-<p><strong>Non-mu-referenced parameters</strong> — when a structural
-parameter and its random effect are written separately
-(e.g. <code>cl &lt;- exp(tcl) * exp(eta.cl)</code>), the sensitivity
-equations keyed on the etas do not by themselves carry
-<code>d(pred)/d(tcl)</code>. <code>admixr2</code> therefore emits its
-own first-order sensitivity model over an explicit <em>direction
-set</em> — one direction per random effect plus one per unpaired
-structural theta — compiled with <code>eventSens = "jump"</code> so that
+the ODE system with sensitivity equations <code>d(pred)/d(eta_i)</code>.
+Since <code>tcl</code> and <code>eta.cl</code> enter additively on the
+log scale, the NLL gradient with respect to <code>tcl</code> equals the
+one with respect to <code>eta.cl</code>, and a single solve recovers
+both.</p>
+<p><strong>Non-mu-referenced parameters</strong> — written separately
+(<code>cl &lt;- exp(tcl) * exp(eta.cl)</code>), the eta-keyed
+sensitivities do not carry <code>d(pred)/d(tcl)</code>. admixr2
+therefore emits its own first-order sensitivity model over an explicit
+<em>direction set</em> — one direction per random effect, one per
+unpaired theta — compiled with <code>eventSens = "jump"</code> so
 dosing-modifier
 (<code>f</code>/<code>lag</code>/<code>rate</code>/<code>dur</code>)
-sensitivities are included. The unpaired thetas then get an
-<strong>analytical</strong> gradient from the same single solve, with no
-finite differences (a message notes that the sensitivity model carries
-them). This mirrors the direction-set scheme <code>nlmixr2est</code>’s
-fast-focei uses, at first order, and is cross-validated against its
-inner model to ~1e-13. A targeted CRN finite-difference solve is used
-only as a fallback, when the augmented model cannot be built.</p>
-<p><strong>Parameters without a random effect</strong> — a structural
-parameter with no corresponding eta (e.g. <code>v2 &lt;- exp(tv2)</code>
-with IIV dropped from V2) is simply the same unpaired case: it gets its
-own direction in that sensitivity model and an exact analytical
-gradient. (<code>adfo</code> is the one exception — its
-<code>V_pred = J Ω Jᵀ + Σ</code> needs the second derivative
-<code>dJ/dθ</code>, so it keeps finite differences for structural
-thetas, as noted above.)</p>
+sensitivities come too. The unpaired thetas then get an
+<strong>analytical</strong> gradient from that same solve, no finite
+differences, with a message saying so. This is the direction-set scheme
+<code>nlmixr2est</code>’s fast-focei uses, at first order,
+cross-validated against its inner model to ~1e-13. A targeted CRN
+finite-difference solve is the fallback when the augmented model cannot
+be built.</p>
+<p><strong>Parameters without a random effect</strong> — one with no
+corresponding eta (<code>v2 &lt;- exp(tv2)</code>, IIV dropped from V2)
+is the same unpaired case: its own direction in that sensitivity model,
+and an exact analytical gradient. (<code>adfo</code> needs one thing
+more: <code>V_pred = J Ω Jᵀ + Σ</code> depends on the second derivative
+<code>dJ/dθ</code>, which comes from the order-2 sensitivity model.
+Finite differences are the fallback when that cannot be built, not the
+rule.)</p>
 </div>
 <div class="section level2">
 <h2 id="irmc-kappa-correction">IRMC kappa correction<a class="anchor" aria-label="anchor" href="#irmc-kappa-correction"></a>
 </h2>
-<p>The IRMC estimator shifts IS weights by moving the proposal mean when
-a structural parameter changes. This works directly for mu-referenced
-parameters (e.g. <code>cl &lt;- exp(tcl + eta.cl)</code>) because the
-weight shift is a closed-form function of the back-transformed
-ratio.</p>
-<p>For <strong>non-mu-referenced parameters</strong> — structural thetas
-without a paired random effect (e.g. <code>ka &lt;- exp(tka)</code> with
-no <code>eta.ka</code>) — changing <code>tka</code> during inner
-optimisation alters the population mean prediction
-<code>f(theta, 0)</code> without a corresponding IS weight path. The
-kappa correction accounts for this by adding
-<code>kappa = f(theta_cand, 0) - f(theta_outer, 0)</code> to the
-predicted mean, keeping the inner NLL anchored to the true prediction at
-the candidate point. Kappa is zero when all struct thetas are
-mu-referenced.</p>
-<p>Two methods control how <code>f(theta_cand, 0)</code> is evaluated
-during inner optimisation:</p>
+<p>IRMC shifts its importance weights by moving the proposal mean when a
+structural parameter changes. For a mu-referenced parameter that shift
+is a closed-form function of the back-transformed ratio.</p>
+<p>A theta with <strong>no paired random effect</strong>
+(<code>ka &lt;- exp(tka)</code>, no <code>eta.ka</code>) has no such
+weight path: changing <code>tka</code> in the inner loop moves
+<code>f(theta, 0)</code> and nothing else follows. The kappa correction
+adds <code>kappa = f(theta_cand, 0) - f(theta_outer, 0)</code> to the
+predicted mean, anchoring the inner NLL to the true prediction at the
+candidate. Kappa is zero when every theta is mu-referenced.</p>
+<p>How <code>f(theta_cand, 0)</code> gets evaluated is the choice:</p>
 <ul>
 <li>
-<strong><code>"exact"</code></strong> (default): re-evaluates
-<code>f(theta_cand, 0)</code> via a single rxSolve at each inner NLL
-evaluation. Exact; costs one extra rxSolve per inner step.</li>
+<strong><code>"exact"</code></strong> (default) re-solves it at each
+inner NLL evaluation — one extra rxSolve per inner step.</li>
 <li>
-<strong><code>"linearized"</code></strong>: precomputes
-<code>J = df/d(theta)</code> once per outer iteration via a small FD
-batch. Approximates
+<strong><code>"linearized"</code></strong> precomputes
+<code>J = df/d(theta)</code> once per outer iteration from a small FD
+batch and takes
 <code>kappa_fn(theta_cand) ≈ f0 + J %*% (theta_cand - theta0)</code> —
-pure arithmetic per inner step, zero extra rxSolve calls.</li>
+arithmetic only, no rxSolve at all.</li>
 </ul>
-<p><code>"exact"</code> is accurate but adds an rxSolve to every inner
-NLL call. <code>"linearized"</code> is faster and the approximation is
-good when inner steps stay small relative to the outer box constraint —
-which is typical for converged phases. Prefer <code>"linearized"</code>
-for complex ODE models where each rxSolve is expensive.</p>
+<p>The approximation holds while inner steps stay small against the
+outer box constraint, which is typical once phases converge, so prefer
+<code>"linearized"</code> wherever a solve is expensive.</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/adirmcControl.html">adirmcControl</a></span><span class="op">(</span><span class="va">...</span>, kappa_method <span class="op">=</span> <span class="st">"exact"</span><span class="op">)</span>       <span class="co"># default</span></span>
 <span><span class="fu"><a href="../reference/adirmcControl.html">adirmcControl</a></span><span class="op">(</span><span class="va">...</span>, kappa_method <span class="op">=</span> <span class="st">"linearized"</span><span class="op">)</span>  <span class="co"># faster for complex ODE models</span></span></code></pre></div>
@@ -378,8 +360,8 @@ for complex ODE models where each rxSolve is expensive.</p>
 <h2 id="parallel-restarts">Parallel restarts<a class="anchor" aria-label="anchor" href="#parallel-restarts"></a>
 </h2>
 <p>Multi-restart fitting guards against local optima.
-<code>workers &gt; 1</code> runs restarts in parallel;
-<code>admixr2</code> manages the worker pool internally:</p>
+<code>workers &gt; 1</code> runs the restarts in parallel, over a pool
+admixr2 manages itself:</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit_par</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
 <span>  <span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
@@ -393,12 +375,12 @@ for complex ODE models where each rxSolve is expensive.</p>
 <span>    seed       <span class="op">=</span> <span class="fl">1L</span></span>
 <span>  <span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
-<p><code>cores</code> is distributed automatically:
-<code>floor(total_cores / n_workers)</code> threads per worker, with
-remainder allocated cyclically (e.g. 13 cores / 4 workers → 4, 3, 3, 3).
-Workers are stopped after the restart phase so all cores are freed for
-the covariance Hessian step. Call <code><a href="../reference/admStopWorkers.html">admStopWorkers()</a></code> manually
-if a fit is interrupted before cleanup.</p>
+<p><code>cores</code> is split automatically —
+<code>floor(total_cores / n_workers)</code> each, remainder cyclically,
+so 13 cores over 4 workers gives 4, 3, 3, 3. Workers stop after the
+restart phase, freeing every core for the covariance Hessian. Call
+<code><a href="../reference/admStopWorkers.html">admStopWorkers()</a></code> by hand if a fit is interrupted before
+that cleanup.</p>
 </div>
 <div class="section level2">
 <h2 id="quasi-random-sampling">Quasi-random sampling<a class="anchor" aria-label="anchor" href="#quasi-random-sampling"></a>
@@ -433,22 +415,21 @@ drawn:</p>
 </tr>
 </tbody>
 </table>
-<p>Sobol sequences typically require 2–5× fewer samples than plain
-normal draws for equivalent NLL variance. For small <code>n_sim</code>,
-<code>"lhs"</code> provides better coverage than Sobol.</p>
+<p>Sobol typically needs 2–5× fewer samples than plain normal draws for
+the same NLL variance; at small <code>n_sim</code>, <code>"lhs"</code>
+covers better.</p>
 </div>
 <div class="section level2">
 <h2 id="parameter-uncertainty">Parameter uncertainty<a class="anchor" aria-label="anchor" href="#parameter-uncertainty"></a>
 </h2>
-<p><code>covMethod = "r"</code> computes a numerical Hessian after
-optimisation and reports standard errors in <code>print(fit)</code>. As
-of this version the default is <code>covMethod = "r,s"</code> (see
-below), which reports the sandwich correction of that same Hessian; pass
-<code>covMethod = "r"</code> explicitly to get the uncorrected SEs. SEs
-are reported for the structural, residual-error <strong>and</strong>
-omega (IIV) parameters; omega is reported on its natural scale, with the
-Hessian rotated off the Cholesky factor the optimiser works in. A larger
-<code>cov_n_sim</code> reduces MC noise in the Hessian:</p>
+<p><code>covMethod = "r"</code> takes a numerical Hessian after
+optimisation and reports standard errors in <code>print(fit)</code>. The
+default is <code>covMethod = "r,s"</code> (below), the sandwich
+correction of that same Hessian; ask for <code>"r"</code> to get the
+uncorrected ones. SEs cover the structural, residual-error
+<strong>and</strong> omega parameters, omega on its natural scale, with
+the Hessian rotated off the Cholesky factor the optimiser works in. A
+larger <code>cov_n_sim</code> cuts MC noise in the Hessian:</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit_cov</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
 <span>  <span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
@@ -456,14 +437,13 @@ Hessian rotated off the Cholesky factor the optimiser works in. A larger
 <span>    studies     <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>examplomycin <span class="op">=</span> <span class="va">study</span><span class="op">)</span>,</span>
 <span>    n_sim       <span class="op">=</span> <span class="fl">5000L</span>,</span>
 <span>    cov_n_sim   <span class="op">=</span> <span class="fl">10000L</span>,   <span class="co"># more samples → lower Hessian noise</span></span>
-<span>    cov_h_outer <span class="op">=</span> <span class="fl">2.5e-3</span>,   <span class="co"># outer FD step scale (default: eps^(1/5) ≈ 2.5e-3)</span></span>
+<span>    cov_h_outer <span class="op">=</span> <span class="fl">2.5e-3</span>,   <span class="co"># outer FD step scale (default: eps^(1/5) ≈ 7.4e-4)</span></span>
 <span>    covMethod   <span class="op">=</span> <span class="st">"r"</span>,</span>
 <span>    seed        <span class="op">=</span> <span class="fl">1L</span></span>
 <span>  <span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
-<p>Set <code>covMethod = "none"</code> to skip uncertainty estimation
-during early model development when you only need the point
-estimates:</p>
+<p>Skip uncertainty altogether during early development, when only the
+point estimates matter:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span><span class="va">...</span>, covMethod <span class="op">=</span> <span class="st">"none"</span><span class="op">)</span></span></code></pre></div>
 <p>If the Hessian is non-positive-definite (SEs printed as
@@ -475,17 +455,17 @@ estimates:</p>
 sampling law<a class="anchor" aria-label="anchor" href="#covmethod-rs-scoring-the-summary-against-its-own-sampling-law"></a>
 </h3>
 <p>The aggregate objective is the exact log-likelihood of <code>n</code>
-iid draws from <code>N(yt, Vt)</code>, so it assumes each subject’s
-observation vector is multivariate normal. It is not —
+iid draws from <code>N(yt, Vt)</code>, which assumes each subject’s
+observation vector is multivariate normal. It is not:
 <code>y_i = f(theta, b_i) + eps_i</code> is nonlinear in the random
-effect, so the marginal is a mixture. This does <strong>not</strong>
-cost the point estimates: the score has expectation zero at the true
-parameters under any weight, so the fit stays consistent. It costs the
-reported uncertainty, in two ways that differ in kind:
+effect, so the marginal is a mixture. The point estimates do
+<strong>not</strong> pay for this — the score has expectation zero at
+the true parameters under any weight, so the fit stays consistent. The
+reported uncertainty does, in two ways that differ in kind:
 <code>Cov(V_ij, V_kl)</code> is mis-sized by the excess kurtosis, and
 <code>Cov(ybar, vech V)</code> is assumed zero where a real correlation
-of 0.3–0.6 sits. The sample mean and the sample covariance are exactly
-independent for a multivariate normal, and for nothing else.</p>
+of 0.3–0.6 sits. Sample mean and sample covariance are exactly
+independent for a multivariate normal and for nothing else.</p>
 <p><code>covMethod = "r,s"</code> scores <code>(ybar, vech V)</code>
 against its own asymptotic law and reports the sandwich
 <code>H^-1 J H^-1</code>, where <code>H</code> is the same Hessian
@@ -498,27 +478,25 @@ fourth moment):</p>
 <span>  control <span class="op">=</span> <span class="fu"><a href="../reference/adghControl.html">adghControl</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>examplomycin <span class="op">=</span> <span class="va">study</span><span class="op">)</span>, covMethod <span class="op">=</span> <span class="st">"r,s"</span><span class="op">)</span></span>
 <span><span class="op">)</span></span>
 <span><span class="va">fit_rs</span><span class="op">$</span><span class="va">covMethod</span>   <span class="co"># "r,s" if the correction was applied, "r" if it degraded</span></span></code></pre></div>
-<p>Point estimates and the objective are identical to the
-<code>"r"</code> fit; only the SEs move. Under correct specification
-<code>J = 2H</code> and <code>"r,s"</code> returns exactly what
-<code>"r"</code> would have, so the two agreeing is the expected outcome
-for a well-specified model, not a sign that nothing happened.</p>
-<p>It applies to every residual family whose conditional law is
-independent across timepoints — which is all of them except
-<code><a href="https://rdrr.io/r/stats/ar.html" class="external-link">ar()</a></code> — the conditionally-normal set (<code>add</code>,
-<code>prop</code>, <code>pow</code>, <code>combined1</code>,
-<code>combined2</code>), the closed-form distributional ones
-(<code>lnorm</code>, <code>pois</code>, <code>binom</code>,
-<code>nbinomMu</code>, <code>beta</code>, <code>t(nu &gt; 4)</code>),
-and the transform-both-sides ones (<code>boxCox</code>,
-<code>yeoJohnson</code>, <code>logitNorm</code>,
-<code>probitNorm</code>). Anything it cannot build — an
-<code><a href="https://rdrr.io/r/stats/ar.html" class="external-link">ar()</a></code> residual, a <code><a href="https://rdrr.io/r/base/t.html" class="external-link">t()</a></code> with
-<code>nu &lt;= 4</code>, an <code>ordinal()</code> or same-subject joint
-study, a singular ingredient — degrades to <code>"r"</code> with a
-warning, and <code>fit$covMethod</code> then reads <code>"r"</code>: it
-records what the covariance <strong>is</strong>, not what was asked
-for.</p>
+<p>Point estimates and objective are identical to the <code>"r"</code>
+fit; only the SEs move. Under correct specification <code>J = 2H</code>,
+so <code>"r,s"</code> returns exactly what <code>"r"</code> would: the
+two agreeing is the expected outcome for a well-specified model, not a
+sign that nothing happened.</p>
+<p>It covers every residual family whose conditional law is independent
+across timepoints — all of them except <code><a href="https://rdrr.io/r/stats/ar.html" class="external-link">ar()</a></code>: the
+conditionally-normal set (<code>add</code>, <code>prop</code>,
+<code>pow</code>, <code>combined1</code>, <code>combined2</code>), the
+closed-form distributional ones (<code>lnorm</code>, <code>pois</code>,
+<code>binom</code>, <code>nbinomMu</code>, <code>beta</code>,
+<code>t(nu &gt; 4)</code>) and the transform-both-sides ones
+(<code>boxCox</code>, <code>yeoJohnson</code>, <code>logitNorm</code>,
+<code>probitNorm</code>). What it cannot build — <code><a href="https://rdrr.io/r/stats/ar.html" class="external-link">ar()</a></code>,
+<code><a href="https://rdrr.io/r/base/t.html" class="external-link">t()</a></code> with <code>nu &lt;= 4</code>, <code>ordinal()</code>, a
+same-subject joint study, a singular ingredient — degrades to
+<code>"r"</code> with a warning, and <code>fit$covMethod</code> then
+reads <code>"r"</code>: it records what the covariance
+<strong>is</strong>, not what was asked for.</p>
 <p>Under <code>"r,s"</code> the denominator of a study’s reported
 <code>V</code> stops being cosmetic — see <code>v_denom</code> in the <a href="aggregate-data.html">aggregate data</a> vignette.</p>
 </div>
@@ -527,16 +505,14 @@ for.</p>
 <h2 id="model-comparison-aic-and-bic">Model comparison: AIC and BIC<a class="anchor" aria-label="anchor" href="#model-comparison-aic-and-bic"></a>
 </h2>
 <p>Standard information criteria work directly on <code>admFit</code>
-objects. <strong>AIC and BIC are comparable only across estimators that
-evaluate the same likelihood.</strong> <code>admc</code>,
-<code>adgh</code>, and <code>adirmc</code> all target the exact
-aggregate MVN likelihood (MC, quadrature, and importance-weighted
-estimates of the same integral), so their information criteria are
-mutually comparable. <code>adfo</code> evaluates a <em>linearised</em>
-likelihood that differs from these, so it must not be compared against
-the other three.</p>
-<p>Here we compare the full model (IIV on all five parameters) against a
-reduced model with IIV on CL and V1 only:</p>
+objects. <strong>AIC and BIC compare only across estimators evaluating
+the same likelihood.</strong> <code>admc</code>, <code>adgh</code> and
+<code>adirmc</code> all target the exact aggregate MVN likelihood — MC,
+quadrature and importance-weighted estimates of one integral — so they
+are mutually comparable. <code>adfo</code>’s is <em>linearised</em>, and
+must not be set against them.</p>
+<p>Full model (IIV on all five parameters) against a reduced one (IIV on
+CL and V1):</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">ctl</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span></span>
 <span>  studies   <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>examplomycin <span class="op">=</span> <span class="va">study</span><span class="op">)</span>,</span>
@@ -560,17 +536,17 @@ reduced model with IIV on CL and V1 only:</p>
 <span><span class="co">#&gt;             df       BIC</span></span>
 <span><span class="co">#&gt; fit_full    11 -3597.732</span></span>
 <span><span class="co">#&gt; fit_reduced  8 -3471.888</span></span></code></pre></div>
-<p>Lower AIC/BIC favours the more parsimonious model; a difference &gt;
-10 is generally considered strong evidence.</p>
+<p>The model with the lower AIC/BIC is preferred; a difference &gt; 10
+is generally considered strong evidence. BIC penalises added parameters
+more heavily than AIC, so the two can disagree on a marginal eta.</p>
 <div class="section level3">
 <h3 id="anova-a-likelihood-ratio-test-on-nested-fits">
 <code>anova()</code>: a likelihood-ratio test on nested fits<a class="anchor" aria-label="anchor" href="#anova-a-likelihood-ratio-test-on-nested-fits"></a>
 </h3>
-<p><code>fit_full</code> and <code>fit_reduced</code> are
-<strong>nested</strong> – <code>fit_reduced</code> is
-<code>fit_full</code> with <code>eta.v2</code>, <code>eta.q</code> and
-<code>eta.ka</code> dropped – so their objectives can be compared
-directly with a chi-squared test:</p>
+<p>The two are <strong>nested</strong> – <code>fit_reduced</code> is
+<code>fit_full</code> without <code>eta.v2</code>, <code>eta.q</code>
+and <code>eta.ka</code> – so a chi-squared test compares their
+objectives directly:</p>
 <div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/stats/anova.html" class="external-link">anova</a></span><span class="op">(</span><span class="va">fit_full</span>, <span class="va">fit_reduced</span><span class="op">)</span></span>
 <span><span class="co">#&gt; Likelihood-ratio test</span></span>
@@ -581,16 +557,14 @@ directly with a chi-squared test:</p>
 number of parameters the larger model adds (three etas here);
 <code>p</code> is <code>pchisq(dOFV, Df, lower.tail = FALSE)</code>, the
 ordinary likelihood-ratio test.</p>
-<p><code><a href="https://rdrr.io/r/stats/anova.html" class="external-link">anova()</a></code> refuses to compare fits that are not on the same
-footing: different estimators score different approximations to the
-likelihood (FO-linearised, quadrature, Monte Carlo), and
-<code>adgh</code> fits on different <code>n_nodes</code> or
-<code>admc</code>/<code>adirmc</code> fits on different
-<code>n_sim</code> move the objective with the grid or sample size
-rather than with the model. All three are rejected with an error rather
-than silently returning a number. See <code><a href="../reference/anova.admFit.html">?anova.admFit</a></code> for the
-boundary-variance case (testing whether an eta’s variance is zero) and
-why a negative <code>dOFV</code> is reported rather than clamped.</p>
+<p><code><a href="https://rdrr.io/r/stats/anova.html" class="external-link">anova()</a></code> refuses fits that are not on the same footing.
+Different estimators score different approximations (FO-linearised,
+quadrature, Monte Carlo), and changing <code>n_nodes</code> or
+<code>n_sim</code> moves the objective with the grid or sample size
+rather than with the model. All three are errors rather than a number
+returned quietly. See <code><a href="../reference/anova.admFit.html">?anova.admFit</a></code> for the
+boundary-variance case — testing whether an eta’s variance is zero — and
+why a negative <code>dOFV</code> is reported, not clamped.</p>
 </div>
 </div>
 <div class="section level2">

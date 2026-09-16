@@ -1,9 +1,8 @@
 # Diagnostic plots
 
 [`plot.admFit()`](https://leidenpharmacology.github.io/admixr2/reference/plot.admFit.md)
-produces up to four diagnostic panel types. Call with `which` to select
-a subset; the default is all four. Each panel is returned as a named
-ggplot2 object in a list.
+draws up to four panel types, all four by default. Each is returned as a
+named ggplot2 object in a list.
 
 ``` r
 
@@ -12,8 +11,8 @@ plots <- plot(fit, which = c("mean", "cov", "nll", "par"))
 
 ## Mean diagnostics
 
-The `"mean"` panel is a 2×2 grid per study. Requires `patchwork` for the
-composite layout; without it, four separate plots are returned.
+A 2×2 grid per study. `patchwork` composes it; without it you get four
+separate plots.
 
 ``` r
 
@@ -29,24 +28,23 @@ Mean diagnostics for the examplomycin study.
 √diag(**V**\_obs).
 
 **Top-right — Predicted:** predicted mean with ±1 SD ribbon, where SD =
-√diag(**V**\_pred). **V**\_pred combines between-subject variability
-(Omega) and residual error (sigma). Both top panels share the same
-y-axis scale so differences in magnitude are immediately visible.
+√diag(**V**\_pred), combining between-subject variability (Omega) and
+residual error (sigma). Both top panels share a y-axis, so a difference
+in magnitude is visible at once.
 
 **Bottom-left — Raw residual:** `E_obs[t] − μ_pred[t]` as a lollipop.
-The grey band is ±2 SE(mean), where SE = √(**V**\_pred\[t,t\] / n).
-Points outside the band indicate systematic bias at that time point.
+The grey band is ±2 SE(mean), SE = √(**V**\_pred\[t,t\] / n); points
+outside it are systematic bias at that time.
 
-**Bottom-right — Standardised residual:** `z[t] = residual[t] / SE[t]`.
-Under a well-specified model, z should be approximately N(0, 1). Stars
-flag \|z\| \> 1.96 (∗), 2.58 (∗∗), 3.29 (∗∗∗). With 9 time points and no
-multiplicity correction, one flagged time point is expected by chance
-alone.
+**Bottom-right — Standardised residual:** `z[t] = residual[t] / SE[t]`,
+which a well-specified model leaves approximately N(0, 1). Stars flag
+\|z\| \> 1.96 (∗), 2.58 (∗∗), 3.29 (∗∗∗). Across 9 uncorrected time
+points, one flag is expected by chance.
 
 ## Covariance diagnostics
 
-The `"cov"` panel compares observed and predicted (co)variance as
-heatmaps. Requires `patchwork` for the composite layout.
+Observed against predicted (co)variance, as heatmaps. Also composed with
+`patchwork`.
 
 ``` r
 
@@ -59,24 +57,21 @@ with residuals.](diagnostic-plots_files/figure-html/cov-panel-1.png)
 Covariance diagnostics: observed and predicted covariance matrices with
 residuals.
 
-**Top row — Observed \| Predicted:** both matrices plotted on a shared
-blue-white-red scale. A good fit shows matching patterns of magnitude
-and sign — including the off-diagonal temporal correlation structure.
+**Top row — Observed \| Predicted:** one shared blue-white-red scale. A
+good fit matches in magnitude and sign, off-diagonal temporal structure
+included.
 
-**Bottom-left — Residual (V_obs − V_pred):** diverging scale
-(purple-white-teal). Persistent positive residuals on the diagonal mean
-the model under-predicts variance; negative residuals indicate
-over-prediction.
+**Bottom-left — Residual (V_obs − V_pred):** diverging
+purple-white-teal. Positive on the diagonal means the model
+under-predicts variance; negative, over-predicts.
 
-**Bottom-right — Standardised residual:** each entry divided by its
-asymptotic SE. Diagonal SE = √(2 V\[i,i\]² / (n−1)); off-diagonal SE =
-√((V\[i,i\]·V\[j,j\] + V\[i,j\]²) / (n−1)). Stars use the same
-thresholds as the mean panel.
+**Bottom-right — Standardised residual:** each entry over its asymptotic
+SE — √(2 V\[i,i\]² / (n−1)) on the diagonal, √((V\[i,i\]·V\[j,j\] +
+V\[i,j\]²) / (n−1)) off it. Stars as above.
 
 ## NLL trace
 
-The `"nll"` panel shows how the objective function evolved across
-optimizer iterations, coloured by restart:
+The objective across optimizer iterations, coloured by restart:
 
 ``` r
 
@@ -88,15 +83,13 @@ restart.](diagnostic-plots_files/figure-html/nll-panel-1.png)
 
 NLL convergence trace. Each line is one optimizer restart.
 
-Restarts that converge to the same final value support a unimodal
-landscape. A spread of final NLL values suggests local optima — increase
-`n_restarts` and `restart_sd` in
-[`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md).
+Restarts landing on the same value support a unimodal landscape; a
+spread of final values suggests local optima, so raise `n_restarts` and
+`restart_sd`.
 
 ## Parameter trace
 
-The `"par"` panel facets each parameter’s trajectory over optimizer
-iterations:
+One facet per parameter, over optimizer iterations:
 
 ``` r
 
@@ -110,22 +103,17 @@ variance.](diagnostic-plots_files/figure-html/par-panel-1.png)
 Parameter trace on the natural scale. Struct thetas back-transformed;
 sigma shown as SD; V(eta) = variance.
 
-Parameters are displayed on the natural scale:
+Everything is on the natural scale: structural thetas back-transformed,
+sigma as an SD, the Omega diagonal as a variance labelled `V(eta.x)`,
+its off-diagonal as the raw Cholesky `L[i,j]`.
 
-- Structural thetas: back-transformed
-  (e.g. [`exp()`](https://rdrr.io/r/base/Log.html) for log-scale params)
-- Sigma: displayed as SD
-- Omega diagonal: displayed as variance, labelled `V(eta.x)`
-- Omega off-diagonal: raw Cholesky L\[i,j\]
-
-Smoothly converging traces that stabilise well before `maxeval` indicate
-the optimizer is not being artificially cut off. If traces still drift
-at the end, increase `maxeval`.
+Traces that flatten well before `maxeval` mean the optimizer was not cut
+off. If they still drift at the end, raise `maxeval`.
 
 ## Accessing individual panels
 
 [`plot()`](https://rdrr.io/r/graphics/plot.default.html) returns its
-list invisibly. Assign it to retrieve or modify panels:
+list invisibly; assign it to reach individual panels:
 
 ``` r
 
@@ -140,11 +128,9 @@ names(plots)
 #> [1] "nll_trace" "par_trace"
 ```
 
-Panel names follow the pattern `<type>_<study>` for per-study panels, or
-`nll_trace` / `par_trace` for the trace panels. For a study with several
-observed outputs the study label gains the output name —
-e.g. `mean_lit.plasma`, `cov_lit.brain` — so each compartment gets its
-own panel:
+Per-study panels are named `<type>_<study>`, the traces `nll_trace` and
+`par_trace`. With several observed outputs the label gains the output
+name — `mean_lit.plasma`, `cov_lit.brain` — so each gets its own panel:
 
 ``` r
 
@@ -172,9 +158,8 @@ NLL trace with a custom theme.
 
 ## IIV correlation heatmap
 
-The estimated Omega matrix can be visualised as a correlation heatmap to
-inspect the inter-individual variability structure. This is especially
-informative for models with off-diagonal omega entries.
+The estimated Omega reads as a correlation heatmap, which is worth a
+look whenever the model has off-diagonal omega entries.
 
 ``` r
 

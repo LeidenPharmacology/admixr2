@@ -82,6 +82,21 @@ covDist(..., cor = NULL, joint = NULL, dist = c("normal", "lnorm"))
 A validated `cov_dist`, ready to pass to a study. Printing it shows each
 covariate's realised mean, SD and type.
 
+## Covariates the model does not read
+
+A distribution may name covariates the analysis model never uses. The
+prediction cannot depend on them, so integrating over them changes
+nothing and they are left off the design, with a message naming them.
+This is what lets a NESTED pair of models share one set of studies: the
+null model of a covariate test simply omits the term, while the
+population it was fitted to still describes everyone who was enrolled.
+Marginalising a covariate out of a correlated specification is exact —
+every surviving margin keeps the distribution it was given.
+
+A covariate the model *does* read must still be described, by a
+`cov_dist` entry or a fixed `cov` value, so a mistyped name is reported
+as the covariate it left undescribed rather than passing unnoticed.
+
 ## See also
 
 [`covDraw()`](https://leidenpharmacology.github.io/admixr2/reference/covDraw.md)

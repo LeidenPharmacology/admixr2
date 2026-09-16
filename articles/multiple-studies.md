@@ -4,21 +4,19 @@
 
 Passing several studies to
 [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
-fits the model to all of them simultaneously, minimising the sum of
-per-study NLLs under a shared set of population parameters. This is
-**meta-analysis** — the core use case for aggregate-data modelling: you
-have summary statistics from multiple trials (which may differ in dose,
-sample size, or observation schedule) and want a single population model
-consistent with all of them. Each study’s `E`, `V` and `n` can come from
-a digitised figure (see
-[`vignette("aggregate-data", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md))
-or from that study’s own published model (see
-[`vignette("datagen", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)).
+fits them simultaneously, minimising the sum of per-study NLLs under one
+shared set of population parameters. This is **meta-analysis**, the core
+use case: summary statistics from several trials that may differ in
+dose, size or schedule, and one population model consistent with all of
+them. Each study’s `E`, `V` and `n` can come from a digitised figure
+([`vignette("aggregate-data")`](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md))
+or from its own published model
+([`vignette("datagen")`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)).
 
 ## Splitting examplomycin into two cohorts
 
-We partition the 500 examplomycin subjects into two cohorts of 250 and
-compute separate aggregate statistics for each:
+Split the 500 examplomycin subjects into two cohorts of 250, with
+separate aggregate statistics for each:
 
 ``` r
 
@@ -27,30 +25,25 @@ library(rxode2)
 library(nlmixr2)
 library(ggplot2)
 
-data("examplomycin")
-obs   <- examplomycin[examplomycin$EVID == 0, ]
-obs   <- obs[order(obs$ID, obs$TIME), ]
-times <- sort(unique(obs$TIME))
-ids   <- unique(obs$ID)
+dv_mat <- admVignetteDvMatrix()       # 500 subjects x 9 times
+times  <- as.numeric(colnames(dv_mat))
 
-dv_mat <- matrix(NA_real_, nrow = length(ids), ncol = length(times))
-for (i in seq_along(ids)) {
-  sub         <- obs[obs$ID == ids[i], ]
-  dv_mat[i, ] <- sub$DV[order(sub$TIME)]
-}
+# Alternate subjects into two equal cohorts, then take E, V and n for each
+cohort1 <- admVignetteStats(dv_mat, seq(1, nrow(dv_mat), by = 2))
+cohort2 <- admVignetteStats(dv_mat, seq(2, nrow(dv_mat), by = 2))
 
-# Alternate subjects into two equal cohorts
-idx1 <- seq(1, length(ids), by = 2)   # rows 1, 3, 5, ... → cohort 1
-idx2 <- seq(2, length(ids), by = 2)   # rows 2, 4, 6, ... → cohort 2
-
-E1 <- colMeans(dv_mat[idx1, ]); V1 <- cov.wt(dv_mat[idx1, ], method = "ML")$cov; n1 <- length(idx1)
-E2 <- colMeans(dv_mat[idx2, ]); V2 <- cov.wt(dv_mat[idx2, ], method = "ML")$cov; n2 <- length(idx2)
+E1 <- cohort1$E; V1 <- cohort1$V; n1 <- cohort1$n
+E2 <- cohort2$E; V2 <- cohort2$V; n2 <- cohort2$n
 ```
+
+Both helpers are defined in this vignette’s setup file: the first
+reshapes `examplomycin` into one row per subject, the second takes `E`,
+`V` and `n` off a set of its rows.
 
 ## Comparing observed profiles across cohorts
 
-Before fitting, visualise the raw summary statistics to confirm the two
-cohorts are comparable (both drawn from the same population here):
+Check the raw summary statistics first: both cohorts come from the same
+population here, so they should be comparable.
 
 ``` r
 
@@ -86,35 +79,14 @@ Observed mean ± 1 SD for each cohort on a log time axis.
 
 ## Model definition
 
+The two-compartment model from [Getting
+started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md),
+supplied by this vignette’s setup file and fitted to both cohorts at
+once:
+
 ``` r
 
-pk_model <- function() {
-  ini({
-    tcl     <- log(5)  ; label("Log clearance (L/hr)")
-    tv1     <- log(10) ; label("Log central volume (L)")
-    tv2     <- log(30) ; label("Log peripheral volume (L)")
-    tq      <- log(10) ; label("Log inter-compartmental CL (L/hr)")
-    tka     <- log(1)  ; label("Log absorption rate constant (1/hr)")
-    prop.sd <- c(0, 0.2); label("Proportional residual error SD")
-    eta.cl ~ 0.09
-    eta.v1 ~ 0.09
-    eta.v2 ~ 0.09
-    eta.q  ~ 0.09
-    eta.ka ~ 0.09
-  })
-  model({
-    cl <- exp(tcl + eta.cl)
-    v1 <- exp(tv1 + eta.v1)
-    v2 <- exp(tv2 + eta.v2)
-    q  <- exp(tq  + eta.q)
-    ka <- exp(tka + eta.ka)
-    d/dt(depot)      <- -ka * depot
-    d/dt(central)    <- ka * depot - (cl/v1 + q/v1) * central + (q/v2) * peripheral
-    d/dt(peripheral) <- (q/v1) * central - (q/v2) * peripheral
-    cp <- central / v1
-    cp ~ prop(prop.sd)
-  })
-}
+pk_model <- admVignetteModel
 ```
 
 ## Fitting with two studies
@@ -148,7 +120,7 @@ admc -3690.262 -3668.262 -3597.732       1845.131
 ── Time (sec fit_multi$time): ──
 
   optimize covariance other elapsed
-1   90.517     31.753     0  122.27
+1    45.84     20.181     0  66.021
 
 ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 
@@ -174,14 +146,13 @@ prop.sd 0.1895 (0.1831, 0.1960)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Censoring (fit_multi$censInformation): No censoring
   Minimization message (fit_multi$message):  
-    NLOPT_FAILURE: Generic failure code. 
+    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 
 ## Per-study diagnostic plots
 
-[`plot()`](https://rdrr.io/r/graphics/plot.default.html) automatically
-produces separate panels for each study. Panel names follow the pattern
-`mean_<study>` and `cov_<study>`:
+[`plot()`](https://rdrr.io/r/graphics/plot.default.html) produces
+separate panels per study, named `mean_<study>` and `cov_<study>`:
 
 ``` r
 
@@ -222,8 +193,7 @@ if (requireNamespace("patchwork", quietly = TRUE)) {
 
 ## Different doses and schedules
 
-Studies may differ in any aspect. A typical multi-study setup from a
-drug development programme:
+Studies may differ in any aspect — a typical development programme:
 
 ``` r
 
@@ -248,9 +218,9 @@ fit_program <- nlmixr2(
 )
 ```
 
-Studies with a diagonal V (or a plain vector of variances) are
-automatically assigned `method = "var"`, avoiding the O(n_t³) Cholesky
-solve when the off-diagonal covariance structure is unavailable.
+A study with a diagonal `V` (or a plain vector of variances) gets
+`method = "var"`, skipping the O(n_t³) Cholesky solve there is no
+off-diagonal structure to justify.
 
 ## See also
 

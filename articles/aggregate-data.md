@@ -8,13 +8,11 @@ needs a mean vector `E`, a covariance `V`, a sample size `n`, the
 observation `times` and a dosing event table `ev`. A published figure
 gives you a mean and an error bar.
 
-Reading the mean off is easy. Getting the variance right is where
-aggregate analyses go wrong: a standard error used as a standard
-deviation is off by a factor of `sqrt(n)`, and the fit does not tell you
-— the structural parameters come back correct and only the
-between-subject variability collapses. This vignette converts a
-published figure into `E`, `V` and `n`, and shows what that mistake
-costs.
+The mean is easy. The variance is where aggregate analyses go wrong: a
+standard error used as a standard deviation is off by `sqrt(n)`, and the
+fit will not tell you — the structural parameters come back correct and
+only the between-subject variability collapses. This vignette turns a
+figure into `E`, `V` and `n`, and shows what that mistake costs.
 
 ``` r
 
@@ -33,12 +31,11 @@ admixr2’s likelihood is
 -2LL = n \left( \log|V_{pred}| + \mathrm{tr}(V_{pred}^{-1} V_{obs}) + r^{\top} V_{pred}^{-1} r \right)
 ```
 
-where `r` is the mismatch between observed and predicted means, and
-`V_pred = J Omega J' + Sigma` — one subject’s covariance, built from the
-between-subject variability and the residual error. `V_obs` must be the
-same object, and the sample size `n` sits outside it. Hand the
-likelihood a standard error squared and you have told it about `n`
-twice.
+where `r` is the mismatch between observed and predicted means and
+`V_pred = J Omega J' + Sigma` is ONE subject’s covariance, built from
+the between-subject variability and the residual error. `V_obs` must be
+the same object, with `n` sitting outside it. Hand the likelihood a
+standard error squared and you have told it about `n` twice.
 
 So `V = SD^2`, never `SEM^2`.
 
@@ -51,7 +48,7 @@ rather than assuming:
 |----|----|----|
 | Standard deviation (SD) | `SD` | Use directly |
 | Standard error (SEM) | `SD = SEM * sqrt(n)` | Off by `sqrt(n)` if confused |
-| 95% CI of the mean | `SD = (upper - lower) * sqrt(n) / 3.92` | 3.92 = 2 × 1.96; for small `n` use `2 * qt(0.975, n - 1)` |
+| 95% CI of the mean | `SD = (upper - lower) * sqrt(n) / (2 * qt(0.975, n - 1))` | the divisor tends to 3.92 = 2 × 1.96 as `n` grows |
 | Interquartile range | `SD ~ IQR / 1.35` | Assumes normality |
 | LS-mean SE (from an MMRM) | `SD ~ SE * sqrt(n)` | Biased small — see below |
 
@@ -62,15 +59,15 @@ sd_from_ci  <- function(lower, upper, n) (upper - lower) * sqrt(n) / (2 * qt(0.9
 sd_from_iqr <- function(q1, q3)        (q3 - q1) / 1.35
 ```
 
-An LS-mean SE deserves care because it is the one row that can silently
-reproduce the error this vignette is about. It comes out of a model,
-usually an MMRM: baseline and covariate adjustment remove variance from
-the residual, and the covariance structure borrows across visits, so
-`SE * sqrt(n)` is usually **smaller** than the true between-subject SD —
-the same direction as mistaking a SEM for an SD. It also describes
-whatever the MMRM modelled, often a change from baseline rather than an
-absolute value. Prefer a descriptive SD from the paper’s own baseline
-table, or from a comparable study.
+The LS-mean SE is the row that can silently reproduce the error this
+vignette is about. It comes out of a model, usually an MMRM: baseline
+and covariate adjustment strip variance from the residual and the
+covariance structure borrows across visits, so `SE * sqrt(n)` usually
+comes out **smaller** than the true between-subject SD — the same
+direction as mistaking a SEM for an SD. It also describes whatever the
+MMRM modelled, often a change from baseline rather than an absolute
+value. Prefer a descriptive SD from the paper’s own baseline table, or
+from a comparable study.
 
 ## A figure reporting standard errors
 
@@ -91,9 +88,9 @@ round(SD, 3)
 #> [1] 0.207 0.188 0.159 0.125 0.106 0.097 0.062
 ```
 
-The bars the figure plots are `sqrt(n)` — nearly eight times — smaller
-than the standard deviations the fit needs. Plotting both makes it
-concrete: the SEM band is far too tight to be a between-subject spread.
+The plotted bars are `sqrt(n)` — nearly eight times — smaller than the
+standard deviations the fit needs. Side by side, the SEM band is
+obviously too tight to be a between-subject spread.
 
 ``` r
 
@@ -158,7 +155,7 @@ adgh -1323.144 -1313.144 -1292.943       661.5719
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.429      0.174     0   0.603 3.497
+elapsed    0.382      0.133     0   0.515 2.664
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -200,7 +197,7 @@ adgh -2942.688 -2932.688 -2912.487       1471.344
 ── Time (sec fit_wrong$time): ──
 
   optimize covariance other elapsed
-1    0.726      0.126     0   0.852
+1    0.523      0.096     0   0.619
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
@@ -237,13 +234,12 @@ round(diag(fit$omega) / diag(fit_wrong$omega), 1)
 ```
 
 `Omega` shrinks by more than an order of magnitude on both random
-effects, because the model is asked to reproduce a between-subject
-spread `n` times tighter than the real one.
-`V_pred = J Omega J' + Sigma` is linear in `Omega` and in the residual
-variance, so both shrink together and the structural parameters are free
-to stay where they were. The shrinkage stops short of the full factor of
-`n` only because the mean-mismatch term `r' V_pred^-1 r` does not
-rescale.
+effects: the model is being asked to reproduce a between-subject spread
+`n` times tighter than the real one. `V_pred = J Omega J' + Sigma` is
+linear in `Omega` and in the residual variance, so both shrink together
+and the structural parameters are free to stay put. Only the
+mean-mismatch term `r' V_pred^-1 r`, which does not rescale, stops the
+shrinkage short of the full factor of `n`.
 
 Nothing in the *point estimates* warns you. The *precision* does:
 
@@ -262,91 +258,84 @@ near zero, is the tell.
 
 Two things make this worse than the demo suggests:
 
-- **The structural parameters only survive because this model fits.**
-  With a misspecified model, `r` is not zero, and a `V_pred` that is `n`
-  times too small weights that mismatch `n` times too heavily — dragging
-  the structural estimates to close a gap they cannot close.
-- **In a multi-study fit, one bad `V` captures the whole fit.** Getting
-  `V` wrong in a single study inflates that study’s weight in the joint
-  likelihood roughly `n`-fold. It then dominates every other arm and
-  biases the shared parameters. This is the usual way admixr2 is used,
-  and it is where the mistake is most expensive.
+- **The structural parameters survive only because this model fits.**
+  Misspecify it and `r` is not zero, so a `V_pred` that is `n` times too
+  small weights that mismatch `n` times too heavily, dragging the
+  structural estimates toward a gap they cannot close.
+- **In a multi-study fit, one bad `V` captures everything.** It inflates
+  that study’s weight in the joint likelihood roughly `n`-fold,
+  whereupon it dominates every other arm and biases the shared
+  parameters. That is the usual way admixr2 is used, and where the
+  mistake is most expensive.
 
 ## Why V is usually diagonal
 
-A figure gives one error bar per time point and nothing about how the
-times covary, so the off-diagonal entries of `V` are not available from
-published summaries. A diagonal `V` selects `method = "var"`, which
-skips the Cholesky solve the full-covariance path needs. This is the
-honest default for literature data. The full-covariance path is
-available when you have the subject-level matrix and can compute
-`cov.wt(dv_mat, method = "ML")$cov` — see [Getting
+A figure gives one error bar per time point and says nothing about how
+the times covary, so published summaries carry no off-diagonal entries.
+A diagonal `V` selects `method = "var"` and skips the Cholesky solve —
+the honest default for literature data. The full-covariance path needs
+the subject-level matrix and `cov.wt(dv_mat, method = "ML")$cov`; see
+[Getting
 started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md).
 
 Note the denominator, and declare it. admixr2’s likelihood is the exact
 one for `n` iid draws only under the ML (`n`) covariance, while a
-published SD is the unbiased (`n - 1`) sample SD – so `V = SD^2` from a
-figure is on the `n - 1` scale and strictly wants
-`V = SD^2 * (n - 1) / n`.
+published SD is the unbiased (`n - 1`) one – so `V = SD^2` off a figure
+is on the `n - 1` scale and strictly wants `V = SD^2 * (n - 1) / n`.
 
-Rather than applying that by hand, say which convention the number is
-on:
+Rather than apply that by hand, say which convention the number is on:
 
 ``` r
 
-study <- list(E = E, V = SD^2, n = n, times = times, ev = ev,
-              v_denom = "unbiased")   # a published SD; admixr2 converts it
+list(E = E, V = SD^2, n = n, times = times,
+     ev      = rxode2::et(amt = 50, cmt = "central"),
+     v_denom = "unbiased")   # a published SD; admixr2 converts it
 ```
 
-`v_denom` defaults to `"ml"`, which is what `cov.wt(method = "ML")` and
+`v_denom` defaults to `"ml"` — what `cov.wt(method = "ML")` and
 [`datagen()`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)
-produce, so nothing changes for data you computed yourself. It is
-declared **per study** because a meta-analysis routinely mixes a
-digitised figure with a model-derived source, and the two need not share
-a denominator.
+produce — so nothing changes for data you computed yourself. It is **per
+study**, because a meta-analysis routinely mixes a digitised figure with
+a model-derived source and the two need not agree.
 
-At `n = 60` the factor is 1.7%, which is small; it grows as `n` falls,
-and it stops being cosmetic for any method that scores the reported
-covariance against its own sampling law rather than treating it as a
-sufficient statistic.
+At `n = 60` the factor is 1.7%. It grows as `n` falls, and it stops
+being cosmetic for any method that scores the reported covariance
+against its own sampling law rather than treating it as a sufficient
+statistic.
 
 ## Sample size
 
 `n` is the number of subjects contributing to the summary, per arm — not
 the total across arms, and not the number of observations.
 
-- **Dropout.** `n` often falls over time, so a figure’s late points may
-  rest on fewer subjects than its early ones. Convert each point’s error
-  bar with the `n` that applies to it, and pass the number contributing
-  to the observations you are fitting — the number at risk, not the
-  number randomised.
+- **Dropout.** `n` falls over time, so a figure’s late points may rest
+  on fewer subjects than its early ones. Convert each error bar with the
+  `n` that applies to it, and pass the number contributing to the
+  observations you are fitting — at risk, not randomised.
 - **Per-endpoint `n`.** PK and PD are not always measured in the same
-  people. A study’s `observations` entries may each carry their own `n`.
+  people, so each `observations` entry may carry its own `n`.
 
 ## Absolute values or change from baseline?
 
 Many PD papers report a least-squares-mean change from baseline rather
-than an absolute value. Either can be fitted, but the model must predict
-the same quantity as the data:
+than an absolute value. Either can be fitted, so long as the model
+predicts the same quantity as the data:
 
-- Fitting absolute values needs a baseline parameter in the model; see
-  [PD and PK/PD
+- Absolute values need a baseline parameter in the model; see [PD and
+  PK/PD
   data](https://leidenpharmacology.github.io/admixr2/articles/pkpd.md).
-- Fitting a change means the model output must itself be a change, and
-  the SD of the change — not of the absolute value — is the one `V`
-  needs.
+- A change means the model output must itself be a change, and `V` wants
+  the SD of the change, not of the absolute value.
 
-Studies that report different quantities must be converted to a common
-one before fitting, not after.
+Studies reporting different quantities must be converted to a common one
+before fitting, not after.
 
 ## When there is no variability at all
 
-A paper often gives a mean with no SD, SEM or CI — a placebo arm
-reported only in a footnote, for example.
-
-You then have to assume a `V`, and it is worth knowing what that
-assumption does. Refit the arm above with the SD deliberately wrong in
-each direction:
+A paper often gives a mean with no SD, SEM or CI — a placebo arm in a
+footnote, say. You then have to assume a `V`, so it is worth knowing
+what that assumption does. Refit the arm above with the SD deliberately
+wrong in each direction:
 
 ``` r
 
@@ -386,13 +375,13 @@ knitr::kable(tbl, row.names = FALSE,
 Fit against a deliberately wrong V. Truth: CL = 5, V = 50, var(eta.cl) =
 0.09, var(eta.v) = 0.04. {.table}
 
-`Omega` follows the assumption in whichever direction it is wrong: too
-small and the between-subject variability collapses, too large and it
-inflates several-fold. `V` is data the model must reproduce, not a
-weight — so an assumed `V` is an assumption about the IIV you are trying
-to estimate, and it propagates to every study through the shared
-`Omega`. Push it far enough and the fit stops being sensible at all: at
-`4x` the structural parameters leave the building.
+`Omega` follows the assumption whichever way it is wrong: too small and
+the between-subject variability collapses, too large and it inflates
+several-fold. `V` is data the model must reproduce, not a weight — so
+assuming one is assuming the IIV you are trying to estimate, and it
+reaches every study through the shared `Omega`. Push far enough and the
+fit stops being sensible: at `4x` the structural parameters leave the
+building.
 
 There is no safe direction to err in. In rough order of preference:
 
@@ -401,19 +390,18 @@ There is no safe direction to err in. In rough order of preference:
 2.  Use a published typical SD for that endpoint and population.
 3.  Exclude the study.
 
-Whichever you choose, record it, and refit across the range you consider
-plausible. If the estimates move, the assumption is doing the work and
+Whichever you choose, record it and refit across the range you consider
+plausible. If the estimates move, the assumption is doing the work, and
 the result belongs in a sensitivity table rather than a headline.
 
 ## Notes
 
-- **The error bar is the dominant error source.** Digitisation software
-  is accurate to a few percent; mistaking a SEM for an SD is an error of
-  `sqrt(n)`. Reading the caption matters more than the pixels.
-- **Geometric means.** A paper reporting a geometric mean and CV% is
-  describing a log-normal distribution, while `E` and `V` are arithmetic
-  moments. Convert before fitting.
-- **Digitising.** WebPlotDigitizer is the usual tool. Extracting a
+- **The error bar dominates every other error source.** Digitisation
+  software is accurate to a few percent; mistaking a SEM for an SD is an
+  error of `sqrt(n)`. The caption matters more than the pixels.
+- **Geometric means.** A geometric mean with CV% describes a log-normal
+  distribution, while `E` and `V` are arithmetic moments. Convert first.
+- **Digitising.** WebPlotDigitizer is the usual tool; extracting a
   figure twice and comparing is a cheap check.
 - **`%RSE` is on the estimation scale.** These parameters are log-scale,
   so an RSE on `tcl` is not an RSE on clearance.

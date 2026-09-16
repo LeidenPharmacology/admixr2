@@ -3,9 +3,9 @@
 ## The problem
 
 A blood-pressure trial reports two doses, 50 mg and 400 mg. You are
-choosing a dose for the next study and you want **150 mg**, which nobody
-measured. This vignette fits a PK/PD model to the two published arms and
-predicts the arm that was never run.
+choosing the dose for the next study and you want **150 mg**, which
+nobody measured. This vignette fits a PK/PD model to the two published
+arms and predicts the arm that was never run.
 
 ``` r
 
@@ -17,11 +17,10 @@ library(ggplot2)
 
 ## The data
 
-Two dose arms, 60 subjects each. Each arm reports a plasma
-concentration–time curve and a diastolic blood pressure (DBP) curve.
-Concentrations are sampled at seven times, DBP at four — PD is usually
-measured more sparsely than PK, and admixr2 does not require the two to
-share a grid:
+Two arms, 60 subjects each, reporting a plasma concentration–time curve
+and a diastolic blood pressure (DBP) curve. Concentrations at seven
+times, DBP at four: PD is usually measured more sparsely than PK, and
+the two need not share a grid.
 
 ``` r
 
@@ -41,30 +40,28 @@ dbp400_mean  <- c(83.1, 84.0, 86.8, 90.7)
 dbp400_sd    <- c( 8.5,  8.5,  8.7,  8.8)
 ```
 
-These two arms are a simulated 60-subject study, drawn from a known
-model — CL = 5 L/h, V = 50 L, baseline DBP = 95 mmHg, Emax = 15 mmHg,
-EC50 = 2 mg/L — so the 150 mg prediction can be checked against a truth
-at the end. Being a sample rather than the population, the numbers carry
-the scatter any 60-subject trial would. A digitised figure gives you
-exactly these fields.
+Both arms are simulated from a known model — CL = 5 L/h, V = 50 L,
+baseline DBP = 95 mmHg, Emax = 15 mmHg, EC50 = 2 mg/L — so the 150 mg
+prediction can be checked against a truth at the end. Being a sample
+rather than the population, the numbers carry the scatter any 60-subject
+trial would. A digitised figure gives you exactly these fields.
 
-By 24 h the 50 mg arm is back at its baseline with the drug almost gone
-(0.1 mg/L); the 400 mg arm is still about 4 mmHg below it. The DBP
-standard deviations barely move across time because the spread is
-dominated by between-subject differences in *baseline* blood pressure,
-which are the same people at every visit.
+By 24 h the 50 mg arm is back at baseline with the drug almost gone (0.1
+mg/L), while the 400 mg arm is still about 4 mmHg below it. The DBP
+standard deviations barely move across time, the spread being dominated
+by between-subject differences in *baseline* blood pressure — the same
+people at every visit.
 
 These are standard deviations. Published figures often plot a standard
-*error* or a model-based least-squares-mean SE instead, which must be
-converted first — see [From a published figure to E, V and
+*error* or a model-based least-squares-mean SE, which must be converted
+first; see [From a published figure to E, V and
 n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md).
 
 ## The model
 
-A one-compartment model with a direct-effect `Emax` term acting to
-*lower* DBP. Two observed outputs make this a multiple-endpoint model,
-so it carries a residual error term for each, exactly as in [Several
-observed
+One compartment with a direct-effect `Emax` term that *lowers* DBP. Two
+observed outputs make it a multiple-endpoint model, carrying a residual
+error term for each, as in [Several observed
 compartments](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.md):
 
 ``` r
@@ -99,24 +96,24 @@ pkpd_model <- function() {
 
 A few points to note:
 
-- Each observed output carries its own residual error term (`prop.cp`,
-  `add.dbp`). This is ordinary nlmixr2 multiple-endpoint syntax.
-- `e0` is the baseline. There is no pre-dose DBP observation here, so
-  `e0` is identified by extrapolating the Emax curve to zero
-  concentration. The 50 mg arm’s 24 h point, where the drug contributes
-  about 5% of `emax`, is what keeps that extrapolation short. A pre-dose
+- Each output carries its own residual error term (`prop.cp`, `add.dbp`)
+  — ordinary nlmixr2 multiple-endpoint syntax.
+- `e0` is the baseline. With no pre-dose DBP observation it is
+  identified by extrapolating the Emax curve to zero concentration, and
+  the 50 mg arm’s 24 h point — where the drug contributes about 5% of
+  `emax` — is what keeps that extrapolation short. A pre-dose
   observation or a placebo arm is the robust way to pin a baseline;
   without one, `e0` and `emax` trade off.
-- The drug enters with a minus sign because it lowers DBP, so `emax` is
-  the maximum *reduction*, in mmHg.
-- `emax` and `ec50` carry no `eta`: the reported DBP SDs are nearly flat
-  across time and dose, which carries little information about
-  PD-parameter IIV, and `eta.e0` already reproduces the observed spread.
+- The minus sign is because the drug lowers DBP, so `emax` is the
+  maximum *reduction*, in mmHg.
+- `emax` and `ec50` carry no `eta`: DBP SDs nearly flat across time and
+  dose say little about PD-parameter IIV, and `eta.e0` already
+  reproduces the spread.
 
 ## Assembling the study specification
 
-Each study gives one `observations` entry per observed output, naming
-the model variable it corresponds to and its own `times`, `E` and `V`:
+One `observations` entry per output, naming the model variable it
+corresponds to and its own `times`, `E` and `V`:
 
 ``` r
 
@@ -138,10 +135,9 @@ study400 <- list(
 ## Fitting
 
 [`admData()`](https://leidenpharmacology.github.io/admixr2/reference/admData.md)
-builds the placeholder data frame nlmixr2’s interface expects — the
-observations themselves live in the control, not in the data argument —
-and takes the names of the observed outputs. Otherwise this is an
-ordinary admixr2 fit:
+builds the placeholder data frame nlmixr2’s interface expects, and takes
+the names of the observed outputs — the observations themselves live in
+the control, not the data argument. Otherwise an ordinary admixr2 fit:
 
 ``` r
 fit <- nlmixr2(pkpd_model, admData(c("cp", "dbp")), est = "adgh",
@@ -156,7 +152,7 @@ adgh 1749.121 1769.121 1820.975      -874.5605
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    2.647      1.168     0   3.815 2.623
+elapsed    1.625      0.761     0   2.386 2.156
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -201,11 +197,10 @@ plot(fit, which = "mean")
 
 ## Predicting an unstudied dose
 
-The fit gives the two things the question needs: how a dose becomes a
+The fit gives both things the question needs: how a dose becomes a
 concentration over time (`cl`, `v`), and how concentration becomes an
-effect (`emax`, `ec50`). For this model both are closed form — a bolus
-decays exponentially, and the effect follows the concentration
-instantly:
+effect (`emax`, `ec50`). Here both are closed form — a bolus decays
+exponentially and the effect follows instantly:
 
 ``` r
 
@@ -229,12 +224,12 @@ studied arms are the check: the model’s DBP at 1 h is 90.6 and 82.6 mmHg
 against the observed 91.5 and 83.1, so the prediction sits on data
 rather than beside it.
 
-A naive linear interpolation in dose would put 150 mg at 7.6 mmHg. The
-curve gives more, because the response is already flattening: 150 mg
-buys much of what 400 mg does.
+Naive linear interpolation in dose would put 150 mg at 7.6 mmHg. The
+curve gives more, the response already flattening: 150 mg buys much of
+what 400 mg does.
 
-The whole predicted time course follows, and can be laid over the arms
-that were measured:
+The whole predicted time course follows, laid over the arms that were
+measured:
 
 ``` r
 
@@ -284,26 +279,26 @@ buy: the right shape and a usable dose, not a precise `Emax`.
 
 A few points to note:
 
-- **The prediction is for a typical subject, not a population mean.**
+- **This is a typical subject, not a population mean.**
   [`drop()`](https://rdrr.io/r/base/drop.html) uses `exp(theta)`, i.e. η
   = 0, whereas the estimator matched `E` to a population *mean* — and
-  the mean of a nonlinear function is not that function at the mean.
-  Here the two agree to about 0.01 mmHg, because the median-to-mean
-  shift and the curvature nearly cancel at `eta.v ~ 0.04`. The gap grows
-  with IIV, and would matter if `emax` or `ec50` carried an `eta`. For a
+  the mean of a nonlinear function is not that function at the mean. The
+  two agree to about 0.01 mmHg here, the median-to-mean shift and the
+  curvature nearly cancelling at `eta.v ~ 0.04`. The gap grows with IIV
+  and would matter if `emax` or `ec50` carried an `eta`. For a
   population mean, simulate over the estimated `Omega`.
-- **Each arm sweeps a range of concentrations**, because the drug
-  clears. That is why a single arm carries more than a static
-  dose–response intuition suggests: the 400 mg arm alone spans 0.4–4 ×
-  `EC50` and largely identifies `emax` and `ec50` on its own.
-- **The 50 mg arm’s job is the baseline.** With 400 mg alone, the lowest
-  concentration observed is still ~29% of `emax`, so the drug-free state
+- **Each arm sweeps a range of concentrations** as the drug clears,
+  which is why one arm carries more than a static dose–response
+  intuition suggests: 400 mg alone spans 0.4–4 × `EC50` and largely
+  identifies `emax` and `ec50`.
+- **The 50 mg arm’s job is the baseline.** With 400 mg alone the lowest
+  observed concentration is still ~29% of `emax`, so the drug-free state
   is never approached and `e0` and `emax` trade off. The 50 mg arm’s 24
-  h point is the only near-drug-free observation in the data.
-- **Check before predicting.** `ec50` is estimated here to 26% RSE —
-  identified, but not precisely, and a dose prediction inherits that. A
+  h point is the only near-drug-free observation there is.
+- **Check before predicting.** `ec50` comes back at 26% RSE — identified
+  but not precise, and a dose prediction inherits that. A
   `temax`/`tec50` correlation near ±1 would mean the two are trading off
-  and the curve’s plateau is not identified at all:
+  and the plateau is not identified at all:
 
 ``` r
 
@@ -322,33 +317,30 @@ if (is.null(cv)) {
   [From a published figure to E, V and
   n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md).
 - **Which estimators.** `adgh` (used here), `adfo` and `admc` support
-  several observed outputs. `adirmc` does not — it errors on
-  multi-output models. See the [estimator
+  several observed outputs; `adirmc` errors on multi-output models. See
+  the [estimator
   comparison](https://leidenpharmacology.github.io/admixr2/articles/estimator-comparison.md).
-- **Same-subject PK and PD.** Here concentration and DBP are independent
-  likelihood blocks, as they would be if digitised from two figures. If
-  they were measured in the same subjects — usually true in a PK/PD
-  study — the two are correlated, and a joint fit with zero
-  cross-covariance is not the same as two independent blocks. Supply the
-  cross-covariance; see
+- **Same-subject PK and PD.** Concentration and DBP are independent
+  likelihood blocks here, as they would be from two figures. Measured in
+  the same subjects — usually the case in a PK/PD study — they are
+  correlated, and a joint fit with zero cross-covariance is not two
+  independent blocks. Supply the cross-covariance; see
   [`?admControl`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
   and [Several observed
   compartments](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.md).
-- **Delayed effects.** `dbp` responds to `cp` instantly here, which is
-  what makes the prediction a formula. If the effect lags concentration,
-  use an effect compartment or a turnover model and simulate the
-  prediction instead.
-- **Placebo arms.** With only active arms, drug effect and the natural
-  time course of the disease are confounded. A placebo arm is just
-  another study with a zero-amount `ev`.
-- **Bounded endpoints.** An additive residual can predict outside the
-  range of a bounded score. Transform the endpoint instead —
-  `logitNorm()`, `probitNorm()`,
+- **Delayed effects.** `dbp` responds to `cp` instantly, which is what
+  makes the prediction a formula. If the effect lags, use an effect
+  compartment or a turnover model and simulate instead.
+- **Placebo arms.** With only active arms, drug effect and the disease’s
+  natural time course are confounded. A placebo arm is just another
+  study with a zero-amount `ev`.
+- **Bounded endpoints.** An additive residual can predict outside a
+  bounded score’s range. Transform instead — `logitNorm()`,
+  `probitNorm()`,
   [`boxCox()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)
   and
-  [`yeoJohnson()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)
-  are supported, with lambda either estimated or fixed. See [Choosing a
-  residual error
+  [`yeoJohnson()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html),
+  lambda estimated or fixed. See [Choosing a residual error
   model](https://leidenpharmacology.github.io/admixr2/articles/error-models.md).
 
 ## See also

@@ -108,33 +108,32 @@
 <h2 id="a-dose-for-a-patient-nobody-studied">A dose for a patient nobody studied<a class="anchor" aria-label="anchor" href="#a-dose-for-a-patient-nobody-studied"></a>
 </h2>
 <p>A woman is admitted with a creatinine clearance of 21 mL/min. The
-drug she needs is renally cleared, and the label gives one dose — 200
-mg, the dose every trial used.</p>
-<p>Three trials have been published: one in normal renal function, one
-in mild impairment, one in moderate. <strong>None enrolled anyone like
-her.</strong> And none of the three reported a renal effect at all,
-because within each trial creatinine clearance barely varied, so each
-analyst sensibly left it out.</p>
-<p>You have three population models that disagree about clearance by
-nearly a factor of two, and not one of them can say why. This vignette
-recovers the renal effect none of them contains — from the three papers
-alone — and turns it into a dose.</p>
+drug she needs is renally cleared, and the label gives one dose: 200 mg,
+what every trial used.</p>
+<p>Three trials have been published — normal renal function, mild
+impairment, moderate. <strong>None enrolled anyone like her</strong>,
+and none reported a renal effect at all, because within each trial
+creatinine clearance barely varied and each analyst sensibly left it
+out.</p>
+<p>So you have three population models that disagree about clearance by
+nearly a factor of two, and not one can say why. This vignette recovers
+the renal effect none of them contains — from the three papers alone —
+and turns it into a dose.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2/">admixr2</a></span><span class="op">)</span>; <span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span>; <span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.org/" class="external-link">nlmixr2</a></span><span class="op">)</span>; <span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://ggplot2.tidyverse.org" class="external-link">ggplot2</a></span><span class="op">)</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="the-world-those-trials-sampled">The world those trials sampled<a class="anchor" aria-label="anchor" href="#the-world-those-trials-sampled"></a>
 </h2>
-<p>To check the answer we need a truth to check it against, so the
-patients here are simulated. Weight and creatinine clearance are
-correlated, so they are drawn jointly through a Gaussian copula: each
-covariate keeps its own lognormal margin, the dependence goes on the
-latent scale.</p>
+<p>Checking the answer needs a truth to check against, so the patients
+are simulated. Weight and creatinine clearance are correlated, so they
+are drawn jointly through a Gaussian copula: each keeps its own
+lognormal margin, the dependence going on the latent scale.</p>
 <p>The truth, unknown to all three analysts, is CL = 5 L/h and V = 50 L
 at 70 kg, allometric weight scaling, <strong>a renal exponent of
-0.6</strong>, and men clearing about 20% faster. The three trials differ
-only in which slice of renal function they sampled — and that alone is
-enough to make their answers disagree.</p>
+0.6</strong>, and men clearing about 20% faster. The trials differ only
+in which slice of renal function they sampled — which alone is enough to
+make their answers disagree.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">11</span><span class="op">)</span></span>
 <span><span class="va">TIMES</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0.5</span>, <span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">4</span>, <span class="fl">8</span>, <span class="fl">12</span>, <span class="fl">24</span><span class="op">)</span>; <span class="va">DOSE</span> <span class="op">&lt;-</span> <span class="fl">200</span></span>
@@ -206,8 +205,8 @@ enough to make their answers disagree.</p>
 <p>Here is where the information is lost. A published summary keeps the
 mean and the spread and throws the patients away, so an orderly,
 explainable difference between individuals survives only as extra width
-in a grey ribbon. Poor clearers at the top, good clearers at the bottom,
-and nothing in what gets printed to say which is which:</p>
+in a grey ribbon — poor clearers at the top, good clearers at the
+bottom, and nothing in print to say which is which:</p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">d1</span>  <span class="op">&lt;-</span> <span class="va">trial_data</span><span class="op">$</span><span class="va">normal</span><span class="op">[</span><span class="va">trial_data</span><span class="op">$</span><span class="va">normal</span><span class="op">$</span><span class="va">EVID</span> <span class="op">==</span> <span class="fl">0</span>, <span class="op">]</span></span>
 <span><span class="va">agg</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>t <span class="op">=</span> <span class="va">TIMES</span>,</span>
@@ -227,18 +226,17 @@ and nothing in what gets printed to say which is which:</p>
 <span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/facet_wrap.html" class="external-link">facet_wrap</a></span><span class="op">(</span><span class="op">~</span><span class="va">panel</span><span class="op">)</span> <span class="op">+</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/labs.html" class="external-link">labs</a></span><span class="op">(</span>x <span class="op">=</span> <span class="st">"time (h)"</span>, y <span class="op">=</span> <span class="st">"concentration (mg/L)"</span><span class="op">)</span> <span class="op">+</span></span>
 <span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggtheme.html" class="external-link">theme_bw</a></span><span class="op">(</span><span class="op">)</span> <span class="op">+</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/theme.html" class="external-link">theme</a></span><span class="op">(</span>legend.position <span class="op">=</span> <span class="st">"bottom"</span><span class="op">)</span></span></code></pre></div>
 <p><img src="covariates_files/figure-html/hidden-1.png" class="r-plt" alt="" width="672"></p>
-<p>Each analyst now fits their own trial, and — as in practice — they do
+<p>Each analyst now fits their own trial and, as in practice, they do
 not write the same model. Sato fixes the allometric exponents at the
-conventional 0.75 and 1; Ito estimates both of them; Khan looks for a
-sex effect on volume as well as on clearance. Five, seven and six
-parameters, with different names. None of that has to be reconciled: a
-study carries its own model, and admixr2 asks for no agreement between
-sources.</p>
+conventional 0.75 and 1; Ito estimates both; Khan looks for a sex effect
+on volume as well as clearance. Five, seven and six parameters, under
+different names. None of that has to be reconciled: a study carries its
+own model, and admixr2 asks for no agreement between sources.</p>
 <p>What they <em>do</em> agree on is which covariates they can see.
 <strong>Sex they can see</strong> — both sexes are enrolled, so it
 varies inside their own data. <strong>Renal function they
 cannot</strong> — within one cohort it barely moves, and what little
-movement there is cannot be told apart from ordinary between-patient
+movement there is cannot be told from ordinary between-patient
 variability.</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># THREE ANALYSTS, THREE MODELS. They share a drug and nothing else: each wrote</span></span>
@@ -310,9 +308,8 @@ variability.</p>
 <span>                        control <span class="op">=</span> <span class="va">.ctl</span><span class="op">)</span></span>
 <span><span class="va">fit_mild</span>     <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span><span class="va">khan_model</span>, <span class="va">trial_data</span><span class="op">$</span><span class="va">mild</span>,     est <span class="op">=</span> <span class="st">"focei"</span>,</span>
 <span>                        control <span class="op">=</span> <span class="va">.ctl</span><span class="op">)</span></span></code></pre></div>
-<p>Each analyst now writes up their trial. What goes in the paper is the
-model and its estimates — which is all admixr2 needs to put the three
-papers into one fit.</p>
+<p>What goes in each paper is the model and its estimates — all admixr2
+needs to put the three into one fit.</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># What a paper prints: the model's parameter estimates, and the baseline table</span></span>
 <span><span class="co"># describing who was enrolled. Nothing about the fit's own covariance is used --</span></span>
@@ -380,12 +377,12 @@ on its own data.</caption>
 </tr>
 </tbody>
 </table>
-<p>Read that table the way the three analysts would have. All three
-retain the sex effect — a covariate that varies <em>inside</em> every
-trial, so every trial could see it. On clearance they disagree by nearly
-a factor of two, and none of them can explain it, because the
-explanation is a covariate that barely moves within any one of them.</p>
-<p>That asymmetry is the entire problem. <strong>A covariate that varies
+<p>Read that table as the analysts would have. All three retain the sex
+effect — a covariate that varies <em>inside</em> every trial, so every
+trial could see it. On clearance they disagree by nearly a factor of two
+and none can explain it, the explanation being a covariate that barely
+moves within any one of them.</p>
+<p>That asymmetry is the whole problem. <strong>A covariate that varies
 within a study is estimable there. One that varies only between studies
 is invisible to each study separately, and visible only to a
 meta-analysis.</strong></p>
@@ -393,29 +390,28 @@ meta-analysis.</strong></p>
 <div class="section level2">
 <h2 id="giving-admixr2-the-papers-not-the-patients">Giving admixr2 the papers, not the patients<a class="anchor" aria-label="anchor" href="#giving-admixr2-the-papers-not-the-patients"></a>
 </h2>
-<p>Nobody is going to send you the individual data. What you have is
-what was printed: each trial’s model, and the baseline table describing
-who was enrolled. That is enough — <code><a href="../reference/datagen.html">datagen()</a></code> turns a
-published model plus its population into the <code>(E, V, n)</code> a
-digitised figure would have given you.</p>
+<p>Nobody will send you the individual data. What you have is what was
+printed: each trial’s model, and the baseline table describing who was
+enrolled. That is enough — <code><a href="../reference/datagen.html">datagen()</a></code> turns a published
+model plus its population into the <code>(E, V, n)</code> a digitised
+figure would have given you.</p>
 <p>Each paper becomes one <code><a href="../reference/admStudy.html">admStudy()</a></code>: the model it
-published, the design, and the population it enrolled. Hand
+published, the design, the population it enrolled. Hand
 <code>population</code> the cohort itself and the baseline table is read
 off it — mean and SD per continuous covariate, the sex split, the
-correlation between weight and renal function, and <code>n</code> from
-the row count. That correlation is taken on the LATENT scale, so on the
-<em>logs</em> for a lognormal margin, which is the step easiest to get
-wrong writing a table out by hand. With a real paper you have a printed
-Table 1 rather than a cohort, and you write that out instead — see the
-last section.</p>
-<p>The population then enters the fit one of three ways, and which one
-is not a style choice: it follows from what the paper’s own model
+weight–renal correlation, and <code>n</code> from the row count. That
+correlation is on the LATENT scale, so on the <em>logs</em> for a
+lognormal margin, which is the step easiest to get wrong writing a table
+out by hand. With a real paper you have a printed Table 1 instead, and
+write that out — see the last section.</p>
+<p>The population then enters the fit one of three ways, and which is
+not a style choice: it follows from what the paper’s own model
 estimated.</p>
 <ul>
 <li>
 <strong>Marginalised</strong> — the estimator integrates the
-prediction over the distribution. This is what a pooled result requires:
-one published curve standing for a whole population of patients.</li>
+prediction over the distribution, which is what a pooled result
+requires: one published curve standing for a whole population.</li>
 <li>
 <strong>Banded</strong> (<code>stratify</code>) — the source is
 split into strata with the covariate conditioned in each, so a covariate
@@ -423,19 +419,19 @@ it <em>fitted</em> contributes a contrast rather than one pooled
 number.</li>
 <li>
 <strong>Conditioned</strong> (<code>at</code>, <code>by</code>) —
-the model is solved at one value. This is what a result reported <em>by
+the model is solved at one value, which is what a result reported <em>by
 subgroup</em> allows.</li>
 </ul>
 <p><strong>All three analysts fitted a sex effect</strong>, so all three
 band on <code>SEX</code>: each becomes two studies with sex conditioned,
-<code>n</code> divided between them by the level probabilities, and both
-halves still marked as ONE source so the pair is not counted as two
-papers. <strong>Nobody fitted renal function</strong>, so
-<code>CRCL</code> is marginalised everywhere — there is no contrast
-inside any single trial to report, and splitting a source on a covariate
-its model never saw would manufacture one. Weight is read by every model
-but at a <em>fixed</em> exponent, so there is no fitted weight effect to
-recover either, and it is marginalised alongside <code>CRCL</code>.</p>
+<code>n</code> split by the level probabilities, both halves still
+marked as ONE source so the pair is not counted as two papers.
+<strong>Nobody fitted renal function</strong>, so <code>CRCL</code> is
+marginalised everywhere — no single trial has a contrast to report, and
+splitting a source on a covariate its model never saw would manufacture
+one. Weight every model reads, but at a <em>fixed</em> exponent, so
+there is no fitted weight effect to recover either and it is
+marginalised alongside <code>CRCL</code>.</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># --- each paper's model ----------------------------------------------------</span></span>
 <span><span class="co"># The source model is that analyst's own model AT their own published values,</span></span>
@@ -497,37 +493,34 @@ recover either, and it is marginalised alongside <code>CRCL</code>.</p>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; print() a single study to check its transcription.</span></span></code></pre></div>
 <p>Each study carries the trial’s <strong>model</strong>, the
-<strong>covariance that trial reported</strong>, and the
-<strong>population it enrolled</strong> — nothing that was not in the
-paper. Nothing is solved yet: a study is a transcription, so it is cheap
-to build and <code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code> one to read it back against the source
-before any fitting happens. The banding on sex is applied when the
-studies reach the fit, which is why three papers still print as three
-sources here.</p>
-<p>Note what is <em>not</em> in there. None of the published models has
-a renal term; the <code>population</code> does. We are telling admixr2
-who was enrolled, and letting it work out what that implies about a
-covariate no analyst ever estimated.</p>
-<p><strong>Why the sex effect has to be stratified and the renal effect
-must not be.</strong> A covariate that every study marginalises is not
-identified. Its effect then enters only through the mixture it induces —
-the level probabilities shift <code>E</code>, the spread between levels
-adds to <code>V</code> — which is exactly what a random effect on the
-same parameter does, so the two trade off freely. With a similar sex
-split in every trial there is no between-study contrast to separate them
-either: the profile goes nearly flat, and a deterministic optimiser
-stops in the same place every run, which reads as convergence.</p>
+<strong>covariance it reported</strong> and the <strong>population it
+enrolled</strong> — nothing that was not in the paper. Nothing is solved
+yet: a study is a transcription, cheap to build and to
+<code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code> back against the source before any fitting. Banding
+on sex is applied when the studies reach the fit, which is why three
+papers still print as three sources.</p>
+<p>Note what is <em>not</em> in there. No published model has a renal
+term; the <code>population</code> does. We tell admixr2 who was enrolled
+and let it work out what that implies about a covariate no analyst ever
+estimated.</p>
+<p><strong>Why sex has to be stratified and renal function must not
+be.</strong> A covariate every study marginalises is not identified: its
+effect enters only through the mixture it induces — the level
+probabilities shift <code>E</code>, the spread between levels adds to
+<code>V</code> — which is exactly what a random effect on the same
+parameter does, so the two trade off freely. With a similar sex split in
+every trial there is no between-study contrast to separate them either,
+and the profile goes nearly flat. A deterministic optimiser then stops
+in the same place every run, which reads as convergence.</p>
 <p>Stratifying a source that <em>did</em> fit the covariate recovers its
 evidence, because within one of its strata sex is a known constant
-rather than something <code>omega</code> can absorb. Doing the reverse —
-splitting a source on a covariate its model never saw — is the error in
-the other direction: it manufactures a contrast the paper never
-reported, and attenuates the coefficient. Hence sex stratified
-everywhere and renal function nowhere.</p>
-<p>The renal effect is identified by a completely different route: no
+rather than something <code>omega</code> can absorb. The reverse —
+splitting a source on a covariate its model never saw — manufactures a
+contrast the paper never reported and attenuates the coefficient. Hence
+sex stratified everywhere, renal function nowhere.</p>
+<p>The renal effect is identified by a different route entirely: no
 trial could condition on it, so it comes purely from the contrast
-<em>between</em> the three cohorts. Two covariates, two mechanisms, one
-fit.</p>
+<em>between</em> cohorts. Two covariates, two mechanisms, one fit.</p>
 </div>
 <div class="section level2">
 <h2 id="pooling-three-models-that-disagree">Pooling three models that disagree<a class="anchor" aria-label="anchor" href="#pooling-three-models-that-disagree"></a>
@@ -613,18 +606,17 @@ term.</caption>
 </tr>
 </tbody>
 </table>
-<p>Both covariate effects come back — out of three analyses that between
-them contained only one of them.</p>
+<p>Both effects come back, out of three analyses that between them
+contained one.</p>
 <p>The sex effect is worth a pause, because it shows what pooling costs.
-The three trials reported 0.16, 0.11, 0.18 for a quantity that is
-genuinely identical in all three; sampling noise alone put them that far
-apart. The meta-analysis has to settle on one number, and
-<strong>reconciling disagreement is not free</strong> — some of it lands
-in the other parameters, which is why the renal exponent comes back a
-little below its truth and the prediction further down is a few per cent
-off rather than exact. That is what a meta-analysis is: evidence that
-does not perfectly agree, pooled anyway, and honest about the
-residual.</p>
+The trials reported 0.16, 0.11, 0.18 for a quantity genuinely identical
+in all three; sampling noise alone put them that far apart. The
+meta-analysis has to settle on one number, and <strong>reconciling
+disagreement is not free</strong> — some of it lands in the other
+parameters, which is why the renal exponent comes back a little below
+its truth and the prediction below is a few per cent off rather than
+exact. That is what a meta-analysis is: evidence that does not quite
+agree, pooled anyway, and honest about the residual.</p>
 </div>
 <div class="section level2">
 <h2 id="how-far-can-you-trust-that-number">How far can you trust that number?<a class="anchor" aria-label="anchor" href="#how-far-can-you-trust-that-number"></a>
@@ -633,62 +625,66 @@ residual.</p>
 sample. Its <code>E</code> and <code>V</code> are exact functions of
 that model’s parameters, so there is no sampling law underneath it — and
 <strong>admixr2 reports no standard error for a fit that includes
-one.</strong> The table above has estimates and no intervals for that
-reason, and an explicit <code>covMethod</code> is refused rather than
-honoured.</p>
-<p>It would be easy to print one anyway: read <code>n</code> as a sample
+one.</strong> That is why the table above has estimates and no
+intervals, and why an explicit <code>covMethod</code> is refused rather
+than honoured.</p>
+<p>Printing one anyway would be easy: read <code>n</code> as a sample
 size and a finite, plausible standard error falls out. It falls as
-<code>1/sqrt(n)</code> — exactly proportional, measured to four
-significant figures — so it is a precision you choose by typing a
-number. Worse, no single number can be right: the <code>n</code> that
-would reproduce one parameter’s true uncertainty differs by more than
-eightfold from the <code>n</code> that reproduces another’s, in the same
-model. Nothing downstream can tell that number from a real one, so it is
-withheld rather than qualified.</p>
+<code>1/sqrt(n)</code> — exactly proportional, to four significant
+figures — so it is a precision you choose by typing a number. Worse, no
+single number can be right: the <code>n</code> reproducing one
+parameter’s true uncertainty differs more than eightfold from the
+<code>n</code> reproducing another’s, in the same model. Nothing
+downstream could tell it from a real one, so it is withheld rather than
+qualified.</p>
 <p><code>n</code> still matters, but only for <strong>relative
-weight</strong> between sources. Set it to the sample size each source
-was developed on.</p>
+weight</strong> between sources; set it to the sample size each was
+developed on.</p>
 <p>What you can still do is test. A likelihood-ratio test compares two
-fits by their objective functions and needs no standard error at all,
-which is the next section.</p>
+fits by their objectives and needs no standard error at all.</p>
 <div class="section level3">
 <h3 id="why-banding-still-matters">Why banding still matters<a class="anchor" aria-label="anchor" href="#why-banding-still-matters"></a>
 </h3>
-<p>Every source in this vignette marginalises over the covariates it did
-not condition on. That is the honest description of what these
-publications report — and it is also the configuration in which the
-pooled objective is least trustworthy. Over 720 replicates, with no
-source banded on the covariate its own model fitted, the
-likelihood-ratio test was sized <strong>0.125</strong> against a nominal
-0.05: a test that rejects two and a half times too often is a test that
-will find a covariate effect that is not there.</p>
+<p>Every source here marginalises over the covariates it did not
+condition on. That is the honest description of what these publications
+report — and also the configuration in which the pooled objective is
+least trustworthy. Over 720 replicates, with no source banded on the
+covariate its own model fitted, the likelihood-ratio test was sized
+<strong>0.125</strong> against a nominal 0.05. A test that rejects two
+and a half times too often will find a covariate effect that is not
+there.</p>
 <p>Banding fixes it, and <strong>one banded source is as good as
 three</strong>: test sizes <strong>0.083</strong> with one banded and
-<strong>0.058</strong> with all of them, against the 0.125 above.
-<code>stratify = TRUE</code> derives the banding from the source’s own
-model, so it needs nothing restated — which is why all three studies
-above set it.</p>
+<strong>0.058</strong> with all of them, against the 0.125 above. The
+three studies above name the covariate outright,
+<code>stratify = "SEX"</code>. <code>stratify = TRUE</code> is the
+alternative: it derives the banding from the source’s own model, banding
+on every covariate that model estimated a coefficient for and leaving
+the rest marginalised, so nothing has to be restated.</p>
 </div>
 <div class="section level3">
 <h3 id="is-the-renal-effect-real">Is the renal effect real?<a class="anchor" aria-label="anchor" href="#is-the-renal-effect-real"></a>
 </h3>
-<p>The interval says the renal exponent is not zero, but the honest test
-is a likelihood-ratio test against the model without it. Fix the
-coefficient rather than deleting the term — the <code>population</code>
-declares <code>CRCL</code>, and admixr2 refuses a distribution naming a
-covariate the model never reads.</p>
+<p>The estimate is close to its truth, but that is not evidence on its
+own — and with no standard error there is no interval to appeal to. The
+test is a likelihood-ratio test against the model without the term.
+Write the null model the obvious way: delete the term. The same
+<code>studies</code> object serves both fits — the population still
+declares <code>CRCL</code>, because that is still who was enrolled, and
+a covariate the null model does not read cannot change its prediction,
+so admixr2 leaves it off the design and says so.</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">adm_model_null</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span>
 <span>    <span class="va">tcl</span>     <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">4</span><span class="op">)</span></span>
 <span>    <span class="va">tv</span>      <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">45</span><span class="op">)</span></span>
-<span>    <span class="va">bcrcl</span>   <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/utils/fix.html" class="external-link">fix</a></span><span class="op">(</span><span class="fl">0</span><span class="op">)</span>          <span class="co"># the restriction being tested</span></span>
 <span>    <span class="va">bsex</span>    <span class="op">&lt;-</span> <span class="fl">0.10</span></span>
 <span>    <span class="va">add.err</span> <span class="op">&lt;-</span> <span class="fl">0.1</span></span>
 <span>    <span class="va">eta.cl</span>  <span class="op">~</span> <span class="fl">0.1</span></span>
 <span>  <span class="op">}</span><span class="op">)</span></span>
 <span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/model.html" class="external-link">model</a></span><span class="op">(</span><span class="op">{</span></span>
-<span>    <span class="va">cl</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tcl</span> <span class="op">+</span> <span class="va">eta.cl</span><span class="op">)</span> <span class="op">*</span> <span class="op">(</span><span class="va">WT</span><span class="op">/</span><span class="fl">70</span><span class="op">)</span><span class="op">^</span><span class="fl">0.75</span> <span class="op">*</span> <span class="op">(</span><span class="va">CRCL</span><span class="op">/</span><span class="fl">90</span><span class="op">)</span><span class="op">^</span><span class="va">bcrcl</span> <span class="op">*</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">bsex</span> <span class="op">*</span> <span class="va">SEX</span><span class="op">)</span></span>
+<span>    <span class="co"># no renal term -- the restriction being tested</span></span>
+<span>    <span class="va">cl</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tcl</span> <span class="op">+</span> <span class="va">eta.cl</span><span class="op">)</span> <span class="op">*</span> <span class="op">(</span><span class="va">WT</span><span class="op">/</span><span class="fl">70</span><span class="op">)</span><span class="op">^</span><span class="fl">0.75</span> <span class="op">*</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">bsex</span> <span class="op">*</span> <span class="va">SEX</span><span class="op">)</span></span>
 <span>    <span class="va">v</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tv</span><span class="op">)</span> <span class="op">*</span> <span class="op">(</span><span class="va">WT</span><span class="op">/</span><span class="fl">70</span><span class="op">)</span></span>
 <span>    <span class="va">cp</span> <span class="op">&lt;-</span> <span class="fu">linCmt</span><span class="op">(</span><span class="op">)</span></span>
 <span>    <span class="va">cp</span> <span class="op">~</span> <span class="fu">add</span><span class="op">(</span><span class="va">add.err</span><span class="op">)</span></span>
@@ -704,14 +700,13 @@ covariate the model never reads.</p>
 <span><span class="co">#&gt;        Npar   OBJF    AIC    BIC   Test  dOFV Df         p</span></span>
 <span><span class="co">#&gt; adgh      5 -11939 -11929 -11897     NA    NA NA        NA</span></span>
 <span><span class="co">#&gt; adgh_1    6 -12608 -12596 -12557 1 vs 2 668.5  1 2.17e-147</span></span></code></pre></div>
-<p>The <code>p</code> column is the ordinary likelihood-ratio test:
-<code>dOFV</code> is compared with a chi-squared reference using
-<code>Df</code>, the number of parameters added by the larger model.
-Here <code>n</code> is each source study’s sample size and supplies the
-sampling scale of its contribution. The study API does not take the
-published estimates’ covariance, so this test does not propagate
-uncertainty in those source-model parameters; interpret a borderline
-result with that limitation in mind.</p>
+<p><code>p</code> is the ordinary likelihood-ratio test:
+<code>dOFV</code> against a chi-squared reference on <code>Df</code>,
+the number of parameters the larger model adds. Each source’s
+<code>n</code> sets the sampling scale of its contribution. The study
+API does not take the published estimates’ covariance, so the test does
+not propagate uncertainty in those source-model parameters — read a
+borderline result with that in mind.</p>
 </div>
 </div>
 <div class="section level2">
@@ -773,24 +768,24 @@ result with that limitation in mind.</p>
 <span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggtheme.html" class="external-link">theme_bw</a></span><span class="op">(</span><span class="op">)</span> <span class="op">+</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/theme.html" class="external-link">theme</a></span><span class="op">(</span>legend.position <span class="op">=</span> <span class="st">"bottom"</span><span class="op">)</span></span></code></pre></div>
 <p><img src="covariates_files/figure-html/mechanism-1.png" class="r-plt" alt="" width="672"></p>
 <p>Both effects are in that picture, and they look nothing alike.</p>
-<p>The <strong>sex effect</strong> is the vertical gap between the two
+<p>The <strong>sex effect</strong> is the vertical gap between the
 lines. Every trial found it, so every flat bar comes in a matching pair
-with the same gap — a covariate that varies within a study is visible to
-that study.</p>
+with the same gap: a covariate that varies within a study is visible to
+it.</p>
 <p>The <strong>renal effect</strong> is the slope, and no trial has one.
-Each is a pair of flat bars, claiming clearance is whatever it happened
-to measure, at any renal function. Three pairs at three different
-heights: each correct over its own range and contradicting the others
-everywhere else. The meta-analysis draws the line through them. That
-line is the renal effect — recovered entirely from <em>between</em> the
-trials, and carried into the shaded region none of them sampled.</p>
+Each is a pair of flat bars claiming clearance is whatever it happened
+to measure, at any renal function — three pairs at three heights, each
+correct over its own range and contradicting the others everywhere else.
+The meta-analysis draws the line through them, recovered entirely from
+<em>between</em> the trials and carried into the shaded region none of
+them sampled.</p>
 </div>
 <div class="section level2">
 <h2 id="back-to-the-patient">Back to the patient<a class="anchor" aria-label="anchor" href="#back-to-the-patient"></a>
 </h2>
 <p>Her creatinine clearance is 21 mL/min, outside every trial’s range.
-Without a meta-analysis you would reach for the published model closest
-to her — the moderate-impairment one — and use it.</p>
+Without a meta-analysis you would reach for the closest published model
+— the moderate-impairment one — and use it.</p>
 <div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">3</span><span class="op">)</span></span>
 <span><span class="co"># mean concentration over a severe cohort (WT 72 kg, CRCL 21 mL/min), reusing</span></span>
@@ -808,10 +803,10 @@ to her — the moderate-impairment one — and use it.</p>
 <span>                            <span class="fl">0</span>,                       <span class="co"># no renal term</span></span>
 <span>                            <span class="va">moderate_paper</span><span class="op">$</span><span class="va">BSEX</span>, <span class="va">moderate_paper</span><span class="op">$</span><span class="va">OM</span><span class="op">)</span></span>
 <span><span class="va">p_truth</span> <span class="op">&lt;-</span> <span class="fu">severe_mean_conc</span><span class="op">(</span><span class="va">CL70</span>, <span class="va">V70</span>, <span class="va">BCRCL</span>, <span class="va">BSEX</span>, <span class="va">OM_CL</span><span class="op">)</span></span></code></pre></div>
-<p>Predicting the <em>mean</em> is only half of it. Simulate a severe
-cohort under each model and compare the whole distribution — median and
-90% interval — against what those patients would really do. The truth is
-repeated in grey behind every panel.</p>
+<p>The <em>mean</em> is only half of it. Simulate a severe cohort under
+each model and compare the whole distribution — median and 90% interval
+— against what those patients would really do. The truth is repeated in
+grey behind every panel.</p>
 <div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">7</span><span class="op">)</span></span>
 <span><span class="co"># one severe cohort, and every model asked to predict THOSE patients</span></span>
@@ -856,7 +851,7 @@ repeated in grey behind every panel.</p>
 <p><img src="covariates_files/figure-html/vpc-1.png" class="r-plt" alt="" width="672"></p>
 <p>Each trial model reproduces the population it was fitted in, not this
 one, and the miss is ordered by how far that population sits from
-severe. At 24 h, against the truth:</p>
+severe. At 24 h against the truth:</p>
 <div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">at_24h</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">model_name</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="va">d</span> <span class="op">&lt;-</span> <span class="va">sims</span><span class="op">[</span><span class="va">sims</span><span class="op">$</span><span class="va">model</span> <span class="op">==</span> <span class="va">model_name</span>, <span class="op">]</span></span>
@@ -906,13 +901,12 @@ h.</caption>
 </tr>
 </tbody>
 </table>
-<p>They miss on <strong>spread</strong> as much as on level. A model
-with no renal term applied to this cohort has only weight and
-<code>omega</code> to generate between-patient variability, and the
-<code>omega</code> it carries was fitted where creatinine clearance
-hardly varied — so it cannot reproduce a population whose clearance
-varies a great deal. Only the meta-analysis, which knows what renal
-function does, lands on the grey.</p>
+<p>They miss on <strong>spread</strong> as much as on level. With no
+renal term, a model has only weight and <code>omega</code> to generate
+between-patient variability, and that <code>omega</code> was fitted
+where creatinine clearance hardly varied — so it cannot reproduce a
+population whose clearance varies a great deal. Only the meta-analysis,
+which knows what renal function does, lands on the grey.</p>
 <div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu">knitr</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/knitr/man/kable.html" class="external-link">kable</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
 <span>  time <span class="op">=</span> <span class="va">TIMES</span>, truth <span class="op">=</span> <span class="va">p_truth</span>, meta_analysis <span class="op">=</span> <span class="va">p_adm</span>, nearest_model <span class="op">=</span> <span class="va">p_near</span>,</span>
@@ -990,7 +984,7 @@ concentration.</caption>
 </table>
 <p>The nearest published model carries a clearance fitted in patients
 who clear the drug considerably faster than she does, so it drifts
-further wrong the longer you look, and it <strong>underpredicts
+further wrong the longer you look and it <strong>underpredicts
 exposure</strong> — the direction that matters clinically.</p>
 </div>
 <div class="section level2">
@@ -1047,10 +1041,10 @@ normal-function patient gets from 200 mg.</caption>
 gives 77 mg against a true 76 mg.</p>
 <p>The nearest published model gives 187 mg — about 2.5 times the dose
 she should get. Note where its small reduction below 200 mg comes from:
-purely the weight difference between the two cohorts. Its renal
-recommendation is exactly zero, and it cannot be anything else, because
-the model has no renal term. It would return the same 187 mg just as
-confidently at 15 mL/min, or at 5.</p>
+purely the weight difference between cohorts. Its renal recommendation
+is exactly zero and cannot be anything else, the model having no renal
+term. It would return the same 187 mg just as confidently at 15 mL/min,
+or at 5.</p>
 </div>
 <div class="section level2">
 <h2 id="doing-this-with-your-own-papers">Doing this with your own papers<a class="anchor" aria-label="anchor" href="#doing-this-with-your-own-papers"></a>
@@ -1058,13 +1052,12 @@ confidently at 15 mL/min, or at 5.</p>
 <p><strong>A paper contributes in one of two currencies</strong>, and
 <code><a href="../reference/admStudy.html">admStudy()</a></code> takes either. A published <em>model</em> goes in
 as <code>model</code> with the paper’s estimates as <code>est</code>;
-<em>digitised</em> aggregate data goes in as <code>E</code> with
-<code>sd</code> (or <code>sem</code>, or a full <code>V</code>). Nothing
-is solved when you build one, so a study is cheap to write and
-<code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code> back against the source before any fitting
-happens.</p>
+<em>digitised</em> aggregate data as <code>E</code> with <code>sd</code>
+(or <code>sem</code>, or a full <code>V</code>). Nothing is solved when
+you build one, so a study is cheap to write and to <code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code>
+back against the source before any fitting.</p>
 <p><strong>The baseline table</strong> goes to
-<code><a href="../reference/admPopulation.html">admPopulation()</a></code> in whichever form the paper printed, one
+<code><a href="../reference/admPopulation.html">admPopulation()</a></code> in whichever form the paper printed it, one
 covariate per argument:</p>
 <div class="sourceCode" id="cb15"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/admPopulation.html">admPopulation</a></span><span class="op">(</span>WT   <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>mean <span class="op">=</span> <span class="fl">78</span>, sd <span class="op">=</span> <span class="fl">16</span><span class="op">)</span>,        <span class="co"># mean and SD</span></span>
@@ -1078,56 +1071,49 @@ covariate per argument:</p>
 <span><span class="co">#&gt;        SEX categorical   0.550  0.498</span></span>
 <span><span class="co">#&gt;   dependence: correlation matrix</span></span></code></pre></div>
 <p><code>cv</code> (as a percent) and <code>range = c(min, max)</code>
-are accepted too, and <code>cor</code> names only the pairs the paper
-gave — everything else is independent, so a partial table needs no
-identity padding. Correlations are on the LATENT scale, which for a
-lognormal margin means the logs. Prefer <code>dist = "lnorm"</code> for
-anything positive: a normal margin is unbounded below and the quadrature
-reaches about 3.75 SD, so a CV above roughly 0.27 puts a node at or
-below zero, where an allometric term is <code>NaN</code>.
-<code><a href="../reference/admPopulation.html">admPopulation()</a></code> warns when it sees this. If you have the
-individual covariates — a digitised listing, or your own cohort — pass
-<code>data =</code> and the table is read off them.</p>
+work too, and <code>cor</code> names only the pairs the paper gave —
+everything else is independent, so a partial table needs no identity
+padding. Correlations are on the LATENT scale, meaning the logs for a
+lognormal margin. Prefer <code>dist = "lnorm"</code> for anything
+positive: a normal margin is unbounded below and the quadrature reaches
+about 3.75 SD, so a CV above roughly 0.27 puts a node at or below zero
+where an allometric term is <code>NaN</code>.
+<code><a href="../reference/admPopulation.html">admPopulation()</a></code> warns when it sees this. With the
+individual covariates in hand — a digitised listing, or your own cohort
+— pass <code>data =</code> and the table is read off them.</p>
 <p><strong>A published model gets you an estimate, not an
-interval.</strong> A study generated from a model is not a sample: its
-mean and covariance are exact functions of somebody else’s published
-estimate, so there is no sampling law underneath it to build a standard
-error from. <code>n</code> sets that study’s <em>relative weight</em>
-against the others and nothing more. Weighting it as though
-<code>n</code> patients had been observed does produce a standard error
-— a finite, plausible one that shrinks as <code>1/sqrt(n)</code>, i.e. a
-precision you set by typing a number — so admixr2 reports none at all
-for a fit that includes a model source, and refuses an explicit
-<code>covMethod</code> rather than honouring one. Point estimates are
-unaffected, and a model <em>is</em> still the right currency for a
-paper: it is what lets three incompatible published models be combined
-at all.</p>
+interval</strong>, for the reason given above: no sampling law, so no
+standard error, and <code>n</code> sets only relative weight. Point
+estimates are unaffected, and a model <em>is</em> still the right
+currency for a paper — it is what lets three incompatible published
+models be combined at all.</p>
 <p><strong>Then read <code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code> before you fit.</strong> It
 lays out which covariates each source bands, conditions and
-marginalises, and says so when one is marginal everywhere — that
+marginalises, and says so when one is marginal everywhere. Such a
 covariate is identified only by the contrast <em>between</em> sources,
 which is legitimate when they really differ and a flat ridge when they
-do not. A flat ridge converges to a confident wrong number rather than
-failing, so it is worth the ten seconds.</p>
+do not — and a flat ridge converges to a confident wrong number rather
+than failing.</p>
 <p><strong>Discrete covariates are strata</strong>, enumerated exactly
-at their levels and weighted by their probabilities — nothing about them
-is approximated. That exactness is also why a discrete covariate must be
+at their levels and weighted by their probabilities — nothing
+approximated. That exactness is why a discrete covariate must be
 declared INDEPENDENT of the other margins: a level is an interval of the
-latent normal rather than a point, so a <code>cor</code> entry naming a
-discrete covariate would change what the enumeration means — the
-conditional law of a continuous margin within the stratum, or the joint
-probabilities of two strata — and neither is carried by the per-level
-probabilities. admixr2 refuses such a table rather than integrating it
-as if it were independent.</p>
+latent normal rather than a point, so a <code>cor</code> entry naming
+one would change what the enumeration means — the conditional law of a
+continuous margin within the stratum, or the joint probabilities of two
+strata — and the per-level probabilities carry neither. admixr2 refuses
+such a table rather than integrating it as though it were
+independent.</p>
 <p><strong>Cost.</strong> A product grid over <code>p</code> continuous
 covariates costs <code>cov_nodes^p</code>, but where they reach the
 model through fewer scalar directions, admixr2 integrates over those
-directions instead. Three covariates entering as one product use 21
-design points rather than 343. That is a verified change of variables.
-For larger designs that do not collapse,
-<code>cov_integration = "sparse"</code> uses the Smolyak rule; raise
-<code>cov_sparse_level</code> only when a sensitivity check shows that
-it is needed.</p>
+directions instead. At the default <code>cov_nodes = 7</code>, three
+covariates entering as one product use 21 design points rather than 343
+— a direction that absorbs three axes is given three axes’ worth of
+nodes. That is a verified change of variables. For larger designs that
+do not collapse, <code>cov_integration = "sparse"</code> uses the
+Smolyak rule; raise <code>cov_sparse_level</code> only when a
+sensitivity check shows that it is needed.</p>
 <p><strong>Estimator support.</strong> <code>admc</code> and
 <code>adgh</code> marginalise covariates; <code>adfo</code> and
 <code>adirmc</code> refuse rather than silently solving at the covariate
@@ -1142,11 +1128,11 @@ never reads.</p>
 <strong>A covariate effect is identified by contrast across
 sources.</strong> That is the whole of this vignette. Within one cohort
 a covariate barely varies, and what little it does is confounded with
-between-subject variability — a covariate enters <code>V</code> where
+between-subject variability — it enters <code>V</code> where
 <code>omega</code> does.</li>
 <li>
 <strong>Fix what convention fixes.</strong> Allometric exponents are
-0.75 and 1; aggregate data is not the place to re-estimate them.
+0.75 and 1, and aggregate data is not the place to re-estimate them.
 Estimate the covariate effects a popPK analysis would.</li>
 <li>
 <strong>Extrapolation is extrapolation.</strong> The severe
