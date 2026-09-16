@@ -133,16 +133,8 @@ adirmcControl <- function(
     grad            = c("analytical", "none", "fd"),
     kappa_method    = c("exact", "linearized", "linearized_gh"),
     kappa_n_nodes   = 5L,
-    # 1e-6, not the 1e-4 the other controls use. The IRMC inner NLL is
-    # DETERMINISTIC given fixed proposals -- there is no MC noise to step over,
-    # which is the whole reason the sampling estimators want a coarser one. The
-    # inner difference is CENTRAL, whose optimum on such a function sits near
-    # eps^(1/3)*|p| ~ 6e-6, so 1e-6 is the right neighbourhood for the fallback
-    # (Shi21 measures the step when it can). The inner FD was a
-    # hard-coded 1e-6 until this branch made it honour grad_h; inheriting a 1e-4
-    # default silently made every `grad = "fd"` adirmc fit converge on a gradient
-    # 100x coarser than the one the loop was tuned for. Honouring grad_h is right;
-    # the default it inherited was not.
+    # 1e-6, not 1e-4: the inner NLL is deterministic (no MC noise to step over),
+    # and central FD's optimum here sits near eps^(1/3)*|p| ~ 6e-6.
     grad_h          = 1e-6,
     cov_h           = 1e-3,
     cov_h_outer     = .Machine$double.eps^(1/5),
@@ -184,10 +176,8 @@ adirmcControl <- function(
 
   checkmate::assertList(studies)
   checkmate::assertIntegerish(n_sim,        lower = 1L,  len = 1)
-  # A residual quadrature needs a real grid. .adghNodes1() refuses m < 1, but it
-  # accepts 1..4 happily and returns a rule that integrates nothing usefully --
-  # the measured error at 5 nodes is already 3.3e-1. Refuse here, where the
-  # message can name the argument, rather than silently scoring a wrong NLL.
+  # .adghNodes1() accepts 1..4 nodes but integrates uselessly there (error 3.3e-1
+  # at 5); refuse below 5 here where the message can name the argument.
   checkmate::assertIntegerish(resid_nodes,  lower = 5L,  len = 1)
   checkmate::assertIntegerish(outer_iter,   lower = 1L,  len = 1)
   checkmate::assertIntegerish(maxeval,      lower = 1L,  len = 1)
@@ -207,8 +197,7 @@ adirmcControl <- function(
   checkmate::assertNumeric(convcrit,        lower = 0,   len = 1)
   checkmate::assertIntegerish(max_worse,    lower = 1L,  len = 1)
   checkmate::assertIntegerish(kappa_n_nodes, lower = 1L, len = 1)
-  # A model source lacks source-parameter uncertainty, so no standard error is available for a
-  # fit that includes one -- see .admResolveCovMethod(), which refuses an
+  # A model source has no sampling law, so .admResolveCovMethod() refuses an
   # explicit covMethod rather than honouring it.
   covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
                                     !missing(covMethod))
@@ -216,11 +205,8 @@ adirmcControl <- function(
   checkmate::assertIntegerish(n_restarts,   lower = 1L,  len = 1)
   checkmate::assertNumeric(restart_sd,      lower = 0,   len = 1)
   checkmate::assertIntegerish(workers,      lower = 1L,  len = 1)
-  # The other three controls validate these; adirmc did not, so adirmcControl(ci
-  # = 99) and adirmcControl(returnAdmr = "x") were accepted silently -- the first
-  # reaches the confidence-interval columns as a nonsense level, the second makes
-  # the driver's `isTRUE(returnAdmr)` quietly FALSE and returns a full fit where a
-  # plain list was asked for.
+  # adirmc alone skipped these: an invalid ci or returnAdmr used to pass through
+  # silently and surface later as a nonsense CI or a plain list where a fit was asked for.
   checkmate::assertNumeric(ci, lower = 0, upper = 1, len = 1, .var.name = "ci")
   checkmate::assertLogical(returnAdmr,      len = 1, .var.name = "returnAdmr")
 
@@ -229,12 +215,9 @@ adirmcControl <- function(
   algorithm <- .algo$algorithm
   grad      <- .algo$grad
 
-  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone" --
-  # see the same note in admControl(). A looser solve is not free: every
-  # finite-difference step that consumes these solves is the same order as the
-  # tolerance sigdig = 4 asks for, so differencing at a 1e-4 step differences noise.
-  # NULL is also the only way back, since no sigdig value reproduces rxode2's own
-  # (atol 1e-8, rtol 1e-6). The tables still need a number and fall back to 4.
+  # sigdig = NULL keeps rxode2's own solver tolerances (see admControl()); a
+  # looser solve differences noise at FD step size, and no sigdig reproduces the
+  # default (atol 1e-8, rtol 1e-6). Tables still need a number, so fall back to 4.
   if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
     rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
@@ -336,12 +319,9 @@ nmObjGetControl.adirmc <- function(x, ...) {
 #   omega          -> log_new -> w -> mu_w, V_w -> -2LL   (analytical via S kernel)
 #   sigma          -> V_w -> -2LL                         (direct, analytical)
 
-# Fused NLL + analytical gradient in one study pass.
-# Called by the memo-cached eval_f / eval_grad_f pair in .adirmcPhaseLoop for
-# grad_mode = "analytical".  Returns list(nll = scalar, grad = numeric(np)).
-# Eliminates the redundant recomputation of IS weights, weighted mean/cov,
-# sigma corrections, and kappa that would otherwise happen when the optimiser
-# calls eval_f(p) and eval_grad_f(p) sequentially at the same p.
+# Fused NLL + analytical gradient in one study pass, called by the memo-cached
+# eval_f/eval_grad_f pair in .adirmcPhaseLoop for grad_mode = "analytical" --
+# avoids recomputing IS weights/weighted mean-cov/sigma/kappa twice per p.
 .adirmcNLLAndGrad <- function(p, pinfo, studies_snap, proposals) {
   pars <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(list(nll = Inf, grad = rep(NA_real_, length(p))))
@@ -400,12 +380,10 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
     mu_sigma <- mu
 
-    # Exact kappa used to cost TWO rxSolve calls per inner evaluation at the same
-    # p: kappa_fn(struct) for the centre (1 row) and, further down, kappa_fn_batch
-    # for the central-difference rows (2 * n_kb rows). They differ only in which
-    # rows are present, so they are fused into one solve of (1 + 2 * n_kb) rows --
-    # the centre is simply carried as the first candidate. The inner loop runs
-    # thousands of times per fit, so this halves its solve count.
+    # Exact kappa used to cost two rxSolve calls per inner eval: kappa_fn(struct)
+    # for the centre and kappa_fn_batch for the CFD rows. Fused into one solve of
+    # (1 + 2*n_kb) rows, centre first -- halves the solve count of a loop that
+    # runs thousands of times per fit.
     kappa_batch <- NULL
     kappa_ctr   <- NULL
     if (!is.null(prop$mu_pop) && is.null(prop$kappa_jac) &&
@@ -882,22 +860,12 @@ nmObjGetControl.adirmc <- function(x, ...) {
 
 # -- Proposal-drawing closure --------------------------------------------------
 
-# Build the closure .adirmcPhaseLoop() calls to redraw proposals at a parameter
-# vector. It needs two of them per run -- one for the inner optimiser and one for
-# the exact-NLL check -- and they differ in EXACTLY ONE argument, `use_grad`
-# (the exact evaluation never needs the gradient-side quantities).
-#
-# That pair was written out longhand, and then the whole pair was written out
-# again in the restart worker: four copies of one 18-line call, differing in one
-# flag and in whether the captured names are the worker's (`studies`, `cores_w`,
-# `omega_expansion`) or the driver's (`studies_snap`, `cores`,
-# `.ctl$omega_expansion`). A factory takes those as arguments and the difference
-# stops being a copy.
-#
-# Kept as a factory returning ONE closure, rather than having .adirmcPhaseLoop
-# take a single function plus a flag: the phase loop's two-closure interface is
-# unchanged, so its signature -- and the worker's, which must stay stable for the
-# daemons -- does not move.
+# Factory for the closure .adirmcPhaseLoop() calls to redraw proposals at a
+# parameter vector. Two are needed per run -- inner optimiser and exact-NLL
+# check -- differing only in `use_grad`; a factory avoids writing that pair out
+# longhand twice (driver + restart worker). Returns ONE closure rather than
+# .adirmcPhaseLoop taking a function+flag, so its two-closure interface (and the
+# worker's signature, which must stay stable for daemons) doesn't move.
 .adirmcProposalFn <- function(rxMod, pinfo, studies, z_list, params_list,
                               output_var, cores, omega_expansion,
                               kappa_method, kappa_n_nodes, use_grad) {
@@ -951,22 +919,14 @@ nmObjGetControl.adirmc <- function(x, ...) {
   .fd_h   <- pinfo$grad_h %||% 1e-6
   .shi_h <- NULL
 
-  # Proposal memo (one entry).
-  #
-  # Each iteration draws proposals at p_cur for the inner optimisation, and then
-  # draws them AGAIN at p_new for the exact-NLL check -- after which p_cur <- p_new,
-  # so the next iteration's inner draw is at the very same p. Proposals are a
-  # deterministic function of p (same z_list, same params_list, same Omega
-  # expansion), so those two draws are bit-identical and one of them is pure waste.
-  # The proposal is the most expensive rxSolve in the loop (n_sim + kappa rows), so
-  # this roughly halves the proposal cost.
-  #
-  # draw_proposals_inner and draw_proposals_exact differ ONLY in `use_grad`, which
-  # decides whether the kappa_fn_batch closure gets built -- and building a closure
-  # costs no solve. So the gradient-capable draw serves both roles.
-  #
-  # The cache correctly MISSES in the two places where p_cur is not p_new: the
-  # start of a phase (p_cur <- best_p) and the max_worse bail-out.
+  # Proposal memo (one entry). Each iteration draws proposals at p_cur for the
+  # inner optimisation, then again at p_new for the exact-NLL check; after
+  # p_cur <- p_new the next inner draw is at the same p, so one draw is pure
+  # waste (proposals are a deterministic function of p) -- this memo skips it,
+  # roughly halving the dominant rxSolve cost. draw_proposals_inner/_exact differ
+  # only in whether the (solve-free) kappa_fn_batch closure gets built, so the
+  # gradient-capable draw serves both. Correctly MISSES at a phase start
+  # (p_cur <- best_p) and the max_worse bail-out.
   .prop_p <- NULL; .prop_v <- NULL
   get_proposals <- function(p) {
     if (!is.null(.prop_p) && identical(p, .prop_p)) return(.prop_v)
@@ -1025,15 +985,9 @@ nmObjGetControl.adirmc <- function(x, ...) {
                                         .var.name = "adirmc inner gradient")
             }
             h <- if (is.null(.shi_h)) .fd_h else .shi_h
-            # CENTRAL, and it has to be: the step above is Shi21's, which
-            # minimises the error of a CENTRAL difference -- h* = (3 eps_f /
-            # |f'''|)^(1/3). A forward difference is optimal at the SQUARE root,
-            # h ~ 2 sqrt(eps_f/|f''|), which is far coarser, so feeding it the
-            # central step leaves the eps_f/h noise term dominant and can be
-            # worse than the fixed 1e-6 the measurement replaced. Central costs
-            # 2n inner NLL evaluations against forward's n+1; the inner NLL is
-            # deterministic given fixed proposals, so what is bought is real
-            # accuracy rather than averaged-down noise.
+            # Central, and it has to be: the Shi21 step above minimises CENTRAL
+            # difference error, and is far too fine for a forward difference
+            # (optimal at ~2 sqrt(eps_f/|f''|)), which would then be noise-dominated.
             function(p) {
               g <- numeric(length(p))
               for (k in seq_along(p)) {
@@ -1047,10 +1001,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
           }),
           NULL)
       }
-      # After .admResolveAlgorithm: grad_mode == "none" <=> derivative-free
-      # algorithm; grad_mode != "none" <=> gradient-based algorithm. Either way
-      # the user's chosen algorithm matches the available gradient, so honour it
-      # (the tryCatch below falls back to BOBYQA if the inner solve errors).
+      # .admResolveAlgorithm already matched algorithm to grad_mode; the tryCatch
+      # below falls back to BOBYQA if the inner solve errors anyway.
       algorithm_inner <- algorithm
       lb_inner <- pmax(ov_lower, p_cur - ph_step)
       ub_inner <- pmin(ov_upper, p_cur + ph_step)
@@ -1123,17 +1075,13 @@ nmObjGetControl.adirmc <- function(x, ...) {
                                rxMod_direct = NULL) {
   library(admixr2)
 
-  # Dev mode: patch the installed namespace with any dev functions in .GlobalEnv.
-  # A daemon is patched by .admDaemonRestart() before it gets here; this covers a
-  # direct (sequential) call. tryCatch guards against the installed package
-  # predating this function (run devtools::install() once).
+  # Dev mode: patch the installed namespace with dev functions from .GlobalEnv
+  # (a daemon is patched earlier by .admDaemonRestart(); this covers a direct call).
   tryCatch(.admPatchDevNamespace(), error = function(e) NULL)
 
-  # adirmc has no sensitivity model (analytical inner gradient) -> no sens_* args.
-  # pinfo IS passed: it carries the parent's simulation-model cache path, which
-  # the worker cannot recompute (it has no `ui`). Named, not positional -- and
-  # not a new formal of either function, so the dev-mode stale-daemon trap does
-  # not apply.
+  # No sens_* args: adirmc's inner gradient is analytical, no sensitivity model.
+  # pinfo carries the parent's sim-model cache path, which the worker cannot
+  # recompute (no `ui`); passed by name so it isn't a new positional formal.
   m       <- .admWorkerLoadModels(ui_lstExpr, rxMod_direct, cores, pinfo = pinfo)
   cores_w <- m$cores_w
   rxMod   <- m$rxMod
@@ -1208,29 +1156,19 @@ nlmixr2Est.adirmc <- function(env, ...) {
   .ds     <- .admDriverStudies(.ui, .ctl, "adirmc")
   studies <- .ds$studies
   pinfo   <- .ds$pinfo
-  # IRMC draws its importance-sampling proposals FROM the random-effect
-  # distribution, so a model with no random effect has nothing to propose: the
-  # proposal draw is degenerate and the fit returned a silent objective = Inf
-  # (frozen at the initial values) rather than refusing. The other three estimators
-  # fit a no-IIV (population-only) model directly.
+  # IRMC draws its IS proposals FROM the random-effect distribution, so with no
+  # eta the draw is degenerate -- refuse rather than silently return Inf.
   if (pinfo$n_eta == 0L)
     stop("est='adirmc' requires at least one random effect (eta): IRMC draws its ",
          "importance-sampling\n  proposals from the random-effect distribution, and ",
          "a model with no IIV has nothing to propose.\n  Use est = \"adfo\", ",
          "\"admc\" or \"adgh\" for a population-only (no-IIV) model.", call. = FALSE)
-  # A beta endpoint's precision phi is SOLVED, not fitted: .admSimulate() returns it
-  # as an attribute on cp_mat and admc/adgh patch it into the residual rows. This
-  # estimator has no such path -- arr$phi stayed NA and .admResidApply() produced NA
-  # for every row, i.e. an NaN objective with no explanation. Refuse with one.
-  # irmc_inner_nll_cpp computes the importance-weighted mu INSIDE the kernel, so
-  # unlike admc the residual cannot be pre-assembled in R and routed around the
-  # fused path. The kernel implements forms 0/1/2 only and has no off-diagonal
-  # channel, so a TBS/count/beta/ordinal/ar model was silently scored as
-  # combined2 -- while .adirmcNLLAndGrad's R path scored it correctly. With the
-  # default grad = "analytical" the inner optimiser used one objective and
-  # nll_exact used the other, so best_p was chosen by minimising the wrong number
-  # and the convergence test |exact - approx| < convcrit could never be met.
-  # Refuse rather than approximate; the other three estimators handle these.
+  # irmc_inner_nll_cpp computes mu INSIDE the kernel (importance-weighted), so
+  # the residual can't be pre-assembled in R as admc does. The kernel implements
+  # forms 0/1/2 only, no off-diagonal channel -- a TBS/count/beta/ordinal/ar model
+  # was silently scored as combined2 there while the R gradient path scored it
+  # correctly, so the inner optimiser and the exact-NLL check disagreed and never
+  # converged. Refuse rather than approximate.
   .bad_form <- vapply(.admResidSpecs(pinfo), function(sp) {
     f <- sp$form %||% 0L
     !identical(f, .ADM_RESID_COMBINED2) && !identical(f, .ADM_RESID_COMBINED1) &&
@@ -1257,8 +1195,8 @@ nlmixr2Est.adirmc <- function(env, ...) {
   Use est = \"admc\" or est = \"adgh\" for this model.",
          call. = FALSE)
 
-  # adirmc only: its inner optimiser finite-differences on a separate path.
-  # Same pinfo-not-a-formal reason as .admDriverPinfo() records.
+  # adirmc only: its inner optimiser FDs on a separate path; carried on pinfo
+  # for the same not-a-formal reason .admDriverPinfo() records.
   pinfo$grad_h           <- .ctl$grad_h
   output_var <- .admOutputVar(.ui)
 
@@ -1283,31 +1221,18 @@ nlmixr2Est.adirmc <- function(env, ...) {
   }
 
 
-  # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
-  # GATED ON covMethod TOO, because that is what actually consumes it.
-  #
-  # adirmc is the one estimator whose FIT never reads a sensitivity model: the inner
-  # gradient is analytic through the softmax/MVN chain and .adirmcProposal() takes no
-  # sens argument. The only consumer is .admCalcCov() for the post-fit Hessian, so
-  # gating on `grad` alone compiled a sensitivity model -- ~3.6s cold -- and then
-  # never read it for every covMethod = "none" fit.
-  #
-  # ...but skipping the load outright would break the ORDERING INVARIANT.
-  # .admLoadModel()'s cache-MISS path calls rxode2::rxode2(ui), which caches
-  # `ui$foceiModel$inner` as NULL. Nothing in this fit reads `inner`, but a LATER
-  # admc/adgh/adfo fit whose .admBuildThetaSens() bails falls back to
-  # .admSensFromInner(), gets NULL, and silently drops to an FD gradient. The
-  # stale-cache recovery that used to repair this no longer exists, so the ordering is
-  # the only defence, and it persists via rxTempDir().
-  #
-  # The compile only happens on a cache MISS, and .admModelCacheFile() is pure, so ask
-  # first: skip the sens load only when .admLoadModel() will take its cache-HIT branch
-  # and therefore cannot poison anything.
+  # Ordering invariant: .admLoadSensModel() must run before .admLoadModel(), and
+  # gated on covMethod too. adirmc's FIT never reads a sensitivity model (the
+  # inner gradient is analytic), only .admCalcCov()'s post-fit Hessian does --
+  # gating on `grad` alone compiled one (~3.6s cold) and never used it for
+  # covMethod = "none" fits. But skipping the load outright breaks the ordering
+  # invariant: .admLoadModel()'s cache-MISS path caches `ui$foceiModel$inner` as
+  # NULL, and a LATER admc/adgh/adfo fit falling back to .admSensFromInner()
+  # would then silently get an FD gradient with no recovery path. So skip the
+  # sens load only when .admLoadModel() is known to take its cache-HIT branch.
   .sim_warm <- isTRUE(tryCatch(file.exists(.admModelCacheFile(.ui)),
                                error = function(e) FALSE))
-  # .admCovWantsHessian(), NOT `== "r"`: both "r" and "r,s" ask for a Hessian, so both
-  # need the sens model. An equality test here is the same shape of bug the note above
-  # describes -- it would silently take the FD-Hessian path for a "r,s" fit.
+  # .admCovWantsHessian(), not `== "r"`: "r" and "r,s" both need the sens model.
   sensModel <- if ((.admCovWantsHessian(.ctl$covMethod) && .ctl$grad == "analytical") || !.sim_warm)
     tryCatch(.admLoadSensModel(.ui), error = function(e) NULL)
   else NULL
@@ -1424,8 +1349,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   t0_cov <- proc.time()
   .want_cov <- .admCovWantsHessian(.ctl$covMethod)
   .cov <- if (.want_cov) {
-    # struct + sigma + OMEGA: .admCalcCov()'s Hessian spans all three, so the
-    # advertised evaluation count must too (it understated it otherwise).
+    # Hessian spans struct + sigma + omega, so the advertised count must too.
     np_cov       <- length(pinfo$struct_names) + length(pinfo$sigma_names) +
                     length(pinfo$omega_par)
     use_grad_cov <- .ctl$grad != "none"
@@ -1453,12 +1377,9 @@ nlmixr2Est.adirmc <- function(env, ...) {
         NULL
       })
   } else NULL
-  # Warns if no covariance could be computed, re-raises any sandwich
-  # ill-conditioning note (as a warning -- see .admFinalizeCovLabel()'s own
-  # comment for why that specific mechanism matters), and returns what the
-  # covariance IS ("r,s" / "r" / ""), not what was asked for.
-  # iniDf order first (nlmixr2est maps SEs positionally), then snapshot the names
-  # BEFORE nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
+  # Returns what the covariance IS ("r,s"/"r"/""), not what was asked for.
+  # iniDf order first (SEs map positionally), then snapshot names before
+  # nlmixr2est sees it -- .admCovThetaOrder()/.admRestoreCovNames().
   .cov_lbl  <- .admFinalizeCovLabel(.cov, .want_cov)
   .cov      <- .admCovThetaOrder(.cov, .ui)
   .cov_nms  <- .admCovNames(.cov)
@@ -1489,14 +1410,11 @@ nlmixr2Est.adirmc <- function(env, ...) {
                          sigma_var      = final$sigma_var,
                          sigma_is_prop  = pinfo$sigma_is_prop,
                          sigma_is_lnorm = pinfo$sigma_is_lnorm,
-                         # the TBS residual quadrature the FIT used -- see adfo.R
+                         # TBS residual quadrature and solver tolerance the FIT
+                         # used -- plot.admFit() re-solves the model, and a mismatch
+                         # would show standardised-residual structure the objective
+                         # was never minimised on.
                          resid_nodes    = pinfo$resid_nodes,
-                        # ... and the solver tolerance the FIT used, for the
-                        # same reason: plot.admFit() re-solves the model to build
-                        # the predicted mean and covariance panels, and a fit run
-                        # at a looser sigdig diagnosed against rxode2's stock
-                        # tolerances shows standardised-residual structure the
-                        # objective was never minimised on.
                          sigdig         = pinfo$sigdig,
                          omega          = final$omega,
                          L              = final$L,

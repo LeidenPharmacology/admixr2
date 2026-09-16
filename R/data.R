@@ -42,15 +42,9 @@ admData <- function(outputs = NULL) {
 
   outputs <- as.character(outputs)
   n_o     <- length(outputs)
-  # Multi-endpoint dummy: one observation per endpoint, keyed by name in a `DVID`
-  # column (nlmixr2's endpoint identifier, cf. nlmixr2data::warfarin). The dose
-  # row targets a real dosing compartment (`CMT = 1`) rather than an endpoint.
-  # As in the single-endpoint frame the observation DV values are a non-NA
-  # placeholder (1): nlmixr2's multi-endpoint data translation rejects an
-  # all-NA-DV dataset. This is purely for dispatch -- each estimator overwrites
-  # `fit$env$objective` (and OBJF/logLik/AIC/BIC) with its own aggregate -2LL,
-  # so the placeholder never enters the reported objective; actual dosing and
-  # observation times come from each study's `ev`.
+  # DVID keys each endpoint (cf. nlmixr2data::warfarin); dose row targets a real
+  # dosing compartment (CMT = 1). Actual dosing/observation times come from each
+  # study's `ev`.
   data.frame(ID   = 1L,
              TIME = c(0, seq_len(n_o)),
              DV   = c(NA_real_, rep(1, n_o)),
