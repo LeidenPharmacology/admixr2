@@ -48,20 +48,20 @@
 # Tensor-product GH grid for n_eta dimensions.
 # Returns X (n_node x n_eta standard-normal nodes) and W (length n_node weights).
 #
-# Memoised, same cache env as .adghNodes1 (which this calls) but NOT the same
-# retention policy. .admCovRefresh/.admJointDesign call this on EVERY objective
-# evaluation, since rank and node count are frozen at admission -- only the ROTATION
-# applied on top depends on the current parameters. The grid itself is pure overhead
-# when rebuilt: measured 68.6 ms/call at r=4, m=15 against an rxSolve()'s ~11 ms, so
-# rebuilt on every NLL and gradient evaluation it was larger than the solve beside it.
+# Memoised, same cache env as .adghNodes1 (which this calls) but NOT
+# the same retention policy. .admCovRefresh/.admJointDesign call
+# this on EVERY objective evaluation, since rank and node count are
+# frozen at admission -- only the ROTATION on top depends on
+# current parameters. Rebuilding the grid itself is pure overhead:
+# measured 68.6 ms/call at r=4, m=15 against an rxSolve()'s ~11 ms.
 #
-# WHAT A TENSOR GRID COSTS TO KEEP is why this does not use .adghNodes1's
-# cache-everything-forever policy. The 1-D nodes are a handful of short vectors; one
-# of these is ~25 MB at 8 etas and 5 nodes, and the cache lives in the namespace
-# rather than the fit, so keeping every (m, n_eta) would grow with the number of
-# models a session fits and never shrink. A fit asks for the SAME grid on every
-# evaluation, so ONE SLOT gets the entire saving and bounds the cache without any
-# eviction policy to get wrong.
+# WHAT A TENSOR GRID COSTS TO KEEP is why this skips
+# .adghNodes1's cache-everything-forever policy: one grid is ~25 MB
+# at 8 etas/5 nodes, and the cache lives in the namespace rather
+# than the fit, so caching every (m, n_eta) would grow with the
+# session and never shrink. A fit asks for the SAME grid every
+# evaluation, so ONE SLOT captures the entire saving with no
+# eviction policy needed.
 .admGridMemo <- function(slot, key, build) {
   # The cache env is a package-level binding, and this runs inside mirai restart
   # workers, where assignInNamespace() cannot ADD a binding to the locked
@@ -122,24 +122,27 @@
   } else {
     g <- list(eta = matrix(0, 1L, 0L), W = 1, X = grid$X, cov_rows = NULL)
   }
-  # General path, adgh's analogue of admc's per-row covariate draws: a PRODUCT GRID
-  # over the covariate quadrature and the eta grid. Deterministic, so adgh stays
-  # noise-free, and it is still ONE rxSolve. The eta block cycles fastest, so the
-  # weights are as.numeric(outer(W_eta, W_cov)) column-major.
+  # General path, adgh's analogue of admc's per-row covariate draws:
+  # a PRODUCT GRID over the covariate quadrature and the eta grid --
+  # deterministic, so adgh stays noise-free, and still ONE rxSolve.
+  # The eta block cycles fastest, so weights are
+  # as.numeric(outer(W_eta, W_cov)) column-major.
   #
-  # The covariate shift -- a separate reduction that pinned the covariate at its
-  # reference and folded its whole contribution into one eta column -- was removed.
-  # .admJointCollapse finds the same structure without a certificate, and is both
-  # cheaper and more accurate wherever both applied. See NEWS.
-  # JOINT COLLAPSE: one design over the etas AND the covariates together, where
-  # they reach the model through the same directions. It replaces the eta grid
-  # as well as the covariate design, so it returns before either is built.
+  # (The old covariate-shift reduction -- pinning the covariate at
+  # its reference and folding its contribution into one eta
+  # column -- was removed: .admJointCollapse finds the same
+  # structure without a certificate, cheaper and more accurate
+  # wherever both applied.)
+  # JOINT COLLAPSE: one design over etas AND covariates together,
+  # where they reach the model through the same directions --
+  # replaces both the eta grid and the covariate design, so it
+  # returns before either is built.
   #
-  # X is the node matrix the omega chain rule differentiates. eta = X L' holds here
-  # exactly as for the ordinary grid -- the joint preimage's eta block IS that matrix
-  # -- so .adghGrad needs no branch of its own. What it does not carry is the
-  # rotation's own dependence on Omega; that term is the quadrature re-choosing
-  # itself within the same column space, and vanishes to the verified accuracy.
+  # X is the node matrix the omega chain rule differentiates;
+  # eta = X L' holds exactly as for the ordinary grid, so
+  # .adghGrad needs no branch of its own. Not carried: the
+  # rotation's own dependence on Omega, which vanishes to the
+  # verified accuracy.
   .jc <- if (!is.null(s)) s[[".adm_cov_joint"]] else NULL
   if (!is.null(.jc)) {
     jd <- .admJointDesign(.jc, .admShiftStruct(pinfo, pars$struct), pars$L)
@@ -173,18 +176,19 @@
                        .admCovSparseGrid(s[["cov_dist"]],
                                          pinfo$cov_sparse_level %||% 3L,
                                          pinfo$cov_nodes %||% 7L)
-          # The COLLAPSED design when the covariates reach the model through a
-          # single scalar: the same integral in the dimension it actually has, so
-          # this is not an approximation the grid would beat. Cached at admission,
-          # but RE-AIMED at the current thetas rather than read from it -- the
-          # rotation depends on the covariate coefficients, which are estimated, so a
-          # design cached at the starting values integrates over the wrong line in
-          # latent space as soon as the optimizer moves (53 to 163 -2LL units for a
-          # 0.1 move in one coefficient).
+          # The COLLAPSED design when the covariates reach the model
+          # through a single scalar: the same integral in the
+          # dimension it actually has, not an approximation the grid
+          # would beat. Cached at admission but RE-AIMED at the
+          # current thetas: the rotation depends on the estimated
+          # covariate coefficients, so a design cached at starting
+          # values integrates the wrong line once the optimizer
+          # moves (53 to 163 -2LL units for a 0.1 move in one
+          # coefficient).
           #
-          # The product grid ONLY when no collapse was admitted (a hand-built study):
-          # the two have different point counts, so swapping mid-fit steps the
-          # objective.
+          # The product grid ONLY when no collapse was admitted (a
+          # hand-built study): the two have different point counts,
+          # so swapping mid-fit steps the objective.
           else if (is.null(s[[".adm_cov_collapse"]]))
                        s[[".adm_cov_grid"]] %||%
                        .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
@@ -419,17 +423,17 @@
 
   for (s in studies) {
     # PER STUDY, THROUGH .adghGrid(), WHERE THE STUDY DECLARES A COVARIATE
-    # DISTRIBUTION. Building the nodes from `grid` and pars$L directly is what made
-    # adgh's analytical gradient blind to the covariate product grid: it
-    # differentiated a different function from the one .adghNLL evaluated, silently.
-    # X, W and eta must come from ONE place.
+    # DISTRIBUTION. Building nodes from `grid` and pars$L directly made
+    # adgh's analytical gradient blind to the covariate product grid --
+    # it differentiated a different function than .adghNLL evaluated,
+    # silently. X, W and eta must come from ONE place.
     #
-    # Only where there IS a covariate distribution, though. .adghGrid()'s zero-eta
-    # branch collapses to the single point (eta 1 x 0, W = 1), which is right for the
-    # OBJECTIVE and wrong here: this loop differentiates over the incoming node grid,
-    # and replacing it with one point at n_eta = 0 leaves the covariance with nothing
-    # to difference and the SEs non-finite. A no-IIV model has no covariate grid
-    # either, so the two cases do not overlap.
+    # Only where there IS a covariate distribution: .adghGrid()'s
+    # zero-eta branch collapses to a single point (eta 1 x 0, W = 1),
+    # right for the OBJECTIVE but wrong here -- this loop differentiates
+    # over the incoming node grid, and one point at n_eta = 0 leaves the
+    # covariance nothing to difference and the SEs non-finite. A no-IIV
+    # model has no covariate grid either, so the cases don't overlap.
     if (!is.null(s[["cov_dist"]])) {
       .gS <- .adghGrid(pars, pinfo, grid, s)
       # Same marked grid .adghMoments turns into Inf -- see there. The point is
@@ -569,20 +573,21 @@
     arr   <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
 
     # ---- Transform-both-sides: EXACT node-wise composition -------------------
-    # Handled as a self-contained block so the delta-expansion path below is
-    # untouched for every other family. See .admTBSNodeParts(): the objective
-    # composes the residual at each NODE and aggregates, rather than collapsing
-    # to (mu_struct, var_f) and expanding around it. The expansion does not
-    # converge -- its error in V is a floor no node count removes, measured at
-    # 3.4e-03 (boxCox) to 3.1e-02 (probitNorm at omega 0.49) and flat from 7
-    # nodes to 25 -- which also means `n_nodes` bought a TBS fit nothing.
+    # Self-contained so the delta-expansion path below is untouched for
+    # every other family. See .admTBSNodeParts(): the objective composes
+    # the residual at each NODE and aggregates, rather than collapsing
+    # to (mu_struct, var_f) and expanding around it. The expansion does
+    # NOT converge -- its error in V is a floor no node count removes,
+    # measured at 3.4e-03 (boxCox) to 3.1e-02 (probitNorm at omega 0.49)
+    # and flat from 7 to 25 nodes, so `n_nodes` buys a TBS fit nothing.
     #
-    # The gradient is the same contraction the structural moments use, with the
-    # conditional mean's derivative folded into the sensitivity column:
+    # The gradient is the same contraction the structural moments use,
+    # with the conditional mean's derivative folded into the sensitivity
+    # column:
     #   A  = dm o graw,  dE = sum_q w A,  Ac = A - dE
     #   dV = Ac' diag(w) Mc + Mc' diag(w) Ac + diag(sum_q w dv o graw)
-    # verified against central differences of this objective at 1e-09 on all
-    # four transforms.
+    # verified against central differences of this objective at 1e-09 on
+    # all four transforms.
     .np <- .admTBSNodeParts(f, arr)
     if (!is.null(.np)) {
       .ag <- .admTBSAggregate(.np, W)
@@ -800,19 +805,19 @@
 
   # Otherwise CENTRAL FD of .adghNLL.
   #
-  # Every perturbed configuration differs from the others only in its structural
-  # thetas -- same node grid, same Omega, same sigma -- so they all share one solve
-  # per study (.adghMomentsBatch).
+  # Every perturbed configuration differs from the others only in its
+  # structural thetas -- same node grid, same Omega, same sigma -- so
+  # they share one solve per study (.adghMomentsBatch).
   #
-  # CENTRAL, not forward, and the STEP is the reason: `grad_h` arrives as Shi21's
-  # measured per-parameter step, and Shi21 minimises the error of a CENTRAL
-  # difference. The forward optimum is a square root and far coarser, so a forward
-  # difference at the central step lands where the eps_f/h noise term dominates. The
-  # baseline configuration that used to ride along as configuration 1 is gone with it
-  # -- a central difference never evaluates the centre -- so this is 2*n_u
+  # CENTRAL, not forward: `grad_h` is Shi21's measured per-parameter
+  # step, minimising CENTRAL-difference error; the forward optimum
+  # is a square root and far coarser, so a forward difference at the
+  # central step lands where eps_f/h noise dominates. The old
+  # baseline configuration (config 1) is gone with it -- a central
+  # difference never evaluates the centre -- so this is 2*n_u
   # configurations against the old n_u + 1, still ONE rxSolve per study.
   #
-  # Joint units keep the per-configuration path and do pay 2*n_u .adghNLL calls.
+  # Joint units keep the per-configuration path and pay 2*n_u .adghNLL calls.
   if (length(unpaired_k) > 0L) {
     n_u <- length(unpaired_k)
     hs  <- pmax(abs(p[unpaired_k]), 0.1) * .admGH(grad_h, unpaired_k)
@@ -879,16 +884,18 @@
 
 # (#5) Pair the objective and the gradient onto ONE solve.
 #
-# nloptr asks for them as two separate calls, but LBFGS always asks at the same p,
-# and .adghGradNLL already forms the moments the NLL needs -- so .adghNLL's solve was
-# pure duplicate work. Memoising on p collapses the pair to one solve (~2x on a
-# gradient-mode fit; estimates unchanged to 6 dp).
+# nloptr asks for them as two separate calls, but LBFGS always asks
+# at the same p, and .adghGradNLL already forms the moments the NLL
+# needs -- so .adghNLL's solve was pure duplicate work. Memoising
+# on p collapses the pair to one solve (~2x on a gradient-mode
+# fit; estimates unchanged to 6 dp).
 #
-# Consequence worth knowing: the objective now comes from the SENSITIVITY solve
-# rather than the plain one. Both integrate the same base ODEs, but the augmented
-# system makes rxode2's adaptive stepper land ~1e-6 apart, so this is NOT
-# bit-identical to the pre-fusion objective, though both sit at the solver's own
-# rtol. It also makes f and grad-f self-consistent (one trajectory).
+# Consequence: the objective now comes from the SENSITIVITY solve
+# rather than the plain one. Both integrate the same base ODEs,
+# but the augmented system makes rxode2's adaptive stepper land
+# ~1e-6 apart, so this is NOT bit-identical to the pre-fusion
+# objective (though both sit at the solver's own rtol) -- it also
+# makes f and grad-f self-consistent (one trajectory).
 #
 # Only for the analytical-sens path; grad = "fd"/"none" keep the old route.
 .adghFusedFns <- function(pinfo, studies, sensModel, rxMod, out_var, grid, cores,
@@ -977,17 +984,19 @@
 
   # Covariate studies: differentiate the NLL, not the gradient.
   #
-  # The original reason given here was that .adghGradNLL builds its quadrature from
-  # pars$L rather than through .adghGrid(), so it could not carry the covariate grid.
-  # That is NOT true and has not been for some time -- it calls .adghGrid() per study
-  # and then .adghStudyCov(). Measured on a 1-cmt lognormal-covariate model, the two
-  # forms agree to 2.7e-05 with identical standard errors, and the gradient form is
-  # ~1.5x faster.
+  # The original reason given here -- that .adghGradNLL builds its
+  # quadrature from pars$L rather than through .adghGrid(), so it
+  # can't carry the covariate grid -- is NOT true and hasn't been
+  # for some time: it calls .adghGrid() per study then
+  # .adghStudyCov(). On a 1-cmt lognormal-covariate model the two
+  # forms agree to 2.7e-05 with identical SEs, and the gradient
+  # form is ~1.5x faster.
   #
-  # The guard is kept anyway, deliberately: it buys one Hessian per fit, that
-  # measurement covers a single model, and the failure it would expose -- standard
-  # errors computed from a different objective than the estimates -- is silent and
-  # severe. Removing it wants a broader comparison, not a rewritten comment.
+  # Kept anyway, deliberately: it buys one Hessian per fit, that
+  # measurement covers a single model, and the failure it would
+  # expose -- SEs computed from a different objective than the
+  # estimates -- is silent and severe. Removing it wants a
+  # broader comparison, not a rewritten comment.
   if (isTRUE(use_grad) &&
       # a fully stratified study's cov_dist is all point specs, so it
       # marginalises nothing and need not cost the gradient-based Hessian
