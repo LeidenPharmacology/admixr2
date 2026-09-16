@@ -88,7 +88,8 @@ study_data <- datagen(
 
 # Each study returns E, V, n, times, ev
 names(study_data$low_dose)
-#> [1] "E"       "V"       "n"       "times"   "ev"      "v_denom" "output"
+#> [1] "E"        "V"        "n"        "times"    "ev"       "v_denom"  ".adm_src"
+#> [8] "output"
 round(study_data$low_dose$E, 2)   # population mean at each time
 #>  0.5    1    2    4    8   12   24 
 #> 1.75 2.38 2.27 1.18 0.24 0.06 0.00
@@ -188,8 +189,7 @@ fit_sim <- nlmixr2(
   analysis_model, admData(), est = "admc",
   control = admControl(
     studies   = study_data,
-    maxeval   = 300L,
-    covMethod = "r"
+      maxeval = 300L
   )
 )
 
@@ -202,22 +202,21 @@ admc -7359.742 -7345.742 -7302.618       3679.871
 ── Time (sec fit_sim$time): ──
 
   optimize covariance other elapsed
-1   39.655     12.706     0  52.361
+1   47.386          0     0  47.386
 
 ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 
-                        Parameter     Est.       SE   %RSE
-tcl           Log clearance (L/h)    1.608  0.01444 0.8984
-tv                 Log volume (L)    2.303  0.01994 0.8661
-tka     Log absorption rate (1/h) 0.001082  0.02641   2441
-prop.sd     Proportional error SD   0.2001 0.004183  2.090
-        Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl        4.991 (4.852, 5.135)    30.41         NaN
-tv         10.00 (9.619, 10.40)    19.60         NaN
-tka       1.001 (0.9506, 1.054)    20.88         NaN
-prop.sd 0.2001 (0.1919, 0.2083)                     
+                        Parameter     Est. SE %RSE Back-transformed(95%CI)
+tcl           Log clearance (L/h)    1.608                           4.991
+tv                 Log volume (L)    2.303                           10.00
+tka     Log absorption rate (1/h) 0.001072                           1.001
+prop.sd     Proportional error SD   0.2001                          0.2001
+        BSV(CV%) Shrink(SD)%
+tcl        30.41         NaN
+tv         19.60         NaN
+tka        20.88         NaN
+prop.sd                     
  
-  Covariance Type (fit_sim$covMethod): r
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit_sim$omega) 
     or correlation (fit_sim$omegaR; diagonals=SDs)

@@ -279,11 +279,6 @@ fit_fo <- nlmixr2(
     seed     = 1L
   )
 )
-#> 
-#> 
-#> 
-#> 
-#> 
 ```
 
 ## Fitting with admc
@@ -376,16 +371,16 @@ knitr::kable(tbl, caption = "Parameter estimates vs true values")
 
 | Parameter   |  True |    adfo |    admc |
 |:------------|------:|--------:|--------:|
-| exp(tcl)    |  5.00 |  4.9083 |  4.9626 |
-| exp(tv1)    | 10.00 |  7.3067 | 10.2582 |
-| exp(tv2)    | 30.00 | 32.3871 | 29.9032 |
-| exp(tq)     | 10.00 | 10.0790 |  9.7400 |
-| exp(tka)    |  1.00 |  0.8033 |  1.0304 |
-| var(eta.cl) |  0.09 |  0.0969 |  0.1011 |
-| var(eta.v1) |  0.09 |  0.1424 |  0.1020 |
-| var(eta.v2) |  0.09 |  0.0904 |  0.0975 |
-| var(eta.q)  |  0.09 |  0.0932 |  0.1073 |
-| var(eta.ka) |  0.09 |  0.0779 |  0.0986 |
+| exp(tcl)    |  5.00 |  4.9100 |  4.9628 |
+| exp(tv1)    | 10.00 |  7.3161 | 10.2581 |
+| exp(tv2)    | 30.00 | 32.3637 | 29.8857 |
+| exp(tq)     | 10.00 | 10.0853 |  9.7381 |
+| exp(tka)    |  1.00 |  0.8043 |  1.0302 |
+| var(eta.cl) |  0.09 |  0.0968 |  0.1011 |
+| var(eta.v1) |  0.09 |  0.1427 |  0.1042 |
+| var(eta.v2) |  0.09 |  0.0905 |  0.0964 |
+| var(eta.q)  |  0.09 |  0.0938 |  0.1075 |
+| var(eta.ka) |  0.09 |  0.0777 |  0.0967 |
 | prop.sd     |  0.20 |  0.1908 |  0.1895 |
 
 Parameter estimates vs true values {.table}
@@ -402,7 +397,7 @@ objectives or used for cross-estimator AIC:
 cat(sprintf("adfo  -2LL = %.2f   AIC = %.2f\n", fit_fo$objective, AIC(fit_fo)))
 #> adfo  -2LL = -3676.41   AIC = -3654.41
 cat(sprintf("admc  -2LL = %.2f   AIC = %.2f\n", fit_mc$objective, AIC(fit_mc)))
-#> admc  -2LL = -3690.25   AIC = -3668.25
+#> admc  -2LL = -3690.26   AIC = -3668.26
 ```
 
 Use AIC only within the same estimator for model selection.

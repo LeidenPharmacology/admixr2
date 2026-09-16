@@ -81,16 +81,16 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.568       0.19     0   0.758 6.962
+elapsed    0.637      0.202     0   0.839 4.743
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
             Est.       SE   %RSE       Back-transformed(95%CI) BSV(CV%)
-tcl      0.03321  0.03553  107.0         1.034 (0.9642, 1.108)    27.92
-tv1        2.292  0.02073 0.9047          9.890 (9.496, 10.30)    15.12
-tq        0.8829  0.05598  6.340          2.418 (2.167, 2.698)         
-tv2       0.8678  0.02625  3.025          2.382 (2.262, 2.507)         
-prop.cp 0.004104 0.001774  43.23 0.004104 (6.266e-4, 0.007582)         
+tcl      0.03322  0.03552  106.9         1.034 (0.9643, 1.108)    27.92
+tv1        2.292  0.01961 0.8557          9.890 (9.517, 10.28)    15.12
+tq        0.8830  0.05657  6.406          2.418 (2.164, 2.702)         
+tv2       0.8678  0.02628  3.028          2.382 (2.262, 2.507)         
+prop.cp 0.004104 0.001770  43.13 0.004104 (6.351e-4, 0.007573)         
         Shrink(SD)%
 tcl             NaN
 tv1             NaN
@@ -108,7 +108,7 @@ prop.cp
    • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. 
   Censoring (fit_plasma$censInformation): No censoring
   Minimization message (fit_plasma$message):  
-    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+    NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. 
 ```
 
 This is a perfectly good plasma model — but look at what it *cannot*
@@ -193,29 +193,22 @@ fit_cns
 ── nlmixr² adgh ──
 
           OBJF       AIC       BIC Log-likelihood
-adgh -88.59587 -72.59587 -36.65795       44.29794
+adgh -88.64046 -72.64046 -36.70254       44.32023
 
 ── Time (sec fit_cns$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.644      0.374     0   1.018 7.343
+elapsed    0.979      0.389     0   1.368  3.59
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
-           Est.      SE   %RSE      Back-transformed(95%CI) BSV(CV%)
-tcl     0.04104 0.02783  67.81        1.042 (0.9866, 1.100)    27.03
-tv1       2.269 0.01517 0.6685         9.674 (9.390, 9.966)    13.85
-tqin      1.085 0.03260  3.004         2.960 (2.777, 3.156)         
-tqout     1.780 0.03701  2.079         5.932 (5.517, 6.378)         
-prop.cp 0.04848 0.02566  52.92 0.04848 (-0.001808, 0.09877)         
-add.cb  0.01999 0.05307  265.5   0.01999 (-0.08402, 0.1240)         
-        Shrink(SD)%
-tcl             NaN
-tv1             NaN
-tqin               
-tqout              
-prop.cp            
-add.cb             
+           Est.      SE   %RSE     Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
+tcl     0.04081 0.02782  68.16       1.042 (0.9864, 1.100)    27.09         NaN
+tv1       2.269 0.01524 0.6718        9.672 (9.388, 9.966)    13.98         NaN
+tqin      1.085 0.03279  3.023        2.958 (2.774, 3.154)                     
+tqout     1.780 0.03718  2.089        5.929 (5.512, 6.377)                     
+prop.cp 0.04449 0.03352  75.35  0.04449 (-0.02121, 0.1102)                     
+add.cb  0.01997 0.01843  92.27 0.01997 (-0.01614, 0.05609)                     
  
   Covariance Type (fit_cns$covMethod): r,s
   No correlations in between subject variability (BSV) matrix
@@ -223,10 +216,10 @@ add.cb
     or correlation (fit_cns$omegaR; diagonals=SDs)
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Information about run found (fit_cns$runInfo):
-   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 1.0e-07, cond 9.95e+06), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `add.cb`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
+   • covMethod = "r,s": the Hessian is ill-conditioned (rcond 2.5e-07, cond 4.01e+06), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `add.cb`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. 
   Censoring (fit_cns$censInformation): No censoring
   Minimization message (fit_cns$message):  
-    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+    NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. 
 ```
 
 ## The same study in long format
@@ -265,7 +258,7 @@ fit_long <- nlmixr2(pk_cns, admData(c("cp", "cb")), est = "adgh",
 
 c(observations = fit_cns$objective, long = fit_long$objective)
 observations         long 
-   -88.59587    -88.59587 
+   -88.64046    -88.64046 
 ```
 
 Which form to use is a matter of taste. The `observations` list keeps

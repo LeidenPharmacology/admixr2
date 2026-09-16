@@ -28,6 +28,7 @@
     <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><a class="dropdown-item" href="../articles/covariates.html">Covariates in aggregate data</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
@@ -104,6 +105,66 @@
 
         </dt>
         <dd>Fit an aggregate data model via Iterative Reweighting MC (adirmc estimator)</dd>
+      </dl></div><div class="section level2">
+      <h2 id="writing-down-the-studies">Writing down the studies<a class="anchor" aria-label="anchor" href="#writing-down-the-studies"></a></h2>
+
+      <div class="section-desc"><p>Describe a source the way its paper does — the model it published, the cohort it enrolled — and let admixr2 assemble the summary it implies.</p></div>
+
+      <dl></dl></div><div class="section level2">
+
+
+
+
+      <dl><dt>
+
+          <code><a href="admStudy.html">admStudy()</a></code>
+
+        </dt>
+        <dd>Write down a published study</dd>
+
+        <dt>
+
+          <code><a href="admStudies.html">admStudies()</a></code>
+
+        </dt>
+        <dd>Collect the studies a meta-analysis draws on</dd>
+
+        <dt>
+
+          <code><a href="admPopulation.html">admPopulation()</a></code>
+
+        </dt>
+        <dd>Describe the population a study enrolled</dd>
+      </dl></div><div class="section level2">
+      <h2 id="covariates">Covariates<a class="anchor" aria-label="anchor" href="#covariates"></a></h2>
+
+      <div class="section-desc"><p>Declare the covariate distribution a source enrolled, and how it enters the fit.</p></div>
+
+      <dl></dl></div><div class="section level2">
+
+
+
+
+      <dl><dt>
+
+          <code><a href="covDist.html">covDist()</a></code>
+
+        </dt>
+        <dd>Describe the covariate distribution a study's subjects span</dd>
+
+        <dt>
+
+          <code><a href="covStrata.html">covStrata()</a></code>
+
+        </dt>
+        <dd>Cut a covariate distribution into strata</dd>
+
+        <dt>
+
+          <code><a href="covDraw.html">covDraw()</a></code>
+
+        </dt>
+        <dd>Draw covariate values from a <code>cov_dist</code> specification</dd>
       </dl></div><div class="section level2">
       <h2 id="simulation">Simulation<a class="anchor" aria-label="anchor" href="#simulation"></a></h2>
 
@@ -194,6 +255,13 @@
 
         </dt>
         <dd>Diagnostic plots for an admixr2 fit</dd>
+
+        <dt>
+
+          <code><a href="anova.admFit.html">anova(<i>&lt;admFit&gt;</i>)</a></code>
+
+        </dt>
+        <dd>Compare nested admixr2 fits by a likelihood-ratio test</dd>
       </dl></div><div class="section level2">
       <h2 id="data">Data<a class="anchor" aria-label="anchor" href="#data"></a></h2>
 

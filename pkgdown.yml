@@ -5,6 +5,7 @@ articles:
   admixr2: admixr2.html
   advanced: advanced.html
   aggregate-data: aggregate-data.html
+  covariates: covariates.html
   datagen: datagen.html
   diagnostic-plots: diagnostic-plots.html
   error-models: error-models.html
@@ -13,7 +14,7 @@ articles:
   multi-compartment: multi-compartment.html
   multiple-studies: multiple-studies.html
   pkpd: pkpd.html
-last_built: 2026-09-11T22:00Z
+last_built: 2026-09-16T07:34Z
 urls:
   reference: https://leidenpharmacology.github.io/admixr2/reference
   article: https://leidenpharmacology.github.io/admixr2/articles

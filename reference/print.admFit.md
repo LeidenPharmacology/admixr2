@@ -96,15 +96,15 @@ print(fit)
 #> 
 #> ── Time (sec fit$time): ──
 #> 
-#>         optimize covariance other elapsed other
-#> elapsed    0.463       0.31     0   0.773 0.219
+#>   optimize covariance other elapsed
+#> 1    0.493      0.329     0   0.822
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>           Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl      1.854  0.01961  1.058    6.384 (6.143, 6.634)    28.95         NaN
-#> tv       3.638  0.01689 0.4641    38.03 (36.80, 39.31)    20.39         NaN
-#> prop.sd 0.3900 0.009106  2.335 0.3900 (0.3721, 0.4078)                     
+#> tcl      1.854  0.02241  1.209    6.384 (6.109, 6.670)    28.95         NaN
+#> tv       3.638  0.01946 0.5350    38.03 (36.61, 39.51)    20.39         NaN
+#> prop.sd 0.3900 0.008281  2.124 0.3900 (0.3737, 0.4062)                     
 #>  
 #>   Covariance Type (fit$covMethod): r,s
 #>   No correlations in between subject variability (BSV) matrix
@@ -112,6 +112,6 @@ print(fit)
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  
-#>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+#>     NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. 
 # }
 ```

@@ -54,6 +54,7 @@
     <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><a class="dropdown-item" href="../articles/covariates.html">Covariates in aggregate data</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
@@ -97,7 +98,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Choosing a residual error model</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.1/vignettes/error-models.Rmd" class="external-link"><code>vignettes/error-models.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/error-models.Rmd" class="external-link"><code>vignettes/error-models.Rmd</code></a></small>
       <div class="d-none name"><code>error-models.Rmd</code></div>
     </div>
 
@@ -118,7 +119,7 @@ value carries variability the structural model does not explain. Your
 residual model is the claim about how to split them, and that split
 decides what goes to <code>omega</code> and what to the residual.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2">admixr2</a></span><span class="op">)</span></span>
+<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2/">admixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.org/" class="external-link">nlmixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://ggplot2.tidyverse.org" class="external-link">ggplot2</a></span><span class="op">)</span></span></code></pre></div>
@@ -217,37 +218,37 @@ proportional one.</caption>
 <tr class="odd">
 <td align="left">CL (L/h)</td>
 <td align="right">5.00</td>
-<td align="right">5.002</td>
+<td align="right">5.00</td>
 <td align="right">5.213</td>
 </tr>
 <tr class="even">
 <td align="left">V (L)</td>
 <td align="right">20.00</td>
-<td align="right">19.996</td>
+<td align="right">20.00</td>
 <td align="right">19.597</td>
 </tr>
 <tr class="odd">
 <td align="left">IIV on CL</td>
 <td align="right">0.09</td>
-<td align="right">0.090</td>
+<td align="right">0.09</td>
 <td align="right">0.084</td>
 </tr>
 <tr class="even">
 <td align="left">IIV on V</td>
 <td align="right">0.04</td>
-<td align="right">0.040</td>
+<td align="right">0.04</td>
 <td align="right">0.065</td>
 </tr>
 <tr class="odd">
 <td align="left">residual SD</td>
 <td align="right">0.20</td>
-<td align="right">0.200</td>
+<td align="right">0.20</td>
 <td align="right">0.467</td>
 </tr>
 <tr class="even">
 <td align="left">-2LL</td>
 <td align="right">NA</td>
-<td align="right">-1542.269</td>
+<td align="right">-1542.27</td>
 <td align="right">-4.118</td>
 </tr>
 </tbody>

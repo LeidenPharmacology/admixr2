@@ -38,6 +38,7 @@ FO), noise-free (unlike MC), and much faster than MC for models with up to
     <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><a class="dropdown-item" href="../articles/covariates.html">Covariates in aggregate data</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
@@ -68,7 +69,7 @@ FO), noise-free (unlike MC), and much faster than MC for models with up to
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control settings for the Gauss-Hermite (GH) quadrature estimator</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.1/R/adgh.R" class="external-link"><code>R/adgh.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/adgh.R" class="external-link"><code>R/adgh.R</code></a></small>
       <div class="d-none name"><code>adghControl.Rd</code></div>
     </div>
 
@@ -114,6 +115,10 @@ FO), noise-free (unlike MC), and much faster than MC for models with up to
 <span>  literalFix <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  returnAdmr <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  resid_nodes <span class="op">=</span> <span class="fl">81L</span>,</span>
+<span>  cov_nodes <span class="op">=</span> <span class="fl">7L</span>,</span>
+<span>  cov_integration <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"on"</span>, <span class="st">"sparse"</span>, <span class="st">"off"</span><span class="op">)</span>,</span>
+<span>  cov_sparse_level <span class="op">=</span> <span class="fl">3L</span>,</span>
+<span>  xtol_rel <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">double.eps</span><span class="op">^</span><span class="op">(</span><span class="fl">1</span><span class="op">/</span><span class="fl">2</span><span class="op">)</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -219,6 +224,8 @@ noise-free).</p></dd>
 <dt id="arg-covmethod">covMethod<a class="anchor" aria-label="anchor" href="#arg-covmethod"></a></dt>
 <dd><p><code>"r,s"</code> (the DEFAULT) computes the sandwich <code>H^-1 J H^-1</code>;
 <code>"r"</code> the numerical Hessian alone, <code>2H^-1</code>; <code>"none"</code> skips the covariance.
+A study generated from a published model defaults to <code>"none"</code> and refuses
+an explicit covariance method because it has no sampling law.
 All three span the structural, residual-error and omega parameters. Omega is
 included because excluding it also biases the STRUCTURAL standard errors
 downward – a theta carrying an eta is correlated with that eta's variance.
@@ -350,6 +357,94 @@ evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.</p></dd>
 
 
+<dt id="arg-cov-nodes">cov_nodes<a class="anchor" aria-label="anchor" href="#arg-cov-nodes"></a></dt>
+<dd><p>Gauss-Hermite nodes per covariate used to integrate the
+COVARIATE distribution when a study declares <code>cov_dist</code> (default 7). This is
+a separate dial from <code>n_nodes</code>, which refines the random-effect dimensions
+only: raising <code>n_nodes</code> alone leaves the covariate integration exactly where
+it was. Measured on a two-compartment model with an allometric weight effect
+and a lognormal weight distribution, 7 nodes place the marginal moments
+within 2e-06 (mean) and 2e-05 (covariance) of an exact reference, and the
+remaining error is the ODE solver's rather than the quadrature's. A wider or
+more skewed covariate distribution, or a more strongly non-linear covariate
+effect, warrants more. Measured against an exact reference on a
+two-compartment model with an allometric weight effect and a lognormal
+weight distribution: 3 nodes give 7.3e-04 / 8.2e-03 (mean / covariance),
+5 give 2.8e-05 / 3.7e-04, 7 give 2.2e-06 / 2.4e-05, and 9 onwards sit at
+~1.2e-06 / ~1.0e-06, which is the ODE solver's accuracy rather than the
+quadrature's. The default is set past that knee, and raising it further
+buys nothing: against a per-subject reference the accuracy is identical at
+5, 9 and 15 nodes. Ignored when <code>cov_integration = "sparse"</code>, which sets
+its own resolution through <code>cov_sparse_level</code>.</p>
+<p>It is a nodes-per-DIRECTION budget rather than a literal node count.
+Where the covariates reach the model through fewer scalars than there
+are covariates, admixr2 integrates over those directions instead of
+over a product grid, and each direction is given <code>cov_nodes * p / r</code>
+nodes rounded up – MORE than <code>cov_nodes</code>, because a direction that
+absorbs several covariate axes carries their combined spread and needs
+proportionally more resolution to resolve it. Three covariates reaching
+the model as a single scalar therefore get 21 nodes on one direction at
+the default, not 7, and still cost 21 design points against the product
+grid's 343. The same budget sizes the directions of a joint
+random-effect/covariate design where one is used.</p></dd>
+
+
+<dt id="arg-cov-integration">cov_integration<a class="anchor" aria-label="anchor" href="#arg-cov-integration"></a></dt>
+<dd><p>How a study's covariate distribution is integrated.
+Three states.</p>
+<p><code>"on"</code> (default) integrates on a product Gauss–Hermite grid of
+<code>cov_nodes</code> points per covariate and <strong>reduces it wherever the model
+permits</strong>, choosing per study without being asked. Where the random
+effects and the covariates span fewer directions than they have members –
+an allometric weight effect on the same parameter as its random effect is
+one direction, not two – the integral is taken over those directions
+instead, which for <code>p</code> covariates costs design points in the rank rather
+than <code>cov_nodes^p</code>. A study that does not qualify is integrated on the full
+grid. There is nothing to tune: a reduction is admitted only after it
+reproduces the design it stands in for, so it cannot trade accuracy for
+speed behind your back. Measured across four model shapes it is 2.5x to
+17x cheaper AND 100x to 170000x more accurate than the unreduced grid.</p>
+<p><code>"off"</code> disables every reduction and integrates on the full product grid.
+Slower, and useful mainly as a reference when a result is in question.</p>
+<p><code>"sparse"</code> replaces the product rule with a Smolyak sparse grid of
+<code>cov_sparse_level</code>, which for <code>p</code> covariates costs far fewer than
+<code>cov_nodes^p</code> points and is the speed lever for models with several
+covariates.</p>
+<p>Both are Gauss–Hermite rules; they differ in which product terms are
+kept. Measured against an exact reference (lognormal margins, allometric
+plus a saturable term), relative error on the mean and the covariance:</p><table class="table table"><tr><td>rule</td><td>p = 3, rho = 0.85</td><td>p = 4, rho = 0.85</td></tr><tr><td>sparse, level 2</td><td>6 pts, 7.8e-04 / 4.7e-02</td><td>9 pts, 9.7e-04 / 6.1e-02</td></tr><tr><td>product, 3 nodes</td><td>27 pts, 4.0e-05 / 1.5e-02</td><td>81 pts, 1.5e-04 / 3.2e-02</td></tr><tr><td>sparse, level 3</td><td>31 pts, 1.6e-06 / 5.0e-04</td><td>49 pts, 3.5e-06 / 9.5e-04</td></tr></table><p>At four covariates level 3 is both cheaper than the 3-node product grid
+and roughly 40x more accurate, and the advantage grows with <code>p</code>. Level 2
+is the axial rule — at one covariate it is exactly <code>cov_nodes = 3</code> —
+and it is offered for continuity rather than recommended.</p>
+<p>DEPENDENT covariates (<code>cor</code>, <code>rho</code>, <code>Sigma</code>) are handled by rotating onto
+the eigenvectors of the latent correlation, and correlation does not cost
+the sparse rule accuracy: at <code>p = 2</code> its mean error is 6.6e-07 at
+<code>rho = 0</code> and 4.8e-08 at <code>rho = 0.85</code>. (Level 2 behaves the other way,
+losing an order of magnitude to correlation, which is one reason the
+default is 3.) An opaque <code>joint</code> sampler is refused, because the rotation
+needs a correlation the closure does not report — declare the dependence
+with <code>cor</code> and admixr2 builds the sampler itself.</p>
+<p>The cost of a sparse rule is SIGNED weights: they sum to 1 exactly, but
+the sum of their absolute values is 2.5 at level 3 for three covariates
+and 4.1 for four, so the answer is a difference of terms several times its
+own size and solver noise is amplified accordingly. A sandwich covariance
+whose weight matrix comes out indefinite as a result is refused rather
+than reported.</p></dd>
+
+
+<dt id="arg-cov-sparse-level">cov_sparse_level<a class="anchor" aria-label="anchor" href="#arg-cov-sparse-level"></a></dt>
+<dd><p>Smolyak level for <code>cov_integration = "sparse"</code>
+(default 3, minimum 2). Level 2 is the axial rule, level 3 adds the
+five-point axes and the pairwise crosses, and each further level refines
+again at a growing weight-magnitude cost. See <code>cov_integration</code> for the
+measured accuracy and point counts.</p></dd>
+
+
+<dt id="arg-xtol-rel">xtol_rel<a class="anchor" aria-label="anchor" href="#arg-xtol-rel"></a></dt>
+<dd><p>Relative parameter tolerance (default
+<code>sqrt(.Machine$double.eps)</code>).</p></dd>
+
+
 <dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>
 <dd><p>Unused arguments (trigger an error).</p></dd>
 
@@ -422,7 +517,6 @@ with a large residual SD; there is little to gain by lowering it.</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">✔</span> done</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → calculate sensitivities</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → finding duplicate expressions in admixr2 sensitivity model...</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> → optimizing duplicate expressions in admixr2 sensitivity model...</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> === admixr2: Aggregate Data Modeling (GH) ===</span>
@@ -432,8 +526,9 @@ with a large residual SD; there is little to gain by lowering it.</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0010     |  1000.18 |    6.203 |    35.45 |   0.3103 |  0.08888 |  0.05562 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0020     |   805.78 |    6.666 |    37.33 |   0.3781 |   0.1041 |  0.05946 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0022 ✓   |   805.78 |    6.667 |    37.33 |    0.378 |    0.104 |  0.05944 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0.2 sec  |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0030     |   805.77 |    6.663 |    37.35 |   0.3784 |   0.1035 |  0.05848 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0034 ✓   |   805.77 |    6.663 |    37.35 |   0.3784 |   0.1035 |  0.05848 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0.4 sec  |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, Analytical-Hessian, sandwich, 6 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>

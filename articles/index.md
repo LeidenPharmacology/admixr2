@@ -22,12 +22,15 @@ Install admixr2 and fit your first model to aggregate data.
 ### Inputs — data & models
 
 The two ways to feed a meta-analysis — digitized study summaries, or
-previously published PK/PD models.
+previously published PK/PD models — and the covariate distribution each
+source enrolled.
 
 - [From a published figure to E, V and
   n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md):
 - [Generating aggregate data with
   datagen](https://leidenpharmacology.github.io/admixr2/articles/datagen.md):
+- [Covariates in aggregate
+  data](https://leidenpharmacology.github.io/admixr2/articles/covariates.md):
 
 ### Meta-analysis across studies
 

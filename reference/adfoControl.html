@@ -34,6 +34,7 @@ non-linear individual predictions.'><meta property="og:image" content="https://l
     <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><a class="dropdown-item" href="../articles/covariates.html">Covariates in aggregate data</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
@@ -64,7 +65,7 @@ non-linear individual predictions.'><meta property="og:image" content="https://l
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control settings for the FO (First-Order) estimator</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.1/R/adfo.R" class="external-link"><code>R/adfo.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/adfo.R" class="external-link"><code>R/adfo.R</code></a></small>
       <div class="d-none name"><code>adfoControl.Rd</code></div>
     </div>
 
@@ -107,6 +108,7 @@ non-linear individual predictions.</p>
 <span>  literalFix <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  returnAdmr <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  resid_nodes <span class="op">=</span> <span class="fl">81L</span>,</span>
+<span>  xtol_rel <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">double.eps</span><span class="op">^</span><span class="op">(</span><span class="fl">1</span><span class="op">/</span><span class="fl">2</span><span class="op">)</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -204,6 +206,8 @@ warning is emitted if an estimate finishes on it.</p></dd>
 <dt id="arg-covmethod">covMethod<a class="anchor" aria-label="anchor" href="#arg-covmethod"></a></dt>
 <dd><p><code>"r,s"</code> (the DEFAULT) computes the sandwich <code>H^-1 J H^-1</code>;
 <code>"r"</code> the numerical Hessian alone, <code>2H^-1</code>; <code>"none"</code> skips the covariance.
+A study generated from a published model defaults to <code>"none"</code> and refuses
+an explicit covariance method because it has no sampling law.
 All three span the structural, residual-error and omega parameters. Omega is
 included because excluding it also biases the STRUCTURAL standard errors
 downward – a theta carrying an eta is correlated with that eta's variance.
@@ -350,6 +354,11 @@ evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.</p></dd>
 
 
+<dt id="arg-xtol-rel">xtol_rel<a class="anchor" aria-label="anchor" href="#arg-xtol-rel"></a></dt>
+<dd><p>Relative parameter tolerance (default
+<code>sqrt(.Machine$double.eps)</code>).</p></dd>
+
+
 <dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>
 <dd><p>Unused arguments (trigger an error).</p></dd>
 
@@ -389,11 +398,11 @@ makes the fallback unreachable:</p><div class="sourceCode"><pre><code><span><spa
 <span class="r-in"><span></span></span>
 <span class="r-in"><span><span class="co"># \donttest{</span></span></span>
 <span class="r-in"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span></span></span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> rxode2 5.1.6 using 2 threads (see ?getRxThreads)</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> rxode2 5.1.7 using 2 threads (see ?getRxThreads)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   no cache: create with `rxCreateCache()`</span>
 <span class="r-in"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.org/" class="external-link">nlmixr2</a></span><span class="op">)</span></span></span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> ── <span style="font-weight: bold;">Attaching packages</span> ───────────────────────────────────────── nlmixr2 7.0.1 ──</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">lotri       </span> 1.0.4      <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2est  </span> 7.0.2 </span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">lotri       </span> 1.0.5      <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2est  </span> 7.0.2 </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2data </span> 2.0.10     <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2extra</span> 5.2.0 </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2save </span> 0.2.0      <span style="color: #00BB00;">★</span> <span style="color: #0000BB;">nlmixr2plot </span> 5.1.0 </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> ── <span style="font-weight: bold;">Optional Packages Not Installed</span> ──────────────────────────── nlmixr2 7.0.1 ──</span>
@@ -456,7 +465,6 @@ makes the fallback unreachable:</p><div class="sourceCode"><pre><code><span><spa
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → calculate sensitivities</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → calculate sensitivities</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → finding duplicate expressions in admixr2 sensitivity model...</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> → optimizing duplicate expressions in admixr2 sensitivity model...</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
@@ -485,14 +493,14 @@ makes the fallback unreachable:</p><div class="sourceCode"><pre><code><span><spa
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>         optimize covariance other elapsed other</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> elapsed    0.551      0.331     0   0.882 6.172</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> elapsed    0.569      0.345     0   0.914 4.759</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>           <span style="font-weight: bold;">Est.</span>       <span style="font-weight: bold;">SE</span>   <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>      1.854  0.01961  1.058    6.384 (6.143, 6.634)    28.95         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv</span>       3.638  0.01689 0.4641    38.03 (36.80, 39.31)    20.39         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span> 0.3900 0.009106  2.335 0.3900 (0.3721, 0.4078)                     </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>      1.854  0.02241  1.209    6.384 (6.109, 6.670)    28.95         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv</span>       3.638  0.01946 0.5350    38.03 (36.61, 39.51)    20.39         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span> 0.3900 0.008281  2.124 0.3900 (0.3737, 0.4062)                     </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Covariance Type (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r,s</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   No correlations in between subject variability (BSV) matrix</span>
@@ -500,7 +508,7 @@ makes the fallback unreachable:</p><div class="sourceCode"><pre><code><span><spa
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Distribution stats (mean/skewness/kurtosis/p-value) available in <span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$shrink</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Censoring (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$censInformation</span>): No censoring</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Minimization message (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$message</span>):  </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>     NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. </span>
 <span class="r-in"><span><span class="co"># }</span></span></span>
 <span class="r-in"><span></span></span>
 </code></pre></div>

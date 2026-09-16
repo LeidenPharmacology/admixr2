@@ -192,29 +192,29 @@ print(fit)
 ── nlmixr² admc ──
 
           OBJF       AIC       BIC Log-likelihood
-admc -3690.254 -3668.254 -3597.724       1845.127
+admc -3690.262 -3668.262 -3597.732       1845.131
 
 ── Time (sec fit$time): ──
 
   optimize covariance other elapsed
-1   21.076     18.795     0  39.871
+1   37.116      16.34     0  53.456
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                                   Parameter    Est.       SE  %RSE
-tcl                    Log clearance (L/hr)   1.602  0.02022 1.262
-tv1                  Log central volume (L)   2.328   0.1413 6.068
-tv2               Log peripheral volume (L)   3.398  0.05620 1.654
-tq        Log inter-compartmental CL (L/hr)   2.276  0.02742 1.205
-tka     Log absorption rate constant (1/hr) 0.02992   0.1314 439.4
-prop.sd      Proportional residual error SD  0.1895 0.003280 1.731
+tcl                    Log clearance (L/hr)   1.602  0.02000 1.248
+tv1                  Log central volume (L)   2.328   0.1320 5.670
+tv2               Log peripheral volume (L)   3.397  0.05338 1.571
+tq        Log inter-compartmental CL (L/hr)   2.276  0.02729 1.199
+tka     Log absorption rate constant (1/hr) 0.02979   0.1230 412.9
+prop.sd      Proportional residual error SD  0.1895 0.003282 1.732
         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl        4.963 (4.770, 5.163)    32.61         NaN
-tv1        10.26 (7.777, 13.53)    32.77         NaN
-tv2        29.90 (26.78, 33.39)    31.99         NaN
-tq         9.740 (9.230, 10.28)    33.66         NaN
-tka       1.030 (0.7964, 1.333)    32.19         NaN
-prop.sd 0.1895 (0.1831, 0.1959)                     
+tcl        4.963 (4.772, 5.161)    32.62         NaN
+tv1        10.26 (7.920, 13.29)    33.15         NaN
+tv2        29.89 (26.92, 33.18)    31.81         NaN
+tq         9.738 (9.231, 10.27)    33.68         NaN
+tka       1.030 (0.8096, 1.311)    31.87         NaN
+prop.sd 0.1895 (0.1831, 0.1960)                     
  
   Covariance Type (fit$covMethod): r,s
   No correlations in between subject variability (BSV) matrix
@@ -222,7 +222,7 @@ prop.sd 0.1895 (0.1831, 0.1959)
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
   Censoring (fit$censInformation): No censoring
   Minimization message (fit$message):  
-    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+    NLOPT_FAILURE: Generic failure code. 
 ```
 
 Key entries in `fit$env$admExtra`:
@@ -230,18 +230,18 @@ Key entries in `fit$env$admExtra`:
 ``` r
 
 fit$objective                    # -2 log-likelihood
-#> [1] -3690.254
+#> [1] -3690.262
 fit$env$admExtra$struct          # structural parameters (log scale)
 #>        tcl        tv1        tv2         tq        tka 
-#> 1.60193579 2.32808009 3.39796638 2.27623769 0.02991704
+#> 1.60197150 2.32807210 3.39738138 2.27604273 0.02978594
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
-#> 0.03591429
+#> 0.03592041
 
 logLik(fit)
-#> 'log Lik.' 1845.127 (df=11)
+#> 'log Lik.' 1845.131 (df=11)
 AIC(fit)
-#> [1] -3668.254
+#> [1] -3668.262
 ```
 
 The estimated between-subject covariance matrix `Omega`:
@@ -252,13 +252,13 @@ knitr::kable(fit$env$admExtra$omega, digits = 4,
              caption = "Estimated Omega (between-subject covariance).")
 ```
 
-|        |       |        |        |        |
-|-------:|------:|-------:|-------:|-------:|
-| 0.1011 | 0.000 | 0.0000 | 0.0000 | 0.0000 |
-| 0.0000 | 0.102 | 0.0000 | 0.0000 | 0.0000 |
-| 0.0000 | 0.000 | 0.0975 | 0.0000 | 0.0000 |
-| 0.0000 | 0.000 | 0.0000 | 0.1073 | 0.0000 |
-| 0.0000 | 0.000 | 0.0000 | 0.0000 | 0.0986 |
+|        |        |        |        |        |
+|-------:|-------:|-------:|-------:|-------:|
+| 0.1011 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| 0.0000 | 0.1042 | 0.0000 | 0.0000 | 0.0000 |
+| 0.0000 | 0.0000 | 0.0964 | 0.0000 | 0.0000 |
+| 0.0000 | 0.0000 | 0.0000 | 0.1075 | 0.0000 |
+| 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0967 |
 
 Estimated Omega (between-subject covariance). {.table}
 

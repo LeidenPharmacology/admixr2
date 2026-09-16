@@ -174,6 +174,34 @@ Main entry point and data helper.
   : Fit an aggregate data model via Iterative Reweighting MC (adirmc
   estimator)
 
+## Writing down the studies
+
+Describe a source the way its paper does — the model it published, the
+cohort it enrolled — and let admixr2 assemble the summary it implies.
+
+- [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+  : Write down a published study
+- [`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
+  : Collect the studies a meta-analysis draws on
+- [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)
+  : Describe the population a study enrolled
+
+## Covariates
+
+Declare the covariate distribution a source enrolled, and how it enters
+the fit.
+
+- [`covDist()`](https://leidenpharmacology.github.io/admixr2/reference/covDist.md)
+  : Describe the covariate distribution a study's subjects span
+
+- [`covStrata()`](https://leidenpharmacology.github.io/admixr2/reference/covStrata.md)
+  : Cut a covariate distribution into strata
+
+- [`covDraw()`](https://leidenpharmacology.github.io/admixr2/reference/covDraw.md)
+  :
+
+  Draw covariate values from a `cov_dist` specification
+
 ## Simulation
 
 Generate aggregate data from models for simulation studies.
@@ -211,6 +239,8 @@ S3 methods for fit objects.
   : Print method for admFit objects
 - [`plot(`*`<admFit>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/plot.admFit.md)
   : Diagnostic plots for an admixr2 fit
+- [`anova(`*`<admFit>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/anova.admFit.md)
+  : Compare nested admixr2 fits by a likelihood-ratio test
 
 ## Data
 
@@ -243,12 +273,15 @@ Install admixr2 and fit your first model to aggregate data.
 ### Inputs — data & models
 
 The two ways to feed a meta-analysis — digitized study summaries, or
-previously published PK/PD models.
+previously published PK/PD models — and the covariate distribution each
+source enrolled.
 
 - [From a published figure to E, V and
   n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md):
 - [Generating aggregate data with
   datagen](https://leidenpharmacology.github.io/admixr2/articles/datagen.md):
+- [Covariates in aggregate
+  data](https://leidenpharmacology.github.io/admixr2/articles/covariates.md):
 
 ### Meta-analysis across studies
 

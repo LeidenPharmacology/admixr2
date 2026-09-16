@@ -118,14 +118,14 @@ knitr::kable(
                   "the proportional one."))
 ```
 
-| parameter   | truth |      prop |    add |
-|:------------|------:|----------:|-------:|
-| CL (L/h)    |  5.00 |     5.002 |  5.213 |
-| V (L)       | 20.00 |    19.996 | 19.597 |
-| IIV on CL   |  0.09 |     0.090 |  0.084 |
-| IIV on V    |  0.04 |     0.040 |  0.065 |
-| residual SD |  0.20 |     0.200 |  0.467 |
-| -2LL        |    NA | -1542.269 | -4.118 |
+| parameter   | truth |     prop |    add |
+|:------------|------:|---------:|-------:|
+| CL (L/h)    |  5.00 |     5.00 |  5.213 |
+| V (L)       | 20.00 |    20.00 | 19.597 |
+| IIV on CL   |  0.09 |     0.09 |  0.084 |
+| IIV on V    |  0.04 |     0.04 |  0.065 |
+| residual SD |  0.20 |     0.20 |  0.467 |
+| -2LL        |    NA | -1542.27 | -4.118 |
 
 Same data, same structural model, two residual models. The additive
 residual SD is in mg/L and is not comparable to the proportional one.

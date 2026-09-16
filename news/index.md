@@ -19,16 +19,16 @@
   and for nothing else.
 
   `covMethod = "r,s"` scores the summary `(ybar, vech V)` against its
-  own asymptotic law – Browne’s ADF estimator, with the fourth-moment
-  matrix computed from the MODEL rather than estimated from the sample,
-  which is what removes ADF’s small-sample failure. The result is the
-  sandwich `H^-1 J H^-1`, where `H` is the Hessian `covMethod = "r"`
-  already inverts, passed in rather than rebuilt so the two cannot
-  disagree about the half they share. Under correct specification
-  `J = 2H` and `"r,s"` returns exactly what `"r"` would have; the
-  reduction holds by construction, and is pinned as a test
-  (`eigen(J(W_normal) / 2H) = 1.0000` on both the `cov` and the `var`
-  branch).
+  own asymptotic law – Browne’s Asymptotically Distribution-Free (ADF)
+  estimator, with the fourth-moment matrix computed from the MODEL
+  rather than estimated from the sample, which is what removes ADF’s
+  small-sample failure. The result is the sandwich `H^-1 J H^-1`, where
+  `H` is the Hessian `covMethod = "r"` already inverts, passed in rather
+  than rebuilt so the two cannot disagree about the half they share.
+  Under correct specification `J = 2H` and `"r,s"` returns exactly what
+  `"r"` would have; the reduction holds by construction, and is pinned
+  as a test (`eigen(J(W_normal) / 2H) = 1.0000` on both the `cov` and
+  the `var` branch).
 
   Point estimates and the objective are untouched – `"r,s"` changes only
   the reported standard errors. On `adgh`, `admc` and `adirmc` the
@@ -297,11 +297,191 @@
   intervals agree to within a factor of 1.15 and the derivatives to
   `10 * eps_f^(2/3)`.
 
+- **[`anova()`](https://rdrr.io/r/stats/anova.html) on nested fits.**
+  `anova(full, reduced)` is the ordinary likelihood-ratio test: the
+  objective difference against a chi-squared reference with `Df` equal
+  to the number of parameters the larger model adds. It does not depend
+  on which `covMethod` the fits used.
+
+  Four comparisons are REFUSED rather than reported, because none of
+  them is a likelihood ratio. Fits from different estimators — each
+  scores its own approximation to the same likelihood, FO-linearised,
+  quadrature or Monte Carlo, so `anova(adfo_fit, adgh_fit)` was
+  differencing two numbers on different scales and returning a perfectly
+  finite `p`. Fits on different node counts, for the same reason: the
+  objective moves with the grid. Fits on different `n_sim`, for
+  admc/adirmc, whose objective is a Monte Carlo average over that many
+  draws. And a non-nested pair, which is a different problem (Vuong) and
+  must not come back with a p-value.
+
+  A negative `dOFV` is reported rather than clamped to zero: the larger
+  model cannot fit worse at its own optimum, so a negative difference
+  says one of the two did not converge. Testing a variance AT zero is a
+  boundary null, where the exact reference is a chi-bar-squared mixture;
+  the p-value reported there is conservative, which is documented rather
+  than refused, because dropping a random effect is an ordinary thing to
+  test.
+
+- **A study can contribute as a published MODEL, not only as digitised
+  aggregate data.** Give
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+  a model and the population it was developed on, and it produces the
+  `(E, V, n)` a digitised figure would have given you. The result is
+  marked as a model source.
+
+  **No standard error is reported for a fit that contains one, and an
+  explicit `covMethod` is refused rather than honoured.** Its mean and
+  covariance are exact functions of the published parameter estimates,
+  while the uncertainty and covariance of those source parameters are
+  unavailable. The reported study size alone cannot reconstruct that
+  sampling law.
+
+  `n` is always the true sample size of the dataset used to develop the
+  source model. It divides out for a lone source and determines that
+  study’s contribution when several sources are pooled, so a missing `n`
+  is reported before it can distort a pooled point estimate.
+
+- **Covariate marginalisation over a declared distribution**, for `admc`
+  and `adgh`. A study declares who was in it — `cov_dist`, see
+  [`covDist()`](https://leidenpharmacology.github.io/admixr2/reference/covDist.md)
+  — and the estimator integrates the prediction over that distribution
+  as well as over the random effects, instead of solving at the
+  covariate mean. Solving at the mean is the ecological plug-in, and it
+  is biased whenever the model is non-linear in the covariate. `adfo`
+  and `adirmc` REFUSE `cov_dist` rather than silently solve at the mean.
+
+  [`covDist()`](https://leidenpharmacology.github.io/admixr2/reference/covDist.md)
+  takes margins in whichever currency the paper printed — `mean`/`sd`,
+  `median`/`iqr`, a `cv` as a percent, a proportion — joined by a
+  Gaussian copula whose correlation is taken on the LATENT scale.
+  Discrete margins are enumerated exactly, at their declared levels and
+  probabilities, rather than put on any quadrature rule.
+  [`covStrata()`](https://leidenpharmacology.github.io/admixr2/reference/covStrata.md)
+  bands a source so a covariate its own model fitted contributes a
+  contrast rather than one pooled number, and
+  [`covDraw()`](https://leidenpharmacology.github.io/admixr2/reference/covDraw.md)
+  returns the rows a design would use, so the design is inspectable.
+
+- **A sparse-grid route for several covariates.**
+  `adghControl(cov_integration = "sparse", cov_sparse_level = )`
+  integrates the covariate distribution on a Smolyak grid instead of the
+  product one. At four covariates and a correlation of 0.85 it is 49
+  design points against the 3-node product grid’s 81, and roughly 40x
+  more accurate on both the mean and the covariance — cheaper and
+  better, with the advantage growing in the number of covariates.
+  Correlation does not cost it: its error at `rho = 0.85` is lower than
+  at `rho = 0`.
+
+  The weights are signed (they sum to 1, but the sum of their magnitudes
+  grows with the level), so a sandwich covariance whose weight matrix
+  comes out indefinite as a result is refused rather than reported.
+
+- **A paper-shaped study API.**
+  [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
+  /
+  [`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
+  describe a source the way a publication does — the model it published,
+  the covariance it reported, the cohort it enrolled — rather than
+  asking you to assemble `(E, V, n)` by hand.
+  [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)
+  reads a baseline-characteristics table in whichever currency the paper
+  used: `mean`/`sd`, `median`/`iqr`, a `cv` as a percent, a bare
+  proportion for a binary covariate, or the cohort itself via `data =`.
+  Correlations are taken on the LATENT scale — the logs for a lognormal
+  margin — which is the step easiest to get wrong transcribing a table
+  by hand, and a reported median and IQR inconsistent with the assumed
+  shape is reported rather than quietly fitted.
+
+  [`print()`](https://rdrr.io/r/base/print.html) on the collection is a
+  PRE-FLIGHT: per covariate and per source it says `conditioned` /
+  `banded` / `marginal` / `-`, and names any covariate that no source
+  can identify because every source marginalises over it. That is a
+  design fault the fit cannot repair, and it is cheaper to see before
+  the fit than after.
+
+  There are deliberately no `rse` / `se` / `cov` arguments. A study
+  built from a published model is not a sample, so no standard error is
+  available for a fit containing one (above), and the reported
+  covariance that would have fed those arguments has no role left.
+
+  The transcription routes are checked rather than trusted. `population`
+  is canonicalised as the study is built, so one written as a plain list
+  is the same object as one from
+  [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)
+  everywhere downstream — `by` reads its levels and dropping the `by`
+  margin carries its correlations across, both of which silently did
+  neither on the raw form. A matrix `cor` is now held to the same rules
+  as the named-vector form: it is reordered to the declared covariates,
+  must name them all, and is refused where it correlates a DISCRETE
+  margin (a level would be a truncation of the latent normal rather than
+  a point). Alongside `data =` it must carry dimnames, because the
+  derived columns are appended after the ones typed in and that order is
+  not guessable, and it says that it REPLACES the cohort’s own
+  correlations rather than merging with them. A covariate named in `...`
+  but absent from `data`, and a missing value in a factor column, are
+  now errors instead of a [`cor()`](https://rdrr.io/r/stats/cor.html)
+  failure and a margin of `NA`. `stratify = FALSE` means the same as
+  omitting it rather than failing in
+  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md);
+  `strata_nodes` / `range` without a `stratify` are refused rather than
+  discarded; and [`print()`](https://rdrr.io/r/base/print.html) shows
+  the covariates a `stratify = TRUE` resolves to instead of the word
+  `TRUE`.
+
+- **The covariate integral is collapsed onto the directions it actually
+  has.** Where the covariates and the random effects reach the model
+  through fewer independent directions than there are of them, the
+  integral has that lower dimension and the product grid was integrating
+  it in the full one. Same answers, fewer points: three covariates on
+  one parameter is a ONE-dimensional integral however many covariates
+  there are.
+
+  Everything rests on one claim — that each covariate-reading assignment
+  depends on the latent normal only through a single linear combination,
+  `p = G(b'xi)`. Then `d log p / d xi = (G'/G) * b`, so the DIRECTION is
+  `b` at every `xi` and the magnitude carries the link. The loading is
+  that relative gradient and the certificate is that its direction does
+  not move. That single statement replaces what were four separate
+  detected “routes”, each with its own residual threshold — and with
+  them goes the hazard that a borderline column flips route mid-fit and
+  steps the objective.
+
+  A consequence worth stating: **a model now collapses on what it DOES,
+  not on how it was spelled.** `exp(tcl + eta.cl) * (WT/70)^b1` and
+  `exp(tcl + eta.cl + b1 * log(WT/70))` are the same model and get the
+  same design; the first used to take the slower path because rxode2
+  does not mu-reference it. A covariate effect entering through a
+  nonlinear LINK — an Emax or square-root term on an affine index — now
+  collapses too. It did not before: the loading was a raw slope, which
+  scales with the random effect, so every such model failed the check
+  that guards against covariate-by-eta interactions and silently fell
+  back to the full product grid. A genuine covariate-by-eta interaction
+  is still refused.
+
 ### Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not
 name a new argument. None is a bug fix, so all are listed here rather
 than below.
+
+- **The sandwich’s `G` is now evaluated at `tau`, not at the observed
+  summary, so every `covMethod = "r,s"` standard error moves slightly.**
+  `J` is defined as `Var(S)`. Expanding the score about `t = tau` gives
+  `Var(S) = sum_s G_s Omega_s G_s' + O(N^-3/2)` with `G_s` the
+  derivative AT `tau_s`; building `G` from the realised residual instead
+  returns `G_0 Omega G_0' + E[K delta Omega delta' K']`, and that second
+  term is a quadratic form — non-negative — so `J` came out biased
+  UPWARD by `O(1/N)`, by an amount growing with the residual relative to
+  the structural spread. Measured over 200,000 paired replicates: +0.33%
+  at `omega = 0.2` rising to +2.9% with a proportional residual,
+  positive in every cell. Removing it also cuts `sd(c_hat)` by 31–35%,
+  which is pure gain for a reported SE.
+
+  This is not justified by test calibration: both versions calibrate
+  `dOFV` about equally well at these `N`, because the inflation is
+  offset by variance and covariance terms of the same order, and that
+  cancellation is a coincidence of sample size. It is justified by the
+  definition of `J`.
 
 - **`covMethod` now defaults to `"r,s"`, so reported standard errors
   change for every script that does not name it.** Point estimates and
@@ -558,6 +738,36 @@ than below.
 
 ### Bug fixes
 
+- **A DISCRETE covariate latently correlated with ANY other margin is
+  now refused instead of being integrated as if it were independent.** A
+  level is an interval of the latent normal, not a point, so a
+  correlation changes what the exact enumeration of the levels means:
+  correlation with a continuous margin makes the continuous conditional
+  differ from cell to cell, and one shared design is then the wrong
+  design in every cell, while correlation with another DISCRETE margin
+  changes the joint cell probabilities, which the per-margin
+  probabilities cannot carry. Both were previously integrated as
+  independent; the first was caught and refused during this release, and
+  the refusal now covers the second. `cov_integration = "sparse"`
+  reports this as an error, the collapse designs decline and fall back
+  to the product grid. A configuration that declared such a correlation
+  and fitted before will now stop: declare the discrete covariate
+  independent of the other margins, or use `cov_integration = "on"`.
+
+- **A joint collapse now probes OMEGA as well as the structural
+  parameters before it freezes the design’s rank.** The joint loading’s
+  random-effect block is `t(L) %*% d/d eta`, so an `Omega` that makes
+  two initially collinear eta directions independent raises the rank
+  exactly as a coefficient leaving zero does. Probing only the
+  structural thetas could freeze a rank the fit then outgrew, after
+  which every re-aim was refused and the objective was `+Inf` across a
+  whole region of `Omega` rather than at an isolated point.
+
+- **Derivative-free fits no longer inherit nloptr’s loose
+  `xtol_rel = 1e-4`.** All four estimators now pass an explicit
+  `xtol_rel`, exposed as the last control argument and defaulting to
+  `sqrt(.Machine$double.eps)`.
+
 - **Parallel restarts (`workers > 1`) could fail with “a parallel worker
   could not read the compiled-model cache” whenever a second R session
   was using admixr2 at the same time.** The compiled-model and
@@ -587,7 +797,7 @@ than below.
   A **second, independent cause** of the same failure is fixed alongside
   it: a worker’s own startup could delete the cache entry it was about
   to read.
-  [`library(admixr2)`](https://leidenpharmacology.github.io/admixr2) in
+  [`library(admixr2)`](https://leidenpharmacology.github.io/admixr2/) in
   a daemon loads nlmixr2est, and the installed 6.2.0’s
   `.resetCacheIfNeeded()` calls
   [`rxode2::rxClean()`](https://nlmixr2.github.io/rxode2/reference/rxClean.html)
@@ -1212,7 +1422,7 @@ than below.
   Note this does not change which packages get *loaded*: `rxode2` itself
   imports `qs2`, and R loads a package’s `Imports` with its namespace,
   so `qs2` (and `stringfish`) still enter the session behind
-  [`library(admixr2)`](https://leidenpharmacology.github.io/admixr2).
+  [`library(admixr2)`](https://leidenpharmacology.github.io/admixr2/).
 
 - **IRMC importance-sampling shift was wrong for every non-`exp`
   mu-referenced theta.** For a paired parameter

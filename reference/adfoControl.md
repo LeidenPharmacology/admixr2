@@ -38,6 +38,7 @@ adfoControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
+  xtol_rel = .Machine$double.eps^(1/2),
   ...
 )
 ```
@@ -143,11 +144,13 @@ adfoControl(
 - covMethod:
 
   `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`; `"r"` the
-  numerical Hessian alone, `2H^-1`; `"none"` skips the covariance. All
-  three span the structural, residual-error and omega parameters. Omega
-  is included because excluding it also biases the STRUCTURAL standard
-  errors downward – a theta carrying an eta is correlated with that
-  eta's variance. If the weakly-identified omega Cholesky makes the
+  numerical Hessian alone, `2H^-1`; `"none"` skips the covariance. A
+  study generated from a published model defaults to `"none"` and
+  refuses an explicit covariance method because it has no sampling law.
+  All three span the structural, residual-error and omega parameters.
+  Omega is included because excluding it also biases the STRUCTURAL
+  standard errors downward – a theta carrying an eta is correlated with
+  that eta's variance. If the weakly-identified omega Cholesky makes the
   Hessian non-positive definite, the structural + residual sub-block is
   reported with a warning.
 
@@ -313,6 +316,10 @@ adfoControl(
   if you have a saturating endpoint with a large residual SD; there is
   little to gain by lowering it.
 
+- xtol_rel:
+
+  Relative parameter tolerance (default `sqrt(.Machine$double.eps)`).
+
 - ...:
 
   Unused arguments (trigger an error).
@@ -353,11 +360,11 @@ ctl2 <- adfoControl(grad = "analytical", maxeval = 1000L)
 
 # \donttest{
 library(rxode2)
-#> rxode2 5.1.6 using 2 threads (see ?getRxThreads)
+#> rxode2 5.1.7 using 2 threads (see ?getRxThreads)
 #>   no cache: create with `rxCreateCache()`
 library(nlmixr2)
 #> ── Attaching packages ───────────────────────────────────────── nlmixr2 7.0.1 ──
-#> ★ lotri        1.0.4      ★ nlmixr2est   7.0.2 
+#> ★ lotri        1.0.5      ★ nlmixr2est   7.0.2 
 #> ★ nlmixr2data  2.0.10     ★ nlmixr2extra 5.2.0 
 #> ★ nlmixr2save  0.2.0      ★ nlmixr2plot  5.1.0 
 #> ── Optional Packages Not Installed ──────────────────────────── nlmixr2 7.0.1 ──
@@ -420,7 +427,6 @@ fit <- nlmixr2(
 #> → calculate sensitivities
 #> → calculate sensitivities
 #> → finding duplicate expressions in admixr2 sensitivity model...
-#> → optimizing duplicate expressions in admixr2 sensitivity model...
 #>  
 #>  
 #>  
@@ -449,14 +455,14 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>         optimize covariance other elapsed other
-#> elapsed    0.551      0.331     0   0.882 6.172
+#> elapsed    0.569      0.345     0   0.914 4.759
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>           Est.       SE   %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl      1.854  0.01961  1.058    6.384 (6.143, 6.634)    28.95         NaN
-#> tv       3.638  0.01689 0.4641    38.03 (36.80, 39.31)    20.39         NaN
-#> prop.sd 0.3900 0.009106  2.335 0.3900 (0.3721, 0.4078)                     
+#> tcl      1.854  0.02241  1.209    6.384 (6.109, 6.670)    28.95         NaN
+#> tv       3.638  0.01946 0.5350    38.03 (36.61, 39.51)    20.39         NaN
+#> prop.sd 0.3900 0.008281  2.124 0.3900 (0.3737, 0.4062)                     
 #>  
 #>   Covariance Type (fit$covMethod): r,s
 #>   No correlations in between subject variability (BSV) matrix
@@ -464,6 +470,6 @@ print(fit)
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  
-#>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+#>     NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. 
 # }
 ```

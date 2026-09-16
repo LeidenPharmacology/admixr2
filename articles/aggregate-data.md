@@ -158,18 +158,18 @@ adgh -1323.144 -1313.144 -1292.943       661.5719
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.439      0.165     0   0.604 4.446
+elapsed    0.429      0.174     0   0.603 3.497
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
                           Parameter    Est.      SE   %RSE
-tcl             Log clearance (L/h)   1.556 0.03365  2.163
-tv                   Log volume (L)   3.911 0.02644 0.6761
-prop.cp Proportional residual error 0.09732 0.05374  55.22
+tcl             Log clearance (L/h)   1.556 0.03364  2.162
+tv                   Log volume (L)   3.911 0.02645 0.6762
+prop.cp Proportional residual error 0.09732 0.05383  55.31
             Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl            4.738 (4.436, 5.062)    25.77         NaN
+tcl            4.738 (4.436, 5.061)    25.77         NaN
 tv             49.96 (47.44, 52.62)    19.68         NaN
-prop.cp 0.09732 (-0.008017, 0.2027)                     
+prop.cp 0.09732 (-0.008190, 0.2028)                     
  
   Covariance Type (fit$covMethod): r,s
   No correlations in between subject variability (BSV) matrix
@@ -177,7 +177,7 @@ prop.cp 0.09732 (-0.008017, 0.2027)
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
   Censoring (fit$censInformation): No censoring
   Minimization message (fit$message):  
-    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+    NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. 
 ```
 
 ## What reading SEM as SD costs
@@ -200,18 +200,18 @@ adgh -2942.688 -2932.688 -2912.487       1471.344
 ── Time (sec fit_wrong$time): ──
 
   optimize covariance other elapsed
-1    0.711       0.12     0   0.831
+1    0.726      0.126     0   0.852
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
                           Parameter     Est.       SE   %RSE
-tcl             Log clearance (L/h)    1.558 0.005418 0.3478
-tv                   Log volume (L)    3.908 0.004076 0.1043
-prop.cp Proportional residual error 0.008208 0.002317  28.23
+tcl             Log clearance (L/h)    1.558 0.005669 0.3639
+tv                   Log volume (L)    3.908 0.004580 0.1172
+prop.cp Proportional residual error 0.008208 0.003649  44.46
              Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl             4.749 (4.698, 4.799)    4.181         NaN
-tv              49.79 (49.39, 50.19)    2.935         NaN
-prop.cp 0.008208 (0.003667, 0.01275)                     
+tcl             4.749 (4.696, 4.802)    4.181         NaN
+tv              49.79 (49.34, 50.24)    2.935         NaN
+prop.cp 0.008208 (0.001056, 0.01536)                     
  
   Covariance Type (fit_wrong$covMethod): r,s
   No correlations in between subject variability (BSV) matrix
@@ -223,7 +223,7 @@ prop.cp 0.008208 (0.003667, 0.01275)
    • admixr2: prop.cp finished on the gradient box constraint (grad_bounds = 5 from the starting value), not at an interior optimum. The reported estimate and SE are those of a constrained fit. Widen grad_bounds, or start closer to the expected value. 
   Censoring (fit_wrong$censInformation): No censoring
   Minimization message (fit_wrong$message):  
-    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+    NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. 
 ```
 
 Clearance and volume are unchanged to three figures. The between-subject
@@ -252,11 +252,11 @@ Nothing in the *point estimates* warns you. The *precision* does:
 round(c(RSE_CL_correct = fit$parFixedDf["tcl", "%RSE"],
         RSE_CL_wrong   = fit_wrong$parFixedDf["tcl", "%RSE"]), 3)
 #> RSE_CL_correct   RSE_CL_wrong 
-#>          2.163          0.348
+#>          2.162          0.364
 ```
 
 Clearance comes back not just right but implausibly certain — its
-standard error tightens about 6.2-fold, of order `sqrt(n)`. An RSE that
+standard error tightens about 5.9-fold, of order `sqrt(n)`. An RSE that
 looks too good for digitised literature data, or an IIV that comes back
 near zero, is the tell.
 

@@ -42,6 +42,7 @@ is ready to supply directly to admControl(studies = ...)."><meta property="og:im
     <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><a class="dropdown-item" href="../articles/covariates.html">Covariates in aggregate data</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
@@ -72,7 +73,7 @@ is ready to supply directly to admControl(studies = ...)."><meta property="og:im
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Generate aggregate study data from (possibly different) pharmacometric models</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.1/R/datagen.R" class="external-link"><code>R/datagen.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/datagen.R" class="external-link"><code>R/datagen.R</code></a></small>
       <div class="d-none name"><code>datagen.Rd</code></div>
     </div>
 
@@ -113,6 +114,38 @@ default is supplied via the <code>model</code> argument.</p></dd>
 <dt><code>n</code></dt>
 <dd><p>(Optional) integer sample size; stored as metadata and
 used when supplying the result to <code><a href="admControl.html">admControl()</a></code>.</p></dd>
+
+<dt><code>cov_dist</code></dt>
+<dd><p>(Optional) the covariate distribution this study's
+subjects span — see <code><a href="covDraw.html">covDraw()</a></code> for the grammar. The generated
+<code>E</code>/<code>V</code> are MARGINAL over it, which is what a publication reports.
+Needs <code>datagenControl(method = "mc")</code> or <code>"gh"</code>; <code>"fo"</code> integrates
+over the random effects only and is refused. Prefer <code>"gh"</code>, which
+adds no Monte Carlo noise to data that is meant to BE the reference.</p></dd>
+
+<dt><code>stratify</code></dt>
+<dd><p>(Optional) <code>TRUE</code> to stratify on every covariate this
+study's OWN data-generating model conditions on, marginalising the
+rest — the split is read from the model, so it cannot disagree with
+it. Two sources sharing one <code>cov_dist</code> therefore stratify differently,
+each according to what it fitted. A character vector names the
+covariates explicitly instead. The study is expanded into
+one ordinary study per covariate stratum, named <code>&lt;study&gt;_s1</code>,
+<code>&lt;study&gt;_s2</code>, ..., each pinned at its own covariate value, carrying its
+own effective size <code>n_k</code> (the quadrature weight times <code>n</code>, summing to
+<code>n</code>), and marginalising the remaining covariates over their
+distribution CONDITIONAL on that stratum. Use it when the source
+reports — or, being a published model, can report — summaries by
+covariate subgroup. Stratify only on what the source actually fitted:
+a source with no term in a covariate has no contrast in it to give, and
+nodes that vary it manufacture a null one. See <code><a href="covStrata.html">covStrata()</a></code>.</p></dd>
+
+<dt><code>strata_nodes</code></dt>
+<dd><p>(Optional) strata per stratified covariate
+(default 5); a discrete covariate is cut at its levels instead. Each
+stratum costs a solve and more of them do not buy accuracy: a matched
+one-covariate fit recovers 0.7000 / 0.7002 / 0.7005 at 3 / 4 / 10
+strata against a true 0.700. See <code><a href="covStrata.html">covStrata()</a></code>.</p></dd>
 
 <dt><code>observations</code></dt>
 <dd><p>(Optional) a named list to generate data for several

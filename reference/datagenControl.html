@@ -28,6 +28,7 @@
     <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><a class="dropdown-item" href="../articles/covariates.html">Covariates in aggregate data</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
@@ -58,7 +59,7 @@
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control parameters for <code><a href="datagen.html">datagen()</a></code></h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.1/R/datagen.R" class="external-link"><code>R/datagen.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/datagen.R" class="external-link"><code>R/datagen.R</code></a></small>
       <div class="d-none name"><code>datagenControl.Rd</code></div>
     </div>
 
@@ -76,7 +77,8 @@
 <span>  seed <span class="op">=</span> <span class="fl">12345L</span>,</span>
 <span>  cores <span class="op">=</span> <span class="fl">1L</span>,</span>
 <span>  return_samples <span class="op">=</span> <span class="cn">FALSE</span>,</span>
-<span>  resid_nodes <span class="op">=</span> <span class="fl">81L</span></span>
+<span>  resid_nodes <span class="op">=</span> <span class="fl">81L</span>,</span>
+<span>  cov_nodes <span class="op">=</span> <span class="fl">7L</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -135,6 +137,14 @@ variance. Ignored by every other error model. Default 81 – the same default
 the four estimator controls use, so <code><a href="datagen.html">datagen()</a></code> and the fit it feeds agree
 unless you deliberately change one of them. See <code><a href="admControl.html">admControl()</a></code> for the
 measured convergence.</p></dd>
+
+
+<dt id="arg-cov-nodes">cov_nodes<a class="anchor" aria-label="anchor" href="#arg-cov-nodes"></a></dt>
+<dd><p>Gauss-Hermite nodes per covariate when <code>method = "gh"</code>
+integrates a study's <code>cov_dist</code> (default 7). Total covariate points are
+<code>cov_nodes^p</code> for <code>p</code> covariates. Ignored by <code>"mc"</code>, which draws a covariate
+value per simulated subject instead, and by <code>"fo"</code>, which cannot integrate a
+covariate at all.</p></dd>
 
 </dl></div>
     <div class="section level2">

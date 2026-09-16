@@ -48,6 +48,46 @@ datagen(studies, model = NULL, control = datagenControl())
       supplying the result to
       [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md).
 
+  `cov_dist`
+
+  :   (Optional) the covariate distribution this study's subjects span —
+      see
+      [`covDraw()`](https://leidenpharmacology.github.io/admixr2/reference/covDraw.md)
+      for the grammar. The generated `E`/`V` are MARGINAL over it, which
+      is what a publication reports. Needs
+      `datagenControl(method = "mc")` or `"gh"`; `"fo"` integrates over
+      the random effects only and is refused. Prefer `"gh"`, which adds
+      no Monte Carlo noise to data that is meant to BE the reference.
+
+  `stratify`
+
+  :   (Optional) `TRUE` to stratify on every covariate this study's OWN
+      data-generating model conditions on, marginalising the rest — the
+      split is read from the model, so it cannot disagree with it. Two
+      sources sharing one `cov_dist` therefore stratify differently,
+      each according to what it fitted. A character vector names the
+      covariates explicitly instead. The study is expanded into one
+      ordinary study per covariate stratum, named `<study>_s1`,
+      `<study>_s2`, ..., each pinned at its own covariate value,
+      carrying its own effective size `n_k` (the quadrature weight times
+      `n`, summing to `n`), and marginalising the remaining covariates
+      over their distribution CONDITIONAL on that stratum. Use it when
+      the source reports — or, being a published model, can report —
+      summaries by covariate subgroup. Stratify only on what the source
+      actually fitted: a source with no term in a covariate has no
+      contrast in it to give, and nodes that vary it manufacture a null
+      one. See
+      [`covStrata()`](https://leidenpharmacology.github.io/admixr2/reference/covStrata.md).
+
+  `strata_nodes`
+
+  :   (Optional) strata per stratified covariate (default 5); a discrete
+      covariate is cut at its levels instead. Each stratum costs a solve
+      and more of them do not buy accuracy: a matched one-covariate fit
+      recovers 0.7000 / 0.7002 / 0.7005 at 3 / 4 / 10 strata against a
+      true 0.700. See
+      [`covStrata()`](https://leidenpharmacology.github.io/admixr2/reference/covStrata.md).
+
   `observations`
 
   :   (Optional) a named list to generate data for several observed

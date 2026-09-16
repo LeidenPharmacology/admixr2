@@ -286,8 +286,10 @@ sits. The sample mean and the sample covariance are exactly independent
 for a multivariate normal, and for nothing else.
 
 `covMethod = "r,s"` scores `(ybar, vech V)` against its own asymptotic
-law and reports the sandwich `H^-1 J H^-1` — on the same `H` that `"r"`
-inverts:
+law and reports the sandwich `H^-1 J H^-1`, where `H` is the same
+Hessian `"r"` inverts and `J` is the variance of the score built from
+that law (the model-derived weight above, not an empirical fourth
+moment):
 
 ``` r
 
@@ -349,27 +351,50 @@ fit_reduced <- nlmixr2(pk_reduced, admData(), est = "admc", control = ctl)
 #> 
 #> 
 #> 
-#> 
-#> 
-#> 
-#> 
-#> 
-#> 
-#> 
-#> 
 
 AIC(fit_full, fit_reduced)
 #>             df       AIC
-#> fit_full    11 -3668.254
+#> fit_full    11 -3668.262
 #> fit_reduced  8 -3523.183
 BIC(fit_full, fit_reduced)
 #>             df       BIC
-#> fit_full    11 -3597.724
+#> fit_full    11 -3597.732
 #> fit_reduced  8 -3471.888
 ```
 
 Lower AIC/BIC favours the more parsimonious model; a difference \> 10 is
 generally considered strong evidence.
+
+### `anova()`: a likelihood-ratio test on nested fits
+
+`fit_full` and `fit_reduced` are **nested** – `fit_reduced` is
+`fit_full` with `eta.v2`, `eta.q` and `eta.ka` dropped – so their
+objectives can be compared directly with a chi-squared test:
+
+``` r
+
+anova(fit_full, fit_reduced)
+#> Likelihood-ratio test
+#>        Npar  OBJF   AIC   BIC   Test  dOFV Df         p
+#> admc      8 -3539 -3523 -3472     NA    NA NA        NA
+#> admc_1   11 -3690 -3668 -3598 1 vs 2 151.1  3 1.541e-32
+```
+
+`dOFV` is the objective difference and `Df` the number of parameters the
+larger model adds (three etas here); `p` is
+`pchisq(dOFV, Df, lower.tail = FALSE)`, the ordinary likelihood-ratio
+test.
+
+[`anova()`](https://rdrr.io/r/stats/anova.html) refuses to compare fits
+that are not on the same footing: different estimators score different
+approximations to the likelihood (FO-linearised, quadrature, Monte
+Carlo), and `adgh` fits on different `n_nodes` or `admc`/`adirmc` fits
+on different `n_sim` move the objective with the grid or sample size
+rather than with the model. All three are rejected with an error rather
+than silently returning a number. See
+[`?anova.admFit`](https://leidenpharmacology.github.io/admixr2/reference/anova.admFit.md)
+for the boundary-variance case (testing whether an eta’s variance is
+zero) and why a negative `dOFV` is reported rather than clamped.
 
 ## See also
 

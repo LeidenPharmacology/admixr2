@@ -30,6 +30,7 @@ Monte Carlo estimator.'><meta property="og:image" content="https://leidenpharmac
     <li><h6 class="dropdown-header" data-toc-skip>Inputs — data &amp; models</h6></li>
     <li><a class="dropdown-item" href="../articles/aggregate-data.html">From a published figure to E, V and n</a></li>
     <li><a class="dropdown-item" href="../articles/datagen.html">Simulating data &amp; using published models</a></li>
+    <li><a class="dropdown-item" href="../articles/covariates.html">Covariates in aggregate data</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><h6 class="dropdown-header" data-toc-skip>Meta-analysis across studies</h6></li>
     <li><a class="dropdown-item" href="../articles/multiple-studies.html">Multiple studies</a></li>
@@ -60,7 +61,7 @@ Monte Carlo estimator.'><meta property="og:image" content="https://leidenpharmac
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control settings for the IRMC estimator</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/v0.4.1/R/adirmc.R" class="external-link"><code>R/adirmc.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/adirmc.R" class="external-link"><code>R/adirmc.R</code></a></small>
       <div class="d-none name"><code>adirmcControl.Rd</code></div>
     </div>
 
@@ -110,6 +111,7 @@ Monte Carlo estimator.</p>
 <span>  literalFix <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  returnAdmr <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  resid_nodes <span class="op">=</span> <span class="fl">81L</span>,</span>
+<span>  xtol_rel <span class="op">=</span> <span class="va">.Machine</span><span class="op">$</span><span class="va">double.eps</span><span class="op">^</span><span class="op">(</span><span class="fl">1</span><span class="op">/</span><span class="fl">2</span><span class="op">)</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -306,6 +308,8 @@ Phases progressively tighten the search region.</p></dd>
 <dt id="arg-covmethod">covMethod<a class="anchor" aria-label="anchor" href="#arg-covmethod"></a></dt>
 <dd><p><code>"r,s"</code> (the DEFAULT) computes the sandwich <code>H^-1 J H^-1</code>;
 <code>"r"</code> the numerical Hessian alone, <code>2H^-1</code>; <code>"none"</code> skips the covariance.
+A study generated from a published model defaults to <code>"none"</code> and refuses
+an explicit covariance method because it has no sampling law.
 All three span the structural, residual-error and omega parameters, and are
 reported on the scale the estimates are printed on. <code><a href="admControl.html">admControl()</a></code> documents
 what the sandwich is, why it is the conservative default, and why it is more
@@ -405,6 +409,11 @@ evaluations at BOTH 31 and 81 nodes. Raise it if you have a saturating endpoint
 with a large residual SD; there is little to gain by lowering it.</p></dd>
 
 
+<dt id="arg-xtol-rel">xtol_rel<a class="anchor" aria-label="anchor" href="#arg-xtol-rel"></a></dt>
+<dd><p>Relative parameter tolerance for convergence (default
+<code>sqrt(.Machine$double.eps)</code>).</p></dd>
+
+
 <dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>
 <dd><p>Additional arguments (none allowed; triggers an error).</p></dd>
 
@@ -491,7 +500,6 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-msg co"><span class="r-pr">#&gt;</span> <span style="color: #00BB00;">✔</span> done</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → calculate sensitivities</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → finding duplicate expressions in admixr2 sensitivity model...</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> → optimizing duplicate expressions in admixr2 sensitivity model...</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
@@ -503,39 +511,34 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+----------+</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> |          |     -2LL |      tcl |      tv1 |      tv2 |       tq |      tka |  prop.sd |   eta.cl |   eta.v1 |   eta.v2 |    eta.q |   eta.ka |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +-- Phase 1: Wide (+/-2.00) -------------------------------------------------------------------------------------------------------------------+</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0001     |   728.22 |    3.552 |     6.49 |    36.82 |    8.796 |   0.5216 |   0.1867 |   0.4043 |   0.1828 |    0.665 |  0.02393 |   0.2747 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0002     | -1247.61 |    4.966 |    6.662 |    33.45 |    7.927 |   0.6548 |   0.1217 |   0.1298 |  0.02474 |   0.1283 |  0.02614 |   0.2091 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0003     | -1194.49 |        5 |    8.026 |    33.06 |    8.569 |   0.7865 |   0.1911 |  0.09852 |   0.1406 |  0.07392 | 0.006252 |   0.1188 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0004     | -1238.75 |    4.872 |    7.888 |    31.64 |    8.864 |   0.7894 |   0.1762 |   0.1499 |  0.07673 |   0.1169 | 0.006838 |   0.1372 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0005     | -1264.67 |    4.955 |    7.829 |    31.56 |    8.832 |     0.79 |   0.1859 |   0.1141 |  0.07267 |  0.08511 | 0.006873 |   0.1292 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0006     | -1266.43 |    4.959 |    8.001 |    31.16 |    8.888 |   0.8065 |   0.1863 |    0.119 |  0.07429 |  0.08569 | 0.006851 |   0.1323 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0007     | -1266.44 |    4.959 |    8.004 |    31.15 |    8.885 |   0.8061 |   0.1863 |    0.119 |  0.07429 |   0.0857 | 0.006851 |   0.1322 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0008 ✓   | -1266.44 |    4.959 |    8.002 |    31.15 |    8.887 |   0.8061 |   0.1863 |    0.119 |  0.07429 |  0.08571 |  0.00685 |   0.1322 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0001     |  2275.01 |    4.164 |    2.486 |    31.23 |    8.951 |   0.7664 |   0.1942 |   0.2236 |    0.665 |   0.2905 |  0.02583 |   0.1075 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0002     | -1238.39 |    4.907 |    8.253 |    31.55 |    9.105 |   0.8141 |    0.191 |   0.1114 |     0.09 |  0.07618 |  0.05042 |   0.1619 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0003     | -1265.61 |    4.918 |    7.943 |    31.88 |    8.851 |   0.7975 |   0.1735 |    0.126 |  0.06732 |   0.1044 |  0.02434 |   0.1414 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0004     | -1263.03 |     4.96 |    7.856 |    31.51 |    8.803 |    0.798 |   0.1857 |   0.1133 |  0.08097 |  0.08228 | 0.006206 |   0.1283 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0005     | -1265.63 |     4.92 |    7.866 |    31.61 |    8.843 |   0.7929 |   0.1837 |   0.1236 |  0.07812 |    0.098 | 0.006491 |     0.13 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0006     | -1266.36 |    4.938 |    7.897 |    31.54 |    8.866 |   0.7967 |   0.1861 |   0.1174 |  0.07976 |  0.09014 | 0.007374 |   0.1267 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0007     | -1266.39 |    4.929 |    7.883 |    31.57 |    8.851 |   0.7949 |   0.1848 |   0.1203 |  0.07921 |  0.09387 | 0.007537 |   0.1296 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0008     | -1266.46 |    4.937 |    7.872 |    31.58 |    8.844 |    0.794 |   0.1851 |   0.1188 |  0.07817 |  0.09111 | 0.007357 |   0.1291 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0009     | -1266.48 |    4.933 |    7.871 |    31.59 |    8.844 |   0.7939 |   0.1849 |   0.1194 |  0.07861 |   0.0925 | 0.007237 |   0.1295 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0010     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.847 |   0.7943 |   0.1851 |   0.1191 |  0.07856 |  0.09187 | 0.007266 |    0.129 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0011     | -1266.48 |    4.933 |    7.875 |    31.58 |    8.847 |   0.7943 |    0.185 |   0.1193 |   0.0787 |  0.09228 | 0.007291 |   0.1292 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0012     | -1266.48 |    4.934 |    7.875 |    31.58 |    8.847 |   0.7943 |   0.1851 |   0.1192 |  0.07861 |  0.09204 | 0.007304 |   0.1291 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0013     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1193 |  0.07863 |  0.09215 | 0.007296 |   0.1292 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0014     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |   0.1851 |   0.1192 |  0.07861 |  0.09209 | 0.007297 |   0.1291 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0015     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09213 | 0.007296 |   0.1292 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0016     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07861 |  0.09211 | 0.007296 |   0.1291 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0017 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007293 |   0.1292 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +-- Phase 2: Focused (+/-1.00) ----------------------------------------------------------------------------------------------------------------+</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0009     | -1266.44 |    4.959 |    8.002 |    31.15 |    8.887 |   0.8061 |   0.1863 |    0.119 |  0.07429 |  0.08571 |  0.00685 |   0.1322 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0010     | -1266.44 |    4.959 |    7.991 |    31.15 |    8.886 |   0.8054 |   0.1862 |    0.119 |  0.07433 |  0.08583 | 0.006848 |   0.1319 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0011     | -1266.44 |    4.959 |    7.991 |    31.16 |    8.886 |   0.8054 |   0.1862 |    0.119 |  0.07433 |  0.08583 | 0.006848 |   0.1319 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0012     | -1266.44 |    4.956 |    7.984 |     31.2 |    8.882 |   0.8044 |   0.1863 |   0.1191 |  0.07447 |  0.08599 | 0.006845 |    0.132 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0013     | -1266.44 |    4.957 |    7.983 |     31.2 |     8.88 |   0.8043 |   0.1862 |   0.1191 |  0.07448 |    0.086 | 0.006845 |   0.1319 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0014     | -1266.44 |    4.956 |    7.982 |     31.2 |    8.881 |   0.8043 |   0.1862 |   0.1191 |  0.07448 |    0.086 | 0.006845 |   0.1319 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0015     | -1266.45 |    4.957 |    7.974 |    31.19 |    8.881 |   0.8038 |   0.1861 |   0.1191 |  0.07453 |   0.0861 | 0.006843 |   0.1317 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0016     | -1266.45 |    4.957 |    7.974 |    31.19 |    8.881 |   0.8038 |   0.1861 |   0.1191 |  0.07453 |   0.0861 | 0.006843 |   0.1317 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0017     | -1266.22 |    4.923 |    7.869 |    31.59 |    8.843 |   0.7939 |    0.185 |   0.1201 |  0.08131 |  0.09585 | 0.006669 |   0.1294 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0018     | -1266.41 |    4.939 |    7.867 |    31.58 |    8.843 |   0.7933 |   0.1854 |   0.1188 |  0.07741 |  0.09027 | 0.006751 |   0.1287 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0019     | -1266.47 |    4.937 |    7.862 |    31.54 |    8.859 |   0.7941 |   0.1856 |    0.119 |  0.07746 |  0.09029 |  0.00675 |   0.1289 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0020     | -1266.48 |    4.939 |    7.872 |    31.51 |    8.851 |   0.7944 |   0.1858 |   0.1191 |  0.07757 |  0.09032 |  0.00675 |   0.1293 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0021     | -1266.48 |    4.938 |    7.874 |    31.52 |    8.848 |   0.7945 |   0.1858 |   0.1191 |  0.07757 |  0.09032 |  0.00675 |   0.1293 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0022 ✓   | -1266.48 |    4.938 |    7.874 |    31.52 |    8.849 |   0.7944 |   0.1858 |   0.1191 |  0.07758 |  0.09032 |  0.00675 |   0.1293 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0018     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07861 |  0.09211 | 0.007296 |   0.1291 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0019 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007293 |   0.1292 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +-- Phase 3: Fine-tuning (+/-0.50) ------------------------------------------------------------------------------------------------------------+</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0023     | -1266.48 |    4.938 |    7.874 |    31.52 |     8.85 |   0.7945 |   0.1858 |   0.1191 |  0.07758 |  0.09032 |  0.00675 |   0.1293 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0024 ✓   | -1266.48 |    4.938 |    7.874 |    31.52 |     8.85 |   0.7945 |   0.1858 |   0.1191 |  0.07758 |  0.09032 |  0.00675 |   0.1293 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0020     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07861 |  0.09211 | 0.007296 |   0.1291 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0021 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007293 |   0.1292 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> +-- Phase 4: Precision (+/-0.01) --------------------------------------------------------------------------------------------------------------+</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0025     | -1266.48 |    4.938 |    7.883 |    31.51 |     8.85 |   0.7952 |   0.1856 |    0.119 |  0.07768 |  0.09035 | 0.006749 |   0.1295 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0026     | -1266.48 |    4.938 |    7.883 |     31.5 |    8.851 |   0.7953 |   0.1856 |   0.1191 |  0.07768 |  0.09036 | 0.006749 |   0.1295 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0027     | -1266.48 |    4.939 |    7.884 |     31.5 |     8.85 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0028     | -1266.48 |    4.939 |    7.884 |     31.5 |    8.851 |   0.7953 |   0.1856 |   0.1191 |  0.07769 |  0.09036 | 0.006749 |   0.1295 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0029 ✓   | -1266.48 |    4.939 |    7.885 |     31.5 |    8.851 |   0.7954 |   0.1856 |   0.1191 |  0.07769 |  0.09037 | 0.006749 |   0.1295 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 1.2 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0022     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |   0.1851 |   0.1192 |  0.07862 |  0.09211 | 0.007296 |   0.1291 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0023     | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09212 | 0.007294 |   0.1292 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 0024 ✓   | -1266.48 |    4.934 |    7.874 |    31.58 |    8.846 |   0.7942 |    0.185 |   0.1192 |  0.07862 |  0.09211 | 0.007294 |   0.1291 |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 2.0 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, MC NLL, Sens-Hessian, sandwich, 12 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
@@ -544,29 +547,29 @@ outputs) are <strong>not</strong> supported by <code>adirmc</code>; use <code>es
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── </span><span style="color: #0000BB; font-weight: bold;">nlmix</span><span style="color: #BB0000; font-weight: bold;">r²</span><span style="font-weight: bold;"> </span><span style="color: #BBBB00; font-weight: bold;">adirmc</span><span style="font-weight: bold;"> ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>             OBJF       AIC       BIC Log-likelihood</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> adirmc -1266.481 -1244.481 -1173.951       633.2406</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> adirmc -1266.484 -1244.484 -1173.953       633.2418</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance other elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    1.168     19.016     0  20.184</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1    2.013      16.97     0  18.983</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>            <span style="font-weight: bold;">Est.</span>      <span style="font-weight: bold;">SE</span>  <span style="font-weight: bold;">%RSE</span> <span style="font-weight: bold;">Back-transformed(95%CI)</span> <span style="font-weight: bold;">BSV(CV%)</span> <span style="font-weight: bold;">Shrink(SD)%</span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>       1.597 0.05101 3.194    4.939 (4.469, 5.458)    35.57         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv1</span>       2.065  0.4625 22.40    7.885 (3.185, 19.52)    28.42         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv2</span>       3.450  0.1807 5.238    31.50 (22.11, 44.89)    30.75         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tq</span>        2.180  0.1485 6.810    8.851 (6.616, 11.84)    8.229         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tka</span>     -0.2290  0.4182 182.7  0.7954 (0.3504, 1.805)    37.18         NaN</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span>  0.1856 0.01192 6.422 0.1856 (0.1623, 0.2090)                     </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tcl</span>       1.596 0.05289 3.314    4.934 (4.448, 5.473)    35.59         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv1</span>       2.064  0.4762 23.07    7.874 (3.097, 20.02)    28.60         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tv2</span>       3.453  0.1869 5.412    31.58 (21.90, 45.55)    31.07         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tq</span>        2.180  0.1536 7.045    8.846 (6.547, 11.95)    8.557         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">tka</span>     -0.2304  0.4307 186.9  0.7942 (0.3415, 1.847)    37.13         NaN</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span>  0.1850 0.01205 6.514 0.1850 (0.1614, 0.2087)                     </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Covariance Type (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r,s</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   No correlations in between subject variability (BSV) matrix</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Full BSV covariance (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$omega</span>) or correlation (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$omegaR</span>; diagonals=SDs) </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Distribution stats (mean/skewness/kurtosis/p-value) available in <span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$shrink</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Information about run found (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$runInfo</span>):</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>    • covMethod = "r,s": the Hessian is ill-conditioned (rcond 1.0e-05, cond 1e+05), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `logchol_eta.q`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>    • covMethod = "r,s": the Hessian is ill-conditioned (rcond 1.0e-05, cond 9.57e+04), and the sandwich inverts it twice where "r" inverts it once -- so the correction is amplified quadratically in the weakly-identified direction, which loads mainly on `logchol_eta.q`. Check that parameter's relative standard error before reading its "r,s" value as a finding; the well-determined parameters are unaffected. </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Censoring (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$censInformation</span>): No censoring</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Minimization message (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$message</span>):  </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. </span>

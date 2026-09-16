@@ -39,6 +39,7 @@ admControl(
   literalFix = TRUE,
   returnAdmr = FALSE,
   resid_nodes = 81L,
+  xtol_rel = .Machine$double.eps^(1/2),
   ...
 )
 ```
@@ -237,11 +238,13 @@ admControl(
 - covMethod:
 
   `"r,s"` (the DEFAULT) computes the sandwich `H^-1 J H^-1`; `"r"` the
-  numerical Hessian alone, `2H^-1`; `"none"` skips the covariance. All
-  three span the structural, residual-error and omega parameters. Omega
-  is included because excluding it also biases the STRUCTURAL standard
-  errors downward – a theta carrying an eta is correlated with that
-  eta's variance. If the weakly-identified omega Cholesky makes the
+  numerical Hessian alone, `2H^-1`; `"none"` skips the covariance. A
+  study generated from a published model defaults to `"none"` and
+  refuses an explicit covariance method because it has no sampling law.
+  All three span the structural, residual-error and omega parameters.
+  Omega is included because excluding it also biases the STRUCTURAL
+  standard errors downward – a theta carrying an eta is correlated with
+  that eta's variance. If the weakly-identified omega Cholesky makes the
   Hessian non-positive definite, the structural + residual sub-block is
   reported with a warning.
 
@@ -409,6 +412,11 @@ admControl(
   if you have a saturating endpoint with a large residual SD; there is
   little to gain by lowering it.
 
+- xtol_rel:
+
+  Relative parameter tolerance for convergence (default
+  `sqrt(.Machine$double.eps)`).
+
 - ...:
 
   Additional arguments (none allowed; triggers an error).
@@ -494,8 +502,10 @@ fit <- nlmixr2(
 #> | 0020     | -3689.96 |    4.963 |    10.47 |    29.64 |    9.746 |    1.051 |   0.1896 |   0.1027 |   0.1028 |  0.09784 |   0.1103 |   0.1058 |
 #> | 0030     | -3690.05 |    4.957 |    10.37 |    29.86 |    9.747 |    1.042 |   0.1895 |   0.1032 |   0.1087 |   0.1021 |   0.1091 |  0.09925 |
 #> | 0040     | -3690.08 |    4.956 |    10.24 |    29.91 |    9.733 |    1.031 |   0.1894 |   0.1034 |   0.1118 |  0.09989 |   0.1081 |   0.0964 |
-#> | 0041 ✓   | -3690.08 |    4.956 |    10.25 |    29.91 |    9.734 |    1.031 |   0.1894 |   0.1034 |   0.1118 |  0.09989 |   0.1081 |  0.09638 |
-#> | 4.6 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 0050     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.737 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09972 |   0.1085 |  0.09614 |
+#> | 0060     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.737 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
+#> | 0069 ✓   | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
+#> | 7.5 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, Sens-Hessian, sandwich, 12 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
@@ -509,17 +519,17 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance other elapsed
-#> 1    4.614     16.361     0  20.975
+#> 1    7.463      15.27     0  22.733
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
 #>            Est.       SE  %RSE Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-#> tcl       1.601  0.01974 1.233    4.956 (4.768, 5.152)    33.00         NaN
-#> tv1       2.327   0.1292 5.553    10.25 (7.953, 13.20)    34.39         NaN
-#> tv2       3.398  0.05187 1.526    29.91 (27.02, 33.11)    32.41         NaN
-#> tq        2.276  0.02771 1.218    9.734 (9.219, 10.28)    33.78         NaN
-#> tka     0.03048   0.1196 392.5   1.031 (0.8155, 1.303)    31.81         NaN
-#> prop.sd  0.1894 0.003293 1.738 0.1894 (0.1830, 0.1959)                     
+#> tcl       1.601  0.01976 1.234    4.957 (4.769, 5.153)    33.01         NaN
+#> tv1       2.329   0.1294 5.555    10.26 (7.964, 13.22)    34.42         NaN
+#> tv2       3.397  0.05200 1.531    29.88 (26.99, 33.09)    32.38         NaN
+#> tq        2.276  0.02769 1.217    9.736 (9.222, 10.28)    33.86         NaN
+#> tka     0.03216   0.1200 373.1   1.033 (0.8163, 1.306)    31.77         NaN
+#> prop.sd  0.1894 0.003291 1.737 0.1894 (0.1830, 0.1959)                     
 #>  
 #>   Covariance Type (fit$covMethod): r,s
 #>   No correlations in between subject variability (BSV) matrix
@@ -527,6 +537,6 @@ print(fit)
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
 #>   Censoring (fit$censInformation): No censoring
 #>   Minimization message (fit$message):  
-#>     NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+#>     NLOPT_FAILURE: Generic failure code. 
 # }
 ```

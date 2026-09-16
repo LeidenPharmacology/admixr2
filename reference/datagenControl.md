@@ -14,7 +14,8 @@ datagenControl(
   seed = 12345L,
   cores = 1L,
   return_samples = FALSE,
-  resid_nodes = 81L
+  resid_nodes = 81L,
+  cov_nodes = 7L
 )
 ```
 
@@ -76,6 +77,14 @@ datagenControl(
   See
   [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
   for the measured convergence.
+
+- cov_nodes:
+
+  Gauss-Hermite nodes per covariate when `method = "gh"` integrates a
+  study's `cov_dist` (default 7). Total covariate points are
+  `cov_nodes^p` for `p` covariates. Ignored by `"mc"`, which draws a
+  covariate value per simulated subject instead, and by `"fo"`, which
+  cannot integrate a covariate at all.
 
 ## Value
 
