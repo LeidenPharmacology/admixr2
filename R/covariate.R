@@ -251,7 +251,7 @@
 # an atomic vector `x[["absent"]]` is an ERROR ("subscript out of bounds") where a list returns NULL. Every
 # consumer that asks "does this study pin covariate cv?" does so with `[[ ]]`, so the coercion has to happen
 # before ANY of them run, not part-way down one function.
-# nothing. Does this covariate reach the model anywhere the probes cannot see?
+# Does this covariate reach the model anywhere the probes cannot see?
 
 # .admCovCollapse, .admJointCollapse and .admShiftSpec all decide which lines read a covariate by scanning
 # TOP-LEVEL ASSIGNMENTS. `quote(if (a) b else c)` has length 4 and `quote(if (a) b)` has `if` as its head, so
