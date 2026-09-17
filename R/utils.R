@@ -12,8 +12,9 @@ utils::globalVariables(c(
   "nll", "restart", "iter",
   "z", "z_label", "z_vjust",
   "resid", "lo", "hi",
+  "str_lo", "str_hi",
   # covariate panels
-  "y", "study", "kind", "level", "n",
+  "x", "y", "study", "kind", "param", "n",
   "xlo", "xhi", "xlo2", "xhi2", "xmin", "xmax"
 ))
 

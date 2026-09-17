@@ -49,6 +49,7 @@ Suggests:
     nlmixr2data,
     numDeriv,
     patchwork,
+    rlang,
     rmarkdown,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr

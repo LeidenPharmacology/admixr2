@@ -1017,6 +1017,107 @@ test_that("a source that ASSERTED a covariate's coefficient is not banded", {
   expect_gt(length(ex$studies), 1L)
 })
 
+test_that("a bare datagen() study is NOT banded for having a distribution", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  # THE DEFECT: the derivation used to fall through to "has a model and a
+  # cov_dist", and datagen() always passes its `model` argument -- so a plain
+  # generated study came back as nine quadrature nodes named `s_s1 ... s_s9`,
+  # two of them holding n = 0 and every one of them costing a solve, and
+  # `datagen(st, mod)[[1L]]` returned a node where the caller wrote a study.
+  # datagen() documents its E/V as MARGINAL over the distribution, which is
+  # what a publication reports.
+  mod <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75; eta.cl ~ .09
+          add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  st <- list(s = list(times = c(1, 4), ev = rxode2::et(amt = 100), n = 100L,
+                      cov_dist = covDist(WT = c(mean = 78, sd = 16),
+                                         dist = "lnorm")))
+  ex <- admixr2:::.admExpandStrata(st, names(st), mod)
+  expect_identical(ex$names, "s")
+  expect_identical(ex$studies$s, st$s)
+  # Asking for it explicitly still bands, because that IS opting in.
+  st$s$stratify <- TRUE
+  expect_gt(length(admixr2:::.admExpandStrata(st, names(st), mod)$studies), 1L)
+})
+
+test_that("`cov_range` truncates a margin that nothing bands", {
+  skip_on_cran()
+  # `cov_range` was read in exactly ONE place, .admCovStrata(), so a study that
+  # went through unbanded carried the field to the end and was scored against
+  # its full declared support -- the `mean +/- SD` transcribed from a baseline
+  # table, which is the case a reported range exists for.
+  st <- list(s = list(times = c(1, 4), n = 100L,
+                      cov_dist = covDist(WT = c(mean = 78, sd = 16),
+                                         dist = "lnorm"),
+                      cov_range = list(WT = c(60, 100))))
+  ex <- admixr2:::.admExpandStrata(st, names(st))
+  sp <- ex$studies$s
+  expect_null(sp[["cov_range"]])
+  expect_gte(admixr2:::.admCovQuantile(sp$cov_dist[["WT"]], 0.001), 60)
+  expect_lte(admixr2:::.admCovQuantile(sp$cov_dist[["WT"]], 0.999), 100)
+})
+
+test_that("the rebuilt stratum sampler survives the drop it is rebuilt for", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  skip_if_not_installed("randtoolbox")
+  # THE DEFECT: the loop ended with `cov_dist <- .admCovDistDrop(cd, unread)`
+  # built from the snapshot taken BEFORE the rebuild, and .admCovDistDrop()
+  # NULLs `joint` itself -- so the rebuild was dead code, and two correlated
+  # conditional margins surviving the drop were drawn INDEPENDENTLY from their
+  # own empirical quantile specs, losing the dependence the stratum sample
+  # encoded with no message.
+  cvs <- c("WT", "CRCL", "ALB")
+  R <- diag(4L); dimnames(R) <- rep(list(c(cvs, "SEX")), 2L)
+  R[cvs, cvs] <- 0.7; diag(R) <- 1
+  cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
+                ALB = c(mean = 40, sd = 6), SEX = c(male = 0.5),
+                dist = "lnorm", cor = R)
+  # Banded on WT, so the OTHER two are sampled CONDITIONAL on this stratum's
+  # weight -- one shared sample, which is where their dependence lives.
+  st <- list(s = list(times = c(1, 4), ev = rxode2::et(amt = 100), n = 100L,
+                      cov_dist = cd, stratify = "WT", strata_nodes = 3L))
+  ex <- suppressMessages(admixr2:::.admExpandStrata(st, names(st)))$studies
+  k  <- ex[[2L]]$cov_dist
+  expect_true(is.function(admixr2:::.admCovDistCanon(k)[["joint"]]))
+  expect_setequal(k[[".adm_strata_joint"]]$cn, c("CRCL", "ALB"))
+
+  # SEX is declared and never read, so it comes off the design -- exactly, and
+  # this is the one sampler that could not survive it unrebuilt.
+  mod <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75; bcr <- 0.3; bal <- 0.2
+          eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt * (CRCL/90)^bcr *
+                    (ALB/40)^bal
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui  <- suppressMessages(rxode2::rxode2(mod))
+  out <- suppressMessages(
+    admixr2:::.admCheckCovariates(ui, list(n_eta = 0L), ex))
+  cdo <- admixr2:::.admCovDistCanon(out[[2L]]$cov_dist)
+  expect_setequal(admixr2:::.admCovSpecNames(cdo), cvs)
+  expect_true(is.function(cdo[["joint"]]))
+  # NOT the canon's own copula over the declared margins: this is the stratum's
+  # conditional sample, which is not rebuildable from `cor` and must not be
+  # labelled as if it were.
+  expect_false(isTRUE(cdo[["jointOwn"]]))
+  # The dependence the sample encoded is still there. Drawn independently from
+  # their own quantile specs -- which is what the dead rebuild left behind --
+  # this correlation is zero.
+  set.seed(4)
+  X <- cdo[["joint"]](matrix(stats::runif(3000L), ncol = 3L))
+  expect_gt(stats::cor(X[, "CRCL"], X[, "ALB"]), 0.3)
+  # And the sample it indexes is REDUCED rather than carried whole: left
+  # behind, 8192 rows including the dropped column rode along in every stratum
+  # for the life of the fit object.
+  expect_setequal(colnames(out[[2L]]$cov_dist[[".adm_strata_joint"]]$X),
+                  c("CRCL", "ALB"))
+})
+
 test_that(".admEvalModelLines runs the parameter block vectorised in a covariate", {
   skip_on_cran()
   skip_if_not_installed("rxode2")

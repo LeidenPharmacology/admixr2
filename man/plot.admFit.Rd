@@ -57,18 +57,18 @@ uses distinct diverging scales: residual (red-white-green) and
 standardised residual (gold-white-purple). Significance stars overlaid on
 the standardised residual panel.
 \item \code{"covariate"} -- Two BETWEEN-study covariate panels, one facet per
-covariate the model reads. \code{covariate_effect} sweeps each covariate across
-the range the sources between them cover and draws every model parameter
-that reads it, at the fitted thetas, once per level of any \emph{conditioned}
-covariate and with the continuous others at the pooled median -- so the
-swept covariate's effect is the slope and a conditioned one's is the gap
-between the lines; the region no source sampled is shaded as extrapolation,
-and a discrete covariate is drawn on its levels rather than swept through
-the values between them. \code{covariate_resid} plots each study's mean
-standardised residual against the covariate value it sits at, with an \code{lm}
-trend: a slope there is a mis-specified covariate form. Produced only for
-a fit whose studies declare covariates, so it is silently absent
-otherwise.
+covariate any source describes -- including one the model does not read,
+which is exactly the case \code{covariate_resid} exists for.
+\code{covariate_effect} sweeps each covariate across the range the sources
+between them cover and draws every model parameter that reads it, at the
+fitted thetas, as ONE line per parameter with the other covariates held at
+the pooled centre; the region no source sampled is shaded as
+extrapolation, and a discrete covariate is drawn on its levels rather than
+swept through the values between them. \code{covariate_resid} plots each
+study's mean standardised residual against the covariate value it sits at,
+with an \code{lm} trend on a continuous axis: a slope there is a mis-specified
+covariate form. Produced only for a fit whose studies declare covariates,
+so it is silently absent otherwise.
 \item \code{"nll"} -- NLL trace per restart over optimizer evaluations. Restarts
 coloured with the Okabe-Ito palette.
 \item \code{"par"} -- Parameter trace per restart on the natural scale (struct thetas
@@ -96,12 +96,17 @@ one. A \strong{marginalised} covariate -- one the estimator integrates over a
 declared distribution -- is drawn as a round point at the study's median with
 a 10th-90th percentile bar and a 2.5th-97.5th whisker: the source constrains
 the effect through the spread it induces, and the whole span is what it
-speaks for. A \strong{conditioned} covariate -- \code{stratify}, \code{at} or \code{by}, so the
-model is solved at one value -- is drawn as a diamond at that value with no
-spread, because it has none; its contribution is a point of contrast against
-the other studies. A banded source therefore appears as several diamonds on
-the covariate it was banded on, and as one merged marginal mark on every
-other, where its strata coincide.
+speaks for. A \strong{conditioned} covariate -- banded, \code{at} or \code{by}, so the model
+is solved at one value -- is drawn as a diamond at that value with no spread,
+because it has none; what that source reports along it is a relationship,
+drawn as its own regression over the range it covers.
+
+A SOURCE IS ONE MARK, not one per stratum. Banding cuts a source into one
+study per quadrature node, and a node is an internal discretisation of the
+very distribution the source already stands for: drawn straight it became
+nine small dots for one paper, each carrying a ninth of its patients, with
+the outermost node setting the axis. On a LEVEL axis the positions are values
+the paper actually reported, so a source appears once per level.
 }
 
 \section{Reading \code{covariate_resid}}{

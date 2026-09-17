@@ -350,7 +350,16 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #' A covariate is **marginal** when the model did not estimate it. There is no
 #' contrast in that paper to band on, and splitting it on a covariate its model
 #' never saw would manufacture evidence, so admixr2 integrates over the
-#' population instead.
+#' population instead. That covers both the covariate the model never mentions
+#' and the one it reads at an asserted coefficient; [print()] names them
+#' separately, because only the second is easy to mistake for conditional.
+#'
+#' The band set comes from the source and from nothing else --- in particular
+#' not from the model being fitted. A covariate the ANALYSIS model never reads
+#' is still banded on, and each stratum then has that margin dropped from its
+#' design, which is exact. Resolving it against the analysis model instead would
+#' make a nested pair band differently: the null model drops the covariate, and
+#' two fits over different study sets have no likelihood ratio between them.
 #'
 #' This matters and is why it is not left to the caller: a covariate every
 #' source marginalises is not identified against a random effect on the same
@@ -377,9 +386,10 @@ admStudy <- function(model = NULL, est = NULL,
                      strata_nodes = NULL, range = NULL,
                      label = NULL, v_denom = NULL) {
   # WHETHER A COVARIATE IS CONDITIONAL OR MARGINAL IS NOT A USER CHOICE. It is a
-  # property of the source's own model -- conditional when that model uses the
-  # covariate, marginal when the population describes it and the model never
-  # mentions it -- so admixr2 derives it and there is nothing to declare.
+  # property of the source's own model -- conditional when that model ESTIMATED
+  # the covariate's coefficient, marginal when it never mentions the covariate
+  # or reads it at an asserted one -- so admixr2 derives it and there is nothing
+  # to declare.
   # `strata_nodes` and `range` STAY, because neither is that choice: one is a
   # precision setting and the other is a fact about the source. It is the span the source
   # ENROLLED, and it is needed exactly when the declared distribution is wider
@@ -391,7 +401,14 @@ admStudy <- function(model = NULL, est = NULL,
   # 10th-90th they span 52-112 and reproduce 1.07533, the truncated
   # population's. Both are exact quadratures -- of DIFFERENT populations, and
   # only one of them is the one the paper reported moments for.
-  stratify <- NULL
+  #
+  # `stratify` IS NOT A FIELD HERE. It stays an internal field of the plain
+  # study specs .admMaterialise() builds, where covStrata(), the internal
+  # callers and a deliberately unbanded reference fit set it; an `admStudy`
+  # object carries the model the derivation reads instead. It used to be
+  # carried as a hardcoded NULL, which made every reader of it on this object
+  # -- print()'s "banded on nothing" line among them -- unreachable code that
+  # looked live.
   # Record the supplied spread before deriving V or replacing sd from sem.
   .from_spread <- is.null(V) && (!is.null(sd) || !is.null(sem))
   # Use the model expression only in construction-time messages.
@@ -545,7 +562,7 @@ admStudy <- function(model = NULL, est = NULL,
     ui = ui, model = model,
     E = E, V = V, n = as.numeric(n), times = as.numeric(times),
     ev = ev, dose = dose, population = population, at = at, by = by,
-    stratify = stratify, strata_nodes = strata_nodes, range = range,
+    strata_nodes = strata_nodes, range = range,
     label = label, v_denom = v_denom), class = "admStudy")
 }
 
@@ -575,6 +592,8 @@ print.admStudy <- function(x, ...) {
     cat(sprintf("  reported  mean profile, %s\n",
                 if (is.matrix(x$V)) "full covariance" else "per-time spread"))
   }
+  # What the fit will band, resolved the same way .admMaterialise() resolves it.
+  .bn <- .admStudyBandNames(x)
   if (!is.null(x$population)) {
     pn <- .admCovSpecNames(x$population)
     cat("  population", paste(pn, collapse = ", "), "\n")
@@ -585,17 +604,23 @@ print.admStudy <- function(x, ...) {
         cat("            ", paste(marg, collapse = ", "),
             " not in this model -> marginalised (no contrast from this source)\n",
             sep = "")
+      # READ AT AN ASSERTED COEFFICIENT is the other way to be marginal, and
+      # the one a reader would otherwise have to work out: the model does
+      # mention the covariate, so the line above says nothing about it.
+      .fx <- setdiff(intersect(pn, cvs), .bn)
+      if (length(.fx))
+        cat("            ", paste(.fx, collapse = ", "),
+            " read at an asserted coefficient -> marginalised (no fitted ",
+            "effect to recover)\n", sep = "")
     }
   }
   if (!is.null(x$at)) cat("  pinned at ",
     paste(sprintf("%s = %s", names(x$at), unlist(x$at)), collapse = ", "), "\n")
   if (!is.null(x$by))       cat("  reported by", x$by, "-> one study per level\n")
-  # Resolve `TRUE` to banded covariate names for display.
-  .bn <- .admStudyBandNames(x)
   if (length(.bn)) cat("  banded on ", paste(.bn, collapse = ", "), "\n")
-  else if (isTRUE(x$stratify))
-    cat("  banded on  nothing -- this model estimated no covariate ",
-        "coefficient\n", sep = "")
+  else if (!is.null(x$ui) && !is.null(x$population))
+    cat("  banded on  nothing -- this model estimated no coefficient for a ",
+        "covariate this source describes\n", sep = "")
   invisible(x)
 }
 
@@ -736,22 +761,22 @@ print() a single study to check its transcription.
 }
 
 # Materialise lazy specs once at the shared driver entry point.
-## `analysis_covs` -- the covariates the ANALYSIS model reads -- is the
-## efficiency half of the rule, and only the efficiency half.
+## THE BAND SET IS A PROPERTY OF THE SOURCE, and of nothing else. A covariate is
+## conditional when that source's model estimated its coefficient and marginal
+## when it did not; that is a statement about the evidence, and it cannot depend
+## on what is being fitted.
 ##
-## Whether a covariate is CONDITIONAL is a property of the SOURCE's model: it is
-## conditional when that model uses the covariate, marginal when the population
-## describes it and the model never mentions it. That is a statement about the
-## evidence and it does not depend on what is being fitted.
-##
-## Whether admixr2 has to BAND on it is a separate question. A covariate the
-## analysis model never reads cannot move the analysis model's prediction, so
-## banding on it changes nothing about the objective -- and a source reading
-## three covariates bands into 162 studies at the default resolution, all of
-## which would then be dropped again by .admCheckCovariates(). Intersecting
-## here leaves the objective identical and the work proportional to what is
-## actually being estimated.
-.admMaterialise <- function(studies, analysis_covs = NULL) {
+## IT USED TO BE NARROWED to the covariates the ANALYSIS model reads, on the
+## argument that banding on one the analysis cannot see buys strata and no
+## change in the objective. Both halves were wrong. The objective moved
+## (-2293.4046 banding on WT alone against -2293.4094 on WT and CRCL), and the
+## narrowing bit in exactly one place: the NULL model of a nested pair, which
+## drops the covariate and so banded less than the full model did. Two fits over
+## different study sets have no likelihood ratio between them, so `anova()`
+## refused the one comparison a covariate test is made of -- and the case is
+## already handled where it belongs, by .admCheckCovariates() dropping the
+## unread margin from each stratum, which is exact.
+.admMaterialise <- function(studies) {
   if (inherits(studies, "admStudies")) studies <- unclass(studies)
   if (!is.list(studies)) return(studies)
   spec <- vapply(studies, inherits, logical(1), "admStudy")
@@ -781,28 +806,33 @@ print() a single study to check its transcription.
     sp <- list(times = s$times, ev = ev, n = s$n)
     if (!is.null(s[["population"]])) sp[["cov_dist"]] <- s[["population"]]
     if (!is.null(s[["at"]]))         sp[["cov"]]      <- s[["at"]]
-    # DERIVED HERE, so the band set reaching datagen() is already resolved:
-    # the covariates this SOURCE's model uses, narrowed to the ones the
-    # ANALYSIS model can actually be moved by. An explicit `stratify` on the
-    # spec still wins -- covStrata() and the internal callers set one.
-    .bn <- if (!is.null(s$stratify)) s$stratify else {
+    # DERIVED HERE, and NOWHERE ELSE: the band set reaching datagen() is
+    # already resolved, and it is the covariates THIS SOURCE estimated a
+    # coefficient for.
+    # An explicit `stratify` on the SPEC still wins. It is not an `admStudy()`
+    # argument and not a field of the object -- see the note in admStudy() --
+    # but it stays an internal field that covStrata(), the internal callers and
+    # a deliberately UNBANDED reference fit can set, and `FALSE` has to reach
+    # the spec or the opt-out silently becomes its opposite.
+    .bn <- if (!is.null(s[["stratify"]])) s[["stratify"]] else {
       b <- .admStudyBandNames(s)
-      if (!is.null(analysis_covs)) b <- intersect(b, analysis_covs)
       # `by` PINS its covariate one level per study, so each level's cov_dist
       # no longer declares it and there is nothing left to band. Leaving it in
       # asked .admCovStrata() to band a covariate the spec had stopped
       # declaring, which it rightly refuses.
       setdiff(b, s$by %||% character(0))
     }
-    # FALSE has to REACH the spec. Dropping it here left `stratify` unset, and
-    # .admExpandStrata() then derived a banding for a study that had explicitly
-    # refused one -- so the opt-out silently became its opposite.
-    if (identical(.bn, FALSE)) {
-      sp$stratify <- FALSE
-    } else if (length(.bn)) {
-      sp$stratify <- .bn
-      if (!is.null(s$strata_nodes)) sp$strata_nodes <- s$strata_nodes
-    }
+    # THE ANSWER REACHES THE SPEC EITHER WAY, `FALSE` included. An empty band
+    # set used to record nothing, and .admExpandStrata() then derived a banding
+    # of its own -- so a source that resolved to nothing came back banded
+    # anyway, and `stratify = FALSE` silently became its opposite.
+    sp$stratify <- if (identical(.bn, FALSE) || !length(.bn)) FALSE else .bn
+    # OUTSIDE the branch, so the spec carries what the caller asked for however
+    # the derivation came out. Copied only when something was banded, a study
+    # that resolved to nothing took the default 9 while its neighbour took the
+    # caller's setting -- and `.adm_strata_nodes` varying between studies is
+    # exactly what anova() refuses to compare across.
+    if (!is.null(s$strata_nodes)) sp$strata_nodes <- s$strata_nodes
     # The enrolled span truncates the declared distribution WHATEVER becomes of
     # the covariate afterwards: strata cut from a conditional one are cut from
     # the truncated margin, and a marginal one is integrated over the truncated
@@ -853,21 +883,28 @@ print() a single study to check its transcription.
   out
 }
 
-# Covariates `stratify` can band (effects estimated by source model).
+# Covariates this source's model ESTIMATED a coefficient for, and whose
+# distribution it also declares -- the ones banding can extract a contrast from.
+#
+# Read by .admMaterialise() at fit time and by print.admStudy() beforehand, so
+# what a study prints is what the fit does. Without the second reader a study
+# printed every covariate as marginal and then came back banded.
 .admStudyBandNames <- function(s) {
   st <- s[["stratify"]]
   if (identical(st, FALSE)) return(character(0))
   if (!is.null(st) && !isTRUE(st)) return(as.character(st))
-  # DERIVED, and derived HERE TOO. `admStudy()` no longer records a `stratify`,
-  # so a study object cannot say what will be banded -- but it carries the model
-  # the derivation reads, so print() can run the same test .admExpandStrata()
-  # runs at fit time. Without this a study printed every covariate as marginal
-  # and then came back banded from the fit.
   if (is.null(s$ui)) return(character(0))
-  # USES, not estimates: every covariate the model reads AND the population
-  # describes. One the population declares and the model never mentions is
-  # marginal, and one the model reads but the population never described has no
-  # distribution to band from.
-  intersect(.admCovSpecNames(s[["population"]]),
-            tryCatch(s$ui$allCovs, error = function(e) character(0)))
+  # ESTIMATED, not merely READ, which is the rule the man page states and the
+  # one `stratify = TRUE` has always enforced. A covariate the model reads at an
+  # ASSERTED coefficient -- weight at a fixed allometric exponent -- carries no
+  # fitted effect to recover: banding on it buys strata and no evidence, and
+  # credits the source with information it never earned. One the population
+  # declares and the model never mentions is marginal; one the model estimates
+  # but the population never described has no distribution to band from.
+  cvs <- intersect(.admCovSpecNames(s[["population"]]),
+                   tryCatch(s$ui$allCovs, error = function(e) character(0)))
+  if (!length(cvs)) return(character(0))
+  cvs[vapply(cvs, function(cv) length(tryCatch(
+    .admCovCoefThetas(s$ui, cv, s[["population"]]),
+    error = function(e) character(0))) > 0L, logical(1))]
 }

@@ -69,9 +69,7 @@
   legend. The residual panel encoded it already and said so nowhere.
 
 * **Whether a covariate is conditional or marginal is derived, not declared**:
-  conditional when the source's own model uses it, marginal when its
-  population declares it and the model never mentions it. Narrowed to what the
-  analysis model can be moved by.
+  conditional when the source's own model ESTIMATED its coefficient.
 
 * **`admMoments(fit)`**: the observed and predicted first two moments per
   source, with the structural share of the variance and the standardised
@@ -113,10 +111,36 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **`range` truncates a MARGINAL covariate's declared distribution too**, not
   only a banded one's: the enrolled span holds however the covariate is used.
 
+* **Banding needs an ESTIMATED coefficient, not just a covariate the model
+  reads**, so a fixed allometric exponent leaves weight marginal.
+
 ## Bug fixes
+
+* **`datagen()` banded every study that declared a covariate distribution**,
+  having a `model` argument of its own to derive from. It needs `stratify` now.
 
 * **`stratify = FALSE` stopped reaching the spec**, so a study that refused
   banding had one derived for it -- the opt-out became its opposite.
+
+* **`strata_nodes` was recorded only when something was banded**, so it could
+  vary between studies of one fit -- which `anova()` refuses to compare across.
+
+* **`range` was silently dropped by a source that bands nothing**, which is the
+  transcribed `mean +/- SD` it exists for.
+
+* **The rebuilt stratum sampler was discarded one line later**, leaving
+  correlated conditional margins to be drawn independently of each other.
+
+* **A continuous covariate banded at `strata_nodes <= 8` was drawn on a
+  discrete axis**, a dot per quadrature node and the ticks on that grid.
+
+* **An unnamed `range` crashed the `covariate_effect` panel out of existence**,
+  the error being caught and the panel reported as absent.
+
+* **A stratum's source is recorded rather than recovered by regex**, so two
+  studies a user named `a_s1` and `a_s2` are no longer merged into one.
+
+* **`admMoments()` returned `NULL` where it documents an empty data frame.**
 
 * **A source banded on a covariate the analysis model does not read could not
   be reduced**: the joint stratum sampler refused the drop, blocking nested

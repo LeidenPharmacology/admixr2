@@ -173,6 +173,17 @@
   rep(unit$output %||% NA_character_, n_t)
 }
 
+# What a STRATUM knows about itself, and nothing else does.
+#
+# `admExtra$studies` are the FLATTENED observation units, each built from an
+# explicit field list -- so a field that is not named here is dropped between
+# the generator and the fit object, however faithfully datagen() copied it.
+# `.adm_strata_nodes` was named and the rest were not, which is how the plot
+# panels ended up recovering a stratum's parent with a regex on its name and
+# guessing whether a point value was a quadrature node or a reported level.
+.ADM_STRATUM_FIELDS <- c(".adm_strata_nodes", ".adm_source",
+                         ".adm_strata_covs", ".adm_node_covs")
+
 # Normalise one observed-compartment unit: coerce E, coerce V to matrix,
 # auto-detect diagonal, set method + v_diag, inherit n/ev/output from study-level
 # `defaults`, and validate dimensions. Returns a self-contained unit.
@@ -188,8 +199,8 @@
   # the distribution those subjects span (which drives the Omega collapse).
   ob[["cov"]]      <- ob[["cov"]]      %||% defaults[["cov"]]
   ob[["cov_dist"]] <- ob[["cov_dist"]] %||% defaults[["cov_dist"]]
-  ob[[".adm_strata_nodes"]] <- ob[[".adm_strata_nodes"]] %||%
-    defaults[[".adm_strata_nodes"]]
+  for (.f in .ADM_STRATUM_FIELDS)
+    ob[[.f]] <- ob[[.f]] %||% defaults[[.f]]
   for (f in c("n", "E", "V", "times"))
     if (is.null(ob[[f]])) stop(sprintf("Study '%s' missing '%s'", label, f), call. = FALSE)
   ob$E <- as.numeric(ob$E)
@@ -315,13 +326,14 @@
     stop(sprintf("Study '%s': the assembled joint covariance is not positive-definite; check the cross / V blocks.",
                  nm), call. = FALSE)
 
+  c(stats::setNames(lapply(.ADM_STRATUM_FIELDS, function(.f) s[[.f]]),
+                    .ADM_STRATUM_FIELDS),
   list(is_joint = TRUE, label = nm, n = s$n, ev = s$ev,
-       .adm_strata_nodes = s[[".adm_strata_nodes"]],
        cov = s[["cov"]], cov_dist = s[["cov_dist"]],
        output = blocks[[1L]]$output,   # any valid endpoint, for cmt-tagging
        times  = sort(unique(unlist(lapply(blocks, `[[`, "times")))),
        method = "cov", E = E_stacked, V = V, blocks = blocks,
-       row_output = row_output, n_total = T_total)
+       row_output = row_output, n_total = T_total))
 }
 
 # -- long-format study input ---------------------------------------------------
@@ -555,19 +567,23 @@
     onames   <- names(s$observations)
     if (is.null(onames) || any(!nzchar(onames)))
       onames <- paste0("obs", seq_along(s$observations))
-    defaults <- list(n = s$n, ev = s$ev, output = s$output %||% default_output,
-                     cov = s[["cov"]], cov_dist = s[["cov_dist"]],
-                     .adm_strata_nodes = s[[".adm_strata_nodes"]])
+    defaults <- c(list(n = s$n, ev = s$ev,
+                       output = s$output %||% default_output,
+                       cov = s[["cov"]], cov_dist = s[["cov_dist"]]),
+                  stats::setNames(lapply(.ADM_STRATUM_FIELDS,
+                                         function(.f) s[[.f]]),
+                                  .ADM_STRATUM_FIELDS))
     s$observations <- setNames(lapply(seq_along(s$observations), function(k)
       .admNormaliseObs(s$observations[[k]], paste0(nm, ".", onames[k]), defaults)),
       onames)
     s$multi <- TRUE
   } else {
     unit <- .admNormaliseObs(
-      list(E = s$E, V = s$V, n = s$n, times = s$times, ev = s$ev,
-           method = s$method, output = s$output %||% default_output,
-           cov = s[["cov"]], cov_dist = s[["cov_dist"]],
-           .adm_strata_nodes = s[[".adm_strata_nodes"]]), nm)
+      c(list(E = s$E, V = s$V, n = s$n, times = s$times, ev = s$ev,
+             method = s$method, output = s$output %||% default_output,
+             cov = s[["cov"]], cov_dist = s[["cov_dist"]]),
+        stats::setNames(lapply(.ADM_STRATUM_FIELDS, function(.f) s[[.f]]),
+                        .ADM_STRATUM_FIELDS)), nm)
     # Preserve top-level normalised fields (legacy callers / tests read these).
     s$E <- unit$E; s$V <- unit$V; s$method <- unit$method
     s$v_diag <- unit$v_diag; s$output <- unit$output

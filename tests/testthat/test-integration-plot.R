@@ -350,18 +350,19 @@ test_that("plot.admFit covariates: a dropped covariate is still plotted against"
   skip_on_cran()
   env <- .int_cov_mis()
   # The null model never reads CRCL, so it is off the design -- and it is still
-  # the covariate the analyst needs the residual plotted against. It also keeps
-  # its declared SPREAD: the source marginalised over a distribution, and the
-  # `cov` value the drop leaves behind is a single number that would have been
-  # mislabelled as a conditioned one.
-  # ONE ROW PER SOURCE on this continuous axis. The sources band on WT --
-  # their models use it -- so each carries nine WT nodes, and reading those
-  # straight drew nine renal positions per paper. The count is not pinned
-  # tightly; what matters is that all three sources are present exactly once
-  # and CRCL is still marginal with a spread to show.
+  # the covariate the analyst needs the residual plotted against.
+  #
+  # ONE ROW PER SOURCE on this continuous axis. Every source model ESTIMATED the
+  # renal coefficient, so each is banded on CRCL into nine quadrature nodes, and
+  # reading those straight drew nine renal positions per paper carrying a ninth
+  # of its patients each. The nodes are admixr2's discretisation of the very
+  # distribution the source already stands for, so the source is one mark --
+  # conditional, because what that paper reports along this axis is a
+  # relationship -- and the span it shows is the one the SOURCE declared, not a
+  # node's own zero width.
   expect_identical(nrow(env$bad), 3L)
   expect_setequal(unique(env$bad$source), c("normal", "mild", "moderate"))
-  expect_true(all(env$bad$kind == "marginal"))
+  expect_true(all(env$bad$kind == "conditional"))
   expect_true(all(env$bad$xhi > env$bad$xlo))
 })
 
@@ -383,8 +384,7 @@ test_that("plot.admFit covariates: a dropped covariate effect shows as a slope",
   expect_gt(max(abs(env$bad$z)), 1.96)
   # Ordered in the covariate, read at the level the claim is made about: the
   # SOURCES run the wrong way, from positive residuals at low renal function to
-  # negative at high. Per-point ordering is noisy now that each source
-  # contributes several WT-conditional positions.
+  # negative at high.
   zs <- tapply(env$bad$z, env$bad$source, mean)
   xs <- tapply(env$bad$x, env$bad$source, mean)
   expect_equal(order(xs), order(-zs))

@@ -305,11 +305,14 @@ test_that("residual panel: strata of one source are joined, not regressed", {
   # strata differing only in SEX, so the PAIR is the evidence it bought.
   # Several sources tilting the same way is the mis-specification; a regression
   # over the pooled cloud averages the pairs away.
-  mk <- function(wt, sex) list(
-    n = 120L, cov = list(WT = wt, SEX = sex),
+  # `.adm_source` is what makes these strata: .admExpandStrata() records the
+  # parent where it knows it, so the panel does not have to read a name.
+  mk <- function(wt, sex, src) list(
+    n = 120L, cov = list(WT = wt, SEX = sex), .adm_source = src,
+    .adm_strata_covs = "SEX",
     cov_dist = list(WT = .pan_lnorm(wt), SEX = list(.point = TRUE)))
-  st <- list(alpha_s1 = mk(70, 0), alpha_s2 = mk(70, 1),
-             beta_s1  = mk(88, 0), beta_s2  = mk(88, 1))
+  st <- list(alpha_s1 = mk(70, 0, "alpha"), alpha_s2 = mk(70, 1, "alpha"),
+             beta_s1  = mk(88, 0, "beta"),  beta_s2  = mk(88, 1, "beta"))
   z <- list(alpha_s1 = -1.4, alpha_s2 = 1.1,
             beta_s1  = -1.9, beta_s2  = 0.7)
   o <- .pan_resid(c("SEX"), st, z)

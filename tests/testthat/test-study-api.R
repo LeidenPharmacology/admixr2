@@ -127,16 +127,28 @@ test_that("materialising a spec is deferred, and matches datagen directly", {
                 population = admPopulation(WT = c(mean = 75, sd = 16),
                                            SEX = c(male = 0.55)),
                 label = "s")
-  got <- admixr2:::.admMaterialise(admStudies(s))
+  got <- suppressWarnings(suppressMessages(
+    admixr2:::.admMaterialise(admStudies(s))))
   ui <- suppressMessages(rxode2::rxode2(.sa_model))
   d <- ui$iniDf; d$est[d$name == "tcl"] <- log(5.2); ui$iniDf <- d
+  # The same call written out by hand, banded the way the derivation bands it:
+  # `.sa_model` estimates the SEX coefficient and asserts the weight exponent.
+  # BOTH SIDES MUST NAME THE SAME STRATA. Compared on `$s` alone this passed
+  # while both sides were NULL -- materialise banded, datagen banded too, and
+  # neither had a study called `s` to compare.
   want <- suppressWarnings(suppressMessages(datagen(
     list(s = list(times = c(1, 4, 12), ev = rxode2::et(amt = 200), n = 240,
+                  stratify = "SEX",
                   cov_dist = admPopulation(WT = c(mean = 75, sd = 16),
                                            SEX = c(male = 0.55)))),
     model = ui, control = datagenControl(method = "gh"))))
-  expect_equal(got$s$E, want$s$E, tolerance = 1e-10)
-  expect_equal(got$s$V, want$s$V, tolerance = 1e-10)
+  expect_setequal(names(got), names(want))
+  expect_setequal(names(got), c("s_s1", "s_s2"))
+  for (k in names(want)) {
+    expect_equal(got[[k]]$E, want[[k]]$E, tolerance = 1e-10)
+    expect_equal(got[[k]]$V, want[[k]]$V, tolerance = 1e-10)
+    expect_equal(got[[k]]$n, want[[k]]$n, tolerance = 1e-10)
+  }
 })
 
 test_that("`by` expands into one study per level, splitting n by the proportion", {
@@ -147,10 +159,11 @@ test_that("`by` expands into one study per level, splitting n by the proportion"
                                            SEX = c(male = 0.6)),
                 by = "SEX", label = "trial")
   got <- admixr2:::.admMaterialise(admStudies(s))
-  # `.sa_model` reads WT, so WT is conditional for this source and bands as
-  # well -- each `by` level becomes several strata. What `by` is responsible
-  # for is the LEVELS and the n split, so that is what is asserted; the band
-  # resolution is not this test's business.
+  # `.sa_model` asserts the weight exponent and estimates only the SEX
+  # coefficient, which `by` has already pinned one level per study -- so there
+  # is nothing left to band and each level is one study. What `by` is
+  # responsible for is the LEVELS and the n split, and the sums below hold
+  # however many strata each level is cut into.
   sx <- vapply(got, function(g) g[["cov"]][["SEX"]], 0)
   expect_setequal(unique(sx), c(0, 1))
   expect_equal(sum(vapply(got, function(g) g$n, 0)), 200)
@@ -165,9 +178,9 @@ test_that("`by` expands into one study per level, splitting n by the proportion"
 test_that("materialising a subgroup refuses a colliding study name", {
   skip_on_cran(); skip_if_not_installed("rxode2")
   # A model reading ONLY the `by` covariate, so the levels are the whole
-  # expansion and the names are exactly `trial_SEX0`/`trial_SEX1`. `.sa_model`
-  # also reads WT, which is conditional and bands, and the names would carry a
-  # stratum suffix this test is not about.
+  # expansion and the names are exactly `trial_SEX0`/`trial_SEX1` -- a model
+  # estimating a second covariate's coefficient would band each level further
+  # and give the names a stratum suffix this test is not about.
   sexonly <- function() {
     ini({ tcl <- log(5); tv <- log(50); bsex <- 0.2
           add.err <- 0.1; eta.cl ~ 0.09 })
@@ -399,11 +412,12 @@ test_that("print.admStudies flags a covariate no source can identify", {
     admStudy(model = .sa_model, population = coh, dose = 200,
              times = c(1, 4, 12), label = "a"))
   out <- paste(utils::capture.output(print(admStudies(a = s))), collapse = " ")
-  # `.sa_model` reads WT and SEX, so both are conditional for this source and
-  # both band. CRCL is declared by the cohort and never mentioned by the model,
-  # so it is the marginal one -- and the only one no source can identify.
+  # `.sa_model` ESTIMATES the SEX coefficient, so SEX bands. WT is read at a
+  # fixed exponent, and CRCL is declared by the cohort and never mentioned by
+  # the model: both are marginal, for the two different reasons print()
+  # distinguishes, and neither is identified by any source here.
   expect_match(out, "SEX +banded")
-  expect_match(out, "WT +banded")
+  expect_match(out, "WT +marginal")
   expect_match(out, "CRCL +marginal")
   expect_match(out, "marginal in every source")
   # that a published model carries no standard error is the other silent one:
@@ -437,11 +451,12 @@ test_that("a covariate constant within a study is pinned, not described", {
   expect_false("CRCL" %in% admixr2:::.admCovSpecNames(s$population))
 })
 
-test_that("the derivation bands every covariate the source model USES", {
+test_that("the derivation bands the covariates the source model ESTIMATED", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # USES, not estimates. `.sa_model` reads WT at a literal ^0.75 and SEX at an
-  # estimated coefficient, and its predictions depend on both -- so both are
-  # conditional for this source. Marginal is for a covariate the population
+  # ESTIMATED, not merely read. `.sa_model` reads WT at a literal ^0.75 and SEX
+  # at an estimated coefficient: the fixed exponent is an assumption, so that
+  # source holds no evidence about weight and banding on it would buy strata
+  # and no evidence. Marginal covers both that and a covariate the population
   # describes and the model never mentions.
   s <- suppressMessages(
     admStudy(model = .sa_model, n = 200, dose = 200, times = c(1, 4, 12),
@@ -450,8 +465,11 @@ test_that("the derivation bands every covariate the source model USES", {
              label = "trial"))
   got <- suppressWarnings(suppressMessages(
     admixr2:::.admMaterialise(admStudies(s))))
-  expect_setequal(unlist(lapply(got, function(g) names(g[["cov"]]))),
-                  c("WT", "SEX"))
+  expect_setequal(unlist(lapply(got, function(g) names(g[["cov"]]))), "SEX")
+  # WT is still described, and integrated over.
+  expect_true(all(vapply(got, function(g)
+    !is.null(g$cov_dist[["WT"]]) && !isTRUE(g$cov_dist[["WT"]][[".point"]]),
+    logical(1))))
   expect_equal(sum(vapply(got, function(g) g$n, 0)), 200)
 })
 
@@ -570,13 +588,36 @@ test_that("banding is not a user option any more", {
                                times = c(1, 4), population = pop), arg)),
       "unused argument")
 
-  # `strata_nodes` and `range` are NOT that choice and stay: one is precision,
-  # the other is the span the source enrolled.
+  # ESTIMATED, not merely READ. `.sa_model` carries WT at a FIXED allometric
+  # exponent and estimates `bsex`, so SEX is the only covariate it holds
+  # evidence about: banding on WT would buy strata and no evidence, and credit
+  # the source with information it never earned.
   sn <- admStudy(model = .sa_model, n = 100, dose = 200, times = c(1, 4),
                  population = pop, strata_nodes = 3L,
                  range = list(WT = c(50, 100)), label = "s")
   g <- admixr2:::.admMaterialise(admStudies(s = sn))
-  expect_identical(length(g), 3L * 2L)     # 3 WT nodes x 2 SEX levels
+  expect_identical(length(g), 2L)          # the 2 SEX levels, and no WT nodes
+
+  # ESTIMATE the exponent and WT becomes conditional, at the caller's
+  # precision: `strata_nodes` is the one knob that is not a statement about
+  # which covariates are conditional.
+  .fit_wt <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bsex <- 0.15; bwt <- 0.75
+          eta.cl ~ 0.09; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt * exp(bsex * SEX)
+            v  <- exp(tv) * (WT/70); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  g2 <- admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .fit_wt, n = 100, dose = 200, times = c(1, 4),
+    population = pop, strata_nodes = 3L,
+    range = list(WT = c(50, 100)), label = "s")))
+  expect_identical(length(g2), 3L * 2L)    # 3 WT nodes x 2 SEX levels
+  # THE NODES ARE THE CALLER'S, on every stratum: copied only inside the
+  # "something was banded" branch, a null fit took the default 9 while the full
+  # fit took this 3, and a different resolution per study is what anova()
+  # refuses to compare across.
+  expect_true(all(vapply(g2, function(z) identical(z[[".adm_strata_nodes"]], 3L),
+                         logical(1))))
 
   # And `range` reaches a MARGINAL covariate too. This model never mentions
   # CRCL, so CRCL is integrated over -- over the TRUNCATED margin, because the
@@ -591,18 +632,57 @@ test_that("banding is not a user option any more", {
   expect_gte(admixr2:::.admCovQuantile(cr, 0.001), 60)
   expect_lte(admixr2:::.admCovQuantile(cr, 0.999), 120)
 
-  # An unnamed `range` still needs exactly one banded covariate to belong to.
+  # An unnamed `range` still needs exactly one banded covariate to belong to,
+  # and `.fit_wt` bands two.
   expect_error(admixr2:::.admMaterialise(admStudies(s = admStudy(
-    model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+    model = .fit_wt, n = 100, dose = 200, times = c(1, 4),
     population = pop, range = c(50, 100), label = "s"))),
     "does not say which covariate")
+  # With exactly one it is accepted, and belongs to that covariate -- SEX here,
+  # whose only two levels the range keeps.
+  g3 <- suppressMessages(admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+    population = pop, range = c(0, 1), label = "s"))))
+  expect_identical(length(g3), 2L)
 
   # And the derivation resolves to the covariates themselves, so a study
-  # prints the band it found rather than a flag it was handed.
-  expect_output(print(admStudy(model = .sa_model, n = 100, dose = 200,
-                               times = c(1, 4), population = pop,
-                               label = "s")),
-                "banded on +WT, SEX")
+  # prints the band it found rather than a flag it was handed -- and says why
+  # the one it did not band is marginal, which is the part a reader cannot see
+  # from the model.
+  out <- capture.output(print(admStudy(model = .sa_model, n = 100, dose = 200,
+                                       times = c(1, 4), population = pop,
+                                       label = "s")))
+  expect_match(paste(out, collapse = "\n"), "banded on +SEX")
+  expect_match(paste(out, collapse = "\n"), "WT read at an asserted coefficient")
+})
+
+test_that("a nested pair bands identically, whatever each model reads", {
+  skip_if_not_installed("rxode2")
+  # A covariate LRT is two fits over the SAME studies: the full model reads the
+  # covariate, the null model does not. What a source bands on is a property of
+  # that source, so both fits get the same strata, and each fit then drops from
+  # every stratum the margin its own model cannot read -- which is exact,
+  # because the stratum was drawn conditional on that value.
+  #
+  # Resolved against the ANALYSIS model instead, the null fit banded less than
+  # the full fit, and two fits over different study sets have no likelihood
+  # ratio between them: anova() refused the one comparison the feature is for.
+  pop <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55))
+  .src <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bsex <- 0.15; bwt <- 0.75
+          eta.cl ~ 0.09; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt * exp(bsex * SEX)
+            v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  st <- admStudies(s = admStudy(model = .src, n = 100, dose = 200,
+                                times = c(1, 4), population = pop,
+                                strata_nodes = 3L, label = "s"))
+  g <- suppressWarnings(suppressMessages(admixr2:::.admMaterialise(st)))
+  expect_identical(length(g), 3L * 2L)
+  # Every stratum still declares the covariate it was cut on as a point, so the
+  # per-fit drop has something exact to remove.
+  expect_true(all(vapply(g, function(z)
+    isTRUE(z$cov_dist[["WT"]][[".point"]]), logical(1))))
 })
 
 test_that("admPopulation guards the data-frame route it advertises", {

@@ -60,7 +60,7 @@ is the residual error. A predicted spread that misses the observed one then
 tells you whether to look at omega and the covariates or at the error model.
 
 A 2×2 grid **per source**. A source is banded into one study per covariate
-level or quadrature node, for every covariate its own model uses --- a covariate
+level or quadrature node, for every covariate its own model fitted --- a covariate
 a study marginalises over is not identified against a random effect on the same
 parameter, so the objective has to sum over the strata. But `A_s1` is an index
 into that expansion, and this panel asks "does the fit reproduce this paper", so
@@ -284,7 +284,7 @@ Both panels distinguish how a study enters a covariate. This is a property of
 
 | | drawn as | meaning |
 |---|---|---|
-| **conditional** | **its own regression line**, over the range it covers | the source's own model USES this covariate, so it is banded --- or it reported at a value of it (`at`, `by`). It reported a *relationship* here, so its own model is drawn: a slope different from the dotted line is a paper the fit does not reproduce, and parallel-but-offset is a different finding from crossing. A source that reported only one value has no slope of its own and stays a point |
+| **conditional** | **its own regression line**, over the range it covers | the source's own model ESTIMATED this covariate's coefficient, so it is banded --- or it reported at a value of it (`at`, `by`). It reported a *relationship* here, so its own model is drawn: a slope different from the dotted line is a paper the fit does not reproduce, and parallel-but-offset is a different finding from crossing. A source that reported only one value has no slope of its own and stays a point |
 | **marginal** | round point and a **whisker** --- 10th–90th over 2.5th–97.5th | the source reported no contrast here, so admixr2 integrates over the population it enrolled. What it covers is a distribution, and drawing that as a line would claim it covers its tails as evenly as its middle |
 
 Splitting a source on a covariate its model never saw would manufacture a
@@ -298,9 +298,11 @@ enrolled, the fit is disagreeing with a paper about that paper's own patients.
 On a level axis the source's own effect is the **gap between its own marks** ---
 one per level it reported --- against the gap between the black points.
 
-A banded source appears once per value it reported on the
-covariate it was banded on, and once on every other, at its own centre. The
-effect panel is per source; only the residual panel keeps the strata apart.
+A banded source appears once per **level** it reported on a covariate banded at
+its levels, and once at its own centre on every other --- including a continuous
+covariate it was banded on, where the values are quadrature nodes rather than
+anything the paper reported. The effect panel is per source; only the residual
+panel keeps the strata apart, and only on a level axis.
 
 A covariate the model **does not read** still gets a `covariate_resid` facet.
 That is the case the panel exists for: the null model of a covariate test simply

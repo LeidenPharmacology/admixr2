@@ -142,7 +142,16 @@ evidence.
 A covariate is \strong{marginal} when the model did not estimate it. There is no
 contrast in that paper to band on, and splitting it on a covariate its model
 never saw would manufacture evidence, so admixr2 integrates over the
-population instead.
+population instead. That covers both the covariate the model never mentions
+and the one it reads at an asserted coefficient; \code{\link[=print]{print()}} names them
+separately, because only the second is easy to mistake for conditional.
+
+The band set comes from the source and from nothing else --- in particular
+not from the model being fitted. A covariate the ANALYSIS model never reads
+is still banded on, and each stratum then has that margin dropped from its
+design, which is exact. Resolving it against the analysis model instead would
+make a nested pair band differently: the null model drops the covariate, and
+two fits over different study sets have no likelihood ratio between them.
 
 This matters and is why it is not left to the caller: a covariate every
 source marginalises is not identified against a random effect on the same

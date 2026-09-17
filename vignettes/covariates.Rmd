@@ -265,13 +265,17 @@ three sources, because it is the distinction the whole method turns on:
   for them: they describe the patients they enrolled and admixr2 integrates
   over that. There is no contrast in either paper to band on, and splitting
   one on a covariate its model never saw would manufacture evidence.
-* `mild` **does** use it, so `CRCL` is **conditional** for that source and the
-  paper can be read at values of it.
+* `mild` **does** estimate it, so `CRCL` is **conditional** for that source and
+  the paper can be read at values of it.
 
 None of that is declared. admixr2 reads each source's own model and works it
 out, which is why all three calls above are identical.
 
-All three fitted a sex effect, so all three band on sex too. Banding is not
+The test is ESTIMATED, not merely read. All three models carry weight, two of
+them at the conventional fixed exponent `(WT/70)^0.75` --- and a fixed exponent
+is an assumption rather than a finding, so for those two `WT` is marginal too.
+Only `moderate`, which fitted its own exponent, is conditional on it. All three
+fitted a sex effect, so all three band on sex. Banding is not
 cosmetic: a covariate every study marginalises over is not identified against a
 random effect on the same parameter, and over 720 replicates the
 likelihood-ratio test was sized **0.125** against a nominal 0.05 with nothing
@@ -457,7 +461,7 @@ sources cleanly. `SEX` is banded, so each source contributes a pair and the grey
 line joining them is the within-source contrast banding bought. `WT` is the
 negative case: the three cohorts enrolled median weights of
 `r paste(round(vapply(cohorts[c("moderate", "mild", "normal")], function(c) median(c$WT), 0)), collapse = ", ")`
-kg, so their bars lie on top of one another and the facet cannot speak to weight
+kg, so they sit on top of one another and the facet cannot speak to weight
 whichever way it tips.
 
 Note also that a mark's size is the patients it speaks for, and that follows the

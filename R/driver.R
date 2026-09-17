@@ -38,11 +38,9 @@
          "drops all but the first. Give each study its own name.",
          call. = FALSE)
   names(studies) <- .nm
-  # Materialise before shared validation reads study fields. The analysis
-  # model's covariates go in so banding is confined to covariates it can be
-  # moved by -- same objective, proportionate work. See .admMaterialise().
-  studies <- .admMaterialise(
-    studies, analysis_covs = tryCatch(.ui$allCovs, error = function(e) NULL))
+  # Materialise before shared validation reads study fields. What each source
+  # bands on comes from that source alone -- see .admMaterialise().
+  studies <- .admMaterialise(studies)
   pinfo <- .admDriverPinfo(.ui, .ctl)
   .admWarnCovIdentifiability(.ui, pinfo, studies)
   list(studies = studies, pinfo = pinfo)

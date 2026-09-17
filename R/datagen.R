@@ -113,11 +113,16 @@ datagenControl <- function(
 #'       over the random effects only and is refused. Prefer `"gh"`, which
 #'       adds no Monte Carlo noise to data that is meant to BE the reference.}
 #'     \item{`stratify`}{(Optional) `TRUE` to stratify on every covariate this
-#'       study's OWN data-generating model conditions on, marginalising the
-#'       rest --- the split is read from the model, so it cannot disagree with
-#'       it. Two sources sharing one `cov_dist` therefore stratify differently,
-#'       each according to what it fitted. A character vector names the
-#'       covariates explicitly instead. The study is expanded into
+#'       study's OWN data-generating model ESTIMATED a coefficient for,
+#'       marginalising the rest --- the split is read from the model, so it
+#'       cannot disagree with it. Two sources sharing one `cov_dist` therefore
+#'       stratify differently, each according to what it fitted. A covariate the
+#'       model merely READS --- weight at a fixed allometric exponent --- is
+#'       refused: there is no fitted effect to recover there. A character vector
+#'       names the covariates explicitly instead, and is taken at its word.
+#'       NOTHING IS DERIVED WITHOUT THIS: a study that asks for no stratification
+#'       is generated MARGINAL over whatever it declared, which is what a
+#'       publication reports. The study is expanded into
 #'       one ordinary study per covariate stratum, named `<study>_s1`,
 #'       `<study>_s2`, ..., each pinned at its own covariate value, carrying its
 #'       own effective size `n_k` (the quadrature weight times `n`, summing to
@@ -128,7 +133,7 @@ datagenControl <- function(
 #'       a source with no term in a covariate has no contrast in it to give, and
 #'       nodes that vary it manufacture a null one. See [covStrata()].}
 #'     \item{`strata_nodes`}{(Optional) strata per stratified covariate
-#'       (default 5); a discrete covariate is cut at its levels instead. Each
+#'       (default 9); a discrete covariate is cut at its levels instead. Each
 #'       stratum costs a solve and more of them do not buy accuracy: a matched
 #'       one-covariate fit recovers 0.7000 / 0.7002 / 0.7005 at 3 / 4 / 10
 #'       strata against a true 0.700. See [covStrata()].}
@@ -464,9 +469,17 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
       if (!is.null(cov_ref_of()))     { r$cov      <- cov_ref_of() }
       # Mark as model source (.adm_src) so standard errors can be refused.
       r$.adm_src <- TRUE
-      # Carry stratum resolution for downstream consistency checks (e.g. anova).
+      # Carry stratum resolution for downstream consistency checks (e.g. anova),
+      # and with it WHOSE stratum this is and WHICH covariates it was cut on:
+      # both are facts about the generated study that nothing downstream can
+      # recover, and the plot panels were left inferring them from its name.
       if (!is.null(s[[".adm_strata_nodes"]]))
         r$.adm_strata_nodes <- s[[".adm_strata_nodes"]]
+      if (!is.null(s[[".adm_source"]]))      r$.adm_source      <- s[[".adm_source"]]
+      if (!is.null(s[[".adm_strata_covs"]]))
+        r$.adm_strata_covs <- s[[".adm_strata_covs"]]
+      if (!is.null(s[[".adm_node_covs"]]))
+        r$.adm_node_covs <- s[[".adm_node_covs"]]
       if (!is.null(spec$output)) r$output <- spec$output
       if (control$return_samples && !is.null(m$cp_mat)) r$samples <- m$cp_mat
       r

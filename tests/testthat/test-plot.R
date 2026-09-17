@@ -523,9 +523,17 @@ test_that(".admCovLevels finds levels only where a covariate has them", {
   expect_null(.admCovLevels("AGE", flat, seq_len(10L)))
 })
 
-test_that(".admCovSource recovers the source a stratum came from", {
-  expect_equal(.admCovSource(c("normal_s1", "normal_s2", "plain")),
-               c("normal", "normal", "plain"))
+test_that(".admCovSource reads the parent a stratum recorded, not its name", {
+  # `.adm_source` is written by .admExpandStrata(), which knows the parent.
+  st <- list(normal_s1 = list(.adm_source = "normal"),
+             normal_s2 = list(.adm_source = "normal"),
+             plain     = list(n = 10L))
+  expect_equal(.admCovSource(st), c("normal", "normal", "plain"))
+  # PINS the regex. Two genuinely distinct studies a user named `a_s1` and
+  # `a_s2` were merged into one source and had their observed moments mixed by
+  # the law of total variance. Nothing split them, so they are their own.
+  own <- list(a_s1 = list(n = 10L), a_s2 = list(n = 20L))
+  expect_equal(.admCovSource(own), c("a_s1", "a_s2"))
 })
 
 test_that(".admLevelBreaks ticks a discrete panel at its levels only", {
@@ -541,12 +549,16 @@ test_that(".admCovResidData marks discreteness and pairs a source's strata", {
                                 pred = list(E = c(1.1, 2.1),
                                             V = diag(c(0.01, 0.04))))), 4L),
                   c("a_s1", "a_s2", "b_s1", "b_s2"))
-  mk <- function(sex, wt) list(
-    n = 50L, cov = list(SEX = sex, WT = wt),
+  # `.adm_source` is what makes these STRATA rather than four studies -- see
+  # .admCovSource(): the parent is recorded where it is known, because two
+  # studies a user named `a_s1` and `a_s2` are not a banded source.
+  mk <- function(sex, wt, src) list(
+    n = 50L, cov = list(SEX = sex, WT = wt), .adm_source = src,
+    .adm_strata_covs = "SEX",
     cov_dist = list(SEX = list(.point = TRUE),
                     WT  = list(meanlog = log(wt), sdlog = 0.2)))
-  st <- list(a_s1 = mk(0, 70), a_s2 = mk(1, 70),
-             b_s1 = mk(0, 90), b_s2 = mk(1, 90))
+  st <- list(a_s1 = mk(0, 70, "a"), a_s2 = mk(1, 70, "a"),
+             b_s1 = mk(0, 90, "b"), b_s2 = mk(1, 90, "b"))
 
   sx <- .admCovResidData("SEX", st, agg)
   # Conditioned in every study, so a contrast between levels -- not a trend.
@@ -637,6 +649,38 @@ test_that(".admCovSourceRange prefers what the source declared", {
   expect_null(.admCovSourceRange(list(), "WT"))
 })
 
+test_that(".admCovSourceRange survives the UNNAMED range admStudy() allows", {
+  skip_if_not_installed("rxode2")
+  # PINS a silent panel. `range = c(52, 118)` is documented and accepted
+  # whenever one covariate is banded, and `[["WT"]]` on an unnamed atomic
+  # vector is a subscript ERROR rather than NULL -- so this threw, and
+  # plot.admFit() catches the error and returns NULL, which took the whole
+  # `covariate_effect` panel out without a word.
+  pop <- list(WT  = list(meanlog = log(70), sdlog = 0.2),
+              SEX = list(values = c(0, 1), probs = c(.5, .5)))
+  # ONE estimated coefficient, so WT is the one banded covariate and the
+  # unnamed range is ITS range.
+  one <- function() {
+    fn <- function() {
+      ini({ tcl <- log(5); bwt <- 0.75; add.err <- 0.1; eta.cl ~ 0.1 })
+      model({ cl <- exp(tcl + eta.cl) * (WT / 70)^bwt * (1 + 0 * SEX)
+              v  <- exp(log(30)); cp <- linCmt(); cp ~ add(add.err) })
+    }
+    suppressMessages(rxode2::rxode2(fn))
+  }
+  s1 <- list(ui = one(), range = c(52, 118), population = pop)
+  expect_equal(.admCovSourceRange(s1, "WT"), c(52, 118))
+  # And NOT read for whichever covariate happens to be on the axis: SEX falls
+  # back to the margin it declared.
+  expect_equal(.admCovSourceRange(s1, "SEX"), c(0, 1))
+
+  # TWO estimated coefficients: the unnamed form belongs to neither, and the
+  # point is that nothing throws -- every covariate falls back to its margin.
+  s2 <- list(ui = .cov_ui(), range = c(52, 118), population = pop)
+  r <- .admCovSourceRange(s2, "WT")
+  expect_true(r[1L] < 70 && r[2L] > 70)
+})
+
 .pan_src <- function(cond = "WT") {
   pop <- list(WT  = list(meanlog = log(75), sdlog = 0.2),
               SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
@@ -667,6 +711,7 @@ test_that(".admCovEffectData draws a conditional source's own regression", {
   # whatever its model estimates, and correctly gets no line.
   band <- function(sex) list(
     n = 100L, cov = list(WT = 80, SEX = sex),
+    .adm_source = "a", .adm_strata_covs = "SEX",
     cov_dist = list(WT  = list(meanlog = log(80), sdlog = 0.2),
                     SEX = list(.point = TRUE)))
   st  <- list(a_s1 = band(0), a_s2 = band(1))
@@ -708,7 +753,8 @@ test_that(".admCovEffectData needs a declared range for a continuous one", {
   # Fewer than that and a set of pinned values reads as a factor, and the
   # discrete branch joins the levels instead -- needing no declared range.
   pin <- function(wt) list(
-    n = 100L, cov = list(WT = wt, SEX = 0),
+    n = 100L, cov = list(WT = wt, SEX = 0), .adm_source = "a",
+    .adm_strata_covs = "WT",
     cov_dist = list(SEX = list(.point = TRUE), WT = list(.point = TRUE)))
   wts <- c(58, 63, 68, 73, 78, 83, 88, 93, 98, 103)
   st  <- stats::setNames(lapply(wts, pin), sprintf("a_s%d", seq_along(wts)))
@@ -770,9 +816,9 @@ test_that(".admCollapseSources leaves an unbanded source alone", {
 test_that(".admCollapseSources renormalises over the strata it has", {
   # A stratum whose simulation failed drops out. A partial collapse is a worse
   # answer than a whole one and a better answer than losing the source.
-  st <- list(a_s1 = list(E = c(2), V = matrix(1), n = 30, times = 1),
-             a_s2 = list(E = c(4), V = matrix(1), n = 10, times = 1),
-             a_s3 = list(E = c(9), V = matrix(1), n = 60, times = 1))
+  .st <- function(e, n) list(E = e, V = matrix(1), n = n, times = 1,
+                             .adm_source = "a")
+  st <- list(a_s1 = .st(2, 30), a_s2 = .st(4, 10), a_s3 = .st(9, 60))
   ag <- list(a_s1 = list(pred = list(E = c(2), V = matrix(1))),
              a_s2 = list(pred = list(E = c(4), V = matrix(1))),
              a_s3 = NULL)
@@ -808,8 +854,10 @@ test_that(".admCollapseSources carries the structural variance too", {
   # law. The structural part's BETWEEN term is the banded covariate's own
   # contribution: banding moved that covariate out of each stratum's spread
   # and into the spacing between them.
-  st <- list(a_s1 = list(E = c(2), V = matrix(1), n = 50, times = 1),
-             a_s2 = list(E = c(6), V = matrix(1), n = 50, times = 1))
+  st <- list(a_s1 = list(E = c(2), V = matrix(1), n = 50, times = 1,
+                         .adm_source = "a"),
+             a_s2 = list(E = c(6), V = matrix(1), n = 50, times = 1,
+                         .adm_source = "a"))
   ag <- list(
     a_s1 = list(pred = list(E = c(2), V = matrix(2), V_struct = matrix(1))),
     a_s2 = list(pred = list(E = c(6), V = matrix(2), V_struct = matrix(1))))
@@ -826,8 +874,10 @@ test_that(".admCollapseSources carries the structural variance too", {
 test_that("admMoments returns the numbers the panels are drawn from", {
   fit <- .make_mock_fit()
   fit$env$admExtra$studies <- list(
-    a_s1 = list(E = c(2, 1), V = diag(c(1, 1)), n = 50, times = c(1, 2)),
-    a_s2 = list(E = c(6, 3), V = diag(c(1, 1)), n = 50, times = c(1, 2)))
+    a_s1 = list(E = c(2, 1), V = diag(c(1, 1)), n = 50, times = c(1, 2),
+                .adm_source = "a"),
+    a_s2 = list(E = c(6, 3), V = diag(c(1, 1)), n = 50, times = c(1, 2),
+                .adm_source = "a"))
   fit$env$aggData <- NULL
   # Stand in for the simulation: the accessor's job is the tidying, and a mock
   # fit has no model to solve.
@@ -861,6 +911,20 @@ test_that("admMoments returns the numbers the panels are drawn from", {
   expect_equal(nrow(ms), 4L)
 })
 
+test_that("admMoments returns an empty DATA FRAME when nothing has moments", {
+  # `NULL[0L, , drop = FALSE]` is NULL, so the guard this replaces read as
+  # "return an empty data frame" and could not be: a caller doing
+  # `nrow(admMoments(fit))` got NULL, not 0, against a documented data frame.
+  fit <- .make_mock_fit()
+  fit$env$admExtra$studies <- list(a = list(E = 1, V = matrix(1), n = 10,
+                                            times = 1))
+  local_mocked_bindings(.admAggData = function(...) list(), .package = "admixr2")
+  m <- admMoments(fit)
+  expect_s3_class(m, "data.frame")
+  expect_identical(nrow(m), 0L)
+  expect_true(all(c("study", "source", "z") %in% names(m)))
+})
+
 test_that("admMoments reports NA struct_sd for a transforming error model", {
   fit <- .make_mock_fit()
   fit$env$admExtra$studies <- list(
@@ -881,13 +945,13 @@ test_that(".admCovResidData is one row per SOURCE per position on THIS axis", {
   # two positions, each pair differing only in a covariate that facet is not
   # about, and each carrying half its paper's n. The effect panel already marks
   # one position per source; this now matches it.
-  mk <- function(crcl, sex) list(
-    n = 50L, times = c(1, 2),
+  mk <- function(crcl, sex, src) list(
+    n = 50L, times = c(1, 2), .adm_source = src, .adm_strata_covs = "SEX",
     cov = list(CRCL = crcl, SEX = sex),
     cov_dist = list(SEX = list(.point = TRUE),
                     CRCL = list(meanlog = log(crcl), sdlog = 0.2)))
-  st <- list(a_s1 = mk(40, 0), a_s2 = mk(40, 1),
-             b_s1 = mk(90, 0), b_s2 = mk(90, 1))
+  st <- list(a_s1 = mk(40, 0, "a"), a_s2 = mk(40, 1, "a"),
+             b_s1 = mk(90, 0, "b"), b_s2 = mk(90, 1, "b"))
   ag <- stats::setNames(lapply(names(st), function(nm) list(
     obs  = list(E = c(1, 2)),
     pred = list(E = c(1.1, 2.1), V = diag(c(0.01, 0.04))))), names(st))
@@ -920,6 +984,12 @@ test_that("a source banded into quadrature nodes is ONE mark, not one per node",
     # the banded source: one point spec per node, n split between them
     stats::setNames(lapply(seq_along(nodes), function(k) list(
       n = 210 * wt[k], times = c(1, 2), cov = list(CRCL = nodes[k]),
+      # A stratum says whose it is and which covariate it is a NODE of. Without
+      # the second, nine nodes are indistinguishable from nine reported levels:
+      # the axis ticks on the quadrature grid and the source draws a dot per
+      # node, which is the defect this test is about, one step further back.
+      .adm_source = "mild", .adm_strata_covs = "CRCL",
+      .adm_node_covs = "CRCL",
       cov_dist = list(CRCL = list(.point = TRUE)))),
       paste0("mild_s", seq_along(nodes))),
     # a marginal source, which keeps the distribution it declared
