@@ -456,15 +456,8 @@ plots$mean_examplomycin
 plots$cov_examplomycin
 ```
 
-## Customising with ggplot2
-
-All returned objects are standard ggplot2 plots:
-
-```{r custom, fig.height=4, fig.cap="NLL trace with a custom theme."}
-plots$nll_trace +
-  ggplot2::theme_minimal(base_size = 13) +
-  ggplot2::labs(title = "Optimiser convergence", subtitle = NULL)
-```
+Every panel is an ordinary ggplot2 object, so `+ theme_minimal()` or
+`+ labs()` works as usual.
 
 ## See also
 

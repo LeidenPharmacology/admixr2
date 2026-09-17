@@ -450,14 +450,6 @@ crcl_med <- vapply(cohorts[c("normal", "mild", "moderate")],
 ```{r form-moments, include=FALSE}
 m_pow <- admMoments(fit,     n_sim = 300L)
 m_lin <- admMoments(fit_lin, n_sim = 300L)
-knitr::kable(data.frame(
-  form      = c("power (correct)", "linear"),
-  `max abs z` = c(max(abs(m_pow$z)), max(abs(m_lin$z))),
-  `obs/pred SD, worst` = c(max(abs(m_pow$obs_sd / m_pow$pred_sd - 1)),
-                           max(abs(m_lin$obs_sd / m_lin$pred_sd - 1))),
-  check.names = FALSE),
-  digits = 3, row.names = FALSE,
-  caption = "The wrong form roughly doubles the worst residual.")
 ```
 
 Three facets, and only one of them can say anything. `CRCL` separates the

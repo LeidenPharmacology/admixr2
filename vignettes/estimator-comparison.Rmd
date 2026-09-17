@@ -327,54 +327,8 @@ jumps where box constraints tighten are expected.
 | Need exact likelihood for AIC comparison across models | `admc`, `adgh`, or `adirmc` (not `adfo`) |
 | Maximum reproducibility, no MC noise | `adfo` or `adgh` (both deterministic) |
 
-## Control objects at a glance
-
-```{r control-summary, eval=FALSE}
-# Values shown are the package defaults.
-
-# adfo key arguments (fastest; linearised likelihood)
-adfoControl(
-  studies    = list(...),
-  grad       = "analytical", # "analytical", "none" (BOBYQA), "fd"
-  maxeval    = 500L,
-  n_restarts = 1L,
-  covMethod  = "r,s",        # sandwich SEs; "r" for the uncorrected Hessian
-  seed       = 12345L
-)
-
-# admc key arguments
-admControl(
-  studies    = list(...),
-  n_sim      = 5000L,        # MC sample count
-  grad       = "sens",       # gradient mode: "sens", "fd", "none"
-  n_restarts = 1L,           # number of optimizer restarts
-  workers    = 1L,           # parallel workers for restarts
-  covMethod  = "r,s",        # sandwich SEs; "r" for the uncorrected Hessian
-  seed       = 12345L
-)
-
-# adgh key arguments (noise-free quadrature; same likelihood scale as admc)
-adghControl(
-  studies    = list(...),
-  n_nodes    = 5L,           # nodes per eta dimension; total = n_nodes^n_eta
-  grad       = "analytical", # gradient mode: "analytical", "fd", "none"
-  n_restarts = 1L,
-  workers    = 1L,
-  covMethod  = "r,s",        # sandwich SEs; "r" for the uncorrected Hessian
-  seed       = 12345L
-)
-
-# adirmc key arguments
-adirmcControl(
-  studies         = list(...),
-  n_sim           = 2500L,
-  phases          = c(2, 1, 0.5, 0.01),  # box constraint half-widths per phase
-  omega_expansion = 1,                   # > 1 inflates the proposal Omega
-  grad            = "analytical",        # "analytical", "none", "fd"
-  kappa_method    = "exact",             # "exact", "linearized", "linearized_gh"
-  seed            = 12345L
-)
-```
+Every argument, with its default, is in `?adfoControl`, `?admControl`,
+`?adghControl` and `?adirmcControl`.
 
 ## See also
 

@@ -34,7 +34,6 @@ to means and covariances, so a digitised figure is a fittable dataset. Two steps
 library(admixr2)
 library(rxode2)
 library(nlmixr2)
-library(ggplot2)
 
 ev <- rxode2::et(amt = 100, cmt = "central")   # single 100-unit dose, shared throughout
 ```
@@ -233,20 +232,19 @@ they did not — here, two separate figures.
 
 ### Model against data
 
-One fit now describes both compartments. Below, the observed summaries (points,
-mean ± SD) sit under the fitted population prediction — the mean curve and the
-±SD band implied by the estimated between-subject variability, over 1000
-simulated subjects with residual error excluded.
+`plot()` draws observed against predicted for each observed output, one panel
+per compartment:
 
-```{r brain-plot, fig.height = 4.6}
-# 1. Pull the fitted estimates from the fit (standard nlmixr2 accessors).
-theta <- fit_cns$theta   # fixed effects (tcl, tv1, tqin, tqout, residuals)
-omega <- fit_cns$omega   # between-subject covariance (rows/cols already named)
+```{r plot-fit, fig.width = 7, fig.height = 3.2}
+plot(fit_cns, which = "mean")
+```
 
-# 2. Simulate the fitted population. We solve a plain, residual-free copy of the
-#    model so the band shows between-subject variability alone -- and because a
-#    multi-endpoint fit can only be re-solved with per-endpoint DVID/CMT tags,
-#    whereas this gives cp and cb directly.
+For a figure of your own, re-solve a residual-free copy of the model over the
+estimated `Omega` -- the band is then between-subject variability alone, and a
+plain rxode2 model gives `cp` and `cb` directly, where a multi-endpoint fit can
+only be re-solved with per-endpoint `DVID`/`CMT` tags:
+
+```{r brain-sim, eval = FALSE}
 sim_model <- rxode2::rxode2({
   cl <- exp(tcl + eta.cl); v1 <- exp(tv1 + eta.v1)
   qin <- exp(tqin); qout <- exp(tqout); vb <- 5
@@ -255,71 +253,15 @@ sim_model <- rxode2::rxode2({
   cp <- central / v1
   cb <- brain / vb
 })
-grid <- seq(0.25, 13, by = 0.25)
-sim  <- rxode2::rxSolve(sim_model,
-  params = theta[c("tcl", "tv1", "tqin", "tqout")],
-  omega  = omega, nSub = 1000L,
-  events = ev |> rxode2::et(grid), returnType = "data.frame")
-
-# 3. Summarise model and data as mean +/- SD per time, per compartment.
-band <- function(value)
-  data.frame(time = sort(unique(sim$time)),
-             mean = tapply(value, sim$time, mean),
-             sd   = tapply(value, sim$time, sd))
-
-pred <- rbind(cbind(compartment = "Plasma", band(sim$cp)),
-              cbind(compartment = "Brain",  band(sim$cb)))
-obs  <- rbind(
-  data.frame(compartment = "Plasma", time = plasma_times, mean = plasma_mean, sd = plasma_sd),
-  data.frame(compartment = "Brain",  time = brain_times,  mean = brain_mean,  sd = brain_sd))
-
-# 4. Model (line + band) over data (points + error bars), coloured by compartment.
-pal <- c(Plasma = "#0072B2", Brain = "#D55E00")   # Okabe-Ito, colour-blind safe
-
-ggplot() +
-  geom_ribbon(data = pred,
-              aes(time, ymin = mean - sd, ymax = mean + sd, fill = compartment),
-              alpha = 0.15) +
-  geom_line(data = pred,
-            aes(time, mean, colour = compartment), linewidth = 1) +
-  geom_errorbar(data = obs,
-                aes(time, ymin = mean - sd, ymax = mean + sd, colour = compartment),
-                width = 0.4, linewidth = 0.6, show.legend = FALSE) +
-  geom_point(data = obs,
-             aes(time, mean, fill = compartment),
-             shape = 21, colour = "white", size = 3, stroke = 0.7) +
-  scale_colour_manual(values = pal, breaks = c("Plasma", "Brain")) +
-  scale_fill_manual(values = pal, guide = "none") +
-  scale_x_continuous(breaks = seq(0, 12, 2),
-                     expand = expansion(mult = c(0.01, 0.03))) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
-  coord_cartesian(ylim = c(0, NA), clip = "off") +
-  guides(colour = guide_legend(override.aes = list(linewidth = 1.4))) +
-  labs(x = "Time (h)", y = "Concentration (mg/L)",
-       title = "Fitted population prediction vs. observed data",
-       subtitle = "Line + band: model (mean ± SD)   ·   Points + bars: data (mean ± SD)",
-       colour = NULL) +
-  theme_minimal(base_size = 12) +
-  theme(
-    legend.position = "top",
-    legend.justification = "left",
-    legend.margin = margin(b = 2),
-    plot.title = element_text(face = "bold", size = 13),
-    plot.subtitle = element_text(colour = "grey40", size = 9, margin = margin(b = 9)),
-    axis.title = element_text(colour = "grey25"),
-    axis.title.x = element_text(margin = margin(t = 6)),
-    axis.title.y = element_text(margin = margin(r = 6)),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank(),
-    panel.grid.major.y = element_line(colour = "grey90", linewidth = 0.4),
-    plot.margin = margin(12, 16, 10, 12)
-  )
+rxode2::rxSolve(sim_model, params = fit_cns$theta[c("tcl", "tv1", "tqin", "tqout")],
+                omega = fit_cns$omega, nSub = 1000L,
+                events = ev |> rxode2::et(seq(0.25, 13, by = 0.25)))
 ```
 
-The prediction tracks both compartments. Now the payoff, read straight off the
-estimates:
+Now the payoff, read straight off the estimates:
 
 ```{r kp}
+theta <- fit_cns$theta
 Kp_uu <- exp(theta[["tqin"]]) / exp(theta[["tqout"]])
 round(Kp_uu, 2)
 ```
@@ -328,15 +270,6 @@ round(Kp_uu, 2)
 plasma concentration. This is why the brain data was needed at all — with plasma
 alone `qin` and `qout` are not separately identifiable, and `Kp,uu` cannot be
 estimated.
-
-### Built-in diagnostics
-
-That overlay was assembled by hand for a custom figure. You don't have to:
-`plot()` draws observed-vs-predicted panels directly, one per observed output.
-
-```{r plot-fit, fig.width = 7, fig.height = 3.2}
-plot(fit_cns, which = "mean")
-```
 
 ## Notes
 
