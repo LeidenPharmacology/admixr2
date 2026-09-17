@@ -72,12 +72,9 @@ print.admFit <- function(x, ...) {
   saved_cl <- class(x)
   on.exit(tryCatch(class(x) <- saved_cl, error = function(e) NULL), add = TRUE)
 
-  # getS3method(), not get(..., envir = asNamespace("nlmixr2est")).
-  # print.nlmixr2FitCore is NOT exported, so reaching into the namespace for it is
-  # semantically a ::: call that merely evades R CMD check's syntactic scan -- and
-  # it carries the same fragility the no-::: policy exists to avoid. It IS
-  # registered as an S3 method, so the method lookup is the supported public route
-  # to the same function.
+  # getS3method(), not get(..., envir = asNamespace(...)): print.nlmixr2FitCore is
+  # not exported, so reaching into the namespace is a ::: call in all but syntax.
+  # It IS registered as an S3 method, so method lookup is the supported route.
   fn <- utils::getS3method("print", "nlmixr2FitCore")
   class(x) <- class(x)[class(x) != "nlmixr2FitData"]
   fn(x, ...)
@@ -100,9 +97,9 @@ print.admFit <- function(x, ...) {
 # Called by print.nlmixr2FitCore when it ends its console branch with
 # print(head(x)). Unlike rmarkdown's print.paged_df, this method is not in
 # nlmixr2est's import chain, so S3 dispatch falls through to admixr2's method
-# table and finds us first -- which is the supported way to intercept this path,
-# and the reason no namespace mutation is needed (see #58).
-# Converts to a plain data frame before head() to avoid .subset2(env, integer).
+# table and finds us first -- the supported way to intercept this path, with
+# no namespace mutation needed (see #58). Converts to a plain data frame
+# before head() to avoid .subset2(env, integer).
 #' @method head admFit
 #' @export
 head.admFit <- function(x, n = 6L, ...) {
@@ -123,20 +120,10 @@ head.paged_df <- function(x, n = 6L, ...) {
   NextMethod()
 }
 
-## Shared display spec for parameter-trace rendering.
-##
-## Returns the per-parameter display names, optimizer-scale -> natural-scale
-## back-transforms, and iniDf-driven facet order used by both the custom
-## `plot(fit, which = "par")` panel and the nlmixr2 `traceplot()` bridge
-## (`.admBuildParHistData`). Keeping this in one place ensures both renderings
-## label and scale parameters identically.
-##
-## - struct thetas: back-transformed via `ui$muRefCurEval` transform
-## - omega diagonal (`log(Omega_ii)`): `exp()` -> variance, labelled `V(eta)`
-## - omega off-diagonal (raw `L[i,j]`): identity, labelled `eta_i,eta_j`
-## - sigma (`log(sigma^2)`): `exp(v/2)` -> SD
-##
-## Returns `NULL` when `pinfo` or `par_names` is unavailable.
+## Shared display spec for parameter-trace rendering: display names,
+## optimizer -> natural-scale back-transforms, and iniDf facet order. Shared
+## between `plot(fit, which = "par")` and the traceplot() bridge so both
+## label/scale identically. NULL if `pinfo` or `par_names` is unavailable.
 .admTraceDisplaySpec <- function(pinfo, par_names, iniDf = NULL) {
   if (is.null(pinfo) || is.null(par_names)) return(NULL)
 
@@ -185,25 +172,11 @@ head.paged_df <- function(x, n = 6L, ...) {
   list(disp_nms = disp_nms, back_fns = back_fns, param_order = param_order)
 }
 
-## Build a nlmixr2-style `parHistData` frame from collected optimizer traces.
-##
-## nlmixr2's `traceplot()` generic reads `fit$parHistStacked`, which
-## `nmObjGet.parHistStacked` derives from `fit$env$parHistData` -- a wide data.frame
-## with a `type` column (it keeps `type == "Unscaled"`), an `iter` column, and one
-## column per parameter. Populating that slot is all `traceplot(fit)` needs; no S3
-## registration, because admFit already inherits `nlmixr2FitCore`.
-##
-## Semantics chosen here:
-## - single chain = the best restart (lowest final NLL); nlmixr2's shape stores one
-##   value per parameter per iter, so multi-restart overlay is not expressible --
-##   that stays in `plot(fit, which = "par")`.
-## - natural scale under `"Unscaled"`, using the same back-transforms and display
-##   names as the custom par panel (`.admTraceDisplaySpec`).
-## - no burn-in marker: `parHist`'s class carries no `niter` attribute, so
-##   `traceplot()` draws no vline.
-##
-## The `iter` axis indexes improving optimizer evaluations, not raw nloptr
-## iterations. Returns `NULL` when no usable trace is available.
+## Builds the `parHistData` frame nlmixr2's `traceplot()` reads via
+## `nmObjGet.parHistStacked` (`fit$env$parHistData`: wide data.frame, `type`
+## column kept at "Unscaled", `iter`, one column per parameter). Single chain
+## = best restart (lowest final NLL); multi-restart overlay stays in
+## `plot(fit, which = "par")`. NULL when no usable trace exists.
 .admBuildParHistData <- function(all_traces, par_names, ui) {
   if (is.null(all_traces) || length(all_traces) == 0L || is.null(par_names))
     return(NULL)
@@ -244,35 +217,21 @@ head.paged_df <- function(x, n = 6L, ...) {
              stringsAsFactors = FALSE)
 }
 
-## Attach a nlmixr2-style `parHistData` slot to a freshly constructed admFit when
-## a usable trace is available. Shared by the admc/adfo/adgh/adirmc estimators so the
-## binding logic lives in one place. A `NULL` build result must not be bound --
-## `env$x <- NULL` still satisfies `exists()` and would leave a stale slot that
-## `nmObjGet.parHistStacked` treats as present -- so we guard on non-NULL.
-## `fit$env` is an environment, so the assignment is in place.
+## Attaches `parHistData` when a usable trace exists. `env$x <- NULL` still
+## satisfies `exists()`, which `nmObjGet.parHistStacked` would treat as
+## present, so guard on non-NULL rather than always assigning.
 .admAttachParHist <- function(fit, all_traces, par_names, ui) {
   ph <- .admBuildParHistData(all_traces, par_names, ui)
   if (!is.null(ph)) fit$env$parHistData <- ph
   invisible(fit)
 }
 
-## Observed and predicted aggregate moments per study.
-##
-## Runs one MC simulation per study at the fitted parameters -- using the same
-## quasi-random sampling and residual-error (sigma) handling as the diagnostic
-## mean/cov panels -- and returns, per study, the observed and predicted mean
-## vector `E` and (co)variance matrix `V`. Shared by `plot.admFit()` (mean/cov
-## panels) and `.admAttachAggData()` (the fit's `aggData` slot) so the two never
-## disagree.
-##
-## Returns a named list, one entry per study. Each entry is `NULL` when the
-## simulation model is unavailable or the study simulation failed, otherwise:
-##   list(times = <numeric>, n = <int>,
-##        obs  = list(E = <named numeric>, V = <matrix>),
-##        pred = list(E = <named numeric>, V = <matrix>))
-## The observation times label `E` (names) and `V` (dimnames). `warn = TRUE`
-## emits the user-facing warnings used on the interactive plot path; the fit
-## attachment path passes `warn = FALSE` so a non-simulable fit stays quiet.
+## Observed and predicted aggregate moments per study: one MC simulation per
+## study at the fitted parameters, using the same sampling/residual handling
+## as the diagnostic mean/cov panels. Shared by `plot.admFit()` and
+## `.admAttachAggData()` so the two never disagree. Returns a named list, one
+## entry per study, NULL when unsimulable, else `list(times=, n=, obs=list(E=,
+## V=), pred=list(E=, V=))`.
 .admAggData <- function(extra, ui, n_sim = NULL, seed = 1L, warn = TRUE) {
   studies   <- extra$studies
   n_sim     <- n_sim %||% extra$n_sim %||% 5000L
@@ -291,17 +250,11 @@ head.paged_df <- function(x, n = 6L, ...) {
               call. = FALSE)
     return(empty)
   }
-  # Detect the simulation output variable (e.g. "ipredSim" for linCmt models)
-  # rather than assuming "cp" -- matches the detection used on the fit path.
+  # Detect the sim output var (e.g. "ipredSim" for linCmt) as the fit path does.
   out_var <- tryCatch(.admOutputVar(ui), error = function(e) "cp")
-  # Re-parse the ui so the plotted bands use exactly the fit's residual error
-  # model (per-endpoint spec, error form, sigma roles). Falls back to a
-  # name-based guess only when the ui cannot be parsed.
-  #
-  # suppressWarnings: this is a RE-parse of a ui that was already parsed (and
-  # already warned about) at fit time, so .admBuildResidSpecs()'s advisory
-  # warnings -- e.g. an estimated t(nu) being non-identifiable from aggregate
-  # data -- would otherwise be re-emitted on every plot() as if they were new.
+  # Re-parse ui for the fit's exact residual model; falls back to a name-based
+  # guess if unparsable. suppressWarnings: this re-parse would otherwise
+  # re-emit .admBuildResidSpecs()'s fit-time advisory warnings on every plot().
   pinfo_r <- tryCatch(suppressWarnings(.admParseIniDf(ui$iniDf, ui)),
                       error = function(e) NULL)
   if (is.null(pinfo_r))
@@ -309,14 +262,12 @@ head.paged_df <- function(x, n = 6L, ...) {
                     sigma_output  = rep(NA_character_, length(sv)),
                     sigma_is_prop  = as.list(grepl("prop",  sig_nms, ignore.case = TRUE)),
                     sigma_is_lnorm = as.list(grepl("lnorm", sig_nms, ignore.case = TRUE)))
-  # No cov_map is rebuilt here: every study uses the plain Omega and carries its
-  # covariates as per-row data or as a shifted eta column, neither of which
-  # needs one. .admStudyCovRows() still needs n_eta, so that stays.
+  # No cov_map rebuilt: covariates ride as per-row data or a shifted eta
+  # column, neither needing one. .admStudyCovRows() still needs n_eta.
   if (is.null(pinfo_r$n_eta)) pinfo_r$n_eta <- n_eta
-  # .admParseIniDf() carries no resid_nodes -- only the DRIVERS set it, from the
-  # control. Restore the count the fit actually used, or the diagnostics rebuild
-  # V_pred on the 81-node default and a fit run with resid_nodes = 31L (or 201L)
-  # is diagnosed against a different model than it was fitted with.
+  # .admParseIniDf() carries no resid_nodes (only the drivers set it from
+  # control); restore the fit's actual count or V_pred rebuilds on the 81-node
+  # default and is diagnosed against a different model than it was fitted with.
   pinfo_r$resid_nodes <- extra$resid_nodes %||% .ADM_TBS_NODES
   sig_output <- pinfo_r$sigma_output
 
@@ -339,20 +290,13 @@ head.paged_df <- function(x, n = 6L, ...) {
     } else {
       eta_mat <- matrix(0, nrow = n_sim, ncol = 0)
     }
-    # ... and on the general path every simulated subject carries its own
-    # covariate value. Without this the solve succeeds AT THE COVARIATE MEAN and
-    # the residual is composed onto a var_f with the covariate spread removed,
-    # while the OBSERVED V in the same panel still carries it: predicted
-    # covariances measured 29-35% low and off-diagonals 61% low on an audited
-    # model, i.e. structured standardised residuals for a fit that is fine.
-    # .admStudyCovRows() draws nothing unless the path is "rows", so any study
-    # routed some other way solves at the covariate MEAN here even though it
-    # declares a distribution -- every panel for it then describes a model with
-    # no covariate spread at all. The estimators are entitled to their own
-    # reduction; this draw is not, because its etas are ordinary draws from
-    # Omega rather than whatever the reduction re-aimed them onto. The general
-    # per-row representation is always valid, just slower, and cost does not
-    # matter for one diagnostic draw, so force it for anything with a cov_dist.
+    # Force the general per-row path for ANY study with a cov_dist. This draw's
+    # etas are ordinary Omega draws, not whatever a reduction re-aimed them
+    # onto, and .admStudyCovRows() draws nothing unless the path is "rows" -- so
+    # a study routed some other way solves at the covariate MEAN while the
+    # observed V in the same panel still carries the spread: measured 29-35% low
+    # predicted covariances (61% off-diagonal). The old `"shift"` guard went
+    # with the path it named; "rows" is the only path now.
     if (!is.null(s[["cov_dist"]])) s$.adm_cov_path <- "rows"
     s <- tryCatch(.admStudyCovRows(s, pinfo_r, nrow(eta_mat)),
                   error = function(e) s)
@@ -366,17 +310,13 @@ head.paged_df <- function(x, n = 6L, ...) {
                                       dimnames = list(NULL, col_nms)))
     params_df[, rxerr_nms] <- 1
     tryCatch(
-      # A joint unit's outputs share one set of etas and are stacked into one
-      # vector; .admSimulate() solves a single output, so it returned the first
-      # endpoint's trajectory for every row. Same shared-eta solve the estimators
-      # use, for the same unit.
-      # sigdig: the tolerance the FIT solved at (extra$sigdig), not rxode2's
-      # default. Without it the predicted-mean, residual and predicted-covariance
-      # panels are computed from a different integration than the objective was
-      # minimised on, and the standardised-residual panel can show structure the
-      # fit never saw -- an artefact that moves with sigdig and disappears when
-      # it is NULL. NULL for a fit made before this field existed, which is
-      # exactly the previous behaviour.
+      # A joint unit stacks several endpoints on shared etas; .admSimulate()
+      # solves one output only (returned the first endpoint for every row), so
+      # route joint units through .admSimulateJoint() as the estimators do.
+      # sigdig: use the FIT's own tolerance (extra$sigdig), not rxode2's
+      # default, or the diagnostic panels integrate differently than the
+      # objective was minimised on and standardised residuals show artefactual
+      # structure. NULL for a fit predating this field (previous behaviour).
       if (isTRUE(s$is_joint))
         .admSimulateJoint(rxMod, extra$struct, sig_nms, eta_mat, s, params_df, 1L,
                           sigdig = extra$sigdig)
@@ -393,19 +333,16 @@ head.paged_df <- function(x, n = 6L, ...) {
   # mean, and the predicted E must carry that scaling just as the NLL does.
   .add_sigma <- function(V, mu, ov = out_var, times = NULL, phi = NULL,
                          cp = NULL) {
-    # beta: the precision is SOLVED and rides back on the simulated matrix. Every
-    # estimator patches it in; this path did not, so after a perfectly ordinary
-    # beta fit the predicted-covariance heatmap, the standardised-residual panels
-    # and the +-1 SD ribbon were all NA, silently.
+    # beta: precision is SOLVED and rides back on the simulated matrix (phi);
+    # every estimator patches it in, so this path must too, or the predicted
+    # panels and +-1 SD ribbon go silently NA after an ordinary beta fit.
     arr <- .admUnitResidRows(pinfo_r, ov, sv, length(mu), phi = phi)
-    # Without `times` + the structural covariance the off-diagonal forms (ar,
-    # ordinal) were dropped, so the predicted-covariance diagnostic panel showed
-    # an independent-residual V for exactly the models whose off-diagonal is the
-    # point of fitting them.
-    # Match the objective: a TBS endpoint composes at each DRAW, so what a
-    # diagnostic draws is what the fit was actually scored against. Needs the
-    # simulated matrix, which is why `cp` is threaded in; without it the panel
-    # falls back to the expansion, which is the previous behaviour.
+    # `times` + V feed the off-diagonal forms (ar, ordinal); without them the
+    # predicted-covariance panel shows independent-residual V for exactly the
+    # models whose off-diagonal is the point of fitting them.
+    # TBS composes at each DRAW to match the objective, so it needs the
+    # simulated matrix `cp`; without it, falls back to the expansion (previous
+    # behaviour).
     if (!is.null(cp)) {
       .ex <- .admResidNodeMomentsTBS(cp, rep(1, nrow(cp)), arr, times)
       if (!is.null(.ex)) return(list(V = .ex$V, mu = .ex$E))
@@ -419,13 +356,10 @@ head.paged_df <- function(x, n = 6L, ...) {
     cp_mat <- .sim_study(s)
     if (is.null(cp_mat)) return(NULL)
     mu     <- colMeans(cp_mat)
-    # A JOINT (same-subject, multi-output) unit stacks several endpoints into one
-    # mean vector, so a single `output` cannot describe its rows: passing one made
-    # .admResidRows() build the whole array from the FIRST endpoint's spec, and the
-    # diagnostic panels then showed a covariance the fit never used (plasma's
-    # prop() applied to the brain rows, and so on). Route it through
-    # .admJointResidual() -- the estimators' own per-row-output path -- rather than
-    # reconstructing the residual here for a second time.
+    # A joint unit's stacked mean vector spans several endpoints, so a single
+    # `output` can't describe its rows (.admResidRows() would build the whole
+    # array from the first endpoint's spec). Route through .admJointResidual(),
+    # the estimators' own per-row-output path.
     res    <- if (isTRUE(s$is_joint))
       .admJointResidual(mu, crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat),
                         s, pinfo_r, sv)
@@ -448,12 +382,9 @@ head.paged_df <- function(x, n = 6L, ...) {
   }), names(studies))
 }
 
-## Attach an `aggData` slot (observed + predicted aggregate moments per study) to
-## a freshly constructed admFit. Shared by the admc/adfo/adgh/adirmc estimators.
-## Computed at the fitted parameters with the fit's own `n_sim` and a fixed seed
-## so `fit$env$aggData` matches the default `plot(fit)` mean/cov panels. A failure
-## to simulate must not break fit construction, so the whole thing is guarded and
-## a `NULL`/all-NULL result simply leaves the slot unset.
+## Attach `aggData` (observed + predicted moments per study) at the fit's own
+## `n_sim`/seed=1 so it matches the default `plot(fit)` panels. Guarded: a
+## simulation failure must not break fit construction.
 .admAttachAggData <- function(fit, extra, ui, seed = 1L) {
   ad <- tryCatch(.admAggData(extra, ui, n_sim = extra$n_sim, seed = seed, warn = FALSE),
                  error = function(e) NULL)
@@ -1615,27 +1546,21 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
   studies  <- extra$studies
   n_sim    <- n_sim %||% extra$n_sim %||% 5000L
 
-  # The covariate residual panel reads the same predicted moments the mean and
-  # cov panels do, so asking for "covariate" alone still has to simulate.
-  # Which covariates earn a facet -- read off the studies, so it costs nothing
-  # and is known BEFORE deciding whether to simulate.
+  # Which covariates earn a facet. Read off the studies, so it costs nothing and
+  # is known BEFORE the decision to simulate.
   cov_nms <- if ("covariate" %in% which)
     .admCovPanelCovs(fit$env$ui, studies) else character(0)
   # The covariate RESIDUAL panel reads the same predicted moments the mean and
-  # cov panels do, so asking for "covariate" has to simulate -- but only when
-  # there is a covariate to plot. A fit that declares none would otherwise pay
-  # for a full n_sim simulation and then draw nothing with it.
+  # cov panels do, so "covariate" has to simulate -- but only when there IS a
+  # covariate, or a fit declaring none pays for a full n_sim run to draw nothing.
   need_sim_local <- any(c("mean", "cov") %in% which) || length(cov_nms) > 0L
-  # Observed + predicted aggregate moments per study (mean vector + cov matrix).
-  # Reuse the fit's stored `aggData` slot when it matches the requested n_sim/seed
-  # (avoids a redundant simulation); otherwise recompute via the shared helper.
+  # Reuse fit$env$aggData when it matches the requested n_sim/seed, else recompute.
   agg <- if (!need_sim_local) {
     setNames(vector("list", length(studies)), names(studies))
   } else {
     cached <- fit$env$aggData
-    # The stored slot was built at n_sim = extra$n_sim and seed 1L. Compare
-    # numerically (not via identical()) so a double n_sim -- e.g. plot(fit,
-    # n_sim = 5000) against a stored 5000L -- still hits the cache.
+    # Stored slot was built at n_sim = extra$n_sim, seed 1L. Compare numerically
+    # (not identical()) so e.g. n_sim = 5000 still hits a stored 5000L.
     if (!is.null(cached) &&
         isTRUE(n_sim == (extra$n_sim %||% 5000L)) && isTRUE(seed == 1L))
       cached

@@ -22,34 +22,18 @@
     p)
 }
 
-# The eta-scale representative of a paired struct theta -- the quantity whose
-# difference (p_new vs p_orig) is the IRMC importance-sampling mean-shift for that
-# theta's eta, and whose derivative is the gradient chain factor.
-#
-# It is p itself, for EVERY transform. A mu-reference is `param <- h(theta + eta)`, so
-# eta and theta enter h through the SAME argument: shifting theta by Delta is
-# identical to shifting eta's mean by Delta, because
-#   f(theta + Delta, eta) = h(theta + Delta + eta) = f(theta, eta + Delta)
-# regardless of h. The exact eta-shift is theta_new - theta_orig = p, its derivative
-# is 1, and the outer transform does not enter at all.
-#
-# The old switch returned log(back(p)), which equals p ONLY for exp. For
-# expit/probit it computed a natural-scale-log shift and for an additive theta
-# log(p); both were wrong -- the expit shift drove the adirmc objective ~140 -2LL
-# units off a few tenths from the proposal point, and the additive one went -Inf at
-# theta <= 0. (Kept as a named function rather than inlined because the C++
-# compute_mean_new kernel, .type_code and the gradient's d_logback_dp all mirror this
-# one definition.)
+# The IRMC importance-sampling mean-shift for a paired theta's eta is p itself,
+# for EVERY transform: a mu-reference is `param <- h(theta+eta)`, so
+# f(theta+Delta, eta) = f(theta, eta+Delta) regardless of h, and the derivative
+# is 1. The old switch returned log(back(p)), equal to p only for exp -- wrong
+# for expit/probit/additive (drove the objective ~140 -2LL units off).
 .admLogBackTransform <- function(p, tr) p
 
-# How many times each name appears in the model expressions.
-#
-# No model text (a hand-built mock ui in the Tier-1 tests) -> 1L, i.e. the
-# shared-eta guard below is simply not applied and muRefDataFrame is trusted as
-# before. A real rxUi always carries lstExpr, so this only affects mocks. (This
-# is the opposite of nlmixr2est's conservative 2L default: there an unknown case
-# costs one extra direction, here it would silently change struct_has_eta for
-# every mock-based unit test.)
+# How many times each name appears in the model expressions. No model text (a
+# Tier-1 mock ui) -> 1L, so the shared-eta guard below is not applied and
+# muRefDataFrame is trusted -- the opposite of nlmixr2est's conservative 2L
+# default, chosen because an unknown case there costs one extra direction, but
+# here it would silently change struct_has_eta for every mock-based test.
 .admNameOccurrence <- function(ui, nms) {
   if (length(nms) == 0L) return(setNames(integer(0), character(0)))
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
@@ -59,26 +43,15 @@
   setNames(vapply(nms, function(nm) sum(syms == nm), integer(1)), nms)
 }
 
-# The theta <-> eta mu-reference map, with SHARED etas removed.
+# The theta <-> eta mu-reference map, with SHARED etas removed. A mu-referenced
+# theta may reuse its eta's sensitivity column since d(pred)/d(theta) ==
+# d(pred)/d(eta) -- but that identity fails when the eta also appears in
+# another parameter, so such a theta is treated as unpaired instead.
 #
-# A mu-referenced theta may reuse its eta's sensitivity column, because theta and eta
-# enter the parameter identically: d(pred)/d(theta) == d(pred)/d(eta). That identity
-# FAILS if the eta also appears in another parameter (`eta.cl` in both `cl` and `v`):
-# d(pred)/d(eta.cl) then collects a path through `v` that d(pred)/d(tcl) does not
-# have. Such a theta is treated as unpaired and gets its own sensitivity direction,
-# which is always exact. In practice rxode2 already declines to mu-reference a shared
-# eta, so this mirrors nlmixr2est's equivalent guard; a false positive costs one
-# extra direction and stays exact.
-#
-# NULL means "no mu-reference information at all" -- the callers then keep their
-# historical fallbacks. A ZERO-ROW frame is different: it means the information
-# exists and says nothing is paired. Conflating the two makes struct_eta_idx fall
-# back to identity pairing, which would add the eta-path gradient on top of the theta
-# column -- double counting.
-# it means the information exists and says nothing is paired (a non-mu-referenced
-# model, or every pair dropped by the shared-eta guard). Conflating the two makes
-# struct_eta_idx fall back to identity pairing (eta j <-> struct j), which would
-# add the eta-path gradient on top of the theta column -- double counting.
+# NULL means "no mu-reference information at all" -- callers keep their
+# historical fallbacks. A ZERO-ROW frame means the information exists and says
+# nothing is paired. Conflating the two falls struct_eta_idx back to identity
+# pairing, double counting the eta-path gradient on top of the theta column.
 .admMuRefPairs <- function(ui) {
   if (is.null(ui)) return(NULL)
   mrd <- tryCatch(ui$muRefDataFrame, error = function(e) NULL)
@@ -98,14 +71,11 @@
   struct_rows <- theta_rows[!is_err & !theta_rows$fix, , drop = FALSE]
   sigma_rows  <- theta_rows[ is_err & !theta_rows$fix, , drop = FALSE]
 
-  # A FIXED omega is not supported. It is dropped from eta_rows here, so n_eta and
-  # omega_init no longer cover every eta index -- omega_init[neta1, neta1] then
-  # runs off the end of the matrix and the parse dies with a bare "subscript out of
-  # bounds". Worse, if it did not, the eta's variance would be silently EXCLUDED
-  # from the model rather than held at its fixed value, so the fit would quietly
-  # ignore that source of between-subject variability. Fail with something the user
-  # can act on instead. (Proper support means: keep the eta, hold its variance at
-  # the fixed value, and exclude only its Cholesky entries from the optimizer.)
+  # A FIXED omega is not supported. Dropping it from eta_rows would silently
+  # exclude that eta's variance from the model rather than hold it at its fixed
+  # value -- fail with something the user can act on instead. (Proper support
+  # means: keep the eta, hold its variance fixed, exclude only its Cholesky
+  # entries from the optimizer.)
   .eta_all <- iniDf[!is.na(iniDf$neta1), , drop = FALSE]
   if (any(.eta_all$fix)) {
     .fx <- unique(.eta_all$name[.eta_all$fix])
@@ -133,10 +103,9 @@
     for (r in seq_len(nrow(eta_rows))) {
       i <- eta_rows$neta1[r]; j <- eta_rows$neta2[r]
       if (i == j) {
-        # Store log(Omega_ii) = 2*log(L_ii), NOT log(L_ii).
-        # With log(L_ii), a unit optimizer step changes Omega_ii by 2*Omega_ii (chain rule x2),
-        # making IS weights 2x more sensitive per LBFGS step -> fast IS degeneracy in IRMC.
-        # log(Omega_ii) gives unit step -> Omega_ii change of Omega_ii, matching adm reference behavior.
+        # log(Omega_ii) = 2*log(L_ii), NOT log(L_ii): with log(L_ii) a unit
+        # optimizer step changes Omega_ii by 2*Omega_ii (chain rule x2), making
+        # IS weights 2x too sensitive per LBFGS step -> fast IS degeneracy in IRMC.
         omega_par       <- c(omega_par, 2 * log(L_init[i, i]))
         omega_par_names <- c(omega_par_names, paste0("logchol_", eta_names[i]))
         chol_i <- c(chol_i, i); chol_j <- c(chol_j, j); chol_diag <- c(chol_diag, TRUE)
@@ -180,18 +149,12 @@
   sigma_names <- sigma_rows$name
 
   # `pow(b, c)` emits TWO iniDf rows: the coefficient (err "pow") and the
-  # EXPONENT (err "pow2"). The exponent is not a variance -- it must not be
-  # squared, floored at zero, or reported as an SD -- so it carries its own
-  # optimizer role and an identity transform. See .admSigmaRole()/.admSigmaNat().
-  # A t() degrees-of-freedom row is likewise not a variance: it is estimated as
-  # log(nu - 2) so nu stays > 2 (see .admSigmaRole()).
-  # ar()'s correlation is likewise not a variance: estimated on the logit scale
-  # so rho stays inside (0,1), which is where rxode2 defines it.
-  # A boxCox/yeoJohnson LAMBDA is not a variance either -- and unlike nu or rho it
-  # must be allowed to be zero or negative (lambda = 0 IS the log transform, and
-  # Yeo-Johnson is defined for lambda < 0), so it is estimated unconstrained on
-  # the identity scale. Defaulting it to "var" silently squared it (exp(2*log(l))
-  # = l^2) and made its gradient wrong by exactly 1/l.
+  # EXPONENT (err "pow2"), which is not a variance -- must not be squared,
+  # floored at zero, or reported as an SD -- so it gets its own role and an
+  # identity transform (.admSigmaRole()/.admSigmaNat()). Likewise t() df is
+  # log(nu-2) so nu stays > 2, ar()'s correlation is logit-scale so rho
+  # stays in (0,1), and a boxCox/yeoJohnson lambda is unconstrained
+  # identity-scale since it must allow zero/negative.
   sigma_role <- setNames(
     ifelse(.err_vals %in% .ADM_ERR_POW_EXP, "pow_exp",
            ifelse(.err_vals %in% .ADM_ERR_T, "t_df",
@@ -399,24 +362,10 @@ covariance for admixr2 to match"),
 # - sigma: 1 (log(sigma^2) encoding self-normalizing).
 # - omega diagonal: 1 (log(Omega_ii) encoding self-normalizing).
 # - omega off-diagonal: pmax(|L_ij_init|, 0.1) (raw L values need magnitude scaling).
-# Are these unpacked parameters usable at all?
-#
-# A NON-FINITE parameter cannot produce a finite objective, but it CAN be handed to
-# rxSolve, which then integrates garbage: the covariance probe legitimately perturbs
-# a sigma to exp(1e5/2) = Inf, and lsoda answers with ~120k `intdy -- t = <denormal>
-# illegal` warnings before the caller's finite-check rejects the result anyway.
-# Rejecting it up front costs one comparison and keeps the console readable.
-#
-# This lived INLINE at eight sites, each carrying a ~10-line comment explaining that
-# it could not be a shared predicate because these run inside mirai daemons, "where
-# assignInNamespace can replace a binding but not ADD one".
-#
-# That rationale is obsolete, and it was this branch that obsoleted it:
-# .admDaemonRestart() now builds a patch environment parented on the namespace and
-# re-parents every patched closure onto it, so new and existing names resolve alike.
-# Pinned by test-integration-daemon-patch.R, which runs in a real daemon.
-#
-# NULL `pars` (an .admUnpack that threw) is folded in.
+
+# Are these unpacked parameters usable at all? A non-finite parameter can still
+# be handed to rxSolve, which then integrates garbage -- reject up front
+# instead. NULL `pars` (an .admUnpack that threw) is folded in.
 .admParsFinite <- function(pars, pinfo) {
   !is.null(pars) &&
     all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&

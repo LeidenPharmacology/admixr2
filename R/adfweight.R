@@ -2,60 +2,37 @@
 # ADF weight matrix -- the sampling law of the reported summary
 # =============================================================================
 #
-# The aggregate objective scores (ybar, V) as if it were the
-# log-likelihood of N iid draws from N(yt, Vt), exact only when each
-# subject's observation vector is multivariate normal -- and it
-# isn't: y_i = f(theta, a_i, b_i) + eps_i with f nonlinear in b_i
-# makes the marginal a mixture. Nonlinearity in the random effect
-# alone is enough; the covariate isn't what breaks it.
-#
-# Point estimates are unaffected: the score is
-# -2 (dtau/dPsi)' W^-1 (t - tau) and E[t] = tau at the true Psi for
-# ANY W (Gourieroux-Monfort-Trognon). What it costs is the reported
-# UNCERTAINTY:
-#
-#   Cov(V_ij, V_kl)   assumed (V_ik V_jl + V_il V_jk)/N   true (mu4 - V V)/N
-#   Cov(ybar, vech V) assumed 0                           true mu3/N
-#
-# The first is mis-sized by the excess kurtosis; the second is a
-# zero where a real 0.3-0.6 correlation sits (sample mean and
-# covariance are only independent under multivariate normality).
+# The aggregate objective scores (ybar, V) as if it were the log-likelihood
+# of N iid draws from N(yt, Vt), exact only when each subject's observation
+# vector is multivariate normal -- and it isn't: y_i = f(theta, a_i, b_i) +
+# eps_i with f nonlinear in b_i makes the marginal a mixture. Point estimates
+# are unaffected (E[t] = tau at the true Psi for ANY W); what it costs is the
+# reported UNCERTAINTY, e.g. Cov(ybar, vech V) assumed 0 but truly mu3/N.
 #
 # So score t = (ybar, vech V) against its own asymptotic law: Browne's ADF
 # estimator, with Omega computed FROM THE MODEL rather than the sample --
-# removing ADF's small-sample failure, since a sample fourth moment needs
-# enormous N. tau(Psi) is unchanged; only the scoring changes.
+# removing ADF's small-sample failure. tau(Psi) is unchanged; only the
+# scoring changes.
 
 # Conditional central moments of the residual at every node, per timepoint.
 #
-# The node ensemble carries f; given the node the residual is a draw from the
-# endpoint's own distribution with that node's f as its mean parameter. What the
-# weight needs from it is the 2nd, 3rd and 4th CENTRAL moments -- the expansion below
-# is exact for any residual that is independent across timepoints given the node, not
-# only a normal one. Returns three Q x m matrices matching `cp`, or NULL when the
-# family cannot supply them.
-#
-# Under normality t3 = 0 and q4 = 3 d^2 and the extra terms vanish identically, so
-# add/prop/pow/combined stay bit-for-bit what they were. lnorm does NOT: its
-# conditional law is lognormal, and treating it as normal understated the fourth
-# moment by exactly the lognormal excess kurtosis.
-#
-# Dispatch is PER ROW. A single unit has one form today, but keying the whole matrix
-# off `form[[1]]` is a trap that costs nothing to avoid.
+# What the weight needs is the 2nd, 3rd and 4th CENTRAL moments -- exact
+# for any residual independent across timepoints given the node, not only
+# a normal one. Returns three Q x m matrices matching `cp`, or NULL when
+# the family can't supply them. Dispatch is PER ROW: a single unit has one
+# form today, but keying the whole matrix off `form[[1]]` is a trap that
+# costs nothing to avoid.
 .admAdfCondMom <- function(cp, arr) {
   Q <- nrow(cp); m <- ncol(cp)
   # ar() correlates the residual ACROSS timepoints, so the products below no
   # longer factor and every cross term the expansion drops is real.
   if (any(!is.na(arr$rho))) return(NULL)
   d <- t3 <- q4 <- matrix(NA_real_, Q, m)
-  # The conditional MEAN, filled only by the forms whose mean is NONLINEAR in the
-  # structural prediction -- which is TBS and nothing else. Everywhere else the
-  # mean is ms * f for a constant ms (f for combined1/2 and pois, f exp(sv/2) for
-  # lnorm, size * f for binom, mu for nbinomMu and beta), so centring the nodes
-  # and scaling by ms is EXACT and .admAdfParts keeps doing that. Leaving m1 NULL
-  # there is what makes this change bit-identical for every existing family
-  # rather than a re-derivation of six conditional means that could disagree with
-  # the objective's.
+  # The conditional MEAN, filled only by forms whose mean is NONLINEAR in the
+  # structural prediction (TBS only). Everywhere else the mean is ms * f for
+  # a constant ms, so centring the nodes and scaling by ms is EXACT and
+  # .admAdfParts keeps doing that -- this keeps the change bit-identical for
+  # every existing family.
   m1 <- NULL
   col <- function(x, j) if (length(x) == 1L) x else x[[j]]
   for (j in seq_len(m)) {
@@ -73,9 +50,7 @@
         t3[, j] <- 0; q4[, j] <- 3 * v^2
       } else {
         # Student-t, folded in as vmul = nu/(nu-2). Symmetric, so t3 = 0; the
-        # fourth moment needs nu > 4 and there is nothing sensible to return
-        # below that -- a t_3 residual has no finite kurtosis, so the sampling
-        # law of the reported V does not have the variance the weight is made of.
+        # fourth moment needs nu > 4 -- a t_3 residual has no finite kurtosis.
         nu <- 2 * vm / (vm - 1)
         if (!is.finite(nu) || nu <= 4) return(NULL)
         t3[, j] <- 0; q4[, j] <- 3 * v^2 * (nu - 2) / (nu - 4)
@@ -119,26 +94,11 @@
         d[, j] <- v; t3[, j] <- sk * v^1.5; q4[, j] <- ku * v^2
       },
       "3" = {                                          # TBS, by quadrature
-        # boxCox / yeoJohnson / logitNorm / probitNorm. Conditionally independent
-        # across timepoints like every other form here, so the expansion applies;
-        # what it needed was the third and fourth central moments, which
-        # .admTBSCentral() takes off the SAME node set the objective's mean and
-        # variance come from.
-        #
-        # The sd is derived by .admTBSSd(), the function .admTBSRow() uses, so the
-        # law conditioned on here is the law the objective composes V_pred from
-        # rather than a second reading of `ftr`/`c1`/`cc`.
-        # Accessed exactly as .admResidDeriv() accesses them: single-bracket, and
-        # `tbs_ftr`/`tbs_c1` guarded for NULL, which they are on a row that never
-        # went through the TBS builder.
-        #
-        # t() folds nu/(nu-2) into a2/b2, exact for the combined forms because only
-        # the residual's VARIANCE enters there. It is not exact here: this branch
-        # integrates g() over the conditional law, so a t-distributed error is not
-        # an inflated-sd normal one and the moments returned would be a normal's.
-        # There is no closed form once the transform is applied, so refuse and let
-        # the fit report "r". The OBJECTIVE keeps composing it as an inflated-sd
-        # normal, which is what it has always done -- see .admTBSRow().
+        # boxCox / yeoJohnson / logitNorm / probitNorm: third/fourth central
+        # moments come from .admTBSCentral() off the SAME node set (and the
+        # SAME .admTBSSd()) the objective composes V_pred from. t() has no
+        # closed form once the transform is applied, so refuse and let the
+        # fit report "r".
         vmj <- col(arr$vmul, j)
         if (!is.null(vmj) && !isTRUE(all.equal(vmj, 1))) return(NULL)
         lam <- arr$lam[j]; yjc <- arr$yj[j]
@@ -171,16 +131,12 @@
 
 # Which timepoints the OBJECTIVE's residual variance is exact at.
 #
-# pow()/combined() compose E_eta[Var(y|eta)] as a2 + b2 E[f^2c] (plus a cross term
-# for combined1), and .admMomF supplies E[f^k] from (mu, var_f) by a second-order
-# delta expansion that is EXACT only at k = 1 and k = 2. Everywhere else it is a
-# truncation -- reached by pow()/combined() with an exponent outside {0.5, 1}.
-#
-# .admAdfCondMom, by contrast, evaluates b2 |f|^2c AT EVERY NODE, so its node average
-# is the exact integral. Both are defensible readings of the same model and they are
-# not equal (9e-05 relative at c = 0.75, rising to 2.5e-02 at c = 1.5 with omega = 1,
-# against 8e-16 at c = 0.5 and c = 1). See .admAdfAlignDv for why that gap has to be
-# closed rather than tolerated.
+# pow()/combined() compose E_eta[Var(y|eta)] as a2 + b2 E[f^2c] (plus a cross
+# term for combined1), and .admMomF supplies E[f^k] from (mu, var_f) by a
+# second-order delta expansion, EXACT only at k = 1 and k = 2 -- a truncation
+# for any other exponent. .admAdfCondMom, by contrast, evaluates b2 |f|^2c
+# AT EVERY NODE, so its node average is the exact integral; see
+# .admAdfAlignDv for why that gap has to be closed.
 .admAdfMomExact <- function(arr, m) {
   col <- function(x, j) if (length(x) == 1L) x else x[[j]]
   vapply(seq_len(m), function(j) {
@@ -202,28 +158,17 @@
 
 # Make the weight's implied residual variance the one the objective composes.
 #
-# S is rebuilt from (C, Dv) by the law of total variance, and the
-# whole expansion downstream is scaled by it -- if S disagrees with
-# the V_pred that G is the cross-derivative of, the weight and
-# objective describe different laws and J = 2H fails at a
-# correctly-specified fit. On a pow(c = 1.5) model this showed up
-# as a reported "r,s" correction that was nothing but .admMomF's
-# truncation.
+# S is rebuilt from (C, Dv) by the law of total variance, and the whole
+# expansion downstream is scaled by it -- if S disagrees with the V_pred
+# that G is the cross-derivative of, the weight and objective describe
+# different laws and J = 2H fails at a correctly-specified fit. Rescale
+# each affected column's CONDITIONAL variance by the single factor that
+# puts its node average on the objective's E[Var(y|eta)] (not applied
+# where .admMomF is exact).
 #
-# THE OBJECTIVE IS WHAT OMEGA HAS TO DESCRIBE (as for TBS one branch
-# up): G is a derivative of the criterion actually minimised, so
-# reading moments from a second, more accurate composition breaks
-# the information equality by exactly the gap between the two --
-# rescale each affected column's CONDITIONAL variance by the single
-# factor that puts its node average on the objective's
-# E[Var(y|eta)] (not applied where .admMomF is exact).
-#
-# MULTIPLICATIVE, NOT A SHIFT: b2 |f|^2c at a pow() grid's outer
-# nodes runs down to 4e-08 while the gap to close is 2e-04, so a
-# constant drives those nodes' variance NEGATIVE. A factor
-# preserves sign and relative spread, which the third/fourth
-# moments are built from.
-#
+# MULTIPLICATIVE, NOT A SHIFT: a constant offset can drive an outer node's
+# variance NEGATIVE. A factor preserves sign and relative spread, which
+# the third/fourth moments are built from.
 .admAdfAlignDv <- function(cm, w, ev, arr) {
   if (is.null(cm) || is.null(cm$d) || is.null(ev)) return(cm)
   ex <- .admAdfMomExact(arr, ncol(cm$d))
@@ -231,13 +176,10 @@
   jj <- which(!ex)
   d0 <- cm$d[, jj, drop = FALSE]
   r  <- ev[jj] / as.numeric(crossprod(w, d0))
-  # A non-positive or non-finite ratio means the expansion and the node integral do
-  # not describe the same law at all -- .admMomF's near-zero cap can put ev below zero
-  # where the node integral cannot. Drop Dv and let the caller degrade to "r".
+  # A non-positive or non-finite ratio means the two don't describe the same
+  # law at all. Drop Dv and let the caller degrade to "r".
   if (!all(is.finite(r)) || any(r <= 0)) { cm$d <- NULL; return(cm) }
-  # The combined branch of .admAdfCondMom leaves t3 = 0 and sets q4 = kappa d^2
-  # for a CONSTANT kappa (3, or the Student-t kurtosis), so scaling q4 by r^2
-  # carries the same kappa through and is all the fourth moment needs.
+  # q4 = kappa d^2 for a CONSTANT kappa, so scaling by r^2 carries it through.
   cm$q4[, jj] <- sweep(cm$q4[, jj, drop = FALSE], 2L, r^2, "*")
   cm$d[, jj]  <- sweep(d0, 2L, r, "*")
   cm
@@ -249,11 +191,9 @@
 # contraction hoisted out of the q x q loop and is what runs; this one is the readable
 # statement of the expansion and the oracle the fast path is pinned against.
 #
-# `C` is the CENTRED conditional means (Q x m), `w` the node weights summing to one,
-# `Dv` the conditional residual variances (Q x m), `N` the subjects. The mu3 and mu4
-# blocks are Isserlis/Wick expansions at the node: given the node the residual is
-# normal with diagonal covariance Dv, so every odd pairing collapses and the even
-# ones are sums of products of C and Dv.
+# `C` is the CENTRED conditional means (Q x m), `w` the node weights summing to
+# one, `Dv` the conditional residual variances (Q x m), `N` the subjects. The
+# mu3/mu4 blocks are Isserlis/Wick expansions at the node.
 .admAdfWeight <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL) {
   w  <- w / sum(w)
   m  <- ncol(C)
@@ -312,15 +252,10 @@
 #   PD     = P' w Dv            A_j = C' (w Dv_j) C  one C-pair with one Dv
 #   B      = Dv' w Dv           the two-Dv terms
 #
-# Cost goes from O(q^2 Q) to O(m^3 Q + q^2), making the ceiling the
-# handoff quotes (m ~ 30, q = 465) reachable rather than theoretical.
-#
-# `var_only`: a `method = "var"` study only reports the mean block
-# plus the DIAGONAL of the covariance-summary block, so building
-# the full q = m(m+1)/2 vech is a quadratic waste -- T1/M3/M4 below
-# are q x q, so at m = 200 the full path allocates several ~3 GB
-# matrices for a 2m x 2m result. Restricting `ij` to the diagonal
-# makes q = m; every line below is generic in `ij`/`I`/`J`/`q`.
+# Cost goes from O(q^2 Q) to O(m^3 Q + q^2). `var_only`: a `method = "var"`
+# study only reports the mean block plus the DIAGONAL of the
+# covariance-summary block, so building the full q = m(m+1)/2 vech is a
+# quadratic waste -- restricting `ij` to the diagonal makes q = m.
 .admAdfWeightFast <- function(C, w, Dv, N, T3 = NULL, Q4 = NULL,
                               var_only = FALSE) {
   w  <- w / sum(w)
@@ -494,11 +429,6 @@
 # covMethod = "r"), which is why under correct specification J = 2H
 # and Avar collapses to 2 H^-1 by construction.
 #
-# AN EARLIER VERSION USED THE GLS SURROGATE and was wrong: it agrees
-# with F only ASYMPTOTICALLY (F is LINEAR in V, quadratic in ybar;
-# GLS is quadratic in both), so (G' Wn^-1 G)^-1 as the bread drifts
-# by terms in (t - tau) -- a ratio rising to 1.46 on log(om^2).
-#
 # The cross-derivative, from F = N( log|Vt| + tr(Vt^-1 V) + r' Vt^-1 r ):
 #
 #   dF/dybar = 2N Vt^-1 r
@@ -522,19 +452,8 @@
   if (is.null(Vi) || !all(is.finite(Vi))) return(NULL)
   # G IS EVALUATED AT tau, NOT AT THE OBSERVED SUMMARY, so the residual here is
   # identically zero. This line looks like an obvious omission and is not -- before
-  # "restoring" it, read algorithm/adf/HANDOFF-INFERENCE.md section 1.
-  #
-  # J is DEFINED as Var(S). Expanding the score about t = tau gives
-  # Var(S) = sum_s G_s Omega_s G_s' + O(N^-3/2) with G_s the derivative AT tau_s.
-  # Building G from the realised residual instead adds E[K delta Omega delta' K'], a
-  # quadratic form -- non-negative -- so J comes out biased UPWARD by O(1/N)
-  # (measured: +0.33% to +2.9%, positive in every cell). Removing it also cuts
-  # sd(c_hat) by 31-35%.
-  #
-  # This is NOT justified by test calibration -- both versions calibrate dOFV about
-  # equally well at these N, because the inflation is offset by terms of the same
-  # order, and that cancellation is a coincidence of sample size. It is justified by
-  # the definition of J.
+  # "restoring" it, read algorithm/adf/HANDOFF-INFERENCE.md section 1 (building
+  # G from the realised residual instead biases J upward by O(1/N)).
   #
   # `s` stays in the signature: s$method still selects the branch.
   p  <- length(dV)
@@ -572,14 +491,12 @@
 # The weight the OBJECTIVE implicitly uses -- the baseline the sandwich corrects
 # away from.
 #
-# For a `cov` study that is the normal-theory covariance of (ybar, vech V). For a
-# `var` study it is NOT the marginal of that: nll_var_cpp scores
+# For a `cov` study that is the normal-theory covariance of (ybar, vech V). For
+# a `var` study it is NOT the marginal of that: nll_var_cpp scores
 #   sum_i N( log v_i + V_ii/v_i + r_i^2/v_i )
-# which treats the m variances, and the m mean residuals, as INDEPENDENT, while the
-# true normal-theory marginal has Cov(V_ii, V_jj) = 2 V_ij^2 / N. So the var branch's
-# baseline is WORKING INDEPENDENCE, and that -- not kurtosis -- is the bulk of what
-# is wrong with it. Using the marginal here instead left eigen(J/2H) at 0.38 .. 3.26
-# rather than all ones, i.e. it described a weight the objective does not use.
+# which treats the m variances, and the m mean residuals, as INDEPENDENT. So
+# the var branch's baseline is WORKING INDEPENDENCE, not kurtosis -- using the
+# true marginal here instead left eigen(J/2H) at 0.38..3.26 rather than all ones.
 .admWorkingWeight <- function(V, N, method) {
   if (!identical(method, "var")) return(.admAdfWeightNormal(V, N))
   v <- diag(V); m <- length(v)
@@ -594,25 +511,12 @@
 # Reference implementation until the analytic extraction (below) is
 # written. Differencing the MOMENTS rather than the objective keeps
 # it well conditioned, and it runs once, post-fit.
-#
-# `h` is only the FALLBACK step, used verbatim where it always was;
-# when `nll_fn` (the estimator's own objective, already in scope
-# for the Hessian FD) is supplied, the step is measured per
-# parameter by .admShi21Steps() instead, like every other FD in the
-# package -- the objective's noise level is still the right proxy
-# for how finely `p` can be perturbed, even differencing the MOMENTS.
-# still the right proxy for how finely `p` can be perturbed.
 .admMomentDeriv <- function(p_hat, pinfo, studies, rxMod, out_var, grid, cores,
                             h = 1e-5, mom_fn = NULL, nll_fn = NULL) {
-  # `mom_fn` is the ESTIMATOR's moment map, kept separate from the
-  # ensemble the weight is built on: G describes the objective that
-  # was minimised, Omega the law the data actually came from. They
-  # coincide for adgh. For adfo they do NOT -- adfo predicts
-  # V = J Omega J' + Sigma, an exactly-normal implied law, so
-  # scoring it against its own assumption would make the sandwich
-  # identically 2H^-1 and say nothing. Passing adfo's moment map
-  # here while keeping the quadrature ensemble for Omega is what
-  # makes the correction meaningful.
+  # `mom_fn` is the ESTIMATOR's moment map, kept separate from the ensemble
+  # the weight is built on: G describes the objective that was minimised,
+  # Omega the law the data actually came from. They coincide for adgh but
+  # not for adfo, whose moment map must be passed in explicitly here.
   mom <- mom_fn %||% function(pp) {
     pars <- .admUnpack(pp, pinfo)
     lapply(studies, function(s)
@@ -642,35 +546,26 @@
 # The conditioning bound the SANDWICH needs, which is not the one a single
 # inversion needs.
 #
-# covreport.R calls H singular below .ADM_NPD_RCOND = sqrt(eps): one inversion loses
-# about kappa * eps of relative accuracy, so that is where 2H^-1 is deemed hopeless.
-# The sandwich inverts H TWICE, so its effective conditioning is kappa^2 and it
-# reaches that same bound already at rcond = eps^(1/4) ~ 1.2e-04.
+# covreport.R calls H singular below .ADM_NPD_RCOND = sqrt(eps). The
+# sandwich inverts H TWICE, so its effective conditioning is kappa^2 and it
+# reaches that same bound already at rcond = eps^(1/4) ~ 1.2e-04. Between
+# the two thresholds is a band where "r" is usable and "r,s" is not.
 #
-# Between the two thresholds is a band where "r" is usable and "r,s" is not. It is
-# not a rounding problem: what is amplified is the genuine gap between J and 2H in a
-# direction the data barely identifies, which is exactly where the two differ most
-# and mean least (measured on a fixture with cond(H) = 3.5e05, the reported residual
-# SE moved by 0.115 and two omega entries by 0.59 and 1.55; the same model with the
-# residual identified reproduced "r" to four decimals).
-# WARN RATHER THAN DEGRADE. The number is not garbage in the way a non-finite or
-# non-PD one is, and the well-determined directions of the same fit are fine --
-# so withholding the whole covariance would cost more than it saves. What the
-# user cannot do is NOTICE, which is what this fixes: the warning names the
-# direction, so a surprising SE can be read against the parameter that caused it.
+# WARN RATHER THAN DEGRADE: the number isn't garbage the way a non-finite
+# or non-PD one is, and the well-determined directions of the same fit are
+# fine. The warning names the direction, so a surprising SE can be read
+# against the parameter that caused it.
 .ADM_SANDWICH_RCOND <- .Machine$double.eps^(1/4)
 
-# RETURNS the diagnosis, it does not raise it. A warning() from here would be
-# swallowed: this runs inside the nlmixr2est stack, which is why the driver
-# raises "covariance could not be computed" itself rather than letting
-# .admCalcCov do it, and why an incomplete source covariance once cost a fit its
-# sandwich in silence. The message travels out on an attribute and each driver
-# emits it beside the covMethod label, where it reaches the user.
+# RETURNS the diagnosis, it does not raise it. A warning() from here would
+# be swallowed inside the nlmixr2est stack, which is why the driver raises
+# "covariance could not be computed" itself. The message travels out on an
+# attribute and each driver emits it beside the covMethod label.
 #
-# `eig_dec`: every driver already has `eigen(H, symmetric = TRUE)` in hand --
-# .admReduceNpdOmega() built it on the SAME (possibly-reduced) H this function is
-# handed -- so recomputing an O(P^3) eigendecomposition here on every "r,s" fit is
-# pure waste. Supplied, it is used as-is; NULL falls back to computing it.
+# `eig_dec`: every driver already has `eigen(H, symmetric = TRUE)` in hand
+# (.admReduceNpdOmega() built it on the SAME possibly-reduced H), so
+# recomputing an O(P^3) eigendecomposition here on every "r,s" fit is pure
+# waste. Supplied, it is used as-is; NULL falls back to computing it.
 .admSandwichCond <- function(H, nms = NULL, eig_dec = NULL) {
   e <- eig_dec %||% tryCatch(eigen(H, symmetric = TRUE), error = function(e) NULL)
   if (is.null(e)) return(NULL)
@@ -709,37 +604,27 @@
                             sensModel = NULL, nms = NULL, Hinv = NULL,
                             nll_fn = NULL, eig_dec = NULL) {
   # H is checked FIRST, and here rather than being left to solve() inside
-  # .admSandwich, whose tryCatch is there for a singular matrix and cannot tell that
-  # apart from an H that was never supplied. A caller that forgot the argument then
-  # gets a silent NULL -- which reads as "the sandwich does not apply" rather than
-  # "you called it wrong", and a calibration study built on it reported numbers for
-  # replicates it had skipped entirely.
+  # .admSandwich, whose tryCatch is there for a singular matrix and cannot tell
+  # that apart from an H that was never supplied.
   if (missing(H) || !is.matrix(H) || nrow(H) != ncol(H) || !all(is.finite(H)))
     stop(".admSandwichCov: `H` must be a finite square Hessian of the objective ",
          "at the optimum -- the same one covMethod = \"r\" inverts.", call. = FALSE)
   # Diagnosed here, where H is, and carried out on an attribute of the RESULT --
   # so a sandwich that goes on to degrade for an unrelated reason returns NULL
-  # and takes the conditioning message with it, rather than warning about a
-  # covariance the fit never reported.
+  # and takes the conditioning message with it.
   .cond <- .admSandwichCond(H, nms, eig_dec = eig_dec)
   pars <- tryCatch(.admUnpack(p_hat, pinfo), error = function(e) NULL)
   if (is.null(pars)) return(NULL)
   # A joint (same-subject, multi-output) unit stacks several outputs into one
-  # covariance. .admAdfParts solves ONE output, so its node ensemble is not the
-  # one behind that block and the Wick expansion would be taken over the wrong
-  # conditional law. Refuse rather than return a plausible wrong weight.
+  # covariance. .admAdfParts solves ONE output, so its node ensemble is not
+  # the one behind that block. Refuse rather than return a plausible wrong weight.
   if (any(vapply(studies, function(s) isTRUE(s$is_joint), logical(1))))
     return(NULL)
   # Analytic first, finite differences as the fallback. .admMomentJac returns NULL
-  # rather than an approximation for any path it does not cover, so the switch is on
-  # availability, not on a tolerance.
-  #
-  # The two differ by ~7e-5 on an ODE model and NOT as a function of the FD step, so
-  # that gap is not truncation: the analytic route reads its predictions from the
-  # SENSITIVITY model and the FD route from the plain simulation model, and two
-  # separately compiled models take different adaptive steps. The sens model is the
-  # right one here -- covMethod = "r"'s Hessian is built from the analytic gradient,
-  # which reads the same model, so G and H stay consistent.
+  # rather than an approximation for any path it does not cover, so the switch is
+  # on availability, not on a tolerance. The sens model is the right FD fallback
+  # too -- covMethod = "r"'s Hessian is built from the analytic gradient, which
+  # reads the same model, so G and H stay consistent.
   if (is.null(md) && is.null(mom_fn))
     md <- tryCatch(.admMomentJac(p_hat, pinfo, studies, sensModel, rxMod,
                                  out_var, grid, cores), error = function(e) NULL)
@@ -776,28 +661,22 @@
 
 # Why the sandwich DOES NOT APPLY to this model, or NULL when it might.
 #
-# These are refusals by construction, not failures: the Wick expansion needs a
-# residual that is independent across timepoints given the node and has a finite
-# fourth moment, and it needs one output per unit. An ar() residual, an ordinal
-# endpoint, a joint unit and a t with nu <= 4 each break one of those.
-#
-# Telling them apart from a failure MATTERS because "r,s" is the default: every ar()
-# and joint fit was emitting "the sandwich correction could not be computed" -- a
-# sentence shaped like something went wrong -- which nlmixr2est carries onto
-# fit$runInfo. For these models the reason below is reported instead, as a message.
-#
-# Deliberately limited to causes that are cheap and CERTAIN to detect up front. A
-# refusal decided deeper in still comes back as NULL and still warns -- that one is a
-# failure of something that was expected to work.
+# These are refusals by construction, not failures: the Wick expansion needs
+# a residual that is independent across timepoints given the node and has a
+# finite fourth moment, and it needs one output per unit. An ar() residual,
+# an ordinal endpoint, a joint unit and a t with nu <= 4 each break one of
+# those, and are reported as a message rather than the generic "could not be
+# computed" warning. Deliberately limited to causes that are cheap and
+# CERTAIN to detect up front; a refusal decided deeper still comes back as
+# NULL and still warns, since that one is a genuine failure.
 .admSandwichNA <- function(p_hat, pinfo, studies, out_var) {
   if (any(vapply(studies, function(s) isTRUE(s$is_joint), logical(1))))
     return(paste("the study stacks several outputs per subject (a joint unit),",
                  "whose conditional law the weight's node ensemble does not",
                  "describe"))
   # .admSandwichGrid() refuses rather than degrade to a coarser-than-floor grid once
-  # nq^n_eta cannot be covered at nq = 3. Checked here, up front, for the same reason
-  # as every other cause below: the driver's tryCatch around the grid builder cannot
-  # tell this refusal apart from an actual failure.
+  # nq^n_eta cannot be covered at nq = 3; the driver's tryCatch cannot tell this
+  # refusal apart from an actual failure.
   if (is.null(.admSandwichGrid(pinfo)))
     return(sprintf(paste("the model has %d random effects, too many for the",
                          "sandwich's capped product quadrature grid (floored",
@@ -824,9 +703,7 @@
                    "variance for the weight to be made of"))
     # TBS's conditional mean is nonlinear in f, so .admAdfCondMom integrates the
     # residual's law over the node ensemble rather than folding nu/(nu-2) into a
-    # variance the way the combined forms do -- and there is no closed form for
-    # that integral under a t rather than a normal law, at any nu. See the TBS
-    # branch of .admAdfCondMom, which refuses on exactly this condition.
+    # variance -- no closed form exists for that integral under a t law, at any nu.
     if (any(arr$form == .ADM_RESID_TBS & is.finite(vm) &
             abs(vm - 1) > sqrt(.Machine$double.eps)))
       return(paste("the endpoint composes a transform-both-sides law",
@@ -841,23 +718,14 @@
 
 # Validates a candidate sandwich result and folds it into the *CalcCov "r"
 # baseline, or falls back to that baseline with a warning. `label` names the
-# caller (e.g. "adghCalcCov") for the fallback warning.
+# caller for the fallback warning. `na` is .admSandwichNA()'s reason, for a
+# model the correction doesn't apply to at all: the fallback is then a
+# MESSAGE naming the reason, not a warning about a failed computation.
 #
-# `na` is .admSandwichNA()'s reason, for a model the correction does not apply to
-# at all: the fallback is then reported as a MESSAGE naming the reason, rather
-# than as a warning about a computation that failed.
-#
-# Shared by adgh/admc/adfo's *CalcCov -- what differs between them is how `sw`
-# is BUILT (adgh's own grid + sensModel; admc's quadrature grid + sensModel;
-# adfo's quadrature grid + moment map), not what happens to it once built.
-#
-# The acceptance gate is a full PSD check, not a diagonal one. J = sum(G Om G')
-# is only guaranteed PSD if every per-study Om is -- and .admAdfAlignDv's
-# rescaling (pow()/combined() with an exponent outside {0.5, 1}) is not itself
-# checked for that, so a positive diagonal does not imply a valid covariance.
-# Reuses .ADM_NPD_RCOND (covreport.R), the same reciprocal-condition-number
-# tolerance the Hessian's own singularity test uses, so "PSD enough to trust"
-# means the same thing on both sides of the sandwich.
+# The acceptance gate is a full PSD check, not a diagonal one: J =
+# sum(G Om G') is only guaranteed PSD if every per-study Om is. Reuses
+# .ADM_NPD_RCOND (covreport.R), the same tolerance the Hessian's own
+# singularity test uses.
 .admIsPsd <- function(m) {
   e <- tryCatch(eigen(m, symmetric = TRUE, only.values = TRUE)$values,
                error = function(e) NULL)
@@ -884,10 +752,8 @@
 
 # Wires the sandwich into a *CalcCov driver: refuse via .admSandwichNA(), build `sw`
 # from `build()` inside a tryCatch, and fold the result into `cov_r` via
-# .admApplySandwich(). Shared because this ~15-line block was copy-pasted
-# near-verbatim across adfo/adgh/admc's *CalcCov -- what differs is how the
-# sandwich's own ingredients get built, which is what `build` (a zero-arg closure
-# over the caller's locals) captures.
+# .admApplySandwich(). `build` is a zero-arg closure over the caller's locals,
+# since each estimator builds the sandwich's ingredients differently.
 .admWireSandwich <- function(p_hat, pinfo, studies, out_var, cov_r, label, build) {
   # A model the correction does not APPLY to (ar(), ordinal, a joint unit, a t
   # with nu <= 4, TBS + t() at any nu, 8+ random effects) is reported as such
@@ -918,30 +784,28 @@
 #
 # adfo carries no node ensemble -- that is the point of FO -- but the weight needs
 # one, because Omega is a property of the model's true nonlinear law and not of the
-# linearisation used to fit it. The grid is built once, post-fit, so a node count
-# that would be extravagant inside an optimisation loop is cheap here; it is still
-# capped, since the product grid is NQ^n_eta.
+# linearisation used to fit it. Built once, post-fit, so it can afford more nodes
+# than an optimisation loop could; still capped, since the product grid is NQ^n_eta.
 #
-# n_eta == 0 IS A GRID, not a refusal. .adghNodeGrid() returns the single-point
-# ensemble, which is correct: with no between-subject variability every subject
-# shares the structural prediction and the summary's sampling law is the residual's
-# alone. That law is still not the normal-theory one the objective assumes -- lnorm,
-# pois, binom, beta and TBS are all skewed or over-dispersed -- so the correction
-# still has something to say. Returning NULL here made admc and adfo degrade to "r"
-# on every no-IIV model while adgh applied the sandwich to the same fit.
+# n_eta == 0 IS A GRID, not a refusal. .adghNodeGrid() returns the
+# single-point ensemble, correct because with no between-subject variability
+# every subject shares the structural prediction and the summary's sampling
+# law is the residual's alone -- still not the normal-theory one the
+# objective assumes (lnorm/pois/binom/beta/TBS are skewed or over-dispersed).
+# Returning NULL here made admc and adfo degrade to "r" on every no-IIV
+# model while adgh applied the sandwich to the same fit.
 .admSandwichGrid <- function(pinfo, max_nodes = 5000L) {
   n_eta <- pinfo$n_eta
   if (is.null(n_eta) || n_eta < 0L) return(NULL)
   if (n_eta == 0L) return(.adghNodeGrid(1L, 0L))
   nq <- 9L
   while (nq > 3L && nq^n_eta > max_nodes) nq <- nq - 2L
-  # THREE IS THE FLOOR, and past it the answer is NULL rather than a smaller grid.
-  # The decrement used to run down to nq = 1, which for n_eta >= 8 it reached:
-  # .adghNodes1(1) is the single node at eta = 0, so C centres to identically zero, S
-  # collapses to diag(E[Var(y|eta)]), and the weight describes a model with NO
-  # between-subject variability. That result is finite with a positive diagonal, so
-  # .admApplySandwich() accepts it and the fit reports covMethod = "r,s" over silently
-  # wrong SEs -- the one failure mode worse than not applying the correction at all.
+  # THREE IS THE FLOOR, and past it the answer is NULL rather than a smaller
+  # grid. The decrement used to run down to nq = 1, which for n_eta >= 8 it
+  # reached: .adghNodes1(1) is the single node at eta = 0, so the weight
+  # describes a model with NO between-subject variability -- finite with a
+  # positive diagonal, so .admApplySandwich() accepted it and the fit
+  # reported covMethod = "r,s" over silently wrong SEs.
   if (nq^n_eta > max_nodes) return(NULL)
   .adghNodeGrid(nq, n_eta)
 }
@@ -950,17 +814,13 @@
 #
 # Returned in the shape .admMomentDeriv expects, so the only thing that changes
 # between estimators is this function. `V` is the full predicted covariance even
-# for a `method = "var"` study: .admScoreCross takes the diagonal itself, which
-# keeps the branch logic in one place rather than two.
+# for a `method = "var"` study: .admScoreCross takes the diagonal itself.
 #
-# .admMomentDeriv's central-difference loop calls this 2p times, each of which used
-# to cost .adfoGetMuJ() -- and so its own rxSolve -- per study: the "each
-# configuration cost its own rxSolve" anti-pattern .adfoGetMuJBatch exists to
-# collapse, reintroduced by a loop it cannot see into. But .adfoGetMuJ's result
-# depends on pp ONLY through pars$struct and, for a TBS endpoint whose lambda is an
-# estimated sigma, that one sigma entry (.adfoMuJKey). Every other sigma/omega
-# direction leaves both inputs at the base point, so memoizing on .adfoMuJKey
-# collapses those directions' solves to one.
+# .admMomentDeriv's central-difference loop calls this 2p times. .adfoGetMuJ's
+# result depends on pp ONLY through pars$struct and, for a TBS endpoint, one
+# lambda sigma entry (.adfoMuJKey) -- every other sigma/omega direction leaves
+# both inputs at the base point, so memoizing on .adfoMuJKey collapses those
+# directions' solves to one.
 .admAdfoMomFn <- function(pinfo, studies, sensModel, rxMod, out_var,
                           params_list, cores) {
   cache <- new.env(parent = emptyenv())
