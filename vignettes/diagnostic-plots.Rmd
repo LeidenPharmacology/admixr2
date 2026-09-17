@@ -51,7 +51,20 @@ four. It has its own section, with its own fit, further down.
 
 ## Mean diagnostics
 
-A 2×2 grid per study. `patchwork` composes it; without it you get four separate
+A 2×2 grid **per source**. `stratify` bands a source into one study per
+covariate level because a covariate a study marginalises over is not identified
+against a random effect on the same parameter --- the objective has to sum over
+the strata. But `A_s1` is an index into that expansion, and this panel asks
+"does the fit reproduce this paper", so the strata are put back together first.
+
+The mean is the n-weighted mean of the strata. The variance is **not**: it is
+the law of total variance, within plus **between**, and the between term is the
+covariate effect the banding created. Averaging the strata's variances would
+report the within-level spread, which is not what the paper published --- a
+correctly specified fit would draw as under-predicting it.
+
+The covariate panels keep the strata, because there the between-level contrast
+is the entire signal. `patchwork` composes it; without it you get four separate
 plots.
 
 ```{r mean-panel, fig.height=6, fig.cap="Mean diagnostics for the examplomycin study."}

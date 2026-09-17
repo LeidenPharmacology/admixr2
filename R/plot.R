@@ -1352,6 +1352,81 @@ head.paged_df <- function(x, n = 6L, ...) {
                        "times"))
 }
 
+## ---- putting a banded source back together ---------------------------------
+##
+## `stratify` is a LIKELIHOOD device. A covariate a study marginalises over is
+## not identified against a random effect on the same parameter -- its effect
+## enters only through the mixture it induces, which is exactly what the random
+## effect does -- so admixr2 bands the source into one stratum per level and the
+## objective sums over them. The strata have to be the unit there.
+##
+## They are not the unit a READER recognises. `A_s1` is an index into an
+## internal expansion; the paper is `A`, and "does the fit reproduce this
+## source" is a question about the paper. So every panel asking it puts the
+## strata back together first.
+##
+## The mean is the n-weighted mean of the strata. THE VARIANCE IS NOT. It is the
+## law of total variance -- within PLUS BETWEEN -- and the between term is the
+## covariate effect the banding created. Verified against the same source fitted
+## unbanded: with both terms the collapsed SD matches to 1.000 at every time;
+## with the within term alone it reads 0.80-0.88, so dropping it would draw a
+## correctly specified fit as under-predicting the reported spread by a fifth.
+.admMixMoments <- function(E_list, V_list, w) {
+  w  <- w / sum(w)
+  E  <- Reduce(`+`, Map(function(e, a) a * as.numeric(e), E_list, w))
+  Vw <- Reduce(`+`, Map(function(v, a) a * as.matrix(v), V_list, w))
+  Vb <- Reduce(`+`, Map(function(e, a) a * tcrossprod(as.numeric(e) - E),
+                        E_list, w))
+  list(E = E, V = Vw + Vb)
+}
+
+## Source-level `studies` and `agg`, for the panels that are about a paper.
+##
+## The covariate panels keep the STRATA -- the between-level contrast is the
+## whole signal there, and collapsing would destroy the thing they exist to
+## show. So this returns new lists rather than replacing the originals.
+##
+## A single-stratum source collapses to itself (the between term is zero) and
+## keeps its `cov`, so an `at`-pinned source still titles with the value it was
+## solved at. Only a genuinely banded source loses that, because it no longer
+## sits at one value of the covariate it was banded on.
+.admCollapseSources <- function(studies, agg) {
+  if (!length(studies) || is.null(names(studies)))
+    return(list(studies = studies, agg = agg))
+  grp <- split(names(studies), .admCovSource(names(studies)))
+  st2 <- list(); ag2 <- list()
+  for (sn in names(grp)) {
+    ks  <- grp[[sn]]
+    # Strata whose simulation failed drop out and the weights renormalise over
+    # what is left: a partial collapse is a worse answer than a whole one, but
+    # it is a better answer than none, and the alternative is losing the source.
+    has <- ks[vapply(ks, function(k) !is.null(agg[[k]]), logical(1))]
+    if (!length(has)) { st2[[sn]] <- studies[[ks[1L]]]; next }
+    nk <- vapply(has, function(k) {
+      v <- suppressWarnings(as.numeric(studies[[k]][["n"]] %||% NA_real_)[1L])
+      if (!is.finite(v) || v <= 0) 1 else v
+    }, double(1))
+
+    obs <- .admMixMoments(lapply(has, function(k) studies[[k]]$E),
+                          lapply(has, function(k) studies[[k]]$V), nk)
+    prd <- .admMixMoments(lapply(has, function(k) agg[[k]]$pred$E),
+                          lapply(has, function(k) agg[[k]]$pred$V), nk)
+
+    s0 <- studies[[has[1L]]]
+    s0$E <- obs$E; s0$V <- obs$V; s0$n <- sum(nk)
+    if (length(has) > 1L) {
+      # A banded source sits at no single value of what it was banded on, so a
+      # `[SEX = 0]` title would be a claim about half of it.
+      s0[["cov"]] <- NULL; s0[["cov_dist"]] <- NULL
+      s0[[".adm_cov_dropped"]] <- NULL
+    }
+    st2[[sn]] <- s0
+    ag2[[sn]] <- utils::modifyList(agg[[has[1L]]],
+                                   list(obs = obs, pred = prd))
+  }
+  list(studies = st2, agg = ag2[names(st2)])
+}
+
 #' Diagnostic plots for an admixr2 fit
 #'
 #' Generates up to five diagnostic panels:
@@ -1596,9 +1671,18 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
   # Residual: raw (E_obs - mu_pred) lollipop with \u00b12 SE band (SE = sqrt(V_pred[t,t]/n)).
   # Standardised residual: z[t] = (E_obs[t] - mu[t]) / sqrt(V_pred[t,t]/n) ~ N(0,1).
   # Stars: |z| > 1.96 (*), > 2.58 (**), > 3.29 (***). Requires patchwork for 2x2.
-  if ("mean" %in% which) for (nm in names(studies)) {
-    s   <- studies[[nm]]
-    ag  <- agg[[nm]]
+  # The mean and cov panels are about a PAPER, so they read the source-level
+  # lists: a banded source is put back together first, by the mixture law. The
+  # covariate panels below keep the strata, where the between-level contrast is
+  # the signal. See .admCollapseSources().
+  .src <- if (any(c("mean", "cov") %in% which))
+    .admCollapseSources(studies, agg) else list(studies = studies, agg = agg)
+  studies_src <- .src$studies
+  agg_src     <- .src$agg
+
+  if ("mean" %in% which) for (nm in names(studies_src)) {
+    s   <- studies_src[[nm]]
+    ag  <- agg_src[[nm]]
     if (is.null(ag)) next
 
     n_obs      <- s$n
@@ -1732,9 +1816,9 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
                                                            face = "plain"))
   }
 
-  for (nm in names(studies)) {
-    s   <- studies[[nm]]
-    ag  <- agg[[nm]]
+  for (nm in names(studies_src)) {
+    s   <- studies_src[[nm]]
+    ag  <- agg_src[[nm]]
     if (is.null(ag)) next
 
     n_obs  <- s$n

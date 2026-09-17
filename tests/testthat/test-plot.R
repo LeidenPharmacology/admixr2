@@ -732,3 +732,53 @@ test_that(".admCovPalette leaves black to the estimated effect", {
   # are a line joining two points, they were indistinguishable.
   expect_false("#000000" %in% .admCovPalette(c("a", "b", "c")))
 })
+
+test_that(".admMixMoments is the law of total variance, not an average", {
+  # Two equally weighted strata, means (1, 3) and (2, 5), identity variances.
+  # Mean: (1.5, 4). Variance: I + the between term, which is
+  # tcrossprod(c(0.5, 1)) -- and it is the between term that carries the
+  # covariate effect the banding created.
+  E <- list(c(1, 3), c(2, 5))
+  V <- list(diag(2), diag(2))
+  m <- .admMixMoments(E, V, c(1, 1))
+  expect_equal(m$E, c(1.5, 4))
+  expect_equal(m$V, diag(2) + tcrossprod(c(0.5, 1)))
+  # Weights are normalised, so the scale of `n` cannot matter.
+  expect_equal(.admMixMoments(E, V, c(50, 50))$V, m$V)
+  # n-WEIGHTED: a stratum with more patients pulls the mean further.
+  expect_equal(.admMixMoments(E, V, c(3, 1))$E, c(1.25, 3.5))
+  # One stratum collapses to itself -- the between term is zero.
+  one <- .admMixMoments(E[1], V[1], 1)
+  expect_equal(one$E, c(1, 3))
+  expect_equal(one$V, diag(2))
+})
+
+test_that(".admCollapseSources leaves an unbanded source alone", {
+  # A single-stratum source keeps its `cov`, so an `at`-pinned study still
+  # titles with the value it was solved at. Only a genuinely banded source
+  # loses that, because it no longer sits at one value.
+  st <- list(solo = list(E = c(1, 2), V = diag(2), n = 50,
+                         times = c(1, 2), cov = list(CRCL = 62)))
+  ag <- list(solo = list(obs  = list(E = c(1, 2), V = diag(2)),
+                         pred = list(E = c(1, 2), V = diag(2))))
+  out <- .admCollapseSources(st, ag)
+  expect_equal(names(out$studies), "solo")
+  expect_equal(out$studies$solo$cov, list(CRCL = 62))
+  expect_equal(out$studies$solo$n, 50)
+})
+
+test_that(".admCollapseSources renormalises over the strata it has", {
+  # A stratum whose simulation failed drops out. A partial collapse is a worse
+  # answer than a whole one and a better answer than losing the source.
+  st <- list(a_s1 = list(E = c(2), V = matrix(1), n = 30, times = 1),
+             a_s2 = list(E = c(4), V = matrix(1), n = 10, times = 1),
+             a_s3 = list(E = c(9), V = matrix(1), n = 60, times = 1))
+  ag <- list(a_s1 = list(pred = list(E = c(2), V = matrix(1))),
+             a_s2 = list(pred = list(E = c(4), V = matrix(1))),
+             a_s3 = NULL)
+  out <- .admCollapseSources(st, ag)
+  expect_equal(names(out$studies), "a")
+  # Weighted over s1 and s2 only: (30*2 + 10*4)/40 = 2.5.
+  expect_equal(as.numeric(out$studies$a$E), 2.5)
+  expect_equal(as.numeric(out$studies$a$n), 40)
+})

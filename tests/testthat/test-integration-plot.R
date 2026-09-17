@@ -179,36 +179,87 @@ test_that("plot.admFit default which: a fit with no covariates is unchanged", {
   st <- admStudies(A = admStudy(model = mfn, population = pop, dose = 100,
                                 times = c(0.5, 1, 2, 4, 8),
                                 stratify = "SEX", label = "A"))
+  # The same source left WHOLE. Its reported moments are what a banded fit's
+  # strata have to collapse back to, and nothing short of fitting it both ways
+  # distinguishes the correct collapse from an average of the strata.
+  st_whole <- admStudies(A = admStudy(model = mfn, population = pop,
+                                      dose = 100, times = c(0.5, 1, 2, 4, 8),
+                                      label = "A"))
   nlmixr2 <- nlmixr2est::nlmixr2
-  fit <- suppressMessages(suppressWarnings(
+  .fit <- function(stu) suppressMessages(suppressWarnings(
     nlmixr2(mfn, admData(), est = "adgh",
-            control = adghControl(studies = st, print = 0L,
+            control = adghControl(studies = stu, print = 0L,
                                   n_restart = 1L, maxeval = 3L))))
+  fit <- .fit(st)
   .int_cov_plot_result <<- list(
-    fit  = fit,
+    fit   = fit,
+    whole = .fit(st_whole),
+    agg  = admixr2:::.admAggData(fit$env$admExtra, fit$env$ui,
+                                 n_sim = 200L, seed = 1L, warn = FALSE),
     out  = .pdf_plot_int(plot(fit, which = c("mean", "cov"), n_sim = 200L)))
   .int_cov_plot_result
 }
 
-test_that("plot.admFit covariates: one panel set per stratum", {
+test_that("plot.admFit covariates: one panel set per SOURCE, not per stratum", {
   skip_if_not_installed("nlmixr2")
   env <- .int_cov_plot()
-  expect_setequal(grep("^mean_.*_(obs|pred|resid)$", grep("^mean_", names(env$out), value = TRUE),
+  # `stratify` is a likelihood device: a covariate a study marginalises over is
+  # not identified against a random effect on the same parameter, so the source
+  # is banded and the objective sums over the strata. `A_s1` is an index into
+  # that expansion, and the mean panel is about the PAPER -- so the strata are
+  # put back together and there is one panel set, for `A`.
+  expect_setequal(grep("^mean_.*_(obs|pred|resid)$",
+                       grep("^mean_", names(env$out), value = TRUE),
                        invert = TRUE, value = TRUE),
-                  c("mean_A_s1", "mean_A_s2"))
+                  "mean_A")
 })
 
-test_that("plot.admFit covariates: stratum panels are titled by covariate value", {
+test_that("plot.admFit covariates: a banded source's panel is titled for the source", {
   skip_if_not_installed("nlmixr2")
   skip_if_not_installed("patchwork")
-  env    <- .int_cov_plot()
-  titles <- vapply(c("mean_A_s1", "mean_A_s2"),
-                   function(k) env$out[[k]]$patches$annotation$title, character(1))
-  # One stratum per sex level, each naming the level it was conditioned at --
-  # not the bare `_s1`/`_s2` index, which says nothing about which is which.
-  expect_setequal(unname(titles),
-                  c("Study 'A_s1' [SEX = 0] -- Mean diagnostics",
-                    "Study 'A_s2' [SEX = 1] -- Mean diagnostics"))
+  env <- .int_cov_plot()
+  # No `[SEX = 0]` bracket: a banded source sits at NO single value of what it
+  # was banded on, so naming one would be a claim about half of it.
+  expect_equal(env$out$mean_A$patches$annotation$title,
+               "Study 'A' -- Mean diagnostics")
+})
+
+test_that("plot.admFit: collapsing a banded source reproduces the unbanded one", {
+  skip_if_not_installed("nlmixr2")
+  # THE REASON .admMixMoments() cannot just average the strata. The same source,
+  # banded and whole, reports the same moments -- and the variance only matches
+  # if the BETWEEN-stratum term is carried, because that term IS the covariate
+  # effect the banding created. Averaging the strata's variances reports the
+  # within-level spread, which is not what the paper published.
+  env <- .int_cov_plot()
+  st  <- env$fit$env$admExtra$studies
+  ks  <- grep("^A_s", names(st), value = TRUE)
+  skip_if(length(ks) < 2L, "source is not banded")
+  whole <- env$whole$env$admExtra$studies[[1L]]
+
+  nk  <- vapply(ks, function(k) as.numeric(st[[k]]$n), double(1))
+  mix <- admixr2:::.admMixMoments(lapply(ks, function(k) st[[k]]$E),
+                                  lapply(ks, function(k) st[[k]]$V), nk)
+
+  # Mean: exactly the n-weighted mean.
+  expect_equal(as.numeric(mix$E), as.numeric(whole$E), tolerance = 1e-8)
+  expect_equal(sum(nk), as.numeric(whole$n))
+  # Variance: matches only WITH the between term.
+  expect_equal(sqrt(diag(mix$V)), sqrt(diag(as.matrix(whole$V))),
+               tolerance = 1e-6, ignore_attr = TRUE)
+  # Within alone is strictly smaller -- which is what makes the term necessary
+  # rather than a rounding detail. How MUCH smaller scales with the covariate
+  # effect, so only the direction is asserted here.
+  wth <- Reduce(`+`, Map(function(k, a) a * as.matrix(st[[k]]$V),
+                         ks, nk / sum(nk)))
+  expect_true(all(sqrt(diag(wth)) < sqrt(diag(mix$V))))
+
+  # And the collapsed source is what the panel is handed.
+  cs <- admixr2:::.admCollapseSources(st, env$agg)
+  expect_equal(names(cs$studies), "A")
+  expect_equal(as.numeric(cs$studies$A$E), as.numeric(mix$E), tolerance = 1e-10)
+  # A banded source keeps no single conditioned value, so its title has none.
+  expect_null(cs$studies$A$cov)
 })
 
 test_that("plot.admFit covariates: both covariate panels are produced", {
