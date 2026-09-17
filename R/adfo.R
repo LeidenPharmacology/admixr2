@@ -7,8 +7,7 @@
 # the whole NLL per theta while the driver has already asked
 # `.adfoCalcCov(use_grad = TRUE)` to central-difference THAT -- nested FD,
 # surfacing as a normal-looking fit whose every `parFixedDf$SE` is NA. So
-# `.adfoGrad` publishes what it actually did and the driver trusts that over
-# its own prediction.
+# `.adfoGrad` publishes what it actually did and the driver trusts that.
 #
 # `use_d2` is a property of (sensModel, pinfo, studies), not the parameter
 # vector. Unset means no gradient ran in THIS process (parallel restarts run
@@ -390,12 +389,10 @@
 
   # --- Pass 2: struct theta CENTRAL FD ----------------------------------------
   #
-  # The perturbed configurations differ ONLY in their structural
-  # thetas, and every one re-solves the same study, so they're
-  # stacked into a single rxSolve per study (.adfoGetMuJBatch)
-  # rather than driven through 2*n_s separate .adfoNLL calls --
-  # same arithmetic, same FD steps, just one call instead of
-  # (1 + 2*n_s).
+  # The perturbed configurations differ ONLY in their structural thetas, and
+  # every one re-solves the same study, so they're stacked into a single
+  # rxSolve per study (.adfoGetMuJBatch) instead of (1 + 2*n_s) separate
+  # .adfoNLL calls.
   #
   # CENTRAL, not forward: `grad_h` is Shi21's measured per-parameter step,
   # minimising CENTRAL-difference error (h* = (3 eps_f/|f'''|)^(1/3)). The
@@ -1187,10 +1184,9 @@ adfoControl <- function(
   # leaving no durable record.
   #
   # WHERE THE WARNING ACTUALLY SURVIVES, measured rather than assumed: NOT in
-  # warnings(), and options(warn = 2) does NOT turn it into an error -- nlmixr2est
-  # intercepts and muffles conditions raised inside nlmixr2Est.*. It survives on
-  # `fit$warnings`, which print(fit) shows. That is a weaker guarantee than the
-  # obvious one, so do not reason from options(warn = 2) here.
+  # warnings(), and options(warn = 2) does NOT turn it into an error --
+  # nlmixr2est intercepts and muffles conditions raised inside
+  # nlmixr2Est.*. It survives on `fit$warnings`, which print(fit) shows.
   .grad_explicit <- !missing(grad)
   grad     <- match.arg(grad)
 
@@ -1449,14 +1445,12 @@ nlmixr2Est.adfo <- function(env, ...) {
 
   # Say so whenever they really are finite-differenced.
   #
-  # The gate used to also require any(!pinfo$struct_has_eta), which meant a model
-  # whose thetas are ALL mu-referenced -- the common cl <- exp(tcl + eta.cl)
-  # style -- got no notice of any kind when the order-2 build silently fell back
-  # to order 1 (a linCmt promotion that fails, an indLin bail-out, .rxSens
-  # returning nothing). The returned object is a perfectly valid order-1 sens
-  # model, so the is.null(sm) branch above does not fire either: the fit ran
-  # LBFGS on the 8e-04..1e-02 forward FD the analytic pass exists to replace,
-  # invisibly, surfacing only as slow or stalled convergence.
+  # The gate used to also require any(!pinfo$struct_has_eta), which meant a
+  # model whose thetas are ALL mu-referenced -- the common cl <- exp(tcl +
+  # eta.cl) style -- got no notice of any kind when the order-2 build
+  # silently fell back to order 1: the fit ran LBFGS on the 8e-04..1e-02
+  # forward FD the analytic pass exists to replace, invisibly, surfacing
+  # only as slow or stalled convergence.
   if (pinfo$n_eta > 0L && want_sens && !have_d2) {
     message(if (any_joint)
       "adfo: joint (same-subject) study -- struct thetas by central FD."
