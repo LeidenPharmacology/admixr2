@@ -313,20 +313,58 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #' @param by Covariate the paper reports results SEPARATELY by, e.g.
 #'   `by = "SEX"`. Expands a published model into one study per level; digitised
 #'   subgroup profiles must be supplied as separate studies.
-#' @param stratify Band the source into strata, so a covariate it fitted
-#'   contributes a CONTRAST rather than one pooled number. `TRUE` bands over
-#'   every covariate the source's own model ESTIMATED a coefficient for, and
-#'   leaves the rest marginalised --- derived from the model, so nothing has to
-#'   be restated. A covariate the model merely READS is not banded: weight at a
-#'   fixed allometric exponent carries no fitted effect to recover, and banding
-#'   on it would buy strata and no evidence. Name a covariate explicitly to
-#'   override that judgement. Available for published model sources only.
-#'   Measured over 720 replicates: coverage 0.933
-#'   with one source banded and 0.925 with all of them, against 0.817 with
-#'   none --- one banded source is as good as three. See [covStrata()].
-#' @param strata_nodes,range Resolution and the enrolled range for `stratify`.
+#' @param strata_nodes Quadrature resolution for a banded CONTINUOUS
+#'   covariate, i.e. how many nodes it is cut into. Default 9. Raise it for
+#'   precision, at a multiplicative cost: a source banded on two continuous
+#'   covariates becomes `strata_nodes^2` studies, and each is solved. Discrete
+#'   covariates are unaffected --- their levels are exact and cost one stratum
+#'   each. Note that the objective VALUE depends on this, so two fits are only
+#'   comparable at the same resolution; admixr2 records it per study and
+#'   [anova()] checks it.
+#' @param range Optional named list giving the covariate span the source
+#'   ENROLLED, e.g. `range = list(WT = c(52, 118))`. The declared distribution
+#'   is truncated to it, whether that covariate ends up conditional (strata are
+#'   then cut from the truncated margin) or marginal (the truncated margin is
+#'   integrated over). Needed when that distribution is
+#'   wider than the enrolment --- a `mean +/- SD` transcribed from a baseline
+#'   table has tails where nobody was --- and *not* wanted when `population` is
+#'   the patients themselves, since the margins are then fitted to exactly who
+#'   was enrolled and truncating would score the paper against a sub-population
+#'   of its own. An unnamed value is allowed only when one covariate is banded.
 #' @param label Optional display name; otherwise taken from the argument name in
 #'   [admStudies()].
+#'
+#' @section Conditional and marginal covariates are derived, not declared:
+#'
+#' Whether a covariate is **conditional** or **marginal** for a source is a
+#' property of that source's own model, so admixr2 works it out and there is
+#' nothing to set.
+#'
+#' A covariate is **conditional** when the source's model ESTIMATED its
+#' coefficient. That paper reports a contrast along it, so the source is banded
+#' into strata and the contrast is carried into the fit. A covariate the model
+#' merely READS is not banded --- weight at a fixed allometric exponent carries
+#' no fitted effect to recover, and banding on it would buy strata and no
+#' evidence.
+#'
+#' A covariate is **marginal** when the model did not estimate it. There is no
+#' contrast in that paper to band on, and splitting it on a covariate its model
+#' never saw would manufacture evidence, so admixr2 integrates over the
+#' population instead.
+#'
+#' This matters and is why it is not left to the caller: a covariate every
+#' source marginalises is not identified against a random effect on the same
+#' parameter. Measured over 720 replicates, coverage was 0.933 with one source
+#' banded and 0.925 with all of them, against **0.817 with none**.
+#'
+#' A source given as digitised `E`/`V` has no model to derive from and is
+#' marginal over whatever it declares. Use one `admStudy(..., at = ...)` per
+#' reported subgroup to enter a paper that published by subgroup.
+#'
+#' `stratify` was removed; [covStrata()] still takes it for working with a
+#' covariate distribution directly. `strata_nodes` and `range` remain: the
+#' first is a precision setting and the second is a fact about the source,
+#' neither of which is a statement about which covariates are conditional.
 #'
 #' @return An `admStudy` object.
 #' @seealso [admStudies()] to collect several, [admPopulation()] for the
@@ -336,8 +374,24 @@ admStudy <- function(model = NULL, est = NULL,
                      E = NULL, V = NULL, sd = NULL, sem = NULL,
                      n = NULL, times = NULL, dose = NULL, ev = NULL,
                      population = NULL, at = NULL, by = NULL,
-                     stratify = NULL, strata_nodes = NULL, range = NULL,
+                     strata_nodes = NULL, range = NULL,
                      label = NULL, v_denom = NULL) {
+  # WHETHER A COVARIATE IS CONDITIONAL OR MARGINAL IS NOT A USER CHOICE. It is a
+  # property of the source's own model -- conditional when that model uses the
+  # covariate, marginal when the population describes it and the model never
+  # mentions it -- so admixr2 derives it and there is nothing to declare.
+  # `strata_nodes` and `range` STAY, because neither is that choice: one is a
+  # precision setting and the other is a fact about the source. It is the span the source
+  # ENROLLED, and it is needed exactly when the declared distribution is wider
+  # than the enrolment -- a `mean +/- SD` transcribed from a baseline table has
+  # tails where nobody was, and strata cut from it credit the paper there.
+  # Measured on a lognormal declared at meanlog log(76), sdlog 0.30: cut from
+  # the full distribution the nodes span 20-294 kg and the mixture reproduces
+  # E[(WT/70)^0.75] = 1.09089, the declared population's value; cut from the
+  # 10th-90th they span 52-112 and reproduce 1.07533, the truncated
+  # population's. Both are exact quadratures -- of DIFFERENT populations, and
+  # only one of them is the one the paper reported moments for.
+  stratify <- NULL
   # Record the supplied spread before deriving V or replacing sd from sem.
   .from_spread <- is.null(V) && (!is.null(sd) || !is.null(sem))
   # Use the model expression only in construction-time messages.
@@ -358,21 +412,16 @@ admStudy <- function(model = NULL, est = NULL,
   if (!has_model && !is.null(est))
     bad("digitised data cannot have `est`; estimates belong to a published ",
         "`model` source.")
-  if (!has_model && (!is.null(by) ||
-      (!is.null(stratify) && !identical(stratify, FALSE)) ||
-      !is.null(strata_nodes) || !is.null(range)))
-    bad("digitised data cannot be expanded with `by` or `stratify`: one ",
-        "reported mean/spread profile contains no separate subgroup profiles. ",
-        "Create one admStudy(..., at = ...) per reported subgroup instead.")
-  # Refuse strata_nodes/range when stratify is absent.
-  if ((is.null(stratify) || identical(stratify, FALSE)) &&
-      (!is.null(strata_nodes) || !is.null(range)))
-    bad("gives ",
-        paste(sQuote(c("strata_nodes", "range")[
-          c(!is.null(strata_nodes), !is.null(range))]), collapse = " and "),
-        " -- the resolution and enrolled range for banding -- but `stratify` ",
-        "is not set, so nothing is banded and they would be ignored. Set ",
-        "`stratify`, or drop them.")
+  if (!has_model && !is.null(by))
+    bad("digitised data cannot be expanded with `by`: one reported mean/spread ",
+        "profile contains no separate subgroup profiles. Create one ",
+        "admStudy(..., at = ...) per reported subgroup instead.")
+  if (!has_model && (!is.null(range) || !is.null(strata_nodes)))
+    bad("digitised data cannot take ",
+        paste(sQuote(c("range", "strata_nodes")[
+          c(!is.null(range), !is.null(strata_nodes))]), collapse = " or "),
+        ": both bear only on the strata a published model is banded into, and ",
+        "there is no model here to band.")
   # A cohort data frame supplies its own sample size.
   if (is.data.frame(population) && is.null(n)) n <- nrow(population)
   if (is.null(n) || !is.finite(n) || n <= 0)
@@ -653,10 +702,14 @@ NOTE: ", paste(sQuote(flat), collapse = ", "),
           " effect on the same parameter. Legitimate when the sources really",
           " do differ; a flat ridge when they do not, and a flat ridge",
           " converges to a confident wrong number rather than failing.",
-          # Suggest only bands .admExpandStrata() can construct.
+          # Banding is derived, so there is nothing for the caller to set --
+          # this reports what the derivation found rather than suggesting a
+          # flag. A source that FITTED the covariate is banded on it already.
           if (length(fit_by))
-            paste0(" Band the source that fitted it (`stratify = \"",
-                   fit_by[1L], "\"`).")
+            paste0(" ", sQuote(fit_by[1L]),
+                   " did fit it, so that source is banded on it and the",
+                   " contrast is carried; this warns because the others are",
+                   " not.")
           else
             paste0(" No source fitted ",
                    if (length(flat) == 1L) "it" else "any of them",
@@ -683,7 +736,22 @@ print() a single study to check its transcription.
 }
 
 # Materialise lazy specs once at the shared driver entry point.
-.admMaterialise <- function(studies) {
+## `analysis_covs` -- the covariates the ANALYSIS model reads -- is the
+## efficiency half of the rule, and only the efficiency half.
+##
+## Whether a covariate is CONDITIONAL is a property of the SOURCE's model: it is
+## conditional when that model uses the covariate, marginal when the population
+## describes it and the model never mentions it. That is a statement about the
+## evidence and it does not depend on what is being fitted.
+##
+## Whether admixr2 has to BAND on it is a separate question. A covariate the
+## analysis model never reads cannot move the analysis model's prediction, so
+## banding on it changes nothing about the objective -- and a source reading
+## three covariates bands into 162 studies at the default resolution, all of
+## which would then be dropped again by .admCheckCovariates(). Intersecting
+## here leaves the objective identical and the work proportional to what is
+## actually being estimated.
+.admMaterialise <- function(studies, analysis_covs = NULL) {
   if (inherits(studies, "admStudies")) studies <- unclass(studies)
   if (!is.list(studies)) return(studies)
   spec <- vapply(studies, inherits, logical(1), "admStudy")
@@ -713,25 +781,50 @@ print() a single study to check its transcription.
     sp <- list(times = s$times, ev = ev, n = s$n)
     if (!is.null(s[["population"]])) sp[["cov_dist"]] <- s[["population"]]
     if (!is.null(s[["at"]]))         sp[["cov"]]      <- s[["at"]]
-    if (!is.null(s$stratify)) {
-      sp$stratify <- s$stratify
-      if (!is.null(s$strata_nodes)) sp$strata_nodes <- s$strata_nodes
-      # Resolve `stratify = TRUE` before assigning an unnamed range.
-      if (!is.null(s$range)) {
-        sp$cov_range <- if (is.list(s$range) && !is.null(names(s$range)))
-          s$range
-        else {
-          .bn <- .admStudyBandNames(s)
-          if (length(.bn) != 1L)
-            stop("admixr2: study '", nm, "': `range` does not say which ",
-                 "covariate it is the enrolled range of, and this source ",
-                 "bands ", if (!length(.bn)) "none" else length(.bn),
-                 ". Give a named list, e.g. range = list(WT = c(52, 118)).",
-                 call. = FALSE)
-          stats::setNames(list(s$range), .bn)
-        }
-      }
+    # DERIVED HERE, so the band set reaching datagen() is already resolved:
+    # the covariates this SOURCE's model uses, narrowed to the ones the
+    # ANALYSIS model can actually be moved by. An explicit `stratify` on the
+    # spec still wins -- covStrata() and the internal callers set one.
+    .bn <- if (!is.null(s$stratify)) s$stratify else {
+      b <- .admStudyBandNames(s)
+      if (!is.null(analysis_covs)) b <- intersect(b, analysis_covs)
+      # `by` PINS its covariate one level per study, so each level's cov_dist
+      # no longer declares it and there is nothing left to band. Leaving it in
+      # asked .admCovStrata() to band a covariate the spec had stopped
+      # declaring, which it rightly refuses.
+      setdiff(b, s$by %||% character(0))
     }
+    # FALSE has to REACH the spec. Dropping it here left `stratify` unset, and
+    # .admExpandStrata() then derived a banding for a study that had explicitly
+    # refused one -- so the opt-out silently became its opposite.
+    if (identical(.bn, FALSE)) {
+      sp$stratify <- FALSE
+    } else if (length(.bn)) {
+      sp$stratify <- .bn
+      if (!is.null(s$strata_nodes)) sp$strata_nodes <- s$strata_nodes
+    }
+    # The enrolled span truncates the declared distribution WHATEVER becomes of
+    # the covariate afterwards: strata cut from a conditional one are cut from
+    # the truncated margin, and a marginal one is integrated over the truncated
+    # margin. `range` says which patients the source had, and that is true
+    # before admixr2 decides how to use them -- so this is deliberately outside
+    # the banding branch above. An unnamed value still needs exactly one banded
+    # covariate to be the range OF; otherwise there is nothing to attach it to.
+    if (!is.null(s$range))
+      sp$cov_range <- if (is.list(s$range) && !is.null(names(s$range)))
+        s$range
+      else {
+        .one <- if (identical(.bn, FALSE)) character(0) else .bn
+        if (length(.one) != 1L)
+          stop("admixr2: study '", nm, "': `range` does not say which ",
+               "covariate it is the enrolled range of, and this source bands ",
+               length(.one),
+               if (length(.one)) paste0(" (", paste(sQuote(.one),
+                                                    collapse = ", "), ")"),
+               ". Give a named list, e.g. range = list(WT = c(52, 118)).",
+               call. = FALSE)
+        stats::setNames(list(s$range), .one)
+      }
     # `by` creates one ordinary pinned study per reported level.
     if (!is.null(s$by)) {
       lv <- s$population[[s$by]][["values"]]
@@ -763,10 +856,18 @@ print() a single study to check its transcription.
 # Covariates `stratify` can band (effects estimated by source model).
 .admStudyBandNames <- function(s) {
   st <- s[["stratify"]]
-  if (is.null(st) || identical(st, FALSE)) return(character(0))
-  if (!isTRUE(st)) return(as.character(st))
-  Filter(function(cv)
-           length(.admCovCoefThetas(s$ui, cv, s[["population"]])) > 0L,
-         intersect(.admCovSpecNames(s[["population"]]),
-                   tryCatch(s$ui$allCovs, error = function(e) character(0))))
+  if (identical(st, FALSE)) return(character(0))
+  if (!is.null(st) && !isTRUE(st)) return(as.character(st))
+  # DERIVED, and derived HERE TOO. `admStudy()` no longer records a `stratify`,
+  # so a study object cannot say what will be banded -- but it carries the model
+  # the derivation reads, so print() can run the same test .admExpandStrata()
+  # runs at fit time. Without this a study printed every covariate as marginal
+  # and then came back banded from the fit.
+  if (is.null(s$ui)) return(character(0))
+  # USES, not estimates: every covariate the model reads AND the population
+  # describes. One the population declares and the model never mentions is
+  # marginal, and one the model reads but the population never described has no
+  # distribution to band from.
+  intersect(.admCovSpecNames(s[["population"]]),
+            tryCatch(s$ui$allCovs, error = function(e) character(0)))
 }

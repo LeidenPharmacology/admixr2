@@ -621,7 +621,12 @@ head.paged_df <- function(x, n = 6L, ...) {
     ggplot2::scale_size_area(max_size = max_size * 0.75, guide = "none")
   else
     ggplot2::scale_size_area(
-      max_size = max_size, breaks = br, name = "n",
+      # "per mark", not "n": the unit follows the facet. On the axis a source
+      # is banded on, each mark is one stratum and carries that stratum's
+      # patients; on every other axis the strata are together and the mark
+      # carries the whole source. Both are the right number for the mark they
+      # are on, and a legend labelled `n` invited them to be read as one thing.
+      max_size = max_size, breaks = br, name = "patients\nper mark",
       guide = ggplot2::guide_legend(order = 3L, override.aes =
                                       list(colour = "grey40", shape = 16L)))
 }
@@ -947,27 +952,60 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## Returns NULL when fewer than two studies carry a finite value, since a single
 ## point has no between-study contrast to read.
 .admCovResidData <- function(cv, studies, agg) {
-  df <- do.call(rbind, lapply(names(studies), function(nm) {
-    s  <- studies[[nm]]
-    ag <- agg[[nm]]
-    if (is.null(ag)) return(NULL)
-    x <- .admCovStudyCentre(s, cv)
-    if (!is.finite(x)) return(NULL)
-    n  <- as.numeric(s[["n"]] %||% NA_real_)
-    se <- sqrt(diag(ag$pred$V) / n)
-    z  <- (as.numeric(ag$obs$E) - as.numeric(ag$pred$E)) / se
+  # ONE ROW PER (SOURCE, POSITION ON THIS AXIS), not per stratum.
+  #
+  # Banding on SEX splits every source in two, and on the CRCL facet both halves
+  # land on the same renal value -- so a three-paper fit drew six points at
+  # three positions, each pair differing only in a covariate this facet is not
+  # about, and each carrying half its paper's `n`. On the SEX facet the two
+  # halves ARE the contrast and stay apart. Grouping by position gets both
+  # without a special case, and matches the effect panel, which already marks
+  # one position per source.
+  #
+  # The moments are combined BEFORE z is formed, by the mixture law -- see
+  # .admMixMoments(). Averaging the strata's z instead would divide each by its
+  # own stratum's se and then average, which is not the residual of anything.
+  ok <- Filter(function(nm)
+    !is.null(agg[[nm]]) && is.finite(.admCovStudyCentre(studies[[nm]], cv)),
+    names(studies))
+  if (!length(ok)) return(NULL)
+  xs  <- vapply(ok, function(nm) .admCovStudyCentre(studies[[nm]], cv),
+                double(1))
+  grp <- split(ok, paste(.admCovSource(ok), signif(xs, 8), sep = "\r"))
+
+  df <- do.call(rbind, lapply(grp, function(ks) {
+    s0 <- studies[[ks[1L]]]
+    nk <- vapply(ks, function(k) {
+      v <- suppressWarnings(as.numeric(studies[[k]][["n"]] %||% NA_real_)[1L])
+      if (!is.finite(v) || v <= 0) 1 else v
+    }, double(1))
+    # Only the observed MEAN is needed -- z divides by the PREDICTED variance --
+    # so the observed side is a plain weighted mean and this asks nothing of
+    # `agg` that the previous per-stratum version did not.
+    w <- nk / sum(nk)
+    obs_E <- Reduce(`+`, Map(function(k, a) a * as.numeric(agg[[k]]$obs$E),
+                             ks, w))
+    prd <- .admMixMoments(lapply(ks, function(k) agg[[k]]$pred$E),
+                          lapply(ks, function(k) agg[[k]]$pred$V), nk)
+    n  <- sum(nk)
+    z  <- (obs_E - prd$E) / sqrt(diag(prd$V) / n)
     z  <- z[is.finite(z)]
     if (!length(z)) return(NULL)
-    # The covariate range each study speaks for, so a point that sits at 62 on
-    # the axis is not read as a study that only ever saw 62. A conditioned
-    # study genuinely did see one value, and gets a zero-width span.
-    xl <- .admCovStudyQ(s, cv, 0.1); xh <- .admCovStudyQ(s, cv, 0.9)
-    data.frame(cov = cv, study = nm, source = .admCovSource(nm),
-               kind = .admCovStudyKind(s, cv),
+    # The covariate range the source speaks for, so a point at 62 is not read
+    # as a study that only ever saw 62. A conditioned source genuinely did see
+    # one value, and gets a zero-width span.
+    xl <- .admCovStudyQ(s0, cv, 0.1); xh <- .admCovStudyQ(s0, cv, 0.9)
+    x  <- xs[[ks[1L]]]
+    data.frame(cov = cv,
+               # Named for the source once its strata are together; a stratum
+               # that stands alone on this axis keeps its own name.
+               study = if (length(ks) > 1L) .admCovSource(ks[1L]) else ks[1L],
+               source = .admCovSource(ks[1L]),
+               kind = .admCovStudyKind(s0, cv),
                x = x, xlo = if (is.finite(xl)) xl else x,
                xhi = if (is.finite(xh)) xh else x,
                z = mean(z), n = n,
-               label = .admStudyCovLabel(s), stringsAsFactors = FALSE)
+               label = .admStudyCovLabel(s0), stringsAsFactors = FALSE)
   }))
   if (is.null(df) || nrow(df) < 2L) return(NULL)
   # A covariate with no between-study contrast has nothing for this panel to
@@ -1289,9 +1327,9 @@ head.paged_df <- function(x, n = 6L, ...) {
       subtitle = paste("a SLOPE across sources, or a consistent TILT in the",
                        "grey within-source pairs, is a mis-specified",
                        "covariate form",
-                       "\narea = n  |  dashed blue: lm  |  +/-1.96 is",
-                       "indicative, not a test: z is averaged over correlated",
-                       "times"))
+                       "\narea = patients per mark  |  dashed blue: lm  |",
+                       "+/-1.96 is indicative, not a test: z is averaged over",
+                       "correlated times"))
 }
 
 ## What `V` actually contains, as a label.
@@ -1393,6 +1431,92 @@ head.paged_df <- function(x, n = 6L, ...) {
     ag2[[sn]][["pred"]] <- prd
   }
   list(studies = st2, agg = ag2[names(st2)])
+}
+
+#' Observed and predicted aggregate moments, tidied
+#'
+#' The numbers every diagnostic panel is drawn from, as one row per study and
+#' observation time. `plot()` draws a fixed set of panels; this returns the
+#' moments behind them so you can draw your own.
+#'
+#' @section What the columns mean:
+#'
+#' `obs_sd` and `pred_sd` are the SD of **one observation across subjects** --
+#' not between-subject variability. They carry BSV, residual error, and,
+#' wherever a study marginalises a covariate, the spread that covariate
+#' induces. `struct_sd` is the same quantity **before** residual error is
+#' composed on, so `pred_sd - struct_sd` is what sigma contributes: a predicted
+#' spread that misses the observed one can then be attributed. `struct_sd` is
+#' `NA` for a transforming error model, which moves the mean as well and leaves
+#' the pre-sigma variance on a different scale.
+#'
+#' `z` is the mean standardised residual, `(obs - pred) / sqrt(pred_var / n)`.
+#'
+#' @section Sources and strata:
+#'
+#' `stratify` bands a source into one study per covariate level, because a
+#' covariate a study marginalises over is not identified against a random
+#' effect on the same parameter. Those strata are the unit of the likelihood,
+#' not a unit a reader recognises, so `by = "source"` (the default) puts them
+#' back together: the mean is the n-weighted mean, and the variance is the law
+#' of total variance -- within plus **between**, the between term being the
+#' covariate effect the banding created.
+#'
+#' `by = "stratum"` returns them separately, which is what you want when the
+#' between-level contrast is the thing you are looking at.
+#'
+#' @param fit An `admFit` object.
+#' @param n_sim,seed Simulation size and seed for the predicted moments.
+#'   Defaults to the fit's own.
+#' @param by `"source"` to collapse a banded source back together, `"stratum"`
+#'   to keep its strata apart.
+#'
+#' @return A data frame with one row per study and observation time.
+#'
+#' @examples
+#' \dontrun{
+#' m <- admMoments(fit)
+#' library(ggplot2)
+#' ggplot(m, aes(pred_sd, obs_sd, colour = study)) +
+#'   geom_abline(slope = 1, intercept = 0) +
+#'   geom_point()
+#' }
+#' @export
+admMoments <- function(fit, n_sim = NULL, seed = 1L,
+                       by = c("source", "stratum")) {
+  by    <- match.arg(by)
+  extra <- fit$env$admExtra %||% fit$env$adirmcExtra %||%
+    stop("No admExtra/adirmcExtra on fit object", call. = FALSE)
+  n_sim <- n_sim %||% extra$n_sim %||% 5000L
+  agg   <- .admAggData(extra, fit$env$ui, n_sim = n_sim, seed = seed,
+                       warn = FALSE)
+  st    <- extra$studies
+  if (identical(by, "source")) {
+    cs  <- .admCollapseSources(st, agg)
+    st  <- cs$studies; agg <- cs$agg
+  }
+  out <- lapply(names(st), function(nm) {
+    s <- st[[nm]]; a <- agg[[nm]]
+    if (is.null(a)) return(NULL)
+    n  <- suppressWarnings(as.numeric(s[["n"]] %||% NA_real_)[1L])
+    oe <- as.numeric(a$obs$E); pe <- as.numeric(a$pred$E)
+    pv <- diag(as.matrix(a$pred$V))
+    vs <- a$pred$V_struct
+    data.frame(
+      study     = nm,
+      source    = .admCovSource(nm),
+      time      = as.numeric(s[["times"]] %||% seq_along(oe)),
+      n         = n,
+      obs_mean  = oe,
+      pred_mean = pe,
+      obs_sd    = sqrt(diag(as.matrix(a$obs$V))),
+      pred_sd   = sqrt(pv),
+      struct_sd = if (is.null(vs)) NA_real_ else sqrt(diag(as.matrix(vs))),
+      z         = (oe - pe) / sqrt(pv / n),
+      stringsAsFactors = FALSE)
+  })
+  out <- do.call(rbind, Filter(Negate(is.null), out))
+  if (is.null(out)) out[0L, , drop = FALSE] else out
 }
 
 #' Diagnostic plots for an admixr2 fit

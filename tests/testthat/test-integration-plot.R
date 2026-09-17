@@ -178,13 +178,20 @@ test_that("plot.admFit default which: a fit with no covariates is unchanged", {
   }
   st <- admStudies(A = admStudy(model = mfn, population = pop, dose = 100,
                                 times = c(0.5, 1, 2, 4, 8),
-                                stratify = "SEX", label = "A"))
+                                label = "A"))
   # The same source left WHOLE. Its reported moments are what a banded fit's
   # strata have to collapse back to, and nothing short of fitting it both ways
   # distinguishes the correct collapse from an average of the strata.
-  st_whole <- admStudies(A = admStudy(model = mfn, population = pop,
-                                      dose = 100, times = c(0.5, 1, 2, 4, 8),
-                                      label = "A"))
+  #
+  # Banding is DERIVED now and there is no argument to refuse it, so the
+  # unbanded reference is built by setting the internal marker directly. That
+  # is the point of the test: a caller cannot ask for this, and the collapse
+  # has to reproduce it anyway.
+  .whole <- unclass(admStudy(model = mfn, population = pop, dose = 100,
+                             times = c(0.5, 1, 2, 4, 8), label = "A"))
+  .whole$stratify <- FALSE
+  st_whole <- structure(list(A = structure(.whole, class = "admStudy")),
+                        class = "admStudies")
   nlmixr2 <- nlmixr2est::nlmixr2
   .fit <- function(stu) suppressMessages(suppressWarnings(
     nlmixr2(mfn, admData(), est = "adgh",
@@ -335,7 +342,14 @@ test_that("plot.admFit covariates: a dropped covariate is still plotted against"
   # its declared SPREAD: the source marginalised over a distribution, and the
   # `cov` value the drop leaves behind is a single number that would have been
   # mislabelled as a conditioned one.
-  expect_equal(nrow(env$bad), 3L)
+  # One row per (source, position on this axis). The sources band on WT --
+  # their models use it -- and WT is correlated with CRCL in these cohorts, so
+  # each WT stratum carries the CRCL distribution CONDITIONAL on its own WT
+  # node and therefore sits at its own renal value. Those positions are real,
+  # so the count is not pinned; what matters is that all three sources are
+  # present and CRCL is still marginal with a spread to show.
+  expect_gte(nrow(env$bad), 3L)
+  expect_setequal(unique(env$bad$source), c("normal", "mild", "moderate"))
   expect_true(all(env$bad$kind == "marginal"))
   expect_true(all(env$bad$xhi > env$bad$xlo))
 })
@@ -356,22 +370,60 @@ test_that("plot.admFit covariates: a dropped covariate effect shows as a slope",
   # of magnitude steeper than the correctly specified fit on the same data.
   expect_gt(abs(b_bad), 50 * abs(b_ok))
   expect_gt(max(abs(env$bad$z)), 1.96)
-  expect_equal(order(env$bad$x), order(-env$bad$z))
+  # Ordered in the covariate, read at the level the claim is made about: the
+  # SOURCES run the wrong way, from positive residuals at low renal function to
+  # negative at high. Per-point ordering is noisy now that each source
+  # contributes several WT-conditional positions.
+  zs <- tapply(env$bad$z, env$bad$source, mean)
+  xs <- tapply(env$bad$x, env$bad$source, mean)
+  expect_equal(order(xs), order(-zs))
 })
 
 test_that("plot.admFit covariates: predicted V carries the marginalised spread", {
-  skip_if_not_installed("nlmixr2")
-  env   <- .int_cov_plot()
-  extra <- env$fit$env$admExtra
-  ui    <- env$fit$env$ui
-  with_cov <- admixr2:::.admAggData(extra, ui, n_sim = 200L, seed = 1L, warn = FALSE)
-  # The same fit with WT pinned at its mean instead of integrated over: this is
-  # what the panels showed when the diagnostic draw kept the estimator's own
-  # covariate reduction rather than forcing per-row values.
-  flat  <- extra
+  skip_if_not_installed("nlmixr2est")
+  nlmixr2 <- nlmixr2est::nlmixr2
+  # A GENUINELY MARGINAL covariate, which now takes a source model that does
+  # NOT read it and an analysis model that does. Anything the source model uses
+  # is conditional and gets banded, and a banded covariate has no within-study
+  # distribution left to integrate -- its spread is in the spacing between
+  # strata instead. This is the covariates-vignette case: nobody published a
+  # renal term, the meta-analysis estimates one.
+  set.seed(4)
+  pop <- data.frame(WT = rlnorm(150L, log(76), 0.2),
+                    CRCL = rlnorm(150L, log(70), 0.3))
+  src_fn <- function() {                      # no renal term
+    ini({ tcl <- log(5); tv <- log(50); add.err <- 0.1; eta.cl ~ 0.1 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75
+            v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ana_fn <- function() {                      # estimates one
+    ini({ tcl <- log(5); tv <- log(50); bcrcl <- 0.5
+          add.err <- 0.1; eta.cl ~ 0.1 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl
+            v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  st  <- admStudies(A = admStudy(model = src_fn, population = pop, dose = 100,
+                                 times = c(0.5, 1, 2, 4, 8), label = "A"))
+  fit <- suppressMessages(suppressWarnings(
+    nlmixr2(ana_fn, admData(), est = "adgh",
+            control = adghControl(studies = st, print = 0L, n_restart = 1L,
+                                  maxeval = 3L))))
+  extra <- fit$env$admExtra
+  ui    <- fit$env$ui
+  # CRCL is marginal here: the source never read it, so it was never banded.
+  expect_true(any(vapply(extra$studies, function(s)
+    "CRCL" %in% admixr2:::.admCovSpecNames(s$cov_dist), logical(1))))
+
+  with_cov <- admixr2:::.admAggData(extra, ui, n_sim = 200L, seed = 1L,
+                                    warn = FALSE)
+  # The same fit with the covariate pinned at its mean instead of integrated
+  # over: this is what the panels showed when the diagnostic draw kept the
+  # estimator's own covariate reduction rather than forcing per-row values.
+  flat <- extra
   flat$studies <- lapply(extra$studies, function(s) { s$cov_dist <- NULL; s })
-  no_cov <- admixr2:::.admAggData(flat, ui, n_sim = 200L, seed = 1L, warn = FALSE)
+  no_cov <- admixr2:::.admAggData(flat, ui, n_sim = 200L, seed = 1L,
+                                  warn = FALSE)
   nm <- names(extra$studies)[1]
-  expect_gt(max(abs(diag(with_cov[[nm]]$pred$V) - diag(no_cov[[nm]]$pred$V))),
-            1e-6)
+  expect_gt(max(abs(diag(with_cov[[nm]]$pred$V) -
+                    diag(no_cov[[nm]]$pred$V))), 1e-6)
 })

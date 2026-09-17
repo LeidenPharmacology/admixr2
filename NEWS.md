@@ -68,6 +68,15 @@
 * **Point area is the study's sample size on both covariate panels**, with a
   legend. The residual panel encoded it already and said so nowhere.
 
+* **Whether a covariate is conditional or marginal is derived, not declared**:
+  conditional when the source's own model uses it, marginal when its
+  population declares it and the model never mentions it. Narrowed to what the
+  analysis model can be moved by.
+
+* **`admMoments(fit)`**: the observed and predicted first two moments per
+  source, with the structural share of the variance and the standardised
+  residual -- the numbers behind the mean and covariance panels.
+
 ## Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not name a new
@@ -97,7 +106,21 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **`adfoControl()`'s new `grad = "analytical"` default brings the
   `grad_bounds` box with it.**
 
+* **`admStudy(stratify = )` is removed**, banding being derived. A script that
+  named fewer covariates than the source's model uses now sums over more
+  strata and moves; `covStrata()` still takes it.
+
+* **`range` truncates a MARGINAL covariate's declared distribution too**, not
+  only a banded one's: the enrolled span holds however the covariate is used.
+
 ## Bug fixes
+
+* **`stratify = FALSE` stopped reaching the spec**, so a study that refused
+  banding had one derived for it -- the opt-out became its opposite.
+
+* **A source banded on a covariate the analysis model does not read could not
+  be reduced**: the joint stratum sampler refused the drop, blocking nested
+  fits. Its inputs are retained so it can be rebuilt on the reduced set.
 
 * **A discrete covariate latently correlated with another margin is refused**,
   rather than integrated as if it were independent.

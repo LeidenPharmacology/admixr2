@@ -126,32 +126,33 @@
 <polyline points='32.50,146.07 35.24,146.07 ' style='stroke-width: 1.07; stroke: #333333; stroke-linecap: butt;' />
 <text x='331.50' y='568.24' text-anchor='middle' style='font-size: 11.00px; font-family: sans;' textLength='76.44px' lengthAdjust='spacingAndGlyphs'>Covariate value</text>
 <text transform='translate(13.05,301.93) rotate(-90)' text-anchor='middle' style='font-size: 11.00px; font-family: sans;' textLength='80.72px' lengthAdjust='spacingAndGlyphs'>Parameter value</text>
-<rect x='638.73' y='215.02' width='55.25' height='45.52' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
-<rect x='644.21' y='220.50' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
-<line x1='645.93' y1='229.14' x2='659.76' y2='229.14' style='stroke-width: 1.07; stroke: #E69F00; stroke-opacity: 0.70; stroke-linecap: butt;' />
-<line x1='645.93' y1='229.14' x2='659.76' y2='229.14' style='stroke-width: 3.41; stroke: #E69F00; stroke-opacity: 0.55; stroke-linecap: butt;' />
-<circle cx='652.85' cy='229.14' r='1.95' style='stroke-width: 0.71; stroke: #E69F00; fill: #E69F00;' />
-<rect x='644.21' y='237.78' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
-<line x1='645.93' y1='246.42' x2='659.76' y2='246.42' style='stroke-width: 1.07; stroke: #56B4E9; stroke-opacity: 0.70; stroke-linecap: butt;' />
-<line x1='645.93' y1='246.42' x2='659.76' y2='246.42' style='stroke-width: 3.41; stroke: #56B4E9; stroke-opacity: 0.55; stroke-linecap: butt;' />
-<circle cx='652.85' cy='246.42' r='1.95' style='stroke-width: 0.71; stroke: #56B4E9; fill: #56B4E9;' />
-<text x='666.96' y='232.17' style='font-size: 8.80px; font-family: sans;' textLength='20.06px' lengthAdjust='spacingAndGlyphs'>north</text>
-<text x='666.96' y='249.45' style='font-size: 8.80px; font-family: sans;' textLength='21.53px' lengthAdjust='spacingAndGlyphs'>south</text>
-<rect x='638.73' y='271.50' width='75.79' height='45.52' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
-<rect x='644.21' y='276.98' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
-<circle cx='652.85' cy='285.62' r='1.95' style='stroke-width: 0.71; stroke: none; fill: #000000;' />
-<rect x='644.21' y='294.26' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
-<polygon points='650.89,302.90 652.85,300.95 654.80,302.90 652.85,304.86 ' style='stroke-width: 0.71; stroke: none; fill: #000000;' />
-<text x='666.96' y='288.65' style='font-size: 8.80px; font-family: sans;' textLength='33.75px' lengthAdjust='spacingAndGlyphs'>marginal</text>
-<text x='666.96' y='305.93' style='font-size: 8.80px; font-family: sans;' textLength='42.08px' lengthAdjust='spacingAndGlyphs'>conditional</text>
-<rect x='638.73' y='327.98' width='48.40' height='60.85' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
-<text x='644.21' y='342.17' style='font-size: 11.00px; font-family: sans;' textLength='6.12px' lengthAdjust='spacingAndGlyphs'>n</text>
-<rect x='644.21' y='348.79' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
-<circle cx='652.85' cy='357.43' r='5.15' style='stroke-width: 0.71; stroke: none; fill: #666666;' />
-<rect x='644.21' y='366.07' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
-<circle cx='652.85' cy='374.71' r='6.22' style='stroke-width: 0.71; stroke: none; fill: #666666;' />
-<text x='666.96' y='360.46' style='font-size: 8.80px; font-family: sans;' textLength='14.68px' lengthAdjust='spacingAndGlyphs'>120</text>
-<text x='666.96' y='377.74' style='font-size: 8.80px; font-family: sans;' textLength='14.68px' lengthAdjust='spacingAndGlyphs'>180</text>
+<rect x='638.73' y='209.08' width='55.25' height='45.52' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
+<rect x='644.21' y='214.56' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
+<line x1='645.93' y1='223.20' x2='659.76' y2='223.20' style='stroke-width: 1.07; stroke: #E69F00; stroke-opacity: 0.70; stroke-linecap: butt;' />
+<line x1='645.93' y1='223.20' x2='659.76' y2='223.20' style='stroke-width: 3.41; stroke: #E69F00; stroke-opacity: 0.55; stroke-linecap: butt;' />
+<circle cx='652.85' cy='223.20' r='1.95' style='stroke-width: 0.71; stroke: #E69F00; fill: #E69F00;' />
+<rect x='644.21' y='231.84' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
+<line x1='645.93' y1='240.48' x2='659.76' y2='240.48' style='stroke-width: 1.07; stroke: #56B4E9; stroke-opacity: 0.70; stroke-linecap: butt;' />
+<line x1='645.93' y1='240.48' x2='659.76' y2='240.48' style='stroke-width: 3.41; stroke: #56B4E9; stroke-opacity: 0.55; stroke-linecap: butt;' />
+<circle cx='652.85' cy='240.48' r='1.95' style='stroke-width: 0.71; stroke: #56B4E9; fill: #56B4E9;' />
+<text x='666.96' y='226.23' style='font-size: 8.80px; font-family: sans;' textLength='20.06px' lengthAdjust='spacingAndGlyphs'>north</text>
+<text x='666.96' y='243.51' style='font-size: 8.80px; font-family: sans;' textLength='21.53px' lengthAdjust='spacingAndGlyphs'>south</text>
+<rect x='638.73' y='265.56' width='75.79' height='45.52' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
+<rect x='644.21' y='271.04' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
+<circle cx='652.85' cy='279.68' r='1.95' style='stroke-width: 0.71; stroke: none; fill: #000000;' />
+<rect x='644.21' y='288.32' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
+<polygon points='650.89,296.96 652.85,295.01 654.80,296.96 652.85,298.92 ' style='stroke-width: 0.71; stroke: none; fill: #000000;' />
+<text x='666.96' y='282.71' style='font-size: 8.80px; font-family: sans;' textLength='33.75px' lengthAdjust='spacingAndGlyphs'>marginal</text>
+<text x='666.96' y='299.99' style='font-size: 8.80px; font-family: sans;' textLength='42.08px' lengthAdjust='spacingAndGlyphs'>conditional</text>
+<rect x='638.73' y='322.04' width='54.37' height='72.73' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
+<text x='644.21' y='336.23' style='font-size: 11.00px; font-family: sans;' textLength='38.53px' lengthAdjust='spacingAndGlyphs'>patients</text>
+<text x='644.21' y='348.11' style='font-size: 11.00px; font-family: sans;' textLength='43.41px' lengthAdjust='spacingAndGlyphs'>per mark</text>
+<rect x='644.21' y='354.73' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
+<circle cx='652.85' cy='363.37' r='5.15' style='stroke-width: 0.71; stroke: none; fill: #666666;' />
+<rect x='644.21' y='372.01' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
+<circle cx='652.85' cy='380.65' r='6.22' style='stroke-width: 0.71; stroke: none; fill: #666666;' />
+<text x='666.96' y='366.40' style='font-size: 8.80px; font-family: sans;' textLength='14.68px' lengthAdjust='spacingAndGlyphs'>120</text>
+<text x='666.96' y='383.68' style='font-size: 8.80px; font-family: sans;' textLength='14.68px' lengthAdjust='spacingAndGlyphs'>180</text>
 <text x='35.24' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='311.76px' lengthAdjust='spacingAndGlyphs'>black dotted, open squares: the ESTIMATED effect  |  coloured: each source's own published model </text>
 <text x='35.24' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='351.24px' lengthAdjust='spacingAndGlyphs'>CONDITIONAL: its own regression over the range it covers  |  MARGINAL: a whisker, 10th-90th over 2.5th-97.5th</text>
 <text x='35.24' y='14.56' style='font-size: 13.20px; font-family: sans;' textLength='264.91px' lengthAdjust='spacingAndGlyphs'>Estimated covariate effect against its sources</text>

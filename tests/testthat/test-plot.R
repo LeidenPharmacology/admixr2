@@ -822,3 +822,86 @@ test_that(".admCollapseSources carries the structural variance too", {
   ag2 <- ag; ag2$a_s2$pred$V_struct <- NULL
   expect_null(.admCollapseSources(st, ag2)$agg$a$pred$V_struct)
 })
+
+test_that("admMoments returns the numbers the panels are drawn from", {
+  fit <- .make_mock_fit()
+  fit$env$admExtra$studies <- list(
+    a_s1 = list(E = c(2, 1), V = diag(c(1, 1)), n = 50, times = c(1, 2)),
+    a_s2 = list(E = c(6, 3), V = diag(c(1, 1)), n = 50, times = c(1, 2)))
+  fit$env$aggData <- NULL
+  # Stand in for the simulation: the accessor's job is the tidying, and a mock
+  # fit has no model to solve.
+  ag <- list(
+    a_s1 = list(times = c(1, 2), n = 50,
+                obs  = list(E = c(2, 1), V = diag(c(1, 1))),
+                pred = list(E = c(2, 1), V = diag(c(4, 4)),
+                            V_struct = diag(c(1, 1)))),
+    a_s2 = list(times = c(1, 2), n = 50,
+                obs  = list(E = c(6, 3), V = diag(c(1, 1))),
+                pred = list(E = c(6, 3), V = diag(c(4, 4)),
+                            V_struct = diag(c(1, 1)))))
+  local_mocked_bindings(.admAggData = function(...) ag, .package = "admixr2")
+
+  # BY SOURCE by default: the two strata are one paper.
+  m <- admMoments(fit)
+  expect_equal(unique(m$study), "a")
+  expect_equal(nrow(m), 2L)
+  expect_setequal(names(m), c("study", "source", "time", "n", "obs_mean",
+                              "pred_mean", "obs_sd", "pred_sd", "struct_sd",
+                              "z"))
+  expect_equal(m$n, c(100, 100))
+  # Collapsed by the mixture law: means (2, 6) and (1, 3) -> (4, 2).
+  expect_equal(m$obs_mean, c(4, 2))
+  # struct_sd is the PRE-SIGMA part, so strictly inside pred_sd.
+  expect_true(all(m$struct_sd < m$pred_sd))
+
+  # BY STRATUM keeps them apart, which is what the covariate panels need.
+  ms <- admMoments(fit, by = "stratum")
+  expect_setequal(ms$study, c("a_s1", "a_s2"))
+  expect_equal(nrow(ms), 4L)
+})
+
+test_that("admMoments reports NA struct_sd for a transforming error model", {
+  fit <- .make_mock_fit()
+  fit$env$admExtra$studies <- list(
+    a = list(E = c(2, 1), V = diag(c(1, 1)), n = 50, times = c(1, 2)))
+  ag <- list(a = list(times = c(1, 2), n = 50,
+                      obs  = list(E = c(2, 1), V = diag(c(1, 1))),
+                      pred = list(E = c(2, 1), V = diag(c(4, 4)),
+                                  V_struct = NULL)))
+  local_mocked_bindings(.admAggData = function(...) ag, .package = "admixr2")
+  # Not rescaled and not guessed: a transforming error model moves the mean, so
+  # the pre-sigma variance is on a different scale and is reported as absent.
+  expect_true(all(is.na(admMoments(fit)$struct_sd)))
+})
+
+test_that(".admCovResidData is one row per SOURCE per position on THIS axis", {
+  # Banding on SEX splits every source in two, and on another covariate's axis
+  # both halves land on the same value -- so a two-paper fit drew four points at
+  # two positions, each pair differing only in a covariate that facet is not
+  # about, and each carrying half its paper's n. The effect panel already marks
+  # one position per source; this now matches it.
+  mk <- function(crcl, sex) list(
+    n = 50L, times = c(1, 2),
+    cov = list(CRCL = crcl, SEX = sex),
+    cov_dist = list(SEX = list(.point = TRUE),
+                    CRCL = list(meanlog = log(crcl), sdlog = 0.2)))
+  st <- list(a_s1 = mk(40, 0), a_s2 = mk(40, 1),
+             b_s1 = mk(90, 0), b_s2 = mk(90, 1))
+  ag <- stats::setNames(lapply(names(st), function(nm) list(
+    obs  = list(E = c(1, 2)),
+    pred = list(E = c(1.1, 2.1), V = diag(c(0.01, 0.04))))), names(st))
+
+  # CRCL: both sex strata of a source share its renal value, so they combine.
+  r <- .admCovResidData("CRCL", st, ag)
+  expect_equal(nrow(r), 2L)
+  expect_setequal(r$study, c("a", "b"))
+  expect_true(all(r$n == 100))              # the whole source, not a stratum
+
+  # SEX: the strata ARE the contrast and stay apart, at their own n.
+  rs <- .admCovResidData("SEX", st, ag)
+  expect_equal(nrow(rs), 4L)
+  expect_setequal(rs$study, names(st))
+  expect_true(all(rs$n == 50))
+  expect_setequal(rs$x, c(0, 1))
+})

@@ -18,7 +18,6 @@ admStudy(
   population = NULL,
   at = NULL,
   by = NULL,
-  stratify = NULL,
   strata_nodes = NULL,
   range = NULL,
   label = NULL,
@@ -64,19 +63,25 @@ from \code{population}.}
 \code{by = "SEX"}. Expands a published model into one study per level; digitised
 subgroup profiles must be supplied as separate studies.}
 
-\item{stratify}{Band the source into strata, so a covariate it fitted
-contributes a CONTRAST rather than one pooled number. \code{TRUE} bands over
-every covariate the source's own model ESTIMATED a coefficient for, and
-leaves the rest marginalised --- derived from the model, so nothing has to
-be restated. A covariate the model merely READS is not banded: weight at a
-fixed allometric exponent carries no fitted effect to recover, and banding
-on it would buy strata and no evidence. Name a covariate explicitly to
-override that judgement. Available for published model sources only.
-Measured over 720 replicates: coverage 0.933
-with one source banded and 0.925 with all of them, against 0.817 with
-none --- one banded source is as good as three. See \code{\link[=covStrata]{covStrata()}}.}
+\item{strata_nodes}{Quadrature resolution for a banded CONTINUOUS
+covariate, i.e. how many nodes it is cut into. Default 9. Raise it for
+precision, at a multiplicative cost: a source banded on two continuous
+covariates becomes \code{strata_nodes^2} studies, and each is solved. Discrete
+covariates are unaffected --- their levels are exact and cost one stratum
+each. Note that the objective VALUE depends on this, so two fits are only
+comparable at the same resolution; admixr2 records it per study and
+\code{\link[=anova]{anova()}} checks it.}
 
-\item{strata_nodes, range}{Resolution and the enrolled range for \code{stratify}.}
+\item{range}{Optional named list giving the covariate span the source
+ENROLLED, e.g. \code{range = list(WT = c(52, 118))}. The declared distribution
+is truncated to it, whether that covariate ends up conditional (strata are
+then cut from the truncated margin) or marginal (the truncated margin is
+integrated over). Needed when that distribution is
+wider than the enrolment --- a \verb{mean +/- SD} transcribed from a baseline
+table has tails where nobody was --- and \emph{not} wanted when \code{population} is
+the patients themselves, since the margins are then fitted to exactly who
+was enrolled and truncating would score the paper against a sub-population
+of its own. An unnamed value is allowed only when one covariate is banded.}
 
 \item{label}{Optional display name; otherwise taken from the argument name in
 \code{\link[=admStudies]{admStudies()}}.}
@@ -120,6 +125,40 @@ Nothing is solved here. The study is generated when it reaches the fit, so
 building one is cheap and a mistake surfaces on \code{print()} rather than after a
 long run.
 }
+\section{Conditional and marginal covariates are derived, not declared}{
+
+
+Whether a covariate is \strong{conditional} or \strong{marginal} for a source is a
+property of that source's own model, so admixr2 works it out and there is
+nothing to set.
+
+A covariate is \strong{conditional} when the source's model ESTIMATED its
+coefficient. That paper reports a contrast along it, so the source is banded
+into strata and the contrast is carried into the fit. A covariate the model
+merely READS is not banded --- weight at a fixed allometric exponent carries
+no fitted effect to recover, and banding on it would buy strata and no
+evidence.
+
+A covariate is \strong{marginal} when the model did not estimate it. There is no
+contrast in that paper to band on, and splitting it on a covariate its model
+never saw would manufacture evidence, so admixr2 integrates over the
+population instead.
+
+This matters and is why it is not left to the caller: a covariate every
+source marginalises is not identified against a random effect on the same
+parameter. Measured over 720 replicates, coverage was 0.933 with one source
+banded and 0.925 with all of them, against \strong{0.817 with none}.
+
+A source given as digitised \code{E}/\code{V} has no model to derive from and is
+marginal over whatever it declares. Use one \code{admStudy(..., at = ...)} per
+reported subgroup to enter a paper that published by subgroup.
+
+\code{stratify} was removed; \code{\link[=covStrata]{covStrata()}} still takes it for working with a
+covariate distribution directly. \code{strata_nodes} and \code{range} remain: the
+first is a precision setting and the second is a fact about the source,
+neither of which is a statement about which covariates are conditional.
+}
+
 \seealso{
 \code{\link[=admStudies]{admStudies()}} to collect several, \code{\link[=admPopulation]{admPopulation()}} for the
 baseline table.

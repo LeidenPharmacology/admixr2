@@ -83,7 +83,7 @@
 <polygon points='650.89,301.93 652.85,299.97 654.80,301.93 652.85,303.88 ' style='stroke-width: 0.71; stroke: none; fill: #000000; fill-opacity: 0.85;' />
 <text x='666.96' y='304.96' style='font-size: 8.80px; font-family: sans;' textLength='42.08px' lengthAdjust='spacingAndGlyphs'>conditional</text>
 <text x='30.83' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='344.75px' lengthAdjust='spacingAndGlyphs'>a SLOPE across sources, or a consistent TILT in the grey within-source pairs, is a mis-specified covariate form </text>
-<text x='30.83' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='300.16px' lengthAdjust='spacingAndGlyphs'>area = n  |  dashed blue: lm  |  +/-1.96 is indicative, not a test: z is averaged over correlated times</text>
+<text x='30.83' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='348.41px' lengthAdjust='spacingAndGlyphs'>area = patients per mark  |  dashed blue: lm  | +/-1.96 is indicative, not a test: z is averaged over correlated times</text>
 <text x='30.83' y='14.56' style='font-size: 13.20px; font-family: sans;' textLength='211.35px' lengthAdjust='spacingAndGlyphs'>Between-study residual vs covariate</text>
 </g>
 </svg>
