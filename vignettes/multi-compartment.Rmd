@@ -148,14 +148,14 @@ ggplot() +
             width = 1.9, height = 1, linewidth = 0.7) +
   geom_text(data = box, aes(x, 0, label = lab), size = 3.3,
             lineheight = 0.95) +
-  geom_text(data = box, aes(x, -0.78, label = tag, colour = seen),
+  geom_text(data = box, aes(x, 0.78, label = tag, colour = seen),
             size = 2.9, fontface = "italic", show.legend = FALSE) +
   scale_fill_manual(values = c(`TRUE` = "#CFE3F2", `FALSE` = "grey93"),
                     guide = "none") +
   scale_colour_manual(values = c(`TRUE` = "#0072B2", `FALSE` = "grey55"),
                       guide = "none") +
   facet_wrap(~panel) +
-  coord_cartesian(xlim = c(-2.1, 4.3), ylim = c(-1.6, 0.95)) +
+  coord_cartesian(xlim = c(-2.1, 4.3), ylim = c(-1.55, 1.05)) +
   theme_void(base_size = 12) +
   theme(strip.text = element_text(face = "bold", size = 10,
                                   margin = margin(b = 6)),
