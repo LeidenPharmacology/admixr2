@@ -34,6 +34,7 @@ to means and covariances, so a digitised figure is a fittable dataset. Two steps
 library(admixr2)
 library(rxode2)
 library(nlmixr2)
+library(ggplot2)
 
 ev <- rxode2::et(amt = 100, cmt = "central")   # single 100-unit dose, shared throughout
 ```
@@ -102,6 +103,64 @@ with efflux clearance `qout`. The steady-state brain:plasma ratio is what we are
 after:
 
 $$K_{p,uu} = \frac{q_{in}}{q_{out}}$$
+
+```{r cmt-diagram, echo=FALSE, fig.height=2.9, fig.width=7, fig.cap="The two structures. Step 1's peripheral compartment is a distribution store: drug goes in and comes back, but nothing was ever measured there, so no amount of plasma data says what concentration it holds. Step 2 gives that compartment a volume, a sampled concentration and a name."}
+# One panel per structure, same geometry and different labels: the point is that
+# Step 2 swaps an unmeasured distribution store for a compartment that was
+# actually sampled.
+.pan <- c("Step 1 - plasma only", "Step 2 - plasma + brain")
+box <- rbind(
+  data.frame(panel = .pan[1], x = 0,   lab = "central\nV1",   out = "cp"),
+  data.frame(panel = .pan[1], x = 3.2, lab = "periph\nV2",    out = NA),
+  data.frame(panel = .pan[2], x = 0,   lab = "central\nV1",   out = "cp"),
+  data.frame(panel = .pan[2], x = 3.2, lab = "brain\nVb = 5", out = "cb"))
+box$panel <- factor(box$panel, .pan)
+box$seen  <- !is.na(box$out)
+box$tag   <- ifelse(box$seen, paste0("observed as ", box$out),
+                    "never measured")
+
+arr  <- arrow(length = unit(0.16, "cm"), type = "closed")
+flow <- rbind(
+  data.frame(panel = .pan, x = 0.95, xend = 2.25, y =  0.22, yend =  0.22,
+             lab = c("Q", "qin"),  vj = -0.6),
+  data.frame(panel = .pan, x = 2.25, xend = 0.95, y = -0.22, yend = -0.22,
+             lab = c("Q", "qout"), vj =  1.5))
+flow$panel <- factor(flow$panel, .pan)
+dose <- data.frame(panel = factor(.pan, .pan), x = -1.9, xend = -0.95,
+                   y = 0, yend = 0)
+elim <- data.frame(panel = factor(.pan, .pan), x = 0, xend = 0,
+                   y = -0.5, yend = -1.35)
+
+ggplot() +
+  geom_segment(data = dose, aes(x, y, xend = xend, yend = yend),
+               arrow = arr, linewidth = 0.5, colour = "grey25") +
+  geom_text(data = dose, aes(x - 0.05, y + 0.28, label = "dose"),
+            size = 3.1, hjust = 0, colour = "grey25") +
+  geom_segment(data = elim, aes(x, y, xend = xend, yend = yend),
+               arrow = arr, linewidth = 0.5, colour = "grey25") +
+  geom_text(data = elim, aes(x + 0.14, yend + 0.2, label = "CL"),
+            size = 3.1, hjust = 0, colour = "grey25") +
+  geom_segment(data = flow, aes(x, y, xend = xend, yend = yend),
+               arrow = arr, linewidth = 0.5, colour = "grey25") +
+  geom_text(data = flow, aes(x = 1.6, y = y, label = lab, vjust = vj),
+            size = 3.1, colour = "grey25") +
+  geom_tile(data = box, aes(x, 0, fill = seen, colour = seen),
+            width = 1.9, height = 1, linewidth = 0.7) +
+  geom_text(data = box, aes(x, 0, label = lab), size = 3.3,
+            lineheight = 0.95) +
+  geom_text(data = box, aes(x, -0.78, label = tag, colour = seen),
+            size = 2.9, fontface = "italic", show.legend = FALSE) +
+  scale_fill_manual(values = c(`TRUE` = "#CFE3F2", `FALSE` = "grey93"),
+                    guide = "none") +
+  scale_colour_manual(values = c(`TRUE` = "#0072B2", `FALSE` = "grey55"),
+                      guide = "none") +
+  facet_wrap(~panel) +
+  coord_cartesian(xlim = c(-2.1, 4.3), ylim = c(-1.6, 0.95)) +
+  theme_void(base_size = 12) +
+  theme(strip.text = element_text(face = "bold", size = 10,
+                                  margin = margin(b = 6)),
+        panel.spacing = unit(1.2, "lines"))
+```
 
 With **two** observed outputs — plasma `cp` and brain `cb` — the model carries a
 residual-error term for each. (`vb`, the brain volume, is a fixed physiological
