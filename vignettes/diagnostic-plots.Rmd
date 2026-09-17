@@ -46,8 +46,8 @@ plots <- plot(fit, which = c("mean", "cov", "covariate", "nll", "par"))
 ```
 
 `"covariate"` needs studies that declare covariates and is silently absent
-otherwise, so this vignette's single-study examplomycin fit produces the other
-four. It has its own section below.
+otherwise, so the single-study examplomycin fit used below produces the other
+four. It has its own section, with its own fit, further down.
 
 ## Mean diagnostics
 
@@ -105,10 +105,74 @@ source can sit beautifully on its own panel while the relation tying them
 together is wrong. `which = "covariate"` draws that contrast, and returns two
 plots.
 
-```r
-plots <- plot(fit, which = "covariate")
-names(plots)
-#> [1] "covariate_effect" "covariate_resid"
+The examplomycin fit declares no covariates, so these two panels need a fit
+that does. Three renal cohorts, generated *with* a renal effect. Two of them
+report only who they enrolled, so creatinine clearance is **marginal** for
+them; `mild` reports its result *by* renal band, so it is **conditional**. One
+figure then carries both readings of the same covariate.
+
+```{r cov-fit, message=FALSE, results="hide"}
+set.seed(11)
+
+renal_model <- function() {
+  ini({
+    tcl   <- log(5) ; tv    <- log(50)
+    bcrcl <- 0.6    ; bsex  <- 0.18
+    add.err <- 0.08
+    eta.cl ~ 0.05
+  })
+  model({
+    cl <- exp(tcl + eta.cl) * (WT / 70)^0.75 * (CRCL / 90)^bcrcl *
+      exp(bsex * SEX)
+    v  <- exp(tv) * (WT / 70)
+    cp <- linCmt()
+    cp ~ add(add.err)
+  })
+}
+
+TIMES <- c(0.5, 2, 8, 24)
+
+# MARGINAL on renal function: the paper reports the population it enrolled and
+# admixr2 integrates over it. Banded on sex, which every analyst fitted.
+enrolled <- function(n, crclm) data.frame(
+  WT   = rlnorm(n, log(76), 0.198),
+  CRCL = rlnorm(n, log(crclm), 0.05),
+  SEX  = rbinom(n, 1, 0.5))
+
+marginal_source <- function(n, crclm) admStudy(
+  model = renal_model, population = enrolled(n, crclm),
+  dose = 200, times = TIMES, stratify = "SEX")
+
+# CONDITIONAL on renal function: banded on CRCL too, over the band it enrolled.
+# Explicit margins rather than a table -- a table carries the observed
+# covariate correlations, and banding on a correlated covariate builds a joint
+# sampler the design cannot later drop a covariate out of.
+banded_source <- function(crclm, band) admStudy(
+  model = renal_model,
+  population = covDist(WT   = c(meanlog = log(76), sdlog = 0.198),
+                       CRCL = c(meanlog = log(crclm), sdlog = 0.05),
+                       SEX  = c(female = 0.5, male = 0.5)),
+  n = 210L, dose = 200, times = TIMES,
+  stratify = c("SEX", "CRCL"), strata_nodes = 1L,
+  range = list(CRCL = band))
+
+renal_studies <- admStudies(
+  normal   = marginal_source(260L, 95),
+  mild     = banded_source(62, c(50, 75)),
+  moderate = marginal_source(180L, 38))
+
+renal_fit <- nlmixr2(
+  renal_model, admData(), est = "adgh",
+  control = adghControl(studies = renal_studies, print = 0L,
+                        n_restart = 1L, maxeval = 40L))
+```
+
+```{r cov-plots, include=FALSE, fig.show="hide"}
+cov_plots <- plot(renal_fit, which = "covariate", n_sim = 300L)
+```
+
+```{r cov-names}
+names(cov_plots)
 ```
 
 **`covariate_effect`** asks one question: **does the estimated covariate effect
@@ -135,6 +199,13 @@ the places the model was actually asked --- and the dotted line joins them, so
 the effect reads the same way on both kinds of axis. The line is a connector
 between marked points, not a claim about the space between them.
 
+```{r covariate-effect, fig.height=4.2, fig.cap="Estimated covariate effect against its sources. `cl vs CRCL`: `mild` reported by renal band, so its own regression runs across 50-75; `normal` and `moderate` reported only who they enrolled, so each is a whisker. `cl vs SEX`: every analyst banded on sex, so each source draws its own line between the two levels."}
+cov_plots$covariate_effect
+```
+
+There is no `WT` facet. Every source reads weight at a *fixed* 0.75 exponent, so
+no weight coefficient is estimated and there is no agreement to check.
+
 The fit is black, dotted, open squares. Sources are coloured, solid, filled.
 Nothing about the fit borrows a source's vocabulary: the shape key
 (circle/diamond) is a statement about a *source*, and the fit is not one.
@@ -151,6 +222,26 @@ covariate value it sits at. How it is read depends on the covariate:
   strata `stratify` cut from one source are joined in grey, because that
   pairing is what banding buys --- the same study, one covariate moved. Several
   sources tilting the same way is the mis-specification.
+
+```{r covariate-resid, fig.height=3.4, fig.cap="Between-study residual against each covariate. A slope across sources, or a consistent tilt in the grey within-source pairs, is a mis-specified covariate form."}
+cov_plots$covariate_resid
+```
+
+This fit has the renal term the data were generated with, so its residuals are
+flat --- which is what a correctly specified covariate form looks like. For the
+same panel on a model that is *missing* the effect, where the three sources run
+from +5 to −4.5 monotone in creatinine clearance, see
+`vignette("covariates")`.
+
+Both panels key colour on the **source**, not the stratum, so a source is one
+colour across the figure. Strata of one source are told apart by where they sit
+and by the grey line joining them, which is what makes them a pair.
+
+A covariate facet is dropped from `covariate_resid` when the sources have no
+real contrast along it --- when the spread of their centres is small against a
+typical within-study 10th--90th. Three cohorts drawing weight from the same
+distribution differ only in what a finite sample estimated, and a free x scale
+would blow that noise up to full panel width and fit a trend through it.
 
 Read it with the coverage bars: three sources spanning the *same* range of a
 covariate cannot say anything about it, whatever the fitted line does, and with
@@ -286,12 +377,3 @@ ggplot2::ggplot(df_corr, ggplot2::aes(x = eta_j, y = eta_i, fill = r)) +
 - [Multiple studies](multiple-studies.html) — meta-analysis across studies
 - [Estimator comparison](estimator-comparison.html)
 
-Both panels key colour on the **source**, not the stratum, so a source is one
-colour across the figure. Strata of one source are told apart by where they sit
-and by the grey line joining them, which is what makes them a pair.
-
-A covariate facet is dropped from `covariate_resid` when the sources have no
-real contrast along it --- when the spread of their centres is small against a
-typical within-study 10th--90th. Three cohorts drawing weight from the same
-distribution differ only in what a finite sample estimated, and a free x scale
-would blow that noise up to full panel width and fit a trend through it.

@@ -527,21 +527,30 @@ plots <- plot(fit_null, which = "covariate")
 ```
 
 The effect panel has no `CRCL` facet: there is no renal effect in this model to
-draw. The residual panel has one --- and across it the three sources run from
-+5 at the moderate-impairment cohort to −4.5 at the normal one, monotone in
-creatinine clearance and far outside ±1.96. (Six marks, three positions: each
-source is banded into two sex strata, and a source's two strata share its renal
-median.) That trend *is* the renal effect, showing up in the residuals of the
-model that does not have it.
+draw. It has no `WT` facet either --- every paper reads weight at a *fixed* 0.75
+exponent, so there is no estimated weight effect to check agreement on, and the
+panel only draws a covariate whose coefficient the model estimates. That leaves
+`SEX`, which every analyst did fit.
 
-Read it alongside the coverage bars, which is what the marks are for. Every
-cohort enrolled much the same weights, so the `WT` facet has its bars lying on
-top of one another and can say nothing about weight whichever way its line tips.
-The `CRCL` facet has three separated bars and can.
+The residual panel has a `CRCL` facet --- and across it the three sources run
+from +5 at the moderate-impairment cohort to −4.5 at the normal one, monotone in
+creatinine clearance and far outside ±1.96. (Six marks, three positions: this
+panel is per *stratum*, each source is banded into two sex strata, and a
+source's two strata share its renal median. Colour is per source, so the two
+strata of one paper are the same colour.) That trend *is* the renal effect,
+showing up in the residuals of the model that does not have it.
+
+There is no `WT` facet here either, and for a different reason: all three
+cohorts drew weight from much the same distribution, so their weight medians
+differ only by what a finite sample of it estimated. A free x scale would blow
+that noise up to full panel width and fit a trend through it, so the facet is
+dropped when the spread of the sources' centres is small against a typical
+within-study 10th--90th. The `CRCL` facet has three genuinely separated
+positions and is kept.
 
 `SEX` is drawn differently again, because every source conditions on it: ticked
-at its two levels and nowhere between, no regression through it, and each
-source's two strata joined in grey. That grey line is the contrast banding
+at the two levels the sources were conditioned at and nowhere between, no
+regression through it, and each source's two strata joined in grey. That grey line is the contrast banding
 bought --- one study, one covariate moved --- and here all three are flat, which
 is the sex effect being fine. A tilt shared by all three would be the
 mis-specification, and it is invisible to a regression over the six strata

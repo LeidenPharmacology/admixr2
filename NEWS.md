@@ -216,6 +216,9 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **Visual regression tests for the covariate panels**, on synthetic studies
   and no fit. Requires the new `vdiffr` suggested dependency.
 
+* **`vignette("diagnostic-plots")` renders the covariate panels** from its own
+  three-source fit, instead of describing them in prose.
+
 * **`print.admFit()` reaches nlmixr2est's printer through `getS3method()`**,
   not an `asNamespace()` lookup.
 
