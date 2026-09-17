@@ -358,54 +358,6 @@ test_that(".admCovPooled weights each study's median by n", {
   expect_equal(.admCovPooled("WT", .cov_studies())$WT, 85, tolerance = 1e-6)
 })
 
-test_that(".admMergeCovMarks merges coincident strata under their source name", {
-  df <- data.frame(
-    cov = "WT", param = "cl", study = c("a_s1", "a_s2", "b_s1"),
-    x = c(70, 70, 90), xlo = 60, xhi = 80, y = c(5, 5, 6),
-    stringsAsFactors = FALSE)
-  out <- .admMergeCovMarks(df)
-  expect_equal(nrow(out), 2L)
-  expect_setequal(out$study, c("a", "b"))
-})
-
-test_that(".admMergeCovMarks unions the spread of the marks it absorbs", {
-  # The merged mark is labelled for both strata, so it has to draw both their
-  # ranges. Keeping the first row's silently showed one stratum's coverage
-  # under a label claiming the pair's.
-  df <- data.frame(
-    cov = "WT", param = "cl", study = c("a_s1", "a_s2"),
-    kind = "marginal", x = 70, y = 5,
-    xlo = c(60, 55), xhi = c(80, 92), xlo2 = c(50, 45), xhi2 = c(90, 99),
-    stringsAsFactors = FALSE)
-  out <- .admMergeCovMarks(df)
-  expect_equal(nrow(out), 1L)
-  expect_equal(c(out$xlo, out$xhi, out$xlo2, out$xhi2), c(55, 92, 45, 99))
-})
-
-test_that(".admMergeCovMarks takes the weaker claim when merged kinds disagree", {
-  # `conditional` is the claim-less reading: a diamond and no bar. Calling the
-  # merge marginal would hand a study solved at one value the 10th-90th spread
-  # of whichever study it happened to land on -- a distribution out of a point.
-  df <- data.frame(
-    cov = "WT", param = "cl", study = c("a_s1", "a_s2"),
-    kind = c("marginal", "conditional"), x = 70, y = 5,
-    xlo = c(60, 70), xhi = c(80, 70), xlo2 = c(50, 70), xhi2 = c(90, 70),
-    stringsAsFactors = FALSE)
-  out <- .admMergeCovMarks(df)
-  expect_equal(out$kind, "conditional")
-  # And no borrowed spread with it.
-  expect_equal(c(out$xlo, out$xhi, out$xlo2, out$xhi2), c(60, 80, 50, 90))
-})
-
-test_that(".admMergeCovMarks keeps strata that genuinely differ apart", {
-  # The axis they were banded ON: same source, different x, so no merge.
-  df <- data.frame(
-    cov = "SEX", param = "cl", study = c("a_s1", "a_s2"),
-    x = c(0, 1), xlo = c(0, 1), xhi = c(0, 1), y = c(5, 6),
-    stringsAsFactors = FALSE)
-  expect_equal(nrow(.admMergeCovMarks(df)), 2L)
-})
-
 test_that(".admCovEffectData sweeps a continuous covariate and pads past it", {
   skip_if_not_installed("rxode2")
   d <- .admCovEffectData(.cov_ui(), "WT", .cov_studies(),
@@ -655,10 +607,10 @@ test_that(".admCovStudySupport reads declared levels, not the centre", {
 })
 
 test_that(".admCovPalette gives a source the same colour in both panels", {
-  # The effect panel's marks come through .admMergeCovMarks(), which collapses
-  # `a_s1`/`a_s2` into `a`; the residual panel keeps them apart. An unnamed
-  # palette then hands `b` a different position in each and it changes colour
-  # across one figure.
+  # The effect panel draws one mark per SOURCE while the residual panel keeps
+  # the strata apart, so it sees `a` where the other sees `a_s1`/`a_s2`. An
+  # unnamed palette then hands `b` a different position in each and it changes
+  # colour across one figure.
   pal <- .admCovPalette(c("a", "b", "a_s1", "a_s2"))
   expect_equal(names(pal), c("a", "a_s1", "a_s2", "b"))
   expect_equal(length(unique(pal)), 4L)

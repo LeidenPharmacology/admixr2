@@ -647,11 +647,11 @@ head.paged_df <- function(x, n = 6L, ...) {
 
 ## One colour per source, held by NAME across both covariate panels.
 ##
-## The two panels are handed different name sets -- the effect panel's marks go
-## through .admMergeCovMarks(), which collapses `x_s1`/`x_s2` into `x`, while
-## the residual panel keeps the strata apart -- so an unnamed palette hands the
-## same source different positions in the vector and it comes out orange on one
-## panel and blue on the other. Built once from the union of both.
+## The two panels are handed different name sets -- the effect panel draws one
+## mark per SOURCE while the residual panel keeps the strata apart, so it sees
+## `x` where the other sees `x_s1` and `x_s2` -- and an unnamed palette hands
+## the same source different positions in the vector, so it comes out orange on
+## one panel and blue on the other. Built once from the union of both.
 ## BLACK IS RESERVED for the estimated effect, which both panels draw in it.
 ## A source in black could not be told from the fit it is being compared
 ## against -- and on the level axis, where both are a line joining two points,
@@ -659,6 +659,29 @@ head.paged_df <- function(x, n = 6L, ...) {
 .admCovPalette <- function(nms) {
   nms <- sort(unique(nms[!is.na(nms)]))
   stats::setNames(.admOkabeIto(length(nms), black = FALSE), nms)
+}
+
+## Point AREA is the study's sample size, on both covariate panels.
+##
+## Area rather than radius, via scale_size_area(), so the encoding is the one a
+## reader actually decodes and zero maps to zero. This follows multinma's
+## `weight_nodes`, which scales its network nodes by sample size.
+##
+## WITH a legend. The residual panel had `guide = "none"`, so area carried n and
+## nothing on the figure said so -- a reader could see that one mark was bigger
+## and had no way to learn what bigger meant. A single study, or a set that all
+## report the same n, gets no legend: there is nothing to compare.
+.admCovSizeScale <- function(n, max_size = 5.5) {
+  n  <- n[is.finite(n)]
+  br <- if (length(unique(n)) > 1L)
+    unique(round(range(n))) else ggplot2::waiver()
+  if (!length(n) || length(unique(n)) < 2L)
+    ggplot2::scale_size_area(max_size = max_size * 0.75, guide = "none")
+  else
+    ggplot2::scale_size_area(
+      max_size = max_size, breaks = br, name = "n",
+      guide = ggplot2::guide_legend(order = 3L, override.aes =
+                                      list(colour = "grey40", shape = 16L)))
 }
 
 ## Scales and styling shared by the two covariate panels.
@@ -792,6 +815,10 @@ head.paged_df <- function(x, n = 6L, ...) {
   lo2 <- vapply(studies, .admCovStudyQ, double(1), cv = cv, u = 0.025)
   hi2 <- vapply(studies, .admCovStudyQ, double(1), cv = cv, u = 0.975)
   knd <- vapply(studies, .admCovStudyKind, character(1), cv = cv)
+  nn  <- vapply(studies, function(z) {
+    v <- suppressWarnings(as.numeric(z[["n"]] %||% NA_real_)[1L])
+    if (length(v) != 1L || !is.finite(v) || v <= 0) NA_real_ else v
+  }, double(1))
   if (!any(is.finite(mid))) return(NULL)
 
   # DISCRETE: declared levels, or a covariate every study conditions at a
@@ -859,6 +886,14 @@ head.paged_df <- function(x, n = 6L, ...) {
     # its centre -- the strata share the distribution this facet is about.
     pos <- if (cond) sort(unique(mid[ii])) else mid[ii][1L]
     ref <- if (cond) ii[match(pos, mid[ii])] else ii[1L]
+    # `n` for a POSITION, not for a stratum. `stratify` divides a source's n
+    # among its strata, so a source banded on sex contributes half its patients
+    # at each sex level -- but on every other covariate's axis both strata land
+    # on the same position and the mark speaks for the whole source. Summing per
+    # position gets both right without a special case.
+    pos_n <- vapply(pos, function(v)
+      sum(nn[ii][abs(mid[ii] - v) < 1e-8], na.rm = TRUE), double(1))
+    pos_n[!is.finite(pos_n) | pos_n <= 0] <- NA_real_
 
 
     do.call(rbind, lapply(seq_along(pos), function(k) {
@@ -879,6 +914,7 @@ head.paged_df <- function(x, n = 6L, ...) {
           xlo   = .or(lo,  i0), xhi  = .or(hi,  i0),
           xlo2  = .or(lo2, i0), xhi2 = .or(hi2, i0),
           y     = as.numeric(o[[pp]]),
+          n     = pos_n[k],
           stringsAsFactors = FALSE)))
     }))
   }))
@@ -957,51 +993,6 @@ head.paged_df <- function(x, n = 6L, ...) {
   list(curve = curve, marks = mk, shade = shade, slines = slines)
 }
 
-
-## Collapse coincident study marks and name them by their shared source.
-##
-## `stratify` produces `<source>_s1`, `_s2`, ... which differ only in the
-## covariate they were banded on. On every OTHER covariate's axis they land at
-## the same point, and six strata overprint into an unreadable smear of labels.
-## Merge marks that coincide and label them with the source they came from;
-## on the axis where they genuinely differ they do not coincide, so they stay
-## separate and keep their own names.
-.admMergeCovMarks <- function(df, digits = 8L) {
-  # KEYED ON THE SOURCE as well as the position. Coinciding is not the same as
-  # belonging together: ten per-band sources sharing one weight distribution
-  # all land on the same point of the WT axis, and merging them produced
-  # legend entries reading `band8/band10` and `3 studies` -- a relationship
-  # between separate studies that does not exist, and which of them got
-  # absorbed depended on floating-point equality at eight significant digits.
-  # Distinct sources now overprint, which is honest: they ARE distinct.
-  key <- paste(.admCovSource(df$study), df$cov, df$param,
-               signif(df$x, digits), signif(df$y, digits), sep = "\r")
-  do.call(rbind, lapply(split(df, key), function(z) {
-    out  <- z[1L, , drop = FALSE]
-    # One source by construction, so the merged strata are named for it.
-    out$study <- .admCovSource(z$study[1L])
-    # The merged mark speaks for ALL the rows it absorbed, so its spread is
-    # their UNION. Keeping the first row's was silently dropping the others':
-    # a mark labelled for two strata would draw only one of their ranges, and
-    # the label would claim coverage the bar did not show.
-    # Only columns the input actually has: widening a mark must not also change
-    # its shape, or rbind-ing the merged groups back together fails when one
-    # group was a single row and another grew a column.
-    # Merged rows that disagree about how the covariate entered are not one
-    # kind, and the reading that claims LESS is `conditional`: it draws a
-    # diamond and no spread. Calling the merge marginal would hand a study
-    # solved at a single value the 10th-90th bar of whichever study it happened
-    # to coincide with -- a distribution invented out of a point.
-    mixed <- nrow(z) > 1L && !is.null(z$kind) && length(unique(z$kind)) > 1L
-    if (mixed) out$kind <- "conditional"
-    if (nrow(z) > 1L && !mixed && identical(out$kind, "marginal"))
-      for (p in list(c("xlo", "min"), c("xlo2", "min"),
-                     c("xhi", "max"), c("xhi2", "max")))
-        if (!is.null(z[[p[1L]]]))
-          out[[p[1L]]] <- get(p[2L])(z[[p[1L]]])
-    out
-  }))
-}
 
 ## Between-study mean standardised residual against a covariate.
 ##
@@ -1245,8 +1236,9 @@ head.paged_df <- function(x, n = 6L, ...) {
           linewidth = 1.6, alpha = 0.55)
     p_eff <- p_eff +
       ggplot2::geom_point(data = marks_df,
-                          ggplot2::aes(colour = study, shape = kind),
-                          size = 2.6) +
+                          ggplot2::aes(colour = study, shape = kind,
+                                       size = n)) +
+      .admCovSizeScale(marks_df$n) +
       .admCovPanelStyle(pal, marks_df$kind)
   }
 
@@ -1338,7 +1330,7 @@ head.paged_df <- function(x, n = 6L, ...) {
     # line joining them, which is the whole point of their being a pair.
     ggplot2::geom_point(ggplot2::aes(size = n, colour = source,
                                      shape = kind), alpha = 0.85) +
-    ggplot2::scale_size_continuous(guide = "none") +
+    .admCovSizeScale(res_df$n) +
     .admCovPanelStyle(pal, res_df$kind) +
     # Breaks from the CONDITIONAL rows only. A marginal source on a level axis
     # sits at the mean of the mixture it declared -- 0.5 for an even split --

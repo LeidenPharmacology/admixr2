@@ -48,8 +48,8 @@
 <line x1='332.00' y1='199.55' x2='332.00' y2='199.55' style='stroke-width: 1.07; stroke: #56B4E9; stroke-opacity: 0.70; stroke-linecap: butt;' />
 <line x1='55.54' y1='523.00' x2='55.54' y2='523.00' style='stroke-width: 3.41; stroke: #E69F00; stroke-opacity: 0.55; stroke-linecap: butt;' />
 <line x1='332.00' y1='199.55' x2='332.00' y2='199.55' style='stroke-width: 3.41; stroke: #56B4E9; stroke-opacity: 0.55; stroke-linecap: butt;' />
-<circle cx='55.54' cy='523.00' r='3.13' style='stroke-width: 0.71; stroke: none; fill: #E69F00;' />
-<circle cx='332.00' cy='199.55' r='3.13' style='stroke-width: 0.71; stroke: none; fill: #56B4E9;' />
+<circle cx='55.54' cy='523.00' r='4.76' style='stroke-width: 0.71; stroke: none; fill: #E69F00;' />
+<circle cx='332.00' cy='199.55' r='4.76' style='stroke-width: 0.71; stroke: none; fill: #56B4E9;' />
 <rect x='27.90' y='58.74' width='608.19' height='486.37' style='stroke-width: 1.07; stroke: #333333;' />
 </g>
 <g clip-path='url(#cpMC4wMHw3MjAuMDB8MC4wMHw1NzYuMDA=)'>
@@ -84,16 +84,16 @@
 <rect x='652.53' y='265.05' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
 <line x1='654.26' y1='273.69' x2='668.08' y2='273.69' style='stroke-width: 1.07; stroke: #E69F00; stroke-opacity: 0.70; stroke-linecap: butt;' />
 <line x1='654.26' y1='273.69' x2='668.08' y2='273.69' style='stroke-width: 3.41; stroke: #E69F00; stroke-opacity: 0.55; stroke-linecap: butt;' />
-<circle cx='661.17' cy='273.69' r='3.13' style='stroke-width: 0.71; stroke: #E69F00; fill: #E69F00;' />
+<circle cx='661.17' cy='273.69' r='1.95' style='stroke-width: 0.71; stroke: #E69F00; fill: #E69F00;' />
 <rect x='652.53' y='282.33' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
 <line x1='654.26' y1='290.97' x2='668.08' y2='290.97' style='stroke-width: 1.07; stroke: #56B4E9; stroke-opacity: 0.70; stroke-linecap: butt;' />
 <line x1='654.26' y1='290.97' x2='668.08' y2='290.97' style='stroke-width: 3.41; stroke: #56B4E9; stroke-opacity: 0.55; stroke-linecap: butt;' />
-<circle cx='661.17' cy='290.97' r='3.13' style='stroke-width: 0.71; stroke: #56B4E9; fill: #56B4E9;' />
+<circle cx='661.17' cy='290.97' r='1.95' style='stroke-width: 0.71; stroke: #56B4E9; fill: #56B4E9;' />
 <text x='675.29' y='276.72' style='font-size: 8.80px; font-family: sans;' textLength='4.89px' lengthAdjust='spacingAndGlyphs'>a</text>
 <text x='675.29' y='294.00' style='font-size: 8.80px; font-family: sans;' textLength='4.89px' lengthAdjust='spacingAndGlyphs'>b</text>
 <rect x='647.05' y='316.05' width='67.47' height='28.24' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
 <rect x='652.53' y='321.53' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
-<circle cx='661.17' cy='330.17' r='3.13' style='stroke-width: 0.71; stroke: none; fill: #000000;' />
+<circle cx='661.17' cy='330.17' r='1.95' style='stroke-width: 0.71; stroke: none; fill: #000000;' />
 <text x='675.29' y='333.20' style='font-size: 8.80px; font-family: sans;' textLength='33.75px' lengthAdjust='spacingAndGlyphs'>marginal</text>
 <text x='27.90' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='311.76px' lengthAdjust='spacingAndGlyphs'>black dotted, open squares: the ESTIMATED effect  |  coloured: each source's own published model </text>
 <text x='27.90' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='351.24px' lengthAdjust='spacingAndGlyphs'>CONDITIONAL: its own regression over the range it covers  |  MARGINAL: a whisker, 10th-90th over 2.5th-97.5th</text>

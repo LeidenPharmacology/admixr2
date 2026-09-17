@@ -59,6 +59,9 @@
 * **A residual facet is dropped when the sources' contrast is sampling noise**,
   measured against a typical within-study 10th-90th.
 
+* **Point area is the study's sample size on both covariate panels**, with a
+  legend. The residual panel encoded it already and said so nowhere.
+
 ## Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not name a new

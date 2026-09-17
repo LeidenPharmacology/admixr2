@@ -233,6 +233,13 @@ same panel on a model that is *missing* the effect, where the three sources run
 from +5 to −4.5 monotone in creatinine clearance, see
 `vignette("covariates")`.
 
+On both panels **point area is the study's sample size**, as `multinma`'s
+`weight_nodes` does for its network nodes. `scale_size_area()`, so area rather
+than radius carries it and zero maps to zero; the legend is suppressed when
+every study reports the same `n`, since there is nothing to compare. A banded
+source's `n` is divided among its strata, so it contributes half its patients at
+each sex level but its whole `n` on any other covariate's axis.
+
 Both panels key colour on the **source**, not the stratum, so a source is one
 colour across the figure. Strata of one source are told apart by where they sit
 and by the grey line joining them, which is what makes them a pair.
@@ -267,11 +274,10 @@ enrolled, the fit is disagreeing with a paper about that paper's own patients.
 
 On a level axis the source's own effect is the **gap between its own marks** ---
 one per level it reported --- against the gap between the black points.
-`inst/examples/covariate-panels.R` draws both cases.
 
-A source banded with `stratify` therefore appears as several diamonds on the
-covariate it was banded on, and as one merged mark on every other, where its
-strata coincide.
+A source banded with `stratify` appears once per value it reported on the
+covariate it was banded on, and once on every other, at its own centre. The
+effect panel is per source; only the residual panel keeps the strata apart.
 
 A covariate the model **does not read** still gets a `covariate_resid` facet.
 That is the case the panel exists for: the null model of a covariate test simply
