@@ -127,6 +127,11 @@ test_that(".admUnpack handles n_eta = 0 (no omega)", {
   expect_true("tcl" %in% names(pars$struct))
 })
 
+test_that("eta_col_names is character(0), not a phantom 'eta.', when n_eta = 0 (#145)", {
+  pinfo <- admixr2:::.admParseIniDf(make_inidf_0eta())
+  expect_identical(pinfo$eta_col_names, character(0))
+})
+
 test_that("Struct theta round-trip on optimizer scale", {
   cl_init <- log(5)
   pinfo <- admixr2:::.admParseIniDf(make_inidf_1eta(cl = cl_init))

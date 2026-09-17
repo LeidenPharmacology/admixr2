@@ -649,6 +649,9 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 ## Bug fixes
 
+* **`adgh` on a no-IIV (`n_eta = 0`) model failed under covariate
+  marginalisation**, with a dimnames-length error from a phantom `"eta."` name.
+
 * **A DISCRETE covariate latently correlated with ANY other margin is now
   refused instead of being integrated as if it were independent.** A level is
   an interval of the latent normal, not a point, so a correlation changes what
