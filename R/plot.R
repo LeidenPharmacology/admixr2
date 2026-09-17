@@ -122,9 +122,8 @@ head.paged_df <- function(x, n = 6L, ...) {
 
 ## Shared display spec for parameter-trace rendering: display names,
 ## optimizer -> natural-scale back-transforms, and iniDf facet order. Shared
-## between `plot(fit, which = "par")` and the traceplot() bridge
-## (`.admBuildParHistData`) so both label/scale identically. NULL if `pinfo`
-## or `par_names` is unavailable.
+## between `plot(fit, which = "par")` and the traceplot() bridge so both
+## label/scale identically. NULL if `pinfo` or `par_names` is unavailable.
 .admTraceDisplaySpec <- function(pinfo, par_names, iniDf = NULL) {
   if (is.null(pinfo) || is.null(par_names)) return(NULL)
 
@@ -175,12 +174,9 @@ head.paged_df <- function(x, n = 6L, ...) {
 
 ## Builds the `parHistData` frame nlmixr2's `traceplot()` reads via
 ## `nmObjGet.parHistStacked` (`fit$env$parHistData`: wide data.frame, `type`
-## column kept at "Unscaled", `iter`, one column per parameter). No S3
-## registration needed -- admFit already inherits `nlmixr2FitCore`.
-## Single chain = best restart (lowest final NLL); multi-restart overlay stays
-## in `plot(fit, which = "par")`. Natural scale via `.admTraceDisplaySpec`. No
-## burn-in marker (`parHist` carries no `niter`). `iter` indexes improving
-## evaluations, not raw nloptr iterations. NULL when no usable trace exists.
+## column kept at "Unscaled", `iter`, one column per parameter). Single chain
+## = best restart (lowest final NLL); multi-restart overlay stays in
+## `plot(fit, which = "par")`. NULL when no usable trace exists.
 .admBuildParHistData <- function(all_traces, par_names, ui) {
   if (is.null(all_traces) || length(all_traces) == 0L || is.null(par_names))
     return(NULL)
@@ -235,8 +231,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## as the diagnostic mean/cov panels. Shared by `plot.admFit()` and
 ## `.admAttachAggData()` so the two never disagree. Returns a named list, one
 ## entry per study, NULL when unsimulable, else `list(times=, n=, obs=list(E=,
-## V=), pred=list(E=, V=))`. `warn=FALSE` on the fit-attachment path so a
-## non-simulable fit stays quiet.
+## V=), pred=list(E=, V=))`.
 .admAggData <- function(extra, ui, n_sim = NULL, seed = 1L, warn = TRUE) {
   studies   <- extra$studies
   n_sim     <- n_sim %||% extra$n_sim %||% 5000L

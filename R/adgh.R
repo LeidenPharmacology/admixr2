@@ -11,18 +11,15 @@
 # -- Node grid -----------------------------------------------------------------
 
 # Probabilists' GH nodes/weights for E_{N(0,1)}[g] = sum_i w_i g(x_i).
-# Golub-Welsch via symmetric tridiagonal eigendecomposition. No external deps.
-# sum(w) = 1, sum(w * x^2) = 1.
-# Memoised: the nodes depend on nothing but `m`, and .admTBSMoments/.admTBSMomentsD
-# ask for the 81-node set on EVERY residual evaluation of a transformed endpoint --
-# an eigen() of an 81x81 matrix each time, ~0.9 ms, inside the objective's inner
-# loop. The cache is keyed by m and lives in the package namespace (see R/zzz.R).
+# Golub-Welsch via symmetric tridiagonal eigendecomposition. sum(w) = 1, sum(w * x^2) = 1.
+# Memoised: .admTBSMoments/.admTBSMomentsD ask for the 81-node set on EVERY residual
+# evaluation of a transformed endpoint (~0.9 ms/eigen() otherwise). Keyed by m, lives
+# in the package namespace (see R/zzz.R).
 .adghNodes1 <- function(m) {
   if (m < 1L) stop("n_nodes must be >= 1")
   if (m == 1L) return(list(x = 0, w = 1))
-  # The cache env is a package-level binding, and this function runs inside mirai
-  # restart workers, where assignInNamespace() cannot ADD a binding to the locked
-  # installed namespace. Degrade to recomputing rather than erroring if it is absent.
+  # Runs inside mirai restart workers, where assignInNamespace() cannot ADD a
+  # binding to the locked installed namespace -- degrade to recomputing if absent.
   .env <- tryCatch(get(".adm_node_env", envir = asNamespace("admixr2")),
                    error = function(e) NULL)
   if (is.null(.env)) {
@@ -48,15 +45,13 @@
 # Tensor-product GH grid for n_eta dimensions.
 # Returns X (n_node x n_eta standard-normal nodes) and W (length n_node weights).
 #
-# Memoised (same cache env as .adghNodes1, different policy): rank/node count
-# are frozen at admission, so a fit asks for the SAME grid every objective
-# evaluation -- rebuild cost is 68.6 ms/call at r=4, m=15 vs rxSolve()'s
-# ~11 ms. ONE SLOT (not .adghNodes1's cache-everything) because one grid is
-# ~25MB at 8 etas/5 nodes; caching every (m, n_eta) would only grow.
+# Memoised (same cache env as .adghNodes1, different policy): rebuild cost is
+# 68.6 ms/call at r=4, m=15 vs rxSolve()'s ~11 ms. ONE SLOT (not
+# .adghNodes1's cache-everything) since one grid is ~25MB at 8 etas/5 nodes.
 .admGridMemo <- function(slot, key, build) {
-  # The cache env is a package-level binding, and this runs inside mirai restart
-  # workers, where assignInNamespace() cannot ADD a binding to the locked
-  # installed namespace. Degrade to recomputing rather than erroring if absent.
+  # Runs inside mirai restart workers, where assignInNamespace() cannot ADD a
+  # binding to the locked installed namespace. Degrade to recomputing rather
+  # than erroring if absent.
   .env <- tryCatch(get(".adm_node_env", envir = asNamespace("admixr2")),
                    error = function(e) NULL)
   if (is.null(.env)) return(build())
@@ -81,10 +76,8 @@
 
 # As .adghNodeGrid, but for PER-DIRECTION node counts rather than one shared `m`
 # repeated `n_eta` times -- what .admCovRefresh needs for a collapsed design's `nv`.
-# .admCovDirNodes returns the same count for every direction today, and this does not
-# assume that holds forever; it is keyed on the exact vector. A uniform `nv` is
-# HANDED STRAIGHT to .adghNodeGrid rather than rebuilt under a second key, so the
-# common case does not hold two copies of the same tensor in the cache.
+# A uniform `nv` is HANDED STRAIGHT to .adghNodeGrid rather than rebuilt under a
+# second key, so the common case does not hold two copies of the same tensor.
 .admNodeGridNv <- function(nv) {
   d <- length(nv)
   if (d == 0L) return(list(X = matrix(0, 1L, 0L), W = 1))
@@ -180,9 +173,7 @@
 #
 # `cpc` -- the node matrix centred at the weighted mean -- is returned because
 # more than one consumer needs it: the gradient contracts against it, and the
-# ADF weight (covMethod = "r,s") IS a function of the centred nodes. Splitting
-# it out is what makes .admAdfParts() and .adghMoments() provably describe the
-# same node set rather than two copies of one expression.
+# ADF weight (covMethod = "r,s") IS a function of the centred nodes.
 .adghStructMoments <- function(cp, W) {
   mu  <- as.numeric(crossprod(W, cp))
   cpc <- sweep(cp, 2L, mu)
@@ -364,9 +355,7 @@
 
   # (#5) The moments this gradient is built from are exactly the moments the NLL
   # needs, so returning the NLL alongside costs nothing and lets the driver skip a
-  # whole second solve per iterate (see .adghFusedFns). Returned as a list rather
-  # than an attribute on the gradient: an attribute travels through unname() and into
-  # expect_equal(), where it broke a gradient-vs-FD comparison. nll = NULL on the
+  # whole second solve per iterate (see .adghFusedFns). nll = NULL on the
   # FD-fallback returns -- those never form these moments.
   nll_total <- 0
 
@@ -380,8 +369,8 @@
   # given d(pred)/d(theta) from the augmented sens model it goes through the SAME
   # contrib() + sigma-V-coupling the paired thetas use -- no FD, no step size.
   # Accumulated separately: if ANY study fails to return theta columns the whole
-  # theta gradient falls back to FD, since mixing the two across studies would
-  # double-count the studies already accumulated here.
+  # theta gradient falls back to FD, to avoid double-counting studies already
+  # accumulated here.
   theta_sens_ok <- length(unpaired_k) > 0L
   g_theta       <- numeric(length(p))
 
@@ -390,11 +379,6 @@
     # directly made the analytical gradient blind to the covariate product
     # grid, silently differentiating a different function than .adghNLL
     # evaluated. X, W and eta must come from ONE place.
-    #
-    # Only where a covariate distribution exists: .adghGrid()'s zero-eta
-    # branch collapses to one point (right for the objective, wrong here --
-    # leaves the covariance nothing to difference, non-finite SEs). A no-IIV
-    # model has no covariate grid either, so the cases don't overlap.
     if (!is.null(s[["cov_dist"]])) {
       .gS <- .adghGrid(pars, pinfo, grid, s)
       # Same marked grid .adghMoments turns into Inf -- see there. The point is
@@ -534,14 +518,12 @@
     arr   <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
 
     # ---- Transform-both-sides: EXACT node-wise composition -------------------
-    # Self-contained so the delta-expansion path below stays untouched for other
-    # families. .admTBSNodeParts() composes the residual at each NODE and
-    # aggregates, rather than collapsing to (mu_struct, var_f) and expanding
-    # around it -- the expansion does NOT converge, its error in V is a floor
-    # no node count removes (3.4e-03 boxCox to 3.1e-02 probitNorm at omega
-    # 0.49, flat from 7 to 25 nodes). Gradient is the same contraction the
-    # structural moments use, with the conditional mean's derivative folded
-    # into the sensitivity column:
+    # .admTBSNodeParts() composes the residual at each NODE and aggregates,
+    # rather than collapsing to (mu_struct, var_f) and expanding around it --
+    # the expansion does NOT converge, its error in V is a floor no node
+    # count removes. Gradient is the same contraction the structural moments
+    # use, with the conditional mean's derivative folded into the
+    # sensitivity column:
     #   A  = dm o graw,  dE = sum_q w A,  Ac = A - dE
     #   dV = Ac' diag(w) Mc + Mc' diag(w) Ac + diag(sum_q w dv o graw)
     # verified against central differences of this objective at 1e-09 on
@@ -834,11 +816,9 @@
 # (#5) Pair the objective and the gradient onto ONE solve. LBFGS always asks
 # both at the same p, and .adghGradNLL already forms the moments .adghNLL
 # needs, so memoising on p collapses the pair (~2x on a gradient-mode fit;
-# estimates unchanged to 6 dp). The objective now comes from the SENSITIVITY
-# solve rather than the plain one -- both integrate the same base ODEs, but
-# the augmented system lands rxode2's adaptive stepper ~1e-6 apart, so this
-# is NOT bit-identical to the pre-fusion objective (both sit at the solver's
-# own rtol; f and grad-f are now self-consistent). Only for the analytical-sens
+# estimates unchanged to 6 dp). NOT bit-identical to the pre-fusion objective
+# (the augmented sensitivity solve takes different adaptive steps than the
+# plain one, both within the solver's own rtol). Only for the analytical-sens
 # path; grad = "fd"/"none" keep the old route.
 .adghFusedFns <- function(pinfo, studies, sensModel, rxMod, out_var, grid, cores,
                           grad_h) {
@@ -895,10 +875,10 @@
   n_o     <- length(pinfo$omega_par)
   # The Hessian spans struct + sigma + OMEGA: excluding omega shrinks the
   # STRUCTURAL SEs too, since a theta carrying an eta is correlated with that
-  # eta's variance. Against 40 simulated datasets, SE(tcl) rose ~8.7% on prop
-  # and lnorm when omega was included; a purely additive model was unaffected.
-  # The omega Cholesky is more weakly identified, so the full Hessian can be
-  # non-PD where struct+sigma alone is fine -- falls back to that sub-block.
+  # eta's variance (measured: SE(tcl) rose ~8.7% on prop/lnorm when omega was
+  # included). The omega Cholesky is more weakly identified, so the full
+  # Hessian can be non-PD where struct+sigma alone is fine -- falls back to
+  # that sub-block.
   n_sub   <- n_s + n_e
   cov_idx <- seq_len(n_sub + n_o)
   np_cov  <- length(cov_idx)
@@ -919,14 +899,11 @@
 
   H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
 
-  # Covariate studies: differentiate the NLL, not the gradient. The original
-  # reason given here -- that .adghGradNLL can't carry the covariate grid --
-  # is no longer true: it calls .adghGrid() per study then .adghStudyCov(),
-  # and on a 1-cmt lognormal-covariate model the two forms agree to 2.7e-05
-  # with the gradient form ~1.5x faster. Kept anyway: that's one model's
-  # measurement, and the failure mode -- SEs from a different objective than
-  # the estimates -- is silent and severe. Removing it wants a broader
-  # comparison, not a rewritten comment.
+  # Covariate studies: differentiate the NLL, not the gradient. The forms
+  # agree to 2.7e-05 on a 1-cmt lognormal-covariate model with the gradient
+  # form ~1.5x faster, but that's one model's measurement against a failure
+  # mode -- SEs from a different objective than the estimates -- that is
+  # silent and severe. Kept conservative pending a broader comparison.
   if (isTRUE(use_grad) &&
       # a fully stratified study's cov_dist is all point specs, so it
       # marginalises nothing and need not cost the gradient-based Hessian

@@ -26,9 +26,7 @@
 # for EVERY transform: a mu-reference is `param <- h(theta+eta)`, so
 # f(theta+Delta, eta) = f(theta, eta+Delta) regardless of h, and the derivative
 # is 1. The old switch returned log(back(p)), equal to p only for exp -- wrong
-# for expit/probit/additive (drove the objective ~140 -2LL units off, or -Inf
-# for theta <= 0). Kept as a named function since the C++ compute_mean_new
-# kernel, .type_code and d_logback_dp all mirror this definition.
+# for expit/probit/additive (drove the objective ~140 -2LL units off).
 .admLogBackTransform <- function(p, tr) p
 
 # How many times each name appears in the model expressions. No model text (a
@@ -48,16 +46,12 @@
 # The theta <-> eta mu-reference map, with SHARED etas removed. A mu-referenced
 # theta may reuse its eta's sensitivity column since d(pred)/d(theta) ==
 # d(pred)/d(eta) -- but that identity fails when the eta also appears in
-# another parameter, so such a theta is treated as unpaired (its own
-# sensitivity direction, always exact; a false positive just costs one extra
-# direction). rxode2 already declines to mu-reference a shared eta, so this
-# mirrors nlmixr2est's equivalent guard.
+# another parameter, so such a theta is treated as unpaired instead.
 #
 # NULL means "no mu-reference information at all" -- callers keep their
 # historical fallbacks. A ZERO-ROW frame means the information exists and says
-# nothing is paired (non-mu-referenced model, or every pair dropped by the
-# shared-eta guard). Conflating the two falls struct_eta_idx back to identity
-# pairing, adding the eta-path gradient on top of the theta column -- double counting.
+# nothing is paired. Conflating the two falls struct_eta_idx back to identity
+# pairing, double counting the eta-path gradient on top of the theta column.
 .admMuRefPairs <- function(ui) {
   if (is.null(ui)) return(NULL)
   mrd <- tryCatch(ui$muRefDataFrame, error = function(e) NULL)
@@ -368,14 +362,10 @@ covariance for admixr2 to match"),
 # - sigma: 1 (log(sigma^2) encoding self-normalizing).
 # - omega diagonal: 1 (log(Omega_ii) encoding self-normalizing).
 # - omega off-diagonal: pmax(|L_ij_init|, 0.1) (raw L values need magnitude scaling).
+
 # Are these unpacked parameters usable at all? A non-finite parameter can still
-# be handed to rxSolve, which then integrates garbage (e.g. the covariance
-# probe perturbing sigma to Inf floods the console with lsoda warnings before
-# the caller's own finite-check rejects it anyway) -- reject up front instead.
-# Shared here rather than inlined at eight sites, now that
-# .admDaemonRestart()'s patch environment lets a daemon resolve a NEW shared
-# helper, not just replace an existing binding (test-integration-daemon-patch.R).
-# NULL `pars` (an .admUnpack that threw) is folded in.
+# be handed to rxSolve, which then integrates garbage -- reject up front
+# instead. NULL `pars` (an .admUnpack that threw) is folded in.
 .admParsFinite <- function(pars, pinfo) {
   !is.null(pars) &&
     all(is.finite(pars$struct)) && all(is.finite(pars$sigma_var)) &&
