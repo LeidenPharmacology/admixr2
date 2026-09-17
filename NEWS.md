@@ -47,6 +47,15 @@
 * **The effect panel compares the estimated effect against its sources**: a
   dotted line, each source at its OWN published parameter value.
 
+* **One mark per source per facet**, not one per stratum, so a source banded on
+  sex no longer draws twice on every other covariate's panel.
+
+* **Both covariate panels key colour on the source**, so a source keeps one
+  colour across the figure; its strata are joined in grey instead.
+
+* **A residual facet is dropped when the sources' contrast is sampling noise**,
+  measured against a typical within-study 10th-90th.
+
 ## Changes that can move an existing fit
 
 Several changes in this release alter results for scripts that do not name a new

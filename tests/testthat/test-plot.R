@@ -321,9 +321,13 @@ test_that(".admCovEffectData marks marginal spread and conditioned points apart"
   expect_true(all(mw$xlo2 < mw$xlo & mw$xlo < mw$x &
                   mw$x < mw$xhi & mw$xhi < mw$xhi2))
   # And at the SOURCE's own parameter value, not read off the fitted line.
-  # `.cov_ui()` at its own ini: cl = 5 * (WT/70)^0.75 * exp(0.2 * SEX).
+  # `.cov_ui()` at its own ini: cl = 5 * (WT/70)^0.75 * exp(0.2 * SEX), with
+  # SEX at the source's own centre -- the prob-weighted mean of its declared
+  # 50/50 split, which is the SAME centre the estimated effect holds its other
+  # covariates at. Taking the median instead put the source at SEX = 1 and made
+  # it look displaced from a fit it agrees with.
   expect_equal(mw$y[mw$study == "lo"],
-               5 * (70 / 70)^0.75 * exp(0.2 * 0), tolerance = 1e-6)
+               5 * (70 / 70)^0.75 * exp(0.2 * 0.5), tolerance = 1e-6)
 
   ms <- .admCovEffectData(.cov_ui(), "SEX", st,
                           list(tcl = log(5), bwt = 0.75, bsex = 0.2),

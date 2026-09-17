@@ -130,15 +130,18 @@ all. A fixed allometric exponent is not a finding; drawing a facet for it invite
 a reader to check an agreement that was never in question.
 
 The region no source sampled is shaded: that is where the fit extrapolates. A
-discrete covariate is drawn on its levels rather than swept through the values
-between them, so nothing claims a prediction at `SEX = 0.37`.
+discrete covariate is **marked at its levels** --- those are the places the
+model was actually asked --- and the dotted line joins them, so the effect reads
+the same way on both kinds of axis. The line is a connector between marked
+points, not a claim about the space between them.
 
 **`covariate_resid`** plots each study's mean standardised residual against the
 covariate value it sits at. How it is read depends on the covariate:
 
 * **continuous** --- a trend. The dashed `lm` across studies; a slope is a
   mis-specified covariate form.
-* **discrete** --- a contrast. The axis is ticked at the levels and nowhere
+* **discrete** --- a contrast. The axis is ticked at the levels the sources were
+  *conditioned* at and nowhere
   else, and no regression is drawn: a line across the levels of a factor
   reports as a slope what is really a difference between groups. Instead the
   strata `stratify` cut from one source are joined in grey, because that
@@ -278,3 +281,13 @@ ggplot2::ggplot(df_corr, ggplot2::aes(x = eta_j, y = eta_i, fill = r)) +
 - [Getting started](admixr2.html)
 - [Multiple studies](multiple-studies.html) — meta-analysis across studies
 - [Estimator comparison](estimator-comparison.html)
+
+Both panels key colour on the **source**, not the stratum, so a source is one
+colour across the figure. Strata of one source are told apart by where they sit
+and by the grey line joining them, which is what makes them a pair.
+
+A covariate facet is dropped from `covariate_resid` when the sources have no
+real contrast along it --- when the spread of their centres is small against a
+typical within-study 10th--90th. Three cohorts drawing weight from the same
+distribution differ only in what a finite sample estimated, and a free x scale
+would blow that noise up to full panel width and fit a trend through it.

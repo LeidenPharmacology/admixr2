@@ -15,10 +15,15 @@
 #   CONDITIONAL -- the analyst estimated this effect, so the paper can be
 #     read at one value of it. Every source here fitted sex, so SEX bands
 #     (`stratify = "SEX"`) and its strata draw as diamonds.
-#   MARGINAL -- the analyst never estimated it. No single paper has a
-#     contrast to report, so admixr2 integrates over the population it
-#     enrolled instead. Nobody fitted renal function, so CRCL is marginal
-#     everywhere and draws as a round point with a 10th-90th bar.
+#   MARGINAL -- the analyst never estimated it, or never reported a
+#     breakdown by it. No contrast to band on, so admixr2 integrates over
+#     the population enrolled instead, and the source draws as a round
+#     point with a whisker.
+#
+# `mild` below is CONDITIONAL on renal function and the other two are
+# MARGINAL on it, so one figure carries both readings of the same
+# covariate: a diamond with a solid line across the band it reported,
+# against two whiskers over the distributions their populations imply.
 #
 # Both are used for estimation. Splitting a source on a covariate its model
 # never saw would manufacture a contrast that is not in the literature.
@@ -71,11 +76,31 @@ no_renal <- function() {
 }
 
 message("[2/6] building studies ...")
+TIMES <- c(0.5, 1, 2, 4, 8, 12, 24)
+
+# MARGINAL on renal function: the paper reports who it enrolled, admixr2
+# integrates over that. Banded on sex, which every analyst did fit.
 mk <- function(co) admStudy(model = with_renal, population = co, dose = 200,
-                            times = c(0.5, 1, 2, 4, 8, 12, 24),
-                            stratify = "SEX")
+                            times = TIMES, stratify = "SEX")
+
+# CONDITIONAL on renal function: this paper reported its result AT a renal
+# value, the way a per-subgroup table gives it to you. `at` pins it, so CRCL
+# leaves `population` -- a population cannot also give a pinned covariate a
+# distribution.
+#
+# On the CRCL panel it therefore draws as a DIAMOND with no spread, against the
+# other two sources' whiskers. That is the difference the panel exists to show:
+# this paper reported a result for a renal value, those two only reported who
+# they enrolled.
+#
+# It does not band on sex. A paper that published a renal breakdown need not
+# have published a sex one, and you can only band on what was reported.
+mk_at <- function(co, v)
+  admStudy(model = with_renal, population = co[c("WT", "SEX")], dose = 200,
+           times = TIMES, at = list(CRCL = v))
+
 studies <- admStudies(normal   = mk(draw(260L, 95)),
-                      mild     = mk(draw(210L, 62)),
+                      mild     = mk_at(draw(210L, 62), 62),
                       moderate = mk(draw(180L, 38)))
 
 run <- function(m) nlmixr2(m, admData(), est = "adgh",
@@ -100,9 +125,11 @@ for (f in out) message("   ", normalizePath(f, winslash = "\\"))
 message("\nLook at covariate-resid-null.png: the SEX facet joins each source's")
 message("two strata in grey (a contrast, flat = correctly specified), while")
 message("CRCL keeps a dashed lm and plunges -- the deleted renal term.")
-message("\nAnd covariate-effect.png carries BOTH kinds of source on one figure.")
-message("Every analyst fitted a sex effect, so SEX is CONDITIONED: each source")
-message("bands into strata and draws as diamonds, one per level it reported.")
-message("Nobody fitted renal function, so CRCL is MARGINAL: admixr2 integrates")
-message("over the population each paper enrolled, and the sources draw as round")
-message("points with a 10th-90th bar. Both contribute to the same fit.")
+message("\nAnd covariate-effect.png carries BOTH readings on one figure.")
+message("cl vs CRCL: 'mild' reported AT a renal value, so it is CONDITIONAL --")
+message("a diamond, no spread. 'normal' and 'moderate' reported only who they")
+message("enrolled, so they are MARGINAL -- a whisker over the distribution")
+message("admixr2 integrates. cl vs SEX: the two banded analysts")
+message("banded on sex, so each source has one mark per level, and the gap")
+message("between its own marks is that paper's own sex effect -- read it")
+message("against the gap in the dotted estimated effect.")
