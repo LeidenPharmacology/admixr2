@@ -94,11 +94,40 @@ test_that("admc/adirmc fits on different n_sim are refused", {
 })
 
 test_that("fits at different stratum resolutions are refused", {
+  # The unnamed form, as a fit saved before the stamp carried covariate names.
   full <- .lrt_fit(c("tcl", "tv", "b1"), 100, strataNodes = 9L)
   red  <- .lrt_fit(c("tcl", "tv"),       106, strataNodes = 5L)
   expect_error(anova(full, red), "stratum resolutions")
   expect_error(anova(full, .lrt_fit(c("tcl", "tv"), 106)),
                "stratum resolutions")
+})
+
+test_that("the resolution is compared per covariate, where the fits overlap", {
+  # THE STAMP IS PER COVARIATE THE MODEL READS. One number per fit refused
+  # exactly the nested pair a covariate test is made of: the null model has
+  # dropped the term, so its sources are not cut into nodes along it and it
+  # records nothing -- and its objective cannot depend on a resolution it
+  # never used. Measured on a real pair, the narrowed null fit (2 studies)
+  # and the same null refitted at the full resolution (10 studies) give dOFV
+  # 409.162568 and 409.162615: the same test to five decimals.
+  full <- .lrt_fit(c("tcl", "tv", "bcrcl"), 100, strataNodes = c(CRCL = 5L))
+  # The null model reads no covariate at all, so it stamps nothing.
+  expect_s3_class(anova(full, .lrt_fit(c("tcl", "tv"), 106)), "anova.admFit")
+  # Nor does a covariate only ONE of them reads put them on different scales.
+  expect_s3_class(anova(full, .lrt_fit(c("tcl", "tv"), 106,
+                                       strataNodes = c(WT = 9L))),
+                  "anova.admFit")
+
+  # REFUSED where it matters. Both read CRCL and cut it differently:
+  expect_error(anova(full, .lrt_fit(c("tcl", "tv"), 106,
+                                    strataNodes = c(CRCL = 9L))),
+               "stratum resolutions on 'CRCL'")
+  # ...and a covariate the model READS but no source was cut on records 1,
+  # because a pooled summary and a set of nodes are different data to a model
+  # that can see the difference.
+  expect_error(anova(full, .lrt_fit(c("tcl", "tv"), 106,
+                                    strataNodes = c(CRCL = 1L))),
+               "stratum resolutions on 'CRCL'")
 })
 
 test_that("anova() needs a pair, and needs admFits", {

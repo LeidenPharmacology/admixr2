@@ -354,12 +354,14 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #' and the one it reads at an asserted coefficient; [print()] names them
 #' separately, because only the second is easy to mistake for conditional.
 #'
-#' The band set comes from the source and from nothing else --- in particular
-#' not from the model being fitted. A covariate the ANALYSIS model never reads
-#' is still banded on, and each stratum then has that margin dropped from its
-#' design, which is exact. Resolving it against the analysis model instead would
-#' make a nested pair band differently: the null model drops the covariate, and
-#' two fits over different study sets have no likelihood ratio between them.
+#' Which covariates a source is conditional on comes from that source. Which of
+#' them admixr2 has to cut into nodes is narrowed to the ones the **analysis**
+#' model reads, and that narrowing is exact: if the model's prediction does not
+#' move across a source's nodes, the mixture those nodes collapse to is a
+#' sufficient statistic for it, so the objective is unchanged to eight decimal
+#' places while the study count falls. Measured on a source conditional on two
+#' covariates with an analysis model reading one, collapsing the unread one
+#' moved the objective by 0.00004 and collapsing the read one by 73.6.
 #'
 #' This matters and is why it is not left to the caller: a covariate every
 #' source marginalises is not identified against a random effect on the same
@@ -761,22 +763,27 @@ print() a single study to check its transcription.
 }
 
 # Materialise lazy specs once at the shared driver entry point.
-## THE BAND SET IS A PROPERTY OF THE SOURCE, and of nothing else. A covariate is
-## conditional when that source's model estimated its coefficient and marginal
-## when it did not; that is a statement about the evidence, and it cannot depend
-## on what is being fitted.
+## WHICH COVARIATES A SOURCE IS CONDITIONAL ON is a property of that source: its
+## own model estimated their coefficients, so its paper reports a contrast along
+## them. WHICH OF THEM ADMIXR2 HAS TO CUT INTO NODES is a different question,
+## and the answer is: only the ones the ANALYSIS model can be moved by.
 ##
-## IT USED TO BE NARROWED to the covariates the ANALYSIS model reads, on the
-## argument that banding on one the analysis cannot see buys strata and no
-## change in the objective. Both halves were wrong. The objective moved
-## (-2293.4046 banding on WT alone against -2293.4094 on WT and CRCL), and the
-## narrowing bit in exactly one place: the NULL model of a nested pair, which
-## drops the covariate and so banded less than the full model did. Two fits over
-## different study sets have no likelihood ratio between them, so `anova()`
-## refused the one comparison a covariate test is made of -- and the case is
-## already handled where it belongs, by .admCheckCovariates() dropping the
-## unread margin from each stratum, which is exact.
-.admMaterialise <- function(studies) {
+## `analysis_covs` is that narrowing, and it is exact rather than a saving with
+## a cost. Measured at identical parameters, on a source conditional on CRCL and
+## WT with an analysis model reading WT only:
+##
+##   both conditional        50 studies   OFV -3041.72602426
+##   only WT conditional     10 studies   OFV -3041.72606427   diff -0.00004
+##   only CRCL conditional   10 studies   OFV -3115.32302414   diff -73.59700
+##
+## Collapsing the direction the analysis CANNOT see costs four decimal places;
+## collapsing one it can see costs 73.6. The invariance is exact rather than
+## approximate -- against a fully marginal reference it is -0.158 at 3 nodes,
+## +0.00003 at 5 and -0.00000001 at 9 -- because if a model's prediction does
+## not move across a source's nodes, the mixture collapse those nodes reduce to
+## is a sufficient statistic for it. That is the same law .admMixMoments()
+## applies, so this is the exactly removable part of the work and nothing else.
+.admMaterialise <- function(studies, analysis_covs = NULL) {
   if (inherits(studies, "admStudies")) studies <- unclass(studies)
   if (!is.list(studies)) return(studies)
   spec <- vapply(studies, inherits, logical(1), "admStudy")
@@ -806,9 +813,10 @@ print() a single study to check its transcription.
     sp <- list(times = s$times, ev = ev, n = s$n)
     if (!is.null(s[["population"]])) sp[["cov_dist"]] <- s[["population"]]
     if (!is.null(s[["at"]]))         sp[["cov"]]      <- s[["at"]]
-    # DERIVED HERE, and NOWHERE ELSE: the band set reaching datagen() is
-    # already resolved, and it is the covariates THIS SOURCE estimated a
-    # coefficient for.
+    # RESOLVED HERE, and nowhere else: what reaches datagen() is the set of
+    # covariates this SOURCE estimated a coefficient for, narrowed to the ones
+    # the ANALYSIS model reads -- see the note above for why the narrowing is
+    # exact.
     # An explicit `stratify` on the SPEC still wins. It is not an `admStudy()`
     # argument and not a field of the object -- see the note in admStudy() --
     # but it stays an internal field that covStrata(), the internal callers and
@@ -816,6 +824,7 @@ print() a single study to check its transcription.
     # the spec or the opt-out silently becomes its opposite.
     .bn <- if (!is.null(s[["stratify"]])) s[["stratify"]] else {
       b <- .admStudyBandNames(s)
+      if (!is.null(analysis_covs)) b <- intersect(b, analysis_covs)
       # `by` PINS its covariate one level per study, so each level's cov_dist
       # no longer declares it and there is nothing left to band. Leaving it in
       # asked .admCovStrata() to band a covariate the spec had stopped

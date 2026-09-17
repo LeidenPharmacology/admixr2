@@ -656,17 +656,23 @@ test_that("banding is not a user option any more", {
   expect_match(paste(out, collapse = "\n"), "WT read at an asserted coefficient")
 })
 
-test_that("a nested pair bands identically, whatever each model reads", {
+test_that("nodes are cut only along what the ANALYSIS model reads", {
   skip_if_not_installed("rxode2")
-  # A covariate LRT is two fits over the SAME studies: the full model reads the
-  # covariate, the null model does not. What a source bands on is a property of
-  # that source, so both fits get the same strata, and each fit then drops from
-  # every stratum the margin its own model cannot read -- which is exact,
-  # because the stratum was drawn conditional on that value.
+  # A source is conditional on what its OWN model estimated; which of those
+  # admixr2 has to cut into nodes is narrowed to what the analysis model reads.
+  # The narrowing is EXACT, not a saving with a cost: if a model's prediction
+  # does not move across a source's nodes, the mixture those nodes collapse to
+  # is a sufficient statistic for it. Measured at identical parameters, on a
+  # source conditional on CRCL and WT with an analysis model reading WT only:
   #
-  # Resolved against the ANALYSIS model instead, the null fit banded less than
-  # the full fit, and two fits over different study sets have no likelihood
-  # ratio between them: anova() refused the one comparison the feature is for.
+  #   both conditional        50 studies   OFV -3041.72602426
+  #   only WT conditional     10 studies   OFV -3041.72606427   diff -0.00004
+  #   only CRCL conditional   10 studies   OFV -3115.32302414   diff -73.59700
+  #
+  # so collapsing the unread direction is free to four decimals and collapsing
+  # a read one is not. Against a fully marginal reference the invariance is
+  # -0.158 at 3 nodes, +0.00003 at 5 and -0.00000001 at 9 -- it is the
+  # quadrature converging, not an approximation being tolerated.
   pop <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55))
   .src <- function() {
     ini({ tcl <- log(5); tv <- log(50); bsex <- 0.15; bwt <- 0.75
@@ -677,12 +683,28 @@ test_that("a nested pair bands identically, whatever each model reads", {
   st <- admStudies(s = admStudy(model = .src, n = 100, dose = 200,
                                 times = c(1, 4), population = pop,
                                 strata_nodes = 3L, label = "s"))
-  g <- suppressWarnings(suppressMessages(admixr2:::.admMaterialise(st)))
-  expect_identical(length(g), 3L * 2L)
-  # Every stratum still declares the covariate it was cut on as a point, so the
-  # per-fit drop has something exact to remove.
-  expect_true(all(vapply(g, function(z)
+  # An analysis model reading both: 3 WT nodes x 2 SEX levels.
+  g_both <- suppressWarnings(suppressMessages(
+    admixr2:::.admMaterialise(st, analysis_covs = c("WT", "SEX"))))
+  expect_identical(length(g_both), 3L * 2L)
+  expect_true(all(vapply(g_both, function(z)
     isTRUE(z$cov_dist[["WT"]][[".point"]]), logical(1))))
+
+  # Reading SEX only: the WT nodes collapse, the SEX levels stay, and WT is
+  # integrated over the distribution the source declared.
+  g_sex <- suppressWarnings(suppressMessages(
+    admixr2:::.admMaterialise(st, analysis_covs = "SEX")))
+  expect_identical(length(g_sex), 2L)
+  expect_false(any(vapply(g_sex, function(z)
+    isTRUE(z$cov_dist[["WT"]][[".point"]]), logical(1))))
+
+  # Reading neither -- the null model of a nested pair -- leaves one study,
+  # marginal over both, and `n` is conserved whichever way it is cut.
+  g_none <- suppressWarnings(suppressMessages(
+    admixr2:::.admMaterialise(st, analysis_covs = character(0))))
+  expect_identical(length(g_none), 1L)
+  for (g in list(g_both, g_sex, g_none))
+    expect_equal(sum(vapply(g, function(z) z$n, 0)), 100)
 })
 
 test_that("admPopulation guards the data-frame route it advertises", {

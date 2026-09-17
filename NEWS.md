@@ -111,8 +111,11 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **`range` truncates a MARGINAL covariate's declared distribution too**, not
   only a banded one's: the enrolled span holds however the covariate is used.
 
-* **Banding needs an ESTIMATED coefficient, not just a covariate the model
+* **Nodes need an ESTIMATED coefficient, not just a covariate the model
   reads**, so a fixed allometric exponent leaves weight marginal.
+
+* **`fit$env$strataNodes` is now one entry per covariate the model reads**,
+  rather than one number per fit, and `anova()` compares where the two overlap.
 
 ## Bug fixes
 
@@ -122,8 +125,12 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **`stratify = FALSE` stopped reaching the spec**, so a study that refused
   banding had one derived for it -- the opt-out became its opposite.
 
-* **`strata_nodes` was recorded only when something was banded**, so it could
-  vary between studies of one fit -- which `anova()` refuses to compare across.
+* **`strata_nodes` was recorded only when something was cut into nodes**, so it
+  could vary between studies of one fit -- which `anova()` refuses to compare.
+
+* **`anova()` refused the nested pair a covariate test is made of.** The null
+  model has dropped the term, so it has no nodes to record; measured, the two
+  objectives agree to 5e-05 and the comparison is exactly valid.
 
 * **`range` was silently dropped by a source that bands nothing**, which is the
   transcribed `mean +/- SD` it exists for.

@@ -352,17 +352,16 @@ test_that("plot.admFit covariates: a dropped covariate is still plotted against"
   # The null model never reads CRCL, so it is off the design -- and it is still
   # the covariate the analyst needs the residual plotted against.
   #
-  # ONE ROW PER SOURCE on this continuous axis. Every source model ESTIMATED the
-  # renal coefficient, so each is banded on CRCL into nine quadrature nodes, and
-  # reading those straight drew nine renal positions per paper carrying a ninth
-  # of its patients each. The nodes are admixr2's discretisation of the very
-  # distribution the source already stands for, so the source is one mark --
-  # conditional, because what that paper reports along this axis is a
-  # relationship -- and the span it shows is the one the SOURCE declared, not a
-  # node's own zero width.
+  # ONE ROW PER SOURCE, and MARGINAL. Every source model estimated the renal
+  # coefficient, so each source is conditional on CRCL; but nodes are cut only
+  # along what the ANALYSIS model reads, and this one reads nothing, so no
+  # source is cut at all. Each therefore keeps the distribution it declared and
+  # shows the span it enrolled -- which is what this panel needs, since the
+  # question is whether the omitted term belonged. A node's own 10th and 90th
+  # are that node, and would have drawn a source that saw one value.
   expect_identical(nrow(env$bad), 3L)
   expect_setequal(unique(env$bad$source), c("normal", "mild", "moderate"))
-  expect_true(all(env$bad$kind == "conditional"))
+  expect_true(all(env$bad$kind == "marginal"))
   expect_true(all(env$bad$xhi > env$bad$xlo))
 })
 

@@ -38,9 +38,12 @@
          "drops all but the first. Give each study its own name.",
          call. = FALSE)
   names(studies) <- .nm
-  # Materialise before shared validation reads study fields. What each source
-  # bands on comes from that source alone -- see .admMaterialise().
-  studies <- .admMaterialise(studies)
+  # Materialise before shared validation reads study fields. The analysis
+  # model's covariates go in: a source is cut into nodes only along the
+  # directions this model can be moved by, which leaves the objective unchanged
+  # -- see .admMaterialise().
+  studies <- .admMaterialise(
+    studies, analysis_covs = tryCatch(.ui$allCovs, error = function(e) NULL))
   pinfo <- .admDriverPinfo(.ui, .ctl)
   .admWarnCovIdentifiability(.ui, pinfo, studies)
   list(studies = studies, pinfo = pinfo)
@@ -85,9 +88,36 @@
 .admFinaliseFit <- function(.ret, .ui, .ctl, est, objective, ov, studies,
                             cov, cov_nms, multi_out, extra_field, handle_ctl,
                             t_opt, t_cov, t_elapsed) {
-  # Record stratum node resolution across studies for anova() compatibility check.
-  # Stamped on .fit$env (not .ret, where env does not yet exist as an environment).
-  .Jn <- sort(unique(unlist(lapply(studies, function(s) s[[".adm_strata_nodes"]]))))
+  # THE RESOLUTION THIS FIT WAS BUILT AT, per covariate THIS MODEL READS, for
+  # anova()'s compatibility check. Stamped on .fit$env (not .ret, where env does
+  # not yet exist as an environment).
+  #
+  # ONE NUMBER PER FIT WAS TOO COARSE, and it refused a comparison that is
+  # exactly valid. A source is cut into nodes only along the covariates the
+  # analysis model reads, so the NULL model of a nested pair -- which has
+  # dropped the term -- legitimately has fewer nodes, or none. Measured: the
+  # full fit at 10 studies against a null fit at 2 gives dOFV 409.162568, and
+  # the same null refitted at the full resolution gives 409.162615, a difference
+  # of 5e-05 -- while the old check refused the first pair outright because one
+  # fit stamped `5` and the other stamped nothing.
+  #
+  # A covariate the model READS but no study is conditional on is recorded as 1:
+  # that fit scored a pooled summary where the other scored nodes, and for a
+  # model that can see the covariate those are genuinely different data.
+  .Jn <- local({
+    .cv <- tryCatch(.ui$allCovs, error = function(e) character(0))
+    .cv <- .cv[vapply(.cv, function(cv) any(vapply(studies, function(s)
+      cv %in% c(.admCovSpecNames(s[["cov_dist"]]),
+                s[[".adm_strata_covs"]] %||% character(0)),
+      logical(1))), logical(1))]
+    if (!length(.cv)) return(integer(0))
+    vapply(.cv, function(cv) {
+      j <- unlist(lapply(studies, function(s)
+        if (cv %in% (s[[".adm_strata_covs"]] %||% character(0)))
+          s[[".adm_strata_nodes"]] else NULL))
+      if (length(j)) max(as.integer(j)) else 1L
+    }, integer(1))
+  })
   nlmixr2est::.nlmixr2FitUpdateParams(.ret)
   handle_ctl(.ctl, .ret)
   if (exists("control", .ui)) rm(list = "control", envir = .ui)
