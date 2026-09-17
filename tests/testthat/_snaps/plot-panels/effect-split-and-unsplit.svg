@@ -41,8 +41,8 @@
 <polyline points='43.68,545.11 43.68,58.74 ' style='stroke-width: 1.07; stroke: #EBEBEB; stroke-linecap: butt;' />
 <polyline points='212.47,545.11 212.47,58.74 ' style='stroke-width: 1.07; stroke: #EBEBEB; stroke-linecap: butt;' />
 <polyline points='43.68,377.01 212.47,138.49 ' style='stroke-width: 2.35; stroke-dasharray: 3.13,9.39; stroke-linecap: butt;' />
-<circle cx='43.68' cy='377.01' r='3.98' style='stroke-width: 0.71; fill: #000000;' />
-<circle cx='212.47' cy='138.49' r='3.98' style='stroke-width: 0.71; fill: #000000;' />
+<rect x='40.09' y='373.42' width='7.18' height='7.18' style='stroke-width: 1.28; fill: #FFFFFF;' />
+<rect x='208.88' y='134.90' width='7.18' height='7.18' style='stroke-width: 1.28; fill: #FFFFFF;' />
 <polygon points='209.34,80.85 212.47,77.72 215.60,80.85 212.47,83.98 ' style='stroke-width: 0.71; stroke: none; fill: #E69F00;' />
 <polygon points='40.55,523.00 43.68,519.88 46.81,523.00 43.68,526.13 ' style='stroke-width: 0.71; stroke: none; fill: #56B4E9;' />
 <rect x='35.24' y='58.74' width='185.67' height='486.37' style='stroke-width: 1.07; stroke: #333333;' />
@@ -238,7 +238,7 @@
 <polygon points='649.72,338.81 652.85,335.68 655.97,338.81 652.85,341.94 ' style='stroke-width: 0.71; stroke: none; fill: #000000;' />
 <text x='666.96' y='324.56' style='font-size: 8.80px; font-family: sans;' textLength='33.75px' lengthAdjust='spacingAndGlyphs'>marginal</text>
 <text x='666.96' y='341.84' style='font-size: 8.80px; font-family: sans;' textLength='42.08px' lengthAdjust='spacingAndGlyphs'>conditional</text>
-<text x='35.24' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='225.96px' lengthAdjust='spacingAndGlyphs'>dotted: the ESTIMATED effect  |  each source at its own published value </text>
+<text x='35.24' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='311.76px' lengthAdjust='spacingAndGlyphs'>black dotted, open squares: the ESTIMATED effect  |  coloured: each source's own published model </text>
 <text x='35.24' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='351.24px' lengthAdjust='spacingAndGlyphs'>CONDITIONAL: its own regression over the range it covers  |  MARGINAL: a whisker, 10th-90th over 2.5th-97.5th</text>
 <text x='35.24' y='14.56' style='font-size: 13.20px; font-family: sans;' textLength='264.91px' lengthAdjust='spacingAndGlyphs'>Estimated covariate effect against its sources</text>
 </g>

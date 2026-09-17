@@ -130,10 +130,14 @@ all. A fixed allometric exponent is not a finding; drawing a facet for it invite
 a reader to check an agreement that was never in question.
 
 The region no source sampled is shaded: that is where the fit extrapolates. A
-discrete covariate is **marked at its levels** --- those are the places the
-model was actually asked --- and the dotted line joins them, so the effect reads
-the same way on both kinds of axis. The line is a connector between marked
-points, not a claim about the space between them.
+discrete covariate is **marked at its levels** with open squares --- those are
+the places the model was actually asked --- and the dotted line joins them, so
+the effect reads the same way on both kinds of axis. The line is a connector
+between marked points, not a claim about the space between them.
+
+The fit is black, dotted, open squares. Sources are coloured, solid, filled.
+Nothing about the fit borrows a source's vocabulary: the shape key
+(circle/diamond) is a statement about a *source*, and the fit is not one.
 
 **`covariate_resid`** plots each study's mean standardised residual against the
 covariate value it sits at. How it is read depends on the covariate:

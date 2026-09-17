@@ -41,8 +41,8 @@
 <polyline points='48.19,545.11 48.19,58.74 ' style='stroke-width: 1.07; stroke: #EBEBEB; stroke-linecap: butt;' />
 <polyline points='307.23,545.11 307.23,58.74 ' style='stroke-width: 1.07; stroke: #EBEBEB; stroke-linecap: butt;' />
 <polyline points='48.19,523.00 307.23,80.85 ' style='stroke-width: 2.35; stroke-dasharray: 3.13,9.39; stroke-linecap: butt;' />
-<circle cx='48.19' cy='523.00' r='3.98' style='stroke-width: 0.71; fill: #000000;' />
-<circle cx='307.23' cy='80.85' r='3.98' style='stroke-width: 0.71; fill: #000000;' />
+<rect x='44.60' y='519.41' width='7.18' height='7.18' style='stroke-width: 1.28; fill: #FFFFFF;' />
+<rect x='303.64' y='77.26' width='7.18' height='7.18' style='stroke-width: 1.28; fill: #FFFFFF;' />
 <polygon points='45.06,523.00 48.19,519.88 51.32,523.00 48.19,526.13 ' style='stroke-width: 0.71; stroke: none; fill: #E69F00;' />
 <polygon points='304.10,80.85 307.23,77.72 310.36,80.85 307.23,83.98 ' style='stroke-width: 0.71; stroke: none; fill: #56B4E9;' />
 <rect x='35.24' y='58.74' width='284.94' height='486.37' style='stroke-width: 1.07; stroke: #333333;' />
@@ -67,8 +67,8 @@
 <polyline points='355.78,545.11 355.78,58.74 ' style='stroke-width: 1.07; stroke: #EBEBEB; stroke-linecap: butt;' />
 <polyline points='614.82,545.11 614.82,58.74 ' style='stroke-width: 1.07; stroke: #EBEBEB; stroke-linecap: butt;' />
 <polyline points='355.78,523.00 614.82,162.10 ' style='stroke-width: 2.35; stroke-dasharray: 3.13,9.39; stroke-linecap: butt;' />
-<circle cx='355.78' cy='523.00' r='3.98' style='stroke-width: 0.71; fill: #000000;' />
-<circle cx='614.82' cy='162.10' r='3.98' style='stroke-width: 0.71; fill: #000000;' />
+<rect x='352.19' y='519.41' width='7.18' height='7.18' style='stroke-width: 1.28; fill: #FFFFFF;' />
+<rect x='611.22' y='158.51' width='7.18' height='7.18' style='stroke-width: 1.28; fill: #FFFFFF;' />
 <line x1='355.78' y1='80.85' x2='614.82' y2='80.85' style='stroke-width: 1.07; stroke: #E69F00; stroke-opacity: 0.70; stroke-linecap: butt;' />
 <line x1='355.78' y1='80.85' x2='614.82' y2='80.85' style='stroke-width: 1.07; stroke: #56B4E9; stroke-opacity: 0.70; stroke-linecap: butt;' />
 <line x1='355.78' y1='80.85' x2='614.82' y2='80.85' style='stroke-width: 3.41; stroke: #E69F00; stroke-opacity: 0.55; stroke-linecap: butt;' />
@@ -144,7 +144,7 @@
 <polygon points='649.72,338.81 652.85,335.68 655.97,338.81 652.85,341.94 ' style='stroke-width: 0.71; stroke: none; fill: #000000;' />
 <text x='666.96' y='324.56' style='font-size: 8.80px; font-family: sans;' textLength='33.75px' lengthAdjust='spacingAndGlyphs'>marginal</text>
 <text x='666.96' y='341.84' style='font-size: 8.80px; font-family: sans;' textLength='42.08px' lengthAdjust='spacingAndGlyphs'>conditional</text>
-<text x='35.24' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='225.96px' lengthAdjust='spacingAndGlyphs'>dotted: the ESTIMATED effect  |  each source at its own published value </text>
+<text x='35.24' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='311.76px' lengthAdjust='spacingAndGlyphs'>black dotted, open squares: the ESTIMATED effect  |  coloured: each source's own published model </text>
 <text x='35.24' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='351.24px' lengthAdjust='spacingAndGlyphs'>CONDITIONAL: its own regression over the range it covers  |  MARGINAL: a whisker, 10th-90th over 2.5th-97.5th</text>
 <text x='35.24' y='14.56' style='font-size: 13.20px; font-family: sans;' textLength='264.91px' lengthAdjust='spacingAndGlyphs'>Estimated covariate effect against its sources</text>
 </g>

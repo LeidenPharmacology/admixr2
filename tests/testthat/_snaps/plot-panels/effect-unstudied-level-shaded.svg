@@ -41,9 +41,9 @@
 <polyline points='608.45,545.11 608.45,58.74 ' style='stroke-width: 1.07; stroke: #EBEBEB; stroke-linecap: butt;' />
 <rect x='497.87' y='58.74' width='110.58' height='486.37' style='stroke-width: 1.07; stroke: none; stroke-linecap: butt; stroke-linejoin: miter; fill: #D9D9D9; fill-opacity: 0.55;' />
 <polyline points='55.54,451.24 332.00,284.50 608.45,80.85 ' style='stroke-width: 2.35; stroke-dasharray: 3.13,9.39; stroke-linecap: butt;' />
-<circle cx='55.54' cy='451.24' r='3.98' style='stroke-width: 0.71; fill: #000000;' />
-<circle cx='332.00' cy='284.50' r='3.98' style='stroke-width: 0.71; fill: #000000;' />
-<circle cx='608.45' cy='80.85' r='3.98' style='stroke-width: 0.71; fill: #000000;' />
+<rect x='51.95' y='447.65' width='7.18' height='7.18' style='stroke-width: 1.28; fill: #FFFFFF;' />
+<rect x='328.41' y='280.91' width='7.18' height='7.18' style='stroke-width: 1.28; fill: #FFFFFF;' />
+<rect x='604.86' y='77.26' width='7.18' height='7.18' style='stroke-width: 1.28; fill: #FFFFFF;' />
 <line x1='55.54' y1='523.00' x2='55.54' y2='523.00' style='stroke-width: 1.07; stroke: #E69F00; stroke-opacity: 0.70; stroke-linecap: butt;' />
 <line x1='332.00' y1='199.55' x2='332.00' y2='199.55' style='stroke-width: 1.07; stroke: #56B4E9; stroke-opacity: 0.70; stroke-linecap: butt;' />
 <line x1='55.54' y1='523.00' x2='55.54' y2='523.00' style='stroke-width: 3.41; stroke: #E69F00; stroke-opacity: 0.55; stroke-linecap: butt;' />
@@ -95,7 +95,7 @@
 <rect x='652.53' y='321.53' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
 <circle cx='661.17' cy='330.17' r='3.13' style='stroke-width: 0.71; stroke: none; fill: #000000;' />
 <text x='675.29' y='333.20' style='font-size: 8.80px; font-family: sans;' textLength='33.75px' lengthAdjust='spacingAndGlyphs'>marginal</text>
-<text x='27.90' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='225.96px' lengthAdjust='spacingAndGlyphs'>dotted: the ESTIMATED effect  |  each source at its own published value </text>
+<text x='27.90' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='311.76px' lengthAdjust='spacingAndGlyphs'>black dotted, open squares: the ESTIMATED effect  |  coloured: each source's own published model </text>
 <text x='27.90' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='351.24px' lengthAdjust='spacingAndGlyphs'>CONDITIONAL: its own regression over the range it covers  |  MARGINAL: a whisker, 10th-90th over 2.5th-97.5th</text>
 <text x='27.90' y='14.56' style='font-size: 13.20px; font-family: sans;' textLength='264.91px' lengthAdjust='spacingAndGlyphs'>Estimated covariate effect against its sources</text>
 </g>

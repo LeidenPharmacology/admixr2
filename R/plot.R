@@ -1209,10 +1209,15 @@ head.paged_df <- function(x, n = 6L, ...) {
   p_eff <- p_eff + ggplot2::geom_line(
     data = curve_df, ggplot2::aes(group = param),
     colour = "black", linewidth = 1.1, linetype = "dotted")
+  # An OPEN SQUARE, which is deliberately not in the source vocabulary. The
+  # shape legend reads "circle = marginal, diamond = conditional" and those are
+  # statements about a SOURCE; the fit is not a source, and marking its levels
+  # with a filled black circle had it reading as a marginalised study.
   if (any(curve_df$disc))
     p_eff <- p_eff + ggplot2::geom_point(
       data = curve_df[curve_df$disc, , drop = FALSE],
-      colour = "black", size = 3.4)
+      colour = "black", fill = "white", shape = 22L, stroke = 0.9,
+      size = 3.2)
 
   # EACH SOURCE at its own published parameter value, over the stretch of the
   # axis it speaks for. CONDITIONAL: a solid line over the range it was banded
@@ -1258,8 +1263,8 @@ head.paged_df <- function(x, n = 6L, ...) {
     ggplot2::labs(
       title = "Estimated covariate effect against its sources",
       x = "Covariate value", y = "Parameter value",
-      subtitle = paste("dotted: the ESTIMATED effect  |  each source at its",
-                       "own published value",
+      subtitle = paste("black dotted, open squares: the ESTIMATED effect",
+                       " |  coloured: each source's own published model",
                        "\nCONDITIONAL: its own regression over the range it",
                        "covers  |  MARGINAL: a whisker, 10th-90th over",
                        "2.5th-97.5th"))
