@@ -905,3 +905,38 @@ test_that(".admCovResidData is one row per SOURCE per position on THIS axis", {
   expect_true(all(rs$n == 50))
   expect_setequal(rs$x, c(0, 1))
 })
+
+test_that("a source banded into quadrature nodes is ONE mark, not one per node", {
+  # THE DEFECT: banding is derived from the source's own model, so a source
+  # whose model uses two continuous covariates is cut into `nodes^2` strata --
+  # 81 by default, 162 with a sex split. Each was read as a position: 99 dots
+  # for one paper on the renal axis, most carrying under two patients, and the
+  # outermost node (three SDs out) set the axis, which then ran to 653 mL/min
+  # with every paper below 150.
+  zz    <- seq(-3.2, 3.2, length.out = 9)
+  nodes <- exp(log(60) + 0.5 * zz)
+  wt    <- stats::dnorm(zz) / sum(stats::dnorm(zz))   # as banding apportions n
+  st <- c(
+    # the banded source: one point spec per node, n split between them
+    stats::setNames(lapply(seq_along(nodes), function(k) list(
+      n = 210 * wt[k], times = c(1, 2), cov = list(CRCL = nodes[k]),
+      cov_dist = list(CRCL = list(.point = TRUE)))),
+      paste0("mild_s", seq_along(nodes))),
+    # a marginal source, which keeps the distribution it declared
+    list(normal = list(n = 260L, times = c(1, 2), cov = list(CRCL = 95),
+                       cov_dist = list(CRCL = list(meanlog = log(95),
+                                                   sdlog = 0.2)))))
+  ag <- stats::setNames(lapply(names(st), function(nm) list(
+    obs  = list(E = c(1, 2)),
+    pred = list(E = c(1.1, 2.1), V = diag(c(0.01, 0.04))))), names(st))
+
+  r <- .admCovResidData("CRCL", st, ag)
+  expect_equal(nrow(r), 2L)
+  expect_setequal(r$study, c("mild", "normal"))
+  # The whole source's patients, at its centre -- not a ninth of them at a node.
+  expect_equal(r$n[r$study == "mild"], 210)
+  expect_lt(r$x[r$study == "mild"], max(nodes))
+  # And the span comes from the SOURCE, so the noise guard has a width to
+  # measure: a stratum is a point spec whose own 10th and 90th are that node.
+  expect_gt(r$xhi[r$study == "normal"], r$xlo[r$study == "normal"])
+})

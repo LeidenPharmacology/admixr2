@@ -269,12 +269,18 @@ test_that("plot.admFit: collapsing a banded source reproduces the unbanded one",
   expect_null(cs$studies$A$cov)
 })
 
-test_that("plot.admFit covariates: both covariate panels are produced", {
+test_that("plot.admFit covariates: one source earns no residual panel", {
   skip_if_not_installed("nlmixr2est")
   env <- .int_cov_plot()
   out <- .pdf_plot_int(plot(env$fit, which = "covariate", n_sim = 200L))
   expect_s3_class(out$covariate_effect, "gg")
-  expect_s3_class(out$covariate_resid,  "gg")
+  # There is ONE source here, so there is no BETWEEN-study residual to read.
+  # Its WT strata are quadrature nodes -- how admixr2 cut that source's own
+  # distribution up -- and plotting them as points on a between-study panel
+  # manufactures a contrast out of an internal discretisation. The effect panel
+  # still draws, because what that panel compares is the source's own model
+  # against the fitted line.
+  expect_null(out$covariate_resid)
   # WT is swept; SEX is banded, so its facet is the two levels and nothing
   # between them. ONE estimated-effect line per facet -- other covariates sit
   # at the pooled centre, and the line is the thing the sources are compared
@@ -342,13 +348,12 @@ test_that("plot.admFit covariates: a dropped covariate is still plotted against"
   # its declared SPREAD: the source marginalised over a distribution, and the
   # `cov` value the drop leaves behind is a single number that would have been
   # mislabelled as a conditioned one.
-  # One row per (source, position on this axis). The sources band on WT --
-  # their models use it -- and WT is correlated with CRCL in these cohorts, so
-  # each WT stratum carries the CRCL distribution CONDITIONAL on its own WT
-  # node and therefore sits at its own renal value. Those positions are real,
-  # so the count is not pinned; what matters is that all three sources are
-  # present and CRCL is still marginal with a spread to show.
-  expect_gte(nrow(env$bad), 3L)
+  # ONE ROW PER SOURCE on this continuous axis. The sources band on WT --
+  # their models use it -- so each carries nine WT nodes, and reading those
+  # straight drew nine renal positions per paper. The count is not pinned
+  # tightly; what matters is that all three sources are present exactly once
+  # and CRCL is still marginal with a spread to show.
+  expect_identical(nrow(env$bad), 3L)
   expect_setequal(unique(env$bad$source), c("normal", "mild", "moderate"))
   expect_true(all(env$bad$kind == "marginal"))
   expect_true(all(env$bad$xhi > env$bad$xlo))

@@ -111,7 +111,11 @@ skip_if_no_vdiffr <- function() {
   agg <- .pan_agg(studies, z)
   res <- Filter(Negate(is.null),
                 lapply(covs, function(cv) .admCovResidData(cv, studies, agg)))
-  .admCovResidPanel(res, .admCovPalette(unlist(lapply(res, `[[`, "study"),
+  # From `source`, which is what the panel colours on -- plot.admFit() builds
+  # it the same way. Keyed on `study` the scale matched nothing and ggplot2
+  # warned rather than failed, so the snapshots were taken with the palette
+  # silently unused.
+  .admCovResidPanel(res, .admCovPalette(unlist(lapply(res, `[[`, "source"),
                                                use.names = FALSE)))
 }
 

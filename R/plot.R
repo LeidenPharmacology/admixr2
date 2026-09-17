@@ -744,6 +744,132 @@ head.paged_df <- function(x, n = 6L, ...) {
 ##
 ## Returns NULL when the model estimates nothing for `cv`, when no line reads
 ## it, when no study gives it a finite value, or when nothing varies.
+## A weighted quantile of a set of positions, for the fallback when a source's
+## own declared distribution cannot be read. Used on the strata: their values
+## are the quadrature nodes and their weights the patients apportioned to each,
+## so this recovers the distribution the nodes discretise. The UNWEIGHTED mean
+## of a log-spaced node grid sits well above its centre -- on nine nodes from
+## 12 to 297 it lands at 97 where the middle node is 60 -- which is enough to
+## move a source onto another source's position and have the residual panel
+## drop the facet as noise.
+.admWQuant <- function(x, w, u) {
+  ok <- is.finite(x)
+  x  <- x[ok]; w <- w[ok]
+  if (!length(x)) return(NA_real_)
+  w[!is.finite(w) | w < 0] <- 0
+  if (!sum(w)) w <- rep(1, length(x))
+  o  <- order(x)
+  x  <- x[o]; cw <- cumsum(w[o]) / sum(w)
+  x[which(cw >= u)[1L]]
+}
+
+## A quantile of a SOURCE's own declared distribution.
+##
+## The strata cannot answer this. Banding cuts a source into one point spec per
+## quadrature node, so a stratum's own 10th and 90th ARE that node -- and a
+## mark that stands for the whole source needs the distribution the source
+## declared, not the grid admixr2 cut it into.
+.admCovSourceQ <- function(s, cv, u) {
+  if (is.null(s)) return(NA_real_)
+  p  <- s[["population"]]
+  sp <- s[["cov_dist"]][[cv]] %||%
+    (if (!is.null(p) && !is.data.frame(p)) p[[cv]])
+  if (!is.null(sp))
+    return(tryCatch(as.numeric(.admCovQuantile(sp, u))[1L],
+                    error = function(e) NA_real_))
+  if (is.data.frame(p) && is.numeric(p[[cv]]))
+    return(unname(stats::quantile(p[[cv]], u, na.rm = TRUE)))
+  NA_real_
+}
+
+## Where a SOURCE sits on the axis. A value it pinned with `at` first, then the
+## centre of the distribution it declared.
+.admCovSourceCentre <- function(s, cv) {
+  if (is.null(s)) return(NA_real_)
+  v <- s[["at"]]
+  if (is.list(v) && !is.null(v[[cv]])) {
+    x <- suppressWarnings(as.numeric(v[[cv]])[1L])
+    if (is.finite(x)) return(x)
+  }
+  p  <- s[["population"]]
+  sp <- s[["cov_dist"]][[cv]] %||%
+    (if (!is.null(p) && !is.data.frame(p)) p[[cv]])
+  if (!is.null(sp)) {
+    x <- .admCovSpecCentre(sp)
+    if (is.finite(x)) return(x)
+  }
+  .admCovSourceQ(s, cv, 0.5)
+}
+
+## One row per (SOURCE, POSITION) -- and on a continuous axis, one row per
+## SOURCE.
+##
+## Banding cuts a source into one stratum per quadrature node, and a node is an
+## internal discretisation of the very distribution the source already stands
+## for. Reading the strata straight drew one mark per node: nine small dots for
+## one paper, each carrying a ninth of its patients, and the outermost node --
+## three SDs out -- then set the axis, so a CRCL panel ran to 650 mL/min with
+## every paper below 150.
+##
+## On a LEVEL axis the positions are values the paper reported, so they stay
+## apart and the gap between them is that paper's own effect.
+.admCovSourcePos <- function(studies, src, cv, is_disc,
+                             mid, lo, hi, lo2, hi2, knd, nn) {
+  by_src <- split(seq_along(studies), .admCovSource(names(studies)))
+  .rng <- function(v, f) {
+    v <- v[is.finite(v)]
+    if (!length(v)) NA_real_ else f(v)
+  }
+  do.call(rbind, lapply(names(by_src), function(sn) {
+    ii <- by_src[[sn]]
+    ii <- ii[is.finite(mid[ii])]
+    if (!length(ii)) return(NULL)
+    cond <- any(knd[ii] == "conditional")
+    so   <- src[[sn]]
+
+    if (cond && is_disc) {
+      p  <- sort(unique(mid[ii]))
+      rf <- ii[match(p, mid[ii])]
+      # `n` for a POSITION, not for a stratum. Banding divides a source's n
+      # among its strata, and two strata at the same level are one mark;
+      # summing per position gets both right without a special case.
+      nq <- vapply(p, function(v)
+        sum(nn[ii][abs(mid[ii] - v) < 1e-8], na.rm = TRUE), double(1))
+      nq[!is.finite(nq) | nq <= 0] <- NA_real_
+      .at <- function(v) vapply(seq_along(p), function(k)
+        if (is.finite(v[rf[k]])) v[rf[k]] else p[k], double(1))
+      return(data.frame(study = sn, kind = "conditional", x = p,
+                        xlo = .at(lo), xhi = .at(hi),
+                        xlo2 = .at(lo2), xhi2 = .at(hi2),
+                        n = nq, stringsAsFactors = FALSE))
+    }
+
+    ctr <- .admCovSourceCentre(so, cv)
+    if (!is.finite(ctr)) ctr <- .admWQuant(mid[ii], nn[ii], 0.5)
+    tot <- sum(nn[ii], na.rm = TRUE)
+    if (!is.finite(tot) || tot <= 0) tot <- NA_real_
+    # A CONDITIONAL source gets NO whisker: what it reported here is a
+    # relationship, drawn as its own regression over the range it covers, and a
+    # bar would redraw it as a degenerate distribution. A MARGINAL one gets the
+    # distribution it declared, which is the evidence it actually carries.
+    q <- if (cond) rep(ctr, 4L) else {
+      z <- c(.admCovSourceQ(so, cv, 0.1),   .admCovSourceQ(so, cv, 0.9),
+             .admCovSourceQ(so, cv, 0.025), .admCovSourceQ(so, cv, 0.975))
+      fb <- if (length(ii) > 1L)
+        c(.admWQuant(mid[ii], nn[ii], 0.1),   .admWQuant(mid[ii], nn[ii], 0.9),
+          .admWQuant(mid[ii], nn[ii], 0.025), .admWQuant(mid[ii], nn[ii], 0.975))
+      else c(.rng(lo[ii], min), .rng(hi[ii], max),
+             .rng(lo2[ii], min), .rng(hi2[ii], max))
+      z[!is.finite(z)] <- fb[!is.finite(z)]
+      z[!is.finite(z)] <- ctr
+      z
+    }
+    data.frame(study = sn, kind = if (cond) "conditional" else "marginal",
+               x = ctr, xlo = q[1L], xhi = q[2L], xlo2 = q[3L], xhi2 = q[4L],
+               n = tot, stringsAsFactors = FALSE)
+  }))
+}
+
 .admCovEffectData <- function(ui, cv, studies, struct, src = NULL,
                               n_grid = 120L, pad = 0.15) {
   ml <- .admModelLines(ui)
@@ -758,7 +884,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   hi  <- vapply(studies, .admCovStudyQ, double(1), cv = cv, u = 0.9)
   # The tails as well as the body: a marginalised source is a DISTRIBUTION the
   # estimator integrates over, and 10th-90th alone draws it as if it stopped
-  # there. The 2.5th-97.5th also decides where extrapolation starts.
+  # there.
   lo2 <- vapply(studies, .admCovStudyQ, double(1), cv = cv, u = 0.025)
   hi2 <- vapply(studies, .admCovStudyQ, double(1), cv = cv, u = 0.975)
   knd <- vapply(studies, .admCovStudyKind, character(1), cv = cv)
@@ -774,7 +900,27 @@ head.paged_df <- function(x, n = 6L, ...) {
   disc    <- .admCovLevels(cv, studies, mid)
   is_disc <- !is.null(disc) && length(disc) > 1L
 
-  covered <- range(c(lo2, lo, mid, hi, hi2), na.rm = TRUE)
+  # ONE ROW PER (SOURCE, POSITION), and on a continuous axis that is ONE ROW
+  # PER SOURCE.
+  #
+  # A source banded on a continuous covariate is cut into quadrature NODES, and
+  # a node is an internal discretisation of the very distribution the source
+  # already stands for. Reading the strata straight drew one mark per node --
+  # nine dots for one paper, each carrying a ninth of its patients -- and the
+  # outermost node, three SDs out, then set the axis: the CRCL panel ran to
+  # 650 mL/min with every paper below 150.
+  #
+  # On a LEVEL axis the positions are values the paper reported, so they stay
+  # apart, and the gap between them is that paper's own effect.
+  pos <- .admCovSourcePos(studies, src, cv, is_disc, mid, lo, hi, lo2, hi2,
+                          knd, nn)
+  if (is.null(pos) || !nrow(pos)) return(NULL)
+
+  # The axis: where the sources are, how far their distributions reach, and --
+  # for a conditional source -- the range its own line has to fit inside.
+  covered <- range(c(pos$x, pos$xlo, pos$xhi, pos$xlo2, pos$xhi2,
+                     unlist(lapply(src[unique(pos$study)], .admCovSourceRange,
+                                   cv = cv))), na.rm = TRUE)
   span    <- diff(covered)
   # Every study at one value: no covariate effect to show, and a curve through
   # territory no source spoke to would be invention.
@@ -799,71 +945,29 @@ head.paged_df <- function(x, n = 6L, ...) {
                disc = is_disc, stringsAsFactors = FALSE)))
   params <- unique(curve$param)
 
-  # EACH SOURCE AT ITS OWN VALUE, once per position it speaks for ON THIS AXIS.
-  #
-  # Per SOURCE, not per stratum. A source banded on SEX expands into two
-  # studies, and evaluating each of them drew that source TWICE on the CRCL
-  # panel -- two whiskers at the same renal value, differing only in a
-  # covariate this facet is not about. Every other covariate is held at the
-  # source's OWN centre instead, which collapses the strata back to one mark.
-  #
-  # On the axis the source IS conditional on, the positions are the values it
-  # reported, so a source banded on SEX gets one mark at each level -- and the
-  # gap between them is that paper's own effect, to read against the gap
-  # between the fitted points.
+  # EACH SOURCE AT ITS OWN POSITION, evaluated under its OWN published model.
   #
   # A source carrying no model of its own gets no mark. Falling back to the
   # fitted curve would put it exactly on the dotted line and read as agreement
   # with a claim it never made.
-  by_src <- split(seq_along(studies), .admCovSource(names(studies)))
-  .or <- function(v, i) if (is.finite(v[i])) v[i] else mid[i]
-
-  mk <- do.call(rbind, lapply(names(by_src), function(sn) {
-    ii <- by_src[[sn]]
-    ii <- ii[is.finite(mid[ii])]
-    if (!length(ii)) return(NULL)
+  mk <- do.call(rbind, lapply(seq_len(nrow(pos)), function(r) {
+    sn <- pos$study[r]
     so <- src[[sn]]
     if (is.null(so) || is.null(so[["ui"]])) return(NULL)
     sml <- .admModelLines(so[["ui"]])
     if (is.null(sml)) return(NULL)
-    at_own <- .admCovSourceAt(so, so[["ui"]])
-
-    cond <- any(knd[ii] == "conditional")
-    # Conditional: the distinct values it reported. Marginal: one position,
-    # its centre -- the strata share the distribution this facet is about.
-    pos <- if (cond) sort(unique(mid[ii])) else mid[ii][1L]
-    ref <- if (cond) ii[match(pos, mid[ii])] else ii[1L]
-    # `n` for a POSITION, not for a stratum. `stratify` divides a source's n
-    # among its strata, so a source banded on sex contributes half its patients
-    # at each sex level -- but on every other covariate's axis both strata land
-    # on the same position and the mark speaks for the whole source. Summing per
-    # position gets both right without a special case.
-    pos_n <- vapply(pos, function(v)
-      sum(nn[ii][abs(mid[ii] - v) < 1e-8], na.rm = TRUE), double(1))
-    pos_n[!is.finite(pos_n) | pos_n <= 0] <- NA_real_
-
-
-    do.call(rbind, lapply(seq_along(pos), function(k) {
-      a <- utils::modifyList(at_own, stats::setNames(list(pos[k]), cv))
-      v <- tryCatch(.admEvalModelLines(sml, a), error = function(e) list())
-      v <- Filter(function(z) length(z$value) == 1L && is.finite(z$value), v)
-      if (!length(v)) return(NULL)
-      o <- stats::setNames(lapply(v, `[[`, "value"),
-                           vapply(v, `[[`, "", "name"))
-      i0 <- ref[k]
-      do.call(rbind, lapply(intersect(params, names(o)), function(pp)
-        data.frame(
-          cov   = cv,
-          param = pp,
-          study = sn,
-          kind  = if (cond) "conditional" else "marginal",
-          x     = pos[k],
-          xlo   = .or(lo,  i0), xhi  = .or(hi,  i0),
-          xlo2  = .or(lo2, i0), xhi2 = .or(hi2, i0),
-          y     = as.numeric(o[[pp]]),
-          n     = pos_n[k],
-          stringsAsFactors = FALSE)))
-    }))
+    a <- utils::modifyList(.admCovSourceAt(so, so[["ui"]]),
+                           stats::setNames(list(pos$x[r]), cv))
+    v <- tryCatch(.admEvalModelLines(sml, a), error = function(e) list())
+    v <- Filter(function(z) length(z$value) == 1L && is.finite(z$value), v)
+    if (!length(v)) return(NULL)
+    o <- stats::setNames(lapply(v, `[[`, "value"), vapply(v, `[[`, "", "name"))
+    do.call(rbind, lapply(intersect(params, names(o)), function(pp)
+      data.frame(cov = cv, param = pp, study = sn, kind = pos$kind[r],
+                 x = pos$x[r], xlo = pos$xlo[r], xhi = pos$xhi[r],
+                 xlo2 = pos$xlo2[r], xhi2 = pos$xhi2[r],
+                 y = as.numeric(o[[pp]]), n = pos$n[r],
+                 stringsAsFactors = FALSE)))
   }))
 
   # THE SOURCE'S OWN REGRESSION, over the range it covers.
@@ -880,10 +984,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   # and the two being parallel but offset is a different finding from the two
   # crossing.
   slines <- do.call(rbind, Filter(Negate(is.null),
-    lapply(names(by_src), function(sn) {
-      ii <- by_src[[sn]]
-      ii <- ii[is.finite(mid[ii])]
-      if (!length(ii) || !any(knd[ii] == "conditional")) return(NULL)
+    lapply(unique(pos$study[pos$kind == "conditional"]), function(sn) {
       so <- src[[sn]]
       if (is.null(so) || is.null(so[["ui"]])) return(NULL)
       sml <- .admModelLines(so[["ui"]])
@@ -892,7 +993,7 @@ head.paged_df <- function(x, n = 6L, ...) {
       # same way the dotted estimated effect does. On a continuous one it needs
       # the range it covers, and a source that declared none has no extent to
       # draw over -- a point value gets a diamond and no line.
-      g <- if (is_disc) sort(unique(mid[ii])) else {
+      g <- if (is_disc) sort(unique(pos$x[pos$study == sn])) else {
         rg <- .admCovSourceRange(so, cv)
         if (is.null(rg)) return(NULL)
         seq(rg[1L], rg[2L], length.out = 40L)
@@ -951,7 +1052,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ##
 ## Returns NULL when fewer than two studies carry a finite value, since a single
 ## point has no between-study contrast to read.
-.admCovResidData <- function(cv, studies, agg) {
+.admCovResidData <- function(cv, studies, agg, src = NULL) {
   # ONE ROW PER (SOURCE, POSITION ON THIS AXIS), not per stratum.
   #
   # Banding on SEX splits every source in two, and on the CRCL facet both halves
@@ -971,7 +1072,19 @@ head.paged_df <- function(x, n = 6L, ...) {
   if (!length(ok)) return(NULL)
   xs  <- vapply(ok, function(nm) .admCovStudyCentre(studies[[nm]], cv),
                 double(1))
-  grp <- split(ok, paste(.admCovSource(ok), signif(xs, 8), sep = "\r"))
+  # Discreteness decides how far the collapse goes, so it is settled first.
+  # Over ALL studies, not the ones that reached here: a study with no `aggData`
+  # entry drops out above, and deciding from what survived lets this panel call
+  # a covariate discrete while the effect panel, which sees every study, calls
+  # it continuous -- different axis ticks on the two halves of one figure.
+  disc <- !is.null(.admCovLevels(
+    cv, studies, vapply(studies, .admCovStudyCentre, double(1), cv = cv)))
+  # ONE ROW PER SOURCE on a continuous axis; one per POSITION on a level axis.
+  # A position on a continuous axis is a quadrature node, which is how admixr2
+  # cut the source's distribution up and not something the paper reported --
+  # see .admCovSourcePos(), which the effect panel reads for the same reason.
+  grp <- split(ok, if (disc) paste(.admCovSource(ok), signif(xs, 8), sep = "\r")
+                   else .admCovSource(ok))
 
   df <- do.call(rbind, lapply(grp, function(ks) {
     s0 <- studies[[ks[1L]]]
@@ -994,18 +1107,46 @@ head.paged_df <- function(x, n = 6L, ...) {
     # The covariate range the source speaks for, so a point at 62 is not read
     # as a study that only ever saw 62. A conditioned source genuinely did see
     # one value, and gets a zero-width span.
-    xl <- .admCovStudyQ(s0, cv, 0.1); xh <- .admCovStudyQ(s0, cv, 0.9)
-    x  <- xs[[ks[1L]]]
+    #
+    # From the SOURCE once its strata are together, because a stratum is a
+    # point spec at one node: its own 10th and 90th are that node, which
+    # collapsed the whisker to nothing and left the noise guard below with a
+    # typical width of zero.
+    #
+    # NOT on a level axis, where a group is one LEVEL of a source and the
+    # source's own centre is the mixture of them: banding on two other
+    # covariates put 81 strata in each sex group, and reading the source centre
+    # moved both groups to SEX = 0.5, collapsing the only contrast the facet
+    # has and dropping it.
+    sn <- .admCovSource(ks[1L])
+    so <- src[[sn]]
+    if (length(ks) > 1L && !disc) {
+      x  <- .admCovSourceCentre(so, cv)
+      if (!is.finite(x)) x <- .admWQuant(xs[ks], nk, 0.5)
+      xl <- .admCovSourceQ(so, cv, 0.1); xh <- .admCovSourceQ(so, cv, 0.9)
+      if (!is.finite(xl)) xl <- .admWQuant(xs[ks], nk, 0.1)
+      if (!is.finite(xh)) xh <- .admWQuant(xs[ks], nk, 0.9)
+    } else {
+      x  <- xs[[ks[1L]]]
+      xl <- .admCovStudyQ(s0, cv, 0.1); xh <- .admCovStudyQ(s0, cv, 0.9)
+    }
+    # Named for the SOURCE whenever its strata are together, on either axis:
+    # `mild_s1` is an index into an internal expansion, and on a level axis the
+    # level is the x position rather than part of the name.
+    .join <- length(ks) > 1L
     data.frame(cov = cv,
                # Named for the source once its strata are together; a stratum
                # that stands alone on this axis keeps its own name.
-               study = if (length(ks) > 1L) .admCovSource(ks[1L]) else ks[1L],
-               source = .admCovSource(ks[1L]),
+               study = if (.join) sn else ks[1L],
+               source = sn,
                kind = .admCovStudyKind(s0, cv),
                x = x, xlo = if (is.finite(xl)) xl else x,
                xhi = if (is.finite(xh)) xh else x,
                z = mean(z), n = n,
-               label = .admStudyCovLabel(s0), stringsAsFactors = FALSE)
+               # A collapsed source holds no single conditioned value, so it
+               # gets no "CRCL = 12.1" label -- that was the first NODE's.
+               label = if (.join) "" else .admStudyCovLabel(s0),
+               stringsAsFactors = FALSE)
   }))
   if (is.null(df) || nrow(df) < 2L) return(NULL)
   # A covariate with no between-study contrast has nothing for this panel to
@@ -1025,13 +1166,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   if (diff(range(df$x)) <= max(0, 0.1 * w)) return(NULL)
   # A discrete covariate is read as a CONTRAST, not a trend, and the two are
   # drawn differently: see the panel code.
-  # Over ALL studies, not the ones that reached this data frame. A study with
-  # no `aggData` entry drops out above, and deciding discreteness from what
-  # survived lets this panel call a covariate discrete while the effect panel,
-  # which sees every study, calls it continuous -- different axis ticks on the
-  # two halves of one figure.
-  df$disc <- !is.null(.admCovLevels(
-    cv, studies, vapply(studies, .admCovStudyCentre, double(1), cv = cv)))
+  df$disc <- disc
   # A source whose strata both survived is a PAIR -- the within-source contrast
   # stratifying on this covariate produced. A source appearing once has no pair
   # and its line would be a dot.
@@ -2010,7 +2145,8 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       tryCatch(.admCovEffectData(fit$env$ui, cv, studies, extra$struct, src_st),
                error = function(e) NULL)))
     res <- Filter(Negate(is.null), lapply(cov_nms, function(cv)
-      tryCatch(.admCovResidData(cv, studies, agg), error = function(e) NULL)))
+      tryCatch(.admCovResidData(cv, studies, agg, src_st),
+               error = function(e) NULL)))
 
     # Each source's OWN published claim, read off the UNEXPANDED studies the
     # control kept. Restricted to the facets the pooled curve draws, so a
