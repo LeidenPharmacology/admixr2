@@ -903,15 +903,12 @@ nmObjGetControl.adirmc <- function(x, ...) {
   # Inner FD step for grad_mode = "fd", carried on `pinfo` rather than added to
   # this function's formals: a daemon resolves .adirmcRestartWorker from the
   # stale INSTALLED namespace, where a new formal throws `unused argument`.
-  # `.shi_h` is filled on the first outer iteration and reused below.
   .fd_h   <- pinfo$grad_h %||% 1e-6
   .shi_h <- NULL
 
-  # Proposal memo (one entry): after p_cur <- p_new, the next inner draw would
-  # be at the same p (proposals are deterministic in p), so this skips it --
-  # roughly halving the dominant rxSolve cost. inner/_exact differ only in
-  # whether kappa_fn_batch gets built, so the gradient-capable draw serves
-  # both. Correctly MISSES at a phase start and the max_worse bail-out.
+  # Proposal memo (one entry): after p_cur <- p_new, the next inner draw would be at the
+  # same p (proposals are deterministic in p), so this skips it, roughly halving the
+  # dominant rxSolve cost.
   .prop_p <- NULL; .prop_v <- NULL
   get_proposals <- function(p) {
     if (!is.null(.prop_p) && identical(p, .prop_p)) return(.prop_v)
@@ -950,15 +947,10 @@ nmObjGetControl.adirmc <- function(x, ...) {
         eval_f <- function(p) .adirmcNLL(p, pinfo, studies, proposals)
         eval_grad_inner <- switch(grad_mode,
           fd = local({
-            # Previously hard-coded 1e-6, ignoring `grad_h`; now honours it and
-            # takes Shi21's measured step when available.
-            #
-            # Measured ONCE on the first outer iteration and reused after, like
-            # FOCEI's numericGrad at nF == 1: `proposals` are redrawn every outer
-            # iteration so `eval_f` is a different function each time, and
-            # re-probing would cost 10 x n_par extra inner NLL evals per
-            # iteration. Noise/curvature character stays stable across
-            # iterations, so the first measurement stays apt.
+            # Measured ONCE on the first outer iteration and reused after, like FOCEI's
+            # numericGrad at nF == 1: `proposals` are redrawn every outer iteration so
+            # `eval_f` is a different function each time, and re-probing would cost
+            # 10 x n_par extra inner NLL evals per iteration.
             if (is.null(.shi_h)) {
               .shi_h <<- .admShi21GradH(eval_f, p_cur, seq_along(p_cur),
                                         .fd_h, scaled = FALSE,
@@ -1146,8 +1138,7 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # irmc_inner_nll_cpp computes mu inside the kernel, so the residual can't be
   # pre-assembled in R as admc does; the kernel only implements forms 0/1/2.
   # A TBS/count/beta/ordinal/ar model was once silently scored as combined2
-  # there while the R gradient path scored it correctly, so inner optimiser
-  # and exact-NLL check disagreed and never converged. Refuse rather than approximate.
+  # there, so inner optimiser and exact-NLL check disagreed and never converged.
   .bad_form <- vapply(.admResidSpecs(pinfo), function(sp) {
     f <- sp$form %||% 0L
     !identical(f, .ADM_RESID_COMBINED2) && !identical(f, .ADM_RESID_COMBINED1) &&
@@ -1203,11 +1194,10 @@ nlmixr2Est.adirmc <- function(env, ...) {
   # .admLoadSensModel() must run before .admLoadModel(), gated on covMethod too:
   # adirmc's FIT never reads a sensitivity model itself, only .admCalcCov()'s
   # post-fit Hessian does, so gating on `grad` alone compiled one (~3.6s cold)
-  # unused for covMethod = "none". But skipping it outright breaks the cache:
+  # unused for covMethod = "none". Skipping it outright breaks the cache though:
   # .admLoadModel()'s cache-MISS path caches `ui$foceiModel$inner` as NULL, so a
   # later admc/adgh/adfo fit falling back to .admSensFromInner() would silently
-  # get an FD gradient with no recovery. So skip only when .admLoadModel() is
-  # known to take its cache-HIT branch.
+  # get an FD gradient with no recovery.
   .sim_warm <- isTRUE(tryCatch(file.exists(.admModelCacheFile(.ui)),
                                error = function(e) FALSE))
   # .admCovWantsHessian(), not `== "r"`: "r" and "r,s" both need the sens model.

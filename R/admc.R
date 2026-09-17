@@ -412,14 +412,9 @@ admControl <- function(
   grad      <- .algo$grad
 
   # sigdig = NULL (the DEFAULT) leaves rxode2's solver defaults alone. A
-  # looser solve isn't free: FD steps (grad_h 1e-4, cov_h 1e-3) are the
-  # same order as the tolerance sigdig = 4 implies, and rxode2 5.1.5
-  # maps sigdig = 4 to rtol = 1e-4 (200x looser than 5.1.4's 5e-7) -- a
-  # 1e-4 FD step would then difference NOISE, not signal, silently.
-  #
-  # NULL is also the only way back: the sigdig -> tolerance map is
-  # one-dimensional and can't reproduce rxode2's real defaults (atol
-  # 1e-8, rtol 1e-6); the tables fall back to 4.
+  # looser solve isn't free: FD steps (grad_h 1e-4, cov_h 1e-3) are the same
+  # order as the tolerance sigdig = 4 implies, and a 1e-4 FD step would then
+  # difference NOISE, not signal, silently.
   if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
     rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
@@ -501,11 +496,9 @@ nmObjGetControl.admc <- function(x, ...) {
   if (is.null(pars)) return(Inf)
   if (pinfo$n_eta > 0 && any(diag(pars$omega) <= 0)) return(Inf)
   # Same non-finite screen .adfoNLL/.adghNLL carry. The omega-diagonal test
-  # above misses it: `Inf > 0` is TRUE, so an overflowed residual (exp(p/2)
-  # = Inf, from the covariance probe) reached rxSolve and lsoda answered
-  # with ~190k `intdy -- t = <denormal> illegal` warnings before discard.
-  # Inline, not shared: runs inside mirai daemons, where
-  # assignInNamespace can replace a binding but not ADD one.
+  # above misses it: `Inf > 0` is TRUE, so an overflowed residual reached
+  # rxSolve and lsoda answered with ~190k illegal-value warnings before
+  # discard. Inline, not shared: runs inside mirai daemons.
   if (!.admParsFinite(pars, pinfo)) return(Inf)
 
   nll2     <- 0
@@ -627,9 +620,8 @@ nmObjGetControl.admc <- function(x, ...) {
   # A TBS endpoint composes the residual at each DRAW (see .admNLL); the
   # analytical decomposition below is written against the delta expansion around
   # (mu_struct, var_f) and would differentiate a different function than the
-  # objective now evaluates. Difference the objective instead -- the same route
-  # a joint unit already takes, and for the same reason. The fixed z_list makes
-  # it a common-random-number FD, so MC noise does not leak into the gradient.
+  # objective now evaluates. Difference the objective instead. The fixed
+  # z_list makes it a common-random-number FD, so MC noise does not leak in.
   .p0 <- tryCatch(.admUnpack(p, pinfo), error = function(e) NULL)
   if (!is.null(.p0) && .admAnyTBS(pinfo, studies, output_var, .p0$sigma_var))
     return(.admNLLGradFD(p, pinfo, studies, z_list, rxMod, output_var,
@@ -749,10 +741,9 @@ nmObjGetControl.admc <- function(x, ...) {
                     dNLL_dV, .rt_j, V_struct, deriv = .dres)
 
       # Unpaired struct thetas. The augmented sens model carries d(pred)/d(theta)
-      # directly (js$dtheta_list): it enters exactly like an eta direction, so the
-      # same partial kernel the FD path feeds serves it -- but exactly, with no
-      # step size. Without those columns (plain sens model), CRN-FD of the joint
-      # contribution at fixed eta_mat, as before.
+      # directly (js$dtheta_list): it enters exactly like an eta direction, with
+      # no step size. Without those columns (plain sens model), CRN-FD of the
+      # joint contribution at fixed eta_mat.
       if (n_unp > 0L) {
         eff_dmu_j <- dNLL_dmu + sigma_mu_scale
         if (!is.null(js$dtheta_list)) {
@@ -1010,13 +1001,10 @@ nmObjGetControl.admc <- function(x, ...) {
     }
 
     # Unpaired struct theta gradient.
-    # theta_sens path: the augmented sens model returned d(pred)/d(theta) in the
-    #   SAME solve as the eta sensitivities -- exact, and it removes the extra
-    #   rxSolve the FD path needs (an rxSolve costs ~11 ms before it integrates
-    #   anything). An unpaired theta enters mu and V exactly like an eta, so it
-    #   feeds the same partial kernel; only the derivative source changes.
-    # !use_sens path: batched_hi/batched_lo already extracted from the single big rxSolve above.
-    # use_sens without theta columns (plain sens model): separate rxSolve for struct perturbations.
+    # theta_sens path: the augmented sens model returned d(pred)/d(theta) in
+    #   the SAME solve as the eta sensitivities -- exact, no extra rxSolve.
+    # !use_sens path: batched_hi/batched_lo already extracted above.
+    # use_sens without theta columns: separate rxSolve for struct perturbations.
     if (n_unp > 0L) {
       if (!is.null(theta_sens)) {
         for (bi in seq_len(n_unp)) {
@@ -1222,12 +1210,11 @@ nmObjGetControl.admc <- function(x, ...) {
           .admBetaPhiConst(matrix(.phi_all[idx], nrow = n_sim, ncol = n_t,
                                   byrow = TRUE))
         ar <- .admUnitResidRows(pinfo, ov, pars$sigma_var, n_t, phi = .ph)
-        # SAME gate as .admNLL(). The fused kernels implement forms 0/1/2 only and
-        # have no off-diagonal channel, so a TBS/count/beta/ordinal/ar model fell
-        # into adm_apply_residual's `else` branch and was scored as combined2. This
-        # function IS the post-fit Hessian evaluator, so without the gate every
-        # standard error came from a different objective than the fitted one
-        # (measured on a boxCox model: .admNLL 190.28 vs .admNLLBatch 49.46).
+        # SAME gate as .admNLL(). The fused kernels implement forms 0/1/2 only,
+        # so a TBS/count/beta/ordinal/ar model fell into the `else` branch and
+        # was scored as combined2 -- every standard error then came from a
+        # different objective than the fitted one (measured on a boxCox
+        # model: .admNLL 190.28 vs .admNLLBatch 49.46).
         nll_ci <- if (.admResidCppOK(ar)) {
           if (identical(s$method, "var"))
             nll_var_from_samples_cpp(cp, as.numeric(s$E), s$v_diag,
@@ -1285,9 +1272,7 @@ nmObjGetControl.admc <- function(x, ...) {
 
   # Joint (same-subject) units are not handled by the batched path -- its stacked
   # matrices are shaped for a single output and it errors with "non-conformable
-  # arguments". .admNLLBatch() already falls back per config for these; mirror that
-  # here rather than relying on the driver's `!any_joint` guard staying in place.
-  # TBS joins the joint units here for the same reason: .admGrad falls back to
+  # arguments". TBS joins them here for the same reason: .admGrad falls back to
   # differencing the objective for both, and the batch path has no analytic
   # decomposition of its own to offer them.
   .pb <- tryCatch(.admUnpack(p_list[[1L]], pinfo), error = function(e) NULL)
@@ -1766,25 +1751,22 @@ nmObjGetControl.admc <- function(x, ...) {
                  function(x) identical(x$form, .ADM_RESID_BETA), logical(1))))
     use_grad <- FALSE
 
-  # A COVARIATE STUDY KEEPS THE GRADIENT PATH HERE. The old guard removing
-  # it was wrong: two of .admGradBatch()'s five hand-built params frames
-  # carried no covariate columns, so an unpaired struct theta's rxSolve
-  # failed silently into a constant-ZERO Hessian row with `valid` still
-  # TRUE. All five carry them now -- admc's covariate path ("rows") is
-  # deterministic in `cov_dist`, unlike the quadrature designs that move
-  # with the parameters.
+  # A COVARIATE STUDY KEEPS THE GRADIENT PATH HERE: two of .admGradBatch()'s
+  # five hand-built params frames used to carry no covariate columns, so an
+  # unpaired struct theta's rxSolve failed silently into a constant-ZERO
+  # Hessian row with `valid` still TRUE. All five carry them now.
 
   # Hessian over struct + sigma + omega (falls back to struct+sigma if not PD).
   # Matches nlmixr2 FOCEI: omega entries are in the optimizer but skipped for cov.
   n_s     <- length(pinfo$struct_names)
   n_e     <- length(pinfo$sigma_names)
   n_o     <- length(pinfo$omega_par)
-  # The Hessian spans struct + sigma + OMEGA -- see .adghCalcCov() for the
-  # measurement. Excluding omega made the STRUCTURAL SEs too small (reported SE /
-  # empirical sampling SD over simulated datasets went from 0.67 to 1.17 on prop
-  # and 0.67 to 1.06 on lnorm when omega was put back), because a theta carrying
-  # an eta is correlated with that eta's variance. Falls back to the struct+sigma
-  # sub-block if the weakly-identified omega Cholesky makes the full H indefinite.
+  # The Hessian spans struct + sigma + OMEGA. Excluding omega made the
+  # STRUCTURAL SEs too small (reported SE / empirical sampling SD went from
+  # 0.67 to 1.17 on prop and 0.67 to 1.06 on lnorm when omega was put back),
+  # because a theta carrying an eta is correlated with that eta's variance.
+  # Falls back to the struct+sigma sub-block if the weakly-identified omega
+  # Cholesky makes the full H indefinite.
   n_sub   <- n_s + n_e
   cov_idx <- seq_len(n_sub + n_o)
   np_cov  <- length(cov_idx)
@@ -1812,10 +1794,8 @@ nmObjGetControl.admc <- function(x, ...) {
     # CENTRAL difference of the gradient -- see .adfoCalcCov() for the reasoning.
     # 2*np_cov param vectors: rows 1..np_cov are p + h_jj, rows np_cov+1..2*np_cov
     # are p - h_jj in the SAME order (only struct+sigma entries perturbed; omega
-    # stays fixed at p_hat). Both halves go through ONE .admGradBatch call, which
-    # is what the batching exists for, so this costs extra ROWS rather than extra
-    # rxSolve calls -- and the baseline vector is gone, a central difference never
-    # evaluating the centre.
+    # stays fixed at p_hat). Both halves go through ONE .admGradBatch call, so
+    # this costs extra ROWS rather than extra rxSolve calls.
     p_list <- c(
       lapply(seq_len(np_cov), function(jj) {
         ph <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_c[jj]; ph
@@ -1834,13 +1814,11 @@ nmObjGetControl.admc <- function(x, ...) {
     }
     H <- (H + t(H)) / 2
   } else {
-    # Step selection. `pmax(abs(p), 0.1) * cov_h_outer` is a guess about how much
-    # noise the objective carries, applied identically to every parameter -- and
-    # it is the guess behind the "Hessian not positive definite ... try
-    # increasing cov_h_outer" warning below. Gill83 measures instead: it probes
-    # THIS objective and returns the step where condition error and truncation
-    # error balance, per parameter. Exact fit here, since the function it probes
-    # is the one being differenced.
+    # Step selection. `pmax(abs(p), 0.1) * cov_h_outer` is a guess about how
+    # much noise the objective carries, applied identically to every
+    # parameter. Gill83 measures instead: it probes THIS objective and
+    # returns the step where condition error and truncation error balance,
+    # per parameter.
     h_fd <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer,
                             .var.name = "admCalcCov")
     n_off   <- np_cov * (np_cov - 1L) / 2L
@@ -1943,12 +1921,9 @@ nmObjGetControl.admc <- function(x, ...) {
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
   # covMethod = "r,s". The weight is built on a QUADRATURE ensemble rather than
-  # on this fit's own MC draws: Omega is a property of the model, not of how the
-  # integral was approximated, and a sample-based weight would carry the MC noise
-  # of the fit into the reported uncertainty. G comes from the same ensemble for
-  # the same reason -- admc's moments are noisy estimates of exactly that
-  # integral, so the noise-free version describes the estimator's target
-  # faithfully and its variance better.
+  # on this fit's own MC draws: Omega is a property of the model, not of how
+  # the integral was approximated, and a sample-based weight would carry the
+  # MC noise of the fit into the reported uncertainty.
   sw_used <- FALSE
   sw_cond <- NULL
   if (isTRUE(sandwich)) {
@@ -2043,13 +2018,11 @@ nmObjGetControl.admc <- function(x, ...) {
 # -- Multi-restart orchestration -----------------------------------------------
 
 # Parallel restarts run on a pool of mirai daemons: background R processes that
-# behave identically on every platform, so there is exactly one worker code path
-# (no fork/PSOCK split). Daemons never share the parent's memory, so everything
-# a restart needs is serialised to it; compiled model DLLs cannot cross that
-# boundary and are reloaded from the disk cache inside the daemon.
-#
-# The pool lives on its own mirai compute profile ("admixr2") so that starting
-# and stopping it never disturbs daemons the user set up for their own code.
+# behave identically on every platform, so there is exactly one worker code path.
+# Daemons never share the parent's memory, so everything a restart needs is
+# serialised to it; compiled model DLLs are reloaded from the disk cache inside
+# the daemon. The pool lives on its own mirai compute profile ("admixr2") so
+# starting/stopping it never disturbs daemons the user set up for their own code.
 .adm_compute <- "admixr2"
 
 .adm_worker_env <- new.env(parent = emptyenv())
@@ -2203,12 +2176,8 @@ admStopWorkers <- function() {
   # nlmixr2est's load step (rxUiGet.foceiModel), inlined rather than calling
   # .admRxLoadAll(): a daemon resolves from the INSTALLED namespace, where
   # assignInNamespace() can replace but not add a binding, so a new helper
-  # here would fail on a dev-mode restart against a stale install.
-  #
-  # The parent's directory check is deliberately omitted: a daemon has its
-  # own tempdir(), so it would fail on every worker and silently drop to
-  # FD. Cross-session staleness is handled by the parent before
-  # .admSetupDaemons(); only DLL-existence is inlined below.
+  # here would fail on a dev-mode restart against a stale install. The
+  # parent's directory check is omitted: a daemon has its own tempdir().
   .load_all <- function(x) {
     .one <- function(e) {
       if (!inherits(e, "rxode2")) return(TRUE)
@@ -2236,12 +2205,10 @@ admStopWorkers <- function() {
     .cacheFile <- pinfo$sim_cache_file
     # rxUiGet.foceiModel()'s read, verbatim: exists -> read -> load, tryCatch
     # because this file lives in a shared persistent rxTempDir() and a bare
-    # readRDS on a half-written entry (concurrent recompile, or a pre-0.4.1
-    # writer that wrote in place) dies with an opaque connection error.
-    #
-    # Records WHICH failure mode fired -- absent, unreadable, or wrong-shape
-    # (digest collision/foreign file) -- since this runs only in a daemon and
-    # the file is often complete again by the time the parent reports it.
+    # readRDS on a half-written entry (concurrent recompile) dies with an
+    # opaque connection error. Records WHICH failure mode fired -- absent,
+    # unreadable, or wrong-shape -- since this runs only in a daemon and the
+    # file is often complete again by the time the parent reports it.
     .why <- NULL
     rxMod <- NULL
     .sz <- NA_real_
@@ -2317,16 +2284,14 @@ admStopWorkers <- function() {
       # .admPkgKey() so such a file is no longer even a hit; belt and braces.)
       if (!is.null(sens_cols))   m$sens_cols  <- sens_cols
       if (!is.null(sens_rename)) m$rename_map <- sens_rename
-      # m$theta_sens_cols/fixed_theta are NOT overwritten (a worker-load
-      # argument would trip the dev-mode stale-daemon "unused argument"
-      # trap); staleness is guarded solely by the sens cache key
-      # (.admIniKey(ui) + .admPkgKey()), which includes a fixed value.
+      # m$theta_sens_cols/fixed_theta are NOT overwritten; staleness is
+      # guarded solely by the sens cache key (.admIniKey(ui) + .admPkgKey()).
       #
-      # pred_tbs MUST be re-derived, exactly as .admLoadSensModel() does: the
-      # key digests ui$lstExpr while lambda's fix() status lives in ini({}),
-      # so `lam <- fix(0.5)` and `lam <- 0.5` collide and a parallel restart
-      # could invert with a different lambda invisibly. The worker has no
-      # `ui`, so this mirrors the parent's fallbacks exactly.
+      # pred_tbs MUST be re-derived: the cache key digests ui$lstExpr while
+      # lambda's fix() status lives in ini({}), so `lam <- fix(0.5)` and
+      # `lam <- 0.5` collide and a parallel restart could invert with a
+      # different lambda invisibly. The worker has no `ui`, so this mirrors
+      # the parent's fallbacks exactly.
       if (!is.null(pinfo) && !is.null(m$pred_tbs)) {
         .sp <- .admResidSpecs(pinfo)
         .s1 <- if (length(.sp)) .sp[[1L]] else NULL
@@ -2351,8 +2316,7 @@ admStopWorkers <- function() {
       m
     }, error = function(e) {
       # Do not fail the restart: a worker without a sens model still fits, by
-      # finite differences -- but not silently, since this worker now computes
-      # a different gradient from the sequential fit. warning() here is inert
+      # finite differences -- but not silently, since warning() here is inert
       # (mirai doesn't relay a daemon's conditions to the parent), so record
       # it on the result instead; .admRunRestarts() raises it in the parent.
       .adm_sens_fallback <<- paste0(
@@ -2364,10 +2328,6 @@ admStopWorkers <- function() {
     # silent divergence the note above exists for, so say so. `sens_cache_file
     # = NULL` is the legitimate case (no sensitivity model at all) and stays
     # quiet, or every gradient-free fit would report on every restart.
-    #
-    # `<-`, not `<<-`: if/else doesn't create an environment, so this runs in
-    # the function frame; `<<-` here would skip the local and hit the
-    # namespace (unlike the tryCatch handler above, a real function).
     if (!is.null(sens_cache_file))
       .adm_sens_fallback <- paste0(
         "could not find the sensitivity model cache (", sens_cache_file, ")")
@@ -2742,12 +2702,9 @@ nlmixr2Est.admc <- function(env, ...) {
     # ... and it is fitted DERIVATIVE-FREE. beta's conditional variance is
     # mu(1-mu)/(1+phi) with phi = b1 + b2 SOLVED from the structural model, so a
     # structural theta reaches the objective through phi as well as through mu.
-    # Every gradient path here chains through mu only (dpred), which makes the
-    # analytic/FD-of-the-prediction gradient a gradient of the wrong function --
-    # it holds phi fixed at the value it had before the perturbation. BOBYQA
-    # differences the objective itself, where phi moves with the thetas as it
-    # should. .adfoNLL/.adirmcNLL refuse beta outright for the related reason
-    # that they have no phi at all.
+    # Every gradient path here chains through mu only, which would hold phi
+    # fixed at its pre-perturbation value; BOBYQA differences the objective
+    # itself, where phi moves with the thetas as it should.
     if (.ctl$grad != "none") {
       # Name the ALGORITHM change too. This is the one place an algorithm is
       # chosen outside .admResolveAlgorithm(), and it overrides whatever the user
@@ -2825,12 +2782,11 @@ nlmixr2Est.admc <- function(env, ...) {
   rxMod <- .admLoadModel(.ui)
   rxode2::rxLock(rxMod)
   # Reclaim compiled models with rxode2's own idiom -- the gc(); rxUnloadAll()
-  # nlmixr2est runs per fit -- so a session of many fits does not accumulate models
-  # (and RSS) unbounded. rxUnloadAll() keeps the last getOption("rxode2.dontUnload",
-  # 10) models, and this fit registers only ~6 (sim + sens + the four foceiModel
-  # companions), so the model driving the returned fit stays loaded for nlmixr2's
-  # post-fit output/table solve; only OLDER models (from earlier fits) are freed --
-  # exactly the semantics nlmixr2est's own rxUnloadAll() at fit start has.
+  # nlmixr2est runs per fit -- so a session of many fits does not accumulate
+  # models (and RSS) unbounded. rxUnloadAll() keeps the last
+  # getOption("rxode2.dontUnload", 10) models, and this fit registers only
+  # ~6, so the model driving the returned fit stays loaded; only OLDER
+  # models are freed.
   on.exit({ rxode2::rxUnlock(rxMod); rxode2::rxSolveFree(); gc(FALSE); rxode2::rxUnloadAll() },
           add = TRUE)
 
@@ -2877,18 +2833,12 @@ nlmixr2Est.admc <- function(env, ...) {
   obj_fd  <- joint_fd || tbs_fd
 
   # Measure the gradient's FD steps ONCE, here, for every later difference to
-  # reuse (FOCEI's numericGrad mechanism at nF == 1).
-  #
-  # The set is the parameters admc steps in PARAMETER space: for a joint
-  # study with no sens model, every coordinate (.admNLLGradFD); otherwise
-  # only struct thetas with no THETA_j_ column -- "unpaired" alone doesn't
-  # qualify, since .admBuildThetaSens emits a direction per unpaired theta
-  # and .admGrad reads d(pred)/d(theta) exactly, differencing nothing.
-  #
-  # ETA perturbations keep the fixed scale regardless, via .admGH0() (no
-  # parameter index). Struct-theta steps apply to a prediction difference
-  # rather than an objective one, but both share the solver-tolerance floor
-  # under common random numbers.
+  # reuse (FOCEI's numericGrad mechanism at nF == 1). The set is the
+  # parameters admc steps in PARAMETER space: for a joint study with no sens
+  # model, every coordinate; otherwise only struct thetas with no THETA_j_
+  # column -- "unpaired" alone doesn't qualify, since .admBuildThetaSens
+  # emits a direction per unpaired theta and .admGrad reads d(pred)/d(theta)
+  # exactly, differencing nothing.
   .fd_idx <- if (!want_grad) integer(0)
     else if (obj_fd) seq_along(ov$p0)
     else if (length(.unpaired) && !.theta_sens)
@@ -3073,14 +3023,12 @@ nlmixr2Est.admc <- function(env, ...) {
                         sigma_var     = final$sigma_var,
                         sigma_is_prop  = pinfo$sigma_is_prop,
                         sigma_is_lnorm = pinfo$sigma_is_lnorm,
-                        # the TBS residual quadrature the FIT used -- see adfo.R
+                        # the TBS residual quadrature and solver tolerance the
+                        # FIT used: plot.admFit() re-solves the model to build
+                        # the predicted panels, and a fit run at a looser sigdig
+                        # diagnosed against stock tolerances shows structure
+                        # the objective was never minimised on.
                         resid_nodes   = pinfo$resid_nodes,
-                        # ... and the solver tolerance the FIT used, for the
-                        # same reason: plot.admFit() re-solves the model to build
-                        # the predicted mean and covariance panels, and a fit run
-                        # at a looser sigdig diagnosed against rxode2's stock
-                        # tolerances shows standardised-residual structure the
-                        # objective was never minimised on.
                         sigdig        = pinfo$sigdig,
                         omega         = final$omega,
                         L             = final$L,

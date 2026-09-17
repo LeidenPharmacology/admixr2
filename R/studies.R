@@ -88,8 +88,6 @@
 # distribution's ARGUMENT, an ordinary variable not an endpoint, so tagged
 # records match nothing: solve returns no rows, objective silently comes back
 # Inf. Single-endpoint count/beta models are unaffected (no tagging happens).
-# An ordinal endpoint is ONE predDf row whose categories are separate outputs,
-# so it is not "mixed" either.
 .admCheckMixedEndpoints <- function(ui) {
   pd <- tryCatch(ui$predDf, error = function(e) NULL)
   if (is.null(pd) || nrow(pd) < 2L || !"distribution" %in% names(pd))
@@ -352,16 +350,10 @@
 #        data = data.frame(DVID = c("cp","cp","cb"), TIME = c(1,2,1),
 #                          E = c(...), V = c(...)))     # V column = variances
 #
-# Same-subject (joint) studies instead carry ONE study-level covariance matrix
-# aligned to the rows of `data`, so no per-row variance column is needed:
-#
-#   list(n = 60L, ev = ev, data = data.frame(DVID = ..., TIME = ..., E = ...),
-#        V = Vjoint)
-#
 # A study-level `V` (or explicit `joint = TRUE`) means the endpoints were
-# measured on the SAME subjects and scored by one MVN. Without it each
-# endpoint is an independent likelihood block -- a separate experiment, so it
-# may carry its own `n` and dosing (a named list of event tables in `ev`).
+# measured on the SAME subjects and scored by one MVN, with `V` aligned to
+# the rows of `data` instead of a per-row variance column. Without it each
+# endpoint is an independent likelihood block.
 .admExpandLongStudy <- function(s, nm) {
   df <- s$data
   if (!is.data.frame(df) || nrow(df) == 0L)
@@ -476,13 +468,11 @@
 #   * Independent blocks -- separate experiments; summed as separate likelihood terms.
 #   * Joint same-subject -- one MVN scored from shared n/ev; collapsed to one unit.
 # Legacy single-output form: E/V/n/times describe one implicit observation.
-#
+
 # Convert a study's reported covariance to the ML (denominator n) convention.
 # `v_denom`: "ml" (default, no-op) or "unbiased" (x (n-1)/n). A digitised
-# figure's SD is the unbiased sample SD; datagen/own data use ML. Eq.(1)'s
-# log-likelihood is exact only for ML -- at n=60 the gap is 1.7%, worth
-# correcting once scored against its own sampling law. Declared per study
-# since a meta-analysis mixes both; idempotent (`v_denom` stamped "ml" after).
+# figure's SD is the unbiased sample SD; datagen/own data use ML -- Eq.(1)'s
+# log-likelihood is exact only for ML (at n=60 the gap is 1.7%).
 .admVDenom <- function(s, nm) {
   vd <- s[["v_denom"]] %||% "ml"
   if (!is.character(vd) || length(vd) != 1L || !vd %in% c("ml", "unbiased"))
@@ -603,8 +593,6 @@
 # tag_cmt: when TRUE (multi-compartment fits), tag each unit's observation
 # records with its output compartment -- nlmixr2's multi-endpoint simulation
 # routes by compartment, and untagged records are ambiguous across endpoints.
-# Single-output fits stay untagged (also needed for linCmt, whose output
-# resolves to "ipredSim", not a valid dosing/observation cmt).
 .admBuildEvFull <- function(units, tag_cmt = FALSE) {
   lapply(units, function(u) {
     ev <- if (!is.null(u$ev)) u$ev else rxode2::et(amt = 100)

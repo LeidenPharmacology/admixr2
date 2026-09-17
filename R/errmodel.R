@@ -2,10 +2,8 @@
 #
 # Every estimator needs the same three things from the residual error model:
 # the mean it induces, the variance it adds to diag(V), and the derivative of
-# both w.r.t. the residual parameters. Used to be an `if (prop) ... else if
-# (lnorm) ...` chain repeated at ~8 sites in R and 3 in C++, capping the
-# supported set at add/prop/lnorm. This file is the single place that knows
-# the error models.
+# both w.r.t. the residual parameters. This file is the single place that
+# knows the error models.
 #
 # The general form, for a prediction f and an endpoint's residual parameters:
 #
@@ -15,11 +13,9 @@
 #               var = mu^2 * (exp(s) - 1)         (moment-matched lognormal)
 #
 # with a the additive SD, b the proportional/power SD and c the power exponent
-# (c = 1 recovers prop, b = 0 recovers add). combined2 with c = 1 is exactly the old
-# independent per-sigma addition, so add/prop/lnorm fits are unchanged.
+# (c = 1 recovers prop, b = 0 recovers add).
 #
-# Encoding of `form`: 0 = combined2, 1 = combined1, 2 = lnorm. The C++ kernels take
-# the same four row arrays (form, a2, b2, cc) and are error-model agnostic.
+# Encoding of `form`: 0 = combined2, 1 = combined1, 2 = lnorm.
 
 .ADM_RESID_COMBINED2 <- 0L
 .ADM_RESID_COMBINED1 <- 1L
@@ -36,17 +32,11 @@
 # `y ~ c(p1, p2)` is a MULTINOMIAL over K = length(args) + 1 categories, with
 # the listed probabilities MARGINAL (not cumulative, not sequential) and the
 # last category taking the remainder -- verified against rxord() directly.
-#
-# The aggregate observation is the vector of category INDICATORS. Per subject:
+# The aggregate observation is the vector of category INDICATORS:
 #
 #   E[1_k]            = p_k
 #   Var(1_k)          = p_k (1 - p_k)
 #   Cov(1_j, 1_k)     = -p_j p_k        (j != k, SAME time point)
-#
-# i.e. diag(p) - p p' within a time, zero residual covariance across times
-# (given eta) -- the diagonal-plus-off-diagonal-rmat shape .admResidApply
-# already supports for ar(). Each p_k is an ordinary derived model
-# expression, so it gets analytic sensitivities like any other.
 .admOrdinalSpec <- function(ui, var) {
   a <- .admDistArgs(ui, var)
   if (is.null(a) || length(a) == 0L) return(NULL)
@@ -63,25 +53,14 @@
 #   E[y|eta]   = mu
 #   Var(y|eta) = mu (1 - mu) / (1 + phi)
 #
-# exactly binom's shape with N replaced by 1/(1+phi), so once the solve hands
-# back mu everything downstream is machinery already in place.
-#
 # Restriction: PHI MUST NOT DEPEND ON ETA (an eta-dependent precision needs
 # the joint distribution of (mu, phi), which admixr2's (mu, var_f) summary
 # can't carry). .admBetaPhiConst() checks it rather than assuming it.
 
 # Verify that the solved beta precision phi = b1 + b2 really is eta-independent,
-# and return the representative row.
-#
-# `phi_mat` is (n_draw x n_time) for ONE configuration, rows = random-effect
-# draws. If phi doesn't depend on eta every row is identical and the first is
-# representative, which is what the solve paths assume when collapsing with
-# [1L, ]. Checks and collapses together so the assumption can't drift from
-# its use -- previously only promised in a comment, with an eta-dependent
-# precision silently populating variance from whichever draw landed first.
-#
-# Rows that legitimately differ (one per STRUCTURAL configuration, as in
-# .admSimulateRows) are NOT eta draws and must not be passed here.
+# and return the representative row. `phi_mat` is (n_draw x n_time); rows
+# that legitimately differ (one per STRUCTURAL configuration) are NOT eta
+# draws and must not be passed here.
 .admBetaPhiConst <- function(phi_mat, tol = 1e-6) {
   if (is.null(phi_mat)) return(NULL)
   if (!is.matrix(phi_mat)) return(phi_mat)
@@ -119,11 +98,7 @@
 # nlmixr2 gives a count endpoint a DIFFERENT shape from a residual-error one:
 # the mean is the distribution's ARGUMENT, not the endpoint, so predDf$var
 # names the DV (`y`) while the quantity admixr2 solves for is `cp` in
-# `y ~ pois(cp)`. No iniDf error rows exist, which is why these models used
-# to sail through every gate and fit with zero residual variance.
-#
-# Their conditional moments are closed form, so once the right column is
-# solved they drop straight into the law of total variance already in place:
+# `y ~ pois(cp)`. Their conditional moments are closed form:
 #
 #   pois(f)        E[y|eta] = f          Var(y|eta) = f
 #   binom(N, p)    E[y|eta] = N p        Var(y|eta) = N p (1 - p)
@@ -155,10 +130,8 @@
   if (is.null(a)) return(NULL)
   .const <- function(x) {
     # A literal is stored in the AST as an actual R number: `binom(20, p)` gives the
-    # double 20, `binom(20L, p)` the integer 20L. deparse(20L) is "20L", and
-    # as.numeric("20L") is NA -- so an integer-suffixed size was misread as
-    # non-constant and refused with advice to fix() a parameter that does not exist.
-    # Read a bare numeric literal (double OR integer) directly, before deparsing.
+    # double 20, `binom(20L, p)` the integer 20L, and deparse(20L)="20L" reads back
+    # as.numeric() NA -- so read a bare numeric literal directly, before deparsing.
     if (is.numeric(x) && length(x) == 1L) return(as.numeric(x))
     v <- suppressWarnings(as.numeric(paste(deparse(x), collapse = "")))
     if (!is.na(v)) return(v)
@@ -169,10 +142,7 @@
       if (isTRUE(r$fix)) return(as.numeric(r$est))
     }
     # A constant written in the MODEL BLOCK -- `nt <- 20; y ~ binom(nt, p)` -- is
-    # every bit as constant as the literal, and is how a number of trials is
-    # usually written. Refusing it sent the user to fix() a parameter that does not
-    # exist. Only a bare numeric assignment counts: anything computed could depend
-    # on a theta, which is the case that genuinely has no gradient path.
+    # every bit as constant as the literal. Only a bare numeric assignment counts.
     lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
     for (e in lst %||% list()) {
       if (is.call(e) && length(e) == 3L &&
@@ -236,16 +206,13 @@
 # A joint ordinal unit stacks one block per category, so the categories of
 # one time point are rows in different blocks and the row-time vector is
 # what identifies them. Three places need this grouping and must agree
-# exactly: .admResidApply (the -p_j*p_k cross term), .admResidVChain
-# (zeroes d(V_pred)/d(V_struct) for those entries), .admResidMuCoupling.
-# ONE definition, since disagreement means the objective carries a cross
-# term the gradient doesn't know about.
+# exactly: .admResidApply (the -p_j*p_k cross term), .admResidVChain, and
+# .admResidMuCoupling -- ONE definition, since disagreement means the
+# objective carries a cross term the gradient doesn't know about.
 #
-# Grouped by TOLERANCE, not exact match: row times from independent inputs
-# like `seq(0.1, 0.7, by = 0.2)` and `c(0.1, 0.3, 0.5, 0.7)` are the same
-# grid but differ in the last bit to match(), silently dropping the cross
-# term. NA row times must NOT collapse into one group (match(NA, ...)
-# matches, which would invent cross terms).
+# Grouped by TOLERANCE, not exact match, since row times from independent
+# inputs can be the same grid but differ in the last bit to match(). NA row
+# times must NOT collapse into one group (match(NA, ...) matches).
 .admOrdTimeGroup <- function(times, or_) {
   out <- rep(NA_integer_, length(times))
   keep <- which(or_ & !is.na(times))
@@ -281,21 +248,9 @@
 # `rxode2::.rxTransform(x, lambda, low, high, transform, inverse)` is what
 # every one of rxode2's own boxCox()/yeoJohnson()/logit()/probit() calls
 # bottoms out in -- calling the kernel makes agreement with the solve
-# structural, rather than a line-by-line port re-deriving it.
-#
-# The two things the kernel does NOT do for us, and the only reason these
-# are wrappers rather than direct calls:
-#
-#   1. It DROPS dim(). The solve paths hand these an n_sim x n_t MATRIX,
-#      and a dropped dim turned cp_mat into a flat vector so every
-#      downstream colMeans()/sweep() produced NA.
-#   2. Its scalar-argument fast path asserts `any.missing = FALSE` on
-#      `lambda`, `low` and `high`.
-#
-# Not routed through the public boxCox()/yeoJohnson()/logit()/probit()
-# wrappers: those add their own `assertNumeric(x, lower = 0,
-# any.missing = FALSE)` and so ERROR on the NA/Inf that the quadrature's
-# tail nodes legitimately produce.
+# structural, rather than a line-by-line port re-deriving it. Not routed
+# through the public wrappers: those assert `any.missing = FALSE` and so
+# ERROR on the NA/Inf that the quadrature's tail nodes legitimately produce.
 .admTBSxf <- function(x, lam, yj, lo, hi, inverse) {
   d   <- dim(x)
   out <- rxode2::.rxTransform(x, lam, lo, hi, as.integer(yj), inverse)
@@ -371,15 +326,11 @@
 # Node count, measured against stats::integrate() at rel.tol 1e-13 over
 # boxCox/yeoJohnson/logit/probit x residual sd in {0.5, 1, 2, 3}. Cost is
 # linear in n but negligible beside the ODE solve, so `resid_nodes` is an
-# ACCURACY dial, not a speed one.
-#
-# Worst case is dominated by sd = 3 boxCox/yeoJohnson, whose inverse hits
-# its bounded support and clamps (see .admTBSp) -- a kink GH converges on
-# slowly. At sd <= 1 (a realistic transformed-scale residual), n = 31
-# already gives 1e-7 or better and logit/probit reach 1e-13.
-#
-# 81 stays the DEFAULT as safe across the whole grid above; configurable
-# per fit via `resid_nodes`.
+# ACCURACY dial, not a speed one. Worst case is sd = 3 boxCox/yeoJohnson,
+# whose inverse hits its bounded support and clamps (see .admTBSp) -- a
+# kink GH converges on slowly; at sd <= 1, n = 31 already gives 1e-7 or
+# better and logit/probit reach 1e-13. 81 stays the DEFAULT as safe across
+# the whole grid; configurable per fit via `resid_nodes`.
 .ADM_TBS_NODES <- 81L
 
 # Moments PLUS their exact partials w.r.t. f and the residual sd, by
@@ -437,11 +388,7 @@
 #
 # A list(), not c(): `[[` on a named CHARACTER VECTOR errors for a missing name,
 # so the `%||%` fallback at every call site only behaves if a miss yields NULL.
-#
-# Only genuinely-refused types belong here. This table used to carry entries
-# for pois/binom/nbinomMu/beta/ordinal/logitNorm/probitNorm/boxCox/tbs/
-# yeoJohnson/tbsYj/ar -- all now implemented, so those reasons were stale
-# documentation printed as if current. An entry here is a promise that
+# Only genuinely-refused types belong here -- an entry is a promise that
 # admixr2 will not fit the model; keep it that way.
 .ADM_ERR_WHY <- list(
   cauchy     = paste0(
@@ -504,17 +451,11 @@
 }
 
 # Validate every endpoint's DISTRIBUTION, independently of whether it has any
-# residual-error parameters.
-#
-# Separate from .admBuildResidSpecs(), which returns early when
-# `sigma_names` is empty -- a count/categorical endpoint has NO iniDf error
-# rows, so it would otherwise sail through with sigma_names = character(0):
-# a converged fit with ZERO residual variance and no warning, the same
-# silent-wrong-model failure as the historical pow() bug. Refused here
-# instead, on the authoritative field (predDf$distribution).
-#
-# `t` is supported (a scale family, see .ADM_ERR_T); everything else
-# non-normal is not, and .ADM_ERR_WHY supplies the per-distribution reason.
+# residual-error parameters. Separate from .admBuildResidSpecs(), which
+# returns early when `sigma_names` is empty -- a count/categorical endpoint
+# has NO iniDf error rows, so it would otherwise sail through with
+# sigma_names = character(0): a converged fit with ZERO residual variance
+# and no warning. Refused here instead, on predDf$distribution.
 .admCheckEndpointDist <- function(ui) {
   predDf <- if (!is.null(ui)) tryCatch(as.data.frame(ui$predDf), error = function(e) NULL) else NULL
   if (is.null(predDf) || nrow(predDf) == 0L) return(invisible(NULL))
@@ -535,23 +476,12 @@
   invisible(NULL)
 }
 
-# Build one residual spec per endpoint from ui$predDf.
-#
-# predDf is authoritative and iniDf$err alone is not: `errType` tells us
-# which terms are present, `addProp` picks combined1 vs combined2,
-# `transform`/`distribution` say whether the endpoint is representable at
-# all, `errTypeF` says which scale the proportional/power term multiplies.
-#
-# Returns NULL when there is no predDf (Tier-1 mock iniDf / no ui); callers
-# then fall back to the legacy sigma_is_prop/sigma_is_lnorm flags.
 # Constructor for a residual-error SPEC: the complete field set and its
-# defaults in ONE place. `...` overrides any default.
-#
-# The four branches that build specs (ordinal, beta, count, residual-
-# parameter) used to spell out the whole ~18-field literal by hand and
-# disagreed about which fields they set (why .admResidRows() reads several
-# through `%||% NA_real_`) -- a missing field silently fell back to form 0,
-# NO residual variance at all.
+# defaults in ONE place. `...` overrides any default. The four branches
+# that build specs (ordinal, beta, count, residual-parameter) used to spell
+# out the whole ~18-field literal by hand and disagreed about which fields
+# they set -- a missing field silently fell back to form 0, NO residual
+# variance at all.
 .admNewSpec <- function(output, form, ...) {
   .d <- list(
     output     = output,      form       = form,
@@ -763,26 +693,14 @@ aggregate mean and covariance cannot recover"),
           fix = "Fix rho in (0, 1), or drop ar() for independent residuals.")
     }
     # ar(): admixr2 implements the STATIONARY continuous-time AR(1), which is
-    # what rxode2's ESTIMATION lines mean. rxode2's two ar() emitters
-    # disagree:
-    #
-    #   .rxArSimLines   (simulation)  rx.arRes <- phi*lag0(rx.arRes,1) +
-    #                                             sqrt(rx_r_*(1-phi^2))*innovation
-    #   .rxArEstNormLines (estimation) rx_pred_ ~ rx_pred_ + phi*rx_arEp
-    #                                  rx_r_    ~ variance * (1 - phi^2)
-    #
-    # The estimation form is the prediction-error decomposition conditional
-    # on the PREVIOUS OBSERVED residual, with implied MARGINAL variance
-    # exactly `variance` -- so admixr2's covariance (sqrt(v_i v_j)
-    # rho^|t_i-t_j|, diag = v) matches nlmixr2's own estimation semantics.
-    # (The conditional form needs each subject's previous residual, which
-    # aggregate data has none of.)
-    #
-    # rxode2's SIMULATION is not stationary when a dose record precedes the
-    # first observation -- an upstream defect specific to ar(); nlmixr2's own
-    # focei can't recover rho from rxode2's own simulation either. So
-    # simulating an ar() fit through rxode2 will not reproduce the fitted
-    # covariance until that's fixed, unlike every other error model here.
+    # what rxode2's ESTIMATION lines mean (`rx_pred_ ~ rx_pred_ + phi*rx_arEp`,
+    # `rx_r_ ~ variance * (1 - phi^2)`) -- the prediction-error decomposition
+    # conditional on the PREVIOUS OBSERVED residual, with implied MARGINAL
+    # variance exactly `variance`, matching admixr2's covariance (sqrt(v_i
+    # v_j) rho^|t_i-t_j|, diag = v). rxode2's SIMULATION emitter disagrees
+    # and is not stationary when a dose record precedes the first
+    # observation, an upstream defect, so simulating an ar() fit through
+    # rxode2 will not reproduce the fitted covariance until that's fixed.
 
     if ((length(k_ar) > 0L || is.finite(ar_fixed)) && identical(tr, "lnorm"))
       .admStopErrModel(
@@ -867,14 +785,8 @@ log-scale residual; composing them has no single ",
       lam_fixed <- if (nrow(.fl) > 0L) as.numeric(.fl$est[1L]) else 1.0
     }
     # A FIXED add/prop/pow parameter never reaches sigma_rows either -- the
-    # same trap tdf_fixed/ar_fixed/lam_fixed close, but the SCALE parameters
-    # had no equivalent and were silently dropped:
-    #   add(a),  a <- fix(0.7)          -> fitted with NO residual variance at all
-    #   add(a) + prop(b), b <- fix(0.2) -> the proportional term vanished
-    #   pow(b, c), c <- fix(0.75)       -> reverted to prop(), i.e. c = 1
-    # The last is precisely the historical pow() failure this file documents.
-    # est is the SD/coefficient, so the stored VARIANCE is est^2; a pow
-    # exponent is stored as itself.
+    # same trap tdf_fixed/ar_fixed/lam_fixed close. est is the SD/coefficient,
+    # so the stored VARIANCE is est^2; a pow exponent is stored as itself.
     .fixval <- function(codes, sq) {
       .f <- full_ini[!is.na(full_ini$err) & full_ini$err %in% codes & full_ini$fix &
                        (is.na(full_ini$condition) | full_ini$condition == ep), , drop = FALSE]
@@ -889,19 +801,11 @@ log-scale residual; composing them has no single ",
     pow_fixed  <- if (length(k_pow)  == 0L)
       .fixval(.ADM_ERR_POW_EXP, FALSE)                                 else NA_real_
 
-    # ar() is only stationary when the residual variance is CONSTANT in time.
-    # rxode2 emits rx.arRes = phi*lag0(rx.arRes,1) + sqrt(rx_r_*(1-phi^2))*rxerr,
-    # so marginal variance obeys V_i = phi^2 V_{i-1} + r_i (1-phi^2); with r
-    # constant that telescopes to V_i = r and admixr2's "diagonal unchanged,
-    # off-diagonal = sqrt(ev_i ev_j) rho^|dt|" is exact.
-    #
-    # With prediction-dependent r (prop/pow/combined) it's non-stationary,
-    # V_i depends on the whole history, and is seeded from the first record
-    # (usually the DOSE row, f = 0, r = 0) -- measured 2.4-12x too high
-    # against rxode2's own simulation. Refused rather than approximated:
-    # reproducing it means encoding rxode2's recursion AND dose-row
-    # initialisation into an aggregate likelihood, an implementation detail
-    # rather than a stated model.
+    # ar() is only stationary when the residual variance is CONSTANT in time
+    # (rxode2's rx.arRes recursion telescopes to V_i = r only then). With
+    # prediction-dependent r (prop/pow/combined) it's non-stationary and
+    # V_i depends on the whole history -- measured 2.4-12x too high against
+    # rxode2's own simulation. Refused rather than approximated.
     if ((length(k_ar) > 0L || is.finite(ar_fixed)) &&
         (length(k_prop) > 0L || is.finite(prop_fixed) ||
          length(k_pow)  > 0L || is.finite(pow_fixed)))
@@ -969,12 +873,10 @@ without that parameter there is no residual to integrate"),
       k_lam  = if (length(k_lam)  > 0L) k_lam[1L]  else NA_integer_,
       lam_fixed = lam_fixed, yj = yj_code, tr_lo = tr_lo, tr_hi = tr_hi,
       add_fixed = add_fixed, prop_fixed = prop_fixed, pow_fixed = pow_fixed,
-      # A TBS endpoint's residual is normal on the TRANSFORMED scale with variance
-      # rx_r_, which rxode2 builds from the SAME add/prop/pow/combined machinery as
-      # any other endpoint. form is .ADM_RESID_TBS, which loses the combined1/2
-      # distinction and the errTypeF, so carry both: without them a prop() term on a
-      # transformed endpoint contributed NOTHING and got an exactly-zero gradient.
-      # errTypeF "transformed" (propT) scales by rx_pred_ = h(f), not rx_pred_f_ = f.
+      # form is .ADM_RESID_TBS, which loses the combined1/2 distinction and
+      # the errTypeF, so carry both: without them a prop() term on a
+      # transformed endpoint contributed NOTHING and got an exactly-zero
+      # gradient.
       tbs_c1  = identical(if (identical(as.character(predDf$addProp[i] %||% "default"),
                                         "default")) add_prop_default
                           else as.character(predDf$addProp[i]), "combined1"),
@@ -992,16 +894,12 @@ without that parameter there is no residual to integrate"),
 #   "tbs_lam" a boxCox/yeoJohnson lambda: identity, unconstrained -- it may be
 #             zero (which IS the log transform) or negative.
 #   "nb_size" a negative-binomial size: natural value is exp(p) (strictly > 0).
-#   "ar_cor"  ar() correlation: natural value is expit(p), so it stays in (0,1)
-#             -- rxode2 itself validates rho in [0,1), and rho >= 1 is a
-#             non-stationary process with no stationary covariance to match.
+#   "ar_cor"  ar() correlation: natural value is expit(p), so it stays in (0,1).
 # The distinction matters because a pow() exponent must not be squared, bounded
 # below at zero, or reported as an SD. Absent (legacy/hand-built pinfo) => all "var".
-#
-# Why t_df is estimated as log(nu - 2) rather than unconstrained: the variance
-# multiplier nu/(nu-2) has a pole at nu = 2 and is NEGATIVE below it, so a step to
-# nu <= 2 would hand the MVN kernel a negative variance. The shifted log keeps nu > 2
-# for every real p, so the constraint cannot be violated by a line search.
+# t_df is estimated as log(nu - 2), not unconstrained, since nu/(nu-2) has a
+# pole at nu = 2 and is NEGATIVE below it -- the shifted log keeps nu > 2 for
+# every real p.
 .admSigmaRole <- function(pinfo) {
   r <- pinfo$sigma_role
   if (is.null(r)) rep("var", length(pinfo$sigma_names)) else r
@@ -1025,13 +923,10 @@ without that parameter there is no residual to integrate"),
 }
 
 # The value .admFullTheta() REPORTS for ONE residual parameter, as a function of
-# its optimizer value.
-#
-# plot.R traces parameters one at a time and so needs the map per name rather than
-# for the whole sigma vector. Built out of .admSigmaNat() instead of re-deriving the
-# roles, because a trace plotted on a different scale from the one print(fit) reports
-# is a silent disagreement: an ar() correlation of 0.6 came out as 1.22 under the
-# generic sigma rule, past the top of its own support.
+# its optimizer value. plot.R traces parameters one at a time and so needs the
+# map per name; built out of .admSigmaNat() rather than re-deriving the roles,
+# since a trace plotted on a different scale from print(fit) is a silent
+# disagreement (an ar() correlation of 0.6 once came out as 1.22).
 .admSigmaReportFn <- function(pinfo, nm) {
   .k <- match(nm, pinfo$sigma_names)
   if (is.na(.k)) return(function(v) exp(v / 2))
@@ -1050,13 +945,9 @@ without that parameter there is no residual to integrate"),
 #
 # The post-fit Hessian is taken w.r.t. the optimizer's parameterisation, but
 # `fit$cov` sits beside `Estimate` in nlmixr2est's parFixed table, so the two
-# must be on the same scale or `Estimate +- 1.96*SE` is wrong by this
-# factor. Lives next to .admSigmaNat()/.admSigmaRole() as the derivative of
-# that same map -- the three CalcCov functions used to each carry their own
-# copy of the switch(), three places to forget a new role.
-#
-# `.admFullTheta()` reports a "var" role as an SD, so the factor is d(sd)/dp with
-# p = log(sd^2): sd = exp(p/2), d(sd)/dp = sd/2. The identity roles get 1.
+# must be on the same scale or `Estimate +- 1.96*SE` is wrong by this factor.
+# `.admFullTheta()` reports a "var" role as an SD, so the factor is d(sd)/dp
+# with p = log(sd^2): sd = exp(p/2), d(sd)/dp = sd/2. The identity roles get 1.
 .admSigmaReportJac <- function(p_sigma, pinfo) {
   if (length(p_sigma) == 0L) return(numeric(0))
   role <- .admSigmaRole(pinfo)
@@ -1121,19 +1012,15 @@ without that parameter there is no residual to integrate"),
   NULL
 }
 
-# Row arrays for a stacked mean vector.
+# Row arrays for a stacked mean vector. `row_output` gives each row's output
+# column name (length n_t); pass a single value, or NULL, for a
+# single-output vector.
 #
-# `row_output` gives each row's output column name (length n_t); pass a single
-# value, or NULL, for a single-output vector. Returns the four parallel arrays
-# the R and C++ residual evaluators both consume, plus `k_*` row->sigma maps used
-# by the gradient.
 # Residual row array for a unit, with the SOLVED beta precision folded in.
-#
 # .admResidRows() knows the error model from pinfo but not phi = b1 + b2,
-# which for a beta endpoint is derived from the SOLVED shapes and rides back
-# as an attribute on the simulate matrix. Threading it was a two-line idiom
-# copied at every estimator/datagen/plot call site; forgetting it left
-# arr$phi NA and every predicted-covariance entry silently NaN.
+# which for a beta endpoint is derived from the SOLVED shapes; forgetting
+# to thread it left arr$phi NA and every predicted-covariance entry
+# silently NaN.
 .admUnitResidRows <- function(pinfo, row_output, sigma_nat, n_t, phi = NULL) {
   arr <- .admResidRows(pinfo, row_output, sigma_nat, n_t)
   if (!is.null(phi)) arr$phi <- phi
@@ -1227,11 +1114,9 @@ without that parameter there is no residual to integrate"),
       if (!is.null(sp$k_ar) && !is.na(sp$k_ar)) k_ar[rows] <- sp$k_ar
     }
   }
-  # phi and ord_grp MUST be here too. They were present only in the early-return
-  # branch above (and duplicated there), so on the normal path arr$ord_grp was NULL
-  # and .admResidApply's `if (any(or_) && !is.null(arr$ord_grp))` never fired --
-  # an ordinal endpoint silently lost its -p_j p_k cross-category covariance, and
-  # beta's phi had nowhere to be patched in.
+  # phi and ord_grp MUST be here too, matching the early-return branch above:
+  # omitting either left arr$ord_grp NULL on the normal path, silently
+  # dropping an ordinal endpoint's -p_j p_k cross-category covariance.
   list(form = form, a2 = a2, b2 = b2, cc = cc, vmul = vmul, rho = rho,
        lam = lam, yj = yj, tlo = tlo, thi = thi, csz = csz, phi = phi,
        ord_grp = ord_grp, tbs_c1 = tbs_c1, tbs_ftr = tbs_ftr,
@@ -1285,24 +1170,15 @@ without that parameter there is no residual to integrate"),
   # log(DBL_EPSILON). Was ifelse(mu > 0, log(mu), 0) -- a third convention.
   lg  <- ifelse(mu > 0, log(mu), log(.Machine$double.eps))
   # 0^(negative exponent). A structural prediction of exactly 0 isn't exotic
-  # -- a dose-at-t=0 model returns it for an observation at t = 0, which
-  # real datasets have constantly; every synthetic gradient test here starts
-  # at t > 0, which is why this reached a real-data fit before being caught
-  # (one NaN row poisoned dv_df and every downstream gradient).
-  #
-  # The rule is rxode2's: it solves `x^y` via Rx_pow_() with safePow = TRUE,
-  # substituting x = DBL_EPSILON when x == 0 and y < 0, so the moment
-  # expansion degrades exactly like the ODE solve of the same model. For
-  # c = 1, k = 2 and g*(k-2) is EXACTLY zero (E[f^2] = mu^2 + var exact);
-  # only pow() with c < 1 sees the eps value.
+  # -- a dose-at-t=0 model returns it for an observation at t = 0 -- and one
+  # NaN row here poisoned dv_df and every downstream gradient. The rule is
+  # rxode2's Rx_pow_(safePow = TRUE): substitute x = DBL_EPSILON when x == 0
+  # and y < 0.
   #
   # THE CAP IS .admMomF's, NOT A SECOND ONE: a negative exponent is a
-  # genuine pole near mu = 0, capped against the LEADING term there. This
-  # function used to zero mu^(k-2) past .ADM_MOM_CAP instead, so objective
-  # and gradient used different corrections near a zero prediction, handing
-  # the optimizer a non-descending direction. Derivatives below are of the
-  # CAPPED expression: where the cap binds, corr = sign(corr)*|lead| with
-  # lead = mu^k > 0, so dv0 = 0.
+  # genuine pole near mu = 0, capped against the LEADING term there.
+  # Derivatives below are of the CAPPED expression: where the cap binds,
+  # corr = sign(corr)*|lead| with lead = mu^k > 0, so dv0 = 0.
   lead <- mk
   pk2  <- mu^(k - 2)
   corr <- g * pk2 * v0
@@ -1330,14 +1206,12 @@ without that parameter there is no residual to integrate"),
 # Compose a full structural covariance with an .admResidApply() result: the
 # lnorm/TBS off-diagonal mean-scale (ms_i ms_j), the composed diagonal
 # (ap$dv), and any ar() correlation matrix (ap$rmat). Was hand-copied at
-# ~11 sites, so an added off-diagonal residual channel meant editing all
-# of them.
+# ~11 sites, so an added off-diagonal residual channel meant editing all of
+# them.
 #
 # na.rm is load-bearing: .admTBSi() returns NaN outside a transform's
-# support, reachable by a line search inside grad_bounds, and a bare
-# `any(ap$ms != 1)` is then NA -- `if (NA)` ABORTS the whole fit instead of
-# the optimizer rejecting the point. With na.rm the multiply is skipped and
-# a NaN in ap$dv still yields a non-finite objective.
+# support, and a bare `any(ap$ms != 1)` is then NA -- `if (NA)` ABORTS the
+# whole fit instead of the optimizer rejecting the point.
 .admApplyResidTail <- function(V, ap) {
   if (any(ap$ms != 1, na.rm = TRUE)) V <- V * tcrossprod(ap$ms)
   diag(V) <- ap$dv
@@ -1359,18 +1233,11 @@ without that parameter there is no residual to integrate"),
 # ar() rmat.
 #
 # Not the old `dv + v(mu)`: residual variance of a prop/pow/lnorm model
-# depends on f, so E_eta[Var(y|eta)] != Var(y | eta = mean). Evaluating at
-# the population mean is NONMEM's "no eta-eps interaction" convention and
-# understates V_pred (measured against individual-level simulation).
-#
-# Moments are ALWAYS taken from (mu, var_f) via .admMomF, never the
-# caller's sample ensemble: the gradient chains analytically through
-# (mu, var_f), so sample moments in the NLL vs. closed form in the
-# gradient would disagree and the optimizer would chase a discontinuity.
-#
-# Callers on the diagonal-only (`method = "var"`) path pass NULL for
-# `cov_f`, and an ar() model is refused there since a diagonal V carries
-# no information about rho.
+# depends on f, so E_eta[Var(y|eta)] != Var(y | eta = mean) -- evaluating
+# at the population mean is NONMEM's "no eta-eps interaction" convention
+# and understates V_pred. Moments are ALWAYS taken from (mu, var_f) via
+# .admMomF, never a sample ensemble, so the NLL and its analytic gradient
+# stay consistent.
 .admResidApply <- function(mu_struct, dv, arr, times = NULL, cov_f = NULL) {
   mu <- mu_struct
   ms <- .admResidMuScale(arr)
@@ -1500,10 +1367,6 @@ without that parameter there is no residual to integrate"),
 }
 
 # Structural (mu, var) -> predicted (mu, diag, full V), in one call.
-#
-# .admResidApply -> .admApplyResidTail is a fixed two-step sequence that the
-# ADF weight (needing `ms` alongside the composed matrix) would otherwise
-# hand-assemble a seventh time.
 #   mu_struct  structural mean E_eta[f]
 #   var_f      diag(Cov_eta(f)) -- the STRUCTURAL variance
 #   arr        row array from .admUnitResidRows() / .admResidRows()
@@ -1514,7 +1377,7 @@ without that parameter there is no residual to integrate"),
 #
 # THE VAR BRANCH MUST NOT SEE `times`/`cov_f`: arr$rho and the ordinal
 # same-time cross term key off `times`, so forwarding it unconditionally
-# would change the var-branch NLL. Forwarded only alongside `cov_f` here.
+# would change the var-branch NLL.
 #
 # Returns mu/dv (always) and V (when composed), plus the raw
 # .admResidApply result as `ap` for callers that want ms/ev/rmat.
@@ -1544,12 +1407,9 @@ without that parameter there is no residual to integrate"),
 # d(var)/d(p_nu): with m = nu/(nu-2) and nu = 2 + exp(p), dm/dp = -(m-1),
 # and since var = m * V0, d(var)/d(p_nu) = -var * (m - 1) / m.
 #
-# dv_dv0 is load-bearing: V_pred depends on the STRUCTURAL variance through
-# more than the identity (ms^2 on every row, plus dE[v]/dvar_f wherever the
-# residual is f-dependent). It's the diagonal factor the estimators apply
-# to dNLL/dV_pred before the eta/omega kernels, which differentiate the
-# structural covariance; off-diagonals take ms_i*ms_j. `.admResidVChain()`
-# packages both.
+# dv_dv0 is load-bearing: it's the diagonal factor the estimators apply to
+# dNLL/dV_pred before the eta/omega kernels; off-diagonals take ms_i*ms_j.
+# `.admResidVChain()` packages both.
 .admResidDeriv <- function(mu_struct, var_f, arr, pinfo) {
   n_t   <- length(mu_struct)
   n_sig <- length(pinfo$sigma_names)
@@ -1571,28 +1431,21 @@ without that parameter there is no residual to integrate"),
   # diagonal of d(NLL)/d(V_struct) (see the `dmu_dv0` attribute of .admResidVChain).
   dmu_dv0 <- numeric(n_t)
   # d(mu_pred)/df beyond the plain mean scale. For TBS mu = m(f) + 0.5*m''(f)*var_f,
-  # so the mean moves with f by m'(f) + 0.5*m'''(f)*var_f -- and that is NOT the same
-  # number as `ms`, which scales the COVARIANCE and must stay m'(f) exactly. Keeping
-  # one vector for both is what left the TBS struct-theta gradient ~1e-3 out.
+  # so the mean moves with f by m'(f) + 0.5*m'''(f)*var_f -- NOT the same
+  # number as `ms`, which scales the COVARIANCE and must stay m'(f) exactly.
   dmu_extra <- numeric(n_t)
-  # The mean scale as .admResidApply() actually uses it. .admResidMuScale() only
-  # knows the CONSTANT scales (1, or exp(s/2) for lnorm); for a TBS endpoint the
-  # scale is m'(f), which depends on f and so cannot come from arr alone. Letting
-  # the chain and the mu-coupling keep using .admResidMuScale() meant they applied
-  # ms = 1 while the NLL applied m'(f) -- a 115% gradient error, constant across
-  # every FD step size (which is what proved it a formula bug, not noise).
+  # The mean scale as .admResidApply() actually uses it. .admResidMuScale()
+  # only knows the CONSTANT scales (1, or exp(s/2) for lnorm); for a TBS
+  # endpoint the scale is m'(f), depending on f, so cannot come from arr
+  # alone -- letting the chain/mu-coupling use .admResidMuScale() instead
+  # produced a 115% gradient error.
   ms_out <- .admResidMuScale(arr)
   if (is.null(var_f)) var_f <- numeric(n_t)
-  # Third instance of the same trap (see .admBuildResidSpecs / .admResidRows):
-  # pois/binom have NO residual parameters but still have f- and var_f-paths
-  # (Var = f, and N p(1-p)); returning the defaults here left dv_df/dv_dv0
-  # silently absent. Same trap reopens for a continuous residual whose only
-  # parameter is fix()ed (`.all_fixed_resid` keeps n_sig == 0 alive, yet a
-  # fixed prop/pow/lnorm/TBS residual still moves with f). Early return must
-  # fire ONLY for a genuinely f-independent residual -- purely additive
-  # (combined form, b^2 == 0, no count/lnorm/TBS) -- where dv_df = 0 and
-  # dv_dv0 = 1 are correct. `arr$b2 > 0` covers a fixed prop/pow/combined
-  # coefficient; lnorm/TBS are f-dependent regardless.
+  # Early return must fire ONLY for a genuinely f-independent residual --
+  # purely additive (combined form, b^2 == 0, no count/lnorm/TBS) -- where
+  # dv_df = 0 and dv_dv0 = 1 are correct. pois/binom have NO residual
+  # parameters but still have f- and var_f-paths, and a fixed prop/pow/
+  # lnorm/TBS residual still moves with f even with n_sig == 0.
   .f_dep <- any(arr$form %in% c(.ADM_RESID_POIS, .ADM_RESID_BINOM,
                                 .ADM_RESID_NBINOM, .ADM_RESID_BETA,
                                 .ADM_RESID_ORDINAL, .ADM_RESID_LNORM,
@@ -1719,15 +1572,11 @@ without that parameter there is no residual to integrate"),
                hh, 1, klm)
       }
       # Student-t degrees of freedom. nu reaches the objective ONLY through
-      # the multiplier m = nu/(nu-2), already folded into a2/b2 for every
-      # form including TBS, so differentiate along that scaling rather than
-      # re-deriving the quadrature -- with p = log(nu-2), dm/dp = -(m-1),
-      # reducing to the closed forms' -vt*(m-1)/m by construction.
-      #
+      # the multiplier m = nu/(nu-2), already folded into a2/b2, so
+      # differentiate along that scaling: with p = log(nu-2), dm/dp = -(m-1).
       # Without this the TBS branch fell through `next` before the
-      # closed-form nu block: `cp ~ boxCox(lam) + add(a) + t(nu)` had a ZERO
-      # nu gradient while the NLL genuinely moved with nu (TBS + t() isn't
-      # refused, only lnorm + t() is).
+      # closed-form nu block, leaving a ZERO nu gradient while the NLL
+      # genuinely moved with nu.
       ktd <- k_tdf[t]
       if (!is.na(ktd)) {
         m0 <- vmul[t]
@@ -1813,15 +1662,12 @@ without that parameter there is no residual to integrate"),
   any(got %in% outs)
 }
 
-# ar() needs a FULL observed covariance. A `method = "var"` study contributes only
-# diag(V), which contains no information about a residual correlation at all -- the
-# fit would run, report whatever rho started at, and mean nothing. Refuse instead,
-# naming the study so the user knows which one to fix.
-# Ordinal endpoints: a diagonal V carries no cross-category information, and the
-# same-time -p_j p_k structure is the whole point of the model. Refuse `var`
-# studies for the same reason ar() does. Also refuse an ordinal endpoint that is
-# NOT expressed as a joint unit -- one block per category probability -- because a
-# non-joint study would score a single category and drop the rest.
+# Ordinal endpoints: a diagonal V carries no cross-category information, and
+# the same-time -p_j p_k structure is the whole point of the model. Refuse
+# `var` studies for the same reason ar() does. Also refuse an ordinal
+# endpoint that is NOT expressed as a joint unit -- one block per category
+# probability -- because a non-joint study would score a single category
+# and drop the rest.
 .admCheckOrdinal <- function(pinfo, studies) {
   sp <- .admResidSpecs(pinfo)
   if (length(sp) == 0L ||
@@ -1883,12 +1729,10 @@ without that parameter there is no residual to integrate"),
   studies <- Filter(function(u) .admUnitTouches(u, names(sp)[.isar]), studies)
   if (length(studies) == 0L) return(invisible(NULL))
 
-  # ar() inside a JOINT (same-subject, multi-output) unit is not representable. The
-  # unit's rows stack several outputs, so its row times REPEAT, and .admARCor's
-  # rho^|t_i - t_j| yields rho^0 = 1 between two DIFFERENT outputs observed at the
-  # same time. On top of that .admResidApply reads arr$rho[1L], so one output's rho
-  # would be applied to every row. ar() describes autocorrelation WITHIN one output's
-  # series; across outputs it has no meaning.
+  # ar() inside a JOINT (same-subject, multi-output) unit is not
+  # representable: its row times REPEAT across outputs, and .admARCor's
+  # rho^|t_i - t_j| yields rho^0 = 1 between two DIFFERENT outputs observed
+  # at the same time.
   jnt <- names(studies)[vapply(studies, function(u) isTRUE(u$is_joint), logical(1))]
   if (length(jnt) > 0L)
     stop("ar() cannot be combined with a joint (same-subject, multi-output) study.\n",
@@ -1921,14 +1765,11 @@ without that parameter there is no residual to integrate"),
 #
 # adm_apply_residual() in src/nll.cpp implements forms 0/1/2 only
 # (combined2, combined1, lnorm) with no off-diagonal channel. Every form
-# added since -- TBS(3), pois(4), binom(5), nbinom(6), beta(7), ordinal(8)
-# -- would fall into its `else` branch and be scored as COMBINED2, silently
-# dropping ar()'s correlation (found via a 1.5e8 gradient mismatch).
-#
-# Rather than duplicate quadrature and multinomial covariance in C++, such
-# a study assembles its moments through .admResidApply() in R and calls
-# the plain nll_cov_cpp/nll_var_cpp kernels on the already-built (mu, V),
-# form-agnostic. The fused path stays for the forms it genuinely covers.
+# added since would fall into its `else` branch and be scored as COMBINED2,
+# silently dropping ar()'s correlation (found via a 1.5e8 gradient
+# mismatch). Such a study instead assembles its moments through
+# .admResidApply() in R and calls the plain nll_cov_cpp/nll_var_cpp kernels
+# on the already-built (mu, V).
 .admResidCppOK <- function(arr) {
   all(arr$form <= .ADM_RESID_LNORM) &&
     (is.null(arr$rho) || all(is.na(arr$rho)))
@@ -1943,13 +1784,11 @@ without that parameter there is no residual to integrate"),
 # Returns the full n_t x n_t multiplier matrix; elementwise-multiply dNLL_dV by it.
 .admResidVChain <- function(mu_struct, var_f, arr, pinfo, times = NULL,
                             deriv = NULL) {
-  # `deriv` (LAST, optional): a precomputed .admResidDeriv(mu_struct, var_f, arr,
-  # pinfo) the caller already holds. The three consumers of .admResidDeriv --
-  # .admResidVChain, .admSigmaGrad, .admResidMuCoupling -- are each called once per
-  # study/unit on the SAME (mu_struct, var_f, arr, pinfo), so computing it once in
-  # the estimator and threading it here avoids two of the three quadratures a TBS/
-  # logitNorm/probitNorm endpoint (resid_nodes, default 81) does per gradient eval.
-  # NULL -> compute it, so every legacy/hand-built caller is unchanged.
+  # `deriv` (LAST, optional): a precomputed .admResidDeriv() the caller
+  # already holds -- the three consumers (.admResidVChain, .admSigmaGrad,
+  # .admResidMuCoupling) are each called once per study/unit on the SAME
+  # inputs, so threading it here avoids redundant quadratures. NULL ->
+  # compute it, so every legacy/hand-built caller is unchanged.
   d  <- deriv %||% .admResidDeriv(mu_struct, var_f, arr, pinfo)
   M  <- tcrossprod(d$ms)          # NOT .admResidMuScale(): see .admResidDeriv$ms
   diag(M) <- d$dv_dv0
@@ -1995,19 +1834,6 @@ without that parameter there is no residual to integrate"),
 # read off the diagonal `dNLL_dvar`. Omitting them just leaves rho out of
 # the analytic gradient (a var-branch study, unidentifiable anyway).
 #
-# ONE row of the TBS moment assembly -- shared by the OBJECTIVE
-# (.admResidApply) and the GRADIENT (.admResidDeriv's `.asm1`), since if
-# the two copies drift by a term the optimizer descends a direction the
-# NLL doesn't follow, the worst failure class in this file. Both need the
-# residual SD on the TRANSFORMED scale and its d/df (rxode2's rx_r_), the
-# quadrature moments over a 3-point f-stencil, and second-order curvature
-# terms differenced from the ANALYTIC first derivatives (one FD level, not
-# two -- nesting FD here cost 300% accuracy).
-#
-# ev = q$v[2] + 0.5*v''(f)*v0 is the objective's curvature-corrected
-# E_eta[Var(y|eta)] (`ev_resid`, which ar() correlates); `dv`, the full
-# predicted variance for the row, is ms^2*v0 + ev.
-#
 # Conditional central moments 2, 3 and 4 of a TBS endpoint given the
 # structural prediction, by the SAME Gauss-Hermite quadrature
 # .admTBSMomentsD() runs for the mean and variance:
@@ -2018,17 +1844,10 @@ without that parameter there is no residual to integrate"),
 #   mu3    =  m_3 - 3 m_1 m_2 + 2 m_1^3
 #   mu4    =  m_4 - 4 m_1 m_3 + 6 m_1^2 m_2 - 3 m_1^4
 #
-# The ADF weight needs exactly (v, mu3, mu4) per node -- why TBS models
-# were the one residual family the sandwich refused despite being
-# conditionally independent across timepoints: no closed form existed for
-# the higher moments, not that they were invalid.
-#
-# The non-finite tail guard must match .admTBSMomentsD()'s node for node
-# (nothing below reads `gp_all`): this supplies the ADF weight's `d` while
-# .admTBSMomentsD() supplies the V_pred the objective composes, and the
-# J = 2H sandwich reduction holds only where the two agree that S ==
-# V_pred. Dropping on `!is.finite(yq_all)` alone would split the variances
-# across different node sets.
+# The ADF weight needs exactly (v, mu3, mu4) per node. The non-finite tail
+# guard must match .admTBSMomentsD()'s node for node, or the J = 2H
+# sandwich reduction breaks where the two disagree about which nodes are
+# dropped.
 .admTBSCentral <- function(f, sd, lam, yj, lo, hi, nodes = .ADM_TBS_NODES) {
   gq <- .adghNodes1(nodes)
   hz <- .admTBS(f, lam, yj, lo, hi)
@@ -2067,10 +1886,6 @@ without that parameter there is no residual to integrate"),
 #   E_j    = sum_q w_q m(f_qj)
 #   V_jk   = sum_q w_q (m_qj - E_j)(m_qk - E_k)              (j != k)
 #   V_jj  += sum_q w_q v(f_qj)
-#
-# exact given the eta quadrature. NULL for anything it doesn't cover (a
-# non-TBS row, an ar()/ordinal cross term, a non-finite sd), so the caller
-# keeps the existing path.
 
 # Does any unit of this fit carry a transform-both-sides endpoint?
 #
@@ -2089,15 +1904,12 @@ without that parameter there is no residual to integrate"),
 
 # Per-node conditional moments AND their derivatives w.r.t. the structural
 # prediction, for a unit whose rows are all TBS. Vectorised over the node
-# grid: .admTBSSd()/.admTBSMomentsD() already take a vector of f, so the
-# whole ensemble costs one quadrature pass per timepoint.
+# grid so the whole ensemble costs one quadrature pass per timepoint.
 #
 #   m, v            conditional mean and variance at each node
-#   dm, dv          their TOTAL derivatives w.r.t. f, which pick up the sd
-#                   path: dm/df = @m/@f + @m/@sd * dsd/df
+#   dm, dv          their TOTAL derivatives w.r.t. f: dm/df = @m/@f + @m/@sd * dsd/df
 #
-# NULL for anything not covered (non-TBS row, ar() cross term, non-finite
-# sd), so a caller keeps the existing path.
+# NULL for anything not covered (non-TBS row, ar() cross term, non-finite sd).
 .admTBSNodeParts <- function(cp, arr) {
   m <- ncol(cp)
   if (is.null(arr$form) || !all(arr$form == .ADM_RESID_TBS)) return(NULL)
@@ -2199,14 +2011,9 @@ without that parameter there is no residual to integrate"),
 #   A = dNLL_dV o cov_f  with a ZERO diagonal (the diagonal belongs to dvar/dv_df).
 # This returns the common `A %*% ms` factor; each caller applies its own
 # contraction -- elementwise by dms_df for a per-ROW term, crossprod by the
-# dms matrix for a per-SIGMA one.
-#
-# This is TBS/lnorm gradient maths, which errmodel.R owns, but had been
-# copied inline four times across .admSigmaGrad(), .admResidMuCoupling()
-# and twice in .adghGrad(); missing an adgh copy when adding a form whose
-# ms varies is the exact class of bug this file's notes blame for the
-# recurring silent-wrong-model failures.
-# Returns NULL when the term does not apply, so callers can skip it cheaply.
+# dms matrix for a per-SIGMA one. This is TBS/lnorm gradient maths that had
+# been copied inline four times across three functions; missing a copy when
+# adding a form whose ms varies is the recurring silent-wrong-model bug.
 .admMsOffDiag <- function(dNLL_dV, cov_f, ms) {
   if (is.null(dNLL_dV) || is.null(cov_f) || is.null(ms)) return(NULL)
   A <- dNLL_dV * cov_f
@@ -2249,12 +2056,7 @@ without that parameter there is no residual to integrate"),
     # wrong by ~25% whenever ar() is active (measured). With
     #   rmat_ij = sqrt(ev_i ev_j) rho^d_ij
     #   d/dp    = rho^d_ij * (dev_i * ev_j + ev_i * dev_j) / (2 sqrt(ev_i ev_j))
-    # d(ev)/dp is d$dvar: ar() is refused with lnorm, so ms == 1 and the ms^2*v0
-    # part of dv carries no sigma dependence, leaving dvar == d(ev)/dp exactly.
     rpow <- rho^dmat; diag(rpow) <- 0
-    # rxode2's safeZero (_div0_): a zero denominator becomes DBL_EPSILON. Was Inf
-    # here, which silently ZEROED the term instead of letting it blow up -- a
-    # different answer, and not one rxode2 would give.
     den  <- outer(sd_e, sd_e); den[den == 0] <- .Machine$double.eps
     for (k in seq_len(ncol(d$dvar))) {
       if (k == kar) next
@@ -2283,21 +2085,15 @@ without that parameter there is no residual to integrate"),
   # already carry the plain dNLL_dmu, so only the excess over 1 belongs here.
   out <- dNLL_dmu * (d$dmu_df - 1) + dNLL_dvar * d$dv_df
   # For a TBS endpoint ms = m'(f) depends on f, so moving the structural mean also
-  # moves the OFF-diagonal of V_pred (V_pred_ij = ms_i ms_j cov_ij). Row k picks up
-  #   2 * m''(f_k) * (A ms)_k,   A = dNLL_dV o cov_f with a zero diagonal,
-  # which is exactly the same contraction .admSigmaGrad() applies for the sigma
-  # path. Zero unless ms varies with f (i.e. TBS only), so nothing else moves.
+  # moves the OFF-diagonal of V_pred: row k picks up 2 * m''(f_k) * (A ms)_k,
+  # the same contraction .admSigmaGrad() applies for the sigma path.
   if (!is.null(cov_f) && !is.null(dNLL_dV) && !is.null(d$dms_df) && any(d$dms_df != 0, na.rm = TRUE))
     out <- out + 2 * d$dms_df * .admMsOffDiag(dNLL_dV, cov_f, d$ms)
-  # ORDINAL: V_pred[i,j] = -E[p_i]E[p_j] for i != j at the same time (the structural
-  # covariance cancels -- see .admResidApply), so mu_i reaches those entries directly
-  # with d(V_pred[i,j])/d(mu_i) = -mu_j. Nothing else carries that: dv_df is the
-  # diagonal and dms_df is zero for ordinal. Omitting it left this term with the
-  # WRONG SIGN and ~16x relative error against a numeric reference.
-  #
-  # Currently unreachable -- .admLoadSensModel() returns NULL for ordinal, which puts
-  # every estimator on a finite-difference gradient -- but the omission was silent
-  # and depended on that invariant holding, so carry the term rather than the risk.
+  # ORDINAL: V_pred[i,j] = -E[p_i]E[p_j] for i != j at the same time (the
+  # structural covariance cancels -- see .admResidApply), so mu_i reaches
+  # those entries directly with d(V_pred[i,j])/d(mu_i) = -mu_j. Currently
+  # unreachable (.admLoadSensModel() returns NULL for ordinal) but carried
+  # rather than risked.
   or_ <- arr$form == .ADM_RESID_ORDINAL
   if (any(or_) && !is.null(dNLL_dV) && !is.null(times) &&
       length(times) == length(mu_struct)) {

@@ -1,19 +1,13 @@
 # Did .adfoGrad's last call actually take the order-2 path?
 #
 # The driver's `have_d2` comes from the cached sens model's SHAPE alone;
-# `.adfoGrad` re-derives its own `use_d2` with stricter run-time requirements
-# (every study's `muj_cache[[i]]$dJ` present, every theta's direction
-# resolving in `dJ`/`dth`). When they disagree, `.adfoGrad` central-differences
-# the whole NLL per theta while the driver has already asked
-# `.adfoCalcCov(use_grad = TRUE)` to central-difference THAT -- nested FD,
-# surfacing as a normal-looking fit whose every `parFixedDf$SE` is NA. So
-# `.adfoGrad` publishes what it actually did and the driver trusts that over
-# its own prediction.
-#
-# `use_d2` is a property of (sensModel, pinfo, studies), not the parameter
-# vector. Unset means no gradient ran in THIS process (parallel restarts run
-# in daemons), so the driver declines the grad-FD Hessian and takes the Gill
-# NLL-FD one: slower, correct, and the same path 0.4.0 used by default.
+# `.adfoGrad` re-derives its own `use_d2` with stricter run-time requirements.
+# When they disagree, `.adfoGrad` central-differences the whole NLL per theta
+# while the driver has already asked for a central-difference of THAT --
+# nested FD, surfacing as a normal-looking fit whose every `parFixedDf$SE` is
+# NA. So `.adfoGrad` publishes what it actually did and the driver trusts
+# that. Unset means no gradient ran in THIS process (parallel restarts run in
+# daemons), so the driver takes the slower but always-correct Gill NLL-FD path.
 .adfo_d2_env <- new.env(parent = emptyenv())
 
 # -- FO (First-Order) aggregate data estimator ---------------------------------
@@ -43,14 +37,10 @@
 # (mu, J) for a whole SET of structural-theta configurations, in ONE rxSolve.
 #
 # struct_mat is n_cfg x n_struct (natural scale). Returns a length-n_cfg list
-# of list(mu, J), one per row -- n_cfg independent FO linearisations.
-#
-# The primitive behind FD batching: each configuration used to cost its own
-# rxSolve, and under FO each carries a single subject (~11ms fixed call cost
-# for ~0.015ms of integration). Stacking rows collapses them into one call
-# and gives rxSolve's OpenMP something to parallelise over. The FD fallback
-# (no sens model) stacks (1 + 2*n_eta) rows per configuration, so it too is
-# a single solve.
+# of list(mu, J), one per row -- n_cfg independent FO linearisations. The
+# primitive behind FD batching: each configuration used to cost its own
+# rxSolve (~11ms fixed call cost for ~0.015ms of integration), so stacking
+# rows into one call is what makes struct-theta FD affordable.
 .adfoGetMuJBatch <- function(struct_mat, pinfo, s, sensModel, rxMod, output_var, cores,
                              sigma_var = NULL) {
   n_cfg <- nrow(struct_mat)
@@ -92,13 +82,10 @@
       list(mu = vals[k, ], J = matrix(0, n_t, 0))))
   }
 
-  # CENTRAL in eta. The base row stays -- mu = f(theta, 0) is the population
-  # prediction, not just an FD baseline -- so a block is
-  # [base, +eps_1..+eps_n, -eps_1..-eps_n]. Unlike the gradient sites this J feeds
-  # V_pred = J Omega J', so its error lands in the OBJECTIVE, not only in the search
-  # direction; a forward difference carried (eps/2)|f''| of it against central's
-  # (eps^2/6)|f'''|. The extra rows ride the SAME .admSimulateRows call, so this is
-  # close to free here. .adfoGetMuJJoint pays per solve and is handled there.
+  # CENTRAL in eta: this J feeds V_pred = J Omega J', so its error lands in
+  # the OBJECTIVE, not only the search direction -- a forward difference
+  # would be far noisier. The extra rows ride the SAME .admSimulateRows call,
+  # so this is close to free here. .adfoGetMuJJoint pays per solve instead.
   eps    <- 1e-6
   n_blk  <- 1L + 2L * n_eta                 # base + one +eps and one -eps per dim
   n_row  <- n_cfg * n_blk
@@ -131,13 +118,10 @@
 .adfoVpred <- function(mu_pred, J, L, arr, n_t, n_eta, times = NULL) {
   JL <- if (n_eta > 0L) J %*% L else matrix(0, n_t, 0)
   V  <- if (n_eta > 0L) tcrossprod(JL) else matrix(0, n_t, n_t)
-  # `times` and the structural covariance are REQUIRED by any residual form that
-  # reaches the off-diagonal (ar's rho^|dt|, ordinal's cross-category term). This
-  # used to pass neither and never add ap$rmat, so adfo scored an INDEPENDENT
-  # residual: its NLL was exactly invariant in rho, while .adfoGrad() -- which does
-  # pass s$times to .admSigmaGrad -- returned a non-zero rho gradient. The optimiser
-  # therefore walked a direction the objective could not move along, and adfo
-  # reported a completely different objective from adgh/admc on identical data.
+  # `times` and the structural covariance are REQUIRED by any residual form
+  # that reaches the off-diagonal (ar's rho^|dt|, ordinal's cross-category
+  # term) -- omitting them used to score an INDEPENDENT residual whose NLL
+  # was invariant in rho while .adfoGrad() returned a non-zero rho gradient.
   ap <- .admResidApply(mu_pred, diag(V), arr, times, V)
   V <- .admApplyResidTail(V, ap)
   list(V = V, mu_sigma = ap$mu, JL = JL, ms = ap$ms, var_f = diag(tcrossprod(JL)))
@@ -166,11 +150,10 @@
                                      eta0, unit, params_mat, cores,
                                      pinfo$nDisplayProgress, pinfo$sigdig))
   if (n_eta == 0L) return(list(mu = mu, J = matrix(0, n_total, 0)))
-  # CENTRAL in eta, matching .adfoGetMuJBatch. This branch cannot batch (the
-  # joint solve is per output block), so it costs 2*n_eta solves against the old
-  # n_eta -- accepted because J enters V_pred = J Omega J' and therefore the
-  # OBJECTIVE, and because this is already the slow fallback taken only when no
-  # sensitivity model could be built.
+  # CENTRAL in eta, matching .adfoGetMuJBatch: J enters V_pred = J Omega J'
+  # and therefore the OBJECTIVE, so the extra cost is accepted (this is
+  # already the slow fallback taken only when no sensitivity model could be
+  # built).
   eps <- 1e-6; J <- matrix(0, n_total, n_eta)
   sim1 <- function(e) as.numeric(.admSimulateJoint(rxMod, pars$struct,
                                                    pinfo$sigma_names, e, unit,
@@ -188,17 +171,12 @@
 # (mu, J) memo for the FO solve.
 #
 # The FO solve depends ONLY on the structural thetas: eta is pinned at 0 and
-# Omega/sigma enter afterwards, analytically (V = J Omega J' + Sigma) --
-# verified empirically, perturbing any omega or sigma leaves mu/J unchanged.
-# So an FD direction perturbing an omega or sigma needs NO solve at all: it
-# reuses the base (mu, J), collapsing the FD gradient/Hessian's solve count
-# to the number of DISTINCT structural vectors visited.
-#
-# `cache` is an environment created per top-level call, never persisted
-# across parameter points. `struct` is the KEY, not the parameters: callers
-# append an estimated Box-Cox/Yeo-Johnson lambda to it, since that lambda
-# reaches rx_pred_ and the cached (mu, J) is no longer a function of
-# structural thetas alone.
+# Omega/sigma enter afterwards, analytically (V = J Omega J' + Sigma). So an
+# FD direction perturbing an omega or sigma needs NO solve at all: it reuses
+# the base (mu, J), collapsing the FD gradient/Hessian's solve count to the
+# number of DISTINCT structural vectors visited. `struct` is the KEY, not
+# the parameters: callers append an estimated Box-Cox/Yeo-Johnson lambda to
+# it, since that lambda reaches rx_pred_ too.
 .adfoMuJKey <- function(pars, sensModel) {
   .tbn <- if (is.null(sensModel)) NULL else sensModel$pred_tbs$lam_name
   if (!is.null(.tbn) && !is.na(.tbn) && .tbn %in% names(pars$sigma_var))
@@ -362,12 +340,9 @@
       nm <- pinfo$struct_names[k]
       ei <- which(pinfo$struct_eta_idx == k)
       # `[`, NOT `[[`: theta_dirs is a named CHARACTER vector, and `[[` with an
-      # unmatched name on an atomic vector THROWS rather than returning NULL -- so
-      # `%||% NA_character_` could never fire and the intended FD degradation was
-      # unreachable. .adfoGrad is not wrapped in a tryCatch here, so that error
-      # propagated out of eval_grad_f and killed the whole nloptr run. Reachable
-      # whenever pinfo's unpaired set and the cached model's differ. Single-bracket
-      # indexing yields NA, which is what the anyNA() check below catches.
+      # unmatched name on an atomic vector THROWS rather than returning NULL, so
+      # `%||% NA_character_` could never fire and the intended FD degradation
+      # was unreachable, killing the whole nloptr run instead.
       .td <- sensModel$theta_dirs %||% character(0)
       .dir_of[k] <- if (length(ei) > 0L && !is.na(ei[[1L]]))
         sensModel$eta_dirs[ei[[1L]]] %||% NA_character_
@@ -390,25 +365,15 @@
 
   # --- Pass 2: struct theta CENTRAL FD ----------------------------------------
   #
-  # The perturbed configurations differ ONLY in their structural
-  # thetas, and every one re-solves the same study, so they're
-  # stacked into a single rxSolve per study (.adfoGetMuJBatch)
-  # rather than driven through 2*n_s separate .adfoNLL calls --
-  # same arithmetic, same FD steps, just one call instead of
-  # (1 + 2*n_s).
-  #
-  # CENTRAL, not forward: `grad_h` is Shi21's measured per-parameter step,
-  # minimising CENTRAL-difference error (h* = (3 eps_f/|f'''|)^(1/3)). The
-  # forward optimum is a square root and far coarser, so a forward difference
-  # at the central step sits deep on the noise side -- measured 10^2-10^4x
-  # worse than central in 0.4.1.
-  #
-  # The extra n_s configurations are extra ROWS of the same batched solve,
-  # dominated by the ~11ms per CALL, so the non-joint branch pays almost
-  # nothing. Joint units keep the per-configuration path: their sensitivity
-  # solve is per output block, so batching needs a per-ID event table
-  # (deferred). Skipped entirely when the second-order block is available:
-  # struct thetas are then accumulated analytically in Pass 3.
+  # The perturbed configurations differ ONLY in their structural thetas, and
+  # every one re-solves the same study, so they're stacked into a single
+  # rxSolve per study (.adfoGetMuJBatch) instead of (1 + 2*n_s) separate
+  # .adfoNLL calls. CENTRAL, not forward: `grad_h` is Shi21's measured
+  # per-parameter step, minimising CENTRAL-difference error -- a forward
+  # difference at that step sits deep on the noise side (measured
+  # 10^2-10^4x worse than central in 0.4.1). Skipped entirely when the
+  # second-order block is available: struct thetas are then accumulated
+  # analytically in Pass 3.
   if (n_s > 0L && is.finite(nll_0) && !use_d2) {
     hs   <- pmax(abs(p[seq_len(n_s)]), 0.1) * .admGH(grad_h, seq_len(n_s))
     # Configurations 1..n_s are p + h_k; n_s+1..2*n_s are p - h_k, SAME order, so
@@ -665,22 +630,21 @@
   n_s     <- length(pinfo$struct_names)
   n_e     <- length(pinfo$sigma_names)
   n_o     <- length(pinfo$omega_par)
-  # The Hessian spans struct + sigma + OMEGA -- see .adghCalcCov() for the
-  # measurement. Excluding omega made the STRUCTURAL SEs too small (reported SE /
-  # empirical sampling SD over simulated datasets went from 0.67 to 1.17 on prop
-  # and 0.67 to 1.06 on lnorm when omega was put back), because a theta carrying
-  # an eta is correlated with that eta's variance. Falls back to the struct+sigma
-  # sub-block if the weakly-identified omega Cholesky makes the full H indefinite.
+  # The Hessian spans struct + sigma + OMEGA -- excluding omega made the
+  # STRUCTURAL SEs too small (reported SE / empirical sampling SD went from
+  # 0.67 to 1.17 on prop when omega was put back), since a theta carrying an
+  # eta is correlated with that eta's variance. Falls back to the
+  # struct+sigma sub-block if the weakly-identified omega Cholesky makes the
+  # full H indefinite.
   n_sub   <- n_s + n_e
   cov_idx <- seq_len(n_sub + n_o)
   np_cov  <- length(cov_idx)
   nms_cov <- names(p_hat)[cov_idx]
 
-  # One (mu, J) memo for the whole Hessian. The Hessian perturbs struct AND sigma
-  # (omega Cholesky is excluded), and every sigma direction -- including the
-  # struct x sigma cross terms -- reuses the solve of its struct component. The
-  # solve count therefore collapses to the number of distinct structural vectors,
-  # which is far below the 1 + 2*np_cov + 4*n_off NLL evaluations performed.
+  # One (mu, J) memo for the whole Hessian: every sigma direction reuses the
+  # solve of its struct component, so the solve count collapses to the
+  # number of distinct structural vectors, far below the NLL evaluations
+  # performed.
   cache  <- new.env(parent = emptyenv())
   nll_fn <- function(p)
     suppressMessages(.adfoNLL(p, pinfo, studies, sensModel, rxMod, output_var,
@@ -699,14 +663,10 @@
   H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
 
   if (use_grad) {
-    # CENTRAL difference of the gradient. This path only runs when the gradient
-    # is ANALYTIC (see `have_d2` at the call site) -- differencing an already
-    # finite-differenced gradient is refused there -- so the function being
-    # differenced is smooth and exact, and a forward difference wastes that: its
-    # truncation error is (h/2)|f''| against central's (h^2/6)|f'''|, and h here
-    # is pmax(|p|,0.1)*cov_h_outer ~ 7e-4, which is coarse. The symmetrisation
-    # below was papering over the asymmetry that error produced.
-    # Cost: 2*np_cov gradient evaluations against the old np_cov+1.
+    # CENTRAL difference of the gradient. Only runs when the gradient is
+    # ANALYTIC (see `have_d2` at the call site), so the function being
+    # differenced is smooth and exact -- a forward difference would waste
+    # that. Cost: 2*np_cov gradient evaluations against the old np_cov+1.
     h_c <- pmax(abs(p_hat[cov_idx]), 0.1) * cov_h_outer
     for (jj in seq_len(np_cov)) {
       ph      <- p_hat; ph[cov_idx[jj]] <- ph[cov_idx[jj]] + h_c[jj]
@@ -717,13 +677,9 @@
     }
     H <- (H + t(H)) / 2
   } else {
-    # Step selection. `pmax(abs(p), 0.1) * cov_h_outer` is a guess about how much
-    # noise the objective carries, applied identically to every parameter -- and
-    # it is the guess behind the "Hessian not positive definite ... try
-    # increasing cov_h_outer" warning below. Gill83 measures instead: it probes
-    # THIS objective and returns the step where condition error and truncation
-    # error balance, per parameter. Exact fit here, since the function it probes
-    # is the one being differenced.
+    # Step selection: gill83 probes THIS objective and returns the step where
+    # condition error and truncation error balance, per parameter, rather
+    # than a fixed `pmax(abs(p), 0.1) * cov_h_outer` guess.
     h_fd <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer,
                             .var.name = "adfoCalcCov")
     for (k in seq_len(np_cov)) {
@@ -784,13 +740,12 @@
 
   cov_full <- (2 * Hinv + t(2 * Hinv)) / 2
   # covMethod = "r,s". FO is the one estimator for which the sandwich is not
-  # merely a kurtosis correction: V = J Omega J' + Sigma is the covariance of an
-  # exactly normal individual law, so scoring FO against its own assumption
-  # would return 2H^-1 by construction. The weight is therefore built on a
-  # quadrature ensemble of the SAME model (.admSandwichGrid), while G comes from
-  # adfo's own moment map -- G describes the estimator, Omega the truth. What
-  # comes back is an SE for the FO fit that answers to the model's true
-  # nonlinear law, so it also absorbs part of the linearisation error.
+  # merely a kurtosis correction: V = J Omega J' + Sigma is the covariance of
+  # an exactly normal individual law, so scoring FO against its own
+  # assumption would return 2H^-1 by construction. The weight is instead
+  # built on a quadrature ensemble of the model's TRUE nonlinear law
+  # (.admSandwichGrid), so the SE also absorbs part of the linearisation
+  # error.
   sw_used <- FALSE
   sw_cond <- NULL
   if (isTRUE(sandwich)) {
@@ -1187,10 +1142,9 @@ adfoControl <- function(
   # leaving no durable record.
   #
   # WHERE THE WARNING ACTUALLY SURVIVES, measured rather than assumed: NOT in
-  # warnings(), and options(warn = 2) does NOT turn it into an error -- nlmixr2est
-  # intercepts and muffles conditions raised inside nlmixr2Est.*. It survives on
-  # `fit$warnings`, which print(fit) shows. That is a weaker guarantee than the
-  # obvious one, so do not reason from options(warn = 2) here.
+  # warnings(), and options(warn = 2) does NOT turn it into an error --
+  # nlmixr2est intercepts and muffles conditions raised inside
+  # nlmixr2Est.*. It survives on `fit$warnings`, which print(fit) shows.
   .grad_explicit <- !missing(grad)
   grad     <- match.arg(grad)
 
@@ -1372,14 +1326,6 @@ nlmixr2Est.adfo <- function(env, ...) {
   want_grad   <- .ctl$grad != "none"
   want_sens   <- .ctl$grad == "analytical"
   use_pure_fd <- .ctl$grad == "fd"
-  # Joint (same-subject) fits keep the analytical FO gradient: .adfoGrad's joint
-  # branch applies the omega/sigma chain rule to the stacked V = J Omega J' + res
-  # (struct thetas via FD of the joint-aware .adfoNLL, as in the single-output
-  # path). grad = "fd" still uses the pure FD gradient.
-  # Multi-compartment fits use the same per-unit gradient as single-output: the
-  # analytical omega/sigma chain rule and struct-theta FD apply per observed
-  # output (each is an independent block with its own residual error).
-
 
   # ORDERING INVARIANT: .admLoadSensModel() must run before .admLoadModel().
   #
@@ -1387,34 +1333,18 @@ nlmixr2Est.adfo <- function(env, ...) {
   # d2f/(d eta d theta), because its V_pred = J Omega J' depends on theta through J.
   # With it .adfoGrad differentiates the struct thetas analytically instead of
   # finite-differencing the whole NLL (2e-07..2e-06 relative against 8e-04..1e-02 for
-  # the FD pass it replaces). Only asked for under grad = "analytical" -- the default
-  # grad = "none" runs BOBYQA and would pay the extra compartments for nothing. A
-  # model that cannot build it transparently gets the order-1 model back.
+  # the FD pass it replaces). A model that cannot build it transparently gets the
+  # order-1 model back.
   sensModel <- if (want_sens) {
     # order 1 for a JOINT (same-subject) fit: `have_d2` below excludes joint
-    # units -- Pass 3 is not implemented for them -- so asking for order 2 would
-    # compile the cross block and integrate it on every solve for a result
-    # nothing reads. Same waste that .admLoadSensModel() already avoids for a
-    # transformed endpoint; this is the other case that reaches it.
+    # units, so asking for order 2 would compile the cross block for nothing.
     .ord <- if (any_joint) 1L else 2L
     sm <- tryCatch(.admLoadSensModel(.ui, order = .ord), error = function(e) NULL)
     if (is.null(sm)) {
-      # How loudly depends on whether the user ASKED for this gradient.
-      # Defaulted: a message, since NULL here is very often BY DESIGN (a
-      # fixed-effects-only model, an ordinal endpoint, mixed
-      # transformed/untransformed endpoints) -- those ran BOBYQA silently
-      # under the old grad = "none" default, so making "analytical" the
-      # default shouldn't turn each into a warning for a condition the user
-      # cannot act on. Explicit: a warning, since quietly giving someone who
-      # wrote grad = "analytical" the gradient they wrote it to avoid is a
-      # different matter.
-      #
-      # ... and equally on whether NULL was EXPECTED. .admLoadSensModel()
-      # also returns NULL on a genuine failure (compile error, unwritable
-      # rxTempDir()) that the user CAN act on, but a message would be
-      # discarded by suppressMessages(), leaving the same script converging
-      # to different estimates on a writable machine. So an unexplained NULL
-      # warns even when the gradient was defaulted.
+      # How loudly depends on whether the user ASKED for this gradient
+      # (defaulted -> message, since NULL is often BY DESIGN) and on whether
+      # NULL was EXPECTED (a genuine build failure warns even when defaulted,
+      # since a message would be silently discarded by suppressMessages()).
       .by_design <- tryCatch(.admSensNullByDesign(.ui, pinfo),
                              error = function(e) TRUE)
       .msg <- if (.by_design)
@@ -1449,14 +1379,12 @@ nlmixr2Est.adfo <- function(env, ...) {
 
   # Say so whenever they really are finite-differenced.
   #
-  # The gate used to also require any(!pinfo$struct_has_eta), which meant a model
-  # whose thetas are ALL mu-referenced -- the common cl <- exp(tcl + eta.cl)
-  # style -- got no notice of any kind when the order-2 build silently fell back
-  # to order 1 (a linCmt promotion that fails, an indLin bail-out, .rxSens
-  # returning nothing). The returned object is a perfectly valid order-1 sens
-  # model, so the is.null(sm) branch above does not fire either: the fit ran
-  # LBFGS on the 8e-04..1e-02 forward FD the analytic pass exists to replace,
-  # invisibly, surfacing only as slow or stalled convergence.
+  # The gate used to also require any(!pinfo$struct_has_eta), which meant a
+  # model whose thetas are ALL mu-referenced -- the common cl <- exp(tcl +
+  # eta.cl) style -- got no notice of any kind when the order-2 build
+  # silently fell back to order 1: the fit ran LBFGS on the 8e-04..1e-02
+  # forward FD the analytic pass exists to replace, invisibly, surfacing
+  # only as slow or stalled convergence.
   if (pinfo$n_eta > 0L && want_sens && !have_d2) {
     message(if (any_joint)
       "adfo: joint (same-subject) study -- struct thetas by central FD."
@@ -1497,11 +1425,9 @@ nlmixr2Est.adfo <- function(env, ...) {
   }
 
   # Measure the gradient's FD steps ONCE, here, and let every later difference
-  # reuse them (the mechanism FOCEI's numericGrad uses at nF == 1). Only for the
-  # parameters that are ACTUALLY finite-differenced -- under grad = "fd" that is
-  # all of them, otherwise just the struct thetas of Pass 2, and when Pass 3 has
-  # the order-2 block there are none at all and the probe is skipped entirely,
-  # leaving `.ctl$grad_h` the scalar it was.
+  # reuse them. Only for the parameters that are ACTUALLY finite-differenced --
+  # under grad = "fd" that is all of them, otherwise just the struct thetas of
+  # Pass 2, and when Pass 3 has the order-2 block there are none at all.
   .fd_idx <- if (!want_grad) integer(0)
     else if (use_pure_fd) seq_along(ov$p0)
     else if (!have_d2) seq_len(length(pinfo$struct_names))
@@ -1623,25 +1549,11 @@ nlmixr2Est.adfo <- function(env, ...) {
     #
     # `have_d2`, not `want_grad`: central-differencing the gradient is only
     # sound if that gradient is smooth (actually analytic). Gated on
-    # want_grad alone it fired in cases where it isn't:
-    #   * sens model failed to load -- want_sens FALSE but
-    #     want_grad still TRUE -- so the Hessian
-    #     central-differenced an already-finite-differenced
-    #     gradient, giving a singular H and "standard errors are
-    #     unavailable for this fit".
-    #   * a transformed endpoint, where the order-2 block is
-    #     deliberately absent and Pass 2 already
-    #     central-differences the whole NLL at grad_h = 1e-4,
-    #     nesting cov_h_outer ~ 2.4e-3 on top.
-    #   * the runtime case `have_d2` can't see: the sens model HAS
-    #     a d2 block, but `.admGetMuJBatch` fell through to its
-    #     FD-Jacobian branch, so no study carries `dJ` and
-    #     .adfoGrad finite-differenced after all.
-    # All three take the Gill NLL-FD Hessian, matching 0.4.0's default and
-    # the covariance calibration the docs were measured on. The third case is
-    # only knowable from what .adfoGrad DID, so require that too: NULL (no
-    # gradient ran in this process, e.g. parallel restarts) is not TRUE, so
-    # the safe branch is taken.
+    # want_grad alone it fired for a sens model that failed to load, a
+    # transformed endpoint (order-2 block deliberately absent), or a runtime
+    # fallback to FD `.adfoGrad` couldn't see coming -- so require what
+    # `.adfoGrad` actually did too (NULL, e.g. from parallel restarts, is
+    # not TRUE, so the safe NLL-FD branch is taken).
     use_grad_cov <- want_grad && have_d2 && isTRUE(.adfo_d2_env$used_d2)
     n_evals <- if (use_grad_cov) {
       np_cov + 1L
