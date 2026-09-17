@@ -283,7 +283,10 @@ covariance for admixr2 to match"),
        # built directly by a unit test gets; the estimators set it from the control.
        sigdig           = NULL,
        eta_names       = eta_names, n_eta = n_eta,
-       eta_col_names   = paste0("eta.", gsub("^eta\\.", "", eta_names)),
+       # paste0("eta.", character(0)) is "eta." (length 1), not character(0) --
+       # guarded so a 0-eta colnames<- in .adghGrid's covariate path doesn't fail.
+       eta_col_names   = if (n_eta > 0L)
+         paste0("eta.", gsub("^eta\\.", "", eta_names)) else character(0),
        omega_par       = omega_par,
        omega_par_names = omega_par_names,
        chol_i          = chol_i, chol_j = chol_j, chol_diag = chol_diag,
