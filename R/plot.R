@@ -1042,15 +1042,13 @@ head.paged_df <- function(x, n = 6L, ...) {
   # zero. Three cohorts drawing weight from the same distribution have medians
   # a few hundred grams apart -- sampling noise in the fitted margins, not
   # evidence -- and an exact-equality guard let that draw a facet, blow it up to
-  # full panel width on a free x scale, and fit a trend through it. Half the
-  # typical 10th-90th is the bar: narrower than that and the sources are, for
-  # this purpose, at the same value.
+  # full panel width on a free x scale, and fit a trend through it.
   #
-  # A TENTH of the typical 10th-90th, not a half. Two cohorts at 70 kg and
-  # 90 kg with a 20% CV overlap heavily and still carry a real contrast; what
-  # this has to catch is the case where the sources declared the SAME
-  # distribution and differ only in what a finite sample of it estimated,
-  # which lands two orders of magnitude below.
+  # A TENTH of the typical 10th-90th is the bar. Two cohorts at 70 kg and 90 kg
+  # with a 20% CV overlap heavily and still carry a real contrast, so the bar
+  # cannot be set near the spread itself; what this has to catch is sources that
+  # declared the SAME distribution and differ only in what a finite sample of it
+  # estimated, which lands two orders of magnitude below.
   w <- stats::median(df$xhi - df$xlo, na.rm = TRUE)
   if (!is.finite(w)) w <- 0
   if (diff(range(df$x)) <= max(0, 0.1 * w)) return(NULL)
