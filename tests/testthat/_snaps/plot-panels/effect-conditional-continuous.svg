@@ -115,8 +115,8 @@
 <rect x='644.21' y='390.65' width='17.28' height='17.28' style='stroke-width: 1.07; stroke: none; fill: #FFFFFF;' />
 <polygon points='649.72,399.29 652.85,396.16 655.97,399.29 652.85,402.42 ' style='stroke-width: 0.71; stroke: none; fill: #000000;' />
 <text x='666.96' y='402.32' style='font-size: 8.80px; font-family: sans;' textLength='42.08px' lengthAdjust='spacingAndGlyphs'>conditional</text>
-<text x='27.90' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='227.14px' lengthAdjust='spacingAndGlyphs'>dotted: estimated effect  |  points: each source at its own published value </text>
-<text x='27.90' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='259.17px' lengthAdjust='spacingAndGlyphs'>solid bar = conditional (range covered), whisker = marginal (10th-90th, 2.5th-97.5th)</text>
+<text x='27.90' y='27.60' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='225.96px' lengthAdjust='spacingAndGlyphs'>dotted: the ESTIMATED effect  |  each source at its own published value </text>
+<text x='27.90' y='35.16' style='font-size: 7.00px; fill: #666666; font-family: sans;' textLength='351.24px' lengthAdjust='spacingAndGlyphs'>CONDITIONAL: its own regression over the range it covers  |  MARGINAL: a whisker, 10th-90th over 2.5th-97.5th</text>
 <text x='27.90' y='14.56' style='font-size: 13.20px; font-family: sans;' textLength='264.91px' lengthAdjust='spacingAndGlyphs'>Estimated covariate effect against its sources</text>
 </g>
 </svg>

@@ -470,9 +470,10 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## source the same black as the first: two entries in one legend, identically
 ## coloured, with nothing saying they were different studies. A per-band
 ## design with ten sources is an ordinary thing to plot.
-.admOkabeIto <- function(n) {
+.admOkabeIto <- function(n, black = TRUE) {
   ok <- c("#000000", "#E69F00", "#56B4E9", "#009E73",
           "#0072B2", "#D55E00", "#CC79A7")
+  if (!black) ok <- ok[-1L]
   if (n <= length(ok)) ok[seq_len(max(n, 0L))]
   else grDevices::hcl.colors(n, "Dark 3")
 }
@@ -651,9 +652,13 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## the residual panel keeps the strata apart -- so an unnamed palette hands the
 ## same source different positions in the vector and it comes out orange on one
 ## panel and blue on the other. Built once from the union of both.
+## BLACK IS RESERVED for the estimated effect, which both panels draw in it.
+## A source in black could not be told from the fit it is being compared
+## against -- and on the level axis, where both are a line joining two points,
+## they were indistinguishable.
 .admCovPalette <- function(nms) {
   nms <- sort(unique(nms[!is.na(nms)]))
-  stats::setNames(.admOkabeIto(length(nms)), nms)
+  stats::setNames(.admOkabeIto(length(nms), black = FALSE), nms)
 }
 
 ## Scales and styling shared by the two covariate panels.
@@ -855,13 +860,6 @@ head.paged_df <- function(x, n = 6L, ...) {
     pos <- if (cond) sort(unique(mid[ii])) else mid[ii][1L]
     ref <- if (cond) ii[match(pos, mid[ii])] else ii[1L]
 
-    # The solid line is a RANGE, and only a continuous covariate gives one: a
-    # renal band of 45-75 is an extent, a stratum at SEX = 0 is a level. Drawn
-    # across the declared 0-1 it would claim the stratum covers both. One
-    # reported value only, too: a source with several bands has a declared
-    # range per band and the study no longer says which is which.
-    rg <- if (cond && !is_disc && length(pos) == 1L)
-      .admCovSourceRange(so, cv) else NULL
 
     do.call(rbind, lapply(seq_along(pos), function(k) {
       a <- utils::modifyList(at_own, stats::setNames(list(pos[k]), cv))
@@ -878,14 +876,56 @@ head.paged_df <- function(x, n = 6L, ...) {
           study = sn,
           kind  = if (cond) "conditional" else "marginal",
           x     = pos[k],
-          xlo   = if (is.null(rg)) .or(lo,  i0) else rg[1L],
-          xhi   = if (is.null(rg)) .or(hi,  i0) else rg[2L],
-          xlo2  = if (is.null(rg)) .or(lo2, i0) else rg[1L],
-          xhi2  = if (is.null(rg)) .or(hi2, i0) else rg[2L],
+          xlo   = .or(lo,  i0), xhi  = .or(hi,  i0),
+          xlo2  = .or(lo2, i0), xhi2 = .or(hi2, i0),
           y     = as.numeric(o[[pp]]),
           stringsAsFactors = FALSE)))
     }))
   }))
+
+  # THE SOURCE'S OWN REGRESSION, over the range it covers.
+  #
+  # Only for a source CONDITIONAL on this covariate, because that is the source
+  # that reported a relationship here: its model estimated the effect, which is
+  # what let it be banded or read at a value in the first place. A marginal
+  # source reported no contrast along this axis and has no line of its own --
+  # its whisker says what it covered, and nothing about slope.
+  #
+  # This is the comparison the panel exists for. The dotted line is the
+  # meta-analysis; a source's own line running at a different slope over a
+  # range that source actually enrolled is a paper the fit does not reproduce,
+  # and the two being parallel but offset is a different finding from the two
+  # crossing.
+  slines <- do.call(rbind, Filter(Negate(is.null),
+    lapply(names(by_src), function(sn) {
+      ii <- by_src[[sn]]
+      ii <- ii[is.finite(mid[ii])]
+      if (!length(ii) || !any(knd[ii] == "conditional")) return(NULL)
+      so <- src[[sn]]
+      if (is.null(so) || is.null(so[["ui"]])) return(NULL)
+      sml <- .admModelLines(so[["ui"]])
+      if (is.null(sml) || !length(.admLinesReading(sml, cv))) return(NULL)
+      # On a level axis the source's own line joins the levels it reported, the
+      # same way the dotted estimated effect does. On a continuous one it needs
+      # the range it covers, and a source that declared none has no extent to
+      # draw over -- a point value gets a diamond and no line.
+      g <- if (is_disc) sort(unique(mid[ii])) else {
+        rg <- .admCovSourceRange(so, cv)
+        if (is.null(rg)) return(NULL)
+        seq(rg[1L], rg[2L], length.out = 40L)
+      }
+      if (length(g) < 2L) return(NULL)
+      a <- utils::modifyList(.admCovSourceAt(so, so[["ui"]]),
+                             stats::setNames(list(g), cv))
+      v <- tryCatch(.admEvalModelLines(sml, a), error = function(e) list())
+      v <- Filter(function(z) length(z$value) == length(g) &&
+                    all(is.finite(z$value)), v)
+      if (!length(v)) return(NULL)
+      do.call(rbind, lapply(Filter(function(z) z$name %in% params, v),
+        function(z) data.frame(
+          cov = cv, param = z$name, study = sn, x = g,
+          y = as.numeric(z$value), stringsAsFactors = FALSE)))
+    })))
 
   # EXTRAPOLATION, the same idea on both kinds of axis: grey marks where the
   # fit is speaking past its sources. On a continuous axis that is the padding
@@ -914,7 +954,7 @@ head.paged_df <- function(x, n = 6L, ...) {
       }
     }
 
-  list(curve = curve, marks = mk, shade = shade)
+  list(curve = curve, marks = mk, shade = shade, slines = slines)
 }
 
 
@@ -1141,6 +1181,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   curve_df <- do.call(rbind, lapply(eff, `[[`, "curve"))
   marks_df <- do.call(rbind, lapply(eff, `[[`, "marks"))
   shade_df <- do.call(rbind, lapply(eff, `[[`, "shade"))
+  sline_df <- do.call(rbind, lapply(eff, `[[`, "slines"))
   if (is.null(curve_df) || !nrow(curve_df)) return(NULL)
   # Degenerate padding (a covariate covering the whole grid) would draw a
   # zero-width rect; harmless, but it puts a stray border on the panel.
@@ -1180,15 +1221,15 @@ head.paged_df <- function(x, n = 6L, ...) {
   # or reported across -- a stated extent. MARGINAL: a whisker, because what it
   # reported is a distribution, and drawing that as a line would claim the
   # source covers its tails as evenly as its middle.
+  # A CONDITIONAL source's own regression, solid, over the range it covers.
+  if (!is.null(sline_df) && nrow(sline_df))
+    p_eff <- p_eff + ggplot2::geom_line(
+      data = sline_df, inherit.aes = FALSE,
+      ggplot2::aes(x = x, y = y, colour = study,
+                   group = paste(study, param)),
+      linewidth = 1.1)
   if (!is.null(marks_df) && nrow(marks_df)) {
-    cond <- marks_df[marks_df$kind == "conditional" &
-                       marks_df$xhi > marks_df$xlo, , drop = FALSE]
     marg <- marks_df[marks_df$kind == "marginal", , drop = FALSE]
-    if (nrow(cond))
-      p_eff <- p_eff + ggplot2::geom_segment(
-        data = cond, inherit.aes = FALSE,
-        ggplot2::aes(x = xlo, xend = xhi, y = y, yend = y, colour = study),
-        linewidth = 1.4)
     if (nrow(marg))
       p_eff <- p_eff +
         ggplot2::geom_segment(
@@ -1219,10 +1260,11 @@ head.paged_df <- function(x, n = 6L, ...) {
     ggplot2::labs(
       title = "Estimated covariate effect against its sources",
       x = "Covariate value", y = "Parameter value",
-      subtitle = paste("dotted: estimated effect  |  points: each source at",
-                       "its own published value",
-                       "\nsolid bar = conditional (range covered),",
-                       "whisker = marginal (10th-90th, 2.5th-97.5th)"))
+      subtitle = paste("dotted: the ESTIMATED effect  |  each source at its",
+                       "own published value",
+                       "\nCONDITIONAL: its own regression over the range it",
+                       "covers  |  MARGINAL: a whisker, 10th-90th over",
+                       "2.5th-97.5th"))
   # Styling comes from .admCovPanelStyle(), added with the marks above. A fit
   # with no marks at all still needs it.
   if (is.null(marks_df) || !nrow(marks_df))

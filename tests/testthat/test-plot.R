@@ -702,3 +702,81 @@ test_that(".admFitSourceStudies is absent rather than fatal", {
   expect_null(.admFitSourceStudies(list()))
   expect_null(.admFitSourceStudies(list(env = new.env())))
 })
+
+test_that(".admCovEffectData draws a conditional source's own regression", {
+  skip_if_not_installed("rxode2")
+  # A source CONDITIONAL on the covariate reported a relationship along this
+  # axis -- its model estimated the effect, which is what let it be banded or
+  # read at a value. Its own line over the range it covers, against the dotted
+  # estimated effect, is the comparison the panel exists for.
+  #
+  # One source BANDED into two strata, which is what gives it a contrast of its
+  # own to draw. A source that reported a single level has no slope of its own,
+  # whatever its model estimates, and correctly gets no line.
+  band <- function(sex) list(
+    n = 100L, cov = list(WT = 80, SEX = sex),
+    cov_dist = list(WT  = list(meanlog = log(80), sdlog = 0.2),
+                    SEX = list(.point = TRUE)))
+  st  <- list(a_s1 = band(0), a_s2 = band(1))
+  src <- list(a = list(
+    ui = .cov_ui(), range = list(WT = c(60, 100)),
+    population = list(WT  = list(meanlog = log(80), sdlog = 0.2),
+                      SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))))
+
+  d <- .admCovEffectData(.cov_ui(), "SEX", st,
+                         list(tcl = log(5), bwt = 0.75, bsex = 0.2), src)
+  expect_false(is.null(d$slines))
+  expect_equal(unique(d$slines$study), "a")
+  # Its own line joins the levels it reported. `.cov_ui()` at its own ini:
+  # exp(0.2) between them.
+  y <- d$slines$y[order(d$slines$x)]
+  expect_equal(y[2L] / y[1L], exp(0.2), tolerance = 1e-8)
+
+  # A source reporting ONE level has no contrast of its own to draw.
+  one <- .admCovEffectData(.cov_ui(), "SEX", .cov_studies(),
+                           list(tcl = log(5), bwt = 0.75, bsex = 0.2),
+                           .cov_src())
+  expect_null(one$slines)
+
+  # A MARGINAL source has no line either. It reported no contrast along this
+  # axis; its whisker says what it covered and nothing about slope.
+  w <- .admCovEffectData(.cov_ui(), "WT", .cov_studies(),
+                         list(tcl = log(5), bwt = 0.75, bsex = 0.2),
+                         .cov_src())
+  expect_true(all(w$marks$kind == "marginal"))
+  expect_null(w$slines)
+})
+
+test_that(".admCovEffectData needs a declared range for a continuous one", {
+  skip_if_not_installed("rxode2")
+  # A conditional CONTINUOUS covariate: the line needs an extent, and the only
+  # thing that gives one is the range the source declared it enrolled. A point
+  # value gets a diamond and no line.
+  # TEN distinct conditioned values, which is past .admCovLevels()' level cap.
+  # Fewer than that and a set of pinned values reads as a factor, and the
+  # discrete branch joins the levels instead -- needing no declared range.
+  pin <- function(wt) list(
+    n = 100L, cov = list(WT = wt, SEX = 0),
+    cov_dist = list(SEX = list(.point = TRUE), WT = list(.point = TRUE)))
+  wts <- c(58, 63, 68, 73, 78, 83, 88, 93, 98, 103)
+  st  <- stats::setNames(lapply(wts, pin), sprintf("a_s%d", seq_along(wts)))
+
+  pop <- list(SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  with_rng <- list(a = list(ui = .cov_ui(), range = list(WT = c(60, 100)),
+                            population = pop))
+  no_rng   <- list(a = list(ui = .cov_ui(), population = pop))
+  th <- list(tcl = log(5), bwt = 0.75, bsex = 0.2)
+
+  d <- .admCovEffectData(.cov_ui(), "WT", st, th, with_rng)
+  expect_false(is.null(d$slines))
+  expect_equal(range(d$slines$x), c(60, 100))
+
+  expect_null(.admCovEffectData(.cov_ui(), "WT", st, th, no_rng)$slines)
+})
+
+test_that(".admCovPalette leaves black to the estimated effect", {
+  # Both panels draw the fit in black. A source in black could not be told from
+  # the thing it is being compared against -- and on a level axis, where both
+  # are a line joining two points, they were indistinguishable.
+  expect_false("#000000" %in% .admCovPalette(c("a", "b", "c")))
+})

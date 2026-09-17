@@ -45,7 +45,10 @@
   study's mean residual against it -- a slope is a bad covariate form.
 
 * **The effect panel compares the estimated effect against its sources**: a
-  dotted line, each source at its OWN published parameter value.
+  dotted line, against each source's own published model.
+
+* **A conditional source draws its OWN regression over the range it covers**;
+  a marginal one draws a whisker, because what it reported is a distribution.
 
 * **One mark per source per facet**, not one per stratum, so a source banded on
   sex no longer draws twice on every other covariate's panel.
@@ -201,6 +204,9 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 * **An eighth source gets its own colour** instead of the first one's, via an
   HCL ramp past the seven Okabe-Ito hues.
+
+* **Black is reserved for the fit** in the covariate panels, so no source is
+  drawn in the colour of the thing it is compared against.
 
 ## Internal changes
 

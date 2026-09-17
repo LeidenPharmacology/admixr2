@@ -22,8 +22,8 @@
 #
 # `mild` below is CONDITIONAL on renal function and the other two are
 # MARGINAL on it, so one figure carries both readings of the same
-# covariate: a diamond with a solid line across the band it reported,
-# against two whiskers over the distributions their populations imply.
+# covariate: its own regression line across the band it reported, against
+# two whiskers over the distributions their populations imply.
 #
 # Both are used for estimation. Splitting a source on a covariate its model
 # never saw would manufacture a contrast that is not in the literature.
@@ -83,24 +83,32 @@ TIMES <- c(0.5, 1, 2, 4, 8, 12, 24)
 mk <- function(co) admStudy(model = with_renal, population = co, dose = 200,
                             times = TIMES, stratify = "SEX")
 
-# CONDITIONAL on renal function: this paper reported its result AT a renal
-# value, the way a per-subgroup table gives it to you. `at` pins it, so CRCL
-# leaves `population` -- a population cannot also give a pinned covariate a
-# distribution.
+# CONDITIONAL on renal function: this paper reported its result BY renal band,
+# so it is banded on CRCL as well as sex. `range` is the band it enrolled --
+# without it admixr2 cuts the strata from the whole declared distribution and
+# credits the source with evidence outside its own band.
 #
-# On the CRCL panel it therefore draws as a DIAMOND with no spread, against the
-# other two sources' whiskers. That is the difference the panel exists to show:
-# this paper reported a result for a renal value, those two only reported who
-# they enrolled.
+# On the CRCL panel it therefore draws as ITS OWN REGRESSION LINE across
+# 50-75 -- its published model, at its published values, over the range it
+# covers -- against the other two sources' whiskers. That is the comparison the
+# panel exists for: a source's own line at a different slope from the dotted
+# estimated effect is a paper the meta-analysis does not reproduce.
 #
-# It does not band on sex. A paper that published a renal breakdown need not
-# have published a sex one, and you can only band on what was reported.
-mk_at <- function(co, v)
-  admStudy(model = with_renal, population = co[c("WT", "SEX")], dose = 200,
-           times = TIMES, at = list(CRCL = v))
+# Its population is given as explicit MARGINS rather than a table. A table
+# carries the observed covariate correlations, banding on a correlated
+# covariate then builds a joint sampler for the stratum, and the null model
+# cannot drop a covariate out of one -- see `?covDist`.
+mk_band <- function(crclm, band)
+  admStudy(model = with_renal,
+           population = covDist(WT   = c(meanlog = log(76), sdlog = 0.198),
+                                CRCL = c(meanlog = log(crclm), sdlog = 0.05),
+                                SEX  = c(female = 0.5, male = 0.5)),
+           n = 210L, dose = 200, times = TIMES,
+           stratify = c("SEX", "CRCL"), strata_nodes = 1L,
+           range = list(CRCL = band))
 
 studies <- admStudies(normal   = mk(draw(260L, 95)),
-                      mild     = mk_at(draw(210L, 62), 62),
+                      mild     = mk_band(62, c(50, 75)),
                       moderate = mk(draw(180L, 38)))
 
 run <- function(m) nlmixr2(m, admData(), est = "adgh",
@@ -126,10 +134,11 @@ message("\nLook at covariate-resid-null.png: the SEX facet joins each source's")
 message("two strata in grey (a contrast, flat = correctly specified), while")
 message("CRCL keeps a dashed lm and plunges -- the deleted renal term.")
 message("\nAnd covariate-effect.png carries BOTH readings on one figure.")
-message("cl vs CRCL: 'mild' reported AT a renal value, so it is CONDITIONAL --")
-message("a diamond, no spread. 'normal' and 'moderate' reported only who they")
+message("cl vs CRCL: 'mild' reported BY renal band, so it is CONDITIONAL --")
+message("its OWN regression line across 50-75, to compare against the dotted")
+message("estimated effect. 'normal' and 'moderate' reported only who they")
 message("enrolled, so they are MARGINAL -- a whisker over the distribution")
-message("admixr2 integrates. cl vs SEX: the two banded analysts")
+message("admixr2 integrates. cl vs SEX: every analyst")
 message("banded on sex, so each source has one mark per level, and the gap")
 message("between its own marks is that paper's own sex effect -- read it")
 message("against the gap in the dotted estimated effect.")
