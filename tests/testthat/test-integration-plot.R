@@ -269,18 +269,24 @@ test_that("plot.admFit: collapsing a banded source reproduces the unbanded one",
   expect_null(cs$studies$A$cov)
 })
 
-test_that("plot.admFit covariates: one source earns no residual panel", {
+test_that("plot.admFit covariates: one source keeps only its LEVEL facet", {
   skip_if_not_installed("nlmixr2est")
   env <- .int_cov_plot()
   out <- .pdf_plot_int(plot(env$fit, which = "covariate", n_sim = 200L))
   expect_s3_class(out$covariate_effect, "gg")
-  # There is ONE source here, so there is no BETWEEN-study residual to read.
-  # Its WT strata are quadrature nodes -- how admixr2 cut that source's own
-  # distribution up -- and plotting them as points on a between-study panel
-  # manufactures a contrast out of an internal discretisation. The effect panel
-  # still draws, because what that panel compares is the source's own model
-  # against the fitted line.
-  expect_null(out$covariate_resid)
+  expect_s3_class(out$covariate_resid,  "gg")
+  # ONE source, so the two facets earn their place differently. WT is
+  # continuous and this source's positions on it are quadrature nodes -- how
+  # admixr2 cut its own distribution up -- so there is no between-study
+  # contrast and the facet goes. SEX is a level axis, where the source's two
+  # strata ARE the contrast banding bought, and the pair stays.
+  rd <- out$covariate_resid$data
+  expect_setequal(unique(rd$cov), "SEX")
+  expect_equal(nrow(rd), 2L)
+  expect_setequal(rd$x, c(0, 1))
+  expect_true(all(rd$paired))
+  # Named for the source on both rows: `A_s1` is an index into the expansion.
+  expect_setequal(rd$study, "A")
   # WT is swept; SEX is banded, so its facet is the two levels and nothing
   # between them. ONE estimated-effect line per facet -- other covariates sit
   # at the pooled centre, and the line is the thing the sources are compared

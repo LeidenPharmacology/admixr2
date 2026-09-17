@@ -50,8 +50,7 @@ Suggests:
     numDeriv,
     patchwork,
     rmarkdown,
-    testthat (>= 3.0.0),
-    vdiffr
+    testthat (>= 3.0.0)
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 Config/testthat/parallel: true
