@@ -51,6 +51,14 @@ four. It has its own section, with its own fit, further down.
 
 ## Mean diagnostics
 
+`sqrt(diag(V))` is the total SD of **one observation across subjects**, not
+between-subject variability --- it carries BSV, residual error, and, wherever a
+study marginalises a covariate, the spread that covariate induces. The panels
+name the terms from the fit rather than assuming them, and the predicted ribbon
+draws the **pre-sigma part inside** the total, so the gap between the two bands
+is the residual error. A predicted spread that misses the observed one then
+tells you whether to look at omega and the covariates or at the error model.
+
 A 2×2 grid **per source**. `stratify` bands a source into one study per
 covariate level because a covariate a study marginalises over is not identified
 against a random effect on the same parameter --- the objective has to sum over

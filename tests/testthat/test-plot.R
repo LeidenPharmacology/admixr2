@@ -782,3 +782,43 @@ test_that(".admCollapseSources renormalises over the strata it has", {
   expect_equal(as.numeric(out$studies$a$E), 2.5)
   expect_equal(as.numeric(out$studies$a$n), 40)
 })
+
+test_that(".admVarParts names what V actually contains", {
+  # `sqrt(diag(V))` is the total SD of one observation across subjects -- NOT
+  # between-subject variability, which is only one of its terms. Labelling it
+  # as BSV points a reader at omega for a misfit that may be all error model.
+  plain <- list(a = list(E = 1, V = 1, n = 10))
+  expect_equal(.admVarParts(plain, n_eta = 1L), "BSV + sigma")
+  # No random effects: no BSV term to name.
+  expect_equal(.admVarParts(plain, n_eta = 0L), "sigma")
+  # A marginalised covariate puts its own spread into V as well.
+  cov <- list(a = list(E = 1, V = 1, n = 10,
+                       cov_dist = list(WT = list(mu = 70, sd = 10))))
+  expect_equal(.admVarParts(cov, n_eta = 1L),
+               "BSV + covariate spread + sigma")
+  # A covariate the model stopped reading still shaped the reported V.
+  drop <- list(a = list(E = 1, V = 1, n = 10,
+                        .adm_cov_dropped = list(WT = list(mu = 70, sd = 10))))
+  expect_equal(.admVarParts(drop, n_eta = 1L),
+               "BSV + covariate spread + sigma")
+})
+
+test_that(".admCollapseSources carries the structural variance too", {
+  # The predicted total and the pre-sigma part both collapse by the mixture
+  # law. The structural part's BETWEEN term is the banded covariate's own
+  # contribution: banding moved that covariate out of each stratum's spread
+  # and into the spacing between them.
+  st <- list(a_s1 = list(E = c(2), V = matrix(1), n = 50, times = 1),
+             a_s2 = list(E = c(6), V = matrix(1), n = 50, times = 1))
+  ag <- list(
+    a_s1 = list(pred = list(E = c(2), V = matrix(2), V_struct = matrix(1))),
+    a_s2 = list(pred = list(E = c(6), V = matrix(2), V_struct = matrix(1))))
+  out <- .admCollapseSources(st, ag)
+  # within 1 + between (4) = 5 on the structural part; total adds sigma.
+  expect_equal(as.numeric(out$agg$a$pred$V_struct), 5)
+  expect_equal(as.numeric(out$agg$a$pred$V), 6)
+  # A transforming error model drops V_struct rather than rescale it, and the
+  # collapse has to survive that.
+  ag2 <- ag; ag2$a_s2$pred$V_struct <- NULL
+  expect_null(.admCollapseSources(st, ag2)$agg$a$pred$V_struct)
+})

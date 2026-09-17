@@ -360,13 +360,24 @@ head.paged_df <- function(x, n = 6L, ...) {
     # `output` can't describe its rows (.admResidRows() would build the whole
     # array from the first endpoint's spec). Route through .admJointResidual(),
     # the estimators' own per-row-output path.
+    # The STRUCTURAL variance, before residual error is composed onto it: the
+    # spread the model itself produces across subjects, from the etas and from
+    # the covariate distribution where there is one. Kept because `V` alone
+    # cannot say WHICH component a misfit is in, and "the spread is wrong"
+    # sends a reader to omega whether or not that is where the problem is.
+    V_str  <- crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat)
     res    <- if (isTRUE(s$is_joint))
-      .admJointResidual(mu, crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat),
-                        s, pinfo_r, sv)
+      .admJointResidual(mu, V_str, s, pinfo_r, sv)
     else
-      .add_sigma(crossprod(sweep(cp_mat, 2L, mu)) / nrow(cp_mat), mu,
-                 s$output %||% out_var, s$times, attr(cp_mat, "phi"), cp_mat)
-    V_pred <- res$V; mu <- res$mu
+      .add_sigma(V_str, mu, s$output %||% out_var, s$times,
+                 attr(cp_mat, "phi"), cp_mat)
+    V_pred <- res$V
+    # A transforming error model (TBS, lognormal) moves the mean as well, and
+    # then the pre-sigma variance is not on `V`'s scale and must not be drawn
+    # against it. Dropped rather than rescaled: a wrong inner band is worse
+    # than none.
+    if (!isTRUE(all.equal(as.numeric(mu), as.numeric(res$mu)))) V_str <- NULL
+    mu <- res$mu
     obs_E  <- as.numeric(s$E)
     obs_V  <- as.matrix(s$V)
     # Joint row labels repeat the times across endpoints, so label them by the
@@ -378,7 +389,7 @@ head.paged_df <- function(x, n = 6L, ...) {
     dimnames(V_pred) <- dimnames(obs_V) <- list(tnm, tnm)
     list(times = s$times, n = s$n,
          obs  = list(E = obs_E, V = obs_V),
-         pred = list(E = mu,    V = V_pred))
+         pred = list(E = mu,    V = V_pred, V_struct = V_str))
   }), names(studies))
 }
 
@@ -1283,6 +1294,21 @@ head.paged_df <- function(x, n = 6L, ...) {
                        "times"))
 }
 
+## What `V` actually contains, as a label.
+##
+## `sqrt(diag(V))` is the total SD of one observation across subjects -- NOT
+## between-subject variability, which is only one of its terms. It also carries
+## residual error, and, wherever a study marginalises a covariate, the spread
+## that covariate induces. Calling it "between-subject SD" points a reader at
+## omega for a misfit that may be entirely in the error model.
+.admVarParts <- function(studies, n_eta = 1L) {
+  has_cov <- any(vapply(studies, function(z)
+    !is.null(z[["cov_dist"]]) || !is.null(z[[".adm_cov_dropped"]]),
+    logical(1)))
+  paste(c(if (n_eta > 0L) "BSV", if (has_cov) "covariate spread", "sigma"),
+        collapse = " + ")
+}
+
 ## ---- putting a banded source back together ---------------------------------
 ##
 ## `stratify` is a LIKELIHOOD device. A covariate a study marginalises over is
@@ -1342,6 +1368,13 @@ head.paged_df <- function(x, n = 6L, ...) {
                           lapply(has, function(k) studies[[k]]$V), nk)
     prd <- .admMixMoments(lapply(has, function(k) agg[[k]]$pred$E),
                           lapply(has, function(k) agg[[k]]$pred$V), nk)
+    # The structural part collapses by the same law. Its BETWEEN term is the
+    # banded covariate's own contribution -- banding moved that covariate out
+    # of each stratum's spread and into the spacing between them, so a source
+    # whose strata are far apart carries it here and nowhere else.
+    vs <- lapply(has, function(k) agg[[k]]$pred$V_struct)
+    prd$V_struct <- if (any(vapply(vs, is.null, logical(1)))) NULL else
+      .admMixMoments(lapply(has, function(k) agg[[k]]$pred$E), vs, nk)$V
 
     s0 <- studies[[has[1L]]]
     s0$E <- obs$E; s0$V <- obs$V; s0$n <- sum(nk)
@@ -1352,8 +1385,12 @@ head.paged_df <- function(x, n = 6L, ...) {
       s0[[".adm_cov_dropped"]] <- NULL
     }
     st2[[sn]] <- s0
-    ag2[[sn]] <- utils::modifyList(agg[[has[1L]]],
-                                   list(obs = obs, pred = prd))
+    # `pred` is REPLACED, not merged. modifyList() merges recursively and drops
+    # nothing that the replacement does not name, so a stratum-level V_struct
+    # survived into the collapsed source -- stratum 1's within-level spread
+    # presented as the paper's, exactly the error this helper exists to avoid.
+    ag2[[sn]] <- utils::modifyList(agg[[has[1L]]], list(obs = obs))
+    ag2[[sn]][["pred"]] <- prd
   }
   list(studies = st2, agg = ag2[names(st2)])
 }
@@ -1604,6 +1641,10 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
     .admCollapseSources(studies, agg) else list(studies = studies, agg = agg)
   studies_src <- .src$studies
   agg_src     <- .src$agg
+  # What `V` contains, named from THIS fit rather than assumed. See
+  # .admVarParts(): the total is not between-subject variability, and saying so
+  # sends a reader to omega for a misfit that may be all error model.
+  v_parts <- .admVarParts(studies, nrow(extra$omega %||% matrix(0, 0, 0)))
 
   if ("mean" %in% which) for (nm in names(studies_src)) {
     s   <- studies_src[[nm]]
@@ -1614,6 +1655,12 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
     mu         <- ag$pred$E
     V_pred     <- ag$pred$V
     pred_sd    <- sqrt(diag(V_pred))
+    # The structural part, if this error model left it on `V`'s scale. Drawn as
+    # an INNER band so the gap to the outer one is the residual error: a reader
+    # seeing the predicted spread miss the observed one can then tell whether
+    # to look at omega and the covariates, or at sigma.
+    V_str      <- ag$pred$V_struct
+    str_sd     <- if (!is.null(V_str)) sqrt(diag(as.matrix(V_str))) else NULL
     obs_sd     <- sqrt(diag(s$V))
     resid_mean <- as.numeric(s$E) - mu
     se_mean    <- sqrt(diag(V_pred) / n_obs)
@@ -1629,7 +1676,11 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
     df_pred <- data.frame(time      = s$times,
                           pred_mean = mu,
                           pred_lo   = mu - pred_sd,
-                          pred_hi   = mu + pred_sd)
+                          pred_hi   = mu + pred_sd,
+                          str_lo    = if (is.null(str_sd)) NA_real_
+                                      else mu - str_sd,
+                          str_hi    = if (is.null(str_sd)) NA_real_
+                                      else mu + str_sd)
     df_res  <- data.frame(time  = s$times,
                           resid = resid_mean,
                           lo    = -2 * se_mean,
@@ -1645,18 +1696,31 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       ggplot2::geom_line(ggplot2::aes(y = obs_mean), colour = "black", linewidth = 1) +
       ggplot2::geom_point(ggplot2::aes(y = obs_mean), colour = "black", size = 2) +
       ggplot2::labs(title = "Observed", x = NULL, y = "Concentration",
-                    subtitle = "ribbon +/-1 SD  [sqrtdiag(V_obs)]  |  shared y scale") +
+                    subtitle = paste0("+/-1 SD of one observation across ",
+                                      "subjects\nshared y scale")) +
       ggplot2::theme_bw() +
       ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
                                                            face = "plain"))
 
     p_pred <- ggplot2::ggplot(df_pred, ggplot2::aes(x = time)) +
       ggplot2::geom_ribbon(ggplot2::aes(ymin = pred_lo, ymax = pred_hi),
-                           fill = "black", alpha = 0.15) +
+                           fill = "black", alpha = 0.15)
+    # Inner band = the model's OWN spread, before residual error. The gap to the
+    # outer band is sigma, which is what tells a reader whether a predicted
+    # spread that misses the observed one is an omega/covariate problem or an
+    # error-model one.
+    if (!is.null(str_sd))
+      p_pred <- p_pred + ggplot2::geom_ribbon(
+        ggplot2::aes(ymin = str_lo, ymax = str_hi), fill = "black",
+        alpha = 0.18, na.rm = TRUE)
+    p_pred <- p_pred +
       ggplot2::geom_line(ggplot2::aes(y = pred_mean), colour = "black", linewidth = 1) +
       ggplot2::geom_point(ggplot2::aes(y = pred_mean), colour = "black", size = 2) +
       ggplot2::labs(title = "Predicted", x = NULL, y = NULL,
-                    subtitle = "ribbon +/-1 SD  [sqrtdiag(V_pred);  BSV + sigma]  |  shared y scale") +
+                    subtitle = paste0("+/-1 SD  [", v_parts, "]",
+                                      if (!is.null(V_str))
+                                        "\ninner band drops sigma"
+                                      else "\nshared y scale")) +
       ggplot2::theme_bw() +
       ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
                                                            face = "plain"))
@@ -1776,9 +1840,11 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
     df_z$z_label <- as.vector(sig_mat)[as.vector(!upper.tri(z_mat))]
 
     p_obs  <- .heat_tile(.mat_df(s$V,       times, lower_only = TRUE), cov_lim, "Cov") +
-      ggplot2::ggtitle("Observed", subtitle = "sample (co)variance from data  [shared scale]")
+      ggplot2::ggtitle("Observed",
+                       subtitle = "sample (co)variance across subjects")
     p_pred <- .heat_tile(.mat_df(V_pred,    times, lower_only = TRUE), cov_lim, "Cov") +
-      ggplot2::ggtitle("Predicted", subtitle = "MC cov + sigma  [shared scale]")
+      ggplot2::ggtitle("Predicted",
+                       subtitle = paste0("MC cov  [", v_parts, "]"))
     p_res  <- .heat_tile(.mat_df(resid_mat, times, lower_only = TRUE), res_lim, "DeltaCov",
                          low = "#4C0690", high = "#048590") +
       ggplot2::ggtitle("Residual", subtitle = "V_obs - V_pred")

@@ -5,6 +5,9 @@
 * **The mean and covariance panels are per SOURCE, not per stratum.** A banded
   source is collapsed by the mixture law, so `_s1`/`_s2` never reaches a figure.
 
+* **The panels name what `V` contains** -- `BSV + covariate spread + sigma`,
+  read off the fit -- and the predicted ribbon shows the pre-sigma part inside.
+
 * **A covariate the model does not read is dropped, not refused**, so a nested
   pair shares one `studies` object and needs no `fix(0)`.
 
