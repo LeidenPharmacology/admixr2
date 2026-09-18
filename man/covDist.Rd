@@ -40,7 +40,7 @@ values on \verb{(0, 1)} --- every covariate mean 0.50 and SD 0.29, whatever
 margins were declared, with no error anywhere. Push them through the
 quantile function you intend.
 
-\code{stratify} needs nothing further: an opaque sampler is banded by binning
+\code{stratify} needs nothing further: an opaque sampler is conditioned by binning
 its output rather than by fixing its input uniforms.}
 
 \item{dist}{Default margin for the \code{c(mean = , sd = )} form: \code{"normal"}

@@ -59,7 +59,7 @@ draws the **pre-sigma part inside** the total, so the gap between the two bands
 is the residual error. A predicted spread that misses the observed one then
 tells you whether to look at omega and the covariates or at the error model.
 
-A 2×2 grid **per source**. A source is banded into one study per covariate
+A 2×2 grid **per source**. A source is cut into one study per covariate
 level or quadrature node, for every covariate its own model fitted --- a covariate
 a study marginalises over is not identified against a random effect on the same
 parameter, so the objective has to sum over the strata. But `A_s1` is an index
@@ -68,7 +68,7 @@ the strata are put back together first.
 
 The mean is the n-weighted mean of the strata. The variance is **not**: it is
 the law of total variance, within plus **between**, and the between term is the
-covariate effect the banding created. Averaging the strata's variances would
+covariate effect the conditioning created. Averaging the strata's variances would
 report the within-level spread, which is not what the paper published --- a
 correctly specified fit would draw as under-predicting it.
 
@@ -130,7 +130,7 @@ plots.
 The examplomycin fit declares no covariates, so these two panels need a fit
 that does. Three renal cohorts, generated *with* a renal effect. Two of them
 report only who they enrolled, so creatinine clearance is **marginal** for
-them; `mild` reports its result *by* renal band, so it is **conditional**. One
+them; `mild` reports its result *by* renal subgroup, so it is **conditional**. One
 figure then carries both readings of the same covariate.
 
 ```{r cov-fit, message=FALSE, results="hide"}
@@ -155,7 +155,7 @@ renal_model <- function() {
 TIMES <- c(0.5, 2, 8, 24)
 
 # MARGINAL on renal function: the paper reports the population it enrolled and
-# admixr2 integrates over it. Banded on sex, which every analyst fitted.
+# admixr2 integrates over it. Conditional on sex, which every analyst fitted.
 enrolled <- function(n, crclm) data.frame(
   WT   = rlnorm(n, log(76), 0.198),
   CRCL = rlnorm(n, log(crclm), 0.05),
@@ -167,17 +167,17 @@ marginal_source <- function(n, crclm) admStudy(
 
 # CONDITIONAL on renal function -- and the call says nothing about that either.
 # `renal_model` uses CRCL, so CRCL is conditional for any source built on it and
-# is banded. What IS worth declaring is `range`: the population here is a
+# is conditional. What IS worth declaring is `range`: the population here is a
 # `mean +/- SD` transcription rather than the patients themselves, so its tails
-# reach where nobody was enrolled, and `strata_nodes` keeps the band count to
-# the one renal band this paper reported.
-banded_source <- function(crclm, band) admStudy(
+# reach where nobody was enrolled, and `strata_nodes` keeps the node count to
+# the one renal subgroup this paper reported.
+conditional_source <- function(crclm, rng) admStudy(
   model = renal_model,
   population = covDist(WT   = c(meanlog = log(76), sdlog = 0.198),
                        CRCL = c(meanlog = log(crclm), sdlog = 0.05),
                        SEX  = c(female = 0.5, male = 0.5)),
   n = 210L, dose = 200, times = TIMES,
-  strata_nodes = 1L, range = list(CRCL = band))
+  strata_nodes = 1L, range = list(CRCL = rng))
 
 renal_studies <- admStudies(
   normal   = marginal_source(260L, 95),
@@ -222,7 +222,7 @@ the places the model was actually asked --- and the dotted line joins them, so
 the effect reads the same way on both kinds of axis. The line is a connector
 between marked points, not a claim about the space between them.
 
-```{r covariate-effect, fig.height=4.2, fig.cap="Estimated covariate effect against its sources. `cl vs CRCL`: `mild` reported by renal band, so its own regression runs across 50-75; `normal` and `moderate` reported only who they enrolled, so each is a whisker. `cl vs SEX`: every analyst banded on sex, so each source draws its own line between the two levels."}
+```{r covariate-effect, fig.height=4.2, fig.cap="Estimated covariate effect against its sources. `cl vs CRCL`: `mild` reported by renal subgroup, so its own regression runs across 50-75; `normal` and `moderate` reported only who they enrolled, so each is a whisker. `cl vs SEX`: every analyst fitted a sex effect, so each source is conditional on it and draws its own line between the two levels."}
 cov_plots$covariate_effect
 ```
 
@@ -243,7 +243,7 @@ covariate value it sits at. How it is read depends on the covariate:
   else, and no regression is drawn: a line across the levels of a factor
   reports as a slope what is really a difference between groups. Instead the
   strata cut from one source are joined in grey, because that
-  pairing is what banding buys --- the same study, one covariate moved. Several
+  pairing is what conditioning buys --- the same study, one covariate moved. Several
   sources tilting the same way is the mis-specification.
 
 ```{r covariate-resid, fig.height=3.4, fig.cap="Between-study residual against each covariate. A slope across sources, or a consistent tilt in the grey within-source pairs, is a mis-specified covariate form."}
@@ -259,7 +259,7 @@ from +5 to −4.5 monotone in creatinine clearance, see
 On both panels **point area is the study's sample size**, as `multinma`'s
 `weight_nodes` does for its network nodes. `scale_size_area()`, so area rather
 than radius carries it and zero maps to zero; the legend is suppressed when
-every study reports the same `n`, since there is nothing to compare. A banded
+every study reports the same `n`, since there is nothing to compare. A conditional
 source's `n` is divided among its strata, so it contributes half its patients at
 each sex level but its whole `n` on any other covariate's axis.
 
@@ -284,7 +284,7 @@ Both panels distinguish how a study enters a covariate. This is a property of
 
 | | drawn as | meaning |
 |---|---|---|
-| **conditional** | **its own regression line**, over the range it covers | the source's own model ESTIMATED this covariate's coefficient, so it is banded --- or it reported at a value of it (`at`, `by`). It reported a *relationship* here, so its own model is drawn: a slope different from the dotted line is a paper the fit does not reproduce, and parallel-but-offset is a different finding from crossing. A source that reported only one value has no slope of its own and stays a point |
+| **conditional** | **its own regression line**, over the range it covers | the source's own model ESTIMATED this covariate's coefficient, so it is conditional --- or it reported at a value of it (`at`, `by`). It reported a *relationship* here, so its own model is drawn: a slope different from the dotted line is a paper the fit does not reproduce, and parallel-but-offset is a different finding from crossing. A source that reported only one value has no slope of its own and stays a point |
 | **marginal** | round point and a **whisker** --- 10th–90th over 2.5th–97.5th | the source reported no contrast here, so admixr2 integrates over the population it enrolled. What it covers is a distribution, and drawing that as a line would claim it covers its tails as evenly as its middle |
 
 Splitting a source on a covariate its model never saw would manufacture a
@@ -298,9 +298,9 @@ enrolled, the fit is disagreeing with a paper about that paper's own patients.
 On a level axis the source's own effect is the **gap between its own marks** ---
 one per level it reported --- against the gap between the black points.
 
-A banded source appears once per **level** it reported on a covariate banded at
+A conditional source appears once per **level** it reported on a covariate conditional at
 its levels, and once at its own centre on every other --- including a continuous
-covariate it was banded on, where the values are quadrature nodes rather than
+covariate it was conditional on, where the values are quadrature nodes rather than
 anything the paper reported. The effect panel is per source; only the residual
 panel keeps the strata apart, and only on a level axis.
 

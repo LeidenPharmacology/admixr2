@@ -256,7 +256,7 @@ test_that("effect panel: an even binary mix shades neither level", {
 
 test_that("effect panel: a conditional CONTINUOUS covariate", {
   skip_if_no_panels()
-  # Ten sources each reported at one renal value, which is what a per-band
+  # Ten sources each reported at one renal value, which is what a per-subgroup
   # summary table gives you. Past the level cap, so the axis is swept -- but
   # every source is a diamond with no bar, because a conditioned source has no
   # distribution to show.
@@ -264,7 +264,7 @@ test_that("effect panel: a conditional CONTINUOUS covariate", {
   st <- stats::setNames(lapply(crcl, function(v)
     list(n = 140L, cov = list(WT = 76, CRCL = v),
          cov_dist = list(WT = .pan_lnorm(76), CRCL = list(.point = TRUE)))),
-    paste0("band", seq_along(crcl)))
+    paste0("src", seq_along(crcl)))
   o  <- .pan_eff(.pan_ui_renal(), c("CRCL"), st)
   mk <- o$eff[[1L]]$marks
   expect_equal(nrow(mk), length(crcl))
@@ -301,7 +301,7 @@ test_that("residual panel: two studies on a continuous covariate get no trend", 
 
 test_that("residual panel: strata of one source are joined, not regressed", {
   skip_if_no_panels()
-  # PINS: the contrast reading on a discrete axis. Banding cuts one source into
+  # PINS: the contrast reading on a discrete axis. Conditioning cuts one source into
   # strata differing only in SEX, so the PAIR is the evidence it bought.
   # Several sources tilting the same way is the mis-specification; a regression
   # over the pooled cloud averages the pairs away.

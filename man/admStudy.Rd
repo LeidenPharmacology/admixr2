@@ -63,9 +63,9 @@ from \code{population}.}
 \code{by = "SEX"}. Expands a published model into one study per level; digitised
 subgroup profiles must be supplied as separate studies.}
 
-\item{strata_nodes}{Quadrature resolution for a banded CONTINUOUS
+\item{strata_nodes}{Quadrature resolution for a conditional CONTINUOUS
 covariate, i.e. how many nodes it is cut into. Default 9. Raise it for
-precision, at a multiplicative cost: a source banded on two continuous
+precision, at a multiplicative cost: a source conditional on two continuous
 covariates becomes \code{strata_nodes^2} studies, and each is solved. Discrete
 covariates are unaffected --- their levels are exact and cost one stratum
 each. Note that the objective VALUE depends on this, so two fits are only
@@ -81,7 +81,7 @@ wider than the enrolment --- a \verb{mean +/- SD} transcribed from a baseline
 table has tails where nobody was --- and \emph{not} wanted when \code{population} is
 the patients themselves, since the margins are then fitted to exactly who
 was enrolled and truncating would score the paper against a sub-population
-of its own. An unnamed value is allowed only when one covariate is banded.}
+of its own. An unnamed value is allowed only when one covariate is conditional.}
 
 \item{label}{Optional display name; otherwise taken from the argument name in
 \code{\link[=admStudies]{admStudies()}}.}
@@ -133,14 +133,14 @@ property of that source's own model, so admixr2 works it out and there is
 nothing to set.
 
 A covariate is \strong{conditional} when the source's model ESTIMATED its
-coefficient. That paper reports a contrast along it, so the source is banded
-into strata and the contrast is carried into the fit. A covariate the model
-merely READS is not banded --- weight at a fixed allometric exponent carries
-no fitted effect to recover, and banding on it would buy strata and no
+coefficient. That paper reports a contrast along it, so the source is cut
+into nodes and the contrast is carried into the fit. A covariate the model
+merely READS is not conditional --- weight at a fixed allometric exponent carries
+no fitted effect to recover, and conditioning on it would buy nodes and no
 evidence.
 
 A covariate is \strong{marginal} when the model did not estimate it. There is no
-contrast in that paper to band on, and splitting it on a covariate its model
+contrast in that paper to condition on, and splitting it on a covariate its model
 never saw would manufacture evidence, so admixr2 integrates over the
 population instead. That covers both the covariate the model never mentions
 and the one it reads at an asserted coefficient; \code{\link[=print]{print()}} names them
@@ -158,7 +158,8 @@ moved the objective by 0.00004 and collapsing the read one by 73.6.
 This matters and is why it is not left to the caller: a covariate every
 source marginalises is not identified against a random effect on the same
 parameter. Measured over 720 replicates, coverage was 0.933 with one source
-banded and 0.925 with all of them, against \strong{0.817 with none}.
+conditional and 0.925 with all of them conditional, against \strong{0.817 with
+none}.
 
 A source given as digitised \code{E}/\code{V} has no model to derive from and is
 marginal over whatever it declares. Use one \code{admStudy(..., at = ...)} per

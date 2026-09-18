@@ -531,7 +531,7 @@ test_that("a `cor` spec conditions on exact POINTS, matching closed form", {
   expect_gt(diff(range(em)), S2)
 })
 
-test_that("without a density, strata fall back to BANDS that partition", {
+test_that("without a density, nodes fall back to BINS that partition", {
   # A `joint` sampler with no density cannot be importance-weighted, so the strata are equiprobable bins of
   # the pool instead -- correct, but coarser.
   cl <- function(x) pmin(pmax(x, 1e-12), 1 - 1e-12)
@@ -547,9 +547,9 @@ test_that("without a density, strata fall back to BANDS that partition", {
   expect_null(cd$density)
   st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L)
   expect_length(st, 4L)
-  # equiprobable BANDS, not quadrature weights
+  # equiprobable BINS, not quadrature weights
   expect_equal(vapply(st, `[[`, 0, "weight"), rep(0.25, 4L), tolerance = 1e-6)
-  # a band is a range, so it carries the stratified covariate too
+  # a bin is a range, so it carries the conditional covariate too
   expect_true(all(vapply(st, function(s) "WT" %in% names(s$cov_dist), TRUE)))
   # and it still conditions: checked against brute force on the same bins
   big <- covDraw(cd, n = 300000L)
@@ -573,8 +573,8 @@ test_that("with INDEPENDENT covariates the conditioning is a no-op", {
 test_that("an opaque sampler is conditioned correctly when the stratified
            covariate is NOT the head of its cascade", {
   # This is the case the u-space route got silently wrong: on a cascade running AGE -> WT -> CRCL, stratifying
-  # on WT left AGE at its unconditional mean in every stratum, against a true 50.1 to 60.4. Banding an opaque
-  # sampler has to bin its OUTPUT; pinning its input uniforms bands only the cascade head.
+  # on WT left AGE at its unconditional mean in every stratum, against a true 50.1 to 60.4. Conditioning on an opaque
+  # sampler has to bin its OUTPUT; pinning its input uniforms is conditional only the cascade head.
 
   # The cascade is built by hand rather than fitted, so this needs no copula package. The conditioning is
   # ASYMMETRIC -- a squared term -- so no correlation matrix reproduces it and the sampler really is opaque.
@@ -956,8 +956,8 @@ test_that("the identifiability warning canonicalises the user's shorthand", {
                  "not identifiable")
 })
 
-test_that("bands are bounded by the range the source REPORTED", {
-  # Strata cut over the analyst's full `cov_dist` evaluate a published model in covariate bands that study
+test_that("nodes are bounded by the range the source REPORTED", {
+  # Nodes cut over the analyst's full `cov_dist` evaluate a published model at covariate values that study
   # never enrolled, and credit its coefficient as evidence there. The overstatement is exactly
   # var(declared)/var(enrolled) -- 3.43x for a source spanning +/-1 SD, 12.38x at +/-0.5 SD. Not bias: false
   # confidence, and it only bites once a second source disagrees.
@@ -989,7 +989,7 @@ test_that("bands are bounded by the range the source REPORTED", {
                "does not declare")
 })
 
-test_that("a source that ASSERTED a covariate's coefficient is not banded", {
+test_that("a source that ASSERTED a covariate's coefficient is not conditional", {
   skip_on_cran()
   skip_if_not_installed("rxode2")
   # `allCovs` reports what a model READS, not what it ESTIMATED. A model carrying (WT/70)^0.75 -- the
@@ -1017,7 +1017,7 @@ test_that("a source that ASSERTED a covariate's coefficient is not banded", {
   expect_gt(length(ex$studies), 1L)
 })
 
-test_that("a bare datagen() study is NOT banded for having a distribution", {
+test_that("a bare datagen() study is NOT conditional for having a distribution", {
   skip_on_cran()
   skip_if_not_installed("rxode2")
   # THE DEFECT: the derivation used to fall through to "has a model and a
@@ -1039,12 +1039,12 @@ test_that("a bare datagen() study is NOT banded for having a distribution", {
   ex <- admixr2:::.admExpandStrata(st, names(st), mod)
   expect_identical(ex$names, "s")
   expect_identical(ex$studies$s, st$s)
-  # Asking for it explicitly still bands, because that IS opting in.
+  # Asking for it explicitly still conditions, because that IS opting in.
   st$s$stratify <- TRUE
   expect_gt(length(admixr2:::.admExpandStrata(st, names(st), mod)$studies), 1L)
 })
 
-test_that("`cov_range` truncates a margin that nothing bands", {
+test_that("`cov_range` truncates a margin nothing conditions on", {
   skip_on_cran()
   # `cov_range` was read in exactly ONE place, .admCovStrata(), so a study that
   # went through unbanded carried the field to the end and was scored against
@@ -1077,7 +1077,7 @@ test_that("the rebuilt stratum sampler survives the drop it is rebuilt for", {
   cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
                 ALB = c(mean = 40, sd = 6), SEX = c(male = 0.5),
                 dist = "lnorm", cor = R)
-  # Banded on WT, so the OTHER two are sampled CONDITIONAL on this stratum's
+  # Conditional on WT, so the OTHER two are sampled CONDITIONAL on this node's
   # weight -- one shared sample, which is where their dependence lives.
   st <- list(s = list(times = c(1, 4), ev = rxode2::et(amt = 100), n = 100L,
                       cov_dist = cd, stratify = "WT", strata_nodes = 3L))
@@ -1149,6 +1149,76 @@ test_that(".admEvalModelLines runs the parameter block vectorised in a covariate
                               `[[`, character(1), "name"))
 })
 
+test_that(".admEvalModelLines skips an assignment whose target is a CALL", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  # `f(depot) <- F1` and `d/dt(central) <- ...` are assignments whose target is
+  # a call, and as.character() flattens those to c("f", "depot") and
+  # c("/", "d", "dt(central)"). assign() then warns that only the first element
+  # is used, and the length-2 `name` reaches the effect panel, where
+  # vapply(..., character(1)) errors -- outside the inner tryCatch, so the whole
+  # covariate_effect panel disappeared for any model with a bioavailability,
+  # lag or duration line whose right-hand side happens to evaluate.
+  fn <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75; f1 <- 0.9
+          eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+            v  <- exp(tv)
+            f(depot) <- f1
+            d/dt(depot) <- -cl/v * depot
+            cp <- depot / v
+            cp ~ add(add.err) })
+  }
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  ml <- admixr2:::.admModelLines(ui)
+  out <- expect_silent(admixr2:::.admEvalModelLines(ml, list(WT = c(60, 80))))
+  nms <- vapply(out, `[[`, "", "name")
+  # Every name is a single symbol, and the covariate line is still there.
+  expect_true(all(nchar(nms) > 0L))
+  expect_true("cl" %in% nms)
+  expect_false(any(c("f", "/") %in% nms))
+})
+
+test_that("the rebuilt stratum sampler keeps its exactly-mapped margins", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  skip_if_not_installed("randtoolbox")
+  # `discExact` names the margins the sampler maps from their OWN uniform.
+  # Intersecting the value already on the spec could only give character(0) --
+  # .admCovDistDrop() NULLs it and the canon re-derives it only from a `cor`
+  # the sampled branch has none of -- so a discrete margin lost its exact
+  # enumeration and the stratum fell back to the equal-weight pool: 4096 rows,
+  # and curvature manufactured in a coefficient that is not identified.
+  cvs <- c("WT", "CRCL", "ALB")
+  R <- diag(4L); dimnames(R) <- rep(list(c(cvs, "SEX")), 2L)
+  R[cvs, cvs] <- 0.7; diag(R) <- 1
+  cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
+                ALB = c(mean = 40, sd = 6), SEX = c(male = 0.5),
+                dist = "lnorm", cor = R)
+  st <- list(s = list(times = c(1, 4), ev = rxode2::et(amt = 100), n = 100L,
+                      cov_dist = cd, stratify = "WT", strata_nodes = 3L))
+  ex <- suppressMessages(admixr2:::.admExpandStrata(st, names(st)))$studies
+  # ONLY ALB is unread: the model reads WT, CRCL and SEX, so SEX survives the
+  # drop as its own discrete margin -- which is the margin whose exact
+  # enumeration was being lost.
+  mod <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75; bcr <- 0.3; bsex <- 0.2
+          eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt * (CRCL/90)^bcr *
+                    exp(bsex * SEX)
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui  <- suppressMessages(rxode2::rxode2(mod))
+  out <- suppressMessages(
+    admixr2:::.admCheckCovariates(ui, list(n_eta = 0L), ex))
+  cdo <- out[[2L]]$cov_dist
+  expect_setequal(admixr2:::.admCovSpecNames(cdo), c("WT", "CRCL", "SEX"))
+  # WT is this stratum's own point and SEX its own discrete margin: both are
+  # mapped straight from their uniform, so both are exactly enumerable, while
+  # CRCL comes from the shared conditional sample.
+  expect_setequal(cdo[["discExact"]], c("WT", "SEX"))
+})
+
 test_that(".admCovCoefThetas separates an estimated coefficient from an asserted one", {
   skip_on_cran()
   skip_if_not_installed("rxode2")
@@ -1218,7 +1288,7 @@ test_that("strata_nodes is a convergence parameter, and fits carry it", {
   expect_equal(ex2$studies[[1L]][[".adm_strata_nodes"]], 4L)
 })
 
-test_that("banding uses the quadrature rule that CONVERGES", {
+test_that("conditioning uses the quadrature rule that CONVERGES", {
   # The objective has to converge in the stratum count or it is not a likelihood -- AIC, BIC and any ratio are
   # otherwise on an arbitrary scale.
 
@@ -1428,7 +1498,7 @@ test_that("a correlated conditional still enumerates an independent discrete mar
 test_that("covStrata's cov_range truncation survives the second canon", {
   # The first canon builds `joint` as a closure over the UNTRUNCATED margins and consumes `cor` into
   # `latentR`; the second early-returns on an existing `joint`. So the truncation was applied to the specs and
-  # then read straight past, and the pool sampled the full declared support -- bands cut over a range the
+  # then read straight past, and the pool sampled the full declared support -- bins cut over a range the
   # source never enrolled, which is the var(declared)/var(enrolled) overstatement the cov_range gate exists to
   # prevent (3.4x at +/-1 SD).
   cd <- covDist(WT = c(mean = 75, sd = 25), CRCL = c(mean = 90, sd = 30),
@@ -1437,7 +1507,7 @@ test_that("covStrata's cov_range truncation survives the second canon", {
                                                  n_pool = 4096L,
                                                  cov_range = list(WT = c(60, 100))))
   expect_false(is.null(st))
-  # every banded value sits inside the enrolled range
+  # every conditional value sits inside the enrolled range
   wt <- unlist(lapply(st, function(b) b[["cov"]][["WT"]]), use.names = FALSE)
   expect_true(all(wt >= 60 - 1e-8 & wt <= 100 + 1e-8))
   # ... and the correlation was NOT lost when the derived fields were rebuilt

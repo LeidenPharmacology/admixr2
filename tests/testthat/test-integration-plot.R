@@ -150,7 +150,7 @@ test_that("plot.admFit default which: a fit with no covariates is unchanged", {
 
 # ---- covariate fits ---------------------------------------------------------
 
-# A banded source becomes several studies named `<source>_s1`, `_s2`, ..., and a
+# A conditional source becomes several studies named `<source>_s1`, `_s2`, ..., and a
 # marginalised covariate has to reach the diagnostic draw as per-subject values:
 # held at its mean instead, the predicted V loses the covariate spread the
 # observed V in the same panel still carries.
@@ -179,11 +179,11 @@ test_that("plot.admFit default which: a fit with no covariates is unchanged", {
   st <- admStudies(A = admStudy(model = mfn, population = pop, dose = 100,
                                 times = c(0.5, 1, 2, 4, 8),
                                 label = "A"))
-  # The same source left WHOLE. Its reported moments are what a banded fit's
+  # The same source left WHOLE. Its reported moments are what a conditional fit's
   # strata have to collapse back to, and nothing short of fitting it both ways
   # distinguishes the correct collapse from an average of the strata.
   #
-  # Banding is DERIVED now and there is no argument to refuse it, so the
+  # Conditioning is DERIVED now and there is no argument to refuse it, so the
   # unbanded reference is built by setting the internal marker directly. That
   # is the point of the test: a caller cannot ask for this, and the collapse
   # has to reproduce it anyway.
@@ -212,7 +212,7 @@ test_that("plot.admFit covariates: one panel set per SOURCE, not per stratum", {
   env <- .int_cov_plot()
   # `stratify` is a likelihood device: a covariate a study marginalises over is
   # not identified against a random effect on the same parameter, so the source
-  # is banded and the objective sums over the strata. `A_s1` is an index into
+  # is conditional and the objective sums over the strata. `A_s1` is an index into
   # that expansion, and the mean panel is about the PAPER -- so the strata are
   # put back together and there is one panel set, for `A`.
   expect_setequal(grep("^mean_.*_(obs|pred|resid)$",
@@ -221,27 +221,27 @@ test_that("plot.admFit covariates: one panel set per SOURCE, not per stratum", {
                   "mean_A")
 })
 
-test_that("plot.admFit covariates: a banded source's panel is titled for the source", {
+test_that("plot.admFit covariates: a conditional source's panel is titled for the source", {
   skip_if_not_installed("nlmixr2")
   skip_if_not_installed("patchwork")
   env <- .int_cov_plot()
-  # No `[SEX = 0]` bracket: a banded source sits at NO single value of what it
-  # was banded on, so naming one would be a claim about half of it.
+  # No `[SEX = 0]` bracket: a conditional source sits at NO single value of what it
+  # was conditional on, so naming one would be a claim about half of it.
   expect_equal(env$out$mean_A$patches$annotation$title,
                "Study 'A' -- Mean diagnostics")
 })
 
-test_that("plot.admFit: collapsing a banded source reproduces the unbanded one", {
+test_that("plot.admFit: collapsing a conditional source reproduces the unconditional one", {
   skip_if_not_installed("nlmixr2")
   # THE REASON .admMixMoments() cannot just average the strata. The same source,
-  # banded and whole, reports the same moments -- and the variance only matches
+  # conditional and whole, reports the same moments -- and the variance only matches
   # if the BETWEEN-stratum term is carried, because that term IS the covariate
-  # effect the banding created. Averaging the strata's variances reports the
+  # effect the conditioning created. Averaging the strata's variances reports the
   # within-level spread, which is not what the paper published.
   env <- .int_cov_plot()
   st  <- env$fit$env$admExtra$studies
   ks  <- grep("^A_s", names(st), value = TRUE)
-  skip_if(length(ks) < 2L, "source is not banded")
+  skip_if(length(ks) < 2L, "source is not conditional")
   whole <- env$whole$env$admExtra$studies[[1L]]
 
   nk  <- vapply(ks, function(k) as.numeric(st[[k]]$n), double(1))
@@ -265,7 +265,7 @@ test_that("plot.admFit: collapsing a banded source reproduces the unbanded one",
   cs <- admixr2:::.admCollapseSources(st, env$agg)
   expect_equal(names(cs$studies), "A")
   expect_equal(as.numeric(cs$studies$A$E), as.numeric(mix$E), tolerance = 1e-10)
-  # A banded source keeps no single conditioned value, so its title has none.
+  # A conditional source keeps no single conditioned value, so its title has none.
   expect_null(cs$studies$A$cov)
 })
 
@@ -279,7 +279,7 @@ test_that("plot.admFit covariates: one source keeps only its LEVEL facet", {
   # continuous and this source's positions on it are quadrature nodes -- how
   # admixr2 cut its own distribution up -- so there is no between-study
   # contrast and the facet goes. SEX is a level axis, where the source's two
-  # strata ARE the contrast banding bought, and the pair stays.
+  # strata ARE the contrast conditioning bought, and the pair stays.
   rd <- out$covariate_resid$data
   expect_setequal(unique(rd$cov), "SEX")
   expect_equal(nrow(rd), 2L)
@@ -287,7 +287,7 @@ test_that("plot.admFit covariates: one source keeps only its LEVEL facet", {
   expect_true(all(rd$paired))
   # Named for the source on both rows: `A_s1` is an index into the expansion.
   expect_setequal(rd$study, "A")
-  # WT is swept; SEX is banded, so its facet is the two levels and nothing
+  # WT is swept; SEX is conditional, so its facet is the two levels and nothing
   # between them. ONE estimated-effect line per facet -- other covariates sit
   # at the pooled centre, and the line is the thing the sources are compared
   # against.
@@ -394,7 +394,7 @@ test_that("plot.admFit covariates: predicted V carries the marginalised spread",
   nlmixr2 <- nlmixr2est::nlmixr2
   # A GENUINELY MARGINAL covariate, which now takes a source model that does
   # NOT read it and an analysis model that does. Anything the source model uses
-  # is conditional and gets banded, and a banded covariate has no within-study
+  # is conditional and gets conditional, and a conditional covariate has no within-study
   # distribution left to integrate -- its spread is in the spacing between
   # strata instead. This is the covariates-vignette case: nobody published a
   # renal term, the meta-analysis estimates one.
@@ -420,7 +420,7 @@ test_that("plot.admFit covariates: predicted V carries the marginalised spread",
                                   maxeval = 3L))))
   extra <- fit$env$admExtra
   ui    <- fit$env$ui
-  # CRCL is marginal here: the source never read it, so it was never banded.
+  # CRCL is marginal here: the source never read it, so it was never conditional.
   expect_true(any(vapply(extra$studies, function(s)
     "CRCL" %in% admixr2:::.admCovSpecNames(s$cov_dist), logical(1))))
 

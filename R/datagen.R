@@ -501,7 +501,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
          paste(sQuote(unique(unlist(study_names)[
            duplicated(unlist(study_names))])), collapse = ", "),
          ". Studies are matched by name downstream, so a duplicate would ",
-         "silently drop all but one. Rename the study, or the banded source ",
+         "silently drop all but one. Rename the study, or the conditional source ",
          "whose strata collide with it.", call. = FALSE)
   stats::setNames(results, unlist(study_names))
 }

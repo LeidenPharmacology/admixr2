@@ -38,9 +38,12 @@ out by name -- \code{plot(fit, which = "mean")$mean_study1_pred} or
 \code{plot(fit, which = "cov")$cov_study1_std_resid} -- or by position, with the
 combined 2x2 grid stored first per study
 (\code{plot(fit, which = "mean")[[1]]} is the full grid, \verb{[1]} the length-1
-named sub-list). The sub-panel keys are \verb{<type>_<study>_obs}, \verb{_pred},
-\verb{_resid}, and \verb{_std_resid}; the combined grid stays under \verb{<type>_<study>}.
-The extra sub-panel keys are not printed on their own.
+named sub-list). The sub-panel keys are \verb{<type>_<source>_obs}, \verb{_pred},
+\verb{_resid}, and \verb{_std_resid}; the combined grid stays under
+\verb{<type>_<source>}. \verb{<source>} is the study name, and for a source cut into
+nodes it is the name of the SOURCE rather than of a node -- these panels
+are about the paper, so the nodes are put back together first and there is
+no \code{mean_study1_s1}. The extra sub-panel keys are not printed on their own.
 }
 \description{
 Generates up to five diagnostic panels:
@@ -96,12 +99,12 @@ one. A \strong{marginalised} covariate -- one the estimator integrates over a
 declared distribution -- is drawn as a round point at the study's median with
 a 10th-90th percentile bar and a 2.5th-97.5th whisker: the source constrains
 the effect through the spread it induces, and the whole span is what it
-speaks for. A \strong{conditioned} covariate -- banded, \code{at} or \code{by}, so the model
+speaks for. A \strong{conditional} covariate -- cut into nodes, or \code{at} or \code{by}, so the model
 is solved at one value -- is drawn as a diamond at that value with no spread,
 because it has none; what that source reports along it is a relationship,
 drawn as its own regression over the range it covers.
 
-A SOURCE IS ONE MARK, not one per stratum. Banding cuts a source into one
+A SOURCE IS ONE MARK, not one per stratum. Conditioning cuts a source into one
 study per quadrature node, and a node is an internal discretisation of the
 very distribution the source already stands for: drawn straight it became
 nine small dots for one paper, each carrying a ninth of its patients, with
@@ -118,7 +121,7 @@ A \strong{discrete} one is read as a contrast instead, and is drawn that way. It
 axis is ticked at its levels and nowhere else, no regression is fitted
 through it -- a line across the levels of a factor reports as a slope what is
 a difference between groups -- and the strata \code{stratify} cut from one source
-are joined, because that pairing is the evidence banding creates: the same
+are joined, because that pairing is the evidence conditioning creates: the same
 study, one covariate moved. Several sources tilting the same way is the
 mis-specification. A regression over the pooled cloud of strata cannot show
 it, since it averages the pairs away.
@@ -144,9 +147,16 @@ mean vector \code{E} and the (co)variance matrix \code{V}:
   fit$env$aggData$study1$pred$V   # predicted covariance matrix
 }
 The predicted moments are computed by one MC simulation at the fitted
-parameters using the fit's own \code{n_sim} and a fixed seed, so they match the
-default \code{plot(fit)} mean/cov panels. The slot is absent only when the fit
-cannot be simulated (no simulation model available).
+parameters using the fit's own \code{n_sim} and a fixed seed. The slot is absent
+only when the fit cannot be simulated (no simulation model available).
+
+It is \strong{per study}, which for a source cut into nodes means per node --
+where the \code{"mean"} and \code{"cov"} panels are per SOURCE, the nodes put back
+together by the mixture law. So the two no longer line up entry for entry on
+such a fit, and the panel keys are \verb{mean_<source>} rather than
+\verb{mean_<source>_s1}. \code{\link[=admMoments]{admMoments()}} returns whichever of the two you want,
+tidied: \code{by = "source"} matches the panels, \code{by = "stratum"} matches this
+slot.
 }
 
 \section{nlmixr2 \code{traceplot()}}{

@@ -2,7 +2,7 @@
 
 ## New features
 
-* **The mean and covariance panels are per SOURCE, not per stratum.** A banded
+* **The mean and covariance panels are per SOURCE, not per stratum.** A conditional
   source is collapsed by the mixture law, so `_s1`/`_s2` never reaches a figure.
 
 * **The panels name what `V` contains** -- `BSV + covariate spread + sigma`,
@@ -56,7 +56,7 @@
 * **A conditional source draws its OWN regression over the range it covers**;
   a marginal one draws a whisker, because what it reported is a distribution.
 
-* **One mark per source per facet**, not one per stratum, so a source banded on
+* **One mark per source per facet**, not one per stratum, so a source conditional on
   sex no longer draws twice on every other covariate's panel.
 
 * **Both covariate panels key colour on the source**, so a source keeps one
@@ -104,12 +104,12 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **`adfoControl()`'s new `grad = "analytical"` default brings the
   `grad_bounds` box with it.**
 
-* **`admStudy(stratify = )` is removed**, banding being derived. A script that
+* **`admStudy(stratify = )` is removed**, conditioning being derived. A script that
   named fewer covariates than the source's model uses now sums over more
   strata and moves; `covStrata()` still takes it.
 
 * **`range` truncates a MARGINAL covariate's declared distribution too**, not
-  only a banded one's: the enrolled span holds however the covariate is used.
+  only a conditional one's: the enrolled span holds however the covariate is used.
 
 * **Nodes need an ESTIMATED coefficient, not just a covariate the model
   reads**, so a fixed allometric exponent leaves weight marginal.
@@ -119,11 +119,11 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 ## Bug fixes
 
-* **`datagen()` banded every study that declared a covariate distribution**,
+* **`datagen()` conditional every study that declared a covariate distribution**,
   having a `model` argument of its own to derive from. It needs `stratify` now.
 
 * **`stratify = FALSE` stopped reaching the spec**, so a study that refused
-  banding had one derived for it -- the opt-out became its opposite.
+  conditioning had one derived for it -- the opt-out became its opposite.
 
 * **`strata_nodes` was recorded only when something was cut into nodes**, so it
   could vary between studies of one fit -- which `anova()` refuses to compare.
@@ -132,13 +132,13 @@ argument. None is a bug fix, so all are listed here rather than below.
   model has dropped the term, so it has no nodes to record; measured, the two
   objectives agree to 5e-05 and the comparison is exactly valid.
 
-* **`range` was silently dropped by a source that bands nothing**, which is the
+* **`range` was silently dropped by a source conditional on nothing**, the
   transcribed `mean +/- SD` it exists for.
 
 * **The rebuilt stratum sampler was discarded one line later**, leaving
   correlated conditional margins to be drawn independently of each other.
 
-* **A continuous covariate banded at `strata_nodes <= 8` was drawn on a
+* **A continuous covariate conditional at `strata_nodes <= 8` was drawn on a
   discrete axis**, a dot per quadrature node and the ticks on that grid.
 
 * **An unnamed `range` crashed the `covariate_effect` panel out of existence**,
@@ -149,7 +149,7 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 * **`admMoments()` returned `NULL` where it documents an empty data frame.**
 
-* **A source banded on a covariate the analysis model does not read could not
+* **A source conditional on a covariate the analysis model does not read could not
   be reduced**: the joint stratum sampler refused the drop, blocking nested
   fits. Its inputs are retained so it can be rebuilt on the reduced set.
 

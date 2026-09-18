@@ -24,7 +24,7 @@ library(admixr2); library(rxode2); library(nlmixr2); library(ggplot2)
 
 A woman with a creatinine clearance of 21 mL/min needs a dose. Three trials have
 been published. **Two of the three fitted no renal effect** --- they enrolled
-narrow bands of renal function, so within those trials the effect is invisible,
+narrow ranges of renal function, so within those trials the effect is invisible,
 absorbed into each paper's clearance. The third enrolled across renal function
 and did estimate it.
 
@@ -37,7 +37,7 @@ only *between* them.
 
 Simulated so there is a truth to check against. Three trials, three
 investigators, three models that share a drug and nothing else. Sato and Ito
-enrolled narrow renal bands and fitted no renal term; Khan enrolled across
+enrolled narrow renal ranges and fitted no renal term; Khan enrolled across
 renal function and fitted one.
 
 
@@ -108,7 +108,7 @@ run_trial <- function(cohort, first_id, renal_within = FALSE) {
 
 cohorts <- list(normal   = draw_cohort(260L, 78, .198, 95, .05),
                 # Khan enrolled ACROSS renal function rather than within a
-                # band -- which is why Khan's analysts could estimate a renal
+                # range -- which is why Khan's analysts could estimate a renal
                 # effect and the other two could not.
                 mild     = draw_cohort(210L, 76, .198, 62, .35),
                 moderate = draw_cohort(180L, 74, .198, 38, .05))
@@ -263,7 +263,7 @@ three sources, because it is the distinction the whole method turns on:
 
 * `normal` and `moderate` estimated no renal effect, so `CRCL` is **marginal**
   for them: they describe the patients they enrolled and admixr2 integrates
-  over that. There is no contrast in either paper to band on, and splitting
+  over that. There is no contrast in either paper to condition on, and splitting
   one on a covariate its model never saw would manufacture evidence.
 * `mild` **does** estimate it, so `CRCL` is **conditional** for that source and
   the paper can be read at values of it.
@@ -275,11 +275,11 @@ The test is ESTIMATED, not merely read. All three models carry weight, two of
 them at the conventional fixed exponent `(WT/70)^0.75` --- and a fixed exponent
 is an assumption rather than a finding, so for those two `WT` is marginal too.
 Only `moderate`, which fitted its own exponent, is conditional on it. All three
-fitted a sex effect, so all three band on sex. Banding is not
+fitted a sex effect, so all three are conditional on sex. Conditioning is not
 cosmetic: a covariate every study marginalises over is not identified against a
 random effect on the same parameter, and over 720 replicates the
 likelihood-ratio test was sized **0.125** against a nominal 0.05 with nothing
-banded, **0.058** with all three.
+conditional, **0.058** with all three.
 
 
 ```{r datagen}
@@ -457,8 +457,8 @@ m_lin <- admMoments(fit_lin, n_sim = 300L)
 ```
 
 Three facets, and only one of them can say anything. `CRCL` separates the
-sources cleanly. `SEX` is banded, so each source contributes a pair and the grey
-line joining them is the within-source contrast banding bought. `WT` is the
+sources cleanly. `SEX` is conditional, so each source contributes a pair and the grey
+line joining them is the within-source contrast conditioning bought. `WT` is the
 negative case: the three cohorts enrolled median weights of
 `r paste(round(vapply(cohorts[c("moderate", "mild", "normal")], function(c) median(c$WT), 0)), collapse = ", ")`
 kg, so they sit on top of one another and the facet cannot speak to weight

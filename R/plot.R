@@ -410,7 +410,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ##
 ## NOT recycled. Okabe-Ito has seven colours, and `rep_len` gave the eighth
 ## source the same black as the first: two entries in one legend, identically
-## coloured, with nothing saying they were different studies. A per-band
+## coloured, with nothing saying they were different studies. A per-node
 ## design with ten sources is an ordinary thing to plot.
 .admOkabeIto <- function(n, black = TRUE) {
   ok <- c("#000000", "#E69F00", "#56B4E9", "#009E73",
@@ -423,7 +423,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## The covariate values a study is CONDITIONED at, as a title fragment.
 ##
 ## `stratify` splits one source into strata named `<source>_s1`, `_s2`, ... and
-## nothing in that name says which slice is which, so a banded fit printed four
+## nothing in that name says which slice is which, so a conditional fit printed four
 ## panels per source with no way to tell the men from the women. The stratum
 ## itself knows: its `cov_dist` entry for a stratified covariate is a `.point`
 ## spec and `cov` carries the value it was conditioned at. `at`/`by` land in the
@@ -483,7 +483,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   if (!is.null(sp) && !isTRUE(sp[[".point"]]))
     return(tryCatch(as.numeric(.admCovQuantile(sp, u))[1L],
                     error = function(e) NA_real_))
-  v <- s[["cov"]][[cv]]
+  v <- .admCovOne(s, cv)
   if (is.null(v)) NA_real_ else as.numeric(v)[1L]
 }
 
@@ -551,7 +551,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ##
 ## CONDITIONAL means that analyst ESTIMATED this effect. Their result can
 ## therefore be read at one value of the covariate -- by subgroup (`at`, `by`),
-## or by banding the source into strata (`stratify`) -- and the study carries a
+## or by cutting the source into nodes (`stratify`) -- and the study carries a
 ## point spec. It contributes a point of contrast against the other sources.
 ##
 ## MARGINAL means they did not. No single paper has a contrast to report, so
@@ -579,12 +579,19 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## are read as levels. The cap stops a continuous covariate that happens to be
 ## conditioned in every study from becoming a 30-level factor.
 ##
-## A QUADRATURE NODE IS NOT A LEVEL. A source banded on a CONTINUOUS covariate
+## ONE level is not a level SET, and .admCovIsDisc() is the test both panels
+## ask. Reading `!is.null(levels)` in one and `length(levels) > 1L` in the other
+## split the figure exactly as the note below forbids: a single declared level
+## made the effect panel sweep a continuous axis while the residual panel keyed
+## its groups on (source, value) and stopped collapsing a source's nodes -- one
+## dot per node, back on one half of the figure.
+##
+## A QUADRATURE NODE IS NOT A LEVEL. A source conditional on a CONTINUOUS covariate
 ## is one point spec per node, which is indistinguishable by value from a
 ## handful of reported subgroups -- so at `strata_nodes <= 8` the axis was
 ## ticked at the quadrature grid, the source drew one dot per node, and nodes
 ## between the ones it landed on were greyed as "levels nobody enrolled". Only
-## 9 > 8 kept the default safe. Banding a DISCRETE covariate is the opposite
+## 9 > 8 kept the default safe. Conditioning on a DISCRETE covariate is the opposite
 ## case: it is enumerated at its declared levels, one stratum each, and those
 ## ARE values the paper reported. The strata record which of the two they are,
 ## so this asks rather than infers.
@@ -611,6 +618,30 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## A source in black could not be told from the fit it is being compared
 ## against -- and on the level axis, where both are a line joining two points,
 ## they were indistinguishable.
+## Could the covariate panels draw ANYTHING? Asked before simulating, because
+## `"covariate"` is in the default `which` and a full n_sim run to produce two
+## NULLs is the most expensive way to draw nothing.
+##
+## Both builders need a BETWEEN-source contrast: at least two distinct positions
+## on some covariate's axis. .admCheckCovariates() fills a `cov` value in for
+## every covariate the model reads, so "some study gives it a value" is true
+## almost always and cannot be the test. This is the builders' own guard, run on
+## the study list alone -- no solve, no simulation.
+.admCovCouldDraw <- function(covs, studies) {
+  if (!length(covs) || length(studies) < 2L) return(FALSE)
+  any(vapply(covs, function(cv) {
+    x <- vapply(studies, .admCovStudyCentre, double(1), cv = cv)
+    x <- x[is.finite(x)]
+    length(x) >= 2L && diff(range(x)) > 0
+  }, logical(1)))
+}
+
+## Is this covariate drawn on LEVELS? The one test, for both panels.
+.admCovIsDisc <- function(cv, studies, mid, max_lev = 8L) {
+  lv <- .admCovLevels(cv, studies, mid, max_lev)
+  !is.null(lv) && length(lv) > 1L
+}
+
 .admCovPalette <- function(nms) {
   nms <- sort(unique(nms[!is.na(nms)]))
   stats::setNames(.admOkabeIto(length(nms), black = FALSE), nms)
@@ -635,7 +666,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   else
     ggplot2::scale_size_area(
       # "per mark", not "n": the unit follows the facet. On the axis a source
-      # is banded on, each mark is one stratum and carries that stratum's
+      # is conditional on, each mark is one stratum and carries that stratum's
       # patients; on every other axis the strata are together and the mark
       # carries the whole source. Both are the right number for the mark they
       # are on, and a legend labelled `n` invited them to be read as one thing.
@@ -691,9 +722,9 @@ head.paged_df <- function(x, n = 6L, ...) {
   }
 }
 
-## The source a study came from: banding splits one into `<source>_s1`, `_s2`,
+## The source a study came from: conditioning splits one into `<source>_s1`, `_s2`,
 ## ... and the strata of one source are a PAIRED set, not independent points.
-## That pairing is the evidence banding creates, so the panels need to be able
+## That pairing is the evidence conditioning creates, so the panels need to be able
 ## to recover it.
 ##
 ## FROM THE STRATUM, not from its name. `sub("_s[0-9]+$", "", nm)` also merged
@@ -728,7 +759,7 @@ head.paged_df <- function(x, n = 6L, ...) {
                        names(s[["cov"]] %||% list()))), use.names = FALSE)))
   if (!length(covs)) return(character(0))
   covs[vapply(covs, function(cv) any(vapply(studies, function(s)
-    !is.null(s[["cov"]][[cv]]) || !is.null(.admCovStudySpec(s, cv)),
+    !is.null(.admCovOne(s, cv)) || !is.null(.admCovStudySpec(s, cv)),
     logical(1))), logical(1))]
 }
 
@@ -759,7 +790,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ##     model. This is the comparison: a source sitting off the dotted line is
 ##     one the meta-analysis does not reproduce.
 ##   * how far along the axis each source SPEAKS FOR, and that is where
-##     conditional and marginal differ. A conditional source was banded or
+##     conditional and marginal differ. A conditional source was cut into nodes, or
 ##     reported at a value, so it covers a stated range: a solid line. A
 ##     marginal one reported no contrast and admixr2 integrates over the
 ##     population it enrolled: a whisker, because that is a distribution.
@@ -792,7 +823,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 
 ## A quantile of a SOURCE's own declared distribution.
 ##
-## The strata cannot answer this. Banding cuts a source into one point spec per
+## The strata cannot answer this. Conditioning cuts a source into one point spec per
 ## quadrature node, so a stratum's own 10th and 90th ARE that node -- and a
 ## mark that stands for the whole source needs the distribution the source
 ## declared, not the grid admixr2 cut it into.
@@ -831,7 +862,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## One row per (SOURCE, POSITION) -- and on a continuous axis, one row per
 ## SOURCE.
 ##
-## Banding cuts a source into one stratum per quadrature node, and a node is an
+## Conditioning cuts a source into one stratum per quadrature node, and a node is an
 ## internal discretisation of the very distribution the source already stands
 ## for. Reading the strata straight drew one mark per node: nine small dots for
 ## one paper, each carrying a ninth of its patients, and the outermost node --
@@ -857,7 +888,7 @@ head.paged_df <- function(x, n = 6L, ...) {
     if (cond && is_disc) {
       p  <- sort(unique(mid[ii]))
       rf <- ii[match(p, mid[ii])]
-      # `n` for a POSITION, not for a stratum. Banding divides a source's n
+      # `n` for a POSITION, not for a stratum. Conditioning divides a source's n
       # among its strata, and two strata at the same level are one mark;
       # summing per position gets both right without a special case.
       nq <- vapply(p, function(v)
@@ -925,12 +956,12 @@ head.paged_df <- function(x, n = 6L, ...) {
   # point. Swept continuously it draws the model at SEX = 0.37, which is not a
   # patient and not a prediction anyone can act on; its axis is the levels.
   disc    <- .admCovLevels(cv, studies, mid)
-  is_disc <- !is.null(disc) && length(disc) > 1L
+  is_disc <- !is.null(disc) && length(disc) > 1L   # == .admCovIsDisc(cv, ...)
 
   # ONE ROW PER (SOURCE, POSITION), and on a continuous axis that is ONE ROW
   # PER SOURCE.
   #
-  # A source banded on a continuous covariate is cut into quadrature NODES, and
+  # A source conditional on a continuous covariate is cut into quadrature NODES, and
   # a node is an internal discretisation of the very distribution the source
   # already stands for. Reading the strata straight drew one mark per node --
   # nine dots for one paper, each carrying a ninth of its patients -- and the
@@ -966,6 +997,14 @@ head.paged_df <- function(x, n = 6L, ...) {
   vals <- Filter(function(z) length(z$value) == length(grid) &&
                    all(is.finite(z$value)) && diff(range(z$value)) > 0, vals)
   if (!length(vals)) return(NULL)
+  # ONE CURVE PER PARAMETER, and it is the LAST assignment to that name. A model
+  # built in stages -- `cl <- exp(tcl) * (WT/70)^bwt` then `cl <- cl * exp(...)`
+  # -- reads the covariate on both lines, and keeping both put 2 * n_grid rows
+  # in one facet: geom_line() then drew a single path zig-zagging between the
+  # two series, while the marks were placed against the first of them. The last
+  # assignment is the value the solve actually uses.
+  .nm <- vapply(vals, `[[`, "", "name")
+  vals <- vals[rev(!duplicated(rev(.nm)))]
 
   curve <- do.call(rbind, lapply(vals, function(z)
     data.frame(cov = cv, param = z$name, x = grid, y = as.numeric(z$value),
@@ -1001,7 +1040,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   #
   # Only for a source CONDITIONAL on this covariate, because that is the source
   # that reported a relationship here: its model estimated the effect, which is
-  # what let it be banded or read at a value in the first place. A marginal
+  # what let it be conditional, or read at a value in the first place. A marginal
   # source reported no contrast along this axis and has no line of its own --
   # its whisker says what it covered, and nothing about slope.
   #
@@ -1082,7 +1121,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 .admCovResidData <- function(cv, studies, agg, src = NULL) {
   # ONE ROW PER (SOURCE, POSITION ON THIS AXIS), not per stratum.
   #
-  # Banding on SEX splits every source in two, and on the CRCL facet both halves
+  # Conditioning on SEX splits every source in two, and on the CRCL facet both halves
   # land on the same renal value -- so a three-paper fit drew six points at
   # three positions, each pair differing only in a covariate this facet is not
   # about, and each carrying half its paper's `n`. On the SEX facet the two
@@ -1104,8 +1143,8 @@ head.paged_df <- function(x, n = 6L, ...) {
   # entry drops out above, and deciding from what survived lets this panel call
   # a covariate discrete while the effect panel, which sees every study, calls
   # it continuous -- different axis ticks on the two halves of one figure.
-  disc <- !is.null(.admCovLevels(
-    cv, studies, vapply(studies, .admCovStudyCentre, double(1), cv = cv)))
+  disc <- .admCovIsDisc(
+    cv, studies, vapply(studies, .admCovStudyCentre, double(1), cv = cv))
   # ONE ROW PER SOURCE on a continuous axis; one per POSITION on a level axis.
   # A position on a continuous axis is a quadrature node, which is how admixr2
   # cut the source's distribution up and not something the paper reported --
@@ -1143,7 +1182,7 @@ head.paged_df <- function(x, n = 6L, ...) {
     # typical width of zero.
     #
     # NOT on a level axis, where a group is one LEVEL of a source and the
-    # source's own centre is the mixture of them: banding on two other
+    # source's own centre is the mixture of them: conditioning on two other
     # covariates put 81 strata in each sex group, and reading the source centre
     # moved both groups to SEX = 0.5, collapsing the only contrast the facet
     # has and dropping it.
@@ -1231,19 +1270,23 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## NULL when the source says nothing, which is a source with no line to draw
 ## rather than one to draw over a guessed range.
 .admCovSourceRange <- function(s, cv) {
-  # `range` IS ALLOWED UNNAMED. admStudy() takes `range = c(52, 118)` whenever
-  # exactly one covariate is banded, and `[["WT"]]` on an unnamed atomic vector
-  # is a subscript ERROR rather than NULL -- so every source using the short
-  # form threw here, and plot.admFit() catches that error and returns NULL,
-  # which took the whole `covariate_effect` panel out silently. The unnamed form
-  # is the range of THAT ONE banded covariate, the only condition it is accepted
-  # under, so it is read for that covariate and not for whichever one happens to
-  # be on the axis.
+  # EVERY SHAPE `range` CAN ARRIVE IN. admStudy() takes `range = c(52, 118)`
+  # when exactly one covariate is conditional, and does not otherwise police the
+  # shape -- so a named list, an unnamed pair, a pair named `lo`/`hi` and a
+  # one-element unnamed list all reach here. `[[` on a name that is absent is a
+  # SUBSCRIPT ERROR rather than NULL for all but the first, and plot.admFit()
+  # catches that error and reports the whole `covariate_effect` panel as absent:
+  # the failure mode hardest to notice. Anything not keyed BY COVARIATE NAME is
+  # read as the range of the one conditional covariate, which is the only
+  # condition the short form is accepted under.
   .r <- s[["range"]]
-  r <- if (is.list(.r) || !is.null(names(.r))) .r[[cv]] else {
-    .b <- tryCatch(.admStudyBandNames(s), error = function(e) character(0))
-    if (identical(.b, cv)) .r else NULL
-  }
+  r <- if (!length(.r)) NULL                       # absent, or an empty list
+       else if (!is.null(names(.r)) && cv %in% names(.r)) .r[[cv]]
+       else if (is.null(names(.r)) &&
+                identical(tryCatch(.admStudyBandNames(s),
+                                   error = function(e) character(0)), cv))
+         (if (is.list(.r)) .r[[1L]] else .r)
+       else NULL
   if (length(r) == 2L && all(is.finite(r)) && r[1L] < r[2L])
     return(sort(as.numeric(r)))
   p <- s[["population"]]
@@ -1321,7 +1364,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 
 ## The fitted-effect panel. `eff` is the list .admCovEffectData() returns, one
 ## element per covariate. NULL when no covariate produced a curve.
-.admCovEffectPanel <- function(eff, pal, src = NULL) {
+.admCovEffectPanel <- function(eff, pal) {
   if (!length(eff)) return(NULL)
   curve_df <- do.call(rbind, lapply(eff, `[[`, "curve"))
   marks_df <- do.call(rbind, lapply(eff, `[[`, "marks"))
@@ -1367,7 +1410,7 @@ head.paged_df <- function(x, n = 6L, ...) {
       size = 3.2)
 
   # EACH SOURCE at its own published parameter value, over the stretch of the
-  # axis it speaks for. CONDITIONAL: a solid line over the range it was banded
+  # axis it speaks for. CONDITIONAL: a solid line over the range it was cut
   # or reported across -- a stated extent. MARGINAL: a whisker, because what it
   # reported is a distribution, and drawing that as a line would claim the
   # source covers its tails as evenly as its middle.
@@ -1455,7 +1498,7 @@ head.paged_df <- function(x, n = 6L, ...) {
       linetype = "longdash")
   # A CONTRAST, where a trend is meaningless. `stratify` splits one source
   # into strata that differ only in this covariate, so the pair is what the
-  # banding bought: the same patients, the same study, one covariate moved.
+  # conditioning bought: the same patients, the same study, one covariate moved.
   # Joining them shows each source's own within-source contrast, and
   # several sources tilting the same way is the mis-specification -- which a
   # regression over the pooled cloud of strata cannot show, because it
@@ -1467,7 +1510,7 @@ head.paged_df <- function(x, n = 6L, ...) {
     p_cres <- p_cres + ggplot2::geom_line(
       data = pair_r, ggplot2::aes(group = source),
       colour = "grey45", linewidth = 0.6, alpha = 0.7)
-  # Studies go in a LEGEND rather than inline text: banded sources sit at
+  # Studies go in a LEGEND rather than inline text: conditional sources sit at
   # nearly the same z, and six strata printed in place overlap into a smear.
   # The 10th-90th span a marginalised study speaks for, so a point plotted
   # at its centre is not read as a study that only ever saw that value.
@@ -1523,12 +1566,12 @@ head.paged_df <- function(x, n = 6L, ...) {
         collapse = " + ")
 }
 
-## ---- putting a banded source back together ---------------------------------
+## ---- putting a conditional source back together ---------------------------------
 ##
 ## `stratify` is a LIKELIHOOD device. A covariate a study marginalises over is
 ## not identified against a random effect on the same parameter -- its effect
 ## enters only through the mixture it induces, which is exactly what the random
-## effect does -- so admixr2 bands the source into one stratum per level and the
+## effect does -- so admixr2 cuts the source into one node per level and the
 ## objective sums over them. The strata have to be the unit there.
 ##
 ## They are not the unit a READER recognises. `A_s1` is an index into an
@@ -1538,7 +1581,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ##
 ## The mean is the n-weighted mean of the strata. THE VARIANCE IS NOT. It is the
 ## law of total variance -- within PLUS BETWEEN -- and the between term is the
-## covariate effect the banding created. Verified against the same source fitted
+## covariate effect conditioning created. Verified against the same source fitted
 ## unbanded: with both terms the collapsed SD matches to 1.000 at every time;
 ## with the within term alone it reads 0.80-0.88, so dropping it would draw a
 ## correctly specified fit as under-predicting the reported spread by a fifth.
@@ -1559,12 +1602,17 @@ head.paged_df <- function(x, n = 6L, ...) {
 ##
 ## A single-stratum source collapses to itself (the between term is zero) and
 ## keeps its `cov`, so an `at`-pinned source still titles with the value it was
-## solved at. Only a genuinely banded source loses that, because it no longer
-## sits at one value of the covariate it was banded on.
+## solved at. Only a genuinely conditional source loses that, because it no longer
+## sits at one value of the covariate it was conditional on.
 .admCollapseSources <- function(studies, agg) {
   if (!length(studies) || is.null(names(studies)))
     return(list(studies = studies, agg = agg))
-  grp <- split(names(studies), .admCovSource(studies))
+  # IN THE ORDER THE CALLER GAVE THEM. split() sorts its group names, so the
+  # panels came back alphabetically rather than in the order the studies were
+  # supplied -- a change of output order for any multi-study fit, conditioned or
+  # not.
+  .src <- .admCovSource(studies)
+  grp <- split(names(studies), factor(.src, levels = unique(.src)))
   st2 <- list(); ag2 <- list()
   for (sn in names(grp)) {
     ks  <- grp[[sn]]
@@ -1583,7 +1631,7 @@ head.paged_df <- function(x, n = 6L, ...) {
     prd <- .admMixMoments(lapply(has, function(k) agg[[k]]$pred$E),
                           lapply(has, function(k) agg[[k]]$pred$V), nk)
     # The structural part collapses by the same law. Its BETWEEN term is the
-    # banded covariate's own contribution -- banding moved that covariate out
+    # conditional covariate's own contribution -- conditioning moved that covariate out
     # of each stratum's spread and into the spacing between them, so a source
     # whose strata are far apart carries it here and nowhere else.
     vs <- lapply(has, function(k) agg[[k]]$pred$V_struct)
@@ -1593,7 +1641,7 @@ head.paged_df <- function(x, n = 6L, ...) {
     s0 <- studies[[has[1L]]]
     s0$E <- obs$E; s0$V <- obs$V; s0$n <- sum(nk)
     if (length(has) > 1L) {
-      # A banded source sits at no single value of what it was banded on, so a
+      # A conditional source sits at no single value of what it was conditional on, so a
       # `[SEX = 0]` title would be a claim about half of it.
       s0[["cov"]] <- NULL; s0[["cov_dist"]] <- NULL
       s0[[".adm_cov_dropped"]] <- NULL
@@ -1630,13 +1678,13 @@ head.paged_df <- function(x, n = 6L, ...) {
 #'
 #' @section Sources and strata:
 #'
-#' `stratify` bands a source into one study per covariate level, because a
+#' `stratify` cuts a source into one study per covariate level, because a
 #' covariate a study marginalises over is not identified against a random
 #' effect on the same parameter. Those strata are the unit of the likelihood,
 #' not a unit a reader recognises, so `by = "source"` (the default) puts them
 #' back together: the mean is the n-weighted mean, and the variance is the law
 #' of total variance -- within plus **between**, the between term being the
-#' covariate effect the banding created.
+#' covariate effect conditioning created.
 #'
 #' `by = "stratum"` returns them separately, which is what you want when the
 #' between-level contrast is the thing you are looking at.
@@ -1644,7 +1692,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 #' @param fit An `admFit` object.
 #' @param n_sim,seed Simulation size and seed for the predicted moments.
 #'   Defaults to the fit's own.
-#' @param by `"source"` to collapse a banded source back together, `"stratum"`
+#' @param by `"source"` to collapse a conditional source back together, `"stratum"`
 #'   to keep its strata apart.
 #'
 #' @return A data frame with one row per study and observation time.
@@ -1664,8 +1712,17 @@ admMoments <- function(fit, n_sim = NULL, seed = 1L,
   extra <- fit$env$admExtra %||% fit$env$adirmcExtra %||%
     stop("No admExtra/adirmcExtra on fit object", call. = FALSE)
   n_sim <- n_sim %||% extra$n_sim %||% 5000L
-  agg   <- .admAggData(extra, fit$env$ui, n_sim = n_sim, seed = seed,
-                       warn = FALSE)
+  # THE SAME CACHE plot() READS. The stored slot was built at the fit's own
+  # n_sim and seed 1, which is exactly what the documented `admMoments(fit)`
+  # asks for -- and running it again made the accessor cost a full simulation
+  # to hand back numbers the fit was already carrying. Compared numerically,
+  # not with identical(), so n_sim = 5000 still hits a stored 5000L.
+  .cached <- fit$env$aggData
+  agg <- if (!is.null(.cached) &&
+             isTRUE(n_sim == (extra$n_sim %||% 5000L)) && isTRUE(seed == 1L))
+    .cached
+  else
+    .admAggData(extra, fit$env$ui, n_sim = n_sim, seed = seed, warn = FALSE)
   st    <- extra$studies
   if (identical(by, "source")) {
     cs  <- .admCollapseSources(st, agg)
@@ -1755,12 +1812,12 @@ admMoments <- function(fit, n_sim = NULL, seed = 1L,
 #' declared distribution -- is drawn as a round point at the study's median with
 #' a 10th-90th percentile bar and a 2.5th-97.5th whisker: the source constrains
 #' the effect through the spread it induces, and the whole span is what it
-#' speaks for. A **conditioned** covariate -- banded, `at` or `by`, so the model
+#' speaks for. A **conditional** covariate -- cut into nodes, or `at` or `by`, so the model
 #' is solved at one value -- is drawn as a diamond at that value with no spread,
 #' because it has none; what that source reports along it is a relationship,
 #' drawn as its own regression over the range it covers.
 #'
-#' A SOURCE IS ONE MARK, not one per stratum. Banding cuts a source into one
+#' A SOURCE IS ONE MARK, not one per stratum. Conditioning cuts a source into one
 #' study per quadrature node, and a node is an internal discretisation of the
 #' very distribution the source already stands for: drawn straight it became
 #' nine small dots for one paper, each carrying a ninth of its patients, with
@@ -1775,7 +1832,7 @@ admMoments <- function(fit, n_sim = NULL, seed = 1L,
 #' axis is ticked at its levels and nowhere else, no regression is fitted
 #' through it -- a line across the levels of a factor reports as a slope what is
 #' a difference between groups -- and the strata `stratify` cut from one source
-#' are joined, because that pairing is the evidence banding creates: the same
+#' are joined, because that pairing is the evidence conditioning creates: the same
 #' study, one covariate moved. Several sources tilting the same way is the
 #' mis-specification. A regression over the pooled cloud of strata cannot show
 #' it, since it averages the pairs away.
@@ -1806,9 +1863,12 @@ admMoments <- function(fit, n_sim = NULL, seed = 1L,
 #'   `plot(fit, which = "cov")$cov_study1_std_resid` -- or by position, with the
 #'   combined 2x2 grid stored first per study
 #'   (`plot(fit, which = "mean")[[1]]` is the full grid, `[1]` the length-1
-#'   named sub-list). The sub-panel keys are `<type>_<study>_obs`, `_pred`,
-#'   `_resid`, and `_std_resid`; the combined grid stays under `<type>_<study>`.
-#'   The extra sub-panel keys are not printed on their own.
+#'   named sub-list). The sub-panel keys are `<type>_<source>_obs`, `_pred`,
+#'   `_resid`, and `_std_resid`; the combined grid stays under
+#'   `<type>_<source>`. `<source>` is the study name, and for a source cut into
+#'   nodes it is the name of the SOURCE rather than of a node -- these panels
+#'   are about the paper, so the nodes are put back together first and there is
+#'   no `mean_study1_s1`. The extra sub-panel keys are not printed on their own.
 #'
 #' @section Aggregate data slot:
 #' Every admixr2 fit also carries the observed and predicted aggregate data in
@@ -1823,9 +1883,16 @@ admMoments <- function(fit, n_sim = NULL, seed = 1L,
 #'   fit$env$aggData$study1$pred$V   # predicted covariance matrix
 #' }
 #' The predicted moments are computed by one MC simulation at the fitted
-#' parameters using the fit's own `n_sim` and a fixed seed, so they match the
-#' default `plot(fit)` mean/cov panels. The slot is absent only when the fit
-#' cannot be simulated (no simulation model available).
+#' parameters using the fit's own `n_sim` and a fixed seed. The slot is absent
+#' only when the fit cannot be simulated (no simulation model available).
+#'
+#' It is **per study**, which for a source cut into nodes means per node --
+#' where the `"mean"` and `"cov"` panels are per SOURCE, the nodes put back
+#' together by the mixture law. So the two no longer line up entry for entry on
+#' such a fit, and the panel keys are `mean_<source>` rather than
+#' `mean_<source>_s1`. [admMoments()] returns whichever of the two you want,
+#' tidied: `by = "source"` matches the panels, `by = "stratum"` matches this
+#' slot.
 #'
 #' @section nlmixr2 `traceplot()`:
 #' admixr2 fits also plug into the nlmixr2 `traceplot()` generic. During fitting
@@ -1906,7 +1973,8 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
   # The covariate RESIDUAL panel reads the same predicted moments the mean and
   # cov panels do, so "covariate" has to simulate -- but only when there IS a
   # covariate, or a fit declaring none pays for a full n_sim run to draw nothing.
-  need_sim_local <- any(c("mean", "cov") %in% which) || length(cov_nms) > 0L
+  need_sim_local <- any(c("mean", "cov") %in% which) ||
+    .admCovCouldDraw(cov_nms, studies)
   # Reuse fit$env$aggData when it matches the requested n_sim/seed, else recompute.
   agg <- if (!need_sim_local) {
     setNames(vector("list", length(studies)), names(studies))
@@ -1950,7 +2018,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
   # Standardised residual: z[t] = (E_obs[t] - mu[t]) / sqrt(V_pred[t,t]/n) ~ N(0,1).
   # Stars: |z| > 1.96 (*), > 2.58 (**), > 3.29 (***). Requires patchwork for 2x2.
   # The mean and cov panels are about a PAPER, so they read the source-level
-  # lists: a banded source is put back together first, by the mixture law. The
+  # lists: a conditional source is put back together first, by the mixture law. The
   # covariate panels below keep the strata, where the between-level contrast is
   # the signal. See .admCollapseSources().
   .src <- if (any(c("mean", "cov") %in% which))
@@ -2006,6 +2074,16 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
                           z_label = sig_mean,
                           z_vjust = ifelse(z_mean >= 0, -0.5, 1.5))
 
+    # THE SHARED Y SCALE, applied rather than asserted. Both subtitles claimed
+    # it and nothing implemented it: patchwork's `|` does not link scales, so
+    # the observed and predicted panels were drawn on whatever limits each
+    # needed and read as agreeing more, or less, than they do. The limits span
+    # both panels' ribbons, including the pre-sigma band when there is one.
+    .ylim <- range(c(df_obs$obs_lo, df_obs$obs_hi, df_pred$pred_lo,
+                     df_pred$pred_hi, df_pred$str_lo, df_pred$str_hi),
+                   na.rm = TRUE, finite = TRUE)
+    if (!all(is.finite(.ylim)) || diff(.ylim) <= 0) .ylim <- NULL
+
     p_obs <- ggplot2::ggplot(df_obs, ggplot2::aes(x = time)) +
       ggplot2::geom_ribbon(ggplot2::aes(ymin = obs_lo, ymax = obs_hi),
                            fill = "black", alpha = 0.15) +
@@ -2017,6 +2095,8 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       ggplot2::theme_bw() +
       ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
                                                            face = "plain"))
+    if (!is.null(.ylim))
+      p_obs <- p_obs + ggplot2::coord_cartesian(ylim = .ylim)
 
     p_pred <- ggplot2::ggplot(df_pred, ggplot2::aes(x = time)) +
       ggplot2::geom_ribbon(ggplot2::aes(ymin = pred_lo, ymax = pred_hi),
@@ -2040,6 +2120,8 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       ggplot2::theme_bw() +
       ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
                                                            face = "plain"))
+    if (!is.null(.ylim))
+      p_pred <- p_pred + ggplot2::coord_cartesian(ylim = .ylim)
 
     p_res <- ggplot2::ggplot(df_res, ggplot2::aes(x = time)) +
       ggplot2::geom_hline(yintercept = 0, colour = "grey40") +

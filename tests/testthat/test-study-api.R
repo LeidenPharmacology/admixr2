@@ -131,10 +131,10 @@ test_that("materialising a spec is deferred, and matches datagen directly", {
     admixr2:::.admMaterialise(admStudies(s))))
   ui <- suppressMessages(rxode2::rxode2(.sa_model))
   d <- ui$iniDf; d$est[d$name == "tcl"] <- log(5.2); ui$iniDf <- d
-  # The same call written out by hand, banded the way the derivation bands it:
+  # The same call written out by hand, conditioned the way the derivation does:
   # `.sa_model` estimates the SEX coefficient and asserts the weight exponent.
   # BOTH SIDES MUST NAME THE SAME STRATA. Compared on `$s` alone this passed
-  # while both sides were NULL -- materialise banded, datagen banded too, and
+  # while both sides were NULL -- materialise conditional, datagen conditional too, and
   # neither had a study called `s` to compare.
   want <- suppressWarnings(suppressMessages(datagen(
     list(s = list(times = c(1, 4, 12), ev = rxode2::et(amt = 200), n = 240,
@@ -161,7 +161,7 @@ test_that("`by` expands into one study per level, splitting n by the proportion"
   got <- admixr2:::.admMaterialise(admStudies(s))
   # `.sa_model` asserts the weight exponent and estimates only the SEX
   # coefficient, which `by` has already pinned one level per study -- so there
-  # is nothing left to band and each level is one study. What `by` is
+  # is nothing left to condition on and each level is one study. What `by` is
   # responsible for is the LEVELS and the n split, and the sums below hold
   # however many strata each level is cut into.
   sx <- vapply(got, function(g) g[["cov"]][["SEX"]], 0)
@@ -179,7 +179,7 @@ test_that("materialising a subgroup refuses a colliding study name", {
   skip_on_cran(); skip_if_not_installed("rxode2")
   # A model reading ONLY the `by` covariate, so the levels are the whole
   # expansion and the names are exactly `trial_SEX0`/`trial_SEX1` -- a model
-  # estimating a second covariate's coefficient would band each level further
+  # estimating a second covariate's coefficient would cut each level further
   # and give the names a stratum suffix this test is not about.
   sexonly <- function() {
     ini({ tcl <- log(5); tv <- log(50); bsex <- 0.2
@@ -323,7 +323,7 @@ test_that("digitised profiles refuse source-only expansion arguments", {
   args <- list(E = 1, sd = 1, n = 20, dose = 1, times = 1,
                population = admPopulation(SEX = c(male = 0.6)))
   expect_error(do.call(admStudy, c(args, list(by = "SEX"))), "digitised data")
-  # `stratify` is not an argument at all any more -- banding is derived from
+  # `stratify` is not an argument at all any more -- conditioning is derived from
   # the source's model, and digitised data has none to derive from.
   expect_error(do.call(admStudy, c(args, list(stratify = "SEX"))),
                "unused argument")
@@ -351,7 +351,7 @@ test_that("a stated margin beats the data, and a dropped association is said", {
   expect_silent(invisible(admPopulation(data = coh)))
 })
 
-test_that("banding is derived from the model with nothing declared", {
+test_that("conditioning is derived from the model with nothing declared", {
   skip_on_cran(); skip_if_not_installed("rxode2")
   # NOTHING IS SET. Whether a covariate is conditional or marginal is a
   # property of the source's own model, so admixr2 derives it -- and it has to
@@ -363,7 +363,7 @@ test_that("banding is derived from the model with nothing declared", {
                 label = "trial")
   got <- suppressWarnings(suppressMessages(
     admixr2:::.admMaterialise(admStudies(s))))
-  # .sa_model estimates bsex and reads WT/SEX, so SEX is banded and WT is not:
+  # .sa_model estimates bsex and reads WT/SEX, so SEX is conditional and WT is not:
   # a fixed allometric exponent carries no fitted effect to recover.
   expect_gt(length(got), 1L)
   expect_true(all(vapply(got, function(g) !is.null(g[["cov"]][["SEX"]]),
@@ -412,11 +412,11 @@ test_that("print.admStudies flags a covariate no source can identify", {
     admStudy(model = .sa_model, population = coh, dose = 200,
              times = c(1, 4, 12), label = "a"))
   out <- paste(utils::capture.output(print(admStudies(a = s))), collapse = " ")
-  # `.sa_model` ESTIMATES the SEX coefficient, so SEX bands. WT is read at a
+  # `.sa_model` ESTIMATES the SEX coefficient, so SEX is conditional. WT is read at a
   # fixed exponent, and CRCL is declared by the cohort and never mentioned by
   # the model: both are marginal, for the two different reasons print()
   # distinguishes, and neither is identified by any source here.
-  expect_match(out, "SEX +banded")
+  expect_match(out, "SEX +conditional")
   expect_match(out, "WT +marginal")
   expect_match(out, "CRCL +marginal")
   expect_match(out, "marginal in every source")
@@ -451,11 +451,11 @@ test_that("a covariate constant within a study is pinned, not described", {
   expect_false("CRCL" %in% admixr2:::.admCovSpecNames(s$population))
 })
 
-test_that("the derivation bands the covariates the source model ESTIMATED", {
+test_that("the derivation conditions on what the source model ESTIMATED", {
   skip_on_cran(); skip_if_not_installed("rxode2")
   # ESTIMATED, not merely read. `.sa_model` reads WT at a literal ^0.75 and SEX
   # at an estimated coefficient: the fixed exponent is an assumption, so that
-  # source holds no evidence about weight and banding on it would buy strata
+  # source holds no evidence about weight and conditioning on it would buy strata
   # and no evidence. Marginal covers both that and a covariate the population
   # describes and the model never mentions.
   s <- suppressMessages(
@@ -576,7 +576,7 @@ test_that("a population is canonicalised on build, so `by` sees the same object"
                "not a valid covariate specification")
 })
 
-test_that("banding is not a user option any more", {
+test_that("conditioning is not a user option any more", {
   skip_if_not_installed("rxode2")
   pop <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55))
   # `stratify` is gone: whether a covariate is conditional or marginal follows
@@ -590,7 +590,7 @@ test_that("banding is not a user option any more", {
 
   # ESTIMATED, not merely READ. `.sa_model` carries WT at a FIXED allometric
   # exponent and estimates `bsex`, so SEX is the only covariate it holds
-  # evidence about: banding on WT would buy strata and no evidence, and credit
+  # evidence about: conditioning on WT would buy strata and no evidence, and credit
   # the source with information it never earned.
   sn <- admStudy(model = .sa_model, n = 100, dose = 200, times = c(1, 4),
                  population = pop, strata_nodes = 3L,
@@ -613,7 +613,7 @@ test_that("banding is not a user option any more", {
     range = list(WT = c(50, 100)), label = "s")))
   expect_identical(length(g2), 3L * 2L)    # 3 WT nodes x 2 SEX levels
   # THE NODES ARE THE CALLER'S, on every stratum: copied only inside the
-  # "something was banded" branch, a null fit took the default 9 while the full
+  # "something was conditional" branch, a null fit took the default 9 while the full
   # fit took this 3, and a different resolution per study is what anova()
   # refuses to compare across.
   expect_true(all(vapply(g2, function(z) identical(z[[".adm_strata_nodes"]], 3L),
@@ -632,8 +632,8 @@ test_that("banding is not a user option any more", {
   expect_gte(admixr2:::.admCovQuantile(cr, 0.001), 60)
   expect_lte(admixr2:::.admCovQuantile(cr, 0.999), 120)
 
-  # An unnamed `range` still needs exactly one banded covariate to belong to,
-  # and `.fit_wt` bands two.
+  # An unnamed `range` still needs exactly one conditional covariate to belong to,
+  # and `.fit_wt` is conditional on two.
   expect_error(admixr2:::.admMaterialise(admStudies(s = admStudy(
     model = .fit_wt, n = 100, dose = 200, times = c(1, 4),
     population = pop, range = c(50, 100), label = "s"))),
@@ -646,13 +646,13 @@ test_that("banding is not a user option any more", {
   expect_identical(length(g3), 2L)
 
   # And the derivation resolves to the covariates themselves, so a study
-  # prints the band it found rather than a flag it was handed -- and says why
-  # the one it did not band is marginal, which is the part a reader cannot see
+  # prints the set it found rather than a flag it was handed -- and says why
+  # the one it did not is marginal, which is the part a reader cannot see
   # from the model.
   out <- capture.output(print(admStudy(model = .sa_model, n = 100, dose = 200,
                                        times = c(1, 4), population = pop,
                                        label = "s")))
-  expect_match(paste(out, collapse = "\n"), "banded on +SEX")
+  expect_match(paste(out, collapse = "\n"), "conditional on +SEX")
   expect_match(paste(out, collapse = "\n"), "WT read at an asserted coefficient")
 })
 

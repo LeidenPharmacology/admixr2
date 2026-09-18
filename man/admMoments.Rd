@@ -12,7 +12,7 @@ admMoments(fit, n_sim = NULL, seed = 1L, by = c("source", "stratum"))
 \item{n_sim, seed}{Simulation size and seed for the predicted moments.
 Defaults to the fit's own.}
 
-\item{by}{\code{"source"} to collapse a banded source back together, \code{"stratum"}
+\item{by}{\code{"source"} to collapse a conditional source back together, \code{"stratum"}
 to keep its strata apart.}
 }
 \value{
@@ -41,13 +41,13 @@ the pre-sigma variance on a different scale.
 \section{Sources and strata}{
 
 
-\code{stratify} bands a source into one study per covariate level, because a
+\code{stratify} cuts a source into one study per covariate level, because a
 covariate a study marginalises over is not identified against a random
 effect on the same parameter. Those strata are the unit of the likelihood,
 not a unit a reader recognises, so \code{by = "source"} (the default) puts them
 back together: the mean is the n-weighted mean, and the variance is the law
 of total variance -- within plus \strong{between}, the between term being the
-covariate effect the banding created.
+covariate effect conditioning created.
 
 \code{by = "stratum"} returns them separately, which is what you want when the
 between-level contrast is the thing you are looking at.

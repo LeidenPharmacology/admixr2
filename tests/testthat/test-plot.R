@@ -472,7 +472,7 @@ test_that("plot.admFit does not simulate for a fit with no covariates", {
 
 test_that("plot.admFit covariate panel survives an all-discrete figure", {
   skip_if_not_installed("rxode2")
-  # Every covariate banded: no study contributes a shade region, so the rect
+  # Every covariate conditional: no study contributes a shade region, so the rect
   # layer's data is NULL and `nrow(NULL)` is length zero, not FALSE.
   fit <- .make_mock_fit()
   fit$env$ui <- .cov_ui()
@@ -523,6 +523,85 @@ test_that(".admCovLevels finds levels only where a covariate has them", {
   expect_null(.admCovLevels("AGE", flat, seq_len(10L)))
 })
 
+test_that("a study's `cov` may be a NAMED NUMERIC VECTOR, not only a list", {
+  # PINS a crash that took out the whole of plot(fit), not just the new panel.
+  # `cov` is documented as "a list or a named numeric vector" and admStudy(at =)
+  # accepts the vector form, but `c(WT = 70)[["CRCL"]]` is a SUBSCRIPT ERROR
+  # where a list returns NULL. The normaliser runs inside .admCheckCovariates(),
+  # which returns early when no study declares a `cov_dist` -- so the plot path
+  # could reach a raw vector, and .admCovPanelCovs() sits outside every
+  # tryCatch in the covariate block.
+  st <- list(a = list(cov = c(WT = 70), n = 10L, E = 1, V = 1, times = 1),
+             b = list(cov = c(CRCL = 90), n = 10L, E = 1, V = 1, times = 1))
+  ui <- list(allCovs = c("WT", "CRCL"))
+  expect_setequal(.admCovPanelCovs(ui, st), c("WT", "CRCL"))
+  expect_equal(.admCovStudyQ(st$a, "WT"), 70)
+  expect_true(is.na(.admCovStudyQ(st$a, "CRCL")))
+  # the list form still reads the same
+  expect_equal(.admCovStudyQ(list(cov = list(WT = 80)), "WT"), 80)
+})
+
+test_that(".admCovSourceRange survives every shape `range` arrives in", {
+  # `[[` on an absent name is an error for all but the named-list form, and
+  # plot.admFit() catches that and reports the panel as ABSENT -- the failure
+  # mode hardest to notice. admStudy() does not police the shape.
+  mk <- function(r) list(range = r,
+    population = list(WT = list(meanlog = log(70), sdlog = 0.2)))
+  # `list()` is in here deliberately: an empty range is what a source with no
+  # reported span carries, and `list()[[1L]]` is a subscript error too.
+  for (r in list(list(WT = c(50, 110)), c(52, 118), c(lo = 52, hi = 118),
+                 list(c(52, 118)), list(), NULL)) {
+    v <- .admCovSourceRange(mk(r), "WT")
+    expect_true(is.null(v) || (length(v) == 2L && all(is.finite(v))))
+  }
+  # The named form is still read for the covariate it names.
+  expect_equal(.admCovSourceRange(mk(list(WT = c(50, 110))), "WT"), c(50, 110))
+})
+
+test_that("ONE declared level is not a level SET, on either panel", {
+  skip_if_not_installed("rxode2")
+  # PINS the split the comment forbids: .admCovLevels() returns a length-1
+  # vector when one declared level is all there is, and reading that as
+  # "discrete" on one panel and "continuous" on the other ticked the two halves
+  # of one figure differently -- and stopped the residual panel collapsing a
+  # source's nodes, so one dot per node came back on it.
+  one <- list(values = 1, probs = 1)
+  st <- list(a = list(n = 50L, cov = list(SEX = 1),
+                      cov_dist = list(SEX = one)),
+             b = list(n = 50L, cov = list(SEX = 1),
+                      cov_dist = list(SEX = one)))
+  mid <- vapply(st, .admCovStudyCentre, double(1), cv = "SEX")
+  expect_length(.admCovLevels("SEX", st, mid), 1L)
+  expect_false(.admCovIsDisc("SEX", st, mid))
+})
+
+test_that("the source collapse keeps the order the caller gave", {
+  # split() sorts its group names, so the panels came back alphabetically
+  # rather than in the order the studies were supplied.
+  mk <- function(e) list(E = e, V = matrix(1), n = 10, times = 1)
+  st <- list(zeta = mk(1), alpha = mk(2), mid = mk(3))
+  ag <- lapply(st, function(s) list(pred = list(E = s$E, V = matrix(1))))
+  out <- .admCollapseSources(st, ag)
+  expect_identical(names(out$studies), c("zeta", "alpha", "mid"))
+})
+
+test_that("the covariate panels do not simulate when they cannot draw", {
+  # `"covariate"` is in the default `which`, and .admCheckCovariates() fills a
+  # `cov` value in for every covariate the model reads -- so "some study gives
+  # it a value" is true almost always. Without a BETWEEN-source contrast both
+  # builders return NULL, and a full n_sim run to draw nothing is the most
+  # expensive way to do it.
+  one <- list(a = list(n = 10L, cov = list(WT = 70)))
+  same <- list(a = list(n = 10L, cov = list(WT = 70)),
+               b = list(n = 10L, cov = list(WT = 70)))
+  diff <- list(a = list(n = 10L, cov = list(WT = 70)),
+               b = list(n = 10L, cov = list(WT = 90)))
+  expect_false(.admCovCouldDraw("WT", one))    # one study, no contrast
+  expect_false(.admCovCouldDraw("WT", same))   # two studies, same value
+  expect_false(.admCovCouldDraw(character(0), diff))
+  expect_true(.admCovCouldDraw("WT", diff))
+})
+
 test_that(".admCovSource reads the parent a stratum recorded, not its name", {
   # `.adm_source` is written by .admExpandStrata(), which knows the parent.
   st <- list(normal_s1 = list(.adm_source = "normal"),
@@ -551,7 +630,7 @@ test_that(".admCovResidData marks discreteness and pairs a source's strata", {
                   c("a_s1", "a_s2", "b_s1", "b_s2"))
   # `.adm_source` is what makes these STRATA rather than four studies -- see
   # .admCovSource(): the parent is recorded where it is known, because two
-  # studies a user named `a_s1` and `a_s2` are not a banded source.
+  # studies a user named `a_s1` and `a_s2` are not a conditional source.
   mk <- function(sex, wt, src) list(
     n = 50L, cov = list(SEX = sex, WT = wt), .adm_source = src,
     .adm_strata_covs = "SEX",
@@ -652,13 +731,13 @@ test_that(".admCovSourceRange prefers what the source declared", {
 test_that(".admCovSourceRange survives the UNNAMED range admStudy() allows", {
   skip_if_not_installed("rxode2")
   # PINS a silent panel. `range = c(52, 118)` is documented and accepted
-  # whenever one covariate is banded, and `[["WT"]]` on an unnamed atomic
+  # whenever one covariate is conditional, and `[["WT"]]` on an unnamed atomic
   # vector is a subscript ERROR rather than NULL -- so this threw, and
   # plot.admFit() catches the error and returns NULL, which took the whole
   # `covariate_effect` panel out without a word.
   pop <- list(WT  = list(meanlog = log(70), sdlog = 0.2),
               SEX = list(values = c(0, 1), probs = c(.5, .5)))
-  # ONE estimated coefficient, so WT is the one banded covariate and the
+  # ONE estimated coefficient, so WT is the one conditional covariate and the
   # unnamed range is ITS range.
   one <- function() {
     fn <- function() {
@@ -702,19 +781,19 @@ test_that(".admFitSourceStudies is absent rather than fatal", {
 test_that(".admCovEffectData draws a conditional source's own regression", {
   skip_if_not_installed("rxode2")
   # A source CONDITIONAL on the covariate reported a relationship along this
-  # axis -- its model estimated the effect, which is what let it be banded or
+  # axis -- its model estimated the effect, which is what let it be conditional or
   # read at a value. Its own line over the range it covers, against the dotted
   # estimated effect, is the comparison the panel exists for.
   #
-  # One source BANDED into two strata, which is what gives it a contrast of its
+  # One source CUT INTO two nodes, which is what gives it a contrast of its
   # own to draw. A source that reported a single level has no slope of its own,
   # whatever its model estimates, and correctly gets no line.
-  band <- function(sex) list(
+  node <- function(sex) list(
     n = 100L, cov = list(WT = 80, SEX = sex),
     .adm_source = "a", .adm_strata_covs = "SEX",
     cov_dist = list(WT  = list(meanlog = log(80), sdlog = 0.2),
                     SEX = list(.point = TRUE)))
-  st  <- list(a_s1 = band(0), a_s2 = band(1))
+  st  <- list(a_s1 = node(0), a_s2 = node(1))
   src <- list(a = list(
     ui = .cov_ui(), range = list(WT = c(60, 100)),
     population = list(WT  = list(meanlog = log(80), sdlog = 0.2),
@@ -783,7 +862,7 @@ test_that(".admMixMoments is the law of total variance, not an average", {
   # Two equally weighted strata, means (1, 3) and (2, 5), identity variances.
   # Mean: (1.5, 4). Variance: I + the between term, which is
   # tcrossprod(c(0.5, 1)) -- and it is the between term that carries the
-  # covariate effect the banding created.
+  # covariate effect the conditioning created.
   E <- list(c(1, 3), c(2, 5))
   V <- list(diag(2), diag(2))
   m <- .admMixMoments(E, V, c(1, 1))
@@ -801,7 +880,7 @@ test_that(".admMixMoments is the law of total variance, not an average", {
 
 test_that(".admCollapseSources leaves an unbanded source alone", {
   # A single-stratum source keeps its `cov`, so an `at`-pinned study still
-  # titles with the value it was solved at. Only a genuinely banded source
+  # titles with the value it was solved at. Only a genuinely conditional source
   # loses that, because it no longer sits at one value.
   st <- list(solo = list(E = c(1, 2), V = diag(2), n = 50,
                          times = c(1, 2), cov = list(CRCL = 62)))
@@ -851,8 +930,8 @@ test_that(".admVarParts names what V actually contains", {
 
 test_that(".admCollapseSources carries the structural variance too", {
   # The predicted total and the pre-sigma part both collapse by the mixture
-  # law. The structural part's BETWEEN term is the banded covariate's own
-  # contribution: banding moved that covariate out of each stratum's spread
+  # law. The structural part's BETWEEN term is the conditional covariate's own
+  # contribution: conditioning moved that covariate out of each stratum's spread
   # and into the spacing between them.
   st <- list(a_s1 = list(E = c(2), V = matrix(1), n = 50, times = 1,
                          .adm_source = "a"),
@@ -940,7 +1019,7 @@ test_that("admMoments reports NA struct_sd for a transforming error model", {
 })
 
 test_that(".admCovResidData is one row per SOURCE per position on THIS axis", {
-  # Banding on SEX splits every source in two, and on another covariate's axis
+  # Conditioning on SEX splits every source in two, and on another covariate's axis
   # both halves land on the same value -- so a two-paper fit drew four points at
   # two positions, each pair differing only in a covariate that facet is not
   # about, and each carrying half its paper's n. The effect panel already marks
@@ -970,8 +1049,8 @@ test_that(".admCovResidData is one row per SOURCE per position on THIS axis", {
   expect_setequal(rs$x, c(0, 1))
 })
 
-test_that("a source banded into quadrature nodes is ONE mark, not one per node", {
-  # THE DEFECT: banding is derived from the source's own model, so a source
+test_that("a source cut into quadrature nodes is ONE mark, not one per node", {
+  # THE DEFECT: conditioning is derived from the source's own model, so a source
   # whose model uses two continuous covariates is cut into `nodes^2` strata --
   # 81 by default, 162 with a sex split. Each was read as a position: 99 dots
   # for one paper on the renal axis, most carrying under two patients, and the
@@ -979,9 +1058,9 @@ test_that("a source banded into quadrature nodes is ONE mark, not one per node",
   # with every paper below 150.
   zz    <- seq(-3.2, 3.2, length.out = 9)
   nodes <- exp(log(60) + 0.5 * zz)
-  wt    <- stats::dnorm(zz) / sum(stats::dnorm(zz))   # as banding apportions n
+  wt    <- stats::dnorm(zz) / sum(stats::dnorm(zz))   # as conditioning apportions n
   st <- c(
-    # the banded source: one point spec per node, n split between them
+    # the conditional source: one point spec per node, n split between them
     stats::setNames(lapply(seq_along(nodes), function(k) list(
       n = 210 * wt[k], times = c(1, 2), cov = list(CRCL = nodes[k]),
       # A stratum says whose it is and which covariate it is a NODE of. Without
