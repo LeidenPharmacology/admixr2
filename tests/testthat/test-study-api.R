@@ -1,5 +1,17 @@
 # Published-study transcription and conversion checks.
 
+# `.sa_model` asserts WT's exponent and estimates `bsex`; `.sa_fitwt` ESTIMATES
+# the exponent, so WT is conditional for it. The pair is what separates "reads a
+# covariate" from "estimated a coefficient for one", which is the rule
+# conditioning is derived by, so both belong at file scope rather than being
+# retyped inside the tests that need the contrast.
+.sa_fitwt <- function() {
+  ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75
+        eta.cl ~ 0.09; add.err <- 0.08 })
+  model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+          v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+}
+
 .sa_model <- function() {
   ini({ tcl <- log(5); tv <- log(50); bsex <- 0.15
         eta.cl ~ 0.09; add.err <- 0.08 })
@@ -600,12 +612,10 @@ test_that("a population is canonicalised on build, so `by` sees the same object"
 
 test_that("print() does not misreport a `by =` source", {
   skip_if_not_installed("rxode2")
-  # `by` pins its covariate one level per study, so .admStudyBandNames() takes
-  # it out of the conditional set deliberately. Subtracting that set alone then
-  # labelled SEX "read at an asserted coefficient" for a model that plainly
-  # estimates `bsex`, and printed "conditional on nothing" directly under a
-  # "reported by SEX" line. The pre-flight print is where a transcription gets
-  # checked, and the natural response was to add a coefficient already there.
+  # `by` pins its covariate one level per study, so it is out of the
+  # conditional set deliberately -- and subtracting that set alone then called
+  # SEX "read at an asserted coefficient" for a model that estimates `bsex`,
+  # under a "reported by SEX" line saying otherwise.
   pop <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55))
   out <- capture.output(print(admStudy(
     model = .sa_model, n = 200, dose = 200, times = c(1, 4),
@@ -625,32 +635,22 @@ test_that("a `range` keyed by covariate names must be a list", {
   # Read as the short form, `c(WT = 52, CRCL = 118)` attached both numbers to
   # whichever single covariate was conditional, as its low and high -- in the
   # fit and, once the plot was made to agree, in both.
-  .fw <- function() {
-    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75
-          eta.cl ~ 0.09; add.err <- 0.08 })
-    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
-            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
-  }
   pop <- admPopulation(WT = c(mean = 70, sd = 15), CRCL = c(mean = 90, sd = 25))
   expect_error(suppressMessages(admixr2:::.admMaterialise(admStudies(
-    s = admStudy(model = .fw, population = pop, n = 100, dose = 200,
+    s = admStudy(model = .sa_fitwt, population = pop, n = 100, dose = 200,
                  times = c(1, 4), range = c(WT = 52, CRCL = 118))))),
     "is not a list")
   # `lo`/`hi` are not covariates, so the short form still stands.
   expect_silent(suppressMessages(admixr2:::.admMaterialise(admStudies(
-    s = admStudy(model = .fw, population = pop, n = 100, dose = 200,
+    s = admStudy(model = .sa_fitwt, population = pop, n = 100, dose = 200,
                  times = c(1, 4), range = c(lo = 52, hi = 118))))))
 })
 
 test_that("no enrolled-range warning for a DISCRETE conditional covariate", {
   skip_if_not_installed("rxode2")
-  # A discrete margin is enumerated at its declared LEVELS, and
-  # .admCovTruncSpec() only drops levels outside the range and renormalises --
-  # so a `range` buys nothing there and the warning's premise is false: the
-  # levels and probabilities are what the paper reported. Conditioning is
-  # derived and on by default, so this fired on essentially every fit with a
-  # source estimating a discrete effect, telling the user to give a span for a
-  # two-level factor.
+  # A discrete margin is enumerated at its declared LEVELS, so a `range` buys
+  # nothing and the warning's premise is false -- yet it fired for every source
+  # estimating a discrete effect, asking for a span for a two-level factor.
   pop <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55))
   st  <- admStudies(s = admStudy(model = .sa_model, n = 100, dose = 200,
                                  times = c(1, 4), population = pop))
@@ -662,16 +662,10 @@ test_that("no enrolled-range warning for a DISCRETE conditional covariate", {
   expect_length(w, 0L)
 
   # A CONTINUOUS one with no range still warns, which is the case it is for.
-  .fw <- function() {
-    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75
-          eta.cl ~ 0.09; add.err <- 0.08 })
-    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
-            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
-  }
   w2 <- NULL
   withCallingHandlers(
     suppressMessages(admixr2:::.admMaterialise(admStudies(
-      s = admStudy(model = .fw, n = 100, dose = 200, times = c(1, 4),
+      s = admStudy(model = .sa_fitwt, n = 100, dose = 200, times = c(1, 4),
                    population = admPopulation(WT = c(mean = 70, sd = 15)))))),
     warning = function(z) { w2 <<- c(w2, conditionMessage(z))
                             invokeRestart("muffleWarning") })

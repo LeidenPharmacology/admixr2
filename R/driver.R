@@ -43,7 +43,7 @@
   # directions this model can be moved by, which leaves the objective unchanged
   # -- see .admMaterialise().
   studies <- .admMaterialise(
-    studies, analysis_covs = tryCatch(.ui$allCovs, error = function(e) NULL))
+    studies, analysis_covs = .admAllCovs(.ui, NULL))
   pinfo <- .admDriverPinfo(.ui, .ctl)
   .admWarnCovIdentifiability(.ui, pinfo, studies)
   list(studies = studies, pinfo = pinfo)
@@ -71,7 +71,7 @@
 # (mean across studies, else 1) so rxode2 does not reject missing parameters.
 .admDummyData <- function(.ui, multi_out, studies) {
   d  <- if (multi_out) admData(.admEndpointNames(.ui)) else admData()
-  cv <- tryCatch(.ui$allCovs, error = function(e) NULL)
+  cv <- .admAllCovs(.ui, NULL)
   for (nm in cv) {
     # s$cov may be a list or named numeric vector
     vals <- unlist(lapply(studies, function(s) {
@@ -101,22 +101,13 @@
   # of 5e-05 -- while the old check refused the first pair outright because one
   # fit stamped `5` and the other stamped nothing.
   #
-  # A covariate the model READS but no study is conditional on is recorded as
-  # `"0"`: that fit integrated over the whole declared distribution where the
-  # other scored nodes, and for a model that can see the covariate those are
-  # genuinely different data. NOT `1`, which is what a source deliberately cut
-  # at `strata_nodes = 1L` stamps -- a single node PINNED at the latent median,
-  # which is a different dataset again, and stamping both as 1 made anova()
-  # accept the pair.
-  #
-  # THE WHOLE MULTISET, not its maximum: `"3/9"` for two sources cut at three
-  # and nine nodes, which max() reported as `9` and so could not be told apart
-  # from both cut at nine. Sorted and de-duplicated, so the stamp does not
-  # depend on the order the studies were given, and a character vector because
-  # a heterogeneous set is not an integer. The homogeneous case -- every source
-  # at the same resolution -- is still just `"9"`.
+  # `"0"` for a covariate the model reads that nothing is conditional on --
+  # integrated over the whole distribution, which is NOT `strata_nodes = 1L`
+  # (one node pinned at the median). Stamping both `1` made anova() accept that
+  # pair. And the whole MULTISET, `"3/9"`, since max() could not tell two
+  # sources at 3 and 9 from both at 9; sorted, so study order cannot matter.
   .Jn <- local({
-    .cv <- tryCatch(.ui$allCovs, error = function(e) character(0))
+    .cv <- .admAllCovs(.ui)
     .cv <- .cv[vapply(.cv, function(cv) any(vapply(studies, function(s)
       cv %in% c(.admCovSpecNames(s[["cov_dist"]]),
                 s[[".adm_strata_covs"]] %||% character(0)),

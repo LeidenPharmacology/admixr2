@@ -547,11 +547,10 @@ admStudy <- function(model = NULL, est = NULL,
                                                    "valid covariate ",
                                                    "specification: ",
                                                    conditionMessage(e)))
-  # THE SECOND DOOR. covDist() refuses `joint`, but `population` also takes a
-  # plain list, and the canon lets one through untouched. `jointOwn` is what
-  # separates the sampler admixr2 BUILT from `cor` -- which is the supported
-  # path and arrives here on every correlated population -- from one the caller
-  # wrote.
+  # THE SECOND DOOR: `population` also takes a plain list, which the canon lets
+  # through untouched. `jointOwn` separates the sampler admixr2 built from
+  # `cor` -- the supported path, on every correlated population -- from one the
+  # caller wrote.
   if (is.function(population[["joint"]]) &&
       !isTRUE(population[["jointOwn"]]))
     bad("`population` carries its own `joint` sampler, which is not accepted ",
@@ -597,7 +596,7 @@ print.admStudy <- function(x, ...) {
                   "  (published spread; converted to ML for the fit)" else ""))
   if (!is.null(x$ui)) {
     ini <- x$ui$iniDf
-    cvs <- tryCatch(x$ui$allCovs, error = function(e) character(0))
+    cvs <- .admAllCovs(x$ui)
     cat(sprintf("  model     %d estimated parameter%s%s\n",
                 sum(!ini$fix), if (sum(!ini$fix) == 1L) "" else "s",
                 if (length(cvs)) paste0("; reads ", paste(cvs, collapse = ", "))
@@ -614,7 +613,7 @@ print.admStudy <- function(x, ...) {
     pn <- .admCovSpecNames(x$population)
     cat("  population", paste(pn, collapse = ", "), "\n")
     if (!is.null(x$ui)) {
-      cvs <- tryCatch(x$ui$allCovs, error = function(e) character(0))
+      cvs <- .admAllCovs(x$ui)
       marg <- setdiff(pn, cvs)
       if (length(marg))
         cat("            ", paste(marg, collapse = ", "),
@@ -814,12 +813,10 @@ print() a single study to check its transcription.
   spec <- vapply(studies, inherits, logical(1), "admStudy")
   if (!any(spec)) return(studies)
   out <- list()
-  # WHICH admStudy() THE STUDY BEING EMITTED CAME FROM. Set once per source
-  # below and read by add(), because the expansions rename: `stratify` gives
-  # `<nm>_s1`, `by` gives `<nm>_<by><level>`, and the two compose. `.adm_source`
-  # records the parent for the FIRST of those and not the second, so a `by`
-  # source's own published model was reachable under no name at all -- see
-  # .admCovSrcBySource().
+  # WHICH admStudy() THE EMITTED STUDY CAME FROM, since the expansions rename:
+  # `stratify` gives `<nm>_s1`, `by` gives `<nm>_<by><level>`. `.adm_source`
+  # records the parent for the first only, so a `by` source's model was
+  # reachable under no name -- see .admCovSrcBySource().
   .spec <- NULL
   add <- function(nm, value) {
     if (nm %in% names(out))
@@ -856,12 +853,9 @@ print() a single study to check its transcription.
     # but it stays an internal field that covStrata(), the internal callers and
     # a deliberately UNBANDED reference fit can set, and `FALSE` has to reach
     # the spec or the opt-out silently becomes its opposite.
-    # TWO SETS, and the difference between them is the whole point of the
-    # narrowing. `.src` is what this SOURCE estimated a coefficient for -- a
-    # property of the paper, true whatever is fitted to it. `.bn` is that set
-    # narrowed to what the ANALYSIS model reads, which is what gets cut into
-    # nodes. Questions about the source are answered from `.src`; only the
-    # cutting uses `.bn`.
+    # TWO SETS. `.src` is what this SOURCE estimated a coefficient for, a
+    # property of the paper; `.bn` is that narrowed to what the ANALYSIS model
+    # reads, which is what gets cut into nodes. Only the cutting uses `.bn`.
     .src <- if (!is.null(s[["stratify"]])) s[["stratify"]]
             else .admStudyBandNames(s)
     .bn <- if (identical(.src, FALSE) || is.null(analysis_covs)) .src
@@ -887,24 +881,18 @@ print() a single study to check its transcription.
     # covariate to be the range OF; otherwise there is nothing to attach it to.
     #
     # FROM `.src`, NOT `.bn`: which covariate an unnamed range belongs to is a
-    # question about the SOURCE, and it is asked before the analysis model has
-    # any say. Read from the narrowed set, one `studies` object gave a source
-    # conditional on a single covariate a clean fit under a model that reads it
-    # and a hard error under the null that drops it -- which is precisely the
-    # nested pair this PR is built around -- and, for a source conditional on
-    # two, silently attached a weight range to whichever one happened to
-    # survive. .admCovSourceRange() already asks the un-narrowed question, so
-    # the fit and the plot disagreed about the same range.
+    # question about the SOURCE, asked before the analysis model has any say.
+    # Narrowed, one `studies` object gave a source conditional on one covariate
+    # a clean fit under a model reading it and a hard error under the null that
+    # drops it -- the nested pair this exists for.
     if (!is.null(s$range))
       sp$cov_range <- if (is.list(s$range) && !is.null(names(s$range)))
         s$range
       else {
         .one <- if (identical(.src, FALSE)) character(0) else .src
-        # A NON-LIST KEYED BY COVARIATE NAMES IS AMBIGUOUS, and was read as the
-        # short form -- so `range = c(WT = 52, CRCL = 118)` attached both
-        # numbers to whichever single covariate was conditional, as its low and
-        # high. Consistently, in the fit and now in the plot, and wrong in
-        # both. `c(lo = , hi = )` is still fine: those are not covariates.
+        # AMBIGUOUS, and read as the short form: `c(WT = 52, CRCL = 118)` put
+        # both numbers on whichever covariate was conditional, as lo and hi.
+        # `c(lo = , hi = )` still stands -- those are not covariates.
         .bad_nm <- intersect(names(s$range) %||% character(0),
                              .admCovSpecNames(s[["population"]]))
         if (length(.bad_nm))
@@ -976,7 +964,7 @@ print() a single study to check its transcription.
   # declares and the model never mentions is marginal; one the model estimates
   # but the population never described has no distribution to condition on.
   cvs <- intersect(.admCovSpecNames(s[["population"]]),
-                   tryCatch(s$ui$allCovs, error = function(e) character(0)))
+                   .admAllCovs(s$ui))
   if (!length(cvs)) return(character(0))
   cvs <- setdiff(cvs, s[["by"]] %||% character(0))
   if (!length(cvs)) return(character(0))

@@ -303,7 +303,7 @@
   # refused where it is written.
   opted <- has
 
-  covs <- tryCatch(.ui$allCovs, error = function(e) character(0))
+  covs <- .admAllCovs(.ui)
 
   # Covariates the model never reads come off the design. See .admCovDistDrop
   # for why that is exact rather than an approximation.
@@ -369,13 +369,10 @@
         # exact on their own specs, so the sampler goes entirely.
         studies[[nm]]$cov_dist[["joint"]]   <- NULL
         studies[[nm]]$cov_dist[["jointOwn"]] <- NULL
-        # AND NO `discExact`. It names the margins a sampler maps from their
-        # own uniform, and there is no sampler here: setting it on this branch
-        # made a claim about something that had just been deleted. Inert today
-        # -- .admCovGrid() reads it only inside `if (is.function(jf))` -- but a
-        # later canon that rebuilt a copula from `cor` would read it and
-        # enumerate margins the new sampler does not pass through, which is the
-        # failure the stop() further down guards against.
+        # AND NO `discExact`: it names the margins a sampler maps from their
+        # own uniform, and the sampler was just deleted. Inert today, but a
+        # later canon rebuilding a copula from `cor` would enumerate margins it
+        # does not pass through -- what the stop() further down guards against.
         studies[[nm]]$cov_dist[["discExact"]] <- NULL
       } else {
         studies[[nm]]$cov_dist[["joint"]] <- .admStrataJoint(
@@ -1121,15 +1118,10 @@
     bad("`cov_range` names covariate(s) ",
         paste(sQuote(setdiff(names(cov_range), nms)), collapse = ", "),
         " that this study's `cov_dist` does not declare.")
-  # REFUSE RATHER THAN NO-OP. Truncation works through the margin specs, and
-  # everything downstream draws through `joint` when there is one. A sampler
-  # admixr2 BUILT (`jointOwn`) is discarded below and rebuilt from the
-  # truncated margins; an opaque one the user supplied cannot be, the canon
-  # short-circuits on it, and every consumer keeps sampling the full declared
-  # support. The enrolled range was accepted, documented as truncating the
-  # margin, and reached nothing -- which is worse than an error, because the
-  # numbers look like an answer. The marginal path this PR added is exactly
-  # where that bites.
+  # REFUSE RATHER THAN NO-OP. Truncation rewrites the margin specs and
+  # everything downstream draws through `joint` instead. One admixr2 BUILT is
+  # rebuilt from the truncated margins below; an opaque one cannot be, so the
+  # range was accepted, documented as truncating, and reached nothing.
   if (is.function(cov_dist[["joint"]]) && !isTRUE(cov_dist[["jointOwn"]]))
     bad("an enrolled `range` cannot be applied to a `cov_dist` that supplies ",
         "its own `joint` sampler, because admixr2 truncates the declared ",
@@ -1624,16 +1616,10 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 ## this into a covariate-effect curve for the price of one evaluation.
 ##
 ## Returns a list of `list(name = <lhs symbol>, value = <numeric>)` for the
-## lines in `keep` (all of them when NULL), in model order, ONE ENTRY PER NAME:
-## a model built in stages -- `cl <- exp(tcl) * (WT/70)^bwt` then
-## `cl <- cl * exp(bsex * SEX)` -- assigns `cl` twice, and the LAST assignment
-## is the value the solve actually uses. Reducing here rather than in a caller
-## because all three consumers need it and only one had it: the fitted curve
-## deduplicated, while the source marks read `setNames(...)[[param]]` and got
-## the FIRST match (a mark at an intermediate value, reading as a source
-## disagreeing with a fit it agrees with) and the source regression line kept
-## BOTH series under one group, so geom_line() drew a path zig-zagging between
-## them.
+## lines in `keep` (all when NULL), in model order, ONE ENTRY PER NAME: a model
+## built in stages assigns `cl` twice and the LAST assignment is what the solve
+## uses. Reduced here, not in a caller, because all three consumers need it and
+## only one had it.
 .admEvalModelLines <- function(ml, cov_at, th_over = list(), keep = NULL) {
   ev  <- new.env(parent = asNamespace("rxode2"))
   ini <- ml$ini
@@ -1666,11 +1652,18 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   out[rev(!duplicated(rev(.nm)))]
 }
 
+## The covariates a model reads, or `default` where there is no model to ask.
+## `ui$allCovs` throws on a half-built ui, and its nine readers wrapped it
+## inconsistently -- some falling back to character(0), some to NULL, which
+## differ under `length()`. The fallback stays the caller's choice.
+.admAllCovs <- function(ui, default = character(0))
+  tryCatch(ui$allCovs, error = function(e) default)
+
 ## A nominal value for every covariate the model reads: the declared median
 ## where there is one, and 1 where there is not -- never 0, which would collapse
 ## a multiplicative term and make the difference below read as "no effect".
 .admCovNominal <- function(ui, cov_dist = NULL) {
-  covs <- tryCatch(ui$allCovs, error = function(e) character(0))
+  covs <- .admAllCovs(ui)
   stats::setNames(lapply(covs, function(nm) {
     sp <- if (!is.null(cov_dist)) cov_dist[[nm]] else NULL
     v  <- if (!is.null(sp)) tryCatch(.admCovQuantile(sp, 0.5),
@@ -1856,16 +1849,10 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     if (is.null(n_tot) || !is.finite(n_tot) || n_tot <= 0)
       stop("admixr2: study '", nm, "' declares `stratify` but has no positive ",
            "`n` to divide among the strata.", call. = FALSE)
-    # CONTINUOUS ONLY, which is why `.node_cv` is derived here rather than 15
-    # lines down where it used to be. A discrete margin is enumerated at its
-    # DECLARED LEVELS: .admCovTruncSpec() only drops levels outside the range
-    # and renormalises, so a `range` buys nothing, and the premise of the
-    # warning is false -- the levels and their probabilities are exactly what
-    # the paper reported, so the source is not being credited with evidence at
-    # values it may never have enrolled. Conditioning is derived and on by
-    # default now, so taking `.miss` over the whole conditional set warned on
-    # essentially every fit with a source whose model estimates a discrete
-    # effect, and told the user to supply a span for a two-level factor.
+    # CONTINUOUS ONLY, which is why `.node_cv` is derived here. A discrete
+    # margin is enumerated at its declared LEVELS, so a `range` buys nothing
+    # and the warning's premise is false -- yet it fired for every source
+    # estimating a discrete effect, asking for a span for a two-level factor.
     .cdk <- .admCovDistCanon(s[["cov_dist"]])
     .node_cv <- Filter(function(cv) is.null(.cdk[[cv]][["values"]]),
                        s[["stratify"]])
@@ -2873,11 +2860,9 @@ covDist <- function(..., cor = NULL, joint = NULL,
                     dist = c("normal", "lnorm")) {
   dist <- match.arg(dist)
   # NOT ACCEPTED YET. The argument stays in the signature so the refusal can
-  # say what to use instead -- dropping it would give "unused argument" -- and
-  # so switching it back on is this one guard. The machinery a user sampler
-  # drives is live and tested (the pooled-bin conditioning route, the drop
-  # refusal, the range refusal); what is not settled is the contract around it,
-  # which is the vine-copula work.
+  # name the alternative, and so switching it back on is this one guard. The
+  # machinery below it is live and tested via with_opaque_joint(); what is not
+  # settled is the contract, which is the vine-copula work.
   if (!is.null(joint))
     stop("admixr2: `joint` is not accepted yet. Dependence between covariates ",
          "goes through `cor` for now, e.g. covDist(WT = c(mean = 72, sd = 16), ",

@@ -625,12 +625,9 @@ test_that(".admLevelBreaks ticks a discrete panel at its levels only", {
 
 test_that(".admCovSrcBySource finds the model of a `by =` source", {
   skip_if_not_installed("rxode2")
-  # `by` expands to `<nm>_<by><level>` in .admMaterialise() and, unless the
-  # source is ALSO conditional, never reaches .admExpandStrata() -- so it
-  # carries no `.adm_source` and the control's key (`khan`) matched nothing.
-  # The mark and the regression line both return early on a missing model, and
-  # .admCovSourceRange() found no range, so the source silently got neither,
-  # and the extrapolation shading greyed territory it covers.
+  # `by` expands to `<nm>_<by><level>` without reaching .admExpandStrata(), so
+  # it carries no `.adm_source` and the control's key (`khan`) matched nothing:
+  # no mark, no regression line, and no range for the shading.
   st  <- list(khan = list(ui = "MODEL"))
   mat <- list(khan_SEX0 = list(n = 10L, .adm_spec = "khan"),
               khan_SEX1 = list(n = 10L, .adm_spec = "khan"))
@@ -661,11 +658,9 @@ test_that(".admCovSourceRange reads the same `range` shapes the fit does", {
   ui  <- suppressMessages(rxode2::rxode2(fn))
   pop <- admPopulation(WT = c(mean = 70, sd = 15))
   s   <- list(population = pop, ui = ui, stratify = "WT")
-  # .admMaterialise() keys by covariate only for a named LIST and reads
-  # everything else as the short form. A pair named lo/hi is not a list, so the
-  # fit truncated to 52-118 while this returned NULL and the panel drew over
-  # the full declared margin -- the fit and the plot disagreeing about one
-  # number.
+  # .admMaterialise() keys by covariate only for a named LIST. A pair named
+  # lo/hi is not a list, so the fit truncated to 52-118 while this returned
+  # NULL and the panel drew over the full declared margin.
   for (r in list(c(lo = 52, hi = 118), c(52, 118), list(c(52, 118)),
                  list(WT = c(52, 118))))
     expect_equal(.admCovSourceRange(utils::modifyList(s, list(range = r)), "WT"),
@@ -736,11 +731,9 @@ test_that(".admCovResidData needs two studies to have a contrast", {
 })
 
 test_that(".admCovResidData survives a `cov` entry longer than one", {
-  # It used to build a `label` column the panel never read, through
-  # .admStudyCovLabel(), which format()s each conditioned value inside
-  # vapply(character(1)): a length-2 entry returns two strings, vapply errors,
-  # the tryCatch around the panel swallows it, and covariate_resid vanished
-  # with no message.
+  # A `label` column the panel never read, built through .admStudyCovLabel(),
+  # which vapply(character(1))s each value -- so a length-2 entry errored and
+  # the tryCatch around the panel swallowed it.
   agg <- list(
     lo = list(obs = list(E = c(1, 2)), pred = list(E = c(1.1, 2.1),
                                                    V = diag(c(0.01, 0.04)))),

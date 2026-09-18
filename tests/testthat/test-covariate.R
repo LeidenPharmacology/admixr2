@@ -1064,12 +1064,9 @@ test_that("`cov_range` truncates a margin nothing conditions on", {
 })
 
 test_that("`cov_range` is refused against an opaque `joint`, not ignored", {
-  # Truncation works through the MARGIN specs, and everything downstream draws
-  # through `joint` when there is one. A sampler admixr2 built is discarded and
-  # rebuilt from the truncated margins; an opaque one cannot be, and the canon
-  # short-circuits on it -- so the range was accepted, documented as
-  # truncating, and reached nothing. Numbers that look like an answer are worse
-  # than an error.
+  # Truncation rewrites the MARGIN specs, and everything downstream draws
+  # through `joint` instead -- so the range was accepted, documented as
+  # truncating, and reached nothing.
   cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20))
   cd[["joint"]] <- function(u) cbind(WT = 60 + 40 * u[, 1L],
                                      CRCL = 50 + 80 * u[, 2L])
@@ -1205,14 +1202,10 @@ test_that(".admEvalModelLines skips an assignment whose target is a CALL", {
 test_that("`keep` selects WHICH parameters, not what their value is", {
   skip_on_cran()
   skip_if_not_installed("rxode2")
-  # The effect panel's curve used `keep = hit`, and the reduction then ran
-  # WITHIN the cv-reading lines: the curve was the last assignment that reads
-  # cv, while the source marks and regression lines -- which pass no `keep` --
-  # were the last assignment anywhere, the value the solve uses. Different
-  # quantities, plotted in the same facet, and only on the facet of the
-  # covariate whose line is not last: every source drew a constant
-  # exp(bsex * SEX) above the dotted line, reading as a meta-analysis
-  # reproducing none of its sources.
+  # `keep = hit` deduplicated within the cv-reading lines, so the curve was the
+  # last assignment READING cv while the marks (no `keep`) were the last
+  # anywhere. Different quantities in one facet, and only on the facet of the
+  # covariate whose line is not last.
   fn <- function() {
     ini({ tcl <- log(5); tv <- log(50); bwt <- 0.6; bsex <- 0.3
           eta.cl ~ .09; add.err <- .3 })
@@ -1239,13 +1232,9 @@ test_that("`keep` selects WHICH parameters, not what their value is", {
 test_that(".admEvalModelLines returns the LAST assignment to each name", {
   skip_on_cran()
   skip_if_not_installed("rxode2")
-  # A model built in stages assigns `cl` twice, and the solve uses the second.
-  # Returning both left the fitted curve to deduplicate for itself -- which it
-  # did -- while the two other consumers did not: the source MARKS read
-  # setNames(...)[[param]] and got the FIRST match, placing a mark at an
-  # intermediate value and reading as a source disagreeing with a fit it
-  # agrees with, and the source REGRESSION LINE kept both series under one
-  # group, so geom_line() drew a path zig-zagging between them.
+  # A model built in stages assigns `cl` twice and the solve uses the second.
+  # Returning both left each consumer to reduce for itself: the marks took the
+  # FIRST match, the regression line kept both series under one group.
   fn <- function() {
     ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75; bsex <- 0.2
           eta.cl ~ .09; add.err <- .3 })
@@ -1718,12 +1707,9 @@ test_that("the sparse grid enumerates a discrete covariate exactly", {
 })
 
 test_that("covDist() does not accept a caller's own `joint` yet", {
-  # TURNED OFF ON PURPOSE, not unimplemented: everything below this door works
-  # and is tested through with_opaque_joint(). What is unsettled is the
-  # contract -- the sampler must consume admixr2's uniforms rather than draw
-  # its own, it owns its margins, and an enrolled `range` cannot reach it --
-  # and that is the vine-copula work. The argument stays in the signature so
-  # the refusal can name the alternative.
+  # TURNED OFF ON PURPOSE: everything below this door works and is tested
+  # through with_opaque_joint(). What is unsettled is the contract -- whose
+  # uniforms, whose margins, and `range` -- which is the vine-copula work.
   expect_error(
     covDist(WT = c(mean = 72, sd = 16), AGE = c(mean = 55, sd = 12),
             joint = function(u) cbind(WT = stats::qlnorm(u[, 1], log(70), .25),

@@ -78,12 +78,9 @@ make_cp_mat <- function(n_sim = 200L, n_times = 3L, seed = 42L) {
 }
 
 # ---- A cov_dist carrying an OPAQUE sampler -----------------------------------
-# covDist(joint = ) and admStudy(population = ) both refuse a caller's own
-# sampler while the vine-copula contract is unsettled. The machinery it drives
-# is not going anywhere -- the pooled-bin conditioning route, the sparse-grid
-# refusal, the margin-drop refusal and the range refusal all key on it -- so
-# these tests reach past the closed door and set the field, which is the same
-# object those paths would have been handed.
+# covDist() and admStudy() both refuse a caller's own sampler for now, but the
+# machinery keyed on it stays live -- the pooled-bin route, the sparse-grid,
+# margin-drop and range refusals. These reach past the door to the same object.
 with_opaque_joint <- function(cd, joint) {
   cd <- unclass(cd)
   cd[["joint"]]    <- joint

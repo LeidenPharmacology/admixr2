@@ -393,6 +393,36 @@ head.paged_df <- function(x, n = 6L, ...) {
   }), names(studies))
 }
 
+## The observed and predicted moments at (`n_sim`, `seed`), simulating only if
+## nobody has asked for that pair yet. One guard for plot() and admMoments(),
+## which both only hit the fit's own slot before -- so `plot(fit, n_sim = 300)`
+## re-simulated every call. Bounded like .adm_covrows_env: these are the
+## largest objects on the fit.
+.ADM_AGG_MEMO_MAX <- 4L
+.admAggCached <- function(fit, extra, n_sim, seed, warn = FALSE) {
+  if (!is.null(fit$env$aggData) &&
+      isTRUE(n_sim == (extra$n_sim %||% 5000L)) && isTRUE(seed == 1L))
+    return(fit$env$aggData)
+  key <- paste0("n", n_sim, "_s", seed)
+  memo <- fit$env$.adm_agg_memo
+  if (is.null(memo)) {
+    memo <- new.env(parent = emptyenv())
+    fit$env$.adm_agg_memo <- memo
+  }
+  hit <- memo[[key]]
+  if (!is.null(hit)) return(hit)
+  if (length(ls(memo, all.names = TRUE)) >= .ADM_AGG_MEMO_MAX)
+    rm(list = ls(memo, all.names = TRUE), envir = memo)
+  hit <- .admAggData(extra, fit$env$ui, n_sim = n_sim, seed = seed, warn = warn)
+  # A FAILED SIMULATION IS NOT MEMOISED, and the warning is the reason. With no
+  # retrievable simulation model .admAggData() warns and comes back with every
+  # study NULL; storing that made the SECOND plot() silent, so a user who could
+  # not draw a mean panel was told once and then left to wonder. It is also the
+  # cheap case -- there is nothing to recompute -- so caching it buys nothing.
+  if (any(!vapply(hit, is.null, logical(1)))) memo[[key]] <- hit
+  hit
+}
+
 ## Attach `aggData` (observed + predicted moments per study) at the fit's own
 ## `n_sim`/seed=1 so it matches the default `plot(fit)` panels. Guarded: a
 ## simulation failure must not break fit construction.
@@ -697,9 +727,22 @@ head.paged_df <- function(x, n = 6L, ...) {
       values = c(marginal = 16L, conditional = 18L), name = NULL,
       breaks = intersect(c("marginal", "conditional"), kinds),
       guide = ggplot2::guide_legend(order = 2L)),
-    ggplot2::theme_bw(),
-    ggplot2::theme(plot.subtitle = ggplot2::element_text(
-      size = 7, colour = "grey40", face = "plain")))
+    .admPanelTheme())
+
+## `theme_bw()` plus the small grey subtitle, BUILT ONCE. It sat inside
+## per-study loops -- 15 sub-panels for a three-source fit -- and theme_bw() is
+## not cheap: 0.64 s for those 15 against 0.002 s cached. A theme is immutable,
+## so one instance serves every panel. Not a top-level constant, because
+## ggplot2 is in Suggests and must not be called at load time.
+.adm_theme_cache <- new.env(parent = emptyenv())
+.admPanelTheme <- function() {
+  if (is.null(.adm_theme_cache$panel))
+    .adm_theme_cache$panel <- list(
+      ggplot2::theme_bw(),
+      ggplot2::theme(plot.subtitle = ggplot2::element_text(
+        size = 7, colour = "grey40", face = "plain")))
+  .adm_theme_cache$panel
+}
 
 ## An axis-breaks function that ticks a discrete facet at its LEVELS only.
 ##
@@ -710,17 +753,11 @@ head.paged_df <- function(x, n = 6L, ...) {
 ##
 ## Without this a binary covariate is ticked at 0.25 and 0.75 -- values it does
 ## not have, and that the model was never asked about.
-## PER COVARIATE, which is the only reason `cov` is an argument. The one breaks
-## function is shared by every free-scaled facet, so handing it every
-## covariate's levels pooled let a facet for CRCL be ticked at SEX's levels
-## whenever those happened to land inside CRCL's limits and fill the span. The
-## 0.8 rule made that rare rather than impossible.
-##
-## The facet is identified by its LIMITS: ggplot2 derives them from that
-## panel's own data by a deterministic expansion, so the covariate whose extent
-## is nearest to `lims` is the one being drawn. `levels_ok` marks the rows
-## whose x is a reported level -- the extent comes from all of them, because
-## that is what sets the limits.
+## PER COVARIATE, which is why `cov` is an argument: one breaks function serves
+## every free-scaled facet, so pooled levels let a CRCL facet be ticked at SEX's
+## values. The facet is identified by its LIMITS, which ggplot2 derives from that
+## panel's own data by a deterministic expansion. `levels_ok` marks the rows
+## whose x is a reported level; the extent comes from all of them.
 .admLevelBreaks <- function(x, cov, levels_ok) {
   ok <- is.finite(x)
   x <- x[ok]; cov <- as.character(cov)[ok]; levels_ok <- levels_ok[ok]
@@ -764,23 +801,11 @@ head.paged_df <- function(x, n = 6L, ...) {
 
 ## The estimator's control, re-keyed by the name the PANELS use for a source.
 ##
-## `.admFitSourceStudies()` returns the list the user passed, keyed by the
-## admStudies() name; the panels ask for `src[[sn]]` where `sn` came from
-## .admCovSource(). Those agree for a plain source, and for a conditional one
-## because .admExpandStrata() records `.adm_source` as the parent -- but not for
-## a `by =` source. `by` expands in .admMaterialise() to `<nm>_<by><level>` and,
-## unless the source is ALSO conditional, never reaches .admExpandStrata(), so
-## it carries no `.adm_source`: the lookup returned NULL, the source got no
-## mark and no regression line on `covariate_effect` (both paths return early on
-## a missing model), and .admCovSourceRange() found nothing, so the
-## extrapolation shading greyed out territory the source actually covers. All
-## silently, and `?plot.admFit` promises `by` a diamond at its value.
-##
-## `.adm_spec` is stamped by .admMaterialise() on everything it emits and says
-## which admStudy() the study came from. Deliberately NOT `.adm_source`: that
-## one means "these are nodes of one source, a paired set", and the levels of a
-## `by` are separate reported subgroups that the mean and covariance panels must
-## keep apart.
+## A `by =` source expands to `<nm>_<by><level>` without passing through
+## .admExpandStrata(), so it carries no `.adm_source` and `src[[sn]]` missed:
+## no mark, no regression line, no range for the shading. `.adm_spec` is
+## deliberately not `.adm_source`, which means "nodes of one source" -- the
+## levels of a `by` are separate subgroups the mean/cov panels keep apart.
 .admCovSrcBySource <- function(studies, src) {
   if (is.null(src) || !length(src)) return(src)
   sn <- .admCovSource(studies)
@@ -805,7 +830,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## draw, so only the residual panel picks it up. A covariate no study describes
 ## at all cannot be placed on an axis and is excluded here.
 .admCovPanelCovs <- function(ui, studies) {
-  covs <- unique(c(tryCatch(ui$allCovs, error = function(e) character(0)),
+  covs <- unique(c(.admAllCovs(ui),
                    unlist(lapply(studies, function(s)
                      c(.admCovSpecNames(s[["cov_dist"]]),
                        names(s[[".adm_cov_dropped"]] %||% list()),
@@ -1046,22 +1071,11 @@ head.paged_df <- function(x, n = 6L, ...) {
   # answering a second question, and the effect is the slope of this one.
   base <- .admCovPooled(.admCovPanelCovs(ui, studies), studies)
   at   <- utils::modifyList(base, stats::setNames(list(grid), cv))
-  # NO `keep`, AND THE SELECTION HAPPENS AFTER. `keep = hit` made
-  # .admEvalModelLines() deduplicate WITHIN the cv-reading lines, so the curve
-  # was the last assignment that READS cv while the source marks and the source
-  # regression lines -- which pass no `keep` -- were the last assignment
-  # anywhere, the value the solve uses. For a model built in stages those are
-  # different quantities in the same facet:
-  #
-  #   cl <- exp(tcl + eta.cl) * (WT/70)^bwt
-  #   cl <- cl * exp(bsex * SEX)
-  #
-  # On `cl vs WT`, `hit` is the first line alone, so every source was drawn a
-  # constant exp(bsex * SEX_centre) above the dotted line -- measured 4.810
-  # against 3.563 at WT = 60 -- which reads as a meta-analysis reproducing none
-  # of its sources on a fit that reproduces all of them, and only on that one
-  # facet. `hit` selects which PARAMETERS the panel is about; it does not
-  # define what their value is.
+  # `hit` SELECTS WHICH PARAMETERS, NOT THEIR VALUE, so it is applied after an
+  # unrestricted evaluation. `keep = hit` deduplicated within the cv-reading
+  # lines only, so on a staged model the curve was the last assignment READING
+  # cv while the marks (no `keep`) were the last anywhere -- a constant
+  # exp(bsex) apart on the WT facet alone, reading as a real disagreement.
   .hitnm <- unique(vapply(ml$lst[hit], function(e)
     if (is.name(e[[2L]])) as.character(e[[2L]]) else "", ""))
   .hitnm <- .hitnm[nzchar(.hitnm)]
@@ -1084,15 +1098,8 @@ head.paged_df <- function(x, n = 6L, ...) {
   # with a claim it never made.
   mk <- do.call(rbind, lapply(seq_len(nrow(pos)), function(r) {
     sn <- pos$study[r]
-    so <- src[[sn]]
-    if (is.null(so) || is.null(so[["ui"]])) return(NULL)
-    sml <- .admModelLines(so[["ui"]])
-    if (is.null(sml)) return(NULL)
-    a <- utils::modifyList(.admCovSourceAt(so, so[["ui"]]),
-                           stats::setNames(list(pos$x[r]), cv))
-    v <- tryCatch(.admEvalModelLines(sml, a), error = function(e) list())
-    v <- Filter(function(z) length(z$value) == 1L && is.finite(z$value), v)
-    if (!length(v)) return(NULL)
+    v  <- .admCovSourceEval(src[[sn]], cv, pos$x[r])
+    if (is.null(v)) return(NULL)
     o <- stats::setNames(lapply(v, `[[`, "value"), vapply(v, `[[`, "", "name"))
     do.call(rbind, lapply(intersect(params, names(o)), function(pp)
       data.frame(cov = cv, param = pp, study = sn, kind = pos$kind[r],
@@ -1118,9 +1125,6 @@ head.paged_df <- function(x, n = 6L, ...) {
   slines <- do.call(rbind, Filter(Negate(is.null),
     lapply(unique(pos$study[pos$kind == "conditional"]), function(sn) {
       so <- src[[sn]]
-      if (is.null(so) || is.null(so[["ui"]])) return(NULL)
-      sml <- .admModelLines(so[["ui"]])
-      if (is.null(sml) || !length(.admLinesReading(sml, cv))) return(NULL)
       # On a level axis the source's own line joins the levels it reported, the
       # same way the dotted estimated effect does. On a continuous one it needs
       # the range it covers, and a source that declared none has no extent to
@@ -1131,12 +1135,8 @@ head.paged_df <- function(x, n = 6L, ...) {
         seq(rg[1L], rg[2L], length.out = 40L)
       }
       if (length(g) < 2L) return(NULL)
-      a <- utils::modifyList(.admCovSourceAt(so, so[["ui"]]),
-                             stats::setNames(list(g), cv))
-      v <- tryCatch(.admEvalModelLines(sml, a), error = function(e) list())
-      v <- Filter(function(z) length(z$value) == length(g) &&
-                    all(is.finite(z$value)), v)
-      if (!length(v)) return(NULL)
+      v <- .admCovSourceEval(so, cv, g, reading = TRUE)
+      if (is.null(v)) return(NULL)
       do.call(rbind, lapply(Filter(function(z) z$name %in% params, v),
         function(z) data.frame(
           cov = cv, param = z$name, study = sn, x = g,
@@ -1277,13 +1277,9 @@ head.paged_df <- function(x, n = 6L, ...) {
                x = x, xlo = if (is.finite(xl)) xl else x,
                xhi = if (is.finite(xh)) xh else x,
                z = mean(z), n = n,
-               # NO `label`. The panel puts sources in a legend and never read
-               # it, so it was work per group for nothing -- and worse than
-               # nothing: .admStudyCovLabel() format()s each conditioned value
-               # through vapply(character(1)), so a `cov` entry of length > 1
-               # returns several strings, vapply errors, the tryCatch around
-               # the panel swallows it, and covariate_resid vanishes with no
-               # message.
+               # NO `label`: the panel legends sources instead and never read
+               # it, and .admStudyCovLabel() vapply(character(1))s each value,
+               # so a `cov` entry longer than one took the panel out silently.
                stringsAsFactors = FALSE)
   }))
   if (is.null(df) || nrow(df) < 2L) return(NULL)
@@ -1349,15 +1345,10 @@ head.paged_df <- function(x, n = 6L, ...) {
   # the failure mode hardest to notice. Anything not keyed BY COVARIATE NAME is
   # read as the range of the one conditional covariate, which is the only
   # condition the short form is accepted under.
-  # THE SAME TEST .admMaterialise() APPLIES, written the same way on purpose.
-  # It keys by covariate only for a NAMED LIST and treats everything else as the
-  # short form, so `range = c(lo = 52, hi = 118)` is the enrolled range of the
-  # one conditional covariate there. Asking `is.null(names(.r))` here instead
-  # matched neither arm and returned NULL, so the fit scored that source over
-  # 52-118 while this panel drew its regression over the 2.5th-97.5th of the
-  # FULL declared margin and sized the extrapolation shading from it -- the
-  # fit and the plot disagreeing about one number, which is the failure the
-  # note in .admMaterialise() set out to remove.
+  # THE SAME TEST .admMaterialise() APPLIES, written the same way on purpose: it
+  # keys by covariate only for a named LIST and reads everything else as the
+  # short form. Asking `is.null(names(.r))` matched neither arm, so
+  # `c(lo = 52, hi = 118)` truncated the fit and not the plot.
   .r <- s[["range"]]
   .keyed <- is.list(.r) && !is.null(names(.r))
   r <- if (!length(.r)) NULL                       # absent, or an empty list
@@ -1393,6 +1384,25 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## patients' values, not the pooled ones. A paper's claim about weight is a
 ## claim about the people it enrolled, and holding them at the pooled centre
 ## would redraw that claim for somebody else's cohort.
+## A source's OWN model evaluated at `x` along `cv`, other covariates at its own
+## centres; NULL if there is no model or nothing usable comes back. One
+## evaluation for the marks and the regression line, which were the same eight
+## lines twice -- the duplication that let the curve and the marks drift onto
+## different quantities. `reading = TRUE` is the line's extra condition: a model
+## that never mentions `cv` reported no relationship to draw.
+.admCovSourceEval <- function(so, cv, x, reading = FALSE) {
+  if (is.null(so) || is.null(so[["ui"]])) return(NULL)
+  sml <- .admModelLines(so[["ui"]])
+  if (is.null(sml)) return(NULL)
+  if (reading && !length(.admLinesReading(sml, cv))) return(NULL)
+  a <- utils::modifyList(.admCovSourceAt(so, so[["ui"]]),
+                         stats::setNames(list(x), cv))
+  v <- tryCatch(.admEvalModelLines(sml, a), error = function(e) list())
+  v <- Filter(function(z) length(z$value) == length(x) &&
+                all(is.finite(z$value)), v)
+  if (!length(v)) NULL else v
+}
+
 .admCovSourceAt <- function(s, ui) {
   base <- .admCovNominal(ui, s[["cov_dist"]] %||% s[["population"]])
   p <- s[["population"]]
@@ -1792,17 +1802,11 @@ admMoments <- function(fit, n_sim = NULL, seed = 1L,
   extra <- fit$env$admExtra %||% fit$env$adirmcExtra %||%
     stop("No admExtra/adirmcExtra on fit object", call. = FALSE)
   n_sim <- n_sim %||% extra$n_sim %||% 5000L
-  # THE SAME CACHE plot() READS. The stored slot was built at the fit's own
-  # n_sim and seed 1, which is exactly what the documented `admMoments(fit)`
-  # asks for -- and running it again made the accessor cost a full simulation
-  # to hand back numbers the fit was already carrying. Compared numerically,
-  # not with identical(), so n_sim = 5000 still hits a stored 5000L.
-  .cached <- fit$env$aggData
-  agg <- if (!is.null(.cached) &&
-             isTRUE(n_sim == (extra$n_sim %||% 5000L)) && isTRUE(seed == 1L))
-    .cached
-  else
-    .admAggData(extra, fit$env$ui, n_sim = n_sim, seed = seed, warn = FALSE)
+  # THE SAME CACHE plot() READS -- see .admAggCached(). The documented
+  # `admMoments(fit)` asks for exactly the configuration the fit already
+  # carries, and running it again made the accessor cost a full simulation to
+  # hand back numbers it was holding.
+  agg <- .admAggCached(fit, extra, n_sim, seed, warn = FALSE)
   st    <- extra$studies
   if (identical(by, "source")) {
     cs  <- .admCollapseSources(st, agg)
@@ -2055,19 +2059,9 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
   # covariate, or a fit declaring none pays for a full n_sim run to draw nothing.
   need_sim_local <- any(c("mean", "cov") %in% which) ||
     .admCovCouldDraw(cov_nms, studies)
-  # Reuse fit$env$aggData when it matches the requested n_sim/seed, else recompute.
-  agg <- if (!need_sim_local) {
+  agg <- if (!need_sim_local)
     setNames(vector("list", length(studies)), names(studies))
-  } else {
-    cached <- fit$env$aggData
-    # Stored slot was built at n_sim = extra$n_sim, seed 1L. Compare numerically
-    # (not identical()) so e.g. n_sim = 5000 still hits a stored 5000L.
-    if (!is.null(cached) &&
-        isTRUE(n_sim == (extra$n_sim %||% 5000L)) && isTRUE(seed == 1L))
-      cached
-    else
-      .admAggData(extra, fit$env$ui, n_sim = n_sim, seed = seed, warn = TRUE)
-  }
+  else .admAggCached(fit, extra, n_sim, seed, warn = TRUE)
 
   plots <- list()
   # Keys to actually display. Individual mean/cov sub-panels are added to
@@ -2172,9 +2166,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       ggplot2::labs(title = "Observed", x = NULL, y = "Concentration",
                     subtitle = paste0("+/-1 SD of one observation across ",
                                       "subjects\nshared y scale")) +
-      ggplot2::theme_bw() +
-      ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
-                                                           face = "plain"))
+      .admPanelTheme()
     if (!is.null(.ylim))
       p_obs <- p_obs + ggplot2::coord_cartesian(ylim = .ylim)
 
@@ -2197,9 +2189,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
                                       if (!is.null(V_str))
                                         "\ninner band drops sigma"
                                       else "\nshared y scale")) +
-      ggplot2::theme_bw() +
-      ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
-                                                           face = "plain"))
+      .admPanelTheme()
     if (!is.null(.ylim))
       p_pred <- p_pred + ggplot2::coord_cartesian(ylim = .ylim)
 
@@ -2213,9 +2203,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       ggplot2::labs(title = "Residual", x = "Time",
                     y = "E_obs - mu_pred",
                     subtitle = "band +/-2 SE(mean)  [SE = sqrt(V_pred[t,t]/n)]") +
-      ggplot2::theme_bw() +
-      ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
-                                                           face = "plain"))
+      .admPanelTheme()
 
     p_z <- ggplot2::ggplot(df_z, ggplot2::aes(x = time, y = z)) +
       ggplot2::geom_hline(yintercept = 0, colour = "grey40") +
@@ -2231,9 +2219,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       ggplot2::labs(title = "Standardised residual",
                     x = "Time", y = "z-score",
                     subtitle = "dashed +/-1.96  |  z = resid/SE  |  *p<.05 **p<.01 ***p<.001") +
-      ggplot2::theme_bw() +
-      ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
-                                                           face = "plain"))
+      .admPanelTheme()
 
     # Combined 2x2 grid first so positional extraction returns the whole panel
     # (plot(fit, which = "mean")[[1]]); the individual sub-panels follow under
@@ -2277,10 +2263,8 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
       ggplot2::scale_fill_gradient2(low = low, mid = "white", high = high,
                                     midpoint = 0, limits = c(-lim, lim), name = fill_name) +
       ggplot2::labs(x = NULL, y = NULL) +
-      ggplot2::theme_bw() +
-      ggplot2::theme(axis.text.x  = ggplot2::element_text(angle = 45, hjust = 1),
-                     plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
-                                                           face = "plain"))
+      .admPanelTheme() +
+      ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
   }
 
   for (nm in names(studies_src)) {
@@ -2425,9 +2409,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
         ggplot2::labs(title = "NLL trace per restart",
                       subtitle = "each line = one restart; lower = better",
                       x = "Iteration", y = "-2LL") +
-        ggplot2::theme_bw() +
-        ggplot2::theme(plot.subtitle = ggplot2::element_text(size = 7, colour = "grey40",
-                                                             face = "plain"))
+        .admPanelTheme()
       print_keys <- c(print_keys, "nll_trace")
     }
   } # end if ("nll" %in% which)
