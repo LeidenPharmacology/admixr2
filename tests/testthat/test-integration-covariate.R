@@ -1144,3 +1144,44 @@ test_that("the covariate path is chosen without asking, and is never worse", {
   expect_equal(as.numeric(mon$E), as.numeric(mof$E), tolerance = 1e-4)
   expect_equal(mon$V, mof$V, tolerance = 1e-3)
 })
+
+# #145: a no-IIV (n_eta = 0) model with a study cov_dist died in .adghGrid's
+# colnames(g$eta) <- pinfo$eta_col_names against a genuinely 0-column eta matrix.
+.zeroeta_cov_mod <- function() {
+  ini({ tcl <- log(5); tv <- log(50); bsex <- 0.18; add.err <- 0.08 })
+  model({ cl <- exp(tcl) * (WT / 70)^0.75 * exp(bsex * SEX)
+          v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+}
+
+test_that("adgh with covariate marginalisation and n_eta = 0 does not error (#145)", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  ui <- suppressMessages(rxode2::rxode2(.zeroeta_cov_mod))
+  ov <- admixr2:::.admOutputVar(ui)
+  rx <- admixr2:::.admLoadModel(ui)
+  cd <- list(WT = list(mu = 76, sd = 15),
+             SEX = list(values = c(0, 1), probs = c(0.5, 0.5)))
+  st <- list(s = list(E = c(9, 7, 4, 1), V = diag(0.4, 4L) + 0.05, n = 200L,
+                      times = c(0.5, 2, 8, 24), ev = rxode2::et(amt = 200),
+                      cov_dist = cd))
+  ctl <- adghControl(studies = st, grad = "none", print = 0L,
+                     covMethod = "none", n_nodes = 5L, cov_nodes = 7L,
+                     cov_integration = "on")
+  pin <- admixr2:::.admDriverPinfo(ui, ctl)
+  expect_identical(pin$n_eta, 0L)
+  expect_identical(pin$eta_col_names, character(0))
+
+  stu <- suppressMessages(admixr2:::.admCheckCovariates(
+    ui, pin, admixr2:::.admDriverUnits(st, ui, ov)$studies))
+  g   <- admixr2:::.adghNodeGrid(pin$n_nodes, pin$n_eta)
+  pr  <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin)
+
+  design <- NULL
+  expect_no_error(design <- admixr2:::.adghGrid(pr, pin, g, stu[[1L]]))
+  expect_false(isTRUE(design$failed))
+  expect_equal(ncol(design$eta), 0L)
+
+  m <- NULL
+  expect_no_error(m <- admixr2:::.adghMoments(pr, pin, stu[[1L]], rx, ov, g, 1L))
+  expect_true(all(is.finite(m$E)))
+  expect_true(all(is.finite(m$V)))
+})

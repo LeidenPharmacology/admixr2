@@ -120,6 +120,12 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 ## Bug fixes
 
+* **`adgh` on a no-IIV (`n_eta = 0`) model failed under covariate
+  marginalisation**, with a dimnames-length error from a phantom `"eta."` name.
+
+* **A DISCRETE covariate latently correlated with any other margin is refused**,
+  rather than integrated as if it were independent; a level is not a point.
+
 * **The estimated-effect curve and the source marks were different quantities**
   for a staged model, so every source drew a constant factor off the fitted line.
 
