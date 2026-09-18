@@ -3606,6 +3606,68 @@ print.covDist <- function(x, ...) {
 }
 
 # =============================================================================
+# PROJECTED NODE DESIGN -- a conditional source on span(source, analysis)
+# =============================================================================
+#
+# A node's likelihood term depends on where the node sits only through what the
+# SOURCE predicts there and what the ANALYSIS model predicts there -- two
+# numbers when both are allometric, whatever p is. So grid the pair, not the
+# covariates: J^2 replaces J^p, exactly, since a lognormal latent makes the pair
+# bivariate normal. Measured via datagen(): 729 nodes -342.37990291 against 81
+# nodes -342.37990292. Needs log-linear maps (.admCovCollapse() declines the
+# rest) and lognormal margins (normal ones carry a ~0.1 bias that does not
+# shrink with J). Issue #148 has the measurements.
+
+# The latent subspace a model's covariate dependence lives in, or NULL where
+# there is nothing to reduce. Off .admCovCollapse(), which already probes the
+# assignments, refuses a loading that moves with eta or a discrete cell, and
+# verifies the reduced design reproduces their law.
+.admCovDirections <- function(ui, pinfo, cov_dist, n_nodes = 7L) {
+  co <- tryCatch(.admCovCollapse(ui, pinfo, cov_dist, n_nodes),
+                 error = function(e) NULL)
+  if (is.null(co) || is.null(co$U)) return(NULL)
+  list(U = co$U, r = co$r, pc = co$pc, cn = co$cn, Rc = co$Rc)
+}
+
+# The span of several such subspaces, as a design to integrate on.
+#
+# RANK FIXED AT THE SUM, not measured: the directions go parallel wherever the
+# analysis model agrees with the source, and a design that changes shape there
+# steps the objective mid-fit. Fixed r = 2 agrees with an adaptive r = 1 to
+# 3e-7, so it costs nothing; unused directions leave the integrand constant.
+.admCovSpan <- function(dirs, Rc, pc) {
+  dirs <- Filter(Negate(is.null), dirs)
+  if (!length(dirs)) return(NULL)
+  r <- sum(vapply(dirs, `[[`, integer(1), "r"))
+  if (r >= pc) return(NULL)            # prices at the full grid or worse
+
+  B  <- do.call(cbind, lapply(dirs, `[[`, "U"))
+  sv <- tryCatch(svd(B), error = function(e) NULL)
+  if (is.null(sv)) return(NULL)
+  Q  <- sv$u[, seq_len(r), drop = FALSE]
+  Sr <- t(Q) %*% Rc %*% Q
+  Lr <- tryCatch(chol(Sr), error = function(e) NULL)
+  if (is.null(Lr)) return(NULL)
+  list(Q = Q, Lr = Lr, r = r, pc = pc)
+}
+
+# Covariate values and weights for a span, crossed with the exact discrete
+# enumeration. Same construction as .admCovCollapse()'s own design -- z = U w
+# through the margins -- so the two cannot drift apart.
+.admCovProjDesign <- function(sp, cd, cn, dn, nms, n_nodes) {
+  .gg <- .admNodeGridNv(rep(as.integer(n_nodes), sp$r))
+  Zg  <- .gg$X %*% sp$Lr %*% t(sp$Q)
+  Xg  <- .admCovXFromZ(cd, cn, Zg)
+  if (!all(is.finite(Xg))) return(NULL)      # a margin quantile saturated
+  W <- .gg$W / sum(.gg$W)
+  if (!length(dn)) return(list(X = Xg, W = W, z = Zg, r = sp$r))
+  .lb <- .admCovLatentBlock(cd, nms, cn, dn, cd[["latentR"]])
+  if (is.null(.lb)) return(NULL)
+  cr <- .admCrossDiscreteCov(Xg, W, .lb$cells, .lb$pcell, dn, nms)
+  list(X = cr$X, W = cr$W, z = Zg[cr$ix, , drop = FALSE], r = sp$r)
+}
+
+# =============================================================================
 # JOINT COLLAPSE -- etas and covariates in ONE latent space
 # =============================================================================
 #

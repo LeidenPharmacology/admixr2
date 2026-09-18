@@ -1826,3 +1826,134 @@ test_that("a single named proportion is a BINARY covariate, not a constant", {
   expect_error(covDist(WT = c(kg = 70)), "[[]0, 1[]]")
   expect_error(covDist(SEX = c(male = -0.2)), "negative")
 })
+
+# ---- projected node design ---------------------------------------------------
+
+.pnd_pop <- function()
+  admPopulation(WT = c(mean = 76, sd = 15), CRCL = c(mean = 92, sd = 22),
+                ALB = c(mean = 40, sd = 5), cor = c(WT.CRCL = 0.45))
+
+.pnd_pinfo <- function(fn) {
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  list(ui = ui, pinfo = admixr2:::.admDriverPinfo(
+    ui, adghControl(studies = list(), print = 0L)))
+}
+
+# Three covariates all on cl -> one direction; split across cl and v -> two.
+.pnd_allom <- function() {
+  ini({ tcl <- log(3.2); tv <- log(21); bwt <- .6; bcr <- .4; balb <- .3
+        eta.cl ~ .09; add.err <- .6 })
+  model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+          v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+}
+.pnd_split <- function() {
+  ini({ tcl <- log(3.2); tv <- log(21); bwt <- .6; bcr <- .4; balb <- .3
+        eta.cl ~ .09; add.err <- .6 })
+  model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr
+          v <- exp(tv)*(ALB/40)^balb; cp <- linCmt(); cp ~ add(add.err) })
+}
+
+test_that(".admCovDirections reports the rank of a model's covariate map", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  pop <- .pnd_pop()
+  a <- .pnd_pinfo(.pnd_allom)
+  d <- admixr2:::.admCovDirections(a$ui, a$pinfo, pop)
+  expect_equal(d$r, 1L)
+  expect_equal(dim(d$U), c(3L, 1L))
+  # Orthonormal, and in the latent coordinates of the CONTINUOUS block.
+  expect_equal(as.numeric(crossprod(d$U)), 1, tolerance = 1e-10)
+  expect_equal(d$pc, 3L)
+
+  b <- .pnd_pinfo(.pnd_split)
+  d2 <- admixr2:::.admCovDirections(b$ui, b$pinfo, pop)
+  expect_equal(d2$r, 2L)
+  expect_equal(dim(d2$U), c(3L, 2L))
+  expect_equal(crossprod(d2$U), diag(2L), tolerance = 1e-10)
+})
+
+test_that(".admCovDirections declines a map that is not linear in the latent", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The projection needs the covariates to enter through a linear combination on
+  # the log scale. An additive shift and a saturating term do not, and the
+  # measured bias is not something a finer grid recovers -- so these must come
+  # back NULL rather than be reduced.
+  pop <- .pnd_pop()
+  add <- .pnd_pinfo(function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .006; bcr <- .4; balb <- .3
+          eta.cl ~ .09; add.err <- .6 })
+    model({ cl <- exp(tcl + eta.cl)*(1 + bwt*(WT - 70))*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) })
+  expect_null(admixr2:::.admCovDirections(add$ui, add$pinfo, pop))
+
+  emax <- .pnd_pinfo(function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .6; bcr <- .4
+          eta.cl ~ .09; add.err <- .6 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(1 + bcr*CRCL/(50 + CRCL))
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) })
+  expect_null(admixr2:::.admCovDirections(emax$ui, emax$pinfo, pop))
+})
+
+test_that(".admCovSpan fixes the rank at the sum and refuses a non-saving span", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  pop <- .pnd_pop()
+  a <- .pnd_pinfo(.pnd_allom); b <- .pnd_pinfo(.pnd_split)
+  d1 <- admixr2:::.admCovDirections(a$ui, a$pinfo, pop)     # r = 1
+  d2 <- admixr2:::.admCovDirections(b$ui, b$pinfo, pop)     # r = 2
+
+  # Two rank-1 models: r = 2 of 3, so 9^2 replaces 9^3.
+  sp <- admixr2:::.admCovSpan(list(d1, d1), d1$Rc, d1$pc)
+  expect_equal(sp$r, 2L)
+  expect_equal(dim(sp$Q), c(3L, 2L))
+  expect_equal(crossprod(sp$Q), diag(2L), tolerance = 1e-10)
+  # Lr is the Cholesky of the projected latent covariance, so Q Lr' maps a
+  # standard normal to the right law on the span.
+  expect_equal(t(sp$Lr) %*% sp$Lr, t(sp$Q) %*% d1$Rc %*% sp$Q,
+               tolerance = 1e-10)
+
+  # RANK FIXED AT THE SUM, not measured: two copies of the SAME rank-1 direction
+  # still give 2, because a design whose shape changes when the analysis model
+  # happens to agree with the source would step the objective mid-fit.
+  expect_equal(admixr2:::.admCovSpan(list(d1, d1), d1$Rc, d1$pc)$r, 2L)
+
+  # 1 + 2 = 3 of 3 covariates buys nothing, and is refused rather than dressed
+  # up as a reduction.
+  expect_null(admixr2:::.admCovSpan(list(d1, d2), d1$Rc, d1$pc))
+  expect_null(admixr2:::.admCovSpan(list(), d1$Rc, d1$pc))
+  expect_null(admixr2:::.admCovSpan(list(NULL), d1$Rc, d1$pc))
+})
+
+test_that("the projected design reproduces the law the product grid integrates", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The mathematical content, without paying for solves: both designs must give
+  # the same weighted law of the two scalars the models read -- what the source
+  # predicts through, and what the analysis model predicts through. Everything
+  # downstream is a function of those.
+  pop <- .pnd_pop()
+  a <- .pnd_pinfo(.pnd_allom)
+  ana <- .pnd_pinfo(function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .52; bcr <- .55; balb <- .18
+          eta.cl ~ .09; add.err <- .6 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) })
+  d_s <- admixr2:::.admCovDirections(a$ui, a$pinfo, pop)
+  d_a <- admixr2:::.admCovDirections(ana$ui, ana$pinfo, pop)
+  sp  <- admixr2:::.admCovSpan(list(d_s, d_a), d_s$Rc, d_s$pc)
+  expect_equal(sp$r, 2L)
+
+  cd <- admixr2:::.admCovDistCanon(pop)
+  cn <- d_s$cn
+  bs <- c(.60, .40, .30); ba <- c(.52, .55, .18)
+  lg <- function(X) cbind(log(X[, "WT"]/70), log(X[, "CRCL"]/95), log(X[, "ALB"]/40))
+  mom <- function(X, W) {
+    L <- lg(X); su <- cbind(L %*% bs, L %*% ba)
+    m <- as.numeric(crossprod(W, su)); C <- sweep(su, 2L, m)
+    c(m, as.numeric(t(C) %*% (W * C)))
+  }
+  J   <- 9L
+  des <- admixr2:::.admCovProjDesign(sp, cd, cn, character(0),
+                                     c("WT", "CRCL", "ALB"), J)
+  expect_equal(nrow(des$X), J^2)              # not J^3
+  gg  <- admixr2:::.admNodeGridNv(rep(J, 3L))
+  Xp  <- admixr2:::.admCovXFromZ(cd, cn, gg$X %*% chol(d_s$Rc))
+  expect_equal(mom(des$X, des$W), mom(Xp, gg$W / sum(gg$W)), tolerance = 1e-8)
+})
