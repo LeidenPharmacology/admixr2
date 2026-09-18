@@ -893,6 +893,22 @@
 .admSvdRank <- function(sv, tol = .ADM_RANK_TOL)
   sum(sv$d > max(sv$d) * tol)
 
+# Orthonormal basis for the span of a loading matrix, for every collapse.
+#
+# The three rank POLICIES differ and must: .admCovCollapse() certifies its rank
+# against the fitted parameters, .admJointDesign() freezes the one admission
+# settled on, .admCovSpan() fixes it at the sum so the shape cannot change. What
+# they share is this -- one basis convention, one validity screen. A B that has
+# GAINED rank since `r` was fixed is refused, not silently re-ranked.
+.admSpanBasis <- function(B, r = NULL, max_r = NULL) {
+  sv <- tryCatch(svd(B), error = function(e) NULL)
+  if (is.null(sv) || !length(sv$d) || max(sv$d) <= 0) return(NULL)
+  if (is.null(r)) r <- .admSvdRank(sv)
+  if (!is.finite(r) || r < 1L || .admSvdRank(sv) > r) return(NULL)
+  if (!is.null(max_r) && r > max_r) return(NULL)
+  list(U = sv$u[, seq_len(r), drop = FALSE], r = r)
+}
+
 # The uniform a latent normal node maps to.
 #
 # ONE tolerance: pnorm() saturates to exactly 0 or 1 in the tails, after which a margin's quantile function
@@ -3524,13 +3540,12 @@ print.covDist <- function(x, ...) {
     }
   }
   if (is.null(r)) return(NULL)
-  sv <- tryCatch(svd(B), error = function(e) NULL)
-  if (is.null(sv) || !length(sv$d)) return(NULL)
   # r == pc is refused: no rank reduction to make, and with the node search gone
   # there is nothing else on this path to gain. The rotation alone buys nothing
   # there -- with B diagonal, U is a permutation and redistributes nothing.
-  if (!is.finite(r) || r < 1L || r >= pc) return(NULL)   # no reduction to make
-  U  <- sv$u[, seq_len(r), drop = FALSE]                # pc x r, orthonormal
+  .sb <- .admSpanBasis(B, r, max_r = pc - 1L)
+  if (is.null(.sb)) return(NULL)
+  U  <- .sb$U                                           # pc x r, orthonormal
   nn <- as.integer(n_nodes)
   if (nn^r * max(nrow(cells), 1L) > max_rows) return(NULL)
 
@@ -3642,9 +3657,11 @@ print.covDist <- function(x, ...) {
   if (r >= pc) return(NULL)            # prices at the full grid or worse
 
   B  <- do.call(cbind, lapply(dirs, `[[`, "U"))
-  sv <- tryCatch(svd(B), error = function(e) NULL)
-  if (is.null(sv)) return(NULL)
-  Q  <- sv$u[, seq_len(r), drop = FALSE]
+  # r is the SUM of the input ranks, so B cannot exceed it; max_r is the same
+  # no-reduction test the other two make.
+  .sb <- .admSpanBasis(B, r, max_r = pc - 1L)
+  if (is.null(.sb)) return(NULL)
+  Q  <- .sb$U
   Sr <- t(Q) %*% Rc %*% Q
   Lr <- tryCatch(chol(Sr), error = function(e) NULL)
   if (is.null(Lr)) return(NULL)
@@ -3819,16 +3836,13 @@ print.covDist <- function(x, ...) {
 .admJointDesign <- function(jc, st, L) {
   B <- .admJointB(jc, st, L, i0 = jc[["i0"]])
   if (is.null(B)) return(NULL)
-  sv <- tryCatch(svd(B), error = function(e) NULL)
-  if (is.null(sv) || !length(sv$d) || max(sv$d) <= 0) return(NULL)
   # [[ ]] not $: `$` PARTIAL-MATCHES on lists, so jc$m silently resolved to
   # jc$max_rows and the row cap then rejected every design. Both are deliberately
   # absent until admission fixes them, which is exactly the case partial matching
   # turns into a wrong answer instead of a NULL.
-  r <- jc[["r"]] %||% .admSvdRank(sv)
-  if (.admSvdRank(sv) > r) return(NULL)
-  if (!is.finite(r) || r < 1L || r > jc$nl) return(NULL)
-  U <- sv$u[, seq_len(r), drop = FALSE]
+  .sb <- .admSpanBasis(B, jc[["r"]], max_r = jc$nl)
+  if (is.null(.sb)) return(NULL)
+  r <- .sb$r; U <- .sb$U
   # the cap lesson from .admCovDirNodes, over the joint space: a direction
   # absorbs (n_eta + pc)/r axes, so it needs that much more resolution than one
   m <- jc[["m"]] %||% ceiling(
