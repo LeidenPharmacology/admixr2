@@ -30,18 +30,13 @@ transcribed as-is.}
 a correlation matrix (named, in any order). Realised through a Gaussian
 copula on the declared margins.}
 
-\item{joint}{Dependence a single correlation cannot express: a function
-receiving the matrix of uniforms admixr2 supplies and returning one named
-column per covariate, on each covariate's OWN scale. Overrides \code{cor}.
-
-The sampler owns its margins. A copula returns dependence on the \emph{copula
-scale} only, so a sampler that hands those uniforms back returns covariate
-values on \verb{(0, 1)} --- every covariate mean 0.50 and SD 0.29, whatever
-margins were declared, with no error anywhere. Push them through the
-quantile function you intend.
-
-\code{stratify} needs nothing further: an opaque sampler is banded by binning
-its output rather than by fixing its input uniforms.}
+\item{joint}{\strong{Not accepted yet, and an error if given.} It is the place an
+arbitrary sampler will attach --- a function receiving the matrix of
+uniforms admixr2 supplies and returning one named column per covariate, on
+each covariate's own scale, which is the shape a vine copula produces ---
+but the contract around it is not settled, so the argument refuses rather
+than half-works. Use \code{cor} for dependence: it builds a Gaussian copula
+over the declared margins.}
 
 \item{dist}{Default margin for the \code{c(mean = , sd = )} form: \code{"normal"}
 (default) or \code{"lnorm"}. A per-covariate \code{dist} wins over it.

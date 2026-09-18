@@ -38,8 +38,12 @@
          "drops all but the first. Give each study its own name.",
          call. = FALSE)
   names(studies) <- .nm
-  # Materialise before shared validation reads study fields.
-  studies <- .admMaterialise(studies)
+  # Materialise before shared validation reads study fields. The analysis
+  # model's covariates go in: a source is cut into nodes only along the
+  # directions this model can be moved by, which leaves the objective unchanged
+  # -- see .admMaterialise().
+  studies <- .admMaterialise(
+    studies, analysis_covs = .admAllCovs(.ui, NULL))
   pinfo <- .admDriverPinfo(.ui, .ctl)
   .admWarnCovIdentifiability(.ui, pinfo, studies)
   list(studies = studies, pinfo = pinfo)
@@ -67,7 +71,7 @@
 # (mean across studies, else 1) so rxode2 does not reject missing parameters.
 .admDummyData <- function(.ui, multi_out, studies) {
   d  <- if (multi_out) admData(.admEndpointNames(.ui)) else admData()
-  cv <- tryCatch(.ui$allCovs, error = function(e) NULL)
+  cv <- .admAllCovs(.ui, NULL)
   for (nm in cv) {
     # s$cov may be a list or named numeric vector
     vals <- unlist(lapply(studies, function(s) {
@@ -84,9 +88,39 @@
 .admFinaliseFit <- function(.ret, .ui, .ctl, est, objective, ov, studies,
                             cov, cov_nms, multi_out, extra_field, handle_ctl,
                             t_opt, t_cov, t_elapsed) {
-  # Record stratum node resolution across studies for anova() compatibility check.
-  # Stamped on .fit$env (not .ret, where env does not yet exist as an environment).
-  .Jn <- sort(unique(unlist(lapply(studies, function(s) s[[".adm_strata_nodes"]]))))
+  # THE RESOLUTION THIS FIT WAS BUILT AT, per covariate THIS MODEL READS, for
+  # anova()'s compatibility check. Stamped on .fit$env (not .ret, where env does
+  # not yet exist as an environment).
+  #
+  # ONE NUMBER PER FIT WAS TOO COARSE, and it refused a comparison that is
+  # exactly valid. A source is cut into nodes only along the covariates the
+  # analysis model reads, so the NULL model of a nested pair -- which has
+  # dropped the term -- legitimately has fewer nodes, or none. Measured: the
+  # full fit at 10 studies against a null fit at 2 gives dOFV 409.162568, and
+  # the same null refitted at the full resolution gives 409.162615, a difference
+  # of 5e-05 -- while the old check refused the first pair outright because one
+  # fit stamped `5` and the other stamped nothing.
+  #
+  # `"0"` for a covariate the model reads that nothing is conditional on --
+  # integrated over the whole distribution, which is NOT `strata_nodes = 1L`
+  # (one node pinned at the median). Stamping both `1` made anova() accept that
+  # pair. And the whole MULTISET, `"3/9"`, since max() could not tell two
+  # sources at 3 and 9 from both at 9; sorted, so study order cannot matter.
+  .Jn <- local({
+    .cv <- .admAllCovs(.ui)
+    .cv <- .cv[vapply(.cv, function(cv) any(vapply(studies, function(s)
+      cv %in% c(.admCovSpecNames(s[["cov_dist"]]),
+                s[[".adm_strata_covs"]] %||% character(0)),
+      logical(1))), logical(1))]
+    if (!length(.cv)) return(character(0))
+    vapply(.cv, function(cv) {
+      j <- unlist(lapply(studies, function(s)
+        if (cv %in% (s[[".adm_strata_covs"]] %||% character(0)))
+          s[[".adm_strata_nodes"]] else NULL))
+      if (!length(j)) "0"
+      else paste(sort(unique(as.integer(j))), collapse = "/")
+    }, character(1))
+  })
   nlmixr2est::.nlmixr2FitUpdateParams(.ret)
   handle_ctl(.ctl, .ret)
   if (exists("control", .ui)) rm(list = "control", envir = .ui)

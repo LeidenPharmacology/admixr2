@@ -1,5 +1,17 @@
 # Published-study transcription and conversion checks.
 
+# `.sa_model` asserts WT's exponent and estimates `bsex`; `.sa_fitwt` ESTIMATES
+# the exponent, so WT is conditional for it. The pair is what separates "reads a
+# covariate" from "estimated a coefficient for one", which is the rule
+# conditioning is derived by, so both belong at file scope rather than being
+# retyped inside the tests that need the contrast.
+.sa_fitwt <- function() {
+  ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75
+        eta.cl ~ 0.09; add.err <- 0.08 })
+  model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+          v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+}
+
 .sa_model <- function() {
   ini({ tcl <- log(5); tv <- log(50); bsex <- 0.15
         eta.cl ~ 0.09; add.err <- 0.08 })
@@ -127,16 +139,28 @@ test_that("materialising a spec is deferred, and matches datagen directly", {
                 population = admPopulation(WT = c(mean = 75, sd = 16),
                                            SEX = c(male = 0.55)),
                 label = "s")
-  got <- admixr2:::.admMaterialise(admStudies(s))
+  got <- suppressWarnings(suppressMessages(
+    admixr2:::.admMaterialise(admStudies(s))))
   ui <- suppressMessages(rxode2::rxode2(.sa_model))
   d <- ui$iniDf; d$est[d$name == "tcl"] <- log(5.2); ui$iniDf <- d
+  # The same call written out by hand, conditioned the way the derivation does:
+  # `.sa_model` estimates the SEX coefficient and asserts the weight exponent.
+  # BOTH SIDES MUST NAME THE SAME STRATA. Compared on `$s` alone this passed
+  # while both sides were NULL -- materialise conditional, datagen conditional too, and
+  # neither had a study called `s` to compare.
   want <- suppressWarnings(suppressMessages(datagen(
     list(s = list(times = c(1, 4, 12), ev = rxode2::et(amt = 200), n = 240,
+                  stratify = "SEX",
                   cov_dist = admPopulation(WT = c(mean = 75, sd = 16),
                                            SEX = c(male = 0.55)))),
     model = ui, control = datagenControl(method = "gh"))))
-  expect_equal(got$s$E, want$s$E, tolerance = 1e-10)
-  expect_equal(got$s$V, want$s$V, tolerance = 1e-10)
+  expect_setequal(names(got), names(want))
+  expect_setequal(names(got), c("s_s1", "s_s2"))
+  for (k in names(want)) {
+    expect_equal(got[[k]]$E, want[[k]]$E, tolerance = 1e-10)
+    expect_equal(got[[k]]$V, want[[k]]$V, tolerance = 1e-10)
+    expect_equal(got[[k]]$n, want[[k]]$n, tolerance = 1e-10)
+  }
 })
 
 test_that("`by` expands into one study per level, splitting n by the proportion", {
@@ -147,21 +171,36 @@ test_that("`by` expands into one study per level, splitting n by the proportion"
                                            SEX = c(male = 0.6)),
                 by = "SEX", label = "trial")
   got <- admixr2:::.admMaterialise(admStudies(s))
-  expect_length(got, 2L)
+  # `.sa_model` asserts the weight exponent and estimates only the SEX
+  # coefficient, which `by` has already pinned one level per study -- so there
+  # is nothing left to condition on and each level is one study. What `by` is
+  # responsible for is the LEVELS and the n split, and the sums below hold
+  # however many strata each level is cut into.
+  sx <- vapply(got, function(g) g[["cov"]][["SEX"]], 0)
+  expect_setequal(unique(sx), c(0, 1))
   expect_equal(sum(vapply(got, function(g) g$n, 0)), 200)
-  expect_setequal(vapply(got, function(g) g[["cov"]][["SEX"]], 0), c(0, 1))
-  # 60% male -> the SEX = 1 study carries 120 subjects
-  n1 <- got[[which(vapply(got, function(g) g[["cov"]][["SEX"]], 0) == 1)]]$n
-  expect_equal(n1, 120)
-  # and SEX is no longer marginalised inside either study
-  expect_false("SEX" %in% admixr2:::.admCovSpecNames(got[[1L]]$cov_dist))
+  # 60% male -> the SEX = 1 level carries 120 subjects across its strata
+  expect_equal(sum(vapply(got[sx == 1], function(g) g$n, 0)), 120)
+  expect_equal(sum(vapply(got[sx == 0], function(g) g$n, 0)), 80)
+  # and SEX is no longer marginalised inside any of them
+  expect_false(any(vapply(got, function(g)
+    "SEX" %in% admixr2:::.admCovSpecNames(g$cov_dist), logical(1))))
 })
 
 test_that("materialising a subgroup refuses a colliding study name", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  s <- admStudy(model = .sa_model, n = 200, dose = 200, times = c(1, 4, 12),
-                population = admPopulation(WT = c(mean = 75, sd = 16),
-                                           SEX = c(male = 0.6)),
+  # A model reading ONLY the `by` covariate, so the levels are the whole
+  # expansion and the names are exactly `trial_SEX0`/`trial_SEX1` -- a model
+  # estimating a second covariate's coefficient would cut each level further
+  # and give the names a stratum suffix this test is not about.
+  sexonly <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bsex <- 0.2
+          add.err <- 0.1; eta.cl ~ 0.09 })
+    model({ cl <- exp(tcl + eta.cl) * exp(bsex * SEX)
+            v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  s <- admStudy(model = sexonly, n = 200, dose = 200, times = c(1, 4, 12),
+                population = admPopulation(SEX = c(male = 0.6)),
                 by = "SEX", label = "trial")
   other <- list(E = 1, V = 1, n = 10, times = 1, ev = rxode2::et(amt = 1))
   expect_error(admixr2:::.admMaterialise(list(trial_SEX0 = other, trial = s)),
@@ -296,8 +335,10 @@ test_that("digitised profiles refuse source-only expansion arguments", {
   args <- list(E = 1, sd = 1, n = 20, dose = 1, times = 1,
                population = admPopulation(SEX = c(male = 0.6)))
   expect_error(do.call(admStudy, c(args, list(by = "SEX"))), "digitised data")
+  # `stratify` is not an argument at all any more -- conditioning is derived from
+  # the source's model, and digitised data has none to derive from.
   expect_error(do.call(admStudy, c(args, list(stratify = "SEX"))),
-               "digitised data")
+               "unused argument")
 })
 
 test_that("a stated margin beats the data, and a dropped association is said", {
@@ -322,16 +363,20 @@ test_that("a stated margin beats the data, and a dropped association is said", {
   expect_silent(invisible(admPopulation(data = coh)))
 })
 
-test_that("stratify = TRUE accepts the parsed model admStudy() hands down", {
+test_that("conditioning is derived from the model with nothing declared", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # admStudy() stores a parsed rxUi rather than the original function.
+  # NOTHING IS SET. Whether a covariate is conditional or marginal is a
+  # property of the source's own model, so admixr2 derives it -- and it has to
+  # work off the parsed rxUi admStudy() stores rather than the original
+  # function.
   s <- admStudy(model = .sa_model, n = 200, dose = 200, times = c(1, 4, 12),
                 population = admPopulation(WT = c(mean = 75, sd = 16),
                                            SEX = c(male = 0.55)),
-                stratify = TRUE, label = "trial")
+                label = "trial")
   got <- suppressWarnings(suppressMessages(
     admixr2:::.admMaterialise(admStudies(s))))
-  # .sa_model estimates bsex and reads WT/SEX, so TRUE bands on SEX only
+  # .sa_model estimates bsex and reads WT/SEX, so SEX is conditional and WT is not:
+  # a fixed allometric exponent carries no fitted effect to recover.
   expect_gt(length(got), 1L)
   expect_true(all(vapply(got, function(g) !is.null(g[["cov"]][["SEX"]]),
                          logical(1))))
@@ -377,10 +422,15 @@ test_that("print.admStudies flags a covariate no source can identify", {
   coh <- .sa_cohort(n = 300L)
   s <- suppressMessages(
     admStudy(model = .sa_model, population = coh, dose = 200,
-             times = c(1, 4, 12), stratify = "SEX", label = "a"))
+             times = c(1, 4, 12), label = "a"))
   out <- paste(utils::capture.output(print(admStudies(a = s))), collapse = " ")
-  expect_match(out, "SEX +banded")
+  # `.sa_model` ESTIMATES the SEX coefficient, so SEX is conditional. WT is read at a
+  # fixed exponent, and CRCL is declared by the cohort and never mentioned by
+  # the model: both are marginal, for the two different reasons print()
+  # distinguishes, and neither is identified by any source here.
+  expect_match(out, "SEX +conditional")
   expect_match(out, "WT +marginal")
+  expect_match(out, "CRCL +marginal")
   expect_match(out, "marginal in every source")
   # that a published model carries no standard error is the other silent one:
   # said at transcription time, where the user can still change the design
@@ -413,19 +463,25 @@ test_that("a covariate constant within a study is pinned, not described", {
   expect_false("CRCL" %in% admixr2:::.admCovSpecNames(s$population))
 })
 
-test_that("stratify = TRUE bands what the source ESTIMATED, not what it reads", {
+test_that("the derivation conditions on what the source model ESTIMATED", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # .sa_model fits bsex and holds weight at a literal ^0.75, so TRUE must band
-  # SEX alone. Banding WT too would manufacture the null contrast that
-  # .admExpandStrata exists to avoid.
+  # ESTIMATED, not merely read. `.sa_model` reads WT at a literal ^0.75 and SEX
+  # at an estimated coefficient: the fixed exponent is an assumption, so that
+  # source holds no evidence about weight and conditioning on it would buy strata
+  # and no evidence. Marginal covers both that and a covariate the population
+  # describes and the model never mentions.
   s <- suppressMessages(
     admStudy(model = .sa_model, n = 200, dose = 200, times = c(1, 4, 12),
              population = admPopulation(WT = c(mean = 75, sd = 16),
                                         SEX = c(male = 0.55)),
-             stratify = TRUE, label = "trial"))
+             label = "trial"))
   got <- suppressWarnings(suppressMessages(
     admixr2:::.admMaterialise(admStudies(s))))
   expect_setequal(unlist(lapply(got, function(g) names(g[["cov"]]))), "SEX")
+  # WT is still described, and integrated over.
+  expect_true(all(vapply(got, function(g)
+    !is.null(g$cov_dist[["WT"]]) && !isTRUE(g$cov_dist[["WT"]][[".point"]]),
+    logical(1))))
   expect_equal(sum(vapply(got, function(g) g$n, 0)), 200)
 })
 
@@ -502,12 +558,34 @@ test_that("a `by` level keeps the correlations among the margins it retains", {
                "cannot materialise correlated 'CRCL' subgroups")
 })
 
+test_that("`population` does not accept a caller's own `joint` yet", {
+  skip_if_not_installed("rxode2")
+  # THE SECOND DOOR. covDist() refuses it, but `population` also takes a plain
+  # list and the canon lets an existing sampler through untouched.
+  raw <- list(WT  = list(quantile = function(u) stats::qlnorm(u, log(70), .25)),
+              AGE = list(quantile = function(u) stats::qgamma(u, 9, 0.3)),
+              joint = function(u) cbind(WT = stats::qlnorm(u[, 1], log(70), .25),
+                                        AGE = stats::qgamma(u[, 2], 9, 0.3)))
+  expect_error(admStudy(model = .sa_model, population = raw, n = 100,
+                        dose = 200, times = c(1, 4)),
+               "own `joint` sampler")
+  # The sampler admixr2 BUILDS from `cor` arrives here on every correlated
+  # population and must not be caught by that: `jointOwn` is the difference.
+  expect_s3_class(
+    admStudy(model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+             population = admPopulation(WT = c(mean = 75, sd = 16),
+                                        CRCL = c(mean = 92, sd = 24),
+                                        cor = c(WT.CRCL = 0.45))),
+    "admStudy")
+})
+
 test_that("by refuses to discard an opaque joint sampler", {
-  cd <- covDist(SEX = list(values = c(0, 1), probs = c(.5, .5)),
-                WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25),
-                joint = function(u) cbind(SEX = as.integer(u[, 1] > .5),
-                                           WT = stats::qlnorm(u[, 2], log(75), .2),
-                                           CRCL = stats::qlnorm(u[, 2], log(90), .2)))
+  cd <- with_opaque_joint(
+    covDist(SEX = list(values = c(0, 1), probs = c(.5, .5)),
+            WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25)),
+    function(u) cbind(SEX = as.integer(u[, 1] > .5),
+                      WT = stats::qlnorm(u[, 2], log(75), .2),
+                      CRCL = stats::qlnorm(u[, 2], log(90), .2)))
   expect_error(admixr2:::.admCovDropMargin(cd, "SEX"), "user-supplied `joint`")
 })
 
@@ -532,23 +610,221 @@ test_that("a population is canonicalised on build, so `by` sees the same object"
                "not a valid covariate specification")
 })
 
-test_that("`stratify = FALSE` is the same statement as omitting it", {
+test_that("print() does not misreport a `by =` source", {
+  skip_if_not_installed("rxode2")
+  # `by` pins its covariate one level per study, so it is out of the
+  # conditional set deliberately -- and subtracting that set alone then called
+  # SEX "read at an asserted coefficient" for a model that estimates `bsex`,
+  # under a "reported by SEX" line saying otherwise.
+  pop <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55))
+  out <- capture.output(print(admStudy(
+    model = .sa_model, n = 200, dose = 200, times = c(1, 4),
+    population = pop, by = "SEX")))
+  expect_true(any(grepl("reported by SEX", out)))
+  expect_false(any(grepl("conditional on  nothing", out)))
+  # WT genuinely IS asserted in `.sa_model` -- a fixed allometric exponent --
+  # so that line stays; SEX must not be on it.
+  .asserted <- grep("asserted coefficient", out, value = TRUE)
+  expect_length(.asserted, 1L)
+  expect_match(.asserted, "WT")
+  expect_false(grepl("SEX", .asserted))
+})
+
+test_that("a `range` keyed by covariate names must be a list", {
+  skip_if_not_installed("rxode2")
+  # Read as the short form, `c(WT = 52, CRCL = 118)` attached both numbers to
+  # whichever single covariate was conditional, as its low and high -- in the
+  # fit and, once the plot was made to agree, in both.
+  pop <- admPopulation(WT = c(mean = 70, sd = 15), CRCL = c(mean = 90, sd = 25))
+  expect_error(suppressMessages(admixr2:::.admMaterialise(admStudies(
+    s = admStudy(model = .sa_fitwt, population = pop, n = 100, dose = 200,
+                 times = c(1, 4), range = c(WT = 52, CRCL = 118))))),
+    "is not a list")
+  # `lo`/`hi` are not covariates, so the short form still stands.
+  expect_silent(suppressMessages(admixr2:::.admMaterialise(admStudies(
+    s = admStudy(model = .sa_fitwt, population = pop, n = 100, dose = 200,
+                 times = c(1, 4), range = c(lo = 52, hi = 118))))))
+})
+
+test_that("no enrolled-range warning for a DISCRETE conditional covariate", {
+  skip_if_not_installed("rxode2")
+  # A discrete margin is enumerated at its declared LEVELS, so a `range` buys
+  # nothing and the warning's premise is false -- yet it fired for every source
+  # estimating a discrete effect, asking for a span for a two-level factor.
+  pop <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55))
+  st  <- admStudies(s = admStudy(model = .sa_model, n = 100, dose = 200,
+                                 times = c(1, 4), population = pop))
+  w <- NULL
+  withCallingHandlers(
+    suppressMessages(admixr2:::.admMaterialise(st)),
+    warning = function(z) { w <<- c(w, conditionMessage(z))
+                            invokeRestart("muffleWarning") })
+  expect_length(w, 0L)
+
+  # A CONTINUOUS one with no range still warns, which is the case it is for.
+  w2 <- NULL
+  withCallingHandlers(
+    suppressMessages(admixr2:::.admMaterialise(admStudies(
+      s = admStudy(model = .sa_fitwt, n = 100, dose = 200, times = c(1, 4),
+                   population = admPopulation(WT = c(mean = 70, sd = 15)))))),
+    warning = function(z) { w2 <<- c(w2, conditionMessage(z))
+                            invokeRestart("muffleWarning") })
+  expect_length(w2, 1L)
+  expect_match(w2, "FULL declared distribution")
+})
+
+test_that("conditioning is not a user option any more", {
   skip_if_not_installed("rxode2")
   pop <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55))
-  s <- admStudy(model = .sa_model, est = c(bsex = .2), n = 100, dose = 200,
-                times = c(1, 4), population = pop, stratify = FALSE,
-                label = "s")
-  expect_named(admixr2:::.admMaterialise(list(s = s)), "s")
-  expect_identical(admixr2:::.admStudyBandNames(s), character(0))
-  # the resolution and range only mean something alongside a band
-  expect_error(admStudy(model = .sa_model, n = 100, dose = 200, times = c(1, 4),
-                        population = pop, range = list(WT = c(50, 100))),
-               "`stratify` is not set")
-  # ...and `TRUE` prints as the covariates it resolves to, not as "TRUE"
-  expect_output(print(admStudy(model = .sa_model, n = 100, dose = 200,
-                               times = c(1, 4), population = pop,
-                               stratify = TRUE, label = "s")),
-                "banded on +SEX")
+  # `stratify` is gone: whether a covariate is conditional or marginal follows
+  # from whether the source's own model uses it.
+  for (arg in list(list(stratify = TRUE), list(stratify = FALSE),
+                   list(stratify = "SEX")))
+    expect_error(
+      do.call(admStudy, c(list(model = .sa_model, n = 100, dose = 200,
+                               times = c(1, 4), population = pop), arg)),
+      "unused argument")
+
+  # ESTIMATED, not merely READ. `.sa_model` carries WT at a FIXED allometric
+  # exponent and estimates `bsex`, so SEX is the only covariate it holds
+  # evidence about: conditioning on WT would buy strata and no evidence, and credit
+  # the source with information it never earned.
+  sn <- admStudy(model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+                 population = pop, strata_nodes = 3L,
+                 range = list(WT = c(50, 100)), label = "s")
+  g <- admixr2:::.admMaterialise(admStudies(s = sn))
+  expect_identical(length(g), 2L)          # the 2 SEX levels, and no WT nodes
+
+  # ESTIMATE the exponent and WT becomes conditional, at the caller's
+  # precision: `strata_nodes` is the one knob that is not a statement about
+  # which covariates are conditional.
+  .fit_wt <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bsex <- 0.15; bwt <- 0.75
+          eta.cl ~ 0.09; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt * exp(bsex * SEX)
+            v  <- exp(tv) * (WT/70); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  g2 <- admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .fit_wt, n = 100, dose = 200, times = c(1, 4),
+    population = pop, strata_nodes = 3L,
+    range = list(WT = c(50, 100)), label = "s")))
+  expect_identical(length(g2), 3L * 2L)    # 3 WT nodes x 2 SEX levels
+  # THE NODES ARE THE CALLER'S, on every stratum: copied only inside the
+  # "something was conditional" branch, a null fit took the default 9 while the full
+  # fit took this 3, and a different resolution per study is what anova()
+  # refuses to compare across.
+  expect_true(all(vapply(g2, function(z) identical(z[[".adm_strata_nodes"]], 3L),
+                         logical(1))))
+
+  # And `range` reaches a MARGINAL covariate too. This model never mentions
+  # CRCL, so CRCL is integrated over -- over the TRUNCATED margin, because the
+  # enrolled span is true before admixr2 decides how to use the covariate.
+  pop2 <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55),
+                        CRCL = c(mean = 90, sd = 25))
+  sp <- admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+    population = pop2, strata_nodes = 1L,
+    range = list(CRCL = c(60, 120)), label = "s")))[[1L]]
+  cr <- sp$cov_dist[["CRCL"]]
+  expect_gte(admixr2:::.admCovQuantile(cr, 0.001), 60)
+  expect_lte(admixr2:::.admCovQuantile(cr, 0.999), 120)
+
+  # An unnamed `range` still needs exactly one conditional covariate to belong to,
+  # and `.fit_wt` is conditional on two.
+  expect_error(admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .fit_wt, n = 100, dose = 200, times = c(1, 4),
+    population = pop, range = c(50, 100), label = "s"))),
+    "does not say which covariate")
+  # With exactly one it is accepted, and belongs to that covariate -- SEX here,
+  # whose only two levels the range keeps.
+  g3 <- suppressMessages(admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+    population = pop, range = c(0, 1), label = "s"))))
+  expect_identical(length(g3), 2L)
+
+  # WHICH COVARIATE AN UNNAMED `range` BELONGS TO IS A QUESTION ABOUT THE
+  # SOURCE, asked before the analysis model has any say. Resolved against the
+  # NARROWED set instead, the same `studies` object worked under a model that
+  # reads the covariate and died under the null that drops it -- which is the
+  # nested pair this is all for.
+  .one_cov <- admStudies(s = admStudy(
+    model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+    population = pop, range = c(0, 1), label = "s"))
+  expect_identical(length(suppressMessages(
+    admixr2:::.admMaterialise(.one_cov, analysis_covs = "SEX"))), 2L)
+  # The null model reads no covariate: no nodes, and no error either.
+  expect_identical(length(suppressMessages(
+    admixr2:::.admMaterialise(.one_cov, analysis_covs = character(0)))), 1L)
+
+  # ...and with TWO conditional covariates, narrowing to one used to make the
+  # unnamed range unambiguous by accident and attach it to the survivor.
+  expect_error(suppressMessages(admixr2:::.admMaterialise(
+    admStudies(s = admStudy(model = .fit_wt, n = 100, dose = 200,
+                            times = c(1, 4), population = pop,
+                            range = c(50, 100), label = "s")),
+    analysis_covs = "WT")),
+    "does not say which covariate")
+
+  # And the derivation resolves to the covariates themselves, so a study
+  # prints the set it found rather than a flag it was handed -- and says why
+  # the one it did not is marginal, which is the part a reader cannot see
+  # from the model.
+  out <- capture.output(print(admStudy(model = .sa_model, n = 100, dose = 200,
+                                       times = c(1, 4), population = pop,
+                                       label = "s")))
+  expect_match(paste(out, collapse = "\n"), "conditional on +SEX")
+  expect_match(paste(out, collapse = "\n"), "WT read at an asserted coefficient")
+})
+
+test_that("nodes are cut only along what the ANALYSIS model reads", {
+  skip_if_not_installed("rxode2")
+  # A source is conditional on what its OWN model estimated; which of those
+  # admixr2 has to cut into nodes is narrowed to what the analysis model reads.
+  # The narrowing is EXACT, not a saving with a cost: if a model's prediction
+  # does not move across a source's nodes, the mixture those nodes collapse to
+  # is a sufficient statistic for it. Measured at identical parameters, on a
+  # source conditional on CRCL and WT with an analysis model reading WT only:
+  #
+  #   both conditional        50 studies   OFV -3041.72602426
+  #   only WT conditional     10 studies   OFV -3041.72606427   diff -0.00004
+  #   only CRCL conditional   10 studies   OFV -3115.32302414   diff -73.59700
+  #
+  # so collapsing the unread direction is free to four decimals and collapsing
+  # a read one is not. Against a fully marginal reference the invariance is
+  # -0.158 at 3 nodes, +0.00003 at 5 and -0.00000001 at 9 -- it is the
+  # quadrature converging, not an approximation being tolerated.
+  pop <- admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55))
+  .src <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bsex <- 0.15; bwt <- 0.75
+          eta.cl ~ 0.09; add.err <- 0.08 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt * exp(bsex * SEX)
+            v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  st <- admStudies(s = admStudy(model = .src, n = 100, dose = 200,
+                                times = c(1, 4), population = pop,
+                                strata_nodes = 3L, label = "s"))
+  # An analysis model reading both: 3 WT nodes x 2 SEX levels.
+  g_both <- suppressWarnings(suppressMessages(
+    admixr2:::.admMaterialise(st, analysis_covs = c("WT", "SEX"))))
+  expect_identical(length(g_both), 3L * 2L)
+  expect_true(all(vapply(g_both, function(z)
+    isTRUE(z$cov_dist[["WT"]][[".point"]]), logical(1))))
+
+  # Reading SEX only: the WT nodes collapse, the SEX levels stay, and WT is
+  # integrated over the distribution the source declared.
+  g_sex <- suppressWarnings(suppressMessages(
+    admixr2:::.admMaterialise(st, analysis_covs = "SEX")))
+  expect_identical(length(g_sex), 2L)
+  expect_false(any(vapply(g_sex, function(z)
+    isTRUE(z$cov_dist[["WT"]][[".point"]]), logical(1))))
+
+  # Reading neither -- the null model of a nested pair -- leaves one study,
+  # marginal over both, and `n` is conserved whichever way it is cut.
+  g_none <- suppressWarnings(suppressMessages(
+    admixr2:::.admMaterialise(st, analysis_covs = character(0))))
+  expect_identical(length(g_none), 1L)
+  for (g in list(g_both, g_sex, g_none))
+    expect_equal(sum(vapply(g, function(z) z$n, 0)), 100)
 })
 
 test_that("admPopulation guards the data-frame route it advertises", {

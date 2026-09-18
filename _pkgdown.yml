@@ -2,9 +2,7 @@ url: https://leidenpharmacology.github.io/admixr2
 
 template:
   bootstrap: 5
-  light-switch: true
   theme: arrow-light          # code highlighting (light)
-  theme-dark: arrow-dark      # code highlighting (dark)
   bslib:
     # ── Leiden Clinical palette (deep navy + logo orange) ──
     bg: "#FBFBFC"
@@ -25,9 +23,7 @@ template:
     code_font: { google: "JetBrains Mono" }
     line-height-base: 1.6
     font-scale: 1.0
-    # ── Navbar background per mode (accent stays navy) ──
     navbar-light-bg: "#FFFFFF"
-    navbar-dark-bg: "#0B1020"
   includes:
     in_header: |
       <meta name="theme-color" content="#001158">
@@ -43,7 +39,7 @@ home:
 navbar:
   structure:
     left: [intro, blog, vignettes, reference]
-    right: [search, github, lightswitch]
+    right: [search, github]
   components:
     blog:
       text: Blog
@@ -174,6 +170,7 @@ reference:
       - print.admFit
       - plot.admFit
       - anova.admFit
+      - admMoments
 
   - title: Data
     desc: Example datasets.

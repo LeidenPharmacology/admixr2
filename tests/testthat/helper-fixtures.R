@@ -76,3 +76,14 @@ make_cp_mat <- function(n_sim = 200L, n_times = 3L, seed = 42L) {
     m[, j] <- rnorm(n_sim, mean = mu[j], sd = sds[j])
   list(mat = m, mu_true = mu, sd_true = sds)
 }
+
+# ---- A cov_dist carrying an OPAQUE sampler -----------------------------------
+# covDist() and admStudy() both refuse a caller's own sampler for now, but the
+# machinery keyed on it stays live -- the pooled-bin route, the sparse-grid,
+# margin-drop and range refusals. These reach past the door to the same object.
+with_opaque_joint <- function(cd, joint) {
+  cd <- unclass(cd)
+  cd[["joint"]]    <- joint
+  cd[["jointOwn"]] <- NULL
+  structure(cd, class = "covDist")
+}

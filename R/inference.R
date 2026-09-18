@@ -60,13 +60,41 @@
          .s2, "). The objective is a Monte Carlo average, so the difference ",
          "is not a likelihood ratio -- refit both with the same `n_sim`.",
          call. = FALSE)
+  # STRATUM RESOLUTION, per covariate, compared only where the two fits OVERLAP.
+  # A covariate only one of them reads cannot put them on different scales: if a
+  # model's prediction does not move across a source's nodes, the mixture those
+  # nodes collapse to is a sufficient statistic for it, so its objective is the
+  # same at either resolution (measured: 4.7e-05 on a dOFV of 409). Comparing
+  # one number per fit refused exactly the nested pair a covariate test is made
+  # of, because the null model had dropped the term and with it the nodes.
   .j1 <- tryCatch(full$env$strataNodes, error = function(e) NULL)
   .j2 <- tryCatch(reduced$env$strataNodes, error = function(e) NULL)
-  if (!identical(.j1, .j2))
-    stop("anova(): these fits were built at different stratum resolutions (",
-         .j1, " and ", .j2, "). The objective is J-dependent, so their ",
-         "difference is not a likelihood ratio -- refit both at the same ",
-         "resolution.", call. = FALSE)
+  # AN UNSET STAMP IS NOT A DISAGREEMENT: a model reading no covariate records
+  # nothing, which is the null of a single-covariate test. BOTH sides must be
+  # named to compare per covariate -- with `||`, one named side entered that
+  # branch, where an unnamed stamp intersects to nothing and passes, so a
+  # pre-rename `5` was accepted against `c(WT = 9)`. as.character() throughout,
+  # since the stamp carries "3/9" now and a saved integer must still match.
+  .nm1 <- names(.j1); .nm2 <- names(.j2)
+  .named <- !is.null(.nm1) && !is.null(.nm2)
+  .sh <- if (.named) intersect(.nm1, .nm2) else NULL
+  .bad <- if (!length(.j1) || !length(.j2)) FALSE
+          else if (.named) length(.sh) > 0L &&
+            !identical(as.character(.j1[.sh]), as.character(.j2[.sh]))
+          else !identical(as.character(unname(.j1)),
+                          as.character(unname(.j2)))
+  if (isTRUE(.bad)) {
+    .w <- if (!.named) "" else {
+      .d <- .sh[as.character(.j1[.sh]) != as.character(.j2[.sh])]
+      paste0(" on ", paste(sQuote(.d), collapse = ", "))
+    }
+    # ", " between covariates: "/" separates node counts within one stamp.
+    stop("anova(): these fits were built at different stratum resolutions",
+         .w, " (", paste(.j1, collapse = ", "), " and ",
+         paste(.j2, collapse = ", "), "). The objective is J-dependent, so ",
+         "their difference is not a likelihood ratio -- refit both at the ",
+         "same resolution.", call. = FALSE)
+  }
   o_f <- as.numeric(full$objective)
   o_r <- as.numeric(reduced$objective)
   if (!is.finite(o_f) || !is.finite(o_r))
@@ -88,6 +116,16 @@
 #' (`admc`, `adirmc`), the same sample size (`n_sim`). Each scores its own
 #' approximation to the likelihood, so objectives from different ones are not
 #' comparable and the comparison is refused rather than reported.
+#'
+#' The **stratum** resolution is checked per covariate, and only where the two
+#' fits overlap. A covariate a model does not read cannot put the two on
+#' different scales: if its prediction does not move across a source's nodes,
+#' the mixture those nodes collapse to is a sufficient statistic for it, so its
+#' objective is the same at either resolution. That is what makes the nested
+#' pair of a covariate test comparable --- the null model drops the term, so its
+#' sources are not cut along it. Two fits that both read a covariate and cut it
+#' differently, including one cutting it and the other integrating over it
+#' whole, are refused.
 #'
 #' Testing a variance AT ZERO puts the null on the boundary of the parameter
 #' space, where the exact reference is a chi-bar-squared mixture rather than a

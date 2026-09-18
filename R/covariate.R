@@ -169,7 +169,7 @@
   # it -- both are a different design point.
   for (cv in names(seen)) {
     pinned <- unique(unlist(lapply(studies, function(s) {
-      v <- s[["cov"]][[cv]]
+      v <- .admCovOne(s, cv)
       if (is.null(v) || is.null(s$cov_dist) ||
           !is.null(s$cov_dist[[cv]][["values"]])) NULL else
         sprintf("%.10g", as.numeric(v)) })))
@@ -189,15 +189,16 @@
             "measured on one source, the objective moves 0.019 units across ",
             "its whole range and the optimizer settled at -0.059 against a ",
             "truth of +0.150.\n",
-            "  STRATIFY on it instead -- `stratify = ",
-            if (length(names(seen)) > 1L)
-              paste0("c(", paste(sQuote(names(seen)), collapse = ", "), ")") else
-              sQuote(cv),
-            "` in the study, or `stratify = TRUE` to derive it from the ",
-            "source's own model. A discrete covariate needs no quadrature ",
-            "nodes, so that costs one study per level and nothing else.\n",
-            "  Or fix() the coefficient, if the source asserted it rather than ",
-            "estimating it.", call. = FALSE)
+            "  A SOURCE THAT ESTIMATED IT would be conditional on it and would ",
+            "carry the contrast: admixr2 derives that from each source's own ",
+            "model, so nothing here is a setting to change -- it is saying ",
+            "that no source in this fit reports an effect of ",
+            sQuote(cv), ". Enter one that does, as its published model, or ",
+            "give a reported subgroup with `admStudy(at = )` or `by = `.\n",
+            "  Or fix() the coefficient, if every source asserted it rather ",
+            "than estimating it: a discrete covariate needs no quadrature ",
+            "nodes, so a conditional source costs one study per level and nothing ",
+            "else.", call. = FALSE)
   }
   invisible(NULL)
 }
@@ -245,6 +246,26 @@
   FALSE
 }
 
+# ONE covariate's pinned value on a study, whatever shape `cov` is in.
+#
+# `cov` is documented as "a list or a named numeric vector", and admStudy(at =)
+# accepts the vector form -- but `c(WT = 70)[["CRCL"]]` is a SUBSCRIPT ERROR
+# where a list returns NULL. .admCovAsList() normalises the whole set, and it
+# runs inside .admCheckCovariates(), which returns early when no study declares
+# a `cov_dist` -- so the plot path could reach a raw vector and the error took
+# out the whole of plot(fit), for fits that drew fine before the covariate
+# panels existed.
+.admCovOne <- function(s, cv) {
+  v <- s[["cov"]]
+  if (is.null(v)) return(NULL)
+  if (!is.list(v)) {
+    nm <- names(v)
+    if (is.null(nm) || !cv %in% nm) return(NULL)
+    return(unname(v[[which(nm == cv)[1L]]]))
+  }
+  v[[cv]]
+}
+
 .admCovAsList <- function(studies) {
   lapply(studies, function(s) {
     if (is.list(s) && !is.null(s[["cov"]]) && !is.list(s[["cov"]]))
@@ -282,7 +303,7 @@
   # refused where it is written.
   opted <- has
 
-  covs <- tryCatch(.ui$allCovs, error = function(e) character(0))
+  covs <- .admAllCovs(.ui)
 
   # Covariates the model never reads come off the design. See .admCovDistDrop
   # for why that is exact rather than an approximation.
@@ -291,19 +312,94 @@
     cd     <- studies[[nm]]$cov_dist
     unread <- setdiff(.admCovSpecNames(cd), covs)
     if (!length(unread)) next
-    # A sampler the USER wrote is opaque, so an unread margin cannot be taken out from
-    # under it. One admixr2 built from declared margins (`jointOwn`) is rebuilt instead.
-    if (is.function(.admCovDistCanon(cd)[["joint"]]) &&
-        !isTRUE(.admCovDistCanon(cd)[["jointOwn"]]))
-      bad("study '", nm, "' declares `cov_dist` for ",
-          paste(sQuote(unread), collapse = ", "),
-          ", which the model never reads, inside a user-supplied `joint` ",
-          "sampler. Marginalising it out would change the dependence among ",
-          "the margins that remain, so declare those explicitly instead. ",
-          "Model covariates: ",
-          if (length(covs)) paste(covs, collapse = ", ") else "(none)", ".")
-    .dropped <- union(.dropped, unread)
+    # A sampler the USER wrote is opaque, so an unread margin cannot be taken out
+    # from under it. One admixr2 built from declared margins (`jointOwn`) is
+    # rebuilt instead.
+    #
+    # A CONDITIONAL SOURCE'S SAMPLER IS THE THIRD CASE, and it reaches here now that
+    # conditioning is derived rather than asked for: .admExpandStrata() builds a
+    # joint for a stratum whenever conditioning couples the latent blocks, and
+    # does not mark it `jointOwn`. Refusing there breaks the nested comparison a
+    # covariate test is made of -- the full model reads the covariate, the null
+    # model does not, and the null fit died on a sampler admixr2 wrote itself.
+    #
+    # It is safe when every unread margin is a POINT, which a conditional covariate
+    # is: the stratum's conditional sample was drawn CONDITIONAL on that value,
+    # so removing the margin cannot change the dependence among the ones that
+    # remain. The sampler is wrapped to stop emitting those columns rather than
+    # rebuilt -- 0.5 stands in for a point margin's uniform because a point
+    # spec's quantile is that value whatever you ask for.
+    .cdc <- .admCovDistCanon(cd)
+    .rebuild <- is.function(.cdc[["joint"]]) && !isTRUE(.cdc[["jointOwn"]])
+    # KEPT for inspection, as .adm_cov_collapse is: the drop is right for the
+    # objective and wrong to forget. The commonest reason a model does not read
+    # a covariate the population declares is that the analyst LEFT IT OUT, and
+    # the question then is whether it belonged -- which the between-study
+    # residual panel answers by plotting against it. Discarding the spec makes
+    # that plot unbuildable for exactly the covariate it is wanted for, and the
+    # study's `cov` value alone cannot stand in: it is a single number where the
+    # source described a distribution, and nothing left would say which it was.
+    studies[[nm]]$.adm_cov_dropped <-
+      utils::modifyList(studies[[nm]][[".adm_cov_dropped"]] %||% list(),
+                        .admCovDistCanon(cd)[unread])
+    # THE DROP GOES FIRST. It used to run at the end of the iteration, built
+    # from `cd` -- the snapshot taken before the rebuild below -- so every write
+    # the rebuild made was overwritten by a spec derived from the pre-rebuild
+    # state, and .admCovDistDrop() NULLs `joint` itself. The rebuild was dead
+    # code: two correlated conditional margins surviving the drop were then
+    # drawn INDEPENDENTLY from their own empirical quantile specs, silently
+    # losing the dependence the stratum sample encoded.
     studies[[nm]]$cov_dist <- .admCovDistDrop(cd, unread)
+    if (.rebuild && !is.null(studies[[nm]]$cov_dist)) {
+      # Rebuildable when admixr2 built it and kept the sample. Anything else
+      # is a sampler we did not write and cannot see into.
+      if (is.null(cd[[".adm_strata_joint"]]))
+        bad("study '", nm, "' declares `cov_dist` for ",
+            paste(sQuote(unread), collapse = ", "),
+            ", which the model never reads, inside a user-supplied `joint` ",
+            "sampler. Marginalising it out would change the dependence among ",
+            "the margins that remain, so declare those explicitly instead. ",
+            "Model covariates: ",
+            if (length(covs)) paste(covs, collapse = ", ") else "(none)", ".")
+      .keep <- .admCovSpecNames(studies[[nm]]$cov_dist)
+      .sj   <- cd[[".adm_strata_joint"]]
+      .cn2  <- setdiff(.sj$cn, unread)
+      if (!length(.cn2)) {
+        # Nothing correlated is left to couple: the remaining margins are
+        # exact on their own specs, so the sampler goes entirely.
+        studies[[nm]]$cov_dist[["joint"]]   <- NULL
+        studies[[nm]]$cov_dist[["jointOwn"]] <- NULL
+        # AND NO `discExact`: it names the margins a sampler maps from their
+        # own uniform, and the sampler was just deleted. Inert today, but a
+        # later canon rebuilding a copula from `cor` would enumerate margins it
+        # does not pass through -- what the stop() further down guards against.
+        studies[[nm]]$cov_dist[["discExact"]] <- NULL
+      } else {
+        studies[[nm]]$cov_dist[["joint"]] <- .admStrataJoint(
+          .sj$X[, .cn2, drop = FALSE], .keep, .cn2,
+          studies[[nm]]$cov_dist[.keep])
+        # NOT `jointOwn`. The drop re-canonised the surviving margins and may
+        # have derived a copula sampler from their correlation submatrix; this
+        # replaces it with the stratum's own conditional sample, which is not
+        # rebuildable from `cor` and must not be labelled as if it were.
+        studies[[nm]]$cov_dist[["jointOwn"]] <- NULL
+        # `discExact` NAMES THE MARGINS THE SAMPLER MAPS FROM THEIR OWN
+        # UNIFORM, which for the rebuilt sampler is everything outside the
+        # conditional sample -- exactly as .admCovStrata() sets it to
+        # setdiff(nk, cn). Intersecting the value already on the spec could
+        # only ever give character(0): .admCovDistDrop() NULLs `discExact`, and
+        # the canon re-derives it only when it builds a copula from `cor`,
+        # which a stratum from the sampled branch has none of. A discrete
+        # margin then lost its exact enumeration and the stratum fell back to
+        # the equal-weight pool -- 4096 rows and, as the note there says,
+        # curvature manufactured in a coefficient that is not identified at
+        # all. Silently.
+        studies[[nm]]$cov_dist[["discExact"]] <- setdiff(.keep, .cn2)
+      }
+      studies[[nm]]$cov_dist[[".adm_strata_joint"]] <-
+        if (length(.cn2)) list(X = .sj$X[, .cn2, drop = FALSE], cn = .cn2)
+    }
+    .dropped <- union(.dropped, unread)
   }
   if (length(.dropped)) {
     .pl <- length(.dropped) > 1L
@@ -563,8 +659,12 @@
   for (nm in drop) out[[nm]] <- NULL
   # The expanded forms are rebuilt from `cor` below; carrying the old sampler
   # across would leave it returning a column its consumers no longer expect.
+  # `.adm_strata_joint` goes with them: it is the conditional SAMPLE the
+  # sampler indexes -- 8192 rows or more, including the column being dropped --
+  # and left behind it rode along in every stratum for the life of the fit
+  # object. .admCheckCovariates() re-attaches a reduced copy when it rebuilds.
   out[c("joint", "jointOwn", "discExact", "latentR", "cor", "rho",
-        "Sigma")] <- NULL
+        "Sigma", ".adm_strata_joint")] <- NULL
   if (!length(keep)) return(NULL)
   if (!is.null(R) && length(keep) > 1L &&
       identical(dim(R), c(length(nms), length(nms)))) {
@@ -719,6 +819,11 @@
 # DEPENDENT COVARIATES. `cov_dist$joint` is a function taking the n x d matrix of uniforms admixr2 draws and
 # returning the n x d matrix of covariate values -- exactly the shape a copula produces, an R-vine included:
 # sample the vine on the uniform scale, then push each column through its own marginal quantile function.
+#
+# NOT REACHABLE FROM THE PUBLIC API RIGHT NOW: covDist() and admStudy(population =) both refuse a caller's own
+# `joint`, pending the vine-copula work. What arrives here is the sampler admixr2 BUILDS from `cor`
+# (`jointOwn`) and the conditional sampler a stratum rebuilds. The path below is exercised by both, and by
+# tests that set `joint` on the spec directly, so it stays live -- this is a closed door, not deleted code.
 #
 # The uniforms come from ADMIXR2's Sobol stream, deliberately, and a user sampler must consume them rather than
 # draw its own -- common random numbers across iterations is what lets a finite difference of the objective
@@ -881,7 +986,12 @@
 # numeric `rho` and off the `joint` CLOSURE, and .admCheckCovariates reported "declares cov_dist for 'rho',
 # which the model never reads".
 .ADM_COV_META <- c("rho", "Sigma", "cor", "joint", "jointOwn", "latentR",
-                   "discExact")
+                   "discExact",
+                   # the conditional sample a stratum's sampler is built from,
+                   # kept so .admCovDistDrop() can rebuild it -- see
+                   # .admStrataJoint(). Not a covariate, so it must never be
+                   # read as one.
+                   ".adm_strata_joint")
 
 # Discrete margins a `joint` sampler maps STRAIGHT FROM THEIR OWN UNIFORM.
 #
@@ -931,7 +1041,7 @@
 # misspecification the answer can jump between basins rather than drift (a verified counterexample flips from
 # beta = 1.57 at J = 4 to 1.6e-05 at J = 5). Drive it up until the answer stops moving.
 #
-# How J-dependent the objective is depends on the rule: measured across J = 5 to 100 on one banded source,
+# How J-dependent the objective is depends on the rule: measured across J = 5 to 100 on one conditional source,
 # Gauss-Hermite moves 0.03 units, pooled bins (an opaque `joint` only) move 51 and are still moving. So OFV,
 # AIC, BIC and a likelihood ratio ARE comparable across resolutions on the default path, not the pooled one.
 # The value is stamped onto every generated study and carried onto the fit so anova() can refuse the comparison.
@@ -940,7 +1050,7 @@
 # Truncate one covariate's margin to the range a source actually enrolled.
 #
 # Strata are cut from the analyst's `cov_dist` over its FULL support, so a published model gets evaluated --
-# and credited as evidence -- in covariate bands where that study enrolled nobody. The inflation is exact
+# and credited as evidence -- at covariate values where that study enrolled nobody. The inflation is exact
 # (information_claimed / information_earned = var_assumed / var_enrolled, measured at 3.43x for a source that
 # enrolled +/- 1 SD): not bias, but FALSE CONFIDENCE. Truncating the SPEC rather than either branch of
 # .admCovStrata means both the exact-conditioning route and the pooled route inherit it via .admCovQuantile.
@@ -988,6 +1098,57 @@
   list(quantile = function(u) qf(pa + u * (pb - pa)))
 }
 
+# Truncate a WHOLE `cov_dist` to the ranges a source enrolled.
+#
+# Shared by the two routes a `range` can take, because the truncation is the
+# same fact either way: strata cut from a conditional covariate are cut from the
+# truncated margin, and a marginal covariate is integrated over the truncated
+# margin. Only .admCovStrata() used to do this, so a source conditional on nothing
+# carried its `cov_range` to the end and was scored against its full declared
+# support -- the `mean +/- SD` transcribed from a baseline table, which is the
+# case `range` exists for.
+.admCovApplyRange <- function(cov_dist, cov_range) {
+  if (is.null(cov_range) || !length(cov_range)) return(cov_dist)
+  bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
+  cov_dist <- .admCovDistCanon(cov_dist)
+  nms <- .admCovSpecNames(cov_dist)
+  if (!is.list(cov_range) || is.null(names(cov_range)))
+    bad("`cov_range` must be a NAMED list, e.g. list(WT = c(52, 118)).")
+  if (!all(names(cov_range) %in% nms))
+    bad("`cov_range` names covariate(s) ",
+        paste(sQuote(setdiff(names(cov_range), nms)), collapse = ", "),
+        " that this study's `cov_dist` does not declare.")
+  # REFUSE RATHER THAN NO-OP. Truncation rewrites the margin specs and
+  # everything downstream draws through `joint` instead. One admixr2 BUILT is
+  # rebuilt from the truncated margins below; an opaque one cannot be, so the
+  # range was accepted, documented as truncating, and reached nothing.
+  if (is.function(cov_dist[["joint"]]) && !isTRUE(cov_dist[["jointOwn"]]))
+    bad("an enrolled `range` cannot be applied to a `cov_dist` that supplies ",
+        "its own `joint` sampler, because admixr2 truncates the declared ",
+        "margins and `joint` is drawn from instead of them. The margins are ",
+        "inside your sampler, so truncate them there: for ",
+        sQuote(names(cov_range)[1L]),
+        ", map its uniform onto [F(lo), F(hi)] before the quantile call, e.g. ",
+        "`qlnorm(pa + v * (pb - pa), meanlog, sdlog)`. Or declare the margins ",
+        "and `cor` and let admixr2 build the sampler, which can then be ",
+        "rebuilt over the truncated ones.")
+  for (nm in names(cov_range))
+    cov_dist[[nm]] <- .admCovTruncSpec(cov_dist[[nm]], cov_range[[nm]], nm)
+  # Discard the derived fields FIRST: the canon short-circuits on an existing `joint`, so re-running it over
+  # truncated margins was a no-op and the sampler kept the full declared support. The correlation has to be
+  # handed BACK as `cor`, or dropping the derived fields would drop the dependence with them.
+  if (isTRUE(cov_dist[["jointOwn"]])) {
+    .R <- cov_dist[["latentR"]]
+    cov_dist[c("joint", "jointOwn", "latentR", "discExact")] <- NULL
+    if (!is.null(.R) && length(nms) > 1L &&
+        identical(dim(.R), c(length(nms), length(nms)))) {
+      dimnames(.R) <- list(nms, nms)
+      cov_dist[["cor"]] <- .R
+    }
+  }
+  .admCovDistCanon(cov_dist)
+}
+
 # Drop one margin and rebuild positional correlation and joint-sampler state.
 .admCovDropMargin <- function(cd, drop) {
   # Canonicalise FIRST. The `cor`/`rho`/`Sigma` spellings are dropped below and
@@ -1015,7 +1176,7 @@
   out  <- cd
   out[[drop]] <- NULL
   out[c("joint", "jointOwn", "discExact", "latentR", "cor", "rho",
-        "Sigma")] <- NULL
+        "Sigma", ".adm_strata_joint")] <- NULL
   if (!is.null(R) && length(keep) > 1L &&
       identical(dim(R), c(length(nms), length(nms)))) {
     i  <- match(keep, nms)
@@ -1028,7 +1189,8 @@
 }
 
 .admCovStrata <- function(cov_dist, stratify, n_nodes = 5L,
-                          n_pool = 32768L, cov_range = NULL) {
+                          n_pool = 32768L, cov_range = NULL,
+                          warn_range = TRUE) {
   cov_dist <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cov_dist)
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
@@ -1041,42 +1203,28 @@
         " that this study's `cov_dist` does not declare. Declared: ",
         paste(sQuote(nms), collapse = ", "), ".")
   checkmate::assertCount(n_nodes, positive = TRUE)
-  # BAND ONLY WHERE THE SOURCE ENROLLED. Without a reported range the strata are cut over the whole declared
-  # distribution, and the source is credited with evidence from bands it never sampled -- see
+  # CONDITION ONLY WHERE THE SOURCE ENROLLED. Without a reported range the strata are cut over the whole declared
+  # distribution, and the source is credited with evidence at covariate values it never sampled -- see
   # .admCovTruncSpec(). Warn rather than do it silently, because the silent case is the leaky one.
-  if (!is.null(cov_range)) {
-    if (!is.list(cov_range) || is.null(names(cov_range)))
-      bad("`cov_range` must be a NAMED list, e.g. list(WT = c(52, 118)).")
-    if (!all(names(cov_range) %in% nms))
-      bad("`cov_range` names covariate(s) ",
-          paste(sQuote(setdiff(names(cov_range), nms)), collapse = ", "),
-          " that this study's `cov_dist` does not declare.")
-    for (nm in names(cov_range))
-      cov_dist[[nm]] <- .admCovTruncSpec(cov_dist[[nm]], cov_range[[nm]], nm)
-    # Discard the derived fields FIRST: the canon short-circuits on an existing `joint`, so re-running it over
-    # truncated margins was a no-op and the sampler kept the full declared support. The correlation has to be
-    # handed BACK as `cor`, or dropping the derived fields would drop the dependence with them.
-    if (isTRUE(cov_dist[["jointOwn"]])) {
-      .R <- cov_dist[["latentR"]]
-      cov_dist[c("joint", "jointOwn", "latentR", "discExact")] <- NULL
-      if (!is.null(.R) && length(nms) > 1L &&
-          identical(dim(.R), c(length(nms), length(nms)))) {
-        dimnames(.R) <- list(nms, nms)
-        cov_dist[["cor"]] <- .R
-      }
-    }
-    cov_dist <- .admCovDistCanon(cov_dist)
-  }
+  cov_dist <- .admCovApplyRange(cov_dist, cov_range)
+  # ONE WARNING PER FIT, raised by the caller. Conditioning is derived now, so
+  # every published-model source whose model estimated a coefficient reaches
+  # here -- a per-call warning made the default path noisy for a user who asked
+  # for nothing, and it named `cov_range`, an internal spec field, where the
+  # argument they can actually pass is `range`. .admExpandStrata() collects the
+  # covariates with no range and says it once; covStrata(), called directly,
+  # still warns for itself.
   .no_rng <- setdiff(stratify, names(cov_range))
-  if (length(.no_rng))
-    warning("admixr2: stratifying on ", paste(sQuote(.no_rng), collapse = ", "),
-            " over the FULL declared distribution, because no `cov_range` was ",
-            "given for ", if (length(.no_rng) == 1L) "it" else "them",
-            ". The source is then credited with evidence in covariate bands it ",
-            "may never have enrolled -- the overstatement is ",
+  if (warn_range && length(.no_rng))
+    warning("admixr2: conditioning on ", paste(sQuote(.no_rng), collapse = ", "),
+            " over the FULL declared distribution, because no range was given ",
+            "for ", if (length(.no_rng) == 1L) "it" else "them",
+            ". The source is then credited with evidence at covariate values ",
+            "it may never have enrolled -- the overstatement is ",
             "var(declared)/var(enrolled), which is 3.4x for a source spanning ",
-            "+/-1 SD. Supply the reported range, e.g. `cov_range = list(",
-            .no_rng[1L], " = c(min, max))`.", call. = FALSE)
+            "+/-1 SD. Supply the reported span: `range = list(",
+            .no_rng[1L], " = c(min, max))` in admStudy(), or `cov_range` here.",
+            call. = FALSE)
 
   d  <- length(nms)
   iS <- match(stratify, nms)
@@ -1101,7 +1249,7 @@
   # covariate it's a TRUNCATION of the latent, not a point, and keeps the
   # pooled route -- discreteness used to send the whole study (most real
   # covariate models: sex, genotype, formulation) to the pooled route, which
-  # represents a band by an equal-weight SAMPLE and can manufacture curvature
+  # represents a node by an equal-weight SAMPLE and can manufacture curvature
   # in a coefficient that isn't identified at all.
   disc_sep <- !any(disc) || (!is.null(Rm) && all(vapply(which(disc), function(j)
     all(abs(Rm[j, -j, drop = TRUE]) < 1e-12), logical(1))))
@@ -1113,7 +1261,7 @@
     # Gauss-Hermite over the continuous stratified covariates, CROSSED with the levels of the discrete ones.
     # Weights multiply: the discrete block is latently independent, so the cell probability factorises exactly.
     #
-    # ROTATED BY chol(R_SS), or the bands are laid out as if the stratified covariates were INDEPENDENT
+    # ROTATED BY chol(R_SS), or the nodes are laid out as if the conditional covariates were INDEPENDENT
     # (measured on WT/AGE at rho = 0.9: weight-weighted correlation across the 25 strata was 0.0000). chol(R)
     # is upper triangular with U'U = R, so Z %*% U has covariance R and every COLUMN is still standard normal.
     if (length(iSc)) {
@@ -1126,7 +1274,7 @@
         if (is.null(.U))
           stop("admixr2: the declared correlation among the stratified ",
                "covariates is not positive definite, so it describes no ",
-               "distribution to band.", call. = FALSE)
+               "distribution to condition on.", call. = FALSE)
         zC <- zC %*% .U
       }
     } else { zC <- matrix(0, 1L, 0L); wC <- 1 }
@@ -1197,15 +1345,15 @@
         nk  <- names(cd_k)
         cn  <- nms[iMc]
         jc  <- match(cn[1L], nk)
-        cd_k[["joint"]] <- local({ Xc <- Xc; nk <- nk; jc <- jc; cn <- cn
-          cds <- cd_k[nk]; other <- setdiff(seq_along(nk), match(cn, nk))
-          function(u) {
-            i <- 1L + pmin(floor(u[, jc] * nrow(Xc)), nrow(Xc) - 1L)
-            out <- matrix(0, nrow(u), length(nk), dimnames = list(NULL, nk))
-            out[, cn] <- Xc[i, , drop = FALSE]
-            for (k in other) out[, k] <- .admCovQuantile(cds[[k]], u[, k])
-            out
-          }})
+        cd_k[["joint"]] <- .admStrataJoint(Xc, nk, cn, cd_k[nk])
+        # THE SAMPLE IS KEPT, so the sampler can be REBUILT if a margin later
+        # comes off. A covariate the analysis model never reads is dropped from
+        # the design -- and this sampler is the one case that could not survive
+        # it, because its row index comes from ONE uniform column and padding
+        # that column collapses every draw onto a single row of `Xc`. Deleting
+        # a column of a joint SAMPLE is exact marginalisation, so the answer is
+        # to rebuild on what is left rather than to wrap or to refuse.
+        cd_k[[".adm_strata_joint"]] <- list(X = Xc, cn = cn)
         cd_k[["discExact"]] <- setdiff(nk, cn)
       }
       cv <- c(stats::setNames(as.list(xC[kc, ]), nms[iSc]),
@@ -1343,7 +1491,7 @@
 #'
 #'   How much the objective depends on it turns on which rule applies. Where the
 #'   latent structure is known — an explicit `cor`, or no declared dependence,
-#'   which is independence — banding conditions on a Gauss-Hermite grid and the
+#'   which is independence — conditioning uses a Gauss-Hermite grid and the
 #'   objective is stable: 0.03 units across counts of 5 to 100, so objective,
 #'   AIC, BIC and likelihood ratios are comparable across resolutions.
 #'
@@ -1362,7 +1510,7 @@
 #'   publications routinely report a min-max or a median with an IQR.
 #'
 #'   Without it the strata are cut over the whole declared distribution, and a
-#'   source is credited with evidence in covariate bands it never sampled. The
+#'   source is credited with evidence at covariate values it never sampled. The
 #'   overstatement is exactly `var(declared) / var(enrolled)`: 3.4x for a source
 #'   spanning ±1 SD, 12.4x at ±0.5 SD. Estimates stay correct — what inflates is
 #'   confidence, and it only shows once a second source disagrees. Omitting it
@@ -1425,7 +1573,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 #
 # `allCovs` reports which covariates a model READS, not which coefficients it ESTIMATED, and the difference
 # decides whether that source carries any evidence about the covariate at all. A model containing `(WT/70)^0.75`
-# reads WT while ASSERTING its coefficient -- the allometric convention -- and banding such a source credits it
+# reads WT while ASSERTING its coefficient -- the allometric convention -- and conditioning such a source credits it
 # with evidence it never earned. Structural parsing cannot answer this reliably (the shortcut of "which thetas
 # appear in the same assignment" is wrong for `cl <- exp(tcl + eta.cl) * (WT/70)^0.75`, where `tcl` shares the
 # expression with WT and has nothing to do with it), so it is answered NUMERICALLY: theta parameterises the
@@ -1435,44 +1583,113 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 
 # is non-zero -- iff changing theta changes what the covariate DOES. A literal exponent gives exactly zero; an
 # estimated one does not.
-.admCovCoefThetas <- function(ui, cov, cov_dist = NULL, tol = 1e-8) {
+## The model's parameter block, in the form the plain-R evaluator below wants.
+## Returns NULL when the ui carries neither, which every caller treats as "give
+## up" rather than as a model with no lines.
+.admModelLines <- function(ui) {
   lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
   ini <- tryCatch(ui$iniDf,   error = function(e) NULL)
   if (is.null(lst) || is.null(ini)) return(NULL)
-  th <- ini[is.na(ini$neta1) & is.na(ini$err) & !ini$fix, , drop = FALSE]
-  if (!nrow(th)) return(character(0))
-  etas <- unique(stats::na.omit(ini$name[!is.na(ini$neta1)]))
-  is_asgn <- vapply(lst, function(e) is.call(e) && length(e) == 3L &&
-                      (identical(e[[1L]], quote(`<-`)) ||
-                       identical(e[[1L]], quote(`=`))), logical(1))
-  hit <- which(is_asgn & vapply(lst, function(e)
+  list(lst = lst, ini = ini,
+       is_asgn = vapply(lst, function(e) is.call(e) && length(e) == 3L &&
+                          (identical(e[[1L]], quote(`<-`)) ||
+                           identical(e[[1L]], quote(`=`))), logical(1)),
+       etas = unique(stats::na.omit(ini$name[!is.na(ini$neta1)])))
+}
+
+## Which assignment lines READ `cov`?
+.admLinesReading <- function(ml, cov)
+  which(ml$is_asgn & vapply(ml$lst, function(e)
     is.call(e) && length(e) == 3L && cov %in% all.vars(e[[3L]]), logical(1)))
-  if (!length(hit)) return(character(0))
-  # a nominal value for every covariate: the declared median where there is one
-  covs <- tryCatch(ui$allCovs, error = function(e) character(0))
-  base_cov <- stats::setNames(lapply(covs, function(nm) {
+
+## Run the model's parameter assignments in plain R -- no compile, no solve.
+##
+## Every eta at 0, every theta at its iniDf value unless `th_over` names it,
+## every covariate at `cov_at`. Lines are evaluated in order and each result is
+## bound, so a line may use an earlier one. A line that errors is skipped rather
+## than fatal: half these models reference solved state (`linCmt()`, compartment
+## amounts) that has no meaning outside a solve, and the covariate lines --
+## which are the point -- evaluate fine without it.
+##
+## `cov_at` entries may be VECTORS, and then so is each returned value: R's
+## arithmetic vectorises through the whole parameter block, which is what turns
+## this into a covariate-effect curve for the price of one evaluation.
+##
+## Returns a list of `list(name = <lhs symbol>, value = <numeric>)` for the
+## lines in `keep` (all when NULL), in model order, ONE ENTRY PER NAME: a model
+## built in stages assigns `cl` twice and the LAST assignment is what the solve
+## uses. Reduced here, not in a caller, because all three consumers need it and
+## only one had it.
+.admEvalModelLines <- function(ml, cov_at, th_over = list(), keep = NULL) {
+  ev  <- new.env(parent = asNamespace("rxode2"))
+  ini <- ml$ini
+  for (i in seq_len(nrow(ini)))
+    if (is.na(ini$neta1[i])) assign(ini$name[i], ini$est[i], ev)
+  for (nm in names(th_over)) assign(nm, th_over[[nm]], ev)
+  for (e in ml$etas) assign(e, 0, ev)
+  for (nm in names(cov_at)) assign(nm, cov_at[[nm]], ev)
+  out <- list()
+  for (ii in seq_along(ml$lst)) {
+    if (!isTRUE(ml$is_asgn[ii])) next
+    # A PLAIN SYMBOL ON THE LEFT, or skip the line. `f(depot) <- F1` and
+    # `d/dt(central) <- ...` are assignments whose target is a CALL, and
+    # as.character() flattens those to c("f", "depot") and
+    # c("/", "d", "dt(central)"): assign() then warns that only the first
+    # element is used, and the length-2 `name` reaches the effect panel, where
+    # vapply(..., character(1)) errors and takes the whole panel out. The
+    # derivative lines were protected only by accident, their right-hand sides
+    # referencing solved state that fails to evaluate first.
+    if (!is.name(ml$lst[[ii]][[2L]])) next
+    v <- tryCatch(eval(ml$lst[[ii]][[3L]], ev), error = function(e) NULL)
+    if (is.null(v)) next
+    nm <- as.character(ml$lst[[ii]][[2L]])
+    assign(nm, v, ev)
+    if (is.null(keep) || ii %in% keep)
+      out[[length(out) + 1L]] <- list(name = nm, value = v)
+  }
+  if (length(out) < 2L) return(out)
+  .nm <- vapply(out, `[[`, "", "name")
+  out[rev(!duplicated(rev(.nm)))]
+}
+
+## The covariates a model reads, or `default` where there is no model to ask.
+## `ui$allCovs` throws on a half-built ui, and its nine readers wrapped it
+## inconsistently -- some falling back to character(0), some to NULL, which
+## differ under `length()`. The fallback stays the caller's choice.
+.admAllCovs <- function(ui, default = character(0))
+  tryCatch(ui$allCovs, error = function(e) default)
+
+## A nominal value for every covariate the model reads: the declared median
+## where there is one, and 1 where there is not -- never 0, which would collapse
+## a multiplicative term and make the difference below read as "no effect".
+.admCovNominal <- function(ui, cov_dist = NULL) {
+  covs <- .admAllCovs(ui)
+  stats::setNames(lapply(covs, function(nm) {
     sp <- if (!is.null(cov_dist)) cov_dist[[nm]] else NULL
     v  <- if (!is.null(sp)) tryCatch(.admCovQuantile(sp, 0.5),
                                      error = function(e) NULL) else NULL
     if (is.null(v) || !is.finite(v) || v == 0) 1 else as.numeric(v)
   }), covs)
+}
+
+.admCovCoefThetas <- function(ui, cov, cov_dist = NULL, tol = 1e-8) {
+  ml <- .admModelLines(ui)
+  if (is.null(ml)) return(NULL)
+  ini <- ml$ini
+  th <- ini[is.na(ini$neta1) & is.na(ini$err) & !ini$fix, , drop = FALSE]
+  if (!nrow(th)) return(character(0))
+  hit <- .admLinesReading(ml, cov)
+  if (!length(hit)) return(character(0))
+  base_cov <- .admCovNominal(ui, cov_dist)
   ev_at <- function(cov_val, th_over) {
-    ev <- new.env(parent = asNamespace("rxode2"))
-    for (i in seq_len(nrow(ini)))
-      if (is.na(ini$neta1[i])) assign(ini$name[i], ini$est[i], ev)
-    for (nm in names(th_over)) assign(nm, th_over[[nm]], ev)
-    for (e in etas) assign(e, 0, ev)
-    for (nm in covs) assign(nm, base_cov[[nm]], ev)
-    assign(cov, cov_val, ev)
-    out <- numeric(0)
-    for (ii in seq_along(lst)) {
-      if (!isTRUE(is_asgn[ii])) next
-      v <- tryCatch(eval(lst[[ii]][[3L]], ev), error = function(e) NULL)
-      if (is.null(v)) next
-      assign(as.character(lst[[ii]][[2L]]), v, ev)
-      if (ii %in% hit && length(v) == 1L && is.finite(v)) out <- c(out, v)
-    }
-    out
+    vals <- .admEvalModelLines(
+      ml, utils::modifyList(base_cov, stats::setNames(list(cov_val), cov)),
+      th_over, keep = hit)
+    # Length-1 and finite only: a line that came back as a vector or an NaN is
+    # not a scalar effect to difference, and the caller compares lengths.
+    v <- lapply(vals, `[[`, "value")
+    as.numeric(unlist(v[vapply(v, function(z)
+      length(z) == 1L && is.finite(z), logical(1))]))
   }
   x0 <- base_cov[[cov]] %||% 1
   x1 <- x0 * 1.05
@@ -1498,6 +1715,28 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   th$name[keep]
 }
 
+# Apply a study's `cov_range` when it conditions on NOTHING, and take it off the study.
+#
+# `cov_range` is read in exactly one place, .admCovStrata(), so a study that
+# was never cut into nodes kept the field and nothing ever truncated anything: the
+# `range` a source reported was accepted, documented as truncating the margin
+# "whether that covariate ends up conditional or marginal", and then silently
+# dropped for precisely the marginal case.
+.admStudyApplyRange <- function(s, nm) {
+  cr <- s[["cov_range"]]
+  if (is.null(cr)) return(s)
+  s[["cov_range"]] <- NULL
+  if (is.null(s[["cov_dist"]])) return(s)
+  # sub(), because every error .admCovApplyRange() raises already starts
+  # "admixr2: " and the user was reading it twice.
+  s[["cov_dist"]] <- tryCatch(
+    .admCovApplyRange(s[["cov_dist"]], cr),
+    error = function(e)
+      stop("admixr2: study '", nm, "': ",
+           sub("^admixr2: ", "", conditionMessage(e)), call. = FALSE))
+  s
+}
+
 # Expand every study carrying `stratify` into one ordinary study per stratum.
 #
 # The output is plain studies -- own `n`, own `cov`, own `cov_dist` -- so the generator and the estimator both
@@ -1505,20 +1744,48 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # it is a quadrature weight standing in for a stratum size, and rounding would break sum(n_k) = n. A source
 # that publishes REAL subgroups reports their real sizes, which beat quadrature weights.
 .admExpandStrata <- function(studies, study_names, model = NULL) {
-  # `stratify = FALSE` is "do not band", the same statement as omitting it. It
-  # reached .admCovStrata() as a length-1 logical and died on "must be a
-  # character vector of covariate names".
+  # DERIVED BY DEFAULT. Whether a covariate is conditional or marginal is a
+  # property of the SOURCE'S OWN MODEL -- it is conditional when that model
+  # estimated its coefficient -- so admixr2 works it out instead of asking.
+  # Requiring `stratify` made the safe configuration opt-in and the risky one
+  # the default: with nothing conditional, a covariate every study marginalises is
+  # not identified against a random effect on the same parameter, and over 720
+  # replicates the likelihood-ratio test was sized 0.125 against a nominal
+  # 0.05 -- 0.058 once conditional.
+  #
+  # There is NO user option, and the derivation happens in .admMaterialise():
+  # that is where a source's own model is known, and it resolves the conditional set
+  # before any spec reaches here. So a study arriving with no `stratify` at all
+  # has not opted in, and is left marginal over whatever it declared.
+  #
+  # IT USED TO DERIVE HERE TOO, from `!is.null(model) && !is.null(cov_dist)`,
+  # which caught the one caller that cannot have opted in: `datagen()` always
+  # passes its `model` argument, so a plain generated study with a covariate
+  # distribution came back as nine quadrature nodes named `s_s1 ... s_s9`, two
+  # of them holding n = 0 and all of them costing a solve -- and
+  # `datagen(st, mod)[[1L]]` then returned a node where the caller wrote a
+  # study. `datagen()` documents its E/V as MARGINAL over the distribution,
+  # which is what a publication reports, and that is again true.
   has <- vapply(studies, function(s) {
     st <- s[["stratify"]]
-    !is.null(st) && !identical(st, FALSE)
+    if (identical(st, FALSE)) return(FALSE)
+    !is.null(st)
   }, logical(1))
-  if (!any(has)) return(list(studies = studies, names = study_names))
-  out <- list(); nms <- character(0)
+  .rng <- vapply(studies, function(s) !is.null(s[["cov_range"]]), logical(1))
+  if (!any(has) && !any(.rng))
+    return(list(studies = studies, names = study_names))
+  out <- list(); nms <- character(0); .no_range <- list()
   for (i in seq_along(studies)) {
     s <- studies[[i]]; nm <- study_names[[i]]
-    if (!isTRUE(has[[i]])) { out[[length(out) + 1L]] <- s; nms <- c(nms, nm); next }
-    # `stratify = TRUE` derives the split FROM THE SOURCE MODEL: a covariate is stratified when this study's own
-    # data-generating model conditions on it, and marginalised when it does not.
+    if (!isTRUE(has[[i]])) {
+      out[[length(out) + 1L]] <- .admStudyApplyRange(s, nm)
+      nms <- c(nms, nm); next
+    }
+    # `stratify = TRUE` derives the split FROM THE SOURCE MODEL: a covariate is
+    # stratified when this study's own model estimated its coefficient, and
+    # marginalised when it did not. Every failure here is an error, because
+    # asking for the derivation and getting nothing back IS a mistake -- the
+    # study that said nothing at all took the branch above.
     if (isTRUE(s[["stratify"]])) {
       m <- s[["model"]] %||% model
       # AN rxUi COUNTS, and admStudy() only ever supplies one; rxode2::rxode2() is idempotent on a ui, so
@@ -1527,8 +1794,9 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
         stop("admixr2: study '", nm, "' asks for `stratify = TRUE`, which is ",
              "derived from that study's own data-generating model, but no ",
              "`model` was supplied for it.", call. = FALSE)
-      cvs <- tryCatch(suppressMessages(rxode2::rxode2(m))$allCovs,
-                      error = function(e) NULL)
+      .ui_s <- tryCatch(suppressMessages(rxode2::rxode2(m)),
+                        error = function(e) NULL)
+      cvs <- if (is.null(.ui_s)) NULL else .ui_s$allCovs
       if (is.null(cvs))
         stop("admixr2: study '", nm, "' asks for `stratify = TRUE` but its ",
              "model could not be parsed to find which covariates it reads.",
@@ -1542,32 +1810,31 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
              ". There is no contrast to stratify on; drop `stratify`, and the ",
              "study is generated marginal over the distribution instead.",
              call. = FALSE)
-      # READING a covariate is not the same as having ESTIMATED its coefficient -- a source that asserted it
-      # (`(WT/70)^0.75`, or a fix()ed theta) carries no evidence about it. Band only where a free theta modulates it.
-      .ui_s <- tryCatch(suppressMessages(rxode2::rxode2(m)),
-                        error = function(e) NULL)
-      if (!is.null(.ui_s)) {
-        .est <- vapply(keep, function(cv) length(.admCovCoefThetas(
-          .ui_s, cv, s[["cov_dist"]])) > 0L, logical(1))
-        if (!any(.est))
-          stop("admixr2: study '", nm, "' asks for `stratify = TRUE`, but its ",
-               "model ASSERTS the coefficient of ",
-               paste(sQuote(keep), collapse = ", "),
-               " rather than estimating it (a fixed exponent or a fix()ed ",
-               "theta). A source that fixed a covariate's coefficient carries ",
-               "no evidence about that covariate, so there is no contrast to ",
-               "extract; drop `stratify` and the study is generated marginal ",
-               "over the distribution instead.", call. = FALSE)
-        if (!all(.est))
-          message("admixr2: study '", nm, "': not stratifying on ",
-                  paste(sQuote(keep[!.est]), collapse = ", "),
-                  " -- the model asserts ",
-                  if (sum(!.est) == 1L) "its coefficient" else "their coefficients",
-                  " rather than estimating ",
-                  if (sum(!.est) == 1L) "it." else "them.")
-        keep <- keep[.est]
-      }
-      s[["stratify"]] <- keep
+      # ESTIMATED, not merely READ. Weight at a fixed allometric exponent is
+      # read by the model and carries no fitted effect to recover: conditioning on
+      # it buys strata and no evidence, and credits the source with
+      # information it never earned. This is the rule `admStudy()` documents
+      # and the rule .admStudyBandNames() derives with, so the one path a user
+      # can reach and the one an internal caller can reach agree.
+      .est <- vapply(keep, function(cv) length(.admCovCoefThetas(
+        .ui_s, cv, s[["cov_dist"]])) > 0L, logical(1))
+      if (!any(.est))
+        stop("admixr2: study '", nm, "' asks for `stratify = TRUE`, but its ",
+             "model ASSERTS the coefficient of ",
+             paste(sQuote(keep), collapse = ", "),
+             " rather than estimating it (a fixed exponent or a fix()ed ",
+             "theta). A source that fixed a covariate's coefficient carries ",
+             "no evidence about that covariate, so there is no contrast to ",
+             "extract; drop `stratify` and the study is generated marginal ",
+             "over the distribution instead.", call. = FALSE)
+      if (!all(.est))
+        message("admixr2: study '", nm, "': not stratifying on ",
+                paste(sQuote(keep[!.est]), collapse = ", "),
+                " -- the model asserts ",
+                if (sum(!.est) == 1L) "its coefficient" else "their coefficients",
+                " rather than estimating ",
+                if (sum(!.est) == 1L) "it." else "them.")
+      s[["stratify"]] <- keep[.est]
     }
     if (is.null(s[["cov_dist"]]))
       stop("admixr2: study '", nm, "' declares `stratify` but no `cov_dist`. ",
@@ -1582,14 +1849,25 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     if (is.null(n_tot) || !is.finite(n_tot) || n_tot <= 0)
       stop("admixr2: study '", nm, "' declares `stratify` but has no positive ",
            "`n` to divide among the strata.", call. = FALSE)
+    # CONTINUOUS ONLY, which is why `.node_cv` is derived here. A discrete
+    # margin is enumerated at its declared LEVELS, so a `range` buys nothing
+    # and the warning's premise is false -- yet it fired for every source
+    # estimating a discrete effect, asking for a span for a two-level factor.
+    .cdk <- .admCovDistCanon(s[["cov_dist"]])
+    .node_cv <- Filter(function(cv) is.null(.cdk[[cv]][["values"]]),
+                       s[["stratify"]])
+    .miss <- setdiff(.node_cv, names(s[["cov_range"]]))
+    if (length(.miss)) .no_range[[nm]] <- .miss
     stl <- .admCovStrata(s[["cov_dist"]], s[["stratify"]],
                          s[["strata_nodes"]] %||% .ADM_STRATA_NODES,
+                         warn_range = FALSE,
                          cov_range = s[["cov_range"]])
     # `stratify = character(0)` reached .admCovStrata's `if (!length(stratify)) return(NULL)` and the loop below
     # then ran zero times, DROPPING the study -- the one malformed `stratify` that did not error.
     if (!length(stl))
       stop("admixr2: study '", nm, "' declares `stratify` but it names no ",
-           "covariate, so the study would be dropped rather than banded. Give ",
+           "covariate, so the study would be dropped rather than cut into ",
+           "nodes. Give ",
            "a covariate name, or remove `stratify`.", call. = FALSE)
     .Jk <- s[["strata_nodes"]] %||% .ADM_STRATA_NODES
     for (k in seq_along(stl)) {
@@ -1599,6 +1877,23 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
       # carried so the fit can refuse to be compared against one built at a different resolution -- the
       # objective is J-dependent
       sk[[".adm_strata_nodes"]] <- .Jk
+      # WHOSE STRATUM THIS IS, and WHICH COVARIATES IT WAS CUT ON, recorded
+      # where it is known rather than re-derived by six readers downstream.
+      # `sub("_s[0-9]+$", "", nm)` merged two genuinely distinct studies a user
+      # happened to name `a_s1` and `a_s2` into one source, mixing their
+      # observed moments by the law of total variance; and with nothing saying
+      # which covariate a point spec is a NODE of, a source cut at
+      # `strata_nodes <= 8` was read as a handful of reported levels -- the
+      # axis ticked at the quadrature grid, one dot per node, and levels
+      # "nobody enrolled" greyed out.
+      sk[[".adm_source"]] <- nm
+      sk[[".adm_strata_covs"]] <- s[["stratify"]]
+      # WHICH OF THEM ARE QUADRATURE NODES, which is the distinction the axis
+      # turns on. A DISCRETE margin is enumerated exactly: one stratum per
+      # declared level, and those levels are values the paper reported. A
+      # CONTINUOUS one is cut into `strata_nodes` nodes, which are admixr2's
+      # own discretisation of a distribution and not anything the source said.
+      if (length(.node_cv)) sk[[".adm_node_covs"]] <- .node_cv
       # a stratum's own point value for the stratified covariates, merged over any `cov` the study already set
       # for covariates it does not stratify on
       sk[["cov"]] <- utils::modifyList(as.list(s[["cov"]] %||% list()),
@@ -1609,8 +1904,43 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
       nms <- c(nms, sprintf("%s_s%d", nm, k))
     }
   }
+  # SAID ONCE, for the whole set: which sources are being scored over the full
+  # declared distribution rather than the span they reported enrolling.
+  if (length(.no_range)) {
+    .cv <- sort(unique(unlist(.no_range, use.names = FALSE)))
+    warning("admixr2: ", length(.no_range),
+            if (length(.no_range) == 1L) " source is" else " sources are",
+            " conditioned over the FULL declared distribution of ",
+            paste(sQuote(.cv), collapse = ", "), ", because no `range` was ",
+            "given for ", if (length(.cv) == 1L) "it" else "them", " (",
+            paste(sprintf("%s: %s", names(.no_range),
+                          vapply(.no_range, paste, "", collapse = "/")),
+                  collapse = "; "),
+            "). A source is then credited with evidence at covariate values it ",
+            "may never have enrolled: the overstatement is ",
+            "var(declared)/var(enrolled), 3.4x for a source spanning +/-1 SD. ",
+            "Give the span each paper reports, e.g. `range = list(", .cv[1L],
+            " = c(min, max))`.", call. = FALSE)
+  }
   names(out) <- nms
   list(studies = out, names = nms)
+}
+
+# The stratum sampler: one row of the conditional sample per supplied uniform,
+# with the discrete and point margins mapped from their own uniforms.
+#
+# Factored out so .admCovDistDrop() can rebuild it on a reduced name set rather
+# than wrap a closure whose row-index column it might be removing.
+.admStrataJoint <- function(X, nk, cn, cds) {
+  jc    <- match(cn[1L], nk)
+  other <- setdiff(seq_along(nk), match(cn, nk))
+  function(u) {
+    i <- 1L + pmin(floor(u[, jc] * nrow(X)), nrow(X) - 1L)
+    out <- matrix(0, nrow(u), length(nk), dimnames = list(NULL, nk))
+    out[, cn] <- X[i, , drop = FALSE]
+    for (k in other) out[, k] <- .admCovQuantile(cds[[k]], u[, k])
+    out
+  }
 }
 
 # Product grid over several covariates: every combination, weights multiplied.
@@ -2203,7 +2533,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     d <- s[["cov_dist"]][[cv]]
     if (!is.null(d))
       return(c(.admCovMeanOf(d) %||% NA_real_, .admCovSdOf(d) %||% NA_real_))
-    v <- s[["cov"]][[cv]]
+    v <- .admCovOne(s, cv)
     if (!is.null(v) && is.numeric(v) && length(v) == 1L && is.finite(v))
       return(c(as.numeric(v), 0))
     NULL
@@ -2476,18 +2806,13 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
 #' @param cor Correlation between the covariates: a scalar for two of them, or
 #'   a correlation matrix (named, in any order). Realised through a Gaussian
 #'   copula on the declared margins.
-#' @param joint Dependence a single correlation cannot express: a function
-#'   receiving the matrix of uniforms admixr2 supplies and returning one named
-#'   column per covariate, on each covariate's OWN scale. Overrides `cor`.
-#'
-#'   The sampler owns its margins. A copula returns dependence on the *copula
-#'   scale* only, so a sampler that hands those uniforms back returns covariate
-#'   values on `(0, 1)` --- every covariate mean 0.50 and SD 0.29, whatever
-#'   margins were declared, with no error anywhere. Push them through the
-#'   quantile function you intend.
-#'
-#'   `stratify` needs nothing further: an opaque sampler is banded by binning
-#'   its output rather than by fixing its input uniforms.
+#' @param joint **Not accepted yet, and an error if given.** It is the place an
+#'   arbitrary sampler will attach --- a function receiving the matrix of
+#'   uniforms admixr2 supplies and returning one named column per covariate, on
+#'   each covariate's own scale, which is the shape a vine copula produces ---
+#'   but the contract around it is not settled, so the argument refuses rather
+#'   than half-works. Use `cor` for dependence: it builds a Gaussian copula
+#'   over the declared margins.
 #' @param dist Default margin for the `c(mean = , sd = )` form: `"normal"`
 #'   (default) or `"lnorm"`. A per-covariate `dist` wins over it.
 #'
@@ -2534,6 +2859,17 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
 covDist <- function(..., cor = NULL, joint = NULL,
                     dist = c("normal", "lnorm")) {
   dist <- match.arg(dist)
+  # NOT ACCEPTED YET. The argument stays in the signature so the refusal can
+  # name the alternative, and so switching it back on is this one guard. The
+  # machinery below it is live and tested via with_opaque_joint(); what is not
+  # settled is the contract, which is the vine-copula work.
+  if (!is.null(joint))
+    stop("admixr2: `joint` is not accepted yet. Dependence between covariates ",
+         "goes through `cor` for now, e.g. covDist(WT = c(mean = 72, sd = 16), ",
+         "CRCL = c(mean = 90, sd = 25), cor = c(WT.CRCL = 0.45)), which builds ",
+         "a Gaussian copula over the declared margins. An arbitrary sampler ",
+         "-- a vine copula among them -- is planned, not released.",
+         call. = FALSE)
   a <- list(...)
   if (length(a) == 1L && is.null(names(a)) && is.data.frame(a[[1L]]))
     out <- .admCovDistFromDf(a[[1L]])

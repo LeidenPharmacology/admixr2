@@ -11,7 +11,11 @@ utils::globalVariables(c(
   "t_col", "t_row", "value",
   "nll", "restart", "iter",
   "z", "z_label", "z_vjust",
-  "resid", "lo", "hi"
+  "resid", "lo", "hi",
+  "str_lo", "str_hi",
+  # covariate panels
+  "x", "y", "study", "kind", "param", "n",
+  "xlo", "xhi", "xlo2", "xhi2", "xmin", "xmax"
 ))
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
