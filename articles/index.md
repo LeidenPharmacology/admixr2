@@ -29,8 +29,7 @@ source enrolled.
   n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md):
 - [Generating aggregate data with
   datagen](https://leidenpharmacology.github.io/admixr2/articles/datagen.md):
-- [Covariates in aggregate
-  data](https://leidenpharmacology.github.io/admixr2/articles/covariates.md):
+- [Covariates](https://leidenpharmacology.github.io/admixr2/articles/covariates.md):
 
 ### Meta-analysis across studies
 

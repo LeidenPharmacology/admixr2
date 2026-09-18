@@ -62,12 +62,17 @@ datagen(studies, model = NULL, control = datagenControl())
   `stratify`
 
   :   (Optional) `TRUE` to stratify on every covariate this study's OWN
-      data-generating model conditions on, marginalising the rest — the
-      split is read from the model, so it cannot disagree with it. Two
-      sources sharing one `cov_dist` therefore stratify differently,
-      each according to what it fitted. A character vector names the
-      covariates explicitly instead. The study is expanded into one
-      ordinary study per covariate stratum, named `<study>_s1`,
+      data-generating model ESTIMATED a coefficient for, marginalising
+      the rest — the split is read from the model, so it cannot disagree
+      with it. Two sources sharing one `cov_dist` therefore stratify
+      differently, each according to what it fitted. A covariate the
+      model merely READS — weight at a fixed allometric exponent — is
+      refused: there is no fitted effect to recover there. A character
+      vector names the covariates explicitly instead, and is taken at
+      its word. NOTHING IS DERIVED WITHOUT THIS: a study that asks for
+      no stratification is generated MARGINAL over whatever it declared,
+      which is what a publication reports. The study is expanded into
+      one ordinary study per covariate stratum, named `<study>_s1`,
       `<study>_s2`, ..., each pinned at its own covariate value,
       carrying its own effective size `n_k` (the quadrature weight times
       `n`, summing to `n`), and marginalising the remaining covariates
@@ -81,7 +86,7 @@ datagen(studies, model = NULL, control = datagenControl())
 
   `strata_nodes`
 
-  :   (Optional) strata per stratified covariate (default 5); a discrete
+  :   (Optional) strata per stratified covariate (default 9); a discrete
       covariate is cut at its levels instead. Each stratum costs a solve
       and more of them do not buy accuracy: a matched one-covariate fit
       recovers 0.7000 / 0.7002 / 0.7005 at 3 / 4 / 10 strata against a

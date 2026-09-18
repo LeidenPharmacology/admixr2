@@ -294,7 +294,7 @@ knitr::kable(tbl, caption = "Parameter estimates vs true values")
 | Parameter   |  True |    adfo |    admc |
 |:------------|------:|--------:|--------:|
 | exp(tcl)    |  5.00 |  4.9100 |  4.9628 |
-| exp(tv1)    | 10.00 |  7.3161 | 10.2582 |
+| exp(tv1)    | 10.00 |  7.3161 | 10.2581 |
 | exp(tv2)    | 30.00 | 32.3637 | 29.8857 |
 | exp(tq)     | 10.00 | 10.0853 |  9.7381 |
 | exp(tka)    |  1.00 |  0.8043 |  1.0302 |
@@ -365,55 +365,12 @@ steps, so the jumps where box constraints tighten are expected.
 | Need exact likelihood for AIC comparison across models | `admc`, `adgh`, or `adirmc` (not `adfo`) |
 | Maximum reproducibility, no MC noise | `adfo` or `adgh` (both deterministic) |
 
-## Control objects at a glance
-
-``` r
-
-# Values shown are the package defaults.
-
-# adfo key arguments (fastest; linearised likelihood)
-adfoControl(
-  studies    = list(...),
-  grad       = "analytical", # "analytical", "none" (BOBYQA), "fd"
-  maxeval    = 500L,
-  n_restarts = 1L,
-  covMethod  = "r,s",        # sandwich SEs; "r" for the uncorrected Hessian
-  seed       = 12345L
-)
-
-# admc key arguments
-admControl(
-  studies    = list(...),
-  n_sim      = 5000L,        # MC sample count
-  grad       = "sens",       # gradient mode: "sens", "fd", "none"
-  n_restarts = 1L,           # number of optimizer restarts
-  workers    = 1L,           # parallel workers for restarts
-  covMethod  = "r,s",        # sandwich SEs; "r" for the uncorrected Hessian
-  seed       = 12345L
-)
-
-# adgh key arguments (noise-free quadrature; same likelihood scale as admc)
-adghControl(
-  studies    = list(...),
-  n_nodes    = 5L,           # nodes per eta dimension; total = n_nodes^n_eta
-  grad       = "analytical", # gradient mode: "analytical", "fd", "none"
-  n_restarts = 1L,
-  workers    = 1L,
-  covMethod  = "r,s",        # sandwich SEs; "r" for the uncorrected Hessian
-  seed       = 12345L
-)
-
-# adirmc key arguments
-adirmcControl(
-  studies         = list(...),
-  n_sim           = 2500L,
-  phases          = c(2, 1, 0.5, 0.01),  # box constraint half-widths per phase
-  omega_expansion = 1,                   # > 1 inflates the proposal Omega
-  grad            = "analytical",        # "analytical", "none", "fd"
-  kappa_method    = "exact",             # "exact", "linearized", "linearized_gh"
-  seed            = 12345L
-)
-```
+Every argument, with its default, is in
+[`?adfoControl`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md),
+[`?admControl`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md),
+[`?adghControl`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md)
+and
+[`?adirmcControl`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md).
 
 ## See also
 

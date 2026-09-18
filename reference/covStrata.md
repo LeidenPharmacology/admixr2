@@ -60,7 +60,7 @@ covStrata(
 
   How much the objective depends on it turns on which rule applies.
   Where the latent structure is known — an explicit `cor`, or no
-  declared dependence, which is independence — banding conditions on a
+  declared dependence, which is independence — conditioning uses a
   Gauss-Hermite grid and the objective is stable: 0.03 units across
   counts of 5 to 100, so objective, AIC, BIC and likelihood ratios are
   comparable across resolutions.
@@ -106,7 +106,7 @@ covStrata(
   routinely report a min-max or a median with an IQR.
 
   Without it the strata are cut over the whole declared distribution,
-  and a source is credited with evidence in covariate bands it never
+  and a source is credited with evidence at covariate values it never
   sampled. The overstatement is exactly `var(declared) / var(enrolled)`:
   3.4x for a source spanning ±1 SD, 12.4x at ±0.5 SD. Estimates stay
   correct — what inflates is confidence, and it only shows once a second
@@ -150,7 +150,7 @@ to generate the strata as studies.
 st <- covStrata(list(WT   = list(mean = 72, sd = 15),
                      CRCL = list(mean = 90, sd = 22), cor = 0.7),
                 stratify = "WT", n_nodes = 4L, n = 300)
-#> Warning: admixr2: stratifying on ‘WT’ over the FULL declared distribution, because no `cov_range` was given for it. The source is then credited with evidence in covariate bands it may never have enrolled -- the overstatement is var(declared)/var(enrolled), which is 3.4x for a source spanning +/-1 SD. Supply the reported range, e.g. `cov_range = list(WT = c(min, max))`.
+#> Warning: admixr2: conditioning on ‘WT’ over the FULL declared distribution, because no range was given for it. The source is then credited with evidence at covariate values it may never have enrolled -- the overstatement is var(declared)/var(enrolled), which is 3.4x for a source spanning +/-1 SD. Supply the reported span: `range = list(WT = c(min, max))` in admStudy(), or `cov_range` here.
 vapply(st, function(s) s$cov$WT, numeric(1))     # where each stratum sits
 #> [1] 107.01621  83.12946  60.87054  36.98379
 vapply(st, function(s) s$n, numeric(1))          # and how big it is

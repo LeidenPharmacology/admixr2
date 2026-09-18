@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
 <link rel="icon" sizes="any" href="../favicon.ico">
 <link rel="manifest" href="../site.webmanifest">
-<script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/IBM_Plex_Sans-0.4.10/font.css" rel="stylesheet">
 <link href="../deps/JetBrains_Mono-0.4.10/font.css" rel="stylesheet">
@@ -25,7 +25,7 @@
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
-    <nav class="navbar navbar-expand-lg fixed-top " aria-label="Site navigation"><div class="container">
+    <nav class="navbar navbar-expand-lg fixed-top bg-light" data-bs-theme="light" aria-label="Site navigation"><div class="container">
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
@@ -75,14 +75,6 @@
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json">
 </form></li>
 <li class="nav-item"><a class="external-link nav-link" href="https://github.com/LeidenPharmacology/admixr2" aria-label="GitHub"><span class="fa fab fa-github"></span></a></li>
-<li class="nav-item dropdown">
-  <button class="nav-link dropdown-toggle" type="button" id="dropdown-lightswitch" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true" aria-label="Light switch"><span class="fa fa-sun"></span></button>
-  <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-lightswitch">
-<li><button class="dropdown-item" data-bs-theme-value="light"><span class="fa fa-sun"></span> Light</button></li>
-    <li><button class="dropdown-item" data-bs-theme-value="dark"><span class="fa fa-moon"></span> Dark</button></li>
-    <li><button class="dropdown-item" data-bs-theme-value="auto"><span class="fa fa-adjust"></span> Auto</button></li>
-  </ul>
-</li>
       </ul>
 </div>
 
@@ -517,18 +509,12 @@ likelihood evaluation, so the objective is smooth and its gradient
 usable. Fresh residuals would add Monte Carlo noise to every evaluation
 for the optimiser to work through.</p>
 <p>How many nodes you need depends on how curved the back-transformation
-is over the range the residual explores. A residual narrow on the
-transformed scale stays where that curve is nearly straight, and a
-handful of nodes covers it.</p>
-<p>The demanding case is a wide residual on a <strong>bounded</strong>
-endpoint — <code>logitNorm</code> or <code>probitNorm</code> on a score
-with a floor and a ceiling — where the back-transform flattens against
-both bounds. At an SD of 2 on the transformed scale, 7 nodes puts the 24
-h variance 7% low and 15 nodes 0.6% low; 31 is converged. A more typical
-width converges by about 15. The default of 81 covers the awkward cases
-with room to spare, at a cost invisible beside the ODE solve. Lower it
-only if profiling says the quadrature is your bottleneck, and check the
-objective does not move.</p>
+is over the range the residual explores. The demanding case is a wide
+residual on a <strong>bounded</strong> endpoint, where the
+back-transform flattens against both bounds: at an SD of 2 on the
+transformed scale, 7 nodes puts the 24 h variance 7% low and 15 nodes
+0.6% low. The default of 81 covers that with room to spare, at a cost
+invisible beside the ODE solve.</p>
 <p><code>resid_nodes</code> is on all four estimator controls and on
 <code><a href="../reference/datagenControl.html">datagenControl()</a></code>, so a study you generate and the fit that
 consumes it integrate the residual the same way unless you change one of
@@ -586,63 +572,44 @@ study.</p>
 <div class="section level2">
 <h2 id="how-the-residual-enters-the-covariance">How the residual enters the covariance<a class="anchor" aria-label="anchor" href="#how-the-residual-enters-the-covariance"></a>
 </h2>
-<p>This is the one place admixr2 changed behaviour in the current
-release, and the change moves results for most models, so it is worth
-being precise about.</p>
-<p>Old and new start from the same structural covariance
-<code>Cov(f)</code> — the spread from subjects differing — and account
-for the residual on top. They differ in <strong>what they
-add</strong>.</p>
-<p><strong>Up to version 0.3.0</strong>, the residual variance was
-worked out once, at the population mean prediction, and added to the
-diagonal:</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi><mspace width="0.278em"></mspace><mo>=</mo><mspace width="0.278em"></mspace><mrow><mi mathvariant="normal">C</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">v</mi></mrow><mo stretchy="false" form="prefix">(</mo><mi>f</mi><mo stretchy="false" form="postfix">)</mo><mspace width="0.278em"></mspace><mo>+</mo><mspace width="0.278em"></mspace><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">g</mi></mrow><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">(</mo><mi mathvariant="normal">Σ</mi><mo stretchy="false" form="prefix">(</mo><mover><mi>f</mi><mo accent="true">‾</mo></mover><mo stretchy="false" form="postfix">)</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">)</mo><mo>,</mo><mspace width="2.0em"></mspace><mrow><mtext mathvariant="normal">proportional: </mtext><mspace width="0.333em"></mspace></mrow><mi mathvariant="normal">Σ</mi><mo stretchy="false" form="prefix">(</mo><mover><mi>f</mi><mo accent="true">‾</mo></mover><mo stretchy="false" form="postfix">)</mo><mspace width="0.278em"></mspace><mo>=</mo><mspace width="0.278em"></mspace><msup><mi>b</mi><mn>2</mn></msup><mspace width="0.167em"></mspace><msup><mover><mi>f</mi><mo accent="true">‾</mo></mover><mrow><mspace width="0.167em"></mspace><mn>2</mn></mrow></msup></mrow><annotation encoding="application/x-tex">V \;=\; \mathrm{Cov}(f) \;+\; \mathrm{diag}\big(\Sigma(\bar f)\big),
-\qquad \text{proportional: } \Sigma(\bar f) \;=\; b^2\,\bar f^{\,2}</annotation></semantics></math></p>
-<p>That is the “no eta-eps interaction” convention, familiar from
-individual-level fitting, where each observation has its own prediction
-and the question never arises.</p>
-<p><strong>From this release</strong>, the residual variance is averaged
-over subjects — the law of total variance:</p>
+<p>The structural covariance <code>Cov(f)</code> – the spread from
+subjects differing – carries the residual on top, averaged over subjects
+by the law of total variance:</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi><mspace width="0.278em"></mspace><mo>=</mo><mspace width="0.278em"></mspace><mrow><mi mathvariant="normal">C</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">v</mi></mrow><mo stretchy="false" form="prefix">(</mo><mi>f</mi><mo stretchy="false" form="postfix">)</mo><mspace width="0.278em"></mspace><mo>+</mo><mspace width="0.278em"></mspace><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">g</mi></mrow><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">(</mo><msub><mi>𝔼</mi><mi>η</mi></msub><mo stretchy="false" form="prefix">[</mo><mrow><mi mathvariant="normal">V</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi></mrow><mo stretchy="false" form="prefix">(</mo><mi>y</mi><mo>∣</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="postfix">]</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">)</mo><mo>,</mo><mspace width="2.0em"></mspace><mrow><mtext mathvariant="normal">proportional: </mtext><mspace width="0.333em"></mspace></mrow><msup><mi>b</mi><mn>2</mn></msup><mspace width="0.167em"></mspace><mi>𝔼</mi><mo stretchy="false" form="prefix">[</mo><msup><mi>f</mi><mn>2</mn></msup><mo stretchy="false" form="postfix">]</mo><mspace width="0.278em"></mspace><mo>=</mo><mspace width="0.278em"></mspace><msup><mi>b</mi><mn>2</mn></msup><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">(</mo><msup><mover><mi>f</mi><mo accent="true">‾</mo></mover><mrow><mspace width="0.167em"></mspace><mn>2</mn></mrow></msup><mo>+</mo><mrow><mi mathvariant="normal">V</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi></mrow><mo stretchy="false" form="prefix">(</mo><mi>f</mi><mo stretchy="false" form="postfix">)</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">V \;=\; \mathrm{Cov}(f) \;+\;
   \mathrm{diag}\big(\mathbb{E}_\eta[\mathrm{Var}(y \mid \eta)]\big),
 \qquad \text{proportional: } b^2\,\mathbb{E}[f^2]
   \;=\; b^2\big(\bar f^{\,2} + \mathrm{Var}(f)\big)</annotation></semantics></math></p>
-<p>The two differ by exactly <code>b^2 Var(f)</code>. A subject’s
-residual scales with <strong>that subject’s</strong> prediction, not the
-population mean, and the average of a square exceeds the square of the
-average by the between-subject variance. The old rule drops that
+<p>A subject’s residual scales with <strong>that subject’s</strong>
+prediction, not the population mean, and the average of a square exceeds
+the square of the average by the between-subject variance. Evaluating
+the residual once at the population mean – the “no eta-eps interaction”
+convention, familiar from individual-level fitting where each
+observation has its own prediction – drops that <code>b^2 Var(f)</code>
 term.</p>
 <table class="table">
 <colgroup>
-<col width="33%">
-<col width="33%">
-<col width="33%">
+<col width="50%">
+<col width="50%">
 </colgroup>
 <thead><tr class="header">
 <th>error model</th>
-<th>up to 0.3.0 added</th>
-<th>now adds</th>
+<th>adds</th>
 </tr></thead>
 <tbody>
 <tr class="odd">
 <td><code>add(a)</code></td>
 <td><code>a²</code></td>
-<td>
-<code>a²</code> — unchanged</td>
 </tr>
 <tr class="even">
 <td><code>prop(b)</code></td>
-<td><code>b²·mean²</code></td>
 <td><code>b²·(mean² + Var(f))</code></td>
 </tr>
 <tr class="odd">
 <td><code>pow(b, c)</code></td>
-<td><code>b²·mean^(2c)</code></td>
 <td><code>b²·E[f^(2c)]</code></td>
 </tr>
 <tr class="even">
 <td><code>lnorm(a)</code></td>
-<td>the diagonal only</td>
 <td>the diagonal, <strong>and</strong> the off-diagonals scaled by
 <code>exp(s)</code>
 </td>
@@ -651,31 +618,14 @@ term.</p>
 </table>
 <p><code>lnorm()</code> is the one that is not merely a diagonal
 correction: its conditional mean is <code>f·exp(s/2)</code>, so the
-whole covariance is scaled.</p>
-<p>Against the simulated subjects from earlier, where the residual’s
-true contribution is known:</p>
-<div class="figure">
-<img src="error-models_files/figure-html/fig-rules-1.png" class="r-plt" alt="Open circles are the residual variance measured from the simulated subjects. Averaging over subjects lands on them; evaluating at the population mean drifts low as subjects spread apart." width="840"><p class="caption">
-Open circles are the residual variance measured from the simulated
-subjects. Averaging over subjects lands on them; evaluating at the
-population mean drifts low as subjects spread apart.
-</p>
-</div>
-<p>The new rule agrees with the measurement to within 0.6% at every
-time. The old one is fine early, where subjects are alike, and misses
-74% of the residual by 24 h, where they differ from one another by more
-than the mean itself.</p>
-<p><strong>What this means for results you already have.</strong> Purely
-additive models are unaffected, bit for bit: <code>a²</code> does not
-depend on the prediction, so there is nothing to average. Every
-<code>prop()</code>, <code>pow()</code> and <code>lnorm()</code> fit
-changes. Against individual-level simulation the old rule carried a
-fixed 15-20% bias in the predicted variance that did not shrink as the
-study grew; in a proportional model with 30-50% IIV the reported
-residual SD and omega were each biased upward by roughly 2-4%, and
-<code>lnorm()</code> more. A refit will not reproduce a 0.3.0 fit’s
-numbers, and the new ones are the right comparison to a residual
-estimated from individual data.</p>
+whole covariance is scaled. Against the simulated subjects above, where
+the residual’s true contribution is known, this rule agrees to 0.6% at
+every time; evaluating at the population mean misses 74% of it by 24 h,
+where subjects differ from one another by more than the mean itself.
+Purely additive models are unaffected either way. Versions up to 0.3.0
+used the population-mean rule, so every <code>prop()</code>,
+<code>pow()</code> and <code>lnorm()</code> fit moves; see
+<code>NEWS.md</code>.</p>
 </div>
 <div class="section level2">
 <h2 id="two-caveats">Two caveats<a class="anchor" aria-label="anchor" href="#two-caveats"></a>
@@ -691,18 +641,10 @@ and approximates a heavy-tailed or bounded per-subject residual
 (small-<code>nu</code> <code>t</code>, counts, <code>beta</code>). Say
 so when reporting SEs or intervals from those.</li>
 <li>
-<strong>New since 0.3.0.</strong> That release supported
-<code>add</code>, <code>prop</code>, <code>pow</code>, both combined
-forms and <code>lnorm</code>, refusing everything else above. This one
-adds <code>t(nu)</code>, the four transformed endpoints, the discrete
-endpoints and ordinal, <code><a href="https://rdrr.io/r/base/Special.html" class="external-link">beta()</a></code> under
-<code>admc</code>/<code>adgh</code>, <code>ar(rho)</code> with
-<code>add()</code>, and <code>resid_nodes</code> — and changes how the
-residual composes into the covariance, so <code>prop()</code>,
-<code>pow()</code> and <code>lnorm()</code> results move. If you have
-results from a version that accepted a now-refused model with only a
-warning — <code>pow()</code> above all — treat them as suspect: they
-were fitted as <strong>additive</strong> error.</li>
+<strong>Results from before 0.4.0 may have been fitted as something
+else.</strong> A version that accepted a now-refused model with only a
+warning – <code>pow()</code> above all – fitted it as
+<strong>additive</strong> error. Treat those as suspect.</li>
 </ul>
 </div>
 <div class="section level2">

@@ -196,7 +196,7 @@ admc -7359.742 -7345.742 -7302.618       3679.871
 ── Time (sec fit_sim$time): ──
 
   optimize covariance other elapsed
-1   40.558      0.001     0  40.559
+1   46.325          0     0  46.325
 
 ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 
@@ -217,8 +217,16 @@ prop.sd
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Censoring (fit_sim$censInformation): No censoring
   Minimization message (fit_sim$message):  
-    NLOPT_FAILURE: Generic failure code. 
+    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
+
+**No standard errors, and the blank `SE` / `%RSE` / `95%CI` columns are
+why.** A study generated from a model is not a sample: `n` is the source
+study’s true sample size, but the parameter uncertainty a sampling law
+would need is not available, so admixr2 sets `covMethod = "none"` and
+reports no uncertainty at all. Naming a `covMethod` explicitly is an
+error rather than an override. The columns are nlmixr2’s table; the
+emptiness is the answer.
 
 Structural parameter estimates and the truth:
 
@@ -452,85 +460,40 @@ Blue is the population mean E, the grey spaghetti the IIV spread.
 `samples` holds concentrations **before** residual error; only the
 diagonal of V carries that.
 
-## First-Order moments for design evaluation
+## Choosing the moment method
 
 [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
 integrates over the IIV by Monte Carlo, the same engine as
-`est = "admc"`. For design evaluation the deterministic First-Order
-expansion — what `est = "adfo"` uses — is often the better source of `E`
-and `V`:
-
-``` math
-E = f(\theta, 0), \qquad V = J\,\Omega\,J^\top + \Sigma, \qquad
-J_{tj} = \left.\frac{\partial f_t}{\partial \eta_j}\right|_{\eta = 0}.
-```
-
-Switch with `method = "fo"` in
-[`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md):
+`est = "admc"`. Two deterministic alternatives match the other
+estimators, and both ignore `n_sim`, `sampling` and `seed`, so their
+output is exactly reproducible:
 
 ``` r
 
-fo_data <- datagen(
-  studies = list(
-    single_study = list(times = times, ev = rxode2::et(amt = 100), n = 250L)
-  ),
-  model   = true_model,
-  control = datagenControl(method = "fo")
-)
-
-round(fo_data$single_study$E, 3)
-#>   0.5     1     2     4     8    12    24 
-#> 3.445 4.773 4.651 2.340 0.360 0.049 0.000
+one <- list(single_study = list(times = times, ev = rxode2::et(amt = 100),
+                                n = 250L))
+fo_data <- datagen(studies = one, model = true_model,
+                   control = datagenControl(method = "fo"))
+gh_data <- datagen(studies = one, model = true_model,
+                   control = datagenControl(method = "gh", n_nodes = 5L))
+round(rbind(fo = fo_data$single_study$E, gh = gh_data$single_study$E), 3)
+#>      0.5     1     2     4     8    12    24
+#> fo 3.445 4.773 4.651 2.340 0.360 0.049 0.000
+#> gh 3.495 4.753 4.549 2.365 0.485 0.113 0.003
 ```
 
-Two reasons. The moments are deterministic and fast — `n_sim`,
-`sampling` and `seed` are ignored — so the result is exactly
-reproducible. More importantly, it keeps the data-generating and
-data-analytic models identical: the Hessian of the FO log-likelihood at
-the generating parameters, the expected information matrix, is then
-evaluated at a genuine maximum. Generate with Monte Carlo and analyse
-under FO and those parameters are not in general an FO maximum
-likelihood estimate, so the FIM is biased. For FIM and optimal-design
-work, generate and analyse under the same approximation.
+`method = "fo"` is the first-order expansion `est = "adfo"` uses,
+`E = f(theta, 0)` and `V = J Omega J' + Sigma`; `method = "gh"` is the
+Gauss-Hermite quadrature `est = "adgh"` uses, unbiased at any IIV.
+`n_nodes` (per eta dimension) trades accuracy against cost: 3 is fast, 5
+is near-exact to IIV SD ~0.5, 7 reaches ~0.7.
 
-## Gauss-Hermite moments for design evaluation with adgh
-
-`method = "fo"` matches `est = "adfo"`, bias and all, for nonlinear
-models or large IIV. GH is the deterministic, noise-free alternative
-that is **unbiased at any IIV** and matches the moments `est = "adgh"`
-computes:
-
-``` math
-E = \sum_{q=1}^Q w_q\,f(\theta, \eta_q), \qquad
-V = \sum_{q=1}^Q w_q\,(f_q - E)(f_q - E)^\top + \Sigma
-```
-
-where $`(\eta_q, w_q)`$ are the $`Q = m^{n_\eta}`$ tensor-product
-Gauss-Hermite nodes and weights, Cholesky-scaled to the current
-$`\Omega`$. Like `"fo"` it is exact and reproducible, with no stochastic
-sampling. Pair `method = "gh"` with `est = "adgh"` for design work
-wherever FO bias would not be negligible:
-
-``` r
-
-gh_data <- datagen(
-  studies = list(
-    single_study = list(times = times, ev = rxode2::et(amt = 100), n = 250L)
-  ),
-  model   = true_model,
-  control = datagenControl(method = "gh", n_nodes = 5L)
-)
-
-round(gh_data$single_study$E, 3)
-#>   0.5     1     2     4     8    12    24 
-#> 3.495 4.753 4.549 2.365 0.485 0.113 0.003
-```
-
-MC, FO and GH agree closely at moderate IIV on a model near-linear in
-$`\eta`$, and separate as IIV grows — GH tracking MC the more accurately
-of the two, since it does not linearise $`f`$. `n_nodes` (per eta
-dimension) trades accuracy against cost: 3 is fast, 5 (the default) is
-near-exact to IIV SD ~0.5, and 7 reaches ~0.7.
+For design work, **generate and analyse under the same approximation**.
+The expected information matrix is the Hessian of the log-likelihood at
+the generating parameters, which is only a genuine maximum when the two
+agree – generate with Monte Carlo, analyse under FO, and those
+parameters are not an FO maximum-likelihood estimate, so the FIM is
+biased.
 
 ## See also
 

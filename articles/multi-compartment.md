@@ -79,7 +79,7 @@ adgh 229.6289 243.6289 270.8316      -114.8144
 ── Time (sec fit_plasma$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.413      0.136     0   0.549 3.583
+elapsed    0.645      0.203     0   0.848 4.777
 
 ── Population Parameters (fit_plasma$parFixed or fit_plasma$parFixedDf): ──
 
@@ -133,6 +133,17 @@ is what we are after:
 ``` math
 K_{p,uu} = \frac{q_{in}}{q_{out}}
 ```
+
+![The two structures. Step 1's peripheral compartment is a distribution
+store: drug goes in and comes back, but nothing was ever measured there,
+so no amount of plasma data says what concentration it holds. Step 2
+gives that compartment a volume, a sampled concentration and a
+name.](multi-compartment_files/figure-html/cmt-diagram-1.png)
+
+The two structures. Step 1’s peripheral compartment is a distribution
+store: drug goes in and comes back, but nothing was ever measured there,
+so no amount of plasma data says what concentration it holds. Step 2
+gives that compartment a volume, a sampled concentration and a name.
 
 With **two** observed outputs — plasma `cp` and brain `cb` — the model
 carries a residual-error term for each. (`vb`, the brain volume, is a
@@ -194,7 +205,7 @@ adgh -88.64046 -72.64046 -36.70254       44.32023
 ── Time (sec fit_cns$time): ──
 
         optimize covariance other elapsed other
-elapsed     0.63      0.245     0   0.875 2.581
+elapsed    1.004      0.424     0   1.428 3.592
 
 ── Population Parameters (fit_cns$parFixed or fit_cns$parFixedDf): ──
 
@@ -307,21 +318,24 @@ compartments came from the same subjects, independent when they did not
 
 ### Model against data
 
-One fit now describes both compartments. Below, the observed summaries
-(points, mean ± SD) sit under the fitted population prediction — the
-mean curve and the ±SD band implied by the estimated between-subject
-variability, over 1000 simulated subjects with residual error excluded.
+[`plot()`](https://rdrr.io/r/graphics/plot.default.html) draws observed
+against predicted for each observed output, one panel per compartment:
 
 ``` r
 
-# 1. Pull the fitted estimates from the fit (standard nlmixr2 accessors).
-theta <- fit_cns$theta   # fixed effects (tcl, tv1, tqin, tqout, residuals)
-omega <- fit_cns$omega   # between-subject covariance (rows/cols already named)
+plot(fit_cns, which = "mean")
+```
 
-# 2. Simulate the fitted population. We solve a plain, residual-free copy of the
-#    model so the band shows between-subject variability alone -- and because a
-#    multi-endpoint fit can only be re-solved with per-endpoint DVID/CMT tags,
-#    whereas this gives cp and cb directly.
+![](multi-compartment_files/figure-html/plot-fit-1.png)![](multi-compartment_files/figure-html/plot-fit-2.png)
+
+For a figure of your own, re-solve a residual-free copy of the model
+over the estimated `Omega` – the band is then between-subject
+variability alone, and a plain rxode2 model gives `cp` and `cb`
+directly, where a multi-endpoint fit can only be re-solved with
+per-endpoint `DVID`/`CMT` tags:
+
+``` r
+
 sim_model <- rxode2::rxode2({
   cl <- exp(tcl + eta.cl); v1 <- exp(tv1 + eta.v1)
   qin <- exp(tqin); qout <- exp(tqout); vb <- 5
@@ -330,74 +344,16 @@ sim_model <- rxode2::rxode2({
   cp <- central / v1
   cb <- brain / vb
 })
-grid <- seq(0.25, 13, by = 0.25)
-sim  <- rxode2::rxSolve(sim_model,
-  params = theta[c("tcl", "tv1", "tqin", "tqout")],
-  omega  = omega, nSub = 1000L,
-  events = ev |> rxode2::et(grid), returnType = "data.frame")
-
-# 3. Summarise model and data as mean +/- SD per time, per compartment.
-band <- function(value)
-  data.frame(time = sort(unique(sim$time)),
-             mean = tapply(value, sim$time, mean),
-             sd   = tapply(value, sim$time, sd))
-
-pred <- rbind(cbind(compartment = "Plasma", band(sim$cp)),
-              cbind(compartment = "Brain",  band(sim$cb)))
-obs  <- rbind(
-  data.frame(compartment = "Plasma", time = plasma_times, mean = plasma_mean, sd = plasma_sd),
-  data.frame(compartment = "Brain",  time = brain_times,  mean = brain_mean,  sd = brain_sd))
-
-# 4. Model (line + band) over data (points + error bars), coloured by compartment.
-pal <- c(Plasma = "#0072B2", Brain = "#D55E00")   # Okabe-Ito, colour-blind safe
-
-ggplot() +
-  geom_ribbon(data = pred,
-              aes(time, ymin = mean - sd, ymax = mean + sd, fill = compartment),
-              alpha = 0.15) +
-  geom_line(data = pred,
-            aes(time, mean, colour = compartment), linewidth = 1) +
-  geom_errorbar(data = obs,
-                aes(time, ymin = mean - sd, ymax = mean + sd, colour = compartment),
-                width = 0.4, linewidth = 0.6, show.legend = FALSE) +
-  geom_point(data = obs,
-             aes(time, mean, fill = compartment),
-             shape = 21, colour = "white", size = 3, stroke = 0.7) +
-  scale_colour_manual(values = pal, breaks = c("Plasma", "Brain")) +
-  scale_fill_manual(values = pal, guide = "none") +
-  scale_x_continuous(breaks = seq(0, 12, 2),
-                     expand = expansion(mult = c(0.01, 0.03))) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
-  coord_cartesian(ylim = c(0, NA), clip = "off") +
-  guides(colour = guide_legend(override.aes = list(linewidth = 1.4))) +
-  labs(x = "Time (h)", y = "Concentration (mg/L)",
-       title = "Fitted population prediction vs. observed data",
-       subtitle = "Line + band: model (mean ± SD)   ·   Points + bars: data (mean ± SD)",
-       colour = NULL) +
-  theme_minimal(base_size = 12) +
-  theme(
-    legend.position = "top",
-    legend.justification = "left",
-    legend.margin = margin(b = 2),
-    plot.title = element_text(face = "bold", size = 13),
-    plot.subtitle = element_text(colour = "grey40", size = 9, margin = margin(b = 9)),
-    axis.title = element_text(colour = "grey25"),
-    axis.title.x = element_text(margin = margin(t = 6)),
-    axis.title.y = element_text(margin = margin(r = 6)),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank(),
-    panel.grid.major.y = element_line(colour = "grey90", linewidth = 0.4),
-    plot.margin = margin(12, 16, 10, 12)
-  )
+rxode2::rxSolve(sim_model, params = fit_cns$theta[c("tcl", "tv1", "tqin", "tqout")],
+                omega = fit_cns$omega, nSub = 1000L,
+                events = ev |> rxode2::et(seq(0.25, 13, by = 0.25)))
 ```
 
-![](multi-compartment_files/figure-html/brain-plot-1.png)
-
-The prediction tracks both compartments. Now the payoff, read straight
-off the estimates:
+Now the payoff, read straight off the estimates:
 
 ``` r
 
+theta <- fit_cns$theta
 Kp_uu <- exp(theta[["tqin"]]) / exp(theta[["tqout"]])
 round(Kp_uu, 2)
 #> [1] 0.5
@@ -407,19 +363,6 @@ round(Kp_uu, 2)
 concentration. This is why the brain data was needed at all — with
 plasma alone `qin` and `qout` are not separately identifiable, and
 `Kp,uu` cannot be estimated.
-
-### Built-in diagnostics
-
-That overlay was assembled by hand for a custom figure. You don’t have
-to: [`plot()`](https://rdrr.io/r/graphics/plot.default.html) draws
-observed-vs-predicted panels directly, one per observed output.
-
-``` r
-
-plot(fit_cns, which = "mean")
-```
-
-![](multi-compartment_files/figure-html/plot-fit-1.png)![](multi-compartment_files/figure-html/plot-fit-2.png)
 
 ## Notes
 

@@ -287,18 +287,12 @@ residuals would add Monte Carlo noise to every evaluation for the
 optimiser to work through.
 
 How many nodes you need depends on how curved the back-transformation is
-over the range the residual explores. A residual narrow on the
-transformed scale stays where that curve is nearly straight, and a
-handful of nodes covers it.
-
-The demanding case is a wide residual on a **bounded** endpoint —
-`logitNorm` or `probitNorm` on a score with a floor and a ceiling —
-where the back-transform flattens against both bounds. At an SD of 2 on
-the transformed scale, 7 nodes puts the 24 h variance 7% low and 15
-nodes 0.6% low; 31 is converged. A more typical width converges by about
-15. The default of 81 covers the awkward cases with room to spare, at a
-cost invisible beside the ODE solve. Lower it only if profiling says the
-quadrature is your bottleneck, and check the objective does not move.
+over the range the residual explores. The demanding case is a wide
+residual on a **bounded** endpoint, where the back-transform flattens
+against both bounds: at an SD of 2 on the transformed scale, 7 nodes
+puts the 24 h variance 7% low and 15 nodes 0.6% low. The default of 81
+covers that with room to spare, at a cost invisible beside the ODE
+solve.
 
 `resid_nodes` is on all four estimator controls and on
 [`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md),
@@ -359,28 +353,9 @@ study.
 
 ## How the residual enters the covariance
 
-This is the one place admixr2 changed behaviour in the current release,
-and the change moves results for most models, so it is worth being
-precise about.
-
-Old and new start from the same structural covariance `Cov(f)` — the
-spread from subjects differing — and account for the residual on top.
-They differ in **what they add**.
-
-**Up to version 0.3.0**, the residual variance was worked out once, at
-the population mean prediction, and added to the diagonal:
-
-``` math
-V \;=\; \mathrm{Cov}(f) \;+\; \mathrm{diag}\big(\Sigma(\bar f)\big),
-\qquad \text{proportional: } \Sigma(\bar f) \;=\; b^2\,\bar f^{\,2}
-```
-
-That is the “no eta-eps interaction” convention, familiar from
-individual-level fitting, where each observation has its own prediction
-and the question never arises.
-
-**From this release**, the residual variance is averaged over subjects —
-the law of total variance:
+The structural covariance `Cov(f)` – the spread from subjects differing
+– carries the residual on top, averaged over subjects by the law of
+total variance:
 
 ``` math
 V \;=\; \mathrm{Cov}(f) \;+\;
@@ -389,48 +364,29 @@ V \;=\; \mathrm{Cov}(f) \;+\;
   \;=\; b^2\big(\bar f^{\,2} + \mathrm{Var}(f)\big)
 ```
 
-The two differ by exactly `b^2 Var(f)`. A subject’s residual scales with
-**that subject’s** prediction, not the population mean, and the average
-of a square exceeds the square of the average by the between-subject
-variance. The old rule drops that term.
+A subject’s residual scales with **that subject’s** prediction, not the
+population mean, and the average of a square exceeds the square of the
+average by the between-subject variance. Evaluating the residual once at
+the population mean – the “no eta-eps interaction” convention, familiar
+from individual-level fitting where each observation has its own
+prediction – drops that `b^2 Var(f)` term.
 
-| error model | up to 0.3.0 added | now adds |
-|----|----|----|
-| `add(a)` | `a²` | `a²` — unchanged |
-| `prop(b)` | `b²·mean²` | `b²·(mean² + Var(f))` |
-| `pow(b, c)` | `b²·mean^(2c)` | `b²·E[f^(2c)]` |
-| `lnorm(a)` | the diagonal only | the diagonal, **and** the off-diagonals scaled by `exp(s)` |
+| error model | adds                                                       |
+|-------------|------------------------------------------------------------|
+| `add(a)`    | `a²`                                                       |
+| `prop(b)`   | `b²·(mean² + Var(f))`                                      |
+| `pow(b, c)` | `b²·E[f^(2c)]`                                             |
+| `lnorm(a)`  | the diagonal, **and** the off-diagonals scaled by `exp(s)` |
 
 `lnorm()` is the one that is not merely a diagonal correction: its
 conditional mean is `f·exp(s/2)`, so the whole covariance is scaled.
-
-Against the simulated subjects from earlier, where the residual’s true
-contribution is known:
-
-![Open circles are the residual variance measured from the simulated
-subjects. Averaging over subjects lands on them; evaluating at the
-population mean drifts low as subjects spread
-apart.](error-models_files/figure-html/fig-rules-1.png)
-
-Open circles are the residual variance measured from the simulated
-subjects. Averaging over subjects lands on them; evaluating at the
-population mean drifts low as subjects spread apart.
-
-The new rule agrees with the measurement to within 0.6% at every time.
-The old one is fine early, where subjects are alike, and misses 74% of
-the residual by 24 h, where they differ from one another by more than
-the mean itself.
-
-**What this means for results you already have.** Purely additive models
-are unaffected, bit for bit: `a²` does not depend on the prediction, so
-there is nothing to average. Every `prop()`, `pow()` and `lnorm()` fit
-changes. Against individual-level simulation the old rule carried a
-fixed 15-20% bias in the predicted variance that did not shrink as the
-study grew; in a proportional model with 30-50% IIV the reported
-residual SD and omega were each biased upward by roughly 2-4%, and
-`lnorm()` more. A refit will not reproduce a 0.3.0 fit’s numbers, and
-the new ones are the right comparison to a residual estimated from
-individual data.
+Against the simulated subjects above, where the residual’s true
+contribution is known, this rule agrees to 0.6% at every time;
+evaluating at the population mean misses 74% of it by 24 h, where
+subjects differ from one another by more than the mean itself. Purely
+additive models are unaffected either way. Versions up to 0.3.0 used the
+population-mean rule, so every `prop()`, `pow()` and `lnorm()` fit
+moves; see `NEWS.md`.
 
 ## Two caveats
 
@@ -440,15 +396,10 @@ individual data.
   `add`/`prop`/`pow`/`lnorm` and approximates a heavy-tailed or bounded
   per-subject residual (small-`nu` `t`, counts, `beta`). Say so when
   reporting SEs or intervals from those.
-- **New since 0.3.0.** That release supported `add`, `prop`, `pow`, both
-  combined forms and `lnorm`, refusing everything else above. This one
-  adds `t(nu)`, the four transformed endpoints, the discrete endpoints
-  and ordinal, [`beta()`](https://rdrr.io/r/base/Special.html) under
-  `admc`/`adgh`, `ar(rho)` with `add()`, and `resid_nodes` — and changes
-  how the residual composes into the covariance, so `prop()`, `pow()`
-  and `lnorm()` results move. If you have results from a version that
-  accepted a now-refused model with only a warning — `pow()` above all —
-  treat them as suspect: they were fitted as **additive** error.
+- **Results from before 0.4.0 may have been fitted as something else.**
+  A version that accepted a now-refused model with only a warning –
+  `pow()` above all – fitted it as **additive** error. Treat those as
+  suspect.
 
 ## See also
 

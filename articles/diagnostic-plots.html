@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
 <link rel="icon" sizes="any" href="../favicon.ico">
 <link rel="manifest" href="../site.webmanifest">
-<script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/IBM_Plex_Sans-0.4.10/font.css" rel="stylesheet">
 <link href="../deps/JetBrains_Mono-0.4.10/font.css" rel="stylesheet">
@@ -25,7 +25,7 @@
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
-    <nav class="navbar navbar-expand-lg fixed-top " aria-label="Site navigation"><div class="container">
+    <nav class="navbar navbar-expand-lg fixed-top bg-light" data-bs-theme="light" aria-label="Site navigation"><div class="container">
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
@@ -75,14 +75,6 @@
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json">
 </form></li>
 <li class="nav-item"><a class="external-link nav-link" href="https://github.com/LeidenPharmacology/admixr2" aria-label="GitHub"><span class="fa fab fa-github"></span></a></li>
-<li class="nav-item dropdown">
-  <button class="nav-link dropdown-toggle" type="button" id="dropdown-lightswitch" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true" aria-label="Light switch"><span class="fa fa-sun"></span></button>
-  <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-lightswitch">
-<li><button class="dropdown-item" data-bs-theme-value="light"><span class="fa fa-sun"></span> Light</button></li>
-    <li><button class="dropdown-item" data-bs-theme-value="dark"><span class="fa fa-moon"></span> Dark</button></li>
-    <li><button class="dropdown-item" data-bs-theme-value="auto"><span class="fa fa-adjust"></span> Auto</button></li>
-  </ul>
-</li>
       </ul>
 </div>
 
@@ -104,15 +96,42 @@
 
     
     
-<p><code><a href="../reference/plot.admFit.html">plot.admFit()</a></code> draws up to four panel types, all four by
+<p><code><a href="../reference/plot.admFit.html">plot.admFit()</a></code> draws up to five panel types, all five by
 default. Each is returned as a named ggplot2 object in a list.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"mean"</span>, <span class="st">"cov"</span>, <span class="st">"nll"</span>, <span class="st">"par"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"mean"</span>, <span class="st">"cov"</span>, <span class="st">"covariate"</span>, <span class="st">"nll"</span>, <span class="st">"par"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<p><code>"covariate"</code> needs studies that declare covariates and is
+silently absent otherwise, so the single-study examplomycin fit used
+below produces the other four. It has its own section, with its own fit,
+further down.</p>
 <div class="section level2">
 <h2 id="mean-diagnostics">Mean diagnostics<a class="anchor" aria-label="anchor" href="#mean-diagnostics"></a>
 </h2>
-<p>A 2×2 grid per study. <code>patchwork</code> composes it; without it
-you get four separate plots.</p>
+<p><code>sqrt(diag(V))</code> is the total SD of <strong>one observation
+across subjects</strong>, not between-subject variability — it carries
+BSV, residual error, and, wherever a study marginalises a covariate, the
+spread that covariate induces. The panels name the terms from the fit
+rather than assuming them, and the predicted ribbon draws the
+<strong>pre-sigma part inside</strong> the total, so the gap between the
+two bands is the residual error. A predicted spread that misses the
+observed one then tells you whether to look at omega and the covariates
+or at the error model.</p>
+<p>A 2×2 grid <strong>per source</strong>. A source is cut into one
+study per covariate level or quadrature node, for every covariate its
+own model fitted — a covariate a study marginalises over is not
+identified against a random effect on the same parameter, so the
+objective has to sum over the strata. But <code>A_s1</code> is an index
+into that expansion, and this panel asks “does the fit reproduce this
+paper”, so the strata are put back together first.</p>
+<p>The mean is the n-weighted mean of the strata. The variance is
+<strong>not</strong>: it is the law of total variance, within plus
+<strong>between</strong>, and the between term is the covariate effect
+the conditioning created. Averaging the strata’s variances would report
+the within-level spread, which is not what the paper published — a
+correctly specified fit would draw as under-predicting it.</p>
+<p>The covariate panels keep the strata, because there the between-level
+contrast is the entire signal. <code>patchwork</code> composes it;
+without it you get four separate plots.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="st">"mean"</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
@@ -161,10 +180,377 @@ over its asymptotic SE — √(2 V[i,i]² / (n−1)) on the diagonal,
 √((V[i,i]·V[j,j] + V[i,j]²) / (n−1)) off it. Stars as above.</p>
 </div>
 <div class="section level2">
+<h2 id="covariate-diagnostics">Covariate diagnostics<a class="anchor" aria-label="anchor" href="#covariate-diagnostics"></a>
+</h2>
+<p>The mean and covariance panels are per study, in isolation. With
+aggregate data a covariate effect is identified <em>between</em> studies
+— the renal exponent in <code><a href="../articles/covariates.html">vignette("covariates")</a></code> comes from
+three cohorts sitting at three different creatinine-clearance medians,
+none of which fitted a renal term — so every source can sit beautifully
+on its own panel while the relation tying them together is wrong.
+<code>which = "covariate"</code> draws that contrast, and returns two
+plots.</p>
+<p>The examplomycin fit declares no covariates, so these two panels need
+a fit that does. Three renal cohorts, generated <em>with</em> a renal
+effect. Two of them report only who they enrolled, so creatinine
+clearance is <strong>marginal</strong> for them; <code>mild</code>
+reports its result <em>by</em> renal subgroup, so it is
+<strong>conditional</strong>. One figure then carries both readings of
+the same covariate.</p>
+<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">11</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">renal_model</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
+<span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span>
+<span>    <span class="va">tcl</span>   <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">5</span><span class="op">)</span> ; <span class="va">tv</span>    <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">50</span><span class="op">)</span></span>
+<span>    <span class="va">bcrcl</span> <span class="op">&lt;-</span> <span class="fl">0.6</span>    ; <span class="va">bsex</span>  <span class="op">&lt;-</span> <span class="fl">0.18</span></span>
+<span>    <span class="va">add.err</span> <span class="op">&lt;-</span> <span class="fl">0.08</span></span>
+<span>    <span class="va">eta.cl</span> <span class="op">~</span> <span class="fl">0.05</span></span>
+<span>  <span class="op">}</span><span class="op">)</span></span>
+<span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/model.html" class="external-link">model</a></span><span class="op">(</span><span class="op">{</span></span>
+<span>    <span class="va">cl</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tcl</span> <span class="op">+</span> <span class="va">eta.cl</span><span class="op">)</span> <span class="op">*</span> <span class="op">(</span><span class="va">WT</span> <span class="op">/</span> <span class="fl">70</span><span class="op">)</span><span class="op">^</span><span class="fl">0.75</span> <span class="op">*</span> <span class="op">(</span><span class="va">CRCL</span> <span class="op">/</span> <span class="fl">90</span><span class="op">)</span><span class="op">^</span><span class="va">bcrcl</span> <span class="op">*</span></span>
+<span>      <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">bsex</span> <span class="op">*</span> <span class="va">SEX</span><span class="op">)</span></span>
+<span>    <span class="va">v</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tv</span><span class="op">)</span> <span class="op">*</span> <span class="op">(</span><span class="va">WT</span> <span class="op">/</span> <span class="fl">70</span><span class="op">)</span></span>
+<span>    <span class="va">cp</span> <span class="op">&lt;-</span> <span class="fu">linCmt</span><span class="op">(</span><span class="op">)</span></span>
+<span>    <span class="va">cp</span> <span class="op">~</span> <span class="fu">add</span><span class="op">(</span><span class="va">add.err</span><span class="op">)</span></span>
+<span>  <span class="op">}</span><span class="op">)</span></span>
+<span><span class="op">}</span></span>
+<span></span>
+<span><span class="va">TIMES</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0.5</span>, <span class="fl">2</span>, <span class="fl">8</span>, <span class="fl">24</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># MARGINAL on renal function: the paper reports the population it enrolled and</span></span>
+<span><span class="co"># admixr2 integrates over it. Conditional on sex, which every analyst fitted.</span></span>
+<span><span class="va">enrolled</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">n</span>, <span class="va">crclm</span><span class="op">)</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
+<span>  WT   <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/stats/Lognormal.html" class="external-link">rlnorm</a></span><span class="op">(</span><span class="va">n</span>, <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">76</span><span class="op">)</span>, <span class="fl">0.198</span><span class="op">)</span>,</span>
+<span>  CRCL <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/stats/Lognormal.html" class="external-link">rlnorm</a></span><span class="op">(</span><span class="va">n</span>, <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="va">crclm</span><span class="op">)</span>, <span class="fl">0.05</span><span class="op">)</span>,</span>
+<span>  SEX  <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/stats/Binomial.html" class="external-link">rbinom</a></span><span class="op">(</span><span class="va">n</span>, <span class="fl">1</span>, <span class="fl">0.5</span><span class="op">)</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">marginal_source</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">n</span>, <span class="va">crclm</span><span class="op">)</span> <span class="fu"><a href="../reference/admStudy.html">admStudy</a></span><span class="op">(</span></span>
+<span>  model <span class="op">=</span> <span class="va">renal_model</span>, population <span class="op">=</span> <span class="fu">enrolled</span><span class="op">(</span><span class="va">n</span>, <span class="va">crclm</span><span class="op">)</span>,</span>
+<span>  dose <span class="op">=</span> <span class="fl">200</span>, times <span class="op">=</span> <span class="va">TIMES</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># CONDITIONAL on renal function -- and the call says nothing about that either.</span></span>
+<span><span class="co"># `renal_model` uses CRCL, so CRCL is conditional for any source built on it and</span></span>
+<span><span class="co"># is conditional. What IS worth declaring is `range`: the population here is a</span></span>
+<span><span class="co"># `mean +/- SD` transcription rather than the patients themselves, so its tails</span></span>
+<span><span class="co"># reach where nobody was enrolled, and `strata_nodes` keeps the node count to</span></span>
+<span><span class="co"># the one renal subgroup this paper reported.</span></span>
+<span><span class="va">conditional_source</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">crclm</span>, <span class="va">rng</span><span class="op">)</span> <span class="fu"><a href="../reference/admStudy.html">admStudy</a></span><span class="op">(</span></span>
+<span>  model <span class="op">=</span> <span class="va">renal_model</span>,</span>
+<span>  population <span class="op">=</span> <span class="fu"><a href="../reference/covDist.html">covDist</a></span><span class="op">(</span>WT   <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>meanlog <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">76</span><span class="op">)</span>, sdlog <span class="op">=</span> <span class="fl">0.198</span><span class="op">)</span>,</span>
+<span>                       CRCL <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>meanlog <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="va">crclm</span><span class="op">)</span>, sdlog <span class="op">=</span> <span class="fl">0.05</span><span class="op">)</span>,</span>
+<span>                       SEX  <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>female <span class="op">=</span> <span class="fl">0.5</span>, male <span class="op">=</span> <span class="fl">0.5</span><span class="op">)</span><span class="op">)</span>,</span>
+<span>  n <span class="op">=</span> <span class="fl">210L</span>, dose <span class="op">=</span> <span class="fl">200</span>, times <span class="op">=</span> <span class="va">TIMES</span>,</span>
+<span>  strata_nodes <span class="op">=</span> <span class="fl">1L</span>, range <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>CRCL <span class="op">=</span> <span class="va">rng</span><span class="op">)</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">renal_studies</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/admStudies.html">admStudies</a></span><span class="op">(</span></span>
+<span>  normal   <span class="op">=</span> <span class="fu">marginal_source</span><span class="op">(</span><span class="fl">260L</span>, <span class="fl">95</span><span class="op">)</span>,</span>
+<span>  mild     <span class="op">=</span> <span class="fu">conditional_source</span><span class="op">(</span><span class="fl">62</span>, <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">50</span>, <span class="fl">75</span><span class="op">)</span><span class="op">)</span>,</span>
+<span>  moderate <span class="op">=</span> <span class="fu">marginal_source</span><span class="op">(</span><span class="fl">180L</span>, <span class="fl">38</span><span class="op">)</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">renal_fit</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
+<span>  <span class="va">renal_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"adgh"</span>,</span>
+<span>  control <span class="op">=</span> <span class="fu"><a href="../reference/adghControl.html">adghControl</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="va">renal_studies</span>, print <span class="op">=</span> <span class="fl">0L</span>,</span>
+<span>                        n_restart <span class="op">=</span> <span class="fl">1L</span>, maxeval <span class="op">=</span> <span class="fl">40L</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">cov_plots</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] "covariate_effect" "covariate_resid"</span></span></code></pre></div>
+<p><strong><code>covariate_effect</code></strong> asks one question:
+<strong>does the estimated covariate effect agree with the sources it
+was fitted from?</strong> One small panel per (parameter, covariate)
+pair, carrying three things and nothing else.</p>
+<ul>
+<li>the <strong>estimated effect</strong>, as a dotted black line across
+the covariate axis — the fitted model’s parameter at the fitted thetas,
+with every other covariate at the pooled centre.</li>
+<li>
+<strong>each source at its own parameter value</strong>, taken from
+that source’s own published model at its own published estimates. This
+is the comparison: a source sitting off the dotted line is one the
+meta-analysis does not reproduce.</li>
+<li>
+<strong>how far along the axis each source speaks for</strong>,
+which is where conditional and marginal differ — see the table
+below.</li>
+</ul>
+<p>A covariate whose coefficient the model does <strong>not</strong>
+estimate gets no panel at all. A fixed allometric exponent is not a
+finding; drawing a facet for it invites a reader to check an agreement
+that was never in question.</p>
+<p>The region no source sampled is shaded: that is where the fit
+extrapolates. A discrete covariate is <strong>marked at its
+levels</strong> with open squares — those are the places the model was
+actually asked — and the dotted line joins them, so the effect reads the
+same way on both kinds of axis. The line is a connector between marked
+points, not a claim about the space between them.</p>
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">cov_plots</span><span class="op">$</span><span class="va">covariate_effect</span></span></code></pre></div>
+<div class="figure">
+<img src="diagnostic-plots_files/figure-html/covariate-effect-1.png" class="r-plt" alt="Estimated covariate effect against its sources. `cl vs CRCL`: `mild` reported by renal subgroup, so its own regression runs across 50-75; `normal` and `moderate` reported only who they enrolled, so each is a whisker. `cl vs SEX`: every analyst fitted a sex effect, so each source is conditional on it and draws its own line between the two levels." width="672"><p class="caption">
+Estimated covariate effect against its sources. <code>cl vs CRCL</code>:
+<code>mild</code> reported by renal subgroup, so its own regression runs
+across 50-75; <code>normal</code> and <code>moderate</code> reported
+only who they enrolled, so each is a whisker. <code>cl vs SEX</code>:
+every analyst fitted a sex effect, so each source is conditional on it
+and draws its own line between the two levels.
+</p>
+</div>
+<p>There is no <code>WT</code> facet. Every source reads weight at a
+<em>fixed</em> 0.75 exponent, so no weight coefficient is estimated and
+there is no agreement to check.</p>
+<p>The fit is black, dotted, open squares. Sources are coloured, solid,
+filled. Nothing about the fit borrows a source’s vocabulary: the shape
+key (circle/diamond) is a statement about a <em>source</em>, and the fit
+is not one.</p>
+<p><strong><code>covariate_resid</code></strong> plots each study’s mean
+standardised residual against the covariate value it sits at. How it is
+read depends on the covariate:</p>
+<ul>
+<li>
+<strong>continuous</strong> — a trend. The dashed <code>lm</code>
+across studies; a slope is a mis-specified covariate form.</li>
+<li>
+<strong>discrete</strong> — a contrast. The axis is ticked at the
+levels the sources were <em>conditioned</em> at and nowhere else, and no
+regression is drawn: a line across the levels of a factor reports as a
+slope what is really a difference between groups. Instead the strata cut
+from one source are joined in grey, because that pairing is what
+conditioning buys — the same study, one covariate moved. Several sources
+tilting the same way is the mis-specification.</li>
+</ul>
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">cov_plots</span><span class="op">$</span><span class="va">covariate_resid</span></span></code></pre></div>
+<div class="figure">
+<img src="diagnostic-plots_files/figure-html/covariate-resid-1.png" class="r-plt" alt="Between-study residual against each covariate. A slope across sources, or a consistent tilt in the grey within-source pairs, is a mis-specified covariate form." width="672"><p class="caption">
+Between-study residual against each covariate. A slope across sources,
+or a consistent tilt in the grey within-source pairs, is a mis-specified
+covariate form.
+</p>
+</div>
+<p>This fit has the renal term the data were generated with, so its
+residuals are flat — which is what a correctly specified covariate form
+looks like. For the same panel on a model that is <em>missing</em> the
+effect, where the three sources run from +5 to −4.5 monotone in
+creatinine clearance, see <code><a href="../articles/covariates.html">vignette("covariates")</a></code>.</p>
+<p>On both panels <strong>point area is the study’s sample
+size</strong>, as <code>multinma</code>’s <code>weight_nodes</code> does
+for its network nodes. <code><a href="https://ggplot2.tidyverse.org/reference/scale_size.html" class="external-link">scale_size_area()</a></code>, so area rather
+than radius carries it and zero maps to zero; the legend is suppressed
+when every study reports the same <code>n</code>, since there is nothing
+to compare. A conditional source’s <code>n</code> is divided among its
+strata, so it contributes half its patients at each sex level but its
+whole <code>n</code> on any other covariate’s axis.</p>
+<p>Both panels key colour on the <strong>source</strong>, not the
+stratum, so a source is one colour across the figure. Strata of one
+source are told apart by where they sit and by the grey line joining
+them, which is what makes them a pair.</p>
+<p>A covariate facet is dropped from <code>covariate_resid</code> when
+the sources have no real contrast along it — when the spread of their
+centres is small against a typical within-study 10th–90th. Three cohorts
+drawing weight from the same distribution differ only in what a finite
+sample estimated, and a free x scale would blow that noise up to full
+panel width and fit a trend through it.</p>
+<p>Read it with the coverage bars: three sources spanning the
+<em>same</em> range of a covariate cannot say anything about it,
+whatever the fitted line does, and with few sources two covariates whose
+study medians move together cannot be told apart.</p>
+<p>Both panels distinguish how a study enters a covariate. This is a
+property of <strong>the source’s own published model</strong> — did that
+analyst estimate the effect — and both kinds feed the same fit:</p>
+<table class="table">
+<colgroup>
+<col width="33%">
+<col width="33%">
+<col width="33%">
+</colgroup>
+<thead><tr class="header">
+<th></th>
+<th>drawn as</th>
+<th>meaning</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td><strong>conditional</strong></td>
+<td>
+<strong>its own regression line</strong>, over the range it
+covers</td>
+<td>the source’s own model ESTIMATED this covariate’s coefficient, so it
+is conditional — or it reported at a value of it (<code>at</code>,
+<code>by</code>). It reported a <em>relationship</em> here, so its own
+model is drawn: a slope different from the dotted line is a paper the
+fit does not reproduce, and parallel-but-offset is a different finding
+from crossing. A source that reported only one value has no slope of its
+own and stays a point</td>
+</tr>
+<tr class="even">
+<td><strong>marginal</strong></td>
+<td>round point and a <strong>whisker</strong> — 10th–90th over
+2.5th–97.5th</td>
+<td>the source reported no contrast here, so admixr2 integrates over the
+population it enrolled. What it covers is a distribution, and drawing
+that as a line would claim it covers its tails as evenly as its
+middle</td>
+</tr>
+</tbody>
+</table>
+<p>Splitting a source on a covariate its model never saw would
+manufacture a contrast that is not in the literature — see
+<code><a href="../articles/covariates.html">vignette("covariates")</a></code>.</p>
+<p>Read the panel by looking for sources that sit <strong>off</strong>
+the dotted line. Black is the meta-analysis; the coloured marks are the
+papers, each at the value its own model publishes. Where they part
+company over a stretch a source actually enrolled, the fit is
+disagreeing with a paper about that paper’s own patients.</p>
+<p>On a level axis the source’s own effect is the <strong>gap between
+its own marks</strong> — one per level it reported — against the gap
+between the black points.</p>
+<p>A conditional source appears once per <strong>level</strong> it
+reported on a covariate conditional at its levels, and once at its own
+centre on every other — including a continuous covariate it was
+conditional on, where the values are quadrature nodes rather than
+anything the paper reported. The effect panel is per source; only the
+residual panel keeps the strata apart, and only on a level axis.</p>
+<p>A covariate the model <strong>does not read</strong> still gets a
+<code>covariate_resid</code> facet. That is the case the panel exists
+for: the null model of a covariate test simply omits the term, admixr2
+takes the covariate off the design because it cannot change the
+prediction, and the question you are asking is precisely whether it
+belonged.</p>
+</div>
+<div class="section level2">
+<h2 id="building-your-own-from-the-moments">Building your own from the moments<a class="anchor" aria-label="anchor" href="#building-your-own-from-the-moments"></a>
+</h2>
+<p><code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> draws a fixed set of panels.
+<code><a href="../reference/admMoments.html">admMoments()</a></code> returns the numbers behind them — one row per
+study and observation time — so you can draw the rest.</p>
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">m</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/admMoments.html">admMoments</a></span><span class="op">(</span><span class="va">renal_fit</span>, n_sim <span class="op">=</span> <span class="fl">300L</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/utils/str.html" class="external-link">str</a></span><span class="op">(</span><span class="va">m</span>, give.attr <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span></span>
+<span><span class="co">#&gt; 'data.frame':    12 obs. of  10 variables:</span></span>
+<span><span class="co">#&gt;  $ study    : chr  "normal" "normal" "normal" "normal" ...</span></span>
+<span><span class="co">#&gt;  $ source   : chr  "normal" "normal" "normal" "normal" ...</span></span>
+<span><span class="co">#&gt;  $ time     : num  0.5 2 8 24 0.5 2 8 24 0.5 2 ...</span></span>
+<span><span class="co">#&gt;  $ n        : num  260 260 260 260 210 210 210 210 180 180 ...</span></span>
+<span><span class="co">#&gt;  $ obs_mean : num  3.544 2.986 1.533 0.291 3.593 ...</span></span>
+<span><span class="co">#&gt;  $ pred_mean: num  3.54 2.99 1.53 0.29 3.59 ...</span></span>
+<span><span class="co">#&gt;  $ obs_sd   : num  0.673 0.57 0.41 0.194 0.716 ...</span></span>
+<span><span class="co">#&gt;  $ pred_sd  : num  0.663 0.557 0.4 0.19 0.705 ...</span></span>
+<span><span class="co">#&gt;  $ struct_sd: num  0.658 0.551 0.392 0.173 0.701 ...</span></span>
+<span><span class="co">#&gt;  $ z        : num  0.0176 0.0228 0.0475 0.0884 0.015 ...</span></span></code></pre></div>
+<p><code>obs_sd</code> and <code>pred_sd</code> are the SD of one
+observation across subjects, and <code>struct_sd</code> is the same
+quantity <em>before</em> residual error is composed on. So
+<code>pred_sd - struct_sd</code> is what sigma contributes, which is
+what lets a departure be attributed rather than merely noticed.</p>
+<p>Strata are collapsed to their source by default; pass
+<code>by = "stratum"</code> to keep them apart.</p>
+<p>To see the three panels below do something, they are drawn against a
+deliberately <strong>mis-specified</strong> fit: the data carry additive
+residual error and this model fits proportional. Everything else is
+correct.</p>
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">wrong_err</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
+<span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span>
+<span>    <span class="va">tcl</span>   <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">5</span><span class="op">)</span> ; <span class="va">tv</span>   <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">50</span><span class="op">)</span></span>
+<span>    <span class="va">bcrcl</span> <span class="op">&lt;-</span> <span class="fl">0.6</span>    ; <span class="va">bsex</span> <span class="op">&lt;-</span> <span class="fl">0.18</span></span>
+<span>    <span class="va">prop.sd</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0</span>, <span class="fl">0.1</span><span class="op">)</span></span>
+<span>    <span class="va">eta.cl</span> <span class="op">~</span> <span class="fl">0.05</span></span>
+<span>  <span class="op">}</span><span class="op">)</span></span>
+<span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/model.html" class="external-link">model</a></span><span class="op">(</span><span class="op">{</span></span>
+<span>    <span class="va">cl</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tcl</span> <span class="op">+</span> <span class="va">eta.cl</span><span class="op">)</span> <span class="op">*</span> <span class="op">(</span><span class="va">WT</span> <span class="op">/</span> <span class="fl">70</span><span class="op">)</span><span class="op">^</span><span class="fl">0.75</span> <span class="op">*</span> <span class="op">(</span><span class="va">CRCL</span> <span class="op">/</span> <span class="fl">90</span><span class="op">)</span><span class="op">^</span><span class="va">bcrcl</span> <span class="op">*</span></span>
+<span>      <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">bsex</span> <span class="op">*</span> <span class="va">SEX</span><span class="op">)</span></span>
+<span>    <span class="va">v</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tv</span><span class="op">)</span> <span class="op">*</span> <span class="op">(</span><span class="va">WT</span> <span class="op">/</span> <span class="fl">70</span><span class="op">)</span></span>
+<span>    <span class="va">cp</span> <span class="op">&lt;-</span> <span class="fu">linCmt</span><span class="op">(</span><span class="op">)</span></span>
+<span>    <span class="va">cp</span> <span class="op">~</span> <span class="fu">prop</span><span class="op">(</span><span class="va">prop.sd</span><span class="op">)</span></span>
+<span>  <span class="op">}</span><span class="op">)</span></span>
+<span><span class="op">}</span></span>
+<span></span>
+<span><span class="va">bad_fit</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
+<span>  <span class="va">wrong_err</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"adgh"</span>,</span>
+<span>  control <span class="op">=</span> <span class="fu"><a href="../reference/adghControl.html">adghControl</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="va">renal_studies</span>, print <span class="op">=</span> <span class="fl">0L</span>,</span>
+<span>                        n_restart <span class="op">=</span> <span class="fl">1L</span>, maxeval <span class="op">=</span> <span class="fl">40L</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="va">mb</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/admMoments.html">admMoments</a></span><span class="op">(</span><span class="va">bad_fit</span>, n_sim <span class="op">=</span> <span class="fl">300L</span><span class="op">)</span></span></code></pre></div>
+<div class="section level3">
+<h3 id="observed-vs-predicted-spread">Observed vs predicted spread<a class="anchor" aria-label="anchor" href="#observed-vs-predicted-spread"></a>
+</h3>
+<p>Aggregate-data fitting takes its variability information entirely
+from the reported <code>V</code>, so a source off the identity line is
+one whose published spread the model does not reproduce.</p>
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">lim</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/range.html" class="external-link">range</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="va">mb</span><span class="op">$</span><span class="va">obs_sd</span>, <span class="va">mb</span><span class="op">$</span><span class="va">pred_sd</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggplot.html" class="external-link">ggplot</a></span><span class="op">(</span><span class="va">mb</span>, <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span><span class="va">pred_sd</span>, <span class="va">obs_sd</span>, colour <span class="op">=</span> <span class="va">source</span>, size <span class="op">=</span> <span class="va">n</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_abline.html" class="external-link">geom_abline</a></span><span class="op">(</span>slope <span class="op">=</span> <span class="fl">1</span>, intercept <span class="op">=</span> <span class="fl">0</span>, colour <span class="op">=</span> <span class="st">"grey40"</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_point.html" class="external-link">geom_point</a></span><span class="op">(</span>alpha <span class="op">=</span> <span class="fl">0.85</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_size.html" class="external-link">scale_size_area</a></span><span class="op">(</span>max_size <span class="op">=</span> <span class="fl">5</span>, name <span class="op">=</span> <span class="st">"n"</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_continuous.html" class="external-link">scale_x_log10</a></span><span class="op">(</span><span class="op">)</span> <span class="op">+</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_continuous.html" class="external-link">scale_y_log10</a></span><span class="op">(</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/coord_fixed.html" class="external-link">coord_fixed</a></span><span class="op">(</span>xlim <span class="op">=</span> <span class="va">lim</span>, ylim <span class="op">=</span> <span class="va">lim</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/labs.html" class="external-link">labs</a></span><span class="op">(</span>x <span class="op">=</span> <span class="st">"predicted SD (log scale)"</span>, y <span class="op">=</span> <span class="st">"observed SD (log scale)"</span>,</span>
+<span>       colour <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggtheme.html" class="external-link">theme_bw</a></span><span class="op">(</span><span class="op">)</span></span></code></pre></div>
+<div class="figure">
+<img src="diagnostic-plots_files/figure-html/spread-1.png" class="r-plt" alt="Observed vs predicted SD of one observation across subjects. The low-concentration points fall below the line: proportional error puts too little spread there, where additive error had a fixed amount." width="672"><p class="caption">
+Observed vs predicted SD of one observation across subjects. The
+low-concentration points fall below the line: proportional error puts
+too little spread there, where additive error had a fixed amount.
+</p>
+</div>
+</div>
+<div class="section level3">
+<h3 id="residual-against-predicted-mean">Residual against predicted mean<a class="anchor" aria-label="anchor" href="#residual-against-predicted-mean"></a>
+</h3>
+<p>A fan or a curve here is a residual error model that does not fit;
+flat scatter about zero is one that does. This is the plot that chooses
+between <code>add()</code>, <code>prop()</code>, <code>pow()</code> and
+<code><a href="https://rdrr.io/r/base/t.html" class="external-link">t()</a></code>.</p>
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggplot.html" class="external-link">ggplot</a></span><span class="op">(</span><span class="va">mb</span>, <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span><span class="va">pred_mean</span>, <span class="va">z</span>, colour <span class="op">=</span> <span class="va">source</span>, size <span class="op">=</span> <span class="va">n</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_abline.html" class="external-link">geom_hline</a></span><span class="op">(</span>yintercept <span class="op">=</span> <span class="fl">0</span>, colour <span class="op">=</span> <span class="st">"grey40"</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_abline.html" class="external-link">geom_hline</a></span><span class="op">(</span>yintercept <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="op">-</span><span class="fl">1.96</span>, <span class="fl">1.96</span><span class="op">)</span>, linetype <span class="op">=</span> <span class="st">"dashed"</span>,</span>
+<span>             colour <span class="op">=</span> <span class="st">"grey60"</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_point.html" class="external-link">geom_point</a></span><span class="op">(</span>alpha <span class="op">=</span> <span class="fl">0.85</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_size.html" class="external-link">scale_size_area</a></span><span class="op">(</span>max_size <span class="op">=</span> <span class="fl">5</span>, guide <span class="op">=</span> <span class="st">"none"</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/labs.html" class="external-link">labs</a></span><span class="op">(</span>x <span class="op">=</span> <span class="st">"predicted mean"</span>, y <span class="op">=</span> <span class="st">"standardised residual"</span>, colour <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggtheme.html" class="external-link">theme_bw</a></span><span class="op">(</span><span class="op">)</span></span></code></pre></div>
+<div class="figure">
+<img src="diagnostic-plots_files/figure-html/zpred-1.png" class="r-plt" alt="Standardised residual against predicted mean. The wedge -- large negative residuals at low concentrations, flat at high -- is the signature of proportional error fitted to additive data." width="672"><p class="caption">
+Standardised residual against predicted mean. The wedge – large negative
+residuals at low concentrations, flat at high – is the signature of
+proportional error fitted to additive data.
+</p>
+</div>
+</div>
+<div class="section level3">
+<h3 id="residual-against-time">Residual against time<a class="anchor" aria-label="anchor" href="#residual-against-time"></a>
+</h3>
+<p>One line per source. A shape shared by <strong>every</strong> line is
+structural or an error model; one line apart from the rest is that
+study.</p>
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggplot.html" class="external-link">ggplot</a></span><span class="op">(</span><span class="va">mb</span>, <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span><span class="va">time</span>, <span class="va">z</span>, colour <span class="op">=</span> <span class="va">source</span>, group <span class="op">=</span> <span class="va">source</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_abline.html" class="external-link">geom_hline</a></span><span class="op">(</span>yintercept <span class="op">=</span> <span class="fl">0</span>, colour <span class="op">=</span> <span class="st">"grey40"</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_abline.html" class="external-link">geom_hline</a></span><span class="op">(</span>yintercept <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="op">-</span><span class="fl">1.96</span>, <span class="fl">1.96</span><span class="op">)</span>, linetype <span class="op">=</span> <span class="st">"dashed"</span>,</span>
+<span>             colour <span class="op">=</span> <span class="st">"grey60"</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_path.html" class="external-link">geom_line</a></span><span class="op">(</span>alpha <span class="op">=</span> <span class="fl">0.85</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_point.html" class="external-link">geom_point</a></span><span class="op">(</span>size <span class="op">=</span> <span class="fl">1.9</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/labs.html" class="external-link">labs</a></span><span class="op">(</span>x <span class="op">=</span> <span class="st">"time (h)"</span>, y <span class="op">=</span> <span class="st">"standardised residual"</span>, colour <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggtheme.html" class="external-link">theme_bw</a></span><span class="op">(</span><span class="op">)</span></span></code></pre></div>
+<div class="figure">
+<img src="diagnostic-plots_files/figure-html/ztime-1.png" class="r-plt" alt="Standardised residual against time, one line per source. All three bend the same way as concentrations fall, which is what makes it the model rather than any one paper." width="672"><p class="caption">
+Standardised residual against time, one line per source. All three bend
+the same way as concentrations fall, which is what makes it the model
+rather than any one paper.
+</p>
+</div>
+<p>For comparison, the same three on the correctly specified
+<code>renal_fit</code> are flat: <code>max(abs(m$z))</code> is 0.09,
+against 2.3 for the mis-specified one.</p>
+</div>
+</div>
+<div class="section level2">
 <h2 id="nll-trace">NLL trace<a class="anchor" aria-label="anchor" href="#nll-trace"></a>
 </h2>
 <p>The objective across optimizer iterations, coloured by restart:</p>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="st">"nll"</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
 <img src="diagnostic-plots_files/figure-html/nll-panel-1.png" class="r-plt" alt="NLL convergence trace. Each line is one optimizer restart." width="672"><p class="caption">
@@ -179,7 +565,7 @@ spread of final values suggests local optima, so raise
 <h2 id="parameter-trace">Parameter trace<a class="anchor" aria-label="anchor" href="#parameter-trace"></a>
 </h2>
 <p>One facet per parameter, over optimizer iterations:</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb14"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="st">"par"</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
 <img src="diagnostic-plots_files/figure-html/par-panel-1.png" class="r-plt" alt="Parameter trace on the natural scale. Struct thetas back-transformed; sigma shown as SD; V(eta) = variance." width="672"><p class="caption">
@@ -200,10 +586,10 @@ optimizer was not cut off. If they still drift at the end, raise
 </h2>
 <p><code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> returns its list invisibly; assign it to reach
 individual panels:</p>
-<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb15"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, which <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"nll"</span>, <span class="st">"par"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
 <p><img src="diagnostic-plots_files/figure-html/access-1.png" class="r-plt" alt="" width="672"><img src="diagnostic-plots_files/figure-html/access-2.png" class="r-plt" alt="" width="672"></p>
-<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb16"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">plots</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] "nll_trace" "par_trace"</span></span></code></pre></div>
 <p>Per-study panels are named <code>&lt;type&gt;_&lt;study&gt;</code>,
@@ -211,65 +597,14 @@ the traces <code>nll_trace</code> and <code>par_trace</code>. With
 several observed outputs the label gains the output name —
 <code>mean_lit.plasma</code>, <code>cov_lit.brain</code> — so each gets
 its own panel:</p>
-<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb17"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span><span class="op">$</span><span class="va">nll_trace</span></span>
 <span><span class="va">plots</span><span class="op">$</span><span class="va">par_trace</span></span>
 <span><span class="va">plots</span><span class="op">$</span><span class="va">mean_examplomycin</span></span>
 <span><span class="va">plots</span><span class="op">$</span><span class="va">cov_examplomycin</span></span></code></pre></div>
-</div>
-<div class="section level2">
-<h2 id="customising-with-ggplot2">Customising with ggplot2<a class="anchor" aria-label="anchor" href="#customising-with-ggplot2"></a>
-</h2>
-<p>All returned objects are standard ggplot2 plots:</p>
-<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">plots</span><span class="op">$</span><span class="va">nll_trace</span> <span class="op">+</span></span>
-<span>  <span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggtheme.html" class="external-link">theme_minimal</a></span><span class="op">(</span>base_size <span class="op">=</span> <span class="fl">13</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/labs.html" class="external-link">labs</a></span><span class="op">(</span>title <span class="op">=</span> <span class="st">"Optimiser convergence"</span>, subtitle <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span></code></pre></div>
-<div class="figure">
-<img src="diagnostic-plots_files/figure-html/custom-1.png" class="r-plt" alt="NLL trace with a custom theme." width="672"><p class="caption">
-NLL trace with a custom theme.
-</p>
-</div>
-</div>
-<div class="section level2">
-<h2 id="iiv-correlation-heatmap">IIV correlation heatmap<a class="anchor" aria-label="anchor" href="#iiv-correlation-heatmap"></a>
-</h2>
-<p>The estimated Omega reads as a correlation heatmap, which is worth a
-look whenever the model has off-diagonal omega entries.</p>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">omega</span>   <span class="op">&lt;-</span> <span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">omega</span></span>
-<span><span class="va">eta_nms</span> <span class="op">&lt;-</span> <span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">eta_col_names</span></span>
-<span><span class="kw">if</span> <span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/NULL.html" class="external-link">is.null</a></span><span class="op">(</span><span class="va">eta_nms</span><span class="op">)</span><span class="op">)</span> <span class="va">eta_nms</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/paste.html" class="external-link">paste0</a></span><span class="op">(</span><span class="st">"eta."</span>, <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq_len</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/nrow.html" class="external-link">nrow</a></span><span class="op">(</span><span class="va">omega</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
-<span></span>
-<span><span class="va">corr_mat</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/cor.html" class="external-link">cov2cor</a></span><span class="op">(</span><span class="va">omega</span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/colnames.html" class="external-link">rownames</a></span><span class="op">(</span><span class="va">corr_mat</span><span class="op">)</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colnames.html" class="external-link">colnames</a></span><span class="op">(</span><span class="va">corr_mat</span><span class="op">)</span> <span class="op">&lt;-</span> <span class="va">eta_nms</span></span>
-<span></span>
-<span><span class="va">df_corr</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/expand.grid.html" class="external-link">expand.grid</a></span><span class="op">(</span></span>
-<span>  eta_i <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/factor.html" class="external-link">factor</a></span><span class="op">(</span><span class="va">eta_nms</span>, levels <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/rev.html" class="external-link">rev</a></span><span class="op">(</span><span class="va">eta_nms</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>  eta_j <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/factor.html" class="external-link">factor</a></span><span class="op">(</span><span class="va">eta_nms</span>, levels <span class="op">=</span> <span class="va">eta_nms</span><span class="op">)</span>,</span>
-<span>  stringsAsFactors <span class="op">=</span> <span class="cn">FALSE</span></span>
-<span><span class="op">)</span></span>
-<span><span class="va">df_corr</span><span class="op">$</span><span class="va">r</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/vector.html" class="external-link">as.vector</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/t.html" class="external-link">t</a></span><span class="op">(</span><span class="va">corr_mat</span><span class="op">)</span><span class="op">)</span></span>
-<span></span>
-<span><span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggplot.html" class="external-link">ggplot</a></span><span class="op">(</span><span class="va">df_corr</span>, <span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span>x <span class="op">=</span> <span class="va">eta_j</span>, y <span class="op">=</span> <span class="va">eta_i</span>, fill <span class="op">=</span> <span class="va">r</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_tile.html" class="external-link">geom_tile</a></span><span class="op">(</span>colour <span class="op">=</span> <span class="st">"white"</span>, linewidth <span class="op">=</span> <span class="fl">0.5</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_text.html" class="external-link">geom_text</a></span><span class="op">(</span><span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span>label <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">r</span>, <span class="fl">2</span><span class="op">)</span><span class="op">)</span>, size <span class="op">=</span> <span class="fl">3.2</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_gradient.html" class="external-link">scale_fill_gradient2</a></span><span class="op">(</span></span>
-<span>    low <span class="op">=</span> <span class="st">"#2166AC"</span>, mid <span class="op">=</span> <span class="st">"white"</span>, high <span class="op">=</span> <span class="st">"#D6604D"</span>,</span>
-<span>    midpoint <span class="op">=</span> <span class="fl">0</span>, limits <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="op">-</span><span class="fl">1</span>, <span class="fl">1</span><span class="op">)</span>, name <span class="op">=</span> <span class="st">"r"</span></span>
-<span>  <span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/labs.html" class="external-link">labs</a></span><span class="op">(</span></span>
-<span>    title    <span class="op">=</span> <span class="st">"IIV correlation (estimated Omega)"</span>,</span>
-<span>    subtitle <span class="op">=</span> <span class="st">"Off-diagonal entries are zero for a diagonal Omega model"</span>,</span>
-<span>    x <span class="op">=</span> <span class="cn">NULL</span>, y <span class="op">=</span> <span class="cn">NULL</span></span>
-<span>  <span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggtheme.html" class="external-link">theme_bw</a></span><span class="op">(</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/theme.html" class="external-link">theme</a></span><span class="op">(</span>axis.text.x <span class="op">=</span> <span class="fu">ggplot2</span><span class="fu">::</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_text</a></span><span class="op">(</span>angle <span class="op">=</span> <span class="fl">45</span>, hjust <span class="op">=</span> <span class="fl">1</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
-<div class="figure">
-<img src="diagnostic-plots_files/figure-html/omega-heatmap-1.png" class="r-plt" alt="IIV correlation matrix derived from the estimated Omega." width="672"><p class="caption">
-IIV correlation matrix derived from the estimated Omega.
-</p>
-</div>
+<p>Every panel is an ordinary ggplot2 object, so
+<code>+ theme_minimal()</code> or <code>+ labs()</code> works as
+usual.</p>
 </div>
 <div class="section level2">
 <h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a>

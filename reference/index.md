@@ -83,6 +83,8 @@ S3 methods for fit objects.
   : Diagnostic plots for an admixr2 fit
 - [`anova(`*`<admFit>`*`)`](https://leidenpharmacology.github.io/admixr2/reference/anova.admFit.md)
   : Compare nested admixr2 fits by a likelihood-ratio test
+- [`admMoments()`](https://leidenpharmacology.github.io/admixr2/reference/admMoments.md)
+  : Observed and predicted aggregate moments, tidied
 
 ## Data
 

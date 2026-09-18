@@ -52,18 +52,13 @@ covDist(..., cor = NULL, joint = NULL, dist = c("normal", "lnorm"))
 
 - joint:
 
-  Dependence a single correlation cannot express: a function receiving
-  the matrix of uniforms admixr2 supplies and returning one named column
-  per covariate, on each covariate's OWN scale. Overrides `cor`.
-
-  The sampler owns its margins. A copula returns dependence on the
-  *copula scale* only, so a sampler that hands those uniforms back
-  returns covariate values on `(0, 1)` — every covariate mean 0.50 and
-  SD 0.29, whatever margins were declared, with no error anywhere. Push
-  them through the quantile function you intend.
-
-  `stratify` needs nothing further: an opaque sampler is banded by
-  binning its output rather than by fixing its input uniforms.
+  **Not accepted yet, and an error if given.** It is the place an
+  arbitrary sampler will attach — a function receiving the matrix of
+  uniforms admixr2 supplies and returning one named column per
+  covariate, on each covariate's own scale, which is the shape a vine
+  copula produces — but the contract around it is not settled, so the
+  argument refuses rather than half-works. Use `cor` for dependence: it
+  builds a Gaussian copula over the declared margins.
 
 - dist:
 

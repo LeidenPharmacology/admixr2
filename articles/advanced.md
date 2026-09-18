@@ -1,5 +1,8 @@
 # Advanced usage
 
+Independent settings, each needing a paragraph more than a reference
+page gives it. The sections have nothing else in common and stand alone.
+
 ## Full covariance vs variance NLL
 
 Each study’s `V` selects a branch of the NLL, auto-detected:
@@ -51,35 +54,14 @@ gradient the optimizer struggles to descend. Nor is the step a constant
 — it is measured per parameter by the Shi (2021) procedure, with
 `grad_h` the fallback when it cannot be.
 
-**[`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
-gradient modes:**
-
-| `grad =` | Method | Notes |
+| `grad =` | What it does | Notes |
 |----|----|----|
-| `"sens"` | Sensitivity equations (default) | Analytical; requires ODE or `linCmt()` model |
-| `"fd"` | Central finite differences | Falls back to this if sens unavailable; step measured per parameter |
-| `"none"` | BOBYQA (derivative-free) | No gradient; useful for debugging or simple models |
+| `"sens"` (`admc`) / `"analytical"` (the other three) | Sensitivity equations, contracted in closed form | The default everywhere. Needs an ODE or `linCmt()` model; `adfo` gets its structural thetas from the order-2 sensitivity model, and falls back to FD only if that cannot be built |
+| `"fd"` | Central finite difference of the full NLL | `2 n_p` evaluations per step. Also the automatic fallback where the sensitivity model cannot be built, with a warning |
+| `"none"` | BOBYQA, derivative-free | No gradient; `adfo`’s default up to 0.4.0 |
 
-**[`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md)
-gradient modes:**
-
-| `grad =` | Method | Notes |
-|----|----|----|
-| `"analytical"` (default) | Chain rule through V_pred | Omega/sigma analytical; struct thetas from the order-2 sensitivity model, FD only if it cannot be built |
-| `"none"` | BOBYQA | Derivative-free; was the default up to 0.4.0 |
-| `"fd"` | Central FD of full NLL | All parameters; `2 n_p` NLL evals per step |
-
-**[`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md)
-gradient modes:**
-
-| `grad =` | Method | Notes |
-|----|----|----|
-| `"analytical"` (default) | Closed-form contractions through sensitivity equations | Exact and cheapest; one batched sensitivity solve per study over the node grid |
-| `"fd"` | Central FD of full NLL | All parameters; `2 n_p` NLL evals per step |
-| `"none"` | BOBYQA (derivative-free) | No gradient |
-
-The GH objective is **noise-free** — deterministic quadrature, no MC
-draws — so its analytical gradient is exact and the Hessian
+The GH objective is **noise-free** – deterministic quadrature, no MC
+draws – so its analytical gradient is exact and the Hessian
 well-conditioned. Keep the default.
 
 For `adfo`, every mode still uses the sensitivity model inside each NLL
@@ -98,10 +80,6 @@ fit_bobyqa <- nlmixr2(pk_model, admData(), est = "admc",
   control = admControl(studies = list(s = study), grad = "none",
                        n_sim = 5000L, seed = 1L))
 ```
-
-Use `"sens"` for any standard ODE or `linCmt()` model. Where the
-sensitivity model cannot be built — some rare ODE features — admixr2
-falls back to `"fd"` with a warning.
 
 ## Mu-referencing and sensitivity equations
 

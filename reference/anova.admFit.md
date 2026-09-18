@@ -33,6 +33,16 @@ estimators, the same node count (`n_nodes`) or, for the Monte Carlo ones
 approximation to the likelihood, so objectives from different ones are
 not comparable and the comparison is refused rather than reported.
 
+The **stratum** resolution is checked per covariate, and only where the
+two fits overlap. A covariate a model does not read cannot put the two
+on different scales: if its prediction does not move across a source's
+nodes, the mixture those nodes collapse to is a sufficient statistic for
+it, so its objective is the same at either resolution. That is what
+makes the nested pair of a covariate test comparable — the null model
+drops the term, so its sources are not cut along it. Two fits that both
+read a covariate and cut it differently, including one cutting it and
+the other integrating over it whole, are refused.
+
 Testing a variance AT ZERO puts the null on the boundary of the
 parameter space, where the exact reference is a chi-bar-squared mixture
 rather than a chi-squared. The p-value reported there is CONSERVATIVE –

@@ -2,482 +2,98 @@
 
 ## admixr2 0.4.1
 
+CRAN release: 2026-09-16
+
 ### New features
 
-- **A covariate the model does not read is dropped, not refused, so
-  nested models need no [`fix()`](https://rdrr.io/r/utils/fix.html).** A
-  study declaring a `cov_dist` for a covariate the analysis model never
-  uses was an error. That made the null model of a covariate test
-  unwritable in the obvious way: the term had to be kept and its
-  coefficient pinned with `fix(0)`, turning the restriction being tested
-  into a property of the model text, and leaving the covariate on the
-  quadrature grid paying for nodes that could not move the objective.
-  The prediction cannot depend on a covariate the model does not read,
-  so integrating over it returns the prediction unchanged; it is now
-  left off the design with a message naming it, and the full and null
-  models share one set of studies. Marginalising a covariate out of a
-  correlated specification is exact – the surviving block of the latent
-  correlation is the corresponding submatrix – so a `cor` pair with only
-  one member read keeps that member’s declared distribution. Checked
-  against the old workaround: objectives agree to 1.5e-09. A covariate
-  the model *does* read must still be described, so a mistyped name is
-  still an error, reported now as the covariate it left undescribed. A
-  `joint` sampler the *user* supplied is still refused, since its
-  columns cannot be marginalised from outside.
+- **The mean and covariance panels are per SOURCE, not per stratum.** A
+  conditional source is collapsed by the mixture law, so `_s1`/`_s2`
+  never reaches a figure.
 
-- **`covMethod = "r,s"`: standard errors that answer to the model’s own
-  sampling law, on all four estimators.** The aggregate objective is the
-  exact log-likelihood of `n` iid draws from `N(yt, Vt)`, which assumes
-  each subject’s observation vector is multivariate normal. It is not:
-  `y_i = f(theta, b_i) + eps_i` with `f` nonlinear in `b_i`, so the
-  marginal is a mixture. That costs nothing in the point estimates – the
-  score has expectation zero at the true parameters under any weight, so
-  every fit stays consistent – but it does cost the reported
-  uncertainty, in two ways that differ in kind: `Cov(V_ij, V_kl)` is
-  mis-sized by the excess kurtosis, and `Cov(ybar, vech V)` is assumed
-  ZERO where a real correlation of 0.3-0.6 sits. The sample mean and
-  sample covariance are exactly independent for a multivariate normal
-  and for nothing else.
+- **The panels name what `V` contains** –
+  `BSV + covariate spread + sigma`, read off the fit – and the predicted
+  ribbon shows the pre-sigma part inside.
 
-  `covMethod = "r,s"` scores the summary `(ybar, vech V)` against its
-  own asymptotic law – Browne’s Asymptotically Distribution-Free (ADF)
-  estimator, with the fourth-moment matrix computed from the MODEL
-  rather than estimated from the sample, which is what removes ADF’s
-  small-sample failure. The result is the sandwich `H^-1 J H^-1`, where
-  `H` is the Hessian `covMethod = "r"` already inverts, passed in rather
-  than rebuilt so the two cannot disagree about the half they share.
-  Under correct specification `J = 2H` and `"r,s"` returns exactly what
-  `"r"` would have; the reduction holds by construction, and is pinned
-  as a test (`eigen(J(W_normal) / 2H) = 1.0000` on both the `cov` and
-  the `var` branch).
+- **A covariate the model does not read is dropped, not refused**, so a
+  nested pair shares one `studies` object and needs no `fix(0)`.
 
-  Point estimates and the objective are untouched – `"r,s"` changes only
-  the reported standard errors. On `adgh`, `admc` and `adirmc` the
-  weight is built on the quadrature ensemble, so it carries none of a
-  fit’s own MC noise. On `adfo` it does more than correct kurtosis:
-  `V = J Omega J' + Sigma` is the covariance of an exactly normal
-  individual law, so scoring FO against its own assumption would return
-  `2H^-1` and say nothing. There, `G` comes from adfo’s moment map and
-  the weight from a post-fit quadrature ensemble of the same model, so
-  the correction absorbs part of the linearisation error as well.
+- **`covMethod = "r,s"`: standard errors scored against the model’s own
+  sampling law** – an ADF sandwich `H^-1 J H^-1`, on all four
+  estimators.
 
-  **`"r,s"` is more sensitive to an ill-conditioned Hessian than `"r"`
-  is**, and admixr2 now says so. `"r"` inverts `H` once, the sandwich
-  inverts it twice, so in a direction the data barely identifies the gap
-  between `J` and `2H` is amplified quadratically. A residual SD
-  contributing 0.01 variance against 1.7 from IIV is such a direction:
-  on one 1-cmt fixture at `cond(H) = 3.5e5` the reported residual SE
-  moved by a factor of 0.11 and two omega entries by 0.59 and 1.55,
-  while the same model and design with the residual identified
-  (`cond(H) = 247`) reproduced `"r"` to four decimals throughout.
-  Neither number is a correction there – both methods are reporting an
-  unidentified direction. Below `rcond(H) = eps^(1/4)` the fit records a
-  note on `fit$runInfo` – where `nlmixr2est` routes an estimator’s
-  warnings, and which `print(fit)` lists – naming the parameter that
-  loads most heavily on the offending direction. The sandwich is still
-  reported, since the well-determined parameters of the same fit are
-  unaffected.
+- **`v_denom` declares which denominator a study’s `V` uses**, per
+  study, rather than a hand-applied `(n-1)/n` correction. Default
+  `"ml"`.
 
-  It applies to every residual family whose conditional law is
-  independent across timepoints, which is **all of them except
-  [`ar()`](https://rdrr.io/r/stats/ar.html)** – the conditionally-normal
-  set (`add`, `prop`, `pow`, `combined1`, `combined2`), the closed-form
-  distributional ones (`lnorm`, `pois`, `binom`, `nbinomMu`, `beta`,
-  `t(nu > 4)`), and the transform-both-sides ones (`boxCox`,
-  `yeoJohnson`, `logitNorm`, `probitNorm`). The last group needs the
-  third and fourth conditional moments, which come off the same
-  Gauss-Hermite quadrature that already produces their mean and variance
-  – two more accumulators over the same nodes, not a second integration
-  scheme, and validated against a direct simulation of the conditional
-  law and against the sampling covariance of simulated studies.
+- **`sigdig` now controls the fit, not just the output tables**, and is
+  opt-in: the default `NULL` leaves rxode2’s own tolerances alone.
 
-  `pow()` and `combined()` with an exponent outside `{0.5, 1}` need one
-  extra step, because there the OBJECTIVE’s own `E[Var(y|eta)]` is a
-  second-order expansion of `E[f^2c]` while the weight integrates
-  `b^2 |f|^2c` over the nodes exactly. Both readings are defensible and
-  they are not equal – 9e-05 relative at `c = 0.75`, up to 2.5e-02 at
-  `c = 1.5` with `omega = 1` – and the weight has to describe the
-  objective that was minimised, or `J = 2H` fails and a
-  correctly-specified `pow()` fit reports a “correction” that is nothing
-  but the truncation. The weight’s conditional variance is therefore
-  rescaled onto the objective’s composition, which leaves the
-  node-to-node shape (and so the third and fourth moments) alone and is
-  not applied at all where the expansion is exact. Pinned by the test
-  that `S` rebuilt from the weight equals `V_pred`.
+- **adfo differentiates its structural thetas analytically**, so
+  `grad = "analytical"` (LBFGS) is now its default.
 
-  Models the correction does **not apply to** report the reason as a
-  message and fall back to `"r"`:
-  [`ar()`](https://rdrr.io/r/stats/ar.html), because it correlates the
-  residual ACROSS timepoints, so the cross terms the expansion drops are
-  real; [`t()`](https://rdrr.io/r/base/t.html) with `nu <= 4`, whose
-  kurtosis does not exist; [`t()`](https://rdrr.io/r/base/t.html)
-  combined with a
-  [`boxCox()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html) /
-  [`yeoJohnson()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)
-  / `logitNorm()` / `probitNorm()` endpoint at ANY `nu`, because that
-  branch integrates the residual’s law over the node ensemble rather
-  than folding `nu/(nu-2)` into a variance, and there is no closed form
-  for a t-distributed residual there; a model with 8 or more random
-  effects, whose capped product quadrature grid (floored at 3 nodes/eta,
-  capped at 5000 nodes total) cannot cover them; and `ordinal()` and
-  same-subject `joint` studies, which stack several outputs into one
-  covariance that the per-output node ensemble does not describe. These
-  are refusals by construction, not failures, which is why they are not
-  warnings – `"r,s"` is the default, so an
-  [`ar()`](https://rdrr.io/r/stats/ar.html) fit would otherwise put “the
-  sandwich correction could not be computed” on `fit$runInfo` on every
-  run. A sandwich that was attempted and could not be BUILT still warns.
-  Either way `fit$covMethod` reports `"r"`: it records what the
-  covariance IS, not what was asked for.
+- **`linCmt()` models are supported at second order**, by promotion to
+  the explicit ODE form.
 
-  The acceptance gate that decides between the two is now a full PSD
-  check rather than a diagonal one: `J = sum(G Om G')` is only
-  guaranteed positive-semi-definite if every per-study `Om` is, and a
-  rescaled `pow()` / `combined()` weight was not independently checked
-  for that, so a positive-diagonal, non-PSD covariance could have been
-  silently accepted and reported. A `method = "var"` study’s weight is
-  also no longer built as the full `m + m(m+1)/2` covariance-summary
-  matrix before discarding everything but its mean and diagonal blocks –
-  that discarded work was `O(m^4)`, multiple gigabytes at 200
-  timepoints, paid on every default-`covMethod` fit of a variance-only
-  study. And the finite-difference fallback for the sandwich’s Jacobian
-  (used whenever the analytic route – no sensitivity model, unpaired
-  thetas – is unavailable, which is always for `adfo`) now measures its
-  step per parameter from the fit’s own objective via Shi21, the same
-  convention every other finite difference in the package follows,
-  rather than a fixed `1e-5` regardless of parameter scale.
+- **Finite-difference steps are measured per parameter** (Shi 2021),
+  replacing the fixed `pmax(abs(p), 0.1) * h` scale.
 
-- **`v_denom`: declare which denominator a study’s `V` uses, rather than
-  convert it by hand.** admixr2’s two input types disagree about what
-  `V` is. A digitised figure gives `V = SD^2` with `SD` the unbiased
-  (`n - 1`) sample SD, while `cov.wt(method = "ML")` and
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  give the `n` covariance the likelihood is exact for. The vignette
-  documented the `(n - 1)/n` correction as a manual step and said it was
-  usually ignored – a defensible O(1/n) wobble while the reported
-  covariance is treated as a sufficient statistic.
+- **[`anova()`](https://rdrr.io/r/stats/anova.html) on nested fits**:
+  the likelihood-ratio test on the objective difference against a
+  chi-squared reference.
 
-  It stops being one under `covMethod = "r,s"`, where the same factor
-  reappears as the alignment of `tau` with `E[t]`, and getting it wrong
-  is measurably worse than not correcting at all. So
-  `v_denom = c("ml", "unbiased")` becomes part of the study spec,
-  declared **per study** because a meta-analysis routinely mixes a
-  digitised source with a model-derived one and the two need not share a
-  denominator. The default is `"ml"`, so nothing changes for anyone;
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  now stamps `"ml"` on what it produces, so a generated study is
-  self-describing rather than relying on the default meaning the same
-  thing. It is idempotent, and it refuses rather than guesses when `n`
-  is absent or `<= 1`.
+- **A study can contribute as a published MODEL**, not only as digitised
+  aggregate data. No standard error is reported for a fit containing
+  one.
 
-- **`sigdig` now controls the fit, not just the output tables – and it
-  is opt-in.** The `sigdig` and `rxControl` arguments were documented as
-  solver controls, but the object they built only ever reached nlmixr2’s
-  *post-fit* table solves: every optimizer solve ran at rxode2’s own
-  default tolerances, so setting `sigdig` changed nothing about the fit.
-  It is now passed to
-  [`rxode2::rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)’s
-  own `sigdig` argument at every solve the estimators issue.
+- **Covariate marginalisation over a declared distribution**
+  ([`covDist()`](https://leidenpharmacology.github.io/admixr2/reference/covDist.md)),
+  for `admc` and `adgh`, instead of solving at the covariate mean.
 
-  **The default is `sigdig = NULL`, so default fit results are
-  unchanged.** `NULL` means “leave rxode2’s own tolerances alone”, which
-  is exactly the numerics every admixr2 fit had before. It is the
-  default because a looser solve is not free: the estimators
-  finite-difference these solves with steps of the same order – `grad_h`
-  1e-4, `cov_h` 1e-3, `cov_h_outer` ~2.5e-3 – while rxode2 5.1.5 maps
-  `sigdig = 4` to `rtol = 1e-4`. Differencing a solution whose own
-  relative noise is 1e-4 with a 1e-4 step returns noise, and it surfaces
-  as a moved objective and an indefinite covariance Hessian (every `SE`
-  reported `NA`) rather than as an error. Turning that on by default
-  would have changed the numerics of every existing script silently, for
-  a knob that looked like table formatting before this release.
+- **A sparse-grid route for several covariates**:
+  `cov_integration = "sparse"` uses a Smolyak grid – 49 points against
+  the product grid’s 81.
 
-  Set explicitly, it is the lever for trading solver accuracy against
-  speed. Measured on a 1-cmt oral ODE model with two studies, at a fixed
-  iteration count, `sigdig = 4` makes **adfo 4.8x faster**, `admc` 1.3x,
-  and `adgh` unchanged (its batched quadrature solve is not
-  integration-bound); the objective moves by 5e-09 relative and the
-  `covMethod = "r"` standard errors are unchanged to four significant
-  figures. It is most worthwhile where the gradient is fully analytic
-  and nothing differences the solve, which after this release is
-  `adfoControl(grad = "analytical")`. Elsewhere, compare the objective
-  and the standard errors against `NULL` before relying on it.
-
-  Passing the digits rather than re-deriving tolerances keeps the
-  mapping rxode2’s business, which matters because rxode2 has changed it
-  between releases: `sigdig = 4` is `atol = rtol = 5e-07` on rxode2
-  5.1.4 but `rtol = 1e-04` on 5.1.5. `sigdig = NULL` is the one setting
-  whose meaning does not move under an upgrade – and no single `sigdig`
-  value reproduces rxode2’s defaults anyway, since they are asymmetric
-  (`atol` 1e-8 against `rtol` 1e-6) while the `sigdig` map is
-  one-dimensional. Table formatting is unaffected either way:
-  `sigdigTable` falls back to 4 when `sigdig` is `NULL`.
-
-  [`plot()`](https://rdrr.io/r/graphics/plot.default.html) now solves at
-  the tolerance the fit used, so the diagnostic panels describe the same
-  integration the objective was minimised on.
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  deliberately does not – it generates the reference, and integrates at
-  rxode2’s own tolerances regardless.
-
-- **adfo differentiates its structural thetas analytically, and
-  `grad = "analytical"` (LBFGS) is now the default.** adfo was the last
-  estimator with a finite-difference component: its
-  `V_pred = J Omega J' + resid` depends on a structural theta through
-  `J`, so the gradient needs `dJ/dtheta`, a *second* derivative that the
-  first-order sensitivity model does not carry. It therefore
-  finite-differenced the whole objective – differencing a
-  log-determinant and a quadratic form, the noisiest construction in the
-  package.
-
-  `.admBuildThetaSens()` now emits a second-order **cross block**
-  `d2f/(d eta d dir)` on request, and `.adfoGrad()` contracts it against
-  the same `dNLL/dV` matrix the omega path already uses, so the two
-  cannot drift apart. Against a central difference of the objective the
-  structural gradient is accurate to 2e-07..2e-06, where the
-  finite-difference pass it replaces reached 8e-04..1e-02 (worst case
-  `tv`, 1.4%).
-
-  Because the gradient is now exact, LBFGS on it beats the
-  derivative-free BOBYQA that `grad = "none"` used, so the default
-  changed. `grad = "none"` remains available, and any model whose
-  second-order model cannot be built falls back to the previous
-  finite-difference gradient automatically.
-
-  **That default flip changes three more things than the gradient**,
-  because `grad != "none"` is the switch for all four. Spelled out,
-  since only the first is obvious:
-
-  1.  The gradient itself, as above.
-  2.  **A box constraint.** A gradient fit is confined to
-      `p0 +/- grad_bounds` (default 5) on the optimizer scale – a factor
-      of ~148 on the log scale. adfo fits were unbounded before. nloptr
-      reports normal convergence at a box corner, so admixr2 now *warns*
-      when an estimate finishes on that bound and the model itself
-      declared none; `admc`/`adgh` have always run this way and gained
-      the same warning.
-  3.  **The covariance method.** `covMethod = "r"` builds its Hessian by
-      forward-differencing the gradient rather than the objective when a
-      gradient is available. That is now gated on the struct-theta
-      gradient being genuinely analytic, not merely on `grad != "none"`:
-      with an order-1 fallback or a transformed endpoint the gradient is
-      itself a finite difference, and differencing it again produced a
-      singular Hessian and “standard errors are unavailable for this
-      fit”. Those cases keep the objective-FD Hessian that 0.4.0 used.
-  4.  **Whether a sensitivity model is asked for at all.**
-      `.admLoadSensModel()` returns `NULL` by design for a
-      fixed-effects-only model, an ordinal endpoint, and mixed
-      transformed/untransformed endpoints. Each used to run BOBYQA
-      silently and briefly warned on every fit; they now emit a single
-      plain message saying the gradient is finite-differenced.
-
-  The startup line distinguishes the two analytic levels:
-  `Grad: Analytical` means the struct thetas come from the second-order
-  block, `Analytical (struct FD)` means the omega/sigma blocks are
-  analytic and the struct thetas are not.
-
-- **`linCmt()` models are supported at second order, by promotion.**
-  `linCmt()` has no second derivative –
-  [`rxFromSE()`](https://nlmixr2.github.io/rxode2/reference/rxToSE.html)
-  cannot emit the nested `linCmtB` derivative, which is why nlmixr2est
-  refuses `linCmt()` outright for its own analytic gradient and
-  covariance. admixr2 instead promotes the model to its explicit ODE
-  form with the exported
-  [`rxode2::linToOde()`](https://nlmixr2.github.io/rxode2/reference/linToOde.html)
-  and builds the second-order block from that. The promoted solve
-  reproduces the analytic `linCmt()` prediction to 1.8e-08 relative.
-
-  Only the `order = 2` request promotes: `admc`/`adgh` continue to use
-  the fast solved form, which is all their first-order moments need.
-
-- **Finite-difference steps measured per parameter (Shi 2021), replacing
-  the fixed scale.** Every finite difference in admixr2 took its step
-  from the same heuristic – `pmax(abs(p), 0.1) * h`, with `h` a fixed
-  constant. That is a single guess about how much noise the objective
-  carries, applied identically to every parameter. A parameter the
-  objective is flat in and one it is sharp in want different steps, and
-  the right step moves with the ODE tolerance.
-
-  admixr2 now measures. For a central difference the error is
-  `(h^2/6)|f'''| + eps_f/h`, minimised at
-  `h* = (3 * eps_f/|f'''|)^(1/3)`, and the procedure estimates `|f'''|`
-  from a symmetric third difference taken where that difference stands
-  clear of the noise floor. The noise level `eps_f` itself comes from
-  More & Wild’s ECnoise. Applied at both places admixr2
-  finite-differences the objective: the post-fit covariance Hessian, and
-  the optimizer’s gradient (measured once at the starting values and
-  reused, the mechanism FOCEI’s `numericGrad` uses at its first
-  evaluation).
-
-  nlmixr2est ships this algorithm as `shi21CentralWrap`, but it is not
-  exported and admixr2 makes no `:::` calls into it, so it is
-  reimplemented here. That also buys the input the upstream route cannot
-  take: `eps_f` is a real argument, and it is the one that matters (`h*`
-  scales as `eps_f^(1/3)`). `test-optim-steps-shi.R` scores the
-  reimplementation against the upstream routine as an oracle – the
-  intervals agree to within a factor of 1.15 and the derivatives to
-  `10 * eps_f^(2/3)`.
-
-- **[`anova()`](https://rdrr.io/r/stats/anova.html) on nested fits.**
-  `anova(full, reduced)` is the ordinary likelihood-ratio test: the
-  objective difference against a chi-squared reference with `Df` equal
-  to the number of parameters the larger model adds. It does not depend
-  on which `covMethod` the fits used.
-
-  Four comparisons are REFUSED rather than reported, because none of
-  them is a likelihood ratio. Fits from different estimators — each
-  scores its own approximation to the same likelihood, FO-linearised,
-  quadrature or Monte Carlo, so `anova(adfo_fit, adgh_fit)` was
-  differencing two numbers on different scales and returning a perfectly
-  finite `p`. Fits on different node counts, for the same reason: the
-  objective moves with the grid. Fits on different `n_sim`, for
-  admc/adirmc, whose objective is a Monte Carlo average over that many
-  draws. And a non-nested pair, which is a different problem (Vuong) and
-  must not come back with a p-value.
-
-  A negative `dOFV` is reported rather than clamped to zero: the larger
-  model cannot fit worse at its own optimum, so a negative difference
-  says one of the two did not converge. Testing a variance AT zero is a
-  boundary null, where the exact reference is a chi-bar-squared mixture;
-  the p-value reported there is conservative, which is documented rather
-  than refused, because dropping a random effect is an ordinary thing to
-  test.
-
-- **A study can contribute as a published MODEL, not only as digitised
-  aggregate data.** Give
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  a model and the population it was developed on, and it produces the
-  `(E, V, n)` a digitised figure would have given you. The result is
-  marked as a model source.
-
-  **No standard error is reported for a fit that contains one, and an
-  explicit `covMethod` is refused rather than honoured.** Its mean and
-  covariance are exact functions of the published parameter estimates,
-  while the uncertainty and covariance of those source parameters are
-  unavailable. The reported study size alone cannot reconstruct that
-  sampling law.
-
-  `n` is always the true sample size of the dataset used to develop the
-  source model. It divides out for a lone source and determines that
-  study’s contribution when several sources are pooled, so a missing `n`
-  is reported before it can distort a pooled point estimate.
-
-- **Covariate marginalisation over a declared distribution**, for `admc`
-  and `adgh`. A study declares who was in it — `cov_dist`, see
-  [`covDist()`](https://leidenpharmacology.github.io/admixr2/reference/covDist.md)
-  — and the estimator integrates the prediction over that distribution
-  as well as over the random effects, instead of solving at the
-  covariate mean. Solving at the mean is the ecological plug-in, and it
-  is biased whenever the model is non-linear in the covariate. `adfo`
-  and `adirmc` REFUSE `cov_dist` rather than silently solve at the mean.
-
-  [`covDist()`](https://leidenpharmacology.github.io/admixr2/reference/covDist.md)
-  takes margins in whichever currency the paper printed — `mean`/`sd`,
-  `median`/`iqr`, a `cv` as a percent, a proportion — joined by a
-  Gaussian copula whose correlation is taken on the LATENT scale.
-  Discrete margins are enumerated exactly, at their declared levels and
-  probabilities, rather than put on any quadrature rule.
-  [`covStrata()`](https://leidenpharmacology.github.io/admixr2/reference/covStrata.md)
-  bands a source so a covariate its own model fitted contributes a
-  contrast rather than one pooled number, and
-  [`covDraw()`](https://leidenpharmacology.github.io/admixr2/reference/covDraw.md)
-  returns the rows a design would use, so the design is inspectable.
-
-- **A sparse-grid route for several covariates.**
-  `adghControl(cov_integration = "sparse", cov_sparse_level = )`
-  integrates the covariate distribution on a Smolyak grid instead of the
-  product one. At four covariates and a correlation of 0.85 it is 49
-  design points against the 3-node product grid’s 81, and roughly 40x
-  more accurate on both the mean and the covariance — cheaper and
-  better, with the advantage growing in the number of covariates.
-  Correlation does not cost it: its error at `rho = 0.85` is lower than
-  at `rho = 0`.
-
-  The weights are signed (they sum to 1, but the sum of their magnitudes
-  grows with the level), so a sandwich covariance whose weight matrix
-  comes out indefinite as a result is refused rather than reported.
-
-- **A paper-shaped study API.**
-  [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)
-  /
-  [`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
-  describe a source the way a publication does — the model it published,
-  the covariance it reported, the cohort it enrolled — rather than
-  asking you to assemble `(E, V, n)` by hand.
+- **A paper-shaped study API**:
+  [`admStudy()`](https://leidenpharmacology.github.io/admixr2/reference/admStudy.md)/[`admStudies()`](https://leidenpharmacology.github.io/admixr2/reference/admStudies.md)
+  describe a source as a publication does, and
   [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)
-  reads a baseline-characteristics table in whichever currency the paper
-  used: `mean`/`sd`, `median`/`iqr`, a `cv` as a percent, a bare
-  proportion for a binary covariate, or the cohort itself via `data =`.
-  Correlations are taken on the LATENT scale — the logs for a lognormal
-  margin — which is the step easiest to get wrong transcribing a table
-  by hand, and a reported median and IQR inconsistent with the assumed
-  shape is reported rather than quietly fitted.
-
-  [`print()`](https://rdrr.io/r/base/print.html) on the collection is a
-  PRE-FLIGHT: per covariate and per source it says `conditioned` /
-  `banded` / `marginal` / `-`, and names any covariate that no source
-  can identify because every source marginalises over it. That is a
-  design fault the fit cannot repair, and it is cheaper to see before
-  the fit than after.
-
-  There are deliberately no `rse` / `se` / `cov` arguments. A study
-  built from a published model is not a sample, so no standard error is
-  available for a fit containing one (above), and the reported
-  covariance that would have fed those arguments has no role left.
-
-  The transcription routes are checked rather than trusted. `population`
-  is canonicalised as the study is built, so one written as a plain list
-  is the same object as one from
-  [`admPopulation()`](https://leidenpharmacology.github.io/admixr2/reference/admPopulation.md)
-  everywhere downstream — `by` reads its levels and dropping the `by`
-  margin carries its correlations across, both of which silently did
-  neither on the raw form. A matrix `cor` is now held to the same rules
-  as the named-vector form: it is reordered to the declared covariates,
-  must name them all, and is refused where it correlates a DISCRETE
-  margin (a level would be a truncation of the latent normal rather than
-  a point). Alongside `data =` it must carry dimnames, because the
-  derived columns are appended after the ones typed in and that order is
-  not guessable, and it says that it REPLACES the cohort’s own
-  correlations rather than merging with them. A covariate named in `...`
-  but absent from `data`, and a missing value in a factor column, are
-  now errors instead of a [`cor()`](https://rdrr.io/r/stats/cor.html)
-  failure and a margin of `NA`. `stratify = FALSE` means the same as
-  omitting it rather than failing in
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md);
-  `strata_nodes` / `range` without a `stratify` are refused rather than
-  discarded; and [`print()`](https://rdrr.io/r/base/print.html) shows
-  the covariates a `stratify = TRUE` resolves to instead of the word
-  `TRUE`.
+  reads a baseline table.
 
 - **The covariate integral is collapsed onto the directions it actually
-  has.** Where the covariates and the random effects reach the model
-  through fewer independent directions than there are of them, the
-  integral has that lower dimension and the product grid was integrating
-  it in the full one. Same answers, fewer points: three covariates on
-  one parameter is a ONE-dimensional integral however many covariates
-  there are.
+  has** – same answers, fewer design points.
 
-  Everything rests on one claim — that each covariate-reading assignment
-  depends on the latent normal only through a single linear combination,
-  `p = G(b'xi)`. Then `d log p / d xi = (G'/G) * b`, so the DIRECTION is
-  `b` at every `xi` and the magnitude carries the link. The loading is
-  that relative gradient and the certificate is that its direction does
-  not move. That single statement replaces what were four separate
-  detected “routes”, each with its own residual threshold — and with
-  them goes the hazard that a borderline column flips route mid-fit and
-  steps the objective.
+- **`plot(fit, which = "covariate")`**: the fitted covariate effect, and
+  each study’s mean residual against it – a slope is a bad covariate
+  form.
 
-  A consequence worth stating: **a model now collapses on what it DOES,
-  not on how it was spelled.** `exp(tcl + eta.cl) * (WT/70)^b1` and
-  `exp(tcl + eta.cl + b1 * log(WT/70))` are the same model and get the
-  same design; the first used to take the slower path because rxode2
-  does not mu-reference it. A covariate effect entering through a
-  nonlinear LINK — an Emax or square-root term on an affine index — now
-  collapses too. It did not before: the loading was a raw slope, which
-  scales with the random effect, so every such model failed the check
-  that guards against covariate-by-eta interactions and silently fell
-  back to the full product grid. A genuine covariate-by-eta interaction
-  is still refused.
+- **The effect panel compares the estimated effect against its
+  sources**: a dotted line, against each source’s own published model.
+
+- **A conditional source draws its OWN regression over the range it
+  covers**; a marginal one draws a whisker, because what it reported is
+  a distribution.
+
+- **One mark per source per facet**, not one per stratum, so a source
+  conditional on sex no longer draws twice on every other covariate’s
+  panel.
+
+- **Both covariate panels key colour on the source**, so a source keeps
+  one colour across the figure; its strata are joined in grey instead.
+
+- **A residual facet is dropped when the sources’ contrast is sampling
+  noise**, measured against a typical within-study 10th-90th.
+
+- **Point area is the study’s sample size on both covariate panels**,
+  with a legend. The residual panel encoded it already and said so
+  nowhere.
+
+- **Whether a covariate is conditional or marginal is derived, not
+  declared**: conditional when the source’s own model ESTIMATED its
+  coefficient.
+
+- **`admMoments(fit)` gives the observed and predicted first two moments
+  per source**, with the structural variance share and the standardised
+  residual.
 
 ### Changes that can move an existing fit
 
@@ -485,1747 +101,512 @@ Several changes in this release alter results for scripts that do not
 name a new argument. None is a bug fix, so all are listed here rather
 than below.
 
-- **The sandwich’s `G` is now evaluated at `tau`, not at the observed
-  summary, so every `covMethod = "r,s"` standard error moves slightly.**
-  `J` is defined as `Var(S)`. Expanding the score about `t = tau` gives
-  `Var(S) = sum_s G_s Omega_s G_s' + O(N^-3/2)` with `G_s` the
-  derivative AT `tau_s`; building `G` from the realised residual instead
-  returns `G_0 Omega G_0' + E[K delta Omega delta' K']`, and that second
-  term is a quadratic form — non-negative — so `J` came out biased
-  UPWARD by `O(1/N)`, by an amount growing with the residual relative to
-  the structural spread. Measured over 200,000 paired replicates: +0.33%
-  at `omega = 0.2` rising to +2.9% with a proportional residual,
-  positive in every cell. Removing it also cuts `sd(c_hat)` by 31–35%,
-  which is pure gain for a reported SE.
+- **`covDist(joint = )` and a `population` carrying its own sampler are
+  refused**, pending the vine-copula work; `cor` is the supported route
+  to dependence.
 
-  This is not justified by test calibration: both versions calibrate
-  `dOFV` about equally well at these `N`, because the inflation is
-  offset by variance and covariance terms of the same order, and that
-  cancellation is a coincidence of sample size. It is justified by the
-  definition of `J`.
+- **The sandwich’s `G` is evaluated at `tau`, not at the observed
+  summary**, so every `covMethod = "r,s"` standard error moves slightly.
 
-- **`covMethod` now defaults to `"r,s"`, so reported standard errors
-  change for every script that does not name it.** Point estimates and
-  objective values are untouched – the sandwich is computed after
-  convergence and the optimizer never sees it.
+- **`covMethod` now defaults to `"r,s"`**, so reported standard errors
+  change for every script that does not name it.
 
-  It is the default because it is the CONSERVATIVE choice. Under correct
-  specification `J = 2H`, so `"r,s"` returns exactly what `"r"` returns;
-  measured end-to-end on a well-specified study the ratio is 1.010 /
-  0.990 / 1.000 across the four estimators. Where the normal-theory
-  assumption does not hold – which is wherever the model is nonlinear in
-  the random effects, i.e. essentially always – it corrects standard
-  errors that were otherwise wrong in two specific ways:
-  `Cov(V_ij, V_kl)` mis-sized by the excess kurtosis, and
-  `Cov(ybar, vech V)` assumed zero where a real correlation of 0.3-0.6
-  sits. Defaulting to `"r"` meant shipping the uncorrected number unless
-  a user knew to ask.
+- **Transform-both-sides endpoints are composed exactly**, by
+  quadrature, and their estimates move.
 
-  Nothing loses its covariance by asking: a sandwich that cannot be
-  built degrades to `"r"` and REPORTS `"r"`, so `fit$covMethod` still
-  records what the covariance is. Runtime overhead is not material for
-  `adgh`, `admc` or `adirmc`; `adfo` pays roughly 20%, because FO
-  carries no node ensemble and one has to be built post-fit for the
-  weight.
+- **The per-parameter Shi (2021) step is not optional**, so any fit
+  relying on a finite difference moves slightly.
 
-  Set `covMethod = "r"` for the previous behaviour.
+- **`gill` is removed from all four controls**, superseded by the
+  Shi (2021) step search.
 
-- **Transform-both-sides endpoints are composed EXACTLY, and their
-  estimates move.** `boxCox`, `yeoJohnson`, `logitNorm` and `probitNorm`
-  predict the aggregate moments through a residual whose conditional
-  mean is NONLINEAR in the structural prediction. admixr2 collapsed the
-  ensemble to `(mu_struct, var_f)` and expanded the residual around it
-  to second order – exact for every family whose conditional mean is
-  linear in `f`, and an approximation for these four.
+- **Forward finite differences are removed**: `grad = "fd"` is now a
+  central difference, and `grad = "cfd"` is gone.
 
-  **The expansion does not converge.** Measured against a 201-node
-  evaluation of the defining integral, its relative error in `V` is a
-  floor that no node count removes – flat from 7 nodes to 25:
-
-  |                          | error in V | at n_nodes 7 -\> 25 |
-  |--------------------------|------------|---------------------|
-  | `boxCox`, omega 0.16     | 3.4e-03    | unchanged           |
-  | `boxCox`, omega 0.49     | 5.2e-03    | unchanged           |
-  | `logitNorm`, omega 0.16  | 4.1e-03    | unchanged           |
-  | `logitNorm`, omega 0.49  | 2.4e-02    | unchanged           |
-  | `probitNorm`, omega 0.49 | 3.1e-02    | unchanged           |
-
-  The practical consequence was worse than the size suggests:
-  **`n_nodes` bought a TBS fit nothing.** Raising it returned the
-  identical biased answer, which is not the contract a quadrature
-  estimator is supposed to offer.
-
-  The residual is now composed at each NODE (adgh) or DRAW (admc) and
-  aggregated, which is exact given the ensemble and converges properly –
-  to 1.8e-06 at 25 nodes on boxCox and to machine precision on
-  `logitNorm`. Estimates AND objective values for existing TBS fits
-  therefore move, by more the higher the between-subject variability and
-  the tighter a `logit`/`probit` bound. Measured OFV shifts on a
-  6-timepoint fixture: 0.15 (boxCox, omega 0.16), 0.31
-  (`logitNorm(0, 12)`, omega 0.16), 3.13 (`logitNorm(0, 12)`, omega
-  0.49).
-
-  **Do not compare an OFV across this release.** The objective itself
-  changed for these endpoints, so a likelihood-ratio test, or an AIC/BIC
-  comparison, between a TBS model fitted before this version and one
-  fitted after is NOT valid – the two numbers are not on the same scale.
-  Refit both sides. A shift of ~3 units is the size of a nested-model
-  test, so this is not a rounding concern. Every other residual family
-  is unchanged, and `adfo` (which keeps the expansion) and `adirmc`
-  (which refuses TBS residuals) are unaffected.
-
-  `adfo` KEEPS the expansion and is now the one estimator that does.
-  Having no node ensemble is what FO means, so there is nothing to
-  compose over; an adfo TBS fit will differ from an adgh or admc one by
-  roughly the figures above. That is a property of the estimator, not a
-  disagreement to reconcile. `adirmc` refuses TBS residuals outright and
-  is unaffected.
-
-  ONE COMBINATION IS STILL APPROXIMATE, and “exact” above does not cover
-  it. [`t()`](https://rdrr.io/r/base/t.html) folds `nu/(nu-2)` into the
-  variance coefficients, which is exact for the combined forms because
-  only the residual’s VARIANCE enters there. It is not exact under a
-  transform: composing integrates the inverse transform over the
-  conditional law, and a t error is not an inflated-sd normal one. A
-  [`t()`](https://rdrr.io/r/base/t.html) + TBS endpoint is therefore
-  composed as an inflated-sd normal, which is what admixr2 has always
-  done – unchanged, not a regression. `covMethod = "r,s"` refuses that
-  combination outright and reports `"r"`, because the third and fourth
-  moments it would otherwise hand the weight are a normal’s.
-
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  and the diagnostic panels compose the same way, so a generated study
-  and a plotted prediction still describe the law the fit was scored
-  against. Note that this makes
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  unusable as an INDEPENDENT oracle for the composition – it shares the
-  implementation, so a “generate then recover” check is self-consistent
-  by construction and cannot detect a composition bias.
-
-  admc’s analytical gradient decomposition is written against the
-  expansion, so a TBS fit on admc now differences its own objective (the
-  route a joint unit already takes, with the fixed `z_list` making it a
-  common-random-number difference). That is slower; adgh’s gradient is
-  analytic throughout and was verified against finite differences of its
-  own NLL at 1.4e-07.
-
-- **Finite-difference steps are now MEASURED per parameter, by the
-  Shi (2021) procedure, and this is not optional.** Every finite
-  difference admixr2 takes of the objective – the optimizer’s gradient
-  under `grad = "fd"`, and the post-fit covariance Hessian – previously
-  used `pmax(abs(p), 0.1) * h` with a fixed `h` (`grad_h`,
-  `cov_h_outer`). That is one guess about how much noise the objective
-  carries, applied identically to every parameter, and it is the guess
-  behind the “Hessian not positive definite … try increasing
-  `cov_h_outer`” advice. The step is now chosen per parameter by probing
-  the objective, with the noise level itself estimated by Moré & Wild’s
-  ECnoise. `grad_h` remains as the FALLBACK a parameter takes when the
-  measurement cannot be made (a direction the objective is flat in, or a
-  failed noise estimate).
-
-  The covariance Hessian gets the measured NOISE but not the gradient’s
-  step: a Hessian is a second difference, whose error is
-  `(h^2/12)|f4| + 4*eps_f/h^2` (with `f4` the fourth derivative) and
-  whose optimum scales as `eps_f^(1/4)`, about ten times larger than the
-  first-derivative `eps_f^(1/3)`. Too fine a step there amplifies noise
-  as `4*eps_f/h^2` – exactly what tips a marginal Hessian out of
-  positive definiteness. Measured 6x to 385x worse across noise levels
-  from 1e-15 to 1e-7 if the gradient’s step is reused.
-
-  `cov_h_outer` SCALES the measured Hessian step rather than merely
-  backing it up, and `grad_h` is the gradient’s fallback. The
-  distinction matters: the measurement almost always succeeds, so a
-  fallback-only `cov_h_outer` would be inert in practice – and it is the
-  escape hatch the documentation points at (“Hessian not positive
-  definite … try increasing `cov_h_outer`”). Raising it by 100 still
-  gives a step 100 times larger.
-
-  Measured against the analytic gradient on the integration model,
-  maximum relative error over all five parameters:
-
-  | step       | adirmc inner NLL | adfo NLL    |
-  |------------|------------------|-------------|
-  | fixed 1e-6 | 7.3e-06          | 9.8e-06     |
-  | Shi21      | **2.8e-10**      | **3.9e-08** |
-
-  Standard errors and any `grad = "fd"` fit will move. They should move
-  toward the truth, but they will move.
-
-- **`gill` is REMOVED from all four controls.** It selected Gill (1983)
-  step selection, added in this same development cycle and never
-  released. It is removed rather than kept alongside Shi21 because
-  measurement showed it was worse than the fixed step it was meant to
-  improve on – 8.1e-04 (adirmc) and 7.9e-04 (adfo) against the fixed
-  step’s 7.3e-06 and 9.8e-06, at four times the evaluations. The cause
-  is not a mistake in the wiring: `nlmixr2Gill83()`’s exported wrapper
-  accepts `gillRtol`/`gillK`/`gillStep`/`gillFtol` and then hardcodes
-  the defaults in the inner call, so it always assumes an objective
-  accurate to about eight significant digits. That is right for FOCEI’s
-  per-subject objective and wrong for admixr2’s aggregate one.
-  `gill = TRUE` is now an error.
-
-- **Forward finite differences are removed; `grad = "fd"` is a CENTRAL
-  difference, and `grad = "cfd"` is gone.** Central was 10^2 to 10^4
-  times more accurate at every site measured, and the one solve per
-  parameter that forward differencing saved does not pay for a gradient
-  the optimizer cannot descend. Scripts passing `grad = "cfd"` must pass
-  `grad = "fd"`; scripts passing `grad = "fd"` keep working and get the
-  central difference.
-
-  **Every remaining finite difference in the package is now central
-  too.** The first pass of this change converted the whole-NLL
-  `grad = "fd"` paths and left five forward differences behind, three of
-  which were being handed Shi21’s measured step – and that step
-  minimises the error of a CENTRAL difference,
-  `h* = (3 eps_f/|f'''|)^(1/3)`. The forward optimum is a square root,
-  `~2 sqrt(eps_f/|f''|)`, and far coarser, so a forward difference taken
-  at the central step sits where its `eps_f/h` noise term dominates: the
-  measured step made those sites *worse*, not better. Converted:
-
-  - `.adfoGrad()` Pass 2 (structural thetas) and `.adghGrad()`’s
-    unpaired-theta block. Both are on the **default**
-    `grad = "analytical"` path – they run whenever the order-2 block or
-    the theta-sensitivity columns are unavailable. Both already batch
-    their configurations into one `rxSolve` per study, so the extra
-    evaluations are extra ROWS, not extra calls; the joint-unit branches
-    do pay per configuration.
-  - the IRMC inner gradient (`adirmcControl(grad = "fd")`), now `2n`
-    inner NLL evaluations against `n+1`.
-  - the gradient-differenced Hessian (`use_grad = TRUE`) in all three of
-    `.adfoCalcCov()`, `.adghCalcCov()` and `.admCalcCov()`. This one
-    runs only when the gradient is analytic, so it was differencing a
-    smooth exact function with a coarse forward step and then
-    symmetrising away the asymmetry that produced. **Reported standard
-    errors will move.**
-  - the FD-Jacobian fallback in `.adfoGetMuJBatch()` and
-    `.adfoGetMuJJoint()`, used when no sensitivity model could be built.
-    Unlike the others this J enters `V_pred = J Omega J'`, so **the adfo
-    objective itself moves on that path**, not just the gradient –
-    toward the truth, but it moves. The batched form absorbs the extra
-    eta rows into the same solve; the joint form cannot batch and costs
-    `2*n_eta` solves against `n_eta`.
-
-- **`adirmcControl(grad = "fd")` now differences with `grad_h`, not a
-  hard-coded `1e-6`.** The IRMC *inner* gradient ignored `grad_h`
-  entirely – it was the one finite difference in the package that could
-  not be tuned, which is why the new measured step selection could not
-  reach it either. It now honours the argument, and takes Shi21’s
-  measured step where one can be measured.
-
-  [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)’s
-  `grad_h` default moves to `1e-6` to match, so **a fit that does not
-  name `grad_h` is unchanged**. The IRMC inner NLL is deterministic
-  given fixed proposals, so it wants a finer step than the sampling
-  estimators, whose `1e-4` default exists to step over Monte Carlo
-  noise; inheriting that common default would have made every
-  `grad = "fd"` adirmc fit converge on a step 100x coarser than the
-  inner loop was tuned for.
-
-  **A script that sets `grad_h` explicitly does change**: the value was
-  ignored here before and is applied now, so the objective and estimates
-  can move. Every other estimator already used `grad_h` for this step,
-  so this also removes a discrepancy – the same control meant something
-  different for adirmc than for the other three.
+- **`adirmcControl(grad = "fd")` differences with `grad_h`**, not a
+  hard-coded `1e-6`.
 
 - **[`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md)’s
   new `grad = "analytical"` default brings the `grad_bounds` box with
-  it.** The box constraint (`p0 +/- grad_bounds`, default 5 on the
-  optimizer scale, a factor of ~148 for a log-scale theta) applies only
-  to gradient-based fits, so under the previous `grad = "none"` default
-  an adfo fit was unconstrained. A default `adfoControl(studies = ...)`
-  call is now confined to that box.
+  it.**
 
-  This is rarely reachable – it takes a starting value off by more than
-  ~148x – and a fit that stops on the box now says so. Set
-  `grad_bounds = Inf` for the old behaviour with the new gradient, or
-  `grad = "none"` for the old behaviour entirely.
+- **`admStudy(stratify = )` is removed**, conditioning being derived: a
+  script naming fewer covariates than its model uses moves.
+  [`covStrata()`](https://leidenpharmacology.github.io/admixr2/reference/covStrata.md)
+  still takes it.
 
-  The box itself is not an adfo peculiarity:
-  [`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md)
-  (`grad = "sens"`) and
-  [`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md)
-  (`grad = "analytical"`) have always defaulted to a gradient *and*
-  `grad_bounds = 5`, so this aligned adfo with them rather than singling
-  it out. That is why the default stays and the REPORTING is what
-  changed: the bounds notice is now emitted as a
-  [`message()`](https://rdrr.io/r/base/message.html) as well as a
-  [`warning()`](https://rdrr.io/r/base/warning.html). nlmixr2est muffles
-  conditions inside `nlmixr2Est.*`, so the warning reaches
-  `fit$warnings` – where `print(fit)` surfaces it – but never
-  [`warnings()`](https://rdrr.io/r/base/warnings.html). A batch script
-  that writes coefficients to disk without printing the fit would have
-  seen nothing at all; the message goes to the same channel as the live
-  progress table, which such a script does see.
+- **`range` truncates a MARGINAL covariate’s declared distribution
+  too**, not only a conditional one’s: the enrolled span holds however
+  the covariate is used.
+
+- **Nodes need an ESTIMATED coefficient, not just a covariate the model
+  reads**, so a fixed allometric exponent leaves weight marginal.
+
+- **`fit$env$strataNodes` is now one entry per covariate the model
+  reads**, rather than one number per fit, and
+  [`anova()`](https://rdrr.io/r/stats/anova.html) compares where the two
+  overlap.
 
 ### Bug fixes
 
-- **A DISCRETE covariate latently correlated with ANY other margin is
-  now refused instead of being integrated as if it were independent.** A
-  level is an interval of the latent normal, not a point, so a
-  correlation changes what the exact enumeration of the levels means:
-  correlation with a continuous margin makes the continuous conditional
-  differ from cell to cell, and one shared design is then the wrong
-  design in every cell, while correlation with another DISCRETE margin
-  changes the joint cell probabilities, which the per-margin
-  probabilities cannot carry. Both were previously integrated as
-  independent; the first was caught and refused during this release, and
-  the refusal now covers the second. `cov_integration = "sparse"`
-  reports this as an error, the collapse designs decline and fall back
-  to the product grid. A configuration that declared such a correlation
-  and fitted before will now stop: declare the discrete covariate
-  independent of the other margins, or use `cov_integration = "on"`.
+- **`adgh` on a no-IIV (`n_eta = 0`) model failed under covariate
+  marginalisation**, with a dimnames-length error from a phantom
+  `"eta."` name.
 
-- **A joint collapse now probes OMEGA as well as the structural
-  parameters before it freezes the design’s rank.** The joint loading’s
-  random-effect block is `t(L) %*% d/d eta`, so an `Omega` that makes
-  two initially collinear eta directions independent raises the rank
-  exactly as a coefficient leaving zero does. Probing only the
-  structural thetas could freeze a rank the fit then outgrew, after
-  which every re-aim was refused and the objective was `+Inf` across a
-  whole region of `Omega` rather than at an isolated point.
+- **A DISCRETE covariate latently correlated with any other margin is
+  refused**, rather than integrated as if it were independent; a level
+  is not a point.
+
+- **The estimated-effect curve and the source marks were different
+  quantities** for a staged model, so every source drew a constant
+  factor off the fitted line.
+
+- **A `by =` source got no mark and no regression line on
+  `covariate_effect`**, its own model being reachable under no name the
+  panels use.
+
+- **[`print()`](https://rdrr.io/r/base/print.html) told a `by =` source
+  its estimated coefficient was asserted**, and that it conditions on
+  nothing, contradicting its own `reported by` line.
+
+- **The no-enrolled-range warning fired for DISCRETE conditional
+  covariates**, where truncation is a no-op; it asked for a span for a
+  two-level factor.
+
+- **A `range` given as `c(lo =, hi =)` was applied by the fit and
+  ignored by the plot**, and one keyed by covariate names without being
+  a list is now refused.
+
+- **An unnamed `range` is resolved against the SOURCE’s conditional
+  covariates**, not the analysis-narrowed set: one `studies` object now
+  serves a nested pair.
+
+- **The source marks and the source regression line took the FIRST
+  assignment to a parameter**, where the solve uses the last; a staged
+  model drew a zig-zag.
+
+- **An enrolled `range` is refused against a `cov_dist` with its own
+  `joint` sampler**, rather than accepted and silently ignored.
+
+- **[`anova()`](https://rdrr.io/r/stats/anova.html) skipped the
+  resolution check when only one fit’s stamp was named**, which is the
+  pre-rename fit the unnamed comparison exists to catch.
+
+- **`fit$env$strataNodes` tells a marginalised covariate from one pinned
+  at a single node**, and reports the whole set of node counts rather
+  than its maximum.
+
+- **A `cov` entry longer than one took the `covariate_resid` panel
+  out**, through a label the panel computed and never read.
+
+- **A free-scaled covariate facet could be ticked at another covariate’s
+  levels**; the breaks are read per covariate now.
+
+- **The `diagnostic-plots` article called an undefined function** and
+  could not be built.
+
+- **[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
+  cut every study that declared a covariate distribution into nodes**,
+  having no `model` of its own to derive from. It needs `stratify` now.
+
+- **`stratify = FALSE` stopped reaching the spec**, so a study that
+  refused conditioning had one derived for it – the opt-out became its
+  opposite.
+
+- **`strata_nodes` was recorded only when something was cut into
+  nodes**, so it could vary between studies of one fit – which
+  [`anova()`](https://rdrr.io/r/stats/anova.html) refuses to compare.
+
+- **[`anova()`](https://rdrr.io/r/stats/anova.html) refused the nested
+  pair a covariate test is made of**, the null having dropped the term
+  and so having no nodes; measured, they agree to 5e-05.
+
+- **`range` was silently dropped by a source conditional on nothing**,
+  the transcribed `mean +/- SD` it exists for.
+
+- **The rebuilt stratum sampler was discarded one line later**, leaving
+  correlated conditional margins to be drawn independently of each
+  other.
+
+- **A continuous covariate conditional at `strata_nodes <= 8` was drawn
+  on a discrete axis**, a dot per quadrature node and the ticks on that
+  grid.
+
+- **An unnamed `range` crashed the `covariate_effect` panel out of
+  existence**, the error being caught and the panel reported as absent.
+
+- **A stratum’s source is recorded rather than recovered by regex**, so
+  two studies a user named `a_s1` and `a_s2` are no longer merged into
+  one.
+
+- **[`admMoments()`](https://leidenpharmacology.github.io/admixr2/reference/admMoments.md)
+  returned `NULL` where it documents an empty data frame.**
+
+- **A source conditional on a covariate the analysis model does not read
+  could not be reduced**: the sampler’s inputs are kept, so it rebuilds
+  on the subset.
+
+- **A discrete covariate latently correlated with another margin is
+  refused**, rather than integrated as if it were independent.
+
+- **A joint collapse probes Omega as well as the structural parameters**
+  before it freezes the design’s rank.
 
 - **Derivative-free fits no longer inherit nloptr’s loose
-  `xtol_rel = 1e-4`.** All four estimators now pass an explicit
-  `xtol_rel`, exposed as the last control argument and defaulting to
-  `sqrt(.Machine$double.eps)`.
+  `xtol_rel = 1e-4`.**
 
-- **Parallel restarts (`workers > 1`) could fail with “a parallel worker
-  could not read the compiled-model cache” whenever a second R session
-  was using admixr2 at the same time.** The compiled-model and
-  sensitivity-model caches are content-addressed files in a *shared*,
-  persistent
-  [`rxode2::rxTempDir()`](https://nlmixr2.github.io/rxode2/reference/rxTempDir.html),
-  so any other process fitting the same model writes the same path – and
-  a parallel fit’s own daemons are readers of that path by design. The
-  entries were written with a bare in-place
-  [`saveRDS()`](https://rdrr.io/r/base/readRDS.html), which publishes
-  the file the instant it opens the connection: it exists at **zero
-  bytes** and is filled in afterwards. A reader landing in that window
-  is handed a truncated payload, and truncation at any fraction makes
-  [`readRDS()`](https://rdrr.io/r/base/readRDS.html) fail –
-  [`file.exists()`](https://rdrr.io/r/base/files.html) is `TRUE` for
-  every one of them, so the existence check could not screen it out.
+- **Parallel restarts could fail to read the compiled-model cache**
+  whenever a second R session was using admixr2 at the same time.
 
-  Cache entries are now published atomically: serialised to a temporary
-  file in the same directory, then
-  [`file.rename()`](https://rdrr.io/r/base/files.html)d over the target.
-  A reader now sees either the previous complete entry or the new
-  complete entry, never a prefix of one. Measured with a single
-  competing writer, reads of a corrupt entry went from **64.7%** to
-  **0**, and the affected test file went from `1 failure, 2 errors` to
-  clean under a sustained competing publisher.
+- **adfo could report `NA` for every standard error** on a fit that
+  converged normally.
 
-  A **second, independent cause** of the same failure is fixed alongside
-  it: a worker’s own startup could delete the cache entry it was about
-  to read.
-  [`library(admixr2)`](https://leidenpharmacology.github.io/admixr2/) in
-  a daemon loads nlmixr2est, and the installed 6.2.0’s
-  `.resetCacheIfNeeded()` calls
-  [`rxode2::rxClean()`](https://nlmixr2.github.io/rxode2/reference/rxClean.html)
-  – which wipes the whole shared
-  [`rxTempDir()`](https://nlmixr2.github.io/rxode2/reference/rxTempDir.html)
-  – whenever its version stamp does not match. That branch never
-  rewrites the stamp, so the mismatch is permanent rather than
-  self-healing, and it fires in every daemon on every fit. Having two
-  nlmixr2est builds in play is enough to trigger it, which is an
-  ordinary state when working against an upstream source tree. Restarts
-  now load admixr2 in every worker *before* any of them reads the cache,
-  and rebuild the model if that startup cleared it.
-
-  Two consequences worth knowing. A rename can legitimately be refused
-  while another process holds the entry open (Windows reports “Access is
-  denied”); the cache write then reports a warning and the fit continues
-  from the model it already has, which is correct because the existing
-  entry is by construction a valid payload for that key. And the
-  guarantee is only as strong as the *other* process’s version – a peer
-  running admixr2 \< 0.4.1 still writes in place.
-
-- **adfo could report `NA` for every standard error on a fit that
-  converged normally.** The driver decided whether to build the
-  covariance Hessian by forward-differencing the *gradient* from the
-  sensitivity model’s shape alone, while `.adfoGrad()` re-derives that
-  decision at run time with stricter requirements – every study’s cached
-  `dJ` present, every theta’s direction resolvable. When they disagreed,
-  the gradient was itself finite-differenced and the Hessian then
-  finite-differenced *that*, which is exactly the nested FD the gate
-  exists to prevent. `.adfoGrad()` now reports what it actually did and
-  the driver believes that, falling back to the NLL-FD Hessian
-  otherwise.
-
-- **A joint (same-subject) study normalised before the model was known
-  kept `NULL` block outputs.** Only the driver’s pass carries the
-  endpoint name, and the short-circuit for an already-normalised study
-  skipped joint units altogether, so each block’s `cmt` tag stayed
-  empty: the joint sensitivity solve either dropped the fit to finite
-  differences or read an untagged compartment, giving a finite but wrong
-  joint objective with no warning.
+- **A joint study normalised before the model was known kept `NULL`
+  block outputs.**
 
 - **`.admCacheWrite()` could delete another session’s valid cache
-  entry.** The cleanup that removes a half-written file ran on any
-  `saveRDS` failure, including one that fails at open time and leaves a
-  complete pre-existing entry untouched. A concurrent fit of the same
-  model could therefore have its compiled model removed underneath its
-  parallel workers, which then fail with “parallel restart N failed”. It
-  now only removes a file that call created.
+  entry.**
 
 - **A sensitivity model that failed to build was reported as quietly as
-  one refused by design.** `.admLoadSensModel()` returns `NULL` both for
-  models that cannot have one (no random effects, ordinal, mixed or
-  unlike endpoint transforms) and for genuine failures such as an
-  unwritable
-  [`rxode2::rxTempDir()`](https://nlmixr2.github.io/rxode2/reference/rxTempDir.html).
-  The second case now warns rather than messages, and says what to check
-  – previously the same script silently produced a coarser gradient, and
-  different estimates and standard errors, on a machine with a read-only
-  cache directory.
+  one refused by design.**
 
 - **A fit that stops on the gradient box constraint now says so
-  audibly.** nlmixr2est muffles conditions raised inside `nlmixr2Est.*`,
-  so the warning reached `fit$warnings` – where `print(fit)` shows it –
-  but never [`warnings()`](https://rdrr.io/r/base/warnings.html). A
-  script that writes coefficients to disk without printing the fit saw
-  nothing at all. The notice is now also a
-  [`message()`](https://rdrr.io/r/base/message.html), on the same
-  channel as the live progress table.
+  audibly.**
 
 - **The order-2 `linCmt()` promotion did not run for a linCmt assigned
-  to a variable, so adfo kept finite-differencing its structural thetas
-  there.** `linCmt()` carries no second derivative, so an order-2
-  request promotes the model to explicit ODE form and builds from that.
-  The gate detecting a solved-form model read `ui$predDf$linCmt`, and on
-  rxode2 5.1.4 that column depends on how the model is *written*:
-
-  | model line | `predDf$linCmt` | promoted before | promoted now |
-  |----|----|----|----|
-  | `linCmt() ~ add(a)` | `TRUE` | yes | yes |
-  | `cp <- linCmt(); cp ~ add(a)` | `FALSE` | **no** | **yes** |
-  | `cp <- 2 * linCmt(); cp ~ add(a)` | `FALSE` | no | no – see below |
-
-  The assigned form is the common way to write it, and there the
-  promotion was never reached: `.admLoadSensModel(order = 2L)` served an
-  order-1 model and adfo silently kept the forward-FD struct-theta pass
-  (8e-04..1e-02 relative, against ~1e-09 for the analytic block). A
-  correct fit, just the slow noisy one.
-
-  Detection now uses the exported
-  [`rxode2::testRxLinCmt()`](https://nlmixr2.github.io/rxode2/reference/testRxLinCmt.html),
-  which checks `ui$.linCmtM` as well and is `TRUE` for all three forms.
-  The third still yields no cross block, because
-  [`rxode2::linToOde()`](https://nlmixr2.github.io/rxode2/reference/linToOde.html)
-  hands a derived `linCmt` back unchanged; the `linCmtB` text backstop
-  then correctly refuses and the caller falls back to order 1. So this
-  widens the fix rather than completing it.
+  to a variable**, so adfo kept finite-differencing its structural
+  thetas there.
 
 - **[`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md)
-  accepted an invalid nloptr algorithm, and would hand a derivative-free
-  one a gradient.** It had its own two-line algorithm rule instead of
-  the shared `.admResolveAlgorithm()` the other three controls use, and
-  that rule was one-directional and unvalidated:
-  `adghControl(algorithm = "NOT_AN_ALGO")` was accepted and surfaced as
-  a cryptic nloptr error mid-fit, and
-  `adghControl(grad = "analytical", algorithm = "NLOPT_LN_NELDERMEAD")`
-  kept both – paying for a gradient the algorithm discards on every
-  iteration. It now goes through the shared reconciliation, so
-  `grad == "none"` if and only if the algorithm is derivative-free, as
-  documented. `algorithm` now defaults to `NULL` (“match `grad`”).
-  `adgh`’s `cov_h_outer` default stays `eps^(1/4)` rather than the other
-  three’s `eps^(1/5)` – that difference is deliberate, since the
-  quadrature surface is noise-free.
-
-  **One combination changes, and it is the one worth knowing about.**
-  The old two-line rule existed to special-case exactly
-  `"NLOPT_LN_BOBYQA"`, upgrading it to LBFGS whenever a gradient was
-  requested – because BOBYQA was `adghControl`’s own *default*, so
-  naming it could not be distinguished from leaving it alone. With the
-  default now `NULL`, naming a derivative-free algorithm is unambiguous
-  and is honoured:
-
-  | `adghControl(...)` | 0.4.0 | 0.4.1 |
-  |----|----|----|
-  | `grad = "analytical"`, `algorithm = "NLOPT_LN_BOBYQA"` | `analytical` + LBFGS | **`none` + BOBYQA** |
-  | `grad = "fd"`, `algorithm = "NLOPT_LN_BOBYQA"` | `fd` + LBFGS | **`none` + BOBYQA** |
-
-  So a script that explicitly restated the old default now gets a
-  derivative-free fit where it had a quasi-Newton one. It says so (the
-  reconciliation emits a message), but if you wrote
-  `algorithm = "NLOPT_LN_BOBYQA"` meaning “the default”, **delete the
-  argument** – `NULL` now picks LBFGS for you. Every other combination
-  is unchanged, including the four pinned in `test-adgh-nodes.R`.
+  accepted an invalid nloptr algorithm**, and would hand a
+  derivative-free one a gradient.
 
 - **[`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)
-  validated neither `ci` nor `returnAdmr`.** `ci = 99` reached the
-  interval columns as a nonsense level and `returnAdmr = "x"` made the
-  driver’s [`isTRUE()`](https://rdrr.io/r/base/Logic.html) quietly
-  `FALSE`, returning a full fit where a plain list was requested. Both
-  are now checked, as in the other three controls.
+  validated neither `ci` nor `returnAdmr`.**
 
 - **A cache write that fails no longer discards the model it just
-  compiled, or kills the fit.** Both disk caches wrote with a bare
-  [`saveRDS()`](https://rdrr.io/r/base/readRDS.html). The cache is an
-  optimisation – by the time it is written the model is compiled and
-  loaded – so an unwritable or full
-  [`rxTempDir()`](https://nlmixr2.github.io/rxode2/reference/rxTempDir.html)
-  (a locked-down HPC home, a cache directory owned by another user)
-  should cost speed, not correctness. Instead `.admLoadModel()`
-  propagated the error and failed the whole `nlmixr2()` call with
-  `cannot open the connection`, while `.admLoadSensModel()`’s callers
-  wrap the build in `tryCatch(error = function(e) NULL)`, so a write
-  failure threw away a *successfully compiled* sensitivity model and
-  dropped adfo from its order-2 analytic structural gradient to forward
-  FD, silently. Both now warn once per file and carry on with the model
-  in hand. (The previous release swallowed the error entirely, which was
-  also wrong – the parallel restart workers find these models by reading
-  exactly these files, so a silent failure resurfaced much later as
-  every restart failing to read the cache.)
+  compiled**, or kills the fit.
 
-- **The session-ownership guard on a cached model rejected nlmixr2est’s
-  own sensitivity model unconditionally.** `.admRxLoadAll()` requires an
-  artifact under a session-local `*Sens` build directory to belong to
-  the running session, and tested that by comparing against
-  `.admModDir()` – which is `<tempdir>/admixr2Sens`, and so can never
-  equal nlmixr2est 7.x’s `<tempdir>/nlmixr2estSens`. A cached
-  `.admSensFromInner()` result was therefore reported stale on every
-  call *in the session that built it*, and the model recompiled (~3 s)
-  for every fit – the endless-recompile failure the guard exists to
-  prevent, caused by the guard. It now tests membership of the current
-  session’s [`tempdir()`](https://rdrr.io/r/base/tempfile.html), which
-  is what identifies the session and covers both build directories.
+- **The session-ownership guard rejected nlmixr2est’s own sensitivity
+  model** unconditionally.
 
 - **The order-2 `linCmt()` promotion could write a theta’s value into
-  the wrong `THETA[k]` slot.** An order-2 request on a solved-form
-  `linCmt()` model promotes it to explicit ODE form, and
-  `.admBuildThetaSens()` numbers its emitted derivative directions from
-  the *promoted* `iniDf`; `.admLoadSensModel()` built the `rename_map`
-  that fills those columns at solve time from the *original* one. Any
-  difference across the promotion – a renumbered `ntheta`, an inserted
-  or dropped row, a reordered eta – meant each theta was differentiated
-  in one slot and filled in another. The solve still succeeds and
-  `use_d2` skips adfo’s FD cross-check, so the fit would converge to
-  wrong estimates and wrong standard errors with no error and no
-  warning. Both are now derived from the same frame by construction
-  (`.admSensNameMaps()`). Latent on every model measured here –
-  [`linToOde()`](https://nlmixr2.github.io/rxode2/reference/linToOde.html)
-  does preserve the `iniDf` on those – but not guaranteed.
+  the wrong `THETA[k]` slot.**
 
-- **The gradient-box warning judged the fit against the wrong point, and
-  stayed silent for the parameters most likely to need it.** It
-  differenced the solution against the fit’s `p0`, but each restart’s
-  box is centred on its own perturbed starting value, so a restart
-  pinned to its box was not reported (its distance from `p0` never
-  reaches `grad_bounds`) while an interior one could be reported
-  spuriously. It also suppressed any hit on a parameter whose model
-  declares a bound on that side – a residual-error parameter always does
-  – even when that bound was nowhere near and admixr2’s box was what
-  stopped the fit. It now reconstructs the box actually given to nloptr,
-  centred on the winning restart’s own init, and reports a hit only when
-  that box, rather than a model-declared bound, is the binding edge.
+- **The gradient-box warning judged the fit against the wrong point**,
+  and stayed silent for the parameters most likely to need it.
 
 - **An explicit `adfoControl(grad = "analytical")` that cannot build a
-  sensitivity model warns again.** 0.4.1 demoted this to a
-  [`message()`](https://rdrr.io/r/base/message.html), which is right
-  when `grad` was left at its (new) default – an unavailable sensitivity
-  model is routine and unactionable for a fixed-effects-only model or an
-  ordinal endpoint – but wrong when the user named the argument: a
-  message is swallowed by
-  [`suppressMessages()`](https://rdrr.io/r/base/message.html), by a
-  knitr chunk with `message = FALSE`, and by any stderr-capturing
-  wrapper, leaving no record that the fit used the gradient the control
-  asked it not to use.
+  sensitivity model warns again.**
 
-  Where it survives is worth stating precisely, because the obvious
-  answer is wrong: nlmixr2est intercepts and muffles conditions raised
-  inside `nlmixr2Est.*`, so this warning does **not** reach
-  [`warnings()`](https://rdrr.io/r/base/warnings.html) and
-  `options(warn = 2)` does **not** turn it into an error. It is recorded
-  on `fit$warnings`, which `print(fit)` displays. That is a durable
-  record where a [`message()`](https://rdrr.io/r/base/message.html) left
-  none, which is the point – but do not rely on `options(warn = 2)` to
-  catch it.
-
-- **Normalising a study twice no longer leaves its endpoint unset.** The
-  idempotence guard added in this release returned before the point
-  where a unit’s `output` is filled from the caller’s default, so a
-  study first normalised without one (which is what the test fixtures
-  do) kept `output = NULL` permanently – and for a multi-endpoint model
-  `.admBuildEvFull(tag_cmt = TRUE)` then has nothing to tag `cmt` with,
-  so the unit reads the wrong compartment’s trajectory. A second pass
-  now fills what is still missing before returning.
+- **Normalising a study twice no longer leaves its endpoint unset.**
 
 - **Dev-mode parallel restarts could not see any function this release
   introduced.**
-  [`utils::assignInNamespace()`](https://rdrr.io/r/utils/getFromNamespace.html)
-  can replace a binding in a daemon’s locked installed namespace but
-  cannot *add* one, and the failure was swallowed, so a newly introduced
-  helper was simply absent in the worker while everything looked healthy
-  – `.admGH()`/`.admGH0()`, called from every finite-difference site in
-  `.admGrad()`/`.admGradBatch()`, would have broken every dev-mode
-  `workers > 1` restart. Dev functions are now injected via a patch
-  *environment* that patched closures are re-parented onto, so new and
-  existing names resolve alike and a future helper needs no special
-  handling. The same dispatch stopped shipping the parent’s model-cache
-  environments to each daemon: an environment serialises by value, so
-  every dev-mode restart was copying compiled rxode2 models that the
-  worker has to rebuild anyway.
 
-- **Generated models are built under role-tagged names, in their own
-  directory, and a cached one is checked before it is trusted.** rxode2
-  names an anonymous model’s `.c`/`.so` from the parsed model text
-  alone, but the emitted C also depends on inputs that text cannot see –
-  above all the event-sensitivity code, which is injected afterwards.
-  Two builds of one text that differ there land on a single artifact,
-  and because entry points resolve by NAME (`R_GetCCallable`) a model
-  bound to the earlier one silently starts executing the replacement
-  (nlmixr2/rxode2#1171). admixr2 is exposed in the worst way of any
-  package: `.admSensFromInner()` recompiles *nlmixr2est’s own* inner
-  model text with `eventSens = "jump"`, where nlmixr2est built the same
-  text with a different one. Generated models now carry a name folding
-  in the role and `eventSens` alongside the parsed md5, and are built in
-  a session-local directory rather than the persistent
-  [`rxTempDir()`](https://nlmixr2.github.io/rxode2/reference/rxTempDir.html).
-
-  The `.rds` caches stay in
-  [`rxTempDir()`](https://nlmixr2.github.io/rxode2/reference/rxTempDir.html),
-  which persists, so a cache entry written by an earlier session
-  necessarily references an artifact this session does not have.
-  `.admRxLoadAll()` therefore checks that a cached model’s DLL exists
-  **and** belongs to this session’s build directory, and reports the
-  entry as stale otherwise so it is rebuilt. Both halves are
-  load-bearing:
-  [`rxode2::rxLoad()`](https://nlmixr2.github.io/rxode2/reference/rxDynLoad.html)
-  on a vanished DLL does not reliably error – it returns quietly and the
-  model then solves to garbage (a prediction frozen at its `t = 0`
-  value, and `NA` structural gradients) – and R removes its temp
-  directory only on a clean exit, so a killed session leaves one behind
-  that satisfies [`file.exists()`](https://rdrr.io/r/base/files.html)
-  indefinitely.
+- **Generated models are built under role-tagged names**, in their own
+  directory, and a cached one is checked before it is trusted.
 
 - **Normalising a study twice turned it into a joint (same-subject)
-  study.** `.admNormaliseStudy()` was not idempotent, and the second
-  pass changed the likelihood. Normalising a legacy single-output study
-  ADDS an `observations` list while KEEPING its top-level `V` – which is
-  exactly the signature the joint branch tests for
-  (`!is.null(s$observations) && !is.null(s$V)`), so a second pass
-  collapsed it into one joint unit:
+  study.**
 
-      pass 1  is_joint = FALSE      pass 2  is_joint = TRUE      pass 3  TRUE
-
-  No error, no warning, and a perfectly plausible fit – down a different
-  likelihood path, and with adfo’s `have_d2` forced `FALSE` (it requires
-  `!any_joint`), so the order-2 analytical structural gradient this
-  release adds quietly turned itself off. Each estimator normalises
-  exactly once, so a normal fit never reached it; the test fixtures hand
-  out pre-normalised studies that the driver then normalises again,
-  which is how it was found – meaning a number of end-to-end tests had
-  been exercising the joint path while appearing to test the ordinary
-  one. `.admNormaliseStudy()` now marks what it has normalised and
-  returns such a study untouched. Genuine joint studies are detected
-  exactly as before.
-
-- **Non-finite parameters no longer reach the ODE solver.** The screen
-  that rejects an unusable parameter vector before a solve tested that
-  the omega diagonal was positive – and `Inf > 0` is `TRUE`. A
-  covariance probe that perturbs a residual parameter to `exp(1e5/2)`
-  therefore handed `Inf` to
-  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html),
-  which integrated garbage and emitted on the order of 190,000
-  `intdy -- t = <denormal> illegal` and `lsoda -- h too small` warnings
-  before the caller discarded the result anyway. The parameter vector is
-  now also checked for finiteness, at the objective *and* gradient entry
-  points of all three affected estimators (the gradients unpack the
-  optimizer vector themselves, so the objective’s guard did not cover
-  them). Aside from the console noise, this removes a guaranteed-useless
-  ODE solve every time the optimizer or the covariance step overflows a
-  parameter.
+- **Non-finite parameters no longer reach the ODE solver.**
 
 - **A cache-key collision solved fits at another model’s fixed value.**
-  A [`fix()`](https://rdrr.io/r/utils/fix.html)ed parameter never
-  reaches the optimizer, so it travels to the solve as data – either
-  baked into `$simulationModel` as that parameter’s default, or carried
-  on the cached sensitivity object. Both caches were keyed on the
-  `model({})` block, which does not distinguish `theta <- fix(0.5)` from
-  `fix(0.9)`. Two such fits therefore shared one compiled model, and the
-  second silently solved at the first’s fixed value: a plausible
-  objective, plausible estimates and plausible standard errors for a
-  model the user never wrote, with no error and no warning, persisting
-  across sessions because the cache directory does. Fixed values now key
-  both caches; ordinary *starting* values deliberately do not, since a
-  starting value is optimizer state and keying it would force a
-  recompile for nothing.
-
-  The parallel workers are why this needed more than a longer key: a
-  worker has no `ui` to re-derive from, and it recomputed the cache path
-  itself. The parent now sends the path on `pinfo` (which travels by
-  value, so no worker signature changes). One consequence for developers
-  only: a `devtools::load_all()` parent and an older INSTALLED admixr2
-  derive that path differently, so a daemon started from a stale install
-  cannot find the file – run `devtools::install()` before testing
-  parallel restarts, as the contributor notes already say. The worker’s
-  error message names that as the first thing to check.
 
 - **A stale sensitivity cache entry could survive a change to what it
-  caches.** The order-1 fallback is stored under the order-2 key, so
-  editing what the order-2 build emits has to invalidate the entry –
-  otherwise the previously compiled model is served and `.adfoGrad()`
-  contracts its second-order columns against the new code’s direction
-  map: a finite, plausible, silently wrong structural gradient with a
-  normal-looking objective. That used to rest on editing a schema-tag
-  string by hand, and was forgotten once during this work. The key now
-  carries the package version *and* a digest of the emitter’s own
-  source, so an edit between releases invalidates it too, with nothing
-  to remember.
+  caches.**
 
 - **`linCmt()` second-order promotion built its direction set from the
-  pre-promotion model.** `.admBuildThetaSens()` swapped in the
-  [`linToOde()`](https://nlmixr2.github.io/rxode2/reference/linToOde.html)
-  model but kept the parameter rows derived from the original, despite a
-  comment claiming otherwise. Any `iniDf` difference across promotion –
-  a renumbered `ntheta`, an added or dropped row, a different eta
-  ordering – would have made the emitted
-  `rx_f1_THETA_k_`/`rx_f2_ETA_i_THETA_k_` differentiate a different
-  parameter, and with `grad = "analytical"` now the default and the FD
-  pass skipped, adfo would descend a gradient computed for the wrong
-  theta. Latent rather than firing (promotion preserves the `iniDf` on
-  the models measured here), but nothing enforced it.
+  pre-promotion model.**
 
 - **A struct theta missing from the cached direction map crashed the
-  fit.** The intended fallback – turn the analytic pass off and
-  finite-difference – was unreachable, because `[[` with an unmatched
-  name on an atomic vector throws rather than returning `NULL`.
-  `.adfoGrad()` is not wrapped in a `tryCatch` there, so the whole
-  nloptr run died with a bare `subscript out of bounds`.
+  fit.**
 
 - **A transformed endpoint no longer pays for second-order compartments
-  it cannot use.** The solve paths deliberately discard the second-order
-  block for an `lnorm`/`boxCox`/`yeoJohnson`/`logit`/`probit` endpoint
-  (chaining a second derivative through the transform needs terms the
-  first-order chain does not carry), but nothing stopped it being
-  *built*: a 2-state, 2-eta, 1-unpaired-theta `lnorm` model integrated
-  20 states instead of 8 on every solve and then threw the extra away.
-  Those endpoints now build the order-1 model directly.
+  it cannot use.**
 
 - **A parallel worker no longer walks on from a model it could not
-  load.** The worker’s re-load step discarded its own failure return, so
-  a model whose shared library had been unloaded was handed to the
-  estimator as if live and the first
-  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
-  dereferenced a dead pointer – an opaque error deep in the restart, or
-  a heap-corruption crash on Windows. It now stops with the cache path
-  and the likely cause. A cache file whose contents are not a compiled
-  model at all is also detected again and rebuilt, rather than being
-  reported as loaded.
+  load.**
 
 - **`.admNLL()` gained the non-finite screen the other estimators got.**
-  admc’s objective – the function nloptr calls as `eval_f` – still
-  carried only the omega-diagonal test described below, which `Inf`
-  passes, so admc users kept seeing the console flood that adfo and adgh
-  users no longer do.
 
-- **Compiled models are held in a session cache.** `.admLoadModel()` and
-  `.admLoadSensModel()` reloaded their model from the disk cache on
-  EVERY call – a [`readRDS()`](https://rdrr.io/r/base/readRDS.html) of a
-  compiled model plus a
-  [`dyn.load()`](https://rdrr.io/r/base/dynload.html), for every fit and
-  every test – and handed back a fresh wrapper object each time. A
-  repeat load now costs a hash lookup instead: measured at roughly 50 ms
-  to 0.5 ms.
+- **Compiled models are held in a session cache**, instead of being
+  reloaded from the disk cache on every call.
 
-  The mechanism is `nlmixr2est`’s, deliberately rather than invented: an
-  [`emptyenv()`](https://rdrr.io/r/base/environment.html)-parented
-  environment per purpose, a composite key covering everything that
-  changes the emitted model, and a wholesale wipe at 64 entries to bound
-  retained compiled models – the same shape as its
-  `.foceiAnalyticAugCache`. The load step matches `rxUiGet.foceiModel()`
-  too, which re-loads EVERY `rxode2` element of a cached object rather
-  than one by name.
+- **The diagnostic panels solved a covariate study at the covariate
+  mean**, so its predicted moments lost the spread the observed ones
+  carry.
 
-  A cached model is only served while its disk cache file still exists,
-  so
-  [`rxode2::rxClean()`](https://nlmixr2.github.io/rxode2/reference/rxClean.html)
-  still forces a genuine recompile, and the metadata the key cannot
-  capture (a `boxCox`/`yeoJohnson` lambda’s VALUE) is re-derived on
-  every hit exactly as the disk path already did.
+- **A covariate the model no longer reads keeps its declared
+  distribution**, so the residual panel can still plot a deleted term
+  against it.
 
-  Note what this does NOT change: memory. A session’s footprint is set
-  by how many DISTINCT models it compiles and loads – measured at
-  roughly 4-10 MB and two shared libraries each, and nothing unloads
-  them – so a session fitting many different models grows regardless of
-  caching. Caching changes how often the same model is re-read, not how
-  many are resident.
+- **Stratified studies are titled by the covariate value they condition
+  at**, not a bare `_s1`/`_s2` index.
+
+- **No effect panel for a covariate the model does not estimate** – a
+  fixed allometric exponent is not a finding to check agreement on.
+
+- **A marginalised level mix sits at its mean, not its median**, so an
+  even binary split no longer greys a studied level or loses its
+  residual facet.
+
+- **The `lm` trend is guarded per covariate**, not across the figure, so
+  a facet with two studies gets no line through its two points.
+
+- **A source keeps one colour across both covariate panels**, and the
+  effect panel’s curves split only on covariates some study conditions
+  at a point.
+
+- **Merging a conditioned mark into a marginal one no longer invents a
+  spread** for it; the merged mark is drawn as the conditioned one it
+  contains.
+
+- **A shaded discrete level no longer costs the axis its level-only
+  ticks**, which had a three-level factor ticked at 0.5 and 1.5.
+
+- **The covariate panels’ legends keep a fixed order.** ggplot2 sorts
+  equal-priority guides by a hash, which is not stable across sessions.
+
+- **Coincident marks from different sources are no longer merged**,
+  which invented labels like `3 studies` for studies that share only a
+  position.
+
+- **An eighth source gets its own colour** instead of the first one’s,
+  via an HCL ramp past the seven Okabe-Ito hues.
+
+- **Black is reserved for the fit** in the covariate panels, so no
+  source is drawn in the colour of the thing it is compared against.
 
 ### Internal changes
 
+- **The covariate panels are built by `.admCovEffectPanel()` and
+  `.admCovResidPanel()`**, not inline in
+  [`plot.admFit()`](https://leidenpharmacology.github.io/admixr2/reference/plot.admFit.md),
+  which loses 170 lines.
+
+- **Visual regression tests for the covariate panels**, on synthetic
+  studies and no fit. Requires the new `vdiffr` suggested dependency.
+
+- **[`vignette("diagnostic-plots")`](https://leidenpharmacology.github.io/admixr2/articles/diagnostic-plots.md)
+  renders the covariate panels** from its own three-source fit, instead
+  of describing them in prose.
+
 - **[`print.admFit()`](https://leidenpharmacology.github.io/admixr2/reference/print.admFit.md)
   reaches nlmixr2est’s printer through
-  [`getS3method()`](https://rdrr.io/r/utils/getS3method.html).** It used
-  `get("print.nlmixr2FitCore", envir = asNamespace("nlmixr2est"))`,
-  which is semantically a `:::` call that merely evades `R CMD check`’s
-  syntactic scan – and carries exactly the upstream-refactor fragility
-  the package’s no-`:::` policy exists to avoid. The function is a
-  registered S3 method, so method lookup is the supported public route
-  to it.
+  [`getS3method()`](https://rdrr.io/r/utils/getS3method.html)**, not an
+  [`asNamespace()`](https://rdrr.io/r/base/ns-internal.html) lookup.
 
-- **The sensitivity-model builder takes an `order` argument.**
-  `.admBuildThetaSens()`/`.admLoadSensModel()` default to `order = 1L` –
-  the existing first-order direction set, unchanged, which is what
-  `admc`/`adgh` read. `order = 2L` additionally emits the eta x
-  direction cross block that `adfo` needs. The block is deliberately
-  asymmetric:
-  [`rxode2::rxExpandSens2_()`](https://nlmixr2.github.io/rxode2/reference/rxExpandSens2_.html)
-  accepts two different direction sets, so no theta x theta compartment
-  is generated, and admixr2 needs none of the residual-variance chains
-  that dominate nlmixr2est’s own second-order build (`errmodel.R`
-  derives the residual analytically). Second-order initial conditions
-  are emitted too, without which a parameter-dependent IC leaves the
-  cross compartment at zero.
-
-  The eta x eta half of that block is SYMMETRIC and
-  [`rxExpandSens2_()`](https://nlmixr2.github.io/rxode2/reference/rxExpandSens2_.html)
-  does not know it: asked for the full rectangle it emits
-  `d2/(d eta_1 d eta_2)` and `d2/(d eta_2 d eta_1)` as two variational
-  compartments carrying the same equation. The block is therefore
-  requested one eta row at a time, against only the directions at or
-  after it, and the name matrix mirrors the duplicate cell onto the
-  canonical one – exact, since mixed partials of a smooth prediction
-  commute, and it means the redundant chain expression is not emitted
-  either. Saves `n_states * n_eta(n_eta - 1)/2` integrated states: 20
-  -\> 18 on a 2-state/2-eta/1-theta model, 63 -\> 54 on a
-  3-state/3-eta/2-theta one. A joint fit now also asks for order 1,
-  since `have_d2` excludes joint units and the cross block it used to
-  compile was integrated on every solve for a result nothing read.
-
-  The sensitivity cache key includes the order; see the
-  cache-invalidation fix above for how a change to what the order-2
-  build emits invalidates an existing entry.
-
-  A [`fix()`](https://rdrr.io/r/utils/fix.html)ed parameter’s VALUE now
-  keys the cache too. A fixed parameter never reaches the optimizer, so
-  it travels to the solve as data carried on the cached object – and a
-  parallel worker, which reads that file and has no `ui` to re-derive
-  from, used the value it found. Two fits of the same model differing
-  only in `theta <- fix(0.5)` versus `fix(0.9)` therefore shared one
-  cache entry, and every parallel restart solved at the other fit’s
-  fixed value: silently, and across sessions, since the cache directory
-  persists. Starting values deliberately do not key the cache – they are
-  optimizer state, and invalidating on them would force a recompile for
-  nothing.
+- **The sensitivity-model builder takes an `order` argument**: `1L` is
+  the existing direction set, `2L` adds the cross block adfo needs.
 
 - **CI: `R-CMD-check` gained a `workflow_dispatch` trigger** and a
-  dependency cache-version bump. The RcppParallel/TBB -\> stringfish -\>
-  qs2 -\> rxode2 stack has broken twice from CRAN-side rebuilds alone,
-  with no commit of this package’s involved, so being able to ask “does
-  the current CRAN state still build?” without pushing a dummy commit is
-  worth two lines. Pair it with a cache-version bump for a genuinely
-  cold resolve – a warm dependency cache is what made macOS look healthy
-  right through the RcppParallel 6.0.0 break.
+  dependency cache-version bump.
 
 ## admixr2 0.4.0
 
 ### New features
 
-- **Student-t residual error (`cp ~ add(a) + t(nu)`) is now supported.**
-  nlmixr2 writes Student-t residuals as a *scale family* – residual =
-  scale \* T_nu, with the scale being whatever
-  `add()`/`prop()`/`pow()`/combined structure the endpoint already has –
-  so on the aggregate scale it is exactly the normal variance times
-  `nu/(nu-2)`. admixr2 moment-matches it: the mean is unchanged and the
-  variance is multiplied, which is exact for every existing residual
-  form and works with all four estimators. Previously refused outright.
+- **Student-t residual error (`cp ~ add(a) + t(nu)`) is supported**, as
+  nlmixr2’s scale family: the residual is `scale * T_nu`.
 
-  **`nu` cannot be estimated from aggregate data and should be fixed**
-  (`nu <- fix(5)`). This is structural, not a small-sample issue: `nu`
-  reaches the aggregate moments only through the multiplier `nu/(nu-2)`,
-  so it is aliased with the scale and only the product `a^2*nu/(nu-2)`
-  is identified – an estimated `nu` reflects its starting value, not the
-  data. admixr2 warns when `nu` is left free.
-  [`t()`](https://rdrr.io/r/base/t.html) is intended for carrying a
-  *known* `nu` through an aggregate analysis (for instance a published
-  model supplied via
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)),
-  not for estimating tail weight; a fitted t model is observationally
-  equivalent to a normal one with the same total residual variance.
+- **The transform-both-sides transforms call rxode2’s own kernel**,
+  instead of an inline reimplementation.
 
-  Note that moment matching makes the *mean* term of the objective
-  correct, but admixr2 also scores `tr(V_pred^-1 V_obs)`, which treats
-  the observed covariance as arising from a normal; that term stays
-  approximate for heavy-tailed residuals, increasingly so as `nu`
-  approaches 2.
-
-- **The transform-both-sides transforms now call rxode2’s own kernel.**
-  `boxCox`, `yeoJohnson`, `logitNorm` and `probitNorm` used to be
-  evaluated by a line-by-line R port of rxode2’s C `_powerD`/`_powerDi`
-  – about ninety lines of branch order, clamps and short-circuits. They
-  now call
-  [`rxode2::.rxTransform()`](https://nlmixr2.github.io/rxode2/reference/dot-rxTransform.html),
-  which is what rxode2’s own
-  [`boxCox()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)/[`yeoJohnson()`](https://nlmixr2.github.io/rxode2/reference/boxCox.html)/
-  [`logit()`](https://nlmixr2.github.io/rxode2/reference/logit.html)/[`probit()`](https://nlmixr2.github.io/rxode2/reference/probit.html)
-  call and which bottoms out in the very C routine the solve transforms
-  with, so admixr2 and rxode2 cannot drift apart. (The port had agreed
-  with it exactly – 0 mismatches over every transform x lambda x bounds
-  combination – but only by re-deriving it.)
-
-  The residual quadrature now evaluates the transform for the whole node
-  grid in one call instead of once per node, which made the switch a
-  **speed-up rather than a cost**: 3.00 -\> 0.60 ms per moment
-  evaluation for `boxCox` at 81 nodes, 1.50 -\> 0.30 for `yeoJohnson`,
-  0.95 -\> 0.30 for `logitNorm` (8 observations). The per-node
-  accumulation is still a loop, deliberately, so the summation order and
-  hence the objective are unchanged.
-
-  Two pieces stay admixr2’s own, for stated reasons: the derivative of
-  the INVERSE transform (rxode2 exposes no equivalent – and its
-  `_powerDD` has a sign error on the Yeo-Johnson negative branch that
-  admixr2 does not reproduce), and
-  [`dim()`](https://rdrr.io/r/base/dim.html) restoration, which
-  [`.rxTransform()`](https://nlmixr2.github.io/rxode2/reference/dot-rxTransform.html)
-  drops.
-
-- `.admBackTransform()`/`.admLogBackTransform()` now use
-  [`rxode2::probitInv()`](https://nlmixr2.github.io/rxode2/reference/probit.html)
+- **`.admBackTransform()` uses
+  [`rxode2::probitInv()`](https://nlmixr2.github.io/rxode2/reference/probit.html)**
   instead of an inline `low + (high - low) * pnorm(p)`. Numerically
-  identical across the whole range, but it is the kernel rxode2 itself
-  transforms with, and it matches the neighbouring `expit` branch, which
-  had always called rxode2.
+  identical.
 
-- **New `resid_nodes` control argument** on all four estimators. A
-  transform-both-sides endpoint (`boxCox`, `yeoJohnson`, `logitNorm`,
-  `probitNorm`) has no closed-form mean and variance –
-  `y = g(h(f) + sigma*eps)` – so admixr2 integrates the residual by
-  Gauss-Hermite quadrature. `resid_nodes` sets that node count (default
-  81); every other error model has closed forms and ignores it.
-
-  It is an **accuracy** dial, not a speed one. Worst-case relative error
-  against an independent quadrature, over all four transforms and
-  residual SD in {0.5, 1, 2, 3}: 5.7e-2 at 15 nodes, 4.5e-3 at 31,
-  5.0e-5 at 81. The error is dominated entirely by the largest SD; at SD
-  \<= 1 (a realistic residual on a transformed scale) 31 nodes already
-  gives 1e-7 or better. Cost is linear in the node count in isolation
-  (~50 us at 15, ~300 us at 81 for an eight-row study) but negligible
-  beside the ODE solve – a full NLL evaluation measured 0.750 s per 60
-  evaluations at *both* 31 and 81 nodes. Raise it for a saturating
-  endpoint with a large residual SD; there is little to gain by lowering
-  it.
-
-  [`datagenControl()`](https://leidenpharmacology.github.io/admixr2/reference/datagenControl.md)
-  takes it too, with the same default, so a study generated by
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  and the fit that consumes it integrate the residual identically unless
-  you deliberately change one of them.
+- **New `resid_nodes` control argument** on all four estimators: the
+  Gauss-Hermite node count for a transform-both-sides residual integral.
 
 - **New vignette: “Choosing a residual error model”**
   ([`vignette("error-models", package = "admixr2")`](https://leidenpharmacology.github.io/admixr2/articles/error-models.md)).
-  What the `cp ~ prop(...)` line actually does once your data are a mean
-  and a covariance; a side-by-side fit of the same study with the right
-  and the wrong residual model (the structural parameters survive, the
-  IIV does not); the full menu of supported models; reading the
-  covariance diagnostic panel, which is the aggregate-data substitute
-  for a residual-vs-predicted plot; `resid_nodes`; the parameters
-  aggregate data cannot identify
-  ([`t()`](https://rdrr.io/r/base/t.html)’s `nu`, an estimated `binom`
-  size); and the combinations that are refused, with the reason for
-  each.
 
 ### Bug fixes
 
-- **Dropped the `qs2` dependency.** The compiled-model and sensitivity
-  disk caches under
-  [`rxode2::rxTempDir()`](https://nlmixr2.github.io/rxode2/reference/rxTempDir.html)
-  are written with
-  [`saveRDS()`](https://rdrr.io/r/base/readRDS.html)/[`readRDS()`](https://rdrr.io/r/base/readRDS.html)
-  instead of `qs2`, and the files are named `adm-sim-*.rds` /
-  `adm-sens-*.rds`. Base R serialization does this job, so the
-  dependency bought nothing; it came up while tracking down rxode2
-  reverse-dependency failures in a check library that did not contain
-  `qs2`. The caches are keyed by a model digest and live in the session
-  temporary directory, so nothing needs migrating – a leftover
-  `adm-*.qs2` is simply a cache miss and the model is recompiled.
-
-  Note this does not change which packages get *loaded*: `rxode2` itself
-  imports `qs2`, and R loads a package’s `Imports` with its namespace,
-  so `qs2` (and `stringfish`) still enter the session behind
-  [`library(admixr2)`](https://leidenpharmacology.github.io/admixr2/).
+- **Dropped the `qs2` dependency**: the compiled-model and sensitivity
+  disk caches use
+  [`saveRDS()`](https://rdrr.io/r/base/readRDS.html)/[`readRDS()`](https://rdrr.io/r/base/readRDS.html).
 
 - **IRMC importance-sampling shift was wrong for every non-`exp`
-  mu-referenced theta.** For a paired parameter
-  `param <- h(theta + eta)`, `eta` and `theta` enter the transform
-  through the *same* argument, so shifting `theta` by `Delta` shifts the
-  importance-sampling target mean of `eta` by exactly `Delta` –
-  `theta_new - theta_orig` – for *any* `h`. The code computed that shift
-  as `log(back(theta))`, which equals `theta` only for `exp`
-  (`log(exp(theta))`); for a bounded (`expit`/`probit`) paired theta it
-  used a natural-scale-log form and for an additive one
-  (`emax <- temax + eta.emax`, the standard Emax writing style) it used
-  `log(theta)`. Both biased the estimate and its analytical gradient,
-  and the additive case went `-Inf`/`NaN` once the parameter passed
-  through zero. Measured against a direct `adgh` evaluation, the `expit`
-  shift drove the IRMC objective ~140 `-2LL` units off within a few
-  tenths of the proposal point; the shift is now the identity
-  `theta_new - theta_orig` for all transforms and matches the direct
-  objective to importance-sampling noise (~0.06). Only `adirmc` fits
-  used this path; the other three estimators integrate the random
-  effects directly and were unaffected.
+  mu-referenced theta.**
 
 - **A [`fix()`](https://rdrr.io/r/utils/fix.html)ed prediction-dependent
-  residual lost its gradient.** A single endpoint whose only residual
-  parameter is [`fix()`](https://rdrr.io/r/utils/fix.html)ed –
-  `cp ~ prop(b)` with `b <- fix(0.2)`, or a fixed `lnorm`/`boxCox`
-  coefficient – is still prediction-dependent: `Var(y|eta)` moves with
-  the prediction. `.admResidDeriv` early-returned `d(var)/df = 0` and
-  `d(V_pred)/d(V_struct) = 1` whenever there were no *estimated*
-  residual parameters, dropping that dependence from both the
-  structural-theta and omega gradients, so under the default analytic
-  gradient the optimizer descended a direction the objective did not
-  follow. The early return now fires only for a genuinely additive
-  residual (where those defaults are correct); every
-  prediction-dependent form runs the full derivative even with no
-  estimated residual parameter. FD-verified across `adfo`/`adgh`/`admc`
-  for fixed `prop`, `lnorm` and combined residuals.
+  residual lost its gradient.**
 
-- **`binom(20L, p)` was refused as a non-constant size.** An integer
-  literal deparses to `"20L"`, and `as.numeric("20L")` is `NA`, so a
-  binomial size written with the integer suffix was misclassified as
-  non-constant and refused with advice to
-  [`fix()`](https://rdrr.io/r/utils/fix.html) a parameter that does not
-  exist – the only difference from `binom(20, p)` being the suffix. A
-  bare numeric literal (double or integer) is now read straight from the
-  model AST.
+- **`binom(20L, p)` was refused as a non-constant size.**
 
-- **A non-positive `nbinomMu` size now gives a clear domain error.** The
-  size is estimated on the log scale, so a start `<= 0` made `log(size)`
-  `-Inf`/`NaN` and the first NLL evaluation `NaN` with no explanation.
-  It now refuses at parse with a domain message, matching the sibling
-  [`ar()`](https://rdrr.io/r/stats/ar.html) correlation and
-  [`t()`](https://rdrr.io/r/base/t.html) degrees-of- freedom guards.
+- **A non-positive `nbinomMu` size now gives a clear domain error.**
 
 - **`beta` precision denominator is guarded against a zero draw.**
-  `.admSimulate` computed a `beta` endpoint’s derived mean `b1/(b1+b2)`
-  without the zero- denominator guard its three sibling solve paths
-  already carry, so a draw with `b1 + b2 = 0` would have produced a
-  `NaN` objective; it now floors the denominator the same way.
 
 - **Standard errors: sigma SEs were uninitialised memory, and omega was
-  excluded.** All three `CalcCov` functions built the Hessian over
-  structural *and* residual parameters but returned only the structural
-  corner. nlmixr2est’s C++ `popDf` builder then read past the end of the
-  matrix, so every sigma row of `parFixedDf$SE` printed a denormal
-  (6.953178e-310, `%RSE` ~1e+307) instead of `NA` – while the discarded
-  sigma SEs were in fact good (reported SE / empirical sampling SD
-  0.90-0.94). The Hessian now also spans **omega**: excluding it made
-  the *structural* SEs too small, because a theta carrying an eta is
-  correlated with that eta’s variance. Reported SE / empirical SD for
-  the eta-carrying theta went from 0.67 to 1.17 (`prop`) and 0.67 to
-  1.06 (`lnorm`); a purely additive model barely moved. Under-stated SEs
-  give over-confident intervals, so that was the dangerous direction of
-  error. If the weakly-identified omega Cholesky makes the full Hessian
-  indefinite, the struct+sigma sub-block is reported with a warning
-  rather than nothing at all.
+  excluded.**
 
-- **Omega and sigma standard errors are now reported, on the scale the
-  estimates are printed on.** `fit$cov` previously covered the
-  structural thetas alone. It now spans structural thetas, residual
-  error *and* omega, delta-transformed out of the optimizer’s
-  parameterisation the way `nlmixr2est` does it – so
-  `Estimate +- 1.96*SE` is meaningful for every row. Residual error is
-  reported as an SD (from `log(sigma^2)`), with the other `sigma_role`s
-  mapped through their own derivatives (`t` degrees of freedom from
-  `log(nu - 2)`, an [`ar()`](https://rdrr.io/r/stats/ar.html)
-  correlation from its logit, a negative-binomial size from its log).
-  Omega is reported as the variance/covariance entries, named exactly as
-  nlmixr2est names them (`om.<eta>`, `cov.<eta_i>.<eta_j>`).
-
-  Omega is the one block that is not a per-row rescaling: the optimizer
-  holds the log-Cholesky, `Omega = L L'`, and `d(Omega_ij)/d(L_ab)` is
-  dense once omega is correlated. The new `.admOmegaJacobian()` builds
-  that Jacobian in full and rotates both the omega block and its
-  cross-covariance with struct/sigma; it agrees with a finite difference
-  to 3e-10 on a correlated two-eta model. Calibration against the
-  empirical sampling SD over 40 simulated studies gives reported SE /
-  empirical SD = 1.13 for an IIV variance.
-
-  Note for anyone touching this: nlmixr2est’s C++ `foceiFitCpp_`
-  re-dimnames the covariance from its own theta-name vector and blanks
-  the omega rows (upstream ships `.impmapNameCov()` to repair the same
-  thing for its importance-sampling estimator). It does so **in place**,
-  which also blanks the driver’s own copy, so the names are snapshot
-  before the matrix is handed over and restored afterwards by
-  `.admRestoreCovNames()`.
+- **Omega and sigma standard errors are reported**, on the scale the
+  estimates are printed on.
 
 - **A printed standard error now belongs to the parameter it is printed
-  beside.** nlmixr2est fills `parFixedDf$SE` *positionally*: it walks
-  the thetas in `iniDf` order and takes the next entry of
-  `sqrt(diag(fit$cov))` for each one it is not skipping. admixr2 builds
-  its covariance in optimizer order – structural thetas first, then
-  residual error – and hands over a matrix that also carries the
-  residual parameters, so two things had to be said explicitly:
-
-  - `.admCovThetaOrder()` puts the theta rows back in `iniDf` order. A
-    model that declares its residual parameter first,
-    `ini({ a <- 0.1; tcl <- log(3); tv <- log(30) })`, previously
-    printed `a` with `tcl`’s SE, `tcl` with `tv`’s and `tv` with `a`’s –
-    a silent rotation, every number finite and plausible.
-  - `.admCovSkip()` tells nlmixr2est which thetas the matrix actually
-    carries, derived from the matrix itself rather than from a
-    convention. nlmixr2est’s own default is version-dependent: 6.2.0
-    skips only *fixed* thetas, while earlier versions (including 6.0.1,
-    current on CRAN) also skip every residual-error theta, because
-    FOCEI’s covariance genuinely does not include them. Without this,
-    those versions printed `NA` for every residual SD and read the
-    structural SEs off the wrong rows.
-
-  Verified on nlmixr2est 6.0.1 and 6.2.0, with the residual declared
-  first and last, and with a
-  [`fix()`](https://rdrr.io/r/utils/fix.html)ed structural theta (which
-  correctly stays `NA`).
+  beside.**
 
 - **Count endpoints could not be fitted with the default gradient.**
-  `y ~ pois(cp)` and `y ~ nbinomMu(k, cp)` emit
-  `rx_pred_ = llikPois(DV, ...)` – the log-likelihood, not the mean –
-  and sensitivity columns that differentiate it, both of which need
-  `DV`, which an aggregate fit does not have. `.adghGrad()` and
-  `.admGradBatch()` returned all-`NA`, so `adgh` died at iteration 0
-  with “gradient of objective in x0 returns NA” and `admc` silently
-  produced a **zero** Hessian and therefore no standard errors. admixr2
-  now emits sensitivities of the count MEAN (the distribution’s
-  argument), exactly as it already did for `beta`; gradients agree with
-  a finite difference to 1.7e-05.
 
 - **The covariance Hessian used the starting lambda for a transformed
-  endpoint.** `.admGradBatch()` – the evaluator behind `covMethod = "r"`
-  when a gradient is available – inherited the transform back-transform
-  but not the estimated-lambda fix: an estimated `boxCox`/`yeoJohnson`
-  lambda is a *sigma* name, so the zero-fill of the solve frame handed
-  rxode2 lambda = 0 (a plain log transform) while the inverse used the
-  model’s STARTING lambda, held constant across every configuration.
-  That is the same mismatch documented elsewhere here as making the
-  sensitivity gradient ~60x wrong, driving the Hessian: every reported
-  SE came from the gradient of a different function, and lambda’s own
-  row was insensitive to lambda. Each configuration now writes and
-  inverts with its own lambda; measured against `.admGrad()` at a lambda
-  well away from its start, the batch gradient went from 67% wrong to
-  exact.
+  endpoint.**
 
 - **[`beta()`](https://rdrr.io/r/base/Special.html) endpoints were only
-  ever right on the plain NLL path.** The prediction of
-  `y ~ beta(b1, b2)` is the derived mean `b1/(b1+b2)` and its variance
-  needs the SOLVED precision `phi = b1 + b2`, and every other path read
-  the raw first shape parameter, or dropped `phi`, or both: the
-  `covMethod = "r"` objective evaluator scored a different model from
-  the fit, the finite-difference gradient returned all-`NA`,
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  emitted an `E` that was a shape parameter and a `V` of `NA`s, and
-  [`plot()`](https://rdrr.io/r/graphics/plot.default.html) gave an
-  all-`NA` predicted covariance after a perfectly ordinary fit. None of
-  it raised anything. Every path that turns a solve into a prediction
-  now combines the pair and carries `phi`.
-
-  A beta fit is also now driven **derivative-free**, with a message: a
-  structural theta reaches the objective through `phi` as well as
-  through the mean, and every gradient path chains through the mean
-  alone. `datagen(method = "fo")` refuses a beta endpoint for the
-  related reason that FO has no path to `phi` at all.
+  ever right on the plain NLL path.**
 
 - **The [`ar()`](https://rdrr.io/r/stats/ar.html) and `ordinal` guards
-  judged every study, not the affected one.** Both decided from a
-  model-level scan and then rejected every flattened unit, so
-  `cp ~ add(a) + ar(rho); ct ~ add(a2)` refused a `ct` study whose `V`
-  happened to be diagonal, and a PK + ordinal model could never be
-  fitted at all – the ordinary `cp` study is neither joint nor supplies
-  one block per category. Each guard now looks only at units that
-  observe the endpoint it is about.
+  judged every study, not the affected one.**
 
 - **Ordinal categories were grouped by exact floating-point time
-  equality.** The row times come from the per-category blocks, i.e. from
-  independent user inputs: `seq(0.1, 0.7, by = 0.2)` and
-  `c(0.1, 0.3, 0.5, 0.7)` are the same grid to a reader and differ in
-  the last bit to [`match()`](https://rdrr.io/r/base/match.html), which
-  put the two categories in different groups and silently dropped the
-  `-p_j*p_k` cross-covariance for those rows – the term a joint ordinal
-  fit exists to capture. Grouped by tolerance now.
+  equality.**
 
 - **The moment expansion and its derivative capped the same pole
-  differently.** `.admMomF()` (what the NLL scores) caps the divergent
-  `mu^(k-2)` correction against the leading term; `.admMomFd()` (what
-  the gradient chains through) zeroed it past a magnitude threshold
-  instead. For `pow(b, c)` with `c < 1` near a zero prediction the two
-  differed by orders of magnitude, so the optimizer was handed a
-  direction that does not descend the function it is minimising. The
-  derivatives are now the derivatives of the capped expression,
-  piecewise, and agree with a finite difference of `.admMomF()` across
-  the capped and uncapped regimes alike.
+  differently.**
 
 - **A parallel worker could invert a transform with another model’s
-  lambda.** The sensitivity cache key covers the `model({})` block, the
-  `iniDf` names, the [`fix()`](https://rdrr.io/r/utils/fix.html) flags
-  and the `err` column – but not the estimates, so two models differing
-  only in the VALUE of a [`fix()`](https://rdrr.io/r/utils/fix.html)ed
-  lambda share one file. The parent re-derives `pred_tbs` on a cache
-  hit; the worker could not, and used the file’s. The parallel restarts
-  then minimised a different objective from the sequential ones,
-  invisibly, because the NLL itself is bit-identical. The worker now
-  re-derives it from `pinfo`, which it already holds.
+  lambda.**
 
 - **[`plot()`](https://rdrr.io/r/graphics/plot.default.html)
-  back-transformed three residual roles on the wrong scale.** The trace
-  panel special-cased `pow_exp` and `t_df` and let `ar_cor`, `nb_size`
-  and `tbs_lam` fall through to the generic `exp(v/2)` variance rule: a
-  converged [`ar()`](https://rdrr.io/r/stats/ar.html) correlation of 0.6
-  plotted as **1.22**, outside its own support and disagreeing with what
-  `print(fit)` reports. The display map now comes from `.admSigmaNat()`
-  itself, so a new `sigma_role` cannot be added in one place and
-  forgotten in the other.
+  back-transformed three residual roles on the wrong scale.**
 
 - **A `binom` size written as a model constant was refused as
-  non-constant.** `nt <- 20; y ~ binom(nt, p)` – a genuinely constant
-  number of trials, and how one is usually written – hard-errored with
-  advice to [`fix()`](https://rdrr.io/r/utils/fix.html) a parameter that
-  does not exist. A bare numeric assignment in `model({})` now resolves;
-  an estimated size is still refused, since it has no gradient path.
+  non-constant.**
 
 - **A count or beta endpoint alongside another endpoint is now
-  refused.** Multi-endpoint solves route observations by compartment,
-  and a count endpoint is read through its distribution’s ARGUMENT – a
-  model variable, not a compartment – so the tagged records matched
-  nothing and the objective came back `Inf` with no explanation.
-  Relatedly, the dummy frame handed to nlmixr2est now carries the
-  ENDPOINT names rather than the solve columns, which is what its
-  `dvid`-\>`cmt` translation expects.
+  refused.**
 
 - **[`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  refuses an ordinal endpoint** instead of emitting a study without the
-  cross-category covariance: its categories are one joint observation,
-  and
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  derives each observed output separately.
+  refuses an ordinal endpoint.**
 
-- **`resid_nodes` no longer changes what a positional call means.** It
-  was added as the SECOND argument of every estimator control, so
-  `adghControl(studies, 7L)` – which had always meant `n_nodes = 7` –
-  set `resid_nodes = 7` instead, passed its own validation, and left
-  `n_nodes` at its default, changing the eta quadrature grid the whole
-  fit is built on with no message. `admControl(studies, 20000L)` and
-  `adirmcControl(studies, 2000L)` were the same for `n_sim`, and
-  `datagenControl` shifted `sampling`/`seed`/`cores`. `resid_nodes` is
-  now the last argument of all five, where it cannot capture a
-  positional one.
+- **`resid_nodes` no longer changes what a positional call means.**
 
-- **The ordinal same-time grouping is now defined once.**
-  `.admResidApply()`, `.admResidVChain()` and `.admResidMuCoupling()`
-  each grouped the rows themselves. When the tolerance-based grouping
-  above was first added, it went into one of the three – which is worse
-  than the exact-match bug it replaced: wrong-but-consistent became
-  objective-and-gradient-disagree, so the optimizer descended a
-  direction the objective does not follow. All three now call
-  `.admOrdTimeGroup()`.
+- **The ordinal same-time grouping is defined once.**
 
 - **Endpoints transformed differently from one another refused the
-  sensitivity model.** The guard caught transformed-vs-*un*transformed
-  mixtures only, while the back-transform spec is a single one taken
-  from the first endpoint. So `cp ~ lnorm(a); ct ~ boxCox(b, lam)`
-  applied [`exp()`](https://rdrr.io/r/base/Log.html) to `ct`’s Box-Cox
-  rows, two `logitNorm` endpoints with different bounds shared the first
-  one’s bounds, and two `boxCox` endpoints shared the first one’s lambda
-  – the residual path being per-endpoint already, the gradient then
-  described a different function from the one the objective scored. Any
-  non-identical set now falls back to finite differences.
+  sensitivity model.**
 
 - **A joint (same-subject) study had no aggregate diagnostics.**
-  `.admAggData()` solved one output for the whole stacked unit and
-  applied the first endpoint’s residual spec to every row; it then died
-  on the dimnames (the row count is the stacked total, the labels were
-  one block’s times) and, being guarded, left `fit$env$aggData` unset –
-  so `plot(fit)`‘s mean/cov panels had nothing to show and said nothing
-  about it. It now uses the estimators’ own shared-eta solve and
-  per-row-output residual, and labels rows `<endpoint>@<time>`.
 
 - **Documented: an `adfo` standard error describes scatter, not
-  accuracy.** FO linearises at eta = 0, so on a non-additive residual or
-  a large omega the point estimate carries a bias of several standard
-  errors – measured 5-20 SE, giving 0% coverage for a nominal 95%
-  interval even where the SE itself matches the sampling SD. Prefer
-  `adgh`/`admc` when the uncertainty matters.
+  accuracy.**
 
-- **A failed covariance is no longer silent.** When the Hessian was
-  singular the covariance came back `NULL`, `covMethod` was set to `""`
-  and every SE was `NA` with no warning reaching the user. The drivers
-  now say so.
+- **A failed covariance is no longer silent.**
 
-- **A study `ev` containing observation records now warns.** `ev` is
-  dosing-only; observation rows in it were appended a second time by the
-  study’s own `times`, silently duplicating every time point.
+- **A study `ev` containing observation records now warns.**
 
 - **Residual parameters fixed with
   [`fix()`](https://rdrr.io/r/utils/fix.html) were silently dropped.**
-  `add(a)` with `a <- fix(0.7)` fitted with **no residual variance at
-  all**; `add(a) + prop(b)` with a fixed `b` lost the proportional term;
-  and `pow(b, c)` with a fixed `c` reverted to `prop()`.
-  `.admParseIniDf()` removes fixed rows from the optimizer, and the
-  residual spec indexed only the estimated ones – `tdf_fixed`,
-  `ar_fixed` and `lam_fixed` existed for exactly this reason but
-  `add`/`prop`/`pow` had no equivalent. They now carry
-  `add_fixed`/`prop_fixed`/`pow_fixed`. Fixing a residual parameter is
-  routine (it is what this package’s own
-  [`t()`](https://rdrr.io/r/base/t.html) advice tells you to do for
-  `nu`), so this was reachable in ordinary use.
 
 - **A `prop()`/`pow()` term on a transform-both-sides endpoint
-  contributed nothing.** For
-  `boxCox`/`yeoJohnson`/`logitNorm`/`probitNorm` the quadrature used
-  only the additive parameter, so `cp ~ add(a) + prop(b) + boxCox(lam)`
-  scored identically with and without `b`: the parameter entered the
-  optimizer, had an exactly-zero gradient, and was reported back at its
-  starting value. rxode2 emits `rx_r_ ~ (a)^2 + (rx_pred_f_)^2*(b)^2`
-  for that model, and admixr2 now builds the transformed-scale residual
-  SD from the same expression, including `propT()`/ `powT()` (which
-  scale by the transformed prediction) and `combined1()`.
+  contributed nothing.**
 
 - **The post-fit covariance was a Hessian of the wrong objective for
-  several error models.** `.admNLLBatch()` – the evaluator
-  `covMethod = "r"` differentiates – called the fused C++ kernels
-  unconditionally. Those implement additive, proportional, combined and
-  lnorm only, so transform-both-sides, count, beta, ordinal and
-  [`ar()`](https://rdrr.io/r/stats/ar.html) models were scored as
-  `combined2`: standard errors and RSEs came from a different model than
-  the one fitted (measured on a boxCox model, 190.28 against 49.46). It
-  now applies the same `.admResidCppOK()` gate `.admNLL()` uses.
-  `adirmc` cannot take that route (its kernel forms the
-  importance-weighted mean internally) and now refuses those models with
-  a message.
+  several error models.**
 
 - **`adfo` dropped [`ar()`](https://rdrr.io/r/stats/ar.html) from its
-  objective while keeping it in the gradient.** `.adfoVpred()` never
-  received the observation times and never added the residual
-  correlation, so the FO objective was exactly invariant in `rho` while
-  `.adfoGrad()` returned a non-zero `rho` gradient – the optimizer
-  walked a direction the objective could not move along, and `adfo`
-  reported a different objective from `adgh`/`admc` on identical data.
-  Relatedly, `adfoControl(grad = "analytical")` warned that it was
-  falling back to finite differences when no sensitivity model was
-  available but did not actually do so.
+  objective while keeping it in the gradient.**
 
 - **An out-of-support transform aborted the whole fit.**
-  `any(ap$ms != 1)` was not NaN-guarded in nine places. `.admTBSi()`
-  legitimately returns `NaN` outside a transform’s support, and the
-  default `grad_bounds = 5` lets a line search reach it, so
-  `any(NaN != 1)` – which is `NA` – raised “missing value where
-  TRUE/FALSE needed” instead of the optimizer simply rejecting the
-  point. This killed every `yeoJohnson` fit.
 
 - **The sensitivity-model cache could serve a stale transform spec.**
-  The cache key digests `ui$lstExpr`, the `model({})` block only, but a
-  Box-Cox lambda’s starting value and its
-  [`fix()`](https://rdrr.io/r/utils/fix.html) status live in `ini({})` –
-  so `lam <- fix(0.5)` and `lam <- 0.5` collided. `pred_tbs` is what
-  tells the solve which lambda to use and how to back-transform, and it
-  was not re-derived on a cache hit (unlike `rename_map`/`fixed_theta`,
-  which are, for the same reason). Gradients came back wrong by 10²⁻¹⁰4x
-  with one component of the wrong sign, while the objective stayed
-  bit-identical, so nothing warned and the fit simply stalled.
 
-- **`0^negative` in the moment expansion.** `pow(b, c)` with `c < 1` at
-  a structural prediction of exactly zero – routine for a depot model
-  observed at `t = 0` – produced a **negative variance** (measured
-  -3.4e+20 at `c = 0.25`) or a plausible-looking 2.3e+05 at `c = 0.75`.
-  The second-order term has a genuine pole there and is now dropped
-  rather than evaluated at machine epsilon. The C++ twin `adm_mom_f()`
-  had no guard at all and returned `NaN` where the R path returned a
-  finite value, so the same model fitted or did not depending on the
-  estimator.
+- **`0^negative` in the moment expansion.**
 
-- **`ordinal` endpoints are now supported** (`y ~ c(p1, p2)`), as a
-  joint same-subject unit with one observation block per category. The
-  spec is registered under every category probability (only the first
-  was, leaving the others with no residual variance), and the same-time
-  cross-category covariance correctly *replaces* the structural
-  covariance rather than adding to it – by the law of total covariance
-  `Cov(1_j, 1_k) = -E[p_j]E[p_k]` exactly, the structural term
-  cancelling. Verified against a multinomial simulation with
-  between-subject variability.
+- **`ordinal` endpoints are supported.**
 
-- **`dv()` is now refused.** It scales the residual by the observed DV,
-  an individual-level quantity an aggregate mean and covariance cannot
-  recover. rxode2’s simulation ignores `dv()`, so admixr2 had been
-  silently fitting the prediction-scaled model instead.
+- **`dv()` is now refused.**
 
 - **[`ar()`](https://rdrr.io/r/stats/ar.html) combined with
-  `prop()`/`pow()`/combined is now refused**, as is
-  [`ar()`](https://rdrr.io/r/stats/ar.html) inside a joint multi-output
-  study. rxode2’s innovation scaling leaves the marginal variance equal
-  to `rx_r_` only when `rx_r_` is constant; with a prediction- dependent
-  variance the process is non-stationary and admixr2’s covariance was
-  measured 2.4-12x too high.
+  `prop()`/`pow()`/combined is now refused.**
 
-- **Known upstream issue – simulating an
+- **Known upstream issue: simulating an
   [`ar()`](https://rdrr.io/r/stats/ar.html) fit will not reproduce its
-  covariance.** rxode2 has two [`ar()`](https://rdrr.io/r/stats/ar.html)
-  emitters and they do not agree with each other. Its *estimation* lines
-  are the prediction-error decomposition (`rx_pred_ + phi*prev_resid`,
-  `rx_r_ * (1 - phi^2)`), whose implied marginal variance is the
-  stationary AR(1) admixr2 scores. Its *simulation* is not stationary
-  when a dose record precedes the first observation: the first
-  observation carries up to 2x the nominal residual variance. A
-  **zero-amount** dose reproduces it and a plain `add()` model does not,
-  so it is record-driven and specific to
-  [`ar()`](https://rdrr.io/r/stats/ar.html); nlmixr2’s own focei cannot
-  recover `rho` from rxode2’s own simulation either (0.4617 against a
-  truth of 0.60 on individual-level data, with no admixr2 involved).
-  admixr2 keeps the stationary form – matching the simulator would put
-  it at odds with nlmixr2’s estimator and would break when this is fixed
-  upstream. Every other error model round-trips (simulate from the
-  fitted model, aggregate, and recover the fitted mean and covariance)
-  to within Monte-Carlo noise.
+  covariance.**
 
-- **Prediction-dependent residual error is now composed correctly
-  (`prop()`, `pow()`, `lnorm()`, combined).** admixr2 built the
-  predicted covariance as `Var_eta(f) + Sigma(mu_pred)` – evaluating the
-  residual variance at the *population mean* prediction rather than
-  averaging it over individual predictions. That is exact only for
-  additive error. The predicted covariance is now the **law of total
-  variance**, `Var_eta(E[y|eta]) + E_eta[Var(y|eta)]`, which for a
-  proportional model adds the previously missing `b^2 * Var_eta(f)` to
-  the diagonal, and for `lnorm()` also scales the **off-diagonals** by
-  `exp(s)` (its conditional mean is `f*exp(s/2)`, so the whole
-  covariance is scaled, not just its diagonal). Validated against
-  individual-level simulation: the old formulas carried fixed biases of
-  ~15-20% that did not shrink with sample size, while the new ones
-  converge to the empirical moments.
-
-  **This changes results for every `prop()`, `pow()` and `lnorm()`
-  model.** Objective values, residual-error and IIV estimates and all
-  standard errors move – for a proportional model with 30-50% IIV, the
-  residual SD and omega were both biased upward by roughly 2-4%; for
-  `lnorm()` the effect is larger. Purely additive (`add()`) models are
-  unchanged, bit for bit. Refits are expected to differ from results
-  produced by earlier versions.
+- **Prediction-dependent residual error is composed correctly**
+  (`prop()`, `pow()`, `lnorm()`, combined).
 
 - **`lnorm()` analytic gradients were computed against the wrong
-  quantity.** For a log-transformed endpoint the sensitivity model
-  returns `rx_pred_ = log(f)` while the NLL path reads the natural-scale
-  prediction, so `grad = "sens"`/`"analytical"` differentiated `log(f)`
-  while the objective scored `f`. The sensitivity paths now
-  back-transform with the chain rule. This affected every `lnorm()` fit
-  using an analytic gradient and went unnoticed because `lnorm()`
-  appeared in no gradient test; a finite-difference gradient check
-  across all estimators and error models has been added.
+  quantity.**
 
 - **[`delay()`](https://nlmixr2.github.io/rxode2/reference/delay.html)
-  (DDE) models get an accurate sensitivity solve.** A delay model’s
-  sensitivity system – the base ODEs plus one variational compartment
-  per state per direction, all delayed – is stiff enough to trip
-  rxode2’s `hasDelay` AutoSwitch composite (`dop853`+`ros4`) into its
-  `ros4` leg, whose dense delay-history is inaccurate for this system.
-  The failure is silent: the sensitivity model’s predictions match the
-  ordinary solve for the first observations and then drift once
-  [`delay()`](https://nlmixr2.github.io/rxode2/reference/delay.html)
-  begins reading the recorded (solved) history, so `grad = "sens"`
-  gradients on a DDE model could be wrong without any error or warning.
-  Sensitivity solves for a delay model are now forced onto pure `dop853`
-  (dense, no `ros4` secondary), whose 8th-order dense output reproduces
-  the ordinary solve. Non-delay models are untouched, and their solves
-  are unchanged byte for byte. Found by porting the equivalent fix from
-  nlmixr2est’s own augmented-sensitivity solve.
+  (DDE) models get an accurate sensitivity solve.**
 
 ### Internal changes
 
 - **The post-fit covariance’s reported-scale rotation and its non-PD
-  omega fallback are now single shared helpers.** The ~46-line block
-  that rotates the optimizer-scale covariance onto the printed scale
-  (residual delta factors plus the omega Jacobian) was byte-identical in
-  all three `CalcCov` functions, and the “drop to the struct+sigma
-  sub-block when omega makes the Hessian indefinite” fallback was
-  duplicated in `adfo`/`admc` with an already-divergent invert-first
-  variant in `adgh`. Both are now `.admScaleReportedCov()` and
-  `.admReduceNpdOmega()` in `utils.R`, so a change to how residual/omega
-  SEs reach the printed scale, or to the fallback threshold, is made in
-  one place rather than three. The `adgh` fallback converges onto the
-  same eigenvalue threshold the other two use; results are unchanged
-  (the full pipeline and covariance suites pass identically).
+  omega fallback are now shared helpers.**
 
 - **The residual variance’s dependence on `(mu, var_f)` is computed once
-  per study/unit instead of three times.** `.admResidVChain()`,
-  `.admSigmaGrad()` and `.admResidMuCoupling()` each recomputed
-  `.admResidDeriv()` internally, in every estimator’s hot gradient loop
-  – three `resid_nodes` (default 81) quadratures per observation row for
-  a transform-both-sides endpoint. They now accept the precomputed
-  derivative as an optional last argument, which the estimators (which
-  call all three on the same inputs) pass, cutting that to one.
-  Gradients are bit-identical (the same computation, reused); the
-  optional argument defaults to recomputing, so every other caller is
-  unchanged.
+  per study/unit**, not three times.
 
 - **The residual V-composition tail is one helper,
-  `.admApplyResidTail()`.** The three-line
-  `V <- V * tcrossprod(ms); diag(V) <- dv; V <- V + rmat` that composes
-  a structural covariance with the residual (lnorm/TBS off-diagonal
-  scale, the composed diagonal, an
-  [`ar()`](https://rdrr.io/r/stats/ar.html) correlation matrix) was
-  hand-copied at eleven sites across every estimator’s moment/objective
-  path, `plot.R`, `datagen.R` and `.admJointResidual`. Adding an
-  off-diagonal residual channel meant editing all of them, and missing
-  one silently dropped that endpoint’s off-diagonal predicted covariance
-  on that path. It is now written once, including the load-bearing
-  `na.rm` guard that keeps a NaN from a transform’s out-of-support tail
-  from aborting the fit. Objective and gradients are bit-identical.
+  `.admApplyResidTail()`.**
 
 ## admixr2 0.3.0
 
 ### New features
 
 - **Analytical gradients for non-mu-referenced (“unpaired”) structural
-  thetas.** A structural theta with no mu-referencing eta (`tka` with no
-  `eta.ka`, or the `exp(tcl) * exp(eta.cl)` writing style rxode2 does
-  not mu-reference) used to cost an extra finite-difference `rxSolve`
-  per gradient call. admixr2 now emits its own first-order sensitivity
-  model over an explicit direction set (one direction per random effect
-  plus one per unpaired theta), compiled with `eventSens = "jump"` so
-  dosing-modifier (`f`/`lag`/`rate`/`dur`) sensitivities are no longer
-  silently zero. This mirrors the scheme nlmixr2est’s fast-focei uses
-  (`.foceiAnalyticDirections`) but first-order only, and is
-  cross-validated against nlmixr2est’s inner model to ~1e-13 across ODE,
-  linCmt, dosing modifiers, initial conditions, covariates, if/else and
-  multi-endpoint models. Consumed by `admc`, `adgh` (including joint
-  multi-output studies); `adfo` keeps finite differences (its
-  `V_pred = J Omega J' + Sigma` needs a second derivative). Measured
-  2.5-3.8x faster and ~100x more accurate than the previous
-  finite-difference path on a 2-compartment model. This adds `symengine`
-  (already a hard dependency of `nlmixr2est`, so always installed
-  alongside admixr2) to `Imports`, used to emit the linCmt direction
-  derivatives. The feature degrades gracefully on rxode2 without
-  `eventSens = "jump"` support (it falls back to the finite-difference
-  path), so no minimum-version bump is required.
+  thetas.**
 
-- **Residual error models: `pow()`, `addPow()` and `combined1()` are now
-  supported, with analytical gradients**
-  ([\#84](https://github.com/LeidenPharmacology/admixr2/issues/84)).
-  admixr2 previously supported only `add`, `prop` and `lnorm`. The
-  residual error model is now read from `ui$predDf`
-  (`errType`/`errTypeF`/`transform`/`addProp`) rather than from
-  `iniDf$err` alone, and every estimator evaluates it through one shared
-  specification:
+- **Residual error models `pow()`, `addPow()` and `combined1()` are
+  supported**, with analytical gradients.
 
-  | form                                   | variance                 |
-  |----------------------------------------|--------------------------|
-  | `combined2` (default for `add + prop`) | `a^2 + b^2 * f^(2c)`     |
-  | `combined1`                            | `(a + b * f^c)^2`        |
-  | `lnorm`                                | moment-matched lognormal |
+- **Multi-compartment fitting (multiple observed outputs).**
 
-  with `c = 1` recovering `prop` and `b = 0` recovering `add`.
-  Analytical `d(var)/d(sigma)`, `d(mu)/d(sigma)` and `d(var)/d(f)` are
-  supplied for all of them, so residual parameters keep an exact
-  gradient under `grad = "sens"`/`"analytical"`.
+- **Parallel restarts run on `mirai` daemons.**
 
-  Existing `add`/`prop`/`lnorm` fits are unaffected: the aggregate
-  `-2LL` is bit-for-bit identical, and their gradients change only by
-  floating-point reassociation (~1 ulp).
+- **New `nDisplayProgress` control argument.**
 
-- **Multi-compartment fitting (multiple observed outputs).** A study may
-  now observe several model outputs at once (e.g. plasma and brain/CSF)
-  via an `observations` list – one entry per observed output with its
-  own `output`, `times`, `E` and `V`. Two modes
-  ([\#85](https://github.com/LeidenPharmacology/admixr2/issues/85)):
-
-  - *Independent* – each output has its own `n`/`ev` (separate
-    experiments, e.g. literature meta-analysis); the aggregate `-2LL` is
-    the sum of the per-output likelihood blocks. Fit with full
-    analytical / sensitivity gradients.
-  - *Joint (same subjects)* – outputs measured on the same subjects,
-    with a shared `n`/`ev` and a joint covariance given either as a
-    study-level full `V` or as per-output marginal `V` plus a `cross`
-    list of cross-covariance blocks. Scored by a single MVN over the
-    stacked vector with shared random effects and the full
-    **analytical** gradient in all three estimators (any number of
-    compartments; the assembled joint covariance is checked for
-    positive-definiteness).
-
-  Supported by `est = "admc"`, `"adfo"` and `"adgh"`;
-  [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  generates multi-output aggregate data and
-  [`plot()`](https://rdrr.io/r/graphics/plot.default.html) renders one
-  panel set per compartment. Pass the endpoint names to
-  [`admData()`](https://leidenpharmacology.github.io/admixr2/reference/admData.md),
-  e.g. `admData(c("cp", "cCSF"))`. `est = "adirmc"` does not support
-  multiple observed outputs.
-
-- **Parallel restarts now run on `mirai` daemons.** `workers > 1` starts
-  a pool of background R processes instead of dispatching through
-  `future`/`furrr`. This replaces the previous fork (Unix/macOS) vs
-  PSOCK (Windows/RStudio) split with a single code path that behaves
-  identically on every platform, and the pool lives on its own mirai
-  compute profile so it never disturbs daemons the user has set up for
-  their own code. `furrr` and `future` are no longer used; `mirai` moves
-  into `Suggests`. Workers are still stopped automatically after the
-  restart phase (and now also on error/interrupt, via
-  [`on.exit()`](https://rdrr.io/r/base/on.exit.html)), so all cores are
-  free for the covariance step;
-  [`admStopWorkers()`](https://leidenpharmacology.github.io/admixr2/reference/admStopWorkers.md)
-  remains available.
-
-- **`nDisplayProgress` control argument** for every estimator
-  ([`admControl()`](https://leidenpharmacology.github.io/admixr2/reference/admControl.md),
-  [`adfoControl()`](https://leidenpharmacology.github.io/admixr2/reference/adfoControl.md),
-  [`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md),
-  [`adirmcControl()`](https://leidenpharmacology.github.io/admixr2/reference/adirmcControl.md)),
-  passed through to the
-  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
-  calls that drive fitting. It sets how many subjects a single solve
-  must exceed before the solver shows its text progress bar. The default
-  (`.Machine$integer.max`) keeps the bar off, so it no longer leaks into
-  scripts, logs or rendered vignettes; lower it (e.g. `1000L`) to watch
-  progress during long interactive fits.
-
-- The aggregate-data estimators (`adfo`, `adgh`, `adirmc`, `admc`) now
-  carry `type` and `description` attributes classifying them as “Model
-  Based Meta Analysis” methods, so they appear in the category-grouped
-  estimation-method list nlmixr2est prints for an unsupported `est=` (or
-  a bare `nlmixr2()` call)
-  ([\#107](https://github.com/LeidenPharmacology/admixr2/issues/107)).
+- **The aggregate-data estimators carry `type` and `description`
+  attributes**, classifying them as Model Based Meta Analysis.
 
 ### Bug fixes
 
 - **`pow()` models no longer fit the wrong residual model, silently.**
-  `pow(b, c)` produces two `iniDf` rows – the coefficient
-  (`err = "pow"`) and the *exponent* (`err = "pow2"`). admixr2
-  recognised neither, warned once, and then treated **both as additive
-  variances**: the exponent was stored as `2*log(c)` and optimized as a
-  variance contributing `exp(2*log(c))` to `diag(V)`. A `pow` model
-  therefore ran to completion and reported plausible estimates for a
-  model it was not fitting. Residual parameters now carry a role, and a
-  `pow` exponent is estimated on its own (unconstrained, identity)
-  scale.
 
-- **`combined1()` is honoured.** `predDf$addProp` selects SD-additive
-  (`combined1`) versus variance-additive (`combined2`) residual error.
-  admixr2 ignored it and always computed `combined2`, dropping the
-  `2*a*b*f` cross term. (`combined2` is nlmixr2’s default, so only
-  models that explicitly asked for `combined1()` were affected.)
+- **`combined1()` is honoured.**
 
-- **An unrepresentable residual model is now refused rather than
-  approximated.** Error types admixr2 cannot express as a Gaussian
-  aggregate MVN (`logitNorm`, `probitNorm`, Box-Cox/Yeo-Johnson
-  transforms, `t`/`cauchy`, `propF`/`powF`) previously emitted a
-  one-time warning and were then **treated as additive**, so the fit
-  proceeded with the wrong residual model. They now
-  [`stop()`](https://rdrr.io/r/base/stop.html). This is a behaviour
-  change: a model that “worked” before may now error.
+- **An unrepresentable residual model is refused rather than
+  approximated.**
 
 - **`propT`/`propF`, `norm`/`dnorm` and `dlnorm`/`logn`/`dlogn` no
-  longer emit spurious “modelled as …” approximation warnings.** These
-  are aliases, not approximations: `norm` *is* `add`, `logn` *is*
-  `lnorm`, and on an untransformed model `propT` (which scales by the
-  transformed prediction) *is* exactly `prop`, because there the
-  transformed and untransformed predictions are the same quantity. The
-  warnings claimed an inaccuracy that did not exist.
+  longer emit spurious approximation warnings.**
 
-- **Lognormal residual error is now applied to the plotted predicted
-  mean.**
-  [`plot.admFit()`](https://leidenpharmacology.github.io/admixr2/reference/plot.admFit.md)’s
-  aggregate-data helper added the lnorm variance to the predicted
-  covariance but never applied the `exp(s/2)` mean scaling to the
-  predicted `E`, so lnorm fits plotted a mean the NLL does not use.
+- **Lognormal residual error is applied to the plotted predicted mean.**
 
-- The solver progress bar no longer appears during covariance/gradient
-  batches. Most internal
-  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
-  calls already suppressed it, but the covariance and batched-gradient
-  solves in `admc` hard-coded a low `nDisplayProgress` (1000), so the
-  bar printed once a chunk exceeded 1000 solves. All solves now honour
-  the new `nDisplayProgress` control argument (default off).
+- **The solver progress bar no longer appears during covariance/gradient
+  batches.**
 
-- Hard-coded numeric constants in a model’s `model({})` block (e.g. a
-  fixed brain volume `vb <- 5`, common in PBPK/CNS models) are no longer
-  zeroed. admixr2 used to hand-fill every model parameter it did not set
-  with `0`, clobbering such a constant’s default and producing an
-  `NA`/non-finite objective (e.g. a `qout / vb` divide-by-zero). It now
-  supplies only the parameters it varies and lets
-  [`rxSolve()`](https://nlmixr2.github.io/rxode2/reference/rxSolve.html)
-  fill the rest from the model’s own defaults, so constants and
-  covariate defaults keep their value.
+- **Hard-coded numeric constants in a `model({})` block are no longer
+  zeroed.**
 
-- `adgh` now computes gradients for non-mu-referenced (unpaired)
-  structural thetas. The unpaired-parameter set was derived from the
-  eta-indexed `struct_eta_idx`, so it was always empty and those thetas
-  silently received a zero gradient; it now uses the struct-indexed
-  `struct_has_eta`.
+- **`adgh` computes gradients for non-mu-referenced (unpaired)
+  structural thetas.**
 
 - **Parallel restarts under `devtools::load_all()` warn once about the
-  installed package.** In dev mode the admixr2 namespace is locked, so
-  worker daemons run the *installed* package rather than the loaded
-  source; if it is stale the parallel objective silently diverges from
-  the sequential one. `.admRunRestarts` now emits a one-time warning in
-  this case telling you to `devtools::install()`. It never fires in
-  production (installed package == source).
+  installed package.**
 
 ### Internal changes
 
-- **`adgh` gradient-mode fits are about twice as fast: the objective and
-  the gradient now share one solve**
-  ([\#76](https://github.com/LeidenPharmacology/admixr2/issues/76)).
-  `nloptr` asks for the objective and the gradient as two separate
-  calls, but LBFGS always asks at the same parameter vector, and
-  `.adghGrad` already builds exactly the moments the negative
-  log-likelihood needs – so the objective’s solve was duplicate work. It
-  is now memoised onto the gradient’s solve. Measured on a
-  3-compartment, 5-eta, 40-timepoint fit with a full covariance `V`:
-  `rxSolve` calls per fit drop from 58 to 23 (`n_nodes = 3`) and 63 to
-  25 (`n_nodes = 5`), roughly halving wall time. Applies to
-  `grad = "analytical"` only (including multi-restart fits);
-  `grad = "fd"`/`"cfd"`/`"none"` are unchanged, as are all gradient
-  values.
+- **`adgh` gradient-mode fits are about twice as fast**: the objective
+  and the gradient share one solve.
 
-  Note for anyone comparing objectives across versions: the reported
-  objective now comes from the sensitivity solve rather than the plain
-  one. Both integrate the same underlying model, but the augmented
-  system makes rxode2’s adaptive stepper land a little differently –
-  about 5e-11 relative on the objective, well inside the solver’s own
-  tolerance, and parameter estimates are unchanged (identical to six
-  decimal places in testing). As a side effect the objective and its
-  gradient are now computed from a single trajectory, where previously
-  they came from two slightly different ones.
-
-- **Model loading and per-fit memory now follow nlmixr2est’s own
-  conventions.** admixr2 previously pinned each fit’s `foceiModel`
-  companion objects in a package-level environment (a Windows
-  GC-finalizer heap-corruption guard) and reclaimed rxode2’s global
-  model registry with a bespoke snapshot/teardown after every fit. Both
-  are gone: the companion objects are no longer pinned (the guard proved
-  unnecessary – verified by running the `covMethod = "r"` fit path
-  repeatedly under aggressive GC with no crash), and each estimator now
-  frees memory the way nlmixr2est does, with
-  [`gc(); rxode2::rxUnloadAll()`](https://rdrr.io/r/base/gc.html). The
-  disk model cache continues to use `qs2` + `digest`, exactly like
-  rxode2/nlmixr2est; the in-memory pin cache was removed (same-model
-  reloads come from the `qs2` files). Net: ~290 fewer lines, no
-  admixr2-specific memory machinery, and fit results are unchanged.
+- **Model loading and per-fit memory follow nlmixr2est’s own
+  conventions.**
 
 - **`admClearCache()` is removed; use
   [`rxode2::rxClean()`](https://nlmixr2.github.io/rxode2/reference/rxClean.html).**
-  admixr2’s `qs2` caches live in
-  [`rxode2::rxTempDir()`](https://nlmixr2.github.io/rxode2/reference/rxTempDir.html)
-  alongside rxode2’s and nlmixr2est’s, so
-  [`rxode2::rxClean()`](https://nlmixr2.github.io/rxode2/reference/rxClean.html)
-  – rxode2’s standard cache wipe (unload all models + clear the temp
-  dir), which nlmixr2est itself calls to reset – already clears
-  admixr2’s cache too. The package-specific `admClearCache()` is
-  therefore redundant.
 
 - **[`print()`](https://rdrr.io/r/base/print.html) on a fit no longer
-  writes into rmarkdown’s namespace.** `print.admFit` temporarily
-  overwrote `rmarkdown:::print.paged_df` via
-  [`assignInNamespace()`](https://rdrr.io/r/utils/getFromNamespace.html)
-  (restoring it `on.exit`) to steer nlmixr2est away from its paged-table
-  branch. That branch is in fact unreachable: nlmixr2est decides between
-  paged and console output by *probing behaviour* – it prints a
-  `paged_df`-classed frame into
-  [`capture.output()`](https://rdrr.io/r/utils/capture.output.html) and
-  infers “a paged renderer consumed my output” from zero captured lines
-  – but `rmarkdown:::print.paged_df` returns its `knit_asis` object
-  visibly and no `print.knit_asis` method exists, so the probe always
-  collects output, always returns `FALSE`, and the console branch is
-  always taken. The stub therefore changed nothing except skipping the
-  discarded probe render (~20 ms per `print(fit)`), at the cost of
-  mutating a foreign namespace – fragile, unsafe under concurrent
-  rendering, and a CRAN-policy grey area. Printed output is unchanged,
-  byte for byte.
-  ([\#58](https://github.com/LeidenPharmacology/admixr2/issues/58))
+  writes into rmarkdown’s namespace.**
 
 ## admixr2 0.2.0
 
@@ -2234,35 +615,26 @@ CRAN release: 2026-07-02
 ### New features
 
 - New estimator `est = "adgh"`: deterministic Gauss-Hermite quadrature
-  over the random-effects prior, configured via
+  over the random-effects prior, via
   [`adghControl()`](https://leidenpharmacology.github.io/admixr2/reference/adghControl.md).
-  The objective is noise-free (no Monte Carlo draws), the analytical
-  gradient is exact, and it is unbiased at any IIV magnitude. For models
-  with up to ~4 random effects it is the fastest exact estimator
+  Noise-free and exact
   ([\#65](https://github.com/LeidenPharmacology/admixr2/issues/65)).
 - [`datagen()`](https://leidenpharmacology.github.io/admixr2/reference/datagen.md)
-  gains FO-approximated population moments (`method = "fo"`, matching
-  `est = "adfo"`) for design evaluation and optimal-design work
+  gains FO-approximated population moments (`method = "fo"`) for design
+  evaluation and optimal-design work
   ([\#56](https://github.com/LeidenPharmacology/admixr2/issues/56)).
 - `adirmcControl(kappa_method = "linearized_gh")`: GH-averaged kappa
   baseline for the IRMC inner loop.
 - `admClearCache()` prunes the session-level compiled-model cache
   ([\#10](https://github.com/LeidenPharmacology/admixr2/issues/10)).
-- Control objects now accept any `nloptr` algorithm; the default is
-  chosen from the gradient mode, and `grad`/`algorithm` are reconciled
-  automatically
+- Control objects accept any `nloptr` algorithm; the default is chosen
+  from the gradient mode, and `grad`/`algorithm` are reconciled
   ([\#70](https://github.com/LeidenPharmacology/admixr2/issues/70)).
 
 ### Bug fixes
 
-- Fix an infinite recursion (“evaluation nested too deeply” / “node
-  stack overflow”) that aborted the first fit of an R session when a
-  covariance matrix was requested (`covMethod = "r"`). Accessing
-  `ui$simulationModel` left a self-referential compiled-model object in
-  `ui$meta`, which nlmixr2’s ui-cloning during fit assembly could not
-  traverse. admixr2 now clears that transient artifact in
-  `.admLoadModel()`, keeping the ui in the canonical state nlmixr2
-  expects. Affected all four estimators (`adfo`/`admc`/`adgh`/`adirmc`)
+- Fix an infinite recursion that aborted the first fit of an R session
+  when a covariance matrix was requested. All four estimators
   ([\#81](https://github.com/LeidenPharmacology/admixr2/issues/81)).
 - Use the ML denominator (`1/n_sim`) consistently in the MC gradient
   kernels, matching the NLL
@@ -2273,7 +645,7 @@ CRAN release: 2026-07-02
 - Guard non-positive predicted variance in the diagonal-NLL paths
   ([\#57](https://github.com/LeidenPharmacology/admixr2/issues/57)).
 - Correct the FO diagonal omega gradient scaling, plus assorted plot,
-  output-variable detection, caching, and worker-serialization fixes.
+  output-variable detection, caching and worker-serialization fixes.
 
 ### Documentation
 
@@ -2283,9 +655,8 @@ CRAN release: 2026-07-02
 
 ### Dependencies
 
-- Declare minimum versions for the imported `rxode2 (>= 5.1.2)` and
-  `nlmixr2est (>= 6.0.1)`, and for the suggested `nlmixr2 (>= 5.0.0)`
-  (used in examples and tests).
+- Declare minimum versions for `rxode2 (>= 5.1.2)`,
+  `nlmixr2est (>= 6.0.1)` and the suggested `nlmixr2 (>= 5.0.0)`.
 
 ## admixr2 0.1.0
 
@@ -2301,6 +672,5 @@ CRAN release: 2026-06-02
 - Diagnostic plots: observed vs predicted mean/covariance, NLL trace,
   parameter trace.
 - `traceplot()` support: admixr2 fits populate the standard
-  `parHistData` slot, so the nlmixr2 `traceplot()` generic works
-  natively (best restart, natural scale, no burn-in marker).
+  `parHistData` slot, so the nlmixr2 generic works natively.
 - Integrates with the nlmixr2/rxode2 ecosystem.

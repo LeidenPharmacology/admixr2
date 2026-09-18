@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
 <link rel="icon" sizes="any" href="../favicon.ico">
 <link rel="manifest" href="../site.webmanifest">
-<script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/IBM_Plex_Sans-0.4.10/font.css" rel="stylesheet">
 <link href="../deps/JetBrains_Mono-0.4.10/font.css" rel="stylesheet">
@@ -25,7 +25,7 @@
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
-    <nav class="navbar navbar-expand-lg fixed-top " aria-label="Site navigation"><div class="container">
+    <nav class="navbar navbar-expand-lg fixed-top bg-light" data-bs-theme="light" aria-label="Site navigation"><div class="container">
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
@@ -75,14 +75,6 @@
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json">
 </form></li>
 <li class="nav-item"><a class="external-link nav-link" href="https://github.com/LeidenPharmacology/admixr2" aria-label="GitHub"><span class="fa fab fa-github"></span></a></li>
-<li class="nav-item dropdown">
-  <button class="nav-link dropdown-toggle" type="button" id="dropdown-lightswitch" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true" aria-label="Light switch"><span class="fa fa-sun"></span></button>
-  <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-lightswitch">
-<li><button class="dropdown-item" data-bs-theme-value="light"><span class="fa fa-sun"></span> Light</button></li>
-    <li><button class="dropdown-item" data-bs-theme-value="dark"><span class="fa fa-moon"></span> Dark</button></li>
-    <li><button class="dropdown-item" data-bs-theme-value="auto"><span class="fa fa-adjust"></span> Auto</button></li>
-  </ul>
-</li>
       </ul>
 </div>
 
@@ -358,7 +350,7 @@ initialisation’s.</p>
 <span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_sim<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a></span>
 <span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a>  optimize covariance other elapsed</span>
-<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">40.558</span>      <span class="fl">0.001</span>     <span class="dv">0</span>  <span class="fl">40.559</span></span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">46.325</span>          <span class="dv">0</span>     <span class="dv">0</span>  <span class="fl">46.325</span></span>
 <span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a></span>
 <span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_sim<span class="sc">$</span>parFixed or fit_sim<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a></span>
@@ -379,7 +371,16 @@ initialisation’s.</p>
 <span id="cb6-36"><a href="#cb6-36" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> <span class="sc">$</span>shrink </span>
 <span id="cb6-37"><a href="#cb6-37" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit_sim<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
 <span id="cb6-38"><a href="#cb6-38" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit_sim<span class="sc">$</span>message)<span class="sc">:</span>  </span>
-<span id="cb6-39"><a href="#cb6-39" tabindex="-1"></a>    NLOPT_FAILURE<span class="sc">:</span> Generic failure code. </span></code></pre></div>
+<span id="cb6-39"><a href="#cb6-39" tabindex="-1"></a>    NLOPT_XTOL_REACHED<span class="sc">:</span> Optimization stopped because xtol_rel or <span class="fu">xtol_abs</span> (above) was reached. </span></code></pre></div>
+<p><strong>No standard errors, and the blank <code>SE</code> /
+<code>%RSE</code> / <code>95%CI</code> columns are why.</strong> A study
+generated from a model is not a sample: <code>n</code> is the source
+study’s true sample size, but the parameter uncertainty a sampling law
+would need is not available, so admixr2 sets
+<code>covMethod = "none"</code> and reports no uncertainty at all.
+Naming a <code>covMethod</code> explicitly is an error rather than an
+override. The columns are nlmixr2’s table; the emptiness is the
+answer.</p>
 <p>Structural parameter estimates and the truth:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">est</span>   <span class="op">&lt;-</span> <span class="va">fit_sim</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">struct</span></span>
@@ -613,83 +614,36 @@ mean (blue).
 residual error; only the diagonal of V carries that.</p>
 </div>
 <div class="section level2">
-<h2 id="first-order-moments-for-design-evaluation">First-Order moments for design evaluation<a class="anchor" aria-label="anchor" href="#first-order-moments-for-design-evaluation"></a>
+<h2 id="choosing-the-moment-method">Choosing the moment method<a class="anchor" aria-label="anchor" href="#choosing-the-moment-method"></a>
 </h2>
 <p><code><a href="../reference/datagen.html">datagen()</a></code> integrates over the IIV by Monte Carlo, the
-same engine as <code>est = "admc"</code>. For design evaluation the
-deterministic First-Order expansion — what <code>est = "adfo"</code>
-uses — is often the better source of <code>E</code> and
-<code>V</code>:</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>E</mi><mo>=</mo><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><mn>0</mn><mo stretchy="false" form="postfix">)</mo><mo>,</mo><mspace width="2.0em"></mspace><mi>V</mi><mo>=</mo><mi>J</mi><mspace width="0.167em"></mspace><mi mathvariant="normal">Ω</mi><mspace width="0.167em"></mspace><msup><mi>J</mi><mi>⊤</mi></msup><mo>+</mo><mi mathvariant="normal">Σ</mi><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>J</mi><mrow><mi>t</mi><mi>j</mi></mrow></msub><mo>=</mo><msub><mrow><mfrac><mrow><mi>∂</mi><msub><mi>f</mi><mi>t</mi></msub></mrow><mrow><mi>∂</mi><msub><mi>η</mi><mi>j</mi></msub></mrow></mfrac><mo stretchy="true" form="postfix">|</mo></mrow><mrow><mi>η</mi><mo>=</mo><mn>0</mn></mrow></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
-E = f(\theta, 0), \qquad V = J\,\Omega\,J^\top + \Sigma, \qquad
-J_{tj} = \left.\frac{\partial f_t}{\partial \eta_j}\right|_{\eta = 0}.
-</annotation></semantics></math></p>
-<p>Switch with <code>method = "fo"</code> in
-<code><a href="../reference/datagenControl.html">datagenControl()</a></code>:</p>
+same engine as <code>est = "admc"</code>. Two deterministic alternatives
+match the other estimators, and both ignore <code>n_sim</code>,
+<code>sampling</code> and <code>seed</code>, so their output is exactly
+reproducible:</p>
 <div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">fo_data</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/datagen.html">datagen</a></span><span class="op">(</span></span>
-<span>  studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
-<span>    single_study <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>times <span class="op">=</span> <span class="va">times</span>, ev <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">100</span><span class="op">)</span>, n <span class="op">=</span> <span class="fl">250L</span><span class="op">)</span></span>
-<span>  <span class="op">)</span>,</span>
-<span>  model   <span class="op">=</span> <span class="va">true_model</span>,</span>
-<span>  control <span class="op">=</span> <span class="fu"><a href="../reference/datagenControl.html">datagenControl</a></span><span class="op">(</span>method <span class="op">=</span> <span class="st">"fo"</span><span class="op">)</span></span>
-<span><span class="op">)</span></span>
-<span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">fo_data</span><span class="op">$</span><span class="va">single_study</span><span class="op">$</span><span class="va">E</span>, <span class="fl">3</span><span class="op">)</span></span>
-<span><span class="co">#&gt;   0.5     1     2     4     8    12    24 </span></span>
-<span><span class="co">#&gt; 3.445 4.773 4.651 2.340 0.360 0.049 0.000</span></span></code></pre></div>
-<p>Two reasons. The moments are deterministic and fast —
-<code>n_sim</code>, <code>sampling</code> and <code>seed</code> are
-ignored — so the result is exactly reproducible. More importantly, it
-keeps the data-generating and data-analytic models identical: the
-Hessian of the FO log-likelihood at the generating parameters, the
-expected information matrix, is then evaluated at a genuine maximum.
-Generate with Monte Carlo and analyse under FO and those parameters are
-not in general an FO maximum likelihood estimate, so the FIM is biased.
-For FIM and optimal-design work, generate and analyse under the same
-approximation.</p>
-</div>
-<div class="section level2">
-<h2 id="gauss-hermite-moments-for-design-evaluation-with-adgh">Gauss-Hermite moments for design evaluation with adgh<a class="anchor" aria-label="anchor" href="#gauss-hermite-moments-for-design-evaluation-with-adgh"></a>
-</h2>
-<p><code>method = "fo"</code> matches <code>est = "adfo"</code>, bias
-and all, for nonlinear models or large IIV. GH is the deterministic,
-noise-free alternative that is <strong>unbiased at any IIV</strong> and
-matches the moments <code>est = "adgh"</code> computes:</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>E</mi><mo>=</mo><munderover><mo>∑</mo><mrow><mi>q</mi><mo>=</mo><mn>1</mn></mrow><mi>Q</mi></munderover><msub><mi>w</mi><mi>q</mi></msub><mspace width="0.167em"></mspace><mi>f</mi><mo stretchy="false" form="prefix">(</mo><mi>θ</mi><mo>,</mo><msub><mi>η</mi><mi>q</mi></msub><mo stretchy="false" form="postfix">)</mo><mo>,</mo><mspace width="2.0em"></mspace><mi>V</mi><mo>=</mo><munderover><mo>∑</mo><mrow><mi>q</mi><mo>=</mo><mn>1</mn></mrow><mi>Q</mi></munderover><msub><mi>w</mi><mi>q</mi></msub><mspace width="0.167em"></mspace><mo stretchy="false" form="prefix">(</mo><msub><mi>f</mi><mi>q</mi></msub><mo>−</mo><mi>E</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="prefix">(</mo><msub><mi>f</mi><mi>q</mi></msub><mo>−</mo><mi>E</mi><msup><mo stretchy="false" form="postfix">)</mo><mi>⊤</mi></msup><mo>+</mo><mi mathvariant="normal">Σ</mi></mrow><annotation encoding="application/x-tex">
-E = \sum_{q=1}^Q w_q\,f(\theta, \eta_q), \qquad
-V = \sum_{q=1}^Q w_q\,(f_q - E)(f_q - E)^\top + \Sigma
-</annotation></semantics></math></p>
-<p>where
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>η</mi><mi>q</mi></msub><mo>,</mo><msub><mi>w</mi><mi>q</mi></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(\eta_q, w_q)</annotation></semantics></math>
-are the
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Q</mi><mo>=</mo><msup><mi>m</mi><msub><mi>n</mi><mi>η</mi></msub></msup></mrow><annotation encoding="application/x-tex">Q = m^{n_\eta}</annotation></semantics></math>
-tensor-product Gauss-Hermite nodes and weights, Cholesky-scaled to the
-current
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Ω</mi><annotation encoding="application/x-tex">\Omega</annotation></semantics></math>.
-Like <code>"fo"</code> it is exact and reproducible, with no stochastic
-sampling. Pair <code>method = "gh"</code> with <code>est = "adgh"</code>
-for design work wherever FO bias would not be negligible:</p>
-<div class="sourceCode" id="cb14"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">gh_data</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/datagen.html">datagen</a></span><span class="op">(</span></span>
-<span>  studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
-<span>    single_study <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>times <span class="op">=</span> <span class="va">times</span>, ev <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">100</span><span class="op">)</span>, n <span class="op">=</span> <span class="fl">250L</span><span class="op">)</span></span>
-<span>  <span class="op">)</span>,</span>
-<span>  model   <span class="op">=</span> <span class="va">true_model</span>,</span>
-<span>  control <span class="op">=</span> <span class="fu"><a href="../reference/datagenControl.html">datagenControl</a></span><span class="op">(</span>method <span class="op">=</span> <span class="st">"gh"</span>, n_nodes <span class="op">=</span> <span class="fl">5L</span><span class="op">)</span></span>
-<span><span class="op">)</span></span>
-<span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">gh_data</span><span class="op">$</span><span class="va">single_study</span><span class="op">$</span><span class="va">E</span>, <span class="fl">3</span><span class="op">)</span></span>
-<span><span class="co">#&gt;   0.5     1     2     4     8    12    24 </span></span>
-<span><span class="co">#&gt; 3.495 4.753 4.549 2.365 0.485 0.113 0.003</span></span></code></pre></div>
-<p>MC, FO and GH agree closely at moderate IIV on a model near-linear in
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>η</mi><annotation encoding="application/x-tex">\eta</annotation></semantics></math>,
-and separate as IIV grows — GH tracking MC the more accurately of the
-two, since it does not linearise
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>.
-<code>n_nodes</code> (per eta dimension) trades accuracy against cost: 3
-is fast, 5 (the default) is near-exact to IIV SD ~0.5, and 7 reaches
-~0.7.</p>
+<code class="sourceCode R"><span><span class="va">one</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>single_study <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>times <span class="op">=</span> <span class="va">times</span>, ev <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">100</span><span class="op">)</span>,</span>
+<span>                                n <span class="op">=</span> <span class="fl">250L</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="va">fo_data</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/datagen.html">datagen</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="va">one</span>, model <span class="op">=</span> <span class="va">true_model</span>,</span>
+<span>                   control <span class="op">=</span> <span class="fu"><a href="../reference/datagenControl.html">datagenControl</a></span><span class="op">(</span>method <span class="op">=</span> <span class="st">"fo"</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="va">gh_data</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/datagen.html">datagen</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="va">one</span>, model <span class="op">=</span> <span class="va">true_model</span>,</span>
+<span>                   control <span class="op">=</span> <span class="fu"><a href="../reference/datagenControl.html">datagenControl</a></span><span class="op">(</span>method <span class="op">=</span> <span class="st">"gh"</span>, n_nodes <span class="op">=</span> <span class="fl">5L</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">rbind</a></span><span class="op">(</span>fo <span class="op">=</span> <span class="va">fo_data</span><span class="op">$</span><span class="va">single_study</span><span class="op">$</span><span class="va">E</span>, gh <span class="op">=</span> <span class="va">gh_data</span><span class="op">$</span><span class="va">single_study</span><span class="op">$</span><span class="va">E</span><span class="op">)</span>, <span class="fl">3</span><span class="op">)</span></span>
+<span><span class="co">#&gt;      0.5     1     2     4     8    12    24</span></span>
+<span><span class="co">#&gt; fo 3.445 4.773 4.651 2.340 0.360 0.049 0.000</span></span>
+<span><span class="co">#&gt; gh 3.495 4.753 4.549 2.365 0.485 0.113 0.003</span></span></code></pre></div>
+<p><code>method = "fo"</code> is the first-order expansion
+<code>est = "adfo"</code> uses, <code>E = f(theta, 0)</code> and
+<code>V = J Omega J' + Sigma</code>; <code>method = "gh"</code> is the
+Gauss-Hermite quadrature <code>est = "adgh"</code> uses, unbiased at any
+IIV. <code>n_nodes</code> (per eta dimension) trades accuracy against
+cost: 3 is fast, 5 is near-exact to IIV SD ~0.5, 7 reaches ~0.7.</p>
+<p>For design work, <strong>generate and analyse under the same
+approximation</strong>. The expected information matrix is the Hessian
+of the log-likelihood at the generating parameters, which is only a
+genuine maximum when the two agree – generate with Monte Carlo, analyse
+under FO, and those parameters are not an FO maximum-likelihood
+estimate, so the FIM is biased.</p>
 </div>
 <div class="section level2">
 <h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a>

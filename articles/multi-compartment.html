@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
 <link rel="icon" sizes="any" href="../favicon.ico">
 <link rel="manifest" href="../site.webmanifest">
-<script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/IBM_Plex_Sans-0.4.10/font.css" rel="stylesheet">
 <link href="../deps/JetBrains_Mono-0.4.10/font.css" rel="stylesheet">
@@ -25,7 +25,7 @@
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
-    <nav class="navbar navbar-expand-lg fixed-top " aria-label="Site navigation"><div class="container">
+    <nav class="navbar navbar-expand-lg fixed-top bg-light" data-bs-theme="light" aria-label="Site navigation"><div class="container">
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
@@ -75,14 +75,6 @@
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json">
 </form></li>
 <li class="nav-item"><a class="external-link nav-link" href="https://github.com/LeidenPharmacology/admixr2" aria-label="GitHub"><span class="fa fab fa-github"></span></a></li>
-<li class="nav-item dropdown">
-  <button class="nav-link dropdown-toggle" type="button" id="dropdown-lightswitch" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true" aria-label="Light switch"><span class="fa fa-sun"></span></button>
-  <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-lightswitch">
-<li><button class="dropdown-item" data-bs-theme-value="light"><span class="fa fa-sun"></span> Light</button></li>
-    <li><button class="dropdown-item" data-bs-theme-value="dark"><span class="fa fa-moon"></span> Dark</button></li>
-    <li><button class="dropdown-item" data-bs-theme-value="auto"><span class="fa fa-adjust"></span> Auto</button></li>
-  </ul>
-</li>
       </ul>
 </div>
 
@@ -181,7 +173,7 @@ admixr2’s Gauss–Hermite estimator:</p>
 <span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_plasma<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a></span>
 <span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a>elapsed    <span class="fl">0.413</span>      <span class="fl">0.136</span>     <span class="dv">0</span>   <span class="fl">0.549</span> <span class="fl">3.583</span></span>
+<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a>elapsed    <span class="fl">0.645</span>      <span class="fl">0.203</span>     <span class="dv">0</span>   <span class="fl">0.848</span> <span class="fl">4.777</span></span>
 <span id="cb3-30"><a href="#cb3-30" tabindex="-1"></a></span>
 <span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_plasma<span class="sc">$</span>parFixed or fit_plasma<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb3-32"><a href="#cb3-32" tabindex="-1"></a></span>
@@ -228,6 +220,14 @@ clearance <code>qin</code> and back with efflux clearance
 <code>qout</code>. The steady-state brain:plasma ratio is what we are
 after:</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>K</mi><mrow><mi>p</mi><mo>,</mo><mi>u</mi><mi>u</mi></mrow></msub><mo>=</mo><mfrac><msub><mi>q</mi><mrow><mi>i</mi><mi>n</mi></mrow></msub><msub><mi>q</mi><mrow><mi>o</mi><mi>u</mi><mi>t</mi></mrow></msub></mfrac></mrow><annotation encoding="application/x-tex">K_{p,uu} = \frac{q_{in}}{q_{out}}</annotation></semantics></math></p>
+<div class="figure">
+<img src="multi-compartment_files/figure-html/cmt-diagram-1.png" class="r-plt" alt="The two structures. Step 1's peripheral compartment is a distribution store: drug goes in and comes back, but nothing was ever measured there, so no amount of plasma data says what concentration it holds. Step 2 gives that compartment a volume, a sampled concentration and a name." width="840"><p class="caption">
+The two structures. Step 1’s peripheral compartment is a distribution
+store: drug goes in and comes back, but nothing was ever measured there,
+so no amount of plasma data says what concentration it holds. Step 2
+gives that compartment a volume, a sampled concentration and a name.
+</p>
+</div>
 <p>With <strong>two</strong> observed outputs — plasma <code>cp</code>
 and brain <code>cb</code> — the model carries a residual-error term for
 each. (<code>vb</code>, the brain volume, is a fixed physiological
@@ -280,7 +280,7 @@ to expect; the fit call is otherwise identical to Step 1:</p>
 <span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_cns<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a></span>
 <span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed     <span class="fl">0.63</span>      <span class="fl">0.245</span>     <span class="dv">0</span>   <span class="fl">0.875</span> <span class="fl">2.581</span></span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>elapsed    <span class="fl">1.004</span>      <span class="fl">0.424</span>     <span class="dv">0</span>   <span class="fl">1.428</span> <span class="fl">3.592</span></span>
 <span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a></span>
 <span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_cns<span class="sc">$</span>parFixed or fit_cns<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a></span>
@@ -383,21 +383,18 @@ figures.</p>
 <div class="section level3">
 <h3 id="model-against-data">Model against data<a class="anchor" aria-label="anchor" href="#model-against-data"></a>
 </h3>
-<p>One fit now describes both compartments. Below, the observed
-summaries (points, mean ± SD) sit under the fitted population prediction
-— the mean curve and the ±SD band implied by the estimated
-between-subject variability, over 1000 simulated subjects with residual
-error excluded.</p>
+<p><code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> draws observed against predicted for each
+observed output, one panel per compartment:</p>
 <div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="co"># 1. Pull the fitted estimates from the fit (standard nlmixr2 accessors).</span></span>
-<span><span class="va">theta</span> <span class="op">&lt;-</span> <span class="va">fit_cns</span><span class="op">$</span><span class="va">theta</span>   <span class="co"># fixed effects (tcl, tv1, tqin, tqout, residuals)</span></span>
-<span><span class="va">omega</span> <span class="op">&lt;-</span> <span class="va">fit_cns</span><span class="op">$</span><span class="va">omega</span>   <span class="co"># between-subject covariance (rows/cols already named)</span></span>
-<span></span>
-<span><span class="co"># 2. Simulate the fitted population. We solve a plain, residual-free copy of the</span></span>
-<span><span class="co">#    model so the band shows between-subject variability alone -- and because a</span></span>
-<span><span class="co">#    multi-endpoint fit can only be re-solved with per-endpoint DVID/CMT tags,</span></span>
-<span><span class="co">#    whereas this gives cp and cb directly.</span></span>
-<span><span class="va">sim_model</span> <span class="op">&lt;-</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/rxode2.html" class="external-link">rxode2</a></span><span class="op">(</span><span class="op">{</span></span>
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit_cns</span>, which <span class="op">=</span> <span class="st">"mean"</span><span class="op">)</span></span></code></pre></div>
+<p><img src="multi-compartment_files/figure-html/plot-fit-1.png" class="r-plt" alt="" width="840"><img src="multi-compartment_files/figure-html/plot-fit-2.png" class="r-plt" alt="" width="840"></p>
+<p>For a figure of your own, re-solve a residual-free copy of the model
+over the estimated <code>Omega</code> – the band is then between-subject
+variability alone, and a plain rxode2 model gives <code>cp</code> and
+<code>cb</code> directly, where a multi-endpoint fit can only be
+re-solved with per-endpoint <code>DVID</code>/<code>CMT</code> tags:</p>
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">sim_model</span> <span class="op">&lt;-</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/rxode2.html" class="external-link">rxode2</a></span><span class="op">(</span><span class="op">{</span></span>
 <span>  <span class="va">cl</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tcl</span> <span class="op">+</span> <span class="va">eta.cl</span><span class="op">)</span>; <span class="va">v1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tv1</span> <span class="op">+</span> <span class="va">eta.v1</span><span class="op">)</span></span>
 <span>  <span class="va">qin</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tqin</span><span class="op">)</span>; <span class="va">qout</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">tqout</span><span class="op">)</span>; <span class="va">vb</span> <span class="op">&lt;-</span> <span class="fl">5</span></span>
 <span>  <span class="va">d</span><span class="op">/</span><span class="fu"><a href="https://rdrr.io/r/stats/TDist.html" class="external-link">dt</a></span><span class="op">(</span><span class="va">central</span><span class="op">)</span> <span class="op">&lt;-</span> <span class="op">-</span><span class="op">(</span><span class="va">cl</span><span class="op">/</span><span class="va">v1</span><span class="op">)</span><span class="op">*</span><span class="va">central</span> <span class="op">-</span> <span class="op">(</span><span class="va">qin</span><span class="op">/</span><span class="va">v1</span><span class="op">)</span><span class="op">*</span><span class="va">central</span> <span class="op">+</span> <span class="op">(</span><span class="va">qout</span><span class="op">/</span><span class="va">vb</span><span class="op">)</span><span class="op">*</span><span class="va">brain</span></span>
@@ -405,86 +402,19 @@ error excluded.</p>
 <span>  <span class="va">cp</span> <span class="op">&lt;-</span> <span class="va">central</span> <span class="op">/</span> <span class="va">v1</span></span>
 <span>  <span class="va">cb</span> <span class="op">&lt;-</span> <span class="va">brain</span> <span class="op">/</span> <span class="va">vb</span></span>
 <span><span class="op">}</span><span class="op">)</span></span>
-<span><span class="va">grid</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">0.25</span>, <span class="fl">13</span>, by <span class="op">=</span> <span class="fl">0.25</span><span class="op">)</span></span>
-<span><span class="va">sim</span>  <span class="op">&lt;-</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve</a></span><span class="op">(</span><span class="va">sim_model</span>,</span>
-<span>  params <span class="op">=</span> <span class="va">theta</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"tcl"</span>, <span class="st">"tv1"</span>, <span class="st">"tqin"</span>, <span class="st">"tqout"</span><span class="op">)</span><span class="op">]</span>,</span>
-<span>  omega  <span class="op">=</span> <span class="va">omega</span>, nSub <span class="op">=</span> <span class="fl">1000L</span>,</span>
-<span>  events <span class="op">=</span> <span class="va">ev</span> <span class="op">|&gt;</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span><span class="va">grid</span><span class="op">)</span>, returnType <span class="op">=</span> <span class="st">"data.frame"</span><span class="op">)</span></span>
-<span></span>
-<span><span class="co"># 3. Summarise model and data as mean +/- SD per time, per compartment.</span></span>
-<span><span class="va">band</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">value</span><span class="op">)</span></span>
-<span>  <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>time <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/unique.html" class="external-link">unique</a></span><span class="op">(</span><span class="va">sim</span><span class="op">$</span><span class="va">time</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>             mean <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/tapply.html" class="external-link">tapply</a></span><span class="op">(</span><span class="va">value</span>, <span class="va">sim</span><span class="op">$</span><span class="va">time</span>, <span class="va">mean</span><span class="op">)</span>,</span>
-<span>             sd   <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/tapply.html" class="external-link">tapply</a></span><span class="op">(</span><span class="va">value</span>, <span class="va">sim</span><span class="op">$</span><span class="va">time</span>, <span class="va">sd</span><span class="op">)</span><span class="op">)</span></span>
-<span></span>
-<span><span class="va">pred</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">rbind</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">cbind</a></span><span class="op">(</span>compartment <span class="op">=</span> <span class="st">"Plasma"</span>, <span class="fu">band</span><span class="op">(</span><span class="va">sim</span><span class="op">$</span><span class="va">cp</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>              <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">cbind</a></span><span class="op">(</span>compartment <span class="op">=</span> <span class="st">"Brain"</span>,  <span class="fu">band</span><span class="op">(</span><span class="va">sim</span><span class="op">$</span><span class="va">cb</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="va">obs</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">rbind</a></span><span class="op">(</span></span>
-<span>  <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>compartment <span class="op">=</span> <span class="st">"Plasma"</span>, time <span class="op">=</span> <span class="va">plasma_times</span>, mean <span class="op">=</span> <span class="va">plasma_mean</span>, sd <span class="op">=</span> <span class="va">plasma_sd</span><span class="op">)</span>,</span>
-<span>  <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>compartment <span class="op">=</span> <span class="st">"Brain"</span>,  time <span class="op">=</span> <span class="va">brain_times</span>,  mean <span class="op">=</span> <span class="va">brain_mean</span>,  sd <span class="op">=</span> <span class="va">brain_sd</span><span class="op">)</span><span class="op">)</span></span>
-<span></span>
-<span><span class="co"># 4. Model (line + band) over data (points + error bars), coloured by compartment.</span></span>
-<span><span class="va">pal</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>Plasma <span class="op">=</span> <span class="st">"#0072B2"</span>, Brain <span class="op">=</span> <span class="st">"#D55E00"</span><span class="op">)</span>   <span class="co"># Okabe-Ito, colour-blind safe</span></span>
-<span></span>
-<span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggplot.html" class="external-link">ggplot</a></span><span class="op">(</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_ribbon.html" class="external-link">geom_ribbon</a></span><span class="op">(</span>data <span class="op">=</span> <span class="va">pred</span>,</span>
-<span>              <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span><span class="va">time</span>, ymin <span class="op">=</span> <span class="va">mean</span> <span class="op">-</span> <span class="va">sd</span>, ymax <span class="op">=</span> <span class="va">mean</span> <span class="op">+</span> <span class="va">sd</span>, fill <span class="op">=</span> <span class="va">compartment</span><span class="op">)</span>,</span>
-<span>              alpha <span class="op">=</span> <span class="fl">0.15</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_path.html" class="external-link">geom_line</a></span><span class="op">(</span>data <span class="op">=</span> <span class="va">pred</span>,</span>
-<span>            <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span><span class="va">time</span>, <span class="va">mean</span>, colour <span class="op">=</span> <span class="va">compartment</span><span class="op">)</span>, linewidth <span class="op">=</span> <span class="fl">1</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_linerange.html" class="external-link">geom_errorbar</a></span><span class="op">(</span>data <span class="op">=</span> <span class="va">obs</span>,</span>
-<span>                <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span><span class="va">time</span>, ymin <span class="op">=</span> <span class="va">mean</span> <span class="op">-</span> <span class="va">sd</span>, ymax <span class="op">=</span> <span class="va">mean</span> <span class="op">+</span> <span class="va">sd</span>, colour <span class="op">=</span> <span class="va">compartment</span><span class="op">)</span>,</span>
-<span>                width <span class="op">=</span> <span class="fl">0.4</span>, linewidth <span class="op">=</span> <span class="fl">0.6</span>, show.legend <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_point.html" class="external-link">geom_point</a></span><span class="op">(</span>data <span class="op">=</span> <span class="va">obs</span>,</span>
-<span>             <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span><span class="va">time</span>, <span class="va">mean</span>, fill <span class="op">=</span> <span class="va">compartment</span><span class="op">)</span>,</span>
-<span>             shape <span class="op">=</span> <span class="fl">21</span>, colour <span class="op">=</span> <span class="st">"white"</span>, size <span class="op">=</span> <span class="fl">3</span>, stroke <span class="op">=</span> <span class="fl">0.7</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_manual.html" class="external-link">scale_colour_manual</a></span><span class="op">(</span>values <span class="op">=</span> <span class="va">pal</span>, breaks <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Plasma"</span>, <span class="st">"Brain"</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_manual.html" class="external-link">scale_fill_manual</a></span><span class="op">(</span>values <span class="op">=</span> <span class="va">pal</span>, guide <span class="op">=</span> <span class="st">"none"</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_continuous.html" class="external-link">scale_x_continuous</a></span><span class="op">(</span>breaks <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">0</span>, <span class="fl">12</span>, <span class="fl">2</span><span class="op">)</span>,</span>
-<span>                     expand <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/expansion.html" class="external-link">expansion</a></span><span class="op">(</span>mult <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0.01</span>, <span class="fl">0.03</span><span class="op">)</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_continuous.html" class="external-link">scale_y_continuous</a></span><span class="op">(</span>expand <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/expansion.html" class="external-link">expansion</a></span><span class="op">(</span>mult <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0</span>, <span class="fl">0.05</span><span class="op">)</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/coord_cartesian.html" class="external-link">coord_cartesian</a></span><span class="op">(</span>ylim <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0</span>, <span class="cn">NA</span><span class="op">)</span>, clip <span class="op">=</span> <span class="st">"off"</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/guides.html" class="external-link">guides</a></span><span class="op">(</span>colour <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/guide_legend.html" class="external-link">guide_legend</a></span><span class="op">(</span>override.aes <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>linewidth <span class="op">=</span> <span class="fl">1.4</span><span class="op">)</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/labs.html" class="external-link">labs</a></span><span class="op">(</span>x <span class="op">=</span> <span class="st">"Time (h)"</span>, y <span class="op">=</span> <span class="st">"Concentration (mg/L)"</span>,</span>
-<span>       title <span class="op">=</span> <span class="st">"Fitted population prediction vs. observed data"</span>,</span>
-<span>       subtitle <span class="op">=</span> <span class="st">"Line + band: model (mean ± SD)   ·   Points + bars: data (mean ± SD)"</span>,</span>
-<span>       colour <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggtheme.html" class="external-link">theme_minimal</a></span><span class="op">(</span>base_size <span class="op">=</span> <span class="fl">12</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/theme.html" class="external-link">theme</a></span><span class="op">(</span></span>
-<span>    legend.position <span class="op">=</span> <span class="st">"top"</span>,</span>
-<span>    legend.justification <span class="op">=</span> <span class="st">"left"</span>,</span>
-<span>    legend.margin <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">margin</a></span><span class="op">(</span>b <span class="op">=</span> <span class="fl">2</span><span class="op">)</span>,</span>
-<span>    plot.title <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_text</a></span><span class="op">(</span>face <span class="op">=</span> <span class="st">"bold"</span>, size <span class="op">=</span> <span class="fl">13</span><span class="op">)</span>,</span>
-<span>    plot.subtitle <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_text</a></span><span class="op">(</span>colour <span class="op">=</span> <span class="st">"grey40"</span>, size <span class="op">=</span> <span class="fl">9</span>, margin <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">margin</a></span><span class="op">(</span>b <span class="op">=</span> <span class="fl">9</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>    axis.title <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_text</a></span><span class="op">(</span>colour <span class="op">=</span> <span class="st">"grey25"</span><span class="op">)</span>,</span>
-<span>    axis.title.x <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_text</a></span><span class="op">(</span>margin <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">margin</a></span><span class="op">(</span>t <span class="op">=</span> <span class="fl">6</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>    axis.title.y <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_text</a></span><span class="op">(</span>margin <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">margin</a></span><span class="op">(</span>r <span class="op">=</span> <span class="fl">6</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>    panel.grid.minor <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_blank</a></span><span class="op">(</span><span class="op">)</span>,</span>
-<span>    panel.grid.major.x <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_blank</a></span><span class="op">(</span><span class="op">)</span>,</span>
-<span>    panel.grid.major.y <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">element_line</a></span><span class="op">(</span>colour <span class="op">=</span> <span class="st">"grey90"</span>, linewidth <span class="op">=</span> <span class="fl">0.4</span><span class="op">)</span>,</span>
-<span>    plot.margin <span class="op">=</span> <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/element.html" class="external-link">margin</a></span><span class="op">(</span><span class="fl">12</span>, <span class="fl">16</span>, <span class="fl">10</span>, <span class="fl">12</span><span class="op">)</span></span>
-<span>  <span class="op">)</span></span></code></pre></div>
-<p><img src="multi-compartment_files/figure-html/brain-plot-1.png" class="r-plt" alt="" width="840"></p>
-<p>The prediction tracks both compartments. Now the payoff, read
-straight off the estimates:</p>
-<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">Kp_uu</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">theta</span><span class="op">[[</span><span class="st">"tqin"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span> <span class="op">/</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">theta</span><span class="op">[[</span><span class="st">"tqout"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span></span>
+<span><span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/rxSolve.html" class="external-link">rxSolve</a></span><span class="op">(</span><span class="va">sim_model</span>, params <span class="op">=</span> <span class="va">fit_cns</span><span class="op">$</span><span class="va">theta</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"tcl"</span>, <span class="st">"tv1"</span>, <span class="st">"tqin"</span>, <span class="st">"tqout"</span><span class="op">)</span><span class="op">]</span>,</span>
+<span>                omega <span class="op">=</span> <span class="va">fit_cns</span><span class="op">$</span><span class="va">omega</span>, nSub <span class="op">=</span> <span class="fl">1000L</span>,</span>
+<span>                events <span class="op">=</span> <span class="va">ev</span> <span class="op">|&gt;</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">0.25</span>, <span class="fl">13</span>, by <span class="op">=</span> <span class="fl">0.25</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<p>Now the payoff, read straight off the estimates:</p>
+<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">theta</span> <span class="op">&lt;-</span> <span class="va">fit_cns</span><span class="op">$</span><span class="va">theta</span></span>
+<span><span class="va">Kp_uu</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">theta</span><span class="op">[[</span><span class="st">"tqin"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span> <span class="op">/</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">exp</a></span><span class="op">(</span><span class="va">theta</span><span class="op">[[</span><span class="st">"tqout"</span><span class="op">]</span><span class="op">]</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">Kp_uu</span>, <span class="fl">2</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] 0.5</span></span></code></pre></div>
 <p><code>Kp,uu</code> ≈ 0.5: at steady state the brain sees about half
 the plasma concentration. This is why the brain data was needed at all —
 with plasma alone <code>qin</code> and <code>qout</code> are not
 separately identifiable, and <code>Kp,uu</code> cannot be estimated.</p>
-</div>
-<div class="section level3">
-<h3 id="built-in-diagnostics">Built-in diagnostics<a class="anchor" aria-label="anchor" href="#built-in-diagnostics"></a>
-</h3>
-<p>That overlay was assembled by hand for a custom figure. You don’t
-have to: <code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> draws observed-vs-predicted panels
-directly, one per observed output.</p>
-<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit_cns</span>, which <span class="op">=</span> <span class="st">"mean"</span><span class="op">)</span></span></code></pre></div>
-<p><img src="multi-compartment_files/figure-html/plot-fit-1.png" class="r-plt" alt="" width="840"><img src="multi-compartment_files/figure-html/plot-fit-2.png" class="r-plt" alt="" width="840"></p>
 </div>
 </div>
 <div class="section level2">

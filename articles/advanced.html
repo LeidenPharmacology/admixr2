@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
 <link rel="icon" sizes="any" href="../favicon.ico">
 <link rel="manifest" href="../site.webmanifest">
-<script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/IBM_Plex_Sans-0.4.10/font.css" rel="stylesheet">
 <link href="../deps/JetBrains_Mono-0.4.10/font.css" rel="stylesheet">
@@ -25,7 +25,7 @@
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
-    <nav class="navbar navbar-expand-lg fixed-top " aria-label="Site navigation"><div class="container">
+    <nav class="navbar navbar-expand-lg fixed-top bg-light" data-bs-theme="light" aria-label="Site navigation"><div class="container">
 
     <a class="navbar-brand me-2" href="../index.html">admixr2</a>
 
@@ -75,14 +75,6 @@
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json">
 </form></li>
 <li class="nav-item"><a class="external-link nav-link" href="https://github.com/LeidenPharmacology/admixr2" aria-label="GitHub"><span class="fa fab fa-github"></span></a></li>
-<li class="nav-item dropdown">
-  <button class="nav-link dropdown-toggle" type="button" id="dropdown-lightswitch" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true" aria-label="Light switch"><span class="fa fa-sun"></span></button>
-  <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-lightswitch">
-<li><button class="dropdown-item" data-bs-theme-value="light"><span class="fa fa-sun"></span> Light</button></li>
-    <li><button class="dropdown-item" data-bs-theme-value="dark"><span class="fa fa-moon"></span> Dark</button></li>
-    <li><button class="dropdown-item" data-bs-theme-value="auto"><span class="fa fa-adjust"></span> Auto</button></li>
-  </ul>
-</li>
       </ul>
 </div>
 
@@ -104,6 +96,9 @@
 
     
     
+<p>Independent settings, each needing a paragraph more than a reference
+page gives it. The sections have nothing else in common and stand
+alone.</p>
 <div class="section level2">
 <h2 id="full-covariance-vs-variance-nll">Full covariance vs variance NLL<a class="anchor" aria-label="anchor" href="#full-covariance-vs-variance-nll"></a>
 </h2>
@@ -169,103 +164,44 @@ one solve per parameter it saved did not pay for a gradient the
 optimizer struggles to descend. Nor is the step a constant — it is
 measured per parameter by the Shi (2021) procedure, with
 <code>grad_h</code> the fallback when it cannot be.</p>
-<p><strong><code><a href="../reference/admControl.html">admControl()</a></code> gradient modes:</strong></p>
 <table class="table">
 <colgroup>
-<col width="40%">
-<col width="32%">
-<col width="28%">
+<col width="33%">
+<col width="33%">
+<col width="33%">
 </colgroup>
 <thead><tr class="header">
 <th><code>grad =</code></th>
-<th>Method</th>
-<th>Notes</th>
-</tr></thead>
-<tbody>
-<tr class="odd">
-<td><code>"sens"</code></td>
-<td>Sensitivity equations (default)</td>
-<td>Analytical; requires ODE or <code>linCmt()</code> model</td>
-</tr>
-<tr class="even">
-<td><code>"fd"</code></td>
-<td>Central finite differences</td>
-<td>Falls back to this if sens unavailable; step measured per
-parameter</td>
-</tr>
-<tr class="odd">
-<td><code>"none"</code></td>
-<td>BOBYQA (derivative-free)</td>
-<td>No gradient; useful for debugging or simple models</td>
-</tr>
-</tbody>
-</table>
-<p><strong><code><a href="../reference/adfoControl.html">adfoControl()</a></code> gradient modes:</strong></p>
-<table class="table">
-<colgroup>
-<col width="40%">
-<col width="32%">
-<col width="28%">
-</colgroup>
-<thead><tr class="header">
-<th><code>grad =</code></th>
-<th>Method</th>
+<th>What it does</th>
 <th>Notes</th>
 </tr></thead>
 <tbody>
 <tr class="odd">
 <td>
-<code>"analytical"</code> (default)</td>
-<td>Chain rule through V_pred</td>
-<td>Omega/sigma analytical; struct thetas from the order-2 sensitivity
-model, FD only if it cannot be built</td>
+<code>"sens"</code> (<code>admc</code>) / <code>"analytical"</code>
+(the other three)</td>
+<td>Sensitivity equations, contracted in closed form</td>
+<td>The default everywhere. Needs an ODE or <code>linCmt()</code> model;
+<code>adfo</code> gets its structural thetas from the order-2
+sensitivity model, and falls back to FD only if that cannot be
+built</td>
 </tr>
 <tr class="even">
-<td><code>"none"</code></td>
-<td>BOBYQA</td>
-<td>Derivative-free; was the default up to 0.4.0</td>
-</tr>
-<tr class="odd">
 <td><code>"fd"</code></td>
-<td>Central FD of full NLL</td>
-<td>All parameters; <code>2 n_p</code> NLL evals per step</td>
-</tr>
-</tbody>
-</table>
-<p><strong><code><a href="../reference/adghControl.html">adghControl()</a></code> gradient modes:</strong></p>
-<table class="table">
-<colgroup>
-<col width="40%">
-<col width="32%">
-<col width="28%">
-</colgroup>
-<thead><tr class="header">
-<th><code>grad =</code></th>
-<th>Method</th>
-<th>Notes</th>
-</tr></thead>
-<tbody>
-<tr class="odd">
+<td>Central finite difference of the full NLL</td>
 <td>
-<code>"analytical"</code> (default)</td>
-<td>Closed-form contractions through sensitivity equations</td>
-<td>Exact and cheapest; one batched sensitivity solve per study over the
-node grid</td>
-</tr>
-<tr class="even">
-<td><code>"fd"</code></td>
-<td>Central FD of full NLL</td>
-<td>All parameters; <code>2 n_p</code> NLL evals per step</td>
+<code>2 n_p</code> evaluations per step. Also the automatic fallback
+where the sensitivity model cannot be built, with a warning</td>
 </tr>
 <tr class="odd">
 <td><code>"none"</code></td>
-<td>BOBYQA (derivative-free)</td>
-<td>No gradient</td>
+<td>BOBYQA, derivative-free</td>
+<td>No gradient; <code>adfo</code>’s default up to 0.4.0</td>
 </tr>
 </tbody>
 </table>
-<p>The GH objective is <strong>noise-free</strong> — deterministic
-quadrature, no MC draws — so its analytical gradient is exact and the
+<p>The GH objective is <strong>noise-free</strong> – deterministic
+quadrature, no MC draws – so its analytical gradient is exact and the
 Hessian well-conditioned. Keep the default.</p>
 <p>For <code>adfo</code>, every mode still uses the sensitivity model
 inside each NLL evaluation to get J in one rxSolve; <code>grad</code>
@@ -280,9 +216,6 @@ only controls how the <em>optimizer</em> gradient is formed.</p>
 <span><span class="va">fit_bobyqa</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span><span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
 <span>  control <span class="op">=</span> <span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span>studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>s <span class="op">=</span> <span class="va">study</span><span class="op">)</span>, grad <span class="op">=</span> <span class="st">"none"</span>,</span>
 <span>                       n_sim <span class="op">=</span> <span class="fl">5000L</span>, seed <span class="op">=</span> <span class="fl">1L</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
-<p>Use <code>"sens"</code> for any standard ODE or <code>linCmt()</code>
-model. Where the sensitivity model cannot be built — some rare ODE
-features — admixr2 falls back to <code>"fd"</code> with a warning.</p>
 </div>
 <div class="section level2">
 <h2 id="mu-referencing-and-sensitivity-equations">Mu-referencing and sensitivity equations<a class="anchor" aria-label="anchor" href="#mu-referencing-and-sensitivity-equations"></a>

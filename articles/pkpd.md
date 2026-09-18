@@ -152,7 +152,7 @@ adgh 1749.121 1769.121 1820.975      -874.5605
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    1.625      0.761     0   2.386 2.156
+elapsed    2.633      1.132     0   3.765 2.618
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
