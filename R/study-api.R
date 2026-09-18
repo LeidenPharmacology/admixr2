@@ -333,9 +333,7 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   of its own. An unnamed value is allowed only when the source itself is
 #'   conditional on exactly one covariate --- which covariate an unnamed range
 #'   belongs to is a question about the source, so the answer does not change
-#'   with the model being fitted to it. A `population` that carries its own
-#'   `joint` sampler (a vine copula, say) cannot be truncated this way and says
-#'   so: the margins are inside the sampler, so the range belongs there too.
+#'   with the model being fitted to it.
 #' @param label Optional display name; otherwise taken from the argument name in
 #'   [admStudies()].
 #'
@@ -549,6 +547,16 @@ admStudy <- function(model = NULL, est = NULL,
                                                    "valid covariate ",
                                                    "specification: ",
                                                    conditionMessage(e)))
+  # THE SECOND DOOR. covDist() refuses `joint`, but `population` also takes a
+  # plain list, and the canon lets one through untouched. `jointOwn` is what
+  # separates the sampler admixr2 BUILT from `cor` -- which is the supported
+  # path and arrives here on every correlated population -- from one the caller
+  # wrote.
+  if (is.function(population[["joint"]]) &&
+      !isTRUE(population[["jointOwn"]]))
+    bad("`population` carries its own `joint` sampler, which is not accepted ",
+        "yet. Declare the margins and give `cor` instead; an arbitrary ",
+        "sampler -- a vine copula among them -- is planned, not released.")
   if (!is.null(by)) {
     if (!is.character(by) || length(by) != 1L || is.na(by) || !nzchar(by))
       bad("`by` must be one non-empty covariate name.")

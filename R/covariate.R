@@ -823,6 +823,11 @@
 # returning the n x d matrix of covariate values -- exactly the shape a copula produces, an R-vine included:
 # sample the vine on the uniform scale, then push each column through its own marginal quantile function.
 #
+# NOT REACHABLE FROM THE PUBLIC API RIGHT NOW: covDist() and admStudy(population =) both refuse a caller's own
+# `joint`, pending the vine-copula work. What arrives here is the sampler admixr2 BUILDS from `cor`
+# (`jointOwn`) and the conditional sampler a stratum rebuilds. The path below is exercised by both, and by
+# tests that set `joint` on the spec directly, so it stays live -- this is a closed door, not deleted code.
+#
 # The uniforms come from ADMIXR2's Sobol stream, deliberately, and a user sampler must consume them rather than
 # draw its own -- common random numbers across iterations is what lets a finite difference of the objective
 # mean anything, and a sampler reseeding internally (e.g. calling RVineSim() without `U`) turns it into noise.
@@ -2804,18 +2809,13 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
 #' @param cor Correlation between the covariates: a scalar for two of them, or
 #'   a correlation matrix (named, in any order). Realised through a Gaussian
 #'   copula on the declared margins.
-#' @param joint Dependence a single correlation cannot express: a function
-#'   receiving the matrix of uniforms admixr2 supplies and returning one named
-#'   column per covariate, on each covariate's OWN scale. Overrides `cor`.
-#'
-#'   The sampler owns its margins. A copula returns dependence on the *copula
-#'   scale* only, so a sampler that hands those uniforms back returns covariate
-#'   values on `(0, 1)` --- every covariate mean 0.50 and SD 0.29, whatever
-#'   margins were declared, with no error anywhere. Push them through the
-#'   quantile function you intend.
-#'
-#'   `stratify` needs nothing further: an opaque sampler is conditioned by binning
-#'   its output rather than by fixing its input uniforms.
+#' @param joint **Not accepted yet, and an error if given.** It is the place an
+#'   arbitrary sampler will attach --- a function receiving the matrix of
+#'   uniforms admixr2 supplies and returning one named column per covariate, on
+#'   each covariate's own scale, which is the shape a vine copula produces ---
+#'   but the contract around it is not settled, so the argument refuses rather
+#'   than half-works. Use `cor` for dependence: it builds a Gaussian copula
+#'   over the declared margins.
 #' @param dist Default margin for the `c(mean = , sd = )` form: `"normal"`
 #'   (default) or `"lnorm"`. A per-covariate `dist` wins over it.
 #'
@@ -2862,6 +2862,19 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
 covDist <- function(..., cor = NULL, joint = NULL,
                     dist = c("normal", "lnorm")) {
   dist <- match.arg(dist)
+  # NOT ACCEPTED YET. The argument stays in the signature so the refusal can
+  # say what to use instead -- dropping it would give "unused argument" -- and
+  # so switching it back on is this one guard. The machinery a user sampler
+  # drives is live and tested (the pooled-bin conditioning route, the drop
+  # refusal, the range refusal); what is not settled is the contract around it,
+  # which is the vine-copula work.
+  if (!is.null(joint))
+    stop("admixr2: `joint` is not accepted yet. Dependence between covariates ",
+         "goes through `cor` for now, e.g. covDist(WT = c(mean = 72, sd = 16), ",
+         "CRCL = c(mean = 90, sd = 25), cor = c(WT.CRCL = 0.45)), which builds ",
+         "a Gaussian copula over the declared margins. An arbitrary sampler ",
+         "-- a vine copula among them -- is planned, not released.",
+         call. = FALSE)
   a <- list(...)
   if (length(a) == 1L && is.null(names(a)) && is.data.frame(a[[1L]]))
     out <- .admCovDistFromDf(a[[1L]])

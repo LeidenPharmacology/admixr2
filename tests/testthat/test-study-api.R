@@ -546,12 +546,34 @@ test_that("a `by` level keeps the correlations among the margins it retains", {
                "cannot materialise correlated 'CRCL' subgroups")
 })
 
+test_that("`population` does not accept a caller's own `joint` yet", {
+  skip_if_not_installed("rxode2")
+  # THE SECOND DOOR. covDist() refuses it, but `population` also takes a plain
+  # list and the canon lets an existing sampler through untouched.
+  raw <- list(WT  = list(quantile = function(u) stats::qlnorm(u, log(70), .25)),
+              AGE = list(quantile = function(u) stats::qgamma(u, 9, 0.3)),
+              joint = function(u) cbind(WT = stats::qlnorm(u[, 1], log(70), .25),
+                                        AGE = stats::qgamma(u[, 2], 9, 0.3)))
+  expect_error(admStudy(model = .sa_model, population = raw, n = 100,
+                        dose = 200, times = c(1, 4)),
+               "own `joint` sampler")
+  # The sampler admixr2 BUILDS from `cor` arrives here on every correlated
+  # population and must not be caught by that: `jointOwn` is the difference.
+  expect_s3_class(
+    admStudy(model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+             population = admPopulation(WT = c(mean = 75, sd = 16),
+                                        CRCL = c(mean = 92, sd = 24),
+                                        cor = c(WT.CRCL = 0.45))),
+    "admStudy")
+})
+
 test_that("by refuses to discard an opaque joint sampler", {
-  cd <- covDist(SEX = list(values = c(0, 1), probs = c(.5, .5)),
-                WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25),
-                joint = function(u) cbind(SEX = as.integer(u[, 1] > .5),
-                                           WT = stats::qlnorm(u[, 2], log(75), .2),
-                                           CRCL = stats::qlnorm(u[, 2], log(90), .2)))
+  cd <- with_opaque_joint(
+    covDist(SEX = list(values = c(0, 1), probs = c(.5, .5)),
+            WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25)),
+    function(u) cbind(SEX = as.integer(u[, 1] > .5),
+                      WT = stats::qlnorm(u[, 2], log(75), .2),
+                      CRCL = stats::qlnorm(u[, 2], log(90), .2)))
   expect_error(admixr2:::.admCovDropMargin(cd, "SEX"), "user-supplied `joint`")
 })
 

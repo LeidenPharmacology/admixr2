@@ -79,6 +79,9 @@
 Several changes in this release alter results for scripts that do not name a new
 argument. None is a bug fix, so all are listed here rather than below.
 
+* **`covDist(joint = )` and a `population` carrying its own sampler are refused**,
+  pending the vine-copula work; `cor` is the supported route to dependence.
+
 * **The sandwich's `G` is evaluated at `tau`, not at the observed summary**,
   so every `covMethod = "r,s"` standard error moves slightly.
 

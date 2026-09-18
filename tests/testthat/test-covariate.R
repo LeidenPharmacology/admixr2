@@ -541,9 +541,10 @@ test_that("without a density, nodes fall back to BINS that partition", {
     cbind(WT = stats::qnorm(cl(stats::pnorm(z[, 1])), 70, 10),
           CRCL = stats::qnorm(cl(stats::pnorm(z2)), 90, 20))
   }
-  cd <- covDist(WT = list(quantile = function(u) stats::qnorm(u, 70, 10)),
-                CRCL = list(quantile = function(u) stats::qnorm(u, 90, 20)),
-                joint = gauss)
+  cd <- with_opaque_joint(
+    covDist(WT = list(quantile = function(u) stats::qnorm(u, 70, 10)),
+            CRCL = list(quantile = function(u) stats::qnorm(u, 90, 20))),
+    gauss)
   expect_null(cd$density)
   st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L)
   expect_length(st, 4L)
@@ -594,10 +595,11 @@ test_that("an opaque sampler is conditioned correctly when the stratified
                 stats::qlnorm(stats::pnorm(zA), ml[3L], sl[3L]))
     colnames(o) <- c("WT", "CRCL", "AGE"); o
   }
-  cd <- covDist(WT = list(quantile = function(u) stats::qlnorm(u, ml[1], sl[1])),
-                CRCL = list(quantile = function(u) stats::qlnorm(u, ml[2], sl[2])),
-                AGE = list(quantile = function(u) stats::qlnorm(u, ml[3], sl[3])),
-                joint = jf)
+  cd <- with_opaque_joint(
+    covDist(WT = list(quantile = function(u) stats::qlnorm(u, ml[1], sl[1])),
+            CRCL = list(quantile = function(u) stats::qlnorm(u, ml[2], sl[2])),
+            AGE = list(quantile = function(u) stats::qlnorm(u, ml[3], sl[3]))),
+    jf)
   st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L)
   got <- vapply(st, function(s) {
     X <- covDraw(s$cov_dist, n = 30000L)
@@ -1370,10 +1372,11 @@ test_that("conditioning uses the quadrature rule that CONVERGES", {
   expect_equal(vapply(st,  `[[`, 0, "weight"),
                vapply(stI, `[[`, 0, "weight"), tolerance = 1e-10)
   # an OPAQUE joint cannot be conditioned, so it keeps the pooled route
-  cdj <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
-                 dist = "lnorm",
-                 joint = function(u) cbind(WT = stats::qlnorm(u[, 1], log(78), .2),
-                                           CRCL = stats::qlnorm(u[, 2], log(90), .2)))
+  cdj <- with_opaque_joint(
+    covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20),
+            dist = "lnorm"),
+    function(u) cbind(WT = stats::qlnorm(u[, 1], log(78), .2),
+                      CRCL = stats::qlnorm(u[, 2], log(90), .2)))
   expect_length(suppressWarnings(covStrata(cdj, "WT", n_nodes = 4L, n = 100)), 4L)
 })
 
@@ -1680,23 +1683,41 @@ test_that("the sparse grid enumerates a discrete covariate exactly", {
   expect_equal(sum(g$W), 1, tolerance = 1e-12)
 })
 
+test_that("covDist() does not accept a caller's own `joint` yet", {
+  # TURNED OFF ON PURPOSE, not unimplemented: everything below this door works
+  # and is tested through with_opaque_joint(). What is unsettled is the
+  # contract -- the sampler must consume admixr2's uniforms rather than draw
+  # its own, it owns its margins, and an enrolled `range` cannot reach it --
+  # and that is the vine-copula work. The argument stays in the signature so
+  # the refusal can name the alternative.
+  expect_error(
+    covDist(WT = c(mean = 72, sd = 16), AGE = c(mean = 55, sd = 12),
+            joint = function(u) cbind(WT = stats::qlnorm(u[, 1], log(70), .25),
+                                      AGE = stats::qgamma(u[, 2], 9, 0.3))),
+    "`joint` is not accepted yet")
+  # `cor` is the supported route, and it still builds a sampler of its own.
+  cd <- covDist(WT = c(mean = 72, sd = 16), CRCL = c(mean = 90, sd = 25),
+                cor = c(WT.CRCL = 0.45))
+  expect_true(is.function(cd[["joint"]]))
+  expect_true(isTRUE(cd[["jointOwn"]]))
+})
+
 test_that("the sparse grid refuses an opaque joint sampler and a bad level", {
   # The rotation needs the latent correlation, and the canoniser early-returns on a user closure BEFORE
   # recording it -- so reading it as independent is exactly the silent approximation this file refuses
   # everywhere else.
-  cd <- covDist(A = c(mean = 1, sd = 0.2), B = c(mean = 1, sd = 0.2),
-                joint = function(u) {
-                  z <- stats::qnorm(pmin(pmax(u, 1e-12), 1 - 1e-12))
-                  out <- cbind(A = exp(0.2 * z[, 1L]),
-                               B = exp(0.2 * (0.8 * z[, 1L] +
-                                              sqrt(1 - 0.64) * z[, 2L])))
-                  out
-                })
+  cd <- with_opaque_joint(
+    covDist(A = c(mean = 1, sd = 0.2), B = c(mean = 1, sd = 0.2)),
+    function(u) {
+      z <- stats::qnorm(pmin(pmax(u, 1e-12), 1 - 1e-12))
+      cbind(A = exp(0.2 * z[, 1L]),
+            B = exp(0.2 * (0.8 * z[, 1L] + sqrt(1 - 0.64) * z[, 2L])))
+    })
   expect_error(admixr2:::.admCovSparseGrid(cd, 3L), "joint. sampler")
-  mixed <- covDist(
-    SEX = list(values = c(0, 1), probs = c(.5, .5)),
-    WT = c(mean = 0, sd = 1),
-    joint = function(u)
+  mixed <- with_opaque_joint(
+    covDist(SEX = list(values = c(0, 1), probs = c(.5, .5)),
+            WT = c(mean = 0, sd = 1)),
+    function(u)
       cbind(SEX = as.numeric(u[, 1L] > .5), WT = stats::qnorm(u[, 1L])))
   expect_error(admixr2:::.admCovSparseGrid(mixed, 3L), "joint. sampler")
   cd2 <- covDist(WT = c(mean = 75, sd = 16))
