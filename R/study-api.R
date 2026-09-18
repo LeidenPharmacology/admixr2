@@ -330,7 +330,12 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   table has tails where nobody was --- and *not* wanted when `population` is
 #'   the patients themselves, since the margins are then fitted to exactly who
 #'   was enrolled and truncating would score the paper against a sub-population
-#'   of its own. An unnamed value is allowed only when one covariate is conditional.
+#'   of its own. An unnamed value is allowed only when the source itself is
+#'   conditional on exactly one covariate --- which covariate an unnamed range
+#'   belongs to is a question about the source, so the answer does not change
+#'   with the model being fitted to it. A `population` that carries its own
+#'   `joint` sampler (a vine copula, say) cannot be truncated this way and says
+#'   so: the margins are inside the sampler, so the range belongs there too.
 #' @param label Optional display name; otherwise taken from the argument name in
 #'   [admStudies()].
 #'
@@ -407,7 +412,7 @@ admStudy <- function(model = NULL, est = NULL,
   #
   # `stratify` IS NOT A FIELD HERE. It stays an internal field of the plain
   # study specs .admMaterialise() builds, where covStrata(), the internal
-  # callers and a deliberately unbanded reference fit set it; an `admStudy`
+  # callers and a deliberately uncut reference fit set it; an `admStudy`
   # object carries the model the derivation reads instead. It used to be
   # carried as a hardcoded NULL, which made every reader of it on this object
   # -- print()'s "conditional on nothing" line among them -- unreachable code that
@@ -823,11 +828,16 @@ print() a single study to check its transcription.
     # but it stays an internal field that covStrata(), the internal callers and
     # a deliberately UNBANDED reference fit can set, and `FALSE` has to reach
     # the spec or the opt-out silently becomes its opposite.
-    .bn <- if (!is.null(s[["stratify"]])) s[["stratify"]] else {
-      b <- .admStudyBandNames(s)
-      if (!is.null(analysis_covs)) b <- intersect(b, analysis_covs)
-      b
-    }
+    # TWO SETS, and the difference between them is the whole point of the
+    # narrowing. `.src` is what this SOURCE estimated a coefficient for -- a
+    # property of the paper, true whatever is fitted to it. `.bn` is that set
+    # narrowed to what the ANALYSIS model reads, which is what gets cut into
+    # nodes. Questions about the source are answered from `.src`; only the
+    # cutting uses `.bn`.
+    .src <- if (!is.null(s[["stratify"]])) s[["stratify"]]
+            else .admStudyBandNames(s)
+    .bn <- if (identical(.src, FALSE) || is.null(analysis_covs)) .src
+           else intersect(.src, analysis_covs)
     # THE ANSWER REACHES THE SPEC EITHER WAY, `FALSE` included. An empty
     # conditional set used to record nothing, and .admExpandStrata() then
     # derived one of its own -- so a source that resolved to nothing came back
@@ -847,11 +857,21 @@ print() a single study to check its transcription.
     # before admixr2 decides how to use them -- so this is deliberately outside
     # the conditioning branch above. An unnamed value still needs exactly one
     # covariate to be the range OF; otherwise there is nothing to attach it to.
+    #
+    # FROM `.src`, NOT `.bn`: which covariate an unnamed range belongs to is a
+    # question about the SOURCE, and it is asked before the analysis model has
+    # any say. Read from the narrowed set, one `studies` object gave a source
+    # conditional on a single covariate a clean fit under a model that reads it
+    # and a hard error under the null that drops it -- which is precisely the
+    # nested pair this PR is built around -- and, for a source conditional on
+    # two, silently attached a weight range to whichever one happened to
+    # survive. .admCovSourceRange() already asks the un-narrowed question, so
+    # the fit and the plot disagreed about the same range.
     if (!is.null(s$range))
       sp$cov_range <- if (is.list(s$range) && !is.null(names(s$range)))
         s$range
       else {
-        .one <- if (identical(.bn, FALSE)) character(0) else .bn
+        .one <- if (identical(.src, FALSE)) character(0) else .src
         if (length(.one) != 1L)
           stop("admixr2: study '", nm, "': `range` does not say which ",
                "covariate it is the enrolled range of, and this source conditions on ",

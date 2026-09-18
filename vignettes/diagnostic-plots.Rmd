@@ -181,7 +181,7 @@ conditional_source <- function(crclm, rng) admStudy(
 
 renal_studies <- admStudies(
   normal   = marginal_source(260L, 95),
-  mild     = banded_source(62, c(50, 75)),
+  mild     = conditional_source(62, c(50, 75)),
   moderate = marginal_source(180L, 38))
 
 renal_fit <- nlmixr2(

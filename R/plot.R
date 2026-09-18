@@ -710,10 +710,30 @@ head.paged_df <- function(x, n = 6L, ...) {
 ##
 ## Without this a binary covariate is ticked at 0.25 and 0.75 -- values it does
 ## not have, and that the model was never asked about.
-.admLevelBreaks <- function(levels) {
-  lv <- sort(unique(levels))
+## PER COVARIATE, which is the only reason `cov` is an argument. The one breaks
+## function is shared by every free-scaled facet, so handing it every
+## covariate's levels pooled let a facet for CRCL be ticked at SEX's levels
+## whenever those happened to land inside CRCL's limits and fill the span. The
+## 0.8 rule made that rare rather than impossible.
+##
+## The facet is identified by its LIMITS: ggplot2 derives them from that
+## panel's own data by a deterministic expansion, so the covariate whose extent
+## is nearest to `lims` is the one being drawn. `levels_ok` marks the rows
+## whose x is a reported level -- the extent comes from all of them, because
+## that is what sets the limits.
+.admLevelBreaks <- function(x, cov, levels_ok) {
+  ok <- is.finite(x)
+  x <- x[ok]; cov <- as.character(cov)[ok]; levels_ok <- levels_ok[ok]
+  if (!length(x)) return(function(lims) pretty(lims))
+  ext <- lapply(split(x, cov), range)
+  lv  <- lapply(split(x[levels_ok], cov[levels_ok]),
+                function(z) sort(unique(z)))
   function(lims) {
-    inside <- lv[lv >= lims[1L] & lv <= lims[2L]]
+    k <- names(ext)[which.min(vapply(ext, function(r)
+      abs(r[1L] - lims[1L]) + abs(r[2L] - lims[2L]), 0))]
+    l <- lv[[k]]
+    if (is.null(l) || length(l) < 2L) return(pretty(lims))
+    inside <- l[l >= lims[1L] & l <= lims[2L]]
     # 0.8, not 0.95: the levels sit inside ggplot2's default 5%-a-side
     # expansion, and a shaded end level pushes the limits out further still.
     if (length(inside) >= 2L && diff(range(inside)) >= 0.8 * diff(lims))
@@ -997,15 +1017,8 @@ head.paged_df <- function(x, n = 6L, ...) {
   vals <- Filter(function(z) length(z$value) == length(grid) &&
                    all(is.finite(z$value)) && diff(range(z$value)) > 0, vals)
   if (!length(vals)) return(NULL)
-  # ONE CURVE PER PARAMETER, and it is the LAST assignment to that name. A model
-  # built in stages -- `cl <- exp(tcl) * (WT/70)^bwt` then `cl <- cl * exp(...)`
-  # -- reads the covariate on both lines, and keeping both put 2 * n_grid rows
-  # in one facet: geom_line() then drew a single path zig-zagging between the
-  # two series, while the marks were placed against the first of them. The last
-  # assignment is the value the solve actually uses.
-  .nm <- vapply(vals, `[[`, "", "name")
-  vals <- vals[rev(!duplicated(rev(.nm)))]
-
+  # ONE CURVE PER PARAMETER: .admEvalModelLines() returns the LAST assignment
+  # to each name, which is the value the solve uses.
   curve <- do.call(rbind, lapply(vals, function(z)
     data.frame(cov = cv, param = z$name, x = grid, y = as.numeric(z$value),
                disc = is_disc, stringsAsFactors = FALSE)))
@@ -1211,9 +1224,13 @@ head.paged_df <- function(x, n = 6L, ...) {
                x = x, xlo = if (is.finite(xl)) xl else x,
                xhi = if (is.finite(xh)) xh else x,
                z = mean(z), n = n,
-               # A collapsed source holds no single conditioned value, so it
-               # gets no "CRCL = 12.1" label -- that was the first NODE's.
-               label = if (.join) "" else .admStudyCovLabel(s0),
+               # NO `label`. The panel puts sources in a legend and never read
+               # it, so it was work per group for nothing -- and worse than
+               # nothing: .admStudyCovLabel() format()s each conditioned value
+               # through vapply(character(1)), so a `cov` entry of length > 1
+               # returns several strings, vapply errors, the tryCatch around
+               # the panel swallows it, and covariate_resid vanishes with no
+               # message.
                stringsAsFactors = FALSE)
   }))
   if (is.null(df) || nrow(df) < 2L) return(NULL)
@@ -1445,7 +1462,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   # a grid spends half the figure on empty (v, CRCL)-style panels.
   p_eff <- p_eff +
     ggplot2::scale_x_continuous(
-      breaks = .admLevelBreaks(curve_df$x[curve_df$disc])) +
+      breaks = .admLevelBreaks(curve_df$x, curve_df$cov, curve_df$disc)) +
     # The strip says which parameter is on y against which covariate on x, so
     # the axis titles do not have to and the panel needs no key to read it.
     ggplot2::facet_wrap(~ cov + param, scales = "free",
@@ -1537,7 +1554,8 @@ head.paged_df <- function(x, n = 6L, ...) {
     # 0.5047619.
     ggplot2::scale_x_continuous(
       breaks = .admLevelBreaks(
-        res_df$x[res_df$disc & res_df$kind == "conditional"])) +
+        res_df$x, res_df$cov,
+        res_df$disc & res_df$kind == "conditional")) +
     ggplot2::facet_wrap(~ cov, scales = "free_x", nrow = 1L) +
     ggplot2::labs(
       title = "Between-study residual vs covariate",
@@ -1582,7 +1600,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## The mean is the n-weighted mean of the strata. THE VARIANCE IS NOT. It is the
 ## law of total variance -- within PLUS BETWEEN -- and the between term is the
 ## covariate effect conditioning created. Verified against the same source fitted
-## unbanded: with both terms the collapsed SD matches to 1.000 at every time;
+## whole -- one study, no nodes: with both terms the collapsed SD matches to 1.000 at every time;
 ## with the within term alone it reads 0.80-0.88, so dropping it would draw a
 ## correctly specified fit as under-predicting the reported spread by a fifth.
 .admMixMoments <- function(E_list, V_list, w) {

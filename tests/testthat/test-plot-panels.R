@@ -321,9 +321,15 @@ test_that("residual panel: strata of one source are joined, not regressed", {
   # Each source appears as a pair, joined by a connector grouped on `source`.
   expect_true(all(o$res[[1L]]$paired))
   expect_equal(nrow(o$res[[1L]]), 4L)
+  # Without rlang, which was in Suggests for this one call: a ggplot2 mapping
+  # entry is a quosure, and a quosure is a one-sided formula carrying the
+  # expression in `[[2]]`. A test that ERRORS rather than skips where an
+  # optional package is absent is the thing skip_if_no_panels() exists to
+  # prevent, and one deparse is not a dependency.
   grp <- vapply(o$p$layers, function(l) {
     g <- l$mapping$group
-    if (is.null(g)) "" else deparse(rlang::quo_get_expr(g))
+    if (is.null(g)) "" else
+      deparse(if (is.call(g) && identical(g[[1L]], quote(`~`))) g[[2L]] else g)
   }, "")
   expect_true("source" %in% grp)
   # PINS the palette keying. Built from `study` it matched nothing, ggplot2

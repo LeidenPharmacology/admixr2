@@ -616,11 +616,25 @@ test_that(".admCovSource reads the parent a stratum recorded, not its name", {
 })
 
 test_that(".admLevelBreaks ticks a discrete panel at its levels only", {
-  brk <- .admLevelBreaks(c(0, 1))
+  brk <- .admLevelBreaks(c(0, 1), c("SEX", "SEX"), c(TRUE, TRUE))
   # A panel spanned by the levels is the discrete one.
   expect_equal(brk(c(-0.05, 1.05)), c(0, 1))
   # A continuous panel falls back to pretty(), not to the levels.
   expect_equal(brk(c(35, 98)), pretty(c(35, 98)))
+})
+
+test_that(".admLevelBreaks reads each facet's OWN covariate, not the pool", {
+  # One breaks function serves every free-scaled facet, and the two covariates
+  # overlap: DOSE's levels (40, 80) sit inside CRCL's span and fill enough of
+  # it that a pooled level set ticked the CRCL panel at DOSE's values.
+  x   <- c(40, 80, 30, 35, 90, 95)
+  cov <- c("DOSE", "DOSE", rep("CRCL", 4L))
+  brk <- .admLevelBreaks(x, cov, c(TRUE, TRUE, rep(FALSE, 4L)))
+  # CRCL's facet: continuous, so pretty() -- NOT c(40, 80), which is what the
+  # pooled set gave, since 40 and 80 fall inside these limits.
+  expect_equal(brk(c(26.75, 98.25)), pretty(c(26.75, 98.25)))
+  # DOSE's own facet still gets its levels.
+  expect_equal(brk(c(38, 82)), c(40, 80))
 })
 
 test_that(".admCovResidData marks discreteness and pairs a source's strata", {
@@ -664,6 +678,24 @@ test_that(".admCovResidData needs two studies to have a contrast", {
                mean((c(1, 2) - c(1.1, 2.1)) / sqrt(c(0.01, 0.04) / 100)),
                tolerance = 1e-8)
   expect_null(.admCovResidData("WT", st["lo"], agg["lo"]))
+})
+
+test_that(".admCovResidData survives a `cov` entry longer than one", {
+  # It used to build a `label` column the panel never read, through
+  # .admStudyCovLabel(), which format()s each conditioned value inside
+  # vapply(character(1)): a length-2 entry returns two strings, vapply errors,
+  # the tryCatch around the panel swallows it, and covariate_resid vanished
+  # with no message.
+  agg <- list(
+    lo = list(obs = list(E = c(1, 2)), pred = list(E = c(1.1, 2.1),
+                                                   V = diag(c(0.01, 0.04)))),
+    hi = list(obs = list(E = c(1, 2)), pred = list(E = c(0.9, 1.9),
+                                                   V = diag(c(0.01, 0.04)))))
+  st <- .cov_studies()
+  st$lo$cov$DOSE <- c(100, 200)
+  out <- expect_silent(.admCovResidData("WT", st, agg))
+  expect_equal(nrow(out), 2L)
+  expect_false("label" %in% names(out))
 })
 
 test_that(".admCovStudyCentre reads a marginalised level mix as its mean", {
@@ -878,7 +910,7 @@ test_that(".admMixMoments is the law of total variance, not an average", {
   expect_equal(one$V, diag(2))
 })
 
-test_that(".admCollapseSources leaves an unbanded source alone", {
+test_that(".admCollapseSources leaves a source with no nodes alone", {
   # A single-stratum source keeps its `cov`, so an `at`-pinned study still
   # titles with the value it was solved at. Only a genuinely conditional source
   # loses that, because it no longer sits at one value.

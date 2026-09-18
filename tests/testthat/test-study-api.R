@@ -645,6 +645,29 @@ test_that("conditioning is not a user option any more", {
     population = pop, range = c(0, 1), label = "s"))))
   expect_identical(length(g3), 2L)
 
+  # WHICH COVARIATE AN UNNAMED `range` BELONGS TO IS A QUESTION ABOUT THE
+  # SOURCE, asked before the analysis model has any say. Resolved against the
+  # NARROWED set instead, the same `studies` object worked under a model that
+  # reads the covariate and died under the null that drops it -- which is the
+  # nested pair this is all for.
+  .one_cov <- admStudies(s = admStudy(
+    model = .sa_model, n = 100, dose = 200, times = c(1, 4),
+    population = pop, range = c(0, 1), label = "s"))
+  expect_identical(length(suppressMessages(
+    admixr2:::.admMaterialise(.one_cov, analysis_covs = "SEX"))), 2L)
+  # The null model reads no covariate: no nodes, and no error either.
+  expect_identical(length(suppressMessages(
+    admixr2:::.admMaterialise(.one_cov, analysis_covs = character(0)))), 1L)
+
+  # ...and with TWO conditional covariates, narrowing to one used to make the
+  # unnamed range unambiguous by accident and attach it to the survivor.
+  expect_error(suppressMessages(admixr2:::.admMaterialise(
+    admStudies(s = admStudy(model = .fit_wt, n = 100, dose = 200,
+                            times = c(1, 4), population = pop,
+                            range = c(50, 100), label = "s")),
+    analysis_covs = "WT")),
+    "does not say which covariate")
+
   # And the derivation resolves to the covariates themselves, so a study
   # prints the set it found rather than a flag it was handed -- and says why
   # the one it did not is marginal, which is the part a reader cannot see

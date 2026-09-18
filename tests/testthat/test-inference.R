@@ -98,8 +98,24 @@ test_that("fits at different stratum resolutions are refused", {
   full <- .lrt_fit(c("tcl", "tv", "b1"), 100, strataNodes = 9L)
   red  <- .lrt_fit(c("tcl", "tv"),       106, strataNodes = 5L)
   expect_error(anova(full, red), "stratum resolutions")
-  expect_error(anova(full, .lrt_fit(c("tcl", "tv"), 106)),
+  # AN UNSET STAMP IS NOT A DISAGREEMENT, whether or not the other side is
+  # named. This used to be refused here and accepted two tests down, where the
+  # named side made the per-covariate branch fire and the intersection with an
+  # unnamed stamp came back empty -- so the same pair was judged on whether
+  # the covariate happened to have a name.
+  expect_s3_class(anova(full, .lrt_fit(c("tcl", "tv"), 106)), "anova.admFit")
+  # A fit saved BEFORE the stamp carried names still gets compared. Entering
+  # the per-covariate branch on one named side alone, the intersection was
+  # empty and this passed at genuinely different resolutions -- the one pair
+  # the unnamed fallback exists to catch.
+  expect_error(anova(full, .lrt_fit(c("tcl", "tv"), 106,
+                                    strataNodes = c(WT = 5L))),
                "stratum resolutions")
+  # ...and the same stamp on either side of the rename is still the same
+  # resolution, so an integer `9` and the character `"9"` agree.
+  expect_s3_class(anova(full, .lrt_fit(c("tcl", "tv"), 106,
+                                       strataNodes = "9")),
+                  "anova.admFit")
 })
 
 test_that("the resolution is compared per covariate, where the fits overlap", {
@@ -122,11 +138,27 @@ test_that("the resolution is compared per covariate, where the fits overlap", {
   expect_error(anova(full, .lrt_fit(c("tcl", "tv"), 106,
                                     strataNodes = c(CRCL = 9L))),
                "stratum resolutions on 'CRCL'")
-  # ...and a covariate the model READS but no source was cut on records 1,
-  # because a pooled summary and a set of nodes are different data to a model
-  # that can see the difference.
+  # ...and a covariate the model READS but no source was cut on records "0",
+  # because integrating over the whole declared distribution and scoring a set
+  # of nodes are different data to a model that can see the difference.
   expect_error(anova(full, .lrt_fit(c("tcl", "tv"), 106,
-                                    strataNodes = c(CRCL = 1L))),
+                                    strataNodes = c(CRCL = "0"))),
+               "stratum resolutions on 'CRCL'")
+  # "0" IS NOT "1". A source cut at `strata_nodes = 1L` is pinned at the latent
+  # median, which is a third dataset again -- and stamping both as 1 made this
+  # pair pass.
+  expect_error(anova(.lrt_fit(c("tcl", "tv", "bcrcl"), 100,
+                              strataNodes = c(CRCL = "1")),
+                     .lrt_fit(c("tcl", "tv"), 106,
+                              strataNodes = c(CRCL = "0"))),
+               "stratum resolutions on 'CRCL'")
+  # THE WHOLE MULTISET, not its maximum: two sources cut at three and nine
+  # nodes are not the same data as both cut at nine, and max() reported both
+  # as 9.
+  expect_error(anova(.lrt_fit(c("tcl", "tv", "bcrcl"), 100,
+                              strataNodes = c(CRCL = "3/9")),
+                     .lrt_fit(c("tcl", "tv"), 106,
+                              strataNodes = c(CRCL = "9"))),
                "stratum resolutions on 'CRCL'")
 })
 

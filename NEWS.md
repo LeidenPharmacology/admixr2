@@ -71,9 +71,8 @@
 * **Whether a covariate is conditional or marginal is derived, not declared**:
   conditional when the source's own model ESTIMATED its coefficient.
 
-* **`admMoments(fit)`**: the observed and predicted first two moments per
-  source, with the structural share of the variance and the standardised
-  residual -- the numbers behind the mean and covariance panels.
+* **`admMoments(fit)` gives the observed and predicted first two moments per
+  source**, with the structural variance share and the standardised residual.
 
 ## Changes that can move an existing fit
 
@@ -104,9 +103,8 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **`adfoControl()`'s new `grad = "analytical"` default brings the
   `grad_bounds` box with it.**
 
-* **`admStudy(stratify = )` is removed**, conditioning being derived. A script that
-  named fewer covariates than the source's model uses now sums over more
-  strata and moves; `covStrata()` still takes it.
+* **`admStudy(stratify = )` is removed**, conditioning being derived: a script
+  naming fewer covariates than its model uses moves. `covStrata()` still takes it.
 
 * **`range` truncates a MARGINAL covariate's declared distribution too**, not
   only a conditional one's: the enrolled span holds however the covariate is used.
@@ -119,8 +117,32 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 ## Bug fixes
 
-* **`datagen()` conditional every study that declared a covariate distribution**,
-  having a `model` argument of its own to derive from. It needs `stratify` now.
+* **An unnamed `range` is resolved against the SOURCE's conditional covariates**,
+  not the analysis-narrowed set: one `studies` object now serves a nested pair.
+
+* **The source marks and the source regression line took the FIRST assignment
+  to a parameter**, where the solve uses the last; a staged model drew a zig-zag.
+
+* **An enrolled `range` is refused against a `cov_dist` with its own `joint`
+  sampler**, rather than accepted and silently ignored.
+
+* **`anova()` skipped the resolution check when only one fit's stamp was
+  named**, which is the pre-rename fit the unnamed comparison exists to catch.
+
+* **`fit$env$strataNodes` tells a marginalised covariate from one pinned at a
+  single node**, and reports the whole set of node counts rather than its maximum.
+
+* **A `cov` entry longer than one took the `covariate_resid` panel out**, through
+  a label the panel computed and never read.
+
+* **A free-scaled covariate facet could be ticked at another covariate's
+  levels**; the breaks are read per covariate now.
+
+* **The `diagnostic-plots` article called an undefined function** and could not
+  be built.
+
+* **`datagen()` cut every study that declared a covariate distribution into
+  nodes**, having no `model` of its own to derive from. It needs `stratify` now.
 
 * **`stratify = FALSE` stopped reaching the spec**, so a study that refused
   conditioning had one derived for it -- the opt-out became its opposite.
@@ -128,9 +150,8 @@ argument. None is a bug fix, so all are listed here rather than below.
 * **`strata_nodes` was recorded only when something was cut into nodes**, so it
   could vary between studies of one fit -- which `anova()` refuses to compare.
 
-* **`anova()` refused the nested pair a covariate test is made of.** The null
-  model has dropped the term, so it has no nodes to record; measured, the two
-  objectives agree to 5e-05 and the comparison is exactly valid.
+* **`anova()` refused the nested pair a covariate test is made of**, the null
+  having dropped the term and so having no nodes; measured, they agree to 5e-05.
 
 * **`range` was silently dropped by a source conditional on nothing**, the
   transcribed `mean +/- SD` it exists for.
@@ -149,9 +170,8 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 * **`admMoments()` returned `NULL` where it documents an empty data frame.**
 
-* **A source conditional on a covariate the analysis model does not read could not
-  be reduced**: the joint stratum sampler refused the drop, blocking nested
-  fits. Its inputs are retained so it can be rebuilt on the reduced set.
+* **A source conditional on a covariate the analysis model does not read could
+  not be reduced**: the sampler's inputs are kept, so it rebuilds on the subset.
 
 * **A discrete covariate latently correlated with another margin is refused**,
   rather than integrated as if it were independent.

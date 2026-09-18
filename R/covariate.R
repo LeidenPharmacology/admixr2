@@ -369,6 +369,14 @@
         # exact on their own specs, so the sampler goes entirely.
         studies[[nm]]$cov_dist[["joint"]]   <- NULL
         studies[[nm]]$cov_dist[["jointOwn"]] <- NULL
+        # AND NO `discExact`. It names the margins a sampler maps from their
+        # own uniform, and there is no sampler here: setting it on this branch
+        # made a claim about something that had just been deleted. Inert today
+        # -- .admCovGrid() reads it only inside `if (is.function(jf))` -- but a
+        # later canon that rebuilt a copula from `cor` would read it and
+        # enumerate margins the new sampler does not pass through, which is the
+        # failure the stop() further down guards against.
+        studies[[nm]]$cov_dist[["discExact"]] <- NULL
       } else {
         studies[[nm]]$cov_dist[["joint"]] <- .admStrataJoint(
           .sj$X[, .cn2, drop = FALSE], .keep, .cn2,
@@ -378,20 +386,21 @@
         # replaces it with the stratum's own conditional sample, which is not
         # rebuildable from `cor` and must not be labelled as if it were.
         studies[[nm]]$cov_dist[["jointOwn"]] <- NULL
+        # `discExact` NAMES THE MARGINS THE SAMPLER MAPS FROM THEIR OWN
+        # UNIFORM, which for the rebuilt sampler is everything outside the
+        # conditional sample -- exactly as .admCovStrata() sets it to
+        # setdiff(nk, cn). Intersecting the value already on the spec could
+        # only ever give character(0): .admCovDistDrop() NULLs `discExact`, and
+        # the canon re-derives it only when it builds a copula from `cor`,
+        # which a stratum from the sampled branch has none of. A discrete
+        # margin then lost its exact enumeration and the stratum fell back to
+        # the equal-weight pool -- 4096 rows and, as the note there says,
+        # curvature manufactured in a coefficient that is not identified at
+        # all. Silently.
+        studies[[nm]]$cov_dist[["discExact"]] <- setdiff(.keep, .cn2)
       }
       studies[[nm]]$cov_dist[[".adm_strata_joint"]] <-
         if (length(.cn2)) list(X = .sj$X[, .cn2, drop = FALSE], cn = .cn2)
-      # `discExact` NAMES THE MARGINS THE SAMPLER MAPS FROM THEIR OWN UNIFORM,
-      # which for the rebuilt sampler is everything outside the conditional
-      # sample -- exactly as .admCovStrata() sets it to setdiff(nk, cn).
-      # Intersecting the value already on the spec could only ever give
-      # character(0): .admCovDistDrop() NULLs `discExact`, and the canon
-      # re-derives it only when it builds a copula from `cor`, which a stratum
-      # from the sampled branch has none of. A discrete margin then lost its
-      # exact enumeration and the stratum fell back to the equal-weight pool --
-      # 4096 rows and, as the note there says, curvature manufactured in a
-      # coefficient that is not identified at all. Silently.
-      studies[[nm]]$cov_dist[["discExact"]] <- setdiff(.keep, .cn2)
     }
     .dropped <- union(.dropped, unread)
   }
@@ -1107,6 +1116,25 @@
     bad("`cov_range` names covariate(s) ",
         paste(sQuote(setdiff(names(cov_range), nms)), collapse = ", "),
         " that this study's `cov_dist` does not declare.")
+  # REFUSE RATHER THAN NO-OP. Truncation works through the margin specs, and
+  # everything downstream draws through `joint` when there is one. A sampler
+  # admixr2 BUILT (`jointOwn`) is discarded below and rebuilt from the
+  # truncated margins; an opaque one the user supplied cannot be, the canon
+  # short-circuits on it, and every consumer keeps sampling the full declared
+  # support. The enrolled range was accepted, documented as truncating the
+  # margin, and reached nothing -- which is worse than an error, because the
+  # numbers look like an answer. The marginal path this PR added is exactly
+  # where that bites.
+  if (is.function(cov_dist[["joint"]]) && !isTRUE(cov_dist[["jointOwn"]]))
+    bad("an enrolled `range` cannot be applied to a `cov_dist` that supplies ",
+        "its own `joint` sampler, because admixr2 truncates the declared ",
+        "margins and `joint` is drawn from instead of them. The margins are ",
+        "inside your sampler, so truncate them there: for ",
+        sQuote(names(cov_range)[1L]),
+        ", map its uniform onto [F(lo), F(hi)] before the quantile call, e.g. ",
+        "`qlnorm(pa + v * (pb - pa), meanlog, sdlog)`. Or declare the margins ",
+        "and `cor` and let admixr2 build the sampler, which can then be ",
+        "rebuilt over the truncated ones.")
   for (nm in names(cov_range))
     cov_dist[[nm]] <- .admCovTruncSpec(cov_dist[[nm]], cov_range[[nm]], nm)
   # Discard the derived fields FIRST: the canon short-circuits on an existing `joint`, so re-running it over
@@ -1591,7 +1619,16 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 ## this into a covariate-effect curve for the price of one evaluation.
 ##
 ## Returns a list of `list(name = <lhs symbol>, value = <numeric>)` for the
-## lines in `keep` (all of them when NULL), in model order.
+## lines in `keep` (all of them when NULL), in model order, ONE ENTRY PER NAME:
+## a model built in stages -- `cl <- exp(tcl) * (WT/70)^bwt` then
+## `cl <- cl * exp(bsex * SEX)` -- assigns `cl` twice, and the LAST assignment
+## is the value the solve actually uses. Reducing here rather than in a caller
+## because all three consumers need it and only one had it: the fitted curve
+## deduplicated, while the source marks read `setNames(...)[[param]]` and got
+## the FIRST match (a mark at an intermediate value, reading as a source
+## disagreeing with a fit it agrees with) and the source regression line kept
+## BOTH series under one group, so geom_line() drew a path zig-zagging between
+## them.
 .admEvalModelLines <- function(ml, cov_at, th_over = list(), keep = NULL) {
   ev  <- new.env(parent = asNamespace("rxode2"))
   ini <- ml$ini
@@ -1619,7 +1656,9 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     if (is.null(keep) || ii %in% keep)
       out[[length(out) + 1L]] <- list(name = nm, value = v)
   }
-  out
+  if (length(out) < 2L) return(out)
+  .nm <- vapply(out, `[[`, "", "name")
+  out[rev(!duplicated(rev(.nm)))]
 }
 
 ## A nominal value for every covariate the model reads: the declared median
@@ -1681,7 +1720,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # Apply a study's `cov_range` when it conditions on NOTHING, and take it off the study.
 #
 # `cov_range` is read in exactly one place, .admCovStrata(), so a study that
-# went through unbanded kept the field and nothing ever truncated anything: the
+# was never cut into nodes kept the field and nothing ever truncated anything: the
 # `range` a source reported was accepted, documented as truncating the margin
 # "whether that covariate ends up conditional or marginal", and then silently
 # dropped for precisely the marginal case.
@@ -1690,10 +1729,13 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   if (is.null(cr)) return(s)
   s[["cov_range"]] <- NULL
   if (is.null(s[["cov_dist"]])) return(s)
-  s[["cov_dist"]] <- tryCatch(.admCovApplyRange(s[["cov_dist"]], cr),
-                              error = function(e)
-                                stop("admixr2: study '", nm, "': ",
-                                     conditionMessage(e), call. = FALSE))
+  # sub(), because every error .admCovApplyRange() raises already starts
+  # "admixr2: " and the user was reading it twice.
+  s[["cov_dist"]] <- tryCatch(
+    .admCovApplyRange(s[["cov_dist"]], cr),
+    error = function(e)
+      stop("admixr2: study '", nm, "': ",
+           sub("^admixr2: ", "", conditionMessage(e)), call. = FALSE))
   s
 }
 

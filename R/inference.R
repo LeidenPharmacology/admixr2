@@ -75,18 +75,34 @@
   # unnamed comparison is kept only for a fit saved before the stamp carried
   # covariate names.
   .nm1 <- names(.j1); .nm2 <- names(.j2)
-  .named <- !is.null(.nm1) || !is.null(.nm2)
+  # BOTH sides named, or there is nothing to line up per covariate. `||` meant
+  # one named side was enough to enter the per-covariate branch, where the
+  # intersection with an unnamed stamp is empty and the check passes -- so a
+  # fit saved before the stamp carried names (a bare `5`) was accepted against
+  # `c(WT = 9)`, at genuinely different resolutions, which is the one pair the
+  # unnamed fallback exists to catch. An EMPTY stamp is still not a
+  # disagreement: a model reading no covariate records nothing and has nothing
+  # to disagree about, and that is the null of a single-covariate test.
+  .named <- !is.null(.nm1) && !is.null(.nm2)
   .sh <- if (.named) intersect(.nm1, .nm2) else NULL
-  .bad <- if (.named) length(.sh) > 0L && !identical(.j1[.sh], .j2[.sh])
-          else !identical(.j1, .j2)
+  .bad <- if (!length(.j1) || !length(.j2)) FALSE
+          else if (.named) length(.sh) > 0L &&
+            !identical(as.character(.j1[.sh]), as.character(.j2[.sh]))
+          # as.character(), because the stamp is a character vector now (it has
+          # to carry "3/9") and a fit saved when it was an integer would
+          # otherwise disagree with an identical new one on type alone.
+          else !identical(as.character(unname(.j1)),
+                          as.character(unname(.j2)))
   if (isTRUE(.bad)) {
     .w <- if (!.named) "" else {
-      .d <- .sh[.j1[.sh] != .j2[.sh]]
+      .d <- .sh[as.character(.j1[.sh]) != as.character(.j2[.sh])]
       paste0(" on ", paste(sQuote(.d), collapse = ", "))
     }
+    # ", " between covariates, because "/" now separates the node counts WITHIN
+    # one covariate's stamp and "3/9/5" would not say which was which.
     stop("anova(): these fits were built at different stratum resolutions",
-         .w, " (", paste(.j1, collapse = "/"), " and ",
-         paste(.j2, collapse = "/"), "). The objective is J-dependent, so ",
+         .w, " (", paste(.j1, collapse = ", "), " and ",
+         paste(.j2, collapse = ", "), "). The objective is J-dependent, so ",
          "their difference is not a likelihood ratio -- refit both at the ",
          "same resolution.", call. = FALSE)
   }

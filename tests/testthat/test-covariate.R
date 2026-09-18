@@ -574,7 +574,7 @@ test_that("an opaque sampler is conditioned correctly when the stratified
            covariate is NOT the head of its cascade", {
   # This is the case the u-space route got silently wrong: on a cascade running AGE -> WT -> CRCL, stratifying
   # on WT left AGE at its unconditional mean in every stratum, against a true 50.1 to 60.4. Conditioning on an opaque
-  # sampler has to bin its OUTPUT; pinning its input uniforms is conditional only the cascade head.
+  # sampler has to bin its OUTPUT; pinning its input uniforms conditions only the cascade head.
 
   # The cascade is built by hand rather than fitted, so this needs no copula package. The conditioning is
   # ASYMMETRIC -- a squared term -- so no correlation matrix reproduces it and the sampler really is opaque.
@@ -1047,7 +1047,7 @@ test_that("a bare datagen() study is NOT conditional for having a distribution",
 test_that("`cov_range` truncates a margin nothing conditions on", {
   skip_on_cran()
   # `cov_range` was read in exactly ONE place, .admCovStrata(), so a study that
-  # went through unbanded carried the field to the end and was scored against
+  # was never cut into nodes carried the field to the end and was scored against
   # its full declared support -- the `mean +/- SD` transcribed from a baseline
   # table, which is the case a reported range exists for.
   st <- list(s = list(times = c(1, 4), n = 100L,
@@ -1059,6 +1059,27 @@ test_that("`cov_range` truncates a margin nothing conditions on", {
   expect_null(sp[["cov_range"]])
   expect_gte(admixr2:::.admCovQuantile(sp$cov_dist[["WT"]], 0.001), 60)
   expect_lte(admixr2:::.admCovQuantile(sp$cov_dist[["WT"]], 0.999), 100)
+})
+
+test_that("`cov_range` is refused against an opaque `joint`, not ignored", {
+  # Truncation works through the MARGIN specs, and everything downstream draws
+  # through `joint` when there is one. A sampler admixr2 built is discarded and
+  # rebuilt from the truncated margins; an opaque one cannot be, and the canon
+  # short-circuits on it -- so the range was accepted, documented as
+  # truncating, and reached nothing. Numbers that look like an answer are worse
+  # than an error.
+  cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20))
+  cd[["joint"]] <- function(u) cbind(WT = 60 + 40 * u[, 1L],
+                                     CRCL = 50 + 80 * u[, 2L])
+  expect_error(admixr2:::.admCovApplyRange(cd, list(WT = c(60, 100))),
+               "own `joint` sampler")
+  # And the study wrapper does not say "admixr2:" twice on the way out.
+  st <- list(times = c(1, 4), n = 100L, cov_dist = cd,
+             cov_range = list(WT = c(60, 100)))
+  e <- tryCatch(admixr2:::.admStudyApplyRange(st, "s"), error = identity)
+  expect_match(conditionMessage(e), "^admixr2: study 's': ")
+  expect_false(grepl("admixr2: study 's': admixr2: ", conditionMessage(e),
+                     fixed = TRUE))
 })
 
 test_that("the rebuilt stratum sampler survives the drop it is rebuilt for", {
@@ -1177,6 +1198,36 @@ test_that(".admEvalModelLines skips an assignment whose target is a CALL", {
   expect_true(all(nchar(nms) > 0L))
   expect_true("cl" %in% nms)
   expect_false(any(c("f", "/") %in% nms))
+})
+
+test_that(".admEvalModelLines returns the LAST assignment to each name", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  # A model built in stages assigns `cl` twice, and the solve uses the second.
+  # Returning both left the fitted curve to deduplicate for itself -- which it
+  # did -- while the two other consumers did not: the source MARKS read
+  # setNames(...)[[param]] and got the FIRST match, placing a mark at an
+  # intermediate value and reading as a source disagreeing with a fit it
+  # agrees with, and the source REGRESSION LINE kept both series under one
+  # group, so geom_line() drew a path zig-zagging between them.
+  fn <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.75; bsex <- 0.2
+          eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+            cl <- cl * exp(bsex * SEX)
+            v  <- exp(tv)
+            cp <- linCmt()
+            cp ~ add(add.err) })
+  }
+  ui  <- suppressMessages(rxode2::rxode2(fn))
+  ml  <- admixr2:::.admModelLines(ui)
+  out <- admixr2:::.admEvalModelLines(ml, list(WT = 70, SEX = 1))
+  nms <- vapply(out, `[[`, "", "name")
+  expect_equal(sum(nms == "cl"), 1L)
+  # The value is the SECOND line's, which carries the SEX term.
+  expect_equal(out[[which(nms == "cl")]]$value, 5 * exp(0.2), tolerance = 1e-8)
+  # ...and the reduction keeps model order for the names that survive.
+  expect_equal(nms[nms %in% c("cl", "v")], c("cl", "v"))
 })
 
 test_that("the rebuilt stratum sampler keeps its exactly-mapped margins", {

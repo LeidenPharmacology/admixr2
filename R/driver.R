@@ -101,22 +101,34 @@
   # of 5e-05 -- while the old check refused the first pair outright because one
   # fit stamped `5` and the other stamped nothing.
   #
-  # A covariate the model READS but no study is conditional on is recorded as 1:
-  # that fit scored a pooled summary where the other scored nodes, and for a
-  # model that can see the covariate those are genuinely different data.
+  # A covariate the model READS but no study is conditional on is recorded as
+  # `"0"`: that fit integrated over the whole declared distribution where the
+  # other scored nodes, and for a model that can see the covariate those are
+  # genuinely different data. NOT `1`, which is what a source deliberately cut
+  # at `strata_nodes = 1L` stamps -- a single node PINNED at the latent median,
+  # which is a different dataset again, and stamping both as 1 made anova()
+  # accept the pair.
+  #
+  # THE WHOLE MULTISET, not its maximum: `"3/9"` for two sources cut at three
+  # and nine nodes, which max() reported as `9` and so could not be told apart
+  # from both cut at nine. Sorted and de-duplicated, so the stamp does not
+  # depend on the order the studies were given, and a character vector because
+  # a heterogeneous set is not an integer. The homogeneous case -- every source
+  # at the same resolution -- is still just `"9"`.
   .Jn <- local({
     .cv <- tryCatch(.ui$allCovs, error = function(e) character(0))
     .cv <- .cv[vapply(.cv, function(cv) any(vapply(studies, function(s)
       cv %in% c(.admCovSpecNames(s[["cov_dist"]]),
                 s[[".adm_strata_covs"]] %||% character(0)),
       logical(1))), logical(1))]
-    if (!length(.cv)) return(integer(0))
+    if (!length(.cv)) return(character(0))
     vapply(.cv, function(cv) {
       j <- unlist(lapply(studies, function(s)
         if (cv %in% (s[[".adm_strata_covs"]] %||% character(0)))
           s[[".adm_strata_nodes"]] else NULL))
-      if (length(j)) max(as.integer(j)) else 1L
-    }, integer(1))
+      if (!length(j)) "0"
+      else paste(sort(unique(as.integer(j))), collapse = "/")
+    }, character(1))
   })
   nlmixr2est::.nlmixr2FitUpdateParams(.ret)
   handle_ctl(.ctl, .ret)

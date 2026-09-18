@@ -184,7 +184,7 @@ test_that("plot.admFit default which: a fit with no covariates is unchanged", {
   # distinguishes the correct collapse from an average of the strata.
   #
   # Conditioning is DERIVED now and there is no argument to refuse it, so the
-  # unbanded reference is built by setting the internal marker directly. That
+  # uncut reference is built by setting the internal marker directly. That
   # is the point of the test: a caller cannot ask for this, and the collapse
   # has to reproduce it anyway.
   .whole <- unclass(admStudy(model = mfn, population = pop, dose = 100,
@@ -394,9 +394,10 @@ test_that("plot.admFit covariates: predicted V carries the marginalised spread",
   nlmixr2 <- nlmixr2est::nlmixr2
   # A GENUINELY MARGINAL covariate, which now takes a source model that does
   # NOT read it and an analysis model that does. Anything the source model uses
-  # is conditional and gets conditional, and a conditional covariate has no within-study
-  # distribution left to integrate -- its spread is in the spacing between
-  # strata instead. This is the covariates-vignette case: nobody published a
+  # is conditional for it and gets cut into nodes, and a conditional covariate
+  # has no within-study distribution left to integrate -- its spread is in the
+  # spacing between its nodes instead. This is the covariates-vignette case:
+  # nobody published a
   # renal term, the meta-analysis estimates one.
   set.seed(4)
   pop <- data.frame(WT = rlnorm(150L, log(76), 0.2),
