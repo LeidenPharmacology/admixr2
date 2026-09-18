@@ -1202,6 +1202,40 @@ test_that(".admEvalModelLines skips an assignment whose target is a CALL", {
   expect_false(any(c("f", "/") %in% nms))
 })
 
+test_that("`keep` selects WHICH parameters, not what their value is", {
+  skip_on_cran()
+  skip_if_not_installed("rxode2")
+  # The effect panel's curve used `keep = hit`, and the reduction then ran
+  # WITHIN the cv-reading lines: the curve was the last assignment that reads
+  # cv, while the source marks and regression lines -- which pass no `keep` --
+  # were the last assignment anywhere, the value the solve uses. Different
+  # quantities, plotted in the same facet, and only on the facet of the
+  # covariate whose line is not last: every source drew a constant
+  # exp(bsex * SEX) above the dotted line, reading as a meta-analysis
+  # reproducing none of its sources.
+  fn <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.6; bsex <- 0.3
+          eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+            cl <- cl * exp(bsex * SEX)
+            v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui  <- suppressMessages(rxode2::rxode2(fn))
+  ml  <- admixr2:::.admModelLines(ml_ui <- ui)
+  hit <- admixr2:::.admLinesReading(ml, "WT")
+  at  <- list(WT = c(60, 70, 80), SEX = 1)
+  gv  <- function(v, n)
+    v[[which(vapply(v, `[[`, "", "name") == n)]]$value
+  kept <- gv(admixr2:::.admEvalModelLines(ml, at, list(), keep = hit), "cl")
+  full <- gv(admixr2:::.admEvalModelLines(ml, at, list()), "cl")
+  # The gap is exactly the factor the second line contributes.
+  expect_equal(full / kept, rep(exp(0.3), 3L), tolerance = 1e-8)
+  # `hit` still says which NAMES the panel is about -- `v` reads no covariate.
+  expect_equal(sort(unique(vapply(
+    admixr2:::.admEvalModelLines(ml, at, list(), keep = hit), `[[`, "", "name"))),
+    "cl")
+})
+
 test_that(".admEvalModelLines returns the LAST assignment to each name", {
   skip_on_cran()
   skip_if_not_installed("rxode2")

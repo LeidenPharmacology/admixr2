@@ -120,6 +120,21 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 ## Bug fixes
 
+* **The estimated-effect curve and the source marks were different quantities**
+  for a staged model, so every source drew a constant factor off the fitted line.
+
+* **A `by =` source got no mark and no regression line on `covariate_effect`**,
+  its own model being reachable under no name the panels use.
+
+* **`print()` told a `by =` source its estimated coefficient was asserted**, and
+  that it conditions on nothing, contradicting its own `reported by` line.
+
+* **The no-enrolled-range warning fired for DISCRETE conditional covariates**,
+  where truncation is a no-op; it asked for a span for a two-level factor.
+
+* **A `range` given as `c(lo =, hi =)` was applied by the fit and ignored by the
+  plot**, and one keyed by covariate names without being a list is now refused.
+
 * **An unnamed `range` is resolved against the SOURCE's conditional covariates**,
   not the analysis-narrowed set: one `studies` object now serves a nested pair.
 

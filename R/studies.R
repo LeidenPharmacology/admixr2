@@ -182,7 +182,8 @@
 # panels ended up recovering a stratum's parent with a regex on its name and
 # guessing whether a point value was a quadrature node or a reported level.
 .ADM_STRATUM_FIELDS <- c(".adm_strata_nodes", ".adm_source",
-                         ".adm_strata_covs", ".adm_node_covs")
+                         ".adm_strata_covs", ".adm_node_covs",
+                         ".adm_spec")
 
 # Normalise one observed-compartment unit: coerce E, coerce V to matrix,
 # auto-detect diagonal, set method + v_diag, inherit n/ev/output from study-level

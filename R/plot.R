@@ -762,6 +762,39 @@ head.paged_df <- function(x, n = 6L, ...) {
   }, character(1))
 }
 
+## The estimator's control, re-keyed by the name the PANELS use for a source.
+##
+## `.admFitSourceStudies()` returns the list the user passed, keyed by the
+## admStudies() name; the panels ask for `src[[sn]]` where `sn` came from
+## .admCovSource(). Those agree for a plain source, and for a conditional one
+## because .admExpandStrata() records `.adm_source` as the parent -- but not for
+## a `by =` source. `by` expands in .admMaterialise() to `<nm>_<by><level>` and,
+## unless the source is ALSO conditional, never reaches .admExpandStrata(), so
+## it carries no `.adm_source`: the lookup returned NULL, the source got no
+## mark and no regression line on `covariate_effect` (both paths return early on
+## a missing model), and .admCovSourceRange() found nothing, so the
+## extrapolation shading greyed out territory the source actually covers. All
+## silently, and `?plot.admFit` promises `by` a diamond at its value.
+##
+## `.adm_spec` is stamped by .admMaterialise() on everything it emits and says
+## which admStudy() the study came from. Deliberately NOT `.adm_source`: that
+## one means "these are nodes of one source, a paired set", and the levels of a
+## `by` are separate reported subgroups that the mean and covariance panels must
+## keep apart.
+.admCovSrcBySource <- function(studies, src) {
+  if (is.null(src) || !length(src)) return(src)
+  sn <- .admCovSource(studies)
+  sp <- vapply(seq_along(studies), function(i) {
+    .p <- studies[[i]][[".adm_spec"]]
+    if (is.character(.p) && length(.p) == 1L) .p else sn[[i]]
+  }, character(1))
+  # One entry per source name, and a source whose spec the control does not
+  # hold keeps a NULL, which every reader already treats as "no model of its
+  # own".
+  keep <- !duplicated(sn)
+  stats::setNames(lapply(sp[keep], function(p) src[[p]]), sn[keep])
+}
+
 ## Covariates worth a facet: any covariate any study describes.
 ##
 ## NOT restricted to the ones the model reads. A covariate the model omits is
@@ -1013,7 +1046,27 @@ head.paged_df <- function(x, n = 6L, ...) {
   # answering a second question, and the effect is the slope of this one.
   base <- .admCovPooled(.admCovPanelCovs(ui, studies), studies)
   at   <- utils::modifyList(base, stats::setNames(list(grid), cv))
-  vals <- .admEvalModelLines(ml, at, struct, keep = hit)
+  # NO `keep`, AND THE SELECTION HAPPENS AFTER. `keep = hit` made
+  # .admEvalModelLines() deduplicate WITHIN the cv-reading lines, so the curve
+  # was the last assignment that READS cv while the source marks and the source
+  # regression lines -- which pass no `keep` -- were the last assignment
+  # anywhere, the value the solve uses. For a model built in stages those are
+  # different quantities in the same facet:
+  #
+  #   cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+  #   cl <- cl * exp(bsex * SEX)
+  #
+  # On `cl vs WT`, `hit` is the first line alone, so every source was drawn a
+  # constant exp(bsex * SEX_centre) above the dotted line -- measured 4.810
+  # against 3.563 at WT = 60 -- which reads as a meta-analysis reproducing none
+  # of its sources on a fit that reproduces all of them, and only on that one
+  # facet. `hit` selects which PARAMETERS the panel is about; it does not
+  # define what their value is.
+  .hitnm <- unique(vapply(ml$lst[hit], function(e)
+    if (is.name(e[[2L]])) as.character(e[[2L]]) else "", ""))
+  .hitnm <- .hitnm[nzchar(.hitnm)]
+  vals <- Filter(function(z) z$name %in% .hitnm,
+                 .admEvalModelLines(ml, at, struct))
   vals <- Filter(function(z) length(z$value) == length(grid) &&
                    all(is.finite(z$value)) && diff(range(z$value)) > 0, vals)
   if (!length(vals)) return(NULL)
@@ -1296,11 +1349,20 @@ head.paged_df <- function(x, n = 6L, ...) {
   # the failure mode hardest to notice. Anything not keyed BY COVARIATE NAME is
   # read as the range of the one conditional covariate, which is the only
   # condition the short form is accepted under.
+  # THE SAME TEST .admMaterialise() APPLIES, written the same way on purpose.
+  # It keys by covariate only for a NAMED LIST and treats everything else as the
+  # short form, so `range = c(lo = 52, hi = 118)` is the enrolled range of the
+  # one conditional covariate there. Asking `is.null(names(.r))` here instead
+  # matched neither arm and returned NULL, so the fit scored that source over
+  # 52-118 while this panel drew its regression over the 2.5th-97.5th of the
+  # FULL declared margin and sized the extrapolation shading from it -- the
+  # fit and the plot disagreeing about one number, which is the failure the
+  # note in .admMaterialise() set out to remove.
   .r <- s[["range"]]
+  .keyed <- is.list(.r) && !is.null(names(.r))
   r <- if (!length(.r)) NULL                       # absent, or an empty list
-       else if (!is.null(names(.r)) && cv %in% names(.r)) .r[[cv]]
-       else if (is.null(names(.r)) &&
-                identical(tryCatch(.admStudyBandNames(s),
+       else if (.keyed) .r[[cv]]
+       else if (identical(tryCatch(.admStudyBandNames(s),
                                    error = function(e) character(0)), cv))
          (if (is.list(.r)) .r[[1L]] else .r)
        else NULL
@@ -2298,6 +2360,10 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
     # published model, which is what puts a source at its own parameter value
     # rather than on the fitted line. See .admFitSourceStudies().
     src_st <- tryCatch(.admFitSourceStudies(fit), error = function(e) NULL)
+    # RE-KEYED to the names the panels use, which are not the names the control
+    # holds. See .admCovSrcBySource(): a `by =` source expands to one study per
+    # level and its model was reachable under neither.
+    src_st <- .admCovSrcBySource(studies, src_st)
     eff <- Filter(Negate(is.null), lapply(cov_nms, function(cv)
       tryCatch(.admCovEffectData(fit$env$ui, cv, studies, extra$struct, src_st),
                error = function(e) NULL)))

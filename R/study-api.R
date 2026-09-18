@@ -623,7 +623,15 @@ print.admStudy <- function(x, ...) {
       # READ AT AN ASSERTED COEFFICIENT is the other way to be marginal, and
       # the one a reader would otherwise have to work out: the model does
       # mention the covariate, so the line above says nothing about it.
-      .fx <- setdiff(intersect(pn, cvs), .bn)
+      #
+      # `by` IS NEITHER. .admStudyBandNames() removes its covariate from the
+      # conditional set deliberately -- `by` pins it one level per study, so
+      # there is nothing left to cut -- and subtracting that set alone then
+      # labelled it "read at an asserted coefficient" for a model that plainly
+      # estimates one, three lines above a `reported by` line saying otherwise.
+      # The pre-flight print is where a transcription gets checked, and the
+      # natural response was to go and add a coefficient the model already had.
+      .fx <- setdiff(intersect(pn, cvs), c(.bn, x$by %||% character(0)))
       if (length(.fx))
         cat("            ", paste(.fx, collapse = ", "),
             " read at an asserted coefficient -> marginalised (no fitted ",
@@ -634,7 +642,10 @@ print.admStudy <- function(x, ...) {
     paste(sprintf("%s = %s", names(x$at), unlist(x$at)), collapse = ", "), "\n")
   if (!is.null(x$by))       cat("  reported by", x$by, "-> one study per level\n")
   if (length(.bn)) cat("  conditional on ", paste(.bn, collapse = ", "), "\n")
-  else if (!is.null(x$ui) && !is.null(x$population))
+  # ...and NOT "conditional on nothing" for a `by` source either: `by` is how
+  # this source reports a covariate contrast, so the sentence is both false and
+  # a contradiction of the line printed just above it.
+  else if (!is.null(x$ui) && !is.null(x$population) && is.null(x$by))
     cat("  conditional on  nothing -- this model estimated no coefficient for a ",
         "covariate this source describes\n", sep = "")
   invisible(x)
@@ -803,14 +814,23 @@ print() a single study to check its transcription.
   spec <- vapply(studies, inherits, logical(1), "admStudy")
   if (!any(spec)) return(studies)
   out <- list()
+  # WHICH admStudy() THE STUDY BEING EMITTED CAME FROM. Set once per source
+  # below and read by add(), because the expansions rename: `stratify` gives
+  # `<nm>_s1`, `by` gives `<nm>_<by><level>`, and the two compose. `.adm_source`
+  # records the parent for the FIRST of those and not the second, so a `by`
+  # source's own published model was reachable under no name at all -- see
+  # .admCovSrcBySource().
+  .spec <- NULL
   add <- function(nm, value) {
     if (nm %in% names(out))
       stop("admixr2: materialising the studies produced duplicate name ",
            sQuote(nm), ". Rename the study whose `by` or `stratify` expansion ",
            "collides with it.", call. = FALSE)
+    if (!is.null(.spec)) value[[".adm_spec"]] <- .spec
     out[[nm]] <<- value
   }
   for (nm in names(studies)) {
+    .spec <- nm
     s <- studies[[nm]]
     if (!inherits(s, "admStudy")) { add(nm, s); next }
     ev <- s$ev %||% rxode2::et(amt = s$dose)
@@ -880,6 +900,19 @@ print() a single study to check its transcription.
         s$range
       else {
         .one <- if (identical(.src, FALSE)) character(0) else .src
+        # A NON-LIST KEYED BY COVARIATE NAMES IS AMBIGUOUS, and was read as the
+        # short form -- so `range = c(WT = 52, CRCL = 118)` attached both
+        # numbers to whichever single covariate was conditional, as its low and
+        # high. Consistently, in the fit and now in the plot, and wrong in
+        # both. `c(lo = , hi = )` is still fine: those are not covariates.
+        .bad_nm <- intersect(names(s$range) %||% character(0),
+                             .admCovSpecNames(s[["population"]]))
+        if (length(.bad_nm))
+          stop("admixr2: study '", nm, "': `range` names covariate(s) ",
+               paste(sQuote(.bad_nm), collapse = ", "),
+               " but is not a list, so it cannot be read as one range per ",
+               "covariate. Give a named LIST, e.g. range = list(",
+               .bad_nm[1L], " = c(52, 118)).", call. = FALSE)
         if (length(.one) != 1L)
           stop("admixr2: study '", nm, "': `range` does not say which ",
                "covariate it is the enrolled range of, and this source conditions on ",

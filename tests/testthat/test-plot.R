@@ -623,6 +623,61 @@ test_that(".admLevelBreaks ticks a discrete panel at its levels only", {
   expect_equal(brk(c(35, 98)), pretty(c(35, 98)))
 })
 
+test_that(".admCovSrcBySource finds the model of a `by =` source", {
+  skip_if_not_installed("rxode2")
+  # `by` expands to `<nm>_<by><level>` in .admMaterialise() and, unless the
+  # source is ALSO conditional, never reaches .admExpandStrata() -- so it
+  # carries no `.adm_source` and the control's key (`khan`) matched nothing.
+  # The mark and the regression line both return early on a missing model, and
+  # .admCovSourceRange() found no range, so the source silently got neither,
+  # and the extrapolation shading greyed territory it covers.
+  st  <- list(khan = list(ui = "MODEL"))
+  mat <- list(khan_SEX0 = list(n = 10L, .adm_spec = "khan"),
+              khan_SEX1 = list(n = 10L, .adm_spec = "khan"))
+  rk <- .admCovSrcBySource(mat, st)
+  expect_named(rk, c("khan_SEX0", "khan_SEX1"))
+  expect_equal(rk$khan_SEX0$ui, "MODEL")
+  expect_equal(rk$khan_SEX1$ui, "MODEL")
+  # NOT `.adm_source`: the two levels are separate reported subgroups, and the
+  # mean and covariance panels have to keep them apart.
+  expect_length(unique(.admCovSource(mat)), 2L)
+  # A node expansion still resolves through `.adm_source` as before.
+  nodes <- list(a_s1 = list(n = 5L, .adm_source = "a", .adm_spec = "a"),
+                a_s2 = list(n = 5L, .adm_source = "a", .adm_spec = "a"))
+  expect_named(.admCovSrcBySource(nodes, list(a = list(ui = "M"))), "a")
+  # A study the control does not hold keeps a NULL, which every reader treats
+  # as "no model of its own".
+  expect_null(.admCovSrcBySource(list(z = list(n = 1L)), st)$z)
+})
+
+test_that(".admCovSourceRange reads the same `range` shapes the fit does", {
+  skip_if_not_installed("rxode2")
+  fn <- function() {
+    ini({ tcl <- log(5); tv <- log(50); bwt <- 0.6
+          eta.cl ~ .09; add.err <- .3 })
+    model({ cl <- exp(tcl + eta.cl) * (WT/70)^bwt
+            v  <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+  }
+  ui  <- suppressMessages(rxode2::rxode2(fn))
+  pop <- admPopulation(WT = c(mean = 70, sd = 15))
+  s   <- list(population = pop, ui = ui, stratify = "WT")
+  # .admMaterialise() keys by covariate only for a named LIST and reads
+  # everything else as the short form. A pair named lo/hi is not a list, so the
+  # fit truncated to 52-118 while this returned NULL and the panel drew over
+  # the full declared margin -- the fit and the plot disagreeing about one
+  # number.
+  for (r in list(c(lo = 52, hi = 118), c(52, 118), list(c(52, 118)),
+                 list(WT = c(52, 118))))
+    expect_equal(.admCovSourceRange(utils::modifyList(s, list(range = r)), "WT"),
+                 c(52, 118))
+  # A named list that does not name this covariate says nothing about it, and
+  # falls through to the declared margin rather than erroring.
+  expect_false(identical(
+    .admCovSourceRange(utils::modifyList(s, list(range = list(CRCL = c(1, 2)))),
+                       "WT"),
+    c(1, 2)))
+})
+
 test_that(".admLevelBreaks reads each facet's OWN covariate, not the pool", {
   # One breaks function serves every free-scaled facet, and the two covariates
   # overlap: DOSE's levels (40, 80) sit inside CRCL's span and fill enough of

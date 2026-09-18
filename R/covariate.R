@@ -1856,7 +1856,20 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     if (is.null(n_tot) || !is.finite(n_tot) || n_tot <= 0)
       stop("admixr2: study '", nm, "' declares `stratify` but has no positive ",
            "`n` to divide among the strata.", call. = FALSE)
-    .miss <- setdiff(s[["stratify"]], names(s[["cov_range"]]))
+    # CONTINUOUS ONLY, which is why `.node_cv` is derived here rather than 15
+    # lines down where it used to be. A discrete margin is enumerated at its
+    # DECLARED LEVELS: .admCovTruncSpec() only drops levels outside the range
+    # and renormalises, so a `range` buys nothing, and the premise of the
+    # warning is false -- the levels and their probabilities are exactly what
+    # the paper reported, so the source is not being credited with evidence at
+    # values it may never have enrolled. Conditioning is derived and on by
+    # default now, so taking `.miss` over the whole conditional set warned on
+    # essentially every fit with a source whose model estimates a discrete
+    # effect, and told the user to supply a span for a two-level factor.
+    .cdk <- .admCovDistCanon(s[["cov_dist"]])
+    .node_cv <- Filter(function(cv) is.null(.cdk[[cv]][["values"]]),
+                       s[["stratify"]])
+    .miss <- setdiff(.node_cv, names(s[["cov_range"]]))
     if (length(.miss)) .no_range[[nm]] <- .miss
     stl <- .admCovStrata(s[["cov_dist"]], s[["stratify"]],
                          s[["strata_nodes"]] %||% .ADM_STRATA_NODES,
@@ -1870,9 +1883,6 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
            "nodes. Give ",
            "a covariate name, or remove `stratify`.", call. = FALSE)
     .Jk <- s[["strata_nodes"]] %||% .ADM_STRATA_NODES
-    .cdk <- .admCovDistCanon(s[["cov_dist"]])
-    .node_cv <- Filter(function(cv) is.null(.cdk[[cv]][["values"]]),
-                       s[["stratify"]])
     for (k in seq_along(stl)) {
       sk <- s
       sk[["stratify"]] <- NULL; sk[["strata_nodes"]] <- NULL
