@@ -289,10 +289,11 @@
 }
 
 # Single pass on sensitivity model returning predictions and sensitivities.
-.admSimulateSens <- function(sensModel, struct_theta, sigma_names,
-                             eta_mat, study, cores,
-                             ndp = .Machine$integer.max, sigma_var = NULL,
-                             sigdig = NULL) {
+# The sensitivity model's parameter frame for one study, and the transform it
+# has to be inverted through. Split out of .admSimulateSens() so the batched
+# path builds it the same way rather than a second way.
+.admSensInnerDf <- function(sensModel, struct_theta, sigma_names, eta_mat,
+                            study, sigma_var = NULL) {
   eta_cols  <- colnames(eta_mat)
   rmap      <- sensModel$rename_map
   n_sim     <- nrow(eta_mat)
@@ -334,6 +335,69 @@
   # Model covariates for this study (only names in study$cov -- see .admCovCols).
   inner_df <- .admCovCols(inner_df, sensModel$mod$params, study[["cov"]],
                           study[["cov_rows"]])
+  list(df = inner_df, tb = .tb, lam = .lam)
+}
+
+# One study's block of a sensitivity solve, reshaped and back-transformed.
+.admSensSplit <- function(out, keep, beg, end, n_t, n_eta, sensModel, .tb, .lam) {
+  cut <- function(v) {
+    m <- matrix(v[keep], ncol = n_t, byrow = TRUE)
+    m[beg:end, , drop = FALSE]
+  }
+  cp_mat     <- cut(out[["rx_pred_"]])
+  dpred_list <- lapply(seq_len(n_eta), function(j) cut(out[[sensModel$sens_cols[j]]]))
+  dtheta_list <- .admThetaSensRows(sensModel, out, keep, n_t, beg, end)
+  if (!is.null(.tb)) {
+    .gp        <- .admTBSid(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
+    cp_mat     <- .admTBSi(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
+    dpred_list <- lapply(dpred_list, function(D) D * .gp)
+    if (!is.null(dtheta_list)) dtheta_list <- lapply(dtheta_list, function(D) D * .gp)
+  }
+  list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list)
+}
+
+# Several studies that share an event table, in ONE sensitivity solve.
+#
+# The gradient pays the same per-call toll as the objective -- .admSimulateSens()
+# was 67% of a profiled fit once the objective had been grouped -- and the same
+# fact rescues it: nodes off one source share `ev_full`, so their parameter
+# frames stack and rxode2 replicates the single event table. Studies the batch
+# cannot take come back NULL for the caller to solve one at a time.
+.admSimulateSensMany <- function(sensModel, struct_theta, sigma_names, eta_list,
+                                 studies, cores, ndp = .Machine$integer.max,
+                                 sigma_var = NULL, sigdig = NULL) {
+  n <- length(studies)
+  if (n == 1L)
+    return(list(.admSimulateSens(sensModel, struct_theta, sigma_names,
+                                 eta_list[[1L]], studies[[1L]], cores, ndp,
+                                 sigma_var, sigdig)))
+  one <- lapply(seq_len(n), function(k)
+    .admSensInnerDf(sensModel, struct_theta, sigma_names, eta_list[[k]],
+                    studies[[k]], sigma_var))
+  if (any(vapply(one, is.null, logical(1)))) return(NULL)
+  nr  <- vapply(eta_list, nrow, integer(1))
+  out <- tryCatch(suppressWarnings(do.call(rxode2::rxSolve,
+    c(list(sensModel$mod, params = do.call(rbind, lapply(one, `[[`, "df")),
+           events = studies[[1L]]$ev_full, cores = cores,
+           nDisplayProgress = ndp, sigdig = sigdig), sensModel$solve_args))),
+    error = function(e) NULL)
+  if (is.null(out) || !all(sensModel$sens_cols %in% names(out))) return(NULL)
+  keep <- out[["time"]] %in% studies[[1L]]$times
+  n_t  <- length(studies[[1L]]$times)
+  end  <- cumsum(nr); beg <- end - nr + 1L
+  lapply(seq_len(n), function(k)
+    .admSensSplit(out, keep, beg[k], end[k], n_t, ncol(eta_list[[k]]),
+                  sensModel, one[[k]]$tb, one[[k]]$lam))
+}
+
+.admSimulateSens <- function(sensModel, struct_theta, sigma_names,
+                             eta_mat, study, cores,
+                             ndp = .Machine$integer.max, sigma_var = NULL,
+                             sigdig = NULL) {
+  .one <- .admSensInnerDf(sensModel, struct_theta, sigma_names, eta_mat, study,
+                          sigma_var)
+  inner_df <- .one$df; .tb <- .one$tb; .lam <- .one$lam
+  n_sim <- nrow(eta_mat)
 
   # Forward solve_args (e.g. forced dop853 for DDE sensitivity models).
   out <- tryCatch(
@@ -350,21 +414,17 @@
   if (!all(sensModel$sens_cols %in% out_cols)) return(NULL)
 
   keep  <- out[["time"]] %in% study$times
-  n_t   <- length(study$times)
-  n_eta <- ncol(eta_mat)
+  .admSensSplit(out, keep, 1L, n_sim, length(study$times), ncol(eta_mat),
+                sensModel, .tb, .lam)
+}
 
-  cp_mat     <- matrix(out[["rx_pred_"]][keep], nrow = n_sim, ncol = n_t, byrow = TRUE)
-  dpred_list <- lapply(seq_len(n_eta), function(j)
-    matrix(out[[sensModel$sens_cols[j]]][keep], nrow = n_sim, ncol = n_t, byrow = TRUE))
-  dtheta_list <- .admThetaSens(sensModel, out, keep, n_sim, n_t)
-
-  # Back-transform TBS/lnorm predictions and chain sensitivities by g'(z).
-  if (!is.null(.tb)) {
-    .gp        <- .admTBSid(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
-    cp_mat     <- .admTBSi(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
-    dpred_list <- lapply(dpred_list, function(D) D * .gp)
-    if (!is.null(dtheta_list)) dtheta_list <- lapply(dtheta_list, function(D) D * .gp)
-  }
-
-  list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list)
+# .admThetaSens() over a row RANGE, so the batched path can take one study's
+# block out of a shared solve.
+.admThetaSensRows <- function(sensModel, out, keep, n_t, beg, end) {
+  tsc <- sensModel$theta_sens_cols
+  if (is.null(tsc) || length(tsc) == 0L) return(NULL)
+  if (!all(tsc %in% names(out))) return(NULL)
+  stats::setNames(lapply(tsc, function(col)
+    matrix(out[[col]][keep], ncol = n_t, byrow = TRUE)[beg:end, , drop = FALSE]),
+    names(tsc))
 }
