@@ -1302,7 +1302,15 @@
       .gg <- .adghNodeGrid(.jf, length(iSc))
       .z0 <- .gg$X %*% chol(Rm[iSc, iSc, drop = FALSE])
       .w0 <- as.numeric(.gg$W / sum(.gg$W))
-      .su <- .z0 %*% proj$Q[match(nms[iSc], proj$cn), , drop = FALSE]
+      # OFF THE COVARIATE VALUES, not the latent. `Q` is a latent basis, and
+      # z and log(x) are the same direction only while the margin is
+      # untruncated -- the whole reason this branch exists is that truncation
+      # bends that map, so projecting z here recombines the wrong coordinates.
+      # proj$A carries the loadings on log(x), where the pair IS linear.
+      .x0 <- vapply(seq_along(iSc), function(k)
+        .admCovQuantile(cov_dist[[nms[iSc[k]]]], .admCovU(.z0[, k])),
+        numeric(nrow(.z0)))
+      .su <- log(.x0) %*% proj$A[match(nms[iSc], proj$cn), , drop = FALSE]
       .P  <- .admCovMomentBasis(.su[, 1L], .su[, 2L],
                                 .admCovMomentDegree(as.integer(n_nodes)^proj$r))
       .rc <- .admCovRecombine(.P, .w0)
@@ -1806,7 +1814,14 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
              error = function(e) NULL))
   if (any(vapply(dirs, is.null, logical(1)))) return(NULL)
   sp <- .admCovSpan(dirs, dirs[[1L]]$Rc, dirs[[1L]]$pc)
-  if (!is.null(sp)) sp$trunc <- .tr
+  if (is.null(sp)) return(NULL)
+  sp$trunc <- .tr
+  # The same span written in log(x): untruncated, z = (log x - meanlog)/sdlog,
+  # so a latent loading q is the log(x) loading q/sdlog. Taken from the
+  # UNtruncated spec, which is where that relation holds.
+  .sd <- vapply(sp$cn, function(v) cd0[[v]][["sdlog"]] %||% NA_real_, 0)
+  if (anyNA(.sd) || any(.sd <= 0)) return(NULL)
+  sp$A <- sp$Q / .sd
   sp
 }
 
