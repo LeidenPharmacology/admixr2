@@ -37,6 +37,7 @@ LinkingTo:
     Rcpp,
     RcppEigen
 Suggests:
+    Deriv,
     expm,
     ggplot2,
     knitr,

@@ -8,12 +8,6 @@
 # itself, across parameter points, ranges, correlations and both supported
 # source ranks.
 #
-# SKIPPED UNDER COVR. Every case here materialises a full product grid and the
-# projection beside it, and covr runs the file instrumented in a parallel
-# worker: it took the coverage job down with a truncated RDS while every
-# platform check passed. The code it reaches is covered by test-covariate.R and
-# the adgh files; what it adds is accuracy, which coverage does not measure.
-#
 # The two paths are deliberately held to DIFFERENT tolerances, because they are
 # not equally exact and saying so is the point. Measured against the product
 # grid as strata_nodes goes 3, 4, 5:
@@ -77,7 +71,7 @@
   ALB = c(mean = 40, sd = 5), ...)
 
 test_that("an UNtruncated projection reproduces the product objective", {
-  skip_on_cran(); skip_on_covr(); skip_if_not_installed("rxode2")
+  skip_on_cran(); skip_if_not_installed("rxode2")
   for (cfg in list(
     list(nm = "independent",  pop = .pc_pop()),
     list(nm = "cor .45",      pop = .pc_pop(cor = c(WT.CRCL = 0.45))),
@@ -90,7 +84,7 @@ test_that("an UNtruncated projection reproduces the product objective", {
 })
 
 test_that("a TRUNCATED projection tracks the product objective, less exactly", {
-  skip_on_cran(); skip_on_covr(); skip_if_not_installed("rxode2")
+  skip_on_cran(); skip_if_not_installed("rxode2")
   for (rng in list(list(WT = c(55, 105), CRCL = c(60, 130), ALB = c(31, 49)),
                    list(WT = c(65, 90),  CRCL = c(75, 110), ALB = c(35, 45)))) {
     g <- .pc_gap(.pc_src, .pc_pop(cor = c(WT.CRCL = 0.45)), rng)
@@ -102,13 +96,13 @@ test_that("a TRUNCATED projection tracks the product objective, less exactly", {
 })
 
 test_that("a rank-two source projects and still tracks the product objective", {
-  skip_on_cran(); skip_on_covr(); skip_if_not_installed("rxode2")
+  skip_on_cran(); skip_if_not_installed("rxode2")
   g <- .pc_gap(.pc_src2, .pc_pop(cor = c(WT.CRCL = 0.45)), NULL)
   expect_lt(g$worst, 1e-6)
 })
 
 test_that("more nodes close the untruncated gap and not the truncated one", {
-  skip_on_cran(); skip_on_covr(); skip_if_not_installed("rxode2")
+  skip_on_cran(); skip_if_not_installed("rxode2")
   # The two error sources are distinguishable by how they RESPOND to
   # strata_nodes, which is the claim the documentation makes. Untruncated, only
   # the finite rules in the two coordinate systems differ and the gap closes by

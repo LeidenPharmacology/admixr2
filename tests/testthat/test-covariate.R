@@ -2196,36 +2196,65 @@ test_that("a movable analysis loading materialises the product grid exactly", {
   expect_equal(sum(nn(gx)), 300)
 })
 
-test_that(".admCovReachable spans every direction a free coefficient reaches", {
+test_that(".admCovReachable admits only a loading certified to hold still", {
   skip_on_cran(); skip_if_not_installed("rxode2")
+  skip_if_not_installed("Deriv")
   ctl <- adghControl(studies = list(), print = 0L)
-  rk <- function(fn) {
+  re <- function(fn) {
     ui <- suppressMessages(rxode2::rxode2(fn))
     admixr2:::.admCovReachable(ui, admixr2:::.admDriverPinfo(ui, ctl),
-                               .pnd_pop())$r
+                               .pnd_pop())
   }
-  # Three estimated exponents sweep all three axes; the same model with them
-  # fixed holds the single direction .admCovDirections() reports.
-  expect_equal(rk(.pnd_allom), 3L)
-  expect_equal(rk(.pnd_allom_fix), 1L)
+  # Estimated exponents move the loading, so there is nothing to certify; the
+  # same model with them fixed keeps the single direction .admCovDirections()
+  # reports, which is what makes the reduction safe to bake in.
+  expect_null(re(.pnd_allom))
+  expect_equal(re(.pnd_allom_fix)$r, 1L)
   a <- .pnd_pinfo(.pnd_allom)
   expect_equal(admixr2:::.admCovDirections(a$ui, a$pinfo, .pnd_pop())$r, 1L)
 
-  # AN INTERACTION IS STATIONARY IN EVERY SINGLE COORDINATE at the starting
-  # point: `.18 + b1*b2` at b1 = b2 = 0 moves for no one-at-a-time perturbation,
-  # and is 0.50 off-span once both move. The joint displacements catch it.
+  # AN INTERACTION IS STATIONARY IN EVERY COORDINATE at the starting point:
+  # `.18 + b1*b2` at b1 = b2 = 0 moves for no perturbation, one at a time or
+  # jointly, yet is 0.50 off-span once both move. Only differentiating catches
+  # it, which is why the certificate is symbolic rather than sampled.
   inter <- function() {
     ini({ tcl <- log(3.2); tv <- log(21); b1 <- 0; b2 <- 0
           eta.cl ~ .09; add.err <- .6 })
     model({ cl <- exp(tcl + eta.cl)*(WT/70)^.52*(CRCL/95)^.55*
                   (ALB/40)^(.18 + b1*b2)
             v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
-  expect_gt(rk(inter), 1L)
+  expect_null(re(inter))
   expect_null(admixr2:::.admStrataProj(
     list(cov_dist = .pnd_pop(), .adm_strata_nodes = 5L,
          .adm_ana_ui = suppressMessages(rxode2::rxode2(inter))),
     suppressMessages(rxode2::rxode2(inter)), c("WT", "CRCL", "ALB")))
 })
+
+test_that(".admCovLoadingInvariant differentiates rather than evaluates", {
+  skip_if_not_installed("Deriv")
+  inv <- function(expr, free, cn = c("WT", "CRCL", "ALB"))
+    admixr2:::.admCovLoadingInvariant(
+      list(lstExpr = list(call("<-", as.name("cl"), expr))), cn, free)
+
+  # a numeric exponent is constant in everything
+  expect_true(inv(quote(exp(tcl)*(WT/70)^0.52), c("tcl", "tv")))
+  # an estimated exponent is not
+  expect_false(inv(quote(exp(tcl)*(WT/70)^bwt), c("tcl", "bwt")))
+  # ...but IS once that coefficient stops being estimated
+  expect_true(inv(quote(exp(tcl)*(WT/70)^bwt), "tcl"))
+  # the interaction, refused on the identity and not on its value at zero
+  expect_false(inv(quote(exp(tcl)*(ALB/40)^(0.18 + b1*b2)), c("b1", "b2")))
+  # a nonlinear reparameterisation of the exponent
+  expect_false(inv(quote(exp(tcl)*(WT/70)^(exp(g1)/(1 + exp(g1)))), "g1"))
+  # a covariate reached through an intermediate is still followed
+  expect_false(admixr2:::.admCovLoadingInvariant(
+    list(lstExpr = list(call("<-", as.name("wtf"), quote((WT/70)^bwt)),
+                        call("<-", as.name("cl"), quote(exp(tcl)*wtf)))),
+    c("WT"), c("tcl", "bwt")))
+  # nothing estimated at all needs no derivative
+  expect_true(inv(quote(exp(tcl)*(WT/70)^bwt), character(0)))
+})
+
 
 test_that(".admCovFineJ budgets the truncated cloud before building it", {
   # j^p atoms by choose(d + r, r) columns, neither bounded by the node count the

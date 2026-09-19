@@ -3834,44 +3834,68 @@ print.covDist <- function(x, ...) {
   NULL
 }
 
-.admCovReachable <- function(ui, pinfo, cov_dist, n_nodes = 7L, h = 0.25) {
+# Substitute every already-assigned intermediate into an expression, so the
+# loading is read off the covariates themselves rather than a name.
+.admCovSubst <- function(e, env) {
+  if (!length(env)) return(e)
+  do.call("substitute", list(e, env))
+}
+
+# Is the covariate loading CONSTANT in the estimated parameters?
+#
+# Symbolic, not sampled. The loading of an assignment on covariate x is
+# x * dlog(rhs)/dx, and baking the nodes into fixed `cov` values is only safe
+# if every estimated parameter's derivative of that is identically zero. No
+# probe can establish this: `(ALB/40)^(.18 + b1*b2)` has a zero derivative in
+# each coefficient at b1 = b2 = 0 and a nonzero one everywhere else, so a check
+# that evaluates admits it where one that DIFFERENTIATES refuses it. NA when it
+# cannot be decided -- no Deriv, an expression that will not differentiate --
+# and the caller reads anything but TRUE as a decline.
+.admCovLoadingInvariant <- function(ui, cn, free) {
+  if (!length(free)) return(TRUE)
+  if (!requireNamespace("Deriv", quietly = TRUE)) return(NA)
+  lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
+  if (is.null(lst)) return(NA)
+  is0 <- function(d) (is.numeric(d) && length(d) == 1L && d == 0) ||
+                     identical(d, 0)
+  env <- list()
+  for (e in lst) {
+    if (!(is.call(e) && length(e) == 3L &&
+          (identical(e[[1L]], quote(`<-`)) || identical(e[[1L]], quote(`=`)))))
+      next
+    rhs <- .admCovSubst(e[[3L]], env)
+    env[[as.character(e[[2L]])]] <- rhs
+    for (v in intersect(all.vars(rhs), cn)) {
+      lo <- tryCatch(Deriv::Simplify(call("*", as.name(v),
+              Deriv::Deriv(call("log", rhs), v, cache.exp = FALSE))),
+              error = function(e) NULL)
+      if (is.null(lo)) return(NA)
+      for (m in free) {
+        d <- tryCatch(Deriv::Simplify(Deriv::Deriv(lo, m, cache.exp = FALSE)),
+                      error = function(e) NULL)
+        if (is.null(d)) return(NA)
+        if (!is0(d)) return(FALSE)
+      }
+    }
+  }
+  TRUE
+}
+
+# The analysis model's directions, once its loading is certified to hold still.
+#
+# .admExpandStrata() bakes the nodes into fixed `cov` values and the studies
+# lose their `cov_dist`, so unlike .admCovRefresh()'s per-call re-aim the span
+# has to stay valid for the whole fit. Certified symbolically rather than
+# probed, so an interacting or nonlinearly parameterised loading is refused on
+# the identity rather than on where it happens to sit.
+.admCovReachable <- function(ui, pinfo, cov_dist, n_nodes = 7L) {
   co <- tryCatch(.admCovCollapse(ui, pinfo, cov_dist, n_nodes),
                  error = function(e) NULL)
   if (is.null(co) || is.null(co$U)) return(NULL)
-  st0 <- tryCatch(.admShiftStruct(
-    pinfo, .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)$struct),
-    error = function(e) NULL)
-  if (is.null(st0)) return(NULL)
-  fx   <- ui$iniDf$name[which(isTRUE(ui$iniDf$fix) | ui$iniDf$fix %in% TRUE)]
-  free <- setdiff(intersect(names(st0), pinfo$struct_names), fx)
-  if (!length(free)) return(list(U = co$U, r = co$r, pc = co$pc, cn = co$cn,
-                                 Rc = co$Rc))
-  # One coordinate at a time is NOT enough. A loading nonlinear in the
-  # parameters can be stationary in every single coordinate at the starting
-  # point -- `(ALB/40)^(.18 + b1*b2)` at b1 = b2 = 0 moves for no single
-  # perturbation and turns 0.50 off-span once both move -- so the coordinate
-  # steps are followed by JOINT displacements. The points are a deterministic
-  # Sobol sequence, not drawn: a design that changed between two runs of the
-  # same fit would be worse than one that is merely conservative.
-  jd <- tryCatch(suppressWarnings(
-    stats::qnorm(randtoolbox::sobol(32L, dim = length(free), seed = 11L))),
-    error = function(e) NULL)
-  if (is.null(jd) || !all(is.finite(jd))) return(NULL)
-  steps <- c(lapply(free, function(nm) stats::setNames(h, nm)),
-             lapply(seq_len(nrow(jd)), function(i)
-               stats::setNames(1.5 * jd[i, ], free)))
-  U <- co$U
-  for (d in steps) {
-    st <- st0
-    for (nm in names(d)) st[[nm]] <- st[[nm]] + d[[nm]]
-    c2 <- .admCovRefresh(co, st)
-    # A re-aim that cannot be made is a span that cannot be certified.
-    if (is.null(c2) || isTRUE(c2$stale) || is.null(c2$U)) return(NULL)
-    U <- cbind(U, c2$U)
-  }
-  sv <- tryCatch(svd(U), error = function(e) NULL)
-  if (is.null(sv)) return(NULL)
-  list(U = U, r = .admSvdRank(sv), pc = co$pc, cn = co$cn, Rc = co$Rc)
+  fx   <- ui$iniDf$name[which(ui$iniDf$fix %in% TRUE)]
+  free <- setdiff(intersect(pinfo$struct_names, ui$iniDf$name), fx)
+  if (!isTRUE(.admCovLoadingInvariant(ui, co$cn, free))) return(NULL)
+  list(U = co$U, r = co$r, pc = co$pc, cn = co$cn, Rc = co$Rc)
 }
 
 # The span of several such subspaces, as a design to integrate on.
