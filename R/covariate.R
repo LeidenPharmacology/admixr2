@@ -1298,23 +1298,16 @@
       # only, no solves -- and recombine to the node count the rotated rule would
       # have used. Exact in the atoms' own moments, so the accuracy is the fine
       # grid's at a small rule's cost.
+      # `fine` is settled at admission, where .admStrataProj() budgets it and
+      # certifies the cloud it buys; 15 is only the fallback for a spec that
+      # never went through there.
       .jf <- min(as.integer(proj$fine %||% 15L), 21L)
-      .gg <- .adghNodeGrid(.jf, length(iSc))
-      .z0 <- .gg$X %*% chol(Rm[iSc, iSc, drop = FALSE])
-      .w0 <- as.numeric(.gg$W / sum(.gg$W))
-      # OFF THE COVARIATE VALUES, not the latent. `Q` is a latent basis, and
-      # z and log(x) are the same direction only while the margin is
-      # untruncated -- the whole reason this branch exists is that truncation
-      # bends that map, so projecting z here recombines the wrong coordinates.
-      # proj$A carries the loadings on log(x), where the pair IS linear.
-      .x0 <- vapply(seq_along(iSc), function(k)
-        .admCovQuantile(cov_dist[[nms[iSc[k]]]], .admCovU(.z0[, k])),
-        numeric(nrow(.z0)))
-      .su <- log(.x0) %*% proj$A[match(nms[iSc], proj$cn), , drop = FALSE]
+      .cl <- .admCovCloud(cov_dist, nms[iSc], Rm[iSc, iSc, drop = FALSE],
+                          proj$A[match(nms[iSc], proj$cn), , drop = FALSE], .jf)
       .P  <- .admCovMomentBasis(
-        .su, .admCovMomentDegree(as.integer(n_nodes)^proj$r, proj$r))
-      .rc <- .admCovRecombine(.P, .w0)
-      zC  <- .z0[.rc$i, , drop = FALSE]; wC <- .rc$w
+        .cl$su, .admCovMomentDegree(as.integer(n_nodes)^proj$r, proj$r))
+      .rc <- .admCovRecombine(.P, .cl$w)
+      zC  <- .cl$z[.rc$i, , drop = FALSE]; wC <- .rc$w
     } else if (length(iSc)) {
       .ng <- .adghNodeGrid(n_nodes, length(iSc))
       zC  <- .ng$X; wC <- as.numeric(.ng$W / sum(.ng$W))
@@ -1821,19 +1814,26 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   sp <- .admCovSpan(dirs, dirs[[1L]]$Rc, dirs[[1L]]$pc)
   if (is.null(sp)) return(NULL)
   sp$trunc <- .tr
-  # A truncated span pays for a fine cloud. Size it here, where declining still
-  # means the product grid rather than a multi-gigabyte allocation mid-fit.
-  if (.tr) {
-    sp$fine <- .admCovFineJ(length(sp$cn), sp$r,
-                            s[[".adm_strata_nodes"]] %||% 9L)
-    if (is.null(sp$fine)) return(NULL)
-  }
   # The same span written in log(x): untruncated, z = (log x - meanlog)/sdlog,
   # so a latent loading q is the log(x) loading q/sdlog. Taken from the
   # UNtruncated spec, which is where that relation holds.
   .sd <- vapply(sp$cn, function(v) cd0[[v]][["sdlog"]] %||% NA_real_, 0)
   if (anyNA(.sd) || any(.sd <= 0)) return(NULL)
   sp$A <- sp$Q / .sd
+  # A truncated span pays for a fine cloud. Budget and CERTIFY it here, after
+  # `A` exists and while declining still means the product grid rather than a
+  # multi-gigabyte allocation, or an uncertified rule, mid-fit.
+  if (.tr) {
+    .nn <- s[[".adm_strata_nodes"]] %||% 9L
+    .jb <- .admCovFineJ(length(sp$cn), sp$r, .nn)
+    if (is.null(.jb)) return(NULL)
+    .ix <- match(sp$cn, dirs[[1L]]$cn)
+    .ct <- tryCatch(.admCovCloudCertify(
+      cd, sp$cn, dirs[[1L]]$Rc[.ix, .ix, drop = FALSE], sp$A, sp$r, .nn, .jb),
+      error = function(e) NULL)
+    if (is.null(.ct)) return(NULL)
+    sp$fine <- .ct$j; sp$cloud_err <- .ct$cloud; sp$recomb_err <- .ct$recomb
+  }
   sp
 }
 
@@ -3740,6 +3740,45 @@ print.covDist <- function(x, ...) {
 # valid for the whole fit. Re-aiming at a perturbed value of each estimated
 # coefficient enumerates the reachable set, exactly so while the loading is
 # linear in them. Coefficients the covariates do not reach cost no rank.
+# The atoms of the projected measure on a j-per-axis cloud.
+#
+# OFF THE COVARIATE VALUES, not the latent. `Q` is a latent basis, and z and
+# log(x) are the same direction only while the margin is untruncated -- the
+# whole reason the truncated branch exists is that truncation bends that map,
+# so projecting z would recombine the wrong coordinates. `A` carries the
+# loadings on log(x), where the pair IS linear.
+.admCovCloud <- function(cov_dist, cn, Rss, A, j) {
+  gg <- .adghNodeGrid(j, length(cn))
+  z0 <- gg$X %*% chol(Rss)
+  x0 <- vapply(seq_along(cn), function(k)
+    .admCovQuantile(cov_dist[[cn[k]]], .admCovU(z0[, k])), numeric(nrow(z0)))
+  list(z = z0, w = as.numeric(gg$W / sum(gg$W)), su = log(x0) %*% A)
+}
+
+# Smooth NONLINEAR probes of the projected coordinates.
+#
+# The recombination reproduces the polynomial moments in its basis exactly, by
+# construction, so agreeing on them measures nothing. A likelihood integrand is
+# not a polynomial, and the cloud has a quadrature error of its own that no
+# number of retained nodes can remove. Both are read here instead, on
+# standardised coordinates so the scale is the measure's own.
+.admCovProbes <- function(su, w) {
+  r  <- ncol(su)
+  mu <- colSums(su * w)
+  sd <- sqrt(pmax(colSums(sweep(su, 2L, mu)^2 * w), .Machine$double.eps))
+  S  <- sweep(sweep(su, 2L, mu), 2L, sd, "/")
+  # a few fixed directions, each read through a growing and a bounded map
+  dirs <- if (r == 1L) matrix(1, 1L, 1L) else
+    rbind(diag(r), matrix(1 / sqrt(r), 1L, r),
+          matrix(c(1, -1, rep(0, r - 2L)) / sqrt(2), 1L, r))
+  t(apply(dirs, 1L, function(d) {
+    v <- as.numeric(S %*% d)
+    c(sum(w * exp(0.6 * v)), sum(w * stats::plogis(v)), sum(w * cos(v)))
+  }))
+}
+
+.admCovProbeErr <- function(a, b) max(abs(a - b) / (abs(b) + 1))
+
 # Nodes per axis for the truncated cloud, or NULL when no size fits.
 #
 # The cloud is j^p atoms and the moment matrix is that many rows by
@@ -3755,6 +3794,42 @@ print.covDist <- function(x, ...) {
     n <- as.numeric(j)^p
     # the recombination cannot match more moments than it has atoms
     if (n >= nc && 8 * n * (p + r + nc) <= max_bytes) return(as.integer(j))
+  }
+  NULL
+}
+
+# REFINE OR REJECT the truncated cloud. Returns the nodes per axis to use, or
+# NULL to decline the projection and keep the product grid.
+#
+# Two error sources, neither of which `strata_nodes` can touch. The cloud has
+# its own quadrature error -- raising the retained node count refines the
+# moment matching against the SAME cloud and cannot remove it -- and the
+# recombination preserves the polynomial moments in its basis rather than the
+# nonlinear integrands a likelihood actually contains. So walk j upwards
+# through the budget, reading both: the cloud against the next coarser cloud,
+# and the recombined rule against the cloud it was drawn from, on probes the
+# recombination did not match by construction. First j that settles both wins;
+# none and the design is declined rather than shipped uncertified.
+.admCovCloudCertify <- function(cov_dist, cn, Rss, A, r, n_nodes,
+                                j_max, tol = 1e-3) {
+  cand <- Filter(function(j) j <= j_max, c(7L, 9L, 11L, 13L, 15L, 17L, 21L))
+  if (length(cand) < 2L) return(NULL)
+  deg  <- .admCovMomentDegree(as.integer(n_nodes)^r, r)
+  prev <- NULL
+  for (j in cand) {
+    cl <- tryCatch(.admCovCloud(cov_dist, cn, Rss, A, j), error = function(e) NULL)
+    if (is.null(cl) || !all(is.finite(cl$su))) return(NULL)
+    ref <- .admCovProbes(cl$su, cl$w)
+    rc  <- tryCatch(.admCovRecombine(.admCovMomentBasis(cl$su, deg), cl$w),
+                    error = function(e) NULL)
+    if (is.null(rc) || !length(rc$i)) return(NULL)
+    e_rec <- .admCovProbeErr(.admCovProbes(cl$su[rc$i, , drop = FALSE], rc$w), ref)
+    if (!is.null(prev)) {
+      e_cld <- .admCovProbeErr(prev, ref)
+      if (e_cld < tol && e_rec < tol)
+        return(list(j = j, cloud = e_cld, recomb = e_rec))
+    }
+    prev <- ref
   }
   NULL
 }
