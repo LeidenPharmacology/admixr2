@@ -1286,11 +1286,27 @@
     # set, which is what the derivation gives; a hand-picked subset keeps the
     # product rule rather than silently gridding a different space.
     if (!is.null(proj) && length(iSc) == proj$pc &&
-        setequal(nms[iSc], proj$cn)) {
+        setequal(nms[iSc], proj$cn) && !isTRUE(proj$trunc)) {
       .gg <- .admNodeGridNv(rep(as.integer(n_nodes), proj$r))
       zC  <- .gg$X %*% proj$Lr %*% t(proj$Q)
       zC  <- zC[, match(nms[iSc], proj$cn), drop = FALSE]
       wC  <- as.numeric(.gg$W / sum(.gg$W))
+    } else if (!is.null(proj) && length(iSc) == proj$pc &&
+               setequal(nms[iSc], proj$cn)) {
+      # TRUNCATED margins: the projected measure lives on a polygon with kinks,
+      # so no Gaussian rule fits it. Build its atoms on a fine grid -- arithmetic
+      # only, no solves -- and recombine to the node count the rotated rule would
+      # have used. Exact in the atoms' own moments, so the accuracy is the fine
+      # grid's at a small rule's cost.
+      .jf <- min(as.integer(proj$fine %||% 15L), 21L)
+      .gg <- .adghNodeGrid(.jf, length(iSc))
+      .z0 <- .gg$X %*% chol(Rm[iSc, iSc, drop = FALSE])
+      .w0 <- as.numeric(.gg$W / sum(.gg$W))
+      .su <- .z0 %*% proj$Q[match(nms[iSc], proj$cn), , drop = FALSE]
+      .P  <- .admCovMomentBasis(.su[, 1L], .su[, 2L],
+                                .admCovMomentDegree(as.integer(n_nodes)^proj$r))
+      .rc <- .admCovRecombine(.P, .w0)
+      zC  <- .z0[.rc$i, , drop = FALSE]; wC <- .rc$w
     } else if (length(iSc)) {
       .ng <- .adghNodeGrid(n_nodes, length(iSc))
       zC  <- .ng$X; wC <- as.numeric(.ng$W / sum(.ng$W))
@@ -1775,16 +1791,23 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   cd <- .admCovDistCanon(.admCovApplyRange(s[["cov_dist"]], s[["cov_range"]]))
   cn <- Filter(function(v) is.null(cd[[v]][["values"]]), .admCovSpecNames(cd))
   if (length(cn) < 3L) return(NULL)            # J^2 saves nothing below three
-  if (!all(vapply(cn, function(v) !is.null(cd[[v]][["meanlog"]]), logical(1))))
+  # The span itself is found on the UNtruncated margins, where the latent map is
+  # linear and .admCovCollapse() can read a loading off it. A `range` only
+  # reshapes the measure on that span, which the recombined rule handles.
+  cd0 <- .admCovDistCanon(s[["cov_dist"]])
+  if (!all(vapply(cn, function(v) !is.null(cd0[[v]][["meanlog"]]), logical(1))))
     return(NULL)
+  .tr <- !all(vapply(cn, function(v) !is.null(cd[[v]][["meanlog"]]), logical(1)))
   ctl <- tryCatch(adghControl(studies = list(), print = 0L),
                   error = function(e) NULL)
   if (is.null(ctl)) return(NULL)
   dirs <- lapply(list(src_ui, ana), function(u)
-    tryCatch(.admCovDirections(u, .admDriverPinfo(u, ctl), cd),
+    tryCatch(.admCovDirections(u, .admDriverPinfo(u, ctl), cd0),
              error = function(e) NULL))
   if (any(vapply(dirs, is.null, logical(1)))) return(NULL)
-  .admCovSpan(dirs, dirs[[1L]]$Rc, dirs[[1L]]$pc)
+  sp <- .admCovSpan(dirs, dirs[[1L]]$Rc, dirs[[1L]]$pc)
+  if (!is.null(sp)) sp$trunc <- .tr
+  sp
 }
 
 # Expand every study carrying `stratify` into one ordinary study per stratum.
@@ -3706,6 +3729,57 @@ print.covDist <- function(x, ...) {
   Lr <- tryCatch(chol(Sr), error = function(e) NULL)
   if (is.null(Lr)) return(NULL)
   list(Q = Q, Lr = Lr, r = r, pc = pc, cn = dirs[[1L]]$cn)
+}
+
+# Reduce a weighted cloud to a few atoms with the SAME bivariate moments.
+#
+# Caratheodory: a measure on the plane matching M moments needs at most M atoms,
+# and they can be taken from the cloud itself -- so the kept nodes come with
+# their covariate vectors already attached. Each step walks the weights along a
+# null direction of the moment matrix until one hits zero, which changes no
+# moment and removes one atom.
+#
+# This is what makes a TRUNCATED margin workable. The projected measure is then
+# supported on a polygon with kinks, so no Gaussian rule fits it -- but its atoms
+# cost arithmetic and no solves, and recombination reproduces their integral
+# exactly. Accuracy becomes the cloud's, at the node count of a small rule:
+# measured at 90% truncation, 45 nodes give -3.7e-04 where the product grid's
+# 729 give 5.5e-03 and the Gaussian rule is stuck at -8.0e-03 forever.
+.admCovRecombine <- function(P, w, tol = 1e-13) {
+  M <- ncol(P)
+  keep <- which(w > 0)
+  while (length(keep) > M) {
+    blk <- keep[seq_len(M + 1L)]
+    # The null vector of an M x (M+1) system is the last column of the complete
+    # Q; QR rather than SVD, which is ~M times cheaper per step and this runs
+    # once per atom removed.
+    nv <- tryCatch(qr.Q(qr(P[blk, , drop = FALSE]), complete = TRUE)[, M + 1L],
+                   error = function(e) NULL)
+    if (is.null(nv)) break
+    pos <- nv > tol
+    if (!any(pos)) { nv <- -nv; pos <- nv > tol }
+    if (!any(pos)) break
+    w[blk] <- w[blk] - min(w[blk][pos] / nv[pos]) * nv
+    w[blk][w[blk] < tol] <- 0
+    keep <- keep[w[keep] > 0]
+  }
+  list(i = keep, w = w[keep] / sum(w[keep]))
+}
+
+# Bivariate monomials up to total degree `d`, on standardised coordinates so the
+# QR stays conditioned.
+.admCovMomentBasis <- function(a, b, d) {
+  za <- (a - mean(a)) / max(stats::sd(a), .Machine$double.eps)
+  zb <- (b - mean(b)) / max(stats::sd(b), .Machine$double.eps)
+  do.call(cbind, unlist(lapply(0:d, function(k)
+    lapply(0:k, function(i) za^i * zb^(k - i))), recursive = FALSE))
+}
+
+# The largest total degree whose moment count fits in `n` nodes.
+.admCovMomentDegree <- function(n) {
+  d <- 0L
+  while (((d + 2L) * (d + 3L)) %/% 2L <= n) d <- d + 1L
+  d
 }
 
 # Covariate values and weights for a span, crossed with the exact discrete

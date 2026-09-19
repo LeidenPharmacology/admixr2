@@ -1985,12 +1985,59 @@ test_that("materialising cuts a source on the span when both models collapse", {
   expect_true(all(vapply(g1, function(z) is.null(z[[".adm_ana_ui"]]), NA)))
 })
 
-test_that("a truncated margin keeps the product grid", {
+test_that("a NORMAL margin keeps the product grid", {
   skip_on_cran(); skip_if_not_installed("rxode2")
-  # `range` replaces meanlog/sdlog with an opaque quantile, and a truncated
-  # lognormal's log is NOT linear in the latent -- so (s, u) stops being
-  # bivariate normal and the Gaussian rule would be biased. Decline, do not
-  # approximate.
+  # The span is read off a loading in the latent, which needs log(x) linear in
+  # it -- true for a lognormal margin and not for a normal one, where the logs
+  # are skewed and the rule would carry a bias no node count removes. Decline,
+  # do not approximate. (A TRUNCATED lognormal is a different case: the map is
+  # still linear, only the measure changes, which recombination handles.)
+  src <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  ana <- suppressMessages(rxode2::rxode2(src))
+  pop <- admPopulation(WT = c(mean = 76, sd = 15), CRCL = c(mean = 92, sd = 22),
+                       ALB = c(mean = 40, sd = 5), dist = "normal")
+  g <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    admStudies(a = admStudy(model = src, population = pop, n = 300L,
+                            dose = 200, times = c(1, 4), strata_nodes = 5L)),
+    analysis_covs = c("WT", "CRCL", "ALB"), analysis_ui = ana)))
+  expect_equal(length(g), 5L^3L)
+})
+
+test_that(".admCovRecombine keeps the moments and drops the atoms", {
+  set.seed(4)
+  n <- 2000L; a <- rnorm(n); b <- 0.6 * a + rnorm(n)
+  w <- runif(n); w <- w / sum(w)
+  for (d in c(4L, 6L, 8L)) {
+    P  <- admixr2:::.admCovMomentBasis(a, b, d)
+    rc <- admixr2:::.admCovRecombine(P, w)
+    # Caratheodory's bound: at most one atom per moment, and the kept atoms are
+    # drawn FROM the cloud, so each still carries its covariate vector.
+    expect_lte(length(rc$i), ncol(P))
+    expect_true(all(rc$i %in% seq_len(n)))
+    expect_true(all(rc$w > 0))
+    expect_equal(sum(rc$w), 1, tolerance = 1e-12)
+    expect_equal(as.numeric(crossprod(P[rc$i, , drop = FALSE], rc$w)),
+                 as.numeric(crossprod(P, w)), tolerance = 1e-9)
+  }
+})
+
+test_that(".admCovMomentDegree fits the moment count inside a node budget", {
+  for (n in c(9L, 25L, 49L, 81L, 121L)) {
+    d <- admixr2:::.admCovMomentDegree(n)
+    expect_lte((d + 1L) * (d + 2L) / 2L, n)      # fits
+    expect_gt((d + 2L) * (d + 3L) / 2L, n)       # and is the largest that does
+  }
+})
+
+test_that("a truncated margin is cut on the span, by recombination", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # `range` reshapes the measure on the span into something no Gaussian rule
+  # fits, so the nodes come from recombining a fine cloud instead. The design
+  # is admitted where it used to be declined.
   src <- function() {
     ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
           eta.cl ~ .09; add.err <- .35 })
@@ -1999,8 +2046,15 @@ test_that("a truncated margin keeps the product grid", {
   ana <- suppressMessages(rxode2::rxode2(src))
   g <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
     admStudies(a = admStudy(model = src, population = .pnd_pop(), n = 300L,
-                            dose = 200, times = c(1, 4), strata_nodes = 5L,
-                            range = list(WT = c(50, 110)))),
+                            dose = 200, times = c(1, 4), strata_nodes = 7L,
+                            range = list(WT = c(55, 105), CRCL = c(60, 130),
+                                         ALB = c(31, 49)))),
     analysis_covs = c("WT", "CRCL", "ALB"), analysis_ui = ana)))
-  expect_equal(length(g), 5L^3L)
+  # Far fewer than the 7^3 the product grid would give, and the weights are
+  # still a partition of n.
+  expect_lt(length(g), 7L^3L)
+  expect_equal(sum(vapply(g, function(z) z$n, 0)), 300)
+  # Every node sits inside the enrolled range it was cut from.
+  wt <- vapply(g, function(z) z$cov$WT, 0)
+  expect_true(all(wt >= 55 & wt <= 105))
 })
