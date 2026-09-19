@@ -110,62 +110,82 @@ with all of them. Each study’s <code>E</code>, <code>V</code> and
 model (<code><a href="../articles/datagen.html">vignette("datagen")</a></code>).</p>
 </div>
 <div class="section level2">
-<h2 id="splitting-examplomycin-into-two-cohorts">Splitting examplomycin into two cohorts<a class="anchor" aria-label="anchor" href="#splitting-examplomycin-into-two-cohorts"></a>
+<h2 id="two-trials-that-differ">Two trials that differ<a class="anchor" aria-label="anchor" href="#two-trials-that-differ"></a>
 </h2>
-<p>Split the 500 examplomycin subjects into two cohorts of 250, with
-separate aggregate statistics for each:</p>
+<p>The point of a meta-analysis is that the studies are <em>not</em>
+interchangeable, so this one combines a trial we hold individual records
+for with a trial we have only summary statistics from — at a different
+dose, a sparser schedule and a different size.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://leidenpharmacology.github.io/admixr2/">admixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.github.io/rxode2/" class="external-link">rxode2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://nlmixr2.org/" class="external-link">nlmixr2</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://ggplot2.tidyverse.org" class="external-link">ggplot2</a></span><span class="op">)</span></span>
 <span></span>
-<span><span class="va">dv_mat</span> <span class="op">&lt;-</span> <span class="fu">admVignetteDvMatrix</span><span class="op">(</span><span class="op">)</span>       <span class="co"># 500 subjects x 9 times</span></span>
-<span><span class="va">times</span>  <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/numeric.html" class="external-link">as.numeric</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/colnames.html" class="external-link">colnames</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="co"># Trial A: 500 subjects at 100 mg, richly sampled. Individual records, reduced</span></span>
+<span><span class="co"># to the E, V and n a publication would print.</span></span>
+<span><span class="va">dv_mat</span>  <span class="op">&lt;-</span> <span class="fu">admVignetteDvMatrix</span><span class="op">(</span><span class="op">)</span>      <span class="co"># 500 subjects x 9 times</span></span>
+<span><span class="va">trial_a</span> <span class="op">&lt;-</span> <span class="fu">admVignetteStats</span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span></span>
+<span><span class="va">times_a</span> <span class="op">&lt;-</span> <span class="va">trial_a</span><span class="op">$</span><span class="va">times</span></span>
 <span></span>
-<span><span class="co"># Alternate subjects into two equal cohorts, then take E, V and n for each</span></span>
-<span><span class="va">cohort1</span> <span class="op">&lt;-</span> <span class="fu">admVignetteStats</span><span class="op">(</span><span class="va">dv_mat</span>, <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fu"><a href="https://rdrr.io/r/base/nrow.html" class="external-link">nrow</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span>, by <span class="op">=</span> <span class="fl">2</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="va">cohort2</span> <span class="op">&lt;-</span> <span class="fu">admVignetteStats</span><span class="op">(</span><span class="va">dv_mat</span>, <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">2</span>, <span class="fu"><a href="https://rdrr.io/r/base/nrow.html" class="external-link">nrow</a></span><span class="op">(</span><span class="va">dv_mat</span><span class="op">)</span>, by <span class="op">=</span> <span class="fl">2</span><span class="op">)</span><span class="op">)</span></span>
-<span></span>
-<span><span class="va">E1</span> <span class="op">&lt;-</span> <span class="va">cohort1</span><span class="op">$</span><span class="va">E</span>; <span class="va">V1</span> <span class="op">&lt;-</span> <span class="va">cohort1</span><span class="op">$</span><span class="va">V</span>; <span class="va">n1</span> <span class="op">&lt;-</span> <span class="va">cohort1</span><span class="op">$</span><span class="va">n</span></span>
-<span><span class="va">E2</span> <span class="op">&lt;-</span> <span class="va">cohort2</span><span class="op">$</span><span class="va">E</span>; <span class="va">V2</span> <span class="op">&lt;-</span> <span class="va">cohort2</span><span class="op">$</span><span class="va">V</span>; <span class="va">n2</span> <span class="op">&lt;-</span> <span class="va">cohort2</span><span class="op">$</span><span class="va">n</span></span></code></pre></div>
-<p>Both helpers are defined in this vignette’s setup file: the first
-reshapes <code>examplomycin</code> into one row per subject, the second
-takes <code>E</code>, <code>V</code> and <code>n</code> off a set of its
-rows.</p>
+<span><span class="co"># Trial B: published as summary statistics only -- 120 subjects at 200 mg, four</span></span>
+<span><span class="co"># sampling times. datagen() turns its model into the aggregate data it implies,</span></span>
+<span><span class="co"># which is what makes a published study a direct input; see vignette("datagen").</span></span>
+<span><span class="va">times_b</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0.5</span>, <span class="fl">2</span>, <span class="fl">6</span>, <span class="fl">12</span><span class="op">)</span></span>
+<span><span class="va">trial_b</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/datagen.html">datagen</a></span><span class="op">(</span></span>
+<span>  studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>b <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>times <span class="op">=</span> <span class="va">times_b</span>,</span>
+<span>                          ev    <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">200</span><span class="op">)</span>,</span>
+<span>                          n     <span class="op">=</span> <span class="fl">120L</span><span class="op">)</span><span class="op">)</span>,</span>
+<span>  model   <span class="op">=</span> <span class="va">admVignetteModel</span>,</span>
+<span>  control <span class="op">=</span> <span class="fu"><a href="../reference/datagenControl.html">datagenControl</a></span><span class="op">(</span>n_sim <span class="op">=</span> <span class="fl">10000L</span>, seed <span class="op">=</span> <span class="fl">1L</span><span class="op">)</span></span>
+<span><span class="op">)</span><span class="op">$</span><span class="va">b</span></span></code></pre></div>
+<p><code>admVignetteDvMatrix()</code> and
+<code>admVignetteStats()</code> come from this vignette’s setup file:
+the first reshapes <code>examplomycin</code> into one row per subject,
+the second takes <code>E</code>, <code>V</code> and <code>n</code> off
+it.</p>
+<p>Trial B is simulated here so the vignette has a second study to
+combine; in practice its <code>E</code>, <code>V</code> and
+<code>n</code> would be digitised from the paper
+(<code><a href="../articles/aggregate-data.html">vignette("aggregate-data")</a></code>) or derived from the model the
+paper published.</p>
 </div>
 <div class="section level2">
-<h2 id="comparing-observed-profiles-across-cohorts">Comparing observed profiles across cohorts<a class="anchor" aria-label="anchor" href="#comparing-observed-profiles-across-cohorts"></a>
+<h2 id="comparing-the-two-observed-profiles">Comparing the two observed profiles<a class="anchor" aria-label="anchor" href="#comparing-the-two-observed-profiles"></a>
 </h2>
-<p>Check the raw summary statistics first: both cohorts come from the
-same population here, so they should be comparable.</p>
+<p>The two are on different doses, so they should <em>not</em> lie on
+top of each other — that separation is the information a joint fit
+uses.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">df_obs</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">rbind</a></span><span class="op">(</span></span>
-<span>  <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>cohort <span class="op">=</span> <span class="st">"Cohort 1"</span>, time <span class="op">=</span> <span class="va">times</span>,</span>
-<span>             mean <span class="op">=</span> <span class="va">E1</span>,</span>
-<span>             lo   <span class="op">=</span> <span class="va">E1</span> <span class="op">-</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">V1</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>             hi   <span class="op">=</span> <span class="va">E1</span> <span class="op">+</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">V1</span><span class="op">)</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>  <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>cohort <span class="op">=</span> <span class="st">"Cohort 2"</span>, time <span class="op">=</span> <span class="va">times</span>,</span>
-<span>             mean <span class="op">=</span> <span class="va">E2</span>,</span>
-<span>             lo   <span class="op">=</span> <span class="va">E2</span> <span class="op">-</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">V2</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>             hi   <span class="op">=</span> <span class="va">E2</span> <span class="op">+</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">V2</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
+<span>  <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>trial <span class="op">=</span> <span class="st">"Trial A (100 mg, n = 500)"</span>, time <span class="op">=</span> <span class="va">times_a</span>,</span>
+<span>             mean <span class="op">=</span> <span class="va">trial_a</span><span class="op">$</span><span class="va">E</span>,</span>
+<span>             lo   <span class="op">=</span> <span class="va">trial_a</span><span class="op">$</span><span class="va">E</span> <span class="op">-</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">trial_a</span><span class="op">$</span><span class="va">V</span><span class="op">)</span><span class="op">)</span>,</span>
+<span>             hi   <span class="op">=</span> <span class="va">trial_a</span><span class="op">$</span><span class="va">E</span> <span class="op">+</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">trial_a</span><span class="op">$</span><span class="va">V</span><span class="op">)</span><span class="op">)</span><span class="op">)</span>,</span>
+<span>  <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>trial <span class="op">=</span> <span class="st">"Trial B (200 mg, n = 120)"</span>, time <span class="op">=</span> <span class="va">times_b</span>,</span>
+<span>             mean <span class="op">=</span> <span class="va">trial_b</span><span class="op">$</span><span class="va">E</span>,</span>
+<span>             lo   <span class="op">=</span> <span class="va">trial_b</span><span class="op">$</span><span class="va">E</span> <span class="op">-</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">trial_b</span><span class="op">$</span><span class="va">V</span><span class="op">)</span><span class="op">)</span>,</span>
+<span>             hi   <span class="op">=</span> <span class="va">trial_b</span><span class="op">$</span><span class="va">E</span> <span class="op">+</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="va">trial_b</span><span class="op">$</span><span class="va">V</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="op">)</span></span>
 <span></span>
-<span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggplot.html" class="external-link">ggplot</a></span><span class="op">(</span><span class="va">df_obs</span>, <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span>x <span class="op">=</span> <span class="va">time</span>, y <span class="op">=</span> <span class="va">mean</span>, colour <span class="op">=</span> <span class="va">cohort</span>, fill <span class="op">=</span> <span class="va">cohort</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggplot.html" class="external-link">ggplot</a></span><span class="op">(</span><span class="va">df_obs</span>, <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span>x <span class="op">=</span> <span class="va">time</span>, y <span class="op">=</span> <span class="va">mean</span>, colour <span class="op">=</span> <span class="va">trial</span>, fill <span class="op">=</span> <span class="va">trial</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
 <span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_ribbon.html" class="external-link">geom_ribbon</a></span><span class="op">(</span><span class="fu"><a href="https://ggplot2.tidyverse.org/reference/aes.html" class="external-link">aes</a></span><span class="op">(</span>ymin <span class="op">=</span> <span class="va">lo</span>, ymax <span class="op">=</span> <span class="va">hi</span><span class="op">)</span>, alpha <span class="op">=</span> <span class="fl">0.15</span>, colour <span class="op">=</span> <span class="cn">NA</span><span class="op">)</span> <span class="op">+</span></span>
 <span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_path.html" class="external-link">geom_line</a></span><span class="op">(</span>linewidth <span class="op">=</span> <span class="fl">1</span><span class="op">)</span> <span class="op">+</span></span>
 <span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/geom_point.html" class="external-link">geom_point</a></span><span class="op">(</span>size <span class="op">=</span> <span class="fl">2.5</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_continuous.html" class="external-link">scale_x_log10</a></span><span class="op">(</span>breaks <span class="op">=</span> <span class="va">times</span>, labels <span class="op">=</span> <span class="va">times</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_manual.html" class="external-link">scale_colour_manual</a></span><span class="op">(</span>values <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Cohort 1"</span> <span class="op">=</span> <span class="st">"#0072B2"</span>, <span class="st">"Cohort 2"</span> <span class="op">=</span> <span class="st">"#D55E00"</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_manual.html" class="external-link">scale_fill_manual</a></span><span class="op">(</span>  values <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Cohort 1"</span> <span class="op">=</span> <span class="st">"#0072B2"</span>, <span class="st">"Cohort 2"</span> <span class="op">=</span> <span class="st">"#D55E00"</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
-<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/labs.html" class="external-link">labs</a></span><span class="op">(</span>title    <span class="op">=</span> <span class="st">"Observed mean ± 1 SD by cohort"</span>,</span>
-<span>       x        <span class="op">=</span> <span class="st">"Time (h, log scale)"</span>,</span>
-<span>       y        <span class="op">=</span> <span class="st">"Concentration"</span>,</span>
-<span>       colour   <span class="op">=</span> <span class="cn">NULL</span>, fill <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_continuous.html" class="external-link">scale_x_log10</a></span><span class="op">(</span>breaks <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/unique.html" class="external-link">unique</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="va">times_a</span>, <span class="va">times_b</span><span class="op">)</span><span class="op">)</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_manual.html" class="external-link">scale_colour_manual</a></span><span class="op">(</span>values <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Trial A (100 mg, n = 500)"</span> <span class="op">=</span> <span class="st">"#0072B2"</span>,</span>
+<span>                                 <span class="st">"Trial B (200 mg, n = 120)"</span> <span class="op">=</span> <span class="st">"#D55E00"</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/scale_manual.html" class="external-link">scale_fill_manual</a></span><span class="op">(</span>  values <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Trial A (100 mg, n = 500)"</span> <span class="op">=</span> <span class="st">"#0072B2"</span>,</span>
+<span>                                 <span class="st">"Trial B (200 mg, n = 120)"</span> <span class="op">=</span> <span class="st">"#D55E00"</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/labs.html" class="external-link">labs</a></span><span class="op">(</span>title  <span class="op">=</span> <span class="st">"Observed mean ± 1 SD by trial"</span>,</span>
+<span>       x      <span class="op">=</span> <span class="st">"Time (h, log scale)"</span>,</span>
+<span>       y      <span class="op">=</span> <span class="st">"Concentration"</span>,</span>
+<span>       colour <span class="op">=</span> <span class="cn">NULL</span>, fill <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span> <span class="op">+</span></span>
 <span>  <span class="fu"><a href="https://ggplot2.tidyverse.org/reference/ggtheme.html" class="external-link">theme_bw</a></span><span class="op">(</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
-<img src="multiple-studies_files/figure-html/obs-compare-1.png" class="r-plt" alt="Observed mean ± 1 SD for each cohort on a log time axis." width="672"><p class="caption">
-Observed mean ± 1 SD for each cohort on a log time axis.
+<img src="multiple-studies_files/figure-html/obs-compare-1.png" class="r-plt" alt="Observed mean ± 1 SD for each trial on a log time axis. Trial B is at twice the dose and four sampling times." width="672"><p class="caption">
+Observed mean ± 1 SD for each trial on a log time axis. Trial B is at
+twice the dose and four sampling times.
 </p>
 </div>
 </div>
@@ -174,24 +194,24 @@ Observed mean ± 1 SD for each cohort on a log time axis.
 </h2>
 <p>The two-compartment model from <a href="admixr2.html">Getting
 started</a>, supplied by this vignette’s setup file and fitted to both
-cohorts at once:</p>
+trials at once:</p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pk_model</span> <span class="op">&lt;-</span> <span class="va">admVignetteModel</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="fitting-with-two-studies">Fitting with two studies<a class="anchor" aria-label="anchor" href="#fitting-with-two-studies"></a>
 </h2>
-<p>Pass both cohorts as a named list. Each entry may independently
-specify <code>times</code>, <code>ev</code>, <code>V</code>,
-<code>n</code>, and <code>method</code>:</p>
+<p>Pass both trials as a named list. Each entry carries its own
+<code>times</code>, <code>ev</code>, <code>V</code>, <code>n</code> and
+<code>method</code>, which is what lets them differ:</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>fit_multi <span class="ot">&lt;-</span> <span class="fu">nlmixr2</span>(</span>
 <span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a>  pk_model, <span class="fu">admData</span>(), <span class="at">est =</span> <span class="st">"admc"</span>,</span>
 <span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a>  <span class="at">control =</span> <span class="fu">admControl</span>(</span>
 <span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a>    <span class="at">studies =</span> <span class="fu">list</span>(</span>
-<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>      <span class="at">cohort1 =</span> <span class="fu">list</span>(<span class="at">E =</span> E1, <span class="at">V =</span> V1, <span class="at">n =</span> n1,</span>
-<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>                     <span class="at">times =</span> times, <span class="at">ev =</span> rxode2<span class="sc">::</span><span class="fu">et</span>(<span class="at">amt =</span> <span class="dv">100</span>)),</span>
-<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>      <span class="at">cohort2 =</span> <span class="fu">list</span>(<span class="at">E =</span> E2, <span class="at">V =</span> V2, <span class="at">n =</span> n2,</span>
-<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>                     <span class="at">times =</span> times, <span class="at">ev =</span> rxode2<span class="sc">::</span><span class="fu">et</span>(<span class="at">amt =</span> <span class="dv">100</span>))</span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>      <span class="at">trial_a =</span> <span class="fu">list</span>(<span class="at">E =</span> trial_a<span class="sc">$</span>E, <span class="at">V =</span> trial_a<span class="sc">$</span>V, <span class="at">n =</span> trial_a<span class="sc">$</span>n,</span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>                     <span class="at">times =</span> times_a, <span class="at">ev =</span> rxode2<span class="sc">::</span><span class="fu">et</span>(<span class="at">amt =</span> <span class="dv">100</span>)),</span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>      <span class="at">trial_b =</span> <span class="fu">list</span>(<span class="at">E =</span> trial_b<span class="sc">$</span>E, <span class="at">V =</span> trial_b<span class="sc">$</span>V, <span class="at">n =</span> trial_b<span class="sc">$</span>n,</span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>                     <span class="at">times =</span> times_b, <span class="at">ev =</span> rxode2<span class="sc">::</span><span class="fu">et</span>(<span class="at">amt =</span> <span class="dv">200</span>))</span>
 <span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a>    ),</span>
 <span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a>    <span class="at">n_sim     =</span> <span class="dv">5000</span><span class="dt">L</span>,</span>
 <span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a>    <span class="at">cov_n_sim =</span> <span class="dv">10000</span><span class="dt">L</span>,</span>
@@ -204,29 +224,29 @@ specify <code>times</code>, <code>ev</code>, <code>V</code>,
 <span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a>── nlmixr² admc ──</span>
 <span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a></span>
 <span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a>          OBJF       AIC       BIC Log<span class="sc">-</span>likelihood</span>
-<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a>admc <span class="sc">-</span><span class="fl">3690.262</span> <span class="sc">-</span><span class="fl">3668.262</span> <span class="sc">-</span><span class="fl">3597.732</span>       <span class="fl">1845.131</span></span>
+<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a>admc <span class="sc">-</span><span class="fl">3351.844</span> <span class="sc">-</span><span class="fl">3329.844</span> <span class="sc">-</span><span class="fl">3258.199</span>       <span class="fl">1675.922</span></span>
 <span id="cb4-22"><a href="#cb4-22" tabindex="-1"></a></span>
 <span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_multi<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb4-24"><a href="#cb4-24" tabindex="-1"></a></span>
 <span id="cb4-25"><a href="#cb4-25" tabindex="-1"></a>  optimize covariance other elapsed</span>
-<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">91.621</span>     <span class="fl">31.312</span>     <span class="dv">0</span> <span class="fl">122.933</span></span>
+<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">40.497</span>     <span class="fl">18.813</span>     <span class="dv">0</span>   <span class="fl">59.31</span></span>
 <span id="cb4-27"><a href="#cb4-27" tabindex="-1"></a></span>
 <span id="cb4-28"><a href="#cb4-28" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_multi<span class="sc">$</span>parFixed or fit_multi<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb4-29"><a href="#cb4-29" tabindex="-1"></a></span>
 <span id="cb4-30"><a href="#cb4-30" tabindex="-1"></a>                                  Parameter    Est.       SE  %RSE</span>
-<span id="cb4-31"><a href="#cb4-31" tabindex="-1"></a>tcl                    Log <span class="fu">clearance</span> (L<span class="sc">/</span>hr)   <span class="fl">1.602</span>  <span class="fl">0.02000</span> <span class="fl">1.248</span></span>
-<span id="cb4-32"><a href="#cb4-32" tabindex="-1"></a>tv1                  Log central <span class="fu">volume</span> (L)   <span class="fl">2.328</span>   <span class="fl">0.1320</span> <span class="fl">5.670</span></span>
-<span id="cb4-33"><a href="#cb4-33" tabindex="-1"></a>tv2               Log peripheral <span class="fu">volume</span> (L)   <span class="fl">3.397</span>  <span class="fl">0.05338</span> <span class="fl">1.571</span></span>
-<span id="cb4-34"><a href="#cb4-34" tabindex="-1"></a>tq        Log inter<span class="sc">-</span>compartmental <span class="fu">CL</span> (L<span class="sc">/</span>hr)   <span class="fl">2.276</span>  <span class="fl">0.02729</span> <span class="fl">1.199</span></span>
-<span id="cb4-35"><a href="#cb4-35" tabindex="-1"></a>tka     Log absorption rate <span class="fu">constant</span> (<span class="dv">1</span><span class="sc">/</span>hr) <span class="fl">0.02979</span>   <span class="fl">0.1230</span> <span class="fl">412.9</span></span>
-<span id="cb4-36"><a href="#cb4-36" tabindex="-1"></a>prop.sd      Proportional residual error SD  <span class="fl">0.1895</span> <span class="fl">0.003282</span> <span class="fl">1.732</span></span>
+<span id="cb4-31"><a href="#cb4-31" tabindex="-1"></a>tcl                    Log <span class="fu">clearance</span> (L<span class="sc">/</span>hr)   <span class="fl">1.603</span>  <span class="fl">0.01771</span> <span class="fl">1.105</span></span>
+<span id="cb4-32"><a href="#cb4-32" tabindex="-1"></a>tv1                  Log central <span class="fu">volume</span> (L)   <span class="fl">2.328</span>   <span class="fl">0.1293</span> <span class="fl">5.552</span></span>
+<span id="cb4-33"><a href="#cb4-33" tabindex="-1"></a>tv2               Log peripheral <span class="fu">volume</span> (L)   <span class="fl">3.398</span>  <span class="fl">0.04947</span> <span class="fl">1.456</span></span>
+<span id="cb4-34"><a href="#cb4-34" tabindex="-1"></a>tq        Log inter<span class="sc">-</span>compartmental <span class="fu">CL</span> (L<span class="sc">/</span>hr)   <span class="fl">2.281</span>  <span class="fl">0.02542</span> <span class="fl">1.114</span></span>
+<span id="cb4-35"><a href="#cb4-35" tabindex="-1"></a>tka     Log absorption rate <span class="fu">constant</span> (<span class="dv">1</span><span class="sc">/</span>hr) <span class="fl">0.02919</span>   <span class="fl">0.1192</span> <span class="fl">408.2</span></span>
+<span id="cb4-36"><a href="#cb4-36" tabindex="-1"></a>prop.sd      Proportional residual error SD  <span class="fl">0.1900</span> <span class="fl">0.003277</span> <span class="fl">1.725</span></span>
 <span id="cb4-37"><a href="#cb4-37" tabindex="-1"></a>        Back<span class="sc">-</span><span class="fu">transformed</span>(<span class="dv">95</span><span class="sc">%CI) BSV(CV%</span>) <span class="fu">Shrink</span>(SD)%</span>
-<span id="cb4-38"><a href="#cb4-38" tabindex="-1"></a>tcl        <span class="fl">4.963</span> (<span class="fl">4.772</span>, <span class="fl">5.161</span>)    <span class="fl">32.62</span>         <span class="cn">NaN</span></span>
-<span id="cb4-39"><a href="#cb4-39" tabindex="-1"></a>tv1        <span class="fl">10.26</span> (<span class="fl">7.920</span>, <span class="fl">13.29</span>)    <span class="fl">33.15</span>         <span class="cn">NaN</span></span>
-<span id="cb4-40"><a href="#cb4-40" tabindex="-1"></a>tv2        <span class="fl">29.89</span> (<span class="fl">26.92</span>, <span class="fl">33.18</span>)    <span class="fl">31.81</span>         <span class="cn">NaN</span></span>
-<span id="cb4-41"><a href="#cb4-41" tabindex="-1"></a>tq         <span class="fl">9.738</span> (<span class="fl">9.231</span>, <span class="fl">10.27</span>)    <span class="fl">33.68</span>         <span class="cn">NaN</span></span>
-<span id="cb4-42"><a href="#cb4-42" tabindex="-1"></a>tka       <span class="fl">1.030</span> (<span class="fl">0.8096</span>, <span class="fl">1.311</span>)    <span class="fl">31.87</span>         <span class="cn">NaN</span></span>
-<span id="cb4-43"><a href="#cb4-43" tabindex="-1"></a>prop.sd <span class="fl">0.1895</span> (<span class="fl">0.1831</span>, <span class="fl">0.1960</span>)                     </span>
+<span id="cb4-38"><a href="#cb4-38" tabindex="-1"></a>tcl        <span class="fl">4.967</span> (<span class="fl">4.797</span>, <span class="fl">5.142</span>)    <span class="fl">32.32</span>         <span class="cn">NaN</span></span>
+<span id="cb4-39"><a href="#cb4-39" tabindex="-1"></a>tv1        <span class="fl">10.26</span> (<span class="fl">7.963</span>, <span class="fl">13.22</span>)    <span class="fl">32.98</span>         <span class="cn">NaN</span></span>
+<span id="cb4-40"><a href="#cb4-40" tabindex="-1"></a>tv2        <span class="fl">29.90</span> (<span class="fl">27.14</span>, <span class="fl">32.95</span>)    <span class="fl">32.07</span>         <span class="cn">NaN</span></span>
+<span id="cb4-41"><a href="#cb4-41" tabindex="-1"></a>tq         <span class="fl">9.789</span> (<span class="fl">9.314</span>, <span class="fl">10.29</span>)    <span class="fl">33.66</span>         <span class="cn">NaN</span></span>
+<span id="cb4-42"><a href="#cb4-42" tabindex="-1"></a>tka       <span class="fl">1.030</span> (<span class="fl">0.8152</span>, <span class="fl">1.301</span>)    <span class="fl">31.79</span>         <span class="cn">NaN</span></span>
+<span id="cb4-43"><a href="#cb4-43" tabindex="-1"></a>prop.sd <span class="fl">0.1900</span> (<span class="fl">0.1835</span>, <span class="fl">0.1964</span>)                     </span>
 <span id="cb4-44"><a href="#cb4-44" tabindex="-1"></a> </span>
 <span id="cb4-45"><a href="#cb4-45" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit_multi<span class="sc">$</span>covMethod)<span class="sc">:</span> r,s</span>
 <span id="cb4-46"><a href="#cb4-46" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
@@ -236,6 +256,10 @@ specify <code>times</code>, <code>ev</code>, <code>V</code>,
 <span id="cb4-50"><a href="#cb4-50" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit_multi<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
 <span id="cb4-51"><a href="#cb4-51" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit_multi<span class="sc">$</span>message)<span class="sc">:</span>  </span>
 <span id="cb4-52"><a href="#cb4-52" tabindex="-1"></a>    NLOPT_FAILURE<span class="sc">:</span> Generic failure code. </span></code></pre></div>
+<p>Nothing above assumes the two share a dose or a schedule. The
+objective is the sum of per-study negative log-likelihoods under one set
+of population parameters, and each study is predicted at its own dosing
+and its own times.</p>
 </div>
 <div class="section level2">
 <h2 id="per-study-diagnostic-plots">Per-study diagnostic plots<a class="anchor" aria-label="anchor" href="#per-study-diagnostic-plots"></a>
@@ -245,25 +269,25 @@ specify <code>times</code>, <code>ev</code>, <code>V</code>,
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit_multi</span>, which <span class="op">=</span> <span class="st">"mean"</span><span class="op">)</span></span></code></pre></div>
 <div class="figure">
-<img src="multiple-studies_files/figure-html/diag-1.png" class="r-plt" alt="Mean diagnostics for both cohorts (one panel per study)." width="672"><p class="caption">
-Mean diagnostics for both cohorts (one panel per study).
+<img src="multiple-studies_files/figure-html/diag-1.png" class="r-plt" alt="Mean diagnostics for both trials (one panel per study)." width="672"><p class="caption">
+Mean diagnostics for both trials (one panel per study).
 </p>
 </div>
 <div class="figure">
-<img src="multiple-studies_files/figure-html/diag-2.png" class="r-plt" alt="Mean diagnostics for both cohorts (one panel per study)." width="672"><p class="caption">
-Mean diagnostics for both cohorts (one panel per study).
+<img src="multiple-studies_files/figure-html/diag-2.png" class="r-plt" alt="Mean diagnostics for both trials (one panel per study)." width="672"><p class="caption">
+Mean diagnostics for both trials (one panel per study).
 </p>
 </div>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">plots</span><span class="op">)</span></span>
-<span><span class="co">#&gt;  [1] "mean_cohort1"           "mean_cohort1_obs"       "mean_cohort1_pred"     </span></span>
-<span><span class="co">#&gt;  [4] "mean_cohort1_resid"     "mean_cohort1_std_resid" "mean_cohort2"          </span></span>
-<span><span class="co">#&gt;  [7] "mean_cohort2_obs"       "mean_cohort2_pred"      "mean_cohort2_resid"    </span></span>
-<span><span class="co">#&gt; [10] "mean_cohort2_std_resid"</span></span></code></pre></div>
+<span><span class="co">#&gt;  [1] "mean_trial_a"           "mean_trial_a_obs"       "mean_trial_a_pred"     </span></span>
+<span><span class="co">#&gt;  [4] "mean_trial_a_resid"     "mean_trial_a_std_resid" "mean_trial_b"          </span></span>
+<span><span class="co">#&gt;  [7] "mean_trial_b_obs"       "mean_trial_b_pred"      "mean_trial_b_resid"    </span></span>
+<span><span class="co">#&gt; [10] "mean_trial_b_std_resid"</span></span></code></pre></div>
 <p>Access individual panels to compare studies side by side:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">plots</span><span class="op">$</span><span class="va">mean_cohort1</span></span>
-<span><span class="va">plots</span><span class="op">$</span><span class="va">mean_cohort2</span></span>
+<code class="sourceCode R"><span><span class="va">plots</span><span class="op">$</span><span class="va">mean_trial_a</span></span>
+<span><span class="va">plots</span><span class="op">$</span><span class="va">mean_trial_b</span></span>
 <span></span>
 <span><span class="co"># Combine with patchwork if installed</span></span>
 <span><span class="kw">if</span> <span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/ns-load.html" class="external-link">requireNamespace</a></span><span class="op">(</span><span class="st">"patchwork"</span>, quietly <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span> <span class="op">{</span></span>
@@ -271,30 +295,11 @@ Mean diagnostics for both cohorts (one panel per study).
 <span><span class="op">}</span></span></code></pre></div>
 </div>
 <div class="section level2">
-<h2 id="different-doses-and-schedules">Different doses and schedules<a class="anchor" aria-label="anchor" href="#different-doses-and-schedules"></a>
+<h2 id="scaling-to-a-programme">Scaling to a programme<a class="anchor" aria-label="anchor" href="#scaling-to-a-programme"></a>
 </h2>
-<p>Studies may differ in any aspect — a typical development
-programme:</p>
-<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">fit_program</span> <span class="op">&lt;-</span> <span class="fu">nlmixr2</span><span class="op">(</span></span>
-<span>  <span class="va">pk_model</span>, <span class="fu"><a href="../reference/admData.html">admData</a></span><span class="op">(</span><span class="op">)</span>, est <span class="op">=</span> <span class="st">"admc"</span>,</span>
-<span>  control <span class="op">=</span> <span class="fu"><a href="../reference/admControl.html">admControl</a></span><span class="op">(</span></span>
-<span>    studies <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
-<span>      phase1_50mg  <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E_50</span>,  V <span class="op">=</span> <span class="va">V_50</span>,  n <span class="op">=</span> <span class="fl">30L</span>,</span>
-<span>                          times <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">4</span>, <span class="fl">8</span><span class="op">)</span>,</span>
-<span>                          ev    <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">50</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>      phase2_100mg <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E_100</span>, V <span class="op">=</span> <span class="va">V_100</span>, n <span class="op">=</span> <span class="fl">120L</span>,</span>
-<span>                          times <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0.5</span>, <span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">4</span>, <span class="fl">8</span>, <span class="fl">12</span><span class="op">)</span>,</span>
-<span>                          ev    <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">100</span><span class="op">)</span><span class="op">)</span>,</span>
-<span>      phase2_200mg <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>E <span class="op">=</span> <span class="va">E_200</span>, V <span class="op">=</span> <span class="va">V_200</span>, n <span class="op">=</span> <span class="fl">115L</span>,</span>
-<span>                          times <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0.5</span>, <span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">4</span>, <span class="fl">8</span>, <span class="fl">12</span><span class="op">)</span>,</span>
-<span>                          ev    <span class="op">=</span> <span class="fu">rxode2</span><span class="fu">::</span><span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/et.html" class="external-link">et</a></span><span class="op">(</span>amt <span class="op">=</span> <span class="fl">200</span><span class="op">)</span><span class="op">)</span></span>
-<span>    <span class="op">)</span>,</span>
-<span>    n_sim   <span class="op">=</span> <span class="fl">5000L</span>,</span>
-<span>    maxeval <span class="op">=</span> <span class="fl">1000L</span>,</span>
-<span>    seed    <span class="op">=</span> <span class="fl">1L</span></span>
-<span>  <span class="op">)</span></span>
-<span><span class="op">)</span></span></code></pre></div>
+<p>A third and fourth study are more entries in the same list, so a
+development programme is written the same way the two above are — one
+entry per trial, each with its own dose, schedule and size.</p>
 <p>A study with a diagonal <code>V</code> (or a plain vector of
 variances) gets <code>method = "var"</code>, skipping the O(n_t³)
 Cholesky solve there is no off-diagonal structure to justify.</p>

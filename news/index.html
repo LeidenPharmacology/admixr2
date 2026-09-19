@@ -176,7 +176,9 @@
 </ul></div>
 <div class="section level3">
 <h3 id="internal-changes-0-4-1">Internal changes<a class="anchor" aria-label="anchor" href="#internal-changes-0-4-1"></a></h3>
-<ul><li><p><strong>The covariate panels are built by <code>.admCovEffectPanel()</code> and <code>.admCovResidPanel()</code></strong>, not inline in <code><a href="../reference/plot.admFit.html">plot.admFit()</a></code>, which loses 170 lines.</p></li>
+<ul><li><p><strong><code><a href="../articles/multiple-studies.html">vignette("multiple-studies")</a></code> combines two trials that actually differ</strong>, where it split one dataset into two statistically identical halves.</p></li>
+<li><p><strong>Compiled objects are no longer tracked</strong>, <code>.gitignore</code> having named them since before they were committed.</p></li>
+<li><p><strong>The covariate panels are built by <code>.admCovEffectPanel()</code> and <code>.admCovResidPanel()</code></strong>, not inline in <code><a href="../reference/plot.admFit.html">plot.admFit()</a></code>, which loses 170 lines.</p></li>
 <li><p><strong>Visual regression tests for the covariate panels</strong>, on synthetic studies and no fit. Requires the new <code>vdiffr</code> suggested dependency.</p></li>
 <li><p><strong><code><a href="../articles/diagnostic-plots.html">vignette("diagnostic-plots")</a></code> renders the covariate panels</strong> from its own three-source fit, instead of describing them in prose.</p></li>
 <li><p><strong><code><a href="../reference/print.admFit.html">print.admFit()</a></code> reaches nlmixr2est’s printer through <code><a href="https://rdrr.io/r/utils/getS3method.html" class="external-link">getS3method()</a></code></strong>, not an <code><a href="https://rdrr.io/r/base/ns-internal.html" class="external-link">asNamespace()</a></code> lookup.</p></li>

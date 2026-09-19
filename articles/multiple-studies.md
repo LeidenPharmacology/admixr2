@@ -13,10 +13,12 @@ them. Each study’s `E`, `V` and `n` can come from a digitised figure
 or from its own published model
 ([`vignette("datagen")`](https://leidenpharmacology.github.io/admixr2/articles/datagen.md)).
 
-## Splitting examplomycin into two cohorts
+## Two trials that differ
 
-Split the 500 examplomycin subjects into two cohorts of 250, with
-separate aggregate statistics for each:
+The point of a meta-analysis is that the studies are *not*
+interchangeable, so this one combines a trial we hold individual records
+for with a trial we have only summary statistics from — at a different
+dose, a sparser schedule and a different size.
 
 ``` r
 
@@ -25,63 +27,80 @@ library(rxode2)
 library(nlmixr2)
 library(ggplot2)
 
-dv_mat <- admVignetteDvMatrix()       # 500 subjects x 9 times
-times  <- as.numeric(colnames(dv_mat))
+# Trial A: 500 subjects at 100 mg, richly sampled. Individual records, reduced
+# to the E, V and n a publication would print.
+dv_mat  <- admVignetteDvMatrix()      # 500 subjects x 9 times
+trial_a <- admVignetteStats(dv_mat)
+times_a <- trial_a$times
 
-# Alternate subjects into two equal cohorts, then take E, V and n for each
-cohort1 <- admVignetteStats(dv_mat, seq(1, nrow(dv_mat), by = 2))
-cohort2 <- admVignetteStats(dv_mat, seq(2, nrow(dv_mat), by = 2))
-
-E1 <- cohort1$E; V1 <- cohort1$V; n1 <- cohort1$n
-E2 <- cohort2$E; V2 <- cohort2$V; n2 <- cohort2$n
+# Trial B: published as summary statistics only -- 120 subjects at 200 mg, four
+# sampling times. datagen() turns its model into the aggregate data it implies,
+# which is what makes a published study a direct input; see vignette("datagen").
+times_b <- c(0.5, 2, 6, 12)
+trial_b <- datagen(
+  studies = list(b = list(times = times_b,
+                          ev    = rxode2::et(amt = 200),
+                          n     = 120L)),
+  model   = admVignetteModel,
+  control = datagenControl(n_sim = 10000L, seed = 1L)
+)$b
 ```
 
-Both helpers are defined in this vignette’s setup file: the first
-reshapes `examplomycin` into one row per subject, the second takes `E`,
-`V` and `n` off a set of its rows.
+`admVignetteDvMatrix()` and `admVignetteStats()` come from this
+vignette’s setup file: the first reshapes `examplomycin` into one row
+per subject, the second takes `E`, `V` and `n` off it.
 
-## Comparing observed profiles across cohorts
+Trial B is simulated here so the vignette has a second study to combine;
+in practice its `E`, `V` and `n` would be digitised from the paper
+([`vignette("aggregate-data")`](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.md))
+or derived from the model the paper published.
 
-Check the raw summary statistics first: both cohorts come from the same
-population here, so they should be comparable.
+## Comparing the two observed profiles
+
+The two are on different doses, so they should *not* lie on top of each
+other — that separation is the information a joint fit uses.
 
 ``` r
 
 df_obs <- rbind(
-  data.frame(cohort = "Cohort 1", time = times,
-             mean = E1,
-             lo   = E1 - sqrt(diag(V1)),
-             hi   = E1 + sqrt(diag(V1))),
-  data.frame(cohort = "Cohort 2", time = times,
-             mean = E2,
-             lo   = E2 - sqrt(diag(V2)),
-             hi   = E2 + sqrt(diag(V2)))
+  data.frame(trial = "Trial A (100 mg, n = 500)", time = times_a,
+             mean = trial_a$E,
+             lo   = trial_a$E - sqrt(diag(trial_a$V)),
+             hi   = trial_a$E + sqrt(diag(trial_a$V))),
+  data.frame(trial = "Trial B (200 mg, n = 120)", time = times_b,
+             mean = trial_b$E,
+             lo   = trial_b$E - sqrt(diag(trial_b$V)),
+             hi   = trial_b$E + sqrt(diag(trial_b$V)))
 )
 
-ggplot(df_obs, aes(x = time, y = mean, colour = cohort, fill = cohort)) +
+ggplot(df_obs, aes(x = time, y = mean, colour = trial, fill = trial)) +
   geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.15, colour = NA) +
   geom_line(linewidth = 1) +
   geom_point(size = 2.5) +
-  scale_x_log10(breaks = times, labels = times) +
-  scale_colour_manual(values = c("Cohort 1" = "#0072B2", "Cohort 2" = "#D55E00")) +
-  scale_fill_manual(  values = c("Cohort 1" = "#0072B2", "Cohort 2" = "#D55E00")) +
-  labs(title    = "Observed mean ± 1 SD by cohort",
-       x        = "Time (h, log scale)",
-       y        = "Concentration",
-       colour   = NULL, fill = NULL) +
+  scale_x_log10(breaks = sort(unique(c(times_a, times_b)))) +
+  scale_colour_manual(values = c("Trial A (100 mg, n = 500)" = "#0072B2",
+                                 "Trial B (200 mg, n = 120)" = "#D55E00")) +
+  scale_fill_manual(  values = c("Trial A (100 mg, n = 500)" = "#0072B2",
+                                 "Trial B (200 mg, n = 120)" = "#D55E00")) +
+  labs(title  = "Observed mean ± 1 SD by trial",
+       x      = "Time (h, log scale)",
+       y      = "Concentration",
+       colour = NULL, fill = NULL) +
   theme_bw()
 ```
 
-![Observed mean ± 1 SD for each cohort on a log time
-axis.](multiple-studies_files/figure-html/obs-compare-1.png)
+![Observed mean ± 1 SD for each trial on a log time axis. Trial B is at
+twice the dose and four sampling
+times.](multiple-studies_files/figure-html/obs-compare-1.png)
 
-Observed mean ± 1 SD for each cohort on a log time axis.
+Observed mean ± 1 SD for each trial on a log time axis. Trial B is at
+twice the dose and four sampling times.
 
 ## Model definition
 
 The two-compartment model from [Getting
 started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.md),
-supplied by this vignette’s setup file and fitted to both cohorts at
+supplied by this vignette’s setup file and fitted to both trials at
 once:
 
 ``` r
@@ -91,18 +110,18 @@ pk_model <- admVignetteModel
 
 ## Fitting with two studies
 
-Pass both cohorts as a named list. Each entry may independently specify
-`times`, `ev`, `V`, `n`, and `method`:
+Pass both trials as a named list. Each entry carries its own `times`,
+`ev`, `V`, `n` and `method`, which is what lets them differ:
 
 ``` r
 fit_multi <- nlmixr2(
   pk_model, admData(), est = "admc",
   control = admControl(
     studies = list(
-      cohort1 = list(E = E1, V = V1, n = n1,
-                     times = times, ev = rxode2::et(amt = 100)),
-      cohort2 = list(E = E2, V = V2, n = n2,
-                     times = times, ev = rxode2::et(amt = 100))
+      trial_a = list(E = trial_a$E, V = trial_a$V, n = trial_a$n,
+                     times = times_a, ev = rxode2::et(amt = 100)),
+      trial_b = list(E = trial_b$E, V = trial_b$V, n = trial_b$n,
+                     times = times_b, ev = rxode2::et(amt = 200))
     ),
     n_sim     = 5000L,
     cov_n_sim = 10000L,
@@ -115,29 +134,29 @@ print(fit_multi)
 ── nlmixr² admc ──
 
           OBJF       AIC       BIC Log-likelihood
-admc -3690.262 -3668.262 -3597.732       1845.131
+admc -3351.844 -3329.844 -3258.199       1675.922
 
 ── Time (sec fit_multi$time): ──
 
   optimize covariance other elapsed
-1   91.621     31.312     0 122.933
+1   40.497     18.813     0   59.31
 
 ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 
                                   Parameter    Est.       SE  %RSE
-tcl                    Log clearance (L/hr)   1.602  0.02000 1.248
-tv1                  Log central volume (L)   2.328   0.1320 5.670
-tv2               Log peripheral volume (L)   3.397  0.05338 1.571
-tq        Log inter-compartmental CL (L/hr)   2.276  0.02729 1.199
-tka     Log absorption rate constant (1/hr) 0.02979   0.1230 412.9
-prop.sd      Proportional residual error SD  0.1895 0.003282 1.732
+tcl                    Log clearance (L/hr)   1.603  0.01771 1.105
+tv1                  Log central volume (L)   2.328   0.1293 5.552
+tv2               Log peripheral volume (L)   3.398  0.04947 1.456
+tq        Log inter-compartmental CL (L/hr)   2.281  0.02542 1.114
+tka     Log absorption rate constant (1/hr) 0.02919   0.1192 408.2
+prop.sd      Proportional residual error SD  0.1900 0.003277 1.725
         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
-tcl        4.963 (4.772, 5.161)    32.62         NaN
-tv1        10.26 (7.920, 13.29)    33.15         NaN
-tv2        29.89 (26.92, 33.18)    31.81         NaN
-tq         9.738 (9.231, 10.27)    33.68         NaN
-tka       1.030 (0.8096, 1.311)    31.87         NaN
-prop.sd 0.1895 (0.1831, 0.1960)                     
+tcl        4.967 (4.797, 5.142)    32.32         NaN
+tv1        10.26 (7.963, 13.22)    32.98         NaN
+tv2        29.90 (27.14, 32.95)    32.07         NaN
+tq         9.789 (9.314, 10.29)    33.66         NaN
+tka       1.030 (0.8152, 1.301)    31.79         NaN
+prop.sd 0.1900 (0.1835, 0.1964)                     
  
   Covariance Type (fit_multi$covMethod): r,s
   No correlations in between subject variability (BSV) matrix
@@ -149,6 +168,11 @@ prop.sd 0.1895 (0.1831, 0.1960)
     NLOPT_FAILURE: Generic failure code. 
 ```
 
+Nothing above assumes the two share a dose or a schedule. The objective
+is the sum of per-study negative log-likelihoods under one set of
+population parameters, and each study is predicted at its own dosing and
+its own times.
+
 ## Per-study diagnostic plots
 
 [`plot()`](https://rdrr.io/r/graphics/plot.default.html) produces
@@ -159,31 +183,31 @@ separate panels per study, named `mean_<study>` and `cov_<study>`:
 plots <- plot(fit_multi, which = "mean")
 ```
 
-![Mean diagnostics for both cohorts (one panel per
+![Mean diagnostics for both trials (one panel per
 study).](multiple-studies_files/figure-html/diag-1.png)
 
-Mean diagnostics for both cohorts (one panel per study).
+Mean diagnostics for both trials (one panel per study).
 
-![Mean diagnostics for both cohorts (one panel per
+![Mean diagnostics for both trials (one panel per
 study).](multiple-studies_files/figure-html/diag-2.png)
 
-Mean diagnostics for both cohorts (one panel per study).
+Mean diagnostics for both trials (one panel per study).
 
 ``` r
 
 names(plots)
-#>  [1] "mean_cohort1"           "mean_cohort1_obs"       "mean_cohort1_pred"     
-#>  [4] "mean_cohort1_resid"     "mean_cohort1_std_resid" "mean_cohort2"          
-#>  [7] "mean_cohort2_obs"       "mean_cohort2_pred"      "mean_cohort2_resid"    
-#> [10] "mean_cohort2_std_resid"
+#>  [1] "mean_trial_a"           "mean_trial_a_obs"       "mean_trial_a_pred"     
+#>  [4] "mean_trial_a_resid"     "mean_trial_a_std_resid" "mean_trial_b"          
+#>  [7] "mean_trial_b_obs"       "mean_trial_b_pred"      "mean_trial_b_resid"    
+#> [10] "mean_trial_b_std_resid"
 ```
 
 Access individual panels to compare studies side by side:
 
 ``` r
 
-plots$mean_cohort1
-plots$mean_cohort2
+plots$mean_trial_a
+plots$mean_trial_b
 
 # Combine with patchwork if installed
 if (requireNamespace("patchwork", quietly = TRUE)) {
@@ -191,32 +215,11 @@ if (requireNamespace("patchwork", quietly = TRUE)) {
 }
 ```
 
-## Different doses and schedules
+## Scaling to a programme
 
-Studies may differ in any aspect — a typical development programme:
-
-``` r
-
-fit_program <- nlmixr2(
-  pk_model, admData(), est = "admc",
-  control = admControl(
-    studies = list(
-      phase1_50mg  = list(E = E_50,  V = V_50,  n = 30L,
-                          times = c(1, 2, 4, 8),
-                          ev    = rxode2::et(amt = 50)),
-      phase2_100mg = list(E = E_100, V = V_100, n = 120L,
-                          times = c(0.5, 1, 2, 4, 8, 12),
-                          ev    = rxode2::et(amt = 100)),
-      phase2_200mg = list(E = E_200, V = V_200, n = 115L,
-                          times = c(0.5, 1, 2, 4, 8, 12),
-                          ev    = rxode2::et(amt = 200))
-    ),
-    n_sim   = 5000L,
-    maxeval = 1000L,
-    seed    = 1L
-  )
-)
-```
+A third and fourth study are more entries in the same list, so a
+development programme is written the same way the two above are — one
+entry per trial, each with its own dose, schedule and size.
 
 A study with a diagonal `V` (or a plain vector of variances) gets
 `method = "var"`, skipping the O(n_t³) Cholesky solve there is no

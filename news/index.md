@@ -381,6 +381,13 @@ than below.
 
 ### Internal changes
 
+- **[`vignette("multiple-studies")`](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.md)
+  combines two trials that actually differ**, where it split one dataset
+  into two statistically identical halves.
+
+- **Compiled objects are no longer tracked**, `.gitignore` having named
+  them since before they were committed.
+
 - **The covariate panels are built by `.admCovEffectPanel()` and
   `.admCovResidPanel()`**, not inline in
   [`plot.admFit()`](https://leidenpharmacology.github.io/admixr2/reference/plot.admFit.md),
