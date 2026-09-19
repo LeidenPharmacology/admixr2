@@ -239,7 +239,7 @@
   ix <- which(!vapply(studies, function(z) isTRUE(z$is_joint), logical(1)))
   if (!length(ix)) return(out)
   ek  <- vapply(ix, function(i) out$s[[i]]$ev_key %||% NA_character_, "")
-  key <- ifelse(is.na(ek), paste0("solo", seq_along(ix)), ek)
+  key <- ifelse(is.na(ek), paste0("solo", seq_along(ix)), "all")
   for (k in unique(key)) {
     ii <- ix[key == k]
     et <- lapply(ii, function(i) { e <- out$eta[[i]]
@@ -376,6 +376,19 @@
   total
 }
 
+# Which studies solve together. Only the OUTPUT has to match:
+# .admSimulateMany() gives each study its own id range, so doses and sampling
+# schedules may differ inside one solve -- measured 0.025s for one stacked call
+# against 0.066s for one per event table and 0.693s for one per study.
+.adghSolveGroupKeys <- function(studies, out_var, solo = NULL) {
+  n <- length(studies)
+  if (is.null(solo))
+    solo <- vapply(studies, function(s) !is.null(s$out_pair), logical(1))
+  ek <- vapply(studies, function(s) s$ev_key %||% NA_character_, "")
+  ov <- vapply(studies, function(s) s$output %||% out_var, "")
+  ifelse(solo | is.na(ek), paste0("solo", seq_len(n)), ov)
+}
+
 # Moments for every non-joint study, solving studies that share an event table
 # together. Falls back to one call per study wherever a group cannot be formed,
 # so the answer is the same either way -- verified bit-identical.
@@ -395,13 +408,7 @@
   solo <- vapply(ix, function(i) !is.null(studies[[i]]$out_pair), logical(1))
   # Group on the event key stamped at flatten time, plus the output the study
   # reads. A study with no key, or a beta pair, is its own group.
-  # ONE EVENT TABLE PER GROUP. .admSimulateMany() can stack different ones with
-  # offset ids, and does so correctly in isolation, but grouping across them
-  # here changed a fitted objective -- so the hot path takes the case that is
-  # cheap to be sure of, which is also where the nodes are.
-  ek  <- vapply(ix, function(i) studies[[i]]$ev_key %||% NA_character_, "")
-  key <- ifelse(solo | is.na(ek), paste0("solo", seq_along(ix)),
-                paste(ek, ov, sep = "\r"))
+  key <- .adghSolveGroupKeys(studies[ix], ov, solo)
   for (k in unique(key)) {
     sel <- which(key == k)
     ii  <- ix[sel]

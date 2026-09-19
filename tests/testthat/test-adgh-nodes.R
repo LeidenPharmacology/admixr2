@@ -338,6 +338,8 @@ test_that("grouping studies does not move the objective, across doses", {
   gr  <- admixr2:::.adghNodeGrid(p$n_nodes %||% 5L, p$n_eta)
   # more than one event key present, so the stacking path is the one under test
   expect_gt(length(unique(vapply(stu, function(z) z$ev_key %||% "", ""))), 1L)
+  # ...and they really do land in ONE group, which is the point of stacking.
+  expect_equal(length(unique(admixr2:::.adghSolveGroupKeys(stu, ov))), 1L)
 
   # Accumulated the way .adghNLL() accumulates: a running total, not sum() over
   # a vector, or the two differ in the last bit purely by summation order (1e-13

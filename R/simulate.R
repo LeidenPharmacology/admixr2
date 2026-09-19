@@ -420,28 +420,41 @@
     return(list(.admSimulateSens(sensModel, struct_theta, sigma_names,
                                  eta_list[[1L]], studies[[1L]], cores, ndp,
                                  sigma_var, sigdig)))
-  # ONE EVENT TABLE, or nothing. This solve fixes `events` at the first study's,
-  # so a group spanning several dosing schedules would silently solve them all
-  # against the first -- which is what a widened grouping did, and it changed a
-  # fitted objective from 1524.12 to 4134.28 while every test still passed.
-  if (!.admEvSame(studies)) return(NULL)
   one <- lapply(seq_len(n), function(k)
     .admSensInnerDf(sensModel, struct_theta, sigma_names, eta_list[[k]],
                     studies[[k]], sigma_var))
   if (any(vapply(one, is.null, logical(1)))) return(NULL)
-  nr  <- vapply(eta_list, nrow, integer(1))
+  nr   <- vapply(eta_list, nrow, integer(1))
+  end  <- cumsum(nr); beg <- end - nr + 1L
+  # DIFFERENT DOSES AND SCHEDULES IN ONE SOLVE, by giving each study its own id
+  # range. Fixing `events` at the first study's instead is the bug that moved a
+  # fitted objective from 1524.11933 to 4134.28314 with every test still green,
+  # so the stacking is the point rather than a refinement.
+  same <- .admEvSame(studies)
+  ev   <- if (same) studies[[1L]]$ev_full else .admEvStack(studies, nr)
+  if (is.null(ev)) return(NULL)
   out <- tryCatch(suppressWarnings(do.call(rxode2::rxSolve,
     c(list(sensModel$mod, params = do.call(rbind, lapply(one, `[[`, "df")),
-           events = studies[[1L]]$ev_full, cores = cores,
+           events = ev, cores = cores,
            nDisplayProgress = ndp, sigdig = sigdig), sensModel$solve_args))),
     error = function(e) NULL)
   if (is.null(out) || !all(sensModel$sens_cols %in% names(out))) return(NULL)
-  keep <- out[["time"]] %in% studies[[1L]]$times
-  n_t  <- length(studies[[1L]]$times)
-  end  <- cumsum(nr); beg <- end - nr + 1L
-  lapply(seq_len(n), function(k)
-    .admSensSplit(out, keep, beg[k], end[k], n_t, ncol(eta_list[[k]]),
-                  sensModel, one[[k]]$tb, one[[k]]$lam))
+  if (same) {
+    keep <- out[["time"]] %in% studies[[1L]]$times
+    n_t  <- length(studies[[1L]]$times)
+    return(lapply(seq_len(n), function(k)
+      .admSensSplit(out, keep, beg[k], end[k], n_t, ncol(eta_list[[k]]),
+                    sensModel, one[[k]]$tb, one[[k]]$lam)))
+  }
+  id <- out[["id"]] %||% out[["sim.id"]]
+  if (is.null(id)) return(NULL)
+  id <- as.integer(id)
+  lapply(seq_len(n), function(k) {
+    o  <- out[id >= beg[k] & id <= end[k], , drop = FALSE]
+    kp <- o[["time"]] %in% studies[[k]]$times
+    .admSensSplit(o, kp, 1L, nr[k], length(studies[[k]]$times),
+                  ncol(eta_list[[k]]), sensModel, one[[k]]$tb, one[[k]]$lam)
+  })
 }
 
 .admSimulateSens <- function(sensModel, struct_theta, sigma_names,
