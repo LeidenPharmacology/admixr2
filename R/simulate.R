@@ -67,7 +67,9 @@
   same <- .admEvSame(studies)
   ev   <- if (same) studies[[1L]]$ev_full else .admEvStack(studies, nr)
   if (is.null(ev)) return(NULL)
-  out <- rxode2::rxSolve(rxMod, params = .admRbindParams(pm),
+  pmat <- .admRbindParams(pm)
+  if (is.null(pmat)) return(NULL)
+  out <- rxode2::rxSolve(rxMod, params = pmat,
                          events = ev, cores = cores,
                          nDisplayProgress = ndp, sigdig = sigdig)
   getv <- function(o) { v <- o[[output_var]]; if (is.null(v)) o[["ipredSim"]] else v }
@@ -111,6 +113,21 @@
 # as.data.frame() on a matrix with row names, both hit make.unique() -- 13.7%
 # of a profiled fit at 60k rows.
 .admRbindParams <- function(dfs, as_df = TRUE) {
+  # ALIGNED BY NAME, never by position. .admCovCols() appends each study's
+  # covariates in that study's own name order, so a positional bind hands the
+  # second study the first study's column names and solves it at swapped
+  # covariate values -- every dimension still valid, nothing to detect it.
+  # NULL when the schemas cannot be reconciled, and the caller solves per study.
+  if (length(dfs) > 1L) {
+    nm <- colnames(dfs[[1L]])
+    if (is.null(nm) || anyDuplicated(nm)) return(NULL)
+    ok <- vapply(dfs, function(d) {
+      dn <- colnames(d)
+      !is.null(dn) && !anyDuplicated(dn) && setequal(dn, nm)
+    }, logical(1))
+    if (!all(ok)) return(NULL)
+    dfs <- lapply(dfs, function(d) d[, nm, drop = FALSE])
+  }
   m <- if (length(dfs) == 1L) dfs[[1L]] else do.call(rbind, dfs)
   if (is.data.frame(m)) return(m)
   rownames(m) <- NULL
@@ -464,8 +481,10 @@
   same <- .admEvSame(studies)
   ev   <- if (same) studies[[1L]]$ev_full else .admEvStack(studies, nr)
   if (is.null(ev)) return(NULL)
+  pmat <- .admRbindParams(lapply(one, `[[`, "df"), FALSE)
+  if (is.null(pmat)) return(NULL)
   out <- tryCatch(suppressWarnings(do.call(rxode2::rxSolve,
-    c(list(sensModel$mod, params = .admRbindParams(lapply(one, `[[`, "df"), FALSE),
+    c(list(sensModel$mod, params = pmat,
            events = ev, cores = cores,
            nDisplayProgress = ndp, sigdig = sigdig), sensModel$solve_args))),
     error = function(e) NULL)
