@@ -254,7 +254,11 @@
         .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, et[[j]],
                          out$s[[ii[j]]], cores, pinfo$nDisplayProgress,
                          pars$sigma_var, pinfo$sigdig))
-    for (j in seq_along(ii)) out$res[[ii[j]]] <- rs[[j]]
+    # SINGLE brackets: a failed solve is a NULL result, and `out$res[[i]] <- NULL`
+    # deletes the slot rather than emptying it, which shifts every later index
+    # and leaves .adghGradNLL() subscripting past the end instead of reaching
+    # its own NULL fallback into .adghFDGrad().
+    for (j in seq_along(ii)) out$res[ii[j]] <- rs[j]
   }
   out
 }
