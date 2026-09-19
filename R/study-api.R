@@ -807,7 +807,7 @@ print() a single study to check its transcription.
 ## not move across a source's nodes, the mixture collapse those nodes reduce to
 ## is a sufficient statistic for it. That is the same law .admMixMoments()
 ## applies, so this is the exactly removable part of the work and nothing else.
-.admMaterialise <- function(studies, analysis_covs = NULL) {
+.admMaterialise <- function(studies, analysis_covs = NULL, analysis_ui = NULL) {
   if (inherits(studies, "admStudies")) studies <- unclass(studies)
   if (!is.list(studies)) return(studies)
   spec <- vapply(studies, inherits, logical(1), "admStudy")
@@ -866,6 +866,12 @@ print() a single study to check its transcription.
     # cut into nodes
     # anyway, and `stratify = FALSE` silently became its opposite.
     sp$stratify <- if (identical(.bn, FALSE) || !length(.bn)) FALSE else .bn
+    # The ANALYSIS model, for the node design only. .admExpandStrata() needs it
+    # to find the span the nodes sit on and this is the one place it is known;
+    # it is dropped again once the strata are cut, so nothing downstream carries
+    # a second ui around.
+    if (!is.null(analysis_ui) && !identical(sp$stratify, FALSE))
+      sp$.adm_ana_ui <- analysis_ui
     # OUTSIDE the branch, so the spec carries what the caller asked for however
     # the derivation came out. Copied only when something was conditional, a study
     # that resolved to nothing took the default 9 while its neighbour took the

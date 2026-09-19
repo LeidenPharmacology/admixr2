@@ -1206,7 +1206,7 @@
 
 .admCovStrata <- function(cov_dist, stratify, n_nodes = 5L,
                           n_pool = 32768L, cov_range = NULL,
-                          warn_range = TRUE) {
+                          warn_range = TRUE, proj = NULL) {
   cov_dist <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cov_dist)
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
@@ -1280,7 +1280,18 @@
     # ROTATED BY chol(R_SS), or the nodes are laid out as if the conditional covariates were INDEPENDENT
     # (measured on WT/AGE at rho = 0.9: weight-weighted correlation across the 25 strata was 0.0000). chol(R)
     # is upper triangular with U'U = R, so Z %*% U has covariance R and every COLUMN is still standard normal.
-    if (length(iSc)) {
+    # A PROJECTED design replaces the product grid where one was admitted: the
+    # nodes then sit on span(source, analysis) at J^r rather than on the
+    # covariates at J^p. Only when the stratified set IS the whole continuous
+    # set, which is what the derivation gives; a hand-picked subset keeps the
+    # product rule rather than silently gridding a different space.
+    if (!is.null(proj) && length(iSc) == proj$pc &&
+        setequal(nms[iSc], proj$cn)) {
+      .gg <- .admNodeGridNv(rep(as.integer(n_nodes), proj$r))
+      zC  <- .gg$X %*% proj$Lr %*% t(proj$Q)
+      zC  <- zC[, match(nms[iSc], proj$cn), drop = FALSE]
+      wC  <- as.numeric(.gg$W / sum(.gg$W))
+    } else if (length(iSc)) {
       .ng <- .adghNodeGrid(n_nodes, length(iSc))
       zC  <- .ng$X; wC <- as.numeric(.ng$W / sum(.ng$W))
       .Rss <- Rm[iSc, iSc, drop = FALSE]
@@ -1753,6 +1764,29 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   s
 }
 
+# The span a study's nodes should sit on, or NULL to keep the product grid.
+#
+# Needs BOTH models to collapse, and the truncated margins the nodes are cut
+# from. Lognormal only: with normal margins the logs are skewed and the Gaussian
+# rule carries a bias no node count removes (#148).
+.admStrataProj <- function(s, src_ui, stratify) {
+  ana <- s[[".adm_ana_ui"]]
+  if (is.null(ana) || is.null(src_ui) || !length(stratify)) return(NULL)
+  cd <- .admCovDistCanon(.admCovApplyRange(s[["cov_dist"]], s[["cov_range"]]))
+  cn <- Filter(function(v) is.null(cd[[v]][["values"]]), .admCovSpecNames(cd))
+  if (length(cn) < 3L) return(NULL)            # J^2 saves nothing below three
+  if (!all(vapply(cn, function(v) !is.null(cd[[v]][["meanlog"]]), logical(1))))
+    return(NULL)
+  ctl <- tryCatch(adghControl(studies = list(), print = 0L),
+                  error = function(e) NULL)
+  if (is.null(ctl)) return(NULL)
+  dirs <- lapply(list(src_ui, ana), function(u)
+    tryCatch(.admCovDirections(u, .admDriverPinfo(u, ctl), cd),
+             error = function(e) NULL))
+  if (any(vapply(dirs, is.null, logical(1)))) return(NULL)
+  .admCovSpan(dirs, dirs[[1L]]$Rc, dirs[[1L]]$pc)
+}
+
 # Expand every study carrying `stratify` into one ordinary study per stratum.
 #
 # The output is plain studies -- own `n`, own `cov`, own `cov_dist` -- so the generator and the estimator both
@@ -1874,10 +1908,15 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
                        s[["stratify"]])
     .miss <- setdiff(.node_cv, names(s[["cov_range"]]))
     if (length(.miss)) .no_range[[nm]] <- .miss
+    # SPAN(source, analysis) where both collapse and the margins are lognormal.
+    # The source model is this study's own; the analysis model rides on the spec
+    # because only .admMaterialise() knows it. NULL means no span and the
+    # product grid, exactly as before.
+    .proj <- .admStrataProj(s, model, s[["stratify"]])
     stl <- .admCovStrata(s[["cov_dist"]], s[["stratify"]],
                          s[["strata_nodes"]] %||% .ADM_STRATA_NODES,
                          warn_range = FALSE,
-                         cov_range = s[["cov_range"]])
+                         cov_range = s[["cov_range"]], proj = .proj)
     # `stratify = character(0)` reached .admCovStrata's `if (!length(stratify)) return(NULL)` and the loop below
     # then ran zero times, DROPPING the study -- the one malformed `stratify` that did not error.
     if (!length(stl))
@@ -1890,6 +1929,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
       sk <- s
       sk[["stratify"]] <- NULL; sk[["strata_nodes"]] <- NULL
       sk[["cov_range"]] <- NULL
+      sk[[".adm_ana_ui"]] <- NULL     # the design is cut; it travels no further
       # carried so the fit can refuse to be compared against one built at a different resolution -- the
       # objective is J-dependent
       sk[[".adm_strata_nodes"]] <- .Jk
@@ -3665,7 +3705,7 @@ print.covDist <- function(x, ...) {
   Sr <- t(Q) %*% Rc %*% Q
   Lr <- tryCatch(chol(Sr), error = function(e) NULL)
   if (is.null(Lr)) return(NULL)
-  list(Q = Q, Lr = Lr, r = r, pc = pc)
+  list(Q = Q, Lr = Lr, r = r, pc = pc, cn = dirs[[1L]]$cn)
 }
 
 # Covariate values and weights for a span, crossed with the exact discrete

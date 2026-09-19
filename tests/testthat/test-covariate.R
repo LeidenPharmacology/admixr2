@@ -1957,3 +1957,50 @@ test_that("the projected design reproduces the law the product grid integrates",
   Xp  <- admixr2:::.admCovXFromZ(cd, cn, gg$X %*% chol(d_s$Rc))
   expect_equal(mom(des$X, des$W), mom(Xp, gg$W / sum(gg$W)), tolerance = 1e-8)
 })
+
+test_that("materialising cuts a source on the span when both models collapse", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  src <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  ana <- suppressMessages(rxode2::rxode2(function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .52; bcr <- .55; balb <- .18
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }))
+  mk <- function() admStudies(a = admStudy(
+    model = src, population = .pnd_pop(), n = 300L, dose = 200,
+    times = c(1, 4), strata_nodes = 5L))
+
+  g0 <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(mk())))
+  g1 <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    mk(), analysis_covs = c("WT", "CRCL", "ALB"), analysis_ui = ana)))
+  expect_equal(length(g0), 5L^3L)     # product grid, as before
+  expect_equal(length(g1), 5L^2L)     # both models rank 1 -> span is rank 2
+  # The weights are still a partition of n, whatever the design.
+  expect_equal(sum(vapply(g1, function(z) z$n, 0)), 300)
+  # And the analysis model does not travel past the cut.
+  expect_true(all(vapply(g1, function(z) is.null(z[[".adm_ana_ui"]]), NA)))
+})
+
+test_that("a truncated margin keeps the product grid", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # `range` replaces meanlog/sdlog with an opaque quantile, and a truncated
+  # lognormal's log is NOT linear in the latent -- so (s, u) stops being
+  # bivariate normal and the Gaussian rule would be biased. Decline, do not
+  # approximate.
+  src <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  ana <- suppressMessages(rxode2::rxode2(src))
+  g <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    admStudies(a = admStudy(model = src, population = .pnd_pop(), n = 300L,
+                            dose = 200, times = c(1, 4), strata_nodes = 5L,
+                            range = list(WT = c(50, 110)))),
+    analysis_covs = c("WT", "CRCL", "ALB"), analysis_ui = ana)))
+  expect_equal(length(g), 5L^3L)
+})
