@@ -2012,7 +2012,7 @@ test_that(".admCovRecombine keeps the moments and drops the atoms", {
   n <- 2000L; a <- rnorm(n); b <- 0.6 * a + rnorm(n)
   w <- runif(n); w <- w / sum(w)
   for (d in c(4L, 6L, 8L)) {
-    P  <- admixr2:::.admCovMomentBasis(a, b, d)
+    P  <- admixr2:::.admCovMomentBasis(cbind(a, b), d)
     rc <- admixr2:::.admCovRecombine(P, w)
     # Caratheodory's bound: at most one atom per moment, and the kept atoms are
     # drawn FROM the cloud, so each still carries its covariate vector.
@@ -2030,6 +2030,32 @@ test_that(".admCovMomentDegree fits the moment count inside a node budget", {
     d <- admixr2:::.admCovMomentDegree(n)
     expect_lte((d + 1L) * (d + 2L) / 2L, n)      # fits
     expect_gt((d + 2L) * (d + 3L) / 2L, n)       # and is the largest that does
+  }
+  # and the same rule in r coordinates, where choose(d + r, r) monomials have
+  # total degree at most d
+  for (r in 2:4) for (n in c(27L, 64L, 125L)) {
+    d <- admixr2:::.admCovMomentDegree(n, r)
+    expect_lte(choose(d + r, r), n)
+    expect_gt(choose(d + 1L + r, r), n)
+  }
+})
+
+test_that(".admCovRecombine keeps the moments of EVERY projected direction", {
+  # A rank-two source plus a rank-one analysis model spans three directions.
+  # Constraining only the first two leaves the third with no moment condition,
+  # so the retained atoms need not reproduce even its mean.
+  set.seed(11)
+  n <- 4000L; r <- 3L
+  Z <- matrix(rnorm(n * r), n, r) %*%
+    chol(matrix(c(1, .4, .2, .4, 1, .3, .2, .3, 1), 3, 3))
+  w <- runif(n); w <- w / sum(w)
+  ref <- c(colSums(Z * w), colSums(Z^2 * w))
+  for (nn in c(27L, 64L)) {
+    P  <- admixr2:::.admCovMomentBasis(Z, admixr2:::.admCovMomentDegree(nn, r))
+    rc <- admixr2:::.admCovRecombine(P, w)
+    Zc <- Z[rc$i, , drop = FALSE]
+    expect_equal(c(colSums(Zc * rc$w), colSums(Zc^2 * rc$w)), ref,
+                 tolerance = 1e-9)
   }
 })
 

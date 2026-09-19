@@ -1311,8 +1311,8 @@
         .admCovQuantile(cov_dist[[nms[iSc[k]]]], .admCovU(.z0[, k])),
         numeric(nrow(.z0)))
       .su <- log(.x0) %*% proj$A[match(nms[iSc], proj$cn), , drop = FALSE]
-      .P  <- .admCovMomentBasis(.su[, 1L], .su[, 2L],
-                                .admCovMomentDegree(as.integer(n_nodes)^proj$r))
+      .P  <- .admCovMomentBasis(
+        .su, .admCovMomentDegree(as.integer(n_nodes)^proj$r, proj$r))
       .rc <- .admCovRecombine(.P, .w0)
       zC  <- .z0[.rc$i, , drop = FALSE]; wC <- .rc$w
     } else if (length(iSc)) {
@@ -3800,19 +3800,38 @@ print.covDist <- function(x, ...) {
   list(i = keep, w = w[keep] / sum(w[keep]))
 }
 
-# Bivariate monomials up to total degree `d`, on standardised coordinates so the
-# QR stays conditioned.
-.admCovMomentBasis <- function(a, b, d) {
-  za <- (a - mean(a)) / max(stats::sd(a), .Machine$double.eps)
-  zb <- (b - mean(b)) / max(stats::sd(b), .Machine$double.eps)
-  do.call(cbind, unlist(lapply(0:d, function(k)
-    lapply(0:k, function(i) za^i * zb^(k - i))), recursive = FALSE))
+# Exponent vectors of every monomial in `r` coordinates up to total degree `d`,
+# lowest degree first so the recombination drops the highest moments first.
+.admCovMonomials <- function(d, r) {
+  g <- as.matrix(expand.grid(rep(list(0:d), r)))
+  g <- g[rowSums(g) <= d, , drop = FALSE]
+  g[order(rowSums(g)), , drop = FALSE]
 }
 
-# The largest total degree whose moment count fits in `n` nodes.
-.admCovMomentDegree <- function(n) {
+# Monomials in the projected coordinates up to total degree `d`, on standardised
+# coordinates so the QR stays conditioned. `Z` carries one column per projected
+# direction: constraining only the first two leaves any further direction with
+# no moment constraint at all, so the retained atoms need not reproduce even its
+# mean.
+.admCovMomentBasis <- function(Z, d) {
+  Z  <- as.matrix(Z)
+  zs <- lapply(seq_len(ncol(Z)), function(j) {
+    v <- Z[, j]
+    (v - mean(v)) / max(stats::sd(v), .Machine$double.eps)
+  })
+  ex <- .admCovMonomials(d, ncol(Z))
+  do.call(cbind, lapply(seq_len(nrow(ex)), function(k) {
+    p <- rep(1, nrow(Z))
+    for (j in seq_len(ncol(Z))) if (ex[k, j]) p <- p * zs[[j]]^ex[k, j]
+    p
+  }))
+}
+
+# The largest total degree whose moment count fits in `n` nodes, in `r`
+# coordinates: choose(d + r, r) monomials have total degree at most `d`.
+.admCovMomentDegree <- function(n, r = 2L) {
   d <- 0L
-  while (((d + 2L) * (d + 3L)) %/% 2L <= n) d <- d + 1L
+  while (choose(d + 1L + r, r) <= n) d <- d + 1L
   d
 }
 
