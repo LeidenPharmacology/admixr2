@@ -2,26 +2,13 @@
 
 ## New features
 
-* **A conditional source is cut on the span of the two models, not on the
-  product grid.** The objective reaches the covariates only through the source
-  direction and the analysis direction, so a source conditional on three
-  covariates needs nodes on that plane rather than the full `strata_nodes^3`
-  cube: 729 studies become 81, exactly rather than approximately. Truncated
-  margins keep the reduction through Caratheodory recombination, which draws
-  its atoms from a fine cloud and reproduces that cloud's moments in every
-  projected direction. The reduction is admitted only where the analysis
-  model's covariate loading is parameter-invariant -- fixed allometric
-  exponents, in practice -- because the nodes are cut once at materialisation
-  and an estimated exponent would carry the loading off the plane they sit on.
-  Anything else keeps the product grid.
+* **A conditional source is cut on the span of both models, not the product
+  grid** -- 729 studies become 81, exactly. Needs an analysis model whose
+  covariate loading cannot move, i.e. fixed exponents; anything else keeps the
+  product grid.
 
-* **One `rxSolve` per group of studies rather than one per study.** A call
-  costs 0.0251 s to enter and 1.6e-06 s per subject, so at the sizes a node
-  expansion produces it is almost all overhead; the objective, the gradient and
-  the post-fit diagnostics now stack their parameter frames and solve together,
-  across different doses and schedules alike. A four-study fit went from 126.4 s
-  to 38.9 s, and the sampled profile from 83.97 s to 41.78 s, with the objective
-  unchanged to every digit.
+* **One `rxSolve` per group of studies, not one per study**, across differing
+  doses and schedules. A four-study fit: 126.4 s to 38.9 s, objective unchanged.
 
 * **The mean and covariance panels are per SOURCE, not per stratum.** A conditional
   source is collapsed by the mixture law, so `_s1`/`_s2` never reaches a figure.
