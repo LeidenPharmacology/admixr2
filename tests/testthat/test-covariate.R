@@ -2162,6 +2162,40 @@ test_that(".admStrataProj declines what it cannot project", {
     list(cov_dist = .pnd_pop(), .adm_ana_ui = anaf), ana, cvs)))
 })
 
+test_that("a movable analysis loading materialises the product grid exactly", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The nodes are cut once and baked into fixed `cov` values, so a span read off
+  # the starting values stops describing the analysis model as soon as the
+  # optimizer moves an exponent. Rather than compare objectives at a few points,
+  # assert the stronger thing the decline buys: with the exponents estimated the
+  # materialisation IS the product one, node for node and weight for weight, so
+  # no parameter point can tell them apart.
+  src <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  mk <- function() admStudies(a = admStudy(
+    model = src, population = .pnd_pop(), n = 300L, dose = 200,
+    times = c(1, 4), strata_nodes = 5L))
+  cv <- function(g) do.call(rbind, lapply(g, function(z) unlist(z$cov)))
+  nn <- function(g) vapply(g, function(z) z$n, 0)
+  g0 <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(mk())))
+
+  mat <- function(fn) suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    mk(), analysis_covs = c("WT", "CRCL", "ALB"),
+    analysis_ui = suppressMessages(rxode2::rxode2(fn)))))
+  gf <- mat(.pnd_allom)          # exponents the optimizer can move
+  expect_equal(length(gf), length(g0))
+  expect_equal(cv(gf), cv(g0))
+  expect_equal(nn(gf), nn(g0))
+
+  # ...and the reduction is still there for the model that can hold its loading
+  gx <- mat(.pnd_allom_fix)
+  expect_equal(length(gx), 5L^2L)
+  expect_equal(sum(nn(gx)), 300)
+})
+
 test_that(".admCovReachable spans every direction a free coefficient reaches", {
   skip_on_cran(); skip_if_not_installed("rxode2")
   ctl <- adghControl(studies = list(), print = 0L)
