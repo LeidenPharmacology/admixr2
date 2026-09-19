@@ -408,7 +408,11 @@
   solo <- vapply(ix, function(i) !is.null(studies[[i]]$out_pair), logical(1))
   # Group on the event key stamped at flatten time, plus the output the study
   # reads. A study with no key, or a beta pair, is its own group.
-  key <- .adghSolveGroupKeys(studies[ix], ov, solo)
+  # out_var, not `ov`: .adghSolveGroupKeys() falls back to it per study, and
+  # handing it the per-study VECTOR makes that fallback length n -- which
+  # vapply(FUN.VALUE = "") refuses. Latent while every study carries an
+  # `output`, which is why nothing caught it.
+  key <- .adghSolveGroupKeys(studies[ix], out_var, solo)
   for (k in unique(key)) {
     sel <- which(key == k)
     ii  <- ix[sel]
