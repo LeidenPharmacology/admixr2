@@ -317,6 +317,12 @@ argument. None is a bug fix, so all are listed here rather than below.
 
 ## Internal changes
 
+* **`vignette("multiple-studies")` combines two trials that actually differ**,
+  where it split one dataset into two statistically identical halves.
+
+* **Compiled objects are no longer tracked**, `.gitignore` having named them
+  since before they were committed.
+
 * **The covariate panels are built by `.admCovEffectPanel()` and
   `.admCovResidPanel()`**, not inline in `plot.admFit()`, which loses 170 lines.
 
