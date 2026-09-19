@@ -1809,8 +1809,13 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   ctl <- tryCatch(adghControl(studies = list(), print = 0L),
                   error = function(e) NULL)
   if (is.null(ctl)) return(NULL)
-  dirs <- lapply(list(src_ui, ana), function(u)
-    tryCatch(.admCovDirections(u, .admDriverPinfo(u, ctl), cd0),
+  # The SOURCE model is published and does not move during the fit, so its one
+  # direction is enough. The ANALYSIS model is what the optimizer is estimating,
+  # so it contributes every direction its free coefficients can reach.
+  dirs <- list(
+    tryCatch(.admCovDirections(src_ui, .admDriverPinfo(src_ui, ctl), cd0),
+             error = function(e) NULL),
+    tryCatch(.admCovReachable(ana, .admDriverPinfo(ana, ctl), cd0),
              error = function(e) NULL))
   if (any(vapply(dirs, is.null, logical(1)))) return(NULL)
   sp <- .admCovSpan(dirs, dirs[[1L]]$Rc, dirs[[1L]]$pc)
@@ -3720,6 +3725,44 @@ print.covDist <- function(x, ...) {
                  error = function(e) NULL)
   if (is.null(co) || is.null(co$U)) return(NULL)
   list(U = co$U, r = co$r, pc = co$pc, cn = co$cn, Rc = co$Rc)
+}
+
+# EVERY direction the optimizer can reach, not just the one at the starting
+# values.
+#
+# .admCovRefresh() re-aims the ordinary collapse on every objective call, so a
+# moving coefficient costs it nothing. The projected node design cannot do that:
+# .admExpandStrata() turns the nodes into fixed `cov` values and the studies
+# lose their `cov_dist`, so a span certified at admission has to stay valid for
+# the whole fit. A loading that later leaves it cannot be represented by the
+# materialised studies at all, and no refresh can repair them.
+#
+# Re-aiming at a perturbed value of each estimated coefficient enumerates the
+# reachable set, and exactly so where the loading is linear in those
+# coefficients, which is the log-linear case the collapse already restricts
+# itself to. Coefficients the covariates do not reach return the same direction
+# and cost no rank.
+.admCovReachable <- function(ui, pinfo, cov_dist, n_nodes = 7L, h = 0.25) {
+  co <- tryCatch(.admCovCollapse(ui, pinfo, cov_dist, n_nodes),
+                 error = function(e) NULL)
+  if (is.null(co) || is.null(co$U)) return(NULL)
+  st0 <- tryCatch(.admShiftStruct(
+    pinfo, .admUnpack(.admBuildOptVec(pinfo)$p0, pinfo)$struct),
+    error = function(e) NULL)
+  if (is.null(st0)) return(NULL)
+  fx   <- ui$iniDf$name[which(isTRUE(ui$iniDf$fix) | ui$iniDf$fix %in% TRUE)]
+  free <- setdiff(intersect(names(st0), pinfo$struct_names), fx)
+  U <- co$U
+  for (nm in free) {
+    st <- st0; st[[nm]] <- st[[nm]] + h
+    c2 <- .admCovRefresh(co, st)
+    # A re-aim that cannot be made is a span that cannot be certified.
+    if (is.null(c2) || isTRUE(c2$stale) || is.null(c2$U)) return(NULL)
+    U <- cbind(U, c2$U)
+  }
+  sv <- tryCatch(svd(U), error = function(e) NULL)
+  if (is.null(sv)) return(NULL)
+  list(U = U, r = .admSvdRank(sv), pc = co$pc, cn = co$cn, Rc = co$Rc)
 }
 
 # The span of several such subspaces, as a design to integrate on.

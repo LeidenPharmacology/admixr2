@@ -1846,6 +1846,17 @@ test_that("a single named proportion is a BINARY covariate, not a constant", {
   model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
           v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
 }
+# The ANALYSIS model has to hold its covariate loading still for the projected
+# design to be admitted: .admExpandStrata() bakes the nodes into fixed `cov`
+# values, so a coefficient the optimizer can move would carry the loading off
+# the span the nodes were cut on. Fixed exponents are the certifiable case.
+.pnd_allom_fix <- function() {
+  ini({ tcl <- log(3.2); tv <- log(21)
+        bwt <- fix(.52); bcr <- fix(.55); balb <- fix(.18)
+        eta.cl ~ .09; add.err <- .6 })
+  model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+          v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+}
 .pnd_split <- function() {
   ini({ tcl <- log(3.2); tv <- log(21); bwt <- .6; bcr <- .4; balb <- .3
         eta.cl ~ .09; add.err <- .6 })
@@ -1965,11 +1976,7 @@ test_that("materialising cuts a source on the span when both models collapse", {
           eta.cl ~ .09; add.err <- .35 })
     model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
             v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
-  ana <- suppressMessages(rxode2::rxode2(function() {
-    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .52; bcr <- .55; balb <- .18
-          eta.cl ~ .09; add.err <- .35 })
-    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
-            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }))
+  ana <- suppressMessages(rxode2::rxode2(.pnd_allom_fix))
   mk <- function() admStudies(a = admStudy(
     model = src, population = .pnd_pop(), n = 300L, dose = 200,
     times = c(1, 4), strata_nodes = 5L))
@@ -2069,7 +2076,7 @@ test_that("a truncated margin is cut on the span, by recombination", {
           eta.cl ~ .09; add.err <- .35 })
     model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
             v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
-  ana <- suppressMessages(rxode2::rxode2(src))
+  ana <- suppressMessages(rxode2::rxode2(.pnd_allom_fix))
   g <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
     admStudies(a = admStudy(model = src, population = .pnd_pop(), n = 300L,
                             dose = 200, times = c(1, 4), strata_nodes = 7L,
@@ -2111,11 +2118,19 @@ test_that("the projected design crosses the exact discrete enumeration", {
   expect_setequal(unique(des$X[, "SEX"]), c(0, 1))
   expect_setequal(colnames(des$X), c("WT", "CRCL", "ALB", "SEX"))
 
-  # ...and end to end: 5^2 x 2 rather than 5^3 x 2.
+  # ...and end to end: 5^2 x 2 rather than 5^3 x 2. The analysis model holds its
+  # loading still, which is what lets the nodes be cut once and baked in.
+  anaf <- suppressMessages(rxode2::rxode2(function() {
+    ini({ tcl <- log(3.2); tv <- log(21)
+          bwt <- fix(.60); bcr <- fix(.40); balb <- fix(.30); bsex <- fix(.25)
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb*
+                  exp(bsex*SEX)
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }))
   g <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
     admStudies(a = admStudy(model = src, population = pop, n = 300L,
                             dose = 200, times = c(1, 4), strata_nodes = 5L)),
-    analysis_covs = c("WT", "CRCL", "ALB", "SEX"), analysis_ui = ui)))
+    analysis_covs = c("WT", "CRCL", "ALB", "SEX"), analysis_ui = anaf)))
   expect_equal(length(g), 5L^2L * 2L)
   expect_equal(sum(vapply(g, function(z) z$n, 0)), 300)
 })
@@ -2136,6 +2151,29 @@ test_that(".admStrataProj declines what it cannot project", {
     list(cov_dist = admPopulation(WT = c(mean = 76, sd = 15),
                                   CRCL = c(mean = 92, sd = 22)),
          .adm_ana_ui = ana), ana, c("WT", "CRCL")))
-  # and it DOES admit the case it is for
-  expect_false(is.null(admixr2:::.admStrataProj(base, ana, cvs)))
+  # an analysis model whose exponents the optimizer can still move: its loading
+  # sweeps all three covariate axes, so no span short of the full grid stays
+  # valid once the fit starts, and the design is declined rather than cut on a
+  # plane the loading will leave
+  expect_null(admixr2:::.admStrataProj(base, ana, cvs))
+  # and it DOES admit the case it is for, once those exponents are fixed
+  anaf <- suppressMessages(rxode2::rxode2(.pnd_allom_fix))
+  expect_false(is.null(admixr2:::.admStrataProj(
+    list(cov_dist = .pnd_pop(), .adm_ana_ui = anaf), ana, cvs)))
+})
+
+test_that(".admCovReachable spans every direction a free coefficient reaches", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  ctl <- adghControl(studies = list(), print = 0L)
+  rk <- function(fn) {
+    ui <- suppressMessages(rxode2::rxode2(fn))
+    admixr2:::.admCovReachable(ui, admixr2:::.admDriverPinfo(ui, ctl),
+                               .pnd_pop())$r
+  }
+  # Three estimated exponents sweep all three axes; the same model with them
+  # fixed holds the single direction .admCovDirections() reports.
+  expect_equal(rk(.pnd_allom), 3L)
+  expect_equal(rk(.pnd_allom_fix), 1L)
+  a <- .pnd_pinfo(.pnd_allom)
+  expect_equal(admixr2:::.admCovDirections(a$ui, a$pinfo, .pnd_pop())$r, 1L)
 })
