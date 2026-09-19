@@ -440,10 +440,10 @@ head.paged_df <- function(x, n = 6L, ...) {
   out <- setNames(vector("list", length(nms)), nms)
   solo <- vapply(studies, function(s)
     isTRUE(s$is_joint) || is.null(s$ev_key) || !is.null(s$out_pair), logical(1))
+  # Only the OUTPUT has to match: .admSimulateMany() gives each study its own id
+  # range, so sources on different doses and schedules share one solve.
   key <- ifelse(solo, paste0("solo", seq_along(nms)),
-                paste(vapply(studies, function(s) s$ev_key %||% "", ""),
-                      vapply(studies, function(s) s$output %||% out_var, ""),
-                      sep = "\r"))
+                vapply(studies, function(s) s$output %||% out_var, ""))
   eta <- .admAggEta(extra, n_sim, n_eta, L, eta_nms, seed)
   for (k in unique(key)) {
     ii <- which(key == k)
