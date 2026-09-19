@@ -516,6 +516,13 @@
                                     pinfo$cov_nodes %||% 7L,
                                     cov_fixed = s_nm[["cov"]]),
                     error = function(e) NULL)
+    # An enrolled `range` bends the latent map, so the collapse above declines
+    # and the study pays the full product grid on every evaluation. The span is
+    # still there on the margins as they stood; only the measure changed.
+    if (is.null(.co))
+      .co <- tryCatch(.admCovCollapseTrunc(.ui, pinfo, s_nm[["cov_dist"]],
+                                           pinfo$cov_nodes %||% 7L),
+                      error = function(e) NULL)
     # Computed, not yet attached: the reduction the study ends up using isn't known until the joint collapse
     # is tried below. JOINT: etas are latent normal directions too, and where an eta and a covariate index
     # reach the model through the same sum they are ONE direction; preferred over the plain covariate collapse
@@ -1007,7 +1014,11 @@
                    # kept so .admCovDistDrop() can rebuild it -- see
                    # .admStrataJoint(). Not a covariate, so it must never be
                    # read as one.
-                   ".adm_strata_joint")
+                   ".adm_strata_joint",
+                   # the margins as they stood BEFORE an enrolled range was
+                   # applied, kept so a collapse can still read a latent
+                   # loading off them -- see .admCovApplyRange().
+                   ".adm_untrunc")
 
 # Discrete margins a `joint` sampler maps STRAIGHT FROM THEIR OWN UNIFORM.
 #
@@ -1148,8 +1159,15 @@
         "`qlnorm(pa + v * (pb - pa), meanlog, sdlog)`. Or declare the margins ",
         "and `cor` and let admixr2 build the sampler, which can then be ",
         "rebuilt over the truncated ones.")
+  # KEEP THE MARGINS AS THEY WERE. Truncation replaces meanlog/sdlog with an
+  # opaque quantile, and a collapse needs the untruncated form to read a loading
+  # off: log(x) is linear in the latent only before the range bends that map.
+  # The measure it then has to integrate is a separate question, and one
+  # .admCovRecombine() answers without assuming a shape.
+  .pre <- cov_dist[names(cov_range)]
   for (nm in names(cov_range))
     cov_dist[[nm]] <- .admCovTruncSpec(cov_dist[[nm]], cov_range[[nm]], nm)
+  cov_dist[[".adm_untrunc"]] <- .pre
   # Discard the derived fields FIRST: the canon short-circuits on an existing `joint`, so re-running it over
   # truncated margins was a no-op and the sampler kept the full declared support. The correlation has to be
   # handed BACK as `cor`, or dropping the derived fields would drop the dependence with them.
@@ -3744,6 +3762,76 @@ print.covDist <- function(x, ...) {
   Lr <- tryCatch(chol(Sr), error = function(e) NULL)
   if (is.null(Lr)) return(NULL)
   list(Q = Q, Lr = Lr, r = r, pc = pc, cn = dirs[[1L]]$cn)
+}
+
+# The integration design for a study whose margins were TRUNCATED.
+#
+# .admCovCollapse() declines those, correctly: an enrolled range bends
+# log(x) = meanlog + sdlog * z, so there is no constant latent loading to read.
+# But the range only reshapes the MEASURE -- the model still reaches the
+# covariates through the same low-rank map, which is readable on the margins as
+# they stood before. So find the span there, then recombine a cloud drawn from
+# the truncated margins, which assumes nothing about the measure's shape.
+#
+# Without this a declared `range` costs the full product grid on EVERY objective
+# evaluation: measured at 343 rows against 21 for three covariates at
+# cov_nodes = 7.
+.admCovCollapseTrunc <- function(ui, pinfo, cov_dist, n_nodes, n_fine = 13L) {
+  cd <- .admCovDistCanon(cov_dist)
+  ut <- cd[[".adm_untrunc"]]
+  if (is.null(ut) || !length(ut)) return(NULL)
+  cn <- Filter(function(v) is.null(cd[[v]][["values"]]), .admCovSpecNames(cd))
+  if (length(cn) < 2L) return(NULL)
+  # The span, off the margins as they were.
+  cd0 <- cd
+  for (nm in names(ut)) cd0[[nm]] <- ut[[nm]]
+  cd0[[".adm_untrunc"]] <- NULL
+  co <- tryCatch(.admCovCollapse(ui, pinfo, cd0, n_nodes),
+                 error = function(e) NULL)
+  if (is.null(co) || is.null(co$U)) return(NULL)
+  sd0 <- vapply(co$cn, function(v) cd0[[v]][["sdlog"]] %||% NA_real_, 0)
+  if (anyNA(sd0) || any(sd0 <= 0)) return(NULL)
+  # A cloud on the TRUNCATED margins, and its coordinates on the span read off
+  # log(x) -- where the map is linear whatever the range did to the measure.
+  gg <- .adghNodeGrid(as.integer(n_fine), length(co$cn))
+  z0 <- gg$X %*% chol(co$Rc)
+  x0 <- vapply(seq_along(co$cn), function(k)
+    .admCovQuantile(cd[[co$cn[k]]], .admCovU(z0[, k])), numeric(nrow(z0)))
+  y  <- log(x0) %*% (co$U / sd0)
+  # BUDGET: the node count the collapse reaches on the untruncated spec, which
+  # is what .admCovDirNodes() sized for this rank -- not n_nodes^r, which is the
+  # raw grid before that sizing and would ask for a far coarser rule.
+  P  <- .admCovMomentBasisR(y, .admCovMomentDegreeR(nrow(co$X), co$r))
+  rc <- .admCovRecombine(P, as.numeric(gg$W / sum(gg$W)))
+  # AND THE SAVING IS AGAINST THE PRODUCT GRID, because that is what a truncated
+  # study actually pays today: .admCovCollapse() declines it, so the fallback is
+  # the full cov_nodes^pc grid on every evaluation.
+  if (length(rc$i) >= as.integer(n_nodes)^co$pc) return(NULL)
+  X <- x0[rc$i, , drop = FALSE]; colnames(X) <- co$cn
+  # Carry the covariates the design does not vary at their own nodes, then
+  # cross with the exact discrete enumeration, as .admCovCollapse() does.
+  cr <- .admCrossDiscreteCov(X, rc$w, co$cells, co$pcell, co$dn, co$nms)
+  list(X = cr$X, W = cr$W, collapsed = TRUE, r = co$r, p = co$p, pc = co$pc,
+       cn = co$cn, dn = co$dn, cd = cd, nms = co$nms, n_cell = cr$n_cell,
+       cells = co$cells, pcell = co$pcell, recombined = TRUE)
+}
+
+# Multivariate monomials up to total degree d, on standardised columns.
+.admCovMomentBasisR <- function(Y, d) {
+  r <- ncol(Y)
+  Z <- sweep(sweep(Y, 2L, colMeans(Y)), 2L,
+             pmax(apply(Y, 2L, stats::sd), .Machine$double.eps), "/")
+  ex <- as.matrix(expand.grid(rep(list(0:d), r)))
+  ex <- ex[rowSums(ex) <= d, , drop = FALSE]
+  vapply(seq_len(nrow(ex)), function(k)
+    apply(sweep(Z, 2L, ex[k, ], "^"), 1L, prod), numeric(nrow(Y)))
+}
+
+# Largest total degree in r dimensions whose moment count fits in `n` nodes.
+.admCovMomentDegreeR <- function(n, r) {
+  d <- 0L
+  while (choose(d + 1L + r, r) <= n) d <- d + 1L
+  d
 }
 
 # Reduce a weighted cloud to a few atoms with the SAME bivariate moments.
