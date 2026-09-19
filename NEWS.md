@@ -3,9 +3,7 @@
 ## New features
 
 * **A conditional source is cut on the span of both models, not the product
-  grid** -- 729 studies become 81, exactly. Needs an analysis model whose
-  covariate loading cannot move, i.e. fixed exponents; anything else keeps the
-  product grid.
+  grid** -- 729 studies become 81, where the analysis exponents are fixed.
 
 * **One `rxSolve` per group of studies, not one per study**, across differing
   doses and schedules. A four-study fit: 126.4 s to 38.9 s, objective unchanged.
