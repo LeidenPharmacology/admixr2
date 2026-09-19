@@ -2058,3 +2058,58 @@ test_that("a truncated margin is cut on the span, by recombination", {
   wt <- vapply(g, function(z) z$cov$WT, 0)
   expect_true(all(wt >= 55 & wt <= 105))
 })
+
+test_that("the projected design crosses the exact discrete enumeration", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # A discrete margin is enumerated, not projected -- it is latently independent
+  # of the rest, so within a level the continuous block keeps the same law and
+  # the level is a constant offset.
+  src <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
+          bsex <- .25; eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb*
+                  exp(bsex*SEX)
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  ui  <- suppressMessages(rxode2::rxode2(src))
+  p   <- admixr2:::.admDriverPinfo(ui, adghControl(studies = list(), print = 0L))
+  pop <- admPopulation(WT = c(mean = 76, sd = 15), CRCL = c(mean = 92, sd = 22),
+                       ALB = c(mean = 40, sd = 5), SEX = c(male = 0.55))
+  d  <- admixr2:::.admCovDirections(ui, p, pop)
+  sp <- admixr2:::.admCovSpan(list(d, d), d$Rc, d$pc)
+  expect_equal(sp$r, 2L)
+  des <- admixr2:::.admCovProjDesign(sp, admixr2:::.admCovDistCanon(pop),
+                                     d$cn, "SEX",
+                                     c("WT", "CRCL", "ALB", "SEX"), 7L)
+  expect_equal(nrow(des$X), 7L^2L * 2L)            # span nodes x levels
+  expect_equal(sum(des$W), 1, tolerance = 1e-12)
+  expect_setequal(unique(des$X[, "SEX"]), c(0, 1))
+  expect_setequal(colnames(des$X), c("WT", "CRCL", "ALB", "SEX"))
+
+  # ...and end to end: 5^2 x 2 rather than 5^3 x 2.
+  g <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    admStudies(a = admStudy(model = src, population = pop, n = 300L,
+                            dose = 200, times = c(1, 4), strata_nodes = 5L)),
+    analysis_covs = c("WT", "CRCL", "ALB", "SEX"), analysis_ui = ui)))
+  expect_equal(length(g), 5L^2L * 2L)
+  expect_equal(sum(vapply(g, function(z) z$n, 0)), 300)
+})
+
+test_that(".admStrataProj declines what it cannot project", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  ana <- suppressMessages(rxode2::rxode2(.pnd_allom))
+  base <- list(cov_dist = .pnd_pop(), .adm_ana_ui = ana)
+  cvs  <- c("WT", "CRCL", "ALB")
+  # no analysis model to span with
+  expect_null(admixr2:::.admStrataProj(list(cov_dist = .pnd_pop()), ana, cvs))
+  # nothing conditional
+  expect_null(admixr2:::.admStrataProj(base, ana, character(0)))
+  # no source model
+  expect_null(admixr2:::.admStrataProj(base, NULL, cvs))
+  # too few continuous covariates for J^2 to save anything
+  expect_null(admixr2:::.admStrataProj(
+    list(cov_dist = admPopulation(WT = c(mean = 76, sd = 15),
+                                  CRCL = c(mean = 92, sd = 22)),
+         .adm_ana_ui = ana), ana, c("WT", "CRCL")))
+  # and it DOES admit the case it is for
+  expect_false(is.null(admixr2:::.admStrataProj(base, ana, cvs)))
+})
