@@ -37,6 +37,50 @@
   m
 }
 
+# Several studies that share an event table, in ONE rxSolve call.
+#
+# rxSolve costs 0.0251 s to enter and 1.6e-06 s per subject: at 100 subjects a
+# call is 99% overhead, and solving 25 subjects costs the same as 2000. We call
+# it once per study, and a conditional source expands to one study per node, so
+# the call count is the study count. The nodes of a source share `ev_full` by
+# construction -- expansion changes only `cov` -- so they stack with no id
+# remapping: rxode2 already replicates a single event table across parameter
+# rows. Measured on 49 nodes, 0.633 s becomes 0.064 s, bit for bit.
+#
+# Callers group by `identical(ev_full)`, which is a pointer comparison for nodes
+# off one source. Everything a batch cannot take -- a beta `out_pair`, an output
+# other than the group's -- is left to .admSimulate() one at a time.
+.admSimulateMany <- function(rxMod, struct_theta, sigma_names, eta_list, studies,
+                             output_var, params_list, cores,
+                             ndp = .Machine$integer.max, sigdig = NULL) {
+  n <- length(studies)
+  if (n == 1L)
+    return(list(.admSimulate(rxMod, struct_theta, sigma_names, eta_list[[1L]],
+                             studies[[1L]], output_var, params_list[[1L]],
+                             cores, ndp, sigdig)))
+  pm <- lapply(seq_len(n), function(k) {
+    m  <- params_list[[k]]
+    et <- eta_list[[k]]
+    for (nm in names(struct_theta)) m[, nm] <- struct_theta[nm]
+    if (length(colnames(et))) m[, colnames(et)] <- et
+    for (nm in sigma_names)         m[, nm] <- 0
+    .admCovCols(m, rxMod$params, studies[[k]][["cov"]],
+                studies[[k]][["cov_rows"]])
+  })
+  nr  <- vapply(eta_list, nrow, integer(1))
+  out <- rxode2::rxSolve(rxMod, params = as.data.frame(do.call(rbind, pm)),
+                         events = studies[[1L]]$ev_full, cores = cores,
+                         nDisplayProgress = ndp, sigdig = sigdig)
+  tms  <- studies[[1L]]$times
+  keep <- out[["time"]] %in% tms
+  v <- out[[output_var]]
+  if (is.null(v)) v <- out[["ipredSim"]]
+  # One row per subject, in the order the blocks were stacked.
+  M   <- matrix(v[keep], ncol = length(tms), byrow = TRUE)
+  end <- cumsum(nr); beg <- end - nr + 1L
+  lapply(seq_len(n), function(k) M[beg[k]:end[k], , drop = FALSE])
+}
+
 # Row-varying variants taking struct_mat (n_row x n_struct) and eta_mat (n_row x n_eta)
 # to evaluate multiple parameter configurations in a single rxSolve call.
 .admSimulateRows <- function(rxMod, struct_mat, sigma_names, eta_mat, study,

@@ -296,14 +296,20 @@
   if (is.null(pars)) return(Inf)
   # Reject non-finite parameters before the solve; see .admParsFinite().
   if (!.admParsFinite(pars, pinfo)) return(Inf)
+  # ONE SOLVE PER GROUP OF STUDIES, not per study. rxSolve is ~99% fixed cost at
+  # these sizes, and a conditional source is one study per node, so the call
+  # count is the study count. See .admSimulateMany().
+  cps <- .adghSolveGrouped(pars, pinfo, studies, rxMod, out_var, grid, cores)
+  if (isTRUE(cps$failed)) return(Inf)
   total <- 0
-  for (s in studies) {
+  for (i in seq_along(studies)) {
+    s <- studies[[i]]
     if (isTRUE(s$is_joint)) {
       m   <- .adghMomentsJoint(pars, pinfo, s, rxMod, grid, cores)
       nll <- nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
     } else {
-      m <- .adghMoments(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores)
-      if (isTRUE(m$failed)) return(Inf)
+      m <- cps$moments[[i]]
+      if (is.null(m) || isTRUE(m$failed)) return(Inf)
       nll <- if (identical(s$method, "var"))
         nll_var_cpp(s$E, s$v_diag, m$E, diag(m$V), s$n)
       else
@@ -313,6 +319,44 @@
     total <- total + nll
   }
   total
+}
+
+# Moments for every non-joint study, solving studies that share an event table
+# together. Falls back to one call per study wherever a group cannot be formed,
+# so the answer is the same either way -- verified bit-identical.
+.adghSolveGrouped <- function(pars, pinfo, studies, rxMod, out_var, grid, cores) {
+  n  <- length(studies)
+  mo <- vector("list", n)
+  ix <- which(!vapply(studies, function(s) isTRUE(s$is_joint), logical(1)))
+  if (!length(ix)) return(list(moments = mo))
+  # Grids first: cheap, no solves, and a failed re-aim has to abort before any
+  # of it is paid for.
+  gs <- lapply(ix, function(i) .adghGrid(pars, pinfo, grid, studies[[i]]))
+  if (any(vapply(gs, function(g) isTRUE(g$failed), logical(1))))
+    return(list(failed = TRUE))
+  ov <- vapply(ix, function(i) studies[[i]]$output %||% out_var, "")
+  # A beta endpoint derives its prediction from a PAIR of outputs and carries a
+  # solved precision alongside; that is .admSimulate()'s business, not a batch's.
+  solo <- vapply(ix, function(i) !is.null(studies[[i]]$out_pair), logical(1))
+  # Group on the event key stamped at flatten time, plus the output the study
+  # reads. A study with no key, or a beta pair, is its own group.
+  ek  <- vapply(ix, function(i) studies[[i]]$ev_key %||% NA_character_, "")
+  key <- ifelse(solo | is.na(ek), paste0("solo", seq_along(ix)),
+                paste(ek, ov, sep = "\r"))
+  for (k in unique(key)) {
+    sel <- which(key == k)
+    ii  <- ix[sel]
+    st  <- lapply(ii, function(i) .adghStudyCov(studies[[i]], gs[[match(i, ix)]]))
+    et  <- lapply(sel, function(j) gs[[j]]$eta)
+    pl  <- lapply(et, function(e) .admMakeParamsList(nrow(e), pinfo, 1L)[[1L]])
+    cp  <- .admSimulateMany(rxMod, pars$struct, pinfo$sigma_names, et, st,
+                            ov[sel[1L]], pl, cores, pinfo$nDisplayProgress,
+                            pinfo$sigdig)
+    for (j in seq_along(sel))
+      mo[[ii[j]]] <- .adghMomentsFromCp(cp[[j]], gs[[sel[j]]]$W, pars, pinfo,
+                                        ov[sel[j]], st[[j]]$times)
+  }
+  list(moments = mo)
 }
 
 # -- Analytic gradient ---------------------------------------------------------
