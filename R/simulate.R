@@ -72,7 +72,7 @@
   same <- .admEvSame(studies)
   ev   <- if (same) studies[[1L]]$ev_full else .admEvStack(studies, nr)
   if (is.null(ev)) return(NULL)
-  out <- rxode2::rxSolve(rxMod, params = as.data.frame(do.call(rbind, pm)),
+  out <- rxode2::rxSolve(rxMod, params = .admRbindParams(pm),
                          events = ev, cores = cores,
                          nDisplayProgress = ndp, sigdig = sigdig)
   getv <- function(o) { v <- o[[output_var]]; if (is.null(v)) o[["ipredSim"]] else v }
@@ -86,16 +86,45 @@
   # DIFFERENT event tables: each study owns an id range, and its own `times`
   # select its rows -- the stacking is what lets one call carry several doses
   # and schedules.
+  # The columns once, then plain vector indexing. Subsetting the solve itself
+  # per study instead cost more than the calls the stacking saves: [.data.frame
+  # and make.unique were 28% of a profiled fit against rxSolve's own 9%.
   id <- out[["id"]] %||% out[["sim.id"]]
   if (is.null(id)) return(NULL)
-  id <- as.integer(id)
+  id <- as.integer(id); tm <- out[["time"]]; v <- getv(out)
+  sl <- .admIdSlices(id, beg, end)
   lapply(seq_len(n), function(k) {
-    sel <- id >= beg[k] & id <= end[k]
-    o   <- out[sel, , drop = FALSE]
-    kp  <- o[["time"]] %in% studies[[k]]$times
-    matrix(getv(o)[kp], nrow = nr[k], ncol = length(studies[[k]]$times),
+    ii  <- sl[[k]] %||% which(id >= beg[k] & id <= end[k])
+    sel <- ii[tm[ii] %in% studies[[k]]$times]
+    matrix(v[sel], nrow = nr[k], ncol = length(studies[[k]]$times),
            byrow = TRUE)
   })
+}
+
+# The rows each study owns. The solve comes back id-sorted and every study holds
+# a contiguous id range, so this is a slice rather than a full-length logical
+# mask per study -- the masks cost 15% of a profiled fit at four studies. NULL
+# per study if the ids are not sorted, and the caller falls back to the mask.
+.admIdSlices <- function(id, beg, end) {
+  n <- length(beg)
+  if (is.unsorted(id)) return(vector("list", n))
+  cum <- c(0L, cumsum(tabulate(id, nbins = end[n])))
+  lapply(seq_len(n), function(k) {
+    lo <- cum[beg[k]] + 1L; hi <- cum[end[k] + 1L]
+    if (hi < lo) integer(0) else lo:hi
+  })
+}
+
+# Parameter frames for a stacked solve. rbind() on data frames, and
+# as.data.frame() on a matrix that inherited row names, both go through
+# make.unique() -- 13.7% of a profiled fit on its own at 60k rows.
+.admRbindParams <- function(dfs, as_df = TRUE) {
+  m <- if (length(dfs) == 1L) dfs[[1L]] else do.call(rbind, dfs)
+  if (is.data.frame(m)) return(m)
+  rownames(m) <- NULL
+  # The sensitivity solve is handed the matrix, as it was before: rxSolve
+  # treats the two differently and converting here moved a fitted objective.
+  if (as_df) as.data.frame(m) else m
 }
 
 # Do these studies agree on their event table? The key is stamped once at
@@ -115,15 +144,28 @@
                collapse = "\r")
   hit <- .adm_evstack_env[[key]]
   if (!is.null(hit)) return(hit)
+  # COLUMN-WISE, never row-wise: replicating rows of a data frame and then
+  # rbind()ing the blocks sends every row through make.unique() on the names,
+  # which was 17% of a profiled fit on its own.
   d <- tryCatch(lapply(seq_along(studies), function(k) {
     x <- as.data.frame(studies[[k]]$ev_full)
     if (is.null(x[["id"]])) x[["id"]] <- 1L
+    if (any(vapply(x, is.factor, logical(1)))) return(NULL)
+    nx  <- nrow(x)
+    idx <- rep.int(seq_len(nx), nr[k])
     off <- if (k == 1L) 0L else sum(nr[seq_len(k - 1L)])
-    x[rep(seq_len(nrow(x)), times = nr[k]), , drop = FALSE] |>
-      transform(id = rep(seq_len(nr[k]), each = nrow(x)) + off)
+    cols <- lapply(x, function(v) v[idx])
+    cols[["id"]] <- rep(seq_len(nr[k]), each = nx) + off
+    cols
   }), error = function(e) NULL)
-  if (is.null(d)) return(NULL)
-  ev <- do.call(rbind, d)
+  if (is.null(d) || any(vapply(d, is.null, logical(1)))) return(NULL)
+  nms <- names(d[[1L]])
+  if (!all(vapply(d, function(p) identical(names(p), nms), logical(1))))
+    return(NULL)
+  ev <- stats::setNames(lapply(nms, function(cc)
+    unlist(lapply(d, `[[`, cc), use.names = FALSE)), nms)
+  attr(ev, "row.names") <- .set_row_names(length(ev[[1L]]))
+  class(ev) <- "data.frame"
   if (length(ls(.adm_evstack_env, all.names = TRUE)) > 32L)
     rm(list = ls(.adm_evstack_env, all.names = TRUE), envir = .adm_evstack_env)
   .adm_evstack_env[[key]] <- ev
@@ -391,7 +433,7 @@
 .admSensSplit <- function(out, keep, beg, end, n_t, n_eta, sensModel, .tb, .lam) {
   cut <- function(v) {
     m <- matrix(v[keep], ncol = n_t, byrow = TRUE)
-    m[beg:end, , drop = FALSE]
+    if (beg == 1L && end == nrow(m)) m else m[beg:end, , drop = FALSE]
   }
   cp_mat     <- cut(out[["rx_pred_"]])
   dpred_list <- lapply(seq_len(n_eta), function(j) cut(out[[sensModel$sens_cols[j]]]))
@@ -434,7 +476,7 @@
   ev   <- if (same) studies[[1L]]$ev_full else .admEvStack(studies, nr)
   if (is.null(ev)) return(NULL)
   out <- tryCatch(suppressWarnings(do.call(rxode2::rxSolve,
-    c(list(sensModel$mod, params = do.call(rbind, lapply(one, `[[`, "df")),
+    c(list(sensModel$mod, params = .admRbindParams(lapply(one, `[[`, "df"), FALSE),
            events = ev, cores = cores,
            nDisplayProgress = ndp, sigdig = sigdig), sensModel$solve_args))),
     error = function(e) NULL)
@@ -448,11 +490,17 @@
   }
   id <- out[["id"]] %||% out[["sim.id"]]
   if (is.null(id)) return(NULL)
-  id <- as.integer(id)
+  # Only the columns the split reads, pulled out once: .admSensSplit() takes
+  # them by [[ either way, so it never sees the data frame.
+  id <- as.integer(id); tm <- out[["time"]]
+  cols <- unique(c("rx_pred_", sensModel$sens_cols, sensModel$theta_sens_cols))
+  cols <- cols[cols %in% names(out)]
+  vv   <- stats::setNames(lapply(cols, function(cc) out[[cc]]), cols)
+  sl   <- .admIdSlices(id, beg, end)
   lapply(seq_len(n), function(k) {
-    o  <- out[id >= beg[k] & id <= end[k], , drop = FALSE]
-    kp <- o[["time"]] %in% studies[[k]]$times
-    .admSensSplit(o, kp, 1L, nr[k], length(studies[[k]]$times),
+    ii  <- sl[[k]] %||% which(id >= beg[k] & id <= end[k])
+    sel <- ii[tm[ii] %in% studies[[k]]$times]
+    .admSensSplit(vv, sel, 1L, nr[k], length(studies[[k]]$times),
                   ncol(eta_list[[k]]), sensModel, one[[k]]$tb, one[[k]]$lam)
   })
 }
