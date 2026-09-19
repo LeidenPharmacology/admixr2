@@ -1063,6 +1063,11 @@
 # The value is stamped onto every generated study and carried onto the fit so anova() can refuse the comparison.
 .ADM_STRATA_NODES <- 9L
 
+# The node resolution a source ASKED for. `.adm_strata_nodes` is stamped on the
+# expanded studies after the design is cut, so reading it at admission silently
+# returned the default and certified a rule the construction never used.
+.admStrataNodes <- function(s) s[["strata_nodes"]] %||% .ADM_STRATA_NODES
+
 # Truncate one covariate's margin to the range a source actually enrolled.
 #
 # Strata are cut from the analyst's `cov_dist` over its FULL support, so a published model gets evaluated --
@@ -1824,7 +1829,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   # `A` exists and while declining still means the product grid rather than a
   # multi-gigabyte allocation, or an uncertified rule, mid-fit.
   if (.tr) {
-    .nn <- s[[".adm_strata_nodes"]] %||% 9L
+    .nn <- .admStrataNodes(s)
     .jb <- .admCovFineJ(length(sp$cn), sp$r, .nn)
     if (is.null(.jb)) return(NULL)
     .ix <- match(sp$cn, dirs[[1L]]$cn)
@@ -1964,7 +1969,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     # product grid, exactly as before.
     .proj <- .admStrataProj(s, model, s[["stratify"]])
     stl <- .admCovStrata(s[["cov_dist"]], s[["stratify"]],
-                         s[["strata_nodes"]] %||% .ADM_STRATA_NODES,
+                         .admStrataNodes(s),
                          warn_range = FALSE,
                          cov_range = s[["cov_range"]], proj = .proj)
     # `stratify = character(0)` reached .admCovStrata's `if (!length(stratify)) return(NULL)` and the loop below
@@ -1974,7 +1979,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
            "covariate, so the study would be dropped rather than cut into ",
            "nodes. Give ",
            "a covariate name, or remove `stratify`.", call. = FALSE)
-    .Jk <- s[["strata_nodes"]] %||% .ADM_STRATA_NODES
+    .Jk <- .admStrataNodes(s)
     for (k in seq_along(stl)) {
       sk <- s
       sk[["stratify"]] <- NULL; sk[["strata_nodes"]] <- NULL
@@ -3755,29 +3760,42 @@ print.covDist <- function(x, ...) {
   list(z = z0, w = as.numeric(gg$W / sum(gg$W)), su = log(x0) %*% A)
 }
 
-# Smooth NONLINEAR probes of the projected coordinates.
+# Location and scale of the projected measure.
+.admCovLoc <- function(su, w) {
+  mu <- colSums(su * w)
+  list(mu = mu,
+       sd = sqrt(pmax(colSums(sweep(su, 2L, mu)^2 * w), .Machine$double.eps)))
+}
+
+# Smooth NONLINEAR probes of the projected coordinates, on a GIVEN
+# normalisation.
 #
 # The recombination reproduces the polynomial moments in its basis exactly, by
-# construction, so agreeing on them measures nothing. A likelihood integrand is
-# not a polynomial, and the cloud has a quadrature error of its own that no
-# number of retained nodes can remove. Both are read here instead, on
-# standardised coordinates so the scale is the measure's own.
-.admCovProbes <- function(su, w) {
-  r  <- ncol(su)
-  mu <- colSums(su * w)
-  sd <- sqrt(pmax(colSums(sweep(su, 2L, mu)^2 * w), .Machine$double.eps))
-  S  <- sweep(sweep(su, 2L, mu), 2L, sd, "/")
-  # a few fixed directions, each read through a growing and a bounded map
+# construction, so agreeing on them measures nothing; a likelihood integrand is
+# not a polynomial. `nrm` is fixed by the caller rather than re-estimated here,
+# because standardising each cloud by its own mean and sd compares shape and
+# nothing else -- Z and 10 + 2*Z come out identical that way, so a shift or a
+# rescale between two clouds would read as converged.
+.admCovProbes <- function(su, w, nrm) {
+  r <- ncol(su)
+  S <- sweep(sweep(su, 2L, nrm$mu), 2L, nrm$sd, "/")
   dirs <- if (r == 1L) matrix(1, 1L, 1L) else
     rbind(diag(r), matrix(1 / sqrt(r), 1L, r),
           matrix(c(1, -1, rep(0, r - 2L)) / sqrt(2), 1L, r))
-  t(apply(dirs, 1L, function(d) {
+  as.numeric(t(apply(dirs, 1L, function(d) {
     v <- as.numeric(S %*% d)
     c(sum(w * exp(0.6 * v)), sum(w * stats::plogis(v)), sum(w * cos(v)))
-  }))
+  })))
 }
 
 .admCovProbeErr <- function(a, b) max(abs(a - b) / (abs(b) + 1))
+
+# Probes AND the mean and scale they were normalised away from: the probes
+# cannot see a shift or a rescale, so those are compared on their own.
+.admCovCloudErr <- function(x, y) {
+  max(.admCovProbeErr(x$p, y$p),
+      .admCovProbeErr(x$m$mu, y$m$mu), .admCovProbeErr(x$m$sd, y$m$sd))
+}
 
 # Nodes per axis for the truncated cloud, or NULL when no size fits.
 #
@@ -3801,32 +3819,47 @@ print.covDist <- function(x, ...) {
 # REFINE OR REJECT the truncated cloud. Returns the nodes per axis to use, or
 # NULL to decline the projection and keep the product grid.
 #
-# Two error sources, neither of which `strata_nodes` can touch. The cloud has
-# its own quadrature error -- raising the retained node count refines the
-# moment matching against the SAME cloud and cannot remove it -- and the
-# recombination preserves the polynomial moments in its basis rather than the
-# nonlinear integrands a likelihood actually contains. So walk j upwards
-# through the budget, reading both: the cloud against the next coarser cloud,
-# and the recombined rule against the cloud it was drawn from, on probes the
-# recombination did not match by construction. First j that settles both wins;
-# none and the design is declined rather than shipped uncertified.
+# TWO ERRORS, AND THEY ANSWER TO DIFFERENT THINGS, so they are gated
+# separately rather than against one number.
+#
+# The cloud's own quadrature error is what refining j removes, and it is read
+# against the next coarser cloud -- location and scale included, since the
+# probes are normalised and cannot see a shift.
+#
+# The recombination's is not. It reproduces the polynomial moments in its basis
+# exactly (its mean and scale come back at 1e-16) and the nonlinear integrands
+# a likelihood contains only to the accuracy its ATOM COUNT allows, and that
+# count is set by the node budget, not by j: measured, it sits at ~2e-03 for
+# every j from 7 to 21. Gating it at the cloud's tolerance would decline every
+# truncated design; gating it at nothing would ship the rank-three case, whose
+# 20 atoms leave it at ~3e-02. Its bound is set where the end-to-end objective
+# error stays at the 1e-05 level -- see
+# test-integration-projected-convergence.R, which measures that rather than
+# assuming it.
 .admCovCloudCertify <- function(cov_dist, cn, Rss, A, r, n_nodes,
-                                j_max, tol = 1e-3) {
+                                j_max, tol = 1e-3, tol_recomb = 1e-2) {
   cand <- Filter(function(j) j <= j_max, c(7L, 9L, 11L, 13L, 15L, 17L, 21L))
   if (length(cand) < 2L) return(NULL)
   deg  <- .admCovMomentDegree(as.integer(n_nodes)^r, r)
-  prev <- NULL
+  prev <- NULL; nrm <- NULL
   for (j in cand) {
     cl <- tryCatch(.admCovCloud(cov_dist, cn, Rss, A, j), error = function(e) NULL)
     if (is.null(cl) || !all(is.finite(cl$su))) return(NULL)
-    ref <- .admCovProbes(cl$su, cl$w)
+    m <- .admCovLoc(cl$su, cl$w)
+    # FIXED ONCE, so every cloud and every rule is read on one set of
+    # coordinates rather than on its own.
+    if (is.null(nrm)) nrm <- m
+    ref <- list(p = .admCovProbes(cl$su, cl$w, nrm), m = m)
     rc  <- tryCatch(.admCovRecombine(.admCovMomentBasis(cl$su, deg), cl$w),
                     error = function(e) NULL)
     if (is.null(rc) || !length(rc$i)) return(NULL)
-    e_rec <- .admCovProbeErr(.admCovProbes(cl$su[rc$i, , drop = FALSE], rc$w), ref)
+    su_c <- cl$su[rc$i, , drop = FALSE]
+    got  <- list(p = .admCovProbes(su_c, rc$w, nrm),
+                 m = .admCovLoc(su_c, rc$w))
+    e_rec <- .admCovCloudErr(got, ref)
     if (!is.null(prev)) {
-      e_cld <- .admCovProbeErr(prev, ref)
-      if (e_cld < tol && e_rec < tol)
+      e_cld <- .admCovCloudErr(prev, ref)
+      if (e_cld < tol && e_rec < tol_recomb)
         return(list(j = j, cloud = e_cld, recomb = e_rec))
     }
     prev <- ref
@@ -3839,6 +3872,30 @@ print.covDist <- function(x, ...) {
 .admCovSubst <- function(e, env) {
   if (!length(env)) return(e)
   do.call("substitute", list(e, env))
+}
+
+# Names written anywhere other than a top-level assignment.
+#
+# An `if` can rewrite an intermediate that a covariate exponent later reads,
+# and a straight-line walk keeps the earlier value: it then differentiates an
+# expression the solver does not execute. Those names are not the branch's
+# covariates, so .admCovInBranch() does not see them.
+.admCovCondNames <- function(lst) {
+  out <- character(0)
+  walk <- function(e, top) {
+    if (!is.call(e)) return(invisible(NULL))
+    if (length(e) == 3L && (identical(e[[1L]], quote(`<-`)) ||
+                            identical(e[[1L]], quote(`=`)))) {
+      if (!top) out <<- c(out, all.vars(e[[2L]]))
+      walk(e[[3L]], FALSE)
+      return(invisible(NULL))
+    }
+    for (i in seq_along(e)[-1L])
+      tryCatch(walk(e[[i]], FALSE), error = function(z) NULL)
+    invisible(NULL)
+  }
+  for (e in lst) tryCatch(walk(e, TRUE), error = function(z) NULL)
+  unique(out)
 }
 
 # Is the covariate loading CONSTANT in the estimated parameters?
@@ -3859,12 +3916,20 @@ print.covDist <- function(x, ...) {
   is0 <- function(d) (is.numeric(d) && length(d) == 1L && d == 0) ||
                      identical(d, 0)
   env <- list()
+  # A value a branch can rewrite, and anything downstream of one, is not what
+  # the straight-line substitution says it is.
+  taint <- .admCovCondNames(lst)
   for (e in lst) {
     if (!(is.call(e) && length(e) == 3L &&
           (identical(e[[1L]], quote(`<-`)) || identical(e[[1L]], quote(`=`)))))
       next
+    nm  <- as.character(e[[2L]])
+    raw <- all.vars(e[[3L]])
     rhs <- .admCovSubst(e[[3L]], env)
-    env[[as.character(e[[2L]])]] <- rhs
+    env[[nm]] <- rhs
+    if (length(intersect(raw, taint))) taint <- union(taint, nm)
+    if (!length(intersect(all.vars(rhs), cn))) next
+    if (length(intersect(c(nm, raw), taint))) return(NA)
     for (v in intersect(all.vars(rhs), cn)) {
       lo <- tryCatch(Deriv::Simplify(call("*", as.name(v),
               Deriv::Deriv(call("log", rhs), v, cache.exp = FALSE))),
