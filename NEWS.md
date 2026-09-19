@@ -5,6 +5,9 @@
 * **A conditional source is cut on the span of both models, not the product
   grid** -- 729 studies become 81, where the analysis exponents are fixed.
 
+* **The projected design is admitted on a symbolic certificate**: the covariate
+  loading must differentiate to zero in every estimated parameter, or decline.
+
 * **A truncated span certifies its cloud before using it** -- against a coarser
   cloud and against integrands the recombination did not match -- or declines.
 
