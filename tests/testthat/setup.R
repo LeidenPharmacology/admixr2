@@ -19,3 +19,21 @@ if (identical(Sys.getenv("R_COVR"), "true") &&
     !identical(Sys.getenv("NOT_CRAN"), "true")) {
   Sys.setenv(NOT_CRAN = "true")
 }
+
+# Stop admixr2's own worker processes before the session ends, under coverage.
+#
+# covr instruments the INSTALLED copy and merges every trace any process
+# loading it wrote. admixr2's restart workers are mirai daemons -- separate R
+# processes that each dump a trace as they exit -- so one still writing while
+# covr walks the directory leaves a half-written file, and the merge dies with
+#   Error in readRDS(f) : error reading from connection
+# which is how this job has been failing. The workflow already opted out of
+# parallel testthat for the same reason; these are the OTHER processes, which
+# that setting does not reach. Shut them down deterministically and let the
+# writes land.
+if (identical(Sys.getenv("R_COVR"), "true")) {
+  withr::defer({
+    try(suppressMessages(admixr2::admStopWorkers()), silent = TRUE)
+    Sys.sleep(3)
+  }, testthat::teardown_env())
+}

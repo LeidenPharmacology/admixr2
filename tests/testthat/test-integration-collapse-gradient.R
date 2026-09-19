@@ -30,4 +30,18 @@ test_that("correlated covariate collapse differentiates the scored objective", {
   got <- admixr2:::.adghGradNLL(p, pin, st, sens, rx, "cp", grid, 1L)$grad
   ref <- admixr2:::.adghFDGrad(p, pin, st, rx, "cp", grid, 1L, 1e-4)
   expect_equal(got, ref, tolerance = 1e-6)
+
+  # A FAILED SENSITIVITY SOLVE must reach the finite-difference fallback. The
+  # pre-pass stored its results with `res[[i]] <- NULL`, which DELETES the slot
+  # rather than emptying it: with one study that left a zero-length `res` and
+  # .adghGradNLL() subscripted past the end instead of seeing the NULL it tests
+  # for. With several studies it silently shifted every later result by one.
+  testthat::local_mocked_bindings(
+    .admSimulateSensMany = function(...) list(NULL), .package = "admixr2")
+  prs <- admixr2:::.admUnpack(p, pin)
+  pre <- admixr2:::.adghGradPre(prs, pin, st, sens, grid, prs$L, 1L, p)
+  expect_length(pre$res, length(st))
+  expect_null(pre$res[[1L]])
+  expect_equal(admixr2:::.adghGradNLL(p, pin, st, sens, rx, "cp", grid, 1L)$grad,
+               ref, tolerance = 1e-6)
 })

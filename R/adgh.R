@@ -204,6 +204,64 @@
   list(E = m$mu, V = m$V)
 }
 
+# Per-study grids, and the sensitivity solves batched by event table.
+#
+# Same grouping the objective uses (see .adghSolveGrouped): the nodes of a
+# conditional source share `ev_full`, so their parameter frames stack into one
+# rxSolve instead of one each. A group whose batched solve fails is re-solved
+# study by study, so a failure degrades exactly as it did before.
+.adghGradPre <- function(pars, pinfo, studies, sensModel, grid, L, cores, p) {
+  n <- length(studies)
+  out <- list(s = vector("list", n), X = vector("list", n),
+              W = vector("list", n), eta = vector("list", n),
+              res = vector("list", n), bail = NULL)
+  for (i in seq_len(n)) {
+    s <- studies[[i]]
+    if (!is.null(s[["cov_dist"]])) {
+      g <- .adghGrid(pars, pinfo, grid, s)
+      # Same marked grid .adghMoments turns into Inf -- see there. The point is
+      # unsolvable, so the objective is Inf and there is no gradient to form;
+      # .adghFusedFns takes both from here and must not be handed a NULL eta.
+      if (isTRUE(g$failed)) {
+        out$bail <- list(grad = stats::setNames(rep(Inf, length(p)), names(p)),
+                         nll = Inf)
+        return(out)
+      }
+      out$X[[i]] <- g$X; out$W[[i]] <- g$W; out$eta[[i]] <- g$eta
+      out$s[[i]] <- .adghStudyCov(s, g)
+    } else {
+      out$X[[i]] <- grid$X; out$W[[i]] <- grid$W
+      out$eta[[i]] <- grid$X %*% t(L)
+      out$s[[i]] <- s
+    }
+  }
+  if (is.null(sensModel)) return(out)
+  ix <- which(!vapply(studies, function(z) isTRUE(z$is_joint), logical(1)))
+  if (!length(ix)) return(out)
+  ek  <- vapply(ix, function(i) out$s[[i]]$ev_key %||% NA_character_, "")
+  key <- ifelse(is.na(ek), paste0("solo", seq_along(ix)), "all")
+  for (k in unique(key)) {
+    ii <- ix[key == k]
+    et <- lapply(ii, function(i) { e <- out$eta[[i]]
+      colnames(e) <- pinfo$eta_col_names; e })
+    rs <- .admSimulateSensMany(sensModel, pars$struct, pinfo$sigma_names, et,
+                               out$s[ii], cores, pinfo$nDisplayProgress,
+                               pars$sigma_var, pinfo$sigdig)
+    # A batch that could not be formed or solved falls back per study, so the
+    # NULL the caller degrades on still means what it meant.
+    if (is.null(rs))
+      rs <- lapply(seq_along(ii), function(j)
+        .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, et[[j]],
+                         out$s[[ii[j]]], cores, pinfo$nDisplayProgress,
+                         pars$sigma_var, pinfo$sigdig))
+    # SINGLE brackets: `res[[i]] <- NULL` deletes the slot rather than emptying
+    # it, shifting every later index and leaving .adghGradNLL() subscripting
+    # past the end instead of reaching its NULL fallback.
+    for (j in seq_along(ii)) out$res[ii[j]] <- rs[j]
+  }
+  out
+}
+
 # Attach the grid's per-row covariate values to a study, so .admSimulate writes
 # them into the params frame. Returns the study untouched when there are none.
 .adghStudyCov <- function(study, g) {
@@ -296,14 +354,20 @@
   if (is.null(pars)) return(Inf)
   # Reject non-finite parameters before the solve; see .admParsFinite().
   if (!.admParsFinite(pars, pinfo)) return(Inf)
+  # ONE SOLVE PER GROUP OF STUDIES, not per study. rxSolve is ~99% fixed cost at
+  # these sizes, and a conditional source is one study per node, so the call
+  # count is the study count. See .admSimulateMany().
+  cps <- .adghSolveGrouped(pars, pinfo, studies, rxMod, out_var, grid, cores)
+  if (isTRUE(cps$failed)) return(Inf)
   total <- 0
-  for (s in studies) {
+  for (i in seq_along(studies)) {
+    s <- studies[[i]]
     if (isTRUE(s$is_joint)) {
       m   <- .adghMomentsJoint(pars, pinfo, s, rxMod, grid, cores)
       nll <- nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
     } else {
-      m <- .adghMoments(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores)
-      if (isTRUE(m$failed)) return(Inf)
+      m <- cps$moments[[i]]
+      if (is.null(m) || isTRUE(m$failed)) return(Inf)
       nll <- if (identical(s$method, "var"))
         nll_var_cpp(s$E, s$v_diag, m$E, diag(m$V), s$n)
       else
@@ -313,6 +377,66 @@
     total <- total + nll
   }
   total
+}
+
+# Which studies solve together. Only the OUTPUT has to match:
+# .admSimulateMany() gives each study its own id range, so doses and sampling
+# schedules may differ inside one solve -- measured 0.025s for one stacked call
+# against 0.066s for one per event table and 0.693s for one per study.
+.adghSolveGroupKeys <- function(studies, out_var, solo = NULL) {
+  n <- length(studies)
+  if (is.null(solo))
+    solo <- vapply(studies, function(s) !is.null(s$out_pair), logical(1))
+  ek <- vapply(studies, function(s) s$ev_key %||% NA_character_, "")
+  ov <- vapply(studies, function(s) s$output %||% out_var, "")
+  ifelse(solo | is.na(ek), paste0("solo", seq_len(n)), ov)
+}
+
+# Moments for every non-joint study, solving studies that share an event table
+# together. Falls back to one call per study wherever a group cannot be formed,
+# so the answer is the same either way -- verified bit-identical.
+.adghSolveGrouped <- function(pars, pinfo, studies, rxMod, out_var, grid, cores) {
+  n  <- length(studies)
+  mo <- vector("list", n)
+  ix <- which(!vapply(studies, function(s) isTRUE(s$is_joint), logical(1)))
+  if (!length(ix)) return(list(moments = mo))
+  # Grids first: cheap, no solves, and a failed re-aim has to abort before any
+  # of it is paid for.
+  gs <- lapply(ix, function(i) .adghGrid(pars, pinfo, grid, studies[[i]]))
+  if (any(vapply(gs, function(g) isTRUE(g$failed), logical(1))))
+    return(list(failed = TRUE))
+  ov <- vapply(ix, function(i) studies[[i]]$output %||% out_var, "")
+  # A beta endpoint derives its prediction from a PAIR of outputs and carries a
+  # solved precision alongside; that is .admSimulate()'s business, not a batch's.
+  solo <- vapply(ix, function(i) !is.null(studies[[i]]$out_pair), logical(1))
+  # Group on the event key stamped at flatten time, plus the output the study
+  # reads. A study with no key, or a beta pair, is its own group.
+  # out_var, not `ov`: .adghSolveGroupKeys() falls back to it per study, and
+  # handing it the per-study VECTOR makes that fallback length n -- which
+  # vapply(FUN.VALUE = "") refuses. Latent while every study carries an
+  # `output`, which is why nothing caught it.
+  key <- .adghSolveGroupKeys(studies[ix], out_var, solo)
+  for (k in unique(key)) {
+    sel <- which(key == k)
+    ii  <- ix[sel]
+    st  <- lapply(ii, function(i) .adghStudyCov(studies[[i]], gs[[match(i, ix)]]))
+    et  <- lapply(sel, function(j) gs[[j]]$eta)
+    pl  <- lapply(et, function(e) .admMakeParamsList(nrow(e), pinfo, 1L)[[1L]])
+    cp  <- .admSimulateMany(rxMod, pars$struct, pinfo$sigma_names, et, st,
+                            ov[sel[1L]], pl, cores, pinfo$nDisplayProgress,
+                            pinfo$sigdig)
+    # A batch that could not be formed comes back NULL; solve the group one at a
+    # time rather than reading NULL as a cp matrix.
+    if (is.null(cp))
+      cp <- lapply(seq_along(sel), function(j)
+        .admSimulate(rxMod, pars$struct, pinfo$sigma_names, et[[j]], st[[j]],
+                     ov[sel[j]], pl[[j]], cores, pinfo$nDisplayProgress,
+                     pinfo$sigdig))
+    for (j in seq_along(sel))
+      mo[[ii[j]]] <- .adghMomentsFromCp(cp[[j]], gs[[sel[j]]]$W, pars, pinfo,
+                                        ov[sel[j]], st[[j]]$times)
+  }
+  list(moments = mo)
 }
 
 # -- Analytic gradient ---------------------------------------------------------
@@ -374,28 +498,17 @@
   theta_sens_ok <- length(unpaired_k) > 0L
   g_theta       <- numeric(length(p))
 
-  for (s in studies) {
-    # PER STUDY, through .adghGrid(): building nodes from `grid`/pars$L
-    # directly made the analytical gradient blind to the covariate product
-    # grid, silently differentiating a different function than .adghNLL
-    # evaluated. X, W and eta must come from ONE place.
-    if (!is.null(s[["cov_dist"]])) {
-      .gS <- .adghGrid(pars, pinfo, grid, s)
-      # Same marked grid .adghMoments turns into Inf -- see there. The point is
-      # unsolvable, so the objective is Inf and there is no gradient to form;
-      # .adghFusedFns takes both from here and must not be handed a NULL eta.
-      if (isTRUE(.gS$failed))
-        return(list(grad = stats::setNames(rep(Inf, length(p)), names(p)),
-                    nll = Inf))
-      X   <- .gS$X
-      W   <- .gS$W
-      s   <- .adghStudyCov(s, .gS)
-      eta <- .gS$eta
-    } else {
-      X   <- grid$X
-      W   <- grid$W
-      eta <- X %*% t(L)
-    }
+  # GRIDS AND SENSITIVITY SOLVES UP FRONT, so studies sharing an event table
+  # solve together -- .admSimulateSens() was 67% of a profiled fit once the
+  # objective had been grouped. The loop below reads, never recomputes.
+  .pre <- .adghGradPre(pars, pinfo, studies, sensModel, grid, L, cores, p)
+  if (!is.null(.pre$bail)) return(.pre$bail)
+
+  for (.si in seq_along(studies)) {
+    s   <- .pre$s[[.si]]
+    X   <- .pre$X[[.si]]
+    W   <- .pre$W[[.si]]
+    eta <- .pre$eta[[.si]]
     colnames(eta) <- pinfo$eta_col_names
 
     # --- Joint (same-subject) analytical quadrature gradient -----------------
@@ -498,8 +611,7 @@
 
     ov <- s$output %||% out_var
 
-    res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
-                            pinfo$nDisplayProgress, pars$sigma_var, pinfo$sigdig)
+    res <- .pre$res[[.si]]
     # .admSimulateSens returns NULL when the solve fails. `next` skipped the study
     # -- i.e. returned a gradient that silently omitted it. Degrade the whole
     # gradient to finite differences instead (what admc/adfo already do).
