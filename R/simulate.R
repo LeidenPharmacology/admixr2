@@ -39,17 +39,12 @@
 
 # Several studies that share an event table, in ONE rxSolve call.
 #
-# rxSolve costs 0.0251 s to enter and 1.6e-06 s per subject: at 100 subjects a
-# call is 99% overhead, and solving 25 subjects costs the same as 2000. We call
-# it once per study, and a conditional source expands to one study per node, so
-# the call count is the study count. The nodes of a source share `ev_full` by
-# construction -- expansion changes only `cov` -- so they stack with no id
-# remapping: rxode2 already replicates a single event table across parameter
-# rows. Measured on 49 nodes, 0.633 s becomes 0.064 s, bit for bit.
-#
-# Callers group by `identical(ev_full)`, which is a pointer comparison for nodes
-# off one source. Everything a batch cannot take -- a beta `out_pair`, an output
-# other than the group's -- is left to .admSimulate() one at a time.
+# rxSolve costs 0.0251 s to enter and 1.6e-06 s per subject, so at 100 subjects
+# a call is 99% overhead and the call count is the study count -- a conditional
+# source expands to one study per node. Nodes off a source share `ev_full`
+# (expansion changes only `cov`), so they stack with no id remapping: measured
+# on 49 nodes, 0.633 s becomes 0.064 s, bit for bit. Anything a batch cannot
+# take -- a beta `out_pair`, another output -- goes to .admSimulate() alone.
 .admSimulateMany <- function(rxMod, struct_theta, sigma_names, eta_list, studies,
                              output_var, params_list, cores,
                              ndp = .Machine$integer.max, sigdig = NULL) {
@@ -83,12 +78,10 @@
     M <- matrix(getv(out)[keep], ncol = length(tms), byrow = TRUE)
     return(lapply(seq_len(n), function(k) M[beg[k]:end[k], , drop = FALSE]))
   }
-  # DIFFERENT event tables: each study owns an id range, and its own `times`
-  # select its rows -- the stacking is what lets one call carry several doses
-  # and schedules.
-  # The columns once, then plain vector indexing. Subsetting the solve itself
-  # per study instead cost more than the calls the stacking saves: [.data.frame
-  # and make.unique were 28% of a profiled fit against rxSolve's own 9%.
+  # DIFFERENT event tables: each study owns an id range and its own `times`
+  # select its rows, which is what lets one call carry several doses. Columns
+  # once, then vector indexing -- subsetting the solve per study instead cost
+  # more than the stacking saves (28% of a profiled fit vs rxSolve's 9%).
   id <- out[["id"]] %||% out[["sim.id"]]
   if (is.null(id)) return(NULL)
   id <- as.integer(id); tm <- out[["time"]]; v <- getv(out)
@@ -101,10 +94,9 @@
   })
 }
 
-# The rows each study owns. The solve comes back id-sorted and every study holds
-# a contiguous id range, so this is a slice rather than a full-length logical
-# mask per study -- the masks cost 15% of a profiled fit at four studies. NULL
-# per study if the ids are not sorted, and the caller falls back to the mask.
+# The rows each study owns, as a slice: the solve is id-sorted and each study
+# holds a contiguous id range, so no full-length mask per study (15% of a
+# profiled fit). NULL per study when unsorted, and the caller masks instead.
 .admIdSlices <- function(id, beg, end) {
   n <- length(beg)
   if (is.unsorted(id)) return(vector("list", n))
@@ -116,8 +108,8 @@
 }
 
 # Parameter frames for a stacked solve. rbind() on data frames, and
-# as.data.frame() on a matrix that inherited row names, both go through
-# make.unique() -- 13.7% of a profiled fit on its own at 60k rows.
+# as.data.frame() on a matrix with row names, both hit make.unique() -- 13.7%
+# of a profiled fit at 60k rows.
 .admRbindParams <- function(dfs, as_df = TRUE) {
   m <- if (length(dfs) == 1L) dfs[[1L]] else do.call(rbind, dfs)
   if (is.data.frame(m)) return(m)
@@ -144,9 +136,8 @@
                collapse = "\r")
   hit <- .adm_evstack_env[[key]]
   if (!is.null(hit)) return(hit)
-  # COLUMN-WISE, never row-wise: replicating rows of a data frame and then
-  # rbind()ing the blocks sends every row through make.unique() on the names,
-  # which was 17% of a profiled fit on its own.
+  # COLUMN-WISE, never row-wise: replicating and rbind()ing data frame rows
+  # sends every row through make.unique() -- 17% of a profiled fit.
   d <- tryCatch(lapply(seq_along(studies), function(k) {
     x <- as.data.frame(studies[[k]]$ev_full)
     if (is.null(x[["id"]])) x[["id"]] <- 1L
@@ -449,11 +440,9 @@
 
 # Several studies that share an event table, in ONE sensitivity solve.
 #
-# The gradient pays the same per-call toll as the objective -- .admSimulateSens()
-# was 67% of a profiled fit once the objective had been grouped -- and the same
-# fact rescues it: nodes off one source share `ev_full`, so their parameter
-# frames stack and rxode2 replicates the single event table. Studies the batch
-# cannot take come back NULL for the caller to solve one at a time.
+# The gradient pays the same per-call toll -- .admSimulateSens() was 67% of a
+# profiled fit once the objective had been grouped -- and the same fact rescues
+# it. Studies the batch cannot take come back NULL for the caller.
 .admSimulateSensMany <- function(sensModel, struct_theta, sigma_names, eta_list,
                                  studies, cores, ndp = .Machine$integer.max,
                                  sigma_var = NULL, sigdig = NULL) {
@@ -490,8 +479,7 @@
   }
   id <- out[["id"]] %||% out[["sim.id"]]
   if (is.null(id)) return(NULL)
-  # Only the columns the split reads, pulled out once: .admSensSplit() takes
-  # them by [[ either way, so it never sees the data frame.
+  # Only the columns the split reads, once: .admSensSplit() takes them by [[.
   id <- as.integer(id); tm <- out[["time"]]
   cols <- unique(c("rx_pred_", sensModel$sens_cols, sensModel$theta_sens_cols))
   cols <- cols[cols %in% names(out)]

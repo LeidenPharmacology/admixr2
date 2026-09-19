@@ -3728,20 +3728,11 @@ print.covDist <- function(x, ...) {
 }
 
 # EVERY direction the optimizer can reach, not just the one at the starting
-# values.
-#
-# .admCovRefresh() re-aims the ordinary collapse on every objective call, so a
-# moving coefficient costs it nothing. The projected node design cannot do that:
-# .admExpandStrata() turns the nodes into fixed `cov` values and the studies
-# lose their `cov_dist`, so a span certified at admission has to stay valid for
-# the whole fit. A loading that later leaves it cannot be represented by the
-# materialised studies at all, and no refresh can repair them.
-#
-# Re-aiming at a perturbed value of each estimated coefficient enumerates the
-# reachable set, and exactly so where the loading is linear in those
-# coefficients, which is the log-linear case the collapse already restricts
-# itself to. Coefficients the covariates do not reach return the same direction
-# and cost no rank.
+# values. .admExpandStrata() bakes the nodes into fixed `cov` values and drops
+# `cov_dist`, so unlike .admCovRefresh()'s per-call re-aim the span has to stay
+# valid for the whole fit. Re-aiming at a perturbed value of each estimated
+# coefficient enumerates the reachable set, exactly so while the loading is
+# linear in them. Coefficients the covariates do not reach cost no rank.
 .admCovReachable <- function(ui, pinfo, cov_dist, n_nodes = 7L, h = 0.25) {
   co <- tryCatch(.admCovCollapse(ui, pinfo, cov_dist, n_nodes),
                  error = function(e) NULL)
@@ -3851,11 +3842,10 @@ print.covDist <- function(x, ...) {
   g[order(rowSums(g)), , drop = FALSE]
 }
 
-# Monomials in the projected coordinates up to total degree `d`, on standardised
-# coordinates so the QR stays conditioned. `Z` carries one column per projected
-# direction: constraining only the first two leaves any further direction with
-# no moment constraint at all, so the retained atoms need not reproduce even its
-# mean.
+# Monomials in the projected coordinates up to total degree `d`, standardised so
+# the QR stays conditioned. One column of `Z` per direction: a direction left
+# out of the basis gets no moment constraint, so the retained atoms need not
+# reproduce even its mean.
 .admCovMomentBasis <- function(Z, d) {
   Z  <- as.matrix(Z)
   zs <- lapply(seq_len(ncol(Z)), function(j) {

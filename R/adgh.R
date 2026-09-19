@@ -254,10 +254,9 @@
         .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, et[[j]],
                          out$s[[ii[j]]], cores, pinfo$nDisplayProgress,
                          pars$sigma_var, pinfo$sigdig))
-    # SINGLE brackets: a failed solve is a NULL result, and `out$res[[i]] <- NULL`
-    # deletes the slot rather than emptying it, which shifts every later index
-    # and leaves .adghGradNLL() subscripting past the end instead of reaching
-    # its own NULL fallback into .adghFDGrad().
+    # SINGLE brackets: `res[[i]] <- NULL` deletes the slot rather than emptying
+    # it, shifting every later index and leaving .adghGradNLL() subscripting
+    # past the end instead of reaching its NULL fallback.
     for (j in seq_along(ii)) out$res[ii[j]] <- rs[j]
   }
   out
@@ -499,11 +498,9 @@
   theta_sens_ok <- length(unpaired_k) > 0L
   g_theta       <- numeric(length(p))
 
-  # GRIDS AND SENSITIVITY SOLVES UP FRONT, so studies sharing an event table are
-  # solved together -- .admSimulateSens() was 67% of a profiled fit once the
-  # objective had been grouped. The loop below reads what this computed rather
-  # than recomputing it, so there is still exactly one place X, W and eta come
-  # from.
+  # GRIDS AND SENSITIVITY SOLVES UP FRONT, so studies sharing an event table
+  # solve together -- .admSimulateSens() was 67% of a profiled fit once the
+  # objective had been grouped. The loop below reads, never recomputes.
   .pre <- .adghGradPre(pars, pinfo, studies, sensModel, grid, L, cores, p)
   if (!is.null(.pre$bail)) return(.pre$bail)
 
