@@ -68,17 +68,66 @@
                 studies[[k]][["cov_rows"]])
   })
   nr  <- vapply(eta_list, nrow, integer(1))
-  out <- rxode2::rxSolve(rxMod, params = as.data.frame(do.call(rbind, pm)),
-                         events = studies[[1L]]$ev_full, cores = cores,
-                         nDisplayProgress = ndp, sigdig = sigdig)
-  tms  <- studies[[1L]]$times
-  keep <- out[["time"]] %in% tms
-  v <- out[[output_var]]
-  if (is.null(v)) v <- out[["ipredSim"]]
-  # One row per subject, in the order the blocks were stacked.
-  M   <- matrix(v[keep], ncol = length(tms), byrow = TRUE)
   end <- cumsum(nr); beg <- end - nr + 1L
-  lapply(seq_len(n), function(k) M[beg[k]:end[k], , drop = FALSE])
+  same <- .admEvSame(studies)
+  ev   <- if (same) studies[[1L]]$ev_full else .admEvStack(studies, nr)
+  if (is.null(ev)) return(NULL)
+  out <- rxode2::rxSolve(rxMod, params = as.data.frame(do.call(rbind, pm)),
+                         events = ev, cores = cores,
+                         nDisplayProgress = ndp, sigdig = sigdig)
+  getv <- function(o) { v <- o[[output_var]]; if (is.null(v)) o[["ipredSim"]] else v }
+  if (same) {
+    tms  <- studies[[1L]]$times
+    keep <- out[["time"]] %in% tms
+    # One row per subject, in the order the blocks were stacked.
+    M <- matrix(getv(out)[keep], ncol = length(tms), byrow = TRUE)
+    return(lapply(seq_len(n), function(k) M[beg[k]:end[k], , drop = FALSE]))
+  }
+  # DIFFERENT event tables: each study owns an id range, and its own `times`
+  # select its rows -- the stacking is what lets one call carry several doses
+  # and schedules.
+  id <- out[["id"]] %||% out[["sim.id"]]
+  if (is.null(id)) return(NULL)
+  id <- as.integer(id)
+  lapply(seq_len(n), function(k) {
+    sel <- id >= beg[k] & id <= end[k]
+    o   <- out[sel, , drop = FALSE]
+    kp  <- o[["time"]] %in% studies[[k]]$times
+    matrix(getv(o)[kp], nrow = nr[k], ncol = length(studies[[k]]$times),
+           byrow = TRUE)
+  })
+}
+
+# Do these studies agree on their event table? The key is stamped once at
+# flatten time; identical() on the tables themselves is useless because rxode2
+# builds a fresh object per call.
+.admEvSame <- function(studies) {
+  k <- vapply(studies, function(s) s$ev_key %||% NA_character_, "")
+  !anyNA(k) && length(unique(k)) == 1L
+}
+
+# One event table for several studies, each block taking its own id range so a
+# single solve covers different doses and schedules. Cached on the shapes it was
+# built from: the tables do not move during a fit, only the parameters do.
+.adm_evstack_env <- new.env(parent = emptyenv())
+.admEvStack <- function(studies, nr) {
+  key <- paste(c(vapply(studies, function(s) s$ev_key %||% "", ""), nr),
+               collapse = "\r")
+  hit <- .adm_evstack_env[[key]]
+  if (!is.null(hit)) return(hit)
+  d <- tryCatch(lapply(seq_along(studies), function(k) {
+    x <- as.data.frame(studies[[k]]$ev_full)
+    if (is.null(x[["id"]])) x[["id"]] <- 1L
+    off <- if (k == 1L) 0L else sum(nr[seq_len(k - 1L)])
+    x[rep(seq_len(nrow(x)), times = nr[k]), , drop = FALSE] |>
+      transform(id = rep(seq_len(nr[k]), each = nrow(x)) + off)
+  }), error = function(e) NULL)
+  if (is.null(d)) return(NULL)
+  ev <- do.call(rbind, d)
+  if (length(ls(.adm_evstack_env, all.names = TRUE)) > 32L)
+    rm(list = ls(.adm_evstack_env, all.names = TRUE), envir = .adm_evstack_env)
+  .adm_evstack_env[[key]] <- ev
+  ev
 }
 
 # Row-varying variants taking struct_mat (n_row x n_struct) and eta_mat (n_row x n_eta)
@@ -371,6 +420,11 @@
     return(list(.admSimulateSens(sensModel, struct_theta, sigma_names,
                                  eta_list[[1L]], studies[[1L]], cores, ndp,
                                  sigma_var, sigdig)))
+  # ONE EVENT TABLE, or nothing. This solve fixes `events` at the first study's,
+  # so a group spanning several dosing schedules would silently solve them all
+  # against the first -- which is what a widened grouping did, and it changed a
+  # fitted objective from 1524.12 to 4134.28 while every test still passed.
+  if (!.admEvSame(studies)) return(NULL)
   one <- lapply(seq_len(n), function(k)
     .admSensInnerDf(sensModel, struct_theta, sigma_names, eta_list[[k]],
                     studies[[k]], sigma_var))

@@ -395,6 +395,10 @@
   solo <- vapply(ix, function(i) !is.null(studies[[i]]$out_pair), logical(1))
   # Group on the event key stamped at flatten time, plus the output the study
   # reads. A study with no key, or a beta pair, is its own group.
+  # ONE EVENT TABLE PER GROUP. .admSimulateMany() can stack different ones with
+  # offset ids, and does so correctly in isolation, but grouping across them
+  # here changed a fitted objective -- so the hot path takes the case that is
+  # cheap to be sure of, which is also where the nodes are.
   ek  <- vapply(ix, function(i) studies[[i]]$ev_key %||% NA_character_, "")
   key <- ifelse(solo | is.na(ek), paste0("solo", seq_along(ix)),
                 paste(ek, ov, sep = "\r"))
@@ -407,6 +411,13 @@
     cp  <- .admSimulateMany(rxMod, pars$struct, pinfo$sigma_names, et, st,
                             ov[sel[1L]], pl, cores, pinfo$nDisplayProgress,
                             pinfo$sigdig)
+    # A batch that could not be formed comes back NULL; solve the group one at a
+    # time rather than reading NULL as a cp matrix.
+    if (is.null(cp))
+      cp <- lapply(seq_along(sel), function(j)
+        .admSimulate(rxMod, pars$struct, pinfo$sigma_names, et[[j]], st[[j]],
+                     ov[sel[j]], pl[[j]], cores, pinfo$nDisplayProgress,
+                     pinfo$sigdig))
     for (j in seq_along(sel))
       mo[[ii[j]]] <- .adghMomentsFromCp(cp[[j]], gs[[sel[j]]]$W, pars, pinfo,
                                         ov[sel[j]], st[[j]]$times)

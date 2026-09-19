@@ -308,3 +308,90 @@ test_that("a uniform nv is the ordinary tensor grid, not a second copy of it", {
   expect_equal(nrow(g$X), 15L)
   expect_equal(sum(g$W), 1, tolerance = 1e-12)
 })
+
+# ---- batched solves ----------------------------------------------------------
+
+test_that("grouping studies does not move the objective, across doses", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The batched path must agree with one-call-per-study EXACTLY, including when
+  # the group spans different dosing schedules -- those stack with offset ids,
+  # and getting that wrong is invisible in the answer's shape.
+  mod <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .6
+          eta.cl ~ .09; add.err <- .6 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  ui  <- suppressMessages(rxode2::rxode2(mod))
+  ov  <- admixr2:::.admOutputVar(ui)
+  pop <- admPopulation(WT = c(mean = 76, sd = 15))
+  mk  <- function(n, d, tms) admStudy(model = mod, population = pop, n = n,
+                                      dose = d, times = tms, strata_nodes = 3L)
+  g <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    admStudies(a = mk(200L, 100, c(1, 4, 8)),
+               b = mk(160L, 250, c(2, 6, 12)),      # different dose AND times
+               c = mk(240L, 175, c(1, 4, 8))))))
+  ctl <- adghControl(studies = g, print = 0L, covMethod = "none")
+  p   <- admixr2:::.admDriverPinfo(ui, ctl)
+  u   <- admixr2:::.admDriverUnits(g, ui, ov)
+  stu <- suppressMessages(admixr2:::.admCheckCovariates(ui, p, u$studies))
+  rx  <- admixr2:::.admLoadModel(ui)
+  gr  <- admixr2:::.adghNodeGrid(p$n_nodes %||% 5L, p$n_eta)
+  # more than one event key present, so the stacking path is the one under test
+  expect_gt(length(unique(vapply(stu, function(z) z$ev_key %||% "", ""))), 1L)
+
+  # Accumulated the way .adghNLL() accumulates: a running total, not sum() over
+  # a vector, or the two differ in the last bit purely by summation order (1e-13
+  # on ~920) and say nothing about the batching.
+  per_study <- function(pv) {
+    pars <- admixr2:::.admUnpack(pv, p)
+    tot <- 0
+    for (s in stu) {
+      m <- admixr2:::.adghMoments(pars, p, s, rx, s$output %||% ov, gr, 1L)
+      tot <- tot + if (identical(s$method, "var"))
+        admixr2:::nll_var_cpp(s$E, s$v_diag, m$E, diag(m$V), s$n)
+      else admixr2:::nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
+    }
+    tot
+  }
+  p0 <- admixr2:::.admBuildOptVec(p)$p0
+  set.seed(7)
+  for (k in 0:2) {
+    pv <- if (k == 0L) p0 else p0 + rnorm(length(p0), 0, 0.05)
+    expect_equal(admixr2:::.adghNLL(pv, p, stu, rx, ov, gr, 1L), per_study(pv),
+                 tolerance = 0)
+  }
+})
+
+test_that(".admSimulateMany reproduces .admSimulate, same events or not", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  mod <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); eta.cl ~ .09; add.err <- .6 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) }) }
+  ui <- suppressMessages(rxode2::rxode2(mod))
+  ov <- admixr2:::.admOutputVar(ui); rx <- admixr2:::.admLoadModel(ui)
+  mk <- function(d, tms) list(E = rep(1, length(tms)), V = diag(length(tms)),
+                              n = 100L, times = tms, ev = rxode2::et(amt = d))
+  for (lab in c("shared", "mixed")) {
+    st <- if (lab == "shared")
+      list(a = mk(100, c(1, 4, 8)), b = mk(100, c(1, 4, 8)))
+    else
+      list(a = mk(100, c(1, 4, 8)), b = mk(250, c(2, 6, 12)))
+    u  <- admixr2:::.admDriverUnits(st, ui, ov)
+    p  <- admixr2:::.admDriverPinfo(ui, adghControl(studies = st, print = 0L))
+    n  <- 60L
+    z  <- admixr2:::.admMakeZ(n, p, 1L, "sobol")
+    pl <- admixr2:::.admMakeParamsList(n, p, 1L)
+    e  <- z[[1L]] %*% t(diag(sqrt(.09), 1L))
+    colnames(e) <- p$eta_col_names
+    th <- c(tcl = log(3.2), tv = log(21))
+    one <- lapply(u$studies, function(s)
+      admixr2:::.admSimulate(rx, th, "add.err", e, s, ov, pl[[1L]], 1L))
+    many <- admixr2:::.admSimulateMany(rx, th, "add.err",
+              rep(list(e), length(u$studies)), u$studies, ov,
+              rep(list(pl[[1L]]), length(u$studies)), 1L)
+    expect_equal(length(many), length(one), info = lab)
+    for (k in seq_along(one))
+      expect_equal(many[[k]], one[[k]], tolerance = 0, info = lab)
+  }
+})
