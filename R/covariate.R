@@ -893,6 +893,22 @@
 .admSvdRank <- function(sv, tol = .ADM_RANK_TOL)
   sum(sv$d > max(sv$d) * tol)
 
+# Orthonormal basis for the span of a loading matrix, for every collapse.
+#
+# The three rank POLICIES differ and must: .admCovCollapse() certifies its rank
+# against the fitted parameters, .admJointDesign() freezes the one admission
+# settled on, .admCovSpan() fixes it at the sum so the shape cannot change. What
+# they share is this -- one basis convention, one validity screen. A B that has
+# GAINED rank since `r` was fixed is refused, not silently re-ranked.
+.admSpanBasis <- function(B, r = NULL, max_r = NULL) {
+  sv <- tryCatch(svd(B), error = function(e) NULL)
+  if (is.null(sv) || !length(sv$d) || max(sv$d) <= 0) return(NULL)
+  if (is.null(r)) r <- .admSvdRank(sv)
+  if (!is.finite(r) || r < 1L || .admSvdRank(sv) > r) return(NULL)
+  if (!is.null(max_r) && r > max_r) return(NULL)
+  list(U = sv$u[, seq_len(r), drop = FALSE], r = r)
+}
+
 # The uniform a latent normal node maps to.
 #
 # ONE tolerance: pnorm() saturates to exactly 0 or 1 in the tails, after which a margin's quantile function
@@ -1190,7 +1206,7 @@
 
 .admCovStrata <- function(cov_dist, stratify, n_nodes = 5L,
                           n_pool = 32768L, cov_range = NULL,
-                          warn_range = TRUE) {
+                          warn_range = TRUE, proj = NULL) {
   cov_dist <- .admCovDistCanon(cov_dist)
   nms <- .admCovSpecNames(cov_dist)
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
@@ -1264,7 +1280,35 @@
     # ROTATED BY chol(R_SS), or the nodes are laid out as if the conditional covariates were INDEPENDENT
     # (measured on WT/AGE at rho = 0.9: weight-weighted correlation across the 25 strata was 0.0000). chol(R)
     # is upper triangular with U'U = R, so Z %*% U has covariance R and every COLUMN is still standard normal.
-    if (length(iSc)) {
+    # A PROJECTED design replaces the product grid where one was admitted: the
+    # nodes then sit on span(source, analysis) at J^r rather than on the
+    # covariates at J^p. Only when the stratified set IS the whole continuous
+    # set, which is what the derivation gives; a hand-picked subset keeps the
+    # product rule rather than silently gridding a different space.
+    if (!is.null(proj) && length(iSc) == proj$pc &&
+        setequal(nms[iSc], proj$cn) && !isTRUE(proj$trunc)) {
+      .gg <- .admNodeGridNv(rep(as.integer(n_nodes), proj$r))
+      zC  <- .gg$X %*% proj$Lr %*% t(proj$Q)
+      zC  <- zC[, match(nms[iSc], proj$cn), drop = FALSE]
+      wC  <- as.numeric(.gg$W / sum(.gg$W))
+    } else if (!is.null(proj) && length(iSc) == proj$pc &&
+               setequal(nms[iSc], proj$cn)) {
+      # TRUNCATED margins: the projected measure lives on a polygon with kinks,
+      # so no Gaussian rule fits it. Build its atoms on a fine grid -- arithmetic
+      # only, no solves -- and recombine to the node count the rotated rule would
+      # have used. Exact in the atoms' own moments, so the accuracy is the fine
+      # grid's at a small rule's cost.
+      # `fine` is settled at admission, where .admStrataProj() budgets it and
+      # certifies the cloud it buys; 15 is only the fallback for a spec that
+      # never went through there.
+      .jf <- min(as.integer(proj$fine %||% 15L), 21L)
+      .cl <- .admCovCloud(cov_dist, nms[iSc], Rm[iSc, iSc, drop = FALSE],
+                          proj$A[match(nms[iSc], proj$cn), , drop = FALSE], .jf)
+      .P  <- .admCovMomentBasis(
+        .cl$su, .admCovMomentDegree(as.integer(n_nodes)^proj$r, proj$r))
+      .rc <- .admCovRecombine(.P, .cl$w)
+      zC  <- .cl$z[.rc$i, , drop = FALSE]; wC <- .rc$w
+    } else if (length(iSc)) {
       .ng <- .adghNodeGrid(n_nodes, length(iSc))
       zC  <- .ng$X; wC <- as.numeric(.ng$W / sum(.ng$W))
       .Rss <- Rm[iSc, iSc, drop = FALSE]
@@ -1737,6 +1781,62 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   s
 }
 
+# The span a study's nodes should sit on, or NULL to keep the product grid.
+#
+# Needs BOTH models to collapse, and the truncated margins the nodes are cut
+# from. Lognormal only: with normal margins the logs are skewed and the Gaussian
+# rule carries a bias no node count removes (#148).
+.admStrataProj <- function(s, src_ui, stratify) {
+  ana <- s[[".adm_ana_ui"]]
+  if (is.null(ana) || is.null(src_ui) || !length(stratify)) return(NULL)
+  cd <- .admCovDistCanon(.admCovApplyRange(s[["cov_dist"]], s[["cov_range"]]))
+  cn <- Filter(function(v) is.null(cd[[v]][["values"]]), .admCovSpecNames(cd))
+  if (length(cn) < 3L) return(NULL)            # J^2 saves nothing below three
+  # The span itself is found on the UNtruncated margins, where the latent map is
+  # linear and .admCovCollapse() can read a loading off it. A `range` only
+  # reshapes the measure on that span, which the recombined rule handles.
+  cd0 <- .admCovDistCanon(s[["cov_dist"]])
+  if (!all(vapply(cn, function(v) !is.null(cd0[[v]][["meanlog"]]), logical(1))))
+    return(NULL)
+  .tr <- !all(vapply(cn, function(v) !is.null(cd[[v]][["meanlog"]]), logical(1)))
+  ctl <- tryCatch(adghControl(studies = list(), print = 0L),
+                  error = function(e) NULL)
+  if (is.null(ctl)) return(NULL)
+  # The SOURCE model is published and does not move during the fit, so its one
+  # direction is enough. The ANALYSIS model is what the optimizer is estimating,
+  # so it contributes every direction its free coefficients can reach.
+  dirs <- list(
+    tryCatch(.admCovDirections(src_ui, .admDriverPinfo(src_ui, ctl), cd0),
+             error = function(e) NULL),
+    tryCatch(.admCovReachable(ana, .admDriverPinfo(ana, ctl), cd0),
+             error = function(e) NULL))
+  if (any(vapply(dirs, is.null, logical(1)))) return(NULL)
+  sp <- .admCovSpan(dirs, dirs[[1L]]$Rc, dirs[[1L]]$pc)
+  if (is.null(sp)) return(NULL)
+  sp$trunc <- .tr
+  # The same span written in log(x): untruncated, z = (log x - meanlog)/sdlog,
+  # so a latent loading q is the log(x) loading q/sdlog. Taken from the
+  # UNtruncated spec, which is where that relation holds.
+  .sd <- vapply(sp$cn, function(v) cd0[[v]][["sdlog"]] %||% NA_real_, 0)
+  if (anyNA(.sd) || any(.sd <= 0)) return(NULL)
+  sp$A <- sp$Q / .sd
+  # A truncated span pays for a fine cloud. Budget and CERTIFY it here, after
+  # `A` exists and while declining still means the product grid rather than a
+  # multi-gigabyte allocation, or an uncertified rule, mid-fit.
+  if (.tr) {
+    .nn <- s[[".adm_strata_nodes"]] %||% 9L
+    .jb <- .admCovFineJ(length(sp$cn), sp$r, .nn)
+    if (is.null(.jb)) return(NULL)
+    .ix <- match(sp$cn, dirs[[1L]]$cn)
+    .ct <- tryCatch(.admCovCloudCertify(
+      cd, sp$cn, dirs[[1L]]$Rc[.ix, .ix, drop = FALSE], sp$A, sp$r, .nn, .jb),
+      error = function(e) NULL)
+    if (is.null(.ct)) return(NULL)
+    sp$fine <- .ct$j; sp$cloud_err <- .ct$cloud; sp$recomb_err <- .ct$recomb
+  }
+  sp
+}
+
 # Expand every study carrying `stratify` into one ordinary study per stratum.
 #
 # The output is plain studies -- own `n`, own `cov`, own `cov_dist` -- so the generator and the estimator both
@@ -1858,10 +1958,15 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
                        s[["stratify"]])
     .miss <- setdiff(.node_cv, names(s[["cov_range"]]))
     if (length(.miss)) .no_range[[nm]] <- .miss
+    # SPAN(source, analysis) where both collapse and the margins are lognormal.
+    # The source model is this study's own; the analysis model rides on the spec
+    # because only .admMaterialise() knows it. NULL means no span and the
+    # product grid, exactly as before.
+    .proj <- .admStrataProj(s, model, s[["stratify"]])
     stl <- .admCovStrata(s[["cov_dist"]], s[["stratify"]],
                          s[["strata_nodes"]] %||% .ADM_STRATA_NODES,
                          warn_range = FALSE,
-                         cov_range = s[["cov_range"]])
+                         cov_range = s[["cov_range"]], proj = .proj)
     # `stratify = character(0)` reached .admCovStrata's `if (!length(stratify)) return(NULL)` and the loop below
     # then ran zero times, DROPPING the study -- the one malformed `stratify` that did not error.
     if (!length(stl))
@@ -1874,6 +1979,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
       sk <- s
       sk[["stratify"]] <- NULL; sk[["strata_nodes"]] <- NULL
       sk[["cov_range"]] <- NULL
+      sk[[".adm_ana_ui"]] <- NULL     # the design is cut; it travels no further
       # carried so the fit can refuse to be compared against one built at a different resolution -- the
       # objective is J-dependent
       sk[[".adm_strata_nodes"]] <- .Jk
@@ -3524,13 +3630,12 @@ print.covDist <- function(x, ...) {
     }
   }
   if (is.null(r)) return(NULL)
-  sv <- tryCatch(svd(B), error = function(e) NULL)
-  if (is.null(sv) || !length(sv$d)) return(NULL)
   # r == pc is refused: no rank reduction to make, and with the node search gone
   # there is nothing else on this path to gain. The rotation alone buys nothing
   # there -- with B diagonal, U is a permutation and redistributes nothing.
-  if (!is.finite(r) || r < 1L || r >= pc) return(NULL)   # no reduction to make
-  U  <- sv$u[, seq_len(r), drop = FALSE]                # pc x r, orthonormal
+  .sb <- .admSpanBasis(B, r, max_r = pc - 1L)
+  if (is.null(.sb)) return(NULL)
+  U  <- .sb$U                                           # pc x r, orthonormal
   nn <- as.integer(n_nodes)
   if (nn^r * max(nrow(cells), 1L) > max_rows) return(NULL)
 
@@ -3603,6 +3708,322 @@ print.covDist <- function(x, ...) {
        # to a daemon. st/Z are NOT kept: .admCovRefresh re-derives the loading
        # from `pr` and its own `st` argument alone.
        pr = pr, Rc = Rc, cell_list = cell_list, z0 = z0, i0 = i0)
+}
+
+# =============================================================================
+# PROJECTED NODE DESIGN -- a conditional source on span(source, analysis)
+# =============================================================================
+#
+# A node's likelihood term depends on where the node sits only through what the
+# SOURCE predicts there and what the ANALYSIS model predicts there -- two
+# numbers when both are allometric, whatever p is. So grid the pair, not the
+# covariates: J^2 replaces J^p, exactly, since a lognormal latent makes the pair
+# bivariate normal. Measured via datagen(): 729 nodes -342.37990291 against 81
+# nodes -342.37990292. Needs log-linear maps (.admCovCollapse() declines the
+# rest) and lognormal margins (normal ones carry a ~0.1 bias that does not
+# shrink with J). Issue #148 has the measurements.
+
+# The latent subspace a model's covariate dependence lives in, or NULL where
+# there is nothing to reduce. Off .admCovCollapse(), which already probes the
+# assignments, refuses a loading that moves with eta or a discrete cell, and
+# verifies the reduced design reproduces their law.
+.admCovDirections <- function(ui, pinfo, cov_dist, n_nodes = 7L) {
+  co <- tryCatch(.admCovCollapse(ui, pinfo, cov_dist, n_nodes),
+                 error = function(e) NULL)
+  if (is.null(co) || is.null(co$U)) return(NULL)
+  list(U = co$U, r = co$r, pc = co$pc, cn = co$cn, Rc = co$Rc)
+}
+
+# EVERY direction the optimizer can reach, not just the one at the starting
+# values. .admExpandStrata() bakes the nodes into fixed `cov` values and drops
+# `cov_dist`, so unlike .admCovRefresh()'s per-call re-aim the span has to stay
+# valid for the whole fit. Re-aiming at a perturbed value of each estimated
+# coefficient enumerates the reachable set, exactly so while the loading is
+# linear in them. Coefficients the covariates do not reach cost no rank.
+# The atoms of the projected measure on a j-per-axis cloud.
+#
+# OFF THE COVARIATE VALUES, not the latent. `Q` is a latent basis, and z and
+# log(x) are the same direction only while the margin is untruncated -- the
+# whole reason the truncated branch exists is that truncation bends that map,
+# so projecting z would recombine the wrong coordinates. `A` carries the
+# loadings on log(x), where the pair IS linear.
+.admCovCloud <- function(cov_dist, cn, Rss, A, j) {
+  gg <- .adghNodeGrid(j, length(cn))
+  z0 <- gg$X %*% chol(Rss)
+  x0 <- vapply(seq_along(cn), function(k)
+    .admCovQuantile(cov_dist[[cn[k]]], .admCovU(z0[, k])), numeric(nrow(z0)))
+  list(z = z0, w = as.numeric(gg$W / sum(gg$W)), su = log(x0) %*% A)
+}
+
+# Smooth NONLINEAR probes of the projected coordinates.
+#
+# The recombination reproduces the polynomial moments in its basis exactly, by
+# construction, so agreeing on them measures nothing. A likelihood integrand is
+# not a polynomial, and the cloud has a quadrature error of its own that no
+# number of retained nodes can remove. Both are read here instead, on
+# standardised coordinates so the scale is the measure's own.
+.admCovProbes <- function(su, w) {
+  r  <- ncol(su)
+  mu <- colSums(su * w)
+  sd <- sqrt(pmax(colSums(sweep(su, 2L, mu)^2 * w), .Machine$double.eps))
+  S  <- sweep(sweep(su, 2L, mu), 2L, sd, "/")
+  # a few fixed directions, each read through a growing and a bounded map
+  dirs <- if (r == 1L) matrix(1, 1L, 1L) else
+    rbind(diag(r), matrix(1 / sqrt(r), 1L, r),
+          matrix(c(1, -1, rep(0, r - 2L)) / sqrt(2), 1L, r))
+  t(apply(dirs, 1L, function(d) {
+    v <- as.numeric(S %*% d)
+    c(sum(w * exp(0.6 * v)), sum(w * stats::plogis(v)), sum(w * cos(v)))
+  }))
+}
+
+.admCovProbeErr <- function(a, b) max(abs(a - b) / (abs(b) + 1))
+
+# Nodes per axis for the truncated cloud, or NULL when no size fits.
+#
+# The cloud is j^p atoms and the moment matrix is that many rows by
+# choose(d + r, r) columns, and neither is bounded by the node count the design
+# ends up with: six continuous covariates at j = 15 is 11.4 million atoms and
+# about 7 GB of basis alone, for a design that retains 78 nodes. Budgeted
+# BEFORE anything is allocated, so an over-budget projection is declined at
+# admission and the product grid is kept.
+.admCovFineJ <- function(p, r, n_nodes, j_max = 15L, max_bytes = 2^30) {
+  if (p < 1L) return(NULL)
+  nc <- choose(.admCovMomentDegree(as.integer(n_nodes)^r, r) + r, r)
+  for (j in seq.int(min(as.integer(j_max), 21L), 3L)) {
+    n <- as.numeric(j)^p
+    # the recombination cannot match more moments than it has atoms
+    if (n >= nc && 8 * n * (p + r + nc) <= max_bytes) return(as.integer(j))
+  }
+  NULL
+}
+
+# REFINE OR REJECT the truncated cloud. Returns the nodes per axis to use, or
+# NULL to decline the projection and keep the product grid.
+#
+# Two error sources, neither of which `strata_nodes` can touch. The cloud has
+# its own quadrature error -- raising the retained node count refines the
+# moment matching against the SAME cloud and cannot remove it -- and the
+# recombination preserves the polynomial moments in its basis rather than the
+# nonlinear integrands a likelihood actually contains. So walk j upwards
+# through the budget, reading both: the cloud against the next coarser cloud,
+# and the recombined rule against the cloud it was drawn from, on probes the
+# recombination did not match by construction. First j that settles both wins;
+# none and the design is declined rather than shipped uncertified.
+.admCovCloudCertify <- function(cov_dist, cn, Rss, A, r, n_nodes,
+                                j_max, tol = 1e-3) {
+  cand <- Filter(function(j) j <= j_max, c(7L, 9L, 11L, 13L, 15L, 17L, 21L))
+  if (length(cand) < 2L) return(NULL)
+  deg  <- .admCovMomentDegree(as.integer(n_nodes)^r, r)
+  prev <- NULL
+  for (j in cand) {
+    cl <- tryCatch(.admCovCloud(cov_dist, cn, Rss, A, j), error = function(e) NULL)
+    if (is.null(cl) || !all(is.finite(cl$su))) return(NULL)
+    ref <- .admCovProbes(cl$su, cl$w)
+    rc  <- tryCatch(.admCovRecombine(.admCovMomentBasis(cl$su, deg), cl$w),
+                    error = function(e) NULL)
+    if (is.null(rc) || !length(rc$i)) return(NULL)
+    e_rec <- .admCovProbeErr(.admCovProbes(cl$su[rc$i, , drop = FALSE], rc$w), ref)
+    if (!is.null(prev)) {
+      e_cld <- .admCovProbeErr(prev, ref)
+      if (e_cld < tol && e_rec < tol)
+        return(list(j = j, cloud = e_cld, recomb = e_rec))
+    }
+    prev <- ref
+  }
+  NULL
+}
+
+# Substitute every already-assigned intermediate into an expression, so the
+# loading is read off the covariates themselves rather than a name.
+.admCovSubst <- function(e, env) {
+  if (!length(env)) return(e)
+  do.call("substitute", list(e, env))
+}
+
+# Is the covariate loading CONSTANT in the estimated parameters?
+#
+# Symbolic, not sampled. The loading of an assignment on covariate x is
+# x * dlog(rhs)/dx, and baking the nodes into fixed `cov` values is only safe
+# if every estimated parameter's derivative of that is identically zero. No
+# probe can establish this: `(ALB/40)^(.18 + b1*b2)` has a zero derivative in
+# each coefficient at b1 = b2 = 0 and a nonzero one everywhere else, so a check
+# that evaluates admits it where one that DIFFERENTIATES refuses it. NA when it
+# cannot be decided -- no Deriv, an expression that will not differentiate --
+# and the caller reads anything but TRUE as a decline.
+.admCovLoadingInvariant <- function(ui, cn, free) {
+  if (!length(free)) return(TRUE)
+  if (!requireNamespace("Deriv", quietly = TRUE)) return(NA)
+  lst <- tryCatch(ui$lstExpr, error = function(e) NULL)
+  if (is.null(lst)) return(NA)
+  is0 <- function(d) (is.numeric(d) && length(d) == 1L && d == 0) ||
+                     identical(d, 0)
+  env <- list()
+  for (e in lst) {
+    if (!(is.call(e) && length(e) == 3L &&
+          (identical(e[[1L]], quote(`<-`)) || identical(e[[1L]], quote(`=`)))))
+      next
+    rhs <- .admCovSubst(e[[3L]], env)
+    env[[as.character(e[[2L]])]] <- rhs
+    for (v in intersect(all.vars(rhs), cn)) {
+      lo <- tryCatch(Deriv::Simplify(call("*", as.name(v),
+              Deriv::Deriv(call("log", rhs), v, cache.exp = FALSE))),
+              error = function(e) NULL)
+      if (is.null(lo)) return(NA)
+      for (m in free) {
+        d <- tryCatch(Deriv::Simplify(Deriv::Deriv(lo, m, cache.exp = FALSE)),
+                      error = function(e) NULL)
+        if (is.null(d)) return(NA)
+        if (!is0(d)) return(FALSE)
+      }
+    }
+  }
+  TRUE
+}
+
+# The analysis model's directions, once its loading is certified to hold still.
+#
+# .admExpandStrata() bakes the nodes into fixed `cov` values and the studies
+# lose their `cov_dist`, so unlike .admCovRefresh()'s per-call re-aim the span
+# has to stay valid for the whole fit. Certified symbolically rather than
+# probed, so an interacting or nonlinearly parameterised loading is refused on
+# the identity rather than on where it happens to sit.
+.admCovReachable <- function(ui, pinfo, cov_dist, n_nodes = 7L) {
+  co <- tryCatch(.admCovCollapse(ui, pinfo, cov_dist, n_nodes),
+                 error = function(e) NULL)
+  if (is.null(co) || is.null(co$U)) return(NULL)
+  fx   <- ui$iniDf$name[which(ui$iniDf$fix %in% TRUE)]
+  free <- setdiff(intersect(pinfo$struct_names, ui$iniDf$name), fx)
+  if (!isTRUE(.admCovLoadingInvariant(ui, co$cn, free))) return(NULL)
+  list(U = co$U, r = co$r, pc = co$pc, cn = co$cn, Rc = co$Rc)
+}
+
+# The span of several such subspaces, as a design to integrate on.
+#
+# RANK FIXED AT THE SUM, not measured: the directions go parallel wherever the
+# analysis model agrees with the source, and a design that changes shape there
+# steps the objective mid-fit. Fixed r = 2 agrees with an adaptive r = 1 to
+# 3e-7, so it costs nothing; unused directions leave the integrand constant.
+.admCovSpan <- function(dirs, Rc, pc) {
+  dirs <- Filter(Negate(is.null), dirs)
+  if (!length(dirs)) return(NULL)
+  r <- sum(vapply(dirs, `[[`, integer(1), "r"))
+  if (r >= pc) return(NULL)            # prices at the full grid or worse
+
+  B  <- do.call(cbind, lapply(dirs, `[[`, "U"))
+  # r is the SUM of the input ranks, so B cannot exceed it; max_r is the same
+  # no-reduction test the other two make.
+  .sb <- .admSpanBasis(B, r, max_r = pc - 1L)
+  if (is.null(.sb)) return(NULL)
+  Q  <- .sb$U
+  Sr <- t(Q) %*% Rc %*% Q
+  Lr <- tryCatch(chol(Sr), error = function(e) NULL)
+  if (is.null(Lr)) return(NULL)
+  list(Q = Q, Lr = Lr, r = r, pc = pc, cn = dirs[[1L]]$cn)
+}
+
+# Reduce a weighted cloud to a few atoms with the SAME bivariate moments.
+#
+# Caratheodory: a measure on the plane matching M moments needs at most M atoms,
+# and they can be taken from the cloud itself -- so the kept nodes come with
+# their covariate vectors already attached. Each step walks the weights along a
+# null direction of the moment matrix until one hits zero, which changes no
+# moment and removes one atom.
+#
+# This is what makes a TRUNCATED margin workable. The projected measure is then
+# supported on a polygon with kinks, so no Gaussian rule fits it -- but its atoms
+# cost arithmetic and no solves, and recombination reproduces their integral
+# exactly. Accuracy becomes the cloud's, at the node count of a small rule:
+# measured at 90% truncation, 45 nodes give -3.7e-04 where the product grid's
+# 729 give 5.5e-03 and the Gaussian rule is stuck at -8.0e-03 forever.
+.admCovRecombine <- function(P, w, tol = 1e-13) {
+  M <- ncol(P)
+  keep <- which(w > 0)
+  while (length(keep) > M) {
+    blk <- keep[seq_len(min(2L * M, length(keep)))]
+    m   <- length(blk)
+    # ONE factorisation per BLOCK, not per atom. The null space of the moment
+    # map restricted to 2M atoms has dimension M, so a single complete QR buys
+    # M eliminations where the obvious loop pays a QR for each -- measured 17.8s
+    # against 0.4s on a 3375-atom cloud.
+    NS <- tryCatch(qr.Q(qr(P[blk, , drop = FALSE]),
+                        complete = TRUE)[, seq.int(M + 1L, m), drop = FALSE],
+                   error = function(e) NULL)
+    if (is.null(NS) || !ncol(NS)) break
+    wb <- w[blk]
+    for (j in seq_len(ncol(NS))) {
+      nv  <- NS[, j]
+      pos <- nv > tol
+      if (!any(pos)) { nv <- -nv; pos <- nv > tol }
+      if (!any(pos)) next
+      k   <- which(pos)[which.min(wb[pos] / nv[pos])]
+      wb  <- wb - (wb[k] / nv[k]) * nv
+      wb[k] <- 0
+      wb[wb < tol] <- 0
+      # Hold the zeroed atom at zero for the directions still to be used: one
+      # step of elimination on the basis, which is what keeps the block's later
+      # moves inside the same null space.
+      if (j < ncol(NS)) {
+        cj <- NS[k, seq.int(j + 1L, ncol(NS))]
+        NS[, seq.int(j + 1L, ncol(NS))] <-
+          NS[, seq.int(j + 1L, ncol(NS)), drop = FALSE] -
+          outer(nv, cj / nv[k])
+      }
+    }
+    w[blk] <- wb
+    keep <- keep[w[keep] > 0]
+  }
+  list(i = keep, w = w[keep] / sum(w[keep]))
+}
+
+# Exponent vectors of every monomial in `r` coordinates up to total degree `d`,
+# lowest degree first so the recombination drops the highest moments first.
+.admCovMonomials <- function(d, r) {
+  g <- as.matrix(expand.grid(rep(list(0:d), r)))
+  g <- g[rowSums(g) <= d, , drop = FALSE]
+  g[order(rowSums(g)), , drop = FALSE]
+}
+
+# Monomials in the projected coordinates up to total degree `d`, standardised so
+# the QR stays conditioned. One column of `Z` per direction: a direction left
+# out of the basis gets no moment constraint, so the retained atoms need not
+# reproduce even its mean.
+.admCovMomentBasis <- function(Z, d) {
+  Z  <- as.matrix(Z)
+  zs <- lapply(seq_len(ncol(Z)), function(j) {
+    v <- Z[, j]
+    (v - mean(v)) / max(stats::sd(v), .Machine$double.eps)
+  })
+  ex <- .admCovMonomials(d, ncol(Z))
+  do.call(cbind, lapply(seq_len(nrow(ex)), function(k) {
+    p <- rep(1, nrow(Z))
+    for (j in seq_len(ncol(Z))) if (ex[k, j]) p <- p * zs[[j]]^ex[k, j]
+    p
+  }))
+}
+
+# The largest total degree whose moment count fits in `n` nodes, in `r`
+# coordinates: choose(d + r, r) monomials have total degree at most `d`.
+.admCovMomentDegree <- function(n, r = 2L) {
+  d <- 0L
+  while (choose(d + 1L + r, r) <= n) d <- d + 1L
+  d
+}
+
+# Covariate values and weights for a span, crossed with the exact discrete
+# enumeration. Same construction as .admCovCollapse()'s own design -- z = U w
+# through the margins -- so the two cannot drift apart.
+.admCovProjDesign <- function(sp, cd, cn, dn, nms, n_nodes) {
+  .gg <- .admNodeGridNv(rep(as.integer(n_nodes), sp$r))
+  Zg  <- .gg$X %*% sp$Lr %*% t(sp$Q)
+  Xg  <- .admCovXFromZ(cd, cn, Zg)
+  if (!all(is.finite(Xg))) return(NULL)      # a margin quantile saturated
+  W <- .gg$W / sum(.gg$W)
+  if (!length(dn)) return(list(X = Xg, W = W, z = Zg, r = sp$r))
+  .lb <- .admCovLatentBlock(cd, nms, cn, dn, cd[["latentR"]])
+  if (is.null(.lb)) return(NULL)
+  cr <- .admCrossDiscreteCov(Xg, W, .lb$cells, .lb$pcell, dn, nms)
+  list(X = cr$X, W = cr$W, z = Zg[cr$ix, , drop = FALSE], r = sp$r)
 }
 
 # =============================================================================
@@ -3757,16 +4178,13 @@ print.covDist <- function(x, ...) {
 .admJointDesign <- function(jc, st, L) {
   B <- .admJointB(jc, st, L, i0 = jc[["i0"]])
   if (is.null(B)) return(NULL)
-  sv <- tryCatch(svd(B), error = function(e) NULL)
-  if (is.null(sv) || !length(sv$d) || max(sv$d) <= 0) return(NULL)
   # [[ ]] not $: `$` PARTIAL-MATCHES on lists, so jc$m silently resolved to
   # jc$max_rows and the row cap then rejected every design. Both are deliberately
   # absent until admission fixes them, which is exactly the case partial matching
   # turns into a wrong answer instead of a NULL.
-  r <- jc[["r"]] %||% .admSvdRank(sv)
-  if (.admSvdRank(sv) > r) return(NULL)
-  if (!is.finite(r) || r < 1L || r > jc$nl) return(NULL)
-  U <- sv$u[, seq_len(r), drop = FALSE]
+  .sb <- .admSpanBasis(B, jc[["r"]], max_r = jc$nl)
+  if (is.null(.sb)) return(NULL)
+  r <- .sb$r; U <- .sb$U
   # the cap lesson from .admCovDirNodes, over the joint space: a direction
   # absorbs (n_eta + pc)/r axes, so it needs that much more resolution than one
   m <- jc[["m"]] %||% ceiling(

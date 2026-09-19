@@ -2,6 +2,18 @@
 
 ## New features
 
+* **A conditional source is cut on the span of both models, not the product
+  grid** -- 729 studies become 81, where the analysis exponents are fixed.
+
+* **The projected design is admitted on a symbolic certificate**: the covariate
+  loading must differentiate to zero in every estimated parameter, or decline.
+
+* **A truncated span certifies its cloud before using it** -- against a coarser
+  cloud and against integrands the recombination did not match -- or declines.
+
+* **One `rxSolve` per group of studies, not one per study**, across differing
+  doses and schedules. A four-study fit: 126.4 s to 38.9 s, objective unchanged.
+
 * **The mean and covariance panels are per SOURCE, not per stratum.** A conditional
   source is collapsed by the mixture law, so `_s1`/`_s2` never reaches a figure.
 

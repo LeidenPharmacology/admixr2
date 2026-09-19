@@ -43,7 +43,7 @@
   # directions this model can be moved by, which leaves the objective unchanged
   # -- see .admMaterialise().
   studies <- .admMaterialise(
-    studies, analysis_covs = .admAllCovs(.ui, NULL))
+    studies, analysis_covs = .admAllCovs(.ui, NULL), analysis_ui = .ui)
   pinfo <- .admDriverPinfo(.ui, .ctl)
   .admWarnCovIdentifiability(.ui, pinfo, studies)
   list(studies = studies, pinfo = pinfo)

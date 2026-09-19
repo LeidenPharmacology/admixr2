@@ -632,6 +632,14 @@
       ev |> rxode2::et(u$times, cmt = u$output)
     else
       ev |> rxode2::et(u$times)
+    # WHAT THE EVENT TABLE SAYS, as a key, computed once per fit. Studies that
+    # agree on it can be solved in ONE rxSolve call -- see .admSimulateMany() --
+    # and the nodes of a conditional source all do, differing only in `cov`.
+    # identical() on the tables themselves is no use: rxode2 builds a fresh
+    # object per call and two with the same content compare FALSE, which quietly
+    # turned 75 studies into 75 groups of one.
+    u$ev_key <- tryCatch(digest::digest(as.data.frame(u$ev_full)),
+                         error = function(e) NULL)
     # Per-block ev for the sensitivity model's analytical joint gradient.
     if (isTRUE(u$is_joint))
       u$blocks <- lapply(u$blocks, function(blk) {

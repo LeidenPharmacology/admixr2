@@ -1826,3 +1826,453 @@ test_that("a single named proportion is a BINARY covariate, not a constant", {
   expect_error(covDist(WT = c(kg = 70)), "[[]0, 1[]]")
   expect_error(covDist(SEX = c(male = -0.2)), "negative")
 })
+
+# ---- projected node design ---------------------------------------------------
+
+.pnd_pop <- function()
+  admPopulation(WT = c(mean = 76, sd = 15), CRCL = c(mean = 92, sd = 22),
+                ALB = c(mean = 40, sd = 5), cor = c(WT.CRCL = 0.45))
+
+.pnd_pinfo <- function(fn) {
+  ui <- suppressMessages(rxode2::rxode2(fn))
+  list(ui = ui, pinfo = admixr2:::.admDriverPinfo(
+    ui, adghControl(studies = list(), print = 0L)))
+}
+
+# Three covariates all on cl -> one direction; split across cl and v -> two.
+.pnd_allom <- function() {
+  ini({ tcl <- log(3.2); tv <- log(21); bwt <- .6; bcr <- .4; balb <- .3
+        eta.cl ~ .09; add.err <- .6 })
+  model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+          v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+}
+# The ANALYSIS model has to hold its covariate loading still for the projected
+# design to be admitted: .admExpandStrata() bakes the nodes into fixed `cov`
+# values, so a coefficient the optimizer can move would carry the loading off
+# the span the nodes were cut on. Fixed exponents are the certifiable case.
+.pnd_allom_fix <- function() {
+  ini({ tcl <- log(3.2); tv <- log(21)
+        bwt <- fix(.52); bcr <- fix(.55); balb <- fix(.18)
+        eta.cl ~ .09; add.err <- .6 })
+  model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+          v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
+}
+.pnd_split <- function() {
+  ini({ tcl <- log(3.2); tv <- log(21); bwt <- .6; bcr <- .4; balb <- .3
+        eta.cl ~ .09; add.err <- .6 })
+  model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr
+          v <- exp(tv)*(ALB/40)^balb; cp <- linCmt(); cp ~ add(add.err) })
+}
+
+test_that(".admCovDirections reports the rank of a model's covariate map", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  pop <- .pnd_pop()
+  a <- .pnd_pinfo(.pnd_allom)
+  d <- admixr2:::.admCovDirections(a$ui, a$pinfo, pop)
+  expect_equal(d$r, 1L)
+  expect_equal(dim(d$U), c(3L, 1L))
+  # Orthonormal, and in the latent coordinates of the CONTINUOUS block.
+  expect_equal(as.numeric(crossprod(d$U)), 1, tolerance = 1e-10)
+  expect_equal(d$pc, 3L)
+
+  b <- .pnd_pinfo(.pnd_split)
+  d2 <- admixr2:::.admCovDirections(b$ui, b$pinfo, pop)
+  expect_equal(d2$r, 2L)
+  expect_equal(dim(d2$U), c(3L, 2L))
+  expect_equal(crossprod(d2$U), diag(2L), tolerance = 1e-10)
+})
+
+test_that(".admCovDirections declines a map that is not linear in the latent", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The projection needs the covariates to enter through a linear combination on
+  # the log scale. An additive shift and a saturating term do not, and the
+  # measured bias is not something a finer grid recovers -- so these must come
+  # back NULL rather than be reduced.
+  pop <- .pnd_pop()
+  add <- .pnd_pinfo(function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .006; bcr <- .4; balb <- .3
+          eta.cl ~ .09; add.err <- .6 })
+    model({ cl <- exp(tcl + eta.cl)*(1 + bwt*(WT - 70))*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) })
+  expect_null(admixr2:::.admCovDirections(add$ui, add$pinfo, pop))
+
+  emax <- .pnd_pinfo(function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .6; bcr <- .4
+          eta.cl ~ .09; add.err <- .6 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(1 + bcr*CRCL/(50 + CRCL))
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) })
+  expect_null(admixr2:::.admCovDirections(emax$ui, emax$pinfo, pop))
+})
+
+test_that(".admCovSpan fixes the rank at the sum and refuses a non-saving span", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  pop <- .pnd_pop()
+  a <- .pnd_pinfo(.pnd_allom); b <- .pnd_pinfo(.pnd_split)
+  d1 <- admixr2:::.admCovDirections(a$ui, a$pinfo, pop)     # r = 1
+  d2 <- admixr2:::.admCovDirections(b$ui, b$pinfo, pop)     # r = 2
+
+  # Two rank-1 models: r = 2 of 3, so 9^2 replaces 9^3.
+  sp <- admixr2:::.admCovSpan(list(d1, d1), d1$Rc, d1$pc)
+  expect_equal(sp$r, 2L)
+  expect_equal(dim(sp$Q), c(3L, 2L))
+  expect_equal(crossprod(sp$Q), diag(2L), tolerance = 1e-10)
+  # Lr is the Cholesky of the projected latent covariance, so Q Lr' maps a
+  # standard normal to the right law on the span.
+  expect_equal(t(sp$Lr) %*% sp$Lr, t(sp$Q) %*% d1$Rc %*% sp$Q,
+               tolerance = 1e-10)
+
+  # RANK FIXED AT THE SUM, not measured: two copies of the SAME rank-1 direction
+  # still give 2, because a design whose shape changes when the analysis model
+  # happens to agree with the source would step the objective mid-fit.
+  expect_equal(admixr2:::.admCovSpan(list(d1, d1), d1$Rc, d1$pc)$r, 2L)
+
+  # 1 + 2 = 3 of 3 covariates buys nothing, and is refused rather than dressed
+  # up as a reduction.
+  expect_null(admixr2:::.admCovSpan(list(d1, d2), d1$Rc, d1$pc))
+  expect_null(admixr2:::.admCovSpan(list(), d1$Rc, d1$pc))
+  expect_null(admixr2:::.admCovSpan(list(NULL), d1$Rc, d1$pc))
+})
+
+test_that("the projected design reproduces the law the product grid integrates", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The mathematical content, without paying for solves: both designs must give
+  # the same weighted law of the two scalars the models read -- what the source
+  # predicts through, and what the analysis model predicts through. Everything
+  # downstream is a function of those.
+  pop <- .pnd_pop()
+  a <- .pnd_pinfo(.pnd_allom)
+  ana <- .pnd_pinfo(function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .52; bcr <- .55; balb <- .18
+          eta.cl ~ .09; add.err <- .6 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) })
+  d_s <- admixr2:::.admCovDirections(a$ui, a$pinfo, pop)
+  d_a <- admixr2:::.admCovDirections(ana$ui, ana$pinfo, pop)
+  sp  <- admixr2:::.admCovSpan(list(d_s, d_a), d_s$Rc, d_s$pc)
+  expect_equal(sp$r, 2L)
+
+  cd <- admixr2:::.admCovDistCanon(pop)
+  cn <- d_s$cn
+  bs <- c(.60, .40, .30); ba <- c(.52, .55, .18)
+  lg <- function(X) cbind(log(X[, "WT"]/70), log(X[, "CRCL"]/95), log(X[, "ALB"]/40))
+  mom <- function(X, W) {
+    L <- lg(X); su <- cbind(L %*% bs, L %*% ba)
+    m <- as.numeric(crossprod(W, su)); C <- sweep(su, 2L, m)
+    c(m, as.numeric(t(C) %*% (W * C)))
+  }
+  J   <- 9L
+  des <- admixr2:::.admCovProjDesign(sp, cd, cn, character(0),
+                                     c("WT", "CRCL", "ALB"), J)
+  expect_equal(nrow(des$X), J^2)              # not J^3
+  gg  <- admixr2:::.admNodeGridNv(rep(J, 3L))
+  Xp  <- admixr2:::.admCovXFromZ(cd, cn, gg$X %*% chol(d_s$Rc))
+  expect_equal(mom(des$X, des$W), mom(Xp, gg$W / sum(gg$W)), tolerance = 1e-8)
+})
+
+test_that("materialising cuts a source on the span when both models collapse", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  src <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  ana <- suppressMessages(rxode2::rxode2(.pnd_allom_fix))
+  mk <- function() admStudies(a = admStudy(
+    model = src, population = .pnd_pop(), n = 300L, dose = 200,
+    times = c(1, 4), strata_nodes = 5L))
+
+  g0 <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(mk())))
+  g1 <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    mk(), analysis_covs = c("WT", "CRCL", "ALB"), analysis_ui = ana)))
+  expect_equal(length(g0), 5L^3L)     # product grid, as before
+  expect_equal(length(g1), 5L^2L)     # both models rank 1 -> span is rank 2
+  # The weights are still a partition of n, whatever the design.
+  expect_equal(sum(vapply(g1, function(z) z$n, 0)), 300)
+  # And the analysis model does not travel past the cut.
+  expect_true(all(vapply(g1, function(z) is.null(z[[".adm_ana_ui"]]), NA)))
+})
+
+test_that("a NORMAL margin keeps the product grid", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The span is read off a loading in the latent, which needs log(x) linear in
+  # it -- true for a lognormal margin and not for a normal one, where the logs
+  # are skewed and the rule would carry a bias no node count removes. Decline,
+  # do not approximate. (A TRUNCATED lognormal is a different case: the map is
+  # still linear, only the measure changes, which recombination handles.)
+  src <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  ana <- suppressMessages(rxode2::rxode2(src))
+  pop <- admPopulation(WT = c(mean = 76, sd = 15), CRCL = c(mean = 92, sd = 22),
+                       ALB = c(mean = 40, sd = 5), dist = "normal")
+  g <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    admStudies(a = admStudy(model = src, population = pop, n = 300L,
+                            dose = 200, times = c(1, 4), strata_nodes = 5L)),
+    analysis_covs = c("WT", "CRCL", "ALB"), analysis_ui = ana)))
+  expect_equal(length(g), 5L^3L)
+})
+
+test_that(".admCovRecombine keeps the moments and drops the atoms", {
+  set.seed(4)
+  n <- 2000L; a <- rnorm(n); b <- 0.6 * a + rnorm(n)
+  w <- runif(n); w <- w / sum(w)
+  for (d in c(4L, 6L, 8L)) {
+    P  <- admixr2:::.admCovMomentBasis(cbind(a, b), d)
+    rc <- admixr2:::.admCovRecombine(P, w)
+    # Caratheodory's bound: at most one atom per moment, and the kept atoms are
+    # drawn FROM the cloud, so each still carries its covariate vector.
+    expect_lte(length(rc$i), ncol(P))
+    expect_true(all(rc$i %in% seq_len(n)))
+    expect_true(all(rc$w > 0))
+    expect_equal(sum(rc$w), 1, tolerance = 1e-12)
+    expect_equal(as.numeric(crossprod(P[rc$i, , drop = FALSE], rc$w)),
+                 as.numeric(crossprod(P, w)), tolerance = 1e-9)
+  }
+})
+
+test_that(".admCovMomentDegree fits the moment count inside a node budget", {
+  for (n in c(9L, 25L, 49L, 81L, 121L)) {
+    d <- admixr2:::.admCovMomentDegree(n)
+    expect_lte((d + 1L) * (d + 2L) / 2L, n)      # fits
+    expect_gt((d + 2L) * (d + 3L) / 2L, n)       # and is the largest that does
+  }
+  # and the same rule in r coordinates, where choose(d + r, r) monomials have
+  # total degree at most d
+  for (r in 2:4) for (n in c(27L, 64L, 125L)) {
+    d <- admixr2:::.admCovMomentDegree(n, r)
+    expect_lte(choose(d + r, r), n)
+    expect_gt(choose(d + 1L + r, r), n)
+  }
+})
+
+test_that(".admCovRecombine keeps the moments of EVERY projected direction", {
+  # A rank-two source plus a rank-one analysis model spans three directions.
+  # Constraining only the first two leaves the third with no moment condition,
+  # so the retained atoms need not reproduce even its mean.
+  set.seed(11)
+  n <- 4000L; r <- 3L
+  Z <- matrix(rnorm(n * r), n, r) %*%
+    chol(matrix(c(1, .4, .2, .4, 1, .3, .2, .3, 1), 3, 3))
+  w <- runif(n); w <- w / sum(w)
+  ref <- c(colSums(Z * w), colSums(Z^2 * w))
+  for (nn in c(27L, 64L)) {
+    P  <- admixr2:::.admCovMomentBasis(Z, admixr2:::.admCovMomentDegree(nn, r))
+    rc <- admixr2:::.admCovRecombine(P, w)
+    Zc <- Z[rc$i, , drop = FALSE]
+    expect_equal(c(colSums(Zc * rc$w), colSums(Zc^2 * rc$w)), ref,
+                 tolerance = 1e-9)
+  }
+})
+
+test_that("a truncated margin is cut on the span, by recombination", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # `range` reshapes the measure on the span into something no Gaussian rule
+  # fits, so the nodes come from recombining a fine cloud instead. The design
+  # is admitted where it used to be declined.
+  src <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  ana <- suppressMessages(rxode2::rxode2(.pnd_allom_fix))
+  g <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    admStudies(a = admStudy(model = src, population = .pnd_pop(), n = 300L,
+                            dose = 200, times = c(1, 4), strata_nodes = 7L,
+                            range = list(WT = c(55, 105), CRCL = c(60, 130),
+                                         ALB = c(31, 49)))),
+    analysis_covs = c("WT", "CRCL", "ALB"), analysis_ui = ana)))
+  # Far fewer than the 7^3 the product grid would give, and the weights are
+  # still a partition of n.
+  expect_lt(length(g), 7L^3L)
+  expect_equal(sum(vapply(g, function(z) z$n, 0)), 300)
+  # Every node sits inside the enrolled range it was cut from.
+  wt <- vapply(g, function(z) z$cov$WT, 0)
+  expect_true(all(wt >= 55 & wt <= 105))
+})
+
+test_that("the projected design crosses the exact discrete enumeration", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # A discrete margin is enumerated, not projected -- it is latently independent
+  # of the rest, so within a level the continuous block keeps the same law and
+  # the level is a constant offset.
+  src <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
+          bsex <- .25; eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb*
+                  exp(bsex*SEX)
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  ui  <- suppressMessages(rxode2::rxode2(src))
+  p   <- admixr2:::.admDriverPinfo(ui, adghControl(studies = list(), print = 0L))
+  pop <- admPopulation(WT = c(mean = 76, sd = 15), CRCL = c(mean = 92, sd = 22),
+                       ALB = c(mean = 40, sd = 5), SEX = c(male = 0.55))
+  d  <- admixr2:::.admCovDirections(ui, p, pop)
+  sp <- admixr2:::.admCovSpan(list(d, d), d$Rc, d$pc)
+  expect_equal(sp$r, 2L)
+  des <- admixr2:::.admCovProjDesign(sp, admixr2:::.admCovDistCanon(pop),
+                                     d$cn, "SEX",
+                                     c("WT", "CRCL", "ALB", "SEX"), 7L)
+  expect_equal(nrow(des$X), 7L^2L * 2L)            # span nodes x levels
+  expect_equal(sum(des$W), 1, tolerance = 1e-12)
+  expect_setequal(unique(des$X[, "SEX"]), c(0, 1))
+  expect_setequal(colnames(des$X), c("WT", "CRCL", "ALB", "SEX"))
+
+  # ...and end to end: 5^2 x 2 rather than 5^3 x 2. The analysis model holds its
+  # loading still, which is what lets the nodes be cut once and baked in.
+  anaf <- suppressMessages(rxode2::rxode2(function() {
+    ini({ tcl <- log(3.2); tv <- log(21)
+          bwt <- fix(.60); bcr <- fix(.40); balb <- fix(.30); bsex <- fix(.25)
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb*
+                  exp(bsex*SEX)
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }))
+  g <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    admStudies(a = admStudy(model = src, population = pop, n = 300L,
+                            dose = 200, times = c(1, 4), strata_nodes = 5L)),
+    analysis_covs = c("WT", "CRCL", "ALB", "SEX"), analysis_ui = anaf)))
+  expect_equal(length(g), 5L^2L * 2L)
+  expect_equal(sum(vapply(g, function(z) z$n, 0)), 300)
+})
+
+test_that(".admStrataProj declines what it cannot project", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  ana <- suppressMessages(rxode2::rxode2(.pnd_allom))
+  base <- list(cov_dist = .pnd_pop(), .adm_ana_ui = ana)
+  cvs  <- c("WT", "CRCL", "ALB")
+  # no analysis model to span with
+  expect_null(admixr2:::.admStrataProj(list(cov_dist = .pnd_pop()), ana, cvs))
+  # nothing conditional
+  expect_null(admixr2:::.admStrataProj(base, ana, character(0)))
+  # no source model
+  expect_null(admixr2:::.admStrataProj(base, NULL, cvs))
+  # too few continuous covariates for J^2 to save anything
+  expect_null(admixr2:::.admStrataProj(
+    list(cov_dist = admPopulation(WT = c(mean = 76, sd = 15),
+                                  CRCL = c(mean = 92, sd = 22)),
+         .adm_ana_ui = ana), ana, c("WT", "CRCL")))
+  # an analysis model whose exponents the optimizer can still move: its loading
+  # sweeps all three covariate axes, so no span short of the full grid stays
+  # valid once the fit starts, and the design is declined rather than cut on a
+  # plane the loading will leave
+  expect_null(admixr2:::.admStrataProj(base, ana, cvs))
+  # and it DOES admit the case it is for, once those exponents are fixed
+  anaf <- suppressMessages(rxode2::rxode2(.pnd_allom_fix))
+  expect_false(is.null(admixr2:::.admStrataProj(
+    list(cov_dist = .pnd_pop(), .adm_ana_ui = anaf), ana, cvs)))
+})
+
+test_that("a movable analysis loading materialises the product grid exactly", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  # The nodes are cut once and baked into fixed `cov` values, so a span read off
+  # the starting values stops describing the analysis model as soon as the
+  # optimizer moves an exponent. Rather than compare objectives at a few points,
+  # assert the stronger thing the decline buys: with the exponents estimated the
+  # materialisation IS the product one, node for node and weight for weight, so
+  # no parameter point can tell them apart.
+  src <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); bwt <- .60; bcr <- .40; balb <- .30
+          eta.cl ~ .09; add.err <- .35 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^bwt*(CRCL/95)^bcr*(ALB/40)^balb
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  mk <- function() admStudies(a = admStudy(
+    model = src, population = .pnd_pop(), n = 300L, dose = 200,
+    times = c(1, 4), strata_nodes = 5L))
+  cv <- function(g) do.call(rbind, lapply(g, function(z) unlist(z$cov)))
+  nn <- function(g) vapply(g, function(z) z$n, 0)
+  g0 <- suppressMessages(suppressWarnings(admixr2:::.admMaterialise(mk())))
+
+  mat <- function(fn) suppressMessages(suppressWarnings(admixr2:::.admMaterialise(
+    mk(), analysis_covs = c("WT", "CRCL", "ALB"),
+    analysis_ui = suppressMessages(rxode2::rxode2(fn)))))
+  gf <- mat(.pnd_allom)          # exponents the optimizer can move
+  expect_equal(length(gf), length(g0))
+  expect_equal(cv(gf), cv(g0))
+  expect_equal(nn(gf), nn(g0))
+
+  # ...and the reduction is still there for the model that can hold its loading
+  gx <- mat(.pnd_allom_fix)
+  expect_equal(length(gx), 5L^2L)
+  expect_equal(sum(nn(gx)), 300)
+})
+
+test_that(".admCovReachable admits only a loading certified to hold still", {
+  skip_on_cran(); skip_if_not_installed("rxode2")
+  skip_if_not_installed("Deriv")
+  ctl <- adghControl(studies = list(), print = 0L)
+  re <- function(fn) {
+    ui <- suppressMessages(rxode2::rxode2(fn))
+    admixr2:::.admCovReachable(ui, admixr2:::.admDriverPinfo(ui, ctl),
+                               .pnd_pop())
+  }
+  # Estimated exponents move the loading, so there is nothing to certify; the
+  # same model with them fixed keeps the single direction .admCovDirections()
+  # reports, which is what makes the reduction safe to bake in.
+  expect_null(re(.pnd_allom))
+  expect_equal(re(.pnd_allom_fix)$r, 1L)
+  a <- .pnd_pinfo(.pnd_allom)
+  expect_equal(admixr2:::.admCovDirections(a$ui, a$pinfo, .pnd_pop())$r, 1L)
+
+  # AN INTERACTION IS STATIONARY IN EVERY COORDINATE at the starting point:
+  # `.18 + b1*b2` at b1 = b2 = 0 moves for no perturbation, one at a time or
+  # jointly, yet is 0.50 off-span once both move. Only differentiating catches
+  # it, which is why the certificate is symbolic rather than sampled.
+  inter <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); b1 <- 0; b2 <- 0
+          eta.cl ~ .09; add.err <- .6 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^.52*(CRCL/95)^.55*
+                  (ALB/40)^(.18 + b1*b2)
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  expect_null(re(inter))
+  expect_null(admixr2:::.admStrataProj(
+    list(cov_dist = .pnd_pop(), .adm_strata_nodes = 5L,
+         .adm_ana_ui = suppressMessages(rxode2::rxode2(inter))),
+    suppressMessages(rxode2::rxode2(inter)), c("WT", "CRCL", "ALB")))
+})
+
+test_that(".admCovLoadingInvariant differentiates rather than evaluates", {
+  skip_if_not_installed("Deriv")
+  inv <- function(expr, free, cn = c("WT", "CRCL", "ALB"))
+    admixr2:::.admCovLoadingInvariant(
+      list(lstExpr = list(call("<-", as.name("cl"), expr))), cn, free)
+
+  # a numeric exponent is constant in everything
+  expect_true(inv(quote(exp(tcl)*(WT/70)^0.52), c("tcl", "tv")))
+  # an estimated exponent is not
+  expect_false(inv(quote(exp(tcl)*(WT/70)^bwt), c("tcl", "bwt")))
+  # ...but IS once that coefficient stops being estimated
+  expect_true(inv(quote(exp(tcl)*(WT/70)^bwt), "tcl"))
+  # the interaction, refused on the identity and not on its value at zero
+  expect_false(inv(quote(exp(tcl)*(ALB/40)^(0.18 + b1*b2)), c("b1", "b2")))
+  # a nonlinear reparameterisation of the exponent
+  expect_false(inv(quote(exp(tcl)*(WT/70)^(exp(g1)/(1 + exp(g1)))), "g1"))
+  # a covariate reached through an intermediate is still followed
+  expect_false(admixr2:::.admCovLoadingInvariant(
+    list(lstExpr = list(call("<-", as.name("wtf"), quote((WT/70)^bwt)),
+                        call("<-", as.name("cl"), quote(exp(tcl)*wtf)))),
+    c("WT"), c("tcl", "bwt")))
+  # nothing estimated at all needs no derivative
+  expect_true(inv(quote(exp(tcl)*(WT/70)^bwt), character(0)))
+})
+
+
+test_that(".admCovFineJ budgets the truncated cloud before building it", {
+  # j^p atoms by choose(d + r, r) columns, neither bounded by the node count the
+  # design keeps: six covariates at j = 15 is 11.4e6 atoms and ~6.6 GB of basis
+  # alone. Checked arithmetically so the test never makes the allocation.
+  expect_equal(admixr2:::.admCovFineJ(3L, 2L, 9L), 15L)
+  expect_lt(admixr2:::.admCovFineJ(6L, 2L, 9L), 15L)
+  expect_lt(admixr2:::.admCovFineJ(7L, 2L, 9L),
+            admixr2:::.admCovFineJ(6L, 2L, 9L))
+  # whatever it returns stays inside the budget and can still carry the moments
+  for (p in 2:8) {
+    j <- admixr2:::.admCovFineJ(p, 2L, 9L)
+    if (is.null(j)) next
+    nc <- choose(admixr2:::.admCovMomentDegree(9L^2L, 2L) + 2L, 2L)
+    n  <- as.numeric(j)^p
+    expect_gte(n, nc)
+    expect_lte(8 * n * (p + 2 + nc), 2^30)
+  }
+  # nothing fits under a tiny budget, and that is a decline rather than a guess
+  expect_null(admixr2:::.admCovFineJ(6L, 2L, 9L, max_bytes = 1e3))
+})

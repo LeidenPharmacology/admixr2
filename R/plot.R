@@ -351,9 +351,16 @@ head.paged_df <- function(x, n = 6L, ...) {
     list(V = .admApplyResidTail(V, ap), mu = ap$mu)
   }
 
+  # ONE SOLVE PER GROUP. .sim_study() re-seeds on every call, so every study
+  # draws the SAME etas -- which means studies sharing an event table stack into
+  # one rxSolve exactly as the objective's do. This runs after every fit, for
+  # every study, so on a conditional source it was one call per node.
+  .cp_all <- .admAggSimAll(studies, .sim_study, rxMod, extra, out_var, sig_nms,
+                           pinfo_r, n_sim, n_eta, L, eta_nms, seed, sig_output)
+
   setNames(lapply(names(studies), function(nm) {
     s      <- studies[[nm]]
-    cp_mat <- .sim_study(s)
+    cp_mat <- .cp_all[[nm]]
     if (is.null(cp_mat)) return(NULL)
     mu     <- colMeans(cp_mat)
     # A joint unit's stacked mean vector spans several endpoints, so a single
@@ -421,6 +428,70 @@ head.paged_df <- function(x, n = 6L, ...) {
   # cheap case -- there is nothing to recompute -- so caching it buys nothing.
   if (any(!vapply(hit, is.null, logical(1)))) memo[[key]] <- hit
   hit
+}
+
+## Solve every study's diagnostic draw, grouping those that share an event
+## table into one call. Falls back to the per-study closure for anything a group
+## cannot take -- a joint unit, a study with no event key, or a failed batch --
+## so the result is the same however a study is routed.
+.admAggSimAll <- function(studies, sim_one, rxMod, extra, out_var, sig_nms,
+                          pinfo_r, n_sim, n_eta, L, eta_nms, seed, sig_output) {
+  nms <- names(studies)
+  out <- setNames(vector("list", length(nms)), nms)
+  solo <- vapply(studies, function(s)
+    isTRUE(s$is_joint) || is.null(s$ev_key) || !is.null(s$out_pair), logical(1))
+  # Only the OUTPUT has to match: .admSimulateMany() gives each study its own id
+  # range, so sources on different doses and schedules share one solve.
+  key <- ifelse(solo, paste0("solo", seq_along(nms)),
+                vapply(studies, function(s) s$output %||% out_var, ""))
+  eta <- .admAggEta(extra, n_sim, n_eta, L, eta_nms, seed)
+  for (k in unique(key)) {
+    ii <- which(key == k)
+    if (length(ii) == 1L || is.null(eta)) {
+      for (i in ii) out[[nms[i]]] <- sim_one(studies[[i]])
+      next
+    }
+    st <- lapply(ii, function(i) {
+      s <- studies[[i]]
+      if (!is.null(s[["cov_dist"]])) s$.adm_cov_path <- "rows"
+      tryCatch(.admStudyCovRows(s, pinfo_r, n_sim), error = function(e) s)
+    })
+    rxerr <- { so <- unique(sig_output[!is.na(sig_output)])
+               if (length(so)) paste0("rxerr.", so) else "rxerr.cp" }
+    cn <- c(names(extra$struct), eta_nms, sig_nms, rxerr)
+    pdf <- as.data.frame(matrix(0, nrow = n_sim, ncol = length(cn),
+                                dimnames = list(NULL, cn)))
+    pdf[, rxerr] <- 1
+    res <- tryCatch(.admSimulateMany(rxMod, extra$struct, sig_nms,
+                                     rep(list(eta), length(ii)), st,
+                                     studies[[ii[1L]]]$output %||% out_var,
+                                     rep(list(pdf), length(ii)), 1L,
+                                     sigdig = extra$sigdig),
+                    error = function(e) NULL)
+    if (is.null(res))
+      for (i in ii) out[[nms[i]]] <- sim_one(studies[[i]])
+    else
+      for (j in seq_along(ii)) out[[nms[ii[j]]]] <- res[[j]]
+  }
+  out
+}
+
+## The eta draw every diagnostic study shares -- .sim_study() re-seeds per call,
+## so this is the same matrix it would build each time.
+.admAggEta <- function(extra, n_sim, n_eta, L, eta_nms, seed) {
+  if (!(n_eta > 0 && !is.null(L))) return(NULL)
+  set.seed(seed)
+  .samp <- extra$sampling %||% "sobol"
+  z <- switch(.samp,
+    sobol  = qnorm(randtoolbox::sobol( n = n_sim, dim = n_eta)),
+    halton = qnorm(randtoolbox::halton(n = n_sim, dim = n_eta)),
+    torus  = qnorm(randtoolbox::torus( n = n_sim, dim = n_eta)),
+    lhs    = qnorm(.lhsSample(n_sim, n_eta)),
+    rnorm  = matrix(rnorm(n_sim * n_eta), nrow = n_sim),
+    qnorm(randtoolbox::sobol(n = n_sim, dim = n_eta)))
+  e <- z %*% t(L)
+  colnames(e) <- eta_nms
+  e
 }
 
 ## Attach `aggData` (observed + predicted moments per study) at the fit's own
