@@ -1821,6 +1821,13 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   sp <- .admCovSpan(dirs, dirs[[1L]]$Rc, dirs[[1L]]$pc)
   if (is.null(sp)) return(NULL)
   sp$trunc <- .tr
+  # A truncated span pays for a fine cloud. Size it here, where declining still
+  # means the product grid rather than a multi-gigabyte allocation mid-fit.
+  if (.tr) {
+    sp$fine <- .admCovFineJ(length(sp$cn), sp$r,
+                            s[[".adm_strata_nodes"]] %||% 9L)
+    if (is.null(sp$fine)) return(NULL)
+  }
   # The same span written in log(x): untruncated, z = (log x - meanlog)/sdlog,
   # so a latent loading q is the log(x) loading q/sdlog. Taken from the
   # UNtruncated spec, which is where that relation holds.
@@ -3733,6 +3740,25 @@ print.covDist <- function(x, ...) {
 # valid for the whole fit. Re-aiming at a perturbed value of each estimated
 # coefficient enumerates the reachable set, exactly so while the loading is
 # linear in them. Coefficients the covariates do not reach cost no rank.
+# Nodes per axis for the truncated cloud, or NULL when no size fits.
+#
+# The cloud is j^p atoms and the moment matrix is that many rows by
+# choose(d + r, r) columns, and neither is bounded by the node count the design
+# ends up with: six continuous covariates at j = 15 is 11.4 million atoms and
+# about 7 GB of basis alone, for a design that retains 78 nodes. Budgeted
+# BEFORE anything is allocated, so an over-budget projection is declined at
+# admission and the product grid is kept.
+.admCovFineJ <- function(p, r, n_nodes, j_max = 15L, max_bytes = 2^30) {
+  if (p < 1L) return(NULL)
+  nc <- choose(.admCovMomentDegree(as.integer(n_nodes)^r, r) + r, r)
+  for (j in seq.int(min(as.integer(j_max), 21L), 3L)) {
+    n <- as.numeric(j)^p
+    # the recombination cannot match more moments than it has atoms
+    if (n >= nc && 8 * n * (p + r + nc) <= max_bytes) return(as.integer(j))
+  }
+  NULL
+}
+
 .admCovReachable <- function(ui, pinfo, cov_dist, n_nodes = 7L, h = 0.25) {
   co <- tryCatch(.admCovCollapse(ui, pinfo, cov_dist, n_nodes),
                  error = function(e) NULL)
@@ -3743,9 +3769,26 @@ print.covDist <- function(x, ...) {
   if (is.null(st0)) return(NULL)
   fx   <- ui$iniDf$name[which(isTRUE(ui$iniDf$fix) | ui$iniDf$fix %in% TRUE)]
   free <- setdiff(intersect(names(st0), pinfo$struct_names), fx)
+  if (!length(free)) return(list(U = co$U, r = co$r, pc = co$pc, cn = co$cn,
+                                 Rc = co$Rc))
+  # One coordinate at a time is NOT enough. A loading nonlinear in the
+  # parameters can be stationary in every single coordinate at the starting
+  # point -- `(ALB/40)^(.18 + b1*b2)` at b1 = b2 = 0 moves for no single
+  # perturbation and turns 0.50 off-span once both move -- so the coordinate
+  # steps are followed by JOINT displacements. The points are a deterministic
+  # Sobol sequence, not drawn: a design that changed between two runs of the
+  # same fit would be worse than one that is merely conservative.
+  jd <- tryCatch(suppressWarnings(
+    stats::qnorm(randtoolbox::sobol(32L, dim = length(free), seed = 11L))),
+    error = function(e) NULL)
+  if (is.null(jd) || !all(is.finite(jd))) return(NULL)
+  steps <- c(lapply(free, function(nm) stats::setNames(h, nm)),
+             lapply(seq_len(nrow(jd)), function(i)
+               stats::setNames(1.5 * jd[i, ], free)))
   U <- co$U
-  for (nm in free) {
-    st <- st0; st[[nm]] <- st[[nm]] + h
+  for (d in steps) {
+    st <- st0
+    for (nm in names(d)) st[[nm]] <- st[[nm]] + d[[nm]]
     c2 <- .admCovRefresh(co, st)
     # A re-aim that cannot be made is a span that cannot be certified.
     if (is.null(c2) || isTRUE(c2$stale) || is.null(c2$U)) return(NULL)

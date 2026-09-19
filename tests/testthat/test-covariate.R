@@ -2210,4 +2210,40 @@ test_that(".admCovReachable spans every direction a free coefficient reaches", {
   expect_equal(rk(.pnd_allom_fix), 1L)
   a <- .pnd_pinfo(.pnd_allom)
   expect_equal(admixr2:::.admCovDirections(a$ui, a$pinfo, .pnd_pop())$r, 1L)
+
+  # AN INTERACTION IS STATIONARY IN EVERY SINGLE COORDINATE at the starting
+  # point: `.18 + b1*b2` at b1 = b2 = 0 moves for no one-at-a-time perturbation,
+  # and is 0.50 off-span once both move. The joint displacements catch it.
+  inter <- function() {
+    ini({ tcl <- log(3.2); tv <- log(21); b1 <- 0; b2 <- 0
+          eta.cl ~ .09; add.err <- .6 })
+    model({ cl <- exp(tcl + eta.cl)*(WT/70)^.52*(CRCL/95)^.55*
+                  (ALB/40)^(.18 + b1*b2)
+            v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) }) }
+  expect_gt(rk(inter), 1L)
+  expect_null(admixr2:::.admStrataProj(
+    list(cov_dist = .pnd_pop(), .adm_strata_nodes = 5L,
+         .adm_ana_ui = suppressMessages(rxode2::rxode2(inter))),
+    suppressMessages(rxode2::rxode2(inter)), c("WT", "CRCL", "ALB")))
+})
+
+test_that(".admCovFineJ budgets the truncated cloud before building it", {
+  # j^p atoms by choose(d + r, r) columns, neither bounded by the node count the
+  # design keeps: six covariates at j = 15 is 11.4e6 atoms and ~6.6 GB of basis
+  # alone. Checked arithmetically so the test never makes the allocation.
+  expect_equal(admixr2:::.admCovFineJ(3L, 2L, 9L), 15L)
+  expect_lt(admixr2:::.admCovFineJ(6L, 2L, 9L), 15L)
+  expect_lt(admixr2:::.admCovFineJ(7L, 2L, 9L),
+            admixr2:::.admCovFineJ(6L, 2L, 9L))
+  # whatever it returns stays inside the budget and can still carry the moments
+  for (p in 2:8) {
+    j <- admixr2:::.admCovFineJ(p, 2L, 9L)
+    if (is.null(j)) next
+    nc <- choose(admixr2:::.admCovMomentDegree(9L^2L, 2L) + 2L, 2L)
+    n  <- as.numeric(j)^p
+    expect_gte(n, nc)
+    expect_lte(8 * n * (p + 2 + nc), 2^30)
+  }
+  # nothing fits under a tiny budget, and that is a decline rather than a guess
+  expect_null(admixr2:::.admCovFineJ(6L, 2L, 9L, max_bytes = 1e3))
 })
