@@ -105,6 +105,19 @@ admStudy(
   per study and [`anova()`](https://rdrr.io/r/stats/anova.html) checks
   it.
 
+  Where the nodes are cut on the span of the source and analysis models
+  rather than the product grid, two error sources remain and neither is
+  reduced by raising `strata_nodes`. A `range` puts the nodes on a fine
+  cloud, which carries a quadrature error of its own, and the
+  recombination that thins that cloud preserves a set of polynomial
+  moments rather than the integrand the objective contains.
+  `strata_nodes` refines the moment matching against the same cloud.
+  admixr2 sizes and certifies the cloud at admission — against a coarser
+  cloud, and against nonlinear probes the recombination did not match by
+  construction — and keeps the product grid when it cannot. Untruncated
+  margins reproduce the product objective to ~1e-08; a truncated one to
+  ~3e-05.
+
 - range:
 
   Optional named list giving the covariate span the source ENROLLED,

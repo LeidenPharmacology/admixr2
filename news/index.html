@@ -60,7 +60,11 @@
 <h2 class="pkg-version" data-toc-text="0.4.1" id="admixr2-041">admixr2 0.4.1<a class="anchor" aria-label="anchor" href="#admixr2-041"></a></h2><p class="text-muted">CRAN release: 2026-09-16</p>
 <div class="section level3">
 <h3 id="new-features-0-4-1">New features<a class="anchor" aria-label="anchor" href="#new-features-0-4-1"></a></h3>
-<ul><li><p><strong>The mean and covariance panels are per SOURCE, not per stratum.</strong> A conditional source is collapsed by the mixture law, so <code>_s1</code>/<code>_s2</code> never reaches a figure.</p></li>
+<ul><li><p><strong>A conditional source is cut on the span of both models, not the product grid</strong> – 729 studies become 81, where the analysis exponents are fixed.</p></li>
+<li><p><strong>The projected design is admitted on a symbolic certificate</strong>: the covariate loading must differentiate to zero in every estimated parameter, or decline.</p></li>
+<li><p><strong>A truncated span certifies its cloud before using it</strong> – against a coarser cloud and against integrands the recombination did not match – or declines.</p></li>
+<li><p><strong>One <code>rxSolve</code> per group of studies, not one per study</strong>, across differing doses and schedules. A four-study fit: 126.4 s to 38.9 s, objective unchanged.</p></li>
+<li><p><strong>The mean and covariance panels are per SOURCE, not per stratum.</strong> A conditional source is collapsed by the mixture law, so <code>_s1</code>/<code>_s2</code> never reaches a figure.</p></li>
 <li><p><strong>The panels name what <code>V</code> contains</strong> – <code>BSV + covariate spread + sigma</code>, read off the fit – and the predicted ribbon shows the pre-sigma part inside.</p></li>
 <li><p><strong>A covariate the model does not read is dropped, not refused</strong>, so a nested pair shares one <code>studies</code> object and needs no <code>fix(0)</code>.</p></li>
 <li><p><strong><code>covMethod = "r,s"</code>: standard errors scored against the model’s own sampling law</strong> – an ADF sandwich <code>H^-1 J H^-1</code>, on all four estimators.</p></li>

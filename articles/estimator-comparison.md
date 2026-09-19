@@ -294,7 +294,7 @@ knitr::kable(tbl, caption = "Parameter estimates vs true values")
 | Parameter   |  True |    adfo |    admc |
 |:------------|------:|--------:|--------:|
 | exp(tcl)    |  5.00 |  4.9100 |  4.9628 |
-| exp(tv1)    | 10.00 |  7.3161 | 10.2582 |
+| exp(tv1)    | 10.00 |  7.3161 | 10.2581 |
 | exp(tv2)    | 30.00 | 32.3637 | 29.8857 |
 | exp(tq)     | 10.00 | 10.0853 |  9.7381 |
 | exp(tka)    |  1.00 |  0.8043 |  1.0302 |

@@ -139,23 +139,23 @@ admc -3351.844 -3329.844 -3258.199       1675.922
 ── Time (sec fit_multi$time): ──
 
   optimize covariance other elapsed
-1   40.497     18.813     0   59.31
+1   68.756      30.71     0  99.466
 
 ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 
                                   Parameter    Est.       SE  %RSE
 tcl                    Log clearance (L/hr)   1.603  0.01771 1.105
-tv1                  Log central volume (L)   2.328   0.1293 5.552
-tv2               Log peripheral volume (L)   3.398  0.04947 1.456
+tv1                  Log central volume (L)   2.328   0.1293 5.553
+tv2               Log peripheral volume (L)   3.398  0.04948 1.456
 tq        Log inter-compartmental CL (L/hr)   2.281  0.02542 1.114
-tka     Log absorption rate constant (1/hr) 0.02919   0.1192 408.2
+tka     Log absorption rate constant (1/hr) 0.02920   0.1192 408.2
 prop.sd      Proportional residual error SD  0.1900 0.003277 1.725
         Back-transformed(95%CI) BSV(CV%) Shrink(SD)%
 tcl        4.967 (4.797, 5.142)    32.32         NaN
 tv1        10.26 (7.963, 13.22)    32.98         NaN
 tv2        29.90 (27.14, 32.95)    32.07         NaN
 tq         9.789 (9.314, 10.29)    33.66         NaN
-tka       1.030 (0.8152, 1.301)    31.79         NaN
+tka       1.030 (0.8151, 1.301)    31.79         NaN
 prop.sd 0.1900 (0.1835, 0.1964)                     
  
   Covariance Type (fit_multi$covMethod): r,s
