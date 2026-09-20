@@ -139,7 +139,7 @@ admc -3351.844 -3329.844 -3258.199       1675.922
 ── Time (sec fit_multi$time): ──
 
   optimize covariance other elapsed
-1   68.756      30.71     0  99.466
+1   69.808     31.002     0  100.81
 
 ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 

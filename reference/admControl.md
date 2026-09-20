@@ -505,7 +505,7 @@ fit <- nlmixr2(
 #> | 0050     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.737 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09972 |   0.1085 |  0.09614 |
 #> | 0060     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.737 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
 #> | 0069 ✓   | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
-#> | 7.8 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 7.5 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, Sens-Hessian, sandwich, 12 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
@@ -519,7 +519,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance other elapsed
-#> 1    7.754     15.578     0  23.332
+#> 1    7.526     15.401     0  22.927
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
