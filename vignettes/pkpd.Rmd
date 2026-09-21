@@ -258,7 +258,8 @@ ggplot(pred, aes(t, dbp, colour = arm)) +
                                 upper = dbp + qnorm(.75) * sd,
                                 ymax = dbp + 1.5 * sd),
                aes(x = t, ymin = ymin, lower = lower, middle = middle,
-                   upper = upper, ymax = ymax, fill = arm),
+                   upper = upper, ymax = ymax, fill = arm,
+                   group = interaction(arm, t)),
                stat = "identity", width = 0.55, alpha = 0.22,
                colour = "grey35", inherit.aes = FALSE, show.legend = FALSE) +
   scale_colour_manual(values = pal) +
