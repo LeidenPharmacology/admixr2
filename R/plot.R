@@ -2184,12 +2184,6 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
     mu         <- ag$pred$E
     V_pred     <- ag$pred$V
     pred_sd    <- sqrt(diag(V_pred))
-    # The structural part, if this error model left it on `V`'s scale. Drawn as
-    # an INNER band so the gap to the outer one is the residual error: a reader
-    # seeing the predicted spread miss the observed one can then tell whether
-    # to look at omega and the covariates, or at sigma.
-    V_str      <- ag$pred$V_struct
-    str_sd     <- if (!is.null(V_str)) sqrt(diag(as.matrix(V_str))) else NULL
     obs_sd     <- sqrt(diag(s$V))
     resid_mean <- as.numeric(s$E) - mu
     se_mean    <- sqrt(diag(V_pred) / n_obs)
@@ -2205,11 +2199,7 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
     df_pred <- data.frame(time      = s$times,
                           pred_mean = mu,
                           pred_lo   = mu - pred_sd,
-                          pred_hi   = mu + pred_sd,
-                          str_lo    = if (is.null(str_sd)) NA_real_
-                                      else mu - str_sd,
-                          str_hi    = if (is.null(str_sd)) NA_real_
-                                      else mu + str_sd)
+                          pred_hi   = mu + pred_sd)
     df_res  <- data.frame(time  = s$times,
                           resid = resid_mean,
                           lo    = -2 * se_mean,
@@ -2223,9 +2213,9 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
     # it and nothing implemented it: patchwork's `|` does not link scales, so
     # the observed and predicted panels were drawn on whatever limits each
     # needed and read as agreeing more, or less, than they do. The limits span
-    # both panels' ribbons, including the pre-sigma band when there is one.
+    # both panels' ribbons.
     .ylim <- range(c(df_obs$obs_lo, df_obs$obs_hi, df_pred$pred_lo,
-                     df_pred$pred_hi, df_pred$str_lo, df_pred$str_hi),
+                     df_pred$pred_hi),
                    na.rm = TRUE, finite = TRUE)
     if (!all(is.finite(.ylim)) || diff(.ylim) <= 0) .ylim <- NULL
 
@@ -2244,22 +2234,12 @@ plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
     p_pred <- ggplot2::ggplot(df_pred, ggplot2::aes(x = time)) +
       ggplot2::geom_ribbon(ggplot2::aes(ymin = pred_lo, ymax = pred_hi),
                            fill = "black", alpha = 0.15)
-    # Inner band = the model's OWN spread, before residual error. The gap to the
-    # outer band is sigma, which is what tells a reader whether a predicted
-    # spread that misses the observed one is an omega/covariate problem or an
-    # error-model one.
-    if (!is.null(str_sd))
-      p_pred <- p_pred + ggplot2::geom_ribbon(
-        ggplot2::aes(ymin = str_lo, ymax = str_hi), fill = "black",
-        alpha = 0.18, na.rm = TRUE)
     p_pred <- p_pred +
       ggplot2::geom_line(ggplot2::aes(y = pred_mean), colour = "black", linewidth = 1) +
       ggplot2::geom_point(ggplot2::aes(y = pred_mean), colour = "black", size = 2) +
       ggplot2::labs(title = "Predicted", x = NULL, y = NULL,
-                    subtitle = paste0("+/-1 SD  [", v_parts, "]",
-                                      if (!is.null(V_str))
-                                        "\ninner band drops sigma"
-                                      else "\nshared y scale")) +
+                    subtitle = paste0("+/-1 SD  [", v_parts,
+                                      "]\nshared y scale")) +
       .admPanelTheme()
     if (!is.null(.ylim))
       p_pred <- p_pred + ggplot2::coord_cartesian(ylim = .ylim)
