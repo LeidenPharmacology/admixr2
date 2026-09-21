@@ -22,9 +22,9 @@ across renal function and fitted one.
 
 | cohort   | median_CRCL | CL_at_70kg | V_at_70kg | sex_effect |
 |:---------|------------:|-----------:|----------:|-----------:|
-| normal   |          95 |      5.256 |    50.036 |      0.163 |
-| mild     |          59 |      5.125 |    49.980 |      0.118 |
-| moderate |          38 |      3.005 |    49.997 |      0.176 |
+| normal   |          95 |      5.136 |    50.037 |      0.184 |
+| mild     |          59 |      4.926 |    49.984 |      0.158 |
+| moderate |          38 |      2.938 |    50.005 |      0.196 |
 
 Three independent analyses, three different models, each sound on its
 own data. {.table}
@@ -171,24 +171,24 @@ knitr::kable(data.frame(
 
 | parameter                         | truth | estimate |
 |:----------------------------------|------:|---------:|
-| CL at 70 kg, CRCL 90, women (L/h) |  5.00 |    5.110 |
-| V at 70 kg (L)                    | 50.00 |   50.010 |
-| renal exponent                    |  0.60 |    0.595 |
-| sex effect (log)                  |  0.18 |    0.153 |
-| additive SD (mg/L)                |  0.08 |    0.079 |
-| omega (eta.cl)                    |  0.05 |    0.049 |
+| CL at 70 kg, CRCL 90, women (L/h) |  5.00 |    4.987 |
+| V at 70 kg (L)                    | 50.00 |   50.060 |
+| renal exponent                    |  0.60 |    0.591 |
+| sex effect (log)                  |  0.18 |    0.180 |
+| additive SD (mg/L)                |  0.08 |    0.080 |
+| omega (eta.cl)                    |  0.05 |    0.065 |
 
 Recovered from three analyses, none of which contained a renal term.
 {.table}
 
-The renal exponent comes back at 0.60 against a truth of 0.6, out of
+The renal exponent comes back at 0.59 against a truth of 0.6, out of
 three analyses only one of which contained a renal term — and that one
 put it at 0.57. There are **no intervals**: every source here is a
 published model rather than a sample, so there is no sampling law to
 build one from and admixr2 reports no standard error at all.
 
-The sex effect shows what pooling costs. The three trials reported 0.16,
-0.12, 0.18 for a quantity genuinely identical in all three; sampling
+The sex effect shows what pooling costs. The three trials reported 0.18,
+0.16, 0.20 for a quantity genuinely identical in all three; sampling
 noise alone put them that far apart. Reconciling that is not free — some
 of it lands in the other parameters, which is why the renal exponent
 comes back a little below its truth.
@@ -234,13 +234,13 @@ and it decides nothing:
 
 | form            | objective | bcrcl |
 |:----------------|----------:|------:|
-| power (correct) | -13644.67 |  0.60 |
-| linear          | -13641.74 |  0.69 |
+| power (correct) | -13334.16 |  0.59 |
+| linear          | -13331.38 |  0.69 |
 
 Same parameter count, so no LRT – and the objectives barely differ.
 {.table}
 
-    #> dOFV (linear - power) = +2.93 on 0 extra parameters
+    #> dOFV (linear - power) = +2.78 on 0 extra parameters
 
 The plot decides it.
 
@@ -278,8 +278,8 @@ Mean standardised residual by source, in order of increasing `CRCL` (38,
 
 | form            | moderate | mild  | normal |
 |-----------------|----------|-------|--------|
-| power (correct) | +0.06    | +0.11 | +0.13  |
-| linear          | +0.12    | -0.00 | +0.22  |
+| power (correct) | +0.15    | +0.36 | +0.17  |
+| linear          | +0.20    | +0.25 | +0.26  |
 
 The linear row is a **U**: both extremes above zero, the middle pulled
 to zero. The power row has no such shape.

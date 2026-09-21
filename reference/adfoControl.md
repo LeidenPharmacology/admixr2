@@ -364,7 +364,7 @@ library(rxode2)
 #>   no cache: create with `rxCreateCache()`
 library(nlmixr2)
 #> ── Attaching packages ───────────────────────────────────────── nlmixr2 7.0.1 ──
-#> ★ lotri        1.0.5      ★ nlmixr2est   7.0.2 
+#> ★ lotri        1.0.5      ★ nlmixr2est   7.1.0 
 #> ★ nlmixr2data  2.0.10     ★ nlmixr2extra 5.2.0 
 #> ★ nlmixr2save  0.2.0      ★ nlmixr2plot  5.1.0 
 #> ── Optional Packages Not Installed ──────────────────────────── nlmixr2 7.0.1 ──
@@ -455,7 +455,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>         optimize covariance other elapsed other
-#> elapsed    0.583      0.342     0   0.925 4.794
+#> elapsed    0.572      0.343     0   0.915 4.821
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
@@ -465,6 +465,17 @@ print(fit)
 #> prop.sd 0.3900 0.008281  2.124 0.3900 (0.3737, 0.4062)                     
 #>  
 #>   Covariance Type (fit$covMethod): r,s
+#>   Some strong fixed parameter correlations exist (fit$cor) :
+#>                 cor:tv,tcl        cor:prop.sd,tcl      cor:om.eta.cl,tcl 
+#>                0.0767                 -0.0534                   0.755  
+#>       cor:om.eta.v,tcl         cor:prop.sd,tv       cor:om.eta.cl,tv 
+#>               -0.0111                   0.742                  0.144   
+#>        cor:om.eta.v,tv  cor:om.eta.cl,prop.sd   cor:om.eta.v,prop.sd 
+#>                -0.839                 0.0341                  -0.733  
+#> cor:om.eta.v,om.eta.cl 
+#>               -0.0385   
+#>  
+#> 
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 

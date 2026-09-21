@@ -155,7 +155,7 @@ adgh -1323.144 -1313.144 -1292.943       661.5719
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    0.448      0.186     0   0.634 3.554
+elapsed    0.434      0.171     0   0.605 3.539
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -169,6 +169,17 @@ tv             49.96 (47.44, 52.62)    19.68         NaN
 prop.cp 0.09732 (-0.008190, 0.2028)                     
  
   Covariance Type (fit$covMethod): r,s
+  Some strong fixed parameter correlations exist (fit$cor) :
+                cor:tv,tcl        cor:prop.cp,tcl      cor:om.eta.cl,tcl 
+               0.0148                -0.0733                 0.0492  
+      cor:om.eta.v,tcl         cor:prop.cp,tv       cor:om.eta.cl,tv 
+               0.0447                 -0.138                 0.0845  
+       cor:om.eta.v,tv  cor:om.eta.cl,prop.cp   cor:om.eta.v,prop.cp 
+                0.117                 -0.592                 -0.831  
+cor:om.eta.v,om.eta.cl 
+                0.469  
+ 
+
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
@@ -197,7 +208,7 @@ adgh -2942.688 -2932.688 -2912.487       1471.344
 ── Time (sec fit_wrong$time): ──
 
   optimize covariance other elapsed
-1    0.775      0.139     0   0.914
+1    0.733      0.127     0    0.86
 
 ── Population Parameters (fit_wrong$parFixed or fit_wrong$parFixedDf): ──
 
@@ -211,6 +222,17 @@ tv              49.79 (49.34, 50.24)    2.935         NaN
 prop.cp 0.008208 (0.001056, 0.01536)                     
  
   Covariance Type (fit_wrong$covMethod): r,s
+  Some strong fixed parameter correlations exist (fit_wrong$cor) :
+                cor:tv,tcl        cor:prop.cp,tcl      cor:om.eta.cl,tcl 
+               0.0139                 -0.780                  0.118  
+      cor:om.eta.v,tcl         cor:prop.cp,tv       cor:om.eta.cl,tv 
+                0.269                 -0.209                 -0.493  
+       cor:om.eta.v,tv  cor:om.eta.cl,prop.cp   cor:om.eta.v,prop.cp 
+                0.557                  0.134                 -0.258  
+cor:om.eta.v,om.eta.cl 
+               -0.345  
+ 
+
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit_wrong$omega) 
     or correlation (fit_wrong$omegaR; diagonals=SDs)

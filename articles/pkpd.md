@@ -152,7 +152,7 @@ adgh 1749.121 1769.121 1820.975      -874.5605
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    1.712      0.807     0   2.519 4.654
+elapsed    1.609      0.778     0   2.387 4.663
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -174,6 +174,21 @@ prop.cp 0.09973 (0.06028, 0.1392)
 add.dbp  3.012 (-0.008698, 6.034)                     
  
   Covariance Type (fit$covMethod): r,s
+  Some strong fixed parameter correlations exist (fit$cor) :
+             cor:tv,tcl         cor:te0,tcl       cor:temax,tcl       cor:tec50,tcl 
+           -0.0159             -0.0840              -0.104              -0.102  
+    cor:prop.cp,tcl     cor:add.dbp,tcl          cor:te0,tv        cor:temax,tv 
+           -0.0639              0.0282              0.0665              0.0825  
+       cor:tec50,tv      cor:prop.cp,tv      cor:add.dbp,tv       cor:temax,te0 
+           -0.0408             -0.0552             -0.0227               0.707  
+      cor:tec50,te0     cor:prop.cp,te0     cor:add.dbp,te0     cor:tec50,temax 
+            -0.379             0.00817              -0.119             0.00645  
+  cor:prop.cp,temax   cor:add.dbp,temax   cor:prop.cp,tec50   cor:add.dbp,tec50 
+            0.0103              -0.166             0.00670              0.0752  
+cor:add.dbp,prop.cp 
+          -0.00291  
+ 
+
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
@@ -194,6 +209,54 @@ plot(fit, which = "mean")
 ```
 
 ![](pkpd_files/figure-html/plot-1.png)![](pkpd_files/figure-html/plot-2.png)![](pkpd_files/figure-html/plot-3.png)![](pkpd_files/figure-html/plot-4.png)
+
+### PK model against data
+
+As in [Several observed
+compartments](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.md),
+the line and band show the fitted population mean ± SD. Points and error
+bars show the published concentration summaries. The band includes
+between-subject variation from `cl` and `v`, but excludes residual
+error.
+
+``` r
+
+theta_pk <- fit$theta
+omega_pk <- fit$omega[c("eta.cl", "eta.v"), c("eta.cl", "eta.v"), drop = FALSE]
+pk_sim <- rxode2::rxSolve(rxode2::rxode2({
+  cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v)
+  d/dt(central) <- -(cl/v) * central
+  cp <- central / v
+}), params = theta_pk[c("tcl", "tv")], omega = omega_pk,
+  nSub = 1000L,
+  events = rxode2::et(amt = 50, cmt = "central") |>
+    rxode2::et(seq(0.25, 24, by = 0.25)), returnType = "data.frame")
+pk_band <- data.frame(
+  time = sort(unique(pk_sim$time)),
+  mean = as.vector(tapply(pk_sim$cp, pk_sim$time, mean)),
+  sd = as.vector(tapply(pk_sim$cp, pk_sim$time, sd)))
+pk_obs <- data.frame(time = pk_times, mean = conc50_mean, sd = conc50_sd)
+
+ggplot() +
+  geom_ribbon(data = pk_band,
+              aes(time, ymin = mean - sd, ymax = mean + sd),
+              fill = "#0072B2", alpha = 0.15) +
+  geom_line(data = pk_band, aes(time, mean), colour = "#0072B2", linewidth = 1) +
+  geom_errorbar(data = pk_obs,
+                aes(time, ymin = mean - sd, ymax = mean + sd),
+                colour = "#0072B2", width = 0.4, linewidth = 0.6) +
+  geom_point(data = pk_obs, aes(time, mean), shape = 21,
+             fill = "#0072B2", colour = "white", size = 3, stroke = 0.7) +
+  labs(x = "Time (h)", y = "Plasma concentration (mg/L)",
+       title = "50 mg: fitted PK prediction vs. observed data",
+       subtitle = "Line + band: model (mean ± SD)   ·   Points + bars: data (mean ± SD)") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold", size = 13),
+        plot.subtitle = element_text(colour = "grey40", size = 9),
+        panel.grid.minor = element_blank())
+```
+
+![](pkpd_files/figure-html/pk-plot-1.png)
 
 ## Predicting an unstudied dose
 
@@ -249,8 +312,16 @@ pal <- c("50 mg (studied)"    = "#0072B2",
 ggplot(pred, aes(t, dbp, colour = arm)) +
   geom_hline(yintercept = e0, linetype = "dashed", colour = "grey55") +
   geom_line(aes(linetype = arm), linewidth = 1) +
-  geom_point(data = obs, aes(fill = arm), shape = 21, colour = "white",
-             size = 2.6, stroke = 0.7, show.legend = FALSE) +
+  geom_boxplot(data = transform(obs, ymin = dbp - 1.5 * sd,
+                                lower = dbp - qnorm(.75) * sd,
+                                middle = dbp,
+                                upper = dbp + qnorm(.75) * sd,
+                                ymax = dbp + 1.5 * sd),
+               aes(x = t, ymin = ymin, lower = lower, middle = middle,
+                   upper = upper, ymax = ymax, fill = arm,
+                   group = interaction(arm, t)),
+               stat = "identity", width = 0.55, alpha = 0.22,
+               colour = "grey35", inherit.aes = FALSE, show.legend = FALSE) +
   scale_colour_manual(values = pal) +
   scale_fill_manual(values = pal) +
   scale_linetype_manual(values = c("50 mg (studied)"    = "solid",
@@ -260,7 +331,7 @@ ggplot(pred, aes(t, dbp, colour = arm)) +
                      expand = expansion(mult = c(0.01, 0.02))) +
   labs(x = "Time (h)", y = "DBP (mmHg)", colour = NULL, linetype = NULL,
        title = "150 mg predicted from the 50 mg and 400 mg arms",
-       subtitle = "Points: observed means. Dashed line: baseline.") +
+       subtitle = "Boxes: approximate observed distributions from mean ± SD (normal assumption). Dashed line: baseline.") +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top", legend.justification = "left",
         plot.title = element_text(face = "bold", size = 13),

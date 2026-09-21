@@ -505,7 +505,7 @@ fit <- nlmixr2(
 #> | 0050     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.737 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09972 |   0.1085 |  0.09614 |
 #> | 0060     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.737 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
 #> | 0069 ✓   | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |
-#> | 7.5 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
+#> | 7.4 sec  |          |          |          |          |          |          |          |          |          |          |          |          |
 #>   Computing covariance (R method, Sens-Hessian, sandwich, 12 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
@@ -519,7 +519,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>   optimize covariance other elapsed
-#> 1    7.526     15.401     0  22.927
+#> 1    7.364      15.39     0  22.754
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
@@ -532,6 +532,47 @@ print(fit)
 #> prop.sd  0.1894 0.003291 1.737 0.1894 (0.1830, 0.1959)                     
 #>  
 #>   Covariance Type (fit$covMethod): r,s
+#>   Some strong fixed parameter correlations exist (fit$cor) :
+#>                 cor:tv1,tcl             cor:tv2,tcl              cor:tq,tcl 
+#>                  0.301                  -0.483                   0.206   
+#>             cor:tka,tcl         cor:prop.sd,tcl       cor:om.eta.cl,tcl 
+#>                  0.330                  0.0481                   -0.125   
+#>       cor:om.eta.v1,tcl       cor:om.eta.v2,tcl        cor:om.eta.q,tcl 
+#>                 -0.243                   -0.183                    0.253   
+#>       cor:om.eta.ka,tcl             cor:tv2,tv1              cor:tq,tv1 
+#>                  0.203                   -0.838                   0.217   
+#>             cor:tka,tv1         cor:prop.sd,tv1       cor:om.eta.cl,tv1 
+#>                  0.981                 -0.0353                 -0.00544   
+#>       cor:om.eta.v1,tv1       cor:om.eta.v2,tv1        cor:om.eta.q,tv1 
+#>                 -0.617                  0.0743                    0.510  
+#>       cor:om.eta.ka,tv1              cor:tq,tv2             cor:tka,tv2 
+#>                  0.629                  -0.269                   -0.846  
+#>         cor:prop.sd,tv2       cor:om.eta.cl,tv2       cor:om.eta.v1,tv2 
+#>                 0.0123                   0.0571                    0.543  
+#>       cor:om.eta.v2,tv2        cor:om.eta.q,tv2       cor:om.eta.ka,tv2 
+#>                 0.0582                   -0.450                  -0.556  
+#>              cor:tka,tq          cor:prop.sd,tq        cor:om.eta.cl,tq 
+#>                  0.257                 -0.00147                  -0.0496   
+#>        cor:om.eta.v1,tq        cor:om.eta.v2,tq         cor:om.eta.q,tq 
+#>                 -0.131                   0.0657                    0.326  
+#>        cor:om.eta.ka,tq         cor:prop.sd,tka       cor:om.eta.cl,tka 
+#>             0.00000856                  -0.0383                 -0.00740   
+#>       cor:om.eta.v1,tka       cor:om.eta.v2,tka        cor:om.eta.q,tka 
+#>                 -0.605                  0.0691                    0.537  
+#>       cor:om.eta.ka,tka   cor:om.eta.cl,prop.sd   cor:om.eta.v1,prop.sd 
+#>                  0.618                 -0.0349                  -0.0447   
+#>   cor:om.eta.v2,prop.sd    cor:om.eta.q,prop.sd   cor:om.eta.ka,prop.sd 
+#>                 -0.183                   -0.159                  -0.0172   
+#> cor:om.eta.v1,om.eta.cl cor:om.eta.v2,om.eta.cl  cor:om.eta.q,om.eta.cl 
+#>                 0.0270                   -0.136                  -0.0149   
+#> cor:om.eta.ka,om.eta.cl cor:om.eta.v2,om.eta.v1  cor:om.eta.q,om.eta.v1 
+#>                -0.0204                  -0.0181                   -0.266   
+#> cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2 
+#>                 -0.642                  -0.120                   0.0407   
+#>  cor:om.eta.ka,om.eta.q 
+#>                  0.191   
+#>  
+#> 
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 

@@ -90,7 +90,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Multiple studies</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/multiple-studies.Rmd" class="external-link"><code>vignettes/multiple-studies.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/docs/pkpd-graphics/vignettes/multiple-studies.Rmd" class="external-link"><code>vignettes/multiple-studies.Rmd</code></a></small>
       <div class="d-none name"><code>multiple-studies.Rmd</code></div>
     </div>
 
@@ -229,7 +229,7 @@ trials at once:</p>
 <span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_multi<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb4-24"><a href="#cb4-24" tabindex="-1"></a></span>
 <span id="cb4-25"><a href="#cb4-25" tabindex="-1"></a>  optimize covariance other elapsed</span>
-<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">69.808</span>     <span class="fl">31.002</span>     <span class="dv">0</span>  <span class="fl">100.81</span></span>
+<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">67.994</span>      <span class="fl">30.46</span>     <span class="dv">0</span>  <span class="fl">98.454</span></span>
 <span id="cb4-27"><a href="#cb4-27" tabindex="-1"></a></span>
 <span id="cb4-28"><a href="#cb4-28" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_multi<span class="sc">$</span>parFixed or fit_multi<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb4-29"><a href="#cb4-29" tabindex="-1"></a></span>
@@ -249,13 +249,54 @@ trials at once:</p>
 <span id="cb4-43"><a href="#cb4-43" tabindex="-1"></a>prop.sd <span class="fl">0.1900</span> (<span class="fl">0.1835</span>, <span class="fl">0.1964</span>)                     </span>
 <span id="cb4-44"><a href="#cb4-44" tabindex="-1"></a> </span>
 <span id="cb4-45"><a href="#cb4-45" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit_multi<span class="sc">$</span>covMethod)<span class="sc">:</span> r,s</span>
-<span id="cb4-46"><a href="#cb4-46" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
-<span id="cb4-47"><a href="#cb4-47" tabindex="-1"></a>  Full BSV <span class="fu">covariance</span> (fit_multi<span class="sc">$</span>omega) </span>
-<span id="cb4-48"><a href="#cb4-48" tabindex="-1"></a>    or <span class="fu">correlation</span> (fit_multi<span class="sc">$</span>omegaR; <span class="at">diagonals=</span>SDs)</span>
-<span id="cb4-49"><a href="#cb4-49" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> <span class="sc">$</span>shrink </span>
-<span id="cb4-50"><a href="#cb4-50" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit_multi<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
-<span id="cb4-51"><a href="#cb4-51" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit_multi<span class="sc">$</span>message)<span class="sc">:</span>  </span>
-<span id="cb4-52"><a href="#cb4-52" tabindex="-1"></a>    NLOPT_FAILURE<span class="sc">:</span> Generic failure code. </span></code></pre></div>
+<span id="cb4-46"><a href="#cb4-46" tabindex="-1"></a>  Some strong fixed parameter correlations <span class="fu">exist</span> (fit_multi<span class="sc">$</span>cor) <span class="sc">:</span></span>
+<span id="cb4-47"><a href="#cb4-47" tabindex="-1"></a>                cor<span class="sc">:</span>tv1,tcl             cor<span class="sc">:</span>tv2,tcl              cor<span class="sc">:</span>tq,tcl </span>
+<span id="cb4-48"><a href="#cb4-48" tabindex="-1"></a>                 <span class="fl">0.342</span>                  <span class="sc">-</span><span class="fl">0.508</span>                   <span class="fl">0.202</span>  </span>
+<span id="cb4-49"><a href="#cb4-49" tabindex="-1"></a>            cor<span class="sc">:</span>tka,tcl         cor<span class="sc">:</span>prop.sd,tcl       cor<span class="sc">:</span>om.eta.cl,tcl </span>
+<span id="cb4-50"><a href="#cb4-50" tabindex="-1"></a>                 <span class="fl">0.367</span>                  <span class="fl">0.0553</span>                 <span class="sc">-</span><span class="fl">0.0961</span>  </span>
+<span id="cb4-51"><a href="#cb4-51" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.v1,tcl       cor<span class="sc">:</span>om.eta.v2,tcl        cor<span class="sc">:</span>om.eta.q,tcl </span>
+<span id="cb4-52"><a href="#cb4-52" tabindex="-1"></a>                <span class="sc">-</span><span class="fl">0.322</span>                  <span class="sc">-</span><span class="fl">0.191</span>                   <span class="fl">0.249</span>  </span>
+<span id="cb4-53"><a href="#cb4-53" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.ka,tcl             cor<span class="sc">:</span>tv2,tv1              cor<span class="sc">:</span>tq,tv1 </span>
+<span id="cb4-54"><a href="#cb4-54" tabindex="-1"></a>                 <span class="fl">0.305</span>                  <span class="sc">-</span><span class="fl">0.856</span>                   <span class="fl">0.211</span>  </span>
+<span id="cb4-55"><a href="#cb4-55" tabindex="-1"></a>            cor<span class="sc">:</span>tka,tv1         cor<span class="sc">:</span>prop.sd,tv1       cor<span class="sc">:</span>om.eta.cl,tv1 </span>
+<span id="cb4-56"><a href="#cb4-56" tabindex="-1"></a>                 <span class="fl">0.984</span>                 <span class="sc">-</span><span class="fl">0.0463</span>                <span class="sc">-</span><span class="fl">0.00150</span>  </span>
+<span id="cb4-57"><a href="#cb4-57" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.v1,tv1       cor<span class="sc">:</span>om.eta.v2,tv1        cor<span class="sc">:</span>om.eta.q,tv1 </span>
+<span id="cb4-58"><a href="#cb4-58" tabindex="-1"></a>                <span class="sc">-</span><span class="fl">0.683</span>                  <span class="fl">0.0883</span>                   <span class="fl">0.500</span>  </span>
+<span id="cb4-59"><a href="#cb4-59" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.ka,tv1              cor<span class="sc">:</span>tq,tv2             cor<span class="sc">:</span>tka,tv2 </span>
+<span id="cb4-60"><a href="#cb4-60" tabindex="-1"></a>                 <span class="fl">0.701</span>                  <span class="sc">-</span><span class="fl">0.247</span>                  <span class="sc">-</span><span class="fl">0.861</span>  </span>
+<span id="cb4-61"><a href="#cb4-61" tabindex="-1"></a>        cor<span class="sc">:</span>prop.sd,tv2       cor<span class="sc">:</span>om.eta.cl,tv2       cor<span class="sc">:</span>om.eta.v1,tv2 </span>
+<span id="cb4-62"><a href="#cb4-62" tabindex="-1"></a>                <span class="fl">0.0142</span>                  <span class="fl">0.0456</span>                   <span class="fl">0.632</span>  </span>
+<span id="cb4-63"><a href="#cb4-63" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.v2,tv2        cor<span class="sc">:</span>om.eta.q,tv2       cor<span class="sc">:</span>om.eta.ka,tv2 </span>
+<span id="cb4-64"><a href="#cb4-64" tabindex="-1"></a>                <span class="fl">0.0501</span>                  <span class="sc">-</span><span class="fl">0.438</span>                  <span class="sc">-</span><span class="fl">0.648</span>  </span>
+<span id="cb4-65"><a href="#cb4-65" tabindex="-1"></a>             cor<span class="sc">:</span>tka,tq          cor<span class="sc">:</span>prop.sd,tq        cor<span class="sc">:</span>om.eta.cl,tq </span>
+<span id="cb4-66"><a href="#cb4-66" tabindex="-1"></a>                 <span class="fl">0.253</span>                 <span class="sc">-</span><span class="fl">0.0202</span>                 <span class="sc">-</span><span class="fl">0.0463</span>  </span>
+<span id="cb4-67"><a href="#cb4-67" tabindex="-1"></a>       cor<span class="sc">:</span>om.eta.v1,tq        cor<span class="sc">:</span>om.eta.v2,tq         cor<span class="sc">:</span>om.eta.q,tq </span>
+<span id="cb4-68"><a href="#cb4-68" tabindex="-1"></a>                <span class="sc">-</span><span class="fl">0.111</span>                  <span class="fl">0.0774</span>                   <span class="fl">0.337</span>  </span>
+<span id="cb4-69"><a href="#cb4-69" tabindex="-1"></a>       cor<span class="sc">:</span>om.eta.ka,tq         cor<span class="sc">:</span>prop.sd,tka       cor<span class="sc">:</span>om.eta.cl,tka </span>
+<span id="cb4-70"><a href="#cb4-70" tabindex="-1"></a>                <span class="fl">0.0402</span>                 <span class="sc">-</span><span class="fl">0.0492</span>                <span class="sc">-</span><span class="fl">0.00304</span>  </span>
+<span id="cb4-71"><a href="#cb4-71" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.v1,tka       cor<span class="sc">:</span>om.eta.v2,tka        cor<span class="sc">:</span>om.eta.q,tka </span>
+<span id="cb4-72"><a href="#cb4-72" tabindex="-1"></a>                <span class="sc">-</span><span class="fl">0.675</span>                  <span class="fl">0.0836</span>                   <span class="fl">0.528</span>  </span>
+<span id="cb4-73"><a href="#cb4-73" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.ka,tka   cor<span class="sc">:</span>om.eta.cl,prop.sd   cor<span class="sc">:</span>om.eta.v1,prop.sd </span>
+<span id="cb4-74"><a href="#cb4-74" tabindex="-1"></a>                 <span class="fl">0.689</span>                 <span class="sc">-</span><span class="fl">0.0340</span>                 <span class="sc">-</span><span class="fl">0.0251</span>  </span>
+<span id="cb4-75"><a href="#cb4-75" tabindex="-1"></a>  cor<span class="sc">:</span>om.eta.v2,prop.sd    cor<span class="sc">:</span>om.eta.q,prop.sd   cor<span class="sc">:</span>om.eta.ka,prop.sd </span>
+<span id="cb4-76"><a href="#cb4-76" tabindex="-1"></a>                <span class="sc">-</span><span class="fl">0.221</span>                  <span class="sc">-</span><span class="fl">0.188</span>                 <span class="sc">-</span><span class="fl">0.0106</span>  </span>
+<span id="cb4-77"><a href="#cb4-77" tabindex="-1"></a>cor<span class="sc">:</span>om.eta.v1,om.eta.cl cor<span class="sc">:</span>om.eta.v2,om.eta.cl  cor<span class="sc">:</span>om.eta.q,om.eta.cl </span>
+<span id="cb4-78"><a href="#cb4-78" tabindex="-1"></a>                <span class="fl">0.0335</span>                  <span class="sc">-</span><span class="fl">0.161</span>                 <span class="fl">0.00154</span>  </span>
+<span id="cb4-79"><a href="#cb4-79" tabindex="-1"></a>cor<span class="sc">:</span>om.eta.ka,om.eta.cl cor<span class="sc">:</span>om.eta.v2,om.eta.v1  cor<span class="sc">:</span>om.eta.q,om.eta.v1 </span>
+<span id="cb4-80"><a href="#cb4-80" tabindex="-1"></a>               <span class="sc">-</span><span class="fl">0.0291</span>                 <span class="sc">-</span><span class="fl">0.0496</span>                  <span class="sc">-</span><span class="fl">0.260</span>  </span>
+<span id="cb4-81"><a href="#cb4-81" tabindex="-1"></a>cor<span class="sc">:</span>om.eta.ka,om.eta.v1  cor<span class="sc">:</span>om.eta.q,om.eta.v2 cor<span class="sc">:</span>om.eta.ka,om.eta.v2 </span>
+<span id="cb4-82"><a href="#cb4-82" tabindex="-1"></a>                <span class="sc">-</span><span class="fl">0.897</span>                  <span class="sc">-</span><span class="fl">0.103</span>                  <span class="fl">0.0636</span>  </span>
+<span id="cb4-83"><a href="#cb4-83" tabindex="-1"></a> cor<span class="sc">:</span>om.eta.ka,om.eta.q </span>
+<span id="cb4-84"><a href="#cb4-84" tabindex="-1"></a>                 <span class="fl">0.225</span>  </span>
+<span id="cb4-85"><a href="#cb4-85" tabindex="-1"></a> </span>
+<span id="cb4-86"><a href="#cb4-86" tabindex="-1"></a></span>
+<span id="cb4-87"><a href="#cb4-87" tabindex="-1"></a>  No correlations <span class="cf">in</span> between subject <span class="fu">variability</span> (BSV) matrix</span>
+<span id="cb4-88"><a href="#cb4-88" tabindex="-1"></a>  Full BSV <span class="fu">covariance</span> (fit_multi<span class="sc">$</span>omega) </span>
+<span id="cb4-89"><a href="#cb4-89" tabindex="-1"></a>    or <span class="fu">correlation</span> (fit_multi<span class="sc">$</span>omegaR; <span class="at">diagonals=</span>SDs)</span>
+<span id="cb4-90"><a href="#cb4-90" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> <span class="sc">$</span>shrink </span>
+<span id="cb4-91"><a href="#cb4-91" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit_multi<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
+<span id="cb4-92"><a href="#cb4-92" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit_multi<span class="sc">$</span>message)<span class="sc">:</span>  </span>
+<span id="cb4-93"><a href="#cb4-93" tabindex="-1"></a>    NLOPT_FAILURE<span class="sc">:</span> Generic failure code. </span></code></pre></div>
 <p>Nothing above assumes the two share a dose or a schedule. The
 objective is the sum of per-study negative log-likelihoods under one set
 of population parameters, and each study is predicted at its own dosing

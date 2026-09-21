@@ -90,7 +90,7 @@
       <img src="../logo.png" class="logo" alt=""><h1>Covariates</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/vignettes/covariates.Rmd" class="external-link"><code>vignettes/covariates.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/docs/pkpd-graphics/vignettes/covariates.Rmd" class="external-link"><code>vignettes/covariates.Rmd</code></a></small>
       <div class="d-none name"><code>covariates.Rmd</code></div>
     </div>
 
@@ -131,23 +131,23 @@ on its own data.</caption>
 <tr class="odd">
 <td align="left">normal</td>
 <td align="right">95</td>
-<td align="right">5.256</td>
-<td align="right">50.036</td>
-<td align="right">0.163</td>
+<td align="right">5.136</td>
+<td align="right">50.037</td>
+<td align="right">0.184</td>
 </tr>
 <tr class="even">
 <td align="left">mild</td>
 <td align="right">59</td>
-<td align="right">5.125</td>
-<td align="right">49.980</td>
-<td align="right">0.118</td>
+<td align="right">4.926</td>
+<td align="right">49.984</td>
+<td align="right">0.158</td>
 </tr>
 <tr class="odd">
 <td align="left">moderate</td>
 <td align="right">38</td>
-<td align="right">3.005</td>
-<td align="right">49.997</td>
-<td align="right">0.176</td>
+<td align="right">2.938</td>
+<td align="right">50.005</td>
+<td align="right">0.196</td>
 </tr>
 </tbody>
 </table>
@@ -302,42 +302,42 @@ term.</caption>
 <tr class="odd">
 <td align="left">CL at 70 kg, CRCL 90, women (L/h)</td>
 <td align="right">5.00</td>
-<td align="right">5.110</td>
+<td align="right">4.987</td>
 </tr>
 <tr class="even">
 <td align="left">V at 70 kg (L)</td>
 <td align="right">50.00</td>
-<td align="right">50.010</td>
+<td align="right">50.060</td>
 </tr>
 <tr class="odd">
 <td align="left">renal exponent</td>
 <td align="right">0.60</td>
-<td align="right">0.595</td>
+<td align="right">0.591</td>
 </tr>
 <tr class="even">
 <td align="left">sex effect (log)</td>
 <td align="right">0.18</td>
-<td align="right">0.153</td>
+<td align="right">0.180</td>
 </tr>
 <tr class="odd">
 <td align="left">additive SD (mg/L)</td>
 <td align="right">0.08</td>
-<td align="right">0.079</td>
+<td align="right">0.080</td>
 </tr>
 <tr class="even">
 <td align="left">omega (eta.cl)</td>
 <td align="right">0.05</td>
-<td align="right">0.049</td>
+<td align="right">0.065</td>
 </tr>
 </tbody>
 </table>
-<p>The renal exponent comes back at 0.60 against a truth of 0.6, out of
+<p>The renal exponent comes back at 0.59 against a truth of 0.6, out of
 three analyses only one of which contained a renal term — and that one
 put it at 0.57. There are <strong>no intervals</strong>: every source
 here is a published model rather than a sample, so there is no sampling
 law to build one from and admixr2 reports no standard error at all.</p>
 <p>The sex effect shows what pooling costs. The three trials reported
-0.16, 0.12, 0.18 for a quantity genuinely identical in all three;
+0.18, 0.16, 0.20 for a quantity genuinely identical in all three;
 sampling noise alone put them that far apart. Reconciling that is not
 free — some of it lands in the other parameters, which is why the renal
 exponent comes back a little below its truth.</p>
@@ -389,17 +389,17 @@ differ.</caption>
 <tbody>
 <tr class="odd">
 <td align="left">power (correct)</td>
-<td align="right">-13644.67</td>
-<td align="right">0.60</td>
+<td align="right">-13334.16</td>
+<td align="right">0.59</td>
 </tr>
 <tr class="even">
 <td align="left">linear</td>
-<td align="right">-13641.74</td>
+<td align="right">-13331.38</td>
 <td align="right">0.69</td>
 </tr>
 </tbody>
 </table>
-<pre><code><span><span class="co">#&gt; dOFV (linear - power) = +2.93 on 0 extra parameters</span></span></code></pre>
+<pre><code><span><span class="co">#&gt; dOFV (linear - power) = +2.78 on 0 extra parameters</span></span></code></pre>
 <p>The plot decides it.</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plots_lin</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit_lin</span>, which <span class="op">=</span> <span class="st">"covariate"</span><span class="op">)</span></span></code></pre></div>
@@ -440,15 +440,15 @@ standardised residual by source, in order of increasing
 <tbody>
 <tr class="odd">
 <td>power (correct)</td>
-<td>+0.06</td>
-<td>+0.11</td>
-<td>+0.13</td>
+<td>+0.15</td>
+<td>+0.36</td>
+<td>+0.17</td>
 </tr>
 <tr class="even">
 <td>linear</td>
-<td>+0.12</td>
-<td>-0.00</td>
-<td>+0.22</td>
+<td>+0.20</td>
+<td>+0.25</td>
+<td>+0.26</td>
 </tr>
 </tbody>
 </table>

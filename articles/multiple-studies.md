@@ -139,7 +139,7 @@ admc -3351.844 -3329.844 -3258.199       1675.922
 ── Time (sec fit_multi$time): ──
 
   optimize covariance other elapsed
-1   69.808     31.002     0  100.81
+1   67.994      30.46     0  98.454
 
 ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 
@@ -159,6 +159,47 @@ tka       1.030 (0.8151, 1.301)    31.79         NaN
 prop.sd 0.1900 (0.1835, 0.1964)                     
  
   Covariance Type (fit_multi$covMethod): r,s
+  Some strong fixed parameter correlations exist (fit_multi$cor) :
+                cor:tv1,tcl             cor:tv2,tcl              cor:tq,tcl 
+                 0.342                  -0.508                   0.202  
+            cor:tka,tcl         cor:prop.sd,tcl       cor:om.eta.cl,tcl 
+                 0.367                  0.0553                 -0.0961  
+      cor:om.eta.v1,tcl       cor:om.eta.v2,tcl        cor:om.eta.q,tcl 
+                -0.322                  -0.191                   0.249  
+      cor:om.eta.ka,tcl             cor:tv2,tv1              cor:tq,tv1 
+                 0.305                  -0.856                   0.211  
+            cor:tka,tv1         cor:prop.sd,tv1       cor:om.eta.cl,tv1 
+                 0.984                 -0.0463                -0.00150  
+      cor:om.eta.v1,tv1       cor:om.eta.v2,tv1        cor:om.eta.q,tv1 
+                -0.683                  0.0883                   0.500  
+      cor:om.eta.ka,tv1              cor:tq,tv2             cor:tka,tv2 
+                 0.701                  -0.247                  -0.861  
+        cor:prop.sd,tv2       cor:om.eta.cl,tv2       cor:om.eta.v1,tv2 
+                0.0142                  0.0456                   0.632  
+      cor:om.eta.v2,tv2        cor:om.eta.q,tv2       cor:om.eta.ka,tv2 
+                0.0501                  -0.438                  -0.648  
+             cor:tka,tq          cor:prop.sd,tq        cor:om.eta.cl,tq 
+                 0.253                 -0.0202                 -0.0463  
+       cor:om.eta.v1,tq        cor:om.eta.v2,tq         cor:om.eta.q,tq 
+                -0.111                  0.0774                   0.337  
+       cor:om.eta.ka,tq         cor:prop.sd,tka       cor:om.eta.cl,tka 
+                0.0402                 -0.0492                -0.00304  
+      cor:om.eta.v1,tka       cor:om.eta.v2,tka        cor:om.eta.q,tka 
+                -0.675                  0.0836                   0.528  
+      cor:om.eta.ka,tka   cor:om.eta.cl,prop.sd   cor:om.eta.v1,prop.sd 
+                 0.689                 -0.0340                 -0.0251  
+  cor:om.eta.v2,prop.sd    cor:om.eta.q,prop.sd   cor:om.eta.ka,prop.sd 
+                -0.221                  -0.188                 -0.0106  
+cor:om.eta.v1,om.eta.cl cor:om.eta.v2,om.eta.cl  cor:om.eta.q,om.eta.cl 
+                0.0335                  -0.161                 0.00154  
+cor:om.eta.ka,om.eta.cl cor:om.eta.v2,om.eta.v1  cor:om.eta.q,om.eta.v1 
+               -0.0291                 -0.0496                  -0.260  
+cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2 
+                -0.897                  -0.103                  0.0636  
+ cor:om.eta.ka,om.eta.q 
+                 0.225  
+ 
+
   No correlations in between subject variability (BSV) matrix
   Full BSV covariance (fit_multi$omega) 
     or correlation (fit_multi$omegaR; diagonals=SDs)

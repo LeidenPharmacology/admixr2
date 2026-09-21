@@ -96,8 +96,8 @@ print(fit)
 #> 
 #> ── Time (sec fit$time): ──
 #> 
-#>   optimize covariance other elapsed
-#> 1    0.505      0.335     0    0.84
+#>         optimize covariance other elapsed other
+#> elapsed    0.492      0.335     0   0.827 0.062
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 
@@ -107,6 +107,17 @@ print(fit)
 #> prop.sd 0.3900 0.008281  2.124 0.3900 (0.3737, 0.4062)                     
 #>  
 #>   Covariance Type (fit$covMethod): r,s
+#>   Some strong fixed parameter correlations exist (fit$cor) :
+#>                 cor:tv,tcl        cor:prop.sd,tcl      cor:om.eta.cl,tcl 
+#>                0.0767                 -0.0534                   0.755  
+#>       cor:om.eta.v,tcl         cor:prop.sd,tv       cor:om.eta.cl,tv 
+#>               -0.0111                   0.742                  0.144   
+#>        cor:om.eta.v,tv  cor:om.eta.cl,prop.sd   cor:om.eta.v,prop.sd 
+#>                -0.839                 0.0341                  -0.733  
+#> cor:om.eta.v,om.eta.cl 
+#>               -0.0385   
+#>  
+#> 
 #>   No correlations in between subject variability (BSV) matrix
 #>   Full BSV covariance (fit$omega) or correlation (fit$omegaR; diagonals=SDs) 
 #>   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 

@@ -55,7 +55,7 @@ data modelling estimator.'><meta property="og:image" content="https://leidenphar
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Control settings for the ADM estimator</h1>
-      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/main/R/admc.R" class="external-link"><code>R/admc.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/LeidenPharmacology/admixr2/blob/docs/pkpd-graphics/R/admc.R" class="external-link"><code>R/admc.R</code></a></small>
       <div class="d-none name"><code>admControl.Rd</code></div>
     </div>
 
@@ -509,7 +509,7 @@ with a large residual SD; there is little to gain by lowering it.</p></dd>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0050     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.737 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09972 |   0.1085 |  0.09614 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0060     | -3690.08 |    4.957 |    10.26 |    29.88 |    9.737 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> | 0069 ✓   | -3690.08 |    4.957 |    10.26 |    29.88 |    9.736 |    1.033 |   0.1894 |   0.1034 |    0.112 |  0.09973 |   0.1085 |  0.09614 |</span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> | 7.5 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> | 7.4 sec  |          |          |          |          |          |          |          |          |          |          |          |          |</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>   Computing covariance (R method, Sens-Hessian, sandwich, 12 gradient evaluations)</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> → compress origData in nlmixr2 object, save 1160</span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span>  </span>
@@ -523,7 +523,7 @@ with a large residual SD; there is little to gain by lowering it.</p></dd>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Time (sec </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$time</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   optimize covariance other elapsed</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1    7.526     15.401     0  22.927</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1    7.364      15.39     0  22.754</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">── Population Parameters (</span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixed</span><span style="font-weight: bold;"> or </span><span style="color: #BBBB00; font-weight: bold;">fit</span><span style="color: #0000BB; font-weight: bold;">$parFixedDf</span><span style="font-weight: bold;">): ──</span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
@@ -536,6 +536,47 @@ with a large residual SD; there is little to gain by lowering it.</p></dd>
 <span class="r-out co"><span class="r-pr">#&gt;</span> <span style="font-weight: bold;">prop.sd</span>  0.1894 0.003291 1.737 0.1894 (0.1830, 0.1959)                     </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>  </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Covariance Type (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$covMethod</span>): <span style="font-weight: bold;">r,s</span></span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   Some strong fixed parameter correlations exist (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$cor</span>) :</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                 cor:tv1,tcl             cor:tv2,tcl              cor:tq,tcl </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                  <span style="color: #00BB00; font-weight: bold;">0.301 </span>                 <span style="color: #00BB00; font-weight: bold;">-0.483 </span>                  0.206   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>             cor:tka,tcl         cor:prop.sd,tcl       cor:om.eta.cl,tcl </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                  <span style="color: #00BB00; font-weight: bold;">0.330 </span>                 0.0481                   -0.125   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>       cor:om.eta.v1,tcl       cor:om.eta.v2,tcl        cor:om.eta.q,tcl </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                 -0.243                   -0.183                    0.253   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>       cor:om.eta.ka,tcl             cor:tv2,tv1              cor:tq,tv1 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                  0.203                   <span style="color: #BB0000; font-weight: bold;">-0.838 </span>                  0.217   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>             cor:tka,tv1         cor:prop.sd,tv1       cor:om.eta.cl,tv1 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                  <span style="color: #BB0000; font-weight: bold;">0.981 </span>                -0.0353                 -0.00544   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>       cor:om.eta.v1,tv1       cor:om.eta.v2,tv1        cor:om.eta.q,tv1 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                 <span style="color: #00BB00; font-weight: bold;">-0.617 </span>                 0.0743                    <span style="color: #00BB00; font-weight: bold;">0.510 </span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>       cor:om.eta.ka,tv1              cor:tq,tv2             cor:tka,tv2 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                  <span style="color: #00BB00; font-weight: bold;">0.629 </span>                 -0.269                   <span style="color: #BB0000; font-weight: bold;">-0.846 </span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>         cor:prop.sd,tv2       cor:om.eta.cl,tv2       cor:om.eta.v1,tv2 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                 0.0123                   0.0571                    <span style="color: #00BB00; font-weight: bold;">0.543 </span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>       cor:om.eta.v2,tv2        cor:om.eta.q,tv2       cor:om.eta.ka,tv2 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                 0.0582                   <span style="color: #00BB00; font-weight: bold;">-0.450 </span>                 <span style="color: #00BB00; font-weight: bold;">-0.556 </span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>              cor:tka,tq          cor:prop.sd,tq        cor:om.eta.cl,tq </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                  0.257                 -0.00147                  -0.0496   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>        cor:om.eta.v1,tq        cor:om.eta.v2,tq         cor:om.eta.q,tq </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                 -0.131                   0.0657                    <span style="color: #00BB00; font-weight: bold;">0.326 </span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>        cor:om.eta.ka,tq         cor:prop.sd,tka       cor:om.eta.cl,tka </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>             0.00000856                  -0.0383                 -0.00740   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>       cor:om.eta.v1,tka       cor:om.eta.v2,tka        cor:om.eta.q,tka </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                 <span style="color: #00BB00; font-weight: bold;">-0.605 </span>                 0.0691                    <span style="color: #00BB00; font-weight: bold;">0.537 </span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>       cor:om.eta.ka,tka   cor:om.eta.cl,prop.sd   cor:om.eta.v1,prop.sd </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                  <span style="color: #00BB00; font-weight: bold;">0.618 </span>                -0.0349                  -0.0447   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   cor:om.eta.v2,prop.sd    cor:om.eta.q,prop.sd   cor:om.eta.ka,prop.sd </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                 -0.183                   -0.159                  -0.0172   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> cor:om.eta.v1,om.eta.cl cor:om.eta.v2,om.eta.cl  cor:om.eta.q,om.eta.cl </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                 0.0270                   -0.136                  -0.0149   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> cor:om.eta.ka,om.eta.cl cor:om.eta.v2,om.eta.v1  cor:om.eta.q,om.eta.v1 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                -0.0204                  -0.0181                   -0.266   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                 <span style="color: #00BB00; font-weight: bold;">-0.642 </span>                 -0.120                   0.0407   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>  cor:om.eta.ka,om.eta.q </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                  0.191   </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>  </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   No correlations in between subject variability (BSV) matrix</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Full BSV covariance (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$omega</span>) or correlation (<span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$omegaR</span>; diagonals=SDs) </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Distribution stats (mean/skewness/kurtosis/p-value) available in <span style="color: #BBBB00;">fit</span><span style="color: #0000BB; font-weight: bold;">$shrink</span> </span>
