@@ -74,39 +74,31 @@ One compartment with a direct-effect `Emax` term that *lowers* DBP. Two observed
 outputs make it a multiple-endpoint model, carrying a residual error term for
 each, as in [Several observed compartments](multi-compartment.html):
 
-<svg viewBox="0 0 960 360" width="100%" role="img"
-     aria-labelledby="pkpd-schematic-title pkpd-schematic-desc"
-     style="display:block;max-width:960px;margin:1.5rem auto;font-family:Arial,sans-serif">
-  <title id="pkpd-schematic-title">One-compartment PK and direct-effect PD model</title>
-  <desc id="pkpd-schematic-desc">A dose enters the central compartment, clearance removes drug, and plasma concentration drives an Emax reduction from baseline blood pressure.</desc>
-  <defs>
-    <marker id="pkpd-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5"
-            orient="auto" markerUnits="strokeWidth">
-      <path d="M1 1 L9 5 L1 9" fill="none" stroke="#555" stroke-width="1.5"/>
-    </marker>
-  </defs>
-  <g fill="none" stroke-width="4">
-    <rect x="120" y="68" width="300" height="180" rx="3" stroke="#001158"/>
-    <rect x="570" y="68" width="330" height="180" rx="3" stroke="#DD6B2A"/>
-  </g>
-  <g fill="none" stroke="#555" stroke-width="2.5" marker-end="url(#pkpd-arrow)">
-    <path d="M20 158 H115"/>
-    <path d="M420 158 H565"/>
-    <path d="M390 248 V318"/>
-  </g>
-  <g text-anchor="middle">
-    <text x="65" y="139" fill="#555" font-size="27">dose</text>
-    <text x="270" y="140" fill="#001158" font-size="34" font-weight="bold">central</text>
-    <text x="270" y="190" fill="#001158" font-size="29">V</text>
-    <text x="495" y="139" fill="#333" font-size="27">cp</text>
-    <text x="735" y="135" fill="#DD6B2A" font-size="34" font-weight="bold">direct Emax effect</text>
-    <text x="735" y="175" fill="#333" font-size="25">DBP = E0 −</text>
-    <text x="735" y="207" fill="#333" font-size="23">Emax · cp / (EC50 + cp)</text>
-    <text x="390" y="350" fill="#555" font-size="27">CL</text>
-    <text x="230" y="286" fill="#0072B2" font-size="23" font-style="italic">observed as cp</text>
-    <text x="735" y="286" fill="#DD6B2A" font-size="23" font-style="italic">observed as dbp</text>
-  </g>
-</svg>
+```{r pkpd-schematic, echo=FALSE, fig.width=7, fig.height=4.55, fig.alt="Dose enters a central compartment, clearance removes drug, and plasma concentration drives a direct Emax blood-pressure response."}
+navy <- "#001158"; orange <- "#DD6B2A"
+grey <- "#6A6A6A"; blue <- "#0072B2"
+op <- par(mar = c(0, 0, 0, 0))
+plot(0, 0, type = "n", xlim = c(0, 10), ylim = c(0, 6.5),
+     axes = FALSE, xlab = "", ylab = "")
+rect(0.5, 2.8, 3.6, 4.8, border = navy, lwd = 2)
+text(2.05, 4.15, "central", font = 2)
+text(2.05, 3.45, "V")
+text(1.75, 2.3, "observed as cp", col = blue, font = 3, cex = 0.9)
+rect(6.4, 2.8, 9.5, 4.8, border = orange, lwd = 2)
+text(7.95, 4.15, "DBP response", font = 2)
+text(7.95, 3.45, "E0, Emax, EC50", cex = 0.8)
+text(7.95, 2.3, "observed as dbp", col = orange, font = 3, cex = 0.9)
+arrows(3.6, 3.8, 6.4, 3.8, length = 0.1, lwd = 1.5)
+text(5, 4.2, "cp")
+arrows(0, 3.8, 0.5, 3.8, length = 0.1, col = grey)
+text(0.22, 4.25, "dose", col = grey, cex = 0.9)
+arrows(3.2, 2.8, 3.2, 1.7, length = 0.1, col = grey)
+text(3.2, 1.4, "CL", col = grey, cex = 0.9)
+par(op)
+```
+
+The arrow carries plasma concentration `cp` into the direct effect:
+`DBP = E0 - Emax * cp / (EC50 + cp)`.
 
 ```{r model}
 pkpd_model <- function() {
