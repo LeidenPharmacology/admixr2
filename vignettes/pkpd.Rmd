@@ -74,10 +74,10 @@ One compartment with a direct-effect `Emax` term that *lowers* DBP. Two observed
 outputs make it a multiple-endpoint model, carrying a residual error term for
 each, as in [Several observed compartments](multi-compartment.html):
 
-```{r pkpd-schematic, echo=FALSE, fig.width=7, fig.height=2.9, fig.alt="A dose enters the central compartment; concentration cp drives the direct Emax blood-pressure response, while CL removes drug."}
+```{r pkpd-schematic, echo=FALSE, fig.width=7, fig.height=2.9, fig.cap="The dashed link passes plasma concentration to the direct Emax equation; it does not transfer drug to a second compartment.", fig.alt="Dose enters the central compartment and leaves through clearance. A dashed information link carries cp to a direct Emax equation for DBP."}
 # Same geometry and visual language as the CNS schematic in multi-compartment.Rmd.
 box <- data.frame(x = c(0, 3.2),
-                  lab = c("central\nV", "DBP response\nE0, Emax, EC50"),
+                  lab = c("central\nV", "direct Emax\nDBP = E0 -\nEmax*cp/(EC50 + cp)"),
                   tag = c("observed as cp", "observed as dbp"))
 arr <- grid::arrow(length = grid::unit(0.16, "cm"), type = "closed")
 
@@ -91,12 +91,15 @@ ggplot() +
   annotate("text", x = 0.14, y = -1.15, label = "CL",
            size = 3.1, hjust = 0, colour = "grey25") +
   geom_segment(aes(x = 0.95, y = 0, xend = 2.25, yend = 0),
-               arrow = arr, linewidth = 0.5, colour = "grey25") +
-  annotate("text", x = 1.6, y = 0, label = "cp", vjust = -0.6,
+               arrow = arr, linetype = "dashed", linewidth = 0.5,
+               colour = "grey25") +
+  annotate("text", x = 1.6, y = 0.31, label = "cp", vjust = 0,
            size = 3.1, colour = "grey25") +
+  annotate("text", x = 1.6, y = -0.28, label = "direct link",
+           size = 2.8, colour = "grey25") +
   geom_tile(data = box, aes(x, 0), width = 1.9, height = 1,
             fill = "#CFE3F2", colour = "#0072B2", linewidth = 0.7) +
-  geom_text(data = box, aes(x, 0, label = lab), size = 3.3,
+  geom_text(data = box, aes(x, 0, label = lab), size = 3.0,
             lineheight = 0.95) +
   geom_text(data = box, aes(x, 0.78, label = tag), size = 2.9,
             fontface = "italic", colour = "#0072B2") +
