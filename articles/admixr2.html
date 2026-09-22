@@ -311,7 +311,7 @@ usage</a>, which also covers parameters with no random effect.</p>
 <span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a></span>
 <span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>  optimize covariance other elapsed</span>
-<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">36.869</span>     <span class="fl">14.317</span>     <span class="dv">0</span>  <span class="fl">51.186</span></span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a><span class="dv">1</span>    <span class="fl">37.53</span>     <span class="fl">16.256</span>     <span class="dv">0</span>  <span class="fl">53.786</span></span>
 <span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a></span>
 <span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a></span>
@@ -349,7 +349,7 @@ usage</a>, which also covers parameters with no random effect.</p>
 <span id="cb6-45"><a href="#cb6-45" tabindex="-1"></a>        cor<span class="sc">:</span>prop.sd,tv2       cor<span class="sc">:</span>om.eta.cl,tv2       cor<span class="sc">:</span>om.eta.v1,tv2 </span>
 <span id="cb6-46"><a href="#cb6-46" tabindex="-1"></a>              <span class="sc">-</span><span class="fl">0.00614</span>                  <span class="fl">0.0506</span>                   <span class="fl">0.625</span>  </span>
 <span id="cb6-47"><a href="#cb6-47" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.v2,tv2        cor<span class="sc">:</span>om.eta.q,tv2       cor<span class="sc">:</span>om.eta.ka,tv2 </span>
-<span id="cb6-48"><a href="#cb6-48" tabindex="-1"></a>                <span class="fl">0.0749</span>                  <span class="sc">-</span><span class="fl">0.439</span>                  <span class="sc">-</span><span class="fl">0.642</span>  </span>
+<span id="cb6-48"><a href="#cb6-48" tabindex="-1"></a>                <span class="fl">0.0750</span>                  <span class="sc">-</span><span class="fl">0.439</span>                  <span class="sc">-</span><span class="fl">0.642</span>  </span>
 <span id="cb6-49"><a href="#cb6-49" tabindex="-1"></a>             cor<span class="sc">:</span>tka,tq          cor<span class="sc">:</span>prop.sd,tq        cor<span class="sc">:</span>om.eta.cl,tq </span>
 <span id="cb6-50"><a href="#cb6-50" tabindex="-1"></a>                 <span class="fl">0.271</span>                <span class="sc">-</span><span class="fl">0.00629</span>                 <span class="sc">-</span><span class="fl">0.0495</span>  </span>
 <span id="cb6-51"><a href="#cb6-51" tabindex="-1"></a>       cor<span class="sc">:</span>om.eta.v1,tq        cor<span class="sc">:</span>om.eta.v2,tq         cor<span class="sc">:</span>om.eta.q,tq </span>
@@ -377,14 +377,14 @@ usage</a>, which also covers parameters with no random effect.</p>
 <span id="cb6-73"><a href="#cb6-73" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> fit<span class="sc">$</span>shrink </span>
 <span id="cb6-74"><a href="#cb6-74" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
 <span id="cb6-75"><a href="#cb6-75" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit<span class="sc">$</span>message)<span class="sc">:</span>  </span>
-<span id="cb6-76"><a href="#cb6-76" tabindex="-1"></a>    NLOPT_XTOL_REACHED<span class="sc">:</span> Optimization stopped because xtol_rel or <span class="fu">xtol_abs</span> (above) was reached. </span></code></pre></div>
+<span id="cb6-76"><a href="#cb6-76" tabindex="-1"></a>    NLOPT_FAILURE<span class="sc">:</span> Generic failure code. </span></code></pre></div>
 <p>Key entries in <code>fit$env$admExtra</code>:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit</span><span class="op">$</span><span class="va">objective</span>                    <span class="co"># -2 log-likelihood</span></span>
 <span><span class="co">#&gt; [1] -3690.262</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">struct</span>          <span class="co"># structural parameters (log scale)</span></span>
 <span><span class="co">#&gt;        tcl        tv1        tv2         tq        tka </span></span>
-<span><span class="co">#&gt; 1.60197115 2.32807483 3.39738144 2.27604233 0.02978847</span></span>
+<span><span class="co">#&gt; 1.60197150 2.32807210 3.39738138 2.27604273 0.02978594</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">env</span><span class="op">$</span><span class="va">admExtra</span><span class="op">$</span><span class="va">sigma_var</span>       <span class="co"># residual variance(s)</span></span>
 <span><span class="co">#&gt;    prop.sd </span></span>
 <span><span class="co">#&gt; 0.03592041</span></span>

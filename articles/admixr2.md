@@ -184,7 +184,7 @@ admc -3690.262 -3668.262 -3597.732       1845.131
 ── Time (sec fit$time): ──
 
   optimize covariance other elapsed
-1   36.869     14.317     0  51.186
+1    37.53     16.256     0  53.786
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -222,7 +222,7 @@ prop.sd 0.1895 (0.1831, 0.1960)
         cor:prop.sd,tv2       cor:om.eta.cl,tv2       cor:om.eta.v1,tv2 
               -0.00614                  0.0506                   0.625  
       cor:om.eta.v2,tv2        cor:om.eta.q,tv2       cor:om.eta.ka,tv2 
-                0.0749                  -0.439                  -0.642  
+                0.0750                  -0.439                  -0.642  
              cor:tka,tq          cor:prop.sd,tq        cor:om.eta.cl,tq 
                  0.271                -0.00629                 -0.0495  
        cor:om.eta.v1,tq        cor:om.eta.v2,tq         cor:om.eta.q,tq 
@@ -250,7 +250,7 @@ cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
   Censoring (fit$censInformation): No censoring
   Minimization message (fit$message):  
-    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+    NLOPT_FAILURE: Generic failure code. 
 ```
 
 Key entries in `fit$env$admExtra`:
@@ -261,7 +261,7 @@ fit$objective                    # -2 log-likelihood
 #> [1] -3690.262
 fit$env$admExtra$struct          # structural parameters (log scale)
 #>        tcl        tv1        tv2         tq        tka 
-#> 1.60197115 2.32807483 3.39738144 2.27604233 0.02978847
+#> 1.60197150 2.32807210 3.39738138 2.27604273 0.02978594
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
 #> 0.03592041
