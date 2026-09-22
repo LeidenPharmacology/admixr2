@@ -74,7 +74,7 @@ One compartment with a direct-effect `Emax` term that *lowers* DBP. Two observed
 outputs make it a multiple-endpoint model, carrying a residual error term for
 each, as in [Several observed compartments](multi-compartment.html):
 
-```{r pkpd-schematic, echo=FALSE, fig.width=7, fig.height=4.55, fig.alt="Dose enters a central compartment, clearance removes drug, and plasma concentration drives a direct Emax blood-pressure response."}
+```{r pkpd-schematic, echo=FALSE, fig.width=4, fig.height=2.6, dpi=300, fig.alt="Dose enters a central compartment, clearance removes drug, and plasma concentration drives a direct Emax blood-pressure response."}
 navy <- "#001158"; orange <- "#DD6B2A"
 grey <- "#6A6A6A"; blue <- "#0072B2"
 op <- par(mar = c(0, 0, 0, 0))
@@ -85,7 +85,7 @@ text(2.05, 4.15, "central", font = 2)
 text(2.05, 3.45, "V")
 text(1.75, 2.3, "observed as cp", col = blue, font = 3, cex = 0.9)
 rect(6.4, 2.8, 9.5, 4.8, border = orange, lwd = 2)
-text(7.95, 4.15, "DBP response", font = 2)
+text(7.95, 4.15, "PD effect", font = 2)
 text(7.95, 3.45, "E0, Emax, EC50", cex = 0.8)
 text(7.95, 2.3, "observed as dbp", col = orange, font = 3, cex = 0.9)
 arrows(3.6, 3.8, 6.4, 3.8, length = 0.1, lwd = 1.5)
