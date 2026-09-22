@@ -196,7 +196,7 @@ admc -7359.742 -7345.742 -7302.618       3679.871
 ── Time (sec fit_sim$time): ──
 
   optimize covariance other elapsed
-1   46.914      0.001     0  46.915
+1   62.186          0     0  62.186
 
 ── Population Parameters (fit_sim$parFixed or fit_sim$parFixedDf): ──
 
@@ -217,7 +217,7 @@ prop.sd
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Censoring (fit_sim$censInformation): No censoring
   Minimization message (fit_sim$message):  
-    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+    NLOPT_FAILURE: Generic failure code. 
 ```
 
 **No standard errors, and the blank `SE` / `%RSE` / `95%CI` columns are

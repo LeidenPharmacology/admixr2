@@ -152,7 +152,12 @@ published figure to E, V and n</a>.</p>
 <p>One compartment with a direct-effect <code>Emax</code> term that
 <em>lowers</em> DBP. Two observed outputs make it a multiple-endpoint
 model, carrying a residual error term for each, as in <a href="multi-compartment.html">Several observed compartments</a>:</p>
-<p><img src="pkpd_files/figure-html/pkpd-schematic-1.png" class="r-plt" alt="Dose enters a central compartment, clearance removes drug, and plasma concentration drives a direct Emax blood-pressure response." width="840"></p>
+<div class="figure">
+<img src="pkpd_files/figure-html/pkpd-schematic-1.png" class="r-plt" alt="Dose enters the central compartment and leaves through clearance. A dashed information link carries cp to a direct Emax equation for DBP." width="840"><p class="caption">
+The dashed link passes plasma concentration to the direct Emax equation;
+it does not transfer drug to a second compartment.
+</p>
+</div>
 <p>The arrow carries plasma concentration <code>cp</code> into the
 direct effect: <code>DBP = E0 - Emax * cp / (EC50 + cp)</code>.</p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
@@ -242,7 +247,7 @@ Otherwise an ordinary admixr2 fit:</p>
 <span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a></span>
 <span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">1.613</span>      <span class="fl">0.754</span>     <span class="dv">0</span>   <span class="fl">2.367</span> <span class="fl">4.549</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">1.793</span>      <span class="fl">0.767</span>     <span class="dv">0</span>    <span class="fl">2.56</span> <span class="fl">3.786</span></span>
 <span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a></span>
 <span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a></span>

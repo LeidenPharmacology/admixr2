@@ -64,9 +64,12 @@ observed outputs make it a multiple-endpoint model, carrying a residual
 error term for each, as in [Several observed
 compartments](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.md):
 
-![Dose enters a central compartment, clearance removes drug, and plasma
-concentration drives a direct Emax blood-pressure
-response.](pkpd_files/figure-html/pkpd-schematic-1.png)
+![Dose enters the central compartment and leaves through clearance. A
+dashed information link carries cp to a direct Emax equation for
+DBP.](pkpd_files/figure-html/pkpd-schematic-1.png)
+
+The dashed link passes plasma concentration to the direct Emax equation;
+it does not transfer drug to a second compartment.
 
 The arrow carries plasma concentration `cp` into the direct effect:
 `DBP = E0 - Emax * cp / (EC50 + cp)`.
@@ -159,7 +162,7 @@ adgh 1749.121 1769.121 1820.975      -874.5605
 ── Time (sec fit$time): ──
 
         optimize covariance other elapsed other
-elapsed    1.613      0.754     0   2.367 4.549
+elapsed    1.793      0.767     0    2.56 3.786
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
