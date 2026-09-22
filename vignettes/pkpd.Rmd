@@ -74,27 +74,34 @@ One compartment with a direct-effect `Emax` term that *lowers* DBP. Two observed
 outputs make it a multiple-endpoint model, carrying a residual error term for
 each, as in [Several observed compartments](multi-compartment.html):
 
-```{r pkpd-schematic, echo=FALSE, fig.width=4, fig.height=2.6, dpi=300, fig.alt="Dose enters a central compartment, clearance removes drug, and plasma concentration drives a direct Emax blood-pressure response."}
-navy <- "#001158"; orange <- "#DD6B2A"
-grey <- "#6A6A6A"; blue <- "#0072B2"
-op <- par(mar = c(0, 0, 0, 0))
-plot(0, 0, type = "n", xlim = c(0, 10), ylim = c(0, 6.5),
-     axes = FALSE, xlab = "", ylab = "")
-rect(0.5, 2.8, 3.6, 4.8, border = navy, lwd = 2)
-text(2.05, 4.15, "central", font = 2)
-text(2.05, 3.45, "V")
-text(1.75, 2.3, "observed as cp", col = blue, font = 3, cex = 0.9)
-rect(6.4, 2.8, 9.5, 4.8, border = orange, lwd = 2)
-text(7.95, 4.15, "PD effect", font = 2)
-text(7.95, 3.45, "E0, Emax, EC50", cex = 0.8)
-text(7.95, 2.3, "observed as dbp", col = orange, font = 3, cex = 0.9)
-arrows(3.6, 3.8, 6.4, 3.8, length = 0.1, lwd = 1.5)
-text(5, 4.2, "cp")
-arrows(0, 3.8, 0.5, 3.8, length = 0.1, col = grey)
-text(0.22, 4.25, "dose", col = grey, cex = 0.9)
-arrows(3.2, 2.8, 3.2, 1.7, length = 0.1, col = grey)
-text(3.2, 1.4, "CL", col = grey, cex = 0.9)
-par(op)
+```{r pkpd-schematic, echo=FALSE, fig.width=7, fig.height=2.9, fig.alt="A dose enters the central compartment; concentration cp drives the direct Emax blood-pressure response, while CL removes drug."}
+# Same geometry and visual language as the CNS schematic in multi-compartment.Rmd.
+box <- data.frame(x = c(0, 3.2),
+                  lab = c("central\nV", "DBP response\nE0, Emax, EC50"),
+                  tag = c("observed as cp", "observed as dbp"))
+arr <- grid::arrow(length = grid::unit(0.16, "cm"), type = "closed")
+
+ggplot() +
+  geom_segment(aes(x = -1.9, y = 0, xend = -0.95, yend = 0),
+               arrow = arr, linewidth = 0.5, colour = "grey25") +
+  annotate("text", x = -1.95, y = 0.28, label = "dose",
+           size = 3.1, hjust = 0, colour = "grey25") +
+  geom_segment(aes(x = 0, y = -0.5, xend = 0, yend = -1.35),
+               arrow = arr, linewidth = 0.5, colour = "grey25") +
+  annotate("text", x = 0.14, y = -1.15, label = "CL",
+           size = 3.1, hjust = 0, colour = "grey25") +
+  geom_segment(aes(x = 0.95, y = 0, xend = 2.25, yend = 0),
+               arrow = arr, linewidth = 0.5, colour = "grey25") +
+  annotate("text", x = 1.6, y = 0, label = "cp", vjust = -0.6,
+           size = 3.1, colour = "grey25") +
+  geom_tile(data = box, aes(x, 0), width = 1.9, height = 1,
+            fill = "#CFE3F2", colour = "#0072B2", linewidth = 0.7) +
+  geom_text(data = box, aes(x, 0, label = lab), size = 3.3,
+            lineheight = 0.95) +
+  geom_text(data = box, aes(x, 0.78, label = tag), size = 2.9,
+            fontface = "italic", colour = "#0072B2") +
+  coord_cartesian(xlim = c(-2.1, 4.3), ylim = c(-1.55, 1.05)) +
+  theme_void(base_size = 12)
 ```
 
 The arrow carries plasma concentration `cp` into the direct effect:
