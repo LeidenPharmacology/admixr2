@@ -74,6 +74,40 @@ One compartment with a direct-effect `Emax` term that *lowers* DBP. Two observed
 outputs make it a multiple-endpoint model, carrying a residual error term for
 each, as in [Several observed compartments](multi-compartment.html):
 
+<svg viewBox="0 0 960 360" width="100%" role="img"
+     aria-labelledby="pkpd-schematic-title pkpd-schematic-desc"
+     style="display:block;max-width:960px;margin:1.5rem auto;font-family:Arial,sans-serif">
+  <title id="pkpd-schematic-title">One-compartment PK and direct-effect PD model</title>
+  <desc id="pkpd-schematic-desc">A dose enters the central compartment, clearance removes drug, and plasma concentration drives an Emax reduction from baseline blood pressure.</desc>
+  <defs>
+    <marker id="pkpd-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M1 1 L9 5 L1 9" fill="none" stroke="#555" stroke-width="1.5"/>
+    </marker>
+  </defs>
+  <g fill="none" stroke-width="4">
+    <rect x="120" y="68" width="300" height="180" rx="3" stroke="#001158"/>
+    <rect x="570" y="68" width="330" height="180" rx="3" stroke="#DD6B2A"/>
+  </g>
+  <g fill="none" stroke="#555" stroke-width="2.5" marker-end="url(#pkpd-arrow)">
+    <path d="M20 158 H115"/>
+    <path d="M420 158 H565"/>
+    <path d="M390 248 V318"/>
+  </g>
+  <g text-anchor="middle">
+    <text x="65" y="139" fill="#555" font-size="27">dose</text>
+    <text x="270" y="140" fill="#001158" font-size="34" font-weight="bold">central</text>
+    <text x="270" y="190" fill="#001158" font-size="29">V</text>
+    <text x="495" y="139" fill="#333" font-size="27">cp</text>
+    <text x="735" y="135" fill="#DD6B2A" font-size="34" font-weight="bold">direct Emax effect</text>
+    <text x="735" y="175" fill="#333" font-size="25">DBP = E0 −</text>
+    <text x="735" y="207" fill="#333" font-size="23">Emax · cp / (EC50 + cp)</text>
+    <text x="390" y="350" fill="#555" font-size="27">CL</text>
+    <text x="230" y="286" fill="#0072B2" font-size="23" font-style="italic">observed as cp</text>
+    <text x="735" y="286" fill="#DD6B2A" font-size="23" font-style="italic">observed as dbp</text>
+  </g>
+</svg>
+
 ```{r model}
 pkpd_model <- function() {
   ini({
