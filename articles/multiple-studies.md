@@ -139,14 +139,14 @@ admc -3351.844 -3329.844 -3258.199       1675.922
 ── Time (sec fit_multi$time): ──
 
   optimize covariance other elapsed
-1    43.15     25.036     0  68.186
+1   56.807     25.298     0  82.105
 
 ── Population Parameters (fit_multi$parFixed or fit_multi$parFixedDf): ──
 
                                   Parameter    Est.       SE  %RSE
 tcl                    Log clearance (L/hr)   1.603  0.01771 1.105
-tv1                  Log central volume (L)   2.328   0.1293 5.553
-tv2               Log peripheral volume (L)   3.398  0.04948 1.456
+tv1                  Log central volume (L)   2.328   0.1293 5.552
+tv2               Log peripheral volume (L)   3.398  0.04947 1.456
 tq        Log inter-compartmental CL (L/hr)   2.281  0.02542 1.114
 tka     Log absorption rate constant (1/hr) 0.02919   0.1192 408.2
 prop.sd      Proportional residual error SD  0.1900 0.003277 1.725
@@ -155,7 +155,7 @@ tcl        4.967 (4.797, 5.142)    32.32         NaN
 tv1        10.26 (7.963, 13.22)    32.98         NaN
 tv2        29.90 (27.14, 32.95)    32.07         NaN
 tq         9.789 (9.314, 10.29)    33.66         NaN
-tka       1.030 (0.8151, 1.301)    31.79         NaN
+tka       1.030 (0.8152, 1.301)    31.79         NaN
 prop.sd 0.1900 (0.1835, 0.1964)                     
  
   Covariance Type (fit_multi$covMethod): r,s
@@ -169,7 +169,7 @@ prop.sd 0.1900 (0.1835, 0.1964)
       cor:om.eta.ka,tcl             cor:tv2,tv1              cor:tq,tv1 
                  0.305                  -0.856                   0.211  
             cor:tka,tv1         cor:prop.sd,tv1       cor:om.eta.cl,tv1 
-                 0.984                 -0.0463                -0.00150  
+                 0.984                 -0.0463                -0.00151  
       cor:om.eta.v1,tv1       cor:om.eta.v2,tv1        cor:om.eta.q,tv1 
                 -0.683                  0.0883                   0.500  
       cor:om.eta.ka,tv1              cor:tq,tv2             cor:tka,tv2 
@@ -185,7 +185,7 @@ prop.sd 0.1900 (0.1835, 0.1964)
        cor:om.eta.ka,tq         cor:prop.sd,tka       cor:om.eta.cl,tka 
                 0.0402                 -0.0492                -0.00304  
       cor:om.eta.v1,tka       cor:om.eta.v2,tka        cor:om.eta.q,tka 
-                -0.675                  0.0836                   0.528  
+                -0.675                  0.0835                   0.528  
       cor:om.eta.ka,tka   cor:om.eta.cl,prop.sd   cor:om.eta.v1,prop.sd 
                  0.689                 -0.0340                 -0.0251  
   cor:om.eta.v2,prop.sd    cor:om.eta.q,prop.sd   cor:om.eta.ka,prop.sd 
@@ -206,7 +206,7 @@ cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2
   Distribution stats (mean/skewness/kurtosis/p-value) available in $shrink 
   Censoring (fit_multi$censInformation): No censoring
   Minimization message (fit_multi$message):  
-    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
+    NLOPT_FAILURE: Generic failure code. 
 ```
 
 Nothing above assumes the two share a dose or a schedule. The objective

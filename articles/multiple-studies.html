@@ -229,14 +229,14 @@ trials at once:</p>
 <span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit_multi<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb4-24"><a href="#cb4-24" tabindex="-1"></a></span>
 <span id="cb4-25"><a href="#cb4-25" tabindex="-1"></a>  optimize covariance other elapsed</span>
-<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a><span class="dv">1</span>    <span class="fl">43.15</span>     <span class="fl">25.036</span>     <span class="dv">0</span>  <span class="fl">68.186</span></span>
+<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a><span class="dv">1</span>   <span class="fl">56.807</span>     <span class="fl">25.298</span>     <span class="dv">0</span>  <span class="fl">82.105</span></span>
 <span id="cb4-27"><a href="#cb4-27" tabindex="-1"></a></span>
 <span id="cb4-28"><a href="#cb4-28" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit_multi<span class="sc">$</span>parFixed or fit_multi<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb4-29"><a href="#cb4-29" tabindex="-1"></a></span>
 <span id="cb4-30"><a href="#cb4-30" tabindex="-1"></a>                                  Parameter    Est.       SE  %RSE</span>
 <span id="cb4-31"><a href="#cb4-31" tabindex="-1"></a>tcl                    Log <span class="fu">clearance</span> (L<span class="sc">/</span>hr)   <span class="fl">1.603</span>  <span class="fl">0.01771</span> <span class="fl">1.105</span></span>
-<span id="cb4-32"><a href="#cb4-32" tabindex="-1"></a>tv1                  Log central <span class="fu">volume</span> (L)   <span class="fl">2.328</span>   <span class="fl">0.1293</span> <span class="fl">5.553</span></span>
-<span id="cb4-33"><a href="#cb4-33" tabindex="-1"></a>tv2               Log peripheral <span class="fu">volume</span> (L)   <span class="fl">3.398</span>  <span class="fl">0.04948</span> <span class="fl">1.456</span></span>
+<span id="cb4-32"><a href="#cb4-32" tabindex="-1"></a>tv1                  Log central <span class="fu">volume</span> (L)   <span class="fl">2.328</span>   <span class="fl">0.1293</span> <span class="fl">5.552</span></span>
+<span id="cb4-33"><a href="#cb4-33" tabindex="-1"></a>tv2               Log peripheral <span class="fu">volume</span> (L)   <span class="fl">3.398</span>  <span class="fl">0.04947</span> <span class="fl">1.456</span></span>
 <span id="cb4-34"><a href="#cb4-34" tabindex="-1"></a>tq        Log inter<span class="sc">-</span>compartmental <span class="fu">CL</span> (L<span class="sc">/</span>hr)   <span class="fl">2.281</span>  <span class="fl">0.02542</span> <span class="fl">1.114</span></span>
 <span id="cb4-35"><a href="#cb4-35" tabindex="-1"></a>tka     Log absorption rate <span class="fu">constant</span> (<span class="dv">1</span><span class="sc">/</span>hr) <span class="fl">0.02919</span>   <span class="fl">0.1192</span> <span class="fl">408.2</span></span>
 <span id="cb4-36"><a href="#cb4-36" tabindex="-1"></a>prop.sd      Proportional residual error SD  <span class="fl">0.1900</span> <span class="fl">0.003277</span> <span class="fl">1.725</span></span>
@@ -245,7 +245,7 @@ trials at once:</p>
 <span id="cb4-39"><a href="#cb4-39" tabindex="-1"></a>tv1        <span class="fl">10.26</span> (<span class="fl">7.963</span>, <span class="fl">13.22</span>)    <span class="fl">32.98</span>         <span class="cn">NaN</span></span>
 <span id="cb4-40"><a href="#cb4-40" tabindex="-1"></a>tv2        <span class="fl">29.90</span> (<span class="fl">27.14</span>, <span class="fl">32.95</span>)    <span class="fl">32.07</span>         <span class="cn">NaN</span></span>
 <span id="cb4-41"><a href="#cb4-41" tabindex="-1"></a>tq         <span class="fl">9.789</span> (<span class="fl">9.314</span>, <span class="fl">10.29</span>)    <span class="fl">33.66</span>         <span class="cn">NaN</span></span>
-<span id="cb4-42"><a href="#cb4-42" tabindex="-1"></a>tka       <span class="fl">1.030</span> (<span class="fl">0.8151</span>, <span class="fl">1.301</span>)    <span class="fl">31.79</span>         <span class="cn">NaN</span></span>
+<span id="cb4-42"><a href="#cb4-42" tabindex="-1"></a>tka       <span class="fl">1.030</span> (<span class="fl">0.8152</span>, <span class="fl">1.301</span>)    <span class="fl">31.79</span>         <span class="cn">NaN</span></span>
 <span id="cb4-43"><a href="#cb4-43" tabindex="-1"></a>prop.sd <span class="fl">0.1900</span> (<span class="fl">0.1835</span>, <span class="fl">0.1964</span>)                     </span>
 <span id="cb4-44"><a href="#cb4-44" tabindex="-1"></a> </span>
 <span id="cb4-45"><a href="#cb4-45" tabindex="-1"></a>  Covariance <span class="fu">Type</span> (fit_multi<span class="sc">$</span>covMethod)<span class="sc">:</span> r,s</span>
@@ -259,7 +259,7 @@ trials at once:</p>
 <span id="cb4-53"><a href="#cb4-53" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.ka,tcl             cor<span class="sc">:</span>tv2,tv1              cor<span class="sc">:</span>tq,tv1 </span>
 <span id="cb4-54"><a href="#cb4-54" tabindex="-1"></a>                 <span class="fl">0.305</span>                  <span class="sc">-</span><span class="fl">0.856</span>                   <span class="fl">0.211</span>  </span>
 <span id="cb4-55"><a href="#cb4-55" tabindex="-1"></a>            cor<span class="sc">:</span>tka,tv1         cor<span class="sc">:</span>prop.sd,tv1       cor<span class="sc">:</span>om.eta.cl,tv1 </span>
-<span id="cb4-56"><a href="#cb4-56" tabindex="-1"></a>                 <span class="fl">0.984</span>                 <span class="sc">-</span><span class="fl">0.0463</span>                <span class="sc">-</span><span class="fl">0.00150</span>  </span>
+<span id="cb4-56"><a href="#cb4-56" tabindex="-1"></a>                 <span class="fl">0.984</span>                 <span class="sc">-</span><span class="fl">0.0463</span>                <span class="sc">-</span><span class="fl">0.00151</span>  </span>
 <span id="cb4-57"><a href="#cb4-57" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.v1,tv1       cor<span class="sc">:</span>om.eta.v2,tv1        cor<span class="sc">:</span>om.eta.q,tv1 </span>
 <span id="cb4-58"><a href="#cb4-58" tabindex="-1"></a>                <span class="sc">-</span><span class="fl">0.683</span>                  <span class="fl">0.0883</span>                   <span class="fl">0.500</span>  </span>
 <span id="cb4-59"><a href="#cb4-59" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.ka,tv1              cor<span class="sc">:</span>tq,tv2             cor<span class="sc">:</span>tka,tv2 </span>
@@ -275,7 +275,7 @@ trials at once:</p>
 <span id="cb4-69"><a href="#cb4-69" tabindex="-1"></a>       cor<span class="sc">:</span>om.eta.ka,tq         cor<span class="sc">:</span>prop.sd,tka       cor<span class="sc">:</span>om.eta.cl,tka </span>
 <span id="cb4-70"><a href="#cb4-70" tabindex="-1"></a>                <span class="fl">0.0402</span>                 <span class="sc">-</span><span class="fl">0.0492</span>                <span class="sc">-</span><span class="fl">0.00304</span>  </span>
 <span id="cb4-71"><a href="#cb4-71" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.v1,tka       cor<span class="sc">:</span>om.eta.v2,tka        cor<span class="sc">:</span>om.eta.q,tka </span>
-<span id="cb4-72"><a href="#cb4-72" tabindex="-1"></a>                <span class="sc">-</span><span class="fl">0.675</span>                  <span class="fl">0.0836</span>                   <span class="fl">0.528</span>  </span>
+<span id="cb4-72"><a href="#cb4-72" tabindex="-1"></a>                <span class="sc">-</span><span class="fl">0.675</span>                  <span class="fl">0.0835</span>                   <span class="fl">0.528</span>  </span>
 <span id="cb4-73"><a href="#cb4-73" tabindex="-1"></a>      cor<span class="sc">:</span>om.eta.ka,tka   cor<span class="sc">:</span>om.eta.cl,prop.sd   cor<span class="sc">:</span>om.eta.v1,prop.sd </span>
 <span id="cb4-74"><a href="#cb4-74" tabindex="-1"></a>                 <span class="fl">0.689</span>                 <span class="sc">-</span><span class="fl">0.0340</span>                 <span class="sc">-</span><span class="fl">0.0251</span>  </span>
 <span id="cb4-75"><a href="#cb4-75" tabindex="-1"></a>  cor<span class="sc">:</span>om.eta.v2,prop.sd    cor<span class="sc">:</span>om.eta.q,prop.sd   cor<span class="sc">:</span>om.eta.ka,prop.sd </span>
@@ -296,7 +296,7 @@ trials at once:</p>
 <span id="cb4-90"><a href="#cb4-90" tabindex="-1"></a>  Distribution <span class="fu">stats</span> (mean<span class="sc">/</span>skewness<span class="sc">/</span>kurtosis<span class="sc">/</span>p<span class="sc">-</span>value) available <span class="cf">in</span> <span class="sc">$</span>shrink </span>
 <span id="cb4-91"><a href="#cb4-91" tabindex="-1"></a>  <span class="fu">Censoring</span> (fit_multi<span class="sc">$</span>censInformation)<span class="sc">:</span> No censoring</span>
 <span id="cb4-92"><a href="#cb4-92" tabindex="-1"></a>  Minimization <span class="fu">message</span> (fit_multi<span class="sc">$</span>message)<span class="sc">:</span>  </span>
-<span id="cb4-93"><a href="#cb4-93" tabindex="-1"></a>    NLOPT_XTOL_REACHED<span class="sc">:</span> Optimization stopped because xtol_rel or <span class="fu">xtol_abs</span> (above) was reached. </span></code></pre></div>
+<span id="cb4-93"><a href="#cb4-93" tabindex="-1"></a>    NLOPT_FAILURE<span class="sc">:</span> Generic failure code. </span></code></pre></div>
 <p>Nothing above assumes the two share a dose or a schedule. The
 objective is the sum of per-study negative log-likelihoods under one set
 of population parameters, and each study is predicted at its own dosing

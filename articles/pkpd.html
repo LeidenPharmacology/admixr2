@@ -152,7 +152,17 @@ published figure to E, V and n</a>.</p>
 <p>One compartment with a direct-effect <code>Emax</code> term that
 <em>lowers</em> DBP. Two observed outputs make it a multiple-endpoint
 model, carrying a residual error term for each, as in <a href="multi-compartment.html">Several observed compartments</a>:</p>
-<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
+<svg viewbox="0 0 960 360" width="100%" role="img" aria-labelledby="pkpd-schematic-title pkpd-schematic-desc" style="display:block;max-width:960px;margin:1.5rem auto;font-family:Arial,sans-serif"><title id="pkpd-schematic-title">
+One-compartment PK and direct-effect PD model
+</title>
+<desc id="pkpd-schematic-desc">A dose enters the central compartment,
+clearance removes drug, and plasma concentration drives an Emax
+reduction from baseline blood pressure.</desc><defs><marker id="pkpd-arrow" markerwidth="10" markerheight="10" refx="8" refy="5" orient="auto" markerunits="strokeWidth"><path d="M1 1 L9 5 L1 9" fill="none" stroke="#555" stroke-width="1.5"></path></marker></defs><g fill="none" stroke-width="4"><rect x="120" y="68" width="300" height="180" rx="3" stroke="#001158"></rect><rect x="570" y="68" width="330" height="180" rx="3" stroke="#DD6B2A"></rect></g><g fill="none" stroke="#555" stroke-width="2.5" marker-end="url(#pkpd-arrow)"><path d="M20 158 H115"></path><path d="M420 158 H565"></path><path d="M390 248 V318"></path></g><g text-anchor="middle"><text x="65" y="139" fill="#555" font-size="27">dose</text><text x="270" y="140" fill="#001158" font-size="34" font-weight="bold">central</text><text x="270" y="190" fill="#001158" font-size="29">V</text><text x="495" y="139" fill="#333" font-size="27">cp</text><text x="735" y="135" fill="#DD6B2A" font-size="34" font-weight="bold">direct
+Emax effect</text><text x="735" y="175" fill="#333" font-size="25">DBP
+= E0 −</text><text x="735" y="207" fill="#333" font-size="23">Emax · cp
+/ (EC50 + cp)</text><text x="390" y="350" fill="#555" font-size="27">CL</text><text x="230" y="286" fill="#0072B2" font-size="23" font-style="italic">observed
+as cp</text><text x="735" y="286" fill="#DD6B2A" font-size="23" font-style="italic">observed
+as dbp</text></g></svg><div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pkpd_model</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="fu"><a href="https://nlmixr2.github.io/rxode2/reference/ini.html" class="external-link">ini</a></span><span class="op">(</span><span class="op">{</span></span>
 <span>    <span class="va">tcl</span>     <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="fl">4</span><span class="op">)</span>  ; <span class="fu">label</span><span class="op">(</span><span class="st">"Log clearance (L/h)"</span><span class="op">)</span></span>
@@ -239,7 +249,7 @@ Otherwise an ordinary admixr2 fit:</p>
 <span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a>── <span class="fu">Time</span> (sec fit<span class="sc">$</span>time)<span class="sc">:</span> ──</span>
 <span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a></span>
 <span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>        optimize covariance other elapsed other</span>
-<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">1.335</span>      <span class="fl">0.648</span>     <span class="dv">0</span>   <span class="fl">1.983</span> <span class="fl">3.959</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>elapsed    <span class="fl">1.452</span>      <span class="fl">0.719</span>     <span class="dv">0</span>   <span class="fl">2.171</span> <span class="fl">3.419</span></span>
 <span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a></span>
 <span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a>── Population <span class="fu">Parameters</span> (fit<span class="sc">$</span>parFixed or fit<span class="sc">$</span>parFixedDf)<span class="sc">:</span> ──</span>
 <span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a></span>

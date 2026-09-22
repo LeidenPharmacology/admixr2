@@ -184,7 +184,7 @@ admc -3690.262 -3668.262 -3597.732       1845.131
 ── Time (sec fit$time): ──
 
   optimize covariance other elapsed
-1   31.864      13.52     0  45.384
+1   36.869     14.317     0  51.186
 
 ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 
@@ -214,21 +214,21 @@ prop.sd 0.1895 (0.1831, 0.1960)
       cor:om.eta.ka,tcl             cor:tv2,tv1              cor:tq,tv1 
                  0.316                  -0.851                   0.233  
             cor:tka,tv1         cor:prop.sd,tv1       cor:om.eta.cl,tv1 
-                 0.982                 -0.0190                -0.00707  
+                 0.982                 -0.0190                -0.00708  
       cor:om.eta.v1,tv1       cor:om.eta.v2,tv1        cor:om.eta.q,tv1 
                 -0.672                  0.0598                   0.501  
       cor:om.eta.ka,tv1              cor:tq,tv2             cor:tka,tv2 
                  0.693                  -0.274                  -0.857  
         cor:prop.sd,tv2       cor:om.eta.cl,tv2       cor:om.eta.v1,tv2 
-              -0.00613                  0.0506                   0.625  
+              -0.00614                  0.0506                   0.625  
       cor:om.eta.v2,tv2        cor:om.eta.q,tv2       cor:om.eta.ka,tv2 
-                0.0750                  -0.439                  -0.642  
+                0.0749                  -0.439                  -0.642  
              cor:tka,tq          cor:prop.sd,tq        cor:om.eta.cl,tq 
                  0.271                -0.00629                 -0.0495  
        cor:om.eta.v1,tq        cor:om.eta.v2,tq         cor:om.eta.q,tq 
                 -0.138                  0.0734                   0.318  
        cor:om.eta.ka,tq         cor:prop.sd,tka       cor:om.eta.cl,tka 
-                0.0656                 -0.0229                -0.00877  
+                0.0656                 -0.0229                -0.00878  
       cor:om.eta.v1,tka       cor:om.eta.v2,tka        cor:om.eta.q,tka 
                 -0.666                  0.0557                   0.527  
       cor:om.eta.ka,tka   cor:om.eta.cl,prop.sd   cor:om.eta.v1,prop.sd 
@@ -236,7 +236,7 @@ prop.sd 0.1895 (0.1831, 0.1960)
   cor:om.eta.v2,prop.sd    cor:om.eta.q,prop.sd   cor:om.eta.ka,prop.sd 
                 -0.195                  -0.161                  0.0196  
 cor:om.eta.v1,om.eta.cl cor:om.eta.v2,om.eta.cl  cor:om.eta.q,om.eta.cl 
-                0.0363                  -0.158                -0.00686  
+                0.0363                  -0.158                -0.00687  
 cor:om.eta.ka,om.eta.cl cor:om.eta.v2,om.eta.v1  cor:om.eta.q,om.eta.v1 
                -0.0317                 -0.0249                  -0.257  
 cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2 
@@ -250,7 +250,7 @@ cor:om.eta.ka,om.eta.v1  cor:om.eta.q,om.eta.v2 cor:om.eta.ka,om.eta.v2
   Distribution stats (mean/skewness/kurtosis/p-value) available in fit$shrink 
   Censoring (fit$censInformation): No censoring
   Minimization message (fit$message):  
-    NLOPT_FAILURE: Generic failure code. 
+    NLOPT_XTOL_REACHED: Optimization stopped because xtol_rel or xtol_abs (above) was reached. 
 ```
 
 Key entries in `fit$env$admExtra`:
@@ -261,10 +261,10 @@ fit$objective                    # -2 log-likelihood
 #> [1] -3690.262
 fit$env$admExtra$struct          # structural parameters (log scale)
 #>        tcl        tv1        tv2         tq        tka 
-#> 1.60197089 2.32807434 3.39738946 2.27604354 0.02978802
+#> 1.60197115 2.32807483 3.39738144 2.27604233 0.02978847
 fit$env$admExtra$sigma_var       # residual variance(s)
 #>    prop.sd 
-#> 0.03592068
+#> 0.03592041
 
 logLik(fit)
 #> 'log Lik.' 1845.131 (df=11)

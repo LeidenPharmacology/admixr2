@@ -365,7 +365,7 @@ library(rxode2)
 library(nlmixr2)
 #> ── Attaching packages ───────────────────────────────────────── nlmixr2 7.0.1 ──
 #> ★ lotri        1.0.5      ★ nlmixr2est   7.1.0 
-#> ★ nlmixr2data  2.0.10     ★ nlmixr2extra 5.2.0 
+#> ★ nlmixr2data  2.0.10     ★ nlmixr2extra 5.2.1 
 #> ★ nlmixr2save  0.2.0      ★ nlmixr2plot  5.1.0 
 #> ── Optional Packages Not Installed ──────────────────────────── nlmixr2 7.0.1 ──
 #> ✖ babelmixr2     ✖ nlmixr2targets
@@ -441,7 +441,7 @@ fit <- nlmixr2(
 #> | 0010     |  1768.15 |    4.967 |    29.88 |   0.2587 |   0.0888 |  0.04603 |
 #> | 0020     |   862.47 |    6.391 |    37.74 |   0.3864 |  0.08003 |   0.0422 |
 #> | 0029 ✓   |   861.90 |    6.384 |    38.03 |     0.39 |  0.08051 |  0.04074 |
-#> | 0.8 sec  |          |          |          |          |          |          |
+#> | 0.7 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, Analytical-Hessian, sandwich, 6 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
@@ -455,7 +455,7 @@ print(fit)
 #> ── Time (sec fit$time): ──
 #> 
 #>         optimize covariance other elapsed other
-#> elapsed    0.803      0.414     0   1.217  3.95
+#> elapsed    0.736      0.397     0   1.133 4.509
 #> 
 #> ── Population Parameters (fit$parFixed or fit$parFixedDf): ──
 #> 

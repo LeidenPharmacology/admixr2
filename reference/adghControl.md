@@ -502,7 +502,7 @@ fit <- nlmixr2(
 #> | 0020     |   805.78 |    6.666 |    37.33 |   0.3781 |   0.1041 |  0.05946 |
 #> | 0030     |   805.77 |    6.663 |    37.35 |   0.3784 |   0.1035 |  0.05848 |
 #> | 0031 ✓   |   805.77 |    6.663 |    37.35 |   0.3784 |   0.1035 |  0.05848 |
-#> | 0.6 sec  |          |          |          |          |          |          |
+#> | 0.5 sec  |          |          |          |          |          |          |
 #>   Computing covariance (R method, Analytical-Hessian, sandwich, 6 gradient evaluations)
 #> → compress origData in nlmixr2 object, save 1160
 #>  
