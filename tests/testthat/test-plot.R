@@ -142,6 +142,19 @@ test_that("plot.admFit mean: warns and returns no mean_ keys when rxMod NULL", {
   expect_false("mean_s1" %in% names(out))
 })
 
+test_that("predicted mean panel draws one SD ribbon", {
+  fit <- .make_mock_fit()
+  fit$env$admExtra$studies <- list(s1 = list(
+    E = c(1, 2), V = diag(2), n = 10L, times = c(1, 2)))
+  ag <- list(s1 = list(pred = list(E = c(1, 2), V = diag(c(2, 2)),
+                                   V_struct = diag(c(1, 1)))))
+  local_mocked_bindings(.admAggCached = function(...) ag, .package = "admixr2")
+  out <- .pdf_wrap(plot(fit, which = "mean"))
+  expect_equal(sum(vapply(out$mean_s1_pred$layers,
+                          function(layer) inherits(layer$geom, "GeomRibbon"),
+                          logical(1))), 1L)
+})
+
 test_that("plot.admFit cov: warns and returns no cov_ keys when rxMod NULL", {
   fit <- .make_mock_fit()
   fit$env$admExtra$studies <- list(s1 = list(
