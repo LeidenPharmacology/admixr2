@@ -1,7 +1,9 @@
 // [[Rcpp::depends(RcppEigen)]]
 #include <RcppEigen.h>
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <limits>
 
 using namespace Rcpp;
 using namespace Eigen;
@@ -47,13 +49,16 @@ static inline VectorXd logdmvnorm_batch_impl(
 // Numerically stable softmax with non-finite clipping
 static inline VectorXd softmax_impl(const VectorXd& lw) {
   int n = lw.size();
-  double m = lw.maxCoeff();
-  VectorXd w = (lw.array() - m).exp();
-  double max_finite = 0.0;
+  double max_finite = -std::numeric_limits<double>::infinity();
   for (int i = 0; i < n; ++i)
-    if (std::isfinite(w[i]) && w[i] > max_finite) max_finite = w[i];
-  for (int i = 0; i < n; ++i)
-    if (!std::isfinite(w[i])) w[i] = max_finite;
+    if (std::isfinite(lw[i])) max_finite = std::max(max_finite, lw[i]);
+  if (!std::isfinite(max_finite)) return VectorXd::Zero(n);
+  VectorXd w(n);
+  for (int i = 0; i < n; ++i) {
+    double x = (std::isnan(lw[i]) || lw[i] > max_finite)
+      ? max_finite : lw[i];                 // clip NaN and +Inf
+    w[i] = std::exp(x - max_finite);        // -Inf -> 0
+  }
   double s = w.sum();
   if (s > 0.0) w /= s;
   return w;
