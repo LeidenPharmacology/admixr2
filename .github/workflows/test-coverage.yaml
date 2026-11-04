@@ -121,6 +121,21 @@ jobs:
 
       - name: Test coverage
         run: |
+          # covr's save_trace() writes straight to the final name, so a process
+          # killed mid-write leaves a truncated trace for good, and one such file
+          # aborts the whole merge. Skip those and say so: a skipped trace costs
+          # only that one process's counts.
+          .merge <- covr:::merge_coverage
+          utils::assignInNamespace("merge_coverage", function(x) {
+            if (is.character(x)) {
+              ok <- vapply(x, function(f)
+                !inherits(try(readRDS(f), silent = TRUE), "try-error"), logical(1))
+              if (!all(ok))
+                cat("::warning::skipped", sum(!ok), "of", length(x), "unreadable covr traces\n")
+              x <- x[ok]
+            }
+            .merge(x)
+          }, ns = "covr")
           cov <- covr::package_coverage(
             quiet = FALSE,
             clean = FALSE,

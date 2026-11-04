@@ -3577,7 +3577,8 @@ print.covDist <- function(x, ...) {
   # whole collapse if it does, so there is nothing per-column left to record.
   z0 <- rbind(rep(0, pc), Z[c(1L, 8L, 20L, 50L, 97L) %% n_probe + 1L, ,
                             drop = FALSE])
-  gradB <- function(cell, st_use = st, eta_at = 0, i0 = NULL)
+  i0 <- NULL
+  gradB <- function(cell, st_use = st, eta_at = 0)
     .admCovGradB(function(ZZ) probe_gen(eta_at, cell,
                                         .admCovXFromZ(cd, cn, ZZ), st_use), z0,
                 i0 = i0)
@@ -3590,10 +3591,6 @@ print.covDist <- function(x, ...) {
   # GH design. The order rather than the single winning row, so a link going
   # stationary at the frozen point has a fixed place to fall to.
   i0 <- attr(B, "at")
-  gradB <- function(cell, st_use = st, eta_at = 0)
-    .admCovGradB(function(ZZ) probe_gen(eta_at, cell,
-                                        .admCovXFromZ(cd, cn, ZZ), st_use), z0,
-                i0 = i0)
   # THE LOADING MUST NOT DEPEND ON THE RANDOM EFFECT. A covariate-by-eta
   # interaction (cl <- exp(tcl + b * WT * eta.cl)) has a direction that moves
   # with eta, and the probe at eta = 0 would report b = 0 -- a collapse onto

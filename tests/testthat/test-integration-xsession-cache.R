@@ -52,6 +52,9 @@ test_that(".admRxLoadAll rejects an artifact built by another session", {
                       error = function(e) NULL)
   utils::assignInNamespace(".admModDir", orig, ns = "admixr2")
   skip_if(is.null(foreign), "sensitivity model could not be built")
+  # Before the unlink above: Windows cannot delete a loaded DLL, and the leftover
+  # directory is an R CMD check "detritus in the temp directory" NOTE.
+  on.exit(try(rxode2::rxUnload(foreign$mod), silent = TRUE), add = TRUE, after = FALSE)
 
   dll <- rxode2::rxDll(foreign$mod)
   # The artifact must genuinely EXIST -- otherwise file.exists() alone would
