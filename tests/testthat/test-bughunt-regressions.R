@@ -25,6 +25,9 @@ test_that("study normalization rejects invalid size, variance, and endpoint", {
     "positive-semidefinite")
   expect_error(admixr2:::.admNormaliseStudy(within(study, V <- NA_real_), "s"),
                "finite")
+  expect_error(admixr2:::.admNormaliseStudy(
+    list(n = 10, times = 1:2, E = 1:2, V = matrix(c(1, NA, NA, 1), 2)), "s"),
+    "finite")
   expect_error(admixr2:::.admExpandLongStudy(
     list(n = 10, data = data.frame(DVID = factor(c("cp", NA)),
                                    TIME = c(1, 2), E = c(1, 99), V = c(1, 1))),
@@ -42,6 +45,8 @@ test_that("joint covariance follows sorted observation times", {
   unit <- admixr2:::.admBuildJointUnit(study, "s", NULL)
   expect_equal(unit$E, c(10, 20, 30, 1))
   expect_equal(diag(unit$V), c(.1, .2, .4, .8))
+  study$n <- 0
+  expect_error(admixr2:::.admBuildJointUnit(study, "s", NULL), "finite positive")
 })
 
 test_that("fractional stratum sizes are summed before BIC", {
