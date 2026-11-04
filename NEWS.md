@@ -1,3 +1,15 @@
+# admixr2 (development version)
+
+## Bug fixes
+
+* **Importance weights with a non-finite log-weight depended on the Eigen
+  version and on the element's position**, because Eigen 3.4's vectorised `exp`
+  returns about `5e-309` for `-Inf` rather than 0. A single `+Inf` gave uniform
+  weights, and on Eigen 5 all-zero weights, which failed the test suite. Now
+  `-Inf` gets weight 0 and `NaN`/`+Inf` are clipped to the largest finite value
+  on every Eigen. Weights from finite log-weights are unchanged. Thanks to Dirk
+  Eddelbuettel (#158).
+
 # admixr2 0.4.1
 
 ## New features

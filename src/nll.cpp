@@ -46,25 +46,29 @@ static inline VectorXd logdmvnorm_batch_impl(
   return VectorXd::Constant(n_sim, log_const) - 0.5 * mahal;
 }
 
-// Numerically stable softmax with non-finite clipping
+// Numerically stable softmax. -Inf gets weight 0; NaN and +Inf are clipped to
+// the largest finite value; an all-non-finite input returns all zeros.
+// -Inf is zeroed by hand because Eigen 3.4's vectorised exp floors it at ~5e-309
+// instead of 0 (Eigen 5 does not), which made the result depend on the Eigen
+// version and on an element's position in the packet. The exp itself stays
+// vectorised: scalar std::exp made this whole kernel up to 6x slower on Windows.
 static inline VectorXd softmax_impl(const VectorXd& lw) {
   int n = lw.size();
   double max_finite = -std::numeric_limits<double>::infinity();
   for (int i = 0; i < n; ++i)
     if (std::isfinite(lw[i])) max_finite = std::max(max_finite, lw[i]);
   if (!std::isfinite(max_finite)) return VectorXd::Zero(n);
-  VectorXd w(n);
-  for (int i = 0; i < n; ++i) {
-    double x = (std::isnan(lw[i]) || lw[i] > max_finite)
-      ? max_finite : lw[i];                 // clip NaN and +Inf
-    w[i] = std::exp(x - max_finite);        // -Inf -> 0
-  }
-  double s = w.sum();
-  if (s > 0.0) w /= s;
+  VectorXd x(n);
+  for (int i = 0; i < n; ++i)
+    x[i] = ((std::isnan(lw[i]) || lw[i] > max_finite) ? max_finite : lw[i]) - max_finite;
+  VectorXd w = x.array().exp();
+  for (int i = 0; i < n; ++i)
+    if (std::isinf(x[i])) w[i] = 0.0;
+  w /= w.sum();  // >= 1: the largest finite entry contributes exp(0)
   return w;
 }
 
-// Weighted mean + covariance: mu = F'w, V = F_c' diag(w) F_c
+//Weighted mean + covariance: mu = F'w, V = F_c' diag(w) F_c
 static inline void weighted_meancov_impl(
     const MatrixXd& F,
     const VectorXd& w,

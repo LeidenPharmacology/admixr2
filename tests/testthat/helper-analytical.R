@@ -14,8 +14,10 @@ nll_var_r <- function(E_obs, v_obs, E_pred, v_pred, n) {
 }
 
 softmax_r <- function(lw) {
-  lw_clipped <- ifelse(is.finite(lw), lw, max(lw[is.finite(lw)], na.rm = TRUE))
-  w <- exp(lw_clipped - max(lw_clipped))
+  # Same contract as softmax_impl: -Inf stays (weight 0), NaN/+Inf clip to max.
+  m <- max(lw[is.finite(lw)])
+  lw[is.nan(lw) | lw == Inf] <- m
+  w <- exp(lw - m)
   w / sum(w)
 }
 
