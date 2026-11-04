@@ -235,6 +235,8 @@ datagenControl <- function(
 #' }
 #' @export
 datagen <- function(studies, model = NULL, control = datagenControl()) {
+  .restoreRng <- .admRngSnapshot()
+  on.exit(.restoreRng(), add = TRUE)
   checkmate::assertList(studies, min.len = 1L)
   if (!inherits(control, "datagenControl"))
     stop("`control` must be created via `datagenControl()`", call. = FALSE)

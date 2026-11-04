@@ -1283,6 +1283,8 @@ nmObjGetControl.adfo <- function(x, ...) {
 #' @importFrom nlmixr2est nlmixr2Est
 #' @export
 nlmixr2Est.adfo <- function(env, ...) {
+  .restoreRng <- .admRngSnapshot()
+  on.exit(.restoreRng(), add = TRUE)
   .ui  <- env$ui
   .ctl <- env$control
 

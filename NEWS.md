@@ -2,6 +2,14 @@
 
 ## Bug fixes
 
+* **Every fit reset the session's random number stream**, because the estimators
+  seed themselves and never restored the caller's state. A loop drawing random
+  numbers between fits got identical draws on every iteration after the first,
+  with no error, so a simulation study written that way silently reused the same
+  data. Fits, `datagen()`, `plot()` and `admMoments()` now leave the stream as
+  they found it. Their own results are unchanged, but code that draws random
+  numbers after a fit now gets different numbers than before.
+
 * **Importance weights with a non-finite log-weight depended on the Eigen
   version and on the element's position**, because Eigen 3.4's vectorised `exp`
   returns about `5e-309` for `-Inf` rather than 0. A single `+Inf` gave uniform
