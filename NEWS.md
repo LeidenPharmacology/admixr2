@@ -10,6 +10,19 @@
   on every Eigen. Weights from finite log-weights are unchanged. Thanks to Dirk
   Eddelbuettel (#158).
 
+* **A joint study-level `V` kept its original row order when observation times
+  were given out of order**, so it no longer lined up with the sorted means. It
+  now follows the sorted times (#137).
+
+* **Bad study input that used to pass silently is now an error**: a missing,
+  non-finite or non-positive `n`; a non-finite or negative variance; a `V` that
+  is not symmetric positive-semidefinite; a missing long-format endpoint; and an
+  empty, unnamed or duplicated covariate in `covDist()` (#137).
+
+* **BIC truncated fractional study sizes**, which can make a stratum count as
+  zero observations. Lognormal moment matching in `covDist()` no longer overflows
+  at extreme scales (#137).
+
 # admixr2 0.4.1
 
 ## New features

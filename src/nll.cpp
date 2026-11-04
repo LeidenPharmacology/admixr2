@@ -688,8 +688,6 @@ Rcpp::List irmc_grad_kernel_cpp(
     const Eigen::VectorXd& eff_dNLL_dmu,
     const Eigen::MatrixXd& dNLL_dV
 ) {
-  int n_sim = F.rows();
-
   // F_c computed from pre-passed mu; avoids recomputing mu = F'w (O(n_sim * n_times) matvec)
   MatrixXd F_c = F.rowwise() - mu.transpose();
   VectorXd term1    = F * eff_dNLL_dmu;                  // n_sim (uncentered, gemv)
