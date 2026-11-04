@@ -2763,13 +2763,22 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
   if (is.null(ctr)) bad("needs a `mean` or a `median` (or `meanlog`/`sdlog`).")
   # spread, in whichever currency the paper used
   sd <- g("sd")
-  if (is.null(sd) && !is.null(g("cv"))) sd <- ctr * g("cv") / 100
+  if (is.null(sd) && !is.null(g("cv"))) {
+    if (is.finite(g("cv")) && g("cv") < 1)
+      warning("admixr2: covariate '", nm, "': `cv` is a percent, so ", g("cv"),
+              " means ", g("cv"), "%. If the paper reports a fraction, give ",
+              "cv = ", 100 * g("cv"), ".", call. = FALSE)
+    sd <- ctr * g("cv") / 100
+  }
   if (is.null(sd) && !is.null(gg("iqr"))) {
     q <- gg("iqr")
     if (length(q) != 2L) bad("`iqr` needs two values, e.g. iqr = c(62, 88).")
     # exact for the assumed shape rather than a rule of thumb: on the scale the margin is modelled on, IQR =
     # 1.349 sd
     q <- sort(q)
+    if (!is.null(g("median")) && (ctr < q[1L] || ctr > q[2L]))
+      bad("has median ", signif(ctr, 4), " outside its own iqr c(",
+          signif(q[1L], 4), ", ", signif(q[2L], 4), ").")
     # A REPORTED (median, IQR) NEED NOT BE CONSISTENT with the assumed shape, and usually is not: real quartiles
     # are rarely symmetric about the median on any scale. Only two of the three numbers can be honoured, so
     # honour the median (the headline) and the IQR WIDTH (the spread), and say when the third disagrees.
@@ -2865,6 +2874,19 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
           "study's `cov`, not `cov_dist`.")
     return(list(values = c(0, 1), probs = c(1 - p1, p1), labels = names(v)))
   }
+  # Values may be counts, so a range cannot be told from levels by size: only its
+  # names give it away. Normalising c(min = 50, max = 110) made a binary covariate.
+  # Not "low"/"high": those are real level labels for a dosing band.
+  if (any(k %in% c("min", "max", "minimum", "maximum", "lo", "hi", "lower", "upper",
+                   "q1", "q3")))
+    bad("looks like a range, not a set of levels. Give it with a centre, e.g. ",
+        "c(median = , range = c(min, max)).")
+  # Proportions from a rounded table sum to about 1. Further off usually means a
+  # dropped level, and normalising then shifts every level that remains.
+  if (all(v < 1) && abs(sum(v) - 1) > 0.02)
+    warning("admixr2: covariate '", nm, "': proportions sum to ",
+            format(sum(v), digits = 3), ", not 1, and were rescaled. Check for ",
+            "a level missing from the table.", call. = FALSE)
   list(values = seq_along(v) - 1, probs = as.numeric(v) / sum(v),
        labels = names(v))
 }

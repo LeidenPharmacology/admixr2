@@ -11,7 +11,10 @@ vignette: >
 knitr::opts_chunk$set(
   collapse = TRUE, comment = "#>",
   message = FALSE, warning = FALSE,
-  fig.width = 7, fig.height = 5
+  fig.width = 7, fig.height = 5,
+  # This vignette ships, and both are only in Suggests.
+  eval = requireNamespace("nlmixr2", quietly = TRUE) &&
+    requireNamespace("ggplot2", quietly = TRUE)
 )
 source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R"))[1])
 ```

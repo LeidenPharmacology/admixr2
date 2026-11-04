@@ -10,6 +10,12 @@
   they found it. Their own results are unchanged, but code that draws random
   numbers after a fit now gets different numbers than before.
 
+* **Slips in a transcribed covariate table passed silently.**
+  `covDist(WT = c(min = 50, max = 110))` became a binary covariate, because
+  anything unrecognised was read as level proportions and rescaled. A range is
+  now refused, and proportions that do not sum to about 1 warn. A `cv` below 1
+  warns, since it is a percent, and a median outside its own IQR is refused.
+
 * **Importance weights with a non-finite log-weight depended on the Eigen
   version and on the element's position**, because Eigen 3.4's vectorised `exp`
   returns about `5e-309` for `-Inf` rather than 0. A single `+Inf` gave uniform

@@ -7,6 +7,24 @@ test_that("covDist rejects empty and duplicate covariates", {
                        A = c(mean = 10, sd = 1)), "duplicate.*A")
 })
 
+test_that("transcription slips in a covariate table are caught", {
+  # a range is not two proportions: this used to become a binary covariate
+  expect_error(covDist(WT = c(min = 50, max = 110)), "looks like a range")
+  expect_error(covDist(WT = c(Lower = 50, Upper = 110)), "looks like a range")
+  # counts and percentages are relative weights, and stay accepted
+  expect_equal(covDist(SEX = c(male = 55, female = 45))$SEX$probs, c(.55, .45))
+  expect_silent(covDist(G = c(a = 1, b = 1)))
+  expect_silent(covDist(DOSE = c(low = .4, high = .6)))
+  # rounding is fine, a missing level is not
+  expect_silent(covDist(G = c(a = .33, b = .33, c = .33)))
+  expect_warning(covDist(G = c(a = .6, b = .3)), "sum to 0.9")
+  # a cv is a percent
+  expect_warning(admPopulation(WT = c(mean = 80, cv = 0.25)), "percent")
+  expect_silent(admPopulation(WT = c(mean = 80, cv = 25)))
+  expect_error(admPopulation(C = c(median = 200, iqr = c(62, 118))),
+               "outside its own iqr")
+})
+
 test_that("lognormal moment matching remains finite at extreme scales", {
   x <- covDist(A = c(mean = 1e200, sd = 1e199), dist = "lnorm")$A
   expect_true(all(is.finite(unlist(x[c("meanlog", "sdlog")]))))
