@@ -25,11 +25,16 @@ Needs \code{datagenControl(method = "mc")} or \code{"gh"}; \code{"fo"} integrate
 over the random effects only and is refused. Prefer \code{"gh"}, which
 adds no Monte Carlo noise to data that is meant to BE the reference.}
 \item{\code{stratify}}{(Optional) \code{TRUE} to stratify on every covariate this
-study's OWN data-generating model conditions on, marginalising the
-rest --- the split is read from the model, so it cannot disagree with
-it. Two sources sharing one \code{cov_dist} therefore stratify differently,
-each according to what it fitted. A character vector names the
-covariates explicitly instead. The study is expanded into
+study's OWN data-generating model ESTIMATED a coefficient for,
+marginalising the rest --- the split is read from the model, so it
+cannot disagree with it. Two sources sharing one \code{cov_dist} therefore
+stratify differently, each according to what it fitted. A covariate the
+model merely READS --- weight at a fixed allometric exponent --- is
+refused: there is no fitted effect to recover there. A character vector
+names the covariates explicitly instead, and is taken at its word.
+NOTHING IS DERIVED WITHOUT THIS: a study that asks for no stratification
+is generated MARGINAL over whatever it declared, which is what a
+publication reports. The study is expanded into
 one ordinary study per covariate stratum, named \verb{<study>_s1},
 \verb{<study>_s2}, ..., each pinned at its own covariate value, carrying its
 own effective size \code{n_k} (the quadrature weight times \code{n}, summing to
@@ -40,7 +45,7 @@ covariate subgroup. Stratify only on what the source actually fitted:
 a source with no term in a covariate has no contrast in it to give, and
 nodes that vary it manufacture a null one. See \code{\link[=covStrata]{covStrata()}}.}
 \item{\code{strata_nodes}}{(Optional) strata per stratified covariate
-(default 5); a discrete covariate is cut at its levels instead. Each
+(default 9); a discrete covariate is cut at its levels instead. Each
 stratum costs a solve and more of them do not buy accuracy: a matched
 one-covariate fit recovers 0.7000 / 0.7002 / 0.7005 at 3 / 4 / 10
 strata against a true 0.700. See \code{\link[=covStrata]{covStrata()}}.}

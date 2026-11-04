@@ -1,0 +1,622 @@
+---
+title: "Covariates"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Covariates}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>",
+  message = FALSE, warning = FALSE,
+  fig.width = 7, fig.height = 4.2
+)
+source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R"))[1])
+```
+
+```{r libs, include=FALSE}
+library(admixr2); library(rxode2); library(nlmixr2); library(ggplot2)
+```
+
+## The question
+
+A woman with a creatinine clearance of 21 mL/min needs a dose. Three trials have
+been published. **Two of the three fitted no renal effect** --- they enrolled
+narrow ranges of renal function, so within those trials the effect is invisible,
+absorbed into each paper's clearance. The third enrolled across renal function
+and did estimate it.
+
+So the evidence arrives in two different shapes, and admixr2 has to take both:
+one paper that reports a renal *relationship*, and two that report only the
+renal function of the patients they happened to enrol --- a contrast visible
+only *between* them.
+
+## Three papers
+
+Simulated so there is a truth to check against. Three trials, three
+investigators, three models that share a drug and nothing else. Sato and Ito
+enrolled narrow renal ranges and fitted no renal term; Khan enrolled across
+renal function and fitted one.
+
+
+```{r sim, include=FALSE}
+set.seed(11)
+TIMES <- c(0.5, 1, 2, 4, 8, 12, 24); DOSE <- 200
+CL70 <- 5; V70 <- 50; BCRCL <- 0.6; BSEX <- 0.18
+OM_CL <- 0.05; SD_ADD <- 0.08
+R <- matrix(c(1, .45, .45, 1), 2, 2,
+            dimnames = list(c("WT", "CRCL"), c("WT", "CRCL")))
+
+# A cohort of virtual patients: lognormal margins for weight and renal
+# function, joined by the Gaussian copula above; sex drawn independently.
+# Used again later for the severe cohort, so it takes its medians as arguments.
+draw_cohort <- function(n, wt_median, wt_cv, crcl_median, crcl_cv,
+                        p_male = 0.55) {
+
+  # a Gaussian copula, one step at a time: correlated normals, turned into
+  # correlated uniforms, then pushed through each covariate's own margin
+  z          <- matrix(rnorm(2 * n), nrow = n, ncol = 2) %*% chol(R)
+  u_wt       <- pnorm(z[, 1])
+  u_crcl     <- pnorm(z[, 2])
+
+  data.frame(
+    WT   = qlnorm(u_wt,   meanlog = log(wt_median),   sdlog = wt_cv),
+    CRCL = qlnorm(u_crcl, meanlog = log(crcl_median), sdlog = crcl_cv),
+    SEX  = rbinom(n, size = 1L, prob = p_male))
+}
+
+# Concentration after an IV bolus into one compartment.
+conc <- function(t, dose, cl, v) dose/v * exp(-cl/v * t)
+
+# Each patient's true clearance. `bcrcl = 0` gives a model with no renal term,
+# which is what all three published models will turn out to be.
+patient_cl <- function(cohort, cl_70kg, bcrcl, bsex, omega) {
+  cl_70kg * (cohort$WT/70)^0.75 * (cohort$CRCL/90)^bcrcl *
+    exp(bsex * cohort$SEX) *
+    exp(rnorm(nrow(cohort), 0, sqrt(omega)))
+}
+
+# One trial's worth of individual data, in nlmixr2 layout.
+# `renal_within = FALSE` gives every patient the COHORT MEDIAN renal function,
+# so the renal effect is a purely BETWEEN-cohort one and no single trial can see
+# it -- which is the situation two of these three papers are in. Khan's trial
+# gets `TRUE`: renal function varies within it, which is why Khan's analysts
+# could estimate the effect and the others could not.
+run_trial <- function(cohort, first_id, renal_within = FALSE) {
+  reference <- cohort
+  if (!renal_within) reference$CRCL <- median(cohort$CRCL)
+  cl <- patient_cl(reference, CL70, BCRCL, BSEX, OM_CL)
+  v  <- V70 * (cohort$WT/70)
+  records <- list()
+  for (i in seq_len(nrow(cohort))) {
+    y <- conc(TIMES, DOSE, cl[i], v[i]) + rnorm(length(TIMES), 0, SD_ADD)
+    records[[i]] <- data.frame(
+      ID   = first_id + i,
+      TIME = c(0, TIMES),                        # dose row, then observations
+      DV   = c(NA_real_, y),
+      AMT  = c(DOSE, rep(0, length(TIMES))),
+      EVID = c(1L, rep(0L, length(TIMES))),
+      CMT  = 1L,
+      WT   = cohort$WT[i],
+      CRCL = cohort$CRCL[i],
+      SEX  = cohort$SEX[i])
+  }
+  do.call(rbind, records)
+}
+
+cohorts <- list(normal   = draw_cohort(260L, 78, .198, 95, .05),
+                # Khan enrolled ACROSS renal function rather than within a
+                # range -- which is why Khan's analysts could estimate a renal
+                # effect and the other two could not.
+                mild     = draw_cohort(210L, 76, .198, 62, .35),
+                moderate = draw_cohort(180L, 74, .198, 38, .05))
+
+trial_data <- list(
+  normal   = run_trial(cohorts$normal,   first_id = 10000),
+  mild     = run_trial(cohorts$mild,     first_id = 20000,
+                       renal_within = TRUE),
+  moderate = run_trial(cohorts$moderate, first_id = 30000))
+```
+
+```{r hidden, include=FALSE}
+d1  <- trial_data$normal[trial_data$normal$EVID == 0, ]
+agg <- data.frame(t = TIMES,
+                  m = tapply(d1$DV, d1$TIME, mean),
+                  s = tapply(d1$DV, d1$TIME, sd),
+                  panel = "What the paper reports")
+ind <- d1[d1$ID %in% head(unique(d1$ID), 150), ]
+ind$panel <- "Individual patients (never published)"
+
+ggplot() +
+  geom_line(data = ind, aes(TIME, DV, group = ID, colour = CRCL),
+            alpha = .35, linewidth = .3) +
+  geom_ribbon(data = agg, aes(t, ymin = m - s, ymax = m + s),
+              fill = "grey55", alpha = .35) +
+  geom_line(data = agg, aes(t, m), linewidth = 1) +
+  scale_colour_viridis_c(name = "CRCL (mL/min)", option = "C", end = .9) +
+  facet_wrap(~panel) + labs(x = "time (h)", y = "concentration (mg/L)") +
+  theme_bw() + theme(legend.position = "bottom")
+```
+
+```{r trialfits, include=FALSE}
+# THREE ANALYSTS, THREE MODELS. They share a drug and nothing else: each wrote
+# their own model, with its own parameters, and admixr2 needs no agreement
+# between them. What differs here is the covariate structure -- the usual place
+# published models diverge -- but the residual and random-effect structure may
+# differ just as freely.
+
+# Sato: the conventional write-up. Allometry fixed at the textbook exponents,
+# one sex effect on clearance.
+sato_model <- function() {
+  ini({
+    tcl     <- log(4.5)
+    tv      <- log(45)
+    bsex    <- 0.10
+    add.err <- 0.2
+    eta.cl  ~ 0.1
+  })
+  model({
+    cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * exp(bsex * SEX)
+    v  <- exp(tv) * (WT/70)
+    cp <- linCmt()
+    cp ~ add(add.err)
+  })
+}
+
+# Ito: estimated BOTH allometric exponents rather than fixing them. Two extra
+# parameters, and a covariance matrix two rows wider than Sato's.
+ito_model <- function() {
+  ini({
+    tcl     <- log(4.5)
+    tv      <- log(45)
+    bwtcl   <- 0.75
+    bwtv    <- 1
+    bsex    <- 0.10
+    add.err <- 0.2
+    eta.cl  ~ 0.1
+  })
+  model({
+    cl <- exp(tcl + eta.cl) * (WT/70)^bwtcl * exp(bsex * SEX)
+    v  <- exp(tv) * (WT/70)^bwtv
+    cp <- linCmt()
+    cp ~ add(add.err)
+  })
+}
+
+# Khan: the only one of the three who ESTIMATED A RENAL EFFECT. Their trial
+# enrolled across renal function, so the effect was identifiable within it.
+khan_model <- function() {
+  ini({
+    tcl     <- log(4.5)
+    tv      <- log(45)
+    bsex    <- 0.10
+    bcrcl   <- 0.3
+    add.err <- 0.2
+    eta.cl  ~ 0.1
+  })
+  model({
+    cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl *
+      exp(bsex * SEX)
+    v  <- exp(tv) * (WT/70)
+    cp <- linCmt()
+    cp ~ add(add.err)
+  })
+}
+
+.ctl <- foceiControl(print = 0L, covMethod = "r")
+fit_normal   <- nlmixr2(sato_model, trial_data$normal,   est = "focei",
+                        control = .ctl)
+fit_moderate <- nlmixr2(ito_model,  trial_data$moderate, est = "focei",
+                        control = .ctl)
+fit_mild     <- nlmixr2(khan_model, trial_data$mild,     est = "focei",
+                        control = .ctl)
+```
+
+```{r published, echo=FALSE}
+# What a paper prints: the model's parameter estimates, and the baseline table
+# describing who was enrolled. Nothing about the fit's own covariance is used --
+# a study generated from a published model is not a sample, so no standard error
+# is reported for a fit that includes one (see the last section).
+normal_paper <- list(
+  CL   = exp(fit_normal$parFixedDf["tcl", "Estimate"]),
+  V    = exp(fit_normal$parFixedDf["tv",  "Estimate"]),
+  BSEX = fit_normal$parFixedDf["bsex",    "Estimate"],
+  OM   = as.numeric(fit_normal$omega[1, 1]))
+
+mild_paper <- list(
+  CL    = exp(fit_mild$parFixedDf["tcl", "Estimate"]),
+  V     = exp(fit_mild$parFixedDf["tv",  "Estimate"]),
+  BSEX  = fit_mild$parFixedDf["bsex",    "Estimate"],
+  # Khan's own renal exponent -- the only one of the three to report one.
+  BCRCL = fit_mild$parFixedDf["bcrcl",   "Estimate"],
+  OM    = as.numeric(fit_mild$omega[1, 1]))
+
+moderate_paper <- list(
+  CL   = exp(fit_moderate$parFixedDf["tcl", "Estimate"]),
+  V    = exp(fit_moderate$parFixedDf["tv",  "Estimate"]),
+  BSEX = fit_moderate$parFixedDf["bsex",    "Estimate"],
+  OM   = as.numeric(fit_moderate$omega[1, 1]))
+
+knitr::kable(data.frame(
+  cohort      = c("normal", "mild", "moderate"),
+  median_CRCL = round(c(median(cohorts$normal$CRCL),
+                        median(cohorts$mild$CRCL),
+                        median(cohorts$moderate$CRCL))),
+  CL_at_70kg  = c(normal_paper$CL,   mild_paper$CL,   moderate_paper$CL),
+  V_at_70kg   = c(normal_paper$V,    mild_paper$V,    moderate_paper$V),
+  sex_effect  = c(normal_paper$BSEX, mild_paper$BSEX, moderate_paper$BSEX)),
+  digits = 3, row.names = FALSE,
+  caption = "Three independent analyses, three different models, each sound on its own data.")
+```
+
+Clearance falls with renal function across the three papers. Only Khan's has a
+renal parameter to say so with; in the other two the effect is buried in the
+clearance each reports.
+
+## Giving admixr2 the papers
+
+A study is a transcription of what a paper reports: its **model at its published
+values**, and the **population it enrolled**. Note the difference between the
+three sources, because it is the distinction the whole method turns on:
+
+* `normal` and `moderate` estimated no renal effect, so `CRCL` is **marginal**
+  for them: they describe the patients they enrolled and admixr2 integrates
+  over that. There is no contrast in either paper to condition on, and splitting
+  one on a covariate its model never saw would manufacture evidence.
+* `mild` **does** estimate it, so `CRCL` is **conditional** for that source and
+  the paper can be read at values of it.
+
+None of that is declared. admixr2 reads each source's own model and works it
+out, which is why all three calls above are identical.
+
+The test is ESTIMATED, not merely read. All three models carry weight, two of
+them at the conventional fixed exponent `(WT/70)^0.75` --- and a fixed exponent
+is an assumption rather than a finding, so for those two `WT` is marginal too.
+Only `moderate`, which fitted its own exponent, is conditional on it. All three
+fitted a sex effect, so all three are conditional on sex. Conditioning is not
+cosmetic: a covariate every study marginalises over is not identified against a
+random effect on the same parameter, and over 720 replicates the
+likelihood-ratio test was sized **0.125** against a nominal 0.05 with nothing
+conditional, **0.058** with all three.
+
+
+```{r datagen}
+# --- each paper's model ----------------------------------------------------
+# The source model is that analyst's own model AT their own published values,
+# and a fit already is exactly that: `fit$ui` carries the model together with
+# the estimates it converged on. Three different models go in, and nothing has
+# to be shared between them.
+#
+# With a real paper you have no fit object. You write the model out yourself and
+# hand admStudy() the printed numbers -- `est = c(tcl = log(5.2), ...)` -- which
+# is the same study, transcribed instead of recovered.
+sato_published <- fit_normal$ui        # normal renal function
+ito_published  <- fit_moderate$ui      # moderate impairment
+khan_published <- fit_mild$ui          # mild impairment
+
+# --- each paper's study ----------------------------------------------------
+normal_study <- admStudy(
+  model      = sato_published,
+  population = cohorts$normal,
+  dose       = DOSE,
+  times      = TIMES)
+
+moderate_study <- admStudy(
+  model      = ito_published,
+  population = cohorts$moderate,
+  dose       = DOSE,
+  times      = TIMES)
+
+# IDENTICAL CALL, different consequence. Khan's model uses renal function and
+# the other two never mention it, so renal function is CONDITIONAL for this
+# source and MARGINAL for them -- and admixr2 reads that off the models. There
+# is nothing here to say it with.
+mild_study <- admStudy(
+  model      = khan_published,
+  population = cohorts$mild,
+  dose       = DOSE,
+  times      = TIMES)
+
+studies <- admStudies(normal   = normal_study,
+                      moderate = moderate_study,
+                      mild     = mild_study)
+
+# the three papers together, used by the figures further down
+published <- list(normal = normal_paper, mild = mild_paper,
+                  moderate = moderate_paper)
+
+studies
+```
+
+## Pooling them
+
+
+```{r admfit}
+adm_model <- function() {
+  ini({
+    tcl     <- log(4)
+    tv      <- log(45)
+    bcrcl   <- 0.3            # the renal effect no published model has
+    bsex    <- 0.10
+    add.err <- 0.1
+    eta.cl  ~ 0.1
+  })
+  model({
+    cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl * exp(bsex * SEX)
+    v  <- exp(tv) * (WT/70)
+    cp <- linCmt()
+    cp ~ add(add.err)
+  })
+}
+fit <- nlmixr2(adm_model, admData(), est = "adgh",
+               control = adghControl(studies = studies, print = 0L))
+pf     <- fit$parFixedDf
+stopifnot(abs(pf["bsex", "Estimate"] - BSEX) < 0.08)
+# NO INTERVALS HERE, and that is the point: every study in this vignette is a
+# published model rather than a sample, so there is no sampling law to build one
+# from and admixr2 reports no standard error at all. The estimates are what the
+# three papers jointly imply; whether the renal effect is real is settled by the
+# likelihood-ratio test below, which needs no standard error.
+knitr::kable(data.frame(
+  parameter = c("CL at 70 kg, CRCL 90, women (L/h)", "V at 70 kg (L)",
+                "renal exponent", "sex effect (log)", "additive SD (mg/L)",
+                "omega (eta.cl)"),
+  truth     = c(CL70, V70, BCRCL, BSEX, SD_ADD, OM_CL),
+  estimate  = c(pf["tcl", "Back-transformed"], pf["tv", "Back-transformed"],
+                pf["bcrcl", "Back-transformed"], pf["bsex", "Back-transformed"],
+                pf["add.err", "Back-transformed"],
+                as.numeric(fit$omega[1L, 1L]))),
+  digits = 3, row.names = FALSE,
+  caption = "Recovered from three analyses, none of which contained a renal term.")
+```
+
+The renal exponent comes back at
+`r sprintf("%.2f", pf["bcrcl", "Estimate"])` against a truth of `r BCRCL`, out
+of three analyses only one of which contained a renal term --- and that one put
+it at `r sprintf("%.2f", fit_mild$parFixedDf["bcrcl", "Estimate"])`.
+There are **no intervals**: every source here is a published model rather than a
+sample, so there is no sampling law to build one from and admixr2 reports no
+standard error at all.
+
+The sex effect shows what pooling costs. The three trials reported
+`r paste(sprintf("%.2f", sapply(published, function(p) p$BSEX)), collapse = ", ")`
+for a quantity genuinely identical in all three; sampling noise alone put them
+that far apart. Reconciling that is not free --- some of it lands in the other
+parameters, which is why the renal exponent comes back a little below its truth.
+
+## Is the shape right?
+
+Three cohorts at three renal medians settle *that* renal function matters. They
+do not settle **what shape** it has. The fitted model uses a power,
+`(CRCL/90)^bcrcl`, which is what generated the cohorts. Fit the obvious
+alternative --- linear in `CRCL` --- to the same sources.
+
+
+```{r linear-form}
+adm_model_lin <- function() {
+  ini({
+    tcl     <- log(4)
+    tv      <- log(45)
+    bcrcl   <- 0.3
+    bsex    <- 0.10
+    add.err <- 0.1
+    eta.cl  ~ 0.1
+  })
+  model({
+    # LINEAR in CRCL where the truth is a power -- same parameter count, so
+    # there is no likelihood-ratio test to appeal to.
+    cl <- exp(tcl + eta.cl) * (WT/70)^0.75 *
+      (1 + bcrcl * (CRCL/90 - 1)) * exp(bsex * SEX)
+    v  <- exp(tv) * (WT/70)
+    cp <- linCmt()
+    cp ~ add(add.err)
+  })
+}
+fit_lin <- nlmixr2(adm_model_lin, admData(), est = "adgh",
+                   control = adghControl(studies = studies, print = 0L))
+```
+
+Both models have the **same number of parameters**, so there is no
+likelihood-ratio test to appeal to. All that is left is the objective, and it
+decides nothing:
+
+
+```{r form-obj, echo=FALSE}
+knitr::kable(data.frame(
+  form      = c("power (correct)", "linear"),
+  objective = c(fit$objf, fit_lin$objf),
+  bcrcl     = c(fit$parFixedDf["bcrcl", "Estimate"],
+                fit_lin$parFixedDf["bcrcl", "Estimate"])),
+  digits = 2, row.names = FALSE,
+  caption = "Same parameter count, so no LRT -- and the objectives barely differ.")
+cat(sprintf("dOFV (linear - power) = %+.2f on 0 extra parameters\n",
+            fit_lin$objf - fit$objf))
+```
+
+The plot decides it.
+
+
+```{r form-resid, fig.height = 3.4, fig.cap = "Between-study residual, linear model. The CRCL facet bends."}
+plots_lin <- plot(fit_lin, which = "covariate")
+```
+
+```{r form-pattern, include=FALSE}
+crcl_med <- vapply(cohorts[c("normal", "mild", "moderate")],
+                   function(co) stats::median(co$CRCL), numeric(1))
+.zby <- function(m) {
+  a <- tapply(m$z, m$source, mean)
+  a[c("moderate", "mild", "normal")]          # increasing CRCL
+}
+```
+
+```{r form-moments, include=FALSE}
+m_pow <- admMoments(fit,     n_sim = 300L)
+m_lin <- admMoments(fit_lin, n_sim = 300L)
+```
+
+Three facets, and only one of them can say anything. `CRCL` separates the
+sources cleanly. `SEX` is conditional, so each source contributes a pair and the grey
+line joining them is the within-source contrast conditioning bought. `WT` is the
+negative case: the three cohorts enrolled median weights of
+`r paste(round(vapply(cohorts[c("moderate", "mild", "normal")], function(c) median(c$WT), 0)), collapse = ", ")`
+kg, so they sit on top of one another and the facet cannot speak to weight
+whichever way it tips.
+
+Note also that a mark's size is the patients it speaks for, and that follows the
+facet: on `SEX` each mark is one sex stratum, on `CRCL` the strata are together
+and each mark is a whole paper.
+
+A **missing** covariate shows up as a slope across the axis. A covariate with
+the **wrong shape** shows up as **curvature** --- the linear model buys both ends
+by inflating `bcrcl` to
+`r sprintf("%.2f", fit_lin$parFixedDf["bcrcl", "Estimate"])`, and then misses the
+middle. Mean standardised residual by source, in order of increasing `CRCL`
+(`r paste(round(crcl_med[c("moderate", "mild", "normal")]), collapse = ", ")`
+mL/min):
+
+| form | moderate | mild | normal |
+|---|---|---|---|
+| power (correct) | `r sprintf("%+.2f", .zby(m_pow)[1])` | `r sprintf("%+.2f", .zby(m_pow)[2])` | `r sprintf("%+.2f", .zby(m_pow)[3])` |
+| linear | `r sprintf("%+.2f", .zby(m_lin)[1])` | `r sprintf("%+.2f", .zby(m_lin)[2])` | `r sprintf("%+.2f", .zby(m_lin)[3])` |
+
+The linear row is a **U**: both extremes above zero, the middle pulled to zero.
+The power row has no such shape.
+
+Read the magnitudes with care. Every source here is a published *model*, so its
+`E` and `V` are exact functions of that model's parameters rather than a sample;
+there is no sampling noise for a residual to be large against, and these never
+approach ±1.96. **The pattern is the evidence, not the size.**
+
+`admMoments()` returns the moments the panels are drawn from if you want to draw
+your own; see `vignette("diagnostic-plots")`.
+
+## Seeing the renal effect
+
+What the meta-analysis actually did. Sato's and Ito's models are **flat bars**
+--- no renal term, so each claims one clearance over the whole range it covered.
+Khan's has a slope of its own. The meta-analysis is the line through all three.
+
+```{r mechanism, fig.height = 4.2, echo = FALSE}
+e  <- setNames(pf$Estimate, rownames(pf))
+crcl_grid <- seq(15, 115, length.out = 120)
+sexlab <- c("women", "men")
+
+# the meta-analysis: one curve per sex. The renal effect is the SLOPE, the sex
+# effect is the vertical GAP between the two.
+curve_df <- data.frame()
+for (sx in 0:1) {
+  cl_curve <- exp(e[["tcl"]]) * (crcl_grid/90)^e[["bcrcl"]] *
+              exp(e[["bsex"]] * sx)
+  curve_df <- rbind(curve_df, data.frame(
+    CRCL = crcl_grid, sex = sexlab[sx + 1L], CL = cl_curve))
+}
+
+# each published model: no renal term, so a FLAT bar per sex, drawn over the
+# CRCL range that trial actually covered
+seg <- data.frame()
+pts <- data.frame()
+for (trial in names(published)) {
+  paper     <- published[[trial]]
+  crcl      <- cohorts[[trial]]$CRCL
+  crcl_p10  <- unname(quantile(crcl, 0.10))
+  crcl_p90  <- unname(quantile(crcl, 0.90))
+  # A paper with no renal term claims ONE clearance over its whole range, so its
+  # bar is flat. Khan reported an exponent, so Khan's bar has that slope -- and
+  # the meta-analysis can be read against it rather than only against a level.
+  bc <- if (is.null(paper$BCRCL)) 0 else paper$BCRCL
+  for (sx in 0:1) {
+    base    <- paper$CL * exp(paper$BSEX * sx)
+    cl_mid  <- base * (median(crcl)/90)^bc
+    seg <- rbind(seg, data.frame(
+      lab = trial, sex = sexlab[sx + 1L],
+      CL = base * (crcl_p10/90)^bc, CLh = base * (crcl_p90/90)^bc,
+      lo = crcl_p10, hi = crcl_p90))
+    pts <- rbind(pts, data.frame(
+      lab = trial, sex = sexlab[sx + 1L],
+      CRCL = median(crcl), CL = cl_mid))
+  }
+}
+
+ggplot(curve_df, aes(CRCL, CL, colour = sex)) +
+  annotate("rect", xmin = 15, xmax = 30, ymin = -Inf, ymax = Inf,
+           fill = "grey85", alpha = .6) +
+  annotate("text", x = 22.5, y = max(curve_df$CL), label = "severe\n(no trial)",
+           size = 3, vjust = 1.1) +
+  geom_segment(data = seg, aes(x = lo, xend = hi, y = CL, yend = CLh),
+               linewidth = 1.5, alpha = .55) +
+  geom_line(linewidth = 1) +
+  geom_point(data = pts, size = 2.6) +
+  geom_text(data = subset(pts, sex == "men"), aes(label = lab),
+            vjust = -1.2, size = 3.1, show.legend = FALSE) +
+  scale_colour_manual(values = c(women = "steelblue4", men = "darkorange3"),
+                      name = NULL) +
+  labs(x = "median creatinine clearance (mL/min)",
+       y = "clearance at 70 kg (L/h)",
+       subtitle = paste("bars: what each published model claims, over the range",
+                        "it covered\nlines: the meta-analysis")) +
+  theme_bw() + theme(legend.position = "bottom")
+```
+
+The slope is the renal effect, recovered from three sources that each had none.
+The vertical gap between the two lines is the sex effect. The grey band is where
+the patient is, and no trial went there.
+
+## The dose
+
+
+```{r predict, include=FALSE}
+set.seed(3)
+# mean concentration over a severe cohort (WT 72 kg, CRCL 21 mL/min), reusing
+# the same two helpers the trials were simulated with
+severe_mean_conc <- function(cl_70kg, v_70kg, bcrcl, bsex, omega, n = 40000L) {
+  pts <- draw_cohort(n, 72, .198, 21, .217)
+  cl  <- patient_cl(pts, cl_70kg, bcrcl, bsex, omega)
+  v   <- v_70kg * (pts$WT/70)
+  sapply(TIMES, function(t) mean(conc(t, DOSE, cl, v)))
+}
+
+p_adm   <- severe_mean_conc(exp(e[["tcl"]]), exp(e[["tv"]]), e[["bcrcl"]],
+                            e[["bsex"]], as.numeric(fit$omega[1L, 1L]))
+p_near  <- severe_mean_conc(moderate_paper$CL, moderate_paper$V,
+                            0,                       # no renal term
+                            moderate_paper$BSEX, moderate_paper$OM)
+p_truth <- severe_mean_conc(CL70, V70, BCRCL, BSEX, OM_CL)
+```
+
+```{r dose, echo=FALSE}
+set.seed(5)
+mean_cl <- function(cl_70kg, bcrcl, bsex, omega, wt_median, crcl_median,
+                    n = 40000L) {
+  pts <- draw_cohort(n, wt_median, .198, crcl_median, .217)
+  mean(patient_cl(pts, cl_70kg, bcrcl, bsex, omega))
+}
+# a severe cohort (WT 72, CRCL 21) against a normal-function one (WT 78, CRCL 95)
+dose_for <- function(cl_70kg, bcrcl, bsex, omega)
+  DOSE * mean_cl(cl_70kg, bcrcl, bsex, omega, 72, 21) /
+         mean_cl(cl_70kg, bcrcl, bsex, omega, 78, 95)
+d_true <- dose_for(CL70, BCRCL, BSEX, OM_CL)
+d_meta <- dose_for(exp(e[["tcl"]]), e[["bcrcl"]], e[["bsex"]],
+                   as.numeric(fit$omega[1L, 1L]))
+d_near <- dose_for(moderate_paper$CL, 0,
+                   moderate_paper$BSEX, moderate_paper$OM)
+knitr::kable(data.frame(
+  basis   = c("the truth", "meta-analysis (admixr2)", "nearest published model"),
+  dose_mg = round(c(d_true, d_meta, d_near))),
+  digits = 0, row.names = FALSE,
+  caption = paste("Dose giving a CrCl 21 mL/min patient the exposure a",
+                  "normal-function patient gets from", DOSE, "mg."))
+```
+
+The nearest published model has no renal term, so it cannot adjust for her at
+all: it hands back the dose it was fitted at, for a cohort whose median renal
+function was
+`r sprintf("%.1f", median(cohorts$moderate$CRCL) / 21)` times hers. The
+meta-analysis lands within `r round(abs(d_meta - d_true))` mg of the truth,
+from three papers only one of which had a renal term to contribute.
+
+## See also
+
+- [Diagnostic plots](diagnostic-plots.html) --- what each panel is for
+- [Multiple studies](multiple-studies.html)

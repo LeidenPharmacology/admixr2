@@ -26,6 +26,7 @@ Roxygen: list(markdown = TRUE)
 Imports:
     checkmate,
     digest,
+    grDevices,
     nlmixr2est (>= 6.0.1),
     nloptr,
     randtoolbox,
@@ -36,6 +37,7 @@ LinkingTo:
     Rcpp,
     RcppEigen
 Suggests:
+    Deriv,
     expm,
     ggplot2,
     knitr,
@@ -49,7 +51,8 @@ Suggests:
     numDeriv,
     patchwork,
     rmarkdown,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    withr
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 Config/testthat/parallel: true

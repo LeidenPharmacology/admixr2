@@ -1,14 +1,7 @@
-# `sigdig` (here and in every sibling below) is pinfo$sigdig -- the control's
-# significant-digits request, handed to rxSolve's OWN `sigdig` argument so
-# rxode2 keeps ownership of the sigdig -> atol/rtol mapping (it changed that
-# formula between 5.1.4 and 5.1.5). NULL means rxode2's default tolerances. It
-# is the LAST formal with a NULL default on purpose: a caller that does not
-# pass it -- plot.R, datagen.R, a mirai daemon running a half-patched dev
-# namespace -- still calls these correctly and gets the previous numerics.
+# `sigdig` passes pinfo$sigdig to rxSolve's `sigdig` (NULL = rxode2 defaults).
+# Last formal with NULL default preserves backward compatibility for callers.
 # Single rxSolve pass for one study given pre-computed eta_mat (n_sim x n_eta).
 # Returns n_sim x n_times matrix of predicted concentrations.
-# params_mat is a named numeric matrix (from .admMakeParamsList); converted to
-# data.frame only at the rxSolve call to avoid repeated list COW copies.
 .admSimulate <- function(rxMod, struct_theta, sigma_names, eta_mat, study,
                          output_var, params_mat, cores,
                          ndp = .Machine$integer.max, sigdig = NULL) {
@@ -16,28 +9,19 @@
   for (nm in names(struct_theta)) params_mat[, nm] <- struct_theta[nm]
   if (length(eta_cols) > 0L)      params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)         params_mat[, nm] <- 0
-  # Only the parameters we vary are supplied; rxSolve fills the rest (rxerr.*,
-  # CMT, hard-coded model constants) from the model's own defaults.
-  # Covariates are the one exception: a model reading `wt` has no default for
-  # it, so each study's own value is written in -- and ONLY that, never a
-  # blanket setdiff() fill. See .admCovCols().
+  # Supply varied parameters; rxSolve fills model defaults. Add study covariates.
   params_mat <- .admCovCols(params_mat, rxMod$params, study[["cov"]], study[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
                           events = study$ev_full, cores = cores,
                           nDisplayProgress = ndp,
                           sigdig = sigdig)
   keep <- out[["time"]] %in% study$times
-  # A beta endpoint is defined by TWO solved columns, so its prediction is
-  # derived: mu = b1/(b1+b2). study$out_pair carries their names; every other
-  # endpoint reads a single column exactly as before. Inlined rather than
-  # factored out -- see the dev-mode daemon note at the top of this file.
+  # Beta endpoints derive prediction as mu = b1 / (b1 + b2).
   .phi <- NULL
   vals <- if (!is.null(study$out_pair)) {
     .b1 <- out[[study$out_pair[[1L]]]]; .b2 <- out[[study$out_pair[[2L]]]]
     .phi <- .b1 + .b2                      # precision; needed for the variance
-    # Guard the denominator exactly as the sibling solve paths do (.admSimulateRows,
-    # .admSimulateJoint, and the admc inlined copies): if phi = b1 + b2 hits 0 at a
-    # draw, an unguarded b1/phi is 0/0 = NaN and poisons the whole moment/objective.
+    # Guard against division by zero when b1 + b2 == 0.
     .b1 / { .d <- .phi; .d[.d == 0] <- .Machine$double.eps; .d }
   } else {
     .v <- out[[output_var]]                # linCmt yields "ipredSim", not rx_pred_
@@ -45,13 +29,7 @@
   }
   m <- matrix(vals[keep],
               nrow = nrow(eta_mat), ncol = length(study$times), byrow = TRUE)
-  # beta's Var(y|eta) = mu(1-mu)/(1+phi) needs phi, which is SOLVED rather than a
-  # residual parameter -- so it rides back as an attribute. A matrix with an extra
-  # attribute is still a matrix, so every existing consumer is unaffected; the one
-  # caller that needs it reads it immediately after this returns. phi must be
-  # eta-independent for the aggregate variance to factor; .admBetaPhiConst()
-  # VERIFIES that across the draws and returns the representative row, so the
-  # assumption and its use stay together (it used to be asserted by a comment only).
+  # Attach solved beta precision phi = b1 + b2 as attribute (verified eta-independent).
   if (!is.null(.phi))
     attr(m, "phi") <- .admBetaPhiConst(
       matrix(.phi[keep], nrow = nrow(eta_mat),
@@ -59,16 +37,151 @@
   m
 }
 
-# Row-varying variants of .admSimulate / .admSimulateSens.
+# Several studies that share an event table, in ONE rxSolve call.
 #
-# .admSimulate broadcasts ONE structural-theta vector across every row. These
-# take a struct_mat (n_row x n_struct, natural scale, colnames = theta names)
-# so each row can carry its own thetas. That is what lets the FO/GH estimators
-# put a whole set of finite-difference directions into a SINGLE rxSolve: an
-# rxSolve call costs ~11 ms before it does any work, and FO's solves are one
-# subject each, so the call overhead -- not the integration -- was the cost.
-#
-# eta_mat is n_row x n_eta and lines up row-for-row with struct_mat.
+# rxSolve costs 0.0251 s to enter and 1.6e-06 s per subject, so at 100 subjects
+# a call is 99% overhead and the call count is the study count -- a conditional
+# source expands to one study per node. Nodes off a source share `ev_full`
+# (expansion changes only `cov`), so they stack with no id remapping: measured
+# on 49 nodes, 0.633 s becomes 0.064 s, bit for bit. Anything a batch cannot
+# take -- a beta `out_pair`, another output -- goes to .admSimulate() alone.
+.admSimulateMany <- function(rxMod, struct_theta, sigma_names, eta_list, studies,
+                             output_var, params_list, cores,
+                             ndp = .Machine$integer.max, sigdig = NULL) {
+  n <- length(studies)
+  if (n == 1L)
+    return(list(.admSimulate(rxMod, struct_theta, sigma_names, eta_list[[1L]],
+                             studies[[1L]], output_var, params_list[[1L]],
+                             cores, ndp, sigdig)))
+  pm <- lapply(seq_len(n), function(k) {
+    m  <- params_list[[k]]
+    et <- eta_list[[k]]
+    for (nm in names(struct_theta)) m[, nm] <- struct_theta[nm]
+    if (length(colnames(et))) m[, colnames(et)] <- et
+    for (nm in sigma_names)         m[, nm] <- 0
+    .admCovCols(m, rxMod$params, studies[[k]][["cov"]],
+                studies[[k]][["cov_rows"]])
+  })
+  nr  <- vapply(eta_list, nrow, integer(1))
+  end <- cumsum(nr); beg <- end - nr + 1L
+  same <- .admEvSame(studies)
+  ev   <- if (same) studies[[1L]]$ev_full else .admEvStack(studies, nr)
+  if (is.null(ev)) return(NULL)
+  pmat <- .admRbindParams(pm)
+  if (is.null(pmat)) return(NULL)
+  out <- rxode2::rxSolve(rxMod, params = pmat,
+                         events = ev, cores = cores,
+                         nDisplayProgress = ndp, sigdig = sigdig)
+  getv <- function(o) { v <- o[[output_var]]; if (is.null(v)) o[["ipredSim"]] else v }
+  if (same) {
+    tms  <- studies[[1L]]$times
+    keep <- out[["time"]] %in% tms
+    # One row per subject, in the order the blocks were stacked.
+    M <- matrix(getv(out)[keep], ncol = length(tms), byrow = TRUE)
+    return(lapply(seq_len(n), function(k) M[beg[k]:end[k], , drop = FALSE]))
+  }
+  # DIFFERENT event tables: each study owns an id range and its own `times`
+  # select its rows, which is what lets one call carry several doses. Columns
+  # once, then vector indexing -- subsetting the solve per study instead cost
+  # more than the stacking saves (28% of a profiled fit vs rxSolve's 9%).
+  id <- out[["id"]] %||% out[["sim.id"]]
+  if (is.null(id)) return(NULL)
+  id <- as.integer(id); tm <- out[["time"]]; v <- getv(out)
+  sl <- .admIdSlices(id, beg, end)
+  lapply(seq_len(n), function(k) {
+    ii  <- sl[[k]] %||% which(id >= beg[k] & id <= end[k])
+    sel <- ii[tm[ii] %in% studies[[k]]$times]
+    matrix(v[sel], nrow = nr[k], ncol = length(studies[[k]]$times),
+           byrow = TRUE)
+  })
+}
+
+# The rows each study owns, as a slice: the solve is id-sorted and each study
+# holds a contiguous id range, so no full-length mask per study (15% of a
+# profiled fit). NULL per study when unsorted, and the caller masks instead.
+.admIdSlices <- function(id, beg, end) {
+  n <- length(beg)
+  if (is.unsorted(id)) return(vector("list", n))
+  cum <- c(0L, cumsum(tabulate(id, nbins = end[n])))
+  lapply(seq_len(n), function(k) {
+    lo <- cum[beg[k]] + 1L; hi <- cum[end[k] + 1L]
+    if (hi < lo) integer(0) else lo:hi
+  })
+}
+
+# Parameter frames for a stacked solve. rbind() on data frames, and
+# as.data.frame() on a matrix with row names, both hit make.unique() -- 13.7%
+# of a profiled fit at 60k rows.
+.admRbindParams <- function(dfs, as_df = TRUE) {
+  # ALIGNED BY NAME, never by position. .admCovCols() appends each study's
+  # covariates in that study's own name order, so a positional bind hands the
+  # second study the first study's column names and solves it at swapped
+  # covariate values -- every dimension still valid, nothing to detect it.
+  # NULL when the schemas cannot be reconciled, and the caller solves per study.
+  if (length(dfs) > 1L) {
+    nm <- colnames(dfs[[1L]])
+    if (is.null(nm) || anyDuplicated(nm)) return(NULL)
+    ok <- vapply(dfs, function(d) {
+      dn <- colnames(d)
+      !is.null(dn) && !anyDuplicated(dn) && setequal(dn, nm)
+    }, logical(1))
+    if (!all(ok)) return(NULL)
+    dfs <- lapply(dfs, function(d) d[, nm, drop = FALSE])
+  }
+  m <- if (length(dfs) == 1L) dfs[[1L]] else do.call(rbind, dfs)
+  if (is.data.frame(m)) return(m)
+  rownames(m) <- NULL
+  # The sensitivity solve is handed the matrix, as it was before: rxSolve
+  # treats the two differently and converting here moved a fitted objective.
+  if (as_df) as.data.frame(m) else m
+}
+
+# Do these studies agree on their event table? The key is stamped once at
+# flatten time; identical() on the tables themselves is useless because rxode2
+# builds a fresh object per call.
+.admEvSame <- function(studies) {
+  k <- vapply(studies, function(s) s$ev_key %||% NA_character_, "")
+  !anyNA(k) && length(unique(k)) == 1L
+}
+
+# One event table for several studies, each block taking its own id range so a
+# single solve covers different doses and schedules. Cached on the shapes it was
+# built from: the tables do not move during a fit, only the parameters do.
+.adm_evstack_env <- new.env(parent = emptyenv())
+.admEvStack <- function(studies, nr) {
+  key <- paste(c(vapply(studies, function(s) s$ev_key %||% "", ""), nr),
+               collapse = "\r")
+  hit <- .adm_evstack_env[[key]]
+  if (!is.null(hit)) return(hit)
+  # COLUMN-WISE, never row-wise: replicating and rbind()ing data frame rows
+  # sends every row through make.unique() -- 17% of a profiled fit.
+  d <- tryCatch(lapply(seq_along(studies), function(k) {
+    x <- as.data.frame(studies[[k]]$ev_full)
+    if (is.null(x[["id"]])) x[["id"]] <- 1L
+    if (any(vapply(x, is.factor, logical(1)))) return(NULL)
+    nx  <- nrow(x)
+    idx <- rep.int(seq_len(nx), nr[k])
+    off <- if (k == 1L) 0L else sum(nr[seq_len(k - 1L)])
+    cols <- lapply(x, function(v) v[idx])
+    cols[["id"]] <- rep(seq_len(nr[k]), each = nx) + off
+    cols
+  }), error = function(e) NULL)
+  if (is.null(d) || any(vapply(d, is.null, logical(1)))) return(NULL)
+  nms <- names(d[[1L]])
+  if (!all(vapply(d, function(p) identical(names(p), nms), logical(1))))
+    return(NULL)
+  ev <- stats::setNames(lapply(nms, function(cc)
+    unlist(lapply(d, `[[`, cc), use.names = FALSE)), nms)
+  attr(ev, "row.names") <- .set_row_names(length(ev[[1L]]))
+  class(ev) <- "data.frame"
+  if (length(ls(.adm_evstack_env, all.names = TRUE)) > 32L)
+    rm(list = ls(.adm_evstack_env, all.names = TRUE), envir = .adm_evstack_env)
+  .adm_evstack_env[[key]] <- ev
+  ev
+}
+
+# Row-varying variants taking struct_mat (n_row x n_struct) and eta_mat (n_row x n_eta)
+# to evaluate multiple parameter configurations in a single rxSolve call.
 .admSimulateRows <- function(rxMod, struct_mat, sigma_names, eta_mat, study,
                              output_var, params_mat, cores,
                              ndp = .Machine$integer.max, sigdig = NULL) {
@@ -76,13 +189,9 @@
   for (nm in colnames(struct_mat)) params_mat[, nm] <- struct_mat[, nm]
   if (length(eta_cols) > 0L)       params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)          params_mat[, nm] <- 0
-  # Covariates, exactly as .admSimulate() and .admSimulateSens() do. Omitting
-  # this made .adghMomentsBatch() -- which sets study$cov_rows itself, with a
-  # comment explaining the tiling stride -- fail outright with "The following
-  # parameter(s) are required for solving: WT". Reachable in a real fit through
-  # .adghGradNLL's unpaired-struct-theta FD fallback, i.e. any model with an
-  # unpaired theta plus a cov_dist study whose theta sensitivities are
-  # unavailable. Not wrapped in tryCatch there, so it aborted the whole fit.
+  # Study covariates into the parameter matrix -- omitting this once aborted a
+  # whole fit ("parameter(s) required for solving: WT") via .adghGradNLL's
+  # uncaught FD fallback.
   params_mat <- .admCovCols(params_mat, rxMod$params, study[["cov"]],
                             study[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
@@ -90,7 +199,7 @@
                           nDisplayProgress = ndp,
                           sigdig = sigdig)
   keep <- out[["time"]] %in% study$times
-  # beta: derived prediction mu = b1/(b1+b2) -- see .admSimulate
+  # beta: derived prediction mu = b1/(b1+b2)
   .phi <- NULL
   vals <- if (!is.null(study$out_pair)) {
     .b1 <- out[[study$out_pair[[1L]]]]; .b2 <- out[[study$out_pair[[2L]]]]
@@ -102,36 +211,15 @@
   }
   m <- matrix(vals[keep], nrow = nrow(struct_mat), ncol = length(study$times),
               byrow = TRUE)
-  # phi rides back the same way it does from .admSimulate: beta's
-  # Var(y | eta) = mu(1 - mu)/(1 + phi) needs it, and it is SOLVED rather than
-  # fitted, so a caller that only has the prediction matrix cannot recover it.
-  # Without this the row-varying paths left arr$phi at NA and every entry of the
-  # predicted covariance came back NA. phi is eta-independent (verified by
-  # .admBetaPhiConst() on the eta-draw paths) but NOT theta-independent, so each
-  # ROW keeps its own -- these paths exist precisely to put different thetas in
-  # different rows, so the rows here are CONFIGURATIONS, not draws, and must not
-  # be collapsed or passed through the eta-independence check.
+  # Attach solved beta precision matrix (one row per configuration).
   if (!is.null(.phi))
     attr(m, "phi") <- matrix(.phi[keep], nrow = nrow(struct_mat),
                              ncol = length(study$times), byrow = TRUE)
   m
 }
 
-# NOTE ON THE FIXED-THETA FILL BELOW (repeated inline in three solve paths rather
-# than factored into a helper -- deliberately):
-#
-# A FIXED theta is not an estimated parameter, so nothing in pinfo (and nothing in
-# the solve paths) writes its THETA[k] column -- but the sens model still HAS that
-# slot and rxSolve REQUIRES every model parameter. Left unset, the sens solve
-# errors and returns NULL: admc/adfo then silently drop to a finite-difference
-# gradient, and .adghGrad silently skipped the study altogether.
-#
-# These three loops run INSIDE mirai daemons. utils::assignInNamespace() can
-# REPLACE a binding in the locked installed namespace but cannot ADD one, so a new
-# helper called from here would be missing in a dev-mode daemon (devtools::load_all
-# with workers > 1 and no prior devtools::install) -- "could not find function" --
-# and abort the whole fit. Same hazard CLAUDE.md records for .admRestartWorker's
-# signature. Three copies of two lines is the cheaper price.
+# Fixed-theta values are filled inline across daemon-executed solve loops
+# to avoid adding unexported helper functions in worker namespaces.
 
 .admSimulateSensRows <- function(sensModel, struct_mat, sigma_names, eta_mat, study,
                                  cores, ndp = .Machine$integer.max,
@@ -154,18 +242,15 @@
   for (j in seq_along(eta_cols)) {
     mapped <- rmap[eta_cols[j]]; if (!is.na(mapped)) inner_df[[mapped]][] <- eta_mat[, j]
   }
-  # fixed thetas: constants the estimated-parameter loops above never write (see
-  # the note at the top of this file -- inlined on purpose, no helper)
+  # fixed thetas: constants the estimated-parameter loops above never write
   for (nm in names(sensModel$fixed_theta))
     inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
 
-  # An ESTIMATED boxCox/yeoJohnson lambda is a SIGMA name, and the zero-fill above
-  # therefore handed the solve lambda = 0 -- so rx_pred_ came back as a plain log
-  # transform while the back-transform below inverted with the model's STARTING
-  # lambda. Two different transforms, hence a sens gradient that was ~60x wrong for
-  # boxCox and NaN for yeoJohnson. Write the current lambda into the solve and
-  # invert with that same number, so the two agree by construction.
-  # Inlined in each solve path on purpose -- see the dev-mode daemon note above.
+  # Supply current lambda estimate for TBS sensitivity solves: an ESTIMATED
+  # boxCox/yeoJohnson lambda is a sigma name, and the zero-fill above would
+  # otherwise hand the solve lambda = 0 while the back-transform inverts with
+  # the model's starting lambda -- two different transforms, a sens gradient
+  # measured ~60x wrong for boxCox and NaN for yeoJohnson.
   .tb <- sensModel$pred_tbs
   .lam <- if (is.null(.tb)) NA_real_ else .tb$lam
   if (!is.null(.tb) && !is.na(.tb$lam_name %||% NA_character_) &&
@@ -175,20 +260,12 @@
     if (!is.na(.mapped) && .mapped %in% names(inner_df)) inner_df[[.mapped]][] <- .lam
   }
 
-  # THE COVARIATE COLUMNS, like every other solve path in this file. Without
-  # them rxSolve stops with "the following parameter(s) are required for
-  # solving" -- and the tryCatch below swallows it, returns NULL, and adfo's
-  # .adfoGetMuJBatch falls through to finite differences. So a covariate model
-  # under `grad = "analytical"` (the adfo default) silently lost its order-2
-  # analytic struct-theta gradient on every objective and gradient evaluation:
-  # nothing errored, the fit just ran on the slower and far less accurate path.
+  # Model covariates for the sensitivity solve. Without them rxSolve fails,
+  # swallowed below, so adfo silently fell back to FD -- a covariate model
+  # under grad="analytical" quietly lost its order-2 gradient with no error.
   inner_df <- .admCovCols(inner_df, sensModel$mod$params, study[["cov"]],
                           study[["cov_rows"]])
-  # do.call + sensModel$solve_args: a DDE model's sensitivity solve is forced onto
-  # pure dop853 (see .admLoadSensModel). solve_args is NULL for every ordinary
-  # model, and c(list(...), NULL) is the original list, so nothing else changes.
-  # Spliced inline rather than through a helper -- see the note at the top of this
-  # file about dev-mode daemons and new functions.
+  # Forward solve_args (e.g. forced dop853 for DDE sensitivity models).
   out <- tryCatch(
     suppressWarnings(
       do.call(rxode2::rxSolve,
@@ -209,14 +286,9 @@
     matrix(out[[sensModel$sens_cols[j]]][keep], nrow = n_row, ncol = n_t, byrow = TRUE))
   dtheta_list <- .admThetaSens(sensModel, out, keep, n_row, n_t)
 
-  # Second-order cross block (order-2 sens model only): d2_list[[dir]][[i]] is
-  # d2(pred)/(d eta_i d dir), one n_row x n_t matrix -- i.e. column i of
-  # dJ/d(dir). NULL at order 1, which is what tells adfo to keep its FD pass.
-  # Extracted BEFORE the transform block below, and deliberately dropped there
-  # for a transformed endpoint: chaining a second derivative through g() needs
-  # g''(z) z_p z_q + g'(z) z_pq, not g' alone, and a silently first-order-chained
-  # second derivative is exactly the class of error that made lnorm's gradient
-  # ~200x wrong before. adfo finite-differences those endpoints instead.
+  # Second-order cross block d2(pred)/(d eta_i d dir); dropped for transformed
+  # endpoints, which need g''(z)z_p z_q + g'(z)z_pq, not a first-order chain
+  # (that once made lnorm's gradient ~200x wrong) -- those use FD instead.
   d2_list <- NULL
   if (!is.null(sensModel$d2_cols) && all(sensModel$d2_cols %in% names(out))) {
     d2_list <- lapply(seq_len(ncol(sensModel$d2_cols)), function(b)
@@ -226,12 +298,7 @@
     names(d2_list) <- colnames(sensModel$d2_cols)
   }
 
-  # lnorm endpoint: rx_pred_ is log(f). Back-transform to the natural scale the
-  # NLL works on, chaining every sensitivity by d(exp(g))/dp = exp(g)*dg/dp.
-  # Inlined rather than factored out -- see the dev-mode daemon note at the top.
-  # Transformed endpoint: rx_pred_ is on the MODELLING scale. Back-transform and
-  # chain every sensitivity by g'(z) -- d(g(z))/dp = g'(z) * dz/dp. Covers lnorm
-  # (yj = 0, lambda = 0) and logit/probit/boxCox/yeoJohnson alike.
+  # Back-transform TBS/lnorm predictions and chain sensitivities by g'(z).
   if (!is.null(.tb)) {
     .gp        <- .admTBSid(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
     cp_mat     <- .admTBSi(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
@@ -244,10 +311,8 @@
        d2_list = d2_list)
 }
 
-# Joint (same-subject) simulation: one rxSolve with SHARED eta produces every
-# observed output; each block is extracted by output name at its own times and
-# stacked column-wise into an n_sim x n_total matrix (columns in block/row
-# order). Used for joint units where the compartments share random effects.
+# Joint (same-subject) simulation: one rxSolve with shared eta produces every
+# observed output; columns stacked in block/row order.
 .admSimulateJoint <- function(rxMod, struct_theta, sigma_names, eta_mat, unit,
                               params_mat, cores, ndp = .Machine$integer.max,
                               sigdig = NULL) {
@@ -255,14 +320,9 @@
   for (nm in names(struct_theta)) params_mat[, nm] <- struct_theta[nm]
   if (length(eta_cols) > 0L)      params_mat[, eta_cols] <- eta_mat
   for (nm in sigma_names)         params_mat[, nm] <- 0
-  # Covariates, as .admSimulate() and .admSimulateRows() do. Without this a JOINT
-  # (same-subject) unit never sees them: .admCheckCovariates routes the study to
-  # "rows" and .admStudyCovRows attaches cov_rows, and the joint solve read
-  # neither. It does not even need a distribution -- a plain cov = list(WT = 72)
-  # on a same-subject multi-compartment study was enough, and ordinal endpoints
-  # are ALWAYS joint, so covariate + ordinal was affected too. admc's joint
-  # branch wraps this solve in tryCatch(error = NULL), so the symptom was an Inf
-  # objective at every parameter vector with no diagnosis at all.
+  # Forward covariates to joint solve -- ordinal endpoints are always joint,
+  # so without this ordinal + covariate broke too, and admc's tryCatch(error =
+  # NULL) around the joint solve turned it into an undiagnosed Inf objective.
   params_mat <- .admCovCols(params_mat, rxMod$params, unit[["cov"]],
                             unit[["cov_rows"]])
   out  <- rxode2::rxSolve(rxMod, params = as.data.frame(params_mat),
@@ -285,12 +345,9 @@
   cp
 }
 
-# Joint sensitivity simulation: for each observed output, one sens solve with the
-# SHARED eta draws (obs tagged with that output's cmt) gives its prediction and
-# d(pred)/d(eta_j); stacked column-wise into n_sim x n_total matrices. Returns
-# list(cp_mat, dpred_list) or NULL if any block's sens solve fails (caller then
-# falls back to FD). Enables the analytical gradient of a joint (same-subject)
-# unit's stacked MVN.
+# Joint sensitivity simulation: one sens solve per observed output with SHARED
+# eta draws, stacked column-wise into n_sim x n_total. NULL if any block fails
+# (caller falls back to FD). Enables the analytic gradient of a joint unit's MVN.
 .admSimulateJointSens <- function(sensModel, struct, sigma_names, eta_mat, unit,
                                   cores, ndp = .Machine$integer.max,
                                   sigma_var = NULL, sigdig = NULL) {
@@ -302,8 +359,7 @@
     stats::setNames(lapply(th_nms, function(nm) matrix(0, n_sim, unit$n_total)), th_nms)
   else NULL
   for (blk in unit$blocks) {
-    # carry the covariate onto the per-block study: .admSimulateSens WOULD inject
-    # it, but only from the study it is handed, and this list dropped both fields
+    # Forward covariates to per-block sensitivity solve.
     bs  <- list(ev_full = blk$ev_full, times = blk$times,
                 cov = unit[["cov"]], cov_rows = unit[["cov_rows"]])
     res <- .admSimulateSens(sensModel, struct, sigma_names, eta_mat, bs, cores, ndp,
@@ -311,8 +367,7 @@
     if (is.null(res)) return(NULL)
     cp_mat[, blk$rows] <- res$cp_mat
     for (j in seq_len(n_eta)) dpred_list[[j]][, blk$rows] <- res$dpred_list[[j]]
-    # any block missing its theta columns disables the theta path for the whole
-    # joint unit (a half-filled stacked derivative would be silently wrong)
+    # Disable theta path for whole unit if any block lacks theta sensitivities.
     if (!is.null(dtheta_list)) {
       if (is.null(res$dtheta_list)) dtheta_list <- NULL
       else for (nm in th_nms) dtheta_list[[nm]][, blk$rows] <- res$dtheta_list[[nm]]
@@ -321,10 +376,7 @@
   list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list)
 }
 
-# Extract d(pred)/d(theta) for the unpaired thetas from a sens solve.
-# NULL when the sens model has no theta directions (the nlmixr2est-inner
-# fallback) or the solve did not return them -- the caller then falls back to
-# finite differences.
+# Extract d(pred)/d(theta) for unpaired thetas from a sens solve (NULL on failure/absence).
 .admThetaSens <- function(sensModel, out, keep, n_row, n_t) {
   tsc <- sensModel$theta_sens_cols
   if (is.null(tsc) || length(tsc) == 0L) return(NULL)
@@ -335,14 +387,12 @@
     names(tsc))
 }
 
-# Single pass on the sensitivity model returning predictions, d(pred)/d(eta_j)
-# and (augmented model only) d(pred)/d(theta_k) for the unpaired struct thetas.
-# Returns list(cp_mat, dpred_list, dtheta_list) or NULL on failure (caller falls
-# back to FD). dtheta_list is NULL when the model carries no theta directions.
-.admSimulateSens <- function(sensModel, struct_theta, sigma_names,
-                             eta_mat, study, cores,
-                             ndp = .Machine$integer.max, sigma_var = NULL,
-                             sigdig = NULL) {
+# Single pass on sensitivity model returning predictions and sensitivities.
+# The sensitivity model's parameter frame for one study, and the transform it
+# has to be inverted through. Split out of .admSimulateSens() so the batched
+# path builds it the same way rather than a second way.
+.admSensInnerDf <- function(sensModel, struct_theta, sigma_names, eta_mat,
+                            study, sigma_var = NULL) {
   eta_cols  <- colnames(eta_mat)
   rmap      <- sensModel$rename_map
   n_sim     <- nrow(eta_mat)
@@ -363,18 +413,15 @@
   for (j in seq_along(eta_cols)) {
     mapped <- rmap[eta_cols[j]]; if (!is.na(mapped)) inner_df[[mapped]][] <- eta_mat[, j]
   }
-  # fixed thetas: constants the estimated-parameter loops above never write (see
-  # the note at the top of this file -- inlined on purpose, no helper)
+  # fixed thetas: constants the estimated-parameter loops above never write
   for (nm in names(sensModel$fixed_theta))
     inner_df[[nm]] <- rep(unname(sensModel$fixed_theta[[nm]]), nrow(inner_df))
 
-  # An ESTIMATED boxCox/yeoJohnson lambda is a SIGMA name, and the zero-fill above
-  # therefore handed the solve lambda = 0 -- so rx_pred_ came back as a plain log
-  # transform while the back-transform below inverted with the model's STARTING
-  # lambda. Two different transforms, hence a sens gradient that was ~60x wrong for
-  # boxCox and NaN for yeoJohnson. Write the current lambda into the solve and
-  # invert with that same number, so the two agree by construction.
-  # Inlined in each solve path on purpose -- see the dev-mode daemon note above.
+  # Supply current lambda estimate for TBS sensitivity solves: an ESTIMATED
+  # boxCox/yeoJohnson lambda is a sigma name, and the zero-fill above would
+  # otherwise hand the solve lambda = 0 while the back-transform inverts with
+  # the model's starting lambda -- two different transforms, a sens gradient
+  # measured ~60x wrong for boxCox and NaN for yeoJohnson.
   .tb <- sensModel$pred_tbs
   .lam <- if (is.null(.tb)) NA_real_ else .tb$lam
   if (!is.null(.tb) && !is.na(.tb$lam_name %||% NA_character_) &&
@@ -387,9 +434,94 @@
   # Model covariates for this study (only names in study$cov -- see .admCovCols).
   inner_df <- .admCovCols(inner_df, sensModel$mod$params, study[["cov"]],
                           study[["cov_rows"]])
+  list(df = inner_df, tb = .tb, lam = .lam)
+}
 
-  # do.call + sensModel$solve_args: DDE sensitivity solves are forced onto pure
-  # dop853 (see .admLoadSensModel); NULL, hence a no-op, for every other model.
+# One study's block of a sensitivity solve, reshaped and back-transformed.
+.admSensSplit <- function(out, keep, beg, end, n_t, n_eta, sensModel, .tb, .lam) {
+  cut <- function(v) {
+    m <- matrix(v[keep], ncol = n_t, byrow = TRUE)
+    if (beg == 1L && end == nrow(m)) m else m[beg:end, , drop = FALSE]
+  }
+  cp_mat     <- cut(out[["rx_pred_"]])
+  dpred_list <- lapply(seq_len(n_eta), function(j) cut(out[[sensModel$sens_cols[j]]]))
+  dtheta_list <- .admThetaSensRows(sensModel, out, keep, n_t, beg, end)
+  if (!is.null(.tb)) {
+    .gp        <- .admTBSid(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
+    cp_mat     <- .admTBSi(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
+    dpred_list <- lapply(dpred_list, function(D) D * .gp)
+    if (!is.null(dtheta_list)) dtheta_list <- lapply(dtheta_list, function(D) D * .gp)
+  }
+  list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list)
+}
+
+# Several studies that share an event table, in ONE sensitivity solve.
+#
+# The gradient pays the same per-call toll -- .admSimulateSens() was 67% of a
+# profiled fit once the objective had been grouped -- and the same fact rescues
+# it. Studies the batch cannot take come back NULL for the caller.
+.admSimulateSensMany <- function(sensModel, struct_theta, sigma_names, eta_list,
+                                 studies, cores, ndp = .Machine$integer.max,
+                                 sigma_var = NULL, sigdig = NULL) {
+  n <- length(studies)
+  if (n == 1L)
+    return(list(.admSimulateSens(sensModel, struct_theta, sigma_names,
+                                 eta_list[[1L]], studies[[1L]], cores, ndp,
+                                 sigma_var, sigdig)))
+  one <- lapply(seq_len(n), function(k)
+    .admSensInnerDf(sensModel, struct_theta, sigma_names, eta_list[[k]],
+                    studies[[k]], sigma_var))
+  if (any(vapply(one, is.null, logical(1)))) return(NULL)
+  nr   <- vapply(eta_list, nrow, integer(1))
+  end  <- cumsum(nr); beg <- end - nr + 1L
+  # DIFFERENT DOSES AND SCHEDULES IN ONE SOLVE, by giving each study its own id
+  # range. Fixing `events` at the first study's instead is the bug that moved a
+  # fitted objective from 1524.11933 to 4134.28314 with every test still green,
+  # so the stacking is the point rather than a refinement.
+  same <- .admEvSame(studies)
+  ev   <- if (same) studies[[1L]]$ev_full else .admEvStack(studies, nr)
+  if (is.null(ev)) return(NULL)
+  pmat <- .admRbindParams(lapply(one, `[[`, "df"), FALSE)
+  if (is.null(pmat)) return(NULL)
+  out <- tryCatch(suppressWarnings(do.call(rxode2::rxSolve,
+    c(list(sensModel$mod, params = pmat,
+           events = ev, cores = cores,
+           nDisplayProgress = ndp, sigdig = sigdig), sensModel$solve_args))),
+    error = function(e) NULL)
+  if (is.null(out) || !all(sensModel$sens_cols %in% names(out))) return(NULL)
+  if (same) {
+    keep <- out[["time"]] %in% studies[[1L]]$times
+    n_t  <- length(studies[[1L]]$times)
+    return(lapply(seq_len(n), function(k)
+      .admSensSplit(out, keep, beg[k], end[k], n_t, ncol(eta_list[[k]]),
+                    sensModel, one[[k]]$tb, one[[k]]$lam)))
+  }
+  id <- out[["id"]] %||% out[["sim.id"]]
+  if (is.null(id)) return(NULL)
+  # Only the columns the split reads, once: .admSensSplit() takes them by [[.
+  id <- as.integer(id); tm <- out[["time"]]
+  cols <- unique(c("rx_pred_", sensModel$sens_cols, sensModel$theta_sens_cols))
+  cols <- cols[cols %in% names(out)]
+  vv   <- stats::setNames(lapply(cols, function(cc) out[[cc]]), cols)
+  sl   <- .admIdSlices(id, beg, end)
+  lapply(seq_len(n), function(k) {
+    ii  <- sl[[k]] %||% which(id >= beg[k] & id <= end[k])
+    sel <- ii[tm[ii] %in% studies[[k]]$times]
+    .admSensSplit(vv, sel, 1L, nr[k], length(studies[[k]]$times),
+                  ncol(eta_list[[k]]), sensModel, one[[k]]$tb, one[[k]]$lam)
+  })
+}
+
+.admSimulateSens <- function(sensModel, struct_theta, sigma_names,
+                             eta_mat, study, cores,
+                             ndp = .Machine$integer.max, sigma_var = NULL,
+                             sigdig = NULL) {
+  .one <- .admSensInnerDf(sensModel, struct_theta, sigma_names, eta_mat, study,
+                          sigma_var)
+  inner_df <- .one$df; .tb <- .one$tb; .lam <- .one$lam
+  n_sim <- nrow(eta_mat)
+
+  # Forward solve_args (e.g. forced dop853 for DDE sensitivity models).
   out <- tryCatch(
     suppressWarnings(
       do.call(rxode2::rxSolve,
@@ -404,25 +536,17 @@
   if (!all(sensModel$sens_cols %in% out_cols)) return(NULL)
 
   keep  <- out[["time"]] %in% study$times
-  n_t   <- length(study$times)
-  n_eta <- ncol(eta_mat)
+  .admSensSplit(out, keep, 1L, n_sim, length(study$times), ncol(eta_mat),
+                sensModel, .tb, .lam)
+}
 
-  cp_mat     <- matrix(out[["rx_pred_"]][keep], nrow = n_sim, ncol = n_t, byrow = TRUE)
-  dpred_list <- lapply(seq_len(n_eta), function(j)
-    matrix(out[[sensModel$sens_cols[j]]][keep], nrow = n_sim, ncol = n_t, byrow = TRUE))
-  dtheta_list <- .admThetaSens(sensModel, out, keep, n_sim, n_t)
-
-  # lnorm endpoint: rx_pred_ is log(f) -- back-transform with the chain rule so
-  # the gradient differentiates the same quantity the NLL scores.
-  # Transformed endpoint: rx_pred_ is on the MODELLING scale. Back-transform and
-  # chain every sensitivity by g'(z) -- d(g(z))/dp = g'(z) * dz/dp. Covers lnorm
-  # (yj = 0, lambda = 0) and logit/probit/boxCox/yeoJohnson alike.
-  if (!is.null(.tb)) {
-    .gp        <- .admTBSid(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
-    cp_mat     <- .admTBSi(cp_mat, .lam, .tb$yj, .tb$lo, .tb$hi)
-    dpred_list <- lapply(dpred_list, function(D) D * .gp)
-    if (!is.null(dtheta_list)) dtheta_list <- lapply(dtheta_list, function(D) D * .gp)
-  }
-
-  list(cp_mat = cp_mat, dpred_list = dpred_list, dtheta_list = dtheta_list)
+# .admThetaSens() over a row RANGE, so the batched path can take one study's
+# block out of a shared solve.
+.admThetaSensRows <- function(sensModel, out, keep, n_t, beg, end) {
+  tsc <- sensModel$theta_sens_cols
+  if (is.null(tsc) || length(tsc) == 0L) return(NULL)
+  if (!all(tsc %in% names(out))) return(NULL)
+  stats::setNames(lapply(tsc, function(col)
+    matrix(out[[col]][keep], ncol = n_t, byrow = TRUE)[beg:end, , drop = FALSE]),
+    names(tsc))
 }

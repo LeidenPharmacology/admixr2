@@ -1,21 +1,10 @@
 # =============================================================================
 # anova() on nested admFits
 # =============================================================================
-#
-# The ORDINARY likelihood-ratio test: the objective difference against a
-# chi-squared reference with as many degrees of freedom as the larger model has
-# extra parameters. No reweighting, no sandwich, and no dependence on which
-# `covMethod` the fits used -- anova(full, reduced) works on what they already
-# carry.
-#
-# WHAT THIS DELIBERATELY DOES NOT DO. Under misspecification the plain LRT is
-# not exactly chi-squared: H (the Hessian of the objective at the optimum) and
-# J (the sandwich's middle term, Var of the score -- see the notation block at
-# the top of R/adfweight.R) disagree, and the exact reference becomes a
-# weighted sum of chi-squares. Correcting for that needs H and J from both fits
-# and a series evaluation of the weighted reference, and it constrains which
-# covMethod a fit must have used. That is the wrong default for the ordinary
-# question "is this extra parameter worth it".
+# Ordinary LRT vs a chi-squared reference (df = added parameters). Deliberately
+# does not correct for H/J disagreement under misspecification (needs H and J
+# from both fits, see R/adfweight.R) -- wrong default for "is this parameter
+# worth it".
 
 # The optimizer-scale parameter names a fit was built on.
 .admFitParNames <- function(fit) {
@@ -37,9 +26,7 @@
   nm_r <- .admFitParNames(reduced)
   if (is.null(nm_f) || is.null(nm_r))
     stop("anova(): could not read the fits' parameter names.", call. = FALSE)
-  # NESTING IS A PRECONDITION, not something to approximate around. A
-  # non-nested pair is a different problem (Vuong) and must not come back with
-  # a p-value.
+  # Nesting check: smaller model parameters must be a subset of the larger model
   if (!all(nm_r %in% nm_f))
     stop("anova(): the models are not nested -- the smaller one has parameters ",
          "the larger does not (", paste(setdiff(nm_r, nm_f), collapse = ", "),
@@ -49,14 +36,7 @@
   if (!length(gamma))
     stop("anova(): the two fits have the same parameters; nothing to test.",
          call. = FALSE)
-  # THE SAME ARGUMENT, FOR THE ESTIMATOR AND FOR THE GRID. A -2LL is only a
-  # likelihood ratio against another -2LL computed the same way, and the
-  # estimators do not compute it the same way: adfo scores FO-LINEARISED
-  # moments, adgh a quadrature, admc a Monte Carlo sample. anova(adfo_fit,
-  # adgh_fit) differenced two numbers on different scales and returned a
-  # perfectly finite p. Two adgh fits on different node counts have the same
-  # problem: the objective moves with the grid, which is why .adghGrid refuses
-  # to change the point count mid-fit in the first place.
+  # Verify identical estimation method and quadrature grid
   .m1 <- tryCatch(full$env$method, error = function(e) NULL)
   .m2 <- tryCatch(reduced$env$method, error = function(e) NULL)
   if (!is.null(.m1) && !is.null(.m2) && !identical(.m1, .m2))
@@ -72,9 +52,7 @@
          .n2, "). The objective moves with the grid, so the difference is not ",
          "a likelihood ratio -- refit both with the same `n_nodes`.",
          call. = FALSE)
-  # SAME ARGUMENT, FOR admc/adirmc: their objective is a Monte Carlo average
-  # over `n_sim` draws, so it moves with `n_sim` exactly as adgh's moves with
-  # `n_nodes`. NULL for adfo/adgh, so this is a no-op there.
+  # Verify identical Monte Carlo sample size (admc/adirmc)
   .s1 <- tryCatch(full$env$nSim, error = function(e) NULL)
   .s2 <- tryCatch(reduced$env$nSim, error = function(e) NULL)
   if (!is.null(.s1) && !is.null(.s2) && !identical(.s1, .s2))
@@ -82,22 +60,48 @@
          .s2, "). The objective is a Monte Carlo average, so the difference ",
          "is not a likelihood ratio -- refit both with the same `n_sim`.",
          call. = FALSE)
+  # STRATUM RESOLUTION, per covariate, compared only where the two fits OVERLAP.
+  # A covariate only one of them reads cannot put them on different scales: if a
+  # model's prediction does not move across a source's nodes, the mixture those
+  # nodes collapse to is a sufficient statistic for it, so its objective is the
+  # same at either resolution (measured: 4.7e-05 on a dOFV of 409). Comparing
+  # one number per fit refused exactly the nested pair a covariate test is made
+  # of, because the null model had dropped the term and with it the nodes.
   .j1 <- tryCatch(full$env$strataNodes, error = function(e) NULL)
   .j2 <- tryCatch(reduced$env$strataNodes, error = function(e) NULL)
-  if (!identical(.j1, .j2))
-    stop("anova(): these fits were built at different stratum resolutions (",
-         .j1, " and ", .j2, "). The objective is J-dependent, so their ",
-         "difference is not a likelihood ratio -- refit both at the same ",
-         "resolution.", call. = FALSE)
+  # AN UNSET STAMP IS NOT A DISAGREEMENT: a model reading no covariate records
+  # nothing, which is the null of a single-covariate test. BOTH sides must be
+  # named to compare per covariate -- with `||`, one named side entered that
+  # branch, where an unnamed stamp intersects to nothing and passes, so a
+  # pre-rename `5` was accepted against `c(WT = 9)`. as.character() throughout,
+  # since the stamp carries "3/9" now and a saved integer must still match.
+  .nm1 <- names(.j1); .nm2 <- names(.j2)
+  .named <- !is.null(.nm1) && !is.null(.nm2)
+  .sh <- if (.named) intersect(.nm1, .nm2) else NULL
+  .bad <- if (!length(.j1) || !length(.j2)) FALSE
+          else if (.named) length(.sh) > 0L &&
+            !identical(as.character(.j1[.sh]), as.character(.j2[.sh]))
+          else !identical(as.character(unname(.j1)),
+                          as.character(unname(.j2)))
+  if (isTRUE(.bad)) {
+    .w <- if (!.named) "" else {
+      .d <- .sh[as.character(.j1[.sh]) != as.character(.j2[.sh])]
+      paste0(" on ", paste(sQuote(.d), collapse = ", "))
+    }
+    # ", " between covariates: "/" separates node counts within one stamp.
+    stop("anova(): these fits were built at different stratum resolutions",
+         .w, " (", paste(.j1, collapse = ", "), " and ",
+         paste(.j2, collapse = ", "), "). The objective is J-dependent, so ",
+         "their difference is not a likelihood ratio -- refit both at the ",
+         "same resolution.", call. = FALSE)
+  }
   o_f <- as.numeric(full$objective)
   o_r <- as.numeric(reduced$objective)
   if (!is.finite(o_f) || !is.finite(o_r))
     stop("anova(): one of these fits has no finite objective.", call. = FALSE)
   d  <- o_r - o_f
   df <- length(gamma)
-  # A NEGATIVE dOFV IS REPORTED, NOT CLAMPED. The larger model cannot fit worse
-  # at its own optimum, so a negative difference says one of the two did not
-  # converge -- which the user needs to see, not have rounded to zero.
+  # Report negative dOFV directly without clamping (indicates convergence failure)
   list(dOFV = d, df = df, gamma = gamma,
        p = if (d > 0) stats::pchisq(d, df, lower.tail = FALSE) else NA_real_)
 }
@@ -112,6 +116,16 @@
 #' (`admc`, `adirmc`), the same sample size (`n_sim`). Each scores its own
 #' approximation to the likelihood, so objectives from different ones are not
 #' comparable and the comparison is refused rather than reported.
+#'
+#' The **stratum** resolution is checked per covariate, and only where the two
+#' fits overlap. A covariate a model does not read cannot put the two on
+#' different scales: if its prediction does not move across a source's nodes,
+#' the mixture those nodes collapse to is a sufficient statistic for it, so its
+#' objective is the same at either resolution. That is what makes the nested
+#' pair of a covariate test comparable --- the null model drops the term, so its
+#' sources are not cut along it. Two fits that both read a covariate and cut it
+#' differently, including one cutting it and the other integrating over it
+#' whole, are refused.
 #'
 #' Testing a variance AT ZERO puts the null on the boundary of the parameter
 #' space, where the exact reference is a chi-bar-squared mixture rather than a
@@ -133,8 +147,7 @@ anova.admFit <- function(object, ...) {
     stop("anova() on a single admFit has nothing to compare it with. Pass the ",
          "nested pair, e.g. anova(full, reduced).", call. = FALSE)
   npar <- vapply(fits, function(z) length(.admFitParNames(z)), integer(1))
-  # Smallest first, the way anova.lme and anova.lm order their tables, so each
-  # test row reads "the model above, plus these parameters".
+  # Order models smallest first (by parameter count)
   ord  <- order(npar)
   fits <- fits[ord]; npar <- npar[ord]
   nms  <- make.unique(vapply(fits, function(z) z$env$method %||% "adm",
@@ -167,10 +180,7 @@ anova.admFit <- function(object, ...) {
 
 #' @export
 print.anova.admFit <- function(x, ...) {
-  # NOT stats::print.anova. It routes through printCoefmat, which calls
-  # data.matrix() on the frame -- and data.matrix() turns a CHARACTER column
-  # into its factor CODES, so `Test` would print as 1, 2, ... instead of
-  # "1 vs 2". Printing the frame directly keeps it as written.
+  # Print data.frame directly to prevent printCoefmat from converting character 'Test' to factors
   h <- attr(x, "heading")
   if (!is.null(h)) cat(paste(h, collapse = "\n"), "\n", sep = "")
   y <- x

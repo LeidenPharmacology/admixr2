@@ -119,12 +119,31 @@ test_that("softmax_cpp: agrees with pure-R reference", {
   expect_equal(admixr2:::softmax_cpp(lw), softmax_r(lw), tolerance = 1e-12)
 })
 
-test_that("softmax_cpp: non-finite inputs clipped to max finite value", {
+test_that("softmax_cpp: -Inf gets weight 0, NaN and +Inf clip to max finite", {
+  # Values, not just sum == 1: Eigen 3.4 once returned uniform weights here,
+  # which are valid weights and wrong ones.
   lw <- c(1.0, -Inf, 2.0, Inf)
-  # should not error and should return valid weights
-  w <- admixr2:::softmax_cpp(lw)
-  expect_equal(sum(w), 1.0, tolerance = 1e-12)
-  expect_true(all(is.finite(w)))
+  w  <- admixr2:::softmax_cpp(lw)
+  expect_equal(w, softmax_r(lw), tolerance = 1e-12)
+  expect_identical(w[2], 0.0)
+  expect_equal(admixr2:::softmax_cpp(c(NaN, 1, 2)), softmax_r(c(2, 1, 2)),
+               tolerance = 1e-12)
+})
+
+test_that("softmax_cpp: non-finite handling does not depend on position", {
+  # Eigen packets are 2+ wide with a scalar tail, so a position bug needs a
+  # vector longer than one packet to show.
+  lw <- c(1, 2, 3, 4, 5, -Inf, Inf, NaN, 0)
+  w  <- admixr2:::softmax_cpp(lw)
+  for (k in seq_along(lw)) {
+    perm <- c(k:length(lw), seq_len(k - 1L))
+    expect_equal(admixr2:::softmax_cpp(lw[perm]), w[perm], tolerance = 1e-14)
+  }
+})
+
+test_that("softmax_cpp: all non-finite input returns zeros", {
+  for (lw in list(c(-Inf, -Inf), c(Inf, Inf), c(NaN, NaN), c(NaN, Inf, -Inf)))
+    expect_identical(admixr2:::softmax_cpp(lw), rep(0.0, length(lw)))
 })
 
 test_that("weighted_meancov_cpp: uniform weights give ML mean and biased cov", {

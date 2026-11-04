@@ -1,31 +1,25 @@
 # -- adgh: aggregate Gauss-Hermite quadrature estimator -------------------------
-# Computes population moments E[f] and Cov[f] for eta ~ N(0, Omega) by
-# deterministic Gauss-Hermite quadrature over the random-effects distribution,
-# then plugs them into the same aggregate MVN -2LL as adfo/admc.
+# Computes population moments E[f] and Cov[f] for eta ~ N(0, Omega) by deterministic
+# Gauss-Hermite quadrature over the random-effects distribution, then plugs them into
+# the same aggregate MVN -2LL as adfo/admc. Structurally this is admc with a small
+# fixed node grid in place of n_sim random draws, and quadrature weights in place of
+# uniform ones -- so the objective is noise-free.
 #
-# Structurally this is admc with a small fixed deterministic node grid in place
-# of n_sim random draws, and quadrature weights in place of uniform ones.
-# The objective is noise-free -> clean gradient/Hessian, fast reproducible opt.
-#
-# The measure is prior N(0, Omega) (prior-predictive population moments, not
-# data-conditional posterior), so plain (non-adaptive) GH is exactly right.
+# The measure is prior N(0, Omega), not a data-conditional posterior, so plain
+# (non-adaptive) GH is exactly right.
 
 # -- Node grid -----------------------------------------------------------------
 
 # Probabilists' GH nodes/weights for E_{N(0,1)}[g] = sum_i w_i g(x_i).
-# Golub-Welsch via symmetric tridiagonal eigendecomposition. No external deps.
-# sum(w) = 1, sum(w * x^2) = 1.
-# Memoised: the nodes depend on nothing but `m`, and .admTBSMoments/.admTBSMomentsD
-# ask for the 81-node set on EVERY residual evaluation of a transformed endpoint --
-# an eigen() of an 81x81 matrix each time, ~0.9 ms, inside the objective's inner
-# loop. The cache is keyed by m, holds a handful of tiny numeric vectors, and lives
-# in the package namespace (created at the top of R/zzz.R).
+# Golub-Welsch via symmetric tridiagonal eigendecomposition. sum(w) = 1, sum(w * x^2) = 1.
+# Memoised: .admTBSMoments/.admTBSMomentsD ask for the 81-node set on EVERY residual
+# evaluation of a transformed endpoint (~0.9 ms/eigen() otherwise). Keyed by m, lives
+# in the package namespace (see R/zzz.R).
 .adghNodes1 <- function(m) {
   if (m < 1L) stop("n_nodes must be >= 1")
   if (m == 1L) return(list(x = 0, w = 1))
-  # The cache env is a package-level binding, and this function runs inside mirai
-  # restart workers, where assignInNamespace() cannot ADD a binding to the locked
-  # installed namespace. Degrade to recomputing rather than erroring if it is absent.
+  # Runs inside mirai restart workers, where assignInNamespace() cannot ADD a
+  # binding to the locked installed namespace -- degrade to recomputing if absent.
   .env <- tryCatch(get(".adm_node_env", envir = asNamespace("admixr2")),
                    error = function(e) NULL)
   if (is.null(.env)) {
@@ -50,13 +44,51 @@
 
 # Tensor-product GH grid for n_eta dimensions.
 # Returns X (n_node x n_eta standard-normal nodes) and W (length n_node weights).
+#
+# Memoised (same cache env as .adghNodes1, different policy): rebuild cost is
+# 68.6 ms/call at r=4, m=15 vs rxSolve()'s ~11 ms. ONE SLOT (not
+# .adghNodes1's cache-everything) since one grid is ~25MB at 8 etas/5 nodes.
+.admGridMemo <- function(slot, key, build) {
+  # Runs inside mirai restart workers, where assignInNamespace() cannot ADD a
+  # binding to the locked installed namespace. Degrade to recomputing rather
+  # than erroring if absent.
+  .env <- tryCatch(get(".adm_node_env", envir = asNamespace("admixr2")),
+                   error = function(e) NULL)
+  if (is.null(.env)) return(build())
+  .hit <- tryCatch(get(slot, envir = .env, inherits = FALSE),
+                   error = function(e) NULL)
+  if (!is.null(.hit) && identical(.hit$key, key)) return(.hit$val)
+  val <- build()
+  assign(slot, list(key = key, val = val), envir = .env)
+  val
+}
+
 .adghNodeGrid <- function(m, n_eta) {
   if (n_eta == 0L) return(list(X = matrix(0, 1L, 0L), W = 1))
-  g <- .adghNodes1(m)
-  X <- as.matrix(expand.grid(rep(list(g$x), n_eta)))
-  W <- as.numeric(apply(expand.grid(rep(list(g$w), n_eta)), 1L, prod))
-  dimnames(X) <- NULL
-  list(X = X, W = W)
+  .admGridMemo(".adm_ghgrid", c(m, n_eta), function() {
+    g <- .adghNodes1(m)
+    X <- as.matrix(expand.grid(rep(list(g$x), n_eta)))
+    W <- as.numeric(apply(expand.grid(rep(list(g$w), n_eta)), 1L, prod))
+    dimnames(X) <- NULL
+    list(X = X, W = W)
+  })
+}
+
+# As .adghNodeGrid, but for PER-DIRECTION node counts rather than one shared `m`
+# repeated `n_eta` times -- what .admCovRefresh needs for a collapsed design's `nv`.
+# A uniform `nv` is HANDED STRAIGHT to .adghNodeGrid rather than rebuilt under a
+# second key, so the common case does not hold two copies of the same tensor.
+.admNodeGridNv <- function(nv) {
+  d <- length(nv)
+  if (d == 0L) return(list(X = matrix(0, 1L, 0L), W = 1))
+  if (all(nv == nv[1L])) return(.adghNodeGrid(nv[1L], d))
+  .admGridMemo(".adm_ghgridv", nv, function() {
+    gl <- lapply(nv, .adghNodes1)
+    X <- as.matrix(expand.grid(lapply(gl, function(g) g$x)))
+    W <- as.numeric(apply(expand.grid(lapply(gl, function(g) g$w)), 1L, prod))
+    dimnames(X) <- NULL
+    list(X = X, W = W)
+  })
 }
 
 # -- Moments -------------------------------------------------------------------
@@ -74,31 +106,55 @@
   } else {
     g <- list(eta = matrix(0, 1L, 0L), W = 1, X = grid$X, cov_rows = NULL)
   }
-  # adgh's analogue of admc's per-row covariate draws: a PRODUCT GRID over the
-  # covariate quadrature and the eta grid. Deterministic, so adgh stays
-  # noise-free, and it is still ONE rxSolve -- n_cov x n_node rows rather than
-  # n_node. The eta block cycles fastest, so the weights are
-  # rep(W_eta, times = n_cov) * rep(W_cov, each = n_eta), which is what
-  # as.numeric(outer(W_eta, W_cov)) produces column-major.
+  # General path: a PRODUCT GRID over the covariate quadrature and the eta
+  # grid, deterministic so adgh stays noise-free and still ONE rxSolve. The
+  # eta block cycles fastest, so weights are as.numeric(outer(W_eta, W_cov))
+  # column-major.
+  #
+  # JOINT COLLAPSE: one design over etas AND covariates together where they
+  # reach the model through the same directions, returned before either the
+  # eta grid or covariate design is built. X is still the node matrix the
+  # omega chain rule differentiates (eta = X L' as usual), so .adghGrad
+  # needs no branch of its own.
+  .jc <- if (!is.null(s)) s[[".adm_cov_joint"]] else NULL
+  if (!is.null(.jc)) {
+    jd <- .admJointDesign(.jc, .admShiftStruct(pinfo, pars$struct), pars$L)
+    # A failed re-aim is an unsolvable point (an affine_log probe going
+    # non-positive), not a licence to fall through to a design with a
+    # DIFFERENT NUMBER OF POINTS mid-optimisation, and not a reason to
+    # stop() a converging fit. So this returns unconditionally -- success or
+    # `failed = TRUE` -- never falling back to .adm_cov_collapse.
+    if (is.null(jd)) return(list(failed = TRUE))
+    return(list(eta = jd$eta, W = jd$W, X = jd$X, cov_rows = jd$cov_rows))
+  }
   if (!is.null(s) && !is.null(s[["cov_dist"]])) {
     nq <- max(nrow(g$eta), 1L)
-    # cov_integration = "sparse": a Smolyak grid in place of the product one.
-    # It is an ORDINARY GRID -- (X, W) with signed W -- so the expansion below
-    # is the same one the product grid takes, and nothing downstream needs to
-    # know which rule produced the rows. That is what the retired "taylor"
-    # design was not: it carried its own derivative-pair machinery, and two of
-    # its three defects lived there.
+    # cov_integration = "sparse": a Smolyak grid, still an ORDINARY GRID
+    # (X, W) with signed W, so the expansion below and everything downstream
+    # is unchanged. (Unlike the retired "taylor" design, which carried its
+    # own derivative-pair machinery.)
     .sparse <- identical(pinfo$cov_integration %||% "on", "sparse")
-    # Cached on the study by .admCheckCovariates -- a pure function of
-    # `cov_dist` and the level, both data -- so it is not rebuilt per objective
-    # call. The %||% keeps a hand-built study (Tier-1 mocks, direct
-    # .adghMoments calls) working, at the old cost.
+    # Cached on the study by .admCheckCovariates (pure function of cov_dist
+    # and level). %||% keeps a hand-built study working at the old cost.
     cg <- if (.sparse) s[[".adm_cov_sparse"]] %||%
                        .admCovSparseGrid(s[["cov_dist"]],
                                          pinfo$cov_sparse_level %||% 3L,
                                          pinfo$cov_nodes %||% 7L)
-          else         s[[".adm_cov_grid"]] %||%
+          # COLLAPSED design when covariates reach the model through a single
+          # scalar. RE-AIMED at current thetas each call, not cached at
+          # admission values: the rotation depends on the estimated
+          # coefficients (53 to 163 -2LL units for a 0.1 move in one).
+          # Product grid only when no collapse was admitted -- the two have
+          # different point counts, so swapping mid-fit steps the objective.
+          else if (is.null(s[[".adm_cov_collapse"]]))
+                       s[[".adm_cov_grid"]] %||%
                        .admCovGrid(s[["cov_dist"]], pinfo$cov_nodes %||% 7L)
+          else         .admCovRefresh(s[[".adm_cov_collapse"]],
+                                      .admShiftStruct(pinfo, pars$struct))
+    # .admCovRefresh MARKS a failed re-aim rather than returning the admission
+    # design. All five of its exits used to be `return(co)`, so a %||% here was dead
+    # code and a failed re-aim scored silently on the STARTING-VALUE rotation.
+    if (isTRUE(cg$stale)) return(list(failed = TRUE))
     nc <- nrow(cg$X)
     g$eta      <- g$eta[rep(seq_len(nq), times = nc), , drop = FALSE]
     colnames(g$eta) <- pinfo$eta_col_names
@@ -117,9 +173,7 @@
 #
 # `cpc` -- the node matrix centred at the weighted mean -- is returned because
 # more than one consumer needs it: the gradient contracts against it, and the
-# ADF weight (covMethod = "r,s") IS a function of the centred nodes. Splitting
-# it out is what makes .admAdfParts() and .adghMoments() provably describe the
-# same node set rather than two copies of one expression.
+# ADF weight (covMethod = "r,s") IS a function of the centred nodes.
 .adghStructMoments <- function(cp, W) {
   mu  <- as.numeric(crossprod(W, cp))
   cpc <- sweep(cp, 2L, mu)
@@ -150,6 +204,64 @@
   list(E = m$mu, V = m$V)
 }
 
+# Per-study grids, and the sensitivity solves batched by event table.
+#
+# Same grouping the objective uses (see .adghSolveGrouped): the nodes of a
+# conditional source share `ev_full`, so their parameter frames stack into one
+# rxSolve instead of one each. A group whose batched solve fails is re-solved
+# study by study, so a failure degrades exactly as it did before.
+.adghGradPre <- function(pars, pinfo, studies, sensModel, grid, L, cores, p) {
+  n <- length(studies)
+  out <- list(s = vector("list", n), X = vector("list", n),
+              W = vector("list", n), eta = vector("list", n),
+              res = vector("list", n), bail = NULL)
+  for (i in seq_len(n)) {
+    s <- studies[[i]]
+    if (!is.null(s[["cov_dist"]])) {
+      g <- .adghGrid(pars, pinfo, grid, s)
+      # Same marked grid .adghMoments turns into Inf -- see there. The point is
+      # unsolvable, so the objective is Inf and there is no gradient to form;
+      # .adghFusedFns takes both from here and must not be handed a NULL eta.
+      if (isTRUE(g$failed)) {
+        out$bail <- list(grad = stats::setNames(rep(Inf, length(p)), names(p)),
+                         nll = Inf)
+        return(out)
+      }
+      out$X[[i]] <- g$X; out$W[[i]] <- g$W; out$eta[[i]] <- g$eta
+      out$s[[i]] <- .adghStudyCov(s, g)
+    } else {
+      out$X[[i]] <- grid$X; out$W[[i]] <- grid$W
+      out$eta[[i]] <- grid$X %*% t(L)
+      out$s[[i]] <- s
+    }
+  }
+  if (is.null(sensModel)) return(out)
+  ix <- which(!vapply(studies, function(z) isTRUE(z$is_joint), logical(1)))
+  if (!length(ix)) return(out)
+  ek  <- vapply(ix, function(i) out$s[[i]]$ev_key %||% NA_character_, "")
+  key <- ifelse(is.na(ek), paste0("solo", seq_along(ix)), "all")
+  for (k in unique(key)) {
+    ii <- ix[key == k]
+    et <- lapply(ii, function(i) { e <- out$eta[[i]]
+      colnames(e) <- pinfo$eta_col_names; e })
+    rs <- .admSimulateSensMany(sensModel, pars$struct, pinfo$sigma_names, et,
+                               out$s[ii], cores, pinfo$nDisplayProgress,
+                               pars$sigma_var, pinfo$sigdig)
+    # A batch that could not be formed or solved falls back per study, so the
+    # NULL the caller degrades on still means what it meant.
+    if (is.null(rs))
+      rs <- lapply(seq_along(ii), function(j)
+        .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, et[[j]],
+                         out$s[[ii[j]]], cores, pinfo$nDisplayProgress,
+                         pars$sigma_var, pinfo$sigdig))
+    # SINGLE brackets: `res[[i]] <- NULL` deletes the slot rather than emptying
+    # it, shifting every later index and leaving .adghGradNLL() subscripting
+    # past the end instead of reaching its NULL fallback.
+    for (j in seq_along(ii)) out$res[ii[j]] <- rs[j]
+  }
+  out
+}
+
 # Attach the grid's per-row covariate values to a study, so .admSimulate writes
 # them into the params frame. Returns the study untouched when there are none.
 .adghStudyCov <- function(study, g) {
@@ -159,6 +271,12 @@
 
 .adghMoments <- function(pars, pinfo, study, rxMod, out_var, grid, cores) {
   g  <- .adghGrid(pars, pinfo, grid, study)
+  # THIS IS WHERE A MARKED GRID BECOMES THE Inf IT WAS MARKED TO BE. .adghGrid
+  # returns list(failed = TRUE) for a failed re-aim, with no `eta` -- so with
+  # nobody reading the flag, nrow(g$eta) was NULL, .admMakeParamsList() called
+  # matrix(0, nrow = NULL) and the fit died on "non-numeric matrix extent" at a
+  # point the line search was merely trying. Reported as unsolvable instead.
+  if (isTRUE(g$failed)) return(list(failed = TRUE))
   study <- .adghStudyCov(study, g)
   pm <- .admMakeParamsList(nrow(g$eta), pinfo, 1L)[[1L]]
   cp <- .admSimulate(rxMod, pars$struct, pinfo$sigma_names, g$eta, study,
@@ -236,13 +354,20 @@
   if (is.null(pars)) return(Inf)
   # Reject non-finite parameters before the solve; see .admParsFinite().
   if (!.admParsFinite(pars, pinfo)) return(Inf)
+  # ONE SOLVE PER GROUP OF STUDIES, not per study. rxSolve is ~99% fixed cost at
+  # these sizes, and a conditional source is one study per node, so the call
+  # count is the study count. See .admSimulateMany().
+  cps <- .adghSolveGrouped(pars, pinfo, studies, rxMod, out_var, grid, cores)
+  if (isTRUE(cps$failed)) return(Inf)
   total <- 0
-  for (s in studies) {
+  for (i in seq_along(studies)) {
+    s <- studies[[i]]
     if (isTRUE(s$is_joint)) {
       m   <- .adghMomentsJoint(pars, pinfo, s, rxMod, grid, cores)
       nll <- nll_cov_cpp(s$E, s$V, m$E, m$V, s$n)
     } else {
-      m <- .adghMoments(pars, pinfo, s, rxMod, s$output %||% out_var, grid, cores)
+      m <- cps$moments[[i]]
+      if (is.null(m) || isTRUE(m$failed)) return(Inf)
       nll <- if (identical(s$method, "var"))
         nll_var_cpp(s$E, s$v_diag, m$E, diag(m$V), s$n)
       else
@@ -252,6 +377,66 @@
     total <- total + nll
   }
   total
+}
+
+# Which studies solve together. Only the OUTPUT has to match:
+# .admSimulateMany() gives each study its own id range, so doses and sampling
+# schedules may differ inside one solve -- measured 0.025s for one stacked call
+# against 0.066s for one per event table and 0.693s for one per study.
+.adghSolveGroupKeys <- function(studies, out_var, solo = NULL) {
+  n <- length(studies)
+  if (is.null(solo))
+    solo <- vapply(studies, function(s) !is.null(s$out_pair), logical(1))
+  ek <- vapply(studies, function(s) s$ev_key %||% NA_character_, "")
+  ov <- vapply(studies, function(s) s$output %||% out_var, "")
+  ifelse(solo | is.na(ek), paste0("solo", seq_len(n)), ov)
+}
+
+# Moments for every non-joint study, solving studies that share an event table
+# together. Falls back to one call per study wherever a group cannot be formed,
+# so the answer is the same either way -- verified bit-identical.
+.adghSolveGrouped <- function(pars, pinfo, studies, rxMod, out_var, grid, cores) {
+  n  <- length(studies)
+  mo <- vector("list", n)
+  ix <- which(!vapply(studies, function(s) isTRUE(s$is_joint), logical(1)))
+  if (!length(ix)) return(list(moments = mo))
+  # Grids first: cheap, no solves, and a failed re-aim has to abort before any
+  # of it is paid for.
+  gs <- lapply(ix, function(i) .adghGrid(pars, pinfo, grid, studies[[i]]))
+  if (any(vapply(gs, function(g) isTRUE(g$failed), logical(1))))
+    return(list(failed = TRUE))
+  ov <- vapply(ix, function(i) studies[[i]]$output %||% out_var, "")
+  # A beta endpoint derives its prediction from a PAIR of outputs and carries a
+  # solved precision alongside; that is .admSimulate()'s business, not a batch's.
+  solo <- vapply(ix, function(i) !is.null(studies[[i]]$out_pair), logical(1))
+  # Group on the event key stamped at flatten time, plus the output the study
+  # reads. A study with no key, or a beta pair, is its own group.
+  # out_var, not `ov`: .adghSolveGroupKeys() falls back to it per study, and
+  # handing it the per-study VECTOR makes that fallback length n -- which
+  # vapply(FUN.VALUE = "") refuses. Latent while every study carries an
+  # `output`, which is why nothing caught it.
+  key <- .adghSolveGroupKeys(studies[ix], out_var, solo)
+  for (k in unique(key)) {
+    sel <- which(key == k)
+    ii  <- ix[sel]
+    st  <- lapply(ii, function(i) .adghStudyCov(studies[[i]], gs[[match(i, ix)]]))
+    et  <- lapply(sel, function(j) gs[[j]]$eta)
+    pl  <- lapply(et, function(e) .admMakeParamsList(nrow(e), pinfo, 1L)[[1L]])
+    cp  <- .admSimulateMany(rxMod, pars$struct, pinfo$sigma_names, et, st,
+                            ov[sel[1L]], pl, cores, pinfo$nDisplayProgress,
+                            pinfo$sigdig)
+    # A batch that could not be formed comes back NULL; solve the group one at a
+    # time rather than reading NULL as a cp matrix.
+    if (is.null(cp))
+      cp <- lapply(seq_along(sel), function(j)
+        .admSimulate(rxMod, pars$struct, pinfo$sigma_names, et[[j]], st[[j]],
+                     ov[sel[j]], pl[[j]], cores, pinfo$nDisplayProgress,
+                     pinfo$sigdig))
+    for (j in seq_along(sel))
+      mo[[ii[j]]] <- .adghMomentsFromCp(cp[[j]], gs[[sel[j]]]$W, pars, pinfo,
+                                        ov[sel[j]], st[[j]]$times)
+  }
+  list(moments = mo)
 }
 
 # -- Analytic gradient ---------------------------------------------------------
@@ -271,6 +456,19 @@
   if (!.admParsFinite(pars, pinfo))
     return(list(grad = stats::setNames(rep(NA_real_, length(p)), names(p)),
                 nll = Inf))
+  # A correlated covariate-only collapse preserves the current index law, but
+  # its minimum-norm preimage does not preserve coefficient sensitivities.
+  # Differentiate the scored objective until that conditional derivative is
+  # carried analytically. The joint collapse works in whitened coordinates and
+  # does not need this fallback.
+  if (any(vapply(studies, function(s) {
+    co <- s[[".adm_cov_collapse"]]
+    identical(.admCovKind(s, pinfo), "collapse") && !is.null(co) &&
+      nrow(co$Rc) > 1L &&
+      any(abs(co$Rc - diag(nrow(co$Rc))) > sqrt(.Machine$double.eps))
+  }, logical(1))))
+    return(list(grad = .adghFDGrad(p, pinfo, studies, rxMod, out_var, grid,
+                                    cores, grad_h), nll = NULL))
   L     <- pars$L
   n_eta <- pinfo$n_eta
   n_s   <- length(pinfo$struct_names)
@@ -280,13 +478,9 @@
   grad  <- numeric(length(p)); names(grad) <- names(p)
 
   # (#5) The moments this gradient is built from are exactly the moments the NLL
-  # needs, so returning the NLL alongside costs nothing and lets the driver skip
-  # a whole second solve per iterate (see .adghFusedFns). Returned as a list
-  # rather than an attribute on the gradient: an attribute travels through
-  # unname() and into expect_equal(), where it broke a gradient-vs-FD comparison
-  # that had nothing to do with the NLL. Callers wanting just the gradient use
-  # the .adghGrad wrapper below. nll = NULL on the FD-fallback returns -- those
-  # never form these moments.
+  # needs, so returning the NLL alongside costs nothing and lets the driver skip a
+  # whole second solve per iterate (see .adghFusedFns). nll = NULL on the
+  # FD-fallback returns -- those never form these moments.
   nll_total <- 0
 
   # Which struct thetas are unpaired (no mu-referencing eta)?
@@ -298,38 +492,23 @@
   # An unpaired theta shifts the quadrature moments exactly like an eta does, so
   # given d(pred)/d(theta) from the augmented sens model it goes through the SAME
   # contrib() + sigma-V-coupling the paired thetas use -- no FD, no step size.
-  # Accumulated separately: if ANY study fails to return theta columns, the whole
-  # theta gradient falls back to the FD block below (mixing the two across
-  # studies would double-count the studies already accumulated here).
+  # Accumulated separately: if ANY study fails to return theta columns the whole
+  # theta gradient falls back to FD, to avoid double-counting studies already
+  # accumulated here.
   theta_sens_ok <- length(unpaired_k) > 0L
   g_theta       <- numeric(length(p))
 
-  for (s in studies) {
-    # PER STUDY, THROUGH .adghGrid(), WHERE THE STUDY DECLARES A COVARIATE
-    # DISTRIBUTION. Building the nodes from `grid` and pars$L directly is what
-    # made adgh's analytical gradient blind to the covariate product grid: it
-    # differentiated a different function from the one .adghNLL evaluated,
-    # silently, wherever a study declared cov_dist. X, W and eta must come from
-    # ONE place.
-    #
-    # Only where there IS a covariate distribution, though. .adghGrid()'s
-    # zero-eta branch collapses to the single point (eta 1 x 0, W = 1), which
-    # is the right answer for the OBJECTIVE and the wrong one here: this loop
-    # differentiates over the incoming node grid, and replacing it with one
-    # point at n_eta = 0 leaves the covariance with nothing to difference and
-    # the SEs non-finite. A no-IIV model has no covariate grid to carry either,
-    # so the two cases do not overlap.
-    if (!is.null(s[["cov_dist"]])) {
-      .gS <- .adghGrid(pars, pinfo, grid, s)
-      X   <- .gS$X
-      W   <- .gS$W
-      s   <- .adghStudyCov(s, .gS)
-      eta <- .gS$eta
-    } else {
-      X   <- grid$X
-      W   <- grid$W
-      eta <- X %*% t(L)
-    }
+  # GRIDS AND SENSITIVITY SOLVES UP FRONT, so studies sharing an event table
+  # solve together -- .admSimulateSens() was 67% of a profiled fit once the
+  # objective had been grouped. The loop below reads, never recomputes.
+  .pre <- .adghGradPre(pars, pinfo, studies, sensModel, grid, L, cores, p)
+  if (!is.null(.pre$bail)) return(.pre$bail)
+
+  for (.si in seq_along(studies)) {
+    s   <- .pre$s[[.si]]
+    X   <- .pre$X[[.si]]
+    W   <- .pre$W[[.si]]
+    eta <- .pre$eta[[.si]]
     colnames(eta) <- pinfo$eta_col_names
 
     # --- Joint (same-subject) analytical quadrature gradient -----------------
@@ -432,8 +611,7 @@
 
     ov <- s$output %||% out_var
 
-    res <- .admSimulateSens(sensModel, pars$struct, pinfo$sigma_names, eta, s, cores,
-                            pinfo$nDisplayProgress, pars$sigma_var, pinfo$sigdig)
+    res <- .pre$res[[.si]]
     # .admSimulateSens returns NULL when the solve fails. `next` skipped the study
     # -- i.e. returned a gradient that silently omitted it. Degrade the whole
     # gradient to finite differences instead (what admc/adfo already do).
@@ -452,20 +630,16 @@
     arr   <- .admResidRows(pinfo, ov, pars$sigma_var, length(mu))
 
     # ---- Transform-both-sides: EXACT node-wise composition -------------------
-    # Handled as a self-contained block so the delta-expansion path below is
-    # untouched for every other family. See .admTBSNodeParts(): the objective
-    # composes the residual at each NODE and aggregates, rather than collapsing
-    # to (mu_struct, var_f) and expanding around it. The expansion does not
-    # converge -- its error in V is a floor no node count removes, measured at
-    # 3.4e-03 (boxCox) to 3.1e-02 (probitNorm at omega 0.49) and flat from 7
-    # nodes to 25 -- which also means `n_nodes` bought a TBS fit nothing.
-    #
-    # The gradient is the same contraction the structural moments use, with the
-    # conditional mean's derivative folded into the sensitivity column:
+    # .admTBSNodeParts() composes the residual at each NODE and aggregates,
+    # rather than collapsing to (mu_struct, var_f) and expanding around it --
+    # the expansion does NOT converge, its error in V is a floor no node
+    # count removes. Gradient is the same contraction the structural moments
+    # use, with the conditional mean's derivative folded into the
+    # sensitivity column:
     #   A  = dm o graw,  dE = sum_q w A,  Ac = A - dE
     #   dV = Ac' diag(w) Mc + Mc' diag(w) Ac + diag(sum_q w dv o graw)
-    # verified against central differences of this objective at 1e-09 on all
-    # four transforms.
+    # verified against central differences of this objective at 1e-09 on
+    # all four transforms.
     .np <- .admTBSNodeParts(f, arr)
     if (!is.null(.np)) {
       .ag <- .admTBSAggregate(.np, W)
@@ -681,24 +855,12 @@
     return(list(grad = grad, nll = if (is.finite(nll_total)) nll_total else Inf))
   }
 
-  # Otherwise CENTRAL FD of .adghNLL.
-  #
-  # Every perturbed configuration differs from the others only in its structural
-  # thetas -- same node grid, same Omega, same sigma -- so they all share one
-  # solve per study (.adghMomentsBatch).
-  #
-  # CENTRAL, not forward, and the STEP is the reason: `grad_h` arrives here as
-  # Shi21's measured per-parameter step (.admShi21GradH, probed over exactly this
-  # parameter set), and Shi21 minimises the error of a CENTRAL difference,
-  # h* = (3 eps_f/|f'''|)^(1/3). The forward optimum is a square root and far
-  # coarser, so a forward difference at the central step lands where the eps_f/h
-  # noise term dominates. The baseline configuration that used to ride along as
-  # configuration 1 is gone with it -- a central difference never evaluates the
-  # centre -- so this is 2*n_u configurations against the old n_u + 1, still ONE
-  # rxSolve per study, which is the cost that matters (~11 ms per CALL).
-  #
-  # Joint units keep the per-configuration path (their solve is per output block)
-  # and do pay: 2*n_u .adghNLL calls against the old n_u + 1.
+  # Otherwise CENTRAL FD of .adghNLL. Perturbed configs differ only in
+  # structural thetas -- same grid/Omega/sigma -- so they share one solve
+  # per study (.adghMomentsBatch). CENTRAL, not forward: grad_h is Shi21's
+  # step tuned for central-difference error, and a forward difference at
+  # that step is dominated by eps_f/h noise. 2*n_u configs, one rxSolve
+  # per study. Joint units keep the per-configuration path (2*n_u .adghNLL calls).
   if (length(unpaired_k) > 0L) {
     n_u <- length(unpaired_k)
     hs  <- pmax(abs(p[unpaired_k]), 0.1) * .admGH(grad_h, unpaired_k)
@@ -713,12 +875,18 @@
       }))
     n_cfg <- length(p_pert)
 
-    if (any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))) {
-      for (i in seq_len(n_u))
-        grad[unpaired_k[i]] <-
+    if (any(vapply(studies, function(u) isTRUE(u$is_joint) ||
+                     !is.null(u[[".adm_cov_collapse"]]) ||
+                     !is.null(u[[".adm_cov_joint"]]), logical(1)))) {
+      for (i in seq_len(n_u)) {
+        gk <-
           (.adghNLL(p_pert[[i]], pinfo, studies, rxMod, out_var, grid, cores) -
              .adghNLL(p_pert[[n_u + i]], pinfo, studies, rxMod, out_var, grid, cores)) /
           (2 * hs[i])
+        # Inf - Inf is NaN, and both perturbations being unsolvable is the
+        # COMMON case at a boundary -- same guard as the batched branch below.
+        grad[unpaired_k[i]] <- if (is.nan(gk)) Inf else gk
+      }
     } else {
       struct_mat <- do.call(rbind,
         lapply(p_pert, function(pp) .admUnpack(pp, pinfo)$struct))
@@ -749,33 +917,21 @@
 }
 
 # The gradient alone, with exactly the contract it has always had: a plain named
-# numeric and nothing else. Callers that compare or subset it (.adghCalcCov, the
-# FD cross-checks in the integration tests) must not have to know that the NLL
-# rides along -- an earlier revision returned it as an attribute on this vector
-# and it leaked into an expect_equal() of gradient values (#113). The NLL is
-# computed either way; forming it from moments that already exist is free.
+# numeric and nothing else. Callers that compare or subset it must not have to know
+# that the NLL rides along -- an earlier revision returned it as an attribute on this
+# vector and it leaked into an expect_equal() of gradient values (#113).
 .adghGrad <- function(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
                       grad_h = 1e-4)
   .adghGradNLL(p, pinfo, studies, sensModel, rxMod, out_var, grid, cores,
                grad_h)$grad
 
-# (#5) Pair the objective and the gradient onto ONE solve.
-#
-# nloptr asks for them as two separate calls, but LBFGS always asks at the same
-# p (measured: every gradient call shares its p with an NLL call), and
-# .adghGradNLL already forms the moments the NLL needs -- so .adghNLL's solve was
-# pure duplicate work. Memoising on p collapses the pair to one solve: ~2x on a
-# gradient-mode fit (8.13s -> 3.77s, 58 -> 23 rxSolve on a 3-cmt/5-eta/40-time
-# fit; estimates unchanged to 6 dp).
-#
-# Consequence worth knowing: the objective now comes from the SENSITIVITY solve
-# rather than the plain one. Both integrate the same base ODEs, but the
-# augmented system makes rxode2's adaptive stepper land ~1e-6 apart (4.6e-11
-# relative on the NLL) -- so this is NOT bit-identical to the pre-fusion
-# objective, though both sit at the solver's own rtol. It also makes f and
-# grad-f self-consistent (one trajectory), where before they came from two.
-#
-# Only for the analytical-sens path; grad = "fd"/"none" keep the old route.
+# (#5) Pair the objective and the gradient onto ONE solve. LBFGS always asks
+# both at the same p, and .adghGradNLL already forms the moments .adghNLL
+# needs, so memoising on p collapses the pair (~2x on a gradient-mode fit;
+# estimates unchanged to 6 dp). NOT bit-identical to the pre-fusion objective
+# (the augmented sensitivity solve takes different adaptive steps than the
+# plain one, both within the solver's own rtol). Only for the analytical-sens
+# path; grad = "fd"/"none" keep the old route.
 .adghFusedFns <- function(pinfo, studies, sensModel, rxMod, out_var, grid, cores,
                           grad_h) {
   memo <- new.env(parent = emptyenv())
@@ -807,6 +963,9 @@
     g[k] <- (.adghNLL(pp, pinfo, studies, rxMod, out_var, grid, cores) -
              .adghNLL(pm, pinfo, studies, rxMod, out_var, grid, cores)) / (2 * hk)
   }
+  # Inf - Inf is NaN; the same guard the two configuration-differenced branches
+  # in .adghGradNLL carry, for the same reason.
+  g[is.nan(g)] <- Inf
   g
 }
 
@@ -826,19 +985,12 @@
   n_s     <- length(pinfo$struct_names)
   n_e     <- length(pinfo$sigma_names)
   n_o     <- length(pinfo$omega_par)
-  # The Hessian now spans struct + sigma + OMEGA. Excluding omega does not just
-  # forgo omega's own SEs -- it makes the STRUCTURAL SEs too small, because a theta
-  # that carries an eta is correlated with that eta's variance and profiling it out
-  # is not the same as fixing it. Measured against the empirical sampling SD over
-  # 40 simulated datasets: SE(tcl) rose 8.8% on prop and 8.6% on lnorm when omega
-  # was included (it was that much too small), while a purely additive model was
-  # unaffected (+0.01%) -- exactly the models where the residual and the IIV
-  # compete to explain the same spread. An omega SE from the full Hessian was
-  # accurate to about +-20% of the empirical SD.
-  #
-  # The omega Cholesky is more weakly identified than struct/sigma, so the full
-  # Hessian can be non-PD where the struct+sigma block is fine. That is handled by
-  # falling back to the struct+sigma sub-block rather than returning nothing.
+  # The Hessian spans struct + sigma + OMEGA: excluding omega shrinks the
+  # STRUCTURAL SEs too, since a theta carrying an eta is correlated with that
+  # eta's variance (measured: SE(tcl) rose ~8.7% on prop/lnorm when omega was
+  # included). The omega Cholesky is more weakly identified, so the full
+  # Hessian can be non-PD where struct+sigma alone is fine -- falls back to
+  # that sub-block.
   n_sub   <- n_s + n_e
   cov_idx <- seq_len(n_sub + n_o)
   np_cov  <- length(cov_idx)
@@ -859,21 +1011,11 @@
 
   H <- matrix(0, np_cov, np_cov, dimnames = list(nms_cov, nms_cov))
 
-  # Covariate studies: differentiate the NLL, not the gradient.
-  #
-  # The original reason given here was that .adghGradNLL builds its quadrature
-  # from pars$L rather than through .adghGrid(), so it could not carry the
-  # covariate grid. That is NOT true and has not been for some time -- it calls
-  # .adghGrid() per study and then .adghStudyCov(), so it is covariate-aware.
-  # Measured on a 1-cmt lognormal-covariate model at its optimum, the two forms
-  # agree to 2.7e-05 on the covariance with identical standard errors, and the
-  # gradient form is ~1.5x faster.
-  #
-  # The guard is kept anyway, deliberately. It buys one Hessian per fit, that
-  # measurement covers a single model, and the failure it would expose --
-  # standard errors computed from a different objective than the estimates --
-  # is silent and severe. Removing it wants a broader comparison than one
-  # model, not a rewritten comment.
+  # Covariate studies: differentiate the NLL, not the gradient. The forms
+  # agree to 2.7e-05 on a 1-cmt lognormal-covariate model with the gradient
+  # form ~1.5x faster, but that's one model's measurement against a failure
+  # mode -- SEs from a different objective than the estimates -- that is
+  # silent and severe. Kept conservative pending a broader comparison.
   if (isTRUE(use_grad) &&
       # a fully stratified study's cov_dist is all point specs, so it
       # marginalises nothing and need not cost the gradient-based Hessian
@@ -896,12 +1038,10 @@
     H <- (H + t(H)) / 2
   } else {
     # Step selection. `pmax(abs(p), 0.1) * cov_h_outer` is a guess about how much
-    # noise the objective carries, applied identically to every parameter -- and
-    # it is the guess behind the "Hessian not positive definite ... try
-    # increasing cov_h_outer" warning below. Gill83 measures instead: it probes
-    # THIS objective and returns the step where condition error and truncation
-    # error balance, per parameter. Exact fit here, since the function it probes
-    # is the one being differenced.
+    # noise the objective carries, applied identically to every parameter -- and it
+    # is the guess behind the "Hessian not positive definite ... try increasing
+    # cov_h_outer" warning below. Gill83 measures instead, probing THIS objective for
+    # the step where condition and truncation error balance, per parameter.
     h_fd <- .admHessSteps(nll_fn, p_hat, cov_idx, cov_h_outer,
                             .var.name = "adghCalcCov")
     for (k in seq_len(np_cov)) {
@@ -1406,17 +1546,13 @@ adghControl <- function(
     # TAIL-only: a new argument inserted mid-signature silently rebinds
     # every positional call. See the resid_nodes note in CLAUDE.md.
     cov_nodes     = 7L,
-    # TAIL-only, as above. These two are the covariate-integration pair:
-    # cov_integration selects the method, cov_sparse_level the resolution of the
-    # sparse one. cov_sparse_level occupies the slot the retired cov_taylor_h
-    # had, so every positional call keeps its meaning.
-    # THREE STATES. "on" reduces the covariate integral wherever the model
-    # permits and the reduction verifies against the design it replaces; "off"
-    # is the bare product grid; "sparse" swaps the product rule for a Smolyak
-    # one. The earlier four values mixed one real choice (which grid) with a
-    # second the caller should never have been asked -- whether to attempt a
-    # particular reduction -- which has a right answer per study that the code
-    # determines for itself.
+    # TAIL-only, as above. cov_integration selects the method, cov_sparse_level
+    # the resolution of the sparse one (occupies the slot retired cov_taylor_h
+    # had, so positional calls keep their meaning).
+    #
+    # THREE STATES: "on" reduces the covariate integral wherever the model
+    # permits and the reduction verifies against the design it replaces;
+    # "off" is the bare product grid; "sparse" swaps in a Smolyak rule.
     cov_integration  = c("on", "sparse", "off"),
     cov_sparse_level = 3L,
     # LAST on purpose: new control arguments are appended.
@@ -1431,11 +1567,10 @@ adghControl <- function(
   addProp   <- match.arg(addProp)
   grad      <- match.arg(grad)
   checkmate::assertList(studies)
-  # A model source lacks source-parameter uncertainty, so no standard error is available for a
-  # fit that includes one -- see .admResolveCovMethod(), which refuses an
-  # explicit covMethod rather than honouring it. Runs AFTER assertList(): a
-  # malformed `studies` must fail on checkmate's message, not on a raw
-  # indexing error from inside the model-source helpers.
+  # A model source lacks source-parameter uncertainty, so no standard error is
+  # available for a fit that includes one -- see .admResolveCovMethod(), which
+  # refuses an explicit covMethod rather than honouring it. Runs AFTER assertList():
+  # a malformed `studies` must fail on checkmate's message.
   covMethod <- .admResolveCovMethod(match.arg(covMethod), studies,
                                     !missing(covMethod))
   cov_integration <- match.arg(cov_integration)
@@ -1446,11 +1581,10 @@ adghControl <- function(
   # message can name the argument, rather than silently scoring a wrong NLL.
   checkmate::assertIntegerish(resid_nodes, lower = 5L, len = 1)
   checkmate::assertIntegerish(cov_nodes, lower = 1L, len = 1)
-  # cov_sparse_level is the Smolyak level. 2 is the axial rule the retired
-  # "taylor" design was; 3 is the default because it is where the accuracy
-  # actually arrives (~30x on both moments) and where correlation stops being a
-  # liability. Higher levels keep improving but sum|W| grows with them, so the
-  # answer becomes a difference of larger terms -- see .admCovSparseGrid.
+  # cov_sparse_level is the Smolyak level. 2 is the axial rule the retired "taylor"
+  # design was; 3 is the default because it is where the accuracy actually arrives
+  # and where correlation stops being a liability. Higher levels keep improving but
+  # sum|W| grows with them -- see .admCovSparseGrid.
   checkmate::assertIntegerish(cov_sparse_level, lower = 2L, upper = 5L, len = 1)
   # NOT assertString(algorithm) here: NULL is now the default and means "pick the
   # one that matches grad". .admResolveAlgorithm() asserts the string and checks
@@ -1477,13 +1611,10 @@ adghControl <- function(
 
   # .admResolveAlgorithm(), like the other three controls -- adgh had its own
   # two-line rule instead, and it was one-directional and unvalidated:
-  #   * adghControl(algorithm = "NOT_AN_ALGO") was ACCEPTED and carried all the
-  #     way to nloptr, where it surfaces as a cryptic error mid-fit;
+  #   * adghControl(algorithm = "NOT_AN_ALGO") was ACCEPTED and carried all the way
+  #     to nloptr, where it surfaces as a cryptic error mid-fit;
   #   * adghControl(grad = "analytical", algorithm = "NLOPT_LN_NELDERMEAD") kept
-  #     BOTH -- a derivative-free algorithm with the gradient still switched on,
-  #     so every iteration paid for a gradient nloptr discards. The other three
-  #     turn the gradient off here and say so.
-  # The four behaviours test-adgh-nodes.R pins are unchanged: NULL + grad "fd" /
+  #     BOTH, so every iteration paid for a gradient nloptr discards.
   # "fd" / "analytical" -> LBFGS, grad "none" -> BOBYQA, and an explicit
   # gradient-based algorithm is kept as given.
   .alg <- .admResolveAlgorithm(algorithm, grad,
@@ -1491,22 +1622,12 @@ adghControl <- function(
   algorithm <- .alg$algorithm
   grad      <- .alg$grad
 
-  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone".
-  # It is the one setting whose meaning does not move under an rxode2 upgrade,
-  # and it is the default because a looser solve is not free: this release is
-  # what first routed sigdig into the estimators' own rxSolve calls, and every
-  # finite-difference step that consumes those solves (grad_h 1e-4, cov_h 1e-3,
-  # cov_h_outer ~2.5e-3) is the same order as the tolerance sigdig = 4 asks for.
-  # rxode2 5.1.5 maps sigdig = 4 to rtol = 1e-4 (5.1.4 mapped it to 5e-7 -- 200x
-  # tighter for the same request), so differencing with a 1e-4 step differences
-  # noise: a moved objective and an indefinite Hessian, not an error. Shipping it
-  # on by default would have changed the numerics of every existing script
-  # silently, for a knob that looked like table formatting before this release.
-  #
-  # NULL is also the only way back: the sigdig -> tolerance map is
-  # one-dimensional while rxode2's defaults are not (atol 1e-8 vs rtol 1e-6), so
-  # no sigdig value reproduces them. The tables still need a number, so they fall
-  # back to 4 -- i.e. sigdigTable is unchanged whichever way sigdig is set.
+  # sigdig = NULL (the DEFAULT) means "leave rxode2's own solver defaults alone" --
+  # see the same note in admControl(). A looser solve is not free: every
+  # finite-difference step that consumes these solves is the same order as the
+  # tolerance sigdig = 4 asks for, so differencing at a 1e-4 step differences noise.
+  # NULL is also the only way back, since no sigdig value reproduces rxode2's own
+  # (atol 1e-8, rtol 1e-6). The tables still need a number and fall back to 4.
   if (is.null(rxControl))   rxControl   <- if (is.null(sigdig))
     rxode2::rxControl() else rxode2::rxControl(sigdig = sigdig)
   if (is.null(sigdigTable)) sigdigTable <- if (is.null(sigdig)) 4L else
@@ -1710,17 +1831,13 @@ nlmixr2Est.adgh <- function(env, ...) {
   .best_nll  <- Inf
 
   # Measure the gradient's FD steps ONCE, here, and let every later
-  # difference reuse them (the mechanism FOCEI's numericGrad uses at nF == 1).
-  # Only the parameters actually finite-differenced: all of them under
-  # grad = "fd", otherwise the unpaired struct thetas -- but ONLY when the
-  # sens model carries no THETA_j_ column for them (`.theta_sens`).
-  #
-  # An unpaired theta is NOT automatically an FD theta. .admBuildThetaSens emits
-  # a direction per unpaired theta, so .adghGrad reads their gradient off the
-  # same solve as the etas' and returns BEFORE its FD block; that block is the
-  # fallback for when those columns could not be built. Probing them regardless
-  # would spend ten NLL evaluations each choosing a step nothing uses.
-  # `.ctl$grad_h` stays a scalar unless this fires.
+  # difference reuse them (FOCEI's numericGrad mechanism at nF == 1). Only
+  # the parameters actually finite-differenced: all of them under grad =
+  # "fd", otherwise the unpaired struct thetas -- and only when the sens
+  # model carries no THETA_j_ column for them (`.theta_sens`), since an
+  # unpaired theta with a sens column gets its gradient from that solve
+  # instead, before the FD block runs. `.ctl$grad_h` stays a scalar unless
+  # this fires.
   .fd_idx <- if (!want_grad) integer(0)
     else if (use_pure_fd) seq_along(ov$p0)
     else if (length(.unpaired) && !.theta_sens)

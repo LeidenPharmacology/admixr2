@@ -20,10 +20,9 @@ source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R")
 
 `admixr2` fits pharmacometric PK/PD models to **summary-level data** instead of
 individual records — a **meta-analysis** framework for population PK/PD. The
-inputs can be **digitised aggregate data** from published studies (means, error
-bars and covariances), **previously published PK/PD models**, or a mix of both.
-The result is a single unified population model with interpretable fixed, random
-and covariate effects, recovered without individual patient data.
+input is **digitised aggregate data** (means, error bars and covariances),
+**previously published models**, or both, and the result is one population model
+with interpretable fixed, random and covariate effects.
 
 For each study you supply:
 
@@ -34,12 +33,9 @@ For each study you supply:
 - **ev** — dosing event table
 
 The estimators match E and V against their model-predicted counterparts and
-return a standard nlmixr2 fit object, so established nlmixr2 models apply to
-aggregate statistics from publications or internal summaries where individual
-records are unavailable. Turning a published figure into `E`, `V` and `n` is
-covered in `vignette("aggregate-data", package = "admixr2")`; letting each study
-carry its own published model as the input is covered in
-`vignette("datagen", package = "admixr2")`.
+return a standard nlmixr2 fit object. Turning a published figure into `E`, `V`
+and `n` is covered in `vignette("aggregate-data")`; letting a study carry its own
+published model instead, in `vignette("datagen")`.
 
 Four estimators are available:
 
@@ -50,12 +46,11 @@ Four estimators are available:
 | Gauss-Hermite | `"adgh"` | `adghControl()` | Deterministic quadrature over η; noise-free, unbiased at any IIV |
 | Iterative Reweighting MC | `"adirmc"` | `adirmcControl()` | Proposals fixed per phase; inner loop needs no new rxSolve calls |
 
-`adfo` is the natural starting point for model screening and initial estimates.
-`admc` is the workhorse for standard PK models. `adgh` is a noise-free
-alternative to `admc`, most efficient when the number of random effects is
-small. `adirmc` is preferred for complex ODE systems with expensive solves,
-high-dimensional IIV, or poor starting values. See
-`vignette("estimator-comparison", package = "admixr2")` for a detailed comparison.
+Start with `adfo` for screening and initial estimates. `admc` is the workhorse
+for standard PK models; `adgh` is its noise-free alternative, most efficient when
+there are few random effects; `adirmc` suits expensive ODE solves,
+high-dimensional IIV or poor starting values. See
+`vignette("estimator-comparison")`.
 
 ## The examplomycin dataset
 
@@ -79,28 +74,24 @@ head(examplomycin[examplomycin$EVID == 0, c("ID", "TIME", "DV")], 9)
 Reshape individual records into a subjects × times matrix, then compute E and V:
 
 ```{r aggregate}
-obs   <- examplomycin[examplomycin$EVID == 0, ]
-obs   <- obs[order(obs$ID, obs$TIME), ]
-times <- sort(unique(obs$TIME))
-ids   <- unique(obs$ID)
-n     <- length(ids)                     # 500
+dv_mat <- admVignetteDvMatrix()          # 500 subjects x 9 times
 
-dv_mat <- matrix(NA_real_, nrow = n, ncol = length(times))
-for (i in seq_along(ids)) {
-  sub         <- obs[obs$ID == ids[i], ]
-  dv_mat[i, ] <- sub$DV[order(sub$TIME)]
-}
-
-E <- colMeans(dv_mat)
-V <- cov.wt(dv_mat, method = "ML")$cov
+E     <- colMeans(dv_mat)
+V     <- cov.wt(dv_mat, method = "ML")$cov
+n     <- nrow(dv_mat)                    # 500
+times <- as.numeric(colnames(dv_mat))
 
 round(E, 2)
 ```
 
-`V` is the 9×9 sample covariance matrix. Its off-diagonal entries capture
-within-subject correlation across time; using the full matrix (`method = "cov"`)
-typically tightens parameter estimates compared to the diagonal-only approximation
-(`method = "var"`). `admixr2` auto-detects the method from the structure of V.
+`admVignetteDvMatrix()` is a helper defined in this vignette's setup file; it
+does nothing but reshape `examplomycin`'s individual records into one row per
+subject and one column per time.
+
+`V`'s off-diagonal entries capture within-subject correlation across time. Using
+the full matrix (`method = "cov"`) typically tightens estimates against the
+diagonal-only approximation (`method = "var"`); admixr2 picks the method from the
+structure of `V`.
 
 ## Model definition
 
@@ -136,13 +127,11 @@ pk_model <- function() {
 }
 ```
 
-Writing each parameter as `exp(tcl + eta.cl)` is called **mu-referencing**:
-the structural fixed effect and its random effect enter additively on the
-log scale. `admixr2` exploits this pairing to compute analytical gradients
-via sensitivity equations. See the
-[Advanced usage](https://leidenpharmacology.github.io/admixr2/articles/advanced.html#mu-referencing-and-sensitivity-equations)
-vignette for details, including how parameters without a random effect are
-handled.
+Writing each parameter as `exp(tcl + eta.cl)` is **mu-referencing**: the fixed
+effect and its random effect enter additively on the log scale. admixr2 uses that
+pairing to get analytical gradients from sensitivity equations — see
+[Advanced usage](advanced.html#mu-referencing-and-sensitivity-equations),
+which also covers parameters with no random effect.
 
 ## Assembling the study specification
 
@@ -201,15 +190,15 @@ knitr::kable(fit$env$admExtra$omega, digits = 4,
 
 ## Diagnostic plots
 
-`plot()` produces up to four panel types and returns them as a named list of
-ggplot2 objects:
+`plot()` draws up to four panel types and returns them as a named list of ggplot2
+objects:
 
-```{r plot, fig.cap="Left: observed vs predicted mean with residuals. Right: NLL convergence trace."}
+```{r plot, fig.cap="Mean diagnostics (observed vs predicted, with residuals), then the NLL convergence trace."}
 plots <- plot(fit, which = c("mean", "nll"))
 ```
 
-For a detailed walkthrough of all four panel types and customisation options, see
-`vignette("diagnostic-plots", package = "admixr2")`.
+All four panel types and their customisation are covered in
+`vignette("diagnostic-plots")`.
 
 ## Where to next
 

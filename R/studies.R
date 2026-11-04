@@ -1,15 +1,12 @@
-# Study and observation-unit handling: resolving a model's endpoints, normalising
-# a study specification, flattening it to independent observation units (or one
-# joint same-subject unit), and the per-row maps the estimators read off a unit.
+# Study/observation-unit handling: resolve a model's endpoints, normalise a study
+# spec, flatten it to independent units (or one joint same-subject unit), and
+# the per-row maps estimators read off a unit.
 #
-# Split out of utils.R; contents unchanged (see R/covreport.R for why that is
-# safe). This is the largest single concern that file held, and the one with the
-# most invariants: `multi_out` is MODEL-level while `is_joint` is study-level, a
-# joint unit routes per ROW (row_output) and so has no endpoint of its own --
-# though it still carries one copied off blocks[[1]] for cmt-tagging, and its
-# BLOCKS each have a real one -- and normalising twice must be idempotent WITHOUT
-# being inert: a second pass still has to fill an output the first pass had no
-# default for, in the blocks as well as in the plain units.
+# Invariants: `multi_out` is MODEL-level, `is_joint` is study-level; a joint
+# unit routes per ROW (row_output), has no endpoint of its own (just a copy off
+# blocks[[1]] for cmt-tagging) though its BLOCKS each have a real one; and
+# normalising twice is idempotent WITHOUT being inert -- a second pass still
+# fills an output the first pass had no default for.
 
 
 # Internal nlmixr2 linCmt names (rxLinCmt, linCmtB, ...) don't appear in the
@@ -20,11 +17,10 @@
 # The model variable an endpoint's predictions actually live in.
 #
 # For a residual-error endpoint this is predDf$var itself (`cp ~ add(a)` -> "cp").
-# For a COUNT endpoint it is NOT: `y ~ pois(cp)` has predDf$var == "y", the DV
-# name, while the quantity that is solved and that admixr2 must read is the
-# distribution's ARGUMENT, `cp`. Following predDf$var there sent every solve
-# looking for a column that does not exist, which is what made count endpoints
-# unreachable. .admCountSpec() recovers the argument from the model line.
+# For a COUNT endpoint it is NOT: `y ~ pois(cp)` has predDf$var == "y" (the DV
+# name), but the quantity actually solved is the distribution's ARGUMENT,
+# `cp` -- following predDf$var made count endpoints unreachable (solve column
+# didn't exist). .admCountSpec() recovers the argument from the model line.
 .admEndpointVar <- function(ui, i = 1L) {
   pd <- tryCatch(ui$predDf, error = function(e) NULL)
   if (is.null(pd) || !"var" %in% names(pd) || nrow(pd) < i) return("cp")
@@ -74,13 +70,11 @@
 
 # The ENDPOINT names, as nlmixr2 knows them -- predDf$var verbatim.
 #
-# NOT the same thing as .admOutputVars(), and the difference matters for exactly
-# the endpoints that made .admEndpointVar() necessary: `y ~ pois(lam)` is SOLVED
-# through `lam` but nlmixr2 knows the endpoint as `y`. These names go in the DVID
-# column of the dummy frame handed to nlmixr2CreateOutputFromUi(), and its
-# dvid->cmt translation rejects a name that is not an endpoint -- so passing the
-# solve variable there made a converged multi-endpoint count fit die at the
-# output-building step with "'dvid'->'cmt' ... on a undefined compartment".
+# NOT the same as .admOutputVars(): `y ~ pois(lam)` is SOLVED through `lam` but
+# nlmixr2 knows the endpoint as `y`. These names go in the DVID column of the
+# dummy frame for nlmixr2CreateOutputFromUi(), whose dvid->cmt translation
+# rejects a non-endpoint name -- passing the solve variable there instead once
+# made a converged multi-endpoint count fit die at output-building.
 .admEndpointNames <- function(ui) {
   nms <- tryCatch(as.character(ui$predDf$var), error = function(e) NULL)
   if (is.null(nms) || !length(nms)) return(.admOutputVars(ui))
@@ -89,17 +83,11 @@
 
 # A count or beta endpoint cannot share a model with other endpoints.
 #
-# Multi-endpoint solves route observations by COMPARTMENT: .admBuildEvFull() tags
-# each unit's records with `cmt = unit$output`, and rxode2 resolves that against
-# the model's endpoints. A count endpoint's output is its distribution's ARGUMENT
-# (`y ~ pois(lam)` is read through `lam`), which is an ordinary model variable and
-# not an endpoint at all, so the tagged records match nothing: the solve returns no
-# rows for that unit and the objective silently comes back Inf -- there is no
-# wrong-but-plausible number, but there is also nothing telling the user why.
-#
-# Single-endpoint count/beta models are unaffected (no tagging happens) and are
-# what the count/beta support was built for. An ordinal endpoint is ONE predDf row
-# whose categories are separate outputs, so it is not "mixed" either.
+# Multi-endpoint solves route observations by COMPARTMENT (.admBuildEvFull()
+# tags records `cmt = unit$output`). A count endpoint's output is its
+# distribution's ARGUMENT, an ordinary variable not an endpoint, so tagged
+# records match nothing: solve returns no rows, objective silently comes back
+# Inf. Single-endpoint count/beta models are unaffected (no tagging happens).
 .admCheckMixedEndpoints <- function(ui) {
   pd <- tryCatch(ui$predDf, error = function(e) NULL)
   if (is.null(pd) || nrow(pd) < 2L || !"distribution" %in% names(pd))
@@ -141,10 +129,9 @@
   sel
 }
 
-# Add each output's residual error to the correct rows of a joint (same-subject)
-# predicted covariance. `mu_struct`/`V_pred` are the structural stacked mean and
-# covariance; each block's own sigma(s) act only on that block's rows. Returns
-# the residual-adjusted mean (`mu`, lnorm-corrected) and covariance (`V`).
+# Add each output's residual error to the right rows of a joint (same-subject)
+# predicted covariance; each block's own sigma(s) act only on its own rows.
+# Returns the residual-adjusted mean (`mu`) and covariance (`V`).
 .admJointResidual <- function(mu_struct, V_pred, unit, pinfo, sigma_var) {
   n_t <- length(mu_struct)
   arr <- .admResidRows(pinfo, .admRowOutput(unit, n_t), sigma_var, n_t)
@@ -186,6 +173,18 @@
   rep(unit$output %||% NA_character_, n_t)
 }
 
+# What a STRATUM knows about itself, and nothing else does.
+#
+# `admExtra$studies` are the FLATTENED observation units, each built from an
+# explicit field list -- so a field that is not named here is dropped between
+# the generator and the fit object, however faithfully datagen() copied it.
+# `.adm_strata_nodes` was named and the rest were not, which is how the plot
+# panels ended up recovering a stratum's parent with a regex on its name and
+# guessing whether a point value was a quadrature node or a reported level.
+.ADM_STRATUM_FIELDS <- c(".adm_strata_nodes", ".adm_source",
+                         ".adm_strata_covs", ".adm_node_covs",
+                         ".adm_spec")
+
 # Normalise one observed-compartment unit: coerce E, coerce V to matrix,
 # auto-detect diagonal, set method + v_diag, inherit n/ev/output from study-level
 # `defaults`, and validate dimensions. Returns a self-contained unit.
@@ -201,8 +200,8 @@
   # the distribution those subjects span (which drives the Omega collapse).
   ob[["cov"]]      <- ob[["cov"]]      %||% defaults[["cov"]]
   ob[["cov_dist"]] <- ob[["cov_dist"]] %||% defaults[["cov_dist"]]
-  ob[[".adm_strata_nodes"]] <- ob[[".adm_strata_nodes"]] %||%
-    defaults[[".adm_strata_nodes"]]
+  for (.f in .ADM_STRATUM_FIELDS)
+    ob[[.f]] <- ob[[.f]] %||% defaults[[.f]]
   for (f in c("n", "E", "V", "times"))
     if (is.null(ob[[f]])) stop(sprintf("Study '%s' missing '%s'", label, f), call. = FALSE)
   if (!is.numeric(ob$n) || length(ob$n) != 1L || !is.finite(ob$n) || ob$n <= 0)
@@ -260,14 +259,13 @@
   } else unname(as.matrix(v))
 }
 
-# Build a single JOINT (same-subject) unit from a study whose observed
-# compartments are measured on the SAME subjects: one shared n and ev, a stacked
-# observation vector [E_1, ..., E_K] and a joint covariance across all
-# compartments. The joint V is supplied either as a study-level full matrix
-# (`s$V`, blocks in `observations` order) or assembled from per-observation
-# marginal V on the diagonal plus optional cross-covariance blocks (`s$cross`, a
-# named list keyed "outA:outB"). Missing cross pairs are zero (block-diagonal).
-# Each output is simulated with the SAME random effects and scored by one MVN.
+# Build a single JOINT (same-subject) unit: one shared n/ev, a stacked
+# observation vector [E_1, ..., E_K], and a joint covariance across all
+# compartments. Joint V is either a study-level full matrix (`s$V`, blocks in
+# `observations` order) or assembled from per-observation marginal V on the
+# diagonal plus optional cross blocks (`s$cross`, keyed "outA:outB"; missing
+# pairs are zero/block-diagonal). Each output shares the SAME random effects
+# and is scored by one MVN.
 .admBuildJointUnit <- function(s, nm, default_output) {
   if (!is.numeric(s$n) || length(s$n) != 1L || !is.finite(s$n) || s$n <= 0)
     stop(sprintf("Study '%s': `n` must be one finite positive number", nm),
@@ -350,13 +348,14 @@
     stop(sprintf("Study '%s': the assembled joint covariance is not positive-definite; check the cross / V blocks.",
                  nm), call. = FALSE)
 
+  c(stats::setNames(lapply(.ADM_STRATUM_FIELDS, function(.f) s[[.f]]),
+                    .ADM_STRATUM_FIELDS),
   list(is_joint = TRUE, label = nm, n = s$n, ev = s$ev,
-       .adm_strata_nodes = s[[".adm_strata_nodes"]],
        cov = s[["cov"]], cov_dist = s[["cov_dist"]],
        output = blocks[[1L]]$output,   # any valid endpoint, for cmt-tagging
        times  = sort(unique(unlist(lapply(blocks, `[[`, "times")))),
        method = "cov", E = E_stacked, V = V, blocks = blocks,
-       row_output = row_output, n_total = T_total)
+       row_output = row_output, n_total = T_total))
 }
 
 # -- long-format study input ---------------------------------------------------
@@ -378,26 +377,17 @@
   if (length(hit) == 0L) NULL else hit[[1L]]
 }
 
-# Rewrite a long-format study into the canonical `observations` form, so the rest
-# of the pipeline is untouched. The study gives one row per observed
-# (endpoint, time) pair:
+# Rewrite a long-format study into the canonical `observations` form, so the
+# rest of the pipeline is untouched. One row per (endpoint, time) pair:
 #
 #   list(n = 60L, ev = ev,
 #        data = data.frame(DVID = c("cp","cp","cb"), TIME = c(1,2,1),
 #                          E = c(...), V = c(...)))     # V column = variances
 #
-# Same-subject (joint) studies instead carry ONE study-level covariance matrix
-# whose rows/cols align with the rows of `data`; the per-row variance column is
-# then unnecessary:
-#
-#   list(n = 60L, ev = ev, data = data.frame(DVID = ..., TIME = ..., E = ...),
-#        V = Vjoint)
-#
-# A study-level `V` (or an explicit `joint = TRUE`) means the endpoints were
-# measured on the SAME subjects and the whole stacked vector is scored by one
-# MVN. Without it each endpoint is an independent likelihood block -- a separate
-# experiment, so it may carry its own `n` (an `n` column) and its own dosing (a
-# named list of event tables in `ev`, keyed by endpoint).
+# A study-level `V` (or explicit `joint = TRUE`) means the endpoints were
+# measured on the SAME subjects and scored by one MVN, with `V` aligned to
+# the rows of `data` instead of a per-row variance column. Without it each
+# endpoint is an independent likelihood block.
 .admExpandLongStudy <- function(s, nm) {
   df <- s$data
   if (!is.data.frame(df) || nrow(df) == 0L)
@@ -511,46 +501,15 @@
 }
 
 # Normalise one study spec into a list of observed-compartment units.
-#
-# Long-format input (study carries a `data` frame with one row per observed
-# endpoint/time, plus an optional study-level joint `V`) is rewritten into the
-# `observations` form first -- see .admExpandLongStudy().
-#
-# Multi-compartment forms (study carries an `observations` list):
-#   * Independent blocks -- each observed output has its own n/ev/times/E/V and is
-#     summed as a separate likelihood block (separate experiments / subjects; no
-#     cross-compartment covariance).
-#   * Joint same-subject -- outputs measured on the SAME subjects; the study gives
-#     a joint covariance (study-level `V`, or per-output marginal `V` + a `cross`
-#     list) and shared n/ev. Collapsed to ONE joint unit scored by a single MVN
-#     with shared random effects. See .admBuildJointUnit().
-#
-# Legacy single-output form: the study's E/V/n/times fields describe one implicit
-# observation. Top-level normalised fields (V, method, v_diag) are preserved for
-# backward compatibility; `$observations` holds the single unit either way.
-# Convert a study's reported covariance to the ML (denominator n) convention the
-# likelihood requires.
-#
-# The two input types admixr2 serves disagree about what `V` IS, and until now
-# the difference was a footnote the user had to act on:
-#
-#   a digitised figure  ->  SD is the UNBIASED (n-1) sample SD, so V = SD^2 is
-#                           an (n-1) covariance
-#   datagen / own data  ->  cov.wt(method = "ML"), an n covariance
-#
-# Eq. (1) is the exact log-likelihood of n iid draws only for the ML form, so a
-# published SD is strictly V = SD^2 * (n-1)/n. At n = 60 that is 1.7% and was
-# reasonably ignored. It stops being ignorable the moment the summary is scored
-# against its own sampling law: the same factor reappears there as the alignment
-# of tau with E[t], where getting it wrong is measurably WORSE than not
-# correcting at all.
-#
-# So it becomes a declaration rather than a convention, PER STUDY -- a
-# meta-analysis routinely mixes a digitised figure with a model-derived source,
-# and the two do not share a denominator.
-#
-# Idempotent: `v_denom` is set to "ml" once applied, so normalising twice cannot
-# apply it twice.
+# Long-format (study$data) is expanded first. Multi-compartment forms:
+#   * Independent blocks -- separate experiments; summed as separate likelihood terms.
+#   * Joint same-subject -- one MVN scored from shared n/ev; collapsed to one unit.
+# Legacy single-output form: E/V/n/times describe one implicit observation.
+
+# Convert a study's reported covariance to the ML (denominator n) convention.
+# `v_denom`: "ml" (default, no-op) or "unbiased" (x (n-1)/n). A digitised
+# figure's SD is the unbiased sample SD; datagen/own data use ML -- Eq.(1)'s
+# log-likelihood is exact only for ML (at n=60 the gap is 1.7%).
 .admVDenom <- function(s, nm) {
   vd <- s[["v_denom"]] %||% "ml"
   if (!is.character(vd) || length(vd) != 1L || !vd %in% c("ml", "unbiased"))
@@ -580,34 +539,13 @@
 }
 
 .admNormaliseStudy <- function(s, nm, default_output = NULL) {
-  # IDEMPOTENT, and it has to be stated rather than assumed.
-  #
-  # Normalising a legacy single-output study ADDS an `observations` list while
-  # KEEPING its top-level `V` -- which is precisely the signature the joint
-  # (same-subject) branch below tests for. So a second pass over an
-  # already-normalised study silently collapsed it into ONE JOINT unit:
-  #
-  #   u <- .admFlattenStudies(list(.admNormaliseStudy(raw,  "s")))  # is_joint FALSE
-  #   u <- .admFlattenStudies(list(.admNormaliseStudy(once, "s")))  # is_joint TRUE
-  #
-  # No error, no warning, a plausible fit -- down a different likelihood path,
-  # and for adfo with `have_d2` forced FALSE (it requires `!any_joint`), so the
-  # order-2 analytical struct-theta gradient quietly turns itself off.
-  #
-  # Each driver normalises exactly once, so this was not reachable from a normal
-  # fit. It WAS reachable from the test fixtures, which hand out pre-normalised
-  # studies that then get normalised again by the driver -- which is how it was
-  # found. Guarding here rather than in the fixtures because "normalise a study"
-  # should not be an operation you can only safely perform once.
-  # ... but idempotent is not the same as INERT. The first pass may have run
-  # without a `default_output` (nothing but the driver knows the model's endpoint,
-  # and the fixtures normalise before there is a model), which leaves every unit
-  # with output = NULL. Short-circuiting outright made the driver's later pass --
-  # the one that DOES carry output_var -- a no-op, so the NULL was permanent: for a
-  # multi-endpoint model .admBuildEvFull(tag_cmt = TRUE) then has nothing to tag
-  # `cmt` with and the unit silently reads the wrong compartment's trajectory.
-  # Repeating the normalisation was masking that; so fill what is still missing,
-  # and only then return.
+  # Guard re-normalisation: idempotent but not inert -- fill still-missing
+  # output fields a model-less first pass couldn't supply. Without this guard,
+  # re-normalising an already-normalised legacy study (top-level `V` plus the
+  # `observations` this adds looks exactly like a joint-study) silently
+  # collapsed it into one joint unit -- no error, wrong likelihood path,
+  # adfo's order-2 gradient quietly disabled. Only reachable from
+  # pre-normalised test fixtures (a normal fit normalises once).
   if (isTRUE(s$.adm_normalised)) {
     if (!is.null(default_output)) {
       if (is.null(s$output)) s$output <- default_output
@@ -616,21 +554,9 @@
           if (is.null(u$output)) u$output <- default_output
           return(u)
         }
-        # A JOINT unit routes per ROW, so it carries no endpoint of its own --
-        # except the one .admBuildJointUnit() copies off blocks[[1]] purely for
-        # cmt-tagging. Skipping joint units ENTIRELY here was too strong: their
-        # BLOCKS each do have an output, taken from `ob$output %||% default_output`
-        # at construction, so a study normalised before the model was known (the
-        # fixtures do exactly this) leaves every blk$output NULL -- and nothing
-        # later fills it, because this short-circuit is the only second pass.
-        #
-        # .admBuildEvFull() then runs `et(blk$times, cmt = blk$output)` per block
-        # with cmt = NULL, so the joint sens solve either errors out of
-        # .admSimulateJointSens() -- dropping the fit to FD -- or reads an
-        # untagged compartment, giving a finite but wrong joint objective with no
-        # warning.
-        #
-        # `row_output` needs nothing: it holds block INDICES, not names.
+        # Joint units route per row -- update blocks' individual output fields.
+        # A study normalised before a model was known leaves blk$output NULL;
+        # .admBuildEvFull() then tags cmt = NULL and reads the wrong compartment.
         if (!is.null(u$blocks))
           u$blocks <- lapply(u$blocks, function(blk) {
             if (is.null(blk$output)) blk$output <- default_output
@@ -645,12 +571,7 @@
     }
     return(s)
   }
-  # Long-format `data` must be expanded to `V`/`observations` BEFORE v_denom
-  # conversion -- otherwise .admVDenom() sees none of it (still raw rows) and
-  # silently no-ops, leaving an "unbiased" V uncorrected. And v_denom must run
-  # BEFORE the joint constructor below: it assembles its own matrix from the
-  # raw per-observation blocks and never passes through .admNormaliseObs, so
-  # converting after that would miss it.
+  # Long-format, v_denom, then joint assembly must run in this order
   if (!is.null(s$data)) s <- .admExpandLongStudy(s, nm)
   s <- .admVDenom(s, nm)
   if (!is.null(s$observations) &&
@@ -671,19 +592,23 @@
     onames   <- names(s$observations)
     if (is.null(onames) || any(!nzchar(onames)))
       onames <- paste0("obs", seq_along(s$observations))
-    defaults <- list(n = s$n, ev = s$ev, output = s$output %||% default_output,
-                     cov = s[["cov"]], cov_dist = s[["cov_dist"]],
-                     .adm_strata_nodes = s[[".adm_strata_nodes"]])
+    defaults <- c(list(n = s$n, ev = s$ev,
+                       output = s$output %||% default_output,
+                       cov = s[["cov"]], cov_dist = s[["cov_dist"]]),
+                  stats::setNames(lapply(.ADM_STRATUM_FIELDS,
+                                         function(.f) s[[.f]]),
+                                  .ADM_STRATUM_FIELDS))
     s$observations <- setNames(lapply(seq_along(s$observations), function(k)
       .admNormaliseObs(s$observations[[k]], paste0(nm, ".", onames[k]), defaults)),
       onames)
     s$multi <- TRUE
   } else {
     unit <- .admNormaliseObs(
-      list(E = s$E, V = s$V, n = s$n, times = s$times, ev = s$ev,
-           method = s$method, output = s$output %||% default_output,
-           cov = s[["cov"]], cov_dist = s[["cov_dist"]],
-           .adm_strata_nodes = s[[".adm_strata_nodes"]]), nm)
+      c(list(E = s$E, V = s$V, n = s$n, times = s$times, ev = s$ev,
+             method = s$method, output = s$output %||% default_output,
+             cov = s[["cov"]], cov_dist = s[["cov_dist"]]),
+        stats::setNames(lapply(.ADM_STRATUM_FIELDS, function(.f) s[[.f]]),
+                        .ADM_STRATUM_FIELDS)), nm)
     # Preserve top-level normalised fields (legacy callers / tests read these).
     s$E <- unit$E; s$V <- unit$V; s$method <- unit$method
     s$v_diag <- unit$v_diag; s$output <- unit$output
@@ -703,24 +628,19 @@
   setNames(units, vapply(units, function(u) u$label, character(1)))
 }
 
-# Attach `ev_full` (dosing merged with observation times) to each unit. Defaults
-# to a 100-unit bolus into compartment 1 when a unit gives no `ev`.
+# Attach `ev_full` (dosing merged with observation times) to each unit.
+# Defaults to a 100-unit bolus into compartment 1 when a unit gives no `ev`.
 #
-# tag_cmt: when TRUE (multi-compartment fits) each unit's observation records are
-# tagged with its output compartment. nlmixr2's simulation model for a
-# multi-endpoint model routes observations by compartment; untagged observations
-# are ambiguous across endpoints and the solve errors. Single-output fits keep
-# untagged observations (unchanged behaviour; also handles linCmt where the
-# output resolves to "ipredSim", which is not a valid dosing/observation cmt).
+# tag_cmt: when TRUE (multi-compartment fits), tag each unit's observation
+# records with its output compartment -- nlmixr2's multi-endpoint simulation
+# routes by compartment, and untagged records are ambiguous across endpoints.
 .admBuildEvFull <- function(units, tag_cmt = FALSE) {
   lapply(units, function(u) {
     ev <- if (!is.null(u$ev)) u$ev else rxode2::et(amt = 100)
-    # `ev` is documented as DOSING-only. If a user also puts observation rows in it,
-    # the et() calls below append the study times a SECOND time and every point is
-    # silently duplicated -- a badly wrong fit with no indication. Warn rather than
-    # silently rewriting the event table: reconstructing `ev` from a filtered
-    # data.frame loses event attributes rxode2 needs (it broke the sensitivity
-    # solve outright), so telling the user is both safer and clearer.
+    # `ev` should carry DOSING only, else its rows silently duplicate the
+    # study's `times` (added below). Warn rather than auto-fix: rebuilding
+    # `ev` from a filtered data.frame loses event attributes rxode2 needs (it
+    # broke the sensitivity solve outright).
     if (isTRUE(getOption("admixr2.warn.ev.obs", TRUE))) {
       .nobs <- tryCatch({
         .d <- as.data.frame(ev)
@@ -731,16 +651,20 @@
                 "`ev` should carry DOSING only -- the study's `times` are added ",
                 "separately, so those rows will be duplicated.", call. = FALSE)
     }
-    # Joint units are always multi-endpoint -> always tag. A single tag (the
-    # first output) is enough: the multi-endpoint solve returns every output
-    # column at the observation times, and each block is extracted by name.
+    # Joint units are always multi-endpoint and always tag_cmt.
     u$ev_full <- if ((tag_cmt || isTRUE(u$is_joint)) && !is.null(u$output))
       ev |> rxode2::et(u$times, cmt = u$output)
     else
       ev |> rxode2::et(u$times)
-    # Joint units also need a per-block event table (obs tagged with that block's
-    # output cmt at its own times) so the sensitivity model can return each
-    # output's prediction + sensitivities for the analytical joint gradient.
+    # WHAT THE EVENT TABLE SAYS, as a key, computed once per fit. Studies that
+    # agree on it can be solved in ONE rxSolve call -- see .admSimulateMany() --
+    # and the nodes of a conditional source all do, differing only in `cov`.
+    # identical() on the tables themselves is no use: rxode2 builds a fresh
+    # object per call and two with the same content compare FALSE, which quietly
+    # turned 75 studies into 75 groups of one.
+    u$ev_key <- tryCatch(digest::digest(as.data.frame(u$ev_full)),
+                         error = function(e) NULL)
+    # Per-block ev for the sensitivity model's analytical joint gradient.
     if (isTRUE(u$is_joint))
       u$blocks <- lapply(u$blocks, function(blk) {
         blk$ev_full <- ev |> rxode2::et(blk$times, cmt = blk$output)

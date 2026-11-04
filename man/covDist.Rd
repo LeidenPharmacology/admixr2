@@ -30,18 +30,13 @@ transcribed as-is.}
 a correlation matrix (named, in any order). Realised through a Gaussian
 copula on the declared margins.}
 
-\item{joint}{Dependence a single correlation cannot express: a function
-receiving the matrix of uniforms admixr2 supplies and returning one named
-column per covariate, on each covariate's OWN scale. Overrides \code{cor}.
-
-The sampler owns its margins. A copula returns dependence on the \emph{copula
-scale} only, so a sampler that hands those uniforms back returns covariate
-values on \verb{(0, 1)} --- every covariate mean 0.50 and SD 0.29, whatever
-margins were declared, with no error anywhere. Push them through the
-quantile function you intend.
-
-\code{stratify} needs nothing further: an opaque sampler is banded by binning
-its output rather than by fixing its input uniforms.}
+\item{joint}{\strong{Not accepted yet, and an error if given.} It is the place an
+arbitrary sampler will attach --- a function receiving the matrix of
+uniforms admixr2 supplies and returning one named column per covariate, on
+each covariate's own scale, which is the shape a vine copula produces ---
+but the contract around it is not settled, so the argument refuses rather
+than half-works. Use \code{cor} for dependence: it builds a Gaussian copula
+over the declared margins.}
 
 \item{dist}{Default margin for the \code{c(mean = , sd = )} form: \code{"normal"}
 (default) or \code{"lnorm"}. A per-covariate \code{dist} wins over it.
@@ -63,6 +58,22 @@ reports: a mean and a standard deviation per covariate, and optionally a
 correlation between them. Validation happens here, where an error can name
 the covariate, rather than at the first objective evaluation of a fit.
 }
+\section{Covariates the model does not read}{
+
+A distribution may name covariates the analysis model never uses. The
+prediction cannot depend on them, so integrating over them changes nothing
+and they are left off the design, with a message naming them. This is what
+lets a NESTED pair of models share one set of studies: the null model of a
+covariate test simply omits the term, while the population it was fitted to
+still describes everyone who was enrolled. Marginalising a covariate out of
+a correlated specification is exact --- every surviving margin keeps the
+distribution it was given.
+
+A covariate the model \emph{does} read must still be described, by a \code{cov_dist}
+entry or a fixed \code{cov} value, so a mistyped name is reported as the
+covariate it left undescribed rather than passing unnoticed.
+}
+
 \examples{
 # what a baseline-characteristics table reports
 cd <- covDist(WT = c(mean = 72, sd = 16), CRCL = c(mean = 90, sd = 25),

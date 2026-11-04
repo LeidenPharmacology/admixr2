@@ -3,6 +3,9 @@
 .RData
 .Ruserdata
 Rplots.pdf
+src/*.so
+src/*.o
+src/*.dll
 CLAUDE.md
 CLAUDE.original.md
 .claude/

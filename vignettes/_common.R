@@ -44,3 +44,70 @@ knitr::knit_hooks$set(output = local({
     .default(x, options)
   }
 }))
+
+# ---------------------------------------------------------------------------
+# The examplomycin running example.
+#
+# Five vignettes (admixr2, multiple-studies, diagnostic-plots, advanced and
+# estimator-comparison) open on the same thing: reshape the shipped individual
+# records into a subjects x times matrix, take E and V off it, and fit the
+# two-compartment model the data were simulated from.  Copied into each, the
+# model had already drifted -- two copies carried label() calls and two did
+# not -- so it lives here and each vignette shows only what it is about.
+
+# Subjects x times matrix of observed DV, one row per subject.
+admVignetteDvMatrix <- function() {
+  obs   <- admixr2::examplomycin
+  obs   <- obs[obs$EVID == 0, ]
+  obs   <- obs[order(obs$ID, obs$TIME), ]
+  times <- sort(unique(obs$TIME))
+  ids   <- unique(obs$ID)
+  dv    <- matrix(NA_real_, nrow = length(ids), ncol = length(times),
+                  dimnames = list(NULL, times))
+  for (i in seq_along(ids)) {
+    sub     <- obs[obs$ID == ids[i], ]
+    dv[i, ] <- sub$DV[order(sub$TIME)]
+  }
+  dv
+}
+
+# E, V and n for a set of rows of that matrix -- all 500 subjects by default.
+# V uses the ML (denominator n) convention, which is what admixr2 assumes
+# unless a study declares `v_denom = "unbiased"`.
+admVignetteStats <- function(dv = admVignetteDvMatrix(), rows = seq_len(nrow(dv))) {
+  dv <- dv[rows, , drop = FALSE]
+  list(E = colMeans(dv),
+       V = stats::cov.wt(dv, method = "ML")$cov,
+       n = nrow(dv),
+       times = as.numeric(colnames(dv)))
+}
+
+# The model examplomycin was simulated from: two compartments, first-order
+# absorption, IIV on all five parameters, proportional residual error.
+admVignetteModel <- function() {
+  ini({
+    tcl     <- log(5)  ; label("Log clearance (L/hr)")
+    tv1     <- log(10) ; label("Log central volume (L)")
+    tv2     <- log(30) ; label("Log peripheral volume (L)")
+    tq      <- log(10) ; label("Log inter-compartmental CL (L/hr)")
+    tka     <- log(1)  ; label("Log absorption rate constant (1/hr)")
+    prop.sd <- c(0, 0.2); label("Proportional residual error SD")
+    eta.cl ~ 0.09
+    eta.v1 ~ 0.09
+    eta.v2 ~ 0.09
+    eta.q  ~ 0.09
+    eta.ka ~ 0.09
+  })
+  model({
+    cl <- exp(tcl + eta.cl)
+    v1 <- exp(tv1 + eta.v1)
+    v2 <- exp(tv2 + eta.v2)
+    q  <- exp(tq  + eta.q)
+    ka <- exp(tka + eta.ka)
+    d/dt(depot)      <- -ka * depot
+    d/dt(central)    <- ka * depot - (cl/v1 + q/v1) * central + (q/v2) * peripheral
+    d/dt(peripheral) <- (q/v1) * central - (q/v2) * peripheral
+    cp <- central / v1
+    cp ~ prop(prop.sd)
+  })
+}

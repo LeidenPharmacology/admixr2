@@ -87,6 +87,16 @@ jobs:
           http-user-agent: ${{ matrix.config.http-user-agent }}
           use-public-rspm: true
 
+      # The macOS lotri binary currently references an OpenMP symbol absent on
+      # the runner (___kmpc_for_static_fini). nlmixr2extra imports lotri, so
+      # dependency setup otherwise stops while lazy-loading nlmixr2extra.
+      - name: Build and load lotri on macOS
+        if: runner.os == 'macOS'
+        run: |
+          install.packages("lotri", type = "source")
+          library(lotri)
+        shell: Rscript {0}
+
       # stringfish compiles against RcppParallel's TBB, so a binary built against a
       # different TBB generation fails to LOAD. Loading rxode2 pulls in qs2 ->
       # stringfish -- DESCRIPTION Imports load with the namespace, verified -- so that
@@ -116,14 +126,15 @@ jobs:
 
       # Bump history: v4 forced a cold resolve against post-RcppParallel-6.2.0
       # CRAN (6.2.0 landed 2026-07-30; the v3 caches were built 2026-07-29
-      # against 6.1.x). v5 is the R_KEEP_PKG_SOURCE change below.
+      # against 6.1.x). v5 is the R_KEEP_PKG_SOURCE change below. v6 evicts
+      # the broken macOS lotri binary.
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           # 4 -> 5 is REQUIRED by the R_KEEP_PKG_SOURCE change above, not
           # incidental: the dependency cache key does not include that variable,
           # so devel would restore its previously cached srcref-laden build and
           # the fix would silently do nothing.
-          cache-version: 5
+          cache-version: 6
           extra-packages: any::rcmdcheck
           needs: check
 

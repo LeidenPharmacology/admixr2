@@ -44,7 +44,7 @@ three.
 
 How much the objective depends on it turns on which rule applies. Where the
 latent structure is known — an explicit \code{cor}, or no declared dependence,
-which is independence — banding conditions on a Gauss-Hermite grid and the
+which is independence — conditioning uses a Gauss-Hermite grid and the
 objective is stable: 0.03 units across counts of 5 to 100, so objective,
 AIC, BIC and likelihood ratios are comparable across resolutions.
 
@@ -81,7 +81,7 @@ covariate was actually ENROLLED over, e.g. \code{list(WT = c(52, 118))} —
 publications routinely report a min-max or a median with an IQR.
 
 Without it the strata are cut over the whole declared distribution, and a
-source is credited with evidence in covariate bands it never sampled. The
+source is credited with evidence at covariate values it never sampled. The
 overstatement is exactly \code{var(declared) / var(enrolled)}: 3.4x for a source
 spanning ±1 SD, 12.4x at ±0.5 SD. Estimates stay correct — what inflates is
 confidence, and it only shows once a second source disagrees. Omitting it
