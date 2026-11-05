@@ -49,11 +49,34 @@
   list(studies = studies, pinfo = pinfo)
 }
 
+# rxSolve drops a dose into a compartment the model lacks without a word, so every
+# prediction is 0 and the fit reports the starting values.
+.admCheckDoseCmt <- function(units, .ui) {
+  states <- .ui$mv0$state
+  if (!length(states)) return(invisible())
+  for (u in units) {
+    d  <- tryCatch(as.data.frame(u$ev), error = function(e) NULL)
+    cm <- as.character(d[["cmt"]])
+    if ("evid" %in% names(d)) cm <- cm[d[["evid"]] != 0]
+    cm  <- setdiff(cm, c(NA, "(default)", "(obs)"))
+    num <- suppressWarnings(as.numeric(cm))
+    bad <- cm[ifelse(is.na(num), !sub("^-", "", cm) %in% states,
+                     abs(num) > length(states))]
+    if (length(bad))
+      stop("admixr2: study '", u$label, "' doses compartment ",
+           paste(sQuote(bad), collapse = ", "), ", which the model does not have. ",
+           "Its compartments are ", paste(sQuote(states), collapse = ", "), ".",
+           call. = FALSE)
+  }
+  invisible()
+}
+
 # Normalise studies, flatten to observation units, and derive model/joint flags.
 .admDriverUnits <- function(studies, .ui, output_var, ev_full = TRUE) {
   for (nm in names(studies))
     studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
   studies   <- .admFlattenStudies(studies)
+  .admCheckDoseCmt(studies, .ui)
   multi_out <- length(.admOutputVars(.ui)) > 1L
   any_joint <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
   if (ev_full) studies <- .admBuildEvFull(studies, tag_cmt = multi_out)

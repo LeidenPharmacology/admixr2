@@ -237,6 +237,18 @@
   if (any(!is.finite(ob$V)) || any(diag(ob$V) < 0))
     stop(sprintf("Study '%s': V must have finite, non-negative variances", label),
          call. = FALSE)
+  if (any(!is.finite(ob$E)))
+    stop(sprintf("Study '%s': E must be finite; drop the timepoints it does not report",
+                 label), call. = FALSE)
+  if (!is.numeric(ob$times) || any(!is.finite(ob$times)))
+    stop(sprintf("Study '%s': `times` must be finite numbers", label), call. = FALSE)
+  # rxSolve returns observations in time order, so E and V have to be in it too:
+  # out of order, each mean was scored against another timepoint's prediction.
+  if (is.unsorted(ob$times)) {
+    .o <- order(ob$times)
+    ob$times <- ob$times[.o]; ob$E <- ob$E[.o]
+    ob$V <- ob$V[.o, .o, drop = FALSE]
+  }
   if (identical(ob$method, "cov")) {
     tol <- sqrt(.Machine$double.eps) * max(1, max(abs(ob$V)))
     if (!isSymmetric(ob$V, tol = tol) ||
@@ -290,6 +302,9 @@
     if (length(Ek) != length(tk))
       stop(sprintf("Study '%s.%s': length(E) (%d) != length(times) (%d)",
                    nm, onames[k], length(Ek), length(tk)), call. = FALSE)
+    if (any(!is.finite(Ek)) || any(!is.finite(tk)))
+      stop(sprintf("Study '%s.%s': E and times must be finite", nm, onames[k]),
+           call. = FALSE)
     Ek  <- Ek[ord]
     Vk  <- .admObsVmat(ob$V)
     if (!is.null(Vk)) {
@@ -610,7 +625,7 @@
         stats::setNames(lapply(.ADM_STRATUM_FIELDS, function(.f) s[[.f]]),
                         .ADM_STRATUM_FIELDS)), nm)
     # Preserve top-level normalised fields (legacy callers / tests read these).
-    s$E <- unit$E; s$V <- unit$V; s$method <- unit$method
+    s$E <- unit$E; s$V <- unit$V; s$times <- unit$times; s$method <- unit$method
     s$v_diag <- unit$v_diag; s$output <- unit$output
     s$observations <- setNames(list(unit), nm)
     s$multi <- FALSE

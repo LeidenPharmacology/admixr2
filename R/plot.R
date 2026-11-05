@@ -81,6 +81,9 @@ print.admFit <- function(x, ...) {
   invisible(x)
 }
 
+#' @export
+summary.admFit <- function(object, ...) object
+
 # knitr auto-print handler. Registered as knit_print.admFit into knitr's
 # namespace by .register_knit_print() in .onLoad (zzz.R). Not named
 # knit_print.admFit to avoid roxygen2 S3-method detection and spurious

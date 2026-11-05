@@ -5,6 +5,9 @@
 
 .admPopFromData <- function(data, dist, given) {
   if (!is.data.frame(data)) data <- as.data.frame(data)
+  if (nrow(data) < 2L)
+    stop("admixr2: `data` needs at least two subjects to describe a population.",
+         call. = FALSE)
   given_nms <- names(given)
   nms <- setdiff(names(data), given_nms) # anything stated in `...` wins outright
   bad <- function(nm, ...) stop("admixr2: covariate '", nm, "' ", ...,
@@ -459,14 +462,19 @@ admStudy <- function(model = NULL, est = NULL,
         "there is no model here to condition.")
   # A cohort data frame supplies its own sample size.
   if (is.data.frame(population) && is.null(n)) n <- nrow(population)
-  if (is.null(n) || !is.finite(n) || n <= 0)
+  if (!is.numeric(n) || length(n) != 1L || !is.finite(n) || n <= 0)
     bad("needs a positive `n` -- the number of subjects it reports on.")
   if (is.null(times) || !length(times)) bad("needs `times`.")
+  if (!is.numeric(times) || any(!is.finite(times)))
+    bad("`times` must be finite numbers.")
   if (is.null(ev) && is.null(dose))
     bad("needs a `dose`, or an `ev` event table for anything a single dose ",
         "cannot express.")
   if (!is.null(ev) && !is.null(dose))
     bad("has both `dose` and `ev`; `dose` is only shorthand for one.")
+  if (!is.null(dose) &&
+      (!is.numeric(dose) || length(dose) != 1L || !is.finite(dose) || dose < 0))
+    bad("`dose` must be one finite non-negative amount; use `ev` for anything else.")
   if (length(at)) {
     if (is.null(names(at)) || any(!nzchar(names(at))) || anyDuplicated(names(at)))
       bad("`at` must have unique, non-empty covariate names, e.g. ",

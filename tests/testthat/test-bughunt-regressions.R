@@ -75,3 +75,100 @@ test_that("fractional stratum sizes are summed before BIC", {
   expect_equal(stats$nobs, 2)
   expect_true(is.finite(stats$objDf$BIC))
 })
+
+test_that("a plain study is put in time order, E and V with it", {
+  V <- matrix(c(4, 1, 0, 1, 5, 2, 0, 2, 6), 3L)
+  u <- admixr2:::.admNormaliseObs(
+    list(E = c(30, 10, 20), V = V, n = 10, times = c(4, 1, 2)), "s")
+  expect_equal(u$times, c(1, 2, 4))
+  expect_equal(u$E, c(10, 20, 30))
+  expect_equal(u$V, V[c(2, 3, 1), c(2, 3, 1)])
+  s <- admixr2:::.admNormaliseStudy(
+    list(E = c(2, 1), V = c(.2, .1), n = 10, times = c(2, 1)), "s")
+  expect_equal(s$times, 1:2)
+  expect_equal(s$v_diag, c(.1, .2))
+})
+
+test_that("a missing mean or time is refused rather than fitted", {
+  ok <- list(E = c(1, 2), V = c(1, 1), n = 10, times = c(1, 2))
+  expect_error(admixr2:::.admNormaliseObs(utils::modifyList(ok, list(E = c(1, NA))), "s"),
+               "E must be finite")
+  expect_error(admixr2:::.admNormaliseObs(utils::modifyList(ok, list(times = c(1, NA))), "s"),
+               "must be finite numbers")
+  expect_error(admixr2:::.admBuildJointUnit(
+    list(n = 10, ev = "EV", V = diag(2),
+         observations = list(a = list(times = 1, E = NA), b = list(times = 1, E = 1))),
+    "s", NULL), "must be finite")
+})
+
+test_that("a lognormal margin keeps the centre the paper reported", {
+  sp <- function(...) admixr2:::.admPopSpec(c(...), "WT", "lnorm")
+  x <- sp(median = 92, sd = 30)
+  expect_equal(exp(x$meanlog), 92)
+  t2 <- exp(x$sdlog^2)
+  expect_equal(92 * sqrt(t2 * (t2 - 1)), 30)
+  x <- sp(median = 92, cv = 30)
+  expect_equal(exp(x$meanlog), 92)
+  expect_equal(sqrt(exp(x$sdlog^2) - 1), .3)
+  expect_equal(exp(suppressMessages(sp(median = 92, range = c(40, 180)))$meanlog), 92)
+  x <- suppressMessages(sp(mean = 92, iqr = c(70, 115)))
+  expect_equal(exp(x$meanlog + x$sdlog^2 / 2), 92)
+  x <- sp(mean = 92, sd = 30)
+  expect_equal(exp(x$meanlog + x$sdlog^2 / 2), 92)
+})
+
+test_that("a margin that describes no distribution is refused where it is written", {
+  expect_error(admPopulation(WT = c(mean = 72, sd = -16)), "POSITIVE")
+  expect_error(admPopulation(WT = c(mean = 72, sd = 0)), "POSITIVE")
+  expect_error(admPopulation(WT = c(mean = -72, sd = 16)), "lognormal")
+  expect_error(admPopulation(WT = c(mean = NA, sd = 16)), "non-finite")
+  expect_error(admPopulation(WT = c(meanlog = 4, sdlog = -.3)), "POSITIVE")
+  expect_error(admPopulation(WT = c(median = 70, iqr = c(70, 70))), "POSITIVE")
+  expect_error(admPopulation(WT = c(median = 5, iqr = c(0, 9))), "iqr")
+  expect_error(covDist(WT = c(mu = 70, sd = -5)), "POSITIVE")
+  expect_error(covDist(WT = c(mean = NA_real_, sd = 5)), "POSITIVE")
+  expect_error(admPopulation(G = list(values = 0:2, probs = c(.5, .5))), "one non-negative")
+  expect_error(admPopulation(G = list(values = 0:1, probs = c(-.5, 1.5))), "one non-negative")
+  z <- admPopulation(Z = c(median = 0, iqr = c(-1, 1)), dist = "normal")
+  expect_equal(z$Z$mu, 0)
+})
+
+test_that("a named correlation matrix is matched by name or refused", {
+  R <- diag(3); dimnames(R) <- rep(list(c("WT", "CRCL", "AGE")), 2L)
+  R["WT", "AGE"] <- R["AGE", "WT"] <- .7
+  expect_error(covDist(WT = c(mean = 72, sd = 16), AGEE = c(mean = 40, sd = 9),
+                       CRCL = c(mean = 90, sd = 20), cor = R), "no row for")
+  ok <- covDist(WT = c(mean = 72, sd = 16), CRCL = c(mean = 90, sd = 20),
+                AGE = c(mean = 40, sd = 9), cor = R[c(3, 1, 2), c(3, 1, 2)])
+  expect_equal(ok$latentR[1L, 3L], .7)
+})
+
+test_that("a dose into a compartment the model lacks is refused", {
+  ui <- list(mv0 = list(state = c("depot", "central")))
+  unit <- function(ev) list(list(label = "s", ev = ev))
+  chk <- function(...) admixr2:::.admCheckDoseCmt(unit(data.frame(...)), ui)
+  expect_error(chk(time = 0, evid = 1, cmt = "nope"), "does not have")
+  expect_error(chk(time = 0, evid = 1, cmt = 7), "does not have")
+  expect_silent(chk(time = 0, evid = 1, cmt = "central"))
+  expect_silent(chk(time = 0, evid = 1, cmt = 2))
+  expect_silent(chk(time = 0, evid = 1, cmt = "(default)"))
+  expect_silent(chk(time = 0, evid = 1, amt = 100))
+  expect_silent(chk(time = 1, evid = 0, cmt = "cp"))
+  expect_silent(admixr2:::.admCheckDoseCmt(unit(NULL), ui))
+  expect_silent(admixr2:::.admCheckDoseCmt(unit(data.frame(evid = 1, cmt = "x")), list()))
+})
+
+test_that("summary() of a fit is the fit", {
+  fit <- structure(list(), class = "admFit")
+  expect_identical(summary(fit), fit)
+})
+
+test_that("admStudy() refuses what it would otherwise drop or misread", {
+  expect_error(admStudy(E = 1:2, sd = 1:2, n = 1:2, times = 1:2, dose = 100), "positive `n`")
+  expect_error(admStudy(E = 1:2, sd = 1:2, n = 20, times = 1:2, dose = -5), "`dose`")
+  expect_error(admStudy(E = 1:2, sd = 1:2, n = 20, times = 1:2, dose = c(1, 2)), "`dose`")
+  expect_error(admStudy(E = 1:2, sd = 1:2, n = 20, times = 1:2, dose = "100"), "`dose`")
+  expect_error(admStudy(E = 1:2, sd = 1:2, n = 20, times = c(1, NA), dose = 100), "`times`")
+  expect_s3_class(admStudy(E = 1:2, sd = 1:2, n = 20, times = 1:2, dose = 0), "admStudy")
+  expect_error(admPopulation(data = data.frame(WT = 70)), "two subjects")
+})

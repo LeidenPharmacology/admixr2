@@ -357,13 +357,14 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         o <- s$observations[[k]]
         list(name   = onm[k],
              output = o$output %||% out_var,
-             times  = o$times  %||% s$times,
+             times  = sort(o$times %||% s$times, na.last = TRUE),
              ev     = o$ev     %||% s$ev,
              n      = o$n      %||% s$n)
       })
     } else {
-      list(list(name = NULL, output = out_var, times = s$times,
-                ev = s$ev, n = s$n))
+      # Sorted because the moments come back in solve order, which is time order.
+      list(list(name = NULL, output = out_var,
+                times = sort(s$times, na.last = TRUE), ev = s$ev, n = s$n))
     }
     # Several observed outputs -> tag each observation's records with its output
     # compartment (nlmixr2's multi-endpoint simulation model routes by cmt).
