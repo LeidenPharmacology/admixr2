@@ -13,6 +13,8 @@
   bad <- function(nm, ...) stop("admixr2: covariate '", nm, "' ", ...,
                                 call. = FALSE)
   binary <- function(p) list(values = c(0, 1), probs = c(1 - p, p))
+  # admPopulation() resolves every margin again, and that is the one that speaks.
+  spec <- function(v, nm) suppressMessages(suppressWarnings(.admPopSpec(v, nm, dist)))
 
   # Overridden margins still contribute cohort correlations.
   cont <- Filter(function(nm) {
@@ -21,7 +23,7 @@
       !all(unique(v) %in% c(0, 1)) &&
       stats::sd(v) >= .Machine$double.eps^0.5 * max(1, abs(mean(v))) &&
       (!identical(dist, "lnorm") || all(v > 0)) &&
-      is.null(tryCatch(.admPopSpec(given[[nm]], nm, dist)[["values"]],
+      is.null(tryCatch(spec(given[[nm]], nm)[["values"]],
                        error = function(e) TRUE))
   }, intersect(given_nms, names(data)))
   specs <- list()
@@ -63,7 +65,7 @@
   # Copula correlations use each resolved margin's latent scale.
   resolved <- c(given, specs)
   resolved <- stats::setNames(
-    lapply(names(resolved), function(nm) .admPopSpec(resolved[[nm]], nm, dist)),
+    lapply(names(resolved), function(nm) spec(resolved[[nm]], nm)),
     names(resolved))
   tf <- function(nm) {
     v <- data[[nm]]

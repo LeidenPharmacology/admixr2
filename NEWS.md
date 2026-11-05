@@ -21,7 +21,8 @@
   centre, and `probs` that do not match `values`. A negative `sd` on a lognormal
   margin used to be read as positive. A named `cor` or `Sigma` matrix missing a
   covariate is refused too, where it used to be applied by position and so could
-  correlate the wrong pair.
+  correlate the wrong pair; a matrix with only row or only column names counts as
+  named.
 
 * **`summary()` on a fit failed** with "wrong arguments for subsetting an
   environment". It now shows the fit, as `print()` does.
@@ -32,9 +33,11 @@
   number. `admPopulation()` accepts a centred `median = 0` with an `iqr`, which
   used to crash.
 
-* **A dose into a compartment the model does not have is refused.** rxode2 drops
-  it without a word, so every prediction was 0 and the fit returned the starting
-  values.
+* **A dose into a compartment the model does not have is refused**, by fits and
+  by `datagen()`. rxode2 drops it without a word, so every prediction was 0: the
+  fit returned the starting values and `datagen()` generated zeros. An `ev` that
+  is not from `rxode2::et()` is refused too; a plain data frame lost its
+  observation times and failed with "subscript out of bounds".
 
 * **Every fit reset the session's random number stream**, because the estimators
   seed themselves and never restored the caller's state. A loop drawing random
@@ -47,8 +50,9 @@
 * **Slips in a transcribed covariate table passed silently.**
   `covDist(WT = c(min = 50, max = 110))` became a binary covariate, because
   anything unrecognised was read as level proportions and rescaled. A range is
-  now refused, and proportions that do not sum to about 1 warn. A `cv` below 1
-  warns, since it is a percent, and a median outside its own IQR is refused.
+  now refused, and proportions or percentages that do not sum to about 1 or 100
+  warn. A `cv` below 1 warns, since it is a percent, and a median outside its own
+  IQR is refused.
 
 * **Importance weights with a non-finite log-weight depended on the Eigen
   version and on the element's position**, because Eigen 3.4's vectorised `exp`

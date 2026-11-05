@@ -703,6 +703,9 @@
 # A named matrix is matched by name or not at all: falling back to position put a
 # correlation on whichever pair sat in that slot.
 .admCovByName <- function(M, nms, what) {
+  if (is.null(rownames(M))) rownames(M) <- colnames(M)
+  if (is.null(rownames(M))) return(M)
+  if (is.null(colnames(M))) colnames(M) <- rownames(M)
   miss <- setdiff(nms, rownames(M))
   if (length(miss))
     stop("admixr2: `", what, "` has no row for ",
@@ -759,13 +762,13 @@
     # order would otherwise correlate the wrong pair. This has to happen HERE, in the branch that can receive
     # a named matrix from the user -- doing it after the branches ran once against a matrix whose dimnames had
     # already been stripped, i.e. never at all.
-    if (!is.null(rownames(R))) R <- .admCovByName(R, nms, "cor")
+    R <- .admCovByName(R, nms, "cor")
   } else if (!is.null(cov_dist[["Sigma"]])) {
     S <- as.matrix(cov_dist[["Sigma"]])
     if (!identical(dim(S), c(d, d)))
       stop("admixr2: `Sigma` is ", nrow(S), " x ", ncol(S), " but ", d,
            " covariates are declared.", call. = FALSE)
-    if (!is.null(rownames(S))) S <- .admCovByName(S, nms, "Sigma")
+    S <- .admCovByName(S, nms, "Sigma")
     if (any(diag(S) <= 0))
       stop("admixr2: `Sigma` has a non-positive diagonal entry, so it ",
            "describes no distribution.", call. = FALSE)
@@ -2815,8 +2818,9 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
     # exact for the assumed shape rather than a rule of thumb: on the scale the margin is modelled on, IQR =
     # 1.349 sd
     q <- sort(q)
-    if (!is.null(g("median")) && (ctr < q[1L] || ctr > q[2L]))
-      bad("has median ", signif(ctr, 4), " outside its own iqr c(",
+    med <- g("median")
+    if (!is.null(med) && (med < q[1L] || med > q[2L]))
+      bad("has median ", signif(med, 4), " outside its own iqr c(",
           signif(q[1L], 4), ", ", signif(q[2L], 4), ").")
     # A REPORTED (median, IQR) NEED NOT BE CONSISTENT with the assumed shape, and usually is not: real quartiles
     # are rarely symmetric about the median on any scale. Only two of the three numbers can be honoured, so
@@ -2928,17 +2932,21 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
   }
   # Values may be counts, so a range cannot be told from levels by size: only its
   # names give it away. Normalising c(min = 50, max = 110) made a binary covariate.
-  # Not "low"/"high": those are real level labels for a dosing band.
-  if (any(k %in% c("min", "max", "minimum", "maximum", "lo", "hi", "lower", "upper",
-                   "q1", "q3")))
+  # Not "low"/"high": those are real level labels for a dosing band. "lo"/"hi" can
+  # be too, so they only count when the values cannot be proportions.
+  if (any(k %in% c("min", "max", "minimum", "maximum", "lower", "upper", "q1", "q3")) ||
+      (any(k %in% c("lo", "hi")) && any(v > 1)))
     bad("looks like a range, not a set of levels. Give it with a centre, e.g. ",
         "c(median = , range = c(min, max)).")
-  # Proportions from a rounded table sum to about 1. Further off usually means a
-  # dropped level, and normalising then shifts every level that remains.
-  if (all(v < 1) && abs(sum(v) - 1) > 0.02)
-    warning("admixr2: covariate '", nm, "': proportions sum to ",
-            format(sum(v), digits = 3), ", not 1, and were rescaled. Check for ",
-            "a level missing from the table.", call. = FALSE)
+  # Proportions from a rounded table sum to about 1, percentages to about 100.
+  # Further off usually means a dropped level, and normalising then shifts every
+  # level that remains. Counts that happen to total near 100 warn too.
+  s <- sum(v)
+  tgt <- if (all(v < 1)) 1 else if (s >= 90 && s <= 110) 100 else NA
+  if (!is.na(tgt) && abs(s - tgt) > 0.02 * tgt)
+    warning("admixr2: covariate '", nm, "': values sum to ", format(s, digits = 3),
+            ", not ", tgt, ", and were rescaled. Check for a level missing from ",
+            "the table.", call. = FALSE)
   list(values = seq_along(v) - 1, probs = as.numeric(v) / sum(v),
        labels = names(v))
 }

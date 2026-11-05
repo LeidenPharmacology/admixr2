@@ -49,15 +49,19 @@
   list(studies = studies, pinfo = pinfo)
 }
 
-# rxSolve drops a dose into a compartment the model lacks without a word, so every
-# prediction is 0 and the fit reports the starting values.
-.admCheckDoseCmt <- function(units, .ui) {
+# et() on a plain data frame drops the observation times, and rxSolve drops a dose
+# into a compartment the model lacks without a word, so every prediction is 0 and
+# the fit reports the starting values.
+.admCheckEv <- function(units, .ui) {
   states <- .ui$mv0$state
-  if (!length(states)) return(invisible())
   for (u in units) {
-    d  <- tryCatch(as.data.frame(u$ev), error = function(e) NULL)
-    cm <- as.character(d[["cmt"]])
-    if ("evid" %in% names(d)) cm <- cm[d[["evid"]] != 0]
+    if (is.null(u$ev)) next
+    if (!inherits(u$ev, "rxEt"))
+      stop("admixr2: study '", u$label, "': `ev` must be an event table from ",
+           "rxode2::et(), not a ", class(u$ev)[1L], ".", call. = FALSE)
+    if (!length(states)) next
+    d   <- as.data.frame(u$ev)
+    cm  <- as.character(d[["cmt"]])[!d[["evid"]] %in% c(0, 2, 3)]
     cm  <- setdiff(cm, c(NA, "(default)", "(obs)"))
     num <- suppressWarnings(as.numeric(cm))
     bad <- cm[ifelse(is.na(num), !sub("^-", "", cm) %in% states,
@@ -76,7 +80,7 @@
   for (nm in names(studies))
     studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
   studies   <- .admFlattenStudies(studies)
-  .admCheckDoseCmt(studies, .ui)
+  .admCheckEv(studies, .ui)
   multi_out <- length(.admOutputVars(.ui)) > 1L
   any_joint <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
   if (ev_full) studies <- .admBuildEvFull(studies, tag_cmt = multi_out)

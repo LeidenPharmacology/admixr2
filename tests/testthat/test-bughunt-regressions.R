@@ -143,24 +143,57 @@ test_that("a named correlation matrix is matched by name or refused", {
   expect_equal(ok$latentR[1L, 3L], .7)
 })
 
-test_that("a dose into a compartment the model lacks is refused", {
+test_that("an event table must be et()'s and dose a compartment the model has", {
   ui <- list(mv0 = list(state = c("depot", "central")))
-  unit <- function(ev) list(list(label = "s", ev = ev))
-  chk <- function(...) admixr2:::.admCheckDoseCmt(unit(data.frame(...)), ui)
-  expect_error(chk(time = 0, evid = 1, cmt = "nope"), "does not have")
-  expect_error(chk(time = 0, evid = 1, cmt = 7), "does not have")
-  expect_silent(chk(time = 0, evid = 1, cmt = "central"))
-  expect_silent(chk(time = 0, evid = 1, cmt = 2))
-  expect_silent(chk(time = 0, evid = 1, cmt = "(default)"))
-  expect_silent(chk(time = 0, evid = 1, amt = 100))
-  expect_silent(chk(time = 1, evid = 0, cmt = "cp"))
-  expect_silent(admixr2:::.admCheckDoseCmt(unit(NULL), ui))
-  expect_silent(admixr2:::.admCheckDoseCmt(unit(data.frame(evid = 1, cmt = "x")), list()))
+  chk <- function(ev, ui_ = ui)
+    admixr2:::.admCheckEv(list(list(label = "s", ev = ev)), ui_)
+  et <- rxode2::et
+  expect_error(chk(et(amt = 100, cmt = "nope")), "does not have")
+  expect_error(chk(et(amt = 100, cmt = 7L)), "does not have")
+  expect_silent(chk(et(amt = 100, cmt = "central")))
+  expect_silent(chk(et(amt = 100, cmt = 2L)))
+  expect_silent(chk(et(amt = 100)))
+  expect_silent(chk(et(amt = 100, cmt = "central") |> et(1, cmt = "cp")))
+  expect_silent(chk(NULL))
+  expect_silent(chk(et(amt = 100, cmt = "nope"), list()))
+  expect_error(chk(data.frame(TIME = 0, AMT = 100, EVID = 1)), "rxode2::et")
 })
 
 test_that("summary() of a fit is the fit", {
   fit <- structure(list(), class = "admFit")
   expect_identical(summary(fit), fit)
+})
+
+test_that("slips the review of the table checks turned up", {
+  # a median is checked against its IQR even when a mean is the centre used
+  x <- suppressMessages(admPopulation(X = c(mean = 140, median = 90, iqr = c(62, 118))))
+  expect_gt(x$X$sdlog, 0)
+  expect_error(admPopulation(X = c(mean = 90, median = 140, iqr = c(62, 118))),
+               "median 140")
+  # lo/hi are level labels unless the values cannot be proportions
+  expect_equal(covDist(DOSE = c(lo = .4, hi = .6))$DOSE$probs, c(.4, .6))
+  expect_error(covDist(WT = c(lo = 50, hi = 110)), "looks like a range")
+  # a percentage table with a level missing
+  expect_warning(covDist(SEX = c(male = 55, female = 40)), "sum to 95")
+  expect_silent(covDist(SEX = c(male = 55, female = 45)))
+  expect_silent(covDist(G = c(a = 1, b = 2, c = 1)))
+  # half-named matrices are matched by name too
+  n3 <- c(WT = 72, CRCL = 90, AGE = 40)
+  R <- diag(3); R[1L, 3L] <- R[3L, 1L] <- .7
+  mk <- function(M) covDist(AGE = c(mean = 40, sd = 9), WT = c(mean = 72, sd = 16),
+                            CRCL = c(mean = 90, sd = 20), cor = M)
+  dimnames(R) <- list(NULL, names(n3))
+  expect_equal(mk(R)$latentR[1L, 2L], .7)
+  dimnames(R) <- list(names(n3), NULL)
+  expect_equal(mk(R)$latentR[1L, 2L], .7)
+  dimnames(R) <- list(NULL, c("WT", "CRCL", "AGEE"))
+  expect_error(mk(R), "no row for")
+  # one warning per covariate, however many times its margin is resolved
+  df <- data.frame(WT = c(60, 70, 80, 90), AGE = c(30, 40, 35, 50))
+  n <- 0L
+  withCallingHandlers(admPopulation(data = df, WT = c(mean = 80, cv = .25)),
+    warning = function(w) { n <<- n + 1L; invokeRestart("muffleWarning") })
+  expect_equal(n, 1L)
 })
 
 test_that("admStudy() refuses what it would otherwise drop or misread", {
