@@ -5,11 +5,16 @@
 
 .admPopFromData <- function(data, dist, given) {
   if (!is.data.frame(data)) data <- as.data.frame(data)
+  if (nrow(data) < 2L)
+    stop("admixr2: `data` needs at least two subjects to describe a population.",
+         call. = FALSE)
   given_nms <- names(given)
   nms <- setdiff(names(data), given_nms) # anything stated in `...` wins outright
   bad <- function(nm, ...) stop("admixr2: covariate '", nm, "' ", ...,
                                 call. = FALSE)
   binary <- function(p) list(values = c(0, 1), probs = c(1 - p, p))
+  # admPopulation() resolves every margin again, and that is the one that speaks.
+  spec <- function(v, nm) suppressMessages(suppressWarnings(.admPopSpec(v, nm, dist)))
 
   # Overridden margins still contribute cohort correlations.
   cont <- Filter(function(nm) {
@@ -18,7 +23,7 @@
       !all(unique(v) %in% c(0, 1)) &&
       stats::sd(v) >= .Machine$double.eps^0.5 * max(1, abs(mean(v))) &&
       (!identical(dist, "lnorm") || all(v > 0)) &&
-      is.null(tryCatch(.admPopSpec(given[[nm]], nm, dist)[["values"]],
+      is.null(tryCatch(spec(given[[nm]], nm)[["values"]],
                        error = function(e) TRUE))
   }, intersect(given_nms, names(data)))
   specs <- list()
@@ -60,7 +65,7 @@
   # Copula correlations use each resolved margin's latent scale.
   resolved <- c(given, specs)
   resolved <- stats::setNames(
-    lapply(names(resolved), function(nm) .admPopSpec(resolved[[nm]], nm, dist)),
+    lapply(names(resolved), function(nm) spec(resolved[[nm]], nm)),
     names(resolved))
   tf <- function(nm) {
     v <- data[[nm]]
@@ -459,14 +464,19 @@ admStudy <- function(model = NULL, est = NULL,
         "there is no model here to condition.")
   # A cohort data frame supplies its own sample size.
   if (is.data.frame(population) && is.null(n)) n <- nrow(population)
-  if (is.null(n) || !is.finite(n) || n <= 0)
+  if (!is.numeric(n) || length(n) != 1L || !is.finite(n) || n <= 0)
     bad("needs a positive `n` -- the number of subjects it reports on.")
   if (is.null(times) || !length(times)) bad("needs `times`.")
+  if (!is.numeric(times) || any(!is.finite(times)))
+    bad("`times` must be finite numbers.")
   if (is.null(ev) && is.null(dose))
     bad("needs a `dose`, or an `ev` event table for anything a single dose ",
         "cannot express.")
   if (!is.null(ev) && !is.null(dose))
     bad("has both `dose` and `ev`; `dose` is only shorthand for one.")
+  if (!is.null(dose) &&
+      (!is.numeric(dose) || length(dose) != 1L || !is.finite(dose) || dose < 0))
+    bad("`dose` must be one finite non-negative amount; use `ev` for anything else.")
   if (length(at)) {
     if (is.null(names(at)) || any(!nzchar(names(at))) || anyDuplicated(names(at)))
       bad("`at` must have unique, non-empty covariate names, e.g. ",

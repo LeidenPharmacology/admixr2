@@ -677,6 +677,43 @@
   .admCovDistCanon(out)
 }
 
+# Refuse a bad margin where it is written. A raw `cov_dist` list is checked by
+# .admCheckCovariates() at the fit; without this, covDist() and print() passed it on.
+.admCovCheckSpec <- function(sp, nm) {
+  bad <- function(...) stop("admixr2: covariate ", sQuote(nm), " ", ..., call. = FALSE)
+  if (!is.list(sp)) return(invisible())
+  v <- sp[["values"]]
+  if (!is.null(v)) {
+    p <- sp[["probs"]]
+    if (!is.numeric(v) || any(!is.finite(v))) bad("needs finite numeric `values`.")
+    if (!is.null(p) && (length(p) != length(v) || !is.numeric(p) ||
+                        any(!is.finite(p)) || any(p < 0) || sum(p) <= 0))
+      bad("needs one non-negative `probs` entry per level, ", length(v), " in all.")
+    return(invisible())
+  }
+  if (is.function(sp[["quantile"]])) return(invisible())
+  loc <- sp[["meanlog"]] %||% sp[["mu"]]
+  sc  <- if (is.null(sp[["meanlog"]])) sp[["sd"]] else sp[["sdlog"]]
+  if (!is.null(loc) && (length(loc) != 1L || length(sc) != 1L || !is.finite(loc) ||
+                        !is.finite(sc) || sc <= 0))
+    bad("needs a finite location and a finite POSITIVE spread.")
+  invisible()
+}
+
+# A named matrix is matched by name or not at all: falling back to position put a
+# correlation on whichever pair sat in that slot.
+.admCovByName <- function(M, nms, what) {
+  if (is.null(rownames(M))) rownames(M) <- colnames(M)
+  if (is.null(rownames(M))) return(M)
+  if (is.null(colnames(M))) colnames(M) <- rownames(M)
+  miss <- setdiff(nms, rownames(M))
+  if (length(miss))
+    stop("admixr2: `", what, "` has no row for ",
+         paste(sQuote(miss), collapse = ", "), "; its names are ",
+         paste(sQuote(rownames(M)), collapse = ", "), ".", call. = FALSE)
+  M[nms, nms, drop = FALSE]
+}
+
 .admCovDistCanon <- function(cov_dist) {
   if (!is.list(cov_dist) || !length(cov_dist)) return(cov_dist)
   nms <- .admCovSpecNames(cov_dist)
@@ -725,15 +762,13 @@
     # order would otherwise correlate the wrong pair. This has to happen HERE, in the branch that can receive
     # a named matrix from the user -- doing it after the branches ran once against a matrix whose dimnames had
     # already been stripped, i.e. never at all.
-    if (!is.null(rownames(R)) && all(nms %in% rownames(R)))
-      R <- R[nms, nms, drop = FALSE]
+    R <- .admCovByName(R, nms, "cor")
   } else if (!is.null(cov_dist[["Sigma"]])) {
     S <- as.matrix(cov_dist[["Sigma"]])
     if (!identical(dim(S), c(d, d)))
       stop("admixr2: `Sigma` is ", nrow(S), " x ", ncol(S), " but ", d,
            " covariates are declared.", call. = FALSE)
-    if (!is.null(rownames(S)) && all(nms %in% rownames(S)))
-      S <- S[nms, nms, drop = FALSE]
+    S <- .admCovByName(S, nms, "Sigma")
     if (any(diag(S) <= 0))
       stop("admixr2: `Sigma` has a non-positive diagonal entry, so it ",
            "describes no distribution.", call. = FALSE)
@@ -2761,30 +2796,52 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
     return(list(meanlog = g("meanlog"), sdlog = g("sdlog")))
   ctr <- g("mean") %||% g("median")
   if (is.null(ctr)) bad("needs a `mean` or a `median` (or `meanlog`/`sdlog`).")
+  if (!is.finite(ctr)) bad("has a non-finite centre.")
+  if (identical(dist, "lnorm") && ctr <= 0)
+    bad("has centre ", ctr, ", which a lognormal margin cannot represent. Use ",
+        '`dist = "normal"`.')
+  # A lognormal's median is exp(meanlog) and its mean sits exp(s2 / 2) above that,
+  # so which of the two was reported changes meanlog.
+  is_med <- is.null(g("mean"))
   # spread, in whichever currency the paper used
   sd <- g("sd")
-  if (is.null(sd) && !is.null(g("cv"))) sd <- ctr * g("cv") / 100
+  if (is.null(sd) && !is.null(g("cv"))) {
+    if (is.finite(g("cv")) && g("cv") < 1)
+      warning("admixr2: covariate '", nm, "': `cv` is a percent, so ", g("cv"),
+              " means ", g("cv"), "%. If the paper reports a fraction, give ",
+              "cv = ", 100 * g("cv"), ".", call. = FALSE)
+    sd <- ctr * g("cv") / 100
+  }
   if (is.null(sd) && !is.null(gg("iqr"))) {
     q <- gg("iqr")
     if (length(q) != 2L) bad("`iqr` needs two values, e.g. iqr = c(62, 88).")
     # exact for the assumed shape rather than a rule of thumb: on the scale the margin is modelled on, IQR =
     # 1.349 sd
     q <- sort(q)
+    med <- g("median")
+    if (!is.null(med) && (med < q[1L] || med > q[2L]))
+      bad("has median ", signif(med, 4), " outside its own iqr c(",
+          signif(q[1L], 4), ", ", signif(q[2L], 4), ").")
     # A REPORTED (median, IQR) NEED NOT BE CONSISTENT with the assumed shape, and usually is not: real quartiles
     # are rarely symmetric about the median on any scale. Only two of the three numbers can be honoured, so
     # honour the median (the headline) and the IQR WIDTH (the spread), and say when the third disagrees.
-    .chk <- function(mid, tol, what) {
-      if (abs(mid - ctr) / ctr > tol)
-        message("admixr2: covariate '", nm, "': median ", signif(ctr, 4),
+    lbl <- if (is_med) "median" else "mean"
+    .chk <- function(mid, tol, what, want = ctr) {
+      if (abs(mid - want) > tol * abs(want))
+        message("admixr2: covariate '", nm, "': ", lbl, " ", signif(ctr, 4),
                 " and iqr c(", signif(q[1L], 4), ", ", signif(q[2L], 4),
                 ") are not consistent with a ", what, " margin -- the ",
                 "quartiles centre on ", signif(mid, 4), " instead. Matching ",
-                "the median and the IQR WIDTH; the quartiles will come out ",
+                "the ", lbl, " and the IQR WIDTH; the quartiles will come out ",
                 "shifted. Give `sd =` if the paper reports one.")
     }
     if (identical(dist, "lnorm")) {
-      .chk(sqrt(q[1L] * q[2L]), 0.02, "lognormal")
-      return(list(meanlog = log(ctr), sdlog = diff(log(q)) / 1.34898))
+      if (q[1L] <= 0) bad("has an `iqr` a lognormal margin cannot represent; ",
+                          'use `dist = "normal"`.')
+      sl <- diff(log(q)) / 1.34898
+      ml <- if (is_med) log(ctr) else log(ctr) - sl^2 / 2
+      .chk(sqrt(q[1L] * q[2L]), 0.02, "lognormal", exp(ml))
+      return(list(meanlog = ml, sdlog = sl))
     }
     .chk(mean(q), 0.02, "normal")
     sd <- diff(q) / 1.34898
@@ -2804,10 +2861,18 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
   if (is.null(sd))
     bad("needs a spread: `sd`, `cv` (as a percent), `iqr = c(lo, hi)` or ",
         "`range = c(min, max)`.")
+  if (!is.finite(sd) || sd <= 0) bad("needs a finite POSITIVE spread.")
   if (identical(dist, "lnorm")) {
-    # match the reported mean and sd on the natural scale exactly
-    s2 <- log1p((sd / ctr)^2)
-    list(meanlog = log(ctr) - s2 / 2, sdlog = sqrt(s2))
+    # match the reported centre and sd on the natural scale exactly. With a median
+    # sd^2 = m^2 t (t - 1) for t = exp(s2); a cv does not depend on the centre.
+    r <- sd / ctr
+    if (!is_med) {
+      s2 <- log1p(r^2)
+      return(list(meanlog = log(ctr) - s2 / 2, sdlog = sqrt(s2)))
+    }
+    s2 <- if (is.null(g("sd")) && !is.null(g("cv"))) log1p(r^2)
+          else log((1 + sqrt(1 + 4 * r^2)) / 2)
+    list(meanlog = log(ctr), sdlog = sqrt(s2))
   } else list(mu = ctr, sd = sd)
 }
 
@@ -2865,6 +2930,23 @@ covDraw <- function(cov_dist, n = 1000L, n_eta = 0L) {
           "study's `cov`, not `cov_dist`.")
     return(list(values = c(0, 1), probs = c(1 - p1, p1), labels = names(v)))
   }
+  # Values may be counts, so a range cannot be told from levels by size: only its
+  # names give it away. Normalising c(min = 50, max = 110) made a binary covariate.
+  # Not "low"/"high": those are real level labels for a dosing band. "lo"/"hi" can
+  # be too, so they only count when the values cannot be proportions.
+  if (any(k %in% c("min", "max", "minimum", "maximum", "lower", "upper", "q1", "q3")) ||
+      (any(k %in% c("lo", "hi")) && any(v > 1)))
+    bad("looks like a range, not a set of levels. Give it with a centre, e.g. ",
+        "c(median = , range = c(min, max)).")
+  # Proportions from a rounded table sum to about 1, percentages to about 100.
+  # Further off usually means a dropped level, and normalising then shifts every
+  # level that remains. Counts that happen to total near 100 warn too.
+  s <- sum(v)
+  tgt <- if (all(v < 1)) 1 else if (s >= 90 && s <= 110) 100 else NA
+  if (!is.na(tgt) && abs(s - tgt) > 0.02 * tgt)
+    warning("admixr2: covariate '", nm, "': values sum to ", format(s, digits = 3),
+            ", not ", tgt, ", and were rescaled. Check for a level missing from ",
+            "the table.", call. = FALSE)
   list(values = seq_along(v) - 1, probs = as.numeric(v) / sum(v),
        labels = names(v))
 }
@@ -3016,6 +3098,7 @@ covDist <- function(..., cor = NULL, joint = NULL,
   # Canonicalise NOW, so an impossible moment match or a non-PD correlation is reported here, naming the
   # covariate, rather than surfacing from inside the first objective evaluation of a fit.
   out <- .admCovDistCanon(out)
+  for (nm in .admCovSpecNames(out)) .admCovCheckSpec(out[[nm]], nm)
   # A NORMAL margin is unbounded below, and the quadrature reaches |z| = 5.19 at the default 7 nodes -- so any
   # covariate with a CV above about 0.27 gets a node at or below zero, and an allometric or log term evaluated
   # there is NaN (weight 72+/-16, CV 0.22, is a typical case). It is only a WARNING: a centred covariate --

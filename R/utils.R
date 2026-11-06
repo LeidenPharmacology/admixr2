@@ -20,6 +20,18 @@ utils::globalVariables(c(
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+# Returns a function restoring the caller's RNG state. Fits, datagen() and the
+# diagnostics seed themselves to be reproducible, but that must not reach the
+# caller: a loop drawing rnorm() between fits would get the same numbers on every
+# iteration, silently. Same contract as stats::simulate().
+.admRngSnapshot <- function() {
+  old <- get0(".Random.seed", envir = globalenv(), inherits = FALSE)
+  function() {
+    if (is.null(old)) suppressWarnings(rm(".Random.seed", envir = globalenv()))
+    else assign(".Random.seed", old, envir = globalenv())
+  }
+}
+
 
 # Assemble fullTheta vector in iniDf row order (thetas + sigma SDs + omega entries).
 .admFullTheta <- function(pars, pinfo) {

@@ -235,6 +235,8 @@ datagenControl <- function(
 #' }
 #' @export
 datagen <- function(studies, model = NULL, control = datagenControl()) {
+  .restoreRng <- .admRngSnapshot()
+  on.exit(.restoreRng(), add = TRUE)
   checkmate::assertList(studies, min.len = 1L)
   if (!inherits(control, "datagenControl"))
     stop("`control` must be created via `datagenControl()`", call. = FALSE)
@@ -271,6 +273,8 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
            "publication reports. For summaries BY covariate stratum, generate ",
            "one ordinary study per stratum with its own `cov` and `n`.",
            call. = FALSE)
+    .chk_times <- function(x) if (!is.numeric(x) || any(!is.finite(x)))
+      stop(sprintf("Study '%s': `times` must be finite numbers", nm), call. = FALSE)
     # Multi-output combined with covariate quadrature is unsupported.
     if (!is.null(s$observations)) {
       if (!is.list(s$observations) || length(s$observations) == 0L)
@@ -281,6 +285,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         if (is.null(o$times %||% s$times))
           stop(sprintf("Study '%s' observation %d is missing `times`.", nm, k),
                call. = FALSE)
+        .chk_times(o$times %||% s$times)
         if (is.null(o$ev %||% s$ev))
           stop(sprintf("Study '%s' observation %d is missing `ev`.", nm, k),
                call. = FALSE)
@@ -288,6 +293,7 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
     } else {
       if (is.null(s$times))
         stop(sprintf("Study '%s' is missing `times`.", nm), call. = FALSE)
+      .chk_times(s$times)
       if (is.null(s$ev))
         stop(sprintf("Study '%s' is missing `ev`.", nm), call. = FALSE)
     }
@@ -355,14 +361,16 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
         o <- s$observations[[k]]
         list(name   = onm[k],
              output = o$output %||% out_var,
-             times  = o$times  %||% s$times,
+             times  = sort(o$times %||% s$times),
              ev     = o$ev     %||% s$ev,
              n      = o$n      %||% s$n)
       })
     } else {
-      list(list(name = NULL, output = out_var, times = s$times,
-                ev = s$ev, n = s$n))
+      # Sorted because the moments come back in solve order, which is time order.
+      list(list(name = NULL, output = out_var,
+                times = sort(s$times), ev = s$ev, n = s$n))
     }
+    .admCheckEv(lapply(obs_specs, function(o) list(label = nm, ev = o$ev)), ui)
     # Several observed outputs -> tag each observation's records with its output
     # compartment (nlmixr2's multi-endpoint simulation model routes by cmt).
     is_multi <- length(unique(vapply(obs_specs, `[[`, character(1),

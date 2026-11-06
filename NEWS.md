@@ -2,6 +2,58 @@
 
 ## Bug fixes
 
+* **Observation times out of order fitted the wrong data, silently, on all four
+  estimators.** `rxSolve()` returns predictions in time order, while `E` and `V`
+  stayed in the order given, so each mean was scored against another timepoint's
+  prediction. `times = c(4, 1, 8, 2)` gave a clearance of 0.03 where the same
+  data in order gave 5.4, with nothing to say so. Plain, long-format and
+  `observations` studies and `datagen()` are now put in time order, as joint
+  studies already were. Studies given in time order are unaffected.
+
+* **A lognormal margin moved the centre the paper reported.** `admPopulation()`
+  read a `median` given with `sd`, `cv` or `range` as a mean, and a `mean` given
+  with `iqr` as a median, so `c(median = 92, sd = 30)` had median 87.5 and
+  `c(mean = 92, iqr = c(70, 115))` had mean 98.4. Both now keep the reported
+  value, which changes results for populations written that way.
+
+* **A covariate margin that describes no distribution is refused where it is
+  written**, not at the fit: a zero, negative or non-finite spread, a non-finite
+  centre, and `probs` that do not match `values`. A negative `sd` on a lognormal
+  margin used to be read as positive. A named `cor` or `Sigma` matrix missing a
+  covariate is refused too, where it used to be applied by position and so could
+  correlate the wrong pair; a matrix with only row or only column names counts as
+  named.
+
+* **`summary()` on a fit failed** with "wrong arguments for subsetting an
+  environment". It now shows the fit, as `print()` does.
+
+* **`NA` in `E` or `times` is refused.** adfo returned an objective of `Inf` at
+  the starting values with no error, and the others failed with unrelated
+  messages. `admStudy()` also refuses a `dose` that is not one non-negative
+  number. `admPopulation()` accepts a centred `median = 0` with an `iqr`, which
+  used to crash.
+
+* **A dose into a compartment the model does not have is refused**, by fits and
+  by `datagen()`. rxode2 drops it without a word, so every prediction was 0: the
+  fit returned the starting values and `datagen()` generated zeros. An `ev` that
+  is not from `rxode2::et()` is refused too; a plain data frame lost its
+  observation times and failed with "subscript out of bounds".
+
+* **Every fit reset the session's random number stream**, because the estimators
+  seed themselves and never restored the caller's state. A loop drawing random
+  numbers between fits got identical draws on every iteration after the first,
+  with no error, so a simulation study written that way silently reused the same
+  data. Fits, `datagen()`, `plot()` and `admMoments()` now leave the stream as
+  they found it. Their own results are unchanged, but code that draws random
+  numbers after a fit now gets different numbers than before.
+
+* **Slips in a transcribed covariate table passed silently.**
+  `covDist(WT = c(min = 50, max = 110))` became a binary covariate, because
+  anything unrecognised was read as level proportions and rescaled. A range is
+  now refused, and proportions or percentages that do not sum to about 1 or 100
+  warn. A `cv` below 1 warns, since it is a percent, and a median outside its own
+  IQR is refused.
+
 * **Importance weights with a non-finite log-weight depended on the Eigen
   version and on the element's position**, because Eigen 3.4's vectorised `exp`
   returns about `5e-309` for `-Inf` rather than 0. A single `+Inf` gave uniform

@@ -2168,7 +2168,7 @@ admStopWorkers <- function() {
   cores_w <- if (!is.null(cores)) {
     cores
   } else if (!is.null(rxMod_direct)) {
-    max(1L, parallel::detectCores() - 1L)
+    max(1L, parallel::detectCores() - 1L, na.rm = TRUE)
   } else {
     1L
   }
@@ -2668,6 +2668,8 @@ admStopWorkers <- function() {
 #' @importFrom nlmixr2est nlmixr2Est
 #' @export
 nlmixr2Est.admc <- function(env, ...) {
+  .restoreRng <- .admRngSnapshot()
+  on.exit(.restoreRng(), add = TRUE)
   .ui  <- env$ui
   .ctl <- env$control
 

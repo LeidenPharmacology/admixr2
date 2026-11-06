@@ -81,6 +81,9 @@ print.admFit <- function(x, ...) {
   invisible(x)
 }
 
+#' @export
+summary.admFit <- function(object, ...) object
+
 # knitr auto-print handler. Registered as knit_print.admFit into knitr's
 # namespace by .register_knit_print() in .onLoad (zzz.R). Not named
 # knit_print.admFit to avoid roxygen2 S3-method detection and spurious
@@ -1869,6 +1872,8 @@ head.paged_df <- function(x, n = 6L, ...) {
 #' @export
 admMoments <- function(fit, n_sim = NULL, seed = 1L,
                        by = c("source", "stratum")) {
+  .restoreRng <- .admRngSnapshot()
+  on.exit(.restoreRng(), add = TRUE)
   by    <- match.arg(by)
   extra <- fit$env$admExtra %||% fit$env$adirmcExtra %||%
     stop("No admExtra/adirmcExtra on fit object", call. = FALSE)
@@ -2106,6 +2111,8 @@ admMoments <- function(fit, n_sim = NULL, seed = 1L,
 #' @export
 plot.admFit <- function(x, which = c("mean", "cov", "covariate", "nll", "par"),
                         n_sim = NULL, seed = 1L, ...) {
+  .restoreRng <- .admRngSnapshot()
+  on.exit(.restoreRng(), add = TRUE)
   # "cov" and "covariate" are both exact choices, so pmatch takes each to
   # itself; they are different panels (residual (co)variance vs covariate
   # effect) and the near-collision is the price of not renaming "cov".

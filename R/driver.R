@@ -49,11 +49,38 @@
   list(studies = studies, pinfo = pinfo)
 }
 
+# et() on a plain data frame drops the observation times, and rxSolve drops a dose
+# into a compartment the model lacks without a word, so every prediction is 0 and
+# the fit reports the starting values.
+.admCheckEv <- function(units, .ui) {
+  states <- .ui$mv0$state
+  for (u in units) {
+    if (is.null(u$ev)) next
+    if (!inherits(u$ev, "rxEt"))
+      stop("admixr2: study '", u$label, "': `ev` must be an event table from ",
+           "rxode2::et(), not a ", class(u$ev)[1L], ".", call. = FALSE)
+    if (!length(states)) next
+    d   <- as.data.frame(u$ev)
+    cm  <- as.character(d[["cmt"]])[!d[["evid"]] %in% c(0, 2, 3)]
+    cm  <- setdiff(cm, c(NA, "(default)", "(obs)"))
+    num <- suppressWarnings(as.numeric(cm))
+    bad <- cm[ifelse(is.na(num), !sub("^-", "", cm) %in% states,
+                     abs(num) > length(states))]
+    if (length(bad))
+      stop("admixr2: study '", u$label, "' doses compartment ",
+           paste(sQuote(bad), collapse = ", "), ", which the model does not have. ",
+           "Its compartments are ", paste(sQuote(states), collapse = ", "), ".",
+           call. = FALSE)
+  }
+  invisible()
+}
+
 # Normalise studies, flatten to observation units, and derive model/joint flags.
 .admDriverUnits <- function(studies, .ui, output_var, ev_full = TRUE) {
   for (nm in names(studies))
     studies[[nm]] <- .admNormaliseStudy(studies[[nm]], nm, output_var)
   studies   <- .admFlattenStudies(studies)
+  .admCheckEv(studies, .ui)
   multi_out <- length(.admOutputVars(.ui)) > 1L
   any_joint <- any(vapply(studies, function(u) isTRUE(u$is_joint), logical(1)))
   if (ev_full) studies <- .admBuildEvFull(studies, tag_cmt = multi_out)

@@ -1117,6 +1117,8 @@ nmObjGetControl.adirmc <- function(x, ...) {
 #' @method nlmixr2Est adirmc
 #' @export
 nlmixr2Est.adirmc <- function(env, ...) {
+  .restoreRng <- .admRngSnapshot()
+  on.exit(.restoreRng(), add = TRUE)
   .ui  <- env$ui
   .ctl <- env$control
 
