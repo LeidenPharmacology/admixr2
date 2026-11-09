@@ -21,7 +21,8 @@ admStudy(
   strata_nodes = NULL,
   range = NULL,
   label = NULL,
-  v_denom = NULL
+  v_denom = NULL,
+  dose_bands = NULL
 )
 }
 \arguments{
@@ -114,6 +115,16 @@ breaks that pattern --- a \code{sd} you computed yourself with the ML
 denominator, say. A published \code{model} is always \code{"ml"}: its moments are
 generated at that denominator, so \code{"unbiased"} is refused rather than
 applied to a \code{V} that is already right.}
+
+\item{dose_bands}{Covariate-dependent dosing, transcribed from the paper's
+dosing table: a named list with one covariate, whose entry is a
+data.frame with columns \code{lo}, \code{hi}, \code{dose} — one row per dose band, e.g.
+\code{dose_bands = list(CRCL = data.frame(lo = c(0, 30), hi = c(30, Inf), dose = c(100, 200)))} doses 100 mg below CrCl 30 and 200 mg above. The
+study is expanded into one study per band — the covariate's declared
+margin truncated to the band, \code{n} split by the band's probability, that
+band's \code{dose} — so the pooled analysis model needs no dose rule. Model
+sources only: a digitised pooled \code{E}/\code{V} cannot be split into per-band
+profiles. Mutually exclusive with \code{dose}/\code{ev}.}
 }
 \value{
 An \code{admStudy} object.

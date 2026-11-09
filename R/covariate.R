@@ -1104,6 +1104,31 @@
 # returned the default and certified a rule the construction never used.
 .admStrataNodes <- function(s) s[["strata_nodes"]] %||% .ADM_STRATA_NODES
 
+# CDF of one canonical covariate margin -- the band weights `dose_bands` needs.
+.admCovCdfOf <- function(spec) {
+  if (!is.null(spec[["meanlog"]]))
+    return(function(x) stats::plnorm(x, spec[["meanlog"]], spec[["sdlog"]]))
+  if (!is.null(spec[["mu"]]))
+    return(function(x) stats::pnorm(x, spec[["mu"]], spec[["sd"]]))
+  if (is.function(spec[["quantile"]])) {
+    gu <- seq(1e-6, 1 - 1e-6, length.out = 20001L)
+    gx <- as.numeric(spec[["quantile"]](gu))
+    return(function(x) stats::approx(gx, gu, xout = x, rule = 2L)$y)
+  }
+  stop("admixr2: this covariate margin has no CDF admixr2 can evaluate; ",
+       "declare it as normal, lognormal, or with a `quantile` function.",
+       call. = FALSE)
+}
+
+# Truncate one margin to a dose band, whose upper edge may be +Inf (the last
+# band) -- `.admCovTruncSpec` requires finite endpoints, so bands get their
+# own form: re-map u onto [F(lo), F(hi)] of the FULL declared margin.
+.admCovBandSpec <- function(spec, lo, hi, cdf) {
+  pa <- if (is.infinite(lo)) 0 else as.numeric(cdf(lo))
+  pb <- if (is.infinite(hi)) 1 else as.numeric(cdf(hi))
+  list(quantile = function(u) .admCovQuantile(spec, pa + u * (pb - pa)))
+}
+
 # Truncate one covariate's margin to the range a source actually enrolled.
 #
 # Strata are cut from the analyst's `cov_dist` over its FULL support, so a published model gets evaluated --

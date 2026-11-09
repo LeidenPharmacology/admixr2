@@ -855,3 +855,80 @@ test_that("admPopulation refuses duplicate covariate names", {
                              WT = c(mean = 80, sd = 12)),
                "covariate names must be unique")
 })
+
+# -- dose_bands: covariate-dependent dosing transcribed from the paper's dosing table
+
+# source model WITHOUT a CRCL coefficient, so the banded covariate stays
+# marginal and the expansion is directly inspectable (no strata on top)
+.sa_noccr <- function() {
+  ini({ tcl <- log(5); tv <- log(50); add.err <- 0.08; eta.cl ~ 0.09 })
+  model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+          cp <- linCmt(); cp ~ add(add.err) })
+}
+.sa_bands <- list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf),
+                                    dose = c(100, 200)))
+
+test_that("dose_bands expands into one study per band, weighted and truncated", {
+  skip_if_not_installed("rxode2")
+  pop <- admPopulation(CRCL = c(mean = 60, sd = 25))
+  s <- admStudy(model = .sa_noccr, population = pop,
+                n = 100, times = c(1, 2, 4), dose_bands = .sa_bands)
+  m <- admixr2:::.admMaterialise(admixr2::admStudies(s = s))
+  expect_setequal(names(m), c("s_CRCLb1", "s_CRCLb2"))
+  # band probabilities from the declared margin: P(CRCL < 30)
+  spec <- admixr2:::.admCovDistCanon(pop)$CRCL
+  p1 <- stats::plnorm(30, spec$meanlog, spec$sdlog)
+  expect_equal(m$s_CRCLb1$n, 100 * p1, tolerance = 1e-6)
+  expect_equal(m$s_CRCLb2$n, 100 * (1 - p1), tolerance = 1e-6)
+  # each band carries its own dose
+  expect_equal(as.data.frame(m$s_CRCLb1$ev)$amt[1], 100)
+  expect_equal(as.data.frame(m$s_CRCLb2$ev)$amt[1], 200)
+  # each band's CRCL margin is truncated to the band
+  q1 <- m$s_CRCLb1$cov_dist$CRCL$quantile(c(0.01, 0.5, 0.99))
+  q2 <- m$s_CRCLb2$cov_dist$CRCL$quantile(c(0.01, 0.5, 0.99))
+  expect_true(all(q1 <= 30) && all(q2 >= 30))
+})
+
+test_that("dose_bands validates its inputs", {
+  bands_bad <- list(CRCL = data.frame(lo = c(-Inf, 20), hi = c(30, Inf),
+                                      dose = c(100, 200)))
+  pop <- admPopulation(CRCL = c(mean = 60, sd = 25))
+  # conflicts with dose/ev and with by
+  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10,
+                        times = 1:2, dose = 100, dose_bands = .sa_bands),
+               "together with `dose` or `ev`")
+  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10,
+                        times = 1:2, by = "CRCL", dose_bands = .sa_bands),
+               "both `dose_bands` and `by`")
+  # digitised data cannot be banded
+  expect_error(admStudy(E = 1:2, sd = 0.1, n = 10, times = 1:2,
+                        dose_bands = .sa_bands), "digitised data cannot")
+  # banded covariate must be declared in population
+  expect_error(admStudy(model = .sa_noccr,
+                        population = admPopulation(WT = c(mean = 70, sd = 10)),
+                        n = 10, times = 1:2, dose_bands = .sa_bands),
+               "does not declare a distribution")
+  # bands must be contiguous
+  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10, times = 1:2,
+                        dose_bands = bands_bad), "contiguous")
+  # first band must cover the lower support
+  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10, times = 1:2,
+                        dose_bands = list(CRCL = data.frame(
+                          lo = c(40, 60), hi = c(60, Inf), dose = c(1, 2)))),
+               "no dose band")
+  # discrete covariates use `by`, not bands
+  expect_error(admStudy(model = .sa_noccr,
+                        population = admPopulation(SEX = c(male = .5)),
+                        n = 10, times = 1:2,
+                        dose_bands = list(SEX = data.frame(lo = c(-Inf, 1),
+                                                          hi = c(1, Inf),
+                                                          dose = c(1, 2)))),
+               "CONTINUOUS")
+  # at/range must not touch the banded covariate
+  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10, times = 1:2,
+                        at = list(CRCL = 50), dose_bands = .sa_bands),
+               "also bands it")
+  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10, times = 1:2,
+                        range = list(CRCL = c(15, 75)), dose_bands = .sa_bands),
+               "both touch")
+})

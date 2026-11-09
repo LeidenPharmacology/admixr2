@@ -302,6 +302,16 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   when that is the cohort's data frame.
 #' @param times Observation times.
 #' @param dose Dose amount, as shorthand for a single-dose `ev`.
+#' @param dose_bands Covariate-dependent dosing, transcribed from the paper's
+#'   dosing table: a named list with one covariate, whose entry is a
+#'   data.frame with columns `lo`, `hi`, `dose` — one row per dose band, e.g.
+#'   `dose_bands = list(CRCL = data.frame(lo = c(0, 30), hi = c(30, Inf),
+#'   dose = c(100, 200)))` doses 100 mg below CrCl 30 and 200 mg above. The
+#'   study is expanded into one study per band — the covariate's declared
+#'   margin truncated to the band, `n` split by the band's probability, that
+#'   band's `dose` — so the pooled analysis model needs no dose rule. Model
+#'   sources only: a digitised pooled `E`/`V` cannot be split into per-band
+#'   profiles. Mutually exclusive with `dose`/`ev`.
 #' @param ev A dosing event table from [rxode2::et()], for anything `dose`
 #'   cannot express.
 #' @param population The population the study enrolled --- see
@@ -407,7 +417,7 @@ admStudy <- function(model = NULL, est = NULL,
                      n = NULL, times = NULL, dose = NULL, ev = NULL,
                      population = NULL, at = NULL, by = NULL,
                      strata_nodes = NULL, range = NULL,
-                     label = NULL, v_denom = NULL) {
+                     label = NULL, v_denom = NULL, dose_bands = NULL) {
   # WHETHER A COVARIATE IS CONDITIONAL OR MARGINAL IS NOT A USER CHOICE. It is a
   # property of the source's own model -- conditional when that model ESTIMATED
   # the covariate's coefficient, marginal when it never mentions the covariate
@@ -469,14 +479,75 @@ admStudy <- function(model = NULL, est = NULL,
   if (is.null(times) || !length(times)) bad("needs `times`.")
   if (!is.numeric(times) || any(!is.finite(times)))
     bad("`times` must be finite numbers.")
-  if (is.null(ev) && is.null(dose))
-    bad("needs a `dose`, or an `ev` event table for anything a single dose ",
-        "cannot express.")
+  if (is.null(ev) && is.null(dose) && is.null(dose_bands))
+    bad("needs a `dose`, an `ev` event table, or `dose_bands` for anything a ",
+        "single dose cannot express.")
   if (!is.null(ev) && !is.null(dose))
     bad("has both `dose` and `ev`; `dose` is only shorthand for one.")
   if (!is.null(dose) &&
       (!is.numeric(dose) || length(dose) != 1L || !is.finite(dose) || dose < 0))
     bad("`dose` must be one finite non-negative amount; use `ev` for anything else.")
+  if (!is.null(dose_bands)) {
+    if (!is.null(dose) || !is.null(ev))
+      bad("has `dose_bands` together with `dose` or `ev`; a study has one ",
+          "fixed dose or one banded dose rule, not both.")
+    if (!has_model)
+      bad("digitised data cannot take `dose_bands`: a single pooled E/V ",
+          "cannot be split into per-band profiles. Enter one admStudy() per ",
+          "reported band instead.")
+    if (!is.null(by))
+      bad("has both `dose_bands` and `by`; band the covariate with ",
+          "`dose_bands` or expand by levels with `by`, not both.")
+    if (!is.list(dose_bands) || length(dose_bands) != 1L ||
+        is.null(names(dose_bands)) || !nzchar(names(dose_bands)[1L]))
+      bad("`dose_bands` must be a named list with ONE covariate, e.g. ",
+          "dose_bands = list(CRCL = data.frame(lo = c(0, 30), ",
+          "hi = c(30, Inf), dose = c(100, 200))).")
+    .bcv <- names(dose_bands)[1L]; .bbd <- dose_bands[[1L]]
+    if (!is.data.frame(.bbd) ||
+        !identical(sort(names(.bbd)), c("dose", "hi", "lo")))
+      bad("the `dose_bands` entry for ", sQuote(.bcv), " must be a ",
+          "data.frame with columns `lo`, `hi`, `dose` -- the paper's dosing ",
+          "table, one row per band.")
+    .blo <- as.numeric(.bbd$lo); .bhi <- as.numeric(.bbd$hi)
+    .bdos <- as.numeric(.bbd$dose)
+    nb <- nrow(.bbd)
+    if (!nb) bad("the `dose_bands` table for ", sQuote(.bcv), " has no rows.")
+    if (any(is.infinite(.bhi[-nb])) || !is.infinite(.bhi[nb]))
+      bad("only the LAST band's `hi` may be Inf.")
+    if (nb > 1L && any(is.infinite(.blo[-1L])))
+      bad("only the FIRST band's `lo` may be -Inf.")
+    .fin <- is.finite(.blo) & is.finite(.bhi)
+    if (any(.blo[.fin] >= .bhi[.fin]))
+      bad("each band needs `lo` below `hi`.")
+    if (nb > 1L && (!identical(order(.blo), seq_len(nb)) ||
+                    any(.bhi[-nb] != .blo[-1L])))
+      bad("bands must be sorted by `lo` and contiguous: each `hi` equals the ",
+          "next band's `lo`.")
+    if (!all(is.finite(.bdos)) || any(.bdos < 0))
+      bad("each band's `dose` must be a finite non-negative amount.")
+    if (is.null(population) || !(.bcv %in% .admCovSpecNames(population)))
+      bad("`dose_bands` bands ", sQuote(.bcv), ", but `population` does not ",
+          "declare a distribution for it. Declare the covariate in ",
+          "`population = admPopulation(...)`.")
+    .bspec <- .admCovDistCanon(population)[[.bcv]]
+    if (!is.null(.bspec[["values"]]))
+      bad("`dose_bands` needs a CONTINUOUS covariate; ", sQuote(.bcv),
+          " is declared with levels -- use `by = ", sQuote(.bcv), "` for ",
+          "discrete groups.")
+    .bcdf <- .admCovCdfOf(.bspec)
+    if (as.numeric(.bcdf(.blo[1L])) > 1e-8)
+      bad("the first band starts at ", .blo[1L], ", but the declared ",
+          "distribution of ", sQuote(.bcv), " puts ",
+          sprintf("%.2g", 100 * as.numeric(.bcdf(.blo[1L]))),
+          "% of its mass below it -- those subjects would fall in no dose ",
+          "band. Start the first band at -Inf.")
+    if (.bcv %in% names(at))
+      bad("`at` pins ", sQuote(.bcv), " but `dose_bands` also bands it.")
+    if (!is.null(range) && (!is.list(range) || .bcv %in% names(as.list(range))))
+      bad("`range` and `dose_bands` both touch ", sQuote(.bcv),
+          "; the bands already delimit its span.")
+  }
   if (length(at)) {
     if (is.null(names(at)) || any(!nzchar(names(at))) || anyDuplicated(names(at)))
       bad("`at` must have unique, non-empty covariate names, e.g. ",
@@ -600,7 +671,8 @@ admStudy <- function(model = NULL, est = NULL,
     E = E, V = V, n = as.numeric(n), times = as.numeric(times),
     ev = ev, dose = dose, population = population, at = at, by = by,
     strata_nodes = strata_nodes, range = range,
-    label = label, v_denom = v_denom), class = "admStudy")
+    label = label, v_denom = v_denom, dose_bands = dose_bands),
+    class = "admStudy")
 }
 
 #' @export
@@ -611,6 +683,12 @@ print.admStudy <- function(x, ...) {
   dz <- if (!is.null(x$dose)) paste0("dose ", x$dose) else "ev supplied"
   cat(sprintf("  design    n = %s, %s, %d times (%g - %g)\n",
               format(x$n), dz, length(x$times), min(x$times), max(x$times)))
+  if (!is.null(x$dose_bands)) {
+    cv <- names(x$dose_bands)[1L]; bd <- x$dose_bands[[1L]]
+    cat(sprintf("  dose bands on %s: %s\n", cv,
+                paste(sprintf("[%g, %g) -> %g", bd$lo, bd$hi, bd$dose),
+                      collapse = ", ")))
+  }
   # Show resolved defaults in the collection pre-flight, not per study.
   if (is.null(x$ui))
     cat(sprintf("  V scale   %s denominator%s\n", x$v_denom %||% "ml",
@@ -939,6 +1017,31 @@ print() a single study to check its transcription.
                call. = FALSE)
         stats::setNames(list(s$range), .one)
       }
+    # `dose_bands` creates one ordinary study per dose band: the covariate's
+    # declared margin truncated to the band (the conditional distribution
+    # GIVEN the band -- exactly what a pooled paper's mixture splits into),
+    # `n` split by the band's probability under the full margin, and that
+    # band's dose in `ev`. The analysis model stays dose-free.
+    if (!is.null(s$dose_bands)) {
+      .bcv <- names(s$dose_bands)[1L]; .bbd <- s$dose_bands[[1L]]
+      .bspec <- .admCovDistCanon(s$population)[[.bcv]]
+      .bcdf <- .admCovCdfOf(.bspec)
+      nb <- nrow(.bbd)
+      for (k in seq_len(nb)) {
+        spk <- sp
+        pa <- if (k == 1L) 0 else as.numeric(.bcdf(.bbd$lo[k]))
+        pb <- if (k == nb) 1 else as.numeric(.bcdf(.bbd$hi[k]))
+        spk$n   <- s$n * (pb - pa)
+        spk$ev  <- rxode2::et(amt = .bbd$dose[k])
+        spk$cov_dist <- sp$cov_dist
+        spk$cov_dist[[.bcv]] <- .admCovBandSpec(.bspec, .bbd$lo[k],
+                                                 .bbd$hi[k], .bcdf)
+        g <- datagen(stats::setNames(list(spk), paste0(nm, "_", .bcv, "b", k)),
+                     model = s$ui, control = datagenControl(method = "gh"))
+        for (kk in names(g)) add(kk, g[[kk]])
+      }
+      next
+    }
     # `by` creates one ordinary pinned study per reported level.
     if (!is.null(s$by)) {
       lv <- s$population[[s$by]][["values"]]

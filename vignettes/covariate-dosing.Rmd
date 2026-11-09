@@ -1,0 +1,358 @@
+---
+title: "Covariate-dependent dosing in a meta-analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Covariate-dependent dosing in a meta-analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>",
+  message = FALSE, warning = FALSE,
+  fig.width = 7, fig.height = 4.2
+)
+source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R"))[1])
+```
+
+```{r libs, include=FALSE}
+library(admixr2); library(rxode2); library(nlmixr2); library(ggplot2)
+```
+
+## The example
+
+A one-compartment IV drug with two published popPK analyses. **Both** papers
+fitted a creatinine-clearance (CrCl) power term on clearance. But only one of
+them **dosed by renal function**: its patients were split into groups by CrCl
+and each group got its own dose. Both papers sampled at 0.5, 1, 2, 4, 8, 12 and
+24 h after the dose. The goal is one pooled population model using only what
+the two papers printed — each paper contributes its **parameter table** and
+its **baseline table**.
+
+- **Alvarez 2021** — 48 patients, normal renal function. Fixed 200 mg IV bolus
+  for everyone.
+- **Beaumont 2023** — 32 patients enrolled across renal function (CrCl 15–75
+  mL/min). **Dosed by CrCl group:** below 30 mL/min received 100 mg, the rest
+  200 mg.
+
+## Step 1 — Extract the parameter tables
+
+From each paper's parameter table you need the typical values, the covariate
+coefficients, the between-subject variability and the residual error:
+
+```{r param-table, echo=FALSE}
+knitr::kable(data.frame(
+  `What the paper prints` = c("Typical clearance, at its reference covariates",
+                              "Typical volume",
+                              "Covariate coefficients",
+                              "Between-subject variance",
+                              "Residual error"),
+  `Example` = c("CL = 5.4 L/h (70 kg, CRCL 90, women)",
+                "V = 46 L (70 kg)",
+                "CRCL exponent 0.62; sex effect 0.15",
+                "ω²CL = 0.04 (or \"CV 20%\")",
+                "proportional, 15%"),
+  `Enter it as` = c("tcl = log(5.4)",
+                    "tv = log(46)",
+                    "bcrcl = 0.62, bsex = 0.15",
+                    "eta.cl ~ 0.04",
+                    "prop.sd = 0.15")),
+  row.names = FALSE,
+  caption = "Parameter table to `est`.")
+```
+
+Two things to watch:
+
+- **Scale.** Estimates go in on the scale the model's `ini()` is written on.
+  Parameters the model exponentiates (`cl <- exp(tcl + eta.cl)`) are entered
+  log-transformed: a clearance reported as 5.4 L/h becomes `tcl = log(5.4)`.
+  Coefficients used directly (exponents, log-scale sex effects) go in as printed.
+- **IIV is a variance.** Papers often report a CV% instead;
+  `log(1 + CV^2)` converts it (20% CV → 0.04).
+
+## Step 2 — Extract the baseline tables
+
+From each paper's baseline ("Table 1") you need, per covariate, a centre, a
+spread, a distribution shape, and any reported correlations:
+
+```{r baseline-table, echo=FALSE}
+knitr::kable(data.frame(
+  Covariate = c("Weight", "Weight (variant)", "Creatinine clearance",
+                "Creatinine clearance (skewed)", "Sex", "Weight × CRCL"),
+  `Paper reports` = c("mean 78 kg, SD 14", "mean 78 kg, CV 18%",
+                      "mean 102, SD 18", "median 41, IQR 29–58",
+                      "60% male", "correlation 0.35"),
+  `Declare it as` = c("WT = c(mean = 78, sd = 14)", "WT = c(mean = 78, cv = 18)",
+                      "CRCL = c(mean = 102, sd = 18)", "CRCL = c(median = 41, iqr = c(29, 58))",
+                      "SEX = c(male = 0.60)", "cor = c(WT.CRCL = 0.35)")),
+  row.names = FALSE,
+  caption = "Baseline table to `admPopulation()`.")
+```
+
+Notes on shape and correlation:
+
+- Lognormal is the default (`dist = "lnorm"`) and is the right choice for a
+  positive covariate like weight or CrCl — a normal margin wide enough to
+  matter puts mass at or below zero, which is `NaN` inside a power term. Use
+  `dist = "normal"` only for a covariate that can legitimately take either sign.
+- Correlations are named by pair, `cor = c(WT.CRCL = 0.35)`; pairs you do not
+  name are treated as independent. For lognormal margins the correlation acts
+  on the latent (log) scale; admixr2 does that conversion for you.
+- Whichever summary the paper printed works: `mean`/`sd`, `mean`/`cv` (in
+  percent), or `median`/`iqr = c(q1, q3)`.
+- Also note the **enrolled range**, usually in the inclusion criteria
+  (e.g. "CRCL 15–75 mL/min"). Pass it as `range` so the source is not
+  credited with evidence at covariate values it never enrolled — a `mean`/`sd`
+  summary has tails where nobody was.
+
+## Step 3 — Transcribe each paper
+
+Write each paper's model as an ordinary nlmixr2 model (the `ini()` values are
+just placeholders with the right names), and hand `admStudy()` the published
+estimates as `est`, together with the population from step 2, the sample size
+and the design.
+
+```{r transcribe}
+TIMES <- c(0.5, 1, 2, 4, 8, 12, 24)
+
+# --- Alvarez 2021: fixed 200 mg for everyone, normal renal function --------
+alvarez_model <- function() {
+  ini({
+    tcl     <- log(5)     # typical CL (L/h) at 70 kg, CRCL 90, women
+    tv      <- log(50)    # typical V (L) at 70 kg
+    bcrcl   <- 0.5        # CRCL exponent on CL -- BOTH papers fitted one
+    bsex    <- 0.1        # sex effect on CL (log scale)
+    prop.sd <- 0.1        # proportional residual error
+    eta.cl  ~ 0.05        # IIV on CL (variance)
+  })
+  model({
+    cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl * exp(bsex * SEX)
+    v  <- exp(tv) * (WT/70)
+    cp <- linCmt()
+    cp ~ prop(prop.sd)
+  })
+}
+
+alvarez_pop <- admPopulation(
+  WT   = c(mean = 78, sd = 14),
+  CRCL = c(mean = 102, sd = 18),
+  SEX  = c(male = 0.60),
+  cor  = c(WT.CRCL = 0.35))
+
+# the papers' printed parameter tables, as named vectors (used again below)
+alvarez_est  <- c(tcl = log(5.4), tv = log(46), bcrcl = 0.55, bsex = 0.15,
+                  prop.sd = 0.12, eta.cl = 0.04)
+beaumont_est <- c(tcl = log(4.9), tv = log(44), bcrcl = 0.62, bsex = 0.15,
+                  prop.sd = 0.18, eta.cl = 0.05)
+
+alvarez <- admStudy(
+  model      = alvarez_model,
+  est        = alvarez_est,
+  population = alvarez_pop,
+  n          = 48,
+  dose       = 200,          # fixed dose: no group split needed
+  times      = TIMES)
+
+# --- Beaumont 2023: enrolled across renal function, dosed BY CRCL GROUP -----
+beaumont_model <- function() {
+  ini({
+    tcl     <- log(5)
+    tv      <- log(50)
+    bcrcl   <- 0.5
+    bsex    <- 0.1
+    prop.sd <- 0.15
+    eta.cl  ~ 0.05
+  })
+  model({
+    cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl * exp(bsex * SEX)
+    v  <- exp(tv) * (WT/70)
+    cp <- linCmt()
+    cp ~ prop(prop.sd)
+  })
+}
+
+# The paper's DOSING TABLE, transcribed as `dose_bands`: one row per band.
+# admixr2 expands this into one study per band -- the CRCL margin truncated
+# to the band, `n` split by the band's probability, and that band's `dose` --
+# so the pooled model needs no dose rule. (The bands already delimit CRCL's
+# span, so no `range` is given for it here.)
+beaumont <- admStudy(
+  model      = beaumont_model,
+  est        = beaumont_est,
+  population = admPopulation(
+    WT   = c(mean = 74, sd = 12),
+    CRCL = c(median = 41, iqr = c(29, 58)),
+    SEX  = c(male = 0.55),
+    cor  = c(WT.CRCL = 0.20)),
+  n          = 32,
+  dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf),
+                                      dose = c(100, 200))),
+  times      = TIMES)
+```
+
+Note what is **not** written anywhere: there is no argument saying whether
+renal function is "used" for dosing, and no dose rule in the model. Beaumont's
+model estimated a renal coefficient, so CRCL is **conditional** for that
+source; the dose difference between its groups is carried by the expanded
+studies' own `dose`, exactly as the paper's dosing table reports it.
+Conditional or marginal is read off each source's own model — there is nothing
+to declare.
+
+## Step 4 — Collect the studies and check the transcription
+
+```{r collect}
+studies <- admStudies(alvarez, beaumont)
+studies
+```
+
+Read this back against the papers before fitting: the covariate matrix names
+which sources are conditional on which covariates, and the NOTEs flag a
+covariate that is marginal in every source (identified only by the
+between-source contrast). `print()` a single study to check its transcription.
+
+## Step 5 — Fit the pooled model
+
+The analysis model contains both covariate terms and **no dose logic** — the
+dose each study carried is already in its `ev`:
+
+```{r pooled-model}
+pooled_model <- function() {
+  ini({
+    tcl     <- log(4)
+    tv      <- log(45)
+    bcrcl   <- 0.3        # the renal effect both papers reported
+    bsex    <- 0.10
+    prop.sd <- 0.1
+    eta.cl  ~ 0.05
+  })
+  model({
+    cl <- exp(tcl + eta.cl) * (WT/70)^0.75 * (CRCL/90)^bcrcl * exp(bsex * SEX)
+    v  <- exp(tv) * (WT/70)
+    cp <- linCmt()
+    cp ~ prop(prop.sd)
+  })
+}
+```
+
+```{r fit}
+fit <- nlmixr2(pooled_model, admData(), est = "adgh",
+               control = adghControl(studies = studies, print = 0L))
+pf  <- fit$parFixedDf
+```
+
+## Step 6 — Read the result
+
+```{r result-table}
+knitr::kable(data.frame(
+  parameter = c("CL at 70 kg, CRCL 90, women (L/h)", "V at 70 kg (L)",
+                "renal exponent", "sex effect (log)",
+                "proportional residual SD", "omega (eta.cl)"),
+  pooled    = c(pf["tcl", "Back-transformed"], pf["tv", "Back-transformed"],
+                pf["bcrcl", "Estimate"], pf["bsex", "Estimate"],
+                pf["prop.sd", "Back-transformed"],
+                as.numeric(fit$omega[1L, 1L])),
+  alvarez   = c(exp(alvarez_est[["tcl"]]), exp(alvarez_est[["tv"]]),
+                alvarez_est[["bcrcl"]], alvarez_est[["bsex"]],
+                alvarez_est[["prop.sd"]], alvarez_est[["eta.cl"]]),
+  beaumont  = c(exp(beaumont_est[["tcl"]]), exp(beaumont_est[["tv"]]),
+                beaumont_est[["bcrcl"]], beaumont_est[["bsex"]],
+                beaumont_est[["prop.sd"]], beaumont_est[["eta.cl"]])),
+  digits = 3, row.names = FALSE,
+  caption = "Pooled fit against what each paper printed.")
+```
+
+The pooled renal exponent comes back at
+`r sprintf("%.3f", pf["bcrcl", "Estimate"])`, against the papers' printed
+`r sprintf("%.2f", alvarez_est[["bcrcl"]])` (Alvarez) and
+`r sprintf("%.2f", beaumont_est[["bcrcl"]])` (Beaumont) — sharpened by the
+between-paper contrast: Alvarez's volunteers (mean CRCL 102) reported a
+clearance of `r sprintf("%.1f", exp(alvarez_est[["tcl"]]))` L/h while
+Beaumont's patients, at lower renal function, reported
+`r sprintf("%.1f", exp(beaumont_est[["tcl"]]))` L/h at the CRCL 90 reference,
+and the pooled model honours both only with a slope on renal function. The
+pooled clearance at the reference covariates,
+`r sprintf("%.2f", pf["tcl", "Back-transformed"])` L/h, sits between the two
+papers' — each paper's `tcl` priced its own population's renal function into
+its intercept. There are **no standard errors**: every source here is a
+published model, not a sample, so there is no sampling law to build an
+interval from; each study's `n` sets its relative weight, not a precision.
+
+```{r fit-plot, fig.cap="Observed vs predicted mean profiles per source. The CRCL<30 band of Beaumont (beaumont_CRCLb1) sits lower at early times: its group received half the dose."}
+plot(fit, which = "mean")
+```
+
+## What the group transcription buys
+
+Transcribe Beaumont **wrongly** — pooled into one study with the full 200 mg
+dose for everyone, as if the dose had been fixed:
+
+```{r fit-pooled}
+studies_pooled <- admStudies(
+  alvarez = alvarez,
+  beaumont = admStudy(
+    model      = beaumont_model,
+    est        = beaumont_est,
+    population = admPopulation(
+      WT   = c(mean = 74, sd = 12),
+      CRCL = c(median = 41, iqr = c(29, 58)),
+      SEX  = c(male = 0.55),
+      cor  = c(WT.CRCL = 0.20)),
+    n          = 32,
+    dose       = 200,
+    times      = TIMES,
+    range      = list(CRCL = c(15, 75))))
+fit_pooled <- nlmixr2(pooled_model, admData(), est = "adgh",
+                      control = adghControl(studies = studies_pooled, print = 0L))
+
+knitr::kable(data.frame(
+  transcription = c("one study per dose group", "pooled, fixed dose (wrong)"),
+  objective     = c(fit$objf, fit_pooled$objf),
+  bcrcl         = c(pf["bcrcl", "Estimate"],
+                    fit_pooled$parFixedDf["bcrcl", "Estimate"])),
+  digits = 3, row.names = FALSE,
+  caption = "Same papers, same model; only the transcription of Beaumont differs.")
+```
+
+Pooling the group-dosed paper as a single fixed-dose study costs
+`r sprintf("%.0f", fit_pooled$objf - fit$objf)` units of \u22122LL — the model can
+see that the low-CrCl group's concentrations are too low for the dose their
+study is credited with. The dose-by-group structure is identified, and
+mis-transcribing it is detectable from the objective alone.
+
+## Cheat sheet
+
+- Parameter table → `est`, on the `ini()` scale (log where the model
+  exponentiates; IIV as a variance, `log(1 + CV^2)` to convert a CV%).
+- Baseline table → `admPopulation()`: `mean`/`sd`, `mean`/`cv`, or
+  `median`/`iqr`; a proportion for a binary covariate; `cor = c(A.B = r)` for
+  the reported pairs; lognormal by default, `dist = "normal"` when the
+  covariate can go negative; `range` for the enrolled span from the inclusion
+  criteria.
+- **Dosed by a covariate, by band or group** (the Beaumont case):
+  `dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf), dose = c(100, 200)))`
+  transcribes the paper's dosing table and expands into one study per band —
+  margin truncated to the band, `n` split by band probability, that band's
+  dose — so the pooled model stays dose-free. `by = "<covariate>"` expands a
+  source into one study per level of a discrete covariate when the dose is
+  shared.
+- **Dosed by a covariate but only a pooled profile is published**: carry the
+  rule in the model instead, as a dosing modifier whose right-hand side is an
+  expression of the covariate — `f(centr) <- ifelse(CRCL < 30, 0.5, 1)` for a
+  bolus (`rate()`/`dur()`/`lag()` for infusions and delays). `ev` itself stays
+  a single numeric `amt` per study; `et(amt = CRCL)` does not parse. Do not
+  assign the modifier inside `if`/`else` branches — rxode2 lowers that to
+  invalid code.
+- One `admStudy()` per paper; collect with `admStudies()`; print the
+  collection and read it back against the papers before fitting.
+- Conditional vs marginal is derived from each paper's own model — a covariate
+  is conditional exactly where that paper estimated its coefficient.
+- Covariate marginalisation needs `est = "admc"` or `"adgh"`; `adfo` and
+  `adirmc` refuse a study that declares a covariate distribution.
+
+## See also
+
+- [Covariates in aggregate data](covariates.html) --- the full worked example, diagnostics, and the identifiability details
+- [Multiple studies](multiple-studies.html) --- meta-analysis across digitised studies
+- [Simulating data & using published models](datagen.html) --- the model-as-input path
+- [Comparing the estimators](estimator-comparison.html) --- adfo / admc / adgh / adirmc
