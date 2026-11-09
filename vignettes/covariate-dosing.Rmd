@@ -23,18 +23,23 @@ library(admixr2); library(rxode2); library(nlmixr2); library(ggplot2)
 ## The example
 
 A one-compartment IV drug with two published popPK analyses. **Both** papers
-fitted a creatinine-clearance (CrCl) power term on clearance. But only one of
-them **dosed by renal function**: its patients were split into groups by CrCl
-and each group got its own dose. Both papers sampled at 0.5, 1, 2, 4, 8, 12 and
+fitted a creatinine-clearance (CrCl) power term on clearance. They also used
+**different dosing rules**: one dosed 2 mg/kg (by weight), the other split its
+patients into groups by CrCl and gave each group its own dose. Both papers
+sampled at 0.5, 1, 2, 4, 8, 12 and
 24 h after the dose. The goal is one pooled population model using only what
 the two papers printed — each paper contributes its **parameter table** and
 its **baseline table**.
 
-- **Alvarez 2021** — 48 patients, normal renal function. Fixed 200 mg IV bolus
-  for everyone.
+- **Alvarez 2021** — 48 patients, normal renal function. **Dosed 2 mg/kg**
+  (weight-proportional: `dose_mult`).
 - **Beaumont 2023** — 32 patients enrolled across renal function (CrCl 15–75
-  mL/min). **Dosed by CrCl group:** below 30 mL/min received 100 mg, the rest
-  200 mg.
+  mL/min). **Dosed by CrCl band:** below 30 mL/min received 100 mg, the rest
+  200 mg (`dose_bands`).
+
+The two papers used *different* dosing rules, and the pooled model needs
+neither: each rule is transcribed at the study level, so one dose-free
+analysis model covers both.
 
 ## Step 1 — Extract the parameter tables
 
@@ -116,7 +121,7 @@ and the design.
 ```{r transcribe}
 TIMES <- c(0.5, 1, 2, 4, 8, 12, 24)
 
-# --- Alvarez 2021: fixed 200 mg for everyone, normal renal function --------
+# --- Alvarez 2021: dosed 2 mg/kg (weight-proportional), normal renal function -
 alvarez_model <- function() {
   ini({
     tcl     <- log(5)     # typical CL (L/h) at 70 kg, CRCL 90, women
@@ -151,8 +156,9 @@ alvarez <- admStudy(
   est        = alvarez_est,
   population = alvarez_pop,
   n          = 48,
-  dose       = 200,          # fixed dose: no group split needed
-  times      = TIMES)
+  dose_mult  = c(WT = 2),    # 2 mg/kg: expanded over WT nodes, amt = 2 * WT
+  times      = TIMES,
+  strata_nodes = 5L)         # WT nodes x CRCL strata: 5 keeps the fit quick
 
 # --- Beaumont 2023: enrolled across renal function, dosed BY CRCL GROUP -----
 beaumont_model <- function() {
@@ -188,7 +194,8 @@ beaumont <- admStudy(
   n          = 32,
   dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf),
                                       dose = c(100, 200))),
-  times      = TIMES)
+  times      = TIMES,
+  strata_nodes = 5L)
 ```
 
 Note what is **not** written anywhere: there is no argument saying whether
@@ -301,6 +308,7 @@ studies_pooled <- admStudies(
     n          = 32,
     dose       = 200,
     times      = TIMES,
+    strata_nodes = 5L,
     range      = list(CRCL = c(15, 75))))
 fit_pooled <- nlmixr2(pooled_model, admData(), est = "adgh",
                       control = adghControl(studies = studies_pooled, print = 0L))

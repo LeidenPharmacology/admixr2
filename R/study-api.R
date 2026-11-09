@@ -1098,7 +1098,10 @@ print() a single study to check its transcription.
         spk$n   <- s$n * stl[[k]]$weight
         spk[["cov"]] <- utils::modifyList(as.list(sp[["cov"]] %||% list()),
                                           stl[[k]]$cov)
-        spk$cov_dist <- .admCovDropMargin(s$population, .mcv)
+        # the REMAINING covariates keep their distribution CONDITIONAL on the
+        # node (the copula is conditioned, not dropped -- dropping would
+        # refuse a correlated baseline table, and conditioning is exact)
+        spk$cov_dist <- stl[[k]]$cov_dist
         # the mult covariate is PINNED at the node now, so it must not also be
         # cut into nodes by datagen's own stratify pass
         if (!identical(spk$stratify, FALSE)) {
