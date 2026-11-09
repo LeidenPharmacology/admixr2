@@ -932,3 +932,46 @@ test_that("dose_bands validates its inputs", {
                         range = list(CRCL = c(15, 75)), dose_bands = .sa_bands),
                "both touch")
 })
+
+test_that("dose_mult expands into per-node studies with amt = mult * node", {
+  skip_if_not_installed("rxode2")
+  pop <- admPopulation(WT = c(mean = 75, sd = 16))
+  s <- admStudy(model = .sa_fitwt, population = pop,
+                n = 90, times = c(1, 2, 4), strata_nodes = 5L,
+                dose_mult = c(WT = 2))
+  m <- admixr2:::.admMaterialise(admixr2::admStudies(s = s))
+  expect_length(m, 5L)
+  expect_true(all(grepl("^s_WTm[1-5]$", names(m))))
+  # n weights sum to n; each node's amt is 2 * its pinned WT
+  expect_equal(sum(vapply(m, function(x) x$n, 0)), 90, tolerance = 1e-8)
+  for (nm in names(m)) {
+    amt <- as.data.frame(m[[nm]]$ev)$amt[1]
+    expect_equal(amt, 2 * m[[nm]]$cov$WT, tolerance = 1e-8)
+  }
+  # nodes span the declared margin
+  w <- vapply(m, function(x) x$cov$WT, 0)
+  expect_true(min(w) < 75 && max(w) > 75)
+})
+
+test_that("dose_mult validates its inputs", {
+  pop <- admPopulation(WT = c(mean = 75, sd = 16))
+  expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10,
+                        times = 1:2, dose = 100, dose_mult = c(WT = 2)),
+               "together with")
+  expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10, times = 1:2,
+                        dose_bands = list(WT = data.frame(lo = c(-Inf, 75),
+                                                          hi = c(75, Inf),
+                                                          dose = c(1, 2))),
+                        dose_mult = c(WT = 2)),
+               "together with")
+  expect_error(admStudy(E = 1:2, sd = 0.1, n = 10, times = 1:2,
+                        dose_mult = c(WT = 2)), "digitised data cannot")
+  expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10,
+                        times = 1:2, dose_mult = c(WT = -2)), "positive")
+  expect_error(admStudy(model = .sa_fitwt,
+                        population = admPopulation(CRCL = c(mean = 90, sd = 20)),
+                        n = 10, times = 1:2, dose_mult = c(WT = 2)),
+               "does not declare")
+  expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10, times = 1:2,
+                        at = list(WT = 70), dose_mult = c(WT = 2)), "also scales")
+})

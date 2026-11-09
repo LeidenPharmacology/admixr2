@@ -335,7 +335,10 @@ mis-transcribing it is detectable from the objective alone.
   margin truncated to the band, `n` split by band probability, that band's
   dose — so the pooled model stays dose-free. `by = "<covariate>"` expands a
   source into one study per level of a discrete covariate when the dose is
-  shared.
+  shared. For covariate-**proportional** dosing (mg/kg), `dose_mult = c(WT = 2)`
+  cuts the covariate into `strata_nodes` nodes and gives each node its own
+  `amt = 2 * <node>` — the same expansion, with the dose computed from the
+  covariate value instead of read off a band table.
 - **Dosed by a covariate but only a pooled profile is published**: carry the
   rule in the model instead, as a dosing modifier whose right-hand side is an
   expression of the covariate — `f(centr) <- ifelse(CRCL < 30, 0.5, 1)` for a

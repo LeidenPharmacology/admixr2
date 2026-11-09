@@ -22,7 +22,8 @@ admStudy(
   range = NULL,
   label = NULL,
   v_denom = NULL,
-  dose_bands = NULL
+  dose_bands = NULL,
+  dose_mult = NULL
 )
 }
 \arguments{
@@ -125,6 +126,14 @@ margin truncated to the band, \code{n} split by the band's probability, that
 band's \code{dose} — so the pooled analysis model needs no dose rule. Model
 sources only: a digitised pooled \code{E}/\code{V} cannot be split into per-band
 profiles. Mutually exclusive with \code{dose}/\code{ev}.}
+
+\item{dose_mult}{Covariate-proportional dosing, e.g. mg/kg:
+\code{dose_mult = c(WT = 2)} doses 2 mg per kg. The covariate is cut into
+\code{strata_nodes} nodes (default 9) and each node becomes its own study with
+\verb{amt = mult * <node value>} and its share of \code{n} — again the pooled model
+needs no dose rule. Named numeric vector of length one, naming a
+continuous covariate declared in \code{population}. Mutually exclusive with
+\code{dose}/\code{ev}/\code{dose_bands}.}
 }
 \value{
 An \code{admStudy} object.

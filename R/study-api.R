@@ -312,6 +312,13 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   band's `dose` — so the pooled analysis model needs no dose rule. Model
 #'   sources only: a digitised pooled `E`/`V` cannot be split into per-band
 #'   profiles. Mutually exclusive with `dose`/`ev`.
+#' @param dose_mult Covariate-proportional dosing, e.g. mg/kg:
+#'   `dose_mult = c(WT = 2)` doses 2 mg per kg. The covariate is cut into
+#'   `strata_nodes` nodes (default 9) and each node becomes its own study with
+#'   `amt = mult * <node value>` and its share of `n` — again the pooled model
+#'   needs no dose rule. Named numeric vector of length one, naming a
+#'   continuous covariate declared in `population`. Mutually exclusive with
+#'   `dose`/`ev`/`dose_bands`.
 #' @param ev A dosing event table from [rxode2::et()], for anything `dose`
 #'   cannot express.
 #' @param population The population the study enrolled --- see
@@ -417,7 +424,8 @@ admStudy <- function(model = NULL, est = NULL,
                      n = NULL, times = NULL, dose = NULL, ev = NULL,
                      population = NULL, at = NULL, by = NULL,
                      strata_nodes = NULL, range = NULL,
-                     label = NULL, v_denom = NULL, dose_bands = NULL) {
+                     label = NULL, v_denom = NULL, dose_bands = NULL,
+                     dose_mult = NULL) {
   # WHETHER A COVARIATE IS CONDITIONAL OR MARGINAL IS NOT A USER CHOICE. It is a
   # property of the source's own model -- conditional when that model ESTIMATED
   # the covariate's coefficient, marginal when it never mentions the covariate
@@ -479,9 +487,9 @@ admStudy <- function(model = NULL, est = NULL,
   if (is.null(times) || !length(times)) bad("needs `times`.")
   if (!is.numeric(times) || any(!is.finite(times)))
     bad("`times` must be finite numbers.")
-  if (is.null(ev) && is.null(dose) && is.null(dose_bands))
-    bad("needs a `dose`, an `ev` event table, or `dose_bands` for anything a ",
-        "single dose cannot express.")
+  if (is.null(ev) && is.null(dose) && is.null(dose_bands) && is.null(dose_mult))
+    bad("needs a `dose`, an `ev` event table, `dose_bands`, or `dose_mult` ",
+        "for anything a single dose cannot express.")
   if (!is.null(ev) && !is.null(dose))
     bad("has both `dose` and `ev`; `dose` is only shorthand for one.")
   if (!is.null(dose) &&
@@ -547,6 +555,31 @@ admStudy <- function(model = NULL, est = NULL,
     if (!is.null(range) && (!is.list(range) || .bcv %in% names(as.list(range))))
       bad("`range` and `dose_bands` both touch ", sQuote(.bcv),
           "; the bands already delimit its span.")
+  }
+  if (!is.null(dose_mult)) {
+    if (!is.null(dose) || !is.null(ev) || !is.null(dose_bands))
+      bad("has `dose_mult` together with `dose`, `ev` or `dose_bands`; a ",
+          "study has one dose rule, not several.")
+    if (!has_model)
+      bad("digitised data cannot take `dose_mult`: a single pooled E/V ",
+          "cannot be split into per-weight profiles. Enter one admStudy() per ",
+          "reported weight band instead.")
+    if (!is.numeric(dose_mult) || length(dose_mult) != 1L ||
+        is.null(names(dose_mult)) || !nzchar(names(dose_mult)[1L]) ||
+        !is.finite(dose_mult) || dose_mult <= 0)
+      bad("`dose_mult` must be a named, positive, finite number per unit ",
+          "covariate, e.g. dose_mult = c(WT = 2) for 2 mg/kg.")
+    .mcv <- names(dose_mult)[1L]
+    if (is.null(population) || !(.mcv %in% .admCovSpecNames(population)))
+      bad("`dose_mult` scales by ", sQuote(.mcv), ", but `population` does ",
+          "not declare a distribution for it. Declare the covariate in ",
+          "`population = admPopulation(...)`.")
+    .mspec <- .admCovDistCanon(population)[[.mcv]]
+    if (!is.null(.mspec[["values"]]))
+      bad("`dose_mult` needs a CONTINUOUS covariate; ", sQuote(.mcv),
+          " is declared with levels.")
+    if (.mcv %in% names(at))
+      bad("`at` pins ", sQuote(.mcv), " but `dose_mult` also scales by it.")
   }
   if (length(at)) {
     if (is.null(names(at)) || any(!nzchar(names(at))) || anyDuplicated(names(at)))
@@ -671,8 +704,8 @@ admStudy <- function(model = NULL, est = NULL,
     E = E, V = V, n = as.numeric(n), times = as.numeric(times),
     ev = ev, dose = dose, population = population, at = at, by = by,
     strata_nodes = strata_nodes, range = range,
-    label = label, v_denom = v_denom, dose_bands = dose_bands),
-    class = "admStudy")
+    label = label, v_denom = v_denom, dose_bands = dose_bands,
+    dose_mult = dose_mult), class = "admStudy")
 }
 
 #' @export
@@ -680,7 +713,10 @@ print.admStudy <- function(x, ...) {
   nm <- x$label %||% "study"
   kind <- if (is.null(x$ui)) "digitised DATA" else "published MODEL"
   cat("admixr2 study '", nm, "'  -- ", kind, "\n", sep = "")
-  dz <- if (!is.null(x$dose)) paste0("dose ", x$dose) else "ev supplied"
+  dz <- if (!is.null(x$dose)) paste0("dose ", x$dose)
+        else if (!is.null(x$dose_bands)) "dose bands"
+        else if (!is.null(x$dose_mult)) "dose per covariate unit"
+        else "ev supplied"
   cat(sprintf("  design    n = %s, %s, %d times (%g - %g)\n",
               format(x$n), dz, length(x$times), min(x$times), max(x$times)))
   if (!is.null(x$dose_bands)) {
@@ -689,6 +725,9 @@ print.admStudy <- function(x, ...) {
                 paste(sprintf("[%g, %g) -> %g", bd$lo, bd$hi, bd$dose),
                       collapse = ", ")))
   }
+  if (!is.null(x$dose_mult))
+    cat(sprintf("  dose mult  %g per unit %s\n", x$dose_mult,
+                names(x$dose_mult)[1L]))
   # Show resolved defaults in the collection pre-flight, not per study.
   if (is.null(x$ui))
     cat(sprintf("  V scale   %s denominator%s\n", x$v_denom %||% "ml",
@@ -1037,6 +1076,37 @@ print() a single study to check its transcription.
         spk$cov_dist[[.bcv]] <- .admCovBandSpec(.bspec, .bbd$lo[k],
                                                  .bbd$hi[k], .bcdf)
         g <- datagen(stats::setNames(list(spk), paste0(nm, "_", .bcv, "b", k)),
+                     model = s$ui, control = datagenControl(method = "gh"))
+        for (kk in names(g)) add(kk, g[[kk]])
+      }
+      next
+    }
+    # `dose_mult` (mg/kg): cut the covariate into strata nodes and give each
+    # node its own amt = mult * node value, with its share of n -- the same
+    # "one study per group" expansion as `by`, with a per-group dose computed
+    # from the group value instead of looked up in a table.
+    if (!is.null(s$dose_mult)) {
+      .mcv <- names(s$dose_mult)[1L]; .mult <- s$dose_mult[[1L]]
+      stl <- .admCovStrata(s$population, .mcv, .admStrataNodes(s),
+                           warn_range = FALSE, cov_range = sp$cov_range)
+      if (is.null(stl) || !length(stl))
+        stop("admixr2: study '", nm, "': `dose_mult` on ", sQuote(.mcv),
+             " produced no nodes; check the covariate's declared margin.",
+             call. = FALSE)
+      for (k in seq_along(stl)) {
+        spk <- sp
+        spk$n   <- s$n * stl[[k]]$weight
+        spk[["cov"]] <- utils::modifyList(as.list(sp[["cov"]] %||% list()),
+                                          stl[[k]]$cov)
+        spk$cov_dist <- .admCovDropMargin(s$population, .mcv)
+        # the mult covariate is PINNED at the node now, so it must not also be
+        # cut into nodes by datagen's own stratify pass
+        if (!identical(spk$stratify, FALSE)) {
+          spk$stratify <- setdiff(spk$stratify, .mcv)
+          if (!length(spk$stratify)) spk$stratify <- FALSE
+        }
+        spk$ev  <- rxode2::et(amt = .mult * stl[[k]]$cov[[.mcv]])
+        g <- datagen(stats::setNames(list(spk), paste0(nm, "_", .mcv, "m", k)),
                      model = s$ui, control = datagenControl(method = "gh"))
         for (kk in names(g)) add(kk, g[[kk]])
       }
