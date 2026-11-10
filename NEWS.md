@@ -1,5 +1,39 @@
 # admixr2 (development version)
 
+## New features
+
+* **Covariate-dependent dosing for published models.** `admStudy()` gains
+  `dose_bands` and `dose_mult`, so a paper that dosed by a covariate can be
+  transcribed as it was run rather than at one representative dose.
+  - `dose_bands` takes the paper's dosing table, e.g.
+    `dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf),
+    dose = c(100, 200)))`. The source becomes one study per band: the
+    covariate restricted to the band, `n` split by the band's share, and that
+    band's dose. A `range` on the banded covariate gives the enrolled span,
+    and the bands are cut inside it.
+  - `dose_mult = c(WT = 2)` doses 2 mg/kg. The covariate is cut into nodes,
+    and each node becomes a study with its own `amt` and share of `n`. A
+    margin that would give a non-positive dose is refused unless a positive
+    `range` bounds it.
+
+  Covariates correlated with the dosing covariate are conditioned on each band
+  or node, so they shift with it. The analysis model needs no dose rule,
+  because each study carries its own dose. Both arguments accept model sources
+  only, since a digitised pooled profile cannot be split by band.
+
+## Changes that can move an existing fit
+
+* **A `range` on a covariate that is stratified and correlated with others now
+  shifts those others too.** The truncated covariate used to be conditioned on
+  its truncated position rather than its place in the full distribution, so
+  correlated covariates barely moved within the enrolled span. Studies
+  without a `range`, or whose covariates are uncorrelated, are unchanged.
+
+* **Stratifying a study that is already conditioned now keeps that
+  conditioning.** A second stratification used to start again from the
+  population as a whole, which removed the dependence between covariates
+  inside each stratum.
+
 ## Bug fixes
 
 * **Observation times out of order fitted the wrong data, silently, on all four

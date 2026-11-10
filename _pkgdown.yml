@@ -64,8 +64,6 @@ navbar:
         - text: Meta-analysis across studies
         - text: Multiple studies
           href: articles/multiple-studies.html
-        - text: Covariate-dependent dosing
-          href: articles/covariate-dosing.html
         - text: Several outputs (plasma + brain)
           href: articles/multi-compartment.html
         - text: PD and PK/PD data
@@ -112,7 +110,6 @@ articles:
       outputs, and PD / PK-PD endpoints.
     contents:
       - multiple-studies
-      - covariate-dosing
       - multi-compartment
       - pkpd
 

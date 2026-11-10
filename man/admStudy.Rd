@@ -123,17 +123,21 @@ data.frame with columns \code{lo}, \code{hi}, \code{dose} — one row per dose b
 \code{dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf), dose = c(100, 200)))} doses 100 mg below CrCl 30 and 200 mg above. The
 study is expanded into one study per band — the covariate's declared
 margin truncated to the band, \code{n} split by the band's probability, that
-band's \code{dose} — so the pooled analysis model needs no dose rule. Model
-sources only: a digitised pooled \code{E}/\code{V} cannot be split into per-band
-profiles. Mutually exclusive with \code{dose}/\code{ev}.}
+band's \code{dose} — so the pooled analysis model needs no dose rule. A
+\code{range} on the banded covariate gives the enrolled span (e.g. the
+inclusion criteria); the bands are cut inside it and \code{n} is split by
+each band's share of that span. Model sources only: a digitised pooled
+\code{E}/\code{V} cannot be split into per-band profiles. Mutually exclusive with
+\code{dose}/\code{ev}.}
 
 \item{dose_mult}{Covariate-proportional dosing, e.g. mg/kg:
 \code{dose_mult = c(WT = 2)} doses 2 mg per kg. The covariate is cut into
 \code{strata_nodes} nodes (default 9) and each node becomes its own study with
 \verb{amt = mult * <node value>} and its share of \code{n} — again the pooled model
 needs no dose rule. Named numeric vector of length one, naming a
-continuous covariate declared in \code{population}. Mutually exclusive with
-\code{dose}/\code{ev}/\code{dose_bands}.}
+continuous covariate declared in \code{population}, whose margin (or \code{range})
+must stay positive. A \code{range} on it limits the nodes to the enrolled
+span. Mutually exclusive with \code{dose}/\code{ev}/\code{dose_bands}.}
 }
 \value{
 An \code{admStudy} object.
