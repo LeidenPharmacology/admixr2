@@ -1085,8 +1085,7 @@ print() a single study to check its transcription.
         # the sampler (grid, covDraw, admc rows) while `n` and `dose` are
         # band-specific. Strip the derived fields and re-canonise from the
         # latent correlation, the same rebuild .admCovApplyRange() performs
-        # for `range`. In a copula, truncating one margin IS conditioning on
-        # the band, so the remaining covariates shift through the copula.
+        # for `range`.
         .cd <- spk$cov_dist
         if (is.function(.cd[["joint"]])) {
           .R <- .cd[["latentR"]]; .lmu <- .cd[["latentMu"]]

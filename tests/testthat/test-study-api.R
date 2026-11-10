@@ -921,16 +921,16 @@ test_that("dose_bands conditions on the band when the banded covariate is correl
     expect_equal(as.data.frame(m[[nm]]$ev)$amt[1], 200)
   }
   # the remaining correlated covariate is conditioned on the node: pooling
-  # draws over each band's nodes, WT shifts. E[WT | CRCL<30] =
-  # mu_W + rho*sd_W*E[z_C | z_C < c], E[z|z<c] = -phi(c)/Phi(c)
+  # draws over each band's nodes reproduces E[WT | band] from the full law.
+  # Conditioning on the band's OWN score instead of the full-margin latent
+  # left WT nearly unshifted (76.5 against 58.7) -- a 30% tolerance hid it.
   wt_mean <- function(nms) sum(vapply(nms, function(nm) {
     X <- covDraw(admixr2:::.admCovDistCanon(m[[nm]]$cov_dist), n = 20000L)
     m[[nm]]$n * mean(X[, "WT"])
   }, 0)) / sum(vapply(m[nms], function(x) x$n, 0))
-  c30 <- stats::qnorm(p1)
-  ewt_lo <- 75 + 0.6 * 12 * (-stats::dnorm(c30) / p1)
-  expect_equal(wt_mean(b1), ewt_lo, tolerance = 0.3)
-  expect_lt(wt_mean(b1), wt_mean(b2))
+  X <- covDraw(admixr2:::.admCovDistCanon(pop), n = 200000L)
+  expect_equal(wt_mean(b1), mean(X[X[, "CRCL"] < 30, "WT"]), tolerance = 0.01)
+  expect_equal(wt_mean(b2), mean(X[X[, "CRCL"] >= 30, "WT"]), tolerance = 0.01)
 })
 
 test_that("dose_bands validates its inputs", {
@@ -995,6 +995,31 @@ test_that("dose_mult expands into per-node studies with amt = mult * node", {
   # nodes span the declared margin
   w <- vapply(m, function(x) x$cov$WT, 0)
   expect_true(min(w) < 75 && max(w) > 75)
+})
+
+test_that("dose_mult keeps the WT node's conditioning through a second stratify pass", {
+  skip_if_not_installed("rxode2")
+  # the source also fits CRCL, so datagen stratifies each (already
+  # WT-conditioned) node on CRCL. .admCovStrata ignored the incoming
+  # latentMu/latentScale and re-cut CRCL from its UNCONDITIONAL law, which
+  # erased the WT-CRCL dependence entirely.
+  mod <- function() {
+    ini({ tcl <- log(5); b <- 0.5; tv <- log(50); add.err <- 0.08; eta.cl ~ 0.09 })
+    model({ cl <- exp(tcl + b * log(CRCL / 60) + eta.cl); v <- exp(tv)
+            cp <- linCmt(); cp ~ add(add.err) })
+  }
+  pop <- admPopulation(CRCL = c(mean = 60, sd = 25), WT = c(mean = 75, sd = 15),
+                       cor = c(WT.CRCL = 0.6))
+  s <- admStudy(model = mod, population = pop, n = 100, times = c(1, 2, 4),
+                dose_mult = c(WT = 2))
+  m <- suppressWarnings(admixr2:::.admMaterialise(admixr2::admStudies(s = s)))
+  nn <- vapply(m, function(x) x$n, 0)
+  xy <- cbind(vapply(m, function(x) x$cov$WT, 0),
+              vapply(m, function(x) x$cov$CRCL, 0))
+  X <- covDraw(admixr2:::.admCovDistCanon(pop), n = 200000L)
+  expect_equal(sum(nn * xy[, 2]) / sum(nn), mean(X[, "CRCL"]), tolerance = 0.01)
+  expect_equal(stats::cov.wt(xy, wt = nn / sum(nn), cor = TRUE)$cor[1, 2],
+               stats::cor(X[, "WT"], X[, "CRCL"]), tolerance = 0.02)
 })
 
 test_that("dose_mult validates its inputs", {

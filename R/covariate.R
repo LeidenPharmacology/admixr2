@@ -1170,7 +1170,10 @@
 .admCovBandSpec <- function(spec, lo, hi, cdf) {
   pa <- if (is.infinite(lo)) 0 else as.numeric(cdf(lo))
   pb <- if (is.infinite(hi)) 1 else as.numeric(cdf(hi))
-  list(quantile = function(u) .admCovQuantile(spec, pa + u * (pb - pa)))
+  # `.band` lets .admCovStrata() map a node back to the FULL-margin latent,
+  # qnorm(pa + u (pb - pa)), which is what the copula conditions on.
+  list(quantile = function(u) .admCovQuantile(spec, pa + u * (pb - pa)),
+       .band = c(pa, pb))
 }
 
 # Truncate one covariate's margin to the range a source actually enrolled.
@@ -1443,6 +1446,25 @@
         zC <- zC %*% .U
       }
     } else { zC <- matrix(0, 1L, 0L); wC <- 1 }
+    # AN ALREADY-CONDITIONED cov_dist (a dose_mult node, a stratum) carries its
+    # shift and shrinkage as latentMu/latentScale: z ~ N(mu0, D R D). Ignoring
+    # them re-stratified from the UNCONDITIONAL law and threw the shift away.
+    # zC has covariance R_SS here, so the affine map gives it Sg_SS.
+    mu0 <- as.numeric(cov_dist[["latentMu"]] %||% numeric(d))
+    sd0 <- as.numeric(cov_dist[["latentScale"]] %||% rep(1, d))
+    Sg  <- Rm * tcrossprod(sd0)
+    if (length(iSc)) {
+      zC <- sweep(sweep(zC, 2L, sd0[iSc], "*"), 2L, mu0[iSc], "+")
+    }
+    # A BAND-truncated margin (dose_bands) maps its node through its OWN
+    # uniform, so zC is the band's score, not the latent the copula couples
+    # through. Condition on the full-margin latent qnorm(pa + u (pb - pa)).
+    zF <- zC
+    for (k in seq_along(iSc)) {
+      .bd <- cov_dist[[nms[iSc[k]]]][[".band"]]
+      if (!is.null(.bd))
+        zF[, k] <- stats::qnorm(.bd[1L] + .admCovU(zC[, k]) * (.bd[2L] - .bd[1L]))
+    }
     nC <- nrow(zC)
     xC <- matrix(if (length(iSc)) vapply(seq_along(iSc), function(k)
       .admCovQuantile(cov_dist[[nms[iSc[k]]]],
@@ -1458,9 +1480,12 @@
     # Conditioning is a NO-OP wherever the latent blocks do not couple, and the stratum's remaining covariates
     # then keep their DECLARED specs -- exact, with no sample standing in for them. That is the common case.
     A <- if (length(iMc) && length(iSc))
-      Rm[iMc, iSc, drop = FALSE] %*% solve(Rm[iSc, iSc, drop = FALSE]) else
+      Sg[iMc, iSc, drop = FALSE] %*% solve(Sg[iSc, iSc, drop = FALSE]) else
       matrix(0, length(iMc), length(iSc))
-    exact_marg <- !length(A) || all(abs(A) < 1e-12)
+    # an incoming shift/scale on the remaining block must ride the conditional
+    # route too, or the declared-margin shortcut below drops it
+    exact_marg <- (!length(A) || all(abs(A) < 1e-12)) &&
+      all(mu0[iM] == 0) && all(sd0[iM] == 1)
     Rmm <- Rm[iM, iM, drop = FALSE]
     dep_marg <- length(iM) > 1L &&
       !isTRUE(all.equal(unname(Rmm), diag(length(iM)), tolerance = 1e-12))
@@ -1471,7 +1496,7 @@
     pt_spec <- function(v) list(.point = TRUE, quantile = local({ v <- as.numeric(v)
       function(u) rep(v, length.out = length(u)) }))
     if (!exact_marg) {
-      Sc <- Rm[iMc, iMc, drop = FALSE] - A %*% Rm[iSc, iMc, drop = FALSE]
+      Sc <- Sg[iMc, iMc, drop = FALSE] - A %*% Sg[iSc, iMc, drop = FALSE]
     }
     return(unlist(lapply(seq_len(nD), function(kd) lapply(seq_len(nC), function(kc) {
       cd_k <- list()
@@ -1498,7 +1523,7 @@
         # refused the child and every dose_bands/dose_mult/stratified unit fell
         # back to the full cov_nodes^p product grid. With latentR present the
         # low-rank design is admitted -- and sampling becomes exact, not a pool.
-        mu <- as.numeric(A %*% zC[kc, ])
+        mu <- mu0[iMc] + as.numeric(A %*% (zF[kc, ] - mu0[iSc]))
         for (k in seq_along(iMc)) cd_k[[nms[iMc[k]]]] <- cov_dist[[nms[iMc[k]]]]
         for (j in setdiff(iM, iMc)) cd_k[[nms[j]]] <- cov_dist[[nms[j]]]
         nk <- names(cd_k)          # margins only: taken BEFORE the metadata below joins
