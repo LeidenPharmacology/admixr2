@@ -120,7 +120,7 @@ applied to a \code{V} that is already right.}
 \item{dose_bands}{Covariate-dependent dosing, transcribed from the paper's
 dosing table: a named list with one covariate, whose entry is a
 data.frame with columns \code{lo}, \code{hi}, \code{dose} — one row per dose band, e.g.
-\code{dose_bands = list(CRCL = data.frame(lo = c(0, 30), hi = c(30, Inf), dose = c(100, 200)))} doses 100 mg below CrCl 30 and 200 mg above. The
+\code{dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf), dose = c(100, 200)))} doses 100 mg below CrCl 30 and 200 mg above. The
 study is expanded into one study per band — the covariate's declared
 margin truncated to the band, \code{n} split by the band's probability, that
 band's \code{dose} — so the pooled analysis model needs no dose rule. Model

@@ -1502,6 +1502,10 @@
         for (k in seq_along(iMc)) cd_k[[nms[iMc[k]]]] <- cov_dist[[nms[iMc[k]]]]
         for (j in setdiff(iM, iMc)) cd_k[[nms[j]]] <- cov_dist[[nms[j]]]
         nk <- names(cd_k)          # margins only: taken BEFORE the metadata below joins
+        # the same 1e-12 ridge the sampled route put on chol(Sc): a
+        # near-singular Schur complement (|rho| -> 1) must stay positive
+        # definite through cov2cor + chol, and latentScale strictly positive
+        Sc <- Sc + diag(1e-12, nrow(Sc))
         Rk <- diag(length(nms)); Rk[iMc, iMc] <- stats::cov2cor(Sc)
         dimnames(Rk) <- list(nms, nms)
         cd_k[["cor"]] <- Rk[nk, nk, drop = FALSE]
@@ -1511,7 +1515,7 @@
         # the conditional latent covariance Sc has diagonal != 1 -- that IS the
         # variance shrinkage of conditioning -- so it rides as a per-margin scale
         lsd <- rep(1, length(nms)); names(lsd) <- nms
-        lsd[nms[iMc]] <- sqrt(pmax(diag(Sc), 0))
+        lsd[nms[iMc]] <- sqrt(diag(Sc))
         cd_k[["latentScale"]] <- lsd[nk]
       }
       cv <- c(stats::setNames(as.list(xC[kc, ]), nms[iSc]),

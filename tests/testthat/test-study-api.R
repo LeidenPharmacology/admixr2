@@ -889,6 +889,50 @@ test_that("dose_bands expands into one study per band, weighted and truncated", 
   expect_true(all(q1 <= 30) && all(q2 >= 30))
 })
 
+test_that("dose_bands conditions on the band when the banded covariate is correlated", {
+  skip_if_not_installed("rxode2")
+  # .sa_noccr fits no CRCL coefficient, so CRCL stays MARGINAL in the source.
+  # Regression 1: admStudy() canonises `population`, so the band spec was
+  # installed under a LIVE `joint` closure over the full margins and the canon
+  # early-returned past the truncation. Regression 2: truncating a margin is
+  # not conditioning on the band -- the correlated WT must shift within the
+  # low-CRCL band, which needs the point-conditional at nodes inside the band.
+  pop <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 60, sd = 25),
+                       cor = c(WT.CRCL = 0.6))
+  s <- admStudy(model = .sa_noccr, population = pop,
+                n = 100, times = c(1, 2, 4), dose_bands = .sa_bands,
+                strata_nodes = 4L)
+  m <- admixr2:::.admMaterialise(admixr2::admStudies(s = s))
+  b1 <- grep("_CRCLb1", names(m), value = TRUE)
+  b2 <- grep("_CRCLb2", names(m), value = TRUE)
+  expect_length(b1, 4L); expect_length(b2, 4L)   # band x node expansion
+  # band probabilities still split n
+  spec <- admixr2:::.admCovDistCanon(pop)$CRCL
+  p1 <- stats::plnorm(30, spec$meanlog, spec$sdlog)
+  expect_equal(sum(vapply(m[b1], function(x) x$n, 0)), 100 * p1, tolerance = 1e-6)
+  expect_equal(sum(vapply(m[b2], function(x) x$n, 0)), 100 * (1 - p1), tolerance = 1e-6)
+  # every node's pinned CRCL sits inside its band, with the band's dose
+  for (nm in b1) {
+    expect_lte(m[[nm]]$cov$CRCL, 30 + 1e-8)
+    expect_equal(as.data.frame(m[[nm]]$ev)$amt[1], 100)
+  }
+  for (nm in b2) {
+    expect_gte(m[[nm]]$cov$CRCL, 30 - 1e-8)
+    expect_equal(as.data.frame(m[[nm]]$ev)$amt[1], 200)
+  }
+  # the remaining correlated covariate is conditioned on the node: pooling
+  # draws over each band's nodes, WT shifts. E[WT | CRCL<30] =
+  # mu_W + rho*sd_W*E[z_C | z_C < c], E[z|z<c] = -phi(c)/Phi(c)
+  wt_mean <- function(nms) sum(vapply(nms, function(nm) {
+    X <- covDraw(admixr2:::.admCovDistCanon(m[[nm]]$cov_dist), n = 20000L)
+    m[[nm]]$n * mean(X[, "WT"])
+  }, 0)) / sum(vapply(m[nms], function(x) x$n, 0))
+  c30 <- stats::qnorm(p1)
+  ewt_lo <- 75 + 0.6 * 12 * (-stats::dnorm(c30) / p1)
+  expect_equal(wt_mean(b1), ewt_lo, tolerance = 0.3)
+  expect_lt(wt_mean(b1), wt_mean(b2))
+})
+
 test_that("dose_bands validates its inputs", {
   bands_bad <- list(CRCL = data.frame(lo = c(-Inf, 20), hi = c(30, Inf),
                                       dose = c(100, 200)))
@@ -974,4 +1018,17 @@ test_that("dose_mult validates its inputs", {
                "does not declare")
   expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10, times = 1:2,
                         at = list(WT = 70), dose_mult = c(WT = 2)), "also scales")
+  # `by` is refused, not silently dropped
+  expect_error(admStudy(model = .sa_fitwt,
+                        population = admPopulation(WT = c(mean = 75, sd = 16),
+                                                   SEX = c(male = 0.5)),
+                        n = 10, times = 1:2, by = "SEX", dose_mult = c(WT = 2)),
+               "both `dose_mult` and `by`")
+})
+
+test_that(".admCovCdfOf inverts a quantile-function margin to the closed form", {
+  spec <- list(quantile = function(u) stats::qlnorm(u, 4, 0.5))
+  f <- admixr2:::.admCovCdfOf(spec)
+  xs <- c(20, 50, 80, 150)
+  expect_equal(f(xs), stats::plnorm(xs, 4, 0.5), tolerance = 1e-3)
 })

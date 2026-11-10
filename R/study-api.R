@@ -305,7 +305,7 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #' @param dose_bands Covariate-dependent dosing, transcribed from the paper's
 #'   dosing table: a named list with one covariate, whose entry is a
 #'   data.frame with columns `lo`, `hi`, `dose` — one row per dose band, e.g.
-#'   `dose_bands = list(CRCL = data.frame(lo = c(0, 30), hi = c(30, Inf),
+#'   `dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf),
 #'   dose = c(100, 200)))` doses 100 mg below CrCl 30 and 200 mg above. The
 #'   study is expanded into one study per band — the covariate's declared
 #'   margin truncated to the band, `n` split by the band's probability, that
@@ -509,7 +509,7 @@ admStudy <- function(model = NULL, est = NULL,
     if (!is.list(dose_bands) || length(dose_bands) != 1L ||
         is.null(names(dose_bands)) || !nzchar(names(dose_bands)[1L]))
       bad("`dose_bands` must be a named list with ONE covariate, e.g. ",
-          "dose_bands = list(CRCL = data.frame(lo = c(0, 30), ",
+          "dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), ",
           "hi = c(30, Inf), dose = c(100, 200))).")
     .bcv <- names(dose_bands)[1L]; .bbd <- dose_bands[[1L]]
     if (!is.data.frame(.bbd) ||
@@ -560,6 +560,10 @@ admStudy <- function(model = NULL, est = NULL,
     if (!is.null(dose) || !is.null(ev) || !is.null(dose_bands))
       bad("has `dose_mult` together with `dose`, `ev` or `dose_bands`; a ",
           "study has one dose rule, not several.")
+    if (!is.null(by))
+      bad("has both `dose_mult` and `by`; scale the dose by ",
+          sQuote(names(dose_mult)[1L]), " or expand by levels with `by`, ",
+          "not both.")
     if (!has_model)
       bad("digitised data cannot take `dose_mult`: a single pooled E/V ",
           "cannot be split into per-weight profiles. Enter one admStudy() per ",
@@ -1075,6 +1079,46 @@ print() a single study to check its transcription.
         spk$cov_dist <- sp$cov_dist
         spk$cov_dist[[.bcv]] <- .admCovBandSpec(.bspec, .bbd$lo[k],
                                                  .bbd$hi[k], .bcdf)
+        # admStudy() canonised `population`, so cov_dist carries a live
+        # `joint` closure over the FULL margins and .admCovDistCanon()
+        # early-returns on it -- the band truncation would be a no-op for
+        # the sampler (grid, covDraw, admc rows) while `n` and `dose` are
+        # band-specific. Strip the derived fields and re-canonise from the
+        # latent correlation, the same rebuild .admCovApplyRange() performs
+        # for `range`. In a copula, truncating one margin IS conditioning on
+        # the band, so the remaining covariates shift through the copula.
+        .cd <- spk$cov_dist
+        if (is.function(.cd[["joint"]])) {
+          .R <- .cd[["latentR"]]; .lmu <- .cd[["latentMu"]]
+          .lsd <- .cd[["latentScale"]]
+          .nms <- .admCovSpecNames(.cd)
+          .cd[c("joint", "jointOwn", "discExact", "latentR")] <- NULL
+          if (!is.null(.R) && length(.nms) > 1L &&
+              identical(dim(.R), c(length(.nms), length(.nms)))) {
+            dimnames(.R) <- list(.nms, .nms)
+            .cd[["cor"]] <- .R
+          }
+          if (!is.null(.lmu)) .cd[["latentMu"]] <- .lmu
+          if (!is.null(.lsd)) .cd[["latentScale"]] <- .lsd
+          spk$cov_dist <- .admCovDistCanon(.cd)
+        }
+        # Truncating a margin is NOT conditioning on the band: in a copula the
+        # remapped quantile keeps the FULL-range copula input, so a correlated
+        # remaining covariate does not shift within the band (measured:
+        # E[WT | CRCL<30] should be ~61 at rho=0.6; margin truncation alone
+        # gives 75). The exact conditional is the point-conditional at nodes
+        # inside the band -- the same expansion dose_mult uses -- so when the
+        # banded covariate is correlated with anything, cut nodes over the
+        # band (its band-truncated margin places them) and condition the rest.
+        .rcd <- .admCovDistCanon(spk$cov_dist)
+        .Rr  <- .rcd[["latentR"]]
+        if (!is.null(.Rr)) {
+          .i <- match(.bcv, .admCovSpecNames(.rcd))
+          if (any(abs(.Rr[.i, - .i, drop = TRUE]) > 1e-12)) {
+            spk$stratify <- if (identical(spk$stratify, FALSE)) .bcv
+                            else union(spk$stratify, .bcv)
+          }
+        }
         g <- datagen(stats::setNames(list(spk), paste0(nm, "_", .bcv, "b", k)),
                      model = s$ui, control = datagenControl(method = "gh"))
         for (kk in names(g)) add(kk, g[[kk]])
