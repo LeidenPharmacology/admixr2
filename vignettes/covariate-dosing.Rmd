@@ -181,8 +181,8 @@ beaumont_model <- function() {
 # The paper's DOSING TABLE, transcribed as `dose_bands`: one row per band.
 # admixr2 expands this into one study per band -- the CRCL margin truncated
 # to the band, `n` split by the band's probability, and that band's `dose` --
-# so the pooled model needs no dose rule. (The bands already delimit CRCL's
-# span, so no `range` is given for it here.)
+# so the pooled model needs no dose rule. `range` is the enrolled span from
+# the inclusion criteria; the bands are cut inside it.
 beaumont <- admStudy(
   model      = beaumont_model,
   est        = beaumont_est,
@@ -194,6 +194,7 @@ beaumont <- admStudy(
   n          = 32,
   dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf),
                                       dose = c(100, 200))),
+  range      = list(CRCL = c(15, 75)),
   times      = TIMES,
   strata_nodes = 5L)
 ```
@@ -323,7 +324,7 @@ knitr::kable(data.frame(
 ```
 
 Pooling the group-dosed paper as a single fixed-dose study costs
-`r sprintf("%.0f", fit_pooled$objf - fit$objf)` units of \u22122LL — the model can
+`r sprintf("%.0f", fit_pooled$objf - fit$objf)` units of −2LL — the model can
 see that the low-CrCl group's concentrations are too low for the dose their
 study is credited with. The dose-by-group structure is identified, and
 mis-transcribing it is detectable from the objective alone.
@@ -340,8 +341,8 @@ mis-transcribing it is detectable from the objective alone.
 - **Dosed by a covariate, by band or group** (the Beaumont case):
   `dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf), dose = c(100, 200)))`
   transcribes the paper's dosing table and expands into one study per band —
-  margin truncated to the band, `n` split by band probability, that band's
-  dose — so the pooled model stays dose-free. `by = "<covariate>"` expands a
+  margin truncated to the band (inside any enrolled `range`), `n` split by
+  band probability, that band's dose — so the pooled model stays dose-free. `by = "<covariate>"` expands a
   source into one study per level of a discrete covariate when the dose is
   shared. For covariate-**proportional** dosing (mg/kg), `dose_mult = c(WT = 2)`
   cuts the covariate into `strata_nodes` nodes and gives each node its own

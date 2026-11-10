@@ -1148,32 +1148,27 @@
 # returned the default and certified a rule the construction never used.
 .admStrataNodes <- function(s) s[["strata_nodes"]] %||% .ADM_STRATA_NODES
 
-# CDF of one canonical covariate margin -- the band weights `dose_bands` needs.
+# CDF of one canonical covariate margin. +/-Inf map to 0/1 exactly: the grid
+# behind a `quantile` margin starts at 1e-6, and `rule = 2` returned that for
+# -Inf, so an open first dose band read as cutting off mass below -Inf.
 .admCovCdfOf <- function(spec) {
-  if (!is.null(spec[["meanlog"]]))
-    return(function(x) stats::plnorm(x, spec[["meanlog"]], spec[["sdlog"]]))
-  if (!is.null(spec[["mu"]]))
-    return(function(x) stats::pnorm(x, spec[["mu"]], spec[["sd"]]))
-  if (is.function(spec[["quantile"]])) {
+  f <- if (!is.null(spec[["meanlog"]]))
+    function(x) stats::plnorm(x, spec[["meanlog"]], spec[["sdlog"]])
+  else if (!is.null(spec[["mu"]]))
+    function(x) stats::pnorm(x, spec[["mu"]], spec[["sd"]])
+  else if (is.function(spec[["quantile"]])) local({
     gu <- seq(1e-6, 1 - 1e-6, length.out = 20001L)
     gx <- as.numeric(spec[["quantile"]](gu))
-    return(function(x) stats::approx(gx, gu, xout = x, rule = 2L)$y)
+    function(x) stats::approx(gx, gu, xout = x, rule = 2L, ties = "ordered")$y
+  })
+  else stop("admixr2: this covariate margin has no CDF admixr2 can evaluate; ",
+            "declare it as normal, lognormal, or with a `quantile` function.",
+            call. = FALSE)
+  function(x) {
+    x <- as.numeric(x); out <- f(x)
+    out[x == -Inf] <- 0; out[x == Inf] <- 1
+    out
   }
-  stop("admixr2: this covariate margin has no CDF admixr2 can evaluate; ",
-       "declare it as normal, lognormal, or with a `quantile` function.",
-       call. = FALSE)
-}
-
-# Truncate one margin to a dose band, whose upper edge may be +Inf (the last
-# band) -- `.admCovTruncSpec` requires finite endpoints, so bands get their
-# own form: re-map u onto [F(lo), F(hi)] of the FULL declared margin.
-.admCovBandSpec <- function(spec, lo, hi, cdf) {
-  pa <- if (is.infinite(lo)) 0 else as.numeric(cdf(lo))
-  pb <- if (is.infinite(hi)) 1 else as.numeric(cdf(hi))
-  # `.band` lets .admCovStrata() map a node back to the FULL-margin latent,
-  # qnorm(pa + u (pb - pa)), which is what the copula conditions on.
-  list(quantile = function(u) .admCovQuantile(spec, pa + u * (pb - pa)),
-       .band = c(pa, pb))
 }
 
 # Truncate one covariate's margin to the range a source actually enrolled.
@@ -1183,12 +1178,14 @@
 # (information_claimed / information_earned = var_assumed / var_enrolled, measured at 3.43x for a source that
 # enrolled +/- 1 SD): not bias, but FALSE CONFIDENCE. Truncating the SPEC rather than either branch of
 # .admCovStrata means both the exact-conditioning route and the pooled route inherit it via .admCovQuantile.
+#
+# An endpoint may be -Inf/Inf: a dose band is the same truncation with an open end, and goes through here.
 .admCovTruncSpec <- function(spec, rng, nm) {
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
   if (is.null(rng)) return(spec)
   rng <- sort(as.numeric(rng))
-  if (length(rng) != 2L || !all(is.finite(rng)) || rng[1L] >= rng[2L])
-    bad("`cov_range` for ", sQuote(nm), " must be two finite increasing ",
+  if (length(rng) != 2L || anyNA(rng) || rng[1L] >= rng[2L])
+    bad("`cov_range` for ", sQuote(nm), " must be two increasing ",
         "values, e.g. c(52, 118).")
   # DISCRETE: a range keeps the levels inside it and renormalises
   if (!is.null(spec[["values"]])) {
@@ -1200,31 +1197,21 @@
   }
   # CONTINUOUS: re-map u onto [F(a), F(b)], which is the truncated quantile function. Weights renormalise
   # automatically over the truncated support, so sum(n_k) = n still holds.
-  cdf <- if (!is.null(spec[["meanlog"]]))
-    function(x) stats::plnorm(x, spec[["meanlog"]], spec[["sdlog"]])
-  else if (!is.null(spec[["mu"]]))
-    function(x) stats::pnorm(x, spec[["mu"]], spec[["sd"]])
-  else NULL
-  qf <- if (!is.null(spec[["meanlog"]]))
-    function(u) stats::qlnorm(u, spec[["meanlog"]], spec[["sdlog"]])
-  else if (!is.null(spec[["mu"]]))
-    function(u) stats::qnorm(u, spec[["mu"]], spec[["sd"]])
-  else if (is.function(spec[["quantile"]])) spec[["quantile"]]
-  else bad("`cov_range` was given for ", sQuote(nm), " but its margin is not ",
-           "one admixr2 can invert (declare it as normal, lognormal, or with ",
-           "a `quantile` function).")
-  if (is.null(cdf)) {
-    # a user quantile function: a fine grid is enough, since this only sets the two truncation endpoints
-    gu <- seq(1e-6, 1 - 1e-6, length.out = 20001L)
-    gx <- as.numeric(qf(gu))
-    cdf <- function(x) stats::approx(gx, gu, xout = x, rule = 2L)$y
-  }
-  pa <- as.numeric(cdf(rng[1L])); pb <- as.numeric(cdf(rng[2L]))
+  cdf <- tryCatch(.admCovCdfOf(spec), error = function(e)
+    bad("`cov_range` was given for ", sQuote(nm), " but its margin is not ",
+        "one admixr2 can invert (declare it as normal, lognormal, or with ",
+        "a `quantile` function)."))
+  pa <- cdf(rng[1L]); pb <- cdf(rng[2L])
   if (!is.finite(pa) || !is.finite(pb) || pb - pa < 1e-8)
     bad("`cov_range` for ", sQuote(nm), " covers essentially none of its ",
         "declared distribution -- check the range and the margin agree on ",
         "units.")
-  list(quantile = function(u) qf(pa + u * (pb - pa)))
+  # `.band` is [F(a), F(b)] on the FULL margin, so .admCovStrata() can map a
+  # node back to the latent the copula couples through, qnorm(pa + u (pb - pa)).
+  # A spec truncated twice composes onto the full margin it was cut from.
+  b0 <- spec[[".band"]] %||% c(0, 1)
+  list(quantile = function(u) .admCovQuantile(spec, pa + u * (pb - pa)),
+       .band = b0[1L] + c(pa, pb) * (b0[2L] - b0[1L]))
 }
 
 # Truncate a WHOLE `cov_dist` to the ranges a source enrolled.
@@ -2731,6 +2718,24 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # The shift path measures Delta(a) relative to it (.admShiftRef), and any study mixing a fixed `cov` with a
 # distributed one needs a value for the fixed part. Deriving it from `cov_dist` rather than making the user
 # restate it removes a way for the two to disagree silently.
+# A covariate's OWN distribution inside `cd`. A conditioned child (a stratum,
+# a dose_mult node, a correlated dose band) keeps its DECLARED margins plus
+# latentMu/latentScale, because the collapse needs them in that form; a reader
+# wanting the covariate's mean, spread or quantiles must fold them back in, or
+# every child reads as the unconditional margin and the between-study contrast
+# disappears.
+.admCovEffMargin <- function(cd, cv) {
+  sp <- cd[[cv]]
+  if (!is.list(sp) || !is.null(sp[["values"]]) || isTRUE(sp[[".point"]]))
+    return(sp)
+  j <- match(cv, .admCovSpecNames(cd))
+  if (is.na(j)) return(sp)
+  m <- cd[["latentMu"]][j] %||% 0; v <- cd[["latentScale"]][j] %||% 1
+  if (m == 0 && v == 1) return(sp)
+  list(quantile = function(u)
+    .admCovQuantile(sp, stats::pnorm(m + v * stats::qnorm(u))))
+}
+
 .admCovMeanOf <- function(spec) {
   if (!is.null(spec$values)) {
     pr <- spec$probs %||% rep(1, length(spec$values))
@@ -2784,7 +2789,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   # as the value it is conditioned at (`cov`) -- these are the same object at two resolutions, and BOTH break
   # the ridge. Reading `cov_dist` alone warned that a source reporting by stratum was unidentified.
   .decl <- function(s, cv) {
-    d <- s[["cov_dist"]][[cv]]
+    d <- .admCovEffMargin(s[["cov_dist"]], cv)
     if (!is.null(d))
       return(c(.admCovMeanOf(d) %||% NA_real_, .admCovSdOf(d) %||% NA_real_))
     v <- .admCovOne(s, cv)

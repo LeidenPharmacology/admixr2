@@ -1102,9 +1102,16 @@ test_that("the rebuilt stratum sampler survives the drop it is rebuilt for", {
   st <- list(s = list(times = c(1, 4), ev = rxode2::et(amt = 100), n = 100L,
                       cov_dist = cd, stratify = "WT", strata_nodes = 3L))
   ex <- suppressMessages(admixr2:::.admExpandStrata(st, names(st)))$studies
-  k  <- ex[[2L]]$cov_dist
-  expect_true(is.function(admixr2:::.admCovDistCanon(k)[["joint"]]))
-  expect_setequal(k[[".adm_strata_joint"]]$cn, c("CRCL", "ALB"))
+  # The stratum is the EXACT Gaussian conditional, carried as a conditioned
+  # copula (declared margins + latentMu/latentScale + conditional cor), not a
+  # sampled cloud: z_M | z_WT ~ N(0.7 z_WT, I - 0.49), so the conditional
+  # correlation of CRCL and ALB is (0.7 - 0.49) / (1 - 0.49).
+  k   <- ex[[3L]]$cov_dist
+  rho <- (0.7 - 0.49) / (1 - 0.49)
+  expect_equal(unname(k[["cor"]]["CRCL", "ALB"]), rho, tolerance = 1e-8)
+  expect_lt(k[["latentMu"]][["CRCL"]], 0)        # the low-WT node pulls CRCL down
+  expect_equal(unname(k[["latentScale"]][c("CRCL", "ALB")]),
+               rep(sqrt(1 - 0.49), 2L), tolerance = 1e-8)
 
   # SEX is declared and never read, so it comes off the design -- exactly, and
   # this is the one sampler that could not survive it unrebuilt.
@@ -1118,24 +1125,18 @@ test_that("the rebuilt stratum sampler survives the drop it is rebuilt for", {
   ui  <- suppressMessages(rxode2::rxode2(mod))
   out <- suppressMessages(
     admixr2:::.admCheckCovariates(ui, list(n_eta = 0L), ex))
-  cdo <- admixr2:::.admCovDistCanon(out[[2L]]$cov_dist)
+  cdo <- admixr2:::.admCovDistCanon(out[[3L]]$cov_dist)
   expect_setequal(admixr2:::.admCovSpecNames(cdo), cvs)
-  expect_true(is.function(cdo[["joint"]]))
-  # NOT the canon's own copula over the declared margins: this is the stratum's
-  # conditional sample, which is not rebuildable from `cor` and must not be
-  # labelled as if it were.
-  expect_false(isTRUE(cdo[["jointOwn"]]))
-  # The dependence the sample encoded is still there. Drawn independently from
-  # their own quantile specs -- which is what the dead rebuild left behind --
-  # this correlation is zero.
-  set.seed(4)
-  X <- cdo[["joint"]](matrix(stats::runif(3000L), ncol = 3L))
-  expect_gt(stats::cor(X[, "CRCL"], X[, "ALB"]), 0.3)
-  # And the sample it indexes is REDUCED rather than carried whole: left
-  # behind, 8192 rows including the dropped column rode along in every stratum
-  # for the life of the fit object.
-  expect_setequal(colnames(out[[2L]]$cov_dist[[".adm_strata_joint"]]$X),
-                  c("CRCL", "ALB"))
+  # The conditioning survives the drop: the shift and the conditional
+  # correlation are reduced to the kept margins, not reset. Drawn from the
+  # declared margins with the shift lost, CRCL/ALB would be uncorrelated
+  # within the stratum, or correlated at the UNconditional 0.7.
+  expect_equal(unname(cdo[["latentMu"]][match(c("CRCL", "ALB"),
+                                              admixr2:::.admCovSpecNames(cdo))]),
+               unname(k[["latentMu"]][c("CRCL", "ALB")]))
+  X <- covDraw(cdo, n = 20000L)
+  expect_equal(stats::cor(X[, "CRCL"], X[, "ALB"]), rho, tolerance = 0.05)
+  expect_lt(mean(X[, "CRCL"]), 90)
 })
 
 test_that(".admEvalModelLines runs the parameter block vectorised in a covariate", {
@@ -1289,10 +1290,11 @@ test_that("the rebuilt stratum sampler keeps its exactly-mapped margins", {
     admixr2:::.admCheckCovariates(ui, list(n_eta = 0L), ex))
   cdo <- out[[2L]]$cov_dist
   expect_setequal(admixr2:::.admCovSpecNames(cdo), c("WT", "CRCL", "SEX"))
-  # WT is this stratum's own point and SEX its own discrete margin: both are
-  # mapped straight from their uniform, so both are exactly enumerable, while
-  # CRCL comes from the shared conditional sample.
-  expect_setequal(cdo[["discExact"]], c("WT", "SEX"))
+  # SEX is its own discrete margin, latently independent, so it stays exactly
+  # enumerable; WT is this stratum's own POINT, which needs no enumeration and
+  # takes no axis. (`discExact` lists discrete margins only.)
+  expect_identical(cdo[["discExact"]], "SEX")
+  expect_true(isTRUE(cdo[["WT"]][[".point"]]))
 })
 
 test_that(".admCovCoefThetas separates an estimated coefficient from an asserted one", {

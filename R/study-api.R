@@ -309,16 +309,20 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   dose = c(100, 200)))` doses 100 mg below CrCl 30 and 200 mg above. The
 #'   study is expanded into one study per band — the covariate's declared
 #'   margin truncated to the band, `n` split by the band's probability, that
-#'   band's `dose` — so the pooled analysis model needs no dose rule. Model
-#'   sources only: a digitised pooled `E`/`V` cannot be split into per-band
-#'   profiles. Mutually exclusive with `dose`/`ev`.
+#'   band's `dose` — so the pooled analysis model needs no dose rule. A
+#'   `range` on the banded covariate gives the enrolled span (e.g. the
+#'   inclusion criteria); the bands are cut inside it and `n` is split by
+#'   each band's share of that span. Model sources only: a digitised pooled
+#'   `E`/`V` cannot be split into per-band profiles. Mutually exclusive with
+#'   `dose`/`ev`.
 #' @param dose_mult Covariate-proportional dosing, e.g. mg/kg:
 #'   `dose_mult = c(WT = 2)` doses 2 mg per kg. The covariate is cut into
 #'   `strata_nodes` nodes (default 9) and each node becomes its own study with
 #'   `amt = mult * <node value>` and its share of `n` — again the pooled model
 #'   needs no dose rule. Named numeric vector of length one, naming a
-#'   continuous covariate declared in `population`. Mutually exclusive with
-#'   `dose`/`ev`/`dose_bands`.
+#'   continuous covariate declared in `population`, whose margin (or `range`)
+#'   must stay positive. A `range` on it limits the nodes to the enrolled
+#'   span. Mutually exclusive with `dose`/`ev`/`dose_bands`.
 #' @param ev A dosing event table from [rxode2::et()], for anything `dose`
 #'   cannot express.
 #' @param population The population the study enrolled --- see
@@ -543,18 +547,30 @@ admStudy <- function(model = NULL, est = NULL,
       bad("`dose_bands` needs a CONTINUOUS covariate; ", sQuote(.bcv),
           " is declared with levels -- use `by = ", sQuote(.bcv), "` for ",
           "discrete groups.")
+    # `range` on the banded covariate is the span the paper ENROLLED; the
+    # bands are cut inside it. Subjects below the first band's `lo` but inside
+    # that span would fall in no band.
+    .brng <- if (is.list(range)) range[[.bcv]]
+    if (!is.null(.brng) && (!is.numeric(.brng) || length(.brng) != 2L ||
+                            anyNA(.brng) || .brng[1L] >= .brng[2L]))
+      bad("`range` for ", sQuote(.bcv), " must be two increasing values, ",
+          "e.g. range = list(", .bcv, " = c(15, 75)).")
+    .bfloor <- if (is.null(.brng)) -Inf else .brng[1L]
     .bcdf <- .admCovCdfOf(.bspec)
-    if (as.numeric(.bcdf(.blo[1L])) > 1e-8)
+    .bout <- .bcdf(.blo[1L]) - .bcdf(.bfloor)
+    if (.blo[1L] > .bfloor && .bout > 1e-8)
       bad("the first band starts at ", .blo[1L], ", but the declared ",
           "distribution of ", sQuote(.bcv), " puts ",
-          sprintf("%.2g", 100 * as.numeric(.bcdf(.blo[1L]))),
-          "% of its mass below it -- those subjects would fall in no dose ",
-          "band. Start the first band at -Inf.")
+          sprintf("%.2g", 100 * .bout), "% of its mass ",
+          if (is.null(.brng)) "below it" else
+            paste0("between the enrolled `range` minimum ", .bfloor, " and it"),
+          " -- those subjects would fall in no dose band. Start the first ",
+          "band at -Inf", if (!is.null(.brng)) " or at the range minimum", ".")
+    if (!is.null(.brng) && .brng[2L] <= .blo[1L])
+      bad("the `range` for ", sQuote(.bcv), " lies entirely below the first ",
+          "dose band.")
     if (.bcv %in% names(at))
       bad("`at` pins ", sQuote(.bcv), " but `dose_bands` also bands it.")
-    if (!is.null(range) && (!is.list(range) || .bcv %in% names(as.list(range))))
-      bad("`range` and `dose_bands` both touch ", sQuote(.bcv),
-          "; the bands already delimit its span.")
   }
   if (!is.null(dose_mult)) {
     if (!is.null(dose) || !is.null(ev) || !is.null(dose_bands))
@@ -584,6 +600,15 @@ admStudy <- function(model = NULL, est = NULL,
           " is declared with levels.")
     if (.mcv %in% names(at))
       bad("`at` pins ", sQuote(.mcv), " but `dose_mult` also scales by it.")
+    # a dose is an amount: a margin reaching zero or below (a NORMAL weight
+    # whose tail node sits under 0 kg) would hand rxode2 a negative `amt`
+    .mrng <- if (is.list(range)) range[[.mcv]]
+    .mfloor <- if (!is.null(.mrng)) min(as.numeric(.mrng))
+               else .admCovQuantile(.mspec, 1e-6)
+    if (is.null(.mspec[["meanlog"]]) && !(.mfloor > 0))
+      bad("`dose_mult` scales by ", sQuote(.mcv), ", whose declared margin ",
+          "reaches zero or below, so a node would get a non-positive dose. ",
+          "Declare it with dist = \"lnorm\", or give a `range`.")
   }
   if (length(at)) {
     if (is.null(names(at)) || any(!nzchar(names(at))) || anyDuplicated(names(at)))
@@ -1060,64 +1085,37 @@ print() a single study to check its transcription.
                call. = FALSE)
         stats::setNames(list(s$range), .one)
       }
-    # `dose_bands` creates one ordinary study per dose band: the covariate's
-    # declared margin truncated to the band (the conditional distribution
-    # GIVEN the band -- exactly what a pooled paper's mixture splits into),
-    # `n` split by the band's probability under the full margin, and that
-    # band's dose in `ev`. The analysis model stays dose-free.
+    # `dose_bands` creates one ordinary study per dose band: the band is a
+    # `range` on the banded covariate (intersected with any enrolled `range`
+    # the user gave), `n` split by the band's share of that span, and that
+    # band's dose in `ev`. The analysis model stays dose-free. Going through
+    # `cov_range` means the truncation, the joint rebuild and the no-range
+    # warning are the same code `range` already uses.
     if (!is.null(s$dose_bands)) {
       .bcv <- names(s$dose_bands)[1L]; .bbd <- s$dose_bands[[1L]]
-      .bspec <- .admCovDistCanon(s$population)[[.bcv]]
-      .bcdf <- .admCovCdfOf(.bspec)
-      nb <- nrow(.bbd)
-      for (k in seq_len(nb)) {
+      .bcd  <- .admCovDistCanon(s$population)
+      .bcdf <- .admCovCdfOf(.bcd[[.bcv]])
+      .brng <- sort(as.numeric(sp$cov_range[[.bcv]] %||% c(-Inf, Inf)))
+      .pR   <- diff(.bcdf(.brng))
+      # Truncating a margin is NOT conditioning on the band: the remapped
+      # quantile keeps the full-range copula input, so a correlated remaining
+      # covariate would not shift within the band. When the banded covariate
+      # is correlated with anything, cut nodes over the band and condition the
+      # rest on each (.admCovStrata() maps a band node back to the full latent).
+      .R  <- .bcd[["latentR"]]
+      .bi <- match(.bcv, .admCovSpecNames(.bcd))
+      .bcorr <- !is.null(.R) && any(abs(.R[.bi, - .bi, drop = TRUE]) > 1e-12)
+      for (k in seq_len(nrow(.bbd))) {
+        .lo <- max(.bbd$lo[k], .brng[1L]); .hi <- min(.bbd$hi[k], .brng[2L])
+        if (.lo >= .hi) next              # band outside the enrolled span
         spk <- sp
-        pa <- if (k == 1L) 0 else as.numeric(.bcdf(.bbd$lo[k]))
-        pb <- if (k == nb) 1 else as.numeric(.bcdf(.bbd$hi[k]))
-        spk$n   <- s$n * (pb - pa)
+        spk$n   <- s$n * diff(.bcdf(c(.lo, .hi))) / .pR
         spk$ev  <- rxode2::et(amt = .bbd$dose[k])
-        spk$cov_dist <- sp$cov_dist
-        spk$cov_dist[[.bcv]] <- .admCovBandSpec(.bspec, .bbd$lo[k],
-                                                 .bbd$hi[k], .bcdf)
-        # admStudy() canonised `population`, so cov_dist carries a live
-        # `joint` closure over the FULL margins and .admCovDistCanon()
-        # early-returns on it -- the band truncation would be a no-op for
-        # the sampler (grid, covDraw, admc rows) while `n` and `dose` are
-        # band-specific. Strip the derived fields and re-canonise from the
-        # latent correlation, the same rebuild .admCovApplyRange() performs
-        # for `range`.
-        .cd <- spk$cov_dist
-        if (is.function(.cd[["joint"]])) {
-          .R <- .cd[["latentR"]]; .lmu <- .cd[["latentMu"]]
-          .lsd <- .cd[["latentScale"]]
-          .nms <- .admCovSpecNames(.cd)
-          .cd[c("joint", "jointOwn", "discExact", "latentR")] <- NULL
-          if (!is.null(.R) && length(.nms) > 1L &&
-              identical(dim(.R), c(length(.nms), length(.nms)))) {
-            dimnames(.R) <- list(.nms, .nms)
-            .cd[["cor"]] <- .R
-          }
-          if (!is.null(.lmu)) .cd[["latentMu"]] <- .lmu
-          if (!is.null(.lsd)) .cd[["latentScale"]] <- .lsd
-          spk$cov_dist <- .admCovDistCanon(.cd)
-        }
-        # Truncating a margin is NOT conditioning on the band: in a copula the
-        # remapped quantile keeps the FULL-range copula input, so a correlated
-        # remaining covariate does not shift within the band (measured:
-        # E[WT | CRCL<30] should be ~61 at rho=0.6; margin truncation alone
-        # gives 75). The exact conditional is the point-conditional at nodes
-        # inside the band -- the same expansion dose_mult uses -- so when the
-        # banded covariate is correlated with anything, cut nodes over the
-        # band (its band-truncated margin places them) and condition the rest.
-        .rcd <- .admCovDistCanon(spk$cov_dist)
-        .Rr  <- .rcd[["latentR"]]
-        if (!is.null(.Rr)) {
-          .i <- match(.bcv, .admCovSpecNames(.rcd))
-          if (any(abs(.Rr[.i, - .i, drop = TRUE]) > 1e-12)) {
-            spk$stratify <- if (identical(spk$stratify, FALSE)) .bcv
-                            else union(spk$stratify, .bcv)
-          }
-        }
+        spk$cov_range <- utils::modifyList(as.list(sp$cov_range %||% list()),
+                                           stats::setNames(list(c(.lo, .hi)), .bcv))
+        if (.bcorr)
+          spk$stratify <- if (identical(spk$stratify, FALSE)) .bcv
+                          else union(spk$stratify, .bcv)
         g <- datagen(stats::setNames(list(spk), paste0(nm, "_", .bcv, "b", k)),
                      model = s$ui, control = datagenControl(method = "gh"))
         for (kk in names(g)) add(kk, g[[kk]])
@@ -1145,6 +1143,11 @@ print() a single study to check its transcription.
         # node (the copula is conditioned, not dropped -- dropping would
         # refuse a correlated baseline table, and conditioning is exact)
         spk$cov_dist <- stl[[k]]$cov_dist
+        # its range was spent cutting the nodes; left on, datagen would
+        # re-truncate the POINT spec and fail. Re-applying the others is a
+        # no-op (a margin truncated to [a, b] already has F(a) = 0, F(b) = 1).
+        spk$cov_range[[.mcv]] <- NULL
+        if (!length(spk$cov_range)) spk$cov_range <- NULL
         # the mult covariate is PINNED at the node now, so it must not also be
         # cut into nodes by datagen's own stratify pass
         if (!identical(spk$stratify, FALSE)) {

@@ -580,7 +580,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 ## move the prediction, so integrating over it is waste) but the source still
 ## described it, and that description is what the residual panel plots against.
 .admCovStudySpec <- function(s, cv)
-  s[["cov_dist"]][[cv]] %||% s[[".adm_cov_dropped"]][[cv]]
+  .admCovEffMargin(s[["cov_dist"]], cv) %||% s[[".adm_cov_dropped"]][[cv]]
 
 .admCovStudyQ <- function(s, cv, u = 0.5) {
   sp <- .admCovStudySpec(s, cv)
@@ -982,7 +982,7 @@ head.paged_df <- function(x, n = 6L, ...) {
 .admCovSourceQ <- function(s, cv, u) {
   if (is.null(s)) return(NA_real_)
   p  <- s[["population"]]
-  sp <- s[["cov_dist"]][[cv]] %||%
+  sp <- .admCovEffMargin(s[["cov_dist"]], cv) %||%
     (if (!is.null(p) && !is.data.frame(p)) p[[cv]])
   if (!is.null(sp))
     return(tryCatch(as.numeric(.admCovQuantile(sp, u))[1L],
@@ -1002,7 +1002,7 @@ head.paged_df <- function(x, n = 6L, ...) {
     if (is.finite(x)) return(x)
   }
   p  <- s[["population"]]
-  sp <- s[["cov_dist"]][[cv]] %||%
+  sp <- .admCovEffMargin(s[["cov_dist"]], cv) %||%
     (if (!is.null(p) && !is.data.frame(p)) p[[cv]])
   if (!is.null(sp)) {
     x <- .admCovSpecCentre(sp)
@@ -1443,7 +1443,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   # time it reaches here -- admStudy() fits margins to the table and keeps
   # those, not the rows -- so it holds specs under the covariate names, exactly
   # like `cov_dist`. Reading only the data frame found a range for nobody.
-  sp <- s[["cov_dist"]][[cv]] %||%
+  sp <- .admCovEffMargin(s[["cov_dist"]], cv) %||%
     (if (!is.null(p) && !is.data.frame(p)) p[[cv]])
   if (!is.null(sp)) {
     rr <- tryCatch(c(.admCovQuantile(sp, 0.025), .admCovQuantile(sp, 0.975)),
