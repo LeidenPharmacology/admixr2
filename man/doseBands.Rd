@@ -8,7 +8,7 @@ doseBands(covariate, breaks, amt, ...)
 }
 \arguments{
 \item{covariate}{The covariate the bands are cut on, bare or quoted
-(\code{CRCL} or \code{"CRCL"}). It must be declared, as a continuous covariate, in
+(\code{CRCL} or \code{"CRCL"}); a variable holding the name also works. It must be declared, as a continuous covariate, in
 the study's \code{population}.}
 
 \item{breaks}{Increasing cut points between bands.}

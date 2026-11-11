@@ -325,7 +325,9 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   A function is evaluated at `strata_nodes` quadrature nodes (default 9) over
 #'   the covariates it reads, each node a study with its share of `n`; a table
 #'   splits the population exactly at its band edges, which nodes cannot do for
-#'   a stepwise rule. Covariates correlated with the dosing ones are conditioned
+#'   a stepwise rule, so write a step as `doseBands()`, not as an `ifelse()` in
+#'   a function (a kink such as a cap, `pmin(15 * WT, 2000)`, is likewise only
+#'   approximated unless `strata_nodes` is raised). Covariates correlated with the dosing ones are conditioned
 #'   on each node or band. A `range` on a dosing covariate gives the enrolled
 #'   span, and the groups are cut inside it. Both need a published or simulated
 #'   `model`: a digitised pooled `E`/`V` cannot be split into per-dose profiles.
@@ -674,8 +676,11 @@ admStudy <- function(model = NULL, est = NULL,
       # Evaluate at the nodes the fit will use, so a dose that is negative,
       # missing or not a single number anywhere fails while the study is
       # written down -- a NORMAL weight's tail node below 0 kg, say.
+      # an unnamed range belongs to the one dosing covariate, as at materialise
       .rng <- if (is.list(range) && !is.null(names(range)))
         range[intersect(names(range), .dcv)]
+      else if (is.numeric(range) && length(.dcv) == 1L)
+        stats::setNames(list(range), .dcv)
       if (!length(.rng)) .rng <- NULL
       .stl <- tryCatch(
         .admCovStrata(population, .dcv, strata_nodes %||% .ADM_STRATA_NODES,

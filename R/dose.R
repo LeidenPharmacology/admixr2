@@ -18,7 +18,7 @@
 #' on the band.
 #'
 #' @param covariate The covariate the bands are cut on, bare or quoted
-#'   (`CRCL` or `"CRCL"`). It must be declared, as a continuous covariate, in
+#'   (`CRCL` or `"CRCL"`); a variable holding the name also works. It must be declared, as a continuous covariate, in
 #'   the study's `population`.
 #' @param breaks Increasing cut points between bands.
 #' @param amt Amount for each band, lowest band first; one more than `breaks`.
@@ -35,7 +35,12 @@
 #' @export
 doseBands <- function(covariate, breaks, amt, ...) {
   cv <- substitute(covariate)
-  cv <- if (is.name(cv)) as.character(cv) else covariate
+  if (is.name(cv)) {
+    # a bare name is the covariate (doseBands(CRCL, ...)), unless it is a
+    # variable holding a covariate name (cv <- "CRCL"; doseBands(cv, ...))
+    v <- tryCatch(covariate, error = function(e) NULL)
+    cv <- if (is.character(v) && length(v) == 1L) v else as.character(cv)
+  } else cv <- covariate
   bad <- function(...) stop("admixr2: doseBands(): ", ..., call. = FALSE)
   if (!is.character(cv) || length(cv) != 1L || is.na(cv) || !nzchar(cv))
     bad("`covariate` must name one covariate, e.g. doseBands(CRCL, ...).")
@@ -102,7 +107,7 @@ print.admDoseBands <- function(x, ...) {
 .admDoseKind <- function(d) {
   if (inherits(d, "admDoseBands")) return("bands")
   if (is.function(d)) return("fun")
-  if (inherits(d, "rxEt") || is.data.frame(d)) return("ev")
+  if (inherits(d, "rxEt")) return("ev")
   if (is.numeric(d)) return("amt")
   NA_character_
 }
@@ -134,7 +139,7 @@ print.admDoseBands <- function(x, ...) {
   r <- tryCatch(do.call(f, arg), error = function(e)
     stop("the dose function failed at ", at, ": ", conditionMessage(e),
          call. = FALSE))
-  ev <- if (inherits(r, "rxEt") || is.data.frame(r)) r
+  ev <- if (inherits(r, "rxEt")) r
         else if (is.numeric(r) && length(r) == 1L) NULL
         else stop("the dose function must return one amount or an ",
                   "rxode2::et() event table; at ", at, " it returned ",
@@ -142,7 +147,9 @@ print.admDoseBands <- function(x, ...) {
                   ".", call. = FALSE)
   a <- if (is.null(ev)) r else {
     d <- as.data.frame(ev)
-    d$amt[is.na(d$evid) | d$evid != 0]
+    # only dosing records carry an amount: observations (0), other-type (2)
+    # and reset (3) rows legitimately have amt = NA
+    d$amt[!is.na(d$evid) & !(d$evid %in% c(0L, 2L, 3L))]
   }
   if (!length(a) || any(!is.finite(a)) || any(a < 0))
     stop("the dose function gives ", paste(format(a), collapse = ", "),

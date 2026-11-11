@@ -1204,3 +1204,27 @@ test_that("datagen() shows what admStudy() objects imply", {
   expect_named(datagen(sim), "study")
   expect_error(datagen(admStudies(sim = sim), model = .sa_noccr), "not used")
 })
+
+test_that("review fixes: unnamed range, et rows, data.frame dose, doseBands name, datagen control", {
+  popn <- suppressWarnings(admPopulation(WT = c(mean = 70, sd = 20),
+                                         dist = "normal"))
+  st <- function(...) admStudy(model = .sa_fitwt, n = 10, times = 1:2, ...)
+  # an unnamed range bounds the one dosing covariate, as it does at materialise
+  expect_s3_class(st(population = popn, range = c(40, 110),
+                     dose = function(WT) 2 * WT), "admStudy")
+  # a reset / other-type row has amt = NA and is not a dose
+  ev <- admixr2:::.admDoseEvAt(function(WT)
+    rxode2::et(time = 0, evid = 3) |> rxode2::et(amt = 2 * WT, time = 1),
+    list(WT = 70))
+  expect_s3_class(ev, "rxEt")
+  # a plain data.frame is not an event table
+  expect_error(st(population = popn,
+                  dose = data.frame(time = 0, amt = 100, evid = 1)), "needs a")
+  # a variable holding the covariate name
+  cv <- "CRCL"
+  expect_identical(doseBands(cv, 30, c(100, 200))$covariate, "CRCL")
+  expect_identical(doseBands(CRCL, 30, c(100, 200))$covariate, "CRCL")
+  # datagen() refuses a control it would otherwise drop
+  expect_error(datagen(admStudies(st(population = popn, range = c(40, 110),
+                 dose = 100)), control = datagenControl()), "`control` is not")
+})
