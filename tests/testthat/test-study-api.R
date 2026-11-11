@@ -856,7 +856,7 @@ test_that("admPopulation refuses duplicate covariate names", {
                "covariate names must be unique")
 })
 
-# -- dose_bands: covariate-dependent dosing transcribed from the paper's dosing table
+# -- dose rules: doseBands() for a dosing table, a function for mg/kg or a formula
 
 # source model WITHOUT a CRCL coefficient, so the banded covariate stays
 # marginal and the expansion is directly inspectable (no strata on top)
@@ -865,14 +865,13 @@ test_that("admPopulation refuses duplicate covariate names", {
   model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
           cp <- linCmt(); cp ~ add(add.err) })
 }
-.sa_bands <- list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf),
-                                    dose = c(100, 200)))
+.sa_bands <- doseBands(CRCL, breaks = 30, amt = c(100, 200))
 
-test_that("dose_bands expands into one study per band, weighted and truncated", {
+test_that("doseBands() expands into one study per band, weighted and truncated", {
   skip_if_not_installed("rxode2")
   pop <- admPopulation(CRCL = c(mean = 60, sd = 25))
   s <- admStudy(model = .sa_noccr, population = pop,
-                n = 100, times = c(1, 2, 4), dose_bands = .sa_bands)
+                n = 100, times = c(1, 2, 4), dose = .sa_bands)
   m <- admixr2:::.admMaterialise(admixr2::admStudies(s = s))
   expect_setequal(names(m), c("s_CRCLb1", "s_CRCLb2"))
   # band probabilities from the declared margin: P(CRCL < 30)
@@ -889,7 +888,7 @@ test_that("dose_bands expands into one study per band, weighted and truncated", 
   expect_true(all(q1 <= 30) && all(q2 >= 30))
 })
 
-test_that("dose_bands conditions on the band when the banded covariate is correlated", {
+test_that("doseBands() conditions on the band when the banded covariate is correlated", {
   skip_if_not_installed("rxode2")
   # .sa_noccr fits no CRCL coefficient, so CRCL stays MARGINAL in the source.
   # Regression 1: admStudy() canonises `population`, so the band spec was
@@ -900,7 +899,7 @@ test_that("dose_bands conditions on the band when the banded covariate is correl
   pop <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 60, sd = 25),
                        cor = c(WT.CRCL = 0.6))
   s <- admStudy(model = .sa_noccr, population = pop,
-                n = 100, times = c(1, 2, 4), dose_bands = .sa_bands,
+                n = 100, times = c(1, 2, 4), dose = .sa_bands,
                 strata_nodes = 4L)
   m <- admixr2:::.admMaterialise(admixr2::admStudies(s = s))
   b1 <- grep("_CRCLb1", names(m), value = TRUE)
@@ -933,66 +932,90 @@ test_that("dose_bands conditions on the band when the banded covariate is correl
   expect_equal(wt_mean(b2), mean(X[X[, "CRCL"] >= 30, "WT"]), tolerance = 0.01)
 })
 
-test_that("dose_bands validates its inputs", {
-  bands_bad <- list(CRCL = data.frame(lo = c(-Inf, 20), hi = c(30, Inf),
-                                      dose = c(100, 200)))
-  pop <- admPopulation(CRCL = c(mean = 60, sd = 25))
-  # conflicts with dose/ev and with by
-  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10,
-                        times = 1:2, dose = 100, dose_bands = .sa_bands),
-               "together with `dose` or `ev`")
-  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10,
-                        times = 1:2, by = "CRCL", dose_bands = .sa_bands),
-               "both `dose_bands` and `by`")
-  # digitised data cannot be banded
-  expect_error(admStudy(E = 1:2, sd = 0.1, n = 10, times = 1:2,
-                        dose_bands = .sa_bands), "digitised data cannot")
-  # banded covariate must be declared in population
-  expect_error(admStudy(model = .sa_noccr,
-                        population = admPopulation(WT = c(mean = 70, sd = 10)),
-                        n = 10, times = 1:2, dose_bands = .sa_bands),
-               "does not declare a distribution")
-  # bands must be contiguous
-  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10, times = 1:2,
-                        dose_bands = bands_bad), "contiguous")
-  # first band must cover the lower support
-  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10, times = 1:2,
-                        dose_bands = list(CRCL = data.frame(
-                          lo = c(40, 60), hi = c(60, Inf), dose = c(1, 2)))),
-               "no dose band")
-  # discrete covariates use `by`, not bands
-  expect_error(admStudy(model = .sa_noccr,
-                        population = admPopulation(SEX = c(male = .5)),
-                        n = 10, times = 1:2,
-                        dose_bands = list(SEX = data.frame(lo = c(-Inf, 1),
-                                                          hi = c(1, Inf),
-                                                          dose = c(1, 2)))),
-               "CONTINUOUS")
-  # `at` must not pin the banded covariate
-  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10, times = 1:2,
-                        at = list(CRCL = 50), dose_bands = .sa_bands),
-               "also bands it")
-  # a first band above the enrolled range minimum strands subjects
-  expect_error(admStudy(model = .sa_noccr, population = pop, n = 10, times = 1:2,
-                        range = list(CRCL = c(15, 75)),
-                        dose_bands = list(CRCL = data.frame(lo = c(20, 30),
-                          hi = c(30, Inf), dose = c(1, 2)))),
-               "range` minimum")
-  # an open first band on a QUANTILE-declared margin is accepted: the CDF
-  # grid starts at 1e-6, which used to read as mass below -Inf
-  expect_s3_class(admStudy(model = .sa_noccr, n = 10, times = 1:2,
-    population = admPopulation(CRCL = list(quantile = function(u)
-      stats::qweibull(u, 2, 60))), dose_bands = .sa_bands), "admStudy")
+test_that("doseBands() builds and checks the table", {
+  b <- doseBands(CRCL, breaks = 30, amt = c(100, 200))
+  expect_identical(b, doseBands("CRCL", 30, c(100, 200)))
+  expect_identical(format(b), "CRCL < 30: 100; CRCL >= 30: 200")
+  expect_identical(format(doseBands(WT, c(50, 80), c(1, 2, 3))),
+                   "WT < 50: 1; 50 to < 80: 2; WT >= 80: 3")
+  expect_error(doseBands(CRCL, c(60, 30), c(1, 2, 3)), "strictly increasing")
+  expect_error(doseBands(CRCL, 30, c(1, 2, 3)), "one amount per band")
+  expect_error(doseBands(CRCL, 30, c(1, -2)), "non-negative")
 })
 
-test_that("dose_bands cuts the bands inside an enrolled `range`, without a warning", {
+test_that("admStudy() validates the dose rule", {
+  pop <- admPopulation(CRCL = c(mean = 60, sd = 25))
+  st  <- function(...) admStudy(model = .sa_noccr, n = 10, times = 1:2, ...)
+  expect_error(st(population = pop, dose = 100, ev = rxode2::et(amt = 1)),
+               "both `dose` and `ev`")
+  expect_error(st(population = pop, dose = "a lot"), "needs a `dose`")
+  expect_error(st(population = pop, dose = c(1, 2)), "one finite non-negative")
+  expect_error(st(population = pop, by = "CRCL", dose = .sa_bands),
+               "doseBands\\(\\) and `by`")
+  expect_error(admStudy(E = 1:2, sd = 0.1, n = 10, times = 1:2, dose = .sa_bands),
+               "digitised data cannot")
+  expect_error(st(population = admPopulation(WT = c(mean = 70, sd = 10)),
+                  dose = .sa_bands), "does not declare")
+  expect_error(st(population = admPopulation(SEX = c(male = .5)),
+                  dose = doseBands(SEX, 0.5, c(1, 2))), "CONTINUOUS")
+  expect_error(st(population = pop, at = list(CRCL = 50), dose = .sa_bands),
+               "`at` pins")
+  expect_error(st(population = pop, range = list(CRCL = c(75, 15)),
+                  dose = .sa_bands), "two increasing")
+  # an open band on a QUANTILE-declared margin is accepted
+  expect_s3_class(st(population = admPopulation(CRCL = list(quantile =
+    function(u) stats::qweibull(u, 2, 60))), dose = .sa_bands), "admStudy")
+  # the released `ev` spelling still works
+  expect_s3_class(st(population = pop, ev = rxode2::et(amt = 100)), "admStudy")
+})
+
+test_that("admStudy() validates a dose function at the nodes it will use", {
+  pop <- admPopulation(WT = c(mean = 75, sd = 16))
+  st  <- function(...) admStudy(model = .sa_fitwt, n = 10, times = 1:2, ...)
+  expect_error(st(population = pop, dose = function() 100), "reads no covariate")
+  expect_error(st(population = pop, dose = function(...) 100), "named arguments")
+  expect_error(st(population = pop, dose = function(CRCL) 2 * CRCL),
+               "does not declare")
+  expect_error(st(population = pop, at = list(WT = 70),
+                  dose = function(WT) 2 * WT), "`at` pins")
+  expect_error(st(population = pop, dose = function(WT) c(WT, WT)),
+               "one amount or an")
+  # a NORMAL weight's tail node sits below 0 kg: refused while writing it down
+  popn <- suppressWarnings(admPopulation(WT = c(mean = 70, sd = 20),
+                                         dist = "normal"))
+  expect_error(st(population = popn, dose = function(WT) 2 * WT),
+               "the dose function gives -")
+  # ... unless the enrolled range keeps it positive
+  expect_s3_class(st(population = popn, range = list(WT = c(40, 110)),
+                     dose = function(WT) 2 * WT), "admStudy")
+  expect_error(admStudy(E = 1:2, sd = 0.1, n = 10, times = 1:2,
+                        dose = function(WT) 2 * WT), "digitised data cannot")
+})
+
+test_that("dosing details are checked where they are written", {
+  # rxode2::et() ignores names it does not know, so a typo must fail here
+  expect_error(doseBands(CRCL, 30, c(1, 2), adl = 6), "not an rxode2::et")
+  expect_error(doseBands(CRCL, 30, c(1, 2), 12), "must be named")
+  expect_identical(format(doseBands(CRCL, 30, c(1, 2), ii = 12, addl = 6)),
+                   "CRCL < 30: 1; CRCL >= 30: 2  (ii = 12, addl = 6)")
+  pop <- admPopulation(WT = c(mean = 75, sd = 16))
+  expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10,
+                        times = 1:2, dose = function(WT) "a lot"),
+               "one amount or an")
+  expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10,
+                        times = 1:2,
+                        dose = function(WT) rxode2::et(amt = -WT)),
+               "finite and non-negative")
+})
+
+test_that("doseBands() cuts the bands inside an enrolled `range`, without a warning", {
   skip_if_not_installed("rxode2")
   # the range used to be refused while the band path still triggered the
   # "no range given" warning it then could not satisfy
   pop <- admPopulation(WT = c(mean = 75, sd = 12), CRCL = c(mean = 60, sd = 25),
                        cor = c(WT.CRCL = 0.6))
   s <- admStudy(model = .sa_noccr, population = pop, n = 100,
-                times = c(1, 2, 4), dose_bands = .sa_bands,
+                times = c(1, 2, 4), dose = .sa_bands,
                 range = list(CRCL = c(15, 75)), strata_nodes = 4L)
   m <- expect_no_warning(admixr2:::.admMaterialise(admixr2::admStudies(s = s)))
   b1 <- grep("_CRCLb1", names(m), value = TRUE)
@@ -1007,12 +1030,12 @@ test_that("dose_bands cuts the bands inside an enrolled `range`, without a warni
   expect_true(all(cr[b2] >= 30 & cr[b2] <= 75))
 })
 
-test_that("dose_mult expands into per-node studies with amt = mult * node", {
+test_that("a dose function expands into per-node studies with amt = f(node)", {
   skip_if_not_installed("rxode2")
   pop <- admPopulation(WT = c(mean = 75, sd = 16))
   s <- admStudy(model = .sa_fitwt, population = pop,
                 n = 90, times = c(1, 2, 4), strata_nodes = 5L,
-                dose_mult = c(WT = 2))
+                dose = function(WT) 2 * WT)
   m <- admixr2:::.admMaterialise(admixr2::admStudies(s = s))
   expect_length(m, 5L)
   expect_true(all(grepl("^s_WTm[1-5]$", names(m))))
@@ -1027,7 +1050,7 @@ test_that("dose_mult expands into per-node studies with amt = mult * node", {
   expect_true(min(w) < 75 && max(w) > 75)
 })
 
-test_that("dose_mult keeps the WT node's conditioning through a second stratify pass", {
+test_that("a dose function keeps the WT node's conditioning through a second stratify pass", {
   skip_if_not_installed("rxode2")
   # the source also fits CRCL, so datagen stratifies each (already
   # WT-conditioned) node on CRCL. .admCovStrata ignored the incoming
@@ -1041,7 +1064,7 @@ test_that("dose_mult keeps the WT node's conditioning through a second stratify 
   pop <- admPopulation(CRCL = c(mean = 60, sd = 25), WT = c(mean = 75, sd = 15),
                        cor = c(WT.CRCL = 0.6))
   s <- admStudy(model = mod, population = pop, n = 100, times = c(1, 2, 4),
-                dose_mult = c(WT = 2))
+                dose = function(WT) 2 * WT)
   m <- suppressWarnings(admixr2:::.admMaterialise(admixr2::admStudies(s = s)))
   nn <- vapply(m, function(x) x$n, 0)
   xy <- cbind(vapply(m, function(x) x$cov$WT, 0),
@@ -1052,52 +1075,69 @@ test_that("dose_mult keeps the WT node's conditioning through a second stratify 
                stats::cor(X[, "WT"], X[, "CRCL"]), tolerance = 0.02)
 })
 
-test_that("dose_mult validates its inputs", {
-  pop <- admPopulation(WT = c(mean = 75, sd = 16))
-  expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10,
-                        times = 1:2, dose = 100, dose_mult = c(WT = 2)),
-               "together with")
-  expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10, times = 1:2,
-                        dose_bands = list(WT = data.frame(lo = c(-Inf, 75),
-                                                          hi = c(75, Inf),
-                                                          dose = c(1, 2))),
-                        dose_mult = c(WT = 2)),
-               "together with")
-  expect_error(admStudy(E = 1:2, sd = 0.1, n = 10, times = 1:2,
-                        dose_mult = c(WT = 2)), "digitised data cannot")
-  expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10,
-                        times = 1:2, dose_mult = c(WT = -2)), "positive")
-  expect_error(admStudy(model = .sa_fitwt,
-                        population = admPopulation(CRCL = c(mean = 90, sd = 20)),
-                        n = 10, times = 1:2, dose_mult = c(WT = 2)),
-               "does not declare")
-  expect_error(admStudy(model = .sa_fitwt, population = pop, n = 10, times = 1:2,
-                        at = list(WT = 70), dose_mult = c(WT = 2)), "also scales")
-  # `by` is refused, not silently dropped
-  expect_error(admStudy(model = .sa_fitwt,
-                        population = admPopulation(WT = c(mean = 75, sd = 16),
-                                                   SEX = c(male = 0.5)),
-                        n = 10, times = 1:2, by = "SEX", dose_mult = c(WT = 2)),
-               "both `dose_mult` and `by`")
-  # a margin reaching zero would hand rxode2 a negative amount
-  popn <- suppressWarnings(admPopulation(WT = c(mean = 70, sd = 20),
-                                         dist = "normal"))
-  expect_error(admStudy(model = .sa_fitwt, n = 10, times = 1:2,
-                        population = popn, dose_mult = c(WT = 2)),
-               "non-positive dose")
-  # ... unless the enrolled range keeps it positive
-  expect_s3_class(admStudy(model = .sa_fitwt, n = 10, times = 1:2,
-                           population = popn, range = list(WT = c(40, 110)),
-                           dose_mult = c(WT = 2)), "admStudy")
+test_that("every dose group gets the timing it was written with", {
+  skip_if_not_installed("rxode2")
+  ev1 <- function(x) as.data.frame(x$ev)
+  # a table: et() details apply to every band
+  m <- admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .sa_noccr, population = admPopulation(CRCL = c(mean = 60, sd = 25)),
+    n = 50, times = c(1, 2, 4),
+    dose = doseBands(CRCL, 30, c(100, 200), ii = 12, addl = 2, dur = 1))))
+  expect_equal(vapply(m, function(x) ev1(x)$amt[1], 0), c(100, 200),
+               ignore_attr = TRUE)
+  expect_true(all(vapply(m, function(x) ev1(x)$ii[1] == 12 &&
+                    ev1(x)$addl[1] == 2 && ev1(x)$dur[1] == 1, logical(1))))
+  # a function returning an et(), as for one subject in an nlmixr2 dataset:
+  # a double loading dose, then the mg/kg maintenance dose
+  f <- function(WT) rxode2::et(amt = 4 * WT) |>
+    rxode2::et(amt = 2 * WT, time = 12, ii = 12, addl = 1)
+  m <- admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .sa_fitwt, population = admPopulation(WT = c(mean = 75, sd = 16)),
+    n = 50, times = c(1, 2, 4), strata_nodes = 3L, dose = f)))
+  for (x in m) {
+    a <- ev1(x)$amt[ev1(x)$evid == 1]
+    expect_equal(a, c(4, 2) * x$cov$WT, tolerance = 1e-10)
+  }
 })
 
-test_that("dose_mult with a `range` on the scaled covariate materialises", {
+test_that("a dose function of two covariates is cut over both", {
+  skip_if_not_installed("rxode2")
+  f <- function(WT, SEX) 2 * WT * (1 + 0.1 * SEX)
+  s <- admStudy(model = .sa_fitwt, n = 100, times = c(1, 2, 4),
+                strata_nodes = 3L, dose = f,
+                population = admPopulation(WT = c(mean = 75, sd = 16),
+                                           SEX = c(male = 0.4)))
+  m <- admixr2:::.admMaterialise(admStudies(s = s))
+  expect_length(m, 6L)                         # 3 WT nodes x 2 SEX levels
+  expect_equal(sum(vapply(m, function(x) x$n, 0)), 100, tolerance = 1e-8)
+  for (x in m)
+    expect_equal(as.data.frame(x$ev)$amt[1], f(x$cov$WT, x$cov$SEX),
+                 tolerance = 1e-10)
+  # SEX's level probabilities are kept
+  sx <- vapply(m, function(x) x$cov$SEX, 0); nn <- vapply(m, function(x) x$n, 0)
+  expect_equal(sum(nn[sx == 1]) / 100, 0.4, tolerance = 1e-8)
+})
+
+test_that("print() shows the dose rule", {
+  skip_if_not_installed("rxode2")
+  pop <- admPopulation(WT = c(mean = 75, sd = 16), CRCL = c(mean = 60, sd = 25))
+  expect_output(print(admStudy(model = .sa_noccr, population = pop, n = 10,
+                               times = 1:2,
+                               dose = doseBands(CRCL, 30, c(100, 200),
+                                                ii = 12, addl = 6))),
+                "CRCL < 30: 100; CRCL >= 30: 200  \\(ii = 12, addl = 6\\)")
+  expect_output(print(admStudy(model = .sa_fitwt, population = pop, n = 10,
+                               times = 1:2, dose = function(WT) 2 * WT)),
+                "dose = f\\(WT\\).*function\\(WT\\) 2 \\* WT")
+})
+
+test_that("a dose function with a `range` on its covariate materialises", {
   skip_if_not_installed("rxode2")
   # the range cut the nodes, then was re-applied to the POINT spec and died
   # in .admCovTruncSpec ("need at least two non-NA values to interpolate")
   s <- admStudy(model = .sa_fitwt, population = admPopulation(WT = c(mean = 75, sd = 16)),
                 n = 90, times = c(1, 2, 4), strata_nodes = 5L,
-                range = list(WT = c(50, 110)), dose_mult = c(WT = 2))
+                range = list(WT = c(50, 110)), dose = function(WT) 2 * WT)
   m <- admixr2:::.admMaterialise(admixr2::admStudies(s = s))
   w <- vapply(m, function(x) x$cov$WT, 0)
   expect_true(all(w >= 50 & w <= 110))
