@@ -656,6 +656,8 @@
   nms  <- .admCovSpecNames(cd)
   keep <- setdiff(nms, drop)
   R    <- cd[["latentR"]]
+  lmu  <- cd[["latentMu"]]
+  lsd  <- cd[["latentScale"]]
   out  <- cd
   for (nm in drop) out[[nm]] <- NULL
   # The expanded forms are rebuilt from `cor` below; carrying the old sampler
@@ -665,8 +667,12 @@
   # and left behind it rode along in every stratum for the life of the fit
   # object. .admCheckCovariates() re-attaches a reduced copy when it rebuilds.
   out[c("joint", "jointOwn", "discExact", "latentR", "cor", "rho",
-        "Sigma", ".adm_strata_joint")] <- NULL
+        "Sigma", ".adm_strata_joint", "latentMu", "latentScale")] <- NULL
   if (!length(keep)) return(NULL)
+  # The dropped margin is latently independent of the rest (checked above), so
+  # conditioning did not shift the survivors: their latent means/scales carry over.
+  if (!is.null(lmu)) out[["latentMu"]] <- lmu[match(keep, nms)]
+  if (!is.null(lsd)) out[["latentScale"]] <- lsd[match(keep, nms)]
   if (!is.null(R) && length(keep) > 1L &&
       identical(dim(R), c(length(nms), length(nms)))) {
     i  <- match(keep, nms)
@@ -782,6 +788,17 @@
     # scalar rho applies to EVERY pair
     R <- matrix(rr, d, d); diag(R) <- 1
   }
+  lmu <- cov_dist[["latentMu"]]
+  if (!is.null(lmu) && (!is.numeric(lmu) || length(lmu) != d ||
+                        !all(is.finite(lmu))))
+    stop("admixr2: `latentMu` must be a finite numeric vector of length ",
+         d, " (one latent mean per declared covariate).", call. = FALSE)
+  lsd <- cov_dist[["latentScale"]] %||% rep(1, d)
+  if (!is.numeric(lsd) || length(lsd) != d || !all(is.finite(lsd)) ||
+      any(lsd <= 0))
+    stop("admixr2: `latentScale` must be a positive finite numeric vector of ",
+         "length ", d, " (one latent scale per declared covariate).",
+         call. = FALSE)
   if (is.null(R)) return(cov_dist)
   # An explicit sampler is the more specific statement; do not override it.
   if (is.function(cov_dist[["joint"]])) return(cov_dist)
@@ -810,7 +827,7 @@
   # the margins; a user's own `joint` is never rebuilt.
   cov_dist[["jointOwn"]] <- TRUE
   cov_dist[["joint"]] <- local({
-    nms <- nms; margins <- margins; Lc <- Lc; d <- d
+    nms <- nms; margins <- margins; Lc <- Lc; d <- d; lmu <- lmu; lsd <- lsd
     function(u) {
       # ONE tolerance, shared with every other site -- .admCovU(). This closure used to clamp at 1e-12, and
       # .admCovGrid hands it uniforms it has ALREADY clamped at .Machine$double.eps, so the looser bound silently
@@ -819,6 +836,12 @@
       cl  <- function(x) pmin(pmax(x, .Machine$double.eps),
                               1 - .Machine$double.eps)
       z   <- stats::qnorm(cl(u)) %*% Lc
+      # A CONDITIONED copula carries its latent mean and scale here (see
+      # .admCovStrata): z | stratum ~ N(latentMu, diag(latentScale) R
+      # diag(latentScale)), sampled as N(0, R) rescaled and shifted.
+      if (!is.null(lmu) || any(lsd != 1))
+        z <- sweep(sweep(z, 2L, lsd, "*"),
+                   2L, lmu %||% numeric(d), "+")
       out <- vapply(seq_len(d), function(j)
         .admCovQuantile(margins[[j]], .admCovU(z[, j])),
         numeric(nrow(u)))
@@ -957,8 +980,20 @@
 # Z is n x length(cn) on the LATENT scale (already rotated and scaled by the caller); the result is n x
 # length(cn) on each covariate's own scale, named. The matrix() is not decoration: vapply drops to a vector at
 # n == 1 or at one covariate.
-.admCovXFromZ <- function(cd, cn, Z)
-  .admCovXFromU(cd, cn, .admCovU(as.matrix(Z)))
+.admCovXFromZ <- function(cd, cn, Z) {
+  Z <- as.matrix(Z)
+  # A conditioned copula's latent shift and scale: the design's Z is centred at
+  # 0 with unit variance, the covariate map sees Z * latentScale + latentMu --
+  # the same transform the joint closure applies.
+  pos <- match(cn, .admCovSpecNames(cd))
+  lsd <- cd[["latentScale"]]
+  lmu <- cd[["latentMu"]]
+  if (!is.null(lsd) || !is.null(lmu)) {
+    if (!is.null(lsd)) Z <- sweep(Z, 2L, lsd[pos], "*")
+    if (!is.null(lmu)) Z <- sweep(Z, 2L, lmu[pos], "+")
+  }
+  .admCovXFromU(cd, cn, .admCovU(Z))
+}
 
 # The same push, from UNIFORMS rather than latent normals -- what a copula's output needs, since
 # inverse_rosenblatt() and admixr2's own sampler both hand back the copula scale and neither knows the
@@ -1043,7 +1078,16 @@
                    # kept so .admCovDistDrop() can rebuild it -- see
                    # .admStrataJoint(). Not a covariate, so it must never be
                    # read as one.
-                   ".adm_strata_joint")
+                   ".adm_strata_joint",
+                   # latent mean shift of a CONDITIONED copula (one entry per
+                   # declared covariate, positional): z ~ N(latentMu, R) is
+                   # sampled as qnorm(u) %*% chol(R) + latentMu. Set by
+                   # .admCovStrata() when it conditions on a correlated stratum.
+                   "latentMu",
+                   # ... and its latent SCALE: the conditional latent covariance
+                   # Sc has diagonal != 1, so z ~ N(mu, Sc) is sampled as
+                   # (qnorm(u) %*% chol(cov2cor(Sc))) * latentScale + latentMu.
+                   "latentScale")
 
 # Discrete margins a `joint` sampler maps STRAIGHT FROM THEIR OWN UNIFORM.
 #
@@ -1104,6 +1148,29 @@
 # returned the default and certified a rule the construction never used.
 .admStrataNodes <- function(s) s[["strata_nodes"]] %||% .ADM_STRATA_NODES
 
+# CDF of one canonical covariate margin. +/-Inf map to 0/1 exactly: the grid
+# behind a `quantile` margin starts at 1e-6, and `rule = 2` returned that for
+# -Inf, so an open first dose band read as cutting off mass below -Inf.
+.admCovCdfOf <- function(spec) {
+  f <- if (!is.null(spec[["meanlog"]]))
+    function(x) stats::plnorm(x, spec[["meanlog"]], spec[["sdlog"]])
+  else if (!is.null(spec[["mu"]]))
+    function(x) stats::pnorm(x, spec[["mu"]], spec[["sd"]])
+  else if (is.function(spec[["quantile"]])) local({
+    gu <- seq(1e-6, 1 - 1e-6, length.out = 20001L)
+    gx <- as.numeric(spec[["quantile"]](gu))
+    function(x) stats::approx(gx, gu, xout = x, rule = 2L, ties = "ordered")$y
+  })
+  else stop("admixr2: this covariate margin has no CDF admixr2 can evaluate; ",
+            "declare it as normal, lognormal, or with a `quantile` function.",
+            call. = FALSE)
+  function(x) {
+    x <- as.numeric(x); out <- f(x)
+    out[x == -Inf] <- 0; out[x == Inf] <- 1
+    out
+  }
+}
+
 # Truncate one covariate's margin to the range a source actually enrolled.
 #
 # Strata are cut from the analyst's `cov_dist` over its FULL support, so a published model gets evaluated --
@@ -1111,12 +1178,14 @@
 # (information_claimed / information_earned = var_assumed / var_enrolled, measured at 3.43x for a source that
 # enrolled +/- 1 SD): not bias, but FALSE CONFIDENCE. Truncating the SPEC rather than either branch of
 # .admCovStrata means both the exact-conditioning route and the pooled route inherit it via .admCovQuantile.
+#
+# An endpoint may be -Inf/Inf: a dose band is the same truncation with an open end, and goes through here.
 .admCovTruncSpec <- function(spec, rng, nm) {
   bad <- function(...) stop("admixr2: ", ..., call. = FALSE)
   if (is.null(rng)) return(spec)
   rng <- sort(as.numeric(rng))
-  if (length(rng) != 2L || !all(is.finite(rng)) || rng[1L] >= rng[2L])
-    bad("`cov_range` for ", sQuote(nm), " must be two finite increasing ",
+  if (length(rng) != 2L || anyNA(rng) || rng[1L] >= rng[2L])
+    bad("`cov_range` for ", sQuote(nm), " must be two increasing ",
         "values, e.g. c(52, 118).")
   # DISCRETE: a range keeps the levels inside it and renormalises
   if (!is.null(spec[["values"]])) {
@@ -1128,31 +1197,21 @@
   }
   # CONTINUOUS: re-map u onto [F(a), F(b)], which is the truncated quantile function. Weights renormalise
   # automatically over the truncated support, so sum(n_k) = n still holds.
-  cdf <- if (!is.null(spec[["meanlog"]]))
-    function(x) stats::plnorm(x, spec[["meanlog"]], spec[["sdlog"]])
-  else if (!is.null(spec[["mu"]]))
-    function(x) stats::pnorm(x, spec[["mu"]], spec[["sd"]])
-  else NULL
-  qf <- if (!is.null(spec[["meanlog"]]))
-    function(u) stats::qlnorm(u, spec[["meanlog"]], spec[["sdlog"]])
-  else if (!is.null(spec[["mu"]]))
-    function(u) stats::qnorm(u, spec[["mu"]], spec[["sd"]])
-  else if (is.function(spec[["quantile"]])) spec[["quantile"]]
-  else bad("`cov_range` was given for ", sQuote(nm), " but its margin is not ",
-           "one admixr2 can invert (declare it as normal, lognormal, or with ",
-           "a `quantile` function).")
-  if (is.null(cdf)) {
-    # a user quantile function: a fine grid is enough, since this only sets the two truncation endpoints
-    gu <- seq(1e-6, 1 - 1e-6, length.out = 20001L)
-    gx <- as.numeric(qf(gu))
-    cdf <- function(x) stats::approx(gx, gu, xout = x, rule = 2L)$y
-  }
-  pa <- as.numeric(cdf(rng[1L])); pb <- as.numeric(cdf(rng[2L]))
+  cdf <- tryCatch(.admCovCdfOf(spec), error = function(e)
+    bad("`cov_range` was given for ", sQuote(nm), " but its margin is not ",
+        "one admixr2 can invert (declare it as normal, lognormal, or with ",
+        "a `quantile` function)."))
+  pa <- cdf(rng[1L]); pb <- cdf(rng[2L])
   if (!is.finite(pa) || !is.finite(pb) || pb - pa < 1e-8)
     bad("`cov_range` for ", sQuote(nm), " covers essentially none of its ",
         "declared distribution -- check the range and the margin agree on ",
         "units.")
-  list(quantile = function(u) qf(pa + u * (pb - pa)))
+  # `.band` is [F(a), F(b)] on the FULL margin, so .admCovStrata() can map a
+  # node back to the latent the copula couples through, qnorm(pa + u (pb - pa)).
+  # A spec truncated twice composes onto the full margin it was cut from.
+  b0 <- spec[[".band"]] %||% c(0, 1)
+  list(quantile = function(u) .admCovQuantile(spec, pa + u * (pb - pa)),
+       .band = b0[1L] + c(pa, pb) * (b0[2L] - b0[1L]))
 }
 
 # Truncate a WHOLE `cov_dist` to the ranges a source enrolled.
@@ -1195,13 +1254,20 @@
   # truncated margins was a no-op and the sampler kept the full declared support. The correlation has to be
   # handed BACK as `cor`, or dropping the derived fields would drop the dependence with them.
   if (isTRUE(cov_dist[["jointOwn"]])) {
-    .R <- cov_dist[["latentR"]]
-    cov_dist[c("joint", "jointOwn", "latentR", "discExact")] <- NULL
+    .R   <- cov_dist[["latentR"]]
+    .lmu <- cov_dist[["latentMu"]]
+    .lsd <- cov_dist[["latentScale"]]
+    cov_dist[c("joint", "jointOwn", "latentR", "discExact", "latentMu",
+               "latentScale")] <- NULL
     if (!is.null(.R) && length(nms) > 1L &&
         identical(dim(.R), c(length(nms), length(nms)))) {
       dimnames(.R) <- list(nms, nms)
       cov_dist[["cor"]] <- .R
     }
+    # Truncating a margin moves no latent mean or scale: the shift lives on the
+    # latent scale, the range maps the margin's own uniform, so both carry across.
+    if (!is.null(.lmu)) cov_dist[["latentMu"]] <- .lmu
+    if (!is.null(.lsd)) cov_dist[["latentScale"]] <- .lsd
   }
   .admCovDistCanon(cov_dist)
 }
@@ -1232,8 +1298,12 @@
   }
   out  <- cd
   out[[drop]] <- NULL
+  lmu  <- cd[["latentMu"]]
+  lsd  <- cd[["latentScale"]]
   out[c("joint", "jointOwn", "discExact", "latentR", "cor", "rho",
-        "Sigma", ".adm_strata_joint")] <- NULL
+        "Sigma", ".adm_strata_joint", "latentMu", "latentScale")] <- NULL
+  if (!is.null(lmu) && length(keep)) out[["latentMu"]] <- lmu[match(keep, nms)]
+  if (!is.null(lsd) && length(keep)) out[["latentScale"]] <- lsd[match(keep, nms)]
   if (!is.null(R) && length(keep) > 1L &&
       identical(dim(R), c(length(nms), length(nms)))) {
     i  <- match(keep, nms)
@@ -1363,6 +1433,25 @@
         zC <- zC %*% .U
       }
     } else { zC <- matrix(0, 1L, 0L); wC <- 1 }
+    # AN ALREADY-CONDITIONED cov_dist (a dose_mult node, a stratum) carries its
+    # shift and shrinkage as latentMu/latentScale: z ~ N(mu0, D R D). Ignoring
+    # them re-stratified from the UNCONDITIONAL law and threw the shift away.
+    # zC has covariance R_SS here, so the affine map gives it Sg_SS.
+    mu0 <- as.numeric(cov_dist[["latentMu"]] %||% numeric(d))
+    sd0 <- as.numeric(cov_dist[["latentScale"]] %||% rep(1, d))
+    Sg  <- Rm * tcrossprod(sd0)
+    if (length(iSc)) {
+      zC <- sweep(sweep(zC, 2L, sd0[iSc], "*"), 2L, mu0[iSc], "+")
+    }
+    # A BAND-truncated margin (dose_bands) maps its node through its OWN
+    # uniform, so zC is the band's score, not the latent the copula couples
+    # through. Condition on the full-margin latent qnorm(pa + u (pb - pa)).
+    zF <- zC
+    for (k in seq_along(iSc)) {
+      .bd <- cov_dist[[nms[iSc[k]]]][[".band"]]
+      if (!is.null(.bd))
+        zF[, k] <- stats::qnorm(.bd[1L] + .admCovU(zC[, k]) * (.bd[2L] - .bd[1L]))
+    }
     nC <- nrow(zC)
     xC <- matrix(if (length(iSc)) vapply(seq_along(iSc), function(k)
       .admCovQuantile(cov_dist[[nms[iSc[k]]]],
@@ -1378,9 +1467,12 @@
     # Conditioning is a NO-OP wherever the latent blocks do not couple, and the stratum's remaining covariates
     # then keep their DECLARED specs -- exact, with no sample standing in for them. That is the common case.
     A <- if (length(iMc) && length(iSc))
-      Rm[iMc, iSc, drop = FALSE] %*% solve(Rm[iSc, iSc, drop = FALSE]) else
+      Sg[iMc, iSc, drop = FALSE] %*% solve(Sg[iSc, iSc, drop = FALSE]) else
       matrix(0, length(iMc), length(iSc))
-    exact_marg <- !length(A) || all(abs(A) < 1e-12)
+    # an incoming shift/scale on the remaining block must ride the conditional
+    # route too, or the declared-margin shortcut below drops it
+    exact_marg <- (!length(A) || all(abs(A) < 1e-12)) &&
+      all(mu0[iM] == 0) && all(sd0[iM] == 1)
     Rmm <- Rm[iM, iM, drop = FALSE]
     dep_marg <- length(iM) > 1L &&
       !isTRUE(all.equal(unname(Rmm), diag(length(iM)), tolerance = 1e-12))
@@ -1391,12 +1483,7 @@
     pt_spec <- function(v) list(.point = TRUE, quantile = local({ v <- as.numeric(v)
       function(u) rep(v, length.out = length(u)) }))
     if (!exact_marg) {
-      Sc <- Rm[iMc, iMc, drop = FALSE] - A %*% Rm[iSc, iMc, drop = FALSE]
-      Lc <- t(chol(Sc + diag(1e-12, nrow(Sc))))
-      nd <- max(as.integer(n_pool), 8192L)
-      q  <- randtoolbox::sobol(nd, dim = length(iMc))
-      if (!is.matrix(q)) q <- matrix(q, ncol = length(iMc))
-      Z0 <- stats::qnorm(pmin(pmax(q, 1e-12), 1 - 1e-12))
+      Sc <- Sg[iMc, iMc, drop = FALSE] - A %*% Sg[iSc, iMc, drop = FALSE]
     }
     return(unlist(lapply(seq_len(nD), function(kd) lapply(seq_len(nC), function(kc) {
       cd_k <- list()
@@ -1410,43 +1497,45 @@
           cd_k[["cor"]] <- Rk[names(cd_k), names(cd_k), drop = FALSE]
         }
       } else {
-        # The closed-form Gaussian conditional of the CONTINUOUS block, drawn once as a low-discrepancy sample.
-        # Discrete margins keep their exact specs and are mapped from their own uniform, which is what
-        # `discExact` tells .admCovGrid it may enumerate.
-        mu <- as.numeric(A %*% zC[kc, ])
-        Xc <- sweep(Z0 %*% t(Lc), 2L, mu, "+")
-        Xc <- matrix(vapply(seq_along(iMc), function(k)
-          .admCovQuantile(cov_dist[[nms[iMc[k]]]],
-            .admCovU(Xc[, k])), numeric(nd)), nd, length(iMc),
-          dimnames = list(NULL, nms[iMc]))
-        # sorted before it is handed out: the rows arrive in Sobol order and the sampler that draws from them
-        # runs another Sobol stream, so indexing by that stream correlates the two and returns a structured
-        # subsample (measured: sd 13.094 against a true 14.283)
-        Xc <- Xc[order(Xc[, 1L]), , drop = FALSE]
-        for (k in seq_along(iMc)) cd_k[[nms[iMc[k]]]] <-
-          list(quantile = local({ v <- sort(Xc[, k])
-            function(u) v[1L + pmin(floor(u * length(v)), length(v) - 1L)] }))
+        # The closed-form Gaussian conditional of the CONTINUOUS block, carried
+        # EXACTLY as a conditioned copula: z_M | z_S = z ~ N(A z, Sc) pointwise
+        # in z, so the child is the DECLARED margins of the remaining block plus
+        # the conditional correlation cov2cor(Sc) plus latentMu = A zC[kc, ].
+        # Discrete margins keep their exact specs and are mapped from their own
+        # uniform, which is what `discExact` (recomputed by the canon from the
+        # child's `cor`) tells .admCovGrid it may enumerate.
+        #
+        # WHY NOT A SAMPLED CLOUD (the previous .admStrataJoint route): an opaque
+        # sample publishes no latentR, so .admCovCollapse()/.admJointCollapse()
+        # refused the child and every dose_bands/dose_mult/stratified unit fell
+        # back to the full cov_nodes^p product grid. With latentR present the
+        # low-rank design is admitted -- and sampling becomes exact, not a pool.
+        mu <- mu0[iMc] + as.numeric(A %*% (zF[kc, ] - mu0[iSc]))
+        for (k in seq_along(iMc)) cd_k[[nms[iMc[k]]]] <- cov_dist[[nms[iMc[k]]]]
         for (j in setdiff(iM, iMc)) cd_k[[nms[j]]] <- cov_dist[[nms[j]]]
-        nk  <- names(cd_k)
-        cn  <- nms[iMc]
-        jc  <- match(cn[1L], nk)
-        cd_k[["joint"]] <- .admStrataJoint(Xc, nk, cn, cd_k[nk])
-        # THE SAMPLE IS KEPT, so the sampler can be REBUILT if a margin later
-        # comes off. A covariate the analysis model never reads is dropped from
-        # the design -- and this sampler is the one case that could not survive
-        # it, because its row index comes from ONE uniform column and padding
-        # that column collapses every draw onto a single row of `Xc`. Deleting
-        # a column of a joint SAMPLE is exact marginalisation, so the answer is
-        # to rebuild on what is left rather than to wrap or to refuse.
-        cd_k[[".adm_strata_joint"]] <- list(X = Xc, cn = cn)
-        cd_k[["discExact"]] <- setdiff(nk, cn)
+        nk <- names(cd_k)          # margins only: taken BEFORE the metadata below joins
+        # the same 1e-12 ridge the sampled route put on chol(Sc): a
+        # near-singular Schur complement (|rho| -> 1) must stay positive
+        # definite through cov2cor + chol, and latentScale strictly positive
+        Sc <- Sc + diag(1e-12, nrow(Sc))
+        Rk <- diag(length(nms)); Rk[iMc, iMc] <- stats::cov2cor(Sc)
+        dimnames(Rk) <- list(nms, nms)
+        cd_k[["cor"]] <- Rk[nk, nk, drop = FALSE]
+        lmu <- numeric(length(nms)); names(lmu) <- nms
+        lmu[nms[iMc]] <- mu
+        cd_k[["latentMu"]] <- lmu[nk]
+        # the conditional latent covariance Sc has diagonal != 1 -- that IS the
+        # variance shrinkage of conditioning -- so it rides as a per-margin scale
+        lsd <- rep(1, length(nms)); names(lsd) <- nms
+        lsd[nms[iMc]] <- sqrt(diag(Sc))
+        cd_k[["latentScale"]] <- lsd[nk]
       }
       cv <- c(stats::setNames(as.list(xC[kc, ]), nms[iSc]),
               stats::setNames(lapply(seq_along(iSd), function(k)
                 lvD[[k]][lgD[kd, k]]), nms[iSd]))
       list(cov = cv[nms[iS]], cov_dist = cd_k,
            weight = wC[kc] * wD[kd],
-           n_pool_cell = if (exact_marg) NA_integer_ else nd)
+           n_pool_cell = NA_integer_)
     })), recursive = FALSE))
   }
 
@@ -2294,8 +2383,13 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     disc <- vapply(nms, function(n) !is.null(cov_dist[[n]][["values"]]),
                    logical(1))
     # ... unless the sampler maps that margin straight from its own uniform, which admixr2 records when it
-    # builds the copula -- see .admCovDiscExact().
-    ex   <- disc & nms %in% (cov_dist[["discExact"]] %||% character(0))
+    # builds the copula -- see .admCovDiscExact(). A POINT margin (a stratified/banded covariate pinned by
+    # .admCovStrata) is the same case with ONE level: enumerate it exactly instead of spending n_nodes
+    # GH nodes on a uniform whose quantile is constant -- that was a 7x row waste on every dose_mult /
+    # dose_bands / stratified unit.
+    pt   <- vapply(nms, function(n) isTRUE(cov_dist[[n]][[".point"]]),
+                   logical(1))
+    ex   <- (disc & nms %in% (cov_dist[["discExact"]] %||% character(0))) | pt
     if (any(disc & !ex)) {
       # THE POOL IS A LAST RESORT, AND IT IS NOT JUST SLOWER -- IT IS SHARED. An equal-weight pool is a
       # deterministic function of `cov_dist`, so datagen() and the fit draw the SAME rows: any idiosyncrasy of
@@ -2624,6 +2718,24 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # The shift path measures Delta(a) relative to it (.admShiftRef), and any study mixing a fixed `cov` with a
 # distributed one needs a value for the fixed part. Deriving it from `cov_dist` rather than making the user
 # restate it removes a way for the two to disagree silently.
+# A covariate's OWN distribution inside `cd`. A conditioned child (a stratum,
+# a dose_mult node, a correlated dose band) keeps its DECLARED margins plus
+# latentMu/latentScale, because the collapse needs them in that form; a reader
+# wanting the covariate's mean, spread or quantiles must fold them back in, or
+# every child reads as the unconditional margin and the between-study contrast
+# disappears.
+.admCovEffMargin <- function(cd, cv) {
+  sp <- cd[[cv]]
+  if (!is.list(sp) || !is.null(sp[["values"]]) || isTRUE(sp[[".point"]]))
+    return(sp)
+  j <- match(cv, .admCovSpecNames(cd))
+  if (is.na(j)) return(sp)
+  m <- cd[["latentMu"]][j] %||% 0; v <- cd[["latentScale"]][j] %||% 1
+  if (m == 0 && v == 1) return(sp)
+  list(quantile = function(u)
+    .admCovQuantile(sp, stats::pnorm(m + v * stats::qnorm(u))))
+}
+
 .admCovMeanOf <- function(spec) {
   if (!is.null(spec$values)) {
     pr <- spec$probs %||% rep(1, length(spec$values))
@@ -2677,7 +2789,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
   # as the value it is conditioned at (`cov`) -- these are the same object at two resolutions, and BOTH break
   # the ridge. Reading `cov_dist` alone warned that a source reporting by stratum was unidentified.
   .decl <- function(s, cv) {
-    d <- s[["cov_dist"]][[cv]]
+    d <- .admCovEffMargin(s[["cov_dist"]], cv)
     if (!is.null(d))
       return(c(.admCovMeanOf(d) %||% NA_real_, .admCovSdOf(d) %||% NA_real_))
     v <- .admCovOne(s, cv)

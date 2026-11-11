@@ -1102,9 +1102,16 @@ test_that("the rebuilt stratum sampler survives the drop it is rebuilt for", {
   st <- list(s = list(times = c(1, 4), ev = rxode2::et(amt = 100), n = 100L,
                       cov_dist = cd, stratify = "WT", strata_nodes = 3L))
   ex <- suppressMessages(admixr2:::.admExpandStrata(st, names(st)))$studies
-  k  <- ex[[2L]]$cov_dist
-  expect_true(is.function(admixr2:::.admCovDistCanon(k)[["joint"]]))
-  expect_setequal(k[[".adm_strata_joint"]]$cn, c("CRCL", "ALB"))
+  # The stratum is the EXACT Gaussian conditional, carried as a conditioned
+  # copula (declared margins + latentMu/latentScale + conditional cor), not a
+  # sampled cloud: z_M | z_WT ~ N(0.7 z_WT, I - 0.49), so the conditional
+  # correlation of CRCL and ALB is (0.7 - 0.49) / (1 - 0.49).
+  k   <- ex[[3L]]$cov_dist
+  rho <- (0.7 - 0.49) / (1 - 0.49)
+  expect_equal(unname(k[["cor"]]["CRCL", "ALB"]), rho, tolerance = 1e-8)
+  expect_lt(k[["latentMu"]][["CRCL"]], 0)        # the low-WT node pulls CRCL down
+  expect_equal(unname(k[["latentScale"]][c("CRCL", "ALB")]),
+               rep(sqrt(1 - 0.49), 2L), tolerance = 1e-8)
 
   # SEX is declared and never read, so it comes off the design -- exactly, and
   # this is the one sampler that could not survive it unrebuilt.
@@ -1118,24 +1125,18 @@ test_that("the rebuilt stratum sampler survives the drop it is rebuilt for", {
   ui  <- suppressMessages(rxode2::rxode2(mod))
   out <- suppressMessages(
     admixr2:::.admCheckCovariates(ui, list(n_eta = 0L), ex))
-  cdo <- admixr2:::.admCovDistCanon(out[[2L]]$cov_dist)
+  cdo <- admixr2:::.admCovDistCanon(out[[3L]]$cov_dist)
   expect_setequal(admixr2:::.admCovSpecNames(cdo), cvs)
-  expect_true(is.function(cdo[["joint"]]))
-  # NOT the canon's own copula over the declared margins: this is the stratum's
-  # conditional sample, which is not rebuildable from `cor` and must not be
-  # labelled as if it were.
-  expect_false(isTRUE(cdo[["jointOwn"]]))
-  # The dependence the sample encoded is still there. Drawn independently from
-  # their own quantile specs -- which is what the dead rebuild left behind --
-  # this correlation is zero.
-  set.seed(4)
-  X <- cdo[["joint"]](matrix(stats::runif(3000L), ncol = 3L))
-  expect_gt(stats::cor(X[, "CRCL"], X[, "ALB"]), 0.3)
-  # And the sample it indexes is REDUCED rather than carried whole: left
-  # behind, 8192 rows including the dropped column rode along in every stratum
-  # for the life of the fit object.
-  expect_setequal(colnames(out[[2L]]$cov_dist[[".adm_strata_joint"]]$X),
-                  c("CRCL", "ALB"))
+  # The conditioning survives the drop: the shift and the conditional
+  # correlation are reduced to the kept margins, not reset. Drawn from the
+  # declared margins with the shift lost, CRCL/ALB would be uncorrelated
+  # within the stratum, or correlated at the UNconditional 0.7.
+  expect_equal(unname(cdo[["latentMu"]][match(c("CRCL", "ALB"),
+                                              admixr2:::.admCovSpecNames(cdo))]),
+               unname(k[["latentMu"]][c("CRCL", "ALB")]))
+  X <- covDraw(cdo, n = 20000L)
+  expect_equal(stats::cor(X[, "CRCL"], X[, "ALB"]), rho, tolerance = 0.05)
+  expect_lt(mean(X[, "CRCL"]), 90)
 })
 
 test_that(".admEvalModelLines runs the parameter block vectorised in a covariate", {
@@ -1289,10 +1290,11 @@ test_that("the rebuilt stratum sampler keeps its exactly-mapped margins", {
     admixr2:::.admCheckCovariates(ui, list(n_eta = 0L), ex))
   cdo <- out[[2L]]$cov_dist
   expect_setequal(admixr2:::.admCovSpecNames(cdo), c("WT", "CRCL", "SEX"))
-  # WT is this stratum's own point and SEX its own discrete margin: both are
-  # mapped straight from their uniform, so both are exactly enumerable, while
-  # CRCL comes from the shared conditional sample.
-  expect_setequal(cdo[["discExact"]], c("WT", "SEX"))
+  # SEX is its own discrete margin, latently independent, so it stays exactly
+  # enumerable; WT is this stratum's own POINT, which needs no enumeration and
+  # takes no axis. (`discExact` lists discrete margins only.)
+  expect_identical(cdo[["discExact"]], "SEX")
+  expect_true(isTRUE(cdo[["WT"]][[".point"]]))
 })
 
 test_that(".admCovCoefThetas separates an estimated coefficient from an asserted one", {
@@ -1555,8 +1557,12 @@ test_that("a correlated conditional still enumerates an independent discrete mar
                   cov_range = list(WT = c(50, 115)))
   expect_length(st, 4L)
   for (s in st) {
-    expect_true(is.function(s$cov_dist[["joint"]]))
-    expect_true("SEX" %in% s$cov_dist[["discExact"]])
+    # the conditional is carried as `cor` + `latentMu` on the raw child; the
+    # derived sampler/correlation appear once canonised
+    cdc <- admixr2:::.admCovDistCanon(s$cov_dist)
+    expect_true(is.function(cdc[["joint"]]))
+    expect_true(!is.null(cdc[["latentR"]]))
+    expect_true("SEX" %in% cdc[["discExact"]])
     X <- covDraw(s$cov_dist, n = 8000L)
     expect_lt(stats::sd(X[, "WT"]), 1e-8)            # stratified: a point
     expect_equal(mean(X[, "SEX"] == 1), 0.55, tolerance = 0.02)
@@ -1570,6 +1576,36 @@ test_that("a correlated conditional still enumerates an independent discrete mar
   # ... and the conditional mean of the correlated covariate still MOVES
   em <- vapply(st, function(s) mean(covDraw(s$cov_dist, n = 20000L)[, "CRCL"]), 0)
   expect_gt(diff(range(em)), 10)
+})
+
+test_that("a correlated conditional child carries latentR/latentMu, so the collapse admits it", {
+  # Regression: the conditioned child used to be an opaque empirical sample with
+  # no `latentR`, so .admCovCollapse() refused it and the unit fell back to the
+  # full cov_nodes^p product grid. Now the child is the exact conditioned
+  # copula: declared margins + conditional `cor` + per-stratum `latentMu`.
+  R <- diag(2); R[1L, 2L] <- R[2L, 1L] <- 0.7
+  dimnames(R) <- list(c("WT", "CRCL"), c("WT", "CRCL"))
+  cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20), cor = R)
+  st <- admixr2:::.admCovStrata(cd, "WT", n_nodes = 4L)
+  for (s in st) {
+    cdc <- admixr2:::.admCovDistCanon(s$cov_dist)
+    expect_true(!is.null(cdc[["latentR"]]))     # readable latent structure, not a sample
+    expect_true(isTRUE(cdc[["jointOwn"]]))
+    expect_equal(length(cdc[["latentMu"]]), 2L)
+    expect_equal(unname(cdc[["latentMu"]][1L]), 0)          # stratified margin: a point
+    # conditional correlation is the Schur complement 1 - 0.7^2 on the diagonal
+    expect_equal(unname(cdc[["latentR"]][2L, 2L]), 1)
+    expect_equal(unname(cdc[["latentR"]][1L, 2L]), 0, tolerance = 1e-12)
+    # latent mean of CRCL is A z_WT with A = 0.7 (latent scale), and its latent
+    # scale carries the conditional variance shrinkage sqrt(1 - 0.7^2)
+    zW <- (s$cov$WT - 78) / 16
+    expect_equal(unname(cdc[["latentMu"]][2L]), 0.7 * zW, tolerance = 1e-10)
+    expect_equal(unname(cdc[["latentScale"]][2L]), sqrt(1 - 0.49), tolerance = 1e-12)
+    # and the sampler honours the shift: CRCL draws centre on the closed form
+    X <- covDraw(s$cov_dist, n = 40000L)
+    expect_equal(mean(X[, "CRCL"]), 90 + 20 * 0.7 * zW, tolerance = 5e-2)
+    expect_equal(sd(X[, "CRCL"]), 20 * sqrt(1 - 0.49), tolerance = 0.15)
+  }
 })
 
 test_that("covStrata's cov_range truncation survives the second canon", {
@@ -1588,8 +1624,9 @@ test_that("covStrata's cov_range truncation survives the second canon", {
   wt <- unlist(lapply(st, function(b) b[["cov"]][["WT"]]), use.names = FALSE)
   expect_true(all(wt >= 60 - 1e-8 & wt <= 100 + 1e-8))
   # ... and the correlation was NOT lost when the derived fields were rebuilt
-  cd2 <- st[[1L]][["cov_dist"]]
+  cd2 <- admixr2:::.admCovDistCanon(st[[1L]][["cov_dist"]])
   expect_true(is.function(cd2[["joint"]]) || !is.null(cd2[["latentR"]]))
+  expect_true(!is.null(cd2[["latentMu"]]))   # the conditional's latent mean survives too
 })
 
 test_that("a continuous summary is not read as a set of levels", {
