@@ -1,8 +1,8 @@
 ---
-title: "Generating aggregate data with datagen"
+title: "Simulated trials and published models"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Generating aggregate data with datagen}
+  %\VignetteIndexEntry{Simulated trials and published models}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -16,23 +16,27 @@ knitr::opts_chunk$set(
 source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R"))[1])
 ```
 
-## When would you use `datagen`?
+## Two reasons to generate a study from a model
 
-Two situations call for generating aggregate data programmatically:
+A study can come from a model rather than from a figure, for two different
+reasons, and admixr2 treats them differently:
 
-**Simulation studies.** To check that an estimator recovers the truth: define a
-data-generating model with known parameters, call `datagen()` for E and V, fit
-your analysis model, compare.
+| You have | Write it as | Scored as | Standard errors |
+|---|---|---|---|
+| A trial you are **simulating** (a worked example, a recovery check, a design question) | `admStudy(model, est, simulated = TRUE)` | `n` sampled patients | yes |
+| A **published model** from a paper | `admStudy(model, est)` | the model it is; `n` sets its weight | no |
 
-**Published models as input.** Each published study was analysed with its own
-structural model — a different number of compartments, a different
-parameterisation, only some of the IIV terms. `datagen()` turns such a model into
-the aggregate data it implies, making it a direct input alongside digitised
-summaries. Several of them in `admControl(studies = ...)` is a meta-analysis
-across the literature (see `vignette("multiple-studies")`).
+Both are generated the same way --- the model's `E` and `V` for that design ---
+and the difference is only in what is claimed. A simulated trial stands in for
+data, so it is scored the way digitised data would be. A published model is not
+a sample: its moments are exact functions of the paper's parameters, and the
+parameter uncertainty a sampling law would need is not available, so a fit that
+includes one reports no standard errors.
 
-Either way the output is a named list of `(E, V, n, times, ev)` objects that
-plugs straight into `admControl(studies = ...)`.
+`datagen()` is the engine underneath. Pass it the studies to **look at** the
+`E` and `V` they imply, and use it directly for what `admStudy()` does not
+express: several observed outputs, the individual simulated samples, and a
+choice of moment method (the last sections below).
 
 ## Simulation study: same model across studies
 
@@ -72,22 +76,26 @@ true_model <- function() {
 True parameter values: CL = 5 L/h, V = 10 L, ka = 1 h⁻¹; IIV of 0.3 (SD on
 log scale) for CL and 0.2 for V and ka; proportional residual error SD = 0.2.
 
-### Generating the data
+### Simulating the trials
 
-A top-level `model` is the default every study inherits, so each spec needs only
-`times`, `ev` and `n`:
+The model's `ini()` holds the truth, so each trial needs only its design. Pass
+`est` to simulate at other values:
 
-```{r datagen-same}
+```{r datagen-same, comment = NA}
 times <- c(0.5, 1, 2, 4, 8, 12, 24)
 
-study_data <- datagen(
-  studies = list(
-    low_dose  = list(times = times, ev = rxode2::et(amt =  50), n = 250L),
-    high_dose = list(times = times, ev = rxode2::et(amt = 100), n = 250L)
-  ),
-  model   = true_model,
-  control = datagenControl(n_sim = 10000L, seed = 1L)
-)
+low_dose  <- admStudy(model = true_model, n = 250, dose =  50, times = times,
+                      simulated = TRUE)
+high_dose <- admStudy(model = true_model, n = 250, dose = 100, times = times,
+                      simulated = TRUE)
+sim_studies <- admStudies(low_dose, high_dose)
+sim_studies
+```
+
+`datagen()` shows the data each trial contributes:
+
+```{r datagen-look}
+study_data <- datagen(sim_studies)
 
 # Each study returns E, V, n, times, ev
 names(study_data$low_dose)
@@ -131,8 +139,8 @@ the estimator and enters the likelihood.
 
 ### Parameter recovery
 
-The generated data plug straight into `admControl(studies = ...)`. Using the same
-structural model for the analysis is what makes this a consistency check:
+The trials go straight into the fit. Using the same structural model for the
+analysis is what makes this a consistency check:
 
 ```{r analysis-model}
 analysis_model <- function() {
@@ -164,20 +172,18 @@ The starting values are deliberately off the truth (CL 4 against 5, V 12 against
 fit_sim <- nlmixr2(
   analysis_model, admData(), est = "admc",
   control = admControl(
-    studies   = study_data,
-      maxeval = 300L
+    studies = sim_studies,
+    maxeval = 300L
   )
 )
 
 print(fit_sim)
 ```
 
-**No standard errors, and the blank `SE` / `%RSE` / `95%CI` columns are why.** A
-study generated from a model is not a sample: `n` is the source study's true
-sample size, but the parameter uncertainty a sampling law would need is not
-available, so admixr2 sets `covMethod = "none"` and reports no uncertainty at
-all. Naming a `covMethod` explicitly is an error rather than an override. The
-columns are nlmixr2's table; the emptiness is the answer.
+The `SE`, `%RSE` and `95%CI` columns are filled: a simulated trial is scored as
+250 sampled patients, so the fit reports the uncertainty two trials of that size
+would carry. The same model entered as a **published** model (below) would leave
+those columns blank.
 
 Structural parameter estimates and the truth:
 
@@ -189,7 +195,9 @@ knitr::kable(
   data.frame(
     parameter = names(truth),
     truth     = round(exp(truth), 2),
-    estimate  = round(exp(est[names(truth)]), 2)
+    estimate  = round(exp(est[names(truth)]), 2),
+    `SE (log scale)` = signif(fit_sim$parFixedDf[names(truth), "SE"], 2),
+    check.names = FALSE
   ),
   row.names = FALSE, caption = "Structural parameter estimates vs true values")
 ```
@@ -197,8 +205,7 @@ knitr::kable(
 ## Literature workflow: per-study models
 
 Each publication comes with its own model — a 2016 paper with one compartment, a
-2022 follow-up with two. A `model` inside a study spec overrides the top-level
-default:
+2022 follow-up with two. Each becomes one `admStudy()`, carrying its own model:
 
 ```{r lit-models}
 # One-compartment oral model (as published in a simpler earlier study)
@@ -254,25 +261,19 @@ Both share a CL of 5 L/h and differ only in how they describe distribution: the
 earlier study lumped the periphery into one larger apparent volume (V = 40 L),
 the later one resolved it (V₁ = 10 L, V₂ = 30 L, Q = 10 L/h).
 
-```{r lit-datagen}
-lit_data <- datagen(
-  studies = list(
-    early_study = list(
-      model = model_1cmt,
-      times = c(0.5, 1, 2, 4, 8, 12),
-      ev    = rxode2::et(amt = 100),
-      n     = 120L
-    ),
-    later_study = list(
-      model = model_2cmt,
-      times = c(2, 4, 8, 12, 24),
-      ev    = rxode2::et(amt = 200),
-      n     = 180L
-    )
-  ),
-  control = datagenControl(n_sim = 10000L, seed = 2L)
-)
+```{r lit-datagen, comment = NA}
+early_study <- admStudy(model = model_1cmt, n = 120, dose = 100,
+                        times = c(0.5, 1, 2, 4, 8, 12))
+later_study <- admStudy(model = model_2cmt, n = 180, dose = 200,
+                        times = c(2, 4, 8, 12, 24))
+lit_studies <- admStudies(early_study, later_study)
+lit_studies
+
+lit_data <- datagen(lit_studies)   # what each paper's model implies
 ```
+
+The `ini()` values stand in for each paper's parameter table here; with a real
+paper, pass its estimates as `est` (see `vignette("covariates")`).
 
 Same drug, same CL, different E profiles — the dosing and the distributional
 assumptions differ:
@@ -331,7 +332,7 @@ lit_analysis <- function() {
 fit_lit <- nlmixr2(
   lit_analysis, admData(), est = "admc",
   control = admControl(
-    studies   = lit_data,
+    studies   = lit_studies,
     n_sim     = 5000L,
     cov_n_sim = 10000L,
     seed      = 3L
@@ -347,7 +348,8 @@ parameters consistent with all of them.
 
 ## Examining individual simulated samples
 
-`return_samples = TRUE` adds the raw `n_sim × n_times` prediction matrix to each
+The rest of this vignette calls `datagen()` directly, on plain study lists, for
+what `admStudy()` does not cover. `return_samples = TRUE` adds the raw `n_sim × n_times` prediction matrix to each
 study's output — useful for inspecting the shape of the simulated distribution,
 or for custom summaries:
 
@@ -412,6 +414,6 @@ maximum-likelihood estimate, so the FIM is biased.
 
 ## See also
 
-- [Multiple studies](multiple-studies.html) — feed per-study models into a meta-analysis
+- [Multiple studies](multiple-studies.html) — combine a digitised and a simulated trial
 - [From a published figure to E, V and n](aggregate-data.html) — the other input type
 - [Estimator comparison](estimator-comparison.html)

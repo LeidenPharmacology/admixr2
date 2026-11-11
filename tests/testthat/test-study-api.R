@@ -1123,3 +1123,44 @@ test_that(".admCovEffMargin folds a conditioned child's latent shift into its ma
   expect_equal(em$quantile(0.5), 60 * exp(0.4))
   expect_equal(em$quantile(stats::pnorm(1)), 60 * exp(0.4 * 1.5))
 })
+
+test_that("simulated = TRUE is scored as a sample: no model-source mark, SEs kept", {
+  skip_if_not_installed("rxode2")
+  pub <- admStudy(model = .sa_noccr, n = 100, dose = 100, times = c(1, 2, 4))
+  sim <- admStudy(model = .sa_noccr, n = 100, dose = 100, times = c(1, 2, 4),
+                  simulated = TRUE)
+  expect_true(admixr2:::.admHasModelSource(admStudies(pub = pub)))
+  expect_false(admixr2:::.admHasModelSource(admStudies(sim = sim)))
+  # same numbers, only the published claim differs
+  mp <- admixr2:::.admMaterialise(admStudies(pub = pub))$pub
+  ms <- admixr2:::.admMaterialise(admStudies(sim = sim))$sim
+  expect_true(isTRUE(mp$.adm_src))
+  expect_null(ms$.adm_src)
+  expect_equal(ms$E, mp$E); expect_equal(ms$V, mp$V)
+  # covMethod is left alone for a simulated trial, forced to "none" otherwise
+  expect_identical(admixr2:::.admResolveCovMethod("r,s",
+                     admixr2:::.admMaterialise(admStudies(sim = sim)), FALSE), "r,s")
+  expect_identical(suppressMessages(admixr2:::.admResolveCovMethod("r,s",
+                     admStudies(pub = pub), FALSE)), "none")
+  # the print says what it is
+  expect_output(print(sim), "SIMULATED trial")
+  expect_output(print(admStudies(pub = pub, sim = sim)), "1 simulated trial")
+  # a simulated trial needs a model to simulate from
+  expect_error(admStudy(E = c(1, 2), sd = c(.1, .2), n = 10, times = 1:2,
+                        dose = 1, simulated = TRUE), "needs a `model`")
+  expect_error(admStudy(model = .sa_noccr, n = 10, dose = 1, times = 1:2,
+                        simulated = NA), "TRUE or FALSE")
+})
+
+test_that("datagen() shows what admStudy() objects imply", {
+  skip_if_not_installed("rxode2")
+  sim <- admStudy(model = .sa_noccr, n = 100, dose = 100, times = c(1, 2, 4),
+                  simulated = TRUE)
+  pub <- admStudy(model = .sa_noccr, n = 100, dose = 100, times = c(1, 2, 4))
+  g <- datagen(admStudies(sim = sim, pub = pub))
+  expect_setequal(names(g), c("sim", "pub"))
+  expect_equal(g$sim$E, admixr2:::.admMaterialise(admStudies(sim = sim))$sim$E)
+  expect_null(g$sim$.adm_src); expect_true(isTRUE(g$pub$.adm_src))
+  expect_named(datagen(sim), "study")
+  expect_error(datagen(admStudies(sim = sim), model = .sa_noccr), "not used")
+})

@@ -42,20 +42,20 @@ library(ggplot2)
 # Trial A: 500 subjects at 100 mg, richly sampled. Individual records, reduced
 # to the E, V and n a publication would print.
 dv_mat  <- admVignetteDvMatrix()      # 500 subjects x 9 times
-trial_a <- admVignetteStats(dv_mat)
-times_a <- trial_a$times
+stats_a <- admVignetteStats(dv_mat)
+times_a <- stats_a$times
+trial_a <- admStudy(E = stats_a$E, V = stats_a$V, n = stats_a$n,
+                    times = times_a, dose = 100)
 
-# Trial B: published as summary statistics only -- 120 subjects at 200 mg, four
-# sampling times. datagen() turns its model into the aggregate data it implies,
-# which is what makes a published study a direct input; see vignette("datagen").
+# Trial B: 120 subjects at 200 mg, four sampling times. SIMULATED here from
+# the model examplomycin came from, so it is scored as 120 sampled patients
+# (with standard errors), just as a digitised summary would be.
 times_b <- c(0.5, 2, 6, 12)
-trial_b <- datagen(
-  studies = list(b = list(times = times_b,
-                          ev    = rxode2::et(amt = 200),
-                          n     = 120L)),
-  model   = admVignetteModel,
-  control = datagenControl(n_sim = 10000L, seed = 1L)
-)$b
+trial_b <- admStudy(model = admVignetteModel, n = 120, dose = 200,
+                    times = times_b, simulated = TRUE)
+
+studies <- admStudies(trial_a, trial_b)
+studies
 ```
 
 `admVignetteDvMatrix()` and `admVignetteStats()` come from this vignette's setup
@@ -64,23 +64,28 @@ takes `E`, `V` and `n` off it.
 
 Trial B is simulated here so the vignette has a second study to combine; in
 practice its `E`, `V` and `n` would be digitised from the paper
-(`vignette("aggregate-data")`) or derived from the model the paper published.
+(`vignette("aggregate-data")`), or the paper's published model would be entered
+with `admStudy(model, est)` --- which then contributes as a model, without
+standard errors (`vignette("datagen")`).
 
 ## Comparing the two observed profiles
 
 The two are on different doses, so they should *not* lie on top of each other ---
 that separation is the information a joint fit uses.
 
+`datagen()` shows the `E` and `V` each study contributes:
+
 ```{r obs-compare, fig.cap="Observed mean ± 1 SD for each trial on a log time axis. Trial B is at twice the dose and four sampling times."}
+gen <- datagen(studies)
 df_obs <- rbind(
   data.frame(trial = "Trial A (100 mg, n = 500)", time = times_a,
-             mean = trial_a$E,
-             lo   = trial_a$E - sqrt(diag(trial_a$V)),
-             hi   = trial_a$E + sqrt(diag(trial_a$V))),
+             mean = gen$trial_a$E,
+             lo   = gen$trial_a$E - sqrt(diag(gen$trial_a$V)),
+             hi   = gen$trial_a$E + sqrt(diag(gen$trial_a$V))),
   data.frame(trial = "Trial B (200 mg, n = 120)", time = times_b,
-             mean = trial_b$E,
-             lo   = trial_b$E - sqrt(diag(trial_b$V)),
-             hi   = trial_b$E + sqrt(diag(trial_b$V)))
+             mean = gen$trial_b$E,
+             lo   = gen$trial_b$E - sqrt(diag(gen$trial_b$V)),
+             hi   = gen$trial_b$E + sqrt(diag(gen$trial_b$V)))
 )
 
 ggplot(df_obs, aes(x = time, y = mean, colour = trial, fill = trial)) +
@@ -110,19 +115,14 @@ pk_model <- admVignetteModel
 
 ## Fitting with two studies
 
-Pass both trials as a named list. Each entry carries its own `times`, `ev`, `V`,
-`n` and `method`, which is what lets them differ:
+Pass the collection. Each study carries its own `times`, dose, `V` and `n`,
+which is what lets them differ:
 
 ```{r fit, comment = NA}
 fit_multi <- nlmixr2(
   pk_model, admData(), est = "admc",
   control = admControl(
-    studies = list(
-      trial_a = list(E = trial_a$E, V = trial_a$V, n = trial_a$n,
-                     times = times_a, ev = rxode2::et(amt = 100)),
-      trial_b = list(E = trial_b$E, V = trial_b$V, n = trial_b$n,
-                     times = times_b, ev = rxode2::et(amt = 200))
-    ),
+    studies   = studies,
     n_sim     = 5000L,
     cov_n_sim = 10000L,
     maxeval   = 300L,

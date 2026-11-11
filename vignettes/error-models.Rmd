@@ -20,7 +20,7 @@ source(Filter(file.exists, c("_common.R", "../_common.R", "vignettes/_common.R")
 
 Your model ends with `cp ~ prop(res.sd)`, as in an individual-level fit. The input
 is not individual data, though: it is a mean and an error bar per time point,
-digitised from a figure or implied by a published model through `datagen()`, and
+digitised from a figure or implied by a published model (`admStudy()`), and
 usually several studies at once.
 
 Each error bar holds two things the fit has to tell apart — subjects genuinely
@@ -41,8 +41,9 @@ A published error bar is one number covering both sources of spread, and only th
 second — the variability the structural model does not explain — is your residual
 model's job.
 
-Everything below uses one model and one study, with `datagen()` standing in for a
-digitised summary so the true values are known. A real analysis would read `E`,
+Everything below uses one model and one study, SIMULATED with
+`admStudy(..., simulated = TRUE)` to stand in for a digitised summary so the true
+values are known. A real analysis would read `E`,
 `V` and `n` off the paper; see
 [From a published figure to E, V and n](aggregate-data.html).
 
@@ -66,9 +67,8 @@ mod_prop <- function() {
   })
 }
 
-gen <- datagen(
-  studies = list(s1 = list(times = times, ev = rxode2::et(amt = 100), n = 200L)),
-  model = mod_prop, control = datagenControl(n_sim = 20000L, seed = 1L))
+gen <- admStudies(s1 = admStudy(model = mod_prop, n = 200, dose = 100,
+                                 times = times, simulated = TRUE))
 ```
 
 Simulating the individual data behind such a summary — 20 000 subjects, each
@@ -291,8 +291,9 @@ bars, from what the source papers report, and from the diagnostics above.
   not shrinking to nothing at the bottom to `add() + prop()`.
 * **Take the residual from the source that reports one.** A study publishing its
   own population model has already estimated a residual from the individual data
-  you do not have — better information than an aggregate fit can recover. Supply
-  that model to `datagen()` and it comes along, or fix yours to the same value:
+  you do not have — better information than an aggregate fit can recover. Enter
+  that model with `admStudy(model, est)` and it comes along, or fix yours to the
+  same value:
 
   ```r
   ini({ res.sd <- fix(0.15) })   # residual error reported by the source study
@@ -375,5 +376,5 @@ moves; see `NEWS.md`.
 - [From a published figure to E, V and n](aggregate-data.html) — where `E` and `V` come from
 - [Comparing the estimators](estimator-comparison.html) — pairing an estimator with an endpoint
 - [Diagnostic plots](diagnostic-plots.html) — reading the covariance panel
-- [Simulating data & using published models](datagen.html) — `datagen()`, used throughout here
+- [Simulating data & using published models](datagen.html) — simulated trials and published models as studies
 - [Getting started](admixr2.html)

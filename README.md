@@ -43,8 +43,8 @@ Two kinds of input feed the analysis:
 - **Aggregate data** — means, error bars and covariances digitised from
   published figures or tables.
 - **Published PK/PD models** — a previously published population model can be
-  supplied directly, via `datagen()`, so the literature's *models* (not only its
-  data) become evidence you can combine.
+  supplied directly, via `admStudy(model, est)`, so the literature's *models*
+  (not only its data) become evidence you can combine.
 
 ## When to use admixr2
 
@@ -64,7 +64,7 @@ multi-study fits with per-study dosing events and time grids under a single
 shared population model.
 
 **Reproducing and extending published models** — supply a previously published
-population model directly as input (via `datagen()`), or digitise its mean
+population model directly as input (via `admStudy(model, est)`), or digitise its mean
 concentration–time profiles from figures. No individual patient data required.
 
 ## Installation
@@ -144,7 +144,7 @@ plot(fit)
 |----------|-------|
 | [Getting started](https://leidenpharmacology.github.io/admixr2/articles/admixr2.html) | Core workflow: data prep, model, fit, diagnostics |
 | [From a published figure to E, V and n](https://leidenpharmacology.github.io/admixr2/articles/aggregate-data.html) | Error-bar semantics (SD vs SEM vs LS-mean SE), diagonal `V`, assumed-`V` sensitivity |
-| [Simulating data & using published models](https://leidenpharmacology.github.io/admixr2/articles/datagen.html) | `datagen()` for simulation studies and for supplying published models as input |
+| [Simulating data & using published models](https://leidenpharmacology.github.io/admixr2/articles/datagen.html) | Simulated trials (`admStudy(..., simulated = TRUE)`, with SEs) and published models as input (no SEs); `datagen()` to inspect them |
 | [Multiple studies](https://leidenpharmacology.github.io/admixr2/articles/multiple-studies.html) | Joint fitting across studies with different designs |
 | [Several outputs (plasma + brain)](https://leidenpharmacology.github.io/admixr2/articles/multi-compartment.html) | Multiple observed compartments; joint same-subject `V` |
 | [PD and PK/PD data](https://leidenpharmacology.github.io/admixr2/articles/pkpd.html) | Effect as a second endpoint, baseline, Emax, predicting an unstudied dose |
