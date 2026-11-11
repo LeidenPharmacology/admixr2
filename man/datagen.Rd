@@ -7,8 +7,9 @@
 datagen(studies, model = NULL, control = datagenControl())
 }
 \arguments{
-\item{studies}{A named list of study specifications.  Each element is a list
-with:
+\item{studies}{An \code{\link[=admStudies]{admStudies()}} (or single \code{\link[=admStudy]{admStudy()}}) object, returned
+generated (\code{model} and \code{control} are then not used); or a named list of study specifications.  Each element is
+a list with:
 \describe{
 \item{\code{model}}{An nlmixr2-style model function with \code{ini()} and
 \code{model()} blocks.  Serves as the data-generating model for this
@@ -91,6 +92,17 @@ different structural model).  True parameter values are taken from the
 is ready to supply directly to \code{admControl(studies = ...)}.
 }
 \details{
+\strong{Most analyses should not call this directly.} Write each study with
+\code{\link[=admStudy]{admStudy()}} --- \code{admStudy(model, est)} for a published model,
+\code{admStudy(model, est, simulated = TRUE)} for a trial you are simulating ---
+and pass \code{\link[=admStudies]{admStudies()}} to the fit, which generates them for you. Use
+\code{datagen()} to LOOK at what such studies imply (pass the \code{\link[=admStudies]{admStudies()}}
+object and it returns the generated \code{E}/\code{V}; a covariate source is cut on
+every covariate it estimated, where a fit cuts only those its analysis model
+reads), or for what \code{\link[=admStudy]{admStudy()}} cannot yet express: several observed outputs
+(\code{observations}), the individual simulated samples, or a choice of moment
+method.
+
 With \code{control = datagenControl(method = "mc")} (the default) population
 moments are computed via the same Monte Carlo engine as \code{est = "admc"}:
 \deqn{E_t = \bar{f}_s(\hat\theta_s, \eta_i, t)}

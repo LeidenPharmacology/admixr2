@@ -117,13 +117,19 @@ ggplot(band, aes(t, m)) +
         strip.text = element_text(face = "bold", size = 10))
 ```
 
-Passing `V` as a plain vector of variances is enough; admixr2 expands it to a
-diagonal matrix and sets `method = "var"`:
+Write the arm down with `admStudy()`, giving the spread as the `sd` it is. One
+SD per time point is enough; admixr2 builds a diagonal `V` from it and sets
+`method = "var"`:
 
-```{r study}
-study <- list(E = E, V = SD^2, n = n, times = times,
-              ev = rxode2::et(amt = 50, cmt = "central"))
+```{r study, comment = NA}
+study <- admStudy(E = E, sd = SD, n = n, times = times,
+                  ev = rxode2::et(amt = 50, cmt = "central"))
+study
 ```
+
+`admStudy()` would equally take the plotted bars as they are, `sem = SEM`, and do
+the `sqrt(n)` conversion itself. Converting by hand above is only to show what
+that conversion is.
 
 ```{r model}
 pk_model <- function() {
@@ -146,7 +152,7 @@ pk_model <- function() {
 
 ```{r fit, comment = NA}
 fit <- nlmixr2(pk_model, admData(), est = "adgh",
-               control = adghControl(studies = list(mg50 = study)))
+               control = adghControl(studies = admStudies(mg50 = study)))
 fit
 ```
 
@@ -158,9 +164,9 @@ Now make the mistake: use the plotted `SEM` as if it were an `SD`, so `V` is
 ```{r sem-demo, comment = NA}
 fit_wrong <- nlmixr2(
   pk_model, admData(), est = "adgh",
-  control = adghControl(studies = list(
-    mg50 = list(E = E, V = SEM^2, n = n, times = times,   # WRONG: SEM^2 as V
-                ev = rxode2::et(amt = 50, cmt = "central")))))
+  control = adghControl(studies = admStudies(
+    mg50 = admStudy(E = E, sd = SEM, n = n, times = times,   # WRONG: SEM as SD
+                    ev = rxode2::et(amt = 50, cmt = "central")))))
 fit_wrong
 ```
 
@@ -210,22 +216,23 @@ selects `method = "var"` and skips the Cholesky solve — the honest default for
 literature data. The full-covariance path needs the subject-level matrix and
 `cov.wt(dv_mat, method = "ML")$cov`; see [Getting started](admixr2.html).
 
-Note the denominator, and declare it. admixr2's likelihood is the exact one for
-`n` iid draws only under the ML (`n`) covariance, while a published SD is the
-unbiased (`n - 1`) one -- so `V = SD^2` off a figure is on the `n - 1` scale and
-strictly wants `V = SD^2 * (n - 1) / n`.
+Note the denominator. admixr2's likelihood is the exact one for `n` iid draws
+only under the ML (`n`) covariance, while a published SD is the unbiased
+(`n - 1`) one -- so `V = SD^2` off a figure is on the `n - 1` scale and strictly
+wants `V = SD^2 * (n - 1) / n`.
 
-Rather than apply that by hand, say which convention the number is on:
+`admStudy()` applies that for you, reading the currency you wrote the study in:
+an `sd` or `sem` is taken as a published, `n - 1` spread, and a `V` as a matrix
+you computed yourself, on the ML scale. Printing the study shows which it chose.
+Only a source that breaks that pattern needs saying so:
 
 ```{r vdenom, eval = FALSE}
-list(E = E, V = SD^2, n = n, times = times,
-     ev      = rxode2::et(amt = 50, cmt = "central"),
-     v_denom = "unbiased")   # a published SD; admixr2 converts it
+admStudy(E = E, sd = sd_ml, n = n, times = times,   # an SD you computed with /n
+         ev = rxode2::et(amt = 50, cmt = "central"),
+         v_denom = "ml")
 ```
 
-`v_denom` defaults to `"ml"` — what `cov.wt(method = "ML")` and
-[`datagen()`](datagen.html) produce — so nothing changes for data you computed
-yourself. It is **per study**, because a meta-analysis routinely mixes a digitised
+The choice is **per study**, because a meta-analysis routinely mixes a digitised
 figure with a model-derived source and the two need not agree.
 
 At `n = 60` the factor is `r round(100 / n, 1)`%. It grows as `n` falls, and it
@@ -267,9 +274,9 @@ does. Refit the arm above with the SD deliberately wrong in each direction:
 ```{r assume-sweep}
 assume <- function(mult) {
   f <- nlmixr2(pk_model, admData(), est = "adgh",
-               control = adghControl(studies = list(
-                 mg50 = list(E = E, V = (SD * mult)^2, n = n, times = times,
-                             ev = rxode2::et(amt = 50, cmt = "central")))))
+               control = adghControl(studies = admStudies(
+                 mg50 = admStudy(E = E, sd = SD * mult, n = n, times = times,
+                                 ev = rxode2::et(amt = 50, cmt = "central")))))
   c(exp(f$theta[["tcl"]]), exp(f$theta[["tv"]]),
     diag(f$omega)[["eta.cl"]], diag(f$omega)[["eta.v"]])
 }

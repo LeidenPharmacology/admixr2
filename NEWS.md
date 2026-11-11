@@ -2,6 +2,22 @@
 
 ## New features
 
+* **`admStudy(..., simulated = TRUE)` for simulated trials, with standard
+  errors.** A trial simulated from a model to stand in for data (a worked
+  example, a recovery check, a design question) is now written like any other
+  study. It is generated exactly as a published model is, but scored as `n`
+  sampled patients, so the fit reports standard errors. Before this, the only
+  public route was `datagen()`, which marks every study as a published model
+  and so blanked the SEs of the whole fit.
+
+* **`datagen()` accepts `admStudy()`/`admStudies()` objects** and returns the
+  `E`/`V` they generate, so what a study contributes can be inspected before
+  fitting. `admStudy()` is now the documented way in for all three kinds of
+  study (digitised data, published models and simulated trials). The vignettes
+  use it throughout, and `datagen()` is kept for inspection and for what
+  `admStudy()` does not yet express (several observed outputs, individual
+  samples, and the choice of moment method).
+
 * **Covariate-dependent dosing for published models.** `admStudy()` gains
   `dose_bands` and `dose_mult`, so a paper that dosed by a covariate can be
   transcribed as it was run rather than at one representative dose.

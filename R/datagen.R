@@ -95,8 +95,20 @@ datagenControl <- function(
 #' `ini()` block of each study's model.  Each element of the returned list
 #' is ready to supply directly to `admControl(studies = ...)`.
 #'
-#' @param studies A named list of study specifications.  Each element is a list
-#'   with:
+#' **Most analyses should not call this directly.** Write each study with
+#' [admStudy()] --- `admStudy(model, est)` for a published model,
+#' `admStudy(model, est, simulated = TRUE)` for a trial you are simulating ---
+#' and pass [admStudies()] to the fit, which generates them for you. Use
+#' `datagen()` to LOOK at what such studies imply (pass the [admStudies()]
+#' object and it returns the generated `E`/`V`; a covariate source is cut on
+#' every covariate it estimated, where a fit cuts only those its analysis model
+#' reads), or for what [admStudy()] cannot yet express: several observed outputs
+#' (`observations`), the individual simulated samples, or a choice of moment
+#' method.
+#'
+#' @param studies An [admStudies()] (or single [admStudy()]) object, returned
+#'   generated (`model` and `control` are then not used); or a named list of study specifications.  Each element is
+#'   a list with:
 #'   \describe{
 #'     \item{`model`}{An nlmixr2-style model function with `ini()` and
 #'       `model()` blocks.  Serves as the data-generating model for this
@@ -235,6 +247,18 @@ datagenControl <- function(
 #' }
 #' @export
 datagen <- function(studies, model = NULL, control = datagenControl()) {
+  # An admStudy collection goes through the fit's own generator, so a simulated
+  # trial comes back unmarked and a published model marked as a source.
+  if (inherits(studies, "admStudy"))
+    studies <- stats::setNames(list(studies), studies$label %||% "study")
+  if (inherits(studies, "admStudies") ||
+      (is.list(studies) && length(studies) &&
+       all(vapply(studies, inherits, logical(1), "admStudy")))) {
+    if (!is.null(model))
+      stop("admixr2: `model` is not used with admStudy() objects; each study ",
+           "carries its own.", call. = FALSE)
+    return(unclass(.admMaterialise(admStudies(studies))))
+  }
   .restoreRng <- .admRngSnapshot()
   on.exit(.restoreRng(), add = TRUE)
   checkmate::assertList(studies, min.len = 1L)
@@ -535,7 +559,8 @@ datagen <- function(studies, model = NULL, control = datagenControl()) {
 
 .admStudyHasModelSource <- function(study) {
   if (!is.list(study)) return(FALSE)
-  if (inherits(study, "admStudy")) return(!is.null(study$ui))
+  if (inherits(study, "admStudy"))
+    return(!is.null(study$ui) && !isTRUE(study$simulated))
   if (isTRUE(study[[".adm_src"]])) return(TRUE)
   observations <- study[["observations"]]
   is.list(observations) && any(vapply(

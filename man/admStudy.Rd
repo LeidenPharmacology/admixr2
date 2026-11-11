@@ -23,7 +23,8 @@ admStudy(
   label = NULL,
   v_denom = NULL,
   dose_bands = NULL,
-  dose_mult = NULL
+  dose_mult = NULL,
+  simulated = FALSE
 )
 }
 \arguments{
@@ -138,6 +139,11 @@ needs no dose rule. Named numeric vector of length one, naming a
 continuous covariate declared in \code{population}, whose margin (or \code{range})
 must stay positive. A \code{range} on it limits the nodes to the enrolled
 span. Mutually exclusive with \code{dose}/\code{ev}/\code{dose_bands}.}
+
+\item{simulated}{\code{FALSE} (default): \code{model} is a PUBLISHED model, a
+meta-analysis source with no standard errors. \code{TRUE}: \code{model} and \code{est} are
+the truth of a trial you are SIMULATING, which is scored as \code{n} sampled
+patients and gets standard errors. Needs a \code{model}.}
 }
 \value{
 An \code{admStudy} object.
@@ -159,6 +165,13 @@ A study generated from a model is not a sample: its mean and covariance are
 exact functions of that model's parameters, and \code{n} sets its RELATIVE WEIGHT
 against the other studies rather than its precision. No standard error is
 reported for a fit that includes one --- see \code{\link[=admStudies]{admStudies()}}.
+
+\strong{Simulating a trial instead.} With \code{simulated = TRUE} the same \code{model} and
+\code{est} describe a trial you are simulating --- a worked example, a design
+evaluation, a recovery check --- rather than a paper. It is generated the
+same way, but scored as \code{n} sampled patients, so the fit reports standard
+errors as it would for digitised data. The summary is the trial's EXPECTED
+one (population moments for \code{n} patients), not one random realisation of it.
 
 Nothing is solved here. The study is generated when it reaches the fit, so
 building one is cheap and a mistake surfaces on \code{print()} rather than after a

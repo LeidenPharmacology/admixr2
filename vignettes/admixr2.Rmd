@@ -35,10 +35,12 @@ For each study you supply:
 - **times** — observation time points
 - **ev** — dosing event table
 
-The estimators match E and V against their model-predicted counterparts and
-return a standard nlmixr2 fit object. Turning a published figure into `E`, `V`
-and `n` is covered in `vignette("aggregate-data")`; letting a study carry its own
-published model instead, in `vignette("datagen")`.
+Each study is written down with `admStudy()`, which checks it as it is built and
+prints it so it can be read back against the source. The estimators match E and V
+against their model-predicted counterparts and return a standard nlmixr2 fit
+object. Turning a published figure into `E`, `V` and `n` is covered in
+`vignette("aggregate-data")`; letting a study carry its own published model
+instead, in `vignette("datagen")`.
 
 Four estimators are available:
 
@@ -136,29 +138,30 @@ pairing to get analytical gradients from sensitivity equations — see
 [Advanced usage](advanced.html#mu-referencing-and-sensitivity-equations),
 which also covers parameters with no random effect.
 
-## Assembling the study specification
+## Writing down the study
 
-Bundle each study's statistics into a named list:
+`admStudy()` takes the statistics and checks them; printing it is the read-back:
 
-```{r study}
-study <- list(
+```{r study, comment = NA}
+study <- admStudy(
   E     = E,
-  V     = V,                       # full 9x9 covariance matrix
+  V     = V,          # full 9x9 covariance matrix (ML denominator, as computed)
   n     = n,
   times = times,
-  ev    = rxode2::et(amt = 100)    # single 100 mg oral dose
+  dose  = 100         # single 100 mg oral dose; `ev = rxode2::et(...)` for more
 )
+study
 ```
 
 ## Fitting
 
-Pass one or more named studies to `admControl()`:
+Collect the studies with `admStudies()` and pass them to `admControl()`:
 
 ```{r fit}
 fit <- nlmixr2(
   pk_model, admData(), est = "admc",
   control = admControl(
-    studies   = list(examplomycin = study),
+    studies   = admStudies(examplomycin = study),
     n_sim     = 5000L,
     cov_n_sim = 10000L,
     maxeval   = 300L,

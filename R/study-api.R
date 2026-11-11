@@ -273,6 +273,13 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #' against the other studies rather than its precision. No standard error is
 #' reported for a fit that includes one --- see [admStudies()].
 #'
+#' **Simulating a trial instead.** With `simulated = TRUE` the same `model` and
+#' `est` describe a trial you are simulating --- a worked example, a design
+#' evaluation, a recovery check --- rather than a paper. It is generated the
+#' same way, but scored as `n` sampled patients, so the fit reports standard
+#' errors as it would for digitised data. The summary is the trial's EXPECTED
+#' one (population moments for `n` patients), not one random realisation of it.
+#'
 #' Nothing is solved here. The study is generated when it reaches the fit, so
 #' building one is cheap and a mistake surfaces on `print()` rather than after a
 #' long run.
@@ -323,6 +330,10 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   continuous covariate declared in `population`, whose margin (or `range`)
 #'   must stay positive. A `range` on it limits the nodes to the enrolled
 #'   span. Mutually exclusive with `dose`/`ev`/`dose_bands`.
+#' @param simulated `FALSE` (default): `model` is a PUBLISHED model, a
+#'   meta-analysis source with no standard errors. `TRUE`: `model` and `est` are
+#'   the truth of a trial you are SIMULATING, which is scored as `n` sampled
+#'   patients and gets standard errors. Needs a `model`.
 #' @param ev A dosing event table from [rxode2::et()], for anything `dose`
 #'   cannot express.
 #' @param population The population the study enrolled --- see
@@ -429,7 +440,7 @@ admStudy <- function(model = NULL, est = NULL,
                      population = NULL, at = NULL, by = NULL,
                      strata_nodes = NULL, range = NULL,
                      label = NULL, v_denom = NULL, dose_bands = NULL,
-                     dose_mult = NULL) {
+                     dose_mult = NULL, simulated = FALSE) {
   # WHETHER A COVARIATE IS CONDITIONAL OR MARGINAL IS NOT A USER CHOICE. It is a
   # property of the source's own model -- conditional when that model ESTIMATED
   # the covariate's coefficient, marginal when it never mentions the covariate
@@ -471,6 +482,11 @@ admStudy <- function(model = NULL, est = NULL,
   if (!has_model && !has_data)
     bad("needs either a `model` (with `est`) or digitised `E` (with ",
         "`sd`, `sem` or `V`).")
+  if (!isTRUE(simulated) && !isFALSE(simulated))
+    bad("`simulated` must be TRUE or FALSE.")
+  if (simulated && !has_model)
+    bad("`simulated = TRUE` needs a `model` and `est` to simulate the trial ",
+        "from; digitised data is already a sample.")
   if (!has_model && !is.null(est))
     bad("digitised data cannot have `est`; estimates belong to a published ",
         "`model` source.")
@@ -734,13 +750,14 @@ admStudy <- function(model = NULL, est = NULL,
     ev = ev, dose = dose, population = population, at = at, by = by,
     strata_nodes = strata_nodes, range = range,
     label = label, v_denom = v_denom, dose_bands = dose_bands,
-    dose_mult = dose_mult), class = "admStudy")
+    dose_mult = dose_mult, simulated = simulated), class = "admStudy")
 }
 
 #' @export
 print.admStudy <- function(x, ...) {
   nm <- x$label %||% "study"
-  kind <- if (is.null(x$ui)) "digitised DATA" else "published MODEL"
+  kind <- if (is.null(x$ui)) "digitised DATA"
+          else if (isTRUE(x$simulated)) "SIMULATED trial" else "published MODEL"
   cat("admixr2 study '", nm, "'  -- ", kind, "\n", sep = "")
   dz <- if (!is.null(x$dose)) paste0("dose ", x$dose)
         else if (!is.null(x$dose_bands)) "dose bands"
@@ -769,8 +786,12 @@ print.admStudy <- function(x, ...) {
                 sum(!ini$fix), if (sum(!ini$fix) == 1L) "" else "s",
                 if (length(cvs)) paste0("; reads ", paste(cvs, collapse = ", "))
                 else ""))
-    cat("  reported  a published model; no standard error is available for a ",
-        "fit that includes one\n", sep = "")
+    if (isTRUE(x$simulated))
+      cat("  reported  a simulated trial of n patients; scored as a sample, ",
+          "with standard errors\n", sep = "")
+    else
+      cat("  reported  a published model; no standard error is available for a ",
+          "fit that includes one\n", sep = "")
   } else {
     cat(sprintf("  reported  mean profile, %s\n",
                 if (is.matrix(x$V)) "full covariance" else "per-time spread"))
@@ -865,17 +886,21 @@ admStudies <- function(...) {
 
 #' @export
 print.admStudies <- function(x, ...) {
-  n_src <- sum(vapply(x, function(s) !is.null(s$ui), logical(1)))
+  .pub  <- function(s) !is.null(s$ui) && !isTRUE(s$simulated)
+  n_src <- sum(vapply(x, .pub, logical(1)))
+  n_sim <- sum(vapply(x, function(s) isTRUE(s$simulated), logical(1)))
   plural <- function(n, one, many) paste0(n, if (n == 1L) one else many)
   cat("admixr2 studies: ", length(x), "  (",
       plural(n_src, " published model, ", " published models, "),
-      length(x) - n_src, " digitised)
+      if (n_sim) plural(n_sim, " simulated trial, ", " simulated trials, "),
+      length(x) - n_src - n_sim, " digitised)
 ", sep = "")
   for (nm in names(x)) {
     s <- x[[nm]]
     cat(sprintf("  %-14s %s  n = %-6s %d times%s
 ", nm,
-                if (is.null(s$ui)) "data " else "model", format(s$n),
+                if (is.null(s$ui)) "data "
+                else if (isTRUE(s$simulated)) "sim  " else "model", format(s$n),
                 length(s$times), ""))
   }
 
@@ -937,7 +962,7 @@ NOTE: ", paste(sQuote(flat), collapse = ", "),
           "
 ", sep = "")
   }
-  src <- names(x)[vapply(x, function(s) !is.null(s$ui), logical(1))]
+  src <- names(x)[vapply(x, .pub, logical(1))]
   if (length(src))
     cat("
 NOTE: ", paste(sQuote(src), collapse = ", "),
@@ -998,6 +1023,10 @@ print() a single study to check its transcription.
     .spec <- nm
     s <- studies[[nm]]
     if (!inherits(s, "admStudy")) { add(nm, s); next }
+    # A SIMULATED trial is generated exactly like a published model but drops
+    # the model-source mark, so it is scored as n sampled patients, with SEs.
+    # `gen` is used by every expansion below (bands, mult, by, plain).
+    gen <- if (isTRUE(s$simulated)) .admDatagenSim else datagen
     ev <- s$ev %||% rxode2::et(amt = s$dose)
     if (is.null(s$ui)) {
       # Digitised studies need no generation.
@@ -1116,7 +1145,7 @@ print() a single study to check its transcription.
         if (.bcorr)
           spk$stratify <- if (identical(spk$stratify, FALSE)) .bcv
                           else union(spk$stratify, .bcv)
-        g <- datagen(stats::setNames(list(spk), paste0(nm, "_", .bcv, "b", k)),
+        g <- gen(stats::setNames(list(spk), paste0(nm, "_", .bcv, "b", k)),
                      model = s$ui, control = datagenControl(method = "gh"))
         for (kk in names(g)) add(kk, g[[kk]])
       }
@@ -1155,7 +1184,7 @@ print() a single study to check its transcription.
           if (!length(spk$stratify)) spk$stratify <- FALSE
         }
         spk$ev  <- rxode2::et(amt = .mult * stl[[k]]$cov[[.mcv]])
-        g <- datagen(stats::setNames(list(spk), paste0(nm, "_", .mcv, "m", k)),
+        g <- gen(stats::setNames(list(spk), paste0(nm, "_", .mcv, "m", k)),
                      model = s$ui, control = datagenControl(method = "gh"))
         for (kk in names(g)) add(kk, g[[kk]])
       }
@@ -1175,14 +1204,14 @@ print() a single study to check its transcription.
         spk$n   <- s$n * pr[k]
         spk[["cov"]] <- c(sp[["cov"]], stats::setNames(list(lv[k]), s$by))
         spk$cov_dist <- .admCovDropMargin(s$population, s$by)
-        g <- datagen(stats::setNames(list(spk), paste0(nm, "_", s$by, lv[k])),
+        g <- gen(stats::setNames(list(spk), paste0(nm, "_", s$by, lv[k])),
                      model = s$ui, control = datagenControl(method = "gh"))
         # `by` plus `stratify` may yield several nodes per level.
         for (kk in names(g)) add(kk, g[[kk]])
       }
       next
     }
-    g <- datagen(stats::setNames(list(sp), nm), model = s$ui,
+    g <- gen(stats::setNames(list(sp), nm), model = s$ui,
                  control = datagenControl(method = "gh"))
     for (k in names(g)) add(k, g[[k]])
   }
