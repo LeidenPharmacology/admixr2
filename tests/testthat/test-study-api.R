@@ -542,11 +542,12 @@ test_that("the resolved denominator reaches the conversion, and is shown", {
 
 test_that("a `by` level keeps the correlations among the margins it retains", {
   # Dropping a margin must rebuild positional latentR.
-  cd <- covDist(SEX = list(values = c(0, 1), probs = c(.45, .55)),
-                WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25),
-                cor = matrix(c(1, 0, 0, 0, 1, .5, 0, .5, 1), 3L, 3L,
-                             dimnames = list(c("SEX", "WT", "CRCL"),
-                                             c("SEX", "WT", "CRCL"))))
+  cd <- suppressWarnings(covDist(
+    SEX = list(values = c(0, 1), probs = c(.45, .55)),
+    WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25),
+    cor = matrix(c(1, 0, 0, 0, 1, .5, 0, .5, 1), 3L, 3L,
+                 dimnames = list(c("SEX", "WT", "CRCL"),
+                                 c("SEX", "WT", "CRCL")))))
   out <- admixr2:::.admCovDropMargin(cd, "SEX")
   expect_identical(admixr2:::.admCovSpecNames(out), c("WT", "CRCL"))
   R <- out[["latentR"]]
@@ -581,8 +582,8 @@ test_that("`population` does not accept a caller's own `joint` yet", {
 
 test_that("by refuses to discard an opaque joint sampler", {
   cd <- with_opaque_joint(
-    covDist(SEX = list(values = c(0, 1), probs = c(.5, .5)),
-            WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25)),
+    suppressWarnings(covDist(SEX = list(values = c(0, 1), probs = c(.5, .5)),
+            WT = c(mean = 75, sd = 16), CRCL = c(mean = 90, sd = 25))),
     function(u) cbind(SEX = as.integer(u[, 1] > .5),
                       WT = stats::qlnorm(u[, 2], log(75), .2),
                       CRCL = stats::qlnorm(u[, 2], log(90), .2)))
@@ -842,8 +843,9 @@ test_that("admPopulation guards the data-frame route it advertises", {
   expect_error(admPopulation(WT = c(mean = 70, sd = 15), SEX = c(male = .55),
                              cor = M), "DISCRETE")
   # positional dimnames are not guessable once the data appends its own columns
-  expect_error(admPopulation(data = d, cor = matrix(c(1, .3, .3, 1), 2L, 2L)),
-               "must have dimnames")
+  expect_error(suppressMessages(
+    admPopulation(data = d, cor = matrix(c(1, .3, .3, 1), 2L, 2L))),
+    "must have dimnames")
   expect_message(admPopulation(data = d,
                                cor = matrix(c(1, .3, .3, 1), 2L, 2L,
                                             dimnames = rep(list(c("WT", "CRCL")), 2L))),
@@ -1227,4 +1229,17 @@ test_that("review fixes: unnamed range, et rows, data.frame dose, doseBands name
   # datagen() refuses a control it would otherwise drop
   expect_error(datagen(admStudies(st(population = popn, range = c(40, 110),
                  dose = 100)), control = datagenControl()), "`control` is not")
+})
+
+test_that("a kinked dose function warns; a smooth one does not; nodes are reused", {
+  pop <- admPopulation(WT = c(mean = 75, sd = 16))
+  st  <- function(...) admStudy(model = .sa_fitwt, n = 10, times = 1:2,
+                                population = pop, ...)
+  expect_warning(st(dose = function(WT) pmin(15 * WT, 1000)), "not smooth")
+  expect_warning(st(dose = function(WT) 2 * WT), NA)
+  expect_warning(st(dose = function(WT) WT^0.75), NA)
+  s <- st(dose = function(WT) 2 * WT)
+  expect_false(is.null(s[[".dose_strata"]]))
+  g <- datagen(admStudies(s))
+  expect_gt(length(g), 1L)
 })

@@ -514,6 +514,7 @@ admStudy <- function(model = NULL, est = NULL,
     dose <- ev
   }
   .dk <- .admDoseKind(dose)
+  .dose_strata <- NULL
   if (is.null(dose) || is.na(.dk))
     bad("needs a `dose`: an amount (dose = 200), an event table ",
         "(dose = rxode2::et(...)), a dosing table (dose = doseBands(CRCL, ",
@@ -682,14 +683,25 @@ admStudy <- function(model = NULL, est = NULL,
       else if (is.numeric(range) && length(.dcv) == 1L)
         stats::setNames(list(range), .dcv)
       if (!length(.rng)) .rng <- NULL
+      .dsk <- list(population, .dcv, strata_nodes %||% .ADM_STRATA_NODES, .rng)
       .stl <- tryCatch(
-        .admCovStrata(population, .dcv, strata_nodes %||% .ADM_STRATA_NODES,
+        .admCovStrata(population, .dcv, .dsk[[3L]],
                       warn_range = FALSE, cov_range = .rng),
         error = function(e) bad("could not cut ", paste(.dcv, collapse = ", "),
                                 " into dose groups: ", conditionMessage(e)))
+      .tot <- numeric(0)
       for (.nd in .stl)
-        tryCatch(.admDoseEvAt(dose, .nd$cov),
-                 error = function(e) bad(conditionMessage(e)))
+        .tot <- c(.tot, tryCatch(
+          .admDoseTotal(.admDoseEvAt(dose, .nd$cov)),
+          error = function(e) bad(conditionMessage(e))))
+      .dose_strata <- list(key = .dsk, strata = .stl)
+      if (length(.dcv) == 1L && is.null(population[[.dcv]][["values"]]) &&
+          .admDoseKinked(vapply(.stl, function(z) z$cov[[.dcv]], numeric(1)),
+                         .tot))
+        warning("admixr2: the dose function is not smooth across its ",
+                length(.stl), " nodes (a cap or a step?), so the dose groups ",
+                "only approximate it. Write a step as doseBands(), or raise ",
+                "`strata_nodes` to resolve a kink.", call. = FALSE)
     }
   }
   overlap <- intersect(names(at), .admCovSpecNames(population))
@@ -704,7 +716,8 @@ admStudy <- function(model = NULL, est = NULL,
     E = E, V = V, n = as.numeric(n), times = as.numeric(times),
     dose = dose, population = population, at = at, by = by,
     strata_nodes = strata_nodes, range = range,
-    label = label, v_denom = v_denom, simulated = simulated),
+    label = label, v_denom = v_denom, simulated = simulated,
+    .dose_strata = .dose_strata),
     class = "admStudy")
 }
 
@@ -1108,8 +1121,12 @@ print() a single study to check its transcription.
     # expansion as `by`, with each group's dose computed rather than looked up.
     if (identical(.dk, "fun")) {
       .fcv <- .admDoseCovs(s$dose)
-      stl <- .admCovStrata(s$population, .fcv, .admStrataNodes(s),
-                           warn_range = FALSE, cov_range = sp$cov_range)
+      # the nodes admStudy() already cut to validate the dose, when the same
+      stl <- if (identical(s[[".dose_strata"]]$key,
+                           list(s$population, .fcv, .admStrataNodes(s),
+                                sp$cov_range))) s[[".dose_strata"]]$strata
+             else .admCovStrata(s$population, .fcv, .admStrataNodes(s),
+                                warn_range = FALSE, cov_range = sp$cov_range)
       if (is.null(stl) || !length(stl))
         stop("admixr2: study '", nm, "': the dose function's covariates ",
              paste(sQuote(.fcv), collapse = ", "), " produced no nodes; ",

@@ -160,6 +160,23 @@ print.admDoseBands <- function(x, ...) {
   ev %||% rxode2::et(amt = as.numeric(r))
 }
 
+# The amount a dose record set gives in total, for the smoothness check.
+.admDoseTotal <- function(ev) {
+  d <- as.data.frame(ev)
+  sum(d$amt[!is.na(d$evid) & !(d$evid %in% c(0L, 2L, 3L))])
+}
+
+# TRUE when the dose is not a smooth function of ONE covariate across its nodes:
+# the slope between neighbouring nodes jumps by more than half its largest
+# value, as at a cap or a step. A smooth rule (mg/kg, allometric) drifts slowly.
+.admDoseKinked <- function(x, a) {
+  o <- order(x); x <- x[o]; a <- a[o]
+  if (length(x) < 4L || anyDuplicated(x) || any(!is.finite(a))) return(FALSE)
+  s <- diff(a) / diff(x)
+  m <- max(abs(s))
+  m > 0 && max(abs(diff(s))) > 0.5 * m
+}
+
 # One line describing a dose rule, for print.admStudy().
 .admDoseLabel <- function(d) {
   switch(.admDoseKind(d),
