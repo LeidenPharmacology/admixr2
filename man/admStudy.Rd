@@ -22,8 +22,6 @@ admStudy(
   range = NULL,
   label = NULL,
   v_denom = NULL,
-  dose_bands = NULL,
-  dose_mult = NULL,
   simulated = FALSE
 )
 }
@@ -44,10 +42,32 @@ when that is the cohort's data frame.}
 
 \item{times}{Observation times.}
 
-\item{dose}{Dose amount, as shorthand for a single-dose \code{ev}.}
+\item{dose}{What each patient gets, in the \code{\link[rxode2:et]{rxode2::et()}} terms an nlmixr2
+dataset uses. One of:
+\itemize{
+\item an amount, \code{dose = 200} (one bolus at time 0);
+\item an event table, \code{dose = rxode2::et(amt = 200, ii = 12, addl = 6, dur = 1)};
+\item a function of covariates returning either of those --- what you would
+write for one subject, with the covariates as its arguments:
+\code{dose = function(WT) 2 * WT} for 2 mg/kg, or
+\code{dose = function(WT) rxode2::et(amt = pmin(15 * WT, 2000), ii = 12, addl = 6, dur = 1)} for a capped mg/kg infusion every 12 h;
+\item a dosing table by covariate band, \code{dose = doseBands(CRCL, breaks = 30, amt = c(100, 200))} --- see \code{\link[=doseBands]{doseBands()}}.
+}
 
-\item{ev}{A dosing event table from \code{\link[rxode2:et]{rxode2::et()}}, for anything \code{dose}
-cannot express.}
+A function or a table expands the study into one study per dose group,
+each with its own dose, so the pooled analysis model needs no dose rule.
+A function is evaluated at \code{strata_nodes} quadrature nodes (default 9) over
+the covariates it reads, each node a study with its share of \code{n}; a table
+splits the population exactly at its band edges, which nodes cannot do for
+a stepwise rule, so write a step as \code{doseBands()}, not as an \code{ifelse()} in
+a function (a kink such as a cap, \code{pmin(15 * WT, 2000)}, is likewise only
+approximated unless \code{strata_nodes} is raised). Covariates correlated with the dosing ones are conditioned
+on each node or band. A \code{range} on a dosing covariate gives the enrolled
+span, and the groups are cut inside it. Both need a published or simulated
+\code{model}: a digitised pooled \code{E}/\code{V} cannot be split into per-dose profiles.}
+
+\item{ev}{An event table from \code{\link[rxode2:et]{rxode2::et()}}; the same as giving it as
+\code{dose}, kept for code written before \code{dose} took one.}
 
 \item{population}{The population the study enrolled --- see
 \code{\link[=admPopulation]{admPopulation()}}. Covariates the model reads are integrated over it.
@@ -117,28 +137,6 @@ breaks that pattern --- a \code{sd} you computed yourself with the ML
 denominator, say. A published \code{model} is always \code{"ml"}: its moments are
 generated at that denominator, so \code{"unbiased"} is refused rather than
 applied to a \code{V} that is already right.}
-
-\item{dose_bands}{Covariate-dependent dosing, transcribed from the paper's
-dosing table: a named list with one covariate, whose entry is a
-data.frame with columns \code{lo}, \code{hi}, \code{dose} — one row per dose band, e.g.
-\code{dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf), dose = c(100, 200)))} doses 100 mg below CrCl 30 and 200 mg above. The
-study is expanded into one study per band — the covariate's declared
-margin truncated to the band, \code{n} split by the band's probability, that
-band's \code{dose} — so the pooled analysis model needs no dose rule. A
-\code{range} on the banded covariate gives the enrolled span (e.g. the
-inclusion criteria); the bands are cut inside it and \code{n} is split by
-each band's share of that span. Model sources only: a digitised pooled
-\code{E}/\code{V} cannot be split into per-band profiles. Mutually exclusive with
-\code{dose}/\code{ev}.}
-
-\item{dose_mult}{Covariate-proportional dosing, e.g. mg/kg:
-\code{dose_mult = c(WT = 2)} doses 2 mg per kg. The covariate is cut into
-\code{strata_nodes} nodes (default 9) and each node becomes its own study with
-\verb{amt = mult * <node value>} and its share of \code{n} — again the pooled model
-needs no dose rule. Named numeric vector of length one, naming a
-continuous covariate declared in \code{population}, whose margin (or \code{range})
-must stay positive. A \code{range} on it limits the nodes to the enrolled
-span. Mutually exclusive with \code{dose}/\code{ev}/\code{dose_bands}.}
 
 \item{simulated}{\code{FALSE} (default): \code{model} is a PUBLISHED model, a
 meta-analysis source with no standard errors. \code{TRUE}: \code{model} and \code{est} are

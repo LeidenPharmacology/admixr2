@@ -18,24 +18,29 @@
   `admStudy()` does not yet express (several observed outputs, individual
   samples, and the choice of moment method).
 
-* **Covariate-dependent dosing for published models.** `admStudy()` gains
-  `dose_bands` and `dose_mult`, so a paper that dosed by a covariate can be
-  transcribed as it was run rather than at one representative dose.
-  - `dose_bands` takes the paper's dosing table, e.g.
-    `dose_bands = list(CRCL = data.frame(lo = c(-Inf, 30), hi = c(30, Inf),
-    dose = c(100, 200)))`. The source becomes one study per band: the
-    covariate restricted to the band, `n` split by the band's share, and that
-    band's dose. A `range` on the banded covariate gives the enrolled span,
-    and the bands are cut inside it.
-  - `dose_mult = c(WT = 2)` doses 2 mg/kg. The covariate is cut into nodes,
-    and each node becomes a study with its own `amt` and share of `n`. A
-    margin that would give a non-positive dose is refused unless a positive
-    `range` bounds it.
+* **Covariate-dependent dosing for published models.** `admStudy()`'s `dose`
+  now takes the dosing rule a paper used, written the way an nlmixr2 dataset
+  writes dosing, so a source that dosed by a covariate is transcribed as it was
+  run rather than at one representative dose:
+  - an amount, `dose = 200`, or an event table,
+    `dose = rxode2::et(amt = 200, ii = 12, addl = 6, dur = 1)`;
+  - a function of the covariates it reads, returning an amount or an `et()`:
+    `dose = function(WT) 2 * WT` for 2 mg/kg, or
+    `function(WT) rxode2::et(amt = pmin(15 * WT, 2000), ii = 12, addl = 6, dur = 1)`
+    for a capped mg/kg infusion. The covariates are cut into nodes, and each
+    node becomes a study with its own dose and its share of `n`;
+  - a dosing table by covariate band, with the new `doseBands()`:
+    `dose = doseBands(CRCL, breaks = 30, amt = c(100, 200))`, plus any `et()`
+    timing (`ii`, `addl`, `dur`, ...) for every band. The source becomes one
+    study per band, split exactly at the band edges. A `range` on the banded
+    covariate gives the enrolled span, and the bands are cut inside it.
 
-  Covariates correlated with the dosing covariate are conditioned on each band
-  or node, so they shift with it. The analysis model needs no dose rule,
-  because each study carries its own dose. Both arguments accept model sources
-  only, since a digitised pooled profile cannot be split by band.
+  Covariates correlated with the dosing ones are conditioned on each node or
+  band, so they shift with it. The analysis model needs no dose rule, because
+  each study carries its own dose. A dose that would be negative or missing at
+  any node is refused when the study is written. Functions and tables need a
+  model source, since a digitised pooled profile cannot be split. `ev` still
+  works, as another name for an event-table `dose`.
 
 ## Changes that can move an existing fit
 

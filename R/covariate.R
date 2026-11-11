@@ -1433,7 +1433,7 @@
         zC <- zC %*% .U
       }
     } else { zC <- matrix(0, 1L, 0L); wC <- 1 }
-    # AN ALREADY-CONDITIONED cov_dist (a dose_mult node, a stratum) carries its
+    # AN ALREADY-CONDITIONED cov_dist (a dose-function node, a stratum) carries its
     # shift and shrinkage as latentMu/latentScale: z ~ N(mu0, D R D). Ignoring
     # them re-stratified from the UNCONDITIONAL law and threw the shift away.
     # zC has covariance R_SS here, so the affine map gives it Sg_SS.
@@ -1443,7 +1443,7 @@
     if (length(iSc)) {
       zC <- sweep(sweep(zC, 2L, sd0[iSc], "*"), 2L, mu0[iSc], "+")
     }
-    # A BAND-truncated margin (dose_bands) maps its node through its OWN
+    # A BAND-truncated margin (doseBands) maps its node through its OWN
     # uniform, so zC is the band's score, not the latent the copula couples
     # through. Condition on the full-margin latent qnorm(pa + u (pb - pa)).
     zF <- zC
@@ -1507,7 +1507,7 @@
         #
         # WHY NOT A SAMPLED CLOUD (the previous .admStrataJoint route): an opaque
         # sample publishes no latentR, so .admCovCollapse()/.admJointCollapse()
-        # refused the child and every dose_bands/dose_mult/stratified unit fell
+        # refused the child and every dose-rule/stratified unit fell
         # back to the full cov_nodes^p product grid. With latentR present the
         # low-rank design is admitted -- and sampling becomes exact, not a pool.
         mu <- mu0[iMc] + as.numeric(A %*% (zF[kc, ] - mu0[iSc]))
@@ -2385,8 +2385,8 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
     # ... unless the sampler maps that margin straight from its own uniform, which admixr2 records when it
     # builds the copula -- see .admCovDiscExact(). A POINT margin (a stratified/banded covariate pinned by
     # .admCovStrata) is the same case with ONE level: enumerate it exactly instead of spending n_nodes
-    # GH nodes on a uniform whose quantile is constant -- that was a 7x row waste on every dose_mult /
-    # dose_bands / stratified unit.
+    # GH nodes on a uniform whose quantile is constant -- that was a 7x row waste on every dose-rule /
+    # doseBands / stratified unit.
     pt   <- vapply(nms, function(n) isTRUE(cov_dist[[n]][[".point"]]),
                    logical(1))
     ex   <- (disc & nms %in% (cov_dist[["discExact"]] %||% character(0))) | pt
@@ -2719,7 +2719,7 @@ covStrata <- function(cov_dist, stratify, n_nodes = .ADM_STRATA_NODES, n = 1,
 # distributed one needs a value for the fixed part. Deriving it from `cov_dist` rather than making the user
 # restate it removes a way for the two to disagree silently.
 # A covariate's OWN distribution inside `cd`. A conditioned child (a stratum,
-# a dose_mult node, a correlated dose band) keeps its DECLARED margins plus
+# a dose-function node, a correlated dose band) keeps its DECLARED margins plus
 # latentMu/latentScale, because the collapse needs them in that form; a reader
 # wanting the covariate's mean, spread or quantiles must fold them back in, or
 # every child reads as the unconditional margin and the between-study contrast
