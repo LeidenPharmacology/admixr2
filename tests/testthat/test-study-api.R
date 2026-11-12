@@ -1271,3 +1271,36 @@ test_that("every et() argument can depend on covariates", {
                  tolerance = 1e-10)
   }
 })
+
+.sa_oral <- function() {
+  ini({ tcl <- log(7); tv <- log(30); tka <- log(0.9); eta.cl ~ 0.1; add.sd <- 0.3 })
+  model({ cl <- exp(tcl + eta.cl); v <- exp(tv); ka <- exp(tka)
+    d/dt(depot) = -ka * depot
+    d/dt(centr) = ka * depot - cl / v * centr
+    cp = centr / v
+    cp ~ add(add.sd) })
+}
+
+test_that("doseBands gives several simultaneous doses per band, per-band cmt", {
+  skip_if_not_installed("rxode2")
+  ev1 <- function(x) as.data.frame(x$ev)
+  m <- admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .sa_oral, population = admPopulation(CRCL = c(mean = 60, sd = 25)),
+    n = 50, times = c(1, 2, 4),
+    dose = doseBands(CRCL, 30, amt = list(c(100, 20), c(200, 40)),
+                     cmt = list(c("depot", "centr")), dur = list(c(0, 1))))))
+  for (i in 1:2) {
+    d <- ev1(m[[i]]); d <- d[d$evid != 0, ]
+    expect_equal(nrow(d), 2L)
+    expect_equal(d$amt, list(c(100, 20), c(200, 40))[[i]])
+    expect_equal(as.character(d$cmt), c("depot", "centr"))
+  }
+  # one cmt per band
+  m <- admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .sa_oral, population = admPopulation(CRCL = c(mean = 60, sd = 25)),
+    n = 50, times = c(1, 2, 4),
+    dose = doseBands(CRCL, 30, amt = c(100, 200), cmt = c("depot", "centr")))))
+  expect_equal(vapply(m, function(x) as.character(ev1(x)$cmt[1]), ""),
+               c("depot", "centr"), ignore_attr = TRUE)
+  expect_match(format(doseBands(CRCL, 30, list(c(1, 2), 3))), "1+2", fixed = TRUE)
+})
