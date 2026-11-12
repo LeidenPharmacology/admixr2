@@ -77,6 +77,18 @@
   # means: keep the eta, hold its variance fixed, exclude only its Cholesky
   # entries from the optimizer.)
   .eta_all <- iniDf[!is.na(iniDf$neta1), , drop = FALSE]
+  # IOV (`iov.cl ~ 0.1 | occ`) parses as an eta whose `condition` is the occasion
+  # variable. Without this guard it would fit as ONE extra per-subject eta -- a
+  # different model, with no error.
+  if ("condition" %in% names(.eta_all)) {
+    .cond <- as.character(.eta_all$condition)
+    .iov  <- .eta_all$name[!is.na(.cond) & nzchar(.cond) & .cond != "id"]
+    if (length(.iov))
+      stop("admixr2 does not support inter-occasion variability yet (",
+           paste(unique(.iov), collapse = ", "), "). Fitting it as a plain random ",
+           "effect would be a different model: drop the `| occ` term, or write the ",
+           "occasion effects out as separate etas.", call. = FALSE)
+  }
   if (any(.eta_all$fix)) {
     .fx <- unique(.eta_all$name[.eta_all$fix])
     stop("admixr2 does not support FIXED omega entries (", paste(.fx, collapse = ", "),
