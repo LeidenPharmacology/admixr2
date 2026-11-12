@@ -237,21 +237,38 @@ test_that("a FIXED diagonal omega is held out of the optimizer, not dropped from
   expect_equal(unname(diag(pars$omega)), c(0.09, 0.04))
 })
 
-test_that("a FIXED omega inside a correlated block is rejected with an actionable error", {
-  corr_fn <- function() {
-    ini({
-      tcl <- log(5); tv <- log(20); add.err <- 0.1
-      eta.cl + eta.v ~ c(fix(0.09), 0.01, 0.04)
-    })
-    model({
-      cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v)
-      d/dt(central) <- -(cl / v) * central
-      cp <- central / v
-      cp ~ add(add.err)
-    })
+test_that("a FIXED correlated block is held whole; one that mixes fixed and free is refused", {
+  mk <- function(blk) {
+    src <- sprintf(paste0("function() {
+ ini({
+ tcl <- log(5)
+ tv <- log(20)
+",
+      " add.err <- 0.1
+ %s
+ })
+ model({
+ cl <- exp(tcl + eta.cl)
+",
+      " v <- exp(tv + eta.v)
+ d/dt(central) <- -(cl / v) * central
+",
+      " cp <- central / v
+ cp ~ add(add.err)
+ })
+}"), blk)
+    suppressWarnings(suppressMessages(rxode2::rxode2(eval(parse(text = src)))))
   }
-  ui <- suppressWarnings(suppressMessages(rxode2::rxode2(corr_fn)))
-  expect_error(admixr2:::.admParseIniDf(ui$iniDf, ui), "correlated block")
+  ui <- mk("eta.cl + eta.v ~ fix(0.09, 0.01, 0.04)")
+  pin <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  expect_equal(pin$n_eta, 2L)
+  expect_equal(length(pin$omega_par), 0L)                # nothing to optimize
+  pars <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin)
+  expect_equal(unname(pars$omega), matrix(c(0.09, 0.01, 0.01, 0.04), 2))
+  # the same block with only its covariance free has no fixed Cholesky entry
+  ui2 <- mk("eta.cl + eta.v ~ c(0.09, 0.01, 0.04)")
+  d <- ui2$iniDf; d$fix[d$name == "eta.cl"] <- TRUE
+  expect_error(admixr2:::.admParseIniDf(d, ui2), "PART of a correlated")
 })
 
 test_that(".adghGrad degrades to FD when the predicted V is singular (was a dropped study)", {

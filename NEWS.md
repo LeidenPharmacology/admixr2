@@ -13,9 +13,10 @@
   covariance matrix `V` across occasions, as the two variances otherwise share
   one flat ridge. `adfo` and `adirmc` refuse an IOV model.
 
-* **Fixed omega entries are now held, not refused**: a fixed diagonal random
-  effect stays in the model and is left out of the optimizer. (`nlmixr2est`'s IOV
-  rewrite produces these.)
+* **Fixed omega is now held, not refused**, as in nlmixr2: a fixed random effect,
+  or a whole fixed block, stays in the model and is left out of the optimizer. A
+  block mixing fixed and free entries is refused, as in nlmixr2. (`nlmixr2est`'s IOV
+  rewrite produces fixed etas.)
 
 * **`admStudy(..., simulated = TRUE)` for simulated trials, with standard
   errors.** A trial simulated from a model to stand in for data (a worked

@@ -73,11 +73,10 @@
 
   # A FIXED omega is held at its value: the eta stays in the model (it is
   # simulated, integrated and differentiated through like any other) and only its
-  # Cholesky entry is left out of the optimizer. nlmixr2est's inter-occasion
+  # Cholesky entries are left out of the optimizer. nlmixr2est's inter-occasion
   # rewrite produces exactly these -- one unit-variance fixed eta per occasion,
-  # scaled by an estimated magnitude theta. Only a DIAGONAL entry can be fixed
-  # here: a fixed variance inside a correlated block has no fixed Cholesky
-  # entry to hold.
+  # scaled by an estimated magnitude theta. A fixed BLOCK works the same way; what
+  # has no meaning, here or in nlmixr2, is a block mixing fixed and free entries.
   .eta_all <- iniDf[!is.na(iniDf$neta1), , drop = FALSE]
   # IOV (`iov.cl ~ 0.1 | occ`) parses as an eta whose `condition` is the occasion
   # variable. Only adgh/admc opt in to nlmixr2est's rewrite of it; anywhere else
@@ -90,13 +89,17 @@
            ") is supported by adgh and admc only. Fitting it as a plain random ",
            "effect would be a different model.", call. = FALSE)
   }
-  .fx_i <- unique(c(.eta_all$neta1[.eta_all$fix], .eta_all$neta2[.eta_all$fix]))
-  .bad  <- .eta_all[.eta_all$neta1 != .eta_all$neta2 &
-                    (.eta_all$neta1 %in% .fx_i | .eta_all$neta2 %in% .fx_i), , drop = FALSE]
-  if (nrow(.bad))
-    stop("admixr2 cannot hold a FIXED omega inside a correlated block (",
-         paste(unique(.bad$name), collapse = ", "), "). Fix the whole block's ",
-         "correlation to zero, or estimate it.", call. = FALSE)
+  # Every entry of a block is fixed together or not at all: a fixed eta whose
+  # covariance with another is free (or the reverse) has no fixed Cholesky entry.
+  .fxd <- .eta_all$neta1[.eta_all$neta1 == .eta_all$neta2 & .eta_all$fix]
+  .off <- .eta_all[.eta_all$neta1 != .eta_all$neta2, , drop = FALSE]
+  .mix <- .off[(.off$neta1 %in% .fxd) != (.off$neta2 %in% .fxd) |
+               (.off$neta1 %in% .fxd & !.off$fix) |
+               (!(.off$neta1 %in% .fxd) & .off$fix), , drop = FALSE]
+  if (nrow(.mix))
+    stop("admixr2 cannot hold PART of a correlated omega block fixed (",
+         paste(unique(.mix$name), collapse = ", "), "). Fix the whole block, or ",
+         "none of it -- as in nlmixr2.", call. = FALSE)
 
   # Dimension and naming come from EVERY eta; the optimizer parameters from the
   # free ones only.
@@ -105,9 +108,13 @@
   eta_rows  <- iniDf[!is.na(iniDf$neta1) & !iniDf$fix, , drop = FALSE]
   eta_names <- .diag_all$name
   n_eta     <- length(eta_names)
-  # L entries held at a fixed value (diagonal only, see above).
-  fixed_i   <- .diag_all$neta1[.diag_all$fix]
-  fixed_L   <- sqrt(.diag_all$est[.diag_all$fix])
+  # Entries of L held at a fixed value, read off the Cholesky of the full omega
+  # below (a fixed block is independent of the free ones, so its rows of L are its
+  # own).
+  .fx_rows  <- .eta_all[.eta_all$fix & .eta_all$neta1 >= .eta_all$neta2, , drop = FALSE]
+  fixed_i   <- .fx_rows$neta1
+  fixed_j   <- .fx_rows$neta2
+  fixed_L   <- numeric(length(fixed_i))
 
   omega_init <- matrix(0, n_eta, n_eta, dimnames = list(eta_names, eta_names))
   omega_par <- numeric(0); omega_par_names <- character(0)
@@ -120,6 +127,7 @@
       omega_init[j, i] <- .eta_all$est[r]
     }
     L_init <- t(chol(omega_init))
+    fixed_L <- L_init[cbind(fixed_i, fixed_j)]
     for (r in seq_len(nrow(eta_rows))) {
       i <- eta_rows$neta1[r]; j <- eta_rows$neta2[r]
       if (i == j) {
@@ -312,7 +320,7 @@ covariance for admixr2 to match"),
        omega_par       = omega_par,
        omega_par_names = omega_par_names,
        chol_i          = chol_i, chol_j = chol_j, chol_diag = chol_diag,
-       fixed_i = fixed_i, fixed_L = fixed_L,
+       fixed_i = fixed_i, fixed_j = fixed_j, fixed_L = fixed_L,
        iniDf              = iniDf,
        eta_rows_df        = eta_rows,
        has_kappa          = has_kappa,
@@ -454,7 +462,7 @@ covariance for admixr2 to match"),
     # Off-diagonal: p = L_ij directly (no transform).
     L[cbind(pinfo$chol_i[nd], pinfo$chol_j[nd])] <- om_p[nd]
     # Held-fixed etas: a constant on the diagonal, no optimizer parameter.
-    if (length(pinfo$fixed_i)) L[cbind(pinfo$fixed_i, pinfo$fixed_i)] <- pinfo$fixed_L
+    if (length(pinfo$fixed_i)) L[cbind(pinfo$fixed_i, pinfo$fixed_j)] <- pinfo$fixed_L
     omega <- L %*% t(L)
   } else {
     L <- NULL; omega <- matrix(0, 0, 0)
