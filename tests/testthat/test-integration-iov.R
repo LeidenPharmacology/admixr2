@@ -80,7 +80,26 @@ test_that("a published IOV model as a source generates what its explicit form do
   # an IOV model without occasions, and occasions without an IOV model, are refused
   expect_error(suppressWarnings(suppressMessages(admixr2::admStudy(
     model = pub, est = est, n = 10, times = tt, dose = ev))), "needs `occasions`")
-  expect_error(suppressWarnings(suppressMessages(admixr2::admStudy(
-    model = .iov_truth, est = est, n = 10, times = tt, dose = ev,
-    occasions = c(rep(1, 5), rep(2, 5))))), "no inter-occasion term")
+})
+
+test_that("a model without an IOV term can still be given occasions (it asserts none)", {
+  plain <- function() {
+    ini({ tcl <- log(2.7); tv <- log(30); eta.cl ~ 0.14; add.sd <- 0.3 })
+    model({ cl <- exp(tcl + eta.cl); v <- exp(tv)
+      d/dt(centr) = -cl / v * centr; cp = centr / v; cp ~ add(add.sd) })
+  }
+  tt <- c(2, 6, 12, 26, 50, 98, 102, 110, 122, 146)
+  ev <- rxode2::et(amt = 100, ii = 24, addl = 6)
+  est <- c(tcl = log(2.7), tv = log(30))
+  lab <- c(rep(1, 5), rep(2, 5))
+  mk <- function(...) suppressWarnings(suppressMessages(admixr2::admStudy(
+    model = plain, est = est, n = 500, times = tt, dose = ev, simulated = TRUE, ...)))
+  with <- mk(occasions = lab); without <- mk()
+  expect_equal(with$occasions, lab)
+  g <- function(s) suppressWarnings(suppressMessages(
+    admixr2::datagen(admixr2::admStudies(s = s))))[[1]]
+  expect_equal(g(with)$V, g(without)$V)             # generated as written
+  # in the fitted model the labels split its times into occasions
+  padded <- admixr2:::.admIovPad(list(s = with), list(var = "occ", levels = c(1, 2)))
+  expect_equal(padded$s$at$iov_t2, 96)
 })

@@ -152,7 +152,11 @@ levels given to \code{admData(occasions = )}; they must not go back to an earlie
 occasion. A new occasion starts at the dose that opens it (an \code{et()} dose
 table) or at its first observation. A published \code{model} written with an IOV
 term (\code{iov.cl ~ 0.05 | occ}) needs this too, and is generated with one random
-effect per occasion. Only \code{adgh} and \code{admc} fit IOV.}
+effect per occasion. A \code{model} WITHOUT such a term may also be given
+\code{occasions}: it is generated as written, and the labels apply in the fitted
+model, so the study asserts that its population has no between-occasion
+variance (leave them out to let it inform only the total variance). Only \code{adgh}
+and \code{admc} fit IOV.}
 }
 \value{
 An \code{admStudy} object.

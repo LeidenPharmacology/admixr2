@@ -343,7 +343,11 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   occasion. A new occasion starts at the dose that opens it (an `et()` dose
 #'   table) or at its first observation. A published `model` written with an IOV
 #'   term (`iov.cl ~ 0.05 | occ`) needs this too, and is generated with one random
-#'   effect per occasion. Only `adgh` and `admc` fit IOV.
+#'   effect per occasion. A `model` WITHOUT such a term may also be given
+#'   `occasions`: it is generated as written, and the labels apply in the fitted
+#'   model, so the study asserts that its population has no between-occasion
+#'   variance (leave them out to let it inform only the total variance). Only `adgh`
+#'   and `admc` fit IOV.
 #' @param ev An event table from [rxode2::et()]; the same as giving it as
 #'   `dose`, kept for code written before `dose` took one.
 #' @param population The population the study enrolled --- see
@@ -603,9 +607,10 @@ admStudy <- function(model = NULL, est = NULL,
     } else if (is.null(occasions) && .admHasIov(ui)) {
       bad("`model` has an inter-occasion term (`| occ`), so the study needs `occasions`: ",
           "the occasion of each time in `times`.")
-    } else if (!is.null(occasions)) {
-      bad("`occasions` was given but `model` has no inter-occasion term (`| occ`).")
     }
+    # A model WITHOUT an IOV term and `occasions`: generated as written (no occasion
+    # variance), and the labels apply in the analysis model only -- which makes this
+    # study assert that its population has no between-occasion variation.
   } else {
     spread <- if (is.null(V)) sem %||% sd else NULL
     if (!is.null(spread) &&
