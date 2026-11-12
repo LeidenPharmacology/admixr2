@@ -1700,7 +1700,12 @@ nmObjGetControl.adgh <- function(x, ...) {
   for (.nm in c("adghControl", "control")) {
     if (exists(.nm, .env)) {
       .ctl <- get(.nm, .env)
-      if (inherits(.ctl, "adghControl")) return(.ctl)
+      if (inherits(.ctl, "adghControl")) {
+        # nlmixr2est's table code (the IOV restore among it) formats with
+        # `fit$control$sigdig`; an unset one (NULL = rxode2's own tolerances) breaks it.
+        if (is.null(.ctl$sigdig)) .ctl$sigdig <- 3L
+        return(.ctl)
+      }
     }
   }
   stop("cannot find adgh control object", call. = FALSE)
@@ -1730,7 +1735,19 @@ nlmixr2Est.adgh <- function(env, ...) {
   if (!inherits(.ctl, "adghControl")) .ctl <- getValidNlmixrCtl.adgh(.ctl)
   if (!inherits(.ctl, "adghControl"))
     stop("Could not recover adghControl", call. = FALSE)
+  # Inter-occasion variability: nlmixr2est has already rewritten the model into a
+  # magnitude theta plus fixed per-occasion etas that read an `occ` column. An
+  # aggregate study has none, so derive it from time (see R/iov.R). `.ui0` is the
+  # model exactly as nlmixr2est returned it, which is what the fit must carry so
+  # nlmixr2est can restore the user's own `| occ` term afterwards.
+  .ui0  <- .ui
+  .iocc <- .admIovOcc(.ui)
+  if (!is.null(.iocc)) {
+    .ui  <- .admIovOccUi(.ui, .iocc)
+    .ctl$studies <- .admIovPad(.ctl$studies, .iocc)
+  }
   assign("control", .ctl, envir = .ui)
+  if (!identical(.ui0, .ui)) assign("control", .ctl, envir = .ui0)
 
   .ds     <- .admDriverStudies(.ui, .ctl, "adgh")
   studies <- .ds$studies
@@ -2015,7 +2032,8 @@ nlmixr2Est.adgh <- function(env, ...) {
 
   .ret            <- new.env(parent = emptyenv())
   .ret$table      <- env$table
-  .ret$ui         <- .ui
+  .ret$ui         <- .ui0
+  .ret$simUi      <- .ui   # time-derived `occ`, for aggregate post-fit simulation
   .ret$fullTheta  <- fullTheta
   .ret$objective  <- opt$objective
   .ret$est        <- "adgh"
@@ -2060,10 +2078,15 @@ nlmixr2Est.adgh <- function(env, ...) {
                         sampling       = "sobol",
                         n_gh           = n_total_nodes)
 
-  .admFinaliseFit(.ret, .ui, .ctl, est = "adgh", objective = opt$objective,
+  .admFinaliseFit(.ret, .ui0, .ctl, est = "adgh", objective = opt$objective,
                   ov = ov, studies = studies, cov = .cov,
                   cov_nms = .cov_nms, multi_out = multi_out,
                   extra_field = "admExtra",
                   handle_ctl = nmObjHandleControlObject.adghControl,
                   t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed)
 }
+
+# Opt in to nlmixr2est's own inter-occasion rewrite (`iov.cl ~ 0.1 | occ`): it expands the
+# term into a magnitude theta plus one unit-variance eta per occasion before this
+# estimator runs, and restores the user's model on the fit afterwards.
+attr(nlmixr2Est.adgh, "iov") <- TRUE

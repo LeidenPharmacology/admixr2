@@ -482,7 +482,12 @@ nmObjGetControl.admc <- function(x, ...) {
   for (.nm in c("admControl", "control")) {
     if (exists(.nm, .env)) {
       .ctl <- get(.nm, .env)
-      if (inherits(.ctl, "admControl")) return(.ctl)
+      if (inherits(.ctl, "admControl")) {
+        # nlmixr2est's table code (the IOV restore among it) formats with
+        # `fit$control$sigdig`; an unset one (NULL = rxode2's own tolerances) breaks it.
+        if (is.null(.ctl$sigdig)) .ctl$sigdig <- 3L
+        return(.ctl)
+      }
     }
   }
   stop("cannot find admc control object", call. = FALSE)
@@ -2676,7 +2681,19 @@ nlmixr2Est.admc <- function(env, ...) {
   if (!inherits(.ctl, "admControl")) .ctl <- getValidNlmixrCtl.admc(.ctl)
   if (!inherits(.ctl, "admControl"))
     stop("Could not recover admControl", call. = FALSE)
+  # Inter-occasion variability: nlmixr2est has already rewritten the model into a
+  # magnitude theta plus fixed per-occasion etas that read an `occ` column. An
+  # aggregate study has none, so derive it from time (see R/iov.R). `.ui0` is the
+  # model exactly as nlmixr2est returned it, which is what the fit must carry so
+  # nlmixr2est can restore the user's own `| occ` term afterwards.
+  .ui0  <- .ui
+  .iocc <- .admIovOcc(.ui)
+  if (!is.null(.iocc)) {
+    .ui  <- .admIovOccUi(.ui, .iocc)
+    .ctl$studies <- .admIovPad(.ctl$studies, .iocc)
+  }
   assign("control", .ctl, envir = .ui)
+  if (!identical(.ui0, .ui)) assign("control", .ctl, envir = .ui0)
 
   .ds     <- .admDriverStudies(.ui, .ctl, "adm")
   studies <- .ds$studies
@@ -3008,7 +3025,8 @@ nlmixr2Est.admc <- function(env, ...) {
 
   .ret            <- new.env(parent = emptyenv())
   .ret$table      <- env$table
-  .ret$ui         <- .ui
+  .ret$ui         <- .ui0
+  .ret$simUi      <- .ui   # time-derived `occ`, for aggregate post-fit simulation
   .ret$fullTheta  <- fullTheta
   .ret$objective  <- opt$objective
   .ret$est        <- "admc"
@@ -3049,10 +3067,13 @@ nlmixr2Est.admc <- function(env, ...) {
                         n_sim         = .ctl$n_sim,
                         sampling      = .ctl$sampling)
 
-  .admFinaliseFit(.ret, .ui, .ctl, est = "admc", objective = opt$objective,
+  .admFinaliseFit(.ret, .ui0, .ctl, est = "admc", objective = opt$objective,
                   ov = ov, studies = studies, cov = .cov,
                   cov_nms = .cov_nms, multi_out = multi_out,
                   extra_field = "admExtra",
                   handle_ctl = nmObjHandleControlObject.admControl,
                   t_opt = t_opt, t_cov = t_cov, t_elapsed = t_elapsed)
 }
+
+# See nlmixr2Est.adgh: opt in to nlmixr2est's own IOV rewrite.
+attr(nlmixr2Est.admc, "iov") <- TRUE

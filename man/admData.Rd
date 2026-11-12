@@ -4,7 +4,7 @@
 \alias{admData}
 \title{Dummy data frame for nlmixr2 dispatch}
 \usage{
-admData(outputs = NULL)
+admData(outputs = NULL, occasions = NULL)
 }
 \arguments{
 \item{outputs}{Optional character vector of observed output (endpoint) names
@@ -17,6 +17,14 @@ multi-endpoint translator rejects an all-\code{NA}-DV dataset; the placeholder i
 purely for dispatch and never enters the reported objective (each estimator
 overwrites it with its own aggregate -2LL). When \code{NULL} (default) the
 single-endpoint dummy frame is returned unchanged.}
+
+\item{occasions}{Optional named number of occasion levels for an inter-occasion
+variability term (\code{iov.cl ~ 0.1 | occ}), e.g. \code{c(occ = 3)}. Adds that column
+with the levels \code{1:3}: nlmixr2est reads the levels of an occasion variable
+from the data it is given, and an aggregate fit has no per-record column.
+Which times belong to which occasion is given on each study, with
+\code{admStudy(occasions = )}. Needs at least two levels. Supported by \code{adgh} and
+\code{admc}.}
 }
 \value{
 A data frame with columns \code{ID}, \code{TIME}, \code{DV}, \code{AMT}, \code{EVID}, \code{CMT}
@@ -38,5 +46,6 @@ frame below uses a placeholder \code{DV}.
 \examples{
 admData()
 admData(c("cp", "cCSF"))
+admData(occasions = c(occ = 2))
 
 }

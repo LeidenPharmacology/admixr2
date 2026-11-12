@@ -22,7 +22,9 @@ admStudy(
   range = NULL,
   label = NULL,
   v_denom = NULL,
-  simulated = FALSE
+  simulated = FALSE,
+  occasions = NULL,
+  occasion_starts = NULL
 )
 }
 \arguments{
@@ -142,6 +144,24 @@ applied to a \code{V} that is already right.}
 meta-analysis source with no standard errors. \code{TRUE}: \code{model} and \code{est} are
 the truth of a trial you are SIMULATING, which is scored as \code{n} sampled
 patients and gets standard errors. Needs a \code{model}.}
+
+\item{occasions}{For a model with inter-occasion variability
+(\code{iov.cl ~ 0.1 | occ}): the occasion of each observation time, one value per
+element of \code{times}, as an \code{occ} data column would give it (e.g.
+\code{times = c(2, 6, 98, 102)}, \code{occasions = c(1, 1, 2, 2)}). The values are the
+levels given to \code{admData(occasions = )}; they must not go back to an earlier
+occasion. A new occasion starts at the one dose between the previous occasion's
+last observation and its own first (an \code{et()} dose table), or at its first observation when there is none; with several doses in between give \code{occasion_starts}. A published \code{model} written with an IOV
+term (\code{iov.cl ~ 0.05 | occ}) needs this too, and is generated with one random
+effect per occasion. A \code{model} WITHOUT such a term may also be given
+\code{occasions}: it is generated as written, and the labels apply in the fitted
+model, so the study asserts that its population has no between-occasion
+variance (leave them out to let it inform only the total variance). Only \code{adgh}
+and \code{admc} fit IOV.}
+
+\item{occasion_starts}{Optional, with \code{occasions}: the time each observed occasion
+after the first begins (the dose that opens it), one per such occasion.
+Required when several doses fall between two occasions' observations.}
 }
 \value{
 An \code{admStudy} object.

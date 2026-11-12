@@ -439,3 +439,13 @@ test_that(".admParseIniDf: a pow() exponent row is an exponent, not a variance",
   expect_equal(unname(pinfo$sigma_init[k]), 0.75)
   expect_equal(unname(admixr2:::.admSigmaNat(pinfo$sigma_init, pinfo)[k]), 0.75)
 })
+
+test_that("an IOV term is refused rather than fitted as a plain eta", {
+  skip_if_not_installed("rxode2")
+  m <- function() {
+    ini({ tcl <- log(2.7); eta.cl ~ 0.3; iov.cl ~ 0.1 | occ; add.sd <- 0.7 })
+    model({ cl <- exp(tcl + eta.cl + iov.cl); v <- 30; linCmt() ~ add(add.sd) })
+  }
+  ui <- rxode2::rxode2(m)
+  expect_error(admixr2:::.admParseIniDf(ui$iniDf, ui), "inter-occasion")
+})
