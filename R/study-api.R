@@ -341,7 +341,9 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   `times = c(2, 6, 98, 102)`, `occasions = c(1, 1, 2, 2)`). The values are the
 #'   levels given to `admData(occasions = )`; they must not go back to an earlier
 #'   occasion. A new occasion starts at the dose that opens it (an `et()` dose
-#'   table) or at its first observation. Only `adgh` and `admc` fit IOV.
+#'   table) or at its first observation. A published `model` written with an IOV
+#'   term (`iov.cl ~ 0.05 | occ`) needs this too, and is generated with one random
+#'   effect per occasion. Only `adgh` and `admc` fit IOV.
 #' @param ev An event table from [rxode2::et()]; the same as giving it as
 #'   `dose`, kept for code written before `dose` took one.
 #' @param population The population the study enrolled --- see
@@ -493,9 +495,6 @@ admStudy <- function(model = NULL, est = NULL,
   if (!isTRUE(simulated) && !isFALSE(simulated))
     bad("`simulated` must be TRUE or FALSE.")
   if (!is.null(occasions)) {
-    if (has_model)
-      bad("`occasions` is not available for a `model` source yet: a published or ",
-          "simulated IOV model cannot be generated. Use it on digitised data.")
     if (!is.numeric(occasions) || length(occasions) != length(times) ||
         anyNA(occasions))
       bad("`occasions` needs one numeric occasion label per element of `times`.")
@@ -589,6 +588,23 @@ admStudy <- function(model = NULL, est = NULL,
       d <- ui$iniDf
       d$est[match(names(est), d$name)] <- unname(est)
       ui$iniDf <- d
+    }
+    # A model written with an IOV term (`iov.cl ~ 0.05 | occ`): one eta per occasion
+    # level, switched by time, with this study's occasion starts pinned as covariates.
+    .iovui <- if (!is.null(occasions))
+      tryCatch(.admIovSourceUi(ui, sort(unique(occasions))),
+               error = function(e) bad(conditionMessage(e)))
+    if (!is.null(.iovui)) {
+      ui <- .iovui
+      .lv <- sort(unique(occasions))
+      .st <- .admOccStarts(times, occasions, .lv, .admEtDoseTimes(dose))[-1L]
+      at <- utils::modifyList(as.list(stats::setNames(.st, paste0("iov_t", seq_along(.lv))[-1L])),
+                              as.list(at))
+    } else if (is.null(occasions) && .admHasIov(ui)) {
+      bad("`model` has an inter-occasion term (`| occ`), so the study needs `occasions`: ",
+          "the occasion of each time in `times`.")
+    } else if (!is.null(occasions)) {
+      bad("`occasions` was given but `model` has no inter-occasion term (`| occ`).")
     }
   } else {
     spread <- if (is.null(V)) sem %||% sd else NULL

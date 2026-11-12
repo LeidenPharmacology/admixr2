@@ -57,3 +57,30 @@ test_that("adfo refuses an IOV model instead of fitting it as a plain eta", {
     control = admixr2::adfoControl(studies = st, cores = 2L)))),
     "adgh and admc only")
 })
+
+test_that("a published IOV model as a source generates what its explicit form does", {
+  pub <- function() {
+    ini({ tcl <- log(2.7); tv <- log(30); eta.cl ~ 0.09; iov.cl ~ 0.05 | occ; add.sd <- 0.3 })
+    model({ cl <- exp(tcl + eta.cl + iov.cl); v <- exp(tv)
+      d/dt(centr) = -cl / v * centr; cp = centr / v; cp ~ add(add.sd) })
+  }
+  tt <- c(2, 6, 12, 26, 50, 98, 102, 110, 122, 146)
+  ev <- rxode2::et(amt = 100, ii = 24, addl = 6)
+  est <- c(tcl = log(2.7), tv = log(30))
+  a <- suppressWarnings(suppressMessages(admixr2::datagen(admixr2::admStudies(
+    s = admixr2::admStudy(model = .iov_truth, est = est, n = 2000, times = tt,
+                          dose = ev, simulated = TRUE)))))[[1]]
+  sp <- suppressWarnings(suppressMessages(admixr2::admStudy(
+    model = pub, est = est, n = 2000, times = tt, dose = ev, simulated = TRUE,
+    occasions = c(rep(1, 5), rep(2, 5)))))
+  expect_equal(sp$at$iov_t2, 96)                    # the dose that opens occasion 2
+  b <- suppressWarnings(suppressMessages(admixr2::datagen(admixr2::admStudies(s = sp))))[[1]]
+  expect_equal(b$E, a$E, tolerance = 1e-6)
+  expect_equal(b$V, a$V, tolerance = 1e-6)
+  # an IOV model without occasions, and occasions without an IOV model, are refused
+  expect_error(suppressWarnings(suppressMessages(admixr2::admStudy(
+    model = pub, est = est, n = 10, times = tt, dose = ev))), "needs `occasions`")
+  expect_error(suppressWarnings(suppressMessages(admixr2::admStudy(
+    model = .iov_truth, est = est, n = 10, times = tt, dose = ev,
+    occasions = c(rep(1, 5), rep(2, 5))))), "no inter-occasion term")
+})

@@ -102,8 +102,27 @@
   t
 }
 
+# Which studies can tell between-occasion variance from between-subject variance: those
+# that observe two or more occasions AND report their covariance (a model source
+# generates it; a digitised study needs a full matrix V, not just SDs). With none, the
+# two variances share one flat ridge -- only their SUM is identified.
+.admIovInformative <- function(studies) {
+  vapply(studies, function(s) {
+    lab <- s[["occasions"]]
+    if (length(unique(lab)) < 2L) return(FALSE)
+    has_model <- !is.null(s[["ui"]]) || !is.null(s[["model"]])
+    has_model || is.matrix(s[["V"]])
+  }, logical(1))
+}
+
 # Give every study the covariates the rewritten model reads: iov_t2 ... iov_tK.
 .admIovPad <- function(studies, occ) {
+  if (!any(.admIovInformative(studies)))
+    warning("admixr2: no study observes two or more occasions with a covariance (a ",
+            "published model, or a full matrix `V`), so the between-occasion variance ",
+            "cannot be separated from the between-subject variance: only their sum is ",
+            "identified, and the split stays wherever the optimizer starts. Give ",
+            "`occasions` to a study that reports its covariance.", call. = FALSE)
   K <- length(occ$levels)
   nm <- paste0("iov_t", seq_len(K))[-1L]
   one <- function(s) {
@@ -118,4 +137,55 @@
   }
   studies[] <- lapply(studies, one)
   studies
+}
+
+# A published model WRITTEN with an IOV term (`iov.cl ~ 0.05 | occ`) as a source: the
+# variance is a published number, so there is nothing for nlmixr2est's estimation
+# rewrite to do. Each occasion `level` gets its own eta carrying that variance, and
+# the term is replaced in the model by the one active at `time` (the study's own
+# occasion start times arrive as the covariates iov_t2, iov_t3, ...). NULL when the
+# model has no IOV term.
+.admIovSourceUi <- function(ui, levels) {
+  d <- ui$iniDf
+  cond <- as.character(d$condition)
+  r <- d[!is.na(d$neta1) & d$neta1 == d$neta2 & !is.na(cond) & nzchar(cond) & cond != "id", ,
+         drop = FALSE]
+  if (!nrow(r)) return(NULL)
+  if (length(unique(cond[match(r$name, d$name)])) > 1L)
+    stop("admixr2: only one occasion variable is supported.", call. = FALSE)
+  K <- length(levels); nm <- paste0("iov_t", seq_len(K))
+  swap <- function(e, v, with) {
+    if (is.name(e) && identical(as.character(e), v)) return(with)
+    if (is.call(e)) for (i in seq_along(e)[-1L]) e[[i]] <- swap(e[[i]], v, with)
+    e
+  }
+  etas <- list()
+  u <- ui
+  for (v in r$name) {
+    en <- paste0(v, ".occ", seq_len(K))
+    part <- vapply(seq_len(K), function(k) {
+      lo <- if (k > 1L) paste0("time >= ", nm[k])
+      hi <- if (k < K) paste0("time < ", nm[k + 1L])
+      cnd <- paste(c(lo, hi), collapse = " & ")
+      if (K == 1L) en[k] else paste0(en[k], " * (", cnd, ")")
+    }, "")
+    with <- str2lang(paste0("(", paste(part, collapse = " + "), ")"))
+    for (ex in u$lstExpr) {
+      if (!any(all.vars(ex) == v)) next
+      line <- swap(ex, v, with)
+      u <- rxode2::rxUiDecompress(suppressWarnings(suppressMessages(
+        eval(bquote(rxode2::model(.(u), .(line)))))))
+    }
+    etas[[v]] <- list(names = en, est = r$est[r$name == v])
+  }
+  for (v in names(etas)) for (en in etas[[v]]$names)
+    u <- rxode2::rxUiDecompress(suppressWarnings(suppressMessages(
+      eval(bquote(rxode2::ini(.(u), .(as.name(en)) ~ .(etas[[v]]$est)))))))
+  u
+}
+
+# TRUE when the model declares an inter-occasion term (a diagonal eta on a level other than `id`).
+.admHasIov <- function(ui) {
+  d <- ui$iniDf; cond <- as.character(d$condition)
+  any(!is.na(d$neta1) & d$neta1 == d$neta2 & !is.na(cond) & nzchar(cond) & cond != "id")
 }

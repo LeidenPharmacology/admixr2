@@ -99,3 +99,17 @@ test_that("an IOV model's occasion variable and levels are read off the rewrite"
   }
   expect_null(admixr2:::.admIovOcc(suppressMessages(rxode2::rxode2(m2))))
 })
+
+test_that("IOV is flagged as unidentified unless a study separates the occasions", {
+  s_occ  <- list(occasions = c(1, 1, 2, 2), times = 1:4, V = diag(4))                 # full V
+  s_sd   <- list(occasions = c(1, 1, 2, 2), times = 1:4, V = rep(1, 4))               # SDs only
+  s_one  <- list(occasions = c(1, 1, 1, 1), times = 1:4, V = diag(4))                 # one occasion
+  s_none <- list(times = 1:4, V = diag(4))                                            # no occasions
+  s_mod  <- list(occasions = c(1, 1, 2, 2), ui = "a model source")
+  expect_equal(unname(admixr2:::.admIovInformative(
+    list(s_occ, s_sd, s_one, s_none, s_mod))), c(TRUE, FALSE, FALSE, FALSE, TRUE))
+  occ <- list(var = "occ", levels = c(1, 2))
+  expect_warning(admixr2:::.admIovPad(list(a = s_sd, b = s_none), occ),
+                 "only their sum is")
+  expect_no_warning(admixr2:::.admIovPad(list(a = s_occ, b = s_none), occ))
+})
