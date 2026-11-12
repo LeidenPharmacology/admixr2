@@ -108,6 +108,10 @@
     vals <- vals[is.finite(vals)]
     d[[nm]] <- if (length(vals)) mean(vals) else 1
   }
+  # An IOV model's occasion variable carries its LEVELS, as nlmixr2est's rewrite
+  # reads them from the data: one mean value would collapse it to one occasion.
+  .io <- .admIovOcc(.ui)
+  if (!is.null(.io)) d <- .admWithLevels(d, .io$var, .io$levels)
   d
 }
 

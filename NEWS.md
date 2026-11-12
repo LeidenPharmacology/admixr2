@@ -2,6 +2,21 @@
 
 ## New features
 
+* **Inter-occasion variability (IOV) for `adgh` and `admc`.** Write it as in nlmixr2,
+  `iov.cl ~ 0.1 | occ`, and `nlmixr2est` does the rewrite (one estimated magnitude
+  plus a unit-variance random effect per occasion) and restores your model on the
+  fit, with the IOV variance under `fit$omega$occ`. An aggregate study has no `occ`
+  column, so the occasion of each observation time is given on the study,
+  `admStudy(..., times = c(2, 6, 98, 102), occasions = c(1, 1, 2, 2))`, and the
+  number of occasions to nlmixr2 with `admData(occasions = c(occ = 2))`. A new
+  occasion starts at the dose that opens it. IOV is identified only from a full
+  covariance matrix `V` across occasions, as the two variances otherwise share
+  one flat ridge. `adfo` and `adirmc` refuse an IOV model.
+
+* **Fixed omega entries are now held, not refused**: a fixed diagonal random
+  effect stays in the model and is left out of the optimizer. (`nlmixr2est`'s IOV
+  rewrite produces these.)
+
 * **`admStudy(..., simulated = TRUE)` for simulated trials, with standard
   errors.** A trial simulated from a model to stand in for data (a worked
   example, a recovery check, a design question) is now written like any other

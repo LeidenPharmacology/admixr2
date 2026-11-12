@@ -335,6 +335,13 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   meta-analysis source with no standard errors. `TRUE`: `model` and `est` are
 #'   the truth of a trial you are SIMULATING, which is scored as `n` sampled
 #'   patients and gets standard errors. Needs a `model`.
+#' @param occasions For a model with inter-occasion variability
+#'   (`iov.cl ~ 0.1 | occ`): the occasion of each observation time, one value per
+#'   element of `times`, as an `occ` data column would give it (e.g.
+#'   `times = c(2, 6, 98, 102)`, `occasions = c(1, 1, 2, 2)`). The values are the
+#'   levels given to `admData(occasions = )`; they must not go back to an earlier
+#'   occasion. A new occasion starts at the dose that opens it (an `et()` dose
+#'   table) or at its first observation. Only `adgh` and `admc` fit IOV.
 #' @param ev An event table from [rxode2::et()]; the same as giving it as
 #'   `dose`, kept for code written before `dose` took one.
 #' @param population The population the study enrolled --- see
@@ -440,7 +447,8 @@ admStudy <- function(model = NULL, est = NULL,
                      n = NULL, times = NULL, dose = NULL, ev = NULL,
                      population = NULL, at = NULL, by = NULL,
                      strata_nodes = NULL, range = NULL,
-                     label = NULL, v_denom = NULL, simulated = FALSE) {
+                     label = NULL, v_denom = NULL, simulated = FALSE,
+                     occasions = NULL) {
   # WHETHER A COVARIATE IS CONDITIONAL OR MARGINAL IS NOT A USER CHOICE. It is a
   # property of the source's own model -- conditional when that model ESTIMATED
   # the covariate's coefficient, marginal when it never mentions the covariate
@@ -484,6 +492,14 @@ admStudy <- function(model = NULL, est = NULL,
         "`sd`, `sem` or `V`).")
   if (!isTRUE(simulated) && !isFALSE(simulated))
     bad("`simulated` must be TRUE or FALSE.")
+  if (!is.null(occasions)) {
+    if (has_model)
+      bad("`occasions` is not available for a `model` source yet: a published or ",
+          "simulated IOV model cannot be generated. Use it on digitised data.")
+    if (!is.numeric(occasions) || length(occasions) != length(times) ||
+        anyNA(occasions))
+      bad("`occasions` needs one numeric occasion label per element of `times`.")
+  }
   if (simulated && !has_model)
     bad("`simulated = TRUE` needs a `model` and `est` to simulate the trial ",
         "from; digitised data is already a sample.")
@@ -717,7 +733,7 @@ admStudy <- function(model = NULL, est = NULL,
     dose = dose, population = population, at = at, by = by,
     strata_nodes = strata_nodes, range = range,
     label = label, v_denom = v_denom, simulated = simulated,
-    .dose_strata = .dose_strata),
+    .dose_strata = .dose_strata, occasions = occasions),
     class = "admStudy")
 }
 

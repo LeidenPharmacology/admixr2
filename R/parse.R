@@ -71,45 +71,53 @@
   struct_rows <- theta_rows[!is_err & !theta_rows$fix, , drop = FALSE]
   sigma_rows  <- theta_rows[ is_err & !theta_rows$fix, , drop = FALSE]
 
-  # A FIXED omega is not supported. Dropping it from eta_rows would silently
-  # exclude that eta's variance from the model rather than hold it at its fixed
-  # value -- fail with something the user can act on instead. (Proper support
-  # means: keep the eta, hold its variance fixed, exclude only its Cholesky
-  # entries from the optimizer.)
+  # A FIXED omega is held at its value: the eta stays in the model (it is
+  # simulated, integrated and differentiated through like any other) and only its
+  # Cholesky entry is left out of the optimizer. nlmixr2est's inter-occasion
+  # rewrite produces exactly these -- one unit-variance fixed eta per occasion,
+  # scaled by an estimated magnitude theta. Only a DIAGONAL entry can be fixed
+  # here: a fixed variance inside a correlated block has no fixed Cholesky
+  # entry to hold.
   .eta_all <- iniDf[!is.na(iniDf$neta1), , drop = FALSE]
   # IOV (`iov.cl ~ 0.1 | occ`) parses as an eta whose `condition` is the occasion
-  # variable. Without this guard it would fit as ONE extra per-subject eta -- a
-  # different model, with no error.
+  # variable. Only adgh/admc opt in to nlmixr2est's rewrite of it; anywhere else
+  # it would fit as ONE extra per-subject eta -- a different model, no error.
   if ("condition" %in% names(.eta_all)) {
     .cond <- as.character(.eta_all$condition)
     .iov  <- .eta_all$name[!is.na(.cond) & nzchar(.cond) & .cond != "id"]
     if (length(.iov))
-      stop("admixr2 does not support inter-occasion variability yet (",
-           paste(unique(.iov), collapse = ", "), "). Fitting it as a plain random ",
-           "effect would be a different model: drop the `| occ` term, or write the ",
-           "occasion effects out as separate etas.", call. = FALSE)
+      stop("admixr2: inter-occasion variability (", paste(unique(.iov), collapse = ", "),
+           ") is supported by adgh and admc only. Fitting it as a plain random ",
+           "effect would be a different model.", call. = FALSE)
   }
-  if (any(.eta_all$fix)) {
-    .fx <- unique(.eta_all$name[.eta_all$fix])
-    stop("admixr2 does not support FIXED omega entries (", paste(.fx, collapse = ", "),
-         "). Remove fix() from the random effect, or drop the eta from the model ",
-         "and fold its parameter into a structural theta.", call. = FALSE)
-  }
+  .fx_i <- unique(c(.eta_all$neta1[.eta_all$fix], .eta_all$neta2[.eta_all$fix]))
+  .bad  <- .eta_all[.eta_all$neta1 != .eta_all$neta2 &
+                    (.eta_all$neta1 %in% .fx_i | .eta_all$neta2 %in% .fx_i), , drop = FALSE]
+  if (nrow(.bad))
+    stop("admixr2 cannot hold a FIXED omega inside a correlated block (",
+         paste(unique(.bad$name), collapse = ", "), "). Fix the whole block's ",
+         "correlation to zero, or estimate it.", call. = FALSE)
 
+  # Dimension and naming come from EVERY eta; the optimizer parameters from the
+  # free ones only.
+  .diag_all <- .eta_all[.eta_all$neta1 == .eta_all$neta2, , drop = FALSE]
+  .diag_all <- .diag_all[order(.diag_all$neta1), , drop = FALSE]
   eta_rows  <- iniDf[!is.na(iniDf$neta1) & !iniDf$fix, , drop = FALSE]
-  diag_rows <- eta_rows[eta_rows$neta1 == eta_rows$neta2, , drop = FALSE]
-  eta_names <- diag_rows$name
+  eta_names <- .diag_all$name
   n_eta     <- length(eta_names)
+  # L entries held at a fixed value (diagonal only, see above).
+  fixed_i   <- .diag_all$neta1[.diag_all$fix]
+  fixed_L   <- sqrt(.diag_all$est[.diag_all$fix])
 
   omega_init <- matrix(0, n_eta, n_eta, dimnames = list(eta_names, eta_names))
   omega_par <- numeric(0); omega_par_names <- character(0)
   chol_i <- integer(0); chol_j <- integer(0); chol_diag <- logical(0)
 
   if (n_eta > 0) {
-    for (r in seq_len(nrow(eta_rows))) {
-      i <- eta_rows$neta1[r]; j <- eta_rows$neta2[r]
-      omega_init[i, j] <- eta_rows$est[r]
-      omega_init[j, i] <- eta_rows$est[r]
+    for (r in seq_len(nrow(.eta_all))) {
+      i <- .eta_all$neta1[r]; j <- .eta_all$neta2[r]
+      omega_init[i, j] <- .eta_all$est[r]
+      omega_init[j, i] <- .eta_all$est[r]
     }
     L_init <- t(chol(omega_init))
     for (r in seq_len(nrow(eta_rows))) {
@@ -297,11 +305,14 @@ covariance for admixr2 to match"),
        eta_names       = eta_names, n_eta = n_eta,
        # paste0("eta.", character(0)) is "eta." (length 1), not character(0) --
        # guarded so a 0-eta colnames<- in .adghGrid's covariate path doesn't fail.
-       eta_col_names   = if (n_eta > 0L)
-         paste0("eta.", gsub("^eta\\.", "", eta_names)) else character(0),
+       # The eta's OWN name: the parameter the solved model reads. Forcing an `eta.`
+       # prefix only worked for etas already named `eta.*`; `b1 ~ 0.1` or nlmixr2est's
+       # `rx.iov.cl.1` gave a column the model has no parameter for.
+       eta_col_names   = eta_names,
        omega_par       = omega_par,
        omega_par_names = omega_par_names,
        chol_i          = chol_i, chol_j = chol_j, chol_diag = chol_diag,
+       fixed_i = fixed_i, fixed_L = fixed_L,
        iniDf              = iniDf,
        eta_rows_df        = eta_rows,
        has_kappa          = has_kappa,
@@ -442,6 +453,8 @@ covariance for admixr2 to match"),
     L[cbind(pinfo$chol_i[d],  pinfo$chol_j[d])]  <- exp(om_p[d] / 2)
     # Off-diagonal: p = L_ij directly (no transform).
     L[cbind(pinfo$chol_i[nd], pinfo$chol_j[nd])] <- om_p[nd]
+    # Held-fixed etas: a constant on the diagonal, no optimizer parameter.
+    if (length(pinfo$fixed_i)) L[cbind(pinfo$fixed_i, pinfo$fixed_i)] <- pinfo$fixed_L
     omega <- L %*% t(L)
   } else {
     L <- NULL; omega <- matrix(0, 0, 0)

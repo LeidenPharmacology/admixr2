@@ -514,7 +514,7 @@ test_that("a `cor` spec conditions on exact POINTS, matching closed form", {
   cd <- covDist(WT = c(mu = MU1, sd = S1), CRCL = c(mu = MU2, sd = S2),
                 cor = RHO)
   expect_false(is.null(cd[["latentR"]]))    # the latent correlation, stashed
-  st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L)
+  st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L, warn_range = FALSE)
   expect_length(st, 4L)
   expect_equal(sum(vapply(st, `[[`, 0, "weight")), 1)
   for (s in st) {
@@ -546,7 +546,7 @@ test_that("without a density, nodes fall back to BINS that partition", {
             CRCL = list(quantile = function(u) stats::qnorm(u, 90, 20))),
     gauss)
   expect_null(cd$density)
-  st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L)
+  st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L, warn_range = FALSE)
   expect_length(st, 4L)
   # equiprobable BINS, not quadrature weights
   expect_equal(vapply(st, `[[`, 0, "weight"), rep(0.25, 4L), tolerance = 1e-6)
@@ -566,7 +566,7 @@ test_that("without a density, nodes fall back to BINS that partition", {
 test_that("with INDEPENDENT covariates the conditioning is a no-op", {
   cd <- covDist(WT = c(mu = 70, sd = 10),
                 CRCL = c(mu = 90, sd = 20))
-  st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L)
+  st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L, warn_range = FALSE)
   em <- vapply(st, function(s) mean(covDraw(s$cov_dist, n = 30000L)[, "CRCL"]), 0)
   expect_equal(em, rep(90, 4L), tolerance = 2e-2)
 })
@@ -600,7 +600,7 @@ test_that("an opaque sampler is conditioned correctly when the stratified
             CRCL = list(quantile = function(u) stats::qlnorm(u, ml[2], sl[2])),
             AGE = list(quantile = function(u) stats::qlnorm(u, ml[3], sl[3]))),
     jf)
-  st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L)
+  st <- admixr2:::.admCovStrata(cd, stratify = "WT", n_nodes = 4L, warn_range = FALSE)
   got <- vapply(st, function(s) {
     X <- covDraw(s$cov_dist, n = 30000L)
     c(mean(X[, "WT"]), mean(X[, "CRCL"]), mean(X[, "AGE"])) }, numeric(3))
@@ -620,7 +620,7 @@ test_that("an opaque sampler is conditioned correctly when the stratified
 test_that("a DISCRETE stratified covariate enumerates its levels exactly", {
   cd <- list(SEX = list(values = c(0, 1), probs = c(0.6, 0.4)),
              WT  = list(mu = 70, sd = 10))
-  st <- admixr2:::.admCovStrata(cd, stratify = "SEX", n_nodes = 7L)
+  st <- admixr2:::.admCovStrata(cd, stratify = "SEX", n_nodes = 7L, warn_range = FALSE)
   expect_length(st, 2L)                     # levels, NOT n_nodes
   expect_equal(sort(vapply(st, function(s) s$cov$SEX, 0)), c(0, 1))
   expect_equal(sort(vapply(st, `[[`, 0, "weight")), c(0.4, 0.6),
@@ -632,7 +632,8 @@ test_that(".admExpandStrata turns one study into ordinary per-stratum studies", 
                        cov_dist = list(WT = list(mu = 70, sd = 10),
                                        CRCL = list(mu = 90, sd = 20)),
                        stratify = "WT", strata_nodes = 4L))
-  ex <- admixr2:::.admExpandStrata(s, names(s))
+  # no `range` here on purpose: the study spans the declared distribution
+  ex <- suppressWarnings(admixr2:::.admExpandStrata(s, names(s)))
   expect_length(ex$studies, 4L)
   expect_identical(ex$names, paste0("src_s", 1:4))
   # n_k are quadrature weights times n, and must still sum to n
@@ -681,14 +682,15 @@ test_that("`stratify = TRUE` derives the split from the SOURCE model", {
   mk <- function(m) list(s = list(model = m, n = 200L, cov_dist = cd,
                                   stratify = TRUE, strata_nodes = 3L))
   # A fitted WT only -> 3 strata, CRCL left to be marginalised
-  eA <- admixr2:::.admExpandStrata(mk(mA), "s")
+  # no `range` on purpose: these tests are about the split, not the enrolment warning
+  eA <- suppressWarnings(admixr2:::.admExpandStrata(mk(mA), "s"))
   expect_length(eA$studies, 3L)
   expect_identical(names(eA$studies[[1L]]$cov), "WT")
   # a stratum is a range, so it carries ALL covariates, including its own
   expect_setequal(admixr2:::.admCovSpecNames(eA$studies[[1L]]$cov_dist),
                   c("WT", "CRCL"))
   # B fitted both -> 9 strata, nothing left over
-  eB <- admixr2:::.admExpandStrata(mk(mB), "s")
+  eB <- suppressWarnings(admixr2:::.admExpandStrata(mk(mB), "s"))
   expect_length(eB$studies, 9L)
   expect_setequal(names(eB$studies[[1L]]$cov), c("WT", "CRCL"))
   expect_setequal(admixr2:::.admCovSpecNames(eB$studies[[1L]]$cov_dist),
@@ -743,7 +745,7 @@ test_that("covDist() accepts what a baseline table reports", {
                                dist = "lnorm"), n = 5000L),
                covDraw(cd, n = 5000L), tolerance = 1e-8)
   # ... and it drops straight into every consumer a plain list served
-  expect_length(covStrata(cd, stratify = "WT", n_nodes = 3L), 3L)
+  expect_length(suppressWarnings(covStrata(cd, stratify = "WT", n_nodes = 3L)), 3L)
   expect_identical(nrow(admixr2:::.admCovGrid(cd, 5L)$X), 25L)
 })
 
@@ -793,9 +795,8 @@ test_that("covDist() refuses ambiguity, at construction, naming the covariate", 
 
 test_that("print.covDist reports what was DECLARED, not what it canonicalised to", {
   # `cor` becomes a joint sampler internally; printing "joint sampler" would hide the number the user typed
-  out <- utils::capture.output(print(covDist(WT = c(mean = 72, sd = 16),
-                                             CRCL = c(mean = 90, sd = 25),
-                                             cor = 0.6)))
+  out <- utils::capture.output(print(suppressWarnings(covDist(
+    WT = c(mean = 72, sd = 16), CRCL = c(mean = 90, sd = 25), cor = 0.6))))
   expect_true(any(grepl("cor = 0.6", out, fixed = TRUE)))
   expect_false(any(grepl("joint sampler", out, fixed = TRUE)))
   expect_true(any(grepl("normal", out)))       # the default margin
@@ -936,7 +937,7 @@ test_that("an ALL-discrete covariate set still takes the product grid", {
                      print = 0L, covMethod = "none", cov_integration = "on")
   pin <- admixr2:::.admDriverPinfo(ui, ctl)
   u   <- admixr2:::.admDriverUnits(st, ui, admixr2:::.admOutputVar(ui))
-  out <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, u$studies))
+  out <- suppressWarnings(suppressMessages(admixr2:::.admCheckCovariates(ui, pin, u$studies)))
   # An all-discrete covariate set has no continuous dimension to reduce, so the product grid -- which
   # enumerates the levels exactly -- is what runs.
   expect_identical(out[[1L]]$.adm_cov_path, "rows")
@@ -1043,7 +1044,7 @@ test_that("a bare datagen() study is NOT conditional for having a distribution",
   expect_identical(ex$studies$s, st$s)
   # Asking for it explicitly still conditions, because that IS opting in.
   st$s$stratify <- TRUE
-  expect_gt(length(admixr2:::.admExpandStrata(st, names(st), mod)$studies), 1L)
+  expect_gt(length(suppressWarnings(admixr2:::.admExpandStrata(st, names(st), mod))$studies), 1L)
 })
 
 test_that("`cov_range` truncates a margin nothing conditions on", {
@@ -1101,7 +1102,7 @@ test_that("the rebuilt stratum sampler survives the drop it is rebuilt for", {
   # weight -- one shared sample, which is where their dependence lives.
   st <- list(s = list(times = c(1, 4), ev = rxode2::et(amt = 100), n = 100L,
                       cov_dist = cd, stratify = "WT", strata_nodes = 3L))
-  ex <- suppressMessages(admixr2:::.admExpandStrata(st, names(st)))$studies
+  ex <- suppressWarnings(suppressMessages(admixr2:::.admExpandStrata(st, names(st))))$studies
   # The stratum is the EXACT Gaussian conditional, carried as a conditioned
   # copula (declared margins + latentMu/latentScale + conditional cor), not a
   # sampled cloud: z_M | z_WT ~ N(0.7 z_WT, I - 0.49), so the conditional
@@ -1123,8 +1124,8 @@ test_that("the rebuilt stratum sampler survives the drop it is rebuilt for", {
             v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
   }
   ui  <- suppressMessages(rxode2::rxode2(mod))
-  out <- suppressMessages(
-    admixr2:::.admCheckCovariates(ui, list(n_eta = 0L), ex))
+  out <- suppressWarnings(suppressMessages(
+    admixr2:::.admCheckCovariates(ui, list(n_eta = 0L), ex)))
   cdo <- admixr2:::.admCovDistCanon(out[[3L]]$cov_dist)
   expect_setequal(admixr2:::.admCovSpecNames(cdo), cvs)
   # The conditioning survives the drop: the shift and the conditional
@@ -1274,7 +1275,7 @@ test_that("the rebuilt stratum sampler keeps its exactly-mapped margins", {
                 dist = "lnorm", cor = R)
   st <- list(s = list(times = c(1, 4), ev = rxode2::et(amt = 100), n = 100L,
                       cov_dist = cd, stratify = "WT", strata_nodes = 3L))
-  ex <- suppressMessages(admixr2:::.admExpandStrata(st, names(st)))$studies
+  ex <- suppressWarnings(suppressMessages(admixr2:::.admExpandStrata(st, names(st))))$studies
   # ONLY ALB is unread: the model reads WT, CRCL and SEX, so SEX survives the
   # drop as its own discrete margin -- which is the margin whose exact
   # enumeration was being lost.
@@ -1286,8 +1287,8 @@ test_that("the rebuilt stratum sampler keeps its exactly-mapped margins", {
             v <- exp(tv); cp <- linCmt(); cp ~ add(add.err) })
   }
   ui  <- suppressMessages(rxode2::rxode2(mod))
-  out <- suppressMessages(
-    admixr2:::.admCheckCovariates(ui, list(n_eta = 0L), ex))
+  out <- suppressWarnings(suppressMessages(
+    admixr2:::.admCheckCovariates(ui, list(n_eta = 0L), ex)))
   cdo <- out[[2L]]$cov_dist
   expect_setequal(admixr2:::.admCovSpecNames(cdo), c("WT", "CRCL", "SEX"))
   # SEX is its own discrete margin, latently independent, so it stays exactly
@@ -1432,8 +1433,8 @@ test_that("a declared DISCRETE covariate no longer forces the pooled rule", {
 test_that("stratifying on a discrete covariate crosses levels with the GH grid", {
   cd <- covDist(WT = c(mean = 78, sd = 16), dist = "lnorm",
                 SEX = list(values = c(0, 1), probs = c(0.45, 0.55)))
-  st <- covStrata(cd, c("WT", "SEX"), n_nodes = 5L, n = 400,
-                  cov_range = list(WT = c(50, 115)))
+  st <- suppressWarnings(covStrata(cd, c("WT", "SEX"), n_nodes = 5L, n = 400,
+                                   cov_range = list(WT = c(50, 115))))
   expect_length(st, 10L)                       # 5 nodes x 2 levels
   expect_equal(sum(vapply(st, `[[`, 0, "weight")), 1)
   # the level probability factorises out exactly -- the discrete block is latently independent, so the cell
@@ -1586,7 +1587,7 @@ test_that("a correlated conditional child carries latentR/latentMu, so the colla
   R <- diag(2); R[1L, 2L] <- R[2L, 1L] <- 0.7
   dimnames(R) <- list(c("WT", "CRCL"), c("WT", "CRCL"))
   cd <- covDist(WT = c(mean = 78, sd = 16), CRCL = c(mean = 90, sd = 20), cor = R)
-  st <- admixr2:::.admCovStrata(cd, "WT", n_nodes = 4L)
+  st <- admixr2:::.admCovStrata(cd, "WT", n_nodes = 4L, warn_range = FALSE)
   for (s in st) {
     cdc <- admixr2:::.admCovDistCanon(s$cov_dist)
     expect_true(!is.null(cdc[["latentR"]]))     # readable latent structure, not a sample
@@ -1614,8 +1615,8 @@ test_that("covStrata's cov_range truncation survives the second canon", {
   # then read straight past, and the pool sampled the full declared support -- bins cut over a range the
   # source never enrolled, which is the var(declared)/var(enrolled) overstatement the cov_range gate exists to
   # prevent (3.4x at +/-1 SD).
-  cd <- covDist(WT = c(mean = 75, sd = 25), CRCL = c(mean = 90, sd = 30),
-                cor = c(WT.CRCL = 0.5))
+  cd <- suppressWarnings(covDist(WT = c(mean = 75, sd = 25), CRCL = c(mean = 90, sd = 30),
+                                 cor = c(WT.CRCL = 0.5)))
   st <- suppressWarnings(admixr2:::.admCovStrata(cd, "WT", n_nodes = 3L,
                                                  n_pool = 4096L,
                                                  cov_range = list(WT = c(60, 100))))
@@ -1753,8 +1754,8 @@ test_that("covDist() does not accept a caller's own `joint` yet", {
                                       AGE = stats::qgamma(u[, 2], 9, 0.3))),
     "`joint` is not accepted yet")
   # `cor` is the supported route, and it still builds a sampler of its own.
-  cd <- covDist(WT = c(mean = 72, sd = 16), CRCL = c(mean = 90, sd = 25),
-                cor = c(WT.CRCL = 0.45))
+  cd <- suppressWarnings(covDist(WT = c(mean = 72, sd = 16), CRCL = c(mean = 90, sd = 25),
+                                 cor = c(WT.CRCL = 0.45)))
   expect_true(is.function(cd[["joint"]]))
   expect_true(isTRUE(cd[["jointOwn"]]))
 })

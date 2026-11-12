@@ -67,7 +67,8 @@ skip_if_not_installed("rxode2")
   st <- admixr2:::.admFlattenStudies(
           list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
   st <- admixr2:::.admBuildEvFull(st)
-  st <- admixr2:::.admCheckCovariates(ui, pinfo, st)
+  # the identifiability warning is pinned by its own test; these fits are about the numerics
+  st <- suppressWarnings(admixr2:::.admCheckCovariates(ui, pinfo, st))
   ov <- admixr2:::.admBuildOptVec(pinfo)
   list(ui = ui, pinfo = pinfo, st = st, ov = ov,
        rxMod = admixr2:::.admLoadModel(ui),
@@ -941,7 +942,7 @@ test_that("the ridge is flat only for a GAUSSIAN covariate, and only then warned
     st <- admixr2:::.admFlattenStudies(
             list(s1 = admixr2:::.admNormaliseStudy(s, "s1", "cp")))
     st <- admixr2:::.admBuildEvFull(st)
-    st <- suppressMessages(admixr2:::.admCheckCovariates(ui, pin, st))
+    st <- suppressWarnings(suppressMessages(admixr2:::.admCheckCovariates(ui, pin, st)))
     g  <- admixr2:::.adghNodeGrid(15L, pin$n_eta)
     rp <- function(tc) {
       p <- admixr2:::.admBuildOptVec(pin)$p0; nm <- names(p)

@@ -211,10 +211,11 @@ test_that("the sens cache key carries a schema tag (pre-fix caches miss)", {
   expect_match(basename(e$sens$cache_file), "^adm-sens-.*\\.rds$")
 })
 
-test_that("a FIXED omega is rejected with an actionable error (not a bare subscript error)", {
-  # Dropping a fixed omega from eta_rows leaves omega_init too small, so the parse
-  # died with "subscript out of bounds"; and had it not, the eta's variance would
-  # have been silently excluded from the model instead of held fixed.
+test_that("a FIXED diagonal omega is held out of the optimizer, not dropped from the model", {
+  # Dropping a fixed omega from eta_rows used to leave omega_init too small ("subscript
+  # out of bounds"), and had it not, the eta's variance would have been silently
+  # excluded instead of held fixed. It now stays in the model at its value; only its
+  # Cholesky entry leaves the optimizer.
   fixed_omega_fn <- function() {
     ini({
       tcl <- log(5); tv <- log(20); add.err <- 0.1
@@ -228,9 +229,29 @@ test_that("a FIXED omega is rejected with an actionable error (not a bare subscr
       cp ~ add(add.err)
     })
   }
-  ui <- suppressMessages(rxode2::rxode2(fixed_omega_fn))
-  expect_error(admixr2:::.admParseIniDf(ui$iniDf, ui),
-               regexp = "does not support FIXED omega")
+  ui <- suppressWarnings(suppressMessages(rxode2::rxode2(fixed_omega_fn)))
+  pin <- admixr2:::.admParseIniDf(ui$iniDf, ui)
+  expect_equal(pin$n_eta, 2L)
+  expect_equal(length(pin$omega_par), 1L)               # only eta.v is estimated
+  pars <- admixr2:::.admUnpack(admixr2:::.admBuildOptVec(pin)$p0, pin)
+  expect_equal(unname(diag(pars$omega)), c(0.09, 0.04))
+})
+
+test_that("a FIXED omega inside a correlated block is rejected with an actionable error", {
+  corr_fn <- function() {
+    ini({
+      tcl <- log(5); tv <- log(20); add.err <- 0.1
+      eta.cl + eta.v ~ c(fix(0.09), 0.01, 0.04)
+    })
+    model({
+      cl <- exp(tcl + eta.cl); v <- exp(tv + eta.v)
+      d/dt(central) <- -(cl / v) * central
+      cp <- central / v
+      cp ~ add(add.err)
+    })
+  }
+  ui <- suppressWarnings(suppressMessages(rxode2::rxode2(corr_fn)))
+  expect_error(admixr2:::.admParseIniDf(ui$iniDf, ui), "correlated block")
 })
 
 test_that(".adghGrad degrades to FD when the predicted V is singular (was a dropped study)", {
