@@ -340,14 +340,17 @@ admPopulation <- function(..., cor = NULL, dist = c("lnorm", "normal"),
 #'   element of `times`, as an `occ` data column would give it (e.g.
 #'   `times = c(2, 6, 98, 102)`, `occasions = c(1, 1, 2, 2)`). The values are the
 #'   levels given to `admData(occasions = )`; they must not go back to an earlier
-#'   occasion. A new occasion starts at the dose that opens it (an `et()` dose
-#'   table) or at its first observation. A published `model` written with an IOV
+#'   occasion. A new occasion starts at the one dose between the previous occasion's
+#'   last observation and its own first (an `et()` dose table), or at its first observation when there is none; with several doses in between give `occasion_starts`. A published `model` written with an IOV
 #'   term (`iov.cl ~ 0.05 | occ`) needs this too, and is generated with one random
 #'   effect per occasion. A `model` WITHOUT such a term may also be given
 #'   `occasions`: it is generated as written, and the labels apply in the fitted
 #'   model, so the study asserts that its population has no between-occasion
 #'   variance (leave them out to let it inform only the total variance). Only `adgh`
 #'   and `admc` fit IOV.
+#' @param occasion_starts Optional, with `occasions`: the time each observed occasion
+#'   after the first begins (the dose that opens it), one per such occasion.
+#'   Required when several doses fall between two occasions' observations.
 #' @param ev An event table from [rxode2::et()]; the same as giving it as
 #'   `dose`, kept for code written before `dose` took one.
 #' @param population The population the study enrolled --- see
