@@ -76,7 +76,7 @@ test_that("a published IOV model as a source generates what its explicit form do
   sp <- suppressWarnings(suppressMessages(admixr2::admStudy(
     model = pub, est = est, n = 2000, times = tt, dose = ev, simulated = TRUE,
     occasions = c(rep(1, 5), rep(2, 5)), occasion_starts = 96)))
-  expect_equal(sp$at$iov_t2, 96)                    # the dose that opens occasion 2
+  expect_equal(sp$at$iov_s2, 96)                    # the dose that opens occasion 2
   b <- suppressWarnings(suppressMessages(admixr2::datagen(admixr2::admStudies(s = sp))))[[1]]
   # the labels survive datagen(), so fitting what it returns places the occasions the same way
   expect_equal(b$occasions, c(rep(1, 5), rep(2, 5)))
@@ -118,4 +118,38 @@ test_that(".admIovCov places occasion starts from the concrete event table", {
   cv <- admixr2:::.admIovCov(list(WT = 70), tt, c(1, 1, 2, 2), 96, c(1, 2), ev)
   expect_equal(cv$iov_t2, 96)                      # the dose, not the first sample at 98
   expect_equal(cv$WT, 70)
+})
+
+test_that("materialising does not leak one study's occasions onto another", {
+  ev <- rxode2::et(amt = 100, ii = 24, addl = 6)
+  a <- admixr2::admStudy(E = c(1, 2, 3, 4), sd = rep(1, 4), n = 10, times = c(2, 26, 98, 102),
+                         dose = ev, occasions = c(1, 1, 2, 2), occasion_starts = 96)
+  raw <- list(E = c(1, 2), V = c(1, 1), n = 10, times = c(2, 26), ev = ev)
+  for (ord in list(list("a", "b"), list("b", "a"))) {
+    st <- list(a = a, b = raw)[unlist(ord)]
+    m <- admixr2:::.admMaterialise(st)
+    expect_null(m$b$occasions)
+    expect_null(m$b$occasion_starts)
+    expect_equal(m$a$occasions, c(1, 1, 2, 2))
+  }
+})
+
+test_that("a published IOV source keeps its own boundaries when the analysis has more levels", {
+  pub <- function() {
+    ini({ tcl <- log(2.7); tv <- log(30); eta.cl ~ 0.09; iov.cl ~ 0.05 | occ; add.sd <- 0.3 })
+    model({ cl <- exp(tcl + eta.cl + iov.cl); v <- exp(tv)
+      d/dt(centr) = -cl / v * centr; cp = centr / v; cp ~ add(add.sd) })
+  }
+  mk <- function() suppressWarnings(suppressMessages(admixr2::admStudy(
+    model = pub, est = c(tcl = log(2.7), tv = log(30)), n = 500,
+    times = c(102, 110, 202, 206), occasions = c(2, 2, 3, 3), occasion_starts = 192,
+    dose = rxode2::et(amt = 100, ii = 24, addl = 9), simulated = TRUE)))
+  g <- function(s) suppressWarnings(suppressMessages(
+    admixr2::datagen(admixr2::admStudies(s = s))))[[1]]
+  alone <- g(mk())
+  s3 <- mk(); s3[[".iov_levels"]] <- c(1, 2, 3)     # what an analysis model with 3 levels does
+  glob <- g(s3)
+  expect_equal(glob$E, alone$E, tolerance = 1e-6)
+  expect_equal(glob$V, alone$V, tolerance = 1e-6)
+  expect_equal(glob$cov$iov_t3, 192)                # global indexing for the analysis model
 })

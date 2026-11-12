@@ -608,7 +608,7 @@ admStudy <- function(model = NULL, est = NULL,
       ui <- .iovui
       .lv <- sort(unique(occasions))
       .st <- .admOccStarts(times, occasions, .lv, .admEtDoseTimes(dose), occasion_starts)[-1L]
-      at <- utils::modifyList(as.list(stats::setNames(.st, paste0("iov_t", seq_along(.lv))[-1L])),
+      at <- utils::modifyList(as.list(stats::setNames(.st, paste0("iov_s", seq_along(.lv))[-1L])),
                               as.list(at))
     } else if (is.null(occasions) && .admHasIov(ui)) {
       bad("`model` has an inter-occasion term (`| occ`), so the study needs `occasions`: ",
@@ -1015,18 +1015,19 @@ print() a single study to check its transcription.
   # `stratify` gives `<nm>_s1`, `by` gives `<nm>_<by><level>`. `.adm_source`
   # records the parent for the first only, so a `by` source's model was
   # reachable under no name -- see .admCovSrcBySource().
-  .spec <- NULL; .iov_keep <- NULL
+  .spec <- NULL; .iov_post <- NULL
   add <- function(nm, value) {
     if (nm %in% names(out))
       stop("admixr2: materialising the studies produced duplicate name ",
            sQuote(nm), ". Rename the study whose `by` or `stratify` expansion ",
            "collides with it.", call. = FALSE)
     if (!is.null(.spec)) value[[".adm_spec"]] <- .spec
-    for (k in names(.iov_keep)) value[[k]] <- .iov_keep[[k]]
+    if (!is.null(.iov_post)) value <- .iov_post(value)
     out[[nm]] <<- value
   }
   for (nm in names(studies)) {
     .spec <- nm
+    .iov_post <- NULL                    # never inherited from the previous study
     s <- studies[[nm]]
     if (!inherits(s, "admStudy")) { add(nm, s); next }
     # A SIMULATED trial is generated exactly like a published model but drops
@@ -1040,19 +1041,28 @@ print() a single study to check its transcription.
     # so a datagen() round trip still fits the same way.
     .occ <- s[["occasions"]]
     .lv  <- s[[".iov_levels"]] %||% sort(unique(.occ))
+    # A published IOV SOURCE is generated against its OWN levels (`iov_s*`, local to the
+    # occasions it observes); the ANALYSIS boundaries `iov_t*` use the model's levels and
+    # are set on every emitted study from its final `ev`.
     iovfix <- function(spk) {
       if (!is.null(.occ))
-        spk[["cov"]] <- .admIovCov(spk[["cov"]], s$times, .occ, s[["occasion_starts"]], .lv, spk$ev)
+        spk[["cov"]] <- .admIovCov(spk[["cov"]], s$times, .occ, s[["occasion_starts"]],
+                                    sort(unique(.occ)), spk$ev, prefix = "iov_s")
       spk
     }
-    .iov_keep <- if (!is.null(.occ)) list(occasions = .occ, occasion_starts = s[["occasion_starts"]])
+    if (!is.null(.occ)) .iov_post <- function(v) {
+      v[["occasions"]] <- .occ; v[["occasion_starts"]] <- s[["occasion_starts"]]
+      cv <- v[["cov"]]
+      cv[grepl("^iov_s[0-9]+$", names(cv))] <- NULL
+      v[["cov"]] <- .admIovCov(cv, v[["times"]] %||% s$times, .occ, s[["occasion_starts"]], .lv, v$ev)
+      v
+    }
     if (is.null(s$ui)) {
       # Digitised studies need no generation.
       g <- list(E = as.numeric(s$E), V = s$V, n = s$n, times = s$times,
                 ev = ev, v_denom = s$v_denom)
       if (!is.null(s[["population"]])) g[["cov_dist"]] <- s[["population"]]
       if (!is.null(s[["at"]]))         g[["cov"]]      <- s[["at"]]
-      g <- iovfix(g)
       add(nm, g)
       next
     }

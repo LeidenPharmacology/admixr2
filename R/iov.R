@@ -173,7 +173,7 @@
   if (!nrow(r)) return(NULL)
   if (length(unique(cond[match(r$name, d$name)])) > 1L)
     stop("admixr2: only one occasion variable is supported.", call. = FALSE)
-  K <- length(levels); nm <- paste0("iov_t", seq_len(K))
+  K <- length(levels); nm <- paste0("iov_s", seq_len(K))
   swap <- function(e, v, with) {
     if (is.name(e) && identical(as.character(e), v)) return(with)
     if (is.call(e)) for (i in seq_along(e)[-1L]) e[[i]] <- swap(e[[i]], v, with)
@@ -212,8 +212,8 @@
 
 # `iov_t2..` for ONE concrete study (its final `ev`), overriding any earlier value: the
 # dose function / dose bands of an admStudy() only become event tables when expanded.
-.admIovCov <- function(cov, times, occasions, starts, levels, ev) {
+.admIovCov <- function(cov, times, occasions, starts, levels, ev, prefix = "iov_t") {
   t <- .admOccStarts(times, occasions, levels, .admEtDoseTimes(ev), starts)[-1L]
   utils::modifyList(as.list(cov %||% list()),
-                    as.list(stats::setNames(t, paste0("iov_t", seq_along(levels))[-1L])))
+                    as.list(stats::setNames(t, paste0(prefix, seq_along(levels))[-1L])))
 }
