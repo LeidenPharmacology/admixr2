@@ -8,8 +8,11 @@
 #' lowest first, so there is always one more amount than cut points and the
 #' bands cover the whole range with no gaps. A value equal to a cut point falls
 #' in the band above it. Anything else about how each dose is given ---
-#' `ii`, `addl`, `dur`, `rate`, `cmt`, ... --- is written as in [rxode2::et()]
-#' and applies to every band.
+#' `ii`, `addl`, `dur`, `rate`, `cmt`, ... --- is written as in [rxode2::et()].
+#' Each is one value, shared by every band, or one value per band, so the
+#' regimen itself can depend on the covariate (`ii = c(24, 12)`). For anything
+#' that is a formula of a covariate, pass a function as `dose` that returns an
+#' [rxode2::et()] table.
 #'
 #' The study is expanded into one study per band: the covariate restricted to
 #' the band (and to the study's enrolled `range`, if given), `n` split by the
@@ -23,8 +26,8 @@
 #' @param breaks Increasing cut points between bands.
 #' @param amt Amount for each band, lowest band first; one more than `breaks`.
 #' @param ... How each dose is given, as [rxode2::et()] arguments: `time`,
-#'   `cmt`, `ii`, `addl`, `dur`, `rate`, `ss`, `until`. Without them each band
-#'   gets one bolus at time 0.
+#'   `cmt`, `ii`, `addl`, `dur`, `rate`, `ss`, `until`; length 1 (all bands) or
+#'   one per band. Without them each band gets one bolus at time 0.
 #' @return An `admDoseBands` object, to pass as `dose` to [admStudy()].
 #' @seealso [admStudy()]; a function of covariates as `dose` for dosing that is
 #'   proportional to (or a formula of) a covariate, e.g. mg/kg.
@@ -32,6 +35,8 @@
 #' doseBands(CRCL, breaks = 30, amt = c(100, 200))
 #' # a 1-h infusion every 12 h, seven doses, in every band
 #' doseBands(CRCL, breaks = 30, amt = c(500, 1000), ii = 12, addl = 6, dur = 1)
+#' # the interval depends on the band too: daily below 30, twice daily above
+#' doseBands(CRCL, breaks = 30, amt = c(500, 1000), ii = c(24, 12), addl = c(2, 6))
 #' @export
 doseBands <- function(covariate, breaks, amt, ...) {
   cv <- substitute(covariate)
@@ -67,9 +72,16 @@ doseBands <- function(covariate, breaks, amt, ...) {
       bad(paste(sQuote(unk), collapse = ", "), " is not an rxode2::et() ",
           "dosing argument this applies to every band; use ",
           paste(.ADM_ET_TIMING, collapse = ", "), ".")
-    tryCatch(do.call(rxode2::et, c(list(amt = 1), timing)), error = function(e)
-      bad("these dosing details do not build an event table: ",
-          conditionMessage(e)))
+    k <- length(amt)
+    badlen <- tn[!vapply(timing, function(v) length(v) %in% c(1L, k), logical(1))]
+    if (length(badlen))
+      bad(paste(sQuote(badlen), collapse = ", "), " must have length 1 (the ",
+          "same in every band) or ", k, " (one per band).")
+    for (j in seq_len(k))
+      tryCatch(do.call(rxode2::et, c(list(amt = 1), .admDoseTimingAt(timing, j, k))),
+               error = function(e)
+        bad("these dosing details do not build an event table: ",
+            conditionMessage(e)))
   }
   structure(list(covariate = cv, breaks = as.numeric(breaks),
                  amt = as.numeric(amt), timing = timing),
@@ -123,9 +135,14 @@ print.admDoseBands <- function(x, ...) {
 .admDoseBandTable <- function(d)
   data.frame(lo = c(-Inf, d$breaks), hi = c(d$breaks, Inf), amt = d$amt)
 
-# One band's event table: its amount under the table's shared dosing details.
+# Band j's dosing details: a length-1 value is shared, a length-k one is per band.
+.admDoseTimingAt <- function(timing, j, k)
+  lapply(timing, function(v) if (length(v) == k) v[[j]] else v)
+
+# One band's event table: its amount and dosing details.
 .admDoseBandEv <- function(d, k)
-  do.call(rxode2::et, c(list(amt = d$amt[k]), d$timing))
+  do.call(rxode2::et, c(list(amt = d$amt[k]),
+                        .admDoseTimingAt(d$timing, k, length(d$amt))))
 
 # A dose function's event table at one node, checked. The function returns an
 # amount (one bolus at time 0) or an rxode2::et() table, exactly as an nlmixr2

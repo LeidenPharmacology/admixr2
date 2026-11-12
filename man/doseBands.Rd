@@ -16,8 +16,8 @@ the study's \code{population}.}
 \item{amt}{Amount for each band, lowest band first; one more than \code{breaks}.}
 
 \item{...}{How each dose is given, as \code{\link[rxode2:et]{rxode2::et()}} arguments: \code{time},
-\code{cmt}, \code{ii}, \code{addl}, \code{dur}, \code{rate}, \code{ss}, \code{until}. Without them each band
-gets one bolus at time 0.}
+\code{cmt}, \code{ii}, \code{addl}, \code{dur}, \code{rate}, \code{ss}, \code{until}; length 1 (all bands) or
+one per band. Without them each band gets one bolus at time 0.}
 }
 \value{
 An \code{admDoseBands} object, to pass as \code{dose} to \code{\link[=admStudy]{admStudy()}}.
@@ -32,8 +32,11 @@ otherwise 200 mg", for the \code{dose} argument of \code{\link[=admStudy]{admStu
 lowest first, so there is always one more amount than cut points and the
 bands cover the whole range with no gaps. A value equal to a cut point falls
 in the band above it. Anything else about how each dose is given ---
-\code{ii}, \code{addl}, \code{dur}, \code{rate}, \code{cmt}, ... --- is written as in \code{\link[rxode2:et]{rxode2::et()}}
-and applies to every band.
+\code{ii}, \code{addl}, \code{dur}, \code{rate}, \code{cmt}, ... --- is written as in \code{\link[rxode2:et]{rxode2::et()}}.
+Each is one value, shared by every band, or one value per band, so the
+regimen itself can depend on the covariate (\code{ii = c(24, 12)}). For anything
+that is a formula of a covariate, pass a function as \code{dose} that returns an
+\code{\link[rxode2:et]{rxode2::et()}} table.
 
 The study is expanded into one study per band: the covariate restricted to
 the band (and to the study's enrolled \code{range}, if given), \code{n} split by the
@@ -45,6 +48,8 @@ on the band.
 doseBands(CRCL, breaks = 30, amt = c(100, 200))
 # a 1-h infusion every 12 h, seven doses, in every band
 doseBands(CRCL, breaks = 30, amt = c(500, 1000), ii = 12, addl = 6, dur = 1)
+# the interval depends on the band too: daily below 30, twice daily above
+doseBands(CRCL, breaks = 30, amt = c(500, 1000), ii = c(24, 12), addl = c(2, 6))
 }
 \seealso{
 \code{\link[=admStudy]{admStudy()}}; a function of covariates as \code{dose} for dosing that is

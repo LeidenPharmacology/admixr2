@@ -1243,3 +1243,31 @@ test_that("a kinked dose function warns; a smooth one does not; nodes are reused
   g <- datagen(admStudies(s))
   expect_gt(length(g), 1L)
 })
+
+test_that("every et() argument can depend on covariates", {
+  skip_if_not_installed("rxode2")
+  ev1 <- function(x) as.data.frame(x$ev)
+  # doseBands: length-1 shared, length-k per band
+  m <- admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .sa_noccr, population = admPopulation(CRCL = c(mean = 60, sd = 25)),
+    n = 50, times = c(1, 2, 4),
+    dose = doseBands(CRCL, 30, c(100, 200), ii = c(24, 12), addl = c(2, 6),
+                     dur = 1))))
+  expect_equal(vapply(m, function(x) ev1(x)$ii[1], 0), c(24, 12), ignore_attr = TRUE)
+  expect_equal(vapply(m, function(x) ev1(x)$addl[1], 0), c(2, 6), ignore_attr = TRUE)
+  expect_true(all(vapply(m, function(x) ev1(x)$dur[1] == 1, logical(1))))
+  expect_error(doseBands(CRCL, 30, c(100, 200), ii = c(24, 12, 6)),
+               "one per band")
+  # a function: amt, ii, addl and dur all read the covariate
+  f <- function(WT) rxode2::et(amt = 2 * WT, ii = 12 + WT / 10, addl = 3,
+                               dur = WT / 50)
+  m <- admixr2:::.admMaterialise(admStudies(s = admStudy(
+    model = .sa_fitwt, population = admPopulation(WT = c(mean = 75, sd = 16)),
+    n = 50, times = c(1, 2, 4), strata_nodes = 3L, dose = f)))
+  for (x in m) {
+    d <- ev1(x)
+    expect_equal(c(d$amt[1], d$ii[1], d$dur[1]),
+                 c(2 * x$cov$WT, 12 + x$cov$WT / 10, x$cov$WT / 50),
+                 tolerance = 1e-10)
+  }
+})
