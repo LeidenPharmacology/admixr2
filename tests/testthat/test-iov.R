@@ -4,9 +4,17 @@ test_that(".admOccStarts starts an occasion at the dose that opens it", {
   tt <- c(2, 6, 12, 26, 50, 98, 102, 110)
   lab <- c(1, 1, 1, 1, 1, 2, 2, 2)
   dose <- seq(0, 144, 24)
-  st <- admixr2:::.admOccStarts(tt, lab, c(1, 2), dose)
-  expect_equal(st[2L], 96)                       # last dose <= 98, after obs of occ 1
+  # two doses (72, 96) fall between the occasions: ambiguous, so say which
+  expect_error(admixr2:::.admOccStarts(tt, lab, c(1, 2), dose), "occasion_starts")
+  st <- admixr2:::.admOccStarts(tt, lab, c(1, 2), dose, starts = 96)
+  expect_equal(st[2L], 96)
   expect_lt(st[1L], 0)                           # first level open on the left
+  expect_error(admixr2:::.admOccStarts(tt, lab, c(1, 2), dose, starts = 40), "must fall after")
+  expect_error(admixr2:::.admOccStarts(tt, lab, c(1, 2), dose, starts = c(96, 97)), "one time per")
+  # exactly one dose between the occasions: it opens the new one
+  expect_equal(admixr2:::.admOccStarts(c(2, 26, 98), c(1, 1, 2), c(1, 2), c(0, 96))[2L], 96)
+  # the reviewer's sparse case is refused rather than guessed
+  expect_error(admixr2:::.admOccStarts(c(2, 150), c(1, 2), c(1, 2), seq(0, 144, 24)), "could have opened")
   # no et() dose table: the first observation of the occasion
   expect_equal(admixr2:::.admOccStarts(tt, lab, c(1, 2), NULL)[2L], 98)
   # a dose inside the earlier occasion's observations does not open the next one

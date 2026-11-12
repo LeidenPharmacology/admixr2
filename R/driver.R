@@ -178,7 +178,7 @@
   # nlmixr2-style parameter history for traceplot()
   .admAttachParHist(.fit, .extra$all_traces, .extra$par_names, .ui)
   # Observed + predicted aggregate moments (E vector, V matrix) per study
-  .admAttachAggData(.fit, .extra, .ui)
+  .admAttachAggData(.fit, .extra, .ret[["simUi"]] %||% .ui)
   .old_cls <- class(.fit)
   .new_cls <- c("admFit", .old_cls)
   attr(.new_cls, ".foceiEnv") <- attr(.old_cls, ".foceiEnv")

@@ -72,11 +72,13 @@
 
 # Where each model occasion level starts for ONE study. Level k is active on
 # [t_k, t_(k+1)); `labels` is the occasion of each observation time, as an `occ`
-# data column would give it. A level starts at the dose that opens it -- the last
-# dose at or before its first observation, provided that dose is after every
-# observation of the earlier occasions -- else at its first observation. A level
-# the study never observes gets an empty interval.
-.admOccStarts <- function(times, labels, levels, dose_times = NULL) {
+# data column would give it. A level starts at the dose that opens it, which the
+# labels identify only when exactly ONE dose falls between the previous occasion's
+# last observation and this one's first (no dose: the first observation). Several
+# candidate doses are ambiguous and refused: say where the occasion starts with
+# `starts` (one time per observed occasion after the first). A level the study
+# never observes gets an empty interval.
+.admOccStarts <- function(times, labels, levels, dose_times = NULL, starts = NULL) {
   K <- length(levels); never <- 1e10
   t <- rep(never, K)
   if (is.null(labels)) { t[-1L] <- never; return(t) }
@@ -87,6 +89,9 @@
          call. = FALSE)
   present <- which(levels %in% labels)
   first   <- present[1L]
+  if (!is.null(starts) && length(starts) != length(present) - 1L)
+    stop("admixr2: `occasion_starts` needs one time per observed occasion after the first (",
+         length(present) - 1L, ").", call. = FALSE)
   for (k in rev(seq_len(K))) {
     nxt <- if (k < K) t[k + 1L] else never
     if (!k %in% present) { t[k] <- if (k < first) -never else nxt; next }
@@ -94,8 +99,22 @@
     s  <- min(times[ok])
     if (k > first) {
       prev_end <- max(times[match(labels, levels) < k])
-      d <- dose_times[dose_times <= s & dose_times > prev_end]
-      s <- if (length(d)) max(d) else s
+      j <- match(k, present[-1L])
+      if (!is.null(starts)) {
+        if (!(starts[j] > prev_end && starts[j] <= s))
+          stop("admixr2: `occasion_starts` for occasion ", levels[k], " (", starts[j],
+               ") must fall after the last time of the earlier occasion (", prev_end,
+               ") and not after its own first time (", s, ").", call. = FALSE)
+        s <- starts[j]
+      } else {
+        d <- dose_times[dose_times <= s & dose_times > prev_end]
+        if (length(d) > 1L)
+          stop("admixr2: occasion ", levels[k], " could have opened at any of the doses at ",
+               paste(d, collapse = ", "), " (between times ", prev_end, " and ", s,
+               "). Say which with `occasion_starts = ", format(d[length(d)]), "`.",
+               call. = FALSE)
+        if (length(d)) s <- d
+      }
     } else s <- -never
     t[k] <- s
   }
@@ -129,7 +148,8 @@
     raw <- !inherits(s, "admStudy")
     lab <- s[["occasions"]]
     dt  <- .admEtDoseTimes(if (raw) s[["ev"]] else s[["dose"]])
-    t   <- .admOccStarts(s[["times"]], lab, occ$levels, dt)[-1L]
+    t   <- .admOccStarts(s[["times"]], lab, occ$levels, dt, s[["occasion_starts"]])[-1L]
+    if (!raw) s[[".iov_levels"]] <- occ$levels
     add <- as.list(stats::setNames(t, nm))
     if (raw) s[["cov"]] <- utils::modifyList(add, as.list(s[["cov"]]))
     else     s$at <- utils::modifyList(add, as.list(s$at))
@@ -188,4 +208,12 @@
 .admHasIov <- function(ui) {
   d <- ui$iniDf; cond <- as.character(d$condition)
   any(!is.na(d$neta1) & d$neta1 == d$neta2 & !is.na(cond) & nzchar(cond) & cond != "id")
+}
+
+# `iov_t2..` for ONE concrete study (its final `ev`), overriding any earlier value: the
+# dose function / dose bands of an admStudy() only become event tables when expanded.
+.admIovCov <- function(cov, times, occasions, starts, levels, ev) {
+  t <- .admOccStarts(times, occasions, levels, .admEtDoseTimes(ev), starts)[-1L]
+  utils::modifyList(as.list(cov %||% list()),
+                    as.list(stats::setNames(t, paste0("iov_t", seq_along(levels))[-1L])))
 }

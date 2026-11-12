@@ -2033,6 +2033,7 @@ nlmixr2Est.adgh <- function(env, ...) {
   .ret            <- new.env(parent = emptyenv())
   .ret$table      <- env$table
   .ret$ui         <- .ui0
+  .ret$simUi      <- .ui   # time-derived `occ`, for aggregate post-fit simulation
   .ret$fullTheta  <- fullTheta
   .ret$objective  <- opt$objective
   .ret$est        <- "adgh"

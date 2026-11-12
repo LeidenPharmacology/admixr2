@@ -454,7 +454,7 @@ admStudy <- function(model = NULL, est = NULL,
                      population = NULL, at = NULL, by = NULL,
                      strata_nodes = NULL, range = NULL,
                      label = NULL, v_denom = NULL, simulated = FALSE,
-                     occasions = NULL) {
+                     occasions = NULL, occasion_starts = NULL) {
   # WHETHER A COVARIATE IS CONDITIONAL OR MARGINAL IS NOT A USER CHOICE. It is a
   # property of the source's own model -- conditional when that model ESTIMATED
   # the covariate's coefficient, marginal when it never mentions the covariate
@@ -503,6 +503,9 @@ admStudy <- function(model = NULL, est = NULL,
         anyNA(occasions))
       bad("`occasions` needs one numeric occasion label per element of `times`.")
   }
+  if (!is.null(occasion_starts) &&
+      (is.null(occasions) || !is.numeric(occasion_starts) || anyNA(occasion_starts)))
+    bad("`occasion_starts` is numeric and goes with `occasions`.")
   if (simulated && !has_model)
     bad("`simulated = TRUE` needs a `model` and `est` to simulate the trial ",
         "from; digitised data is already a sample.")
@@ -601,7 +604,7 @@ admStudy <- function(model = NULL, est = NULL,
     if (!is.null(.iovui)) {
       ui <- .iovui
       .lv <- sort(unique(occasions))
-      .st <- .admOccStarts(times, occasions, .lv, .admEtDoseTimes(dose))[-1L]
+      .st <- .admOccStarts(times, occasions, .lv, .admEtDoseTimes(dose), occasion_starts)[-1L]
       at <- utils::modifyList(as.list(stats::setNames(.st, paste0("iov_t", seq_along(.lv))[-1L])),
                               as.list(at))
     } else if (is.null(occasions) && .admHasIov(ui)) {
@@ -754,7 +757,8 @@ admStudy <- function(model = NULL, est = NULL,
     dose = dose, population = population, at = at, by = by,
     strata_nodes = strata_nodes, range = range,
     label = label, v_denom = v_denom, simulated = simulated,
-    .dose_strata = .dose_strata, occasions = occasions),
+    .dose_strata = .dose_strata, occasions = occasions,
+    occasion_starts = occasion_starts),
     class = "admStudy")
 }
 
@@ -1008,13 +1012,14 @@ print() a single study to check its transcription.
   # `stratify` gives `<nm>_s1`, `by` gives `<nm>_<by><level>`. `.adm_source`
   # records the parent for the first only, so a `by` source's model was
   # reachable under no name -- see .admCovSrcBySource().
-  .spec <- NULL
+  .spec <- NULL; .iov_keep <- NULL
   add <- function(nm, value) {
     if (nm %in% names(out))
       stop("admixr2: materialising the studies produced duplicate name ",
            sQuote(nm), ". Rename the study whose `by` or `stratify` expansion ",
            "collides with it.", call. = FALSE)
     if (!is.null(.spec)) value[[".adm_spec"]] <- .spec
+    for (k in names(.iov_keep)) value[[k]] <- .iov_keep[[k]]
     out[[nm]] <<- value
   }
   for (nm in names(studies)) {
@@ -1027,12 +1032,24 @@ print() a single study to check its transcription.
     gen <- if (isTRUE(s$simulated)) .admDatagenSim else datagen
     .dk <- .admDoseKind(s$dose)
     ev  <- switch(.dk, ev = s$dose, amt = rxode2::et(amt = s$dose), NULL)
+    # Occasion starts come from each EXPANDED study's concrete `ev` (a dose function or
+    # dose bands only become event tables here), and the labels travel with the output
+    # so a datagen() round trip still fits the same way.
+    .occ <- s[["occasions"]]
+    .lv  <- s[[".iov_levels"]] %||% sort(unique(.occ))
+    iovfix <- function(spk) {
+      if (!is.null(.occ))
+        spk[["cov"]] <- .admIovCov(spk[["cov"]], s$times, .occ, s[["occasion_starts"]], .lv, spk$ev)
+      spk
+    }
+    .iov_keep <- if (!is.null(.occ)) list(occasions = .occ, occasion_starts = s[["occasion_starts"]])
     if (is.null(s$ui)) {
       # Digitised studies need no generation.
       g <- list(E = as.numeric(s$E), V = s$V, n = s$n, times = s$times,
                 ev = ev, v_denom = s$v_denom)
       if (!is.null(s[["population"]])) g[["cov_dist"]] <- s[["population"]]
       if (!is.null(s[["at"]]))         g[["cov"]]      <- s[["at"]]
+      g <- iovfix(g)
       add(nm, g)
       next
     }
@@ -1040,6 +1057,7 @@ print() a single study to check its transcription.
     sp <- list(times = s$times, ev = ev, n = s$n)
     if (!is.null(s[["population"]])) sp[["cov_dist"]] <- s[["population"]]
     if (!is.null(s[["at"]]))         sp[["cov"]]      <- s[["at"]]
+    sp <- iovfix(sp)
     # RESOLVED HERE, and nowhere else: what reaches datagen() is the set of
     # covariates this SOURCE estimated a coefficient for, narrowed to the ones
     # the ANALYSIS model reads -- see the note above for why the narrowing is
@@ -1141,6 +1159,7 @@ print() a single study to check its transcription.
         spk <- sp
         spk$n   <- s$n * diff(.bcdf(c(.lo, .hi))) / .pR
         spk$ev  <- .admDoseBandEv(s$dose, k)
+        spk <- iovfix(spk)
         spk$cov_range <- utils::modifyList(as.list(sp$cov_range %||% list()),
                                            stats::setNames(list(c(.lo, .hi)), .bcv))
         if (.bcorr)
@@ -1189,6 +1208,7 @@ print() a single study to check its transcription.
           if (!length(spk$stratify)) spk$stratify <- FALSE
         }
         spk$ev <- .admDoseEvAt(s$dose, stl[[k]]$cov)
+        spk <- iovfix(spk)
         g <- gen(stats::setNames(list(spk),
                                  paste0(nm, "_", paste(.fcv, collapse = ""), "m", k)),
                  model = s$ui, control = datagenControl(method = "gh"))

@@ -8,8 +8,8 @@
   fit, with the IOV variance under `fit$omega$occ`. An aggregate study has no `occ`
   column, so the occasion of each observation time is given on the study,
   `admStudy(..., times = c(2, 6, 98, 102), occasions = c(1, 1, 2, 2))`, and the
-  number of occasions to nlmixr2 with `admData(occasions = c(occ = 2))`. A new
-  occasion starts at the dose that opens it. IOV is identified only from a full
+  number of occasions to nlmixr2 with `admData(occasions = c(occ = 2))`.
+  An occasion starts at the dose that opens it: when several doses lie between two occasions' samples, say which with `occasion_starts =` (it is refused as ambiguous otherwise). IOV is identified only from a full
   covariance matrix `V` across occasions, as the two variances otherwise share
   one flat ridge. `adfo` and `adirmc` refuse an IOV model.
 

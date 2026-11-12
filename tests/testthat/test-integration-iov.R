@@ -26,7 +26,7 @@ skip_if_not_installed("rxode2")
     dose = ev, simulated = TRUE)))[[1]]
   admixr2::admStudies(s = admixr2::admStudy(
     E = sim$E, V = sim$V, n = N, times = tt, dose = ev,
-    occasions = c(rep(1, 5), rep(2, 5))))
+    occasions = c(rep(1, 5), rep(2, 5)), occasion_starts = 96))
 }))
 
 test_that("adgh recovers a per-occasion variance and keeps it apart from BSV", {
@@ -38,6 +38,9 @@ test_that("adgh recovers a per-occasion variance and keeps it apart from BSV", {
   expect_equal(f$omega$id[["eta.cl", "eta.cl"]], 0.09, tolerance = 0.05)
   expect_equal(unname(f$fixef["tcl"]), log(2.7), tolerance = 0.01)
   expect_true(all(c("ID", "occ", "iov.cl") %in% names(f$iov$occ)))
+  # post-fit aggregate predictions survive the occasion rewrite
+  expect_gt(nrow(admixr2::admMoments(f)), 0L)
+  expect_gt(length(suppressMessages(suppressWarnings(plot(f, which = "mean")))), 0L)
 })
 
 test_that("admc recovers a per-occasion variance", {
@@ -72,9 +75,14 @@ test_that("a published IOV model as a source generates what its explicit form do
                           dose = ev, simulated = TRUE)))))[[1]]
   sp <- suppressWarnings(suppressMessages(admixr2::admStudy(
     model = pub, est = est, n = 2000, times = tt, dose = ev, simulated = TRUE,
-    occasions = c(rep(1, 5), rep(2, 5)))))
+    occasions = c(rep(1, 5), rep(2, 5)), occasion_starts = 96)))
   expect_equal(sp$at$iov_t2, 96)                    # the dose that opens occasion 2
   b <- suppressWarnings(suppressMessages(admixr2::datagen(admixr2::admStudies(s = sp))))[[1]]
+  # the labels survive datagen(), so fitting what it returns places the occasions the same way
+  expect_equal(b$occasions, c(rep(1, 5), rep(2, 5)))
+  expect_equal(b$cov$iov_t2, 96)
+  rp <- admixr2:::.admIovPad(list(s = b), list(var = "occ", levels = c(1, 2)))
+  expect_equal(rp$s$cov$iov_t2, 96)
   expect_equal(b$E, a$E, tolerance = 1e-6)
   expect_equal(b$V, a$V, tolerance = 1e-6)
   # an IOV model without occasions, and occasions without an IOV model, are refused
@@ -94,7 +102,7 @@ test_that("a model without an IOV term can still be given occasions (it asserts 
   lab <- c(rep(1, 5), rep(2, 5))
   mk <- function(...) suppressWarnings(suppressMessages(admixr2::admStudy(
     model = plain, est = est, n = 500, times = tt, dose = ev, simulated = TRUE, ...)))
-  with <- mk(occasions = lab); without <- mk()
+  with <- mk(occasions = lab, occasion_starts = 96); without <- mk()
   expect_equal(with$occasions, lab)
   g <- function(s) suppressWarnings(suppressMessages(
     admixr2::datagen(admixr2::admStudies(s = s))))[[1]]
@@ -102,4 +110,12 @@ test_that("a model without an IOV term can still be given occasions (it asserts 
   # in the fitted model the labels split its times into occasions
   padded <- admixr2:::.admIovPad(list(s = with), list(var = "occ", levels = c(1, 2)))
   expect_equal(padded$s$at$iov_t2, 96)
+})
+
+test_that(".admIovCov places occasion starts from the concrete event table", {
+  ev <- rxode2::et(amt = 100, ii = 24, addl = 6)
+  tt <- c(2, 26, 98, 102)
+  cv <- admixr2:::.admIovCov(list(WT = 70), tt, c(1, 1, 2, 2), 96, c(1, 2), ev)
+  expect_equal(cv$iov_t2, 96)                      # the dose, not the first sample at 98
+  expect_equal(cv$WT, 70)
 })

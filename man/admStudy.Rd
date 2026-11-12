@@ -23,7 +23,8 @@ admStudy(
   label = NULL,
   v_denom = NULL,
   simulated = FALSE,
-  occasions = NULL
+  occasions = NULL,
+  occasion_starts = NULL
 )
 }
 \arguments{

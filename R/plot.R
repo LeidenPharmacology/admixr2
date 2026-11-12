@@ -423,7 +423,7 @@ head.paged_df <- function(x, n = 6L, ...) {
   if (!is.null(hit)) return(hit)
   if (length(ls(memo, all.names = TRUE)) >= .ADM_AGG_MEMO_MAX)
     rm(list = ls(memo, all.names = TRUE), envir = memo)
-  hit <- .admAggData(extra, fit$env$ui, n_sim = n_sim, seed = seed, warn = warn)
+  hit <- .admAggData(extra, fit$env[["simUi"]] %||% fit$env$ui, n_sim = n_sim, seed = seed, warn = warn)
   # A FAILED SIMULATION IS NOT MEMOISED, and the warning is the reason. With no
   # retrievable simulation model .admAggData() warns and comes back with every
   # study NULL; storing that made the SECOND plot() silent, so a user who could
